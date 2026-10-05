@@ -16,7 +16,8 @@
  * - `replay`: the steps, in order. A `{ file, records }` step writes its records into `file`, a
  *   relative posix path under the provider directory, by extension: `.jsonl` appends one JSON line
  *   per record; `.json` writes its single record; `.db` runs each record, an SQL statement, on that
- *   SQLite file (provider stores are SQL text, `17` §1.4). An `{ exit }` step stops the stub there
+ *   SQLite file in one transaction, so a failing statement leaves none of the step's rows
+ *   (provider stores are SQL text, `17` §1.4). An `{ exit }` step stops the stub there
  *   with that code (CH-04).
  * - `exitCode`: the code once every step ran.
  * - `ignoreStdin`: after the replay the stub reads nothing and stays alive until it is killed
@@ -115,7 +116,16 @@ function writeStep(target, file, records) {
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
     const db = new DatabaseSync(target)
     try {
+      // One transaction for the step, as a provider writes a turn: one commit and its two disk
+      // flushes, not a commit per statement. On a stalling Windows runner disk the 15 autocommits
+      // of the OpenCode default script ran its stub past the OS lane's 10 s child bound (run
+      // 37284110939), while the stubs that only append took under a second together.
+      db.exec('BEGIN')
       for (const statement of records) db.exec(statement)
+      db.exec('COMMIT')
+    } catch (error) {
+      if (db.isTransaction) db.exec('ROLLBACK')
+      throw error
     } finally {
       db.close()
     }
