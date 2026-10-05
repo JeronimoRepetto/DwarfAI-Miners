@@ -2,8 +2,10 @@
 // four-value status derived from persisted facts, and the timer that moves an idle dwarf to asleep;
 // machine 2, presence (07 §2): rank by depth, the pending end of each end, the one departure; and
 // (ISSUE-069) the dwarfs stored in the Host database, one per provider identity, the arrival and
-// departure commands with their lifecycle facts, and `CrewQueries`. Crew imports only suppliers
-// (05 §1.3, R4); what it reads of launching and of the delivery routes comes in as `SessionLinks`.
+// departure commands with their lifecycle facts, and `CrewQueries`. ISSUE-080: `endAllIn`, Remove
+// mine's ends over the `SessionTerminator` that `host/wiring` binds (`Crew.ends`). Crew imports only
+// suppliers (05 §1.3, R4); what it reads of launching and of the delivery routes comes in as
+// `SessionLinks`.
 import type { HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
@@ -17,9 +19,14 @@ import { CrewResetStep } from './adapters/sqlite/CrewResetStep'
 import { SqliteDwarfRepository } from './adapters/SqliteDwarfRepository'
 import { CrewArrivals, type CrewCommands } from './application/arrival'
 import { CrewReadModel, type CrewQueries, type SessionLinks } from './application/crewQueries'
+import { CrewEndAllIn, type CrewEnds } from './application/endAllIn'
+import type { CrewEndEvent } from './application/events'
 import { StatusTimer } from './application/statusTimer'
 import type { CrewEvent } from './domain/events'
+import type { SessionTerminator } from './ports/sessionTerminator'
 
+export type { CrewEndEvent, DwarfStopFailed, DwarfStopRequested } from './application/events'
+export type { CrewEnds } from './application/endAllIn'
 export type {
   CrewEvent,
   DwarfArrived,
@@ -74,6 +81,15 @@ export interface Crew {
   queries: CrewQueries
   /** Machine 1's clock; boot recomputes the present dwarfs' statuses through it (S1.18). */
   statusTimer: StatusTimer
+  /**
+   * `endAllIn` over the Host's `SessionTerminator`, which `host/wiring` binds from suppliers and the
+   * kernel's process control (16 §4.2), publishing `CrewEndEvent` on the Host bus it passes
+   * (later: ISSUE-093). Mines calls it for Remove mine.
+   */
+  ends(deps: {
+    terminator: SessionTerminator
+    bus: Pick<DomainEventBus<CrewEndEvent>, 'publish'>
+  }): CrewEnds
 }
 
 /** The module over the Host database. */
@@ -102,7 +118,18 @@ export function createCrew(deps: CrewDeps): Crew {
     links: deps.links,
     presentDwarfs: repository
   })
-  return { commands, queries, statusTimer }
+  const ends: Crew['ends'] = ({ terminator, bus }) =>
+    new CrewEndAllIn({
+      repository,
+      transactions: deps.transactions,
+      bus,
+      clock: deps.clock,
+      ids: deps.ids,
+      hostEpoch: deps.hostEpoch,
+      terminator,
+      departures: commands
+    })
+  return { commands, queries, statusTimer, ends }
 }
 
 /**
