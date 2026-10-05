@@ -14,8 +14,10 @@
 //   (S3.22) is crew's `EndedAgentLedger` question, and this signature carries no identity: it is
 //   never asked here (later: ISSUE-093 routes it).
 // - A live mine gains the arrival: its recency is refreshed and its id answered. An `unenterable`
-//   mine answers its reason and gains no dwarf (INV-08). `checkFolder` for a known mine lands with
-//   the folder check (later: ISSUE-085).
+//   mine answers its reason and gains no dwarf (INV-08). A known mine's folder is checked first
+//   (`checkFolder`, ISSUE-085; S3.12, S3.13): a folder gone makes it unenterable before the
+//   session lands, and a folder back makes it enterable again. A removed mine is not checked: it
+//   is rediscovered.
 // - A created or reattached mine is handed to `remeasure` (ISSUE-065). Events after commit.
 import type { FolderPath } from '../../../kernel/domain/values'
 import { mineIdOf, openMine, transition, type Mine, type MineStep } from '../domain/mine'
@@ -38,9 +40,14 @@ interface Settled {
   readonly reattached?: boolean
 }
 
+/** What `resolveForSession` runs on: the commands' deps and the module's one `checkFolder`. */
+export interface ResolveForSessionDeps extends MineCommandDeps {
+  readonly checkFolder: MinesCommands['checkFolder']
+}
+
 /** `resolveForSession` over `deps`. */
 export function createResolveForSession(
-  deps: MineCommandDeps
+  deps: ResolveForSessionDeps
 ): Pick<MinesCommands, 'resolveForSession'> {
   return {
     async resolveForSession(path, firstMessage) {
@@ -49,6 +56,10 @@ export function createResolveForSession(
       const inLinkedWorktree = workplace !== undefined
       const now = deps.clock.now()
       const name = nameOfFolder(deps, key)
+      // A known mine's folder is checked first (S3.12, S3.13), with no transaction open; the
+      // transaction below reads the state the check left.
+      const known = deps.repository.byPath(key as string as FolderPath)
+      if (known !== null && known.state !== 'removed') await deps.checkFolder(known.id)
       const settled = deps.transactions.inTransaction((): Settled => {
         const existing = deps.repository.byPath(key as string as FolderPath)
         if (existing === null) {

@@ -4,12 +4,15 @@
 // the only writer of `mines`) and `MinesQueries` for the Mines page browse (B-M19). ISSUE-066:
 // "Add a mine" and the worktree dialog (`declare`, `adoptMainProject`), the mine of a session's
 // cwd (`resolveForSession`) and `resolveFileInMine`, every path re-validated on the real disk
-// (18 C-17). The other commands grow in later issues (later: ISSUE-065, ISSUE-080, ISSUE-085).
+// (18 C-17). ISSUE-085: `checkFolder`, run by `resolveForSession` for a known mine, and the
+// folder-check schedule that `host/wiring` starts (later: ISSUE-093). The other commands grow in
+// later issues (later: ISSUE-065, ISSUE-080).
 import type { HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { FileSystem } from '../../kernel/ports/fileSystem'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
+import type { Scheduler } from '../../kernel/ports/scheduler'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
@@ -17,7 +20,9 @@ import { createHostGitRepoInspector } from './adapters/FsGitRepoInspector'
 import { NodePathProbe } from './adapters/pathValidation'
 import { SqliteMineRepository } from './adapters/SqliteMineRepository'
 import { hostVolumeRules } from './adapters/volumeCase'
+import { createCheckFolder } from './application/checkFolder'
 import { createDeclareCommands, type MinesCommands } from './application/declare'
+import { FolderCheckSchedule } from './application/folderCheckSchedule'
 import { MineReadModel, type MinesQueries } from './application/mineQueries'
 import { resolveFileInMine } from './application/resolveFile'
 import { createResolveForSession } from './application/resolveForSession'
@@ -26,7 +31,15 @@ import type { MapSite } from './domain/mine'
 
 export type { MinesCommands } from './application/declare'
 export type { MinesQueries, MineSummary, MineView } from './application/mineQueries'
-export type { MineCreated, MineReattached, MinesEvent } from './domain/events'
+export { MINE_FOLDER_CHECK_MS, type FolderCheckSchedule } from './application/folderCheckSchedule'
+export type {
+  MineBecameEnterable,
+  MineBecameUnenterable,
+  MineCreated,
+  MineReattached,
+  MinesEvent
+} from './domain/events'
+export type { FolderUnenterableReason } from './domain/folderCheck'
 export type { MapMarker, MapSite, Mine, MineName, MineState, MineTransitionId } from './domain/mine'
 export type { MinePath, PathStyle } from './domain/minePath'
 export type { Tier } from './domain/tier'
@@ -41,8 +54,11 @@ export interface MinesDeps {
   mapSites: readonly MapSite[]
   /** A fraction in [0, 1) for the map-site pick; production passes `Math.random`. */
   random: () => number
-  /** Read only: the git inspector reads `.git` files through it (ADR-030). */
-  fs: Pick<FileSystem, 'stat' | 'readTextHead'>
+  /**
+   * Read only: the git inspector reads `.git` files through it (ADR-030), and `checkFolder` stats
+   * a mine's folder, listing it only when the stat cannot tell why it failed.
+   */
+  fs: Pick<FileSystem, 'stat' | 'readTextHead' | 'listDirWithSizes'>
   clock: Clock
   ids: IdGenerator
   bus: DomainEventBus<MinesEvent>
@@ -53,8 +69,17 @@ export interface MinesDeps {
 
 export interface Mines {
   queries: MinesQueries
-  /** The commands built so far (ISSUE-066). */
-  commands: Pick<MinesCommands, 'declare' | 'adoptMainProject' | 'resolveForSession'>
+  /** The commands built so far (ISSUE-066, ISSUE-085). */
+  commands: Pick<
+    MinesCommands,
+    'declare' | 'adoptMainProject' | 'resolveForSession' | 'checkFolder'
+  >
+  /**
+   * The folder check of every mine with a present dwarf, every `intervalMs` (05 §3.1; 07 S3.12
+   * trigger (c)), over this instance's `checkFolder`; `host/wiring` starts it after boot with the
+   * kernel `Scheduler` and `MINE_FOLDER_CHECK_MS` (later: ISSUE-093).
+   */
+  folderCheckSchedule(deps: { scheduler: Scheduler; intervalMs: number }): FolderCheckSchedule
 }
 
 /** The module over the Host database and the real disk, with the Host OS's path rules. */
@@ -88,8 +113,21 @@ export function createMines(deps: MinesDeps): Mines {
     style,
     remeasure: (mineId: MineId) => deps.remeasure(mineId)
   }
+  const { checkFolder } = createCheckFolder({ ...commandDeps, fs: deps.fs })
+  // Interim, until ISSUE-094 gives mines crew's present dwarfs: the repository's join.
+  const minesWithPresentDwarfs = (): MineId[] => {
+    const ids = repository.query({ sortBy: 'name', direction: 'asc' }).map((mine) => mine.id)
+    const counts = repository.presentDwarfsIn(ids)
+    return ids.filter((mineId) => (counts.get(mineId) ?? 0) > 0)
+  }
   return {
     queries,
-    commands: { ...createDeclareCommands(commandDeps), ...createResolveForSession(commandDeps) }
+    commands: {
+      ...createDeclareCommands(commandDeps),
+      ...createResolveForSession({ ...commandDeps, checkFolder }),
+      checkFolder
+    },
+    folderCheckSchedule: ({ scheduler, intervalMs }) =>
+      new FolderCheckSchedule({ scheduler, intervalMs, minesWithPresentDwarfs, checkFolder })
   }
 }
