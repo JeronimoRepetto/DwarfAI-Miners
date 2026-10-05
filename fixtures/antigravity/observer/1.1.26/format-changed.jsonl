@@ -1,0 +1,4 @@
+{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-09-04T19:01:13Z","content":"<USER_REQUEST>\nIs the build green?\n</USER_REQUEST>"}
+{"stepIndex":1,"origin":"MODEL","stepType":"PLANNER_RESPONSE","state":"DONE","createdAt":"2026-09-04T19:01:14Z","body":"Renamed fields after an upgrade: this record is drift."}
+{"stepIndex":2,"origin":"MODEL","stepType":"PLANNER_RESPONSE","state":"DONE","createdAt":"2026-09-04T19:01:15Z","body":"Still drift."}
+{"stepIndex":3,"origin":"MODEL","stepType":"PLANNER_RESPONSE","state":"DONE","createdAt":"2026-09-04T19:01:16Z","body":"Nothing of the new format is readable."}
