@@ -28,6 +28,7 @@ describe('InMemoryActivityLog', () => {
         }
       },
       runs: (dwarfId) => log.runs(dwarfId),
+      reopen: () => log.reopen(),
       dispose: () => undefined
     }
   })

@@ -9,7 +9,7 @@
 //   (INV-66): the statement throws and the caller's transaction rolls back. Then 09 §5.2 step 4,
 //   verbatim: the dwarf's newest `ACTIVITY_RUNS_PER_DWARF` runs stay, the open one ranked first so
 //   it is never trimmed.
-// - `openRun` reads the dwarf's open run (the read of the package gap in ports/activityLog.ts).
+// - `openRun` reads the dwarf's open run through `activity_disclosures_one_open` (16 §4.6, amendment A).
 // - Summaries are one line per step and never tool output (ADR-007 item 4): stored as given.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId } from '../../../kernel/domain/values'
@@ -17,7 +17,7 @@ import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ActivityDisclosure } from '../domain/activityRun'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
-import type { ActivityLog, ActivityRunReader } from '../ports/activityLog'
+import type { ActivityLog } from '../ports/activityLog'
 
 export interface SqliteActivityLogDeps {
   /** The Host's one writer (09 §8.1). */
@@ -44,7 +44,7 @@ const TRIM = `DELETE FROM activity_disclosures
 const OPEN_RUN = `SELECT id, dwarf_id, turn_key, open, step_count, summaries_json, opened_at, closed_at
   FROM activity_disclosures WHERE dwarf_id = ? AND open = 1`
 
-export class SqliteActivityLog implements ActivityLog, ActivityRunReader {
+export class SqliteActivityLog implements ActivityLog {
   constructor(private readonly deps: SqliteActivityLogDeps) {}
 
   saveDisclosure(d: ActivityDisclosure): void {

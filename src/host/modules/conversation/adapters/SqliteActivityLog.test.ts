@@ -21,6 +21,7 @@ describe('SqliteActivityLog', () => {
       dwarfIds,
       inTransaction: (work) => runner.inTransaction(work),
       runs: (dwarfId) => storedRuns(db, dwarfId),
+      reopen: () => new SqliteActivityLog({ db, scope: runner }),
       dispose: () => undefined
     }
   })

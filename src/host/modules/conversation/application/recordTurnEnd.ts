@@ -25,15 +25,15 @@ import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import { applyTurnEnded, type ActivityDisclosure } from '../domain/activityRun'
 import type { ConversationEvent } from '../domain/events'
-import type { ActivityLog, ActivityRunReader } from '../ports/activityLog'
+import type { ActivityLog } from '../ports/activityLog'
 import { activityChanged } from './activityChanged'
 import type { ConversationCommands } from './ingest'
 
 export interface TurnEndRecorderDeps {
   /** The kernel log of `dwarf_lifecycle_facts`, shared with crew (16 §3). */
   facts: LifecycleFactLog
-  /** The dwarf's activity runs (16 §4.6 `ActivityLog`, with the open-run read). */
-  activity: ActivityLog & ActivityRunReader
+  /** The dwarf's activity runs (16 §4.6 `ActivityLog`, amended with `openRun`). */
+  activity: ActivityLog
   /** One transaction per report (16 §2.2), joined when the caller has one open. */
   transactions: TransactionRunner
   /** Whether the caller has a transaction open (16 §2.3). */

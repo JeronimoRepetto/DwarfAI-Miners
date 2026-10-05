@@ -3,22 +3,24 @@
 // closes in place under its id; the store refuses a second open run for a dwarf (INV-66,
 // `activity_disclosures_one_open`); each save keeps the dwarf's newest 50 runs and never trims the
 // open one (09 §5.2 step 4; ADR-007); every write runs inside the caller's transaction (16 §2.2).
-// `openRun` is the read the package gap of ports/activityLog.ts adds.
+// `openRun` (16 §4.6, amendment A): null with no run, the open run, null after it closes, and the\n// same answer from a reopened store.
 import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
 import type { ActivityDisclosure } from '../domain/activityRun'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
-import type { ActivityLog, ActivityRunReader } from '../ports/activityLog'
+import type { ActivityLog } from '../ports/activityLog'
 
 export interface ActivityLogSubject {
-  log: ActivityLog & ActivityRunReader
+  log: ActivityLog
   /** Two dwarfs that exist in the subject's store (the SQLite half seeds their rows). */
   dwarfIds: readonly [DwarfId, DwarfId]
   /** The caller's transaction: commits when `work` returns, rolls back when it throws. */
   inTransaction<T>(work: () => T): T
   /** Every stored run of the dwarf, by `openedAt` then id. */
   runs(dwarfId: DwarfId): ActivityDisclosure[]
+  /** A new store over the same stored runs: what a Host restart opens (S11.07). */
+  reopen(): ActivityLog
   dispose(): void | Promise<void>
 }
 
@@ -93,6 +95,35 @@ export function runActivityLogContract(
       s.inTransaction(() => s.log.saveDisclosure(closed))
       expect(s.runs(dwarf)).toEqual([closed])
       expect(s.inTransaction(() => s.log.openRun(dwarf))).toBeNull()
+    })
+
+    it('[S11.07, INV-66] openRun answers null with no run, the open run while it is open, null once it closed, and the same from a reopened store', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      expect(s.inTransaction(() => s.log.openRun(dwarf))).toBeNull()
+
+      // An open run, with a closed one before it and another dwarf's open run beside it.
+      const closedBefore = run(dwarf, 1)
+      const open = openRunOf(dwarf, 2, 3)
+      const theirs = openRunOf(other, 3)
+      s.inTransaction(() => {
+        s.log.saveDisclosure(closedBefore)
+        s.log.saveDisclosure(open)
+        s.log.saveDisclosure(theirs)
+      })
+      expect(s.inTransaction(() => s.log.openRun(dwarf))).toEqual(open)
+
+      // A Host restart: the run is still open, read from the stored rows (S11.07).
+      const reopened = s.reopen()
+      expect(s.inTransaction(() => reopened.openRun(dwarf))).toEqual(open)
+      expect(s.inTransaction(() => reopened.openRun(other))).toEqual(theirs)
+
+      // Once it closes, the dwarf has no open run, before and after a restart.
+      s.inTransaction(() => reopened.saveDisclosure({ ...open, open: false, closedAt: T0 + 90 }))
+      expect(s.inTransaction(() => reopened.openRun(dwarf))).toBeNull()
+      expect(s.inTransaction(() => s.reopen().openRun(dwarf))).toBeNull()
+      // Outside the caller's transaction the read is refused (16 §2.2).
+      expect(() => reopened.openRun(other)).toThrow(HostInvariantError)
     })
 
     it('[INV-66] a second open run for the same dwarf is refused by the store', async () => {
