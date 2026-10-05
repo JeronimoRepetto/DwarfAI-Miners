@@ -201,6 +201,39 @@ describe('stub CLI kit (17 §1.9)', () => {
     }
   })
 
+  it('[ADR-008] a .db step is written as one transaction, so a statement that fails leaves none of its rows', () => {
+    const dataHome = tempDir()
+    const script = writeScript({
+      version: '0.0.0-test',
+      replay: [
+        {
+          file: 'opencode/opencode.db',
+          records: [
+            'CREATE TABLE session (id TEXT PRIMARY KEY)',
+            "INSERT INTO session VALUES ('ses_one')",
+            'INSERT INTO no_such_table VALUES (1)'
+          ]
+        }
+      ],
+      exitCode: 0,
+      ignoreStdin: false
+    })
+
+    expect(() =>
+      playAs(
+        'opencode',
+        [],
+        baseEnv({ XDG_DATA_HOME: dataHome, DWARFAI_STUB_OPENCODE_SCRIPT: script })
+      )
+    ).toThrow(/no_such_table/)
+    const db = new DatabaseSync(path.join(dataHome, 'opencode', 'opencode.db'), { readOnly: true })
+    try {
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
   it('[ADR-008] a stub whose provider directory variable is unset writes nothing and fails', () => {
     const home = tempDir()
     const run = playAs('claude', [], baseEnv({ HOME: home, USERPROFILE: home }))

@@ -202,6 +202,12 @@ test.describe('E2E harness: a bounded teardown (17 §1.9)', () => {
     const { app, profile } = current
     // Held before teardown: Playwright refuses `app.process()` once the app is closed.
     const child = app.process()
+    // The app's start is over first: until the UI attached to its Host, the start runs one synchronous step on the
+    // main thread, the Host's breakaway launch (a CreateProcess of the fresh versioned copy on Windows: about 0.1 s
+    // here, seconds on a stalling CI disk), and a diagnosis asked inside it gets no answer (run 37287673670: "the main
+    // process did not answer within 3000 ms", the quit 40 ms after the page's load). The case asks a main process
+    // that has nothing left to do, the responsive one its second assertion describes.
+    await waitForHostAttached(profile)
     const pids = await app.evaluate(({ app: electronApp }) =>
       electronApp.getAppMetrics().map((metric) => metric.pid)
     )
@@ -247,13 +253,15 @@ test.describe('E2E harness: main-process errors (17 §1.9)', () => {
     const child = current.app.process()
     // The canary throws at quit only where the harness captures main-process errors, so a run
     // without the capture can never open Electron's modal "A JavaScript error occurred" box.
+    // It throws inside the listener, not on a later tick: Electron reports a listener's exception
+    // as uncaught before `app.quit()` returns, on every OS, while on macOS the whole quit can run
+    // inside `app.quit()` and the process exit before a deferred throw (runs 37279955715 and
+    // 37285520952: before-quit, destroyed, will-quit and exit 0 within 20 ms, nothing captured).
     await current.app.evaluate(({ app: electronApp }) => {
       electronApp.once('before-quit', () => {
         const captured = (globalThis as { __dwarfaiE2eMainErrors?: string }).__dwarfaiE2eMainErrors
         if (captured === undefined) return
-        process.nextTick(() => {
-          throw new Error('canary: thrown in the main process at quit')
-        })
+        throw new Error('canary: thrown in the main process at quit')
       })
     })
 

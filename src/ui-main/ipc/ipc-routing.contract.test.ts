@@ -8,11 +8,14 @@ import {
   UNROUTED,
   type ChannelKey,
   type DwarfId,
+  type FolderPath,
   type HostResult,
+  type MineId,
   type SnapshotPage,
   type StepId
 } from '@dwarfai/contracts'
-import { composeStopAllRelay } from '../index'
+import { composeBoardFacade, composeStopAllRelay } from '../index'
+import type { HostEvent } from '../window/ports/hostClient'
 import { createStopEverything } from '../window/application/stopEverything'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -381,6 +384,101 @@ describe('pre-cut table', () => {
       error: { code: 'INTERNAL', retryable: false }
     })
     expect(response.safeParse(refused.answer).success).toBe(true)
+  })
+
+  it('[ADR-001] BoardFacadeAdapter is listed for cuts 1 to 4', async () => {
+    // TC-086-03 (21 §3, 14 §5): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
+    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'BoardFacadeAdapter')).toEqual({
+      name: 'BoardFacadeAdapter',
+      cuts: ['cut-1', 'cut-2', 'cut-3a', 'cut-3b', 'cut-3d', 'cut-3e', 'cut-4a', 'cut-4b'],
+      shapeAdapter: false
+    })
+    // A-12 and A-P2 are RETIRE rows of the Host (14 §2.1) that keep today's shape, served by today's runtime until the
+    // cut-1 switch (ISSUE-123) routes them through the facade.
+    const BOARD_ROWS: ChannelKey[] = ['mines:get', 'mines:update']
+    for (const key of BOARD_ROWS) {
+      expect([CHANNELS[key].status, CHANNELS[key].placement], key).toEqual(['retired', 'host'])
+      expect(
+        ROUTES.filter((r) => r.channel === key).map((r) => r.owner),
+        key
+      ).toEqual(['legacy'])
+    }
+
+    // The root composes the facade only once the table routes A-12 to the Host: not in this release.
+    let handler: ((event: HostEvent) => void) | null = null
+    const client = {
+      subscribe: (h: (event: HostEvent) => void) => {
+        handler = h
+        return () => (handler = null)
+      }
+    }
+    const sent: Array<[string, unknown]> = []
+    const windows = () => [
+      { webContentsId: 1, send: (push: string, p: unknown) => void sent.push([push, p]) }
+    ]
+    const macrotasks: Array<() => void> = []
+    const defer = (run: () => void) => void macrotasks.push(run)
+    expect(composeBoardFacade({ routes: ROUTES, client, windows, defer })).toBeUndefined()
+    expect(handler).toBeNull()
+
+    // In a table that routes A-12 and A-P2 to the Host (as the cut-1 switch will), the facade is A-12's `host` handler
+    // and pushes A-P2 to the mode windows, both in today's shape.
+    const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+      channel,
+      owner: 'host',
+      since: 'cut-1',
+      parity: 'passed',
+      shape: 'target'
+    })
+    const cut1Routes = [
+      ...ROUTES.filter((r) => !BOARD_ROWS.includes(r.channel)),
+      ...BOARD_ROWS.map(hostRoute)
+    ]
+    const facade = composeBoardFacade({ routes: cut1Routes, client, windows, defer })
+    expect(facade?.part.channels).toEqual(['mines:get'])
+    const MINE = '01920000-0000-7000-9000-0000000c0001'
+    const ore = { tokens: 5 }
+    ;(handler as ((event: HostEvent) => void) | null)?.({
+      kind: 'snapshot',
+      snapshot: {
+        snapshotId: 's-1',
+        seq: 1,
+        epoch: 'epoch-1',
+        chunks: [
+          {
+            section: 'mines',
+            data: [
+              {
+                id: MINE as MineId,
+                path: '/work/gamma' as FolderPath,
+                name: 'gamma',
+                state: 'active',
+                tier: 'silver',
+                hasBeenMeasured: true,
+                lastUsedAt: 1,
+                totals: {
+                  coal: ore,
+                  bronze: ore,
+                  copper: ore,
+                  silver: ore,
+                  gold: ore,
+                  uranium: ore
+                }
+              }
+            ]
+          }
+        ]
+      }
+    })
+    for (const run of macrotasks.splice(0)) run()
+    const answer = await facade?.part.target.serve('mines:get', undefined)
+    expect(CHANNELS['mines:get'].response.safeParse(answer).success).toBe(true)
+    expect((answer as { mines: Array<{ id: string }> }).mines.map((m) => m.id)).toEqual([MINE])
+    expect(sent.map(([push]) => push)).toEqual(['mines:update'])
+    expect(CHANNELS['mines:update'].response.safeParse(sent[0]?.[1]).success).toBe(true)
+    expect(sent[0]?.[1]).toEqual(answer)
+    facade?.dispose()
+    expect(handler).toBeNull()
   })
 })
 
