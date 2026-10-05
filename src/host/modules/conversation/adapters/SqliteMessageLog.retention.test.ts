@@ -12,6 +12,7 @@ import type { ConversationEntry } from '../../suppliers'
 import { ConversationIngest } from '../application/ingest'
 import type { ConversationEvent } from '../domain/events'
 import { seedConversationDb, sqliteProbe } from '../testing/sqliteConversationDb'
+import { SqliteActivityLog } from './SqliteActivityLog'
 import { SqliteMessageLog } from './SqliteMessageLog'
 
 const T0 = 1_790_000_000_000
@@ -47,6 +48,7 @@ function setUp() {
   const log = new SqliteMessageLog({ db, scope: runner, clock, ids })
   const ingest = new ConversationIngest({
     log,
+    activity: new SqliteActivityLog({ db, scope: runner }),
     transactions,
     scope: runner,
     bus,

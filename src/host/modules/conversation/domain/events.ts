@@ -17,4 +17,13 @@ export type MessagesAppended = DomainEvent<
  */
 export type TurnEndedEvent = DomainEvent<'TurnEnded', { dwarfId: DwarfId; end: TurnEnded }>
 
-export type ConversationEvent = MessagesAppended | TurnEndedEvent
+/**
+ * 08 §0, §2.6: an activity run opened, grew or closed (07 §11), keyed (disclosureId, stepCount,
+ * open); one per changed run per committed transaction, with the run's final state in it.
+ */
+export type ActivityChanged = DomainEvent<
+  'ActivityChanged',
+  { dwarfId: DwarfId; disclosureId: string; open: boolean; stepCount: number }
+>
+
+export type ConversationEvent = MessagesAppended | TurnEndedEvent | ActivityChanged
