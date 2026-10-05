@@ -32,6 +32,10 @@ import {
 import { createLegacySettingsWriteHub } from '../legacy-bridge/settingsMirror/legacySettingsWrites'
 import type { MirrorHalf } from '../legacy-bridge/settingsMirror/mirrorHalf'
 import {
+  createNotificationsMirrorHalf,
+  reportNotificationsWrites
+} from '../legacy-bridge/settingsMirror/notificationsHalf'
+import {
   createSettingsMirrorBridge,
   type LegacySettingsWrites
 } from '../legacy-bridge/settingsMirror/settingsMirrorBridge'
@@ -901,10 +905,11 @@ if (process.type === 'browser') {
         : dialog.showOpenDialog(parent, options)
     }
   }
-  void startUiMain({
-    lock: new ElectronSingleInstanceLock(app),
-    lifecycle: electronLifecycle(),
-    legacyRuntime: createLegacyRuntimeRoute(
+  // The legacy store's saves of Host-read preferences, for `SettingsMirrorBridge` (21 §3): the notifications half
+  // (ISSUE-116, from cut 1) reports today's A-43 saves through the route the router serves the legacy rows with.
+  const legacySettingsWrites = createLegacySettingsWriteHub()
+  const legacyRuntime = reportNotificationsWrites(
+    createLegacyRuntimeRoute(
       composeLegacyRuntime(
         { app, dialog, nativeImage, shell, clipboard, globalShortcut },
         windowFamilyOwner(ROUTES) === 'ui-local'
@@ -912,6 +917,12 @@ if (process.type === 'browser') {
           : { log: uiLog }
       )
     ),
+    legacySettingsWrites
+  )
+  void startUiMain({
+    lock: new ElectronSingleInstanceLock(app),
+    lifecycle: electronLifecycle(),
+    legacyRuntime,
     ipc: electronIpcMain(),
     appEntry: appEntryUrl(),
     appWindows,
@@ -951,6 +962,9 @@ if (process.type === 'browser') {
       drawsWithoutWindow: drawsWithoutWindow(currentUiPlatform())
     },
     // The halves register here with their legacy saves wired to the hub (ISSUE-116 from cut 1, ISSUE-194 from 3a).
-    settingsMirror: { legacy: createLegacySettingsWriteHub(), halves: [] }
+    settingsMirror: {
+      legacy: legacySettingsWrites,
+      halves: [createNotificationsMirrorHalf(legacyRuntime)]
+    }
   })
 }

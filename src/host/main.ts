@@ -31,12 +31,22 @@
 // adds `db-read-only` to `hello.ok.capabilities`. `session.snapshot` (ISSUE-026) serves the sections of the
 // SectionRegistry, advertised as `section:<name>`: at cut 0 the `meta` section only, over the
 // boot-state SnapshotMetaSource bound here (`resetEpoch` from `app_meta`, `minesEverKnown` false
-// until the mines module reads its table, later: ISSUE-082). Bound later, each by its issue: the modules and
-// their bridges (16 §8.2 step 4).
+// until the mines module reads its table, later: ISSUE-082). Boot step 3 wires the preferences module
+// over the database step 2 opened (ISSUE-226: wiring/preferencesWiring.ts, with the FeatureFlagReader,
+// the Reset saga's cleanup and the cut-1 bindings that stand in for the OS secret store, the config
+// writers and the ledger) and resumes an unfinished Reset saga before anything else is constructed
+// and before any command is accepted (05 §2.3; 16 §8.2). Boot step 4 constructs the other modules,
+// each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
+// SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
+// the others join later.
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
+import type { PreferencesEvent } from './modules/preferences'
+import type { Suppliers, SuppliersEvent } from './modules/suppliers'
+import { createHostInstallResolver } from './modules/suppliers/adapters/install/hostInstallResolver'
+import { SqliteCapabilityRecordStore } from './modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
@@ -60,12 +70,15 @@ import { nodeOsSessionSignals } from './platform/process/osSessionSignals'
 import { createPrivilegeCheck } from './platform/process/privilege'
 import { hostRuntime } from './platform/process/runtimeFacts'
 import { createHostFileProtection } from './platform/sqlite/fileProtection'
+import { SqliteResetCleanup } from './platform/sqlite/resetCleanup'
 import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
 import { createUpgradeDrain } from './transport/lifecycle/drain'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
+import { PREFERENCES_FRAMES } from './transport/methods/preferences'
+import { RESET_FRAMES } from './transport/methods/resetMetrics'
 import { HostIdentityFile } from './transport/runFiles/hostIdentityFile'
 import { SNAPSHOT_TAIL, type SnapshotMetaSource } from './transport/snapshot/metaSection'
 import { SectionRegistry } from './transport/snapshot/sectionRegistry'
@@ -73,12 +86,21 @@ import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
 import { errorCode, runBoot } from './wiring/boot'
 import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
+import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
 import { installUncaughtHandlers } from './wiring/uncaught'
 import { emptyDrainGate } from './wiring/emptyDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
-import { HostInvariantError } from './kernel'
+import {
+  emptyLedgerInstallMoment,
+  noOwnedConfigWriter,
+  servePreferences,
+  unavailableSecretStore,
+  type WiredPreferences
+} from './wiring/preferencesWiring'
+import { isPublicBuild, wireSuppliers } from './wiring/suppliersWiring'
+import { HostInvariantError, InProcessEventBus } from './kernel'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
@@ -154,6 +176,11 @@ async function main(): Promise<void> {
   // Opened by boot step 2 (createHostDatabase below). `session.snapshot` is served only once the
   // Host is past `starting` and `migrating` (HOST_NOT_READY before), so after step 2 opened it.
   let database: HostDatabase | undefined
+  // The modules boot steps 3 and 4 construct, for the bridges and transport methods that join later.
+  const modules: { preferences?: WiredPreferences; suppliers?: Suppliers } = {}
+  // The Host's one event bus (16 §2.3), created by boot step 3 over the connection step 2 opened;
+  // each module's events join its union with the module.
+  let bus: InProcessEventBus<PreferencesEvent | SuppliersEvent> | undefined
   // The module sections join this registry here, each with its module (16 §8.2 step 4).
   const sections = new SectionRegistry()
   const snapshotMeta: SnapshotMetaSource = {
@@ -195,6 +222,9 @@ async function main(): Promise<void> {
     sections,
     snapshotMeta
   })
+  // Served before the boot binds the endpoint, so every hello.ok lists them (14 §1.3); boot step 3
+  // constructs the module they forward to.
+  const servedPreferences = servePreferences({ dispatcher, sections, connections })
   const processControl = new NodeProcessControl({
     scheduler,
     diagnostics: log,
@@ -257,7 +287,7 @@ async function main(): Promise<void> {
         state: () => hostState.current(),
         dispatcher,
         connections,
-        frames: [...LIFECYCLE_FRAMES, ...TRANSPORT_FRAMES],
+        frames: [...LIFECYCLE_FRAMES, ...TRANSPORT_FRAMES, ...PREFERENCES_FRAMES, ...RESET_FRAMES],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
         sections: () => sections.names(),
@@ -284,7 +314,74 @@ async function main(): Promise<void> {
         processControl,
         log,
         endpoint,
-        database: opened
+        database: opened,
+        // Step 3: preferences first, then the saga's boot resume (07 S13.08).
+        resumeResetSaga: async () => {
+          const { db, transactions } = opened.connection()
+          bus = new InProcessEventBus<PreferencesEvent | SuppliersEvent>({
+            transactionScope: transactions,
+            onHandlerError: (failure) =>
+              log.record({
+                level: 'error',
+                event: 'uncaught',
+                subsystem: 'host',
+                errCode: errorCode(failure.error)
+              })
+          })
+          const preferences = servedPreferences.wire({
+            db,
+            transactions,
+            bus,
+            clock,
+            ids,
+            hostEpoch: epoch,
+            log,
+            featureFlags: await createFeatureFlagReader({
+              env: process.env,
+              fs,
+              configFilePath: featureFlagConfigFilePath(dataDir.userDataDir),
+              log
+            }),
+            maintenance: new SqliteResetCleanup({
+              db,
+              path: join(dataDir.userDataDir, HOST_DB_FILE)
+            }),
+            // Cut 1: no ledger, OS secret store or owned config entry yet (later: ISSUE-096,
+            // ISSUE-324, ISSUE-323).
+            ledger: emptyLedgerInstallMoment,
+            secrets: unavailableSecretStore,
+            externalConfig: noOwnedConfigWriter,
+            ready: () => hostState.current().state === 'ready'
+          })
+          modules.preferences = preferences
+          return preferences.resumeOnBoot()
+        },
+        constructModules: () => {
+          const { db, transactions } = opened.connection()
+          if (bus === undefined || modules.preferences === undefined) {
+            throw new HostInvariantError('boot step 4 runs after step 3 wired preferences')
+          }
+          modules.suppliers = wireSuppliers({
+            publicBuild: isPublicBuild(buildKindOf(dataDir)),
+            clock,
+            scheduler,
+            ids,
+            fs,
+            log,
+            installResolver: createHostInstallResolver({ fs, processControl, scheduler }),
+            capabilityRecords: new SqliteCapabilityRecordStore({
+              db,
+              tx: transactions,
+              ids,
+              log
+            }),
+            integrationGate: modules.preferences.integrationGate,
+            bus,
+            hostEpoch: epoch,
+            // A new demo world each Host start (15 §4.12); development builds only.
+            simulatedSeed: epoch
+          })
+        }
       })
     },
     {

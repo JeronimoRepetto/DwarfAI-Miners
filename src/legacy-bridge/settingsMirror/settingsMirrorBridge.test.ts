@@ -12,7 +12,15 @@ import {
 } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
 import type { HostClient, HostConnection } from '../../ui-main/window/ports/hostClient'
+import { SequenceIdGenerator } from '../../host/kernel/fakes/SequenceIdGenerator'
+import { IPC_CHANNELS } from '../../shared/contracts'
+import { createLegacySettingsWriteHub } from './legacySettingsWrites'
 import type { MirrorHalf } from './mirrorHalf'
+import {
+  createNotificationsMirrorHalf,
+  reportNotificationsWrites,
+  type LegacySettingsRoute
+} from './notificationsHalf'
 import {
   createSettingsMirrorBridge,
   type LegacySettingsWrites,
@@ -38,6 +46,10 @@ const HOST_DEFAULTS: HostPreferences = {
  */
 class RecordingMirrorHost implements MirrorHostClient {
   readonly sets: PreferenceSetParams[] = []
+  /** The `preferences.set` answers: the stored preferences (16 §4.12). */
+  readonly answers: HostPreferences[] = []
+  /** The keys whose `HostPreferencesChanged` the Host published (08 §2.9: only on change). */
+  readonly changes: HostPreferenceKey[] = []
   prefs: HostPreferences = { ...HOST_DEFAULTS }
   private connection: HostConnection = { state: 'connecting' }
   private readonly listeners = new Set<(s: HostConnection) => void>()
@@ -80,7 +92,10 @@ class RecordingMirrorHost implements MirrorHostClient {
     if (method !== 'preferences.set') return Promise.reject(new Error(`unexpected ${method}`))
     const set = params as PreferenceSetParams
     this.sets.push(set)
+    // 16 §4.12: `set` answers what was stored, and only a changed value publishes `HostPreferencesChanged`.
+    if (!Object.is(this.prefs[set.key], set.value)) this.changes.push(set.key)
     this.prefs = { ...this.prefs, [set.key]: set.value }
+    this.answers.push({ ...this.prefs })
     return Promise.resolve({ ...this.prefs })
   }
 
@@ -238,5 +253,129 @@ describe('SettingsMirrorBridge core (21 §3; 14 §5; ADR-016 item 5)', () => {
 
     expect(host.sets).toEqual([{ key: 'routingProfile', value: 'economy', requestId: 'req-1' }])
     expect(legacy.writes).toBe(1)
+  })
+})
+
+/**
+ * Fake legacy settings route: today's A-42 / A-43 handlers (`LegacyRuntimeRoute`, #316) over one stored boolean. Like
+ * today's A-43 handler, it stores a boolean payload, keeps the stored value for anything else, and answers what it
+ * stored. It counts the A-43 writes it served, so a write the bridge made would show.
+ */
+class FakeLegacyNotificationsRoute implements LegacySettingsRoute {
+  a43Writes = 0
+
+  constructor(public stored: boolean) {}
+
+  serve(channel: string, payload: unknown): Promise<unknown> {
+    if (channel === IPC_CHANNELS.getNotificationsEnabled) return Promise.resolve(this.stored)
+    if (channel === IPC_CHANNELS.setNotificationsEnabled) {
+      this.a43Writes += 1
+      if (typeof payload === 'boolean') this.stored = payload
+      return Promise.resolve(this.stored)
+    }
+    return Promise.resolve(undefined)
+  }
+}
+
+function notificationsSetup(stored: boolean) {
+  const host = new RecordingMirrorHost()
+  const legacy = new FakeLegacyNotificationsRoute(stored)
+  const hub = createLegacySettingsWriteHub()
+  // What `src/ui-main/index.ts` composes: the router serves the legacy rows through `route`.
+  const route = reportNotificationsWrites(legacy, hub)
+  const half = createNotificationsMirrorHalf(route)
+  const ids = new SequenceIdGenerator()
+  const bridge = createSettingsMirrorBridge({
+    hostClient: host,
+    legacy: hub,
+    halves: [half],
+    newRequestId: () => ids.uuidv7()
+  })
+  return { host, legacy, hub, route, half, bridge }
+}
+
+const REQ = (n: number): string => `00000000-0000-7000-8000-${n.toString(16).padStart(12, '0')}`
+
+describe('SettingsMirrorBridge notifications half (21 §3; 14 §5; ADR-016 item 5)', () => {
+  it('[ADR-018] on attach the bridge sends the legacy systemNotificationsOn value to the Host once', async () => {
+    const { host, bridge } = notificationsSetup(false)
+
+    host.attach()
+    await bridge.idle()
+    host.detach()
+    host.attach()
+    await bridge.idle()
+
+    expect(host.sets).toEqual([{ key: 'systemNotificationsOn', value: false, requestId: REQ(1) }])
+    expect(host.prefs.systemNotificationsOn).toBe(false)
+  })
+
+  it('[ADR-018] after the legacy A-43 handler stores a new value the bridge sends preferences.set with that stored value and a new requestId', async () => {
+    const { host, route, bridge } = notificationsSetup(true)
+    host.attach()
+    await bridge.idle()
+    expect(host.sets).toEqual([])
+
+    await route.serve(IPC_CHANNELS.setNotificationsEnabled, false)
+    await bridge.idle()
+    // Today's handler keeps the stored value for a payload that is not a boolean: the stored value is mirrored, not
+    // the one the renderer asked for.
+    await route.serve(IPC_CHANNELS.setNotificationsEnabled, 'on')
+    await bridge.idle()
+
+    expect(host.sets).toEqual([
+      { key: 'systemNotificationsOn', value: false, requestId: REQ(1) },
+      { key: 'systemNotificationsOn', value: false, requestId: REQ(2) }
+    ])
+    expect(host.prefs.systemNotificationsOn).toBe(false)
+  })
+
+  it('[ADR-018] a legacy write that stores the same value still sends it, and the Host publishes no change for it', async () => {
+    const { host, route, bridge } = notificationsSetup(true)
+    host.attach()
+    await bridge.idle()
+
+    await route.serve(IPC_CHANNELS.setNotificationsEnabled, true)
+    await bridge.idle()
+
+    expect(host.sets).toEqual([{ key: 'systemNotificationsOn', value: true, requestId: REQ(1) }])
+    expect(host.answers.map((stored) => stored.systemNotificationsOn)).toEqual([true])
+    expect(host.changes).toEqual([])
+  })
+
+  it('[ADR-016] the notifications half mirrors no secret and no integration gate', async () => {
+    const { host, hub, route, half, bridge } = notificationsSetup(false)
+
+    expect(half.keys).toEqual(['systemNotificationsOn'])
+
+    host.attach()
+    await bridge.idle()
+    // Saves of every other Host-read preference, a secret write and the A-43 write all reach the bridge.
+    for (const key of Object.keys(HOST_DEFAULTS) as HostPreferenceKey[]) hub.saved(key)
+    hub.saved('defaultModel')
+    await route.serve(IPC_CHANNELS.setJevApiKey, 'not-a-real-key')
+    await route.serve(IPC_CHANNELS.setNotificationsEnabled, true)
+    await bridge.idle()
+
+    expect(new Set(host.sets.map((set) => set.key))).toEqual(new Set(['systemNotificationsOn']))
+    expect(host.sets.some((set) => set.value === 'not-a-real-key')).toBe(false)
+  })
+
+  it('[ADR-018] while the Host is unreachable the mirror retries at the next attach and never writes the legacy store', async () => {
+    const { host, legacy, route, bridge } = notificationsSetup(true)
+    host.attach()
+    await bridge.idle()
+    host.detach()
+
+    await route.serve(IPC_CHANNELS.setNotificationsEnabled, false)
+    await bridge.idle()
+    expect(host.sets).toEqual([])
+
+    host.attach()
+    await bridge.idle()
+
+    expect(host.sets).toEqual([{ key: 'systemNotificationsOn', value: false, requestId: REQ(1) }])
+    expect(legacy.a43Writes).toBe(1)
+    expect(legacy.stored).toBe(false)
   })
 })
