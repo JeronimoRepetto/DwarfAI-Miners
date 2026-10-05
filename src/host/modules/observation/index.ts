@@ -20,6 +20,7 @@ import type { Scheduler } from '../../kernel/ports/scheduler'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
+import { ObservationResetStep } from './adapters/sqlite/ObservationResetStep'
 import { SqliteCursorStore } from './adapters/SqliteCursorStore'
 import { SqliteEndedAgentLedger } from './adapters/SqliteEndedAgentLedger'
 import { SqliteObservedSessionStore } from './adapters/SqliteObservedSessionStore'
@@ -199,4 +200,22 @@ export function createSqliteObservationStores(deps: {
     sessions: new SqliteObservedSessionStore({ db: deps.db, scope: deps.scope }),
     ended: new SqliteEndedAgentLedger({ db: deps.db, scope: deps.scope })
   }
+}
+
+/**
+ * The observation step of the Reset-metrics saga (ADR-023; ADR-029 §B; 09 §7.2): the shape of
+ * the preferences module's `ResetDbStep` (16 §4.12), stated here so observation imports nothing
+ * from preferences (05 §1.3, R4). It joins the saga's one `db` transaction.
+ */
+export interface ObservationResetDbStep {
+  readonly name: string
+  reset(tx: TransactionRunner): void
+}
+
+/** `name: 'observation'`; registered with the saga by host/wiring/resetParticipants.ts. */
+export function createObservationResetStep(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+}): ObservationResetDbStep {
+  return new ObservationResetStep(deps)
 }

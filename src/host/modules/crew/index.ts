@@ -13,6 +13,7 @@ import type { Scheduler } from '../../kernel/ports/scheduler'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
+import { CrewResetStep } from './adapters/sqlite/CrewResetStep'
 import { SqliteDwarfRepository } from './adapters/SqliteDwarfRepository'
 import { CrewArrivals, type CrewCommands } from './application/arrival'
 import { CrewReadModel, type CrewQueries, type SessionLinks } from './application/crewQueries'
@@ -102,4 +103,22 @@ export function createCrew(deps: CrewDeps): Crew {
     presentDwarfs: repository
   })
   return { commands, queries, statusTimer }
+}
+
+/**
+ * The crew step of the Reset-metrics saga (ADR-023; 09 §7.2): the shape of the preferences
+ * module's `ResetDbStep` (16 §4.12), stated here so crew imports nothing from preferences
+ * (05 §1.3, R4). It joins the saga's one `db` transaction.
+ */
+export interface CrewResetDbStep {
+  readonly name: string
+  reset(tx: TransactionRunner): void
+}
+
+/** `name: 'crew'`; registered with the saga by host/wiring/resetParticipants.ts. */
+export function createCrewResetStep(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+}): CrewResetDbStep {
+  return new CrewResetStep(deps)
 }

@@ -17,6 +17,7 @@ import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { createHostGitRepoInspector } from './adapters/FsGitRepoInspector'
+import { MinesResetStep } from './adapters/sqlite/MinesResetStep'
 import { NodePathProbe } from './adapters/pathValidation'
 import { SqliteMineRepository } from './adapters/SqliteMineRepository'
 import { hostVolumeRules } from './adapters/volumeCase'
@@ -130,4 +131,33 @@ export function createMines(deps: MinesDeps): Mines {
     folderCheckSchedule: ({ scheduler, intervalMs }) =>
       new FolderCheckSchedule({ scheduler, intervalMs, minesWithPresentDwarfs, checkFolder })
   }
+}
+
+/**
+ * The mines step of the Reset-metrics saga (ADR-023 items 1, 3; 09 §7.2): the shape of the
+ * preferences module's `ResetDbStep` (16 §4.12), stated here so mines imports nothing from
+ * preferences (05 §1.3, R4). `reset` joins the saga's one `db` transaction; the walk of each mine
+ * it recreated is queued by `walkRecreatedMines`, which `host/wiring` calls once that transaction
+ * committed (on `MetricsResetStarted`, 16 §2.3), never inside it.
+ */
+export interface MinesResetDbStep {
+  readonly name: string
+  reset(tx: TransactionRunner): void
+  /** After the commit: hands every mine the last `reset` recreated to `remeasure`, once. */
+  walkRecreatedMines(): void
+}
+
+/** `name: 'mines'`; registered with the saga by host/wiring/resetParticipants.ts. */
+export function createMinesResetStep(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+  clock: Clock
+  /** The map's spawn sites a recreated mine's site is re-picked from (as `MinesDeps.mapSites`). */
+  mapSites: readonly MapSite[]
+  /** A fraction in [0, 1) for the pick; production passes `Math.random`. */
+  random: () => number
+  /** A recreated mine's walk (as `MinesDeps.remeasure`). */
+  remeasure(mineId: MineId): void
+}): MinesResetDbStep {
+  return new MinesResetStep(deps)
 }
