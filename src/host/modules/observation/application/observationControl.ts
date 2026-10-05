@@ -1,7 +1,7 @@
 // The observation module's driving port (05 §3.3; 16 §4.3), member for member. ISSUE-070 builds
-// `start`, `stop` and `nudge` (the loop); `catchUp` lands with offline activity (later:
-// ISSUE-078) and `recordEnded` with the `EndedAgentLedger` (later: ISSUE-072), so the module
-// exposes `ObservationControlSoFar` until then.
+// `start`, `stop` and `nudge` (the loop) and ISSUE-072 `recordEnded` (the `EndedAgentLedger`);
+// `catchUp` lands with offline activity (later: ISSUE-078), so the module exposes
+// `ObservationControlSoFar` until then.
 import type { Instant, ProviderId, ProviderIdentity } from '../../../kernel/domain/values'
 
 export interface ObservationControl {
@@ -13,4 +13,7 @@ export interface ObservationControl {
 }
 
 /** The members built so far. */
-export type ObservationControlSoFar = Pick<ObservationControl, 'start' | 'stop' | 'nudge'>
+export type ObservationControlSoFar = Pick<
+  ObservationControl,
+  'start' | 'stop' | 'nudge' | 'recordEnded'
+>

@@ -9,9 +9,20 @@
 // - Keys (15 §1.5, ADR-006 item 2): `sourceKey = <adapterId>:<providerId>:<sessionId>[:<agentId>]:<eventId>`
 //   with `eventId` the record's `uuid` (else `<byteOffset>:<sha1(line)>`, for a record with none),
 //   so the bytes around a record (CRLF, unknown fields) never change its key.
-// - Identity (ADR-015 item 7): the record's `sessionId` (else the file's), plus the subagent's agent
-//   id when the file is a subagent's transcript. The cwd is the record's own: the project-folder
-//   name is a lossy encoding of it and is never decoded (ADR-030).
+// - Identity (ADR-015 item 7): the session the file names, plus the subagent's agent id when the
+//   file is a subagent's transcript. The cwd is the record's own: the project-folder name is a
+//   lossy encoding of it and is never decoded (ADR-030).
+// - Replayed records (15 §6 C-16; FM-145): a session resumed or forked in the person's terminal
+//   writes a new session id, and its transcript can carry the previous session's records first,
+//   each still naming the session it was written in. Such a record belongs to the file's identity
+//   (the new dwarf, S4.41; it never announces the previous session, which would be a ghost) but
+//   keeps the keys it was first written with (`sourceKey`, `unitKey`, from its own `sessionId`),
+//   so its messages and usage dedupe to zero rows; it is no activity and ends no turn. The new
+//   identity's `session` fact carries the previous id as `previousProviderSessionId` (UNVERIFIED
+//   until SP-15 records how Claude Code writes a resumed transcript; synthetic fixtures).
+// - Endings (#28, #64): a subagent's `<task-notification>` delivered with a terminal status is a
+//   `closed` fact of that subagent's identity (`reconcile.ts`), which the loop records in
+//   `EndedAgentLedger`.
 // - Control plane (FM-086, INV-68): a slash command and its output, a meta line, a compaction
 //   summary (#188), a "Warmup", a side-chain record in the session's own file and a synthetic
 //   assistant message are not conversation: each is an entry flagged `controlPlane` with a label
@@ -45,6 +56,7 @@ import type {
   UsageObservationInput
 } from '../../../suppliers'
 import type { ObservedEvent } from '../../ports/observationAdapter'
+import { endedAgentsIn } from './reconcile'
 
 type Rec = Record<string, unknown>
 
@@ -88,10 +100,16 @@ export interface TranscriptState {
   unit: OpenUnit | null
   /** The identities whose `session` fact this stream already gave. */
   announced: readonly string[]
+  /** The session whose records this session's file replays first (C-16), once one was read. */
+  previous: string | null
 }
 
 /** A stream read from its first byte, or from the middle with nothing known before. */
-export const TRANSCRIPT_START: TranscriptState = Object.freeze({ unit: null, announced: [] })
+export const TRANSCRIPT_START: TranscriptState = Object.freeze({
+  unit: null,
+  announced: [],
+  previous: null
+})
 
 /** What one line adds. */
 export interface TranscriptStep {
@@ -156,14 +174,29 @@ export function eventIdOf(record: ClaudeRecord, text: string, offset: number): s
   return `${offset}:${createHash('sha1').update(text).digest('hex')}`
 }
 
-/** The identity a record belongs to: its session, and the file's subagent (ADR-015 item 7). */
-export function identityOf(record: ClaudeRecord, context: TranscriptContext): ProviderIdentity {
-  const sessionId = asString(record.raw.sessionId) ?? context.file.sessionId
+/** The identity a record belongs to: the file's session and subagent (ADR-015 item 7). */
+export function identityOf(_record: ClaudeRecord, context: TranscriptContext): ProviderIdentity {
   return {
     providerId: context.providerId,
-    providerSessionId: sessionId,
+    providerSessionId: context.file.sessionId,
     ...(context.file.agentId === null ? {} : { providerAgentId: context.file.agentId })
   }
+}
+
+/**
+ * The identity a record's keys are made from: the session it names (else the file's), and the
+ * file's subagent. Differs from `identityOf` only for a replayed record (C-16).
+ */
+function keyIdentityOf(record: ClaudeRecord, context: TranscriptContext): ProviderIdentity {
+  const sessionId = asString(record.raw.sessionId) ?? context.file.sessionId
+  return { ...identityOf(record, context), providerSessionId: sessionId }
+}
+
+/** The previous session a session's own file replays this record from, if it does (C-16). */
+function replayedFrom(record: ClaudeRecord, context: TranscriptContext): string | null {
+  if (context.file.agentId !== null) return null
+  const sessionId = asString(record.raw.sessionId)
+  return sessionId !== undefined && sessionId !== context.file.sessionId ? sessionId : null
 }
 
 /** `<providerId>:<sessionId>[:<agentId>]` (15 §1.5). */
@@ -234,7 +267,7 @@ export function entryOf(
   context: TranscriptContext,
   eventId: string
 ): ConversationEntry | null {
-  const identity = identityOf(record, context)
+  const identity = keyIdentityOf(record, context)
   const common = {
     sourceKey: sourceKeyOf(identity, eventId),
     providerTime: record.at,
@@ -319,6 +352,7 @@ export function stepTranscript(
 ): TranscriptStep {
   const eventId = eventIdOf(record, line.text, line.offset)
   const identity = identityOf(record, context)
+  const keyIdentity = keyIdentityOf(record, context)
   const cwd = (asString(record.raw.cwd) as FolderPath | undefined) ?? null
   const base = { identity, ...(cwd === null ? {} : { cwd }) }
   const events: ObservedEvent[] = []
@@ -326,6 +360,8 @@ export function stepTranscript(
   let unit = state.unit
   let announced = state.announced
   const foreign = isForeignSideChain(record, context)
+  const replayed = replayedFrom(record, context)
+  const previous = state.previous ?? replayed
 
   const identityKey = identityKeyOf(identity)
   if (!foreign && cwd !== null && record.at !== null && !announced.includes(identityKey)) {
@@ -346,11 +382,40 @@ export function stepTranscript(
       sourceEventId: eventId,
       cwd,
       at: record.at,
-      ...(parentIdentity === undefined ? {} : { parentIdentity })
+      ...(parentIdentity === undefined ? {} : { parentIdentity }),
+      ...(previous === null ? {} : { previousProviderSessionId: previous })
+    })
+  }
+
+  // The subagents this record says have ended (#28, #64): agent ids are the session's they were
+  // written in, so a replayed ending names the previous session's agent. The harness's queue
+  // records carry no `uuid`, so an ending's id is made from the record's own fields, never from
+  // its bytes or offset (HO-37: a CRLF or extra-field copy is the same ending).
+  const endingId =
+    asString(record.raw.uuid) ??
+    `${record.type}:${asString(record.raw.operation) ?? ''}:${asString(record.raw.timestamp) ?? ''}`
+  for (const agentId of endedAgentsIn(record.raw)) {
+    if (record.at === null) {
+      warnings.push(`ending without a time at byte ${line.offset}`)
+      continue
+    }
+    events.push({
+      identity: { ...keyIdentity, providerAgentId: agentId },
+      kind: 'closed',
+      sourceEventId: `${endingId}:ended:${agentId}`,
+      at: record.at
     })
   }
 
   const entry = entryOf(record, context, eventId)
+  if (replayed !== null) {
+    // Its messages and usage only, under the keys it was first written with (C-16).
+    if (entry !== null) {
+      events.push({ ...base, kind: 'entries', sourceEventId: eventId, entries: [entry] })
+    }
+    const step = stepUsage(unit, record, identity, keyIdentity, cwd, foreign, events)
+    return { state: { unit: step, announced, previous }, events, warnings }
+  }
   if (entry?.role === 'person' && record.type === 'user' && record.at !== null) {
     events.push({
       ...base,
@@ -376,34 +441,8 @@ export function stepTranscript(
   if (entry !== null)
     events.push({ ...base, kind: 'entries', sourceEventId: eventId, entries: [entry] })
 
+  unit = stepUsage(unit, record, identity, keyIdentity, cwd, foreign, events)
   if (counted) {
-    const messageId = asString(message.id)
-    const usage = message.usage
-    if (messageId !== undefined && isRecord(usage)) {
-      // A later message seals the one before it if no row of it carried a stop reason.
-      if (unit !== null && unit.messageId !== messageId && !unit.sealed) {
-        events.push(usageEventOf(unit))
-      }
-      if (unit === null || unit.messageId !== messageId) {
-        unit = {
-          messageId,
-          tokens: tokensOf(usage),
-          at: record.at,
-          sealed: false,
-          identity,
-          cwd,
-          keyBase: `${identity.providerId}:${streamKeyOf(identity)}`
-        }
-      } else if (!unit.sealed) {
-        unit = { ...unit, tokens: tokensOf(usage), at: record.at }
-      }
-      // The first row with a stop reason is the message's final one (ADR-006 item 6).
-      if (!unit.sealed && typeof message.stop_reason === 'string' && message.stop_reason !== '') {
-        events.push(usageEventOf(unit))
-        unit = { ...unit, sealed: true }
-      }
-    }
-
     const end = turnEndOf(message.stop_reason)
     if (end !== null) {
       if (record.at === null) {
@@ -415,7 +454,7 @@ export function stepTranscript(
           sourceEventId: eventId,
           at: record.at,
           end: {
-            turnKey: sourceKeyOf(identity, eventId),
+            turnKey: sourceKeyOf(keyIdentity, eventId),
             ...end,
             at: record.at,
             reliability: 'inferred',
@@ -426,5 +465,50 @@ export function stepTranscript(
     }
   }
 
-  return { state: { unit, announced }, events, warnings }
+  return { state: { unit, announced, previous }, events, warnings }
+}
+
+/**
+ * The usage unit a record continues, opens or seals (ADR-006 items 4 and 6), pushing the usage
+ * facts it completes onto `events`: one unit per `message.id`, keyed by `keyIdentity`.
+ */
+function stepUsage(
+  unit: OpenUnit | null,
+  record: ClaudeRecord,
+  identity: ProviderIdentity,
+  keyIdentity: ProviderIdentity,
+  cwd: FolderPath | null,
+  foreign: boolean,
+  events: ObservedEvent[]
+): OpenUnit | null {
+  const message = messageOf(record)
+  if (record.type !== 'assistant' || message === null || foreign) return unit
+  if (message.model === SYNTHETIC_MODEL) return unit
+  const messageId = asString(message.id)
+  const usage = message.usage
+  if (messageId === undefined || !isRecord(usage)) return unit
+  // A later message seals the one before it if no row of it carried a stop reason.
+  if (unit !== null && unit.messageId !== messageId && !unit.sealed) {
+    events.push(usageEventOf(unit))
+  }
+  let next = unit
+  if (next === null || next.messageId !== messageId) {
+    next = {
+      messageId,
+      tokens: tokensOf(usage),
+      at: record.at,
+      sealed: false,
+      identity,
+      cwd,
+      keyBase: `${keyIdentity.providerId}:${streamKeyOf(keyIdentity)}`
+    }
+  } else if (!next.sealed) {
+    next = { ...next, tokens: tokensOf(usage), at: record.at }
+  }
+  // The first row with a stop reason is the message's final one (ADR-006 item 6).
+  if (!next.sealed && typeof message.stop_reason === 'string' && message.stop_reason !== '') {
+    events.push(usageEventOf(next))
+    next = { ...next, sealed: true }
+  }
+  return next
 }
