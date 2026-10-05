@@ -5,6 +5,7 @@
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant, MineId } from '../../../kernel/domain/values'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
+import { RecordingDiagnosticsLog } from '../../../kernel/fakes/RecordingDiagnosticsLog'
 import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
@@ -14,6 +15,8 @@ import type { LedgerEvent } from '../domain/events'
 import type { LiveMaterial } from '../domain/materials'
 import { InMemoryLedgerRepository, InMemoryLedgerWorld } from './InMemoryLedgerRepository'
 import { createLedger } from '../index'
+import { FakeHistoricalUsageScanner } from '../ports/fakes/FakeHistoricalUsageScanner'
+import type { HistoricalUsageScanner } from '../ports/historicalUsageScanner'
 import type { LedgerRepository } from '../ports/ledgerRepository'
 import type { LedgerRepositorySubject, StoredEntry } from './ledgerRepository.contract'
 
@@ -84,7 +87,7 @@ export function inMemoryLedgerStorage(clock: FakeClock = new FakeClock(0)) {
       return id
     },
     setInstallMoment(at: Instant | null): void {
-      world.rows.installMomentAt = at
+      world.writeInstallMoment(at)
     },
     setResetInProgress(inProgress: boolean): void {
       world.rows.resetInProgress = inProgress
@@ -126,18 +129,50 @@ export function inMemoryLedgerSubject(): LedgerRepositorySubject {
 
 export const LEDGER_EPOCH = 'epoch-0076'
 
-/** The ledger module over the in-memory storage, with a bus that refuses an in-transaction publish. */
-export function inMemoryLedger(clock: FakeClock = new FakeClock(1_760_000_000_000)) {
-  const storage = inMemoryLedgerStorage(clock)
-  const bus = new RecordingEventBus<LedgerEvent>({ transactionScope: storage.transactions })
+type InMemoryLedgerStorage = ReturnType<typeof inMemoryLedgerStorage>
+
+/** The parts a second ledger over the same storage shares with the first. */
+interface SharedLedgerParts extends InMemoryLedgerStorage {
+  bus: RecordingEventBus<LedgerEvent>
+  log: RecordingDiagnosticsLog
+  scanner: FakeHistoricalUsageScanner
+  eventIds: SequenceIdGenerator
+}
+
+export interface InMemoryLedgerOptions {
+  /** Another in-memory ledger whose storage, bus, log and event ids this one shares (a restart). */
+  storage?: SharedLedgerParts
+  /** A repository over the same storage (for example one that fails at a chosen write). */
+  repository?: LedgerRepository
+  /** The scanner of the coal backfill; the shared or a new `FakeHistoricalUsageScanner` otherwise. */
+  scanner?: HistoricalUsageScanner
+}
+
+/**
+ * The ledger module over the in-memory storage, with a bus that refuses an in-transaction publish,
+ * a recording log and a `FakeHistoricalUsageScanner` with no history.
+ */
+export function inMemoryLedger(
+  clock: FakeClock = new FakeClock(1_760_000_000_000),
+  options: InMemoryLedgerOptions = {}
+) {
+  const shared = options.storage
+  const storage: InMemoryLedgerStorage = shared ?? inMemoryLedgerStorage(clock)
+  const bus =
+    shared?.bus ?? new RecordingEventBus<LedgerEvent>({ transactionScope: storage.transactions })
+  const log = shared?.log ?? new RecordingDiagnosticsLog()
+  const scanner = shared?.scanner ?? new FakeHistoricalUsageScanner()
+  const eventIds = shared?.eventIds ?? new SequenceIdGenerator()
   const ledger = createLedger({
-    repository: storage.repository,
+    repository: options.repository ?? storage.repository,
     transactions: storage.transactions,
     scope: storage.transactions,
     bus,
-    clock,
-    ids: new SequenceIdGenerator(),
-    hostEpoch: LEDGER_EPOCH
+    clock: storage.clock,
+    ids: eventIds,
+    hostEpoch: LEDGER_EPOCH,
+    scanner: options.scanner ?? scanner,
+    log
   })
-  return { ...storage, bus, ledger }
+  return { ...storage, bus, log, scanner, eventIds, ledger }
 }
