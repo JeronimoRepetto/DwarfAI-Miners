@@ -77,6 +77,7 @@ import {
   stopEverythingRequestedSchema,
   getUiPreferencesRequestSchema,
   uiPreferencesAnswerSchema,
+  uiPreferencesResetSchema,
   uiPreferenceWriteSchema,
   uiSessionChangeSchema,
   uiSessionPatchSchema,
@@ -738,6 +739,16 @@ export const CHANNELS = {
     status: 'new',
     request: uiPreferenceWriteSchema,
     response: uiPreferenceWriteSchema
+  },
+  // A-N12 `onUiPreferencesReset` (ADR-024 item 8; ADR-023 item 4 step 5): UI main reset its stores for a Reset metrics
+  // epoch; every window re-reads its session and preferences (14 §3.9, AMENDMENT-1)
+  'ui:preferences:reset': {
+    name: 'ui:preferences:reset',
+    kind: 'push',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: uiPreferencesResetSchema
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

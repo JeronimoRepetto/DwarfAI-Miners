@@ -202,6 +202,8 @@ export function goldenApi(sample: GoldenSample): Api {
     onUiSessionChanged: unsubscribe,
     // A-N20, A-N21: a golden stores no UI preference, so none is answered and none is written.
     getUiPreferences: () => Promise.resolve({}),
-    setUiPreference: refuse('setUiPreference')
+    setUiPreference: refuse('setUiPreference'),
+    // A-N12: a golden runs no Reset metrics, so no reset is ever pushed.
+    onUiPreferencesReset: unsubscribe
   }
 }
