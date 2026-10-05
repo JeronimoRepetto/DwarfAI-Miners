@@ -1,6 +1,6 @@
 // B-M12 `preferences.get`, B-M13 `preferences.set`, B-F24 `preferences.changed` and the snapshot's
 // `preferences` section (14 §2.3, §2.4, §3.4, §3.6, §4.1; ADR-024 D1, D9; INV-105), over the
-// preferences module's driving ports. The composition root registers them (later: ISSUE-226).
+// preferences module's driving ports. host/wiring/preferencesWiring.ts registers them (ISSUE-226).
 //
 // - B-M12 and B-M13 are `ui` only (roles.ts; a `notifier` gets FORBIDDEN). Their params are the
 //   contract's strict() schemas: one writable key, a catalog provider or none as the default

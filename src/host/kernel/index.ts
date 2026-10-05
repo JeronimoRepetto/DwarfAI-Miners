@@ -14,6 +14,13 @@ export type {
   LifecycleFactType
 } from './ports/lifecycleFactLog'
 export type { Scheduler } from './ports/scheduler'
+export {
+  SECRET_NAMES,
+  SECRET_READ_TIMEOUT_MS,
+  type SecretName,
+  type SecretReader,
+  type SecretValue
+} from './ports/secretReader'
 export type { TransactionScope } from './ports/transactionScope'
 export {
   InProcessEventBus,

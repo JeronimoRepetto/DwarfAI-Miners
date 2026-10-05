@@ -1,0 +1,49 @@
+{
+  "spike": "S-030-1",
+  "platform": "darwin",
+  "osRelease": "25.6.0",
+  "node": "v24.21.0",
+  "rounds": 20,
+  "measurements": [
+    {
+      "label": "apfs",
+      "how": "disk image, APFS (hdiutil, not elevated)",
+      "expected": "case-insensitive",
+      "verdict": "case-insensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.046,
+        "median": 0.106,
+        "max": 4.689
+      },
+      "realpathOfSwappedSpelling": "the on-disk spelling"
+    },
+    {
+      "label": "apfs-case-sensitive",
+      "how": "disk image, Case-sensitive APFS (hdiutil, not elevated)",
+      "expected": "case-sensitive",
+      "verdict": "case-sensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.031,
+        "median": 0.114,
+        "max": 1.074
+      },
+      "realpathOfSwappedSpelling": "not found (ENOENT)"
+    },
+    {
+      "label": "os-temp",
+      "how": "the OS's own temp folder",
+      "expected": null,
+      "verdict": "case-insensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.026,
+        "median": 0.053,
+        "max": 0.262
+      },
+      "realpathOfSwappedSpelling": "the on-disk spelling"
+    }
+  ],
+  "setupNotes": []
+}
