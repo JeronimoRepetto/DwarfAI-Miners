@@ -71,6 +71,8 @@ export interface UiSession {
   dropDwarf(dwarfId: DwarfId): void
   /** Empties the store: UI main entered tray-only (S10.14, S10.15). */
   clear(): void
+  /** Reset metrics (ADR-024 item 8): empties the store but for the drafts (INV-113); nothing is pushed (14 §3.9). */
+  clearExceptDrafts(): void
   /** Stops hearing the Host's frames (the app is closing). */
   dispose(): void
 }
@@ -207,6 +209,17 @@ export function createUiSession(deps: UiSessionDeps): UiSession {
       dwarfs.clear()
       fields = emptyFields()
       stopListening()
+    },
+    clearExceptDrafts() {
+      for (const dwarfId of [...dwarfs]) {
+        const draft = store.draft(dwarfId)
+        store.dropDwarf(dwarfId)
+        // INV-113: a draft is UI-memory only and survives the reset (ADR-024 item 8).
+        if (draft === '') dwarfs.delete(dwarfId)
+        else store.setDraft(dwarfId, draft)
+      }
+      fields = emptyFields()
+      if (dwarfs.size === 0) stopListening()
     },
     dispose: stopListening
   }

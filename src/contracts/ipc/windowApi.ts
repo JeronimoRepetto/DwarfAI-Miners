@@ -398,6 +398,14 @@ export const uiPreferencesAnswerSchema = z
   .strict() satisfies z.ZodType<Partial<UiPreferencesMap>>
 
 /**
+ * A-N12 `onUiPreferencesReset`'s payload (14 §2.2, §3.8 `{ epoch: number }`; ADR-024 item 8): only the Reset metrics
+ * epoch UI main applied, a whole count from 1. Each window then re-reads A-N17 and A-N20 (14 §3.9, AMENDMENT-1).
+ */
+export const uiPreferencesResetSchema = z
+  .object({ epoch: z.number().int().positive() })
+  .strict() satisfies z.ZodType<{ epoch: number }>
+
+/**
  * A-N21's request and answer: one key and its value. Only the keys a renderer may write are listed: `lastMode` and
  * `resetEpochApplied` are UI main's own (14 §3.9), so a write of either is refused `INVALID_PARAMS` by the seam A gate.
  */

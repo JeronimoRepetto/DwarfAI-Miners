@@ -319,6 +319,10 @@ export interface DwarfAiMinersApi {
   setUiPreference: (
     request: TargetRequest<'ui:preferences:set'>
   ) => Promise<TargetResult<'ui:preferences:set'>>
+  /** A-N12 · `ui:preferences:reset` · push · NEW · target shape */
+  onUiPreferencesReset: (
+    listener: (payload: TargetResult<'ui:preferences:reset'>) => void
+  ) => () => void
   /** A-N01 · `host:snapshot` · invoke · NEW · target shape */
   getHostSnapshot: (
     request: TargetRequest<'host:snapshot'>
@@ -581,6 +585,13 @@ const api: DwarfAiMinersApi = {
     invokeOrReject(() => ipcRenderer.invoke('ui:preferences:get', request)),
   setUiPreference: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('ui:preferences:set', request)),
+  onUiPreferencesReset: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
+      listener(payload as TargetResult<'ui:preferences:reset'>)
+    }
+    ipcRenderer.on('ui:preferences:reset', wrapped)
+    return () => ipcRenderer.removeListener('ui:preferences:reset', wrapped)
+  },
   getHostSnapshot: (request) => invokeOrReject(() => ipcRenderer.invoke('host:snapshot', request)),
   onHostEvent: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {

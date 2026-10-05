@@ -192,6 +192,15 @@ const NEW_ROWS = [
     placement: 'ui-local',
     sensitive: false
   },
+  // ISSUE-061: the Reset metrics UI step (ADR-024 item 8), born `ui-local` in cut 1
+  {
+    id: 'A-N12',
+    wire: 'ui:preferences:reset',
+    member: 'onUiPreferencesReset',
+    kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
+  },
   // ISSUE-082: the Host read path of every Host-fed read model (ADR-033 item 3), born `host` in cut 1; both carry
   // sensitive Host data (14 §3.5 `session.snapshot` result, SENSITIVE_FRAMES)
   {

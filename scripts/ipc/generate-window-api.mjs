@@ -115,6 +115,7 @@ const MEMBERS = {
   'ui:session:changed': 'onUiSessionChanged', // A-N19 (unrouted until cut 1)
   'ui:preferences:get': 'getUiPreferences', // A-N20 (unrouted until cut 1)
   'ui:preferences:set': 'setUiPreference', // A-N21 (unrouted until cut 1)
+  'ui:preferences:reset': 'onUiPreferencesReset', // A-N12 (unrouted until cut 1)
   'host:snapshot': 'getHostSnapshot', // A-N01 (unrouted until cut 1)
   'host:event': 'onHostEvent' // A-N02 (unrouted until cut 1)
 }

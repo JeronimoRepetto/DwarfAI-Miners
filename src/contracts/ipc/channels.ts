@@ -79,6 +79,7 @@ import {
   stopEverythingRequestedSchema,
   getUiPreferencesRequestSchema,
   uiPreferencesAnswerSchema,
+  uiPreferencesResetSchema,
   uiPreferenceWriteSchema,
   uiSessionChangeSchema,
   uiSessionPatchSchema,
@@ -740,6 +741,16 @@ export const CHANNELS = {
     status: 'new',
     request: uiPreferenceWriteSchema,
     response: uiPreferenceWriteSchema
+  },
+  // A-N12 `onUiPreferencesReset` (ADR-024 item 8; ADR-023 item 4 step 5): UI main reset its stores for a Reset metrics
+  // epoch; every window re-reads its session and preferences (14 §3.9, AMENDMENT-1)
+  'ui:preferences:reset': {
+    name: 'ui:preferences:reset',
+    kind: 'push',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: uiPreferencesResetSchema
   },
   // A-N01 `getHostSnapshot`, A-N02 `onHostEvent` (ADR-003 item 7; ADR-033 item 3; 14 §1.2): the Host read path of every
   // Host-fed read model, born `host` in cut 1. A-N01 relays B-M04 `session.snapshot` page by page, its params and page

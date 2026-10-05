@@ -87,6 +87,7 @@ export const WINDOW_API_MEMBERS = {
   onUiSessionChanged: 'push',
   getUiPreferences: 'invoke',
   setUiPreference: 'invoke',
+  onUiPreferencesReset: 'push',
   getHostSnapshot: 'invoke',
   onHostEvent: 'push'
 } as const satisfies Record<keyof DwarfAiMinersApi, WindowApiMemberKind>

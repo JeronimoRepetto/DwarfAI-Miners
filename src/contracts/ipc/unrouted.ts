@@ -59,6 +59,9 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // handler issue (ISSUE-060)
   'ui:preferences:get': 'cut-1',
   'ui:preferences:set': 'cut-1',
+  // A-N12, born `ui-local` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by its handler issue
+  // (ISSUE-061)
+  'ui:preferences:reset': 'cut-1',
   // A-N01, A-N02, born `host` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by their handler
   // issue (ISSUE-082)
   'host:snapshot': 'cut-1',
