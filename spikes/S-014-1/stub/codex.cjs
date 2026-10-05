@@ -17,10 +17,13 @@ const maxMs = Number(process.env.S0141_MAX_MS || 30000)
 const cap = setTimeout(() => process.exit(0), Number.isFinite(maxMs) ? maxMs : 30000)
 let child = null
 
+/** Ends after its child did, so no process of this stub still holds the working folder when the test removes it. */
 function end() {
   clearTimeout(cap)
-  if (child !== null) child.stdin.end()
-  process.exit(0)
+  if (child === null || child.exitCode !== null) process.exit(0)
+  child.once('exit', () => process.exit(0))
+  child.stdin.end()
+  setTimeout(() => process.exit(0), 5000).unref()
 }
 
 function ready() {

@@ -112,7 +112,7 @@ describe.runIf(mode === 'stub')('S-014-1 pid source over stub processes (L8)', (
   afterAll(async () => {
     // A running process holds its working folder on Windows: end them all before the folder goes.
     await stopAll()
-    if (root !== '') rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    if (root !== '') rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
   })
 
   it('[S-014-1, ADR-014] the pid source attributes exactly one provider process to one observed fixture session or reports no identity', async () => {
