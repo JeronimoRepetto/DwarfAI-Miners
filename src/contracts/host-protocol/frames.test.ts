@@ -4,6 +4,7 @@ import type {
   AttentionKind,
   DwarfId,
   DwarfWire,
+  HostToast,
   Material,
   MaterialAmount,
   MineId,
@@ -410,5 +411,32 @@ describe('conversation.appended payload (14 §3.5, B-F11) and SENSITIVE_METHODS'
     expect(SENSITIVE_FRAMES).toContain('conversation.appended')
     expect(SENSITIVE_METHODS['conversation.feed']).toBe('result')
     expect(SENSITIVE_METHODS['session.snapshot']).toBe('result')
+  })
+})
+
+// The B-F28 payload of 14 §3.5 (`HostToast`, 14 §3.6) and its strict() schema (14 §1.4).
+
+describe('toast payload (14 §3.5, B-F28; 14 §3.6 HostToast)', () => {
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099a8084'
+
+  it('[US-RES-004.AC01, BR-23] the toast frame carries exactly HostToast, refuses any other key, and is never logged', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toContain('toast')
+    expectTypeOf<HostFrames['toast']>().toEqualTypeOf<HostToast>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['toast']>>().toEqualTypeOf<
+      HostFrames['toast']
+    >()
+
+    const toast = HOST_FRAME_SCHEMAS['toast']
+    const providerError = {
+      kind: 'provider-error',
+      providerId: 'claude',
+      cause: 'unreadable',
+      dwarfId: DWARF
+    }
+    expect(toast.safeParse(providerError).success).toBe(true)
+    expect(toast.safeParse({ ...providerError, dwarfId: undefined }).success).toBe(true)
+    expect(toast.safeParse({ ...providerError, detail: 'provider text' }).success).toBe(false)
+    expect(toast.safeParse({ kind: 'errored', dwarfId: DWARF }).success).toBe(false)
+    expect(SENSITIVE_FRAMES).toContain('toast')
   })
 })
