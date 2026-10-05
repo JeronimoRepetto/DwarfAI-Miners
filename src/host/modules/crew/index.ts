@@ -47,6 +47,7 @@ export { StatusTimer, type StatusTimerDeps } from './application/statusTimer'
 export type { CrewCommands, CrewQueries, SessionLinks }
 // Strangler-only (05 §3.2; AMENDMENT-8): the B-M41 record, deleted with B-M41 at the end of cut 4.
 export type { PresentIdentity } from './application/crewQueries'
+export type { SessionTerminator } from './ports/sessionTerminator'
 
 export interface CrewDeps {
   /** The Host's one writer (09 §8.1). */
