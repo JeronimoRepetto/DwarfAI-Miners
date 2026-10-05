@@ -1,0 +1,25 @@
+{
+  "$comment": "Hand-written from 15 §5 (identity = the thread id of the registry row) and the candidate's state.ts rules: archived threads are not sessions, the Windows extended-length prefix is stripped from cwd, the parent comes from the sub-agent spawn blob, and the watermark is the highest rowid read.",
+  "warnings": 0,
+  "watermark": 4,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000731",
+      "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+      "at": 1790762399000,
+      "parentProviderSessionId": null
+    },
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000732",
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790765999000,
+      "parentProviderSessionId": "01a0b000-0000-7000-8000-000000000731"
+    },
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000736",
+      "cwd": "\\\\placeholder-host\\share\\sample-project",
+      "at": 1790776800000,
+      "parentProviderSessionId": null
+    }
+  ]
+}

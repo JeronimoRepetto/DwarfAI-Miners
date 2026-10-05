@@ -333,6 +333,39 @@ describe('ObservationLoop', () => {
     w.loop.stop()
   })
 
+  it('[ADR-021, INV-39] a reliable turn end is published as ObservedTurnEnded after its batch commits, and waits for the dwarf with the cursor held', async () => {
+    const w = world()
+    const end = {
+      turnKey: 'turn-1',
+      kind: 'concluded' as const,
+      at: T0 + 5,
+      reliability: 'reliable' as const,
+      cancelledFromApp: false
+    }
+    const batch: ObservedEvent[] = [
+      { kind: 'session', sourceEventId: 'e1', identity: S1, cwd: MINE, at: T0 },
+      { kind: 'turn-ended', sourceEventId: 'e6', identity: S1, at: T0 + 5, end }
+    ]
+    w.adapter.sources = [source('s1')]
+    w.adapter.onRead('s1', () => ({ events: batch, next: cursor(80), warnings: [] }))
+
+    // No dwarf yet: the end is not lost, the stream waits with its cursor held.
+    w.loop.start()
+    await w.loop.whenIdle()
+    expect(w.bus.published.map((e) => e.type)).toEqual(['SessionObserved'])
+    expect(w.cursors.get('s1')).toBeNull()
+
+    // The dwarf exists: the end leaves once, stamped with it, after the batch committed.
+    const dwarfId = w.dwarfs.bind(S1, MINE, T0 + 1)
+    await w.poll()
+    expect(w.cursors.get('s1')).toEqual(cursor(80))
+    expect(w.transactions.committed).toBe(1)
+    expect(w.bus.ofType('ObservedTurnEnded').map((e) => e.payload)).toEqual([
+      { identity: S1, end: { ...end, dwarfId } }
+    ])
+    w.loop.stop()
+  })
+
   it('[INV-37] nudges are coalesced and one cycle runs at a time', async () => {
     const w = world()
     w.dwarfs.bind(S1, MINE, T0)

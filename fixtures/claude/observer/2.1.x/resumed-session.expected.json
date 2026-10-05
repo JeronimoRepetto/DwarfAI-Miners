@@ -1,0 +1,36 @@
+{
+  "$comment": "Hand-written from 13 FM-145 and ADR-015 item 7: a session resumed or forked in the person's terminal writes a new session id (its first record continues plain-session's chain through parentUuid), so it is a new identity with its own keys. Shared by resumed-session-crlf.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000717",
+      "providerAgentId": null,
+      "cwd": "C:\\Users\\j\\work\\sample.project",
+      "at": 1790784000000,
+      "parent": null
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "Pick up where we left off.", "providerTime": 1790784000000 },
+    { "role": "dwarf", "text": "Resuming.", "providerTime": 1790784002000 }
+  ],
+  "activity": ["turn-started", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000717:00000000-0000-4000-8000-000000071702",
+      "kind": "concluded",
+      "at": 1790784002000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01ResumedSessionA",
+      "fidelity": 1,
+      "tokens": { "inputNet": 4, "output": 6, "cacheRead": 320, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790784002000
+    }
+  ]
+}

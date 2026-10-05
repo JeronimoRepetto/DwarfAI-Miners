@@ -1,0 +1,9 @@
+{"timestamp":"2026-09-30T11:00:00.000Z","type":"session_meta","payload":{"id":"01a0b000-0000-7000-8000-000000000732","session_id":"01a0b000-0000-7000-8000-000000000732","timestamp":"2026-09-30T10:59:59.000Z","cwd":"/home/j/work/sample-project","originator":"codex_cli_rs","cli_version":"0.153.4","source":{"subagent":{"thread_spawn":{"parent_thread_id":"01a0b000-0000-7000-8000-000000000731","depth":1,"agent_nickname":"Placeholder","agent_path":"/root/placeholder_agent"}}}}}
+{"timestamp":"2026-09-30T11:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"01a0b000-0000-7000-8000-0000000007b1"}}
+{"timestamp":"2026-09-30T11:00:01.100Z","type":"event_msg","payload":{"type":"user_message","message":"Run the full test suite.","images":[]}}
+{"timestamp":"2026-09-30T11:00:02.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":310}},"rate_limits":null}}
+{"timestamp":"2026-09-30T11:00:03.000Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"01a0b000-0000-7000-8000-0000000007b1","reason":"interrupted"}}
+{"timestamp":"2026-09-30T11:00:10.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":1.0}}}}
+{"timestamp":"2026-09-30T11:01:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"01a0b000-0000-7000-8000-0000000007b2"}}
+{"timestamp":"2026-09-30T11:01:00.100Z","type":"event_msg","payload":{"type":"user_message","message":"Try again, only the unit tests.","images":[]}}
+{"timestamp":"2026-09-30T11:01:01.000Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"01a0b000-0000-7000-8000-0000000007b2","reason":"synthetic_unknown_reason"}}
