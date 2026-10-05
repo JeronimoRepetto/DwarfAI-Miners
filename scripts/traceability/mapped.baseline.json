@@ -511,5 +511,20 @@
   "S11.06",
   "S11.07",
   "S3.23",
-  "S3.24"
+  "S3.24",
+  "US-SHELL-010.AC02",
+  "US-SET-005.AC01",
+  "BR-01",
+  "US-SET-005.AC02",
+  "NFR-SND-04",
+  "NFR-SND-08",
+  "NFR-SND-07",
+  "US-MINE-003.AC03",
+  "US-ASK-006.AC02",
+  "US-MINE-003.AC05",
+  "US-MINE-007.AC04",
+  "US-SHELL-010.AC01",
+  "US-MINE-003.AC04",
+  "US-SET-005.AC04",
+  "NFR-SND-05"
 ]
