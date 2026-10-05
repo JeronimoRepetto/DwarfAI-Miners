@@ -29,6 +29,7 @@ const EXPECTED_MODULES = [
   './heldSessionText.ts',
   './index.ts',
   './jsonText.ts',
+  './outcomeLine.ts',
   './truncate.ts'
 ]
 
