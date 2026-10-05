@@ -1,0 +1,45 @@
+{
+  "$comment": "Hand-written from 15 §5 (subagents/agent-<id>.jsonl + agent-<id>.meta.json) and ADR-015 item 7: a depth-1 subagent is its own identity (sessionId + providerAgentId), and its sidecar names no parentAgentId, so its parent is the session itself. Its keys carry the agent id (15 §1.5). Shared by subagent-crlf.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000716",
+      "providerAgentId": "a1b2c3d4e5f607181",
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790780400000,
+      "parent": {
+        "providerSessionId": "01a0b000-0000-7000-8000-000000000716",
+        "providerAgentId": null
+      }
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "Review the diff in src.", "providerTime": 1790780400000 },
+    { "role": "dwarf", "text": "The diff looks fine.", "providerTime": 1790780409000 }
+  ],
+  "activity": ["turn-started", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000716:a1b2c3d4e5f607181:00000000-0000-4000-8000-000000071602",
+      "kind": "concluded",
+      "at": 1790780409000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01SubagentA",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 3,
+        "output": 25,
+        "cacheRead": 1200,
+        "cacheWrite": 500,
+        "reasoning": 0
+      },
+      "sealed": true,
+      "providerTime": 1790780409000
+    }
+  ]
+}

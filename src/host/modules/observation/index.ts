@@ -2,8 +2,8 @@
 // observation loop (ISSUE-070) polls every provider's `ObservationAdapter`, reads each stream from
 // its forward-only cursor and turns the records into events, writing only its own tables
 // (`source_cursors`, `observed_sessions`, `observed_session_streams`; INV-37): messages and usage
-// go to conversation and ledger through the `ObservedBatchSink` bridge. The Codex adapter
-// (ISSUE-073) is exported for the composition; the other provider adapters (later: ISSUE-071,
+// go to conversation and ledger through the `ObservedBatchSink` bridge. The Claude (ISSUE-071) and
+// Codex (ISSUE-073) adapters are exported for the composition; the other provider adapters (later:
 // ISSUE-074, ISSUE-075), the ended-agent ledger (later: ISSUE-072) and `catchUp` (later:
 // ISSUE-078) join with their issues; `host/main.ts` composes it (later: ISSUE-095).
 import type { HostEpoch } from '../../kernel/domain/values'
@@ -37,6 +37,12 @@ export type {
   UsageObserved
 } from './application/events'
 export type { ObservationControl, ObservationControlSoFar } from './application/observationControl'
+export {
+  CLAUDE_OBSERVED_CAPABILITIES,
+  ClaudeObservationAdapter,
+  claudeConfigDirOf,
+  type ClaudeObservationAdapterOptions
+} from './adapters/claude/ClaudeObservationAdapter'
 export {
   CODEX_OBSERVED_CAPABILITIES,
   CodexObservationAdapter,
