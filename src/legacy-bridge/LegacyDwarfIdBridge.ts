@@ -157,7 +157,10 @@ export interface LegacyPushMap {
   push(channel: string, payload: unknown): Promise<unknown>
 }
 
-export interface LegacyDwarfIdRows extends LegacyRowTarget, LegacyPushMap {}
+export interface LegacyDwarfIdRows extends LegacyRowTarget, LegacyPushMap {
+  /** The today wires of the request rows the bridge maps (A-13, A-23, A-26, A-27). */
+  readonly requestChannels: readonly string[]
+}
 
 type IdField = 'whole' | 'dwarfId'
 
@@ -202,6 +205,7 @@ export function createLegacyDwarfIdRows(deps: {
       if (legacyId === null) return NOT_FOUND[channel as keyof typeof NOT_FOUND]
       return legacy.serve(channel, withId(field, payload, legacyId))
     },
+    requestChannels: Object.keys(REQUEST_ROWS),
     pushChannels: [SETTLED_PUSH, LAUNCH_FAILED_PUSH],
     async push(channel, payload) {
       if (channel !== SETTLED_PUSH) return payload
