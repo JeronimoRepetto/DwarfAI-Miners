@@ -86,7 +86,8 @@ export const WINDOW_API_MEMBERS = {
   patchUiSession: 'send',
   onUiSessionChanged: 'push',
   getUiPreferences: 'invoke',
-  setUiPreference: 'invoke'
+  setUiPreference: 'invoke',
+  onUiPreferencesReset: 'push'
 } as const satisfies Record<keyof DwarfAiMinersApi, WindowApiMemberKind>
 
 const MEMBERS: Readonly<Record<string, WindowApiMemberKind>> = WINDOW_API_MEMBERS

@@ -146,6 +146,11 @@ import {
 import { createUiSessionRows, UI_SESSION_ROWS } from './ipc/handlers/uiSession'
 import { createUiPreferenceMapRows, UI_PREFERENCE_MAP_ROWS } from './ipc/handlers/uiPreferenceMap'
 import { createUiPreferenceMap } from './window/application/uiPreferenceMap'
+import { createUiPreferencesReset } from './window/application/uiPreferencesReset'
+import {
+  createUiPreferencesResetPush,
+  UI_PREFERENCES_RESET_PUSH
+} from './ipc/handlers/uiPreferencesReset'
 import { createStartWithSystem, type StartWithSystem } from './window/application/startWithSystem'
 import { ElectronAutostart } from './window/adapters/autostart/ElectronAutostart'
 import { loginEntryOffered } from './window/domain/loginEntryGate'
@@ -532,6 +537,23 @@ export async function startUiMain({
           host: host.client
         })
 
+  // The Reset metrics UI step (ISSUE-061; ADR-024 item 8): composed with the Host attach whatever the table serves, so
+  // the saga's `ui-prefs` step never waits on this UI; A-N12 reaches the mode windows once the table routes the push.
+  // It hears the Host before the reopen starts the attach, so the first snapshot already reaches it.
+  const uiPreferencesReset =
+    host === undefined || uiPreferences === undefined || uiSession === undefined
+      ? undefined
+      : createUiPreferencesReset({
+          store: uiPreferences.store,
+          session: uiSession,
+          ...(startWithSystem === undefined ? {} : { startWithSystem }),
+          push: createUiPreferencesResetPush(() =>
+            routed(UI_PREFERENCES_RESET_PUSH) ? modeWindowList() : []
+          ),
+          host: host.client
+        })
+  const stopResetListening = uiPreferencesReset?.listen()
+
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
   const toggle = rebuilt && panel !== undefined ? shortcut?.(panel) : undefined
   const stop =
@@ -626,6 +648,7 @@ export async function startUiMain({
     notificationPresenter?.dispose()
     stopConnectionPush?.()
     uiSession?.dispose()
+    stopResetListening?.()
     mirror?.dispose()
     host?.client.dispose()
     legacyRuntime.willQuit()
