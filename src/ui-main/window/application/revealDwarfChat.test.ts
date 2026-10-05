@@ -11,7 +11,10 @@ import { RecordingUiLog } from '../../hostLauncher/fakes/RecordingUiLog'
 import { RecordingHostClient } from '../ports/fakes/RecordingHostClient'
 import { RecordingNotificationDisplay } from '../ports/fakes/RecordingNotificationDisplay'
 import { startNotificationPresenter, type AttentionFrame } from './notificationPresenter'
+import type { EvtFrame } from '@dwarfai/contracts'
+import type { HostEvent } from '../ports/hostClient'
 import {
+  createDepartedDwarfs,
   createRevealDwarfChat,
   type ModeReveal,
   type RevealMode,
@@ -388,5 +391,26 @@ describe('revealDwarfChat (ISSUE-114)', () => {
       { mode: 'panel', target: { mineId: MINE, dwarfId: DWARF } },
       { mode: 'panel', target: { mineId: MINE, dwarfId: OTHER_DWARF } }
     ])
+  })
+
+  it('[INV-34] the board presence a reveal reads drops a dwarf on its dwarf.departed frame, and nothing else', () => {
+    const host = new RecordingHostClient()
+    const departed = createDepartedDwarfs(host)
+    const frame = (name: string, data: unknown): HostEvent => ({
+      kind: 'frame',
+      frame: { type: 'evt', seq: 7, epoch: 'boot-1', name, data } as unknown as EvtFrame
+    })
+
+    expect(departed.present({ mineId: MINE, dwarfId: DWARF })).toBe(true)
+    host.deliver(frame('dwarf.departed', { dwarfId: DWARF, mineId: MINE, cause: 'stopped' }))
+    host.deliver(frame('dwarf.departed', { dwarfId: 'not-an-id' }))
+    host.deliver(frame('mine.changed', { dwarfId: OTHER_DWARF }))
+
+    expect(departed.present({ mineId: MINE, dwarfId: DWARF })).toBe(false)
+    expect(departed.present({ mineId: MINE, dwarfId: OTHER_DWARF })).toBe(true)
+    // Only the Host's frames are heard: nothing is sent to it.
+    expect(host.calls).toEqual([{ member: 'subscribe' }])
+    departed.dispose()
+    expect(host.subscribers).toBe(0)
   })
 })

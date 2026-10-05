@@ -21,8 +21,14 @@
 // A mode with no reveal is not built, so it is never open (hidden until built, 21 §1 item 8); reaching one is a
 // composition fault and fails the reveal loudly. A click during a mode transition is held by the `ModeCoordinator`
 // (S27.14), which is not built yet: the Panel is the one mode until then.
-import type { DwarfId, MineId, RevealDwarfChatPush } from '@dwarfai/contracts'
+import {
+  dwarfIdSchema,
+  type DwarfId,
+  type MineId,
+  type RevealDwarfChatPush
+} from '@dwarfai/contracts'
 import type { UiLog } from '../../diagnostics/uiLogger'
+import type { HostClient } from '../ports/hostClient'
 
 /** What a mode window is told to reveal (A-N16's payload, 14 §3.8): `dwarfId` null when the dwarf left. */
 export type RevealTarget = RevealDwarfChatPush
@@ -114,4 +120,29 @@ export function createRevealDwarfChat(deps: RevealDwarfChatDeps): DwarfChatRevea
       return present ? 'chat-open' : 'mine-only'
     }
   }
+}
+
+/**
+ * The board presence a reveal reads (ISSUE-114): whether a dwarf is still in its mine, as far as UI main has heard. A
+ * dwarf counts as present until the Host's `dwarf.departed` frame for it arrives (14 §3.5; INV-34, 07 S2.04), the same
+ * frame the UI session store drops a dwarf's entries on. The conservative reading: UI main keeps no fuller board until
+ * the cut-1 switch routes the Host board (ISSUE-123), so a dwarf never heard of is not declared gone, and the Panel's
+ * own board check still opens no chat for a dwarf it does not draw (`App.vue`).
+ */
+export interface DepartedDwarfs {
+  present(t: { mineId: MineId; dwarfId: DwarfId }): boolean
+  dispose(): void
+}
+
+export function createDepartedDwarfs(host: Pick<HostClient, 'subscribe'>): DepartedDwarfs {
+  const departed = new Set<DwarfId>()
+  const unsubscribe = host.subscribe((event) => {
+    if (event.kind !== 'frame') return
+    const name: string = event.frame.name
+    if (name !== 'dwarf.departed') return
+    const data = event.frame.data as { dwarfId?: unknown } | null
+    const dwarfId = dwarfIdSchema.safeParse(data?.dwarfId)
+    if (dwarfId.success) departed.add(dwarfId.data)
+  })
+  return { present: ({ dwarfId }) => !departed.has(dwarfId), dispose: unsubscribe }
 }
