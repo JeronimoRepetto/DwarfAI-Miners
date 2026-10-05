@@ -3,7 +3,8 @@
 // INV-96; ADR-014 item 6) over the repository double, a recording bus and crew's `endAllIn` as mines
 // sees it along its one edge (05 §1.3): a double that ends the scripted dwarfs, departing each ended
 // one `mine-removed` before it answers, as crew's contract says (16 §4.2). Crew's own side of it is
-// proven in crew's `endAllIn.test.ts`, and the two together in `wiring/flows/removeMine.flow.test.ts`.
+// proven in crew's `endAllIn.test.ts`, and the two together over seam B in
+// `transport/methods/mines.remove.contract.test.ts`.
 //
 // TC-080-01, TC-080-02.
 import { describe, expect, it } from 'vitest'
