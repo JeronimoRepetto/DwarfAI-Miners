@@ -11,7 +11,9 @@
 // - any other advertised method through `handle(method, fn)`, else `{}`; an unadvertised one → METHOD_NOT_FOUND; a
 //   method outside the notifier scope on a notifier connection → FORBIDDEN;
 // - frames: `publish(name, data)` numbers a frame on the one `ui` target (from 1 per epoch) and writes it to every
-//   `ui` connection from `hello.ok` on; `host.closing` also reaches the notifiers.
+//   `ui` connection from `hello.ok` on; `host.closing` also reaches the notifiers. `publishToNotifiers(name, data)` numbers
+//   a frame on the `notifier` target (its own seq, no ring: the notifier has no replay, 14 §2.3) and writes it to every
+//   `notifier` connection, as the Host does with `attention.notify` / `attention.withdraw` (B-F22, B-F23).
 // `crash()` drops every connection and refuses new ones; `restart()` brings a new boot with a new epoch.
 import { duplexPair, type Duplex } from 'node:stream'
 import {
@@ -130,6 +132,7 @@ export class FakeHost {
   private readonly ring: Array<{ seq: number; name: string; data: unknown }> = []
   private readonly snapshots = new Map<string, HeldSnapshot>()
   private seq = 0
+  private notifierSeq = 0
   private down = false
   private nextConn = 0
   private nextClient = 0
@@ -208,6 +211,16 @@ export class FakeHost {
     return this.seq
   }
 
+  /** Numbers a frame on the `notifier` target and writes it to every `notifier` connection (14 §2.3, §2.4). */
+  publishToNotifiers(name: string, data: unknown): number {
+    this.notifierSeq += 1
+    const entry = { seq: this.notifierSeq, name, data }
+    for (const connection of this.connections) {
+      if (connection.role === 'notifier') this.deliver(connection, entry)
+    }
+    return this.notifierSeq
+  }
+
   /** The seq of the last frame numbered on the `ui` target. */
   currentSeq(): number {
     return this.seq
@@ -237,6 +250,7 @@ export class FakeHost {
     this.down = false
     this.epoch = epoch
     this.seq = 0
+    this.notifierSeq = 0
     this.ring.length = 0
     this.snapshots.clear()
   }
