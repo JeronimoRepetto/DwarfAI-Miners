@@ -1,11 +1,12 @@
 // Test helpers over a template-database copy for conversation's SQLite tests (17 §1.5): one mine
 // and two dwarfs seeded in bound SQL, and read-backs of `messages` / `message_keys` /
-// `activity_disclosures` the ports do not expose. Never imported by production code (R14).
+// `activity_disclosures` / `outcome_lines` the ports do not expose. Never imported by production code (R14).
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { ActivityDisclosure } from '../domain/activityRun'
+import type { OutcomeLine, OutcomeLinePart, TurnOutcomeKind } from '../domain/outcomeLine'
 
 const MINE = '00000000-0000-7000-8000-0000000000f1'
 export const CONVERSATION_DWARFS = [
@@ -140,4 +141,24 @@ export function storedRuns(db: SqliteDatabase, dwarfId: DwarfId): ActivityDisclo
       openedAt: Number(row['opened_at']),
       ...(row['closed_at'] === null ? {} : { closedAt: Number(row['closed_at']) })
     }))
+}
+
+/** The dwarf's stored outcome line, read back from `outcome_lines` (09 §4.4) independently of the adapter. */
+export function storedOutcome(db: SqliteDatabase, dwarfId: DwarfId): OutcomeLine | null {
+  const row = db.all(
+    `SELECT dwarf_id, kind, step_count, parts_json, detail, closing_words, reliability, at
+       FROM outcome_lines WHERE dwarf_id = ?`,
+    [dwarfId]
+  )[0]
+  if (row === undefined) return null
+  return {
+    dwarfId: String(row['dwarf_id']) as DwarfId,
+    kind: String(row['kind']) as TurnOutcomeKind,
+    stepCount: Number(row['step_count']),
+    parts: JSON.parse(String(row['parts_json'])) as OutcomeLinePart[],
+    ...(row['detail'] === null ? {} : { detail: String(row['detail']) }),
+    ...(row['closing_words'] === null ? {} : { closingWords: String(row['closing_words']) }),
+    reliability: String(row['reliability']) as OutcomeLine['reliability'],
+    at: Number(row['at'])
+  }
 }

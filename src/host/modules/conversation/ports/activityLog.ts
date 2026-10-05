@@ -10,15 +10,18 @@
 // outlives a Host restart (S11.07) — through the `activity_disclosures_one_open` index (09 §4.4,
 // 09 §6 index table).
 //
-// `saveOutcome(o: OutcomeLine)`, the port's second member over `outcome_lines`, lands with the
-// outcome line and its type (later: ISSUE-102).
+// `saveOutcome` (16 §4.6, ISSUE-102) writes the dwarf's one outcome line over `outcome_lines`
+// (09 §4.4: one row per dwarf), replacing the previous one.
 import type { DwarfId } from '../../../kernel/domain/values'
 import type { ActivityDisclosure } from '../domain/activityRun'
+import type { OutcomeLine } from '../domain/outcomeLine'
 
-/** 16 §4.6 `ActivityLog`: the members built so far. */
+/** 16 §4.6 `ActivityLog`. */
 export interface ActivityLog {
   /** Inserts the run, or updates it in place under its id; then keeps the dwarf's newest 50 runs. */
   saveDisclosure(d: ActivityDisclosure): void
+  /** Stores the dwarf's one outcome line, replacing its previous one; the same line twice changes nothing. */
+  saveOutcome(o: OutcomeLine): void
   // Amended: 16 §4.6 openRun (owner amendment A, 2026-10-05)
   /** The dwarf's open run, or null when it has none (INV-66: at most one); inside the caller's transaction. */
   openRun(dwarfId: DwarfId): ActivityDisclosure | null
