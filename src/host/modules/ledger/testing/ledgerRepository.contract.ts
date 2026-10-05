@@ -344,5 +344,86 @@ export function runLedgerRepositoryContract(
       expect(store.unit('claude:session-1:msg-1')).toBeNull()
       expect(s.entries(mine)).toEqual([])
     })
+
+    // The coal backfill members (16 §4.10; 09 §5.5; ISSUE-077).
+
+    it('[S19.01] a written install moment has a not-started backfill with no recorded scan units', async () => {
+      const s = await setUp()
+      expect(s.repository.backfillState()).toEqual({ state: 'not-started', creditedScanUnits: [] })
+    })
+
+    it('[S19.03, S19.05, FM-022] a scan unit is recorded once, the state keeps its done instant, and a new install moment empties the progress', async () => {
+      const s = await setUp()
+      const store = s.repository
+      const T = CONTRACT_INSTALL_MOMENT
+      const unit = { scanUnit: 'claude:/history/project-a', adapterId: 'claude', tokensCredited: 7 }
+
+      const marks = s.inTransaction(() => {
+        store.setBackfillState({ state: 'running', creditedScanUnits: [] })
+        return [
+          store.markScanUnit(unit, T - 5),
+          store.markScanUnit({ ...unit, tokensCredited: 9 }, T - 4),
+          store.markScanUnit(
+            { scanUnit: 'codex:/history/2026/01/02', adapterId: 'codex', tokensCredited: 0 },
+            T - 3
+          )
+        ]
+      })
+      expect(marks).toEqual(['new', 'duplicate', 'new'])
+      expect(store.backfillState()).toEqual({
+        state: 'running',
+        creditedScanUnits: ['claude:/history/project-a', 'codex:/history/2026/01/02']
+      })
+
+      s.inTransaction(() => store.setBackfillState({ state: 'paused', creditedScanUnits: [] }))
+      expect(store.backfillState().state).toBe('paused')
+      expect(store.backfillState().creditedScanUnits).toHaveLength(2)
+
+      s.inTransaction(() =>
+        store.setBackfillState({ state: 'done', creditedScanUnits: [], doneAt: T + 50 })
+      )
+      expect(store.backfillState()).toEqual({
+        state: 'done',
+        creditedScanUnits: ['claude:/history/project-a', 'codex:/history/2026/01/02'],
+        doneAt: T + 50
+      })
+
+      s.setInstallMoment(T + 1_000)
+      expect(store.backfillState()).toEqual({ state: 'not-started', creditedScanUnits: [] })
+    })
+
+    it('[S19.05] a done state without its instant and another state with one are refused and change nothing', async () => {
+      const s = await setUp()
+      const store = s.repository
+      expect(() =>
+        s.inTransaction(() => store.setBackfillState({ state: 'done', creditedScanUnits: [] }))
+      ).toThrow()
+      expect(() =>
+        s.inTransaction(() =>
+          store.setBackfillState({ state: 'paused', creditedScanUnits: [], doneAt: 1 })
+        )
+      ).toThrow()
+      expect(store.backfillState()).toEqual({ state: 'not-started', creditedScanUnits: [] })
+    })
+
+    it('[ADR-006] the backfill writes throw outside a transaction, and with no install moment a scan unit is refused and the state is not written', async () => {
+      const s = await setUp()
+      const store = s.repository
+      const unit = {
+        scanUnit: 'opencode:/history/opencode.db',
+        adapterId: 'opencode',
+        tokensCredited: 0
+      }
+      expect(() => store.markScanUnit(unit, 1)).toThrow(HostInvariantError)
+      expect(() => store.setBackfillState({ state: 'running', creditedScanUnits: [] })).toThrow(
+        HostInvariantError
+      )
+      expect(store.backfillState()).toEqual({ state: 'not-started', creditedScanUnits: [] })
+
+      s.setInstallMoment(null)
+      expect(() => s.inTransaction(() => store.markScanUnit(unit, 1))).toThrow()
+      s.inTransaction(() => store.setBackfillState({ state: 'running', creditedScanUnits: [] }))
+      expect(store.backfillState()).toEqual({ state: 'not-started', creditedScanUnits: [] })
+    })
   })
 }
