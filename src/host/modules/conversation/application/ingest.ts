@@ -15,6 +15,7 @@
 // in its parent's session (`providerAgentId`, 15 §1.5): it is never re-resolved here.
 //
 // Amendment of 2026-10-02 to 16 §4.6 (ISSUE-098): `ingest` takes the feed of the batch (`origin`).
+import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
 import type { EventId, DwarfId, HostEpoch } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
@@ -34,6 +35,9 @@ import type { MessageLog } from '../ports/messageLog'
 export interface ConversationCommands {
   // from live streams + transcript readers
   ingest(dwarfId: DwarfId, entries: ConversationEntry[], origin: 'live-stream' | 'transcript'): void
+  // ADR-021 payload from a driver turn.ended or ObservedTurnEnded; one transaction; LifecycleFactLog
+  // key turn:<dwarfId>:<turnKey>; publishes TurnEnded only when the key is new (08 §4) (AMENDMENT-10)
+  recordTurnEnd(end: TurnEnded): void
 }
 
 export interface ConversationIngestDeps {
@@ -50,7 +54,7 @@ export interface ConversationIngestDeps {
   hostEpoch: HostEpoch
 }
 
-export class ConversationIngest implements ConversationCommands {
+export class ConversationIngest implements Pick<ConversationCommands, 'ingest'> {
   /** The events of ingests that joined a caller's transaction, until it publishes or drops them. */
   private readonly held: ConversationEvent[] = []
 
@@ -61,7 +65,7 @@ export class ConversationIngest implements ConversationCommands {
     entries: ConversationEntry[],
     origin: 'live-stream' | 'transcript'
   ): void {
-    const { log, transactions, scope, bus, clock, ids, hostEpoch } = this.deps
+    const { log, transactions, scope, clock, ids, hostEpoch } = this.deps
     const joined = scope.isInTransaction()
     // A batch carries one dwarf's entries, so that dwarf is the only one it can push over the cap.
     const { appended } = transactions.inTransaction(() => {
@@ -78,11 +82,19 @@ export class ConversationIngest implements ConversationCommands {
       hostEpoch,
       payload: { dwarfId, messages: appended.map(toMessageView) }
     }
+    this.emit(event, joined)
+  }
+
+  /**
+   * After the commit of the transaction that wrote `event`'s rows: published now, or held for the
+   * caller whose transaction the write joined (`publishJoined` / `discardJoined`).
+   */
+  emit(event: ConversationEvent, joined: boolean): void {
     if (joined) {
       this.held.push(event)
       return
     }
-    bus.publish(event)
+    this.deps.bus.publish(event)
   }
 
   /** After the caller's commit: publishes the events its joined ingests held, in order. */

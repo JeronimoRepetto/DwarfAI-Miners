@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
+import type { TurnEnded } from '../../kernel/domain/sharedContracts'
+import { SqliteLifecycleFactLog } from '../../platform/sqlite/SqliteLifecycleFactLog'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import type { ConversationEntry } from '../suppliers'
@@ -17,17 +19,19 @@ function setUp() {
   const transactions = new SqliteTransactionRunner(db)
   const [dwarf] = seedConversationDb(db, transactions, T0)
   const bus = new RecordingEventBus<ConversationEvent>({ transactionScope: transactions })
-  const conversation = createConversation({
-    db,
-    transactions,
-    bus,
-    clock: new FakeClock(T0),
-    ids: new SequenceIdGenerator(),
-    hostEpoch: 'epoch-0098'
-  })
+  const clock = new FakeClock(T0)
+  const ids = new SequenceIdGenerator()
+  const lifecycleFacts = new SqliteLifecycleFactLog({ db, scope: transactions, ids, clock })
+  const boot = (hostEpoch: string) =>
+    createConversation({ db, transactions, bus, lifecycleFacts, clock, ids, hostEpoch })
+  const conversation = boot('epoch-0098')
   const count = (table: 'messages' | 'message_keys') =>
     Number(db.all(`SELECT count(*) AS n FROM ${table}`)[0]?.['n'])
-  return { conversation, bus, dwarf, count }
+  const turnFacts = () =>
+    db.all(
+      `SELECT dwarf_id, source_key FROM dwarf_lifecycle_facts WHERE type = 'TurnEnded' ORDER BY rowid`
+    )
+  return { conversation, bus, dwarf, count, turnFacts, boot }
 }
 
 const entry = (n: number, extra: Partial<ConversationEntry> = {}): ConversationEntry => ({
@@ -97,5 +101,32 @@ describe('the wired conversation queries (16 §4.6 ConversationQueries)', () => 
     const rest = conversation.queries.feed(dwarf, { before: newest.messages[2]?.id })
     expect(rest.messages.map((m) => m.text)).toEqual(['message 1'])
     expect(rest.reachedStart).toBe(true)
+  })
+})
+
+describe('the wired recordTurnEnd (16 §4.6; 09 §5.6)', () => {
+  const end = (dwarfId: TurnEnded['dwarfId'], extra: Partial<TurnEnded> = {}): TurnEnded => ({
+    dwarfId,
+    turnKey: 'codex:codex:session-0:turn-1',
+    kind: 'concluded',
+    at: T0 - 1_000,
+    reliability: 'reliable',
+    cancelledFromApp: false,
+    ...extra
+  })
+
+  it('[ADR-021, ADR-006] a turn end reported twice and replayed after a restart is one dwarf_lifecycle_facts row keyed turn:<dwarfId>:<turnKey>, published once', () => {
+    const { conversation, bus, dwarf, turnFacts, boot } = setUp()
+
+    conversation.commands.recordTurnEnd(end(dwarf))
+    conversation.commands.recordTurnEnd(end(dwarf, { reliability: 'inferred', at: T0 }))
+    boot('epoch-0100').commands.recordTurnEnd(end(dwarf))
+
+    expect(turnFacts()).toEqual([
+      { dwarf_id: dwarf, source_key: `turn:${dwarf}:codex:codex:session-0:turn-1` }
+    ])
+    expect(bus.ofType('TurnEnded').map((e) => e.payload)).toEqual([
+      { dwarfId: dwarf, end: end(dwarf) }
+    ])
   })
 })
