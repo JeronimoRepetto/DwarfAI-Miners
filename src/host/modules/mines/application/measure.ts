@@ -7,7 +7,9 @@
 // - `mineCreated` (route of `MineCreated`): every new mine is measured by itself, the configured
 //   delay after its creation, through the kernel `Scheduler` (INV-04, PO #47). An observed mine
 //   waits `unrecorded` with no tier until then (S3.01), and the walk moves it to `measuring`
-//   (S3.08); a declared one is already `measuring` (S3.04) and its walk simply starts.
+//   (S3.08); a declared one is already `measuring` (S3.04) and its walk simply starts. Every walk
+//   start publishes `MineMeasurementStarted` (S3.04, S3.08, S3.10, S3.14, S3.21), except the
+//   restart of one a boot interrupted (S3.25 holds the state).
 // - `remeasure`: an `active` mine goes back to `measuring` with its last tier and weight kept
 //   until the walk finishes (S3.10); a `measuring` mine without a walk (one a boot, a Reset or a
 //   found-again folder left measuring) gets one. A mine already walking is left alone.
@@ -23,34 +25,17 @@
 // §2.3). The ledger's crediting of a never-measured mine's sealed units is the route of
 // `MineMeasured` (INV-94, later: ISSUE-076). No timer and no clock read of its own: time is the
 // injected `Clock` and `Scheduler`.
-import type { DomainEvent } from '../../../kernel/domain/domainEvent'
-import type { EventId, FolderPath, HostEpoch, Instant, MineId } from '../../../kernel/domain/values'
+import type { EventId, FolderPath, HostEpoch, MineId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { Scheduler } from '../../../kernel/ports/scheduler'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
+import type { MeasurementEvent } from '../domain/events'
 import { transition, type Mine, type MineInput } from '../domain/mine'
-import type { SourceWeight, Tier, TierThresholds } from '../domain/tier'
+import type { TierThresholds } from '../domain/tier'
 import type { MineRepository } from '../ports/mineRepository'
 import type { SourceWeightScanner } from '../ports/sourceWeightScanner'
-
-/** 08 §2.1: a scoring walk started (S3.04, S3.08, S3.10). */
-export type MineMeasurementStarted = DomainEvent<
-  'MineMeasurementStarted',
-  { mineId: MineId; startedAt: Instant }
->
-/** 08 §2.1: a walk finished and set the tier (S3.09); keyed `(mineId, measuredAt)`. */
-export type MineMeasured = DomainEvent<
-  'MineMeasured',
-  { mineId: MineId; tier: Tier; sourceWeight: SourceWeight; measuredAt: Instant }
->
-/** 08 §2.1: the mine's folder is missing or unreadable (S3.11). */
-export type MineBecameUnenterable = DomainEvent<
-  'MineBecameUnenterable',
-  { mineId: MineId; reason: string }
->
-export type MeasurementEvent = MineMeasurementStarted | MineMeasured | MineBecameUnenterable
 
 /** The reason a walk that failed outright gives its mine (16 §4.1: scan failure → unenterable). */
 const SCAN_FAILED = 'scan-failed'
@@ -92,21 +77,7 @@ export class MineMeasurement {
 
   /** `MinesCommands.remeasure`: starts a walk of the mine unless one is running. */
   remeasure(mineId: MineId): void {
-    if (this.walks.has(mineId)) return
-    const mine = this.deps.repository.byId(mineId)
-    if (mine === null) return
-    const input = startInput(mine)
-    if (input === 'none') return
-    let started: Mine = mine
-    if (input !== 'walk-only') {
-      const now = this.deps.clock.now()
-      const step = transition(mine, input, now)
-      if (step.mine === null || step.transition === null) return
-      started = step.mine
-      this.deps.transactions.inTransaction(() => this.deps.repository.save(started))
-      this.publish('MineMeasurementStarted', { mineId, startedAt: now })
-    }
-    this.walk(started)
+    this.start(mineId, { announce: true })
   }
 
   /** Removal (S3.15): the running walk is aborted and a pending one dropped. */
@@ -127,13 +98,32 @@ export class MineMeasurement {
     for (const mine of this.deps.repository.query({ sortBy: 'name', direction: 'asc' })) {
       if (mine.state === 'unrecorded') this.mineCreated(mine.id)
       // S3.25 holds the state: the walk restarts with no transition and no new event.
-      else if (mine.state === 'measuring') this.remeasure(mine.id)
+      else if (mine.state === 'measuring') this.start(mine.id, { announce: false })
     }
   }
 
   /** Resolves once every started walk has been answered (tests; the Host's drain). */
   async idle(): Promise<void> {
     while (this.inFlight.size > 0) await Promise.all([...this.inFlight])
+  }
+
+  /** Starts a walk unless one is running; `announce` publishes `MineMeasurementStarted`. */
+  private start(mineId: MineId, opts: { announce: boolean }): void {
+    if (this.walks.has(mineId)) return
+    const mine = this.deps.repository.byId(mineId)
+    if (mine === null) return
+    const input = startInput(mine)
+    if (input === 'none') return
+    const now = this.deps.clock.now()
+    let started: Mine = mine
+    if (input !== 'walk-only') {
+      const step = transition(mine, input, now)
+      if (step.mine === null || step.transition === null) return
+      started = step.mine
+      this.deps.transactions.inTransaction(() => this.deps.repository.save(started))
+    }
+    if (opts.announce) this.publish('MineMeasurementStarted', { mineId, startedAt: now })
+    this.walk(started)
   }
 
   private walk(mine: Mine): void {

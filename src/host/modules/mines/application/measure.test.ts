@@ -15,7 +15,8 @@ import { canonicalMinePath } from '../domain/minePath'
 import { DEFAULT_TIER_THRESHOLDS } from '../domain/tier'
 import { FakeSourceWeightScanner } from '../ports/fakes/FakeSourceWeightScanner'
 import { InMemoryMineRepository } from '../testing/InMemoryMineRepository'
-import { MineMeasurement, type MeasurementEvent } from './measure'
+import type { MeasurementEvent } from '../domain/events'
+import { MineMeasurement } from './measure'
 
 const T0 = 1_790_000_000_000
 const DELAY_MS = 5_000
@@ -118,6 +119,20 @@ describe('MineMeasurement (16 §4.1 MinesCommands.remeasure)', () => {
       { mineId, startedAt: T0 + DELAY_MS }
     ])
     expect(scanner.calls.map((call) => call.path)).toEqual([repository.byId(mineId)?.path])
+  })
+
+  it('[S3.04] the walk of a declared mine publishes MineMeasurementStarted when it starts', () => {
+    const { clock, measurement, scanner, bus, create, write } = world()
+    const mineId = create('declared')
+    write(mineId, 'src/a.ts', 1)
+    scanner.hold()
+
+    measurement.mineCreated(mineId)
+    clock.advance(DELAY_MS)
+
+    expect(bus.ofType('MineMeasurementStarted').map((event) => event.payload)).toEqual([
+      { mineId, startedAt: T0 + DELAY_MS }
+    ])
   })
 
   it('[US-MINES-008.AC04] a mine that was never measured has tier null while measuring', () => {
@@ -275,7 +290,8 @@ describe('MineMeasurement (16 §4.1 MinesCommands.remeasure)', () => {
     await measurement.idle()
 
     expect(scanner.calls.map((call) => call.signal.aborted)).toEqual([true, true])
-    expect(types()).toEqual(['MineMeasurementStarted'])
+    // Both walks started (S3.04, S3.08); neither answered.
+    expect(types()).toEqual(['MineMeasurementStarted', 'MineMeasurementStarted'])
   })
 
   it('[S3.25] a walk left unfinished by a Host restart starts again from scratch at boot', async () => {

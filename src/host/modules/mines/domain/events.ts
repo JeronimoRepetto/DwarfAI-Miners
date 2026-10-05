@@ -1,10 +1,10 @@
 // The mines module's domain events (08 §0), over the kernel envelope (08 §1.2). Published after
-// commit by the use cases (16 §2.3). The measurement events arrive with `remeasure` (later:
-// ISSUE-065).
+// commit by the use cases (16 §2.3).
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
-import type { MineId } from '../../../kernel/domain/values'
+import type { Instant, MineId } from '../../../kernel/domain/values'
 import type { MineName } from './mine'
 import type { MinePath } from './minePath'
+import type { SourceWeight, Tier } from './tier'
 
 /**
  * A mine came to exist (08 §0; 07 S3.01, S3.02, S3.04, S3.05): `observed` on a session's first
@@ -30,4 +30,28 @@ export type MineReattached = DomainEvent<
   { mineId: MineId; via: 'rediscovery' | 'manual-add' }
 >
 
-export type MinesEvent = MineCreated | MineReattached
+/** A scoring walk started (08 §0; 07 S3.04, S3.08, S3.10). State, keyed `(mineId, startedAt)`. */
+export type MineMeasurementStarted = DomainEvent<
+  'MineMeasurementStarted',
+  { mineId: MineId; startedAt: Instant }
+>
+
+/**
+ * A walk finished and set the tier from the measured weight (08 §0; 07 S3.09; INV-05). State,
+ * keyed `(mineId, measuredAt)`; the ledger credits a never-measured mine's sealed units (INV-94).
+ */
+export type MineMeasured = DomainEvent<
+  'MineMeasured',
+  { mineId: MineId; tier: Tier; sourceWeight: SourceWeight; measuredAt: Instant }
+>
+
+/** The mine's folder is missing or unreadable (08 §0; 07 S3.11, S3.12). State, on change. */
+export type MineBecameUnenterable = DomainEvent<
+  'MineBecameUnenterable',
+  { mineId: MineId; reason: string }
+>
+
+/** The events of the scoring walk (`MinesCommands.remeasure`, ISSUE-065). */
+export type MeasurementEvent = MineMeasurementStarted | MineMeasured | MineBecameUnenterable
+
+export type MinesEvent = MineCreated | MineReattached | MeasurementEvent
