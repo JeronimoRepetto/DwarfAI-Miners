@@ -29,6 +29,7 @@ import {
   type LegacyLaunchedSessions
 } from '../legacy-bridge/LegacyEndFirstAdapter'
 import { createLegacySettingsWriteHub } from '../legacy-bridge/settingsMirror/legacySettingsWrites'
+import { createBoardFacadeAdapter } from '../legacy-bridge/BoardFacadeAdapter'
 import type { MirrorHalf } from '../legacy-bridge/settingsMirror/mirrorHalf'
 import {
   createNotificationsMirrorHalf,
@@ -53,6 +54,7 @@ import type { ToggleShortcut } from './window/application/toggleShortcut'
 import { startTrayProcess, type TrayProcess } from './window/application/trayMenu'
 import {
   createStopEverythingRows,
+  STOP_EVERYTHING_CONFIRM,
   STOP_EVERYTHING_CANCEL,
   STOP_EVERYTHING_REQUEST
 } from './ipc/handlers/stopEverything'
@@ -118,6 +120,7 @@ import {
 import { ElectronTray } from './window/adapters/ElectronTray'
 import { readUserDataConfigFile } from './window/adapters/userDataConfigFile'
 import type { HostClientService } from './host-client/HostClient'
+import type { HostClient } from './window/ports/hostClient'
 import { composeHostClient } from './host-client/composeHostClient'
 import { mintRequestId } from './host-client/requestIds'
 import {
@@ -282,6 +285,49 @@ export function composeStopAllRelay(
 ): StopAllRelay {
   const adapter = createLegacyEndFirstAdapter({ legacy, timers })
   return (requestId, shutdown) => adapter.beforeStopAll(requestId, shutdown)
+}
+
+/** A-12 `getMines` (invoke) and A-P2 `onMinesUpdated` (push): RETIRE rows of the Host (14 §2.1). */
+const BOARD_READ = 'mines:get' satisfies ChannelKey
+const BOARD_PUSH = 'mines:update' satisfies ChannelKey
+
+export interface BoardFacadeComposition {
+  /** The `host` target part serving A-12. */
+  part: RouteTargetPart
+  dispose(): void
+}
+
+/**
+ * `BoardFacadeAdapter` (21 §3, cuts 1–4; 14 §5): A-12 and A-P2 from the Host board in today's `MinesSnapshot`, for the
+ * composables not yet switched to A-N01/A-N02. Composed once the table routes A-12 to the Host (the cut-1 switch,
+ * ISSUE-123), as a part of the `host` target; A-P2 reaches the mode windows only while the table routes it to the Host
+ * too, so today's runtime and the facade never push the board together (21 §1 item 4). `undefined` in a table that
+ * serves A-12 `legacy`. Deleted at cut 5 after a test proves no consumer (ISSUE-242).
+ */
+export function composeBoardFacade(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'subscribe'>
+  windows: () => readonly WindowContents[]
+  defer?: (run: () => void) => void
+}): BoardFacadeComposition | undefined {
+  const toHost = (channel: ChannelKey): boolean =>
+    deps.routes.some((r) => r.channel === channel && r.owner === 'host')
+  if (!toHost(BOARD_READ)) return undefined
+  const pushes = toHost(BOARD_PUSH)
+  const facade = createBoardFacadeAdapter({
+    client: deps.client,
+    push: (board) => {
+      if (pushes) for (const window of deps.windows()) window.send(BOARD_PUSH, board)
+    },
+    ...(deps.defer === undefined ? {} : { defer: deps.defer })
+  })
+  return {
+    part: {
+      channels: [BOARD_READ],
+      target: { serve: () => Promise.resolve(facade.getMines()) }
+    },
+    dispose: () => facade.dispose()
+  }
 }
 
 /** An open window of the app, as the pushes reach it. */
@@ -555,6 +601,24 @@ export async function startUiMain({
         })
       : undefined
 
+  // A-12 and A-P2 from the Host board, once the table routes them there (the cut-1 switch, ISSUE-123; 21 §3).
+  const boardFacade =
+    host === undefined
+      ? undefined
+      : composeBoardFacade({ routes, client: host.client, windows: modeWindowList })
+  const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
+  const hostTarget =
+    boardFacade === undefined
+      ? stopRows
+      : composeRouteTargets([
+          ...(stopRows === undefined
+            ? []
+            : [
+                { channels: [STOP_EVERYTHING_CONFIRM], target: stopRows } satisfies RouteTargetPart
+              ]),
+          boardFacade.part
+        ])
+
   // Every seam A call goes through the router table from the first renderer load (21 §1 item 1), behind the gate
   // that checks its sender and its payload (ADR-019 items 7, 8).
   const uiLocal = composeUiLocal({
@@ -574,7 +638,7 @@ export async function startUiMain({
     legacy: legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
     // A-N26, the one `host` row of cut 0: its handler relays `host.shutdown` on the confirmation's `ui` connection.
-    ...(stop === undefined ? {} : { host: createStopEverythingRows(stop) }),
+    ...(hostTarget === undefined ? {} : { host: hostTarget }),
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
   }).register(ipc)
   const secondLaunch = wireSecondLaunch(lock)
@@ -610,6 +674,7 @@ export async function startUiMain({
     uiSession?.dispose()
     stopResetListening?.()
     mirror?.dispose()
+    boardFacade?.dispose()
     host?.client.dispose()
     legacyRuntime.willQuit()
   })
