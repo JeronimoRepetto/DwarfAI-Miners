@@ -42,6 +42,7 @@ export interface ConnectionRegistryOptions {
 
 export class ConnectionRegistry implements FramePublisher {
   private readonly delivery: FrameDelivery<AttachedConnection>
+  private readonly attachListeners = new Set<(connection: AttachedConnection) => void>()
   private readonly detachListeners = new Set<(connection: AttachedConnection) => void>()
 
   constructor(options: ConnectionRegistryOptions = {}) {
@@ -50,12 +51,23 @@ export class ConnectionRegistry implements FramePublisher {
 
   attach(connection: AttachedConnection): void {
     this.delivery.attach(connection)
+    for (const listener of [...this.attachListeners]) listener(connection)
   }
 
   detach(connection: AttachedConnection): void {
     const attached = this.connections().includes(connection)
     this.delivery.detach(connection)
     if (attached) for (const listener of [...this.detachListeners]) listener(connection)
+  }
+
+  /**
+   * Calls `listener` with each connection attached from now on, once it receives frames (its
+   * `hello.ok` is written); returns the unsubscribe. The notifier's standing notifications are sent
+   * from here (14 §2.3 "Notifier scope", ADR-018 item 5).
+   */
+  onAttach(listener: (connection: AttachedConnection) => void): () => void {
+    this.attachListeners.add(listener)
+    return () => this.attachListeners.delete(listener)
   }
 
   /**

@@ -395,6 +395,29 @@ describe('presence params and result (14 §3.4, B-M07)', () => {
   })
 })
 
+// The B-M08 entry of 14 §3.4 and its strict() schemas (14 §1.4): the notifier reports a click on a
+// level-3 notification by its key, for a diagnostics counter only (ADR-018 item 6).
+
+describe('attention.clicked params and result (14 §3.4, B-M08)', () => {
+  it('[ADR-003] the attention.clicked schemas infer exactly {key} and {}, and refuse any other key', () => {
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('attention.clicked')
+    expectTypeOf<HostMethods['attention.clicked']['params']>().toEqualTypeOf<{ key: string }>()
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+    expectTypeOf<HostMethods['attention.clicked']['result']>().toEqualTypeOf<{}>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['attention.clicked']['params']>
+    >().toEqualTypeOf<{ key: string }>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['attention.clicked']
+    expect(params.safeParse({ key: 'd:question:ask-1' }).success).toBe(true)
+    expect(params.safeParse({ key: 1 }).success).toBe(false)
+    expect(params.safeParse({}).success).toBe(false)
+    expect(params.safeParse({ key: 'k', requestId: 'r' }).success).toBe(false)
+    expect(result.safeParse({}).success).toBe(true)
+    expect(result.safeParse({ counted: 1 }).success).toBe(false)
+  })
+})
+
 describe('mines.list params and result (14 §3.4, B-M19)', () => {
   it('[ADR-019] the mines.list schemas infer exactly the 14 §3.4 entry and refuse any other key', () => {
     expectTypeOf<HostMethods['mines.list']['params']>().toEqualTypeOf<MineListParams>()
