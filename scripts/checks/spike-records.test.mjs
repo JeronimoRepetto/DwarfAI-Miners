@@ -314,6 +314,50 @@ Not run yet.
     )
   })
 
+  // ADDED for ISSUE-319 (TC-319-01): the cut-1 non-blocking records. Each may stay partial or failed, but it keeps the
+  // documented default and names the gated issue that follows it (21 §9 "Cut 1, non-blocking"; 24-issues README §6).
+  // Only the records with measured output have a raw-output folder yet; the others gain theirs with the first
+  // recording on the maintainer's machine (17 §5.5).
+  it('[SP-06, S-014-1, S-021-1, S-021-2, S-032-1, S-018-2] the cut-1 measurement records exist, pass the record check and keep the default their gated issues follow', () => {
+    const dir = path.join(repoRoot, 'spike-results')
+    const decisionOf = (id, { rawOutputs }) => {
+      const file = path.join(dir, `${id}.md`)
+      expect(existsSync(file), `spike-results/${id}.md exists`).toBe(true)
+      const text = readFileSync(file, 'utf8')
+      expect(checkSpikeRecord(text, `${id}.md`), `spike-results/${id}.md`).toEqual([])
+      if (rawOutputs) {
+        expect(existsSync(path.join(dir, id)), `spike-results/${id}/ holds the raw outputs`).toBe(
+          true
+        )
+      }
+      return decisionText(parseFrontMatter(text).body) ?? ''
+    }
+    const usage = decisionOf('SP-06', { rawOutputs: false })
+    expect(usage, 'SP-06 keeps its default').toMatch(
+      /one\s+authoritative\s+usage\s+path\s+per\s+session/
+    )
+    expect(usage, 'SP-06 names its gated issue').toMatch(/ISSUE-076/)
+    const pidSource = decisionOf('S-014-1', { rawOutputs: true })
+    expect(pidSource, 'S-014-1 keeps its default').toMatch(/failed: 'no-identity'[\s\S]*kept/)
+    expect(pidSource, 'S-014-1 names its gated issue').toMatch(/ISSUE-079/)
+    for (const id of ['S-021-1', 'S-021-2']) {
+      const turnEnd = decisionOf(id, { rawOutputs: false })
+      expect(turnEnd, `${id} keeps its default`).toMatch(/`turnEnd`\s+stays\s+`none`/)
+      expect(turnEnd, `${id} names its gated issue`).toMatch(/ISSUE-100/)
+    }
+    const inferred = decisionOf('S-032-1', { rawOutputs: false })
+    expect(inferred, 'S-032-1 keeps its default rule').toMatch(
+      /INFERRED_TURN_END_MS`, default 30 s/
+    )
+    expect(inferred, 'S-032-1 keeps the observed-ask values').toMatch(
+      /observedPermission[\s\S]*observedQuestion|initial `15` §2\.5 values stay/
+    )
+    expect(inferred, 'S-032-1 names its gated issue').toMatch(/ISSUE-070/)
+    const raise = decisionOf('S-018-2', { rawOutputs: true })
+    expect(raise, 'S-018-2 keeps its default').toMatch(/FM-049/)
+    expect(raise, 'S-018-2 names its gated issue').toMatch(/ISSUE-114/)
+  })
+
   it('[SP-02, SP-04, SP-05] every committed spike record passes the record check', () => {
     const dir = path.join(repoRoot, 'spike-results')
     const records = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.md')) : []
