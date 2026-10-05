@@ -1,6 +1,6 @@
 // The UiPreferenceStore conformance suite (16 §4.14, 17 §1.3): run against InMemoryUiPreferenceStore and against
 // JsonUiPreferenceStore over a per-test temporary folder, for each of the six stores (TC-048-01) and the UiPreferencesMap
-// keys built so far (`startWithSystem`, ISSUE-060).
+// keys built so far (`startWithSystem`, ISSUE-060; `resetEpochApplied`, ISSUE-061).
 import { describe, expect, it } from 'vitest'
 import { defaultsOf } from '../domain/uiPreferenceValues'
 import type {
@@ -38,7 +38,8 @@ export const NON_DEFAULT_VALUES: UiPreferenceStoreMap = {
   dockSide: 'left',
   alwaysOnTop: false,
   shortcut: 'Control+Alt+K',
-  startWithSystem: false
+  startWithSystem: false,
+  resetEpochApplied: 2
 }
 
 /** A second stored value per store, different from both the defaults and `NON_DEFAULT_VALUES`. */
@@ -52,7 +53,8 @@ const OTHER_VALUES: UiPreferenceStoreMap = {
   dockSide: 'right',
   alwaysOnTop: true,
   shortcut: 'Control+Shift+J',
-  startWithSystem: true
+  startWithSystem: true,
+  resetEpochApplied: 3
 }
 
 export const STORE_KEYS = Object.keys(NON_DEFAULT_VALUES) as UiPreferenceStoreKey[]
@@ -118,6 +120,13 @@ export function runUiPreferenceStoreContract(
       const subject = await makeSubject()
 
       expect(subject.open().load('startWithSystem')).toBe(true)
+      expect(subject.logged()).toEqual([])
+    })
+
+    it('[ADR-024] a store never written loads resetEpochApplied 0, so the first reset epoch is newer, and logs nothing', async () => {
+      const subject = await makeSubject()
+
+      expect(subject.open().load('resetEpochApplied')).toBe(0)
       expect(subject.logged()).toEqual([])
     })
   })

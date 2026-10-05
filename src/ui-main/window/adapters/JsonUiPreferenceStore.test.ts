@@ -104,7 +104,9 @@ describe('JsonUiPreferenceStore', () => {
       alwaysOnTop: { pinned: false },
       shortcut: { accelerator: 'Control+Alt+K' },
       // NEW with ISSUE-060, no store of today's: the document this store writes.
-      startWithSystem: { on: false }
+      startWithSystem: { on: false },
+      // NEW with ISSUE-061, no store of today's: the document this store writes.
+      resetEpochApplied: { epoch: 2 }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), `${JSON.stringify(legacy[key])}\n`)
@@ -127,7 +129,9 @@ describe('JsonUiPreferenceStore', () => {
       dockSide: { edge: 'top' },
       alwaysOnTop: { pinned: 'yes' },
       shortcut: { accelerator: 'K' },
-      startWithSystem: { on: 'yes' }
+      startWithSystem: { on: 'yes' },
+      // An epoch is a whole count from 0.
+      resetEpochApplied: { epoch: -1 }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), JSON.stringify(nonConforming[key]))

@@ -2,7 +2,7 @@
 // per-OS login entry and the UI preference `startWithSystem`, whose stored value is always the entry's verified state.
 // Every apply writes (`AutostartPort.set`), then reads the entry back (`get()`) and stores what it read, so the toggle
 // never shows something the OS refused; it runs at every start, before any window (S40.01, S40.02), and when the person
-// changes the toggle (S40.03, S40.04). A refusal the person asked for is answered with the real state, which the window
+// changes the toggle (S40.03, S40.04), and Reset metrics returns it to ON and applies it (S40.10). A refusal the person asked for is answered with the real state, which the window
 // that asked shows with one message (S40.06); at a start it is only logged (S40.07). There is no automatic retry. The
 // Host is never involved: turning it off never stops a running Host (OQ-65).
 import type { LogRecord } from '@dwarfai/contracts'
@@ -21,7 +21,7 @@ export type AutostartOutcome =
 
 /**
  * The one record each apply writes (19 §9.6 `autostart.register`): `causeClass` is its outcome, `msg` the trigger
- * (`start` / `toggle`) and the value applied (`on` / `off`); `failed` is `warn`, the rest `info`.
+ * (`start` / `toggle` / `reset`) and the value applied (`on` / `off`); `failed` is `warn`, the rest `info`.
  */
 export type AutostartRegisterRecord = Required<
   Pick<LogRecord, 'level' | 'event' | 'subsystem' | 'outcome' | 'msg'>
@@ -51,7 +51,15 @@ export interface StartWithSystem {
   toggle(value: boolean): StartWithSystemAnswer
   /** The stored value (A-N20). */
   stored(): boolean
+  /**
+   * S40.10, Reset metrics (ADR-024 item 8): back to ON and applied; `asked` for `ui.resetPreferences`, not at attach.
+   * Answers the stored (verified) value and whether the OS refused ON; the reset completes either way.
+   */
+  reset(asked: boolean): StartWithSystemAnswer
 }
+
+/** What started an apply, as `autostart.register` names it (19 §9.6). */
+type Trigger = 'start' | 'toggle' | 'reset'
 
 /** The `errCode` of a read-back that disagrees with a write that returned (FM-147). */
 const READBACK_MISMATCH = 'readback-mismatch'
@@ -95,7 +103,7 @@ export function createStartWithSystem(deps: StartWithSystemDeps): StartWithSyste
 
   function record(
     outcome: AutostartOutcome,
-    trigger: 'start' | 'toggle',
+    trigger: Trigger,
     target: boolean,
     errCode?: string
   ): void {
@@ -122,10 +130,7 @@ export function createStartWithSystem(deps: StartWithSystemDeps): StartWithSyste
   }
 
   /** Writes `target`, reads the entry back and stores what it read (S40.05…S40.08); answers the stored value. */
-  function apply(
-    applying: StartWithSystemNode,
-    trigger: 'start' | 'toggle'
-  ): StartWithSystemAnswer {
+  function apply(applying: StartWithSystemNode, trigger: Trigger): StartWithSystemAnswer {
     if (applying.state !== 'applying') throw new Error('start with the system: not applying')
     const { target } = applying
     const before = read()
@@ -180,6 +185,8 @@ export function createStartWithSystem(deps: StartWithSystemDeps): StartWithSyste
       }
       return apply(asked.value.to, 'toggle')
     },
-    stored: () => store.load('startWithSystem')
+    stored: () => store.load('startWithSystem'),
+    // S40.10: ON whatever the node; there is no `applying` between calls, so no apply is running.
+    reset: (asked) => apply(step(node, { type: 'reset', asked }).to ?? node, 'reset')
   }
 }
