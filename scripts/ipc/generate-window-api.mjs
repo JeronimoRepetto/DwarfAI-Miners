@@ -112,7 +112,9 @@ const MEMBERS = {
   'host:connection:confirm-restart': 'confirmHostRestart', // A-N33 (AMENDMENT-11; unrouted until generation-2)
   'ui:session:get': 'getUiSession', // A-N17 (unrouted until cut 1)
   'ui:session:patch': 'patchUiSession', // A-N18 (unrouted until cut 1)
-  'ui:session:changed': 'onUiSessionChanged' // A-N19 (unrouted until cut 1)
+  'ui:session:changed': 'onUiSessionChanged', // A-N19 (unrouted until cut 1)
+  'ui:preferences:get': 'getUiPreferences', // A-N20 (unrouted until cut 1)
+  'ui:preferences:set': 'setUiPreference' // A-N21 (unrouted until cut 1)
 }
 
 /**

@@ -423,11 +423,15 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     // A-N33 stays unrouted: dormant until the first release that bumps `endpointGeneration` (AMENDMENT-11).
     // AMENDED for ISSUE-059 (was: only A-N33): a NEW row whose handler lands before the step that routes it is listed
     // with that step (22 §5): A-N17…A-N19, born `ui-local` in cut 1 and routed by the cut-1 switch (ISSUE-123).
+    // AMENDED for ISSUE-060 (was: A-N33 and A-N17…A-N19): A-N20 and A-N21 join them, born `ui-local` in cut 1 and
+    // routed by the same switch.
     expect(UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
       'ui:session:get': 'cut-1',
       'ui:session:patch': 'cut-1',
-      'ui:session:changed': 'cut-1'
+      'ui:session:changed': 'cut-1',
+      'ui:preferences:get': 'cut-1',
+      'ui:preferences:set': 'cut-1'
     })
   })
 

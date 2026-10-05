@@ -37,7 +37,9 @@ export const UI_PREFERENCE_FILES: Readonly<Record<UiPreferenceStoreKey, string>>
   launchView: 'launch-view-v1.json',
   dockSide: 'panel-edge-v1.json',
   alwaysOnTop: 'pin-preference-v1.json',
-  shortcut: 'shortcut-preference-v1.json'
+  shortcut: 'shortcut-preference-v1.json',
+  // NEW with the UiPreferencesMap (ISSUE-060): no store of today's holds it.
+  startWithSystem: 'start-with-system-v1.json'
 }
 
 /** The older two-choice typography preference (Interface and Messaging faces), read while no typography file exists. */
@@ -94,7 +96,8 @@ const FORMATS: { readonly [K in UiPreferenceStoreKey]: FileFormat<K> } = {
   launchView: asItself(CHANNELS['launch-view:get'].response),
   dockSide: inField('edge', CHANNELS['panel:layout:get'].response.shape.edge),
   alwaysOnTop: inField('pinned', z.boolean()),
-  shortcut: inField('accelerator', canonicalAccelerator)
+  shortcut: inField('accelerator', canonicalAccelerator),
+  startWithSystem: inField('on', z.boolean())
 }
 
 export interface JsonUiPreferenceStoreOptions {
