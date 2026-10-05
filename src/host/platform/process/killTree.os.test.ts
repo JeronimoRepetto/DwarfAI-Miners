@@ -4,7 +4,7 @@
 // and only after their identity still matches (never a bare pid).
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -127,17 +127,41 @@ function killCases(): void {
     }
   }
 
+  /**
+   * An adapter on the real OS that also records every ending step it takes: each taskkill it runs
+   * (Windows) and each signal it sends (POSIX). Liveness checks (signal 0) are not ending steps.
+   */
+  function recordingControl(): { control: NodeProcessControl; ends: string[] } {
+    const ends: string[] = []
+    const run = createQueryRunner()
+    const control = new NodeProcessControl({
+      runCommand: (file, args, options) => {
+        if (win32.basename(file).toLowerCase() === 'taskkill.exe') {
+          ends.push(`taskkill ${args.join(' ')}`)
+        }
+        return run(file, args, options)
+      },
+      sendSignal: (pid, signal) => {
+        ends.push(`${signal} ${pid}`)
+        process.kill(pid, signal)
+      }
+    })
+    return { control, ends }
+  }
+
   const must = (identity: ProcessIdentity | undefined): ProcessIdentity => {
     if (identity === undefined) throw new Error('missing stub identity')
     return identity
   }
 
   it('[ADR-014, FM-005] killTree of a stub with a child and a grandchild ends all three and reports ended', async () => {
-    const control = new NodeProcessControl()
+    const { control, ends } = recordingControl()
     const tree = await startTree(control, 'root')
     const root = must(tree.root)
 
     expect(await control.killTree(root, OWNED)).toEqual({ kind: 'ended' })
+    // The recorder sees the ending steps the identity case below relies on finding none of.
+    expect(ends).not.toEqual([])
 
     // `ended` only after the root's exit was observed: it is gone at once.
     expect(await probe.probe(root.pid)).toBe('absent')
@@ -194,25 +218,23 @@ function killCases(): void {
   }, 60_000)
 
   it(`[ADR-014] a recorded identity whose start time is off by more than 2 000 ms ends nothing`, async () => {
-    const control = new NodeProcessControl()
+    const { control, ends } = recordingControl()
     const tree = await startTree(control, 'root')
     const root = must(tree.root)
     const recycled = {
       ...root,
       processStartTimeMs: root.processStartTimeMs - PROCESS_START_TOLERANCE_MS - 1
     }
+    // The pid is live and is the stub: `ended` below comes from the start-time mismatch, not from
+    // a root that is already gone.
+    expect(matchesRecorded(await probe.probe(root.pid), root)).toBe(true)
 
     expect(await control.killTree(recycled, OWNED)).toEqual({ kind: 'ended' })
 
-    for (const role of ['root', 'child', 'grandchild'] as const) {
-      const identity = must(tree[role])
-      expect({ role, running: matchesRecorded(await probe.probe(identity.pid), identity) }).toEqual(
-        {
-          role,
-          running: true
-        }
-      )
-    }
+    // "Ends nothing" is read from what the adapter did, not from the stubs' liveness afterwards:
+    // another OS-lane file's bare-pid cleanup can end a stub whose pid Windows handed on, which
+    // made a liveness check here fail without any signal from killTree.
+    expect(ends).toEqual([])
   }, 60_000)
 }
 

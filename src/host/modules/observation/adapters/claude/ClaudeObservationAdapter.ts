@@ -16,17 +16,26 @@
 //   (FM-145). The cwd is the records' own, never the folder name's (ADR-030).
 // - Turn ends are inferred (`turnEnd: 'none'` until S-021-1 passes); the 30 s inference from
 //   silence (S-032-1) is the loop's, not this adapter's.
-// - Not read here: the session registry `sessions/<pid>.json` (pid + start time for ending an
-//   observed session, and its `waitingFor` ask evidence) belongs to ISSUE-072's #45 guard and to an
-//   observed-ask port that does not exist yet, so `observedPermission` / `observedQuestion` are
-//   `none` here although 15 §2.5 measured `detected` (hidden until built).
+// - Endings and replays (`reconcile.ts`, `parse.ts`): a subagent's delivered `<task-notification>`
+//   is a `closed` fact of its identity, which the loop records in `EndedAgentLedger` (INV-36); a
+//   resumed session's replayed records keep their first keys (C-16).
+// - The session registry `sessions/<pid>.json` is read, when the composition gives a
+//   `ProcessControl`, for one fact only: the process identity of a session (pid and the recorded
+//   start, through the #45 guard of `reconcile.ts`), which the module answers for ending an
+//   observed session (ADR-014 item 2; 05 §4 item 1). Each (pid, recorded start) pair is probed once
+//   and its verdict kept while the entry exists (the poll runs every 2 s and a probe may spawn a
+//   process); an entry that disappears drops its verdict. Its `waitingFor` ask evidence belongs
+//   to an observed-ask port that does not exist yet, so `observedPermission` /
+//   `observedQuestion` are `none` here although 15 §2.5 measured `detected` (hidden until built).
 //
 // Candidate decision (21 §6): `src/main/providers/claude/parse.ts` and `subagents.ts` are replaced;
 // the evidence is in `ClaudeObservationAdapter.conformance.test.ts`.
 import { join } from 'node:path'
-import type { ProviderId } from '../../../../kernel/domain/values'
+import type { ProbeResult, ProcessIdentity } from '../../../../kernel/domain/processIdentity'
+import type { ProviderId, ProviderIdentity } from '../../../../kernel/domain/values'
 import type { Clock } from '../../../../kernel/ports/clock'
 import type { FileSystem } from '../../../../kernel/ports/fileSystem'
+import type { ProcessControl } from '../../../../kernel/ports/processControl'
 import type { ObservedCapabilities } from '../../../suppliers'
 import type {
   Cursor,
@@ -53,6 +62,7 @@ import {
   type TranscriptFile,
   type TranscriptState
 } from './parse'
+import { registryEntryOf, registryIdentity, type RegistryEntry } from './reconcile'
 import { isTranscriptName, parentAgentIdOf, SIDECAR_MAX_BYTES, transcriptFileOf } from './subagents'
 
 /** How far before a cursor a read with no kept stream state looks to rebuild it. */
@@ -106,7 +116,14 @@ export interface ClaudeObservationAdapterOptions {
   fs: FileSystem
   clock: Clock
   identify?: FileIdentifier
+  /** The kernel probe for the #45 guard; without it no session answers a process identity. */
+  processes?: Pick<ProcessControl, 'probe' | 'currentBootIdentity'>
 }
+
+/** A registry file's name: the pid of the session's process. */
+const REGISTRY_FILE = /^\d+\.json$/
+/** The most read of a registry file: real ones are under 1 KiB. */
+const REGISTRY_MAX_BYTES = 64 * 1024
 
 /** A stream's state at a byte offset: the end of the last read. */
 interface Checkpoint {
@@ -129,6 +146,10 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
   private readonly checkpoints = new Map<string, Checkpoint>()
   /** The lines the base consumes during each read in flight, by stream and byte offset. */
   private readonly reading = new Map<string, Map<number, string>>()
+  /** The process identity the #45 guard took for each registered session, by session id. */
+  private registered = new Map<string, ProcessIdentity | null>()
+  /** The guard's verdict per (pid, recorded start), kept while that registry entry exists. */
+  private readonly verdicts = new Map<string, ProcessIdentity | null>()
 
   constructor(private readonly options: ClaudeObservationAdapterOptions) {
     this.providerId = options.providerId
@@ -151,6 +172,7 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
 
   async discover(fs: FileSystem): Promise<SourceFile[]> {
     const found = await this.transcripts.discover(fs)
+    await this.readRegistry()
     return found.filter((source) => transcriptFileOf(source.path) !== null)
   }
 
@@ -201,6 +223,18 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     return out
   }
 
+  /**
+   * The process identity of a session as of the last `discover` (pid and recorded start, ADR-014
+   * item 1), or null: a subagent runs inside its session's process and has none of its own, and a
+   * session the registry does not name, or whose pid the #45 guard did not take, has none either.
+   */
+  processIdentityOf(identity: ProviderIdentity): ProcessIdentity | null {
+    if (identity.providerId !== this.providerId || identity.providerAgentId !== undefined) {
+      return null
+    }
+    return this.registered.get(identity.providerSessionId) ?? null
+  }
+
   entries(
     ref: ObservedSessionRef,
     window: { before?: string; limit: number }
@@ -238,6 +272,65 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
         entries: [entry]
       }
     ]
+  }
+
+  /** Reads the session registry and takes each entry's process identity through the #45 guard. */
+  private async readRegistry(): Promise<void> {
+    const processes = this.options.processes
+    if (processes === undefined) return
+    const folder = join(this.options.configDir, 'sessions')
+    let listed: Array<{ name: string; isDirectory: boolean }>
+    try {
+      listed = await this.options.fs.listDir(folder)
+    } catch {
+      return
+    }
+    const registered = new Map<string, ProcessIdentity | null>()
+    const present = new Set<string>()
+    for (const file of listed) {
+      if (file.isDirectory || !REGISTRY_FILE.test(file.name)) continue
+      let text: string
+      try {
+        text = await this.options.fs.readTextHead(join(folder, file.name), REGISTRY_MAX_BYTES)
+      } catch {
+        continue
+      }
+      const entry = registryEntryOf(text)
+      if (entry === null) continue
+      const key = `${entry.pid}|${entry.recordedStartMs ?? ''}`
+      present.add(key)
+      let identity = this.verdicts.get(key)
+      if (identity === undefined) {
+        identity = await this.guard(entry, processes)
+        this.verdicts.set(key, identity)
+      }
+      registered.set(entry.sessionId, identity)
+    }
+    for (const key of [...this.verdicts.keys()]) if (!present.has(key)) this.verdicts.delete(key)
+    this.registered = registered
+  }
+
+  /** The #45 guard over one entry: one probe of its pid, and the boot id when it answers none. */
+  private async guard(
+    entry: RegistryEntry,
+    processes: Pick<ProcessControl, 'probe' | 'currentBootIdentity'>
+  ): Promise<ProcessIdentity | null> {
+    if (entry.recordedStartMs === null) return null
+    let probe: ProbeResult
+    try {
+      probe = await processes.probe(entry.pid)
+    } catch {
+      probe = 'unknown'
+    }
+    let bootId: string | 'unknown' = 'unknown'
+    if (probe === 'unknown') {
+      try {
+        bootId = (await processes.currentBootIdentity()).bootId
+      } catch {
+        bootId = 'unknown'
+      }
+    }
+    return registryIdentity(entry, probe, bootId)
   }
 
   /** Which transcript the source is, with its subagent's parent from the sidecar. */

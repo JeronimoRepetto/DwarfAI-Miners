@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createProcessEnd } from './processEnd'
+import { createProcessProbe, sameProcessStart } from './processProbe'
 
 const TREE = fileURLToPath(new URL('../../../fixtures/bin/tree/tree.mjs', import.meta.url))
 const SLEEPER = fileURLToPath(new URL('../../../fixtures/bin/sleeper/sleeper.mjs', import.meta.url))
@@ -37,16 +38,21 @@ async function goneWithin(pid: number, ms: number): Promise<boolean> {
 
 function endCases(): void {
   const children: ChildProcess[] = []
-  const pids: number[] = []
+  /** The tree's descendants by identity: pid and start time, read while they ran (ADR-014). */
+  const descendants: Array<{ pid: number; startMs: number }> = []
   const folders: string[] = []
+  const startTimes = createProcessProbe()
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const child of children.splice(0)) {
       child.stdin?.end()
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     }
-    // The tree's own descendants: started by this test, recorded by pid, still within their cap.
-    for (const pid of pids.splice(0)) {
+    // The tree's own descendants, ended only while each pid is still the process recorded: a pid
+    // the OS handed on, or one whose start time cannot be read, is never signalled.
+    for (const { pid, startMs } of descendants.splice(0)) {
+      const now = await startTimes.processStartTimeMs(pid)
+      if (now === null || !sameProcessStart(now, startMs)) continue
       try {
         process.kill(pid, 'SIGKILL')
       } catch {
@@ -87,7 +93,10 @@ function endCases(): void {
       )
       const [r, c, g] = [roles.get('root'), roles.get('child'), roles.get('grandchild')]
       if (r !== undefined && c !== undefined && g !== undefined) {
-        pids.push(c, g)
+        for (const pid of [c, g]) {
+          const startMs = await startTimes.processStartTimeMs(pid)
+          if (startMs !== null) descendants.push({ pid, startMs })
+        }
         return { root: r, child: c, grandchild: g }
       }
       if (Date.now() >= deadline) throw new Error(`the stub tree did not start: ${text}`)
