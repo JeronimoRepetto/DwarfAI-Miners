@@ -1,0 +1,17 @@
+{
+  "providerVersion": "0.153.x",
+  "capturedAt": "2026-10-05",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §5 (Codex row) and the record shapes documented in docs/provider-formats.md and docs/codex-v2-format.md; no real CLI was run. Replace with the scrubbed ISSUE-319 recordings (SP-06 one-turn, tool-continuation; S-032-1 two-turns) when the maintainer records them.",
+  "capabilities": {
+    "observe": true,
+    "turnEnd": "reliable",
+    "usage": { "fidelity": 1, "rateLimits": false },
+    "console": "log",
+    "observedPermission": "none",
+    "observedQuestion": "none"
+  }
+}

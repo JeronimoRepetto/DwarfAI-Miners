@@ -2,8 +2,9 @@
 // observation loop (ISSUE-070) polls every provider's `ObservationAdapter`, reads each stream from
 // its forward-only cursor and turns the records into events, writing only its own tables
 // (`source_cursors`, `observed_sessions`, `observed_session_streams`; INV-37): messages and usage
-// go to conversation and ledger through the `ObservedBatchSink` bridge. The provider adapters
-// (later: ISSUE-071…ISSUE-075), the ended-agent ledger (later: ISSUE-072) and `catchUp` (later:
+// go to conversation and ledger through the `ObservedBatchSink` bridge. The Codex adapter
+// (ISSUE-073) is exported for the composition; the other provider adapters (later: ISSUE-071,
+// ISSUE-074, ISSUE-075), the ended-agent ledger (later: ISSUE-072) and `catchUp` (later:
 // ISSUE-078) join with their issues; `host/main.ts` composes it (later: ISSUE-095).
 import type { ProcessIdentity } from '../../kernel/domain/processIdentity'
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
@@ -29,6 +30,7 @@ import type { ObservedSessionStore } from './ports/observedSessionStore'
 
 export type {
   ObservationEvent,
+  ObservedTurnEnded,
   SessionActivityObserved,
   SessionClosedObserved,
   SessionObserved,
@@ -36,6 +38,12 @@ export type {
   UsageObserved
 } from './application/events'
 export type { ObservationControl, ObservationControlSoFar } from './application/observationControl'
+export {
+  CODEX_OBSERVED_CAPABILITIES,
+  CodexObservationAdapter,
+  codexHomeOf,
+  type CodexObservationAdapterOptions
+} from './adapters/codex/CodexObservationAdapter'
 export { OBSERVATION_POLL_MS, type NudgeHint } from './application/observationLoop'
 export type { ObservationQueries } from './application/observationQueries'
 export {
