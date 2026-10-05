@@ -6,8 +6,8 @@
 // - One report per `(providerId, cause, dwarfId?)` and poll cycle (08 §2.3 idempotency; HO-33):
 //   the loop opens each cycle with `beginCycle`, and a repeat within it is folded away.
 // - Drift is counted before it surfaces (ADR-026 item 6; FM-068). A read that skipped records but
-//   read nothing is one unreadable read of its key; `DRIFT_SURFACE_THRESHOLD` of them in a row
-//   surface once as `unreadable` — the same toast as any provider error, worded no differently
+//   read nothing is one unreadable read of its stream; `DRIFT_SURFACE_THRESHOLD` of them in a row
+//   surface once as `unreadable` for the stream's provider and dwarf — the same toast as any provider error, worded no differently
 //   (US-RES-004.AC04, PO #11). A read that read anything ends the streak; skipped lines beside
 //   readable records stay a log record only (FM-086). A read with nothing new neither counts nor
 //   ends the streak.
@@ -41,10 +41,12 @@ export interface ProviderErrorReport {
   dwarfId?: DwarfId
 }
 
-/** Whose drift a read counts toward. */
+/** Whose drift a read counts toward: the streak is the stream's, the report its dwarf's. */
 export interface DriftKey {
   providerId: ProviderId
   dwarfId?: DwarfId
+  /** The stream read; none for a provider-wide failure (its sources could not be listed). */
+  streamId?: string
 }
 
 /** What one read of a stream gave. */
@@ -84,7 +86,7 @@ export class ProviderErrorFold {
 
   /** Counts one read toward its key's drift; the `unreadable` report when the streak surfaces. */
   read(key: DriftKey, outcome: ReadOutcome): ProviderErrorReport | null {
-    const id = JSON.stringify([key.providerId, key.dwarfId ?? null])
+    const id = JSON.stringify([key.providerId, key.streamId ?? null])
     if (outcome.readable) {
       this.streaks.delete(id)
       return null
@@ -95,6 +97,10 @@ export class ProviderErrorFold {
     this.streaks.set(id, streak)
     if (streak.surfaced || streak.count < DRIFT_SURFACE_THRESHOLD) return null
     streak.surfaced = true
-    return this.error({ ...key, cause: 'unreadable' })
+    return this.error({
+      providerId: key.providerId,
+      cause: 'unreadable',
+      ...(key.dwarfId === undefined ? {} : { dwarfId: key.dwarfId })
+    })
   }
 }

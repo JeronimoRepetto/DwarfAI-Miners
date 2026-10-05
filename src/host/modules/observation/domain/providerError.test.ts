@@ -86,6 +86,25 @@ describe('ProviderErrorFold', () => {
     expect(fold.read(key, unreadable)).toBeNull()
   })
 
+  it('[US-RES-004.AC04, FM-068] each stream keeps its own streak and two streams of one dwarf surface as one report per cycle', () => {
+    const fold = new ProviderErrorFold()
+    const unreadable = { readable: false, drifted: true }
+    const a = { providerId: 'claude', dwarfId: D1, streamId: 'a' }
+    const b = { providerId: 'claude', dwarfId: D1, streamId: 'b' }
+    const surfaced: Array<ProviderErrorReport | null> = []
+    for (let n = 0; n < DRIFT_SURFACE_THRESHOLD; n++) {
+      fold.beginCycle()
+      surfaced.push(fold.read(a, unreadable), fold.read(b, unreadable))
+    }
+    // Two unreadable reads a cycle are one cycle of drift for each stream, not two.
+    expect(surfaced.slice(0, -2).every((r) => r === null)).toBe(true)
+    // Both streams cross in the same cycle: one report, without the stream.
+    expect(surfaced.slice(-2)).toEqual([
+      { providerId: 'claude', cause: 'unreadable', dwarfId: D1 },
+      null
+    ])
+  })
+
   it('[US-RES-004.AC04, FM-068, INV-38] a readable read ends the streak and a batch with skipped lines but readable records never surfaces', () => {
     const fold = new ProviderErrorFold()
     const key = { providerId: 'claude', dwarfId: D1 }

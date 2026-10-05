@@ -33,6 +33,15 @@
 // mine. An ended identity whose dwarf is still present (it arrived while its ending was being
 // read) is closed (S4.33), because an `active` session is never in the ledger (07 §4B).
 //
+// Provider errors (ISSUE-084; 13 FM-067, FM-068; ADR-026 item 6): every read of a stream is
+// counted by the `ProviderErrorFold` of domain/providerError.ts, opened once per poll cycle. A read
+// that skipped records and read none, or that threw, is an unreadable read of its stream; a streak
+// of them surfaces for the stream's dwarf (the dwarf a batch of that stream was last written to in
+// this Host run; none when the stream never read) once as `ProviderErrorObserved {cause: 'unreadable'}`, published after
+// the batch's own events, at most once per `(providerId, cause, dwarfId?)` and cycle. The dwarf's
+// status is not touched: no event of this loop changes it (US-RES-004.AC02). A thrown read is
+// logged with its `errCode` (`code`, else the error's name) and never its message (16 §2.1).
+//
 // `catchUp` (ISSUE-078) is one such cycle at Host boot, before the live loop starts: it reads every
 // stream from the cursor the last Host left, so what was written while no Host ran is observed by
 // these same rules (S4.38, S4.39; INV-98).
@@ -56,6 +65,7 @@ import type { ConversationEntry, UsageObservation } from '../../suppliers'
 import { generationStreamId, sourceRestarted } from '../domain/cursor'
 import { holdsFirstMessage } from '../domain/firstMessage'
 import { observedTransition } from '../domain/observedSession'
+import { ProviderErrorFold, type ReadOutcome } from '../domain/providerError'
 import type { CursorStore } from '../ports/cursorStore'
 import type {
   Cursor,
@@ -143,6 +153,10 @@ export class ObservationLoop {
   private readonly cwdOf = new Map<string, FolderPath>()
   /** The identity of each dwarf a batch was written to this Host run. */
   private readonly identityOfDwarf = new Map<DwarfId, ProviderIdentity>()
+  /** The dwarf a batch of each stream was last written to this Host run (ISSUE-084). */
+  private readonly dwarfOfStream = new Map<string, DwarfId>()
+  /** Provider errors, folded per cause and cycle, drift counted before it surfaces (ISSUE-084). */
+  private readonly errors = new ProviderErrorFold()
 
   constructor(private readonly deps: ObservationLoopDeps) {}
 
@@ -185,6 +199,7 @@ export class ObservationLoop {
     while (this.cycle !== null) await this.cycle
     const halts = this.halts
     const pass = (async () => {
+      this.errors.beginCycle()
       for (const adapter of this.deps.adapters) {
         if (this.halts !== halts) return
         await this.observe(adapter, () => this.halts === halts)
@@ -242,6 +257,7 @@ export class ObservationLoop {
   private async runCycles(): Promise<void> {
     do {
       this.rerun = false
+      this.errors.beginCycle()
       for (const adapter of this.deps.adapters) {
         if (!this.running) return
         await this.observe(adapter, () => this.running)
@@ -254,8 +270,9 @@ export class ObservationLoop {
     let sources: SourceFile[]
     try {
       sources = await adapter.discover(this.deps.fs)
-    } catch {
-      this.drift(adapter, 'discover')
+    } catch (error) {
+      this.drift(adapter, 'discover', error)
+      this.countRead(adapter, null, { readable: false, drifted: true })
       return
     }
     const seen = new Set<string>()
@@ -272,14 +289,21 @@ export class ObservationLoop {
     let batch: Awaited<ReturnType<ObservationAdapter['read']>>
     try {
       batch = await adapter.read({ ...source, streamId }, from)
-    } catch {
-      this.drift(adapter, 'read')
+    } catch (error) {
+      this.drift(adapter, 'read', error)
+      this.countRead(adapter, streamId, { readable: false, drifted: true })
       return
     }
     for (let n = 0; n < batch.warnings.length; n++) this.drift(adapter, 'record')
     const plan = this.plan(adapter, streamId, batch.events)
+    // A session record alone is no readable content: a provider whose format changed still names it.
+    const outcome: ReadOutcome = {
+      readable: batch.events.some((e) => e.kind !== 'session'),
+      drifted: batch.warnings.length > 0
+    }
     if (plan.held) {
       this.publishAll(plan.events)
+      this.countRead(adapter, streamId, outcome)
       return
     }
     try {
@@ -303,6 +327,25 @@ export class ObservationLoop {
       return
     }
     this.publishAll(plan.events)
+    this.countRead(adapter, streamId, outcome)
+  }
+
+  /** Counts one read toward its dwarf's drift; publishes the provider error a streak surfaces. */
+  private countRead(
+    adapter: ObservationAdapter,
+    streamId: string | null,
+    outcome: ReadOutcome
+  ): void {
+    const dwarfId = streamId === null ? undefined : this.dwarfOfStream.get(streamId)
+    const report = this.errors.read(
+      {
+        providerId: adapter.providerId,
+        ...(dwarfId === undefined ? {} : { dwarfId }),
+        ...(streamId === null ? {} : { streamId })
+      },
+      outcome
+    )
+    if (report !== null) this.publishAll([{ type: 'ProviderErrorObserved', payload: report }])
   }
 
   /** The generation of `source` its stored cursors say it is in (FM-087), and where to read from. */
@@ -382,6 +425,7 @@ export class ObservationLoop {
 
       const dwarfId = session.dwarfId
       this.identityOfDwarf.set(dwarfId, identity)
+      this.dwarfOfStream.set(streamId, dwarfId)
       if (entries.length > 0 || usage.length > 0) {
         plan.sinks.push({
           dwarfId,
@@ -487,8 +531,14 @@ export class ObservationLoop {
     }
   }
 
-  private drift(adapter: ObservationAdapter, where: 'discover' | 'read' | 'record'): void {
-    // Nothing the provider wrote is logged: no path, no line, no error text (ADR-026 item 4).
+  private drift(
+    adapter: ObservationAdapter,
+    where: 'discover' | 'read' | 'record',
+    error?: unknown
+  ): void {
+    // Nothing the provider wrote is logged: no path, no line, no error text (ADR-026 item 4); a
+    // failed read keeps only its code (16 §2.1).
+    const errCode = error === undefined ? undefined : errCodeOf(error)
     this.deps.log.record({
       level: 'warn',
       event: 'observation.drift',
@@ -496,9 +546,21 @@ export class ObservationLoop {
       provider: adapter.providerId,
       outcome: 'skipped',
       causeClass: where,
+      ...(errCode === undefined ? {} : { errCode }),
       msg: 'unreadable or malformed provider data skipped'
     })
   }
+}
+
+/** The code of a thrown error (19 §9 `errCode` = `err.code`, else `err.name`), never its message. */
+function errCodeOf(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string' || typeof code === 'number') return String(code)
+    const name = (error as { name?: unknown }).name
+    if (typeof name === 'string') return name
+  }
+  return 'unknown'
 }
 
 /** A batch's records grouped by identity, in first-seen order. */
