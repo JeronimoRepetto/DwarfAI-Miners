@@ -14,7 +14,13 @@ import {
   type SnapshotPage,
   type StepId
 } from '@dwarfai/contracts'
-import { composeBoardFacade, composeStopAllRelay } from '../index'
+import {
+  composeBoardFacade,
+  composeLegacyAgentRegistryFeed,
+  composeLegacyLaunchObservation,
+  composeStopAllRelay,
+  type LegacyRuntimeSurface
+} from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
 import { createStopEverything } from '../window/application/stopEverything'
 import { readFileSync } from 'node:fs'
@@ -757,5 +763,105 @@ describe('rollback', () => {
     expect(rolledBack1.routes.filter((r) => r.since === 'cut-0')).toEqual(
       ROUTES.filter((r) => r.since === 'cut-0')
     )
+  })
+})
+
+describe('cut-1 legacy composition', () => {
+  /** Today's runtime as `LegacyAgentRegistryFeed` is handed it: one discovery, every other part recording. */
+  function legacySurface() {
+    const reached: string[] = []
+    const surface: LegacyRuntimeSurface = {
+      pollIntervalMs: 2_000,
+      discovery: [
+        {
+          kind: 'claude',
+          scan: async () => {
+            reached.push('discovery')
+            return [
+              {
+                provider: 'claude',
+                sessionId: 's1',
+                cwd: '/work/moria',
+                status: 'busy',
+                dwarfs: [],
+                updatedAt: 1
+              }
+            ]
+          }
+        }
+      ],
+      registry: { replace: () => void reached.push('registry') },
+      board: { publish: () => void reached.push('board publish') },
+      ledger: { credit: () => void reached.push('crediting') },
+      projects: { record: () => void reached.push('projects-store write') },
+      notifier: { update: () => void reached.push('notifier') }
+    }
+    return { surface, reached }
+  }
+  const launches = {
+    liveLaunches: async () => [{ launchId: 'launch:1' }],
+    endLaunch: async () => 'ended' as const
+  }
+  const span = (from: StepId, to: StepId): StepId[] =>
+    STEP_ORDER.slice(STEP_ORDER.indexOf(from), STEP_ORDER.indexOf(to) + 1)
+
+  it('[ADR-001] in cut 1 LegacyAgentRegistryFeed and LegacyLaunchObservation are composed and listed with their cuts', () => {
+    // TC-087-01 (21 §3): both are listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
+    for (const name of ['LegacyAgentRegistryFeed', 'LegacyLaunchObservation']) {
+      expect(
+        LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === name),
+        name
+      ).toEqual({
+        name,
+        cuts: span('cut-1', 'cut-4b'),
+        shapeAdapter: false
+      })
+    }
+    // The root composes each exactly in the releases it is listed for: in cut 1 (and its rollback build, whose table
+    // is cut 1's), not in this release's cut-0 table, and no longer once it is deleted.
+    const { surface } = legacySurface()
+    const timers = { every: () => () => {} }
+    for (const release of span('cut-1', 'cut-4b')) {
+      expect(
+        composeLegacyAgentRegistryFeed({ release, legacy: surface, timers }),
+        release
+      ).toBeDefined()
+      expect(composeLegacyLaunchObservation({ release, launches }), release).toBeDefined()
+    }
+    for (const release of [ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1'] as StepId[]) {
+      expect(
+        composeLegacyAgentRegistryFeed({ release, legacy: surface, timers }),
+        release
+      ).toBeUndefined()
+      expect(composeLegacyLaunchObservation({ release, launches }), release).toBeUndefined()
+    }
+  })
+
+  it('[ADR-001] composing LegacyAgentRegistryFeed adds no legacy board publish, crediting, projects-store write or notifier path', async () => {
+    // TC-087-01 (21 §1 item 4; ADR-001 Consequences, IR-21-07): the feed reaches only the discovery and the registry.
+    const { surface, reached } = legacySurface()
+    let cycle: (() => void) | null = null
+    const feed = composeLegacyAgentRegistryFeed({
+      release: 'cut-1',
+      legacy: surface,
+      timers: {
+        every: (_ms, run) => {
+          cycle = run
+          return () => (cycle = null)
+        }
+      }
+    })
+    feed?.start()
+    await feed?.whenIdle()
+    ;(cycle as (() => void) | null)?.()
+    await feed?.whenIdle()
+    expect(reached).toEqual(['discovery', 'registry', 'discovery', 'registry'])
+    feed?.stop()
+    expect(cycle).toBeNull()
+
+    // LegacyLaunchObservation composes only the legacy runtime's own launch channel: no observation path of its own.
+    const observation = composeLegacyLaunchObservation({ release: 'cut-1', launches })
+    expect(Object.keys(observation ?? {})).toEqual(['channel'])
+    expect(await observation?.channel.liveLaunches()).toEqual([{ launchId: 'launch:1' }])
   })
 })
