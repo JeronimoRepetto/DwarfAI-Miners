@@ -10,6 +10,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   powerMonitor,
   screen,
   session,
@@ -116,6 +117,13 @@ import {
   ElectronGlobalShortcut
 } from './window/adapters/ElectronGlobalShortcut'
 import { ElectronTray } from './window/adapters/ElectronTray'
+import { ElectronNotificationDisplay } from './window/adapters/ElectronNotificationDisplay'
+import { startNotificationPresenter } from './window/application/notificationPresenter'
+import { drawsWithoutWindow } from './window/domain/trayNotificationGate'
+import type {
+  NotificationDisplay,
+  NotificationWithdrawal
+} from './window/ports/notificationDisplay'
 import { readUserDataConfigFile } from './window/adapters/userDataConfigFile'
 import type { HostClientService } from './host-client/HostClient'
 import { composeHostClient } from './host-client/composeHostClient'
@@ -420,6 +428,15 @@ export interface UiMainDeps {
    */
   settingsMirror?: { legacy: LegacySettingsWrites; halves: readonly MirrorHalf[] }
   /**
+   * Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the display adapter and whether S-018-1 passed on this OS.
+   * With the rebuilt window family, the Host attach and the UI log, the root draws the `notifier` connection's
+   * `attention.notify` / `attention.withdraw` frames for the process's life (window/application/notificationPresenter.ts).
+   */
+  notifications?: {
+    display: NotificationDisplay & NotificationWithdrawal
+    drawsWithoutWindow: boolean
+  }
+  /**
    * How this process was started (07 machine 10): a normal launch, or a `--background` start by the login entry or the
    * Host, which is tray-only and builds no window until the person opens the app (S10.03, S10.13). Default normal.
    */
@@ -476,6 +493,7 @@ export async function startUiMain({
   panelWindow,
   host,
   settingsMirror,
+  notifications,
   launch = { kind: 'normal', tray: true, window: true },
   startWithSystem
 }: UiMainDeps): Promise<UiMainStarted | undefined> {
@@ -555,6 +573,27 @@ export async function startUiMain({
         })
       : undefined
 
+  // Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the notifier connection's frames, from the start of the
+  // attach, are drawn once Electron is ready (a notification cannot be built before), in arrival order; where S-018-1
+  // has not passed, only while the Panel is shown (window/domain/trayNotificationGate.ts).
+  const notificationPresenter =
+    rebuilt &&
+    panel !== undefined &&
+    host !== undefined &&
+    uiLog !== undefined &&
+    notifications !== undefined
+      ? startNotificationPresenter({
+          onAttentionFrame: (handler) => {
+            const ready = lifecycle.whenReady()
+            return host.client.onAttentionFrame((frame) => void ready.then(() => handler(frame)))
+          },
+          display: notifications.display,
+          drawsWithoutWindow: notifications.drawsWithoutWindow,
+          anyWindowOpen: () => panel.visible(),
+          log: uiLog
+        })
+      : undefined
+
   // Every seam A call goes through the router table from the first renderer load (21 §1 item 1), behind the gate
   // that checks its sender and its payload (ADR-019 items 7, 8).
   const uiLocal = composeUiLocal({
@@ -606,6 +645,7 @@ export async function startUiMain({
   lifecycle.onWillQuit(() => {
     toggle?.dispose()
     trayProcess?.dispose()
+    notificationPresenter?.dispose()
     stopConnectionPush?.()
     uiSession?.dispose()
     stopResetListening?.()
@@ -999,6 +1039,15 @@ if (process.type === 'browser') {
       newConfirmationId: () => randomUUID()
     },
     host: { client: electronHostClient(uiLog, dataDir) },
+    notifications: {
+      display: new ElectronNotificationDisplay({
+        notification: Notification,
+        platform: currentUiPlatform(),
+        setAppUserModelId: (id) => app.setAppUserModelId(id),
+        log: uiLog
+      }),
+      drawsWithoutWindow: drawsWithoutWindow(currentUiPlatform())
+    },
     launch: uiStartPlanOf(process.argv),
     ...electronStartWithSystem(uiPreferenceStore, uiLog),
     // The halves register here with their legacy saves wired to the hub (ISSUE-116 from cut 1, ISSUE-194 from 3a).

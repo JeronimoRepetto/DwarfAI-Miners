@@ -49,8 +49,10 @@
 //   frame's content, a token, a pid or a path (14 §1.10).
 import type { Duplex } from 'node:stream'
 import {
+  HOST_FRAME_SCHEMAS,
   isAdvertised,
   SNAPSHOT_SECTIONS,
+  type EvtFrame,
   type Hello,
   type HelloOk,
   type HostFrameData,
@@ -66,6 +68,7 @@ import type { UiLog } from '../diagnostics/uiLogger'
 import type { HungHostEnd } from '../hostLauncher/hungHost'
 import type { UpgradingLaunchResult } from '../hostLauncher/upgradingLauncher'
 import type {
+  AttentionFrame,
   HostAvailability,
   HostClient,
   HostConnection,
@@ -144,6 +147,8 @@ export interface HostClientService extends HostClient {
   hostFacts(): { hostState: HelloOk['state']; jobStatus: HelloOk['jobStatus'] } | null
   /** Electron `powerMonitor` `resume` (13 FM-109): ping at once. */
   wake(): void
+  /** The `notifier` connection's level-3 frames (B-F22, B-F23), schema-checked; returns the unsubscribe. */
+  onAttentionFrame(h: (frame: AttentionFrame) => void): () => void
 }
 
 /** The notifier scope of ADR-003 item 12 (14 §2.3 "Notifier scope"). */
@@ -214,6 +219,7 @@ class NodeHostClient implements HostClientService {
   private readonly handlers = new Set<(e: HostEvent) => void>()
   private readonly stateListeners = new Set<(s: HostConnection) => void>()
   private readonly closingListeners = new Set<(reason: ClosingReason) => void>()
+  private readonly attentionListeners = new Set<(frame: AttentionFrame) => void>()
   private readonly channelDeps: ChannelDeps
   /** `hello.ok.capabilities` of the last connection: replaced on every reconnect, kept while reconnecting. */
   private advertised: readonly string[] = []
@@ -317,6 +323,11 @@ class NodeHostClient implements HostClientService {
   onClosing(h: (reason: ClosingReason) => void): () => void {
     this.closingListeners.add(h)
     return () => this.closingListeners.delete(h)
+  }
+
+  onAttentionFrame(h: (frame: AttentionFrame) => void): () => void {
+    this.attentionListeners.add(h)
+    return () => this.attentionListeners.delete(h)
   }
 
   hostFacts(): { hostState: HelloOk['state']; jobStatus: HelloOk['jobStatus'] } | null {
@@ -524,6 +535,7 @@ class NodeHostClient implements HostClientService {
     this.notifier = channel
     this.advertised = channel.helloOk.capabilities
     channel.heard(() => this.heard(channel))
+    channel.events((frame) => this.attention(frame))
     void channel.closed.then((reason) => this.lost(channel, reason))
     const { helloOk } = channel
     this.facts = { hostState: helloOk.state, jobStatus: helloOk.jobStatus }
@@ -541,6 +553,26 @@ class NodeHostClient implements HostClientService {
   /** A frame from the Host on a connection the client holds (the hung-Host bound counts from the last one). */
   private heard(channel: HostChannel): void {
     if (channel === this.notifier || channel === this.ui) this.dispatch({ kind: 'frame' })
+  }
+
+  /**
+   * A frame of the `notifier` connection: `attention.notify` / `attention.withdraw` that pass their strict() schema go to
+   * every `onAttentionFrame` handler (14 §1.4; ADR-018 item 5); anything else is not the notifier's to act on here
+   * (`host.closing` is read by the channel itself). A handler that throws costs its own frame, never the connection
+   * or the other handlers (13 FM-048). Nothing is logged: the payload is sensitive (14 §3.5 SENSITIVE_FRAMES).
+   */
+  private attention(frame: EvtFrame): void {
+    if (frame.name !== 'attention.notify' && frame.name !== 'attention.withdraw') return
+    const parsed = HOST_FRAME_SCHEMAS[frame.name].safeParse(frame.data)
+    if (!parsed.success) return
+    const attention = { name: frame.name, data: parsed.data } as AttentionFrame
+    for (const listener of [...this.attentionListeners]) {
+      try {
+        listener(attention)
+      } catch {
+        // The handler's own failure (the presenter logs its display failures by event name).
+      }
+    }
   }
 
   /** The `ui` connection: hello, `events.subscribe` first, then replay or the paged snapshot. */
