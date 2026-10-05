@@ -3,14 +3,16 @@
 // spawn in a new session. The processes are throwaway Node scripts, never a provider CLI (17 §1.8), and every one
 // still running is ended after its case. The double and the seam runs are fakes/FakeHostSpawner.test.ts,
 // windows.test.ts and posix.test.ts.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, vi } from 'vitest'
 import type { HostSpawnRequest } from './ports'
 import { createPosixSpawner } from './posix'
+import { IDENTITY_TOLERANCE_MS, createProcessStartReader } from './processStart'
 import { runHostSpawnerContract, type SpawnScript } from './testing/hostSpawner.contract'
+import { osQueryRunner, thisPlatform } from './testing/osQueryRunner'
 import { loadWinLaunch } from './win-launch/nativeWinLaunch'
 import { createWindowsSpawner } from './windows'
 
@@ -43,6 +45,18 @@ function running(pid: number): boolean {
   }
 }
 
+const readStart = createProcessStartReader({ platform: thisPlatform(), runQuery: osQueryRunner() })
+
+/**
+ * Whether `pid` is still the script that wrote its pid file at `writtenAtMs` (ADR-014: never a bare
+ * pid): it runs and started no later than that, within the one tolerance. Gone, started later or
+ * unreadable is never the script, so it is never signalled.
+ */
+async function stillTheScript(pid: number, writtenAtMs: number): Promise<boolean> {
+  const start = await readStart(pid)
+  return start.kind === 'started' && start.ms <= writtenAtMs + IDENTITY_TOLERANCE_MS
+}
+
 runHostSpawnerContract(`the real ${process.platform} spawner`, () => {
   const root = mkdtempSync(path.join(tmpdir(), 'dwarfai-spawner-os-'))
   const pidFile = path.join(root, 'kept.pid')
@@ -50,7 +64,13 @@ runHostSpawnerContract(`the real ${process.platform} spawner`, () => {
   cleanups.push(async () => {
     writeFileSync(stopFile, '')
     const pid = Number(existsSync(pidFile) ? readFileSync(pidFile, 'utf8') : NaN)
-    if (Number.isSafeInteger(pid) && running(pid)) process.kill(pid)
+    if (
+      Number.isSafeInteger(pid) &&
+      running(pid) &&
+      (await stillTheScript(pid, statSync(pidFile).mtimeMs))
+    ) {
+      process.kill(pid)
+    }
     // Windows keeps a folder that is a live process's working folder: wait for the process to be gone first.
     for (
       let waited = 0;
