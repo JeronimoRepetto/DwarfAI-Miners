@@ -214,7 +214,9 @@ describe.runIf(mode === 'stub')('S-014-1 pid source over stub processes (L8)', (
       reason: 'no-candidate',
       candidates: 0
     })
-  }, 60_000)
+    // Room for one listing at its whole bound (LISTING_TIMEOUT_MS) besides the processes' starts and probes, so a
+    // hung listing fails with its own error, not with this test's timeout.
+  }, 120_000)
 })
 
 describe.runIf(mode === 'real')(
