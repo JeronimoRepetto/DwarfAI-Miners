@@ -83,8 +83,8 @@ export function createPreferences(deps: PreferencesDeps): Preferences {
 }
 
 /**
- * 16 §4.12 `PreferencesCommands.resetMetrics` (ADR-023 saga). It joins `Preferences.commands`
- * when the module is wired into the Host (later: ISSUE-226).
+ * 16 §4.12 `PreferencesCommands.resetMetrics` (ADR-023 saga). host/wiring/preferencesWiring.ts
+ * joins it to `Preferences.commands` when it wires the module into the Host (ISSUE-226).
  */
 export interface ResetMetricsCommands {
   resetMetrics(cmd: ResetMetricsCommand): Promise<MetricsResetResult>
