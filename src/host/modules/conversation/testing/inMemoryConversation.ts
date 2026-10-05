@@ -47,6 +47,7 @@ export function inMemoryConversation(options: { guardedBus?: boolean } = {}) {
   const commands = new ConversationIngest({
     log,
     transactions: transactionRunner,
+    scope,
     bus,
     clock,
     ids,
@@ -58,6 +59,8 @@ export function inMemoryConversation(options: { guardedBus?: boolean } = {}) {
     bus,
     clock,
     scope,
+    /** The runner `ingest` uses: a caller's transaction that `ingest` joins. */
+    runner: transactionRunner,
     transactions: () => transactions
   }
 }

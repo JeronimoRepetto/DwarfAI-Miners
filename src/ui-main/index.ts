@@ -31,6 +31,18 @@ import {
 } from '../legacy-bridge/LegacyEndFirstAdapter'
 import { createLegacySettingsWriteHub } from '../legacy-bridge/settingsMirror/legacySettingsWrites'
 import { createBoardFacadeAdapter } from '../legacy-bridge/BoardFacadeAdapter'
+import {
+  createLegacyAgentRegistryFeed,
+  LEGACY_FEED_PROVIDERS_CUT_1,
+  type LegacyAgentRegistryFeed,
+  type LegacyFeedModes,
+  type LegacyFeedTimers,
+  type LegacyRuntimeSurface
+} from '../legacy-bridge/LegacyAgentRegistryFeed'
+import {
+  createLegacyLaunchObservation,
+  type LegacyLaunchObservation
+} from '../legacy-bridge/LegacyLaunchObservation'
 import type { MirrorHalf } from '../legacy-bridge/settingsMirror/mirrorHalf'
 import {
   createNotificationsMirrorHalf,
@@ -47,7 +59,7 @@ import {
   type StopEverything
 } from './window/application/stopEverything'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './ipc/router'
-import { ROUTES } from './ipc/routes'
+import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE } from './ipc/routes'
 import type { ChannelRoute } from './ipc/channelRoute'
 import type { TrayController } from './window/ports/trayController'
 import type { PanelWindowController } from './window/ports/panelWindowController'
@@ -106,7 +118,12 @@ import {
 } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
 import { uiDataDirectory } from './dataDirectory'
-import { DEFAULT_TOGGLE_ACCELERATOR, PROTOCOL_VERSION, type ChannelKey } from '@dwarfai/contracts'
+import {
+  DEFAULT_TOGGLE_ACCELERATOR,
+  PROTOCOL_VERSION,
+  type ChannelKey,
+  type StepId
+} from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
 import { createNativeActions } from './window/application/nativeActions'
@@ -338,6 +355,60 @@ export function composeBoardFacade(deps: {
   }
 }
 
+/** Whether the legacy-bridge adapter `name` lives in `release`: composed exactly in the steps 21 §3 lists it for. */
+function bridgeLivesIn(name: string, release: StepId): boolean {
+  return LEGACY_BRIDGE_ADAPTERS.some(
+    (adapter) => adapter.name === name && adapter.cuts.includes(release)
+  )
+}
+
+/** Runs `run` every `ms` on Node's timers. */
+const realInterval: LegacyFeedTimers = {
+  every: (ms, run) => {
+    const timer = setInterval(run, ms)
+    return () => clearInterval(timer)
+  }
+}
+
+export type { LegacyRuntimeSurface }
+
+/**
+ * `LegacyAgentRegistryFeed` (21 §3, cuts 1–4; ADR-001 Consequences): from cut 1 the Host observer is the only observer,
+ * and only the legacy providers' session discovery stays composed, into the legacy runtime's in-memory agent registry,
+ * so the rows still `legacy` (send, console, stop, asks) find their dwarf and the Codex pending questions. Composed in
+ * the releases it is listed for (cut 1, its rollback build included, to the end of cut 4), never in the cut-0 table,
+ * and only over a bound legacy surface. The cut-1 switch (ISSUE-123) turns the rest of today's observer off.
+ */
+export function composeLegacyAgentRegistryFeed(deps: {
+  release: StepId
+  legacy: LegacyRuntimeSurface | undefined
+  modes?: LegacyFeedModes
+  timers?: LegacyFeedTimers
+}): LegacyAgentRegistryFeed | undefined {
+  if (deps.legacy === undefined || !bridgeLivesIn('LegacyAgentRegistryFeed', deps.release)) {
+    return undefined
+  }
+  return createLegacyAgentRegistryFeed({
+    legacy: deps.legacy,
+    modes: deps.modes ?? LEGACY_FEED_PROVIDERS_CUT_1,
+    timers: deps.timers ?? realInterval
+  })
+}
+
+/**
+ * `LegacyLaunchObservation` (21 §3, cuts 1–4b; 14 §5): a session today's runtime launched is an observed session for the
+ * Host, found in its provider's files like any other; the legacy runtime keeps its launch channel, which from cut 1 is
+ * reached through this bridge (the A-N26 end-first relay). Composed in the releases it is listed for, never in the
+ * cut-0 table; deleted at the end of 4b (ISSUE-240).
+ */
+export function composeLegacyLaunchObservation(deps: {
+  release: StepId
+  launches: LegacyLaunchedSessions
+}): LegacyLaunchObservation | undefined {
+  if (!bridgeLivesIn('LegacyLaunchObservation', deps.release)) return undefined
+  return createLegacyLaunchObservation({ launches: deps.launches })
+}
+
 /** An open window of the app, as the pushes reach it. */
 export interface AppWindow extends WindowContents {
   close(): void
@@ -427,6 +498,13 @@ export interface UiMainDeps {
   >
   /** The route table (default `ROUTES`, the release's own); a test or a rollback table is passed here. */
   routes?: readonly ChannelRoute[]
+  /** The release the table is for (default `ROUTES_RELEASE`): which legacy-bridge adapters live (21 §3). */
+  release?: StepId
+  /**
+   * Today's runtime as `LegacyAgentRegistryFeed` is handed it (21 §3, cuts 1–4): its providers' discovery and its
+   * in-memory agent registry. Without it, or in a release the feed is not listed for, no feed is composed.
+   */
+  legacyRegistry?: LegacyRuntimeSurface
   /** Every open window of the app (A-N04, A-N25 pushes; the tray's Quit closes them). */
   appWindows?: () => readonly AppWindow[]
   /** The rebuilt tray (ISSUE-053): its icon and the id of each new confirmation. */
@@ -530,6 +608,8 @@ export async function startUiMain({
   ipc,
   appEntry,
   routes = ROUTES,
+  release = ROUTES_RELEASE,
+  legacyRegistry,
   appWindows = () => [],
   tray,
   shortcut,
@@ -600,6 +680,11 @@ export async function startUiMain({
         })
   const stopResetListening = uiPreferencesReset?.listen()
 
+  // From cut 1 to the end of cut 4 (21 §3): a session today's runtime launched is observed by the Host like any other,
+  // and today's runtime keeps its launch channel; only the registry-only discovery of today's observer stays composed.
+  const launchObservation = composeLegacyLaunchObservation({ release, launches: legacyRuntime })
+  const registryFeed = composeLegacyAgentRegistryFeed({ release, legacy: legacyRegistry })
+
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
   const toggle = rebuilt && panel !== undefined ? shortcut?.(panel) : undefined
   const stop =
@@ -615,7 +700,7 @@ export async function startUiMain({
             }
           },
           newConfirmationId: () => tray.newConfirmationId(),
-          relay: composeStopAllRelay(legacyRuntime)
+          relay: composeStopAllRelay(launchObservation?.channel ?? legacyRuntime)
         })
       : undefined
 
@@ -715,6 +800,7 @@ export async function startUiMain({
     stopResetListening?.()
     mirror?.dispose()
     boardFacade?.dispose()
+    registryFeed?.stop()
     host?.client.dispose()
     legacyRuntime.willQuit()
   })
@@ -767,6 +853,8 @@ export async function startUiMain({
       // Today's Panel window answers a second launch (before cut 0, or a rollback build).
       secondLaunch.attach(legacyPanel)
     }
+    // The registry-only discovery runs over today's composed runtime (21 §3 `LegacyAgentRegistryFeed`).
+    registryFeed?.start()
   } catch (error) {
     // The start cannot go on. The UI log says which step failed and the error's class or code, never its message
     // (ADR-026 items 3-4), and is written out before the process ends; today's composition also reports its own
