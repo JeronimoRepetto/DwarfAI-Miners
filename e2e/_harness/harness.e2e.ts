@@ -247,13 +247,15 @@ test.describe('E2E harness: main-process errors (17 §1.9)', () => {
     const child = current.app.process()
     // The canary throws at quit only where the harness captures main-process errors, so a run
     // without the capture can never open Electron's modal "A JavaScript error occurred" box.
+    // It throws inside the listener, not on a later tick: Electron reports a listener's exception
+    // as uncaught before `app.quit()` returns, on every OS, while on macOS the whole quit can run
+    // inside `app.quit()` and the process exit before a deferred throw (runs 37279955715 and
+    // 37285520952: before-quit, destroyed, will-quit and exit 0 within 20 ms, nothing captured).
     await current.app.evaluate(({ app: electronApp }) => {
       electronApp.once('before-quit', () => {
         const captured = (globalThis as { __dwarfaiE2eMainErrors?: string }).__dwarfaiE2eMainErrors
         if (captured === undefined) return
-        process.nextTick(() => {
-          throw new Error('canary: thrown in the main process at quit')
-        })
+        throw new Error('canary: thrown in the main process at quit')
       })
     })
 
