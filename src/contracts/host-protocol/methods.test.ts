@@ -16,6 +16,7 @@ import {
   type HostShutdownParams,
   type HostShutdownResult,
   type PresenceParams,
+  type RemoveMineResult,
   type SubscribeParams,
   type SubscribeResult
 } from './methods'
@@ -579,5 +580,37 @@ describe('conversation.feed params and result (14 §3.4, §3.6, B-M26)', () => {
     expect(
       result.safeParse({ dwarfId: DWARF, messages: [], reachedStart: true, next: MESSAGE }).success
     ).toBe(false)
+  })
+})
+
+// The B-M18 entry of 14 §3.4 (`RemoveMineResult`) and its strict() schemas (14 §1.4).
+
+describe('mines.remove params and result (14 §3.4, B-M18)', () => {
+  it('[US-MINES-006.AC09, ADR-014] the mines.remove schemas infer exactly the 14 §3.4 entry, answer only ok or dwarf-could-not-be-ended, and refuse any other key', () => {
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('mines.remove')
+    expectTypeOf<HostMethods['mines.remove']['params']>().toEqualTypeOf<{
+      mineId: MineId
+      requestId: string
+    }>()
+    expectTypeOf<HostMethods['mines.remove']['result']>().toEqualTypeOf<RemoveMineResult>()
+    expectTypeOf<z.infer<(typeof HOST_METHOD_SCHEMAS)['mines.remove']['params']>>().toEqualTypeOf<
+      HostMethods['mines.remove']['params']
+    >()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['mines.remove']['result']>
+    >().toEqualTypeOf<RemoveMineResult>()
+
+    const MINE = '01890a5d-ac96-774b-bcce-b302099a8057'
+    const REQUEST = '01890a5d-ac96-774b-bcce-b302099a8058'
+    const { params, result } = HOST_METHOD_SCHEMAS['mines.remove']
+    expect(params.safeParse({ mineId: MINE, requestId: REQUEST }).success).toBe(true)
+    expect(params.safeParse({ mineId: MINE }).success).toBe(false)
+    expect(params.safeParse({ mineId: 'alpha', requestId: REQUEST }).success).toBe(false)
+    expect(params.safeParse({ mineId: MINE, requestId: REQUEST, force: true }).success).toBe(false)
+    expect(result.safeParse({ ok: true, value: {} }).success).toBe(true)
+    expect(result.safeParse({ ok: false, error: 'dwarf-could-not-be-ended' }).success).toBe(true)
+    // The failed dwarfs reach the UI only in the one toast frame (PO #79), never in the result.
+    expect(result.safeParse({ ok: true, value: { failed: [MINE] } }).success).toBe(false)
+    expect(result.safeParse({ ok: false, error: 'could-not-end' }).success).toBe(false)
   })
 })

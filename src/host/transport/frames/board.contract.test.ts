@@ -367,7 +367,8 @@ describe('the board frames (14 §2.4 B-F06, B-F08, B-F09, B-F10; 08 §2.1, §2.2
       'dwarf.arrived',
       'dwarf.changed',
       'dwarf.departed',
-      'toast'
+      'toast',
+      'mine.removed'
     ])
   })
 
@@ -443,5 +444,86 @@ describe('the board frames (14 §2.4 B-F06, B-F08, B-F09, B-F10; 08 §2.1, §2.2
       }
     ])
     expect(JSON.stringify(b.frames.sent)).not.toMatch(/provider said|quota/)
+  })
+
+  it('[S3.09, S3.11, S3.13, ADR-003] the measurement and folder-check events each send mine.changed with the mine as stored after the commit', () => {
+    const b = board()
+    const measuring = mineView(MINE_A, 'alpha', { state: 'measuring' })
+    const measured = mineView(MINE_A, 'alpha', {
+      state: 'active',
+      tier: 'silver',
+      sourceWeight: { bytes: 2_000_000 },
+      hasBeenMeasured: true,
+      measuredAt: 7
+    })
+    const unenterable = { ...measured, state: 'unenterable' as const, unenterableReason: 'missing' }
+
+    b.commitMine(
+      measuring,
+      event<MinesEvent>('MineMeasurementStarted', { mineId: MINE_A, startedAt: 5 })
+    )
+    b.commitMine(
+      measured,
+      event<MinesEvent>('MineMeasured', {
+        mineId: MINE_A,
+        tier: 'silver',
+        sourceWeight: { bytes: 2_000_000 },
+        measuredAt: 7
+      })
+    )
+    b.commitMine(
+      unenterable,
+      event<MinesEvent>('MineBecameUnenterable', { mineId: MINE_A, reason: 'missing' })
+    )
+    b.commitMine(measured, event<MinesEvent>('MineBecameEnterable', { mineId: MINE_A }))
+
+    const totals = NO_LEDGER_TOTALS.totalsOf(MINE_A)
+    expect(b.frames.sent).toEqual([
+      { name: 'mine.changed', data: { mine: toMineWire(measuring, totals) } },
+      { name: 'mine.changed', data: { mine: toMineWire(measured, totals) } },
+      { name: 'mine.changed', data: { mine: toMineWire(unenterable, totals) } },
+      { name: 'mine.changed', data: { mine: toMineWire(measured, totals) } }
+    ])
+    expect(b.minesBus.handlerErrors).toEqual([])
+  })
+
+  it('[US-MAP-004.AC02, US-MINES-006.AC03, S3.16] MineRemoved sends mine.removed with the mine id and its removal instant, and no mine.changed', () => {
+    const b = board()
+
+    b.commitMine(
+      mineView(MINE_A, 'alpha', { state: 'removed', removedAt: 42 }),
+      event<MinesEvent>('MineRemoved', { mineId: MINE_A, removedAt: 42 })
+    )
+
+    expect(b.frames.sent).toEqual([
+      { name: 'mine.removed', data: { mineId: MINE_A, removedAt: 42 } }
+    ])
+    expect(b.minesBus.handlerErrors).toEqual([])
+  })
+
+  it('[US-MINES-006.AC09, ADR-014] MineRemovalFailed sends exactly one toast mine-removal-failed naming every failed dwarf', () => {
+    const b = board()
+    b.mines.put(mineView(MINE_A, 'alpha'))
+
+    b.minesBus.publish(
+      event<MinesEvent>('MineRemovalFailed', {
+        mineId: MINE_A,
+        requestId: 'remove-1',
+        failed: [DWARF_A, DWARF_B]
+      })
+    )
+
+    expect(b.frames.sent).toEqual([
+      {
+        name: 'toast',
+        data: {
+          kind: 'mine-removal-failed',
+          requestId: 'remove-1',
+          mineId: MINE_A,
+          failed: [DWARF_A, DWARF_B]
+        }
+      }
+    ])
+    expect(b.minesBus.handlerErrors).toEqual([])
   })
 })

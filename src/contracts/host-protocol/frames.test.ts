@@ -5,6 +5,7 @@ import type {
   DwarfId,
   DwarfWire,
   HostToast,
+  Instant,
   Material,
   MaterialAmount,
   MineId,
@@ -438,5 +439,35 @@ describe('toast payload (14 §3.5, B-F28; 14 §3.6 HostToast)', () => {
     expect(toast.safeParse({ ...providerError, detail: 'provider text' }).success).toBe(false)
     expect(toast.safeParse({ kind: 'errored', dwarfId: DWARF }).success).toBe(false)
     expect(SENSITIVE_FRAMES).toContain('toast')
+  })
+})
+
+// The B-F07 payload of 14 §3.5 and its strict() schema (14 §1.4).
+
+describe('mine.removed payload (14 §3.5, B-F07)', () => {
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a8057'
+
+  it('[US-MAP-004.AC02, US-MINES-006.AC03] mine.removed carries exactly the mine id and its removal instant, and the mine-removal-failed toast names every failed dwarf', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toContain('mine.removed')
+    expectTypeOf<HostFrames['mine.removed']>().toEqualTypeOf<{
+      mineId: MineId
+      removedAt: Instant
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['mine.removed']>>().toEqualTypeOf<
+      HostFrames['mine.removed']
+    >()
+
+    const removed = HOST_FRAME_SCHEMAS['mine.removed']
+    expect(removed.safeParse({ mineId: MINE, removedAt: 1_790_000_000_000 }).success).toBe(true)
+    expect(removed.safeParse({ mineId: MINE }).success).toBe(false)
+    expect(removed.safeParse({ mineId: MINE, removedAt: 1, name: 'alpha' }).success).toBe(false)
+    expect(removed.safeParse({ mineId: 'alpha', removedAt: 1 }).success).toBe(false)
+    // Not a sensitive frame: an id and an instant only (14 §3.5 SENSITIVE_FRAMES).
+    expect(SENSITIVE_FRAMES).not.toContain('mine.removed')
+
+    const toast = HOST_FRAME_SCHEMAS['toast']
+    const failed = { kind: 'mine-removal-failed', requestId: 'r-1', mineId: MINE, failed: [MINE] }
+    expect(toast.safeParse(failed).success).toBe(true)
+    expect(toast.safeParse({ ...failed, failed: undefined }).success).toBe(false)
   })
 })
