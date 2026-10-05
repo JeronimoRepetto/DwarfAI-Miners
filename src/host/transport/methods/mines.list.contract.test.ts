@@ -207,7 +207,7 @@ async function host() {
     hostEpoch: EPOCH,
     remeasure: () => undefined
   })
-  registerMines(dispatcher, { mines: mines.queries })
+  registerMines(dispatcher, { mines: mines.queries, commands: mines.commands })
 
   const throttle = new HelloThrottle(clock)
   /** Connects with `role` and returns the client once hello.ok arrived. */

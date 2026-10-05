@@ -5,7 +5,7 @@
 //   `MineSummary` with its present-dwarf count. Removed mines are never listed (09 §4.11), so a
 //   listed summary's `removed` is false.
 // - `get` and `folderOf` read one mine on the board: a removed or unknown mine reads as none.
-// - `resolveFileInMine` is ISSUE-066's (later: ISSUE-066).
+// - `resolveFileInMine` is `resolveFile.ts`'s (ISSUE-066): it reads the disk, so the module index composes it beside this read model.
 import type { FolderPath, Instant, MineId, Result } from '../../../kernel/domain/values'
 import type { Mine, MineName } from '../domain/mine'
 import type { MinePath } from '../domain/minePath'
@@ -52,7 +52,7 @@ export interface MineReadModelDeps {
   presentDwarfs: PresentDwarfCounts
 }
 
-/** `MinesQueries` without `resolveFileInMine` (later: ISSUE-066). */
+/** `MinesQueries` without `resolveFileInMine`, which `resolveFile.ts` serves (ISSUE-066). */
 export class MineReadModel implements Omit<MinesQueries, 'resolveFileInMine'> {
   constructor(private readonly deps: MineReadModelDeps) {}
 
