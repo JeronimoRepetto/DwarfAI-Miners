@@ -2,7 +2,9 @@
 // (ISSUE-098) the storage floor: `ingest` writes one batch of entries in one transaction with
 // once-only keys (INV-60), drops control-plane records and hand-off echoes with their key kept
 // (INV-68), merges echoes of DwarfAI-sent rows, keeps at most 50 stored rows per dwarf in the same
-// transaction (INV-61, ISSUE-105), and publishes `MessagesAppended` after the commit.
+// transaction (INV-61, ISSUE-105), and publishes `MessagesAppended` after the commit. ISSUE-099:
+// observed entries — the typed-echo merge, and an ingest that joins observation's batch
+// transaction and holds its events for `joinedEvents` (AMENDMENT-10).
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import type { HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
@@ -28,6 +30,8 @@ export type {
   MessageView
 } from './domain/messages'
 export type { ConversationCommands }
+/** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
+export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
 
 export interface ConversationDeps {
   /** The Host's one writer (09 §8.1). */
@@ -42,8 +46,21 @@ export interface ConversationDeps {
   hostEpoch: HostEpoch
 }
 
+/**
+ * The events of `ingest` calls that joined a caller's open transaction (AMENDMENT-10: the observed
+ * batch, 16 §4.3). They are held, never published inside that transaction (16 §2.3): the caller
+ * publishes them once its transaction committed, or discards them when it rolled back.
+ */
+export interface JoinedEvents {
+  /** After the caller's commit: publishes the held events, in ingest order. */
+  publish(): void
+  /** After the caller's rollback: drops the held events. */
+  discard(): void
+}
+
 export interface Conversation {
   commands: ConversationCommands
+  joinedEvents: JoinedEvents
 }
 
 /** The module over the Host database. */
@@ -57,10 +74,17 @@ export function createConversation(deps: ConversationDeps): Conversation {
   const commands = new ConversationIngest({
     log,
     transactions: deps.transactions,
+    scope: deps.transactions,
     bus: deps.bus,
     clock: deps.clock,
     ids: deps.ids,
     hostEpoch: deps.hostEpoch
   })
-  return { commands }
+  return {
+    commands,
+    joinedEvents: {
+      publish: () => commands.publishJoined(),
+      discard: () => commands.discardJoined()
+    }
+  }
 }

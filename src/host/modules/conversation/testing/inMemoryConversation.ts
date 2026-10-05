@@ -47,6 +47,7 @@ export function inMemoryConversation(options: { guardedBus?: boolean } = {}) {
   const commands = new ConversationIngest({
     log,
     transactions: transactionRunner,
+    scope,
     bus,
     clock,
     ids,
