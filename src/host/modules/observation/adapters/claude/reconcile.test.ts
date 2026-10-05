@@ -18,6 +18,7 @@
 // only from the three delivery envelopes (#28, #64), an ended agent never comes back (the ledger,
 // INV-36), the nested parent from the sidecar (#391), and the #45 pid-recycle guard on the kernel's
 // one tolerance.
+import { realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -73,8 +74,14 @@ afterEach(async () => {
   await Promise.all(temps.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
+/**
+ * A per-test folder in its real spelling: discovery reports every source by its canonical
+ * (`realpath.native`) path (FM-093), and the tests look sources up by the paths they wrote, which
+ * differ when the temp root is reached through a link (macOS `/var` → `/private/var`, a Windows
+ * 8.3 short name, a junction).
+ */
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'dwarfai-reconcile-'))
+  const dir = realpathSync.native(await mkdtemp(join(tmpdir(), 'dwarfai-reconcile-')))
   temps.push(dir)
   return dir
 }
