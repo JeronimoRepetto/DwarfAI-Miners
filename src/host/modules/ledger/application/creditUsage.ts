@@ -7,10 +7,9 @@
 // (INV-94; credited later by `creditSealedUnits`), or not from the session's authoritative path
 // (INV-92). The material is the mine's tier, never the caller's (INV-94), never coal (INV-95).
 //
-// The path an observation arrived by is the route's: `UsageObserved` through the observation
-// batch is the transcript path, `DriverUsageReported` the driver path (11 F2). Package gap: 16
-// §4.10's `creditUsage(o)` names no path and `UsageObservation` (ADR-006 item 4) carries none, so
-// the module hands each route its own `LedgerCommands`, bound to that path (`commandsFor`).
+// `path` is the route's (16 §4.10 as amended 2026-10-05): `UsageObserved` through the observation
+// batch is the transcript path, `DriverUsageReported` the driver path (11 F2); `UsageObservation`
+// (ADR-006 item 4) carries none.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { UsageObservation } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, MineId } from '../../../kernel/domain/values'
@@ -20,23 +19,23 @@ import type { Crediting } from './crediting'
 
 export function creditUsage(
   crediting: Crediting,
-  path: UsagePath,
-  o: UsageObservation
+  o: UsageObservation,
+  path: UsagePath
 ): 'credited' | 'stored' | 'duplicate' {
   return crediting.run(() => {
-    const store = crediting.deps.stores[path]
+    const store = crediting.repository
     const subject = store.subjectOf(o.dwarfId as DwarfId)
     if (subject === null) {
       throw new HostInvariantError(
         'creditUsage for a dwarf the database does not hold; usage is routed only for bound dwarfs (UC-007 preconditions)'
       )
     }
-    if (store.record(o, subject.mineId) === 'duplicate') return 'duplicate'
+    if (store.record(o, subject.mineId, path) === 'duplicate') return 'duplicate'
     return crediting.creditIfCreditable(o.unitKey) ? 'credited' : 'stored'
   })
 }
 
 /** `LedgerQueries.totals`: the mine's six materials, each its own count (INV-93). */
 export function totals(crediting: Crediting, mineId: MineId): MaterialTotals {
-  return crediting.store.totals(mineId)
+  return crediting.repository.totals(mineId)
 }

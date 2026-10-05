@@ -10,7 +10,7 @@ import type { Crediting } from './crediting'
 export function creditSealedUnits(crediting: Crediting, mineId: MineId): { credited: number } {
   return crediting.run(() => {
     let credited = 0
-    for (const unitKey of crediting.store.sealedUncredited(mineId)) {
+    for (const unitKey of crediting.repository.sealedUncredited(mineId)) {
       if (crediting.creditIfCreditable(unitKey)) credited += 1
     }
     return { credited }

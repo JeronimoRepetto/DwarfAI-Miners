@@ -14,7 +14,7 @@ import type { LedgerEvent } from '../domain/events'
 import type { LiveMaterial } from '../domain/materials'
 import { InMemoryLedgerRepository, InMemoryLedgerWorld } from './InMemoryLedgerRepository'
 import { createLedger } from '../index'
-import type { LedgerStore } from '../ports/ledgerRepository'
+import type { LedgerRepository } from '../ports/ledgerRepository'
 import type { LedgerRepositorySubject, StoredEntry } from './ledgerRepository.contract'
 
 /** A transaction over the world: joins an open one, restores the world when `work` throws. */
@@ -56,20 +56,17 @@ export function inMemoryLedgerStorage(clock: FakeClock = new FakeClock(0)) {
   const ids = new SequenceIdGenerator()
   let mines = 0
   let dwarfs = 0
-  const stores = new Map<UsagePath, LedgerStore>()
-  const storeFor = (path: UsagePath): LedgerStore => {
-    let store = stores.get(path)
-    if (store === undefined) {
-      store = new InMemoryLedgerRepository({ world, path, scope: transactions, ids, clock })
-      stores.set(path, store)
-    }
-    return store
-  }
+  const repository: LedgerRepository = new InMemoryLedgerRepository({
+    world,
+    scope: transactions,
+    ids,
+    clock
+  })
   return {
     world,
     transactions,
     clock,
-    storeFor,
+    repository,
     addMine(tier: LiveMaterial | null): MineId {
       mines += 1
       const id = `00000000-0000-7000-8000-${mines.toString(16).padStart(12, '0')}` as MineId
@@ -102,6 +99,11 @@ export function inMemoryLedgerStorage(clock: FakeClock = new FakeClock(0)) {
           units,
           kind
         }))
+    },
+    entryIds(mineId: MineId): string[] {
+      return [...world.rows.entries.values()]
+        .filter((entry) => entry.mineId === mineId)
+        .map((entry) => entry.id)
     }
   }
 }
@@ -110,13 +112,14 @@ export function inMemoryLedgerStorage(clock: FakeClock = new FakeClock(0)) {
 export function inMemoryLedgerSubject(): LedgerRepositorySubject {
   const storage = inMemoryLedgerStorage()
   return {
-    storeFor: storage.storeFor,
+    repository: storage.repository,
     inTransaction: (work) => storage.transactions.inTransaction(work),
     addMine: storage.addMine,
     addDwarf: storage.addDwarf,
     setInstallMoment: storage.setInstallMoment,
     setResetInProgress: storage.setResetInProgress,
     entries: storage.entries,
+    entryIds: storage.entryIds,
     dispose: () => undefined
   }
 }
@@ -128,7 +131,7 @@ export function inMemoryLedger(clock: FakeClock = new FakeClock(1_760_000_000_00
   const storage = inMemoryLedgerStorage(clock)
   const bus = new RecordingEventBus<LedgerEvent>({ transactionScope: storage.transactions })
   const ledger = createLedger({
-    stores: { driver: storage.storeFor('driver'), transcript: storage.storeFor('transcript') },
+    repository: storage.repository,
     transactions: storage.transactions,
     scope: storage.transactions,
     bus,

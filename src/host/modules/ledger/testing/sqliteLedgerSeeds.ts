@@ -81,6 +81,11 @@ export function sqliteLedgerSeeds(db: SqliteDatabase, runner: TransactionRunner)
         )
       })
     },
+    entryIds(mineId: MineId): string[] {
+      return db
+        .all('SELECT id FROM ledger_entries WHERE mine_id = ?', [mineId])
+        .map((row) => String(row['id']))
+    },
     entries(mineId: MineId): StoredEntry[] {
       return db
         .all(

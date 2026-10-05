@@ -1,7 +1,7 @@
 // The LedgerRepository conformance suite (16 §4.10 doubles row: transplanted `ledger.test.ts:166`
 // and `:308`, duplicate credits once; 17 §1.3), run on `InMemoryLedgerRepository` and on
-// `SqliteLedgerRepository` over the template database. It covers the 16 §4.10 members built here
-// and the `UsageUnitReads` the crediting transaction needs (see ports/ledgerRepository.ts). The
+// `SqliteLedgerRepository` over the template database. It covers the members of 16 §4.10 (as
+// amended 2026-10-05) built here, the crediting reads included (see ports/ledgerRepository.ts). The
 // transplanted `:166` (never coal from live) is the domain's INV-95 case and the L5 CHECK case.
 // Never imported by production code (R14).
 import { afterEach, describe, expect, it } from 'vitest'
@@ -10,7 +10,7 @@ import type { UsageObservation } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, Instant, MineId } from '../../../kernel/domain/values'
 import type { UsagePath } from '../domain/credit'
 import { MATERIALS, type LiveMaterial, type Material } from '../domain/materials'
-import type { LedgerStore } from '../ports/ledgerRepository'
+import type { LedgerRepository } from '../ports/ledgerRepository'
 
 /** One stored `ledger_entries` row. */
 export interface StoredEntry {
@@ -22,8 +22,8 @@ export interface StoredEntry {
 }
 
 export interface LedgerRepositorySubject {
-  /** The store whose `record` writes observations of `path`, over the subject's one storage. */
-  storeFor(path: UsagePath): LedgerStore
+  /** The repository under test, over the subject's one storage. */
+  repository: LedgerRepository
   /** The caller's transaction (16 §2.2): commits when `work` returns, rolls back when it throws. */
   inTransaction<T>(work: () => T): T
   /** A mine measured with `tier`, or never measured (`null`). */
@@ -36,6 +36,8 @@ export interface LedgerRepositorySubject {
   setResetInProgress(inProgress: boolean): void
   /** Every ledger entry of the mine, by unit key. */
   entries(mineId: MineId): StoredEntry[]
+  /** The stored `ledger_entries.id` of every entry of the mine. */
+  entryIds(mineId: MineId): string[]
   dispose(): void | Promise<void>
 }
 
@@ -80,13 +82,13 @@ export function runLedgerRepositoryContract(
       const s = await setUp()
       const mine = s.addMine('silver')
       const dwarf = s.addDwarf(mine, 'transcript')
-      const store = s.storeFor('transcript')
+      const store = s.repository
       const first = usageObservation(dwarf, { unitKey: 'u-1', sourceKey: 'k-1' })
       const second = usageObservation(dwarf, { unitKey: 'u-2', sourceKey: 'k-2' })
 
       const answers = s.inTransaction(() => {
-        store.record(first, mine)
-        store.record(second, mine)
+        store.record(first, mine, 'transcript')
+        store.record(second, mine, 'transcript')
         return [
           store.credit('u-1', mine, 'silver', 60_000, 1, 'live'),
           store.credit('u-1', mine, 'silver', 60_000, 1, 'live'),
@@ -94,7 +96,11 @@ export function runLedgerRepositoryContract(
         ]
       })
 
-      expect(answers).toEqual(['credited', 'duplicate', 'credited'])
+      expect(answers.map((answer) => answer.outcome)).toEqual(['credited', 'duplicate', 'credited'])
+      const ids = answers.flatMap((a) => (a.outcome === 'credited' ? [a.ledgerEntryId] : []))
+      expect(ids).toHaveLength(2)
+      expect(new Set(ids).size).toBe(2)
+      for (const id of ids) expect(id).toMatch(/^[0-9a-f-]{36}$/)
       const entries = s.entries(mine)
       expect(entries.map((e) => e.unitKey).sort()).toEqual(['u-1', 'u-2'])
       const totals = store.totals(mine)
@@ -105,15 +111,14 @@ export function runLedgerRepositoryContract(
         expect(totals[material]).toEqual({ tokens: sum })
       }
       expect(totals.silver).toEqual({ tokens: 200_000 })
-      expect(store.entryOf('u-1')).toMatch(/^[0-9a-f-]{36}$/)
-      expect(store.entryOf('u-3')).toBeNull()
+      expect(s.entryIds(mine).sort()).toEqual([...ids].sort())
     })
 
     it('[INV-90, ADR-006] storing a usage observation whose sourceKey is already stored inserts nothing', async () => {
       const s = await setUp()
       const mine = s.addMine('bronze')
       const dwarf = s.addDwarf(mine, 'transcript')
-      const store = s.storeFor('transcript')
+      const store = s.repository
       const observation = usageObservation(dwarf, { sealed: false })
       const reRead = usageObservation(dwarf, {
         fidelity: 2,
@@ -122,8 +127,8 @@ export function runLedgerRepositoryContract(
       })
 
       const answers = s.inTransaction(() => [
-        store.record(observation, mine),
-        store.record(reRead, mine)
+        store.record(observation, mine, 'transcript'),
+        store.record(reRead, mine, 'transcript')
       ])
 
       expect(answers).toEqual(['new', 'duplicate'])
@@ -138,7 +143,7 @@ export function runLedgerRepositoryContract(
       // mine that has never produced").
       const s = await setUp()
       const mine = s.addMine('gold')
-      const store = s.storeFor('transcript')
+      const store = s.repository
       expect(store.totals(mine)).toEqual({
         coal: { tokens: 0 },
         bronze: { tokens: 0 },
@@ -153,7 +158,7 @@ export function runLedgerRepositoryContract(
       const s = await setUp()
       const mine = s.addMine('copper')
       const dwarf = s.addDwarf(mine, 'transcript')
-      const store = s.storeFor('transcript')
+      const store = s.repository
       const T = CONTRACT_INSTALL_MOMENT
       s.inTransaction(() => {
         store.record(
@@ -163,7 +168,8 @@ export function runLedgerRepositoryContract(
             providerTime: T + 1_000,
             observedAt: T + 1_100
           }),
-          mine
+          mine,
+          'transcript'
         )
       })
       expect(store.unit('claude:session-1:msg-1')).toMatchObject({
@@ -183,7 +189,8 @@ export function runLedgerRepositoryContract(
             providerTime: T + 2_000,
             observedAt: T + 2_100
           }),
-          mine
+          mine,
+          'transcript'
         )
         // A later unsealed record never unseals it and never moves its provider time.
         store.record(
@@ -193,7 +200,8 @@ export function runLedgerRepositoryContract(
             providerTime: T + 3_000,
             observedAt: T + 3_100
           }),
-          mine
+          mine,
+          'transcript'
         )
       })
       expect(store.unit('claude:session-1:msg-1')).toMatchObject({
@@ -216,47 +224,50 @@ export function runLedgerRepositoryContract(
         cacheWrite: 0,
         reasoning: 0
       })
+      const store = s.repository
       s.inTransaction(() => {
-        const transcript = s.storeFor('transcript')
-        const driver = s.storeFor('driver')
-        transcript.record(
+        store.record(
           usageObservation(dwarf, {
             sourceKey: 't-1',
             fidelity: 1,
             tokens: tokens(10),
             observedAt: T + 2
           }),
-          mine
+          mine,
+          'transcript'
         )
-        transcript.record(
+        store.record(
           usageObservation(dwarf, {
             sourceKey: 't-2',
             fidelity: 1,
             tokens: tokens(20),
             observedAt: T + 1
           }),
-          mine
+          mine,
+          'transcript'
         )
-        driver.record(
+        store.record(
           usageObservation(dwarf, {
             sourceKey: 'd-1',
             fidelity: 0,
             tokens: tokens(30),
             observedAt: T + 1
           }),
-          mine
+          mine,
+          'driver'
         )
-        driver.record(
+        store.record(
           usageObservation(dwarf, {
             sourceKey: 'd-2',
             fidelity: 2,
             tokens: tokens(40),
             observedAt: T + 3
           }),
-          mine
+          mine,
+          'driver'
         )
       })
-      expect(s.storeFor('transcript').unit('claude:session-1:msg-1')?.best).toEqual({
+      expect(store.unit('claude:session-1:msg-1')?.best).toEqual({
         transcript: { sourceKey: 't-2', tokens: 20 },
         driver: { sourceKey: 'd-2', tokens: 40 }
       })
@@ -267,7 +278,7 @@ export function runLedgerRepositoryContract(
       const measured = s.addMine('uranium')
       const unmeasured = s.addMine(null)
       const dwarf = s.addDwarf(measured, 'driver')
-      const store = s.storeFor('transcript')
+      const store = s.repository
 
       expect(store.subjectOf(dwarf)).toEqual({ mineId: measured, usagePath: 'driver' })
       expect(store.subjectOf('00000000-0000-7000-8000-0000000fffff' as DwarfId)).toBeNull()
@@ -290,22 +301,29 @@ export function runLedgerRepositoryContract(
       const other = s.addMine(null)
       const dwarf = s.addDwarf(mine, 'transcript')
       const elsewhere = s.addDwarf(other, 'transcript')
-      const store = s.storeFor('transcript')
+      const store = s.repository
       const T = CONTRACT_INSTALL_MOMENT
       s.inTransaction(() => {
         store.record(
           usageObservation(dwarf, { unitKey: 'u-late', sourceKey: 'k-1', observedAt: T + 9 }),
-          mine
+          mine,
+          'transcript'
         )
         store.record(
           usageObservation(dwarf, { unitKey: 'u-early', sourceKey: 'k-2', observedAt: T + 1 }),
-          mine
+          mine,
+          'transcript'
         )
         store.record(
           usageObservation(dwarf, { unitKey: 'u-open', sourceKey: 'k-3', sealed: false }),
-          mine
+          mine,
+          'transcript'
         )
-        store.record(usageObservation(elsewhere, { unitKey: 'u-other', sourceKey: 'k-4' }), other)
+        store.record(
+          usageObservation(elsewhere, { unitKey: 'u-other', sourceKey: 'k-4' }),
+          other,
+          'transcript'
+        )
       })
       expect(store.sealedUncredited(mine)).toEqual(['u-early', 'u-late'])
 
@@ -318,8 +336,10 @@ export function runLedgerRepositoryContract(
       const s = await setUp()
       const mine = s.addMine('bronze')
       const dwarf = s.addDwarf(mine, 'transcript')
-      const store = s.storeFor('transcript')
-      expect(() => store.record(usageObservation(dwarf), mine)).toThrow(HostInvariantError)
+      const store = s.repository
+      expect(() => store.record(usageObservation(dwarf), mine, 'transcript')).toThrow(
+        HostInvariantError
+      )
       expect(() => store.credit('u-1', mine, 'bronze', 1, 0, 'live')).toThrow(HostInvariantError)
       expect(store.unit('claude:session-1:msg-1')).toBeNull()
       expect(s.entries(mine)).toEqual([])

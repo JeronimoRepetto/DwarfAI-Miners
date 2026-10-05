@@ -5,26 +5,26 @@
 //   16 §4.3 `ObservedBatchSink`: the batch's facts, ledger rows and cursor advance commit together,
 //   09 §5.2 step 5), and in its own otherwise. Its events are published only after a commit: at once
 //   when the ledger opened the transaction itself, and when the caller says its transaction
-//   committed (`publishCommitted`) when it joined one; a rolled-back caller drops them
-//   (`discardUncommitted`), so a credit that never committed is never announced. Package gap: 16
-//   §4.3 says the ledger's events of a batch are published after the batch commit but names no
-//   hand-off; this pair is it, called by the bridge that runs the batch (later: ISSUE-096).
+//   committed (`joinedEvents.publish`) when it joined one; a rolled-back caller drops them
+//   (`joinedEvents.discard`), so a credit that never committed is never announced. Package gap:
+//   16 §4.3 says the ledger's events of a batch are published after the batch commit but names no
+//   hand-off; this pair is it, the same shape as conversation's `joinedEvents` (ISSUE-099), called
+//   by the bridge that runs the batch (later: ISSUE-096).
 // - The credit itself is `decideCredit` over the facts read in that transaction, then one
 //   `LedgerRepository.credit` with the mine's tier as material and `kind = 'live'`.
-import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { EventId, HostEpoch } from '../../../kernel/domain/values'
-import { decideCredit, type UnitKey, type UsagePath } from '../domain/credit'
+import { decideCredit, type UnitKey } from '../domain/credit'
 import type { LedgerEvent } from '../domain/events'
-import type { LedgerStore } from '../ports/ledgerRepository'
+import type { LedgerRepository } from '../ports/ledgerRepository'
 
 export interface CreditingDeps {
-  /** One store per usage path; each records the observations of its path (`usage_observations.path`). */
-  stores: Readonly<Record<UsagePath, LedgerStore>>
+  /** 16 §4.10 `LedgerRepository` (as amended 2026-10-05). */
+  repository: LedgerRepository
   transactions: TransactionRunner
   /** The same transaction runner's probe: whether a caller's transaction is open. */
   scope: TransactionScope
@@ -39,9 +39,8 @@ export class Crediting {
 
   constructor(readonly deps: CreditingDeps) {}
 
-  /** Any store: the reads and the credit are path-independent. */
-  get store(): LedgerStore {
-    return this.deps.stores.transcript
+  get repository(): LedgerRepository {
+    return this.deps.repository
   }
 
   /** Runs `work` in the caller's transaction or its own, then publishes once that one committed. */
@@ -51,16 +50,16 @@ export class Crediting {
     try {
       result = this.deps.transactions.inTransaction(work)
     } catch (error) {
-      this.discardUncommitted()
+      this.discardJoined()
       throw error
     }
-    this.publishCommitted()
+    this.publishJoined()
     return result
   }
 
   /** 09 §5.3 steps 2–3 for one stored unit; queues its events when it is credited. */
   creditIfCreditable(unitKey: UnitKey): boolean {
-    const { store } = this
+    const store = this.deps.repository
     const unit = store.unit(unitKey)
     if (unit === null) return false
     const subject = store.subjectOf(unit.dwarfId)
@@ -74,13 +73,9 @@ export class Crediting {
     })
     if (!decision.creditable) return false
     const { material, tokens, units } = decision
-    if (store.credit(unitKey, unit.mineId, material, tokens, units, 'live') === 'duplicate') {
-      return false
-    }
-    const ledgerEntryId = store.entryOf(unitKey)
-    if (ledgerEntryId === null) {
-      throw new HostInvariantError('a credited unit has no ledger entry (09 §5.3 step 3)')
-    }
+    const credit = store.credit(unitKey, unit.mineId, material, tokens, units, 'live')
+    if (credit.outcome === 'duplicate') return false
+    const { ledgerEntryId } = credit
     const mineId = unit.mineId
     this.queue({
       type: 'MaterialCredited',
@@ -93,13 +88,15 @@ export class Crediting {
     return true
   }
 
-  publishCommitted(): void {
+  /** The caller's transaction committed: publishes the held events, in credit order. */
+  publishJoined(): void {
     const events = this.pending
     this.pending = []
     for (const event of events) this.deps.bus.publish(event)
   }
 
-  discardUncommitted(): void {
+  /** The caller's transaction rolled back: drops the held events. */
+  discardJoined(): void {
     this.pending = []
   }
 

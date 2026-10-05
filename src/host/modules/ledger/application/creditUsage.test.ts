@@ -44,16 +44,16 @@ describe('LedgerCommands and LedgerQueries', () => {
     const w = world()
     const mine = w.addMine('copper')
     const owned = w.addDwarf(mine, 'driver')
-    const transcript = w.ledger.commandsFor('transcript')
+    const commands = w.ledger.commands
 
-    expect(transcript.creditUsage(usage(owned, 'u-1', 30_000))).toBe('stored')
+    expect(commands.creditUsage(usage(owned, 'u-1', 30_000), 'transcript')).toBe('stored')
     // The LaunchRecord is deleted 7 days after the session ended (09 §7.1); the ledger never reads
     // it: the dwarf's stored path still decides, so a later transcript read cannot switch paths.
-    expect(transcript.creditUsage(usage(owned, 'u-2', 30_000))).toBe('stored')
+    expect(commands.creditUsage(usage(owned, 'u-2', 30_000), 'transcript')).toBe('stored')
     expect(w.entries(mine)).toEqual([])
 
     // The authoritative path's observation of the same unit is the one credited.
-    expect(w.ledger.commandsFor('driver').creditUsage(usage(owned, 'u-1', 40_000))).toBe('credited')
+    expect(w.ledger.commands.creditUsage(usage(owned, 'u-1', 40_000), 'driver')).toBe('credited')
     expect(w.ledger.queries.totals(mine).copper).toEqual({ tokens: 40_000 })
   })
 
@@ -61,12 +61,12 @@ describe('LedgerCommands and LedgerQueries', () => {
     const w = world()
     const mine = w.addMine('copper')
     const dwarf = w.addDwarf(mine, 'transcript')
-    const commands = w.ledger.commandsFor('transcript')
+    const commands = w.ledger.commands
 
-    expect(commands.creditUsage(usage(dwarf, 'u-1', 30_000))).toBe('credited')
+    expect(commands.creditUsage(usage(dwarf, 'u-1', 30_000), 'transcript')).toBe('credited')
     // The mine grows into silver (a new measurement): later units pay silver, the copper stays.
     w.measure(mine, 'silver')
-    expect(commands.creditUsage(usage(dwarf, 'u-2', 70_000))).toBe('credited')
+    expect(commands.creditUsage(usage(dwarf, 'u-2', 70_000), 'transcript')).toBe('credited')
 
     expect(w.ledger.queries.totals(mine)).toEqual({
       coal: { tokens: 0 },
@@ -87,9 +87,9 @@ describe('LedgerCommands and LedgerQueries', () => {
     const mines: MineId[] = [w.addMine('bronze'), w.addMine('gold'), w.addMine('bronze')]
     mines.forEach((mine, n) => {
       const dwarf = w.addDwarf(mine, 'transcript')
-      const commands = w.ledger.commandsFor('transcript')
-      commands.creditUsage(usage(dwarf, `u-${n}-a`, 11_000 * (n + 1)))
-      commands.creditUsage(usage(dwarf, `u-${n}-b`, 3_000 * (n + 1)))
+      const commands = w.ledger.commands
+      commands.creditUsage(usage(dwarf, `u-${n}-a`, 11_000 * (n + 1)), 'transcript')
+      commands.creditUsage(usage(dwarf, `u-${n}-b`, 3_000 * (n + 1)), 'transcript')
     })
 
     const entries = mines.flatMap((mine) => w.entries(mine))
@@ -114,22 +114,20 @@ describe('LedgerCommands and LedgerQueries', () => {
 
     // Driver first, then the transcript reports the same unit under another key.
     expect(
-      w.ledger.commandsFor('driver').creditUsage(usage(owned, 'u-1', 100_000, { fidelity: 2 }))
+      w.ledger.commands.creditUsage(usage(owned, 'u-1', 100_000, { fidelity: 2 }), 'driver')
     ).toBe('credited')
-    expect(w.ledger.commandsFor('transcript').creditUsage(usage(owned, 'u-1', 100_000))).toBe(
-      'stored'
-    )
+    expect(w.ledger.commands.creditUsage(usage(owned, 'u-1', 100_000), 'transcript')).toBe('stored')
     // Transcript first for an observed session, then a driver-side report of the same unit.
     expect(
-      w.ledger.commandsFor('driver').creditUsage(usage(observed, 'u-2', 200_000, { fidelity: 2 }))
+      w.ledger.commands.creditUsage(usage(observed, 'u-2', 200_000, { fidelity: 2 }), 'driver')
     ).toBe('stored')
-    expect(w.ledger.commandsFor('transcript').creditUsage(usage(observed, 'u-2', 200_000))).toBe(
+    expect(w.ledger.commands.creditUsage(usage(observed, 'u-2', 200_000), 'transcript')).toBe(
       'credited'
     )
     // A re-read of the same record inserts nothing.
     const reRead = usage(observed, 'u-3', 100_000)
-    expect(w.ledger.commandsFor('transcript').creditUsage(reRead)).toBe('credited')
-    expect(w.ledger.commandsFor('transcript').creditUsage(reRead)).toBe('duplicate')
+    expect(w.ledger.commands.creditUsage(reRead, 'transcript')).toBe('credited')
+    expect(w.ledger.commands.creditUsage(reRead, 'transcript')).toBe('duplicate')
 
     expect(w.entries(mine).map((entry) => entry.unitKey)).toEqual(['u-1', 'u-2', 'u-3'])
     expect(w.ledger.queries.totals(mine).gold).toEqual({ tokens: 400_000 })
@@ -140,11 +138,13 @@ describe('LedgerCommands and LedgerQueries', () => {
     const w = world()
     const mine = w.addMine(null)
     const dwarf = w.addDwarf(mine, 'transcript')
-    const commands = w.ledger.commandsFor('transcript')
+    const commands = w.ledger.commands
 
-    expect(commands.creditUsage(usage(dwarf, 'u-1', 50_000))).toBe('stored')
-    expect(commands.creditUsage(usage(dwarf, 'u-2', 100_000))).toBe('stored')
-    expect(commands.creditUsage(usage(dwarf, 'u-open', 9_000, { sealed: false }))).toBe('stored')
+    expect(commands.creditUsage(usage(dwarf, 'u-1', 50_000), 'transcript')).toBe('stored')
+    expect(commands.creditUsage(usage(dwarf, 'u-2', 100_000), 'transcript')).toBe('stored')
+    expect(
+      commands.creditUsage(usage(dwarf, 'u-open', 9_000, { sealed: false }), 'transcript')
+    ).toBe('stored')
     expect(w.entries(mine)).toEqual([])
     // Still measuring: nothing to credit yet.
     expect(commands.creditSealedUnits(mine)).toEqual({ credited: 0 })
@@ -166,12 +166,15 @@ describe('LedgerCommands and LedgerQueries', () => {
     const w = world()
     const mine = w.addMine('bronze')
     const dwarf = w.addDwarf(mine, 'transcript')
-    const commands = w.ledger.commandsFor('transcript')
+    const commands = w.ledger.commands
 
-    commands.creditUsage(usage(dwarf, 'u-1', 9_000, { sealed: false }))
+    commands.creditUsage(usage(dwarf, 'u-1', 9_000, { sealed: false }), 'transcript')
     expect(w.bus.published).toEqual([])
     // The sealing record is the better observation (fidelity 2), so it is the one credited.
-    commands.creditUsage(usage(dwarf, 'u-1', 25_000, { fidelity: 2, observedAt: INSTALL + 1_200 }))
+    commands.creditUsage(
+      usage(dwarf, 'u-1', 25_000, { fidelity: 2, observedAt: INSTALL + 1_200 }),
+      'transcript'
+    )
 
     const [credited, changed] = w.bus.published
     expect(w.bus.published.map((e) => e.type)).toEqual(['MaterialCredited', 'LedgerTotalsChanged'])
@@ -197,23 +200,23 @@ describe('LedgerCommands and LedgerQueries', () => {
     const w = world()
     const mine = w.addMine('bronze')
     const dwarf = w.addDwarf(mine, 'transcript')
-    const commands = w.ledger.commandsFor('transcript')
+    const commands = w.ledger.commands
 
     w.transactions.inTransaction(() => {
-      expect(commands.creditUsage(usage(dwarf, 'u-1', 10_000))).toBe('credited')
+      expect(commands.creditUsage(usage(dwarf, 'u-1', 10_000), 'transcript')).toBe('credited')
     })
     expect(w.bus.published).toEqual([])
-    w.ledger.publishCommitted()
+    w.ledger.joinedEvents.publish()
     expect(w.bus.published.map((e) => e.type)).toEqual(['MaterialCredited', 'LedgerTotalsChanged'])
 
     expect(() =>
       w.transactions.inTransaction(() => {
-        commands.creditUsage(usage(dwarf, 'u-2', 10_000))
+        commands.creditUsage(usage(dwarf, 'u-2', 10_000), 'transcript')
         throw new Error('the batch failed')
       })
     ).toThrow('the batch failed')
-    w.ledger.discardUncommitted()
-    w.ledger.publishCommitted()
+    w.ledger.joinedEvents.discard()
+    w.ledger.joinedEvents.publish()
     expect(w.bus.published).toHaveLength(2)
     expect(w.entries(mine).map((entry) => entry.unitKey)).toEqual(['u-1'])
   })
@@ -222,12 +225,12 @@ describe('LedgerCommands and LedgerQueries', () => {
     const w = world()
     const mine = w.addMine('bronze')
     const dwarf = w.addDwarf(mine, 'transcript')
-    const commands = w.ledger.commandsFor('transcript')
+    const commands = w.ledger.commands
 
     w.setResetInProgress(true)
-    expect(commands.creditUsage(usage(dwarf, 'u-1', 10_000))).toBe('stored')
+    expect(commands.creditUsage(usage(dwarf, 'u-1', 10_000), 'transcript')).toBe('stored')
     w.setResetInProgress(false)
-    expect(commands.creditUsage(usage(dwarf, 'u-2', 10_000))).toBe('credited')
+    expect(commands.creditUsage(usage(dwarf, 'u-2', 10_000), 'transcript')).toBe('credited')
     expect(w.entries(mine).map((entry) => entry.unitKey)).toEqual(['u-2'])
   })
 })

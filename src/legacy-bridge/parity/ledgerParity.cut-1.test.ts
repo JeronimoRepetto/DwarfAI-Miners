@@ -113,13 +113,13 @@ function hostCredited(session: FixtureSession): number {
   w.setInstallMoment(INSTALL)
   const mine = w.addMine(session.tier)
   const dwarf = w.addDwarf(mine, 'transcript')
-  const commands = w.ledger.commandsFor('transcript')
+  const commands = w.ledger.commands
   const records: UsageObservation[] = session.units.map((tokens, n) =>
     record(dwarf, session.name, n, tokens)
   )
   // An offline session is read from its cursor at the next boot (ADR-006 item 7): the same records.
   const reads = session.reRead === true ? [records, records] : [records]
-  for (const read of reads) for (const o of read) commands.creditUsage(o)
+  for (const read of reads) for (const o of read) commands.creditUsage(o, 'transcript')
   if (session.tier === null && session.measuredAs !== undefined) {
     w.measure(mine, session.measuredAs)
     commands.creditSealedUnits(mine)

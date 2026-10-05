@@ -1,7 +1,7 @@
 // The LedgerRepository double (16 §4.10 `InMemoryLedgerRepository`; 16 §2.8): the rows of
 // `usage_units`, `usage_observations`, `ledger_entries` and the facts of `dwarfs`, `mines`,
 // `install_moment` and `reset_journal` that 09 §5.3 reads, kept in one `InMemoryLedgerWorld`
-// that every instance (one per path) shares. It passes `runLedgerRepositoryContract`, as the
+// that every instance over the same storage shares. It passes `runLedgerRepositoryContract`, as the
 // SQLite adapter does. Never imported by production code (R14).
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { UsageObservation } from '../../../kernel/domain/sharedContracts'
@@ -18,8 +18,9 @@ import {
 } from '../domain/materials'
 import type {
   BestObservation,
+  CreditOutcome,
   CreditSubject,
-  LedgerStore,
+  LedgerRepository,
   StoredUsageUnit
 } from '../ports/ledgerRepository'
 
@@ -97,21 +98,19 @@ export class InMemoryLedgerWorld {
 
 export interface InMemoryLedgerRepositoryDeps {
   world: InMemoryLedgerWorld
-  /** The path of the observations this instance records (`usage_observations.path`). */
-  path: UsagePath
   scope: TransactionScope
   ids: IdGenerator
   clock: Clock
 }
 
-export class InMemoryLedgerRepository implements LedgerStore {
+export class InMemoryLedgerRepository implements LedgerRepository {
   constructor(private readonly deps: InMemoryLedgerRepositoryDeps) {}
 
   private get rows(): WorldRows {
     return this.deps.world.rows
   }
 
-  record(o: UsageObservation, mineId: MineId): 'new' | 'duplicate' {
+  record(o: UsageObservation, mineId: MineId, path: UsagePath): 'new' | 'duplicate' {
     this.requireTransaction('record')
     if (this.rows.observations.has(o.sourceKey)) return 'duplicate'
     const existing = this.rows.units.get(o.unitKey)
@@ -132,7 +131,7 @@ export class InMemoryLedgerRepository implements LedgerStore {
     this.rows.observations.set(o.sourceKey, {
       sourceKey: o.sourceKey,
       unitKey: o.unitKey,
-      path: this.deps.path,
+      path,
       fidelity: o.fidelity,
       tokens: usageTokens(o.tokens),
       observedAt: o.observedAt
@@ -147,15 +146,16 @@ export class InMemoryLedgerRepository implements LedgerStore {
     tokens: number,
     units: number,
     kind: 'live' | 'coal-backfill'
-  ): 'credited' | 'duplicate' {
+  ): CreditOutcome {
     this.requireTransaction('credit')
-    if (this.rows.entries.has(unitKey)) return 'duplicate'
+    if (this.rows.entries.has(unitKey)) return { outcome: 'duplicate' }
     // The table CHECK of 09 §4.7: coal only via the backfill, and the backfill pays only coal.
     if ((kind === 'coal-backfill') !== (m === 'coal')) {
       throw new HostInvariantError(`a ${kind} credit of ${m} violates the ledger_entries CHECK`)
     }
+    const ledgerEntryId = this.deps.ids.uuidv7()
     this.rows.entries.set(unitKey, {
-      id: this.deps.ids.uuidv7(),
+      id: ledgerEntryId,
       unitKey,
       mineId,
       material: m,
@@ -164,7 +164,7 @@ export class InMemoryLedgerRepository implements LedgerStore {
       kind,
       creditedAt: this.deps.clock.now()
     })
-    return 'credited'
+    return { outcome: 'credited', ledgerEntryId }
   }
 
   totals(mineId: MineId): MaterialTotals {
@@ -208,10 +208,6 @@ export class InMemoryLedgerRepository implements LedgerStore {
       .filter((u) => u.mineId === mineId && u.sealed && !this.rows.entries.has(u.unitKey))
       .sort((a, b) => a.firstObservedAt - b.firstObservedAt || compare(a.unitKey, b.unitKey))
       .map((u) => u.unitKey)
-  }
-
-  entryOf(unitKey: UnitKey): string | null {
-    return this.rows.entries.get(unitKey)?.id ?? null
   }
 
   /** `usage_observations_unit`: highest fidelity, ties to the earlier, then by key (ADR-006 item 5). */

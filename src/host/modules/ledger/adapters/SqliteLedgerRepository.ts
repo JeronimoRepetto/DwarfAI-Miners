@@ -1,6 +1,6 @@
 // `SqliteLedgerRepository` (16 §4.10; 05 §3.10): the ledger tables of 09 §4.7 in bound SQL through
-// the kernel `SqliteDatabase` port (R11), plus the reads 09 §5.3 step 2 makes of `dwarfs`, `mines`,
-// `install_moment` and `reset_journal` (`UsageUnitReads`, see ports/ledgerRepository.ts). It reads
+// the kernel `SqliteDatabase` port (R11), with the reads 09 §5.3 step 2 makes of `dwarfs`, `mines`,
+// `install_moment` and `reset_journal` (16 §4.10 as amended 2026-10-05). It reads
 // other modules' rows and writes only the ledger's, as `SqliteMineRepository` reads
 // `material_totals`. Replaces today's `sqliteLedgerStore.ts` (a whole-state rewrite of the
 // last-seen-counter vault, superseded by ADR-006); nothing of it is kept.
@@ -11,9 +11,10 @@
 // - `record` (09 §5.3 step 1): a `sourceKey` already stored answers `'duplicate'` and writes
 //   nothing, not even the unit's seal (INV-90). Otherwise the unit is upserted (`sealed` only ever
 //   rises; `provider_time` and `sealed_at` become those of the sealing record) and the observation
-//   is inserted with this instance's `path`.
+//   is inserted with the `path` it arrived by.
 // - `credit` (09 §5.3 step 3): one insert, `ON CONFLICT (unit_key) DO NOTHING`, so a unit has one
-//   entry whatever path or retry reaches it (ADR-006 item 5); its `source_key` is the unit's best
+//   entry whatever path or retry reaches it (ADR-006 item 5), and answers the new entry's id; its
+//   `source_key` is the unit's best
 //   observation on the dwarf's stored path. The `ledger_entries_accumulate` trigger adds it to
 //   `material_totals` in the same transaction (ADR-006 item 9); the coal CHECK and
 //   `ledger_entries_immutable` stay the database's backstops (INV-95, INV-99).
@@ -34,8 +35,9 @@ import {
 } from '../domain/materials'
 import type {
   BestObservation,
+  CreditOutcome,
   CreditSubject,
-  LedgerStore,
+  LedgerRepository,
   StoredUsageUnit
 } from '../ports/ledgerRepository'
 
@@ -48,8 +50,6 @@ export interface SqliteLedgerRepositoryDeps {
   ids: IdGenerator
   /** `ledger_entries.credited_at`. */
   clock: Clock
-  /** The path of the observations this instance records (`usage_observations.path`). */
-  path: UsagePath
 }
 
 const OBSERVATION_EXISTS = 'SELECT 1 AS found FROM usage_observations WHERE source_key = ?'
@@ -106,14 +106,12 @@ const SEALED_UNCREDITED = `SELECT u.unit_key FROM usage_units u
     AND NOT EXISTS (SELECT 1 FROM ledger_entries e WHERE e.unit_key = u.unit_key)
   ORDER BY u.first_observed_at, u.unit_key`
 
-const ENTRY_ID = 'SELECT id FROM ledger_entries WHERE unit_key = ?'
-
 const PATHS: readonly UsagePath[] = ['driver', 'transcript']
 
-export class SqliteLedgerRepository implements LedgerStore {
+export class SqliteLedgerRepository implements LedgerRepository {
   constructor(private readonly deps: SqliteLedgerRepositoryDeps) {}
 
-  record(o: UsageObservation, mineId: MineId): 'new' | 'duplicate' {
+  record(o: UsageObservation, mineId: MineId, path: UsagePath): 'new' | 'duplicate' {
     this.requireTransaction('record')
     const { db } = this.deps
     if (db.all(OBSERVATION_EXISTS, [o.sourceKey]).length > 0) return 'duplicate'
@@ -130,7 +128,7 @@ export class SqliteLedgerRepository implements LedgerStore {
     db.run(INSERT_OBSERVATION, [
       o.sourceKey,
       o.unitKey,
-      this.deps.path,
+      path,
       o.fidelity,
       o.tokens.inputNet,
       o.tokens.output,
@@ -151,10 +149,11 @@ export class SqliteLedgerRepository implements LedgerStore {
     tokens: number,
     units: number,
     kind: 'live' | 'coal-backfill'
-  ): 'credited' | 'duplicate' {
+  ): CreditOutcome {
     this.requireTransaction('credit')
+    const ledgerEntryId = this.deps.ids.uuidv7()
     const { changes } = this.deps.db.run(INSERT_ENTRY, [
-      this.deps.ids.uuidv7(),
+      ledgerEntryId,
       unitKey,
       mineId,
       m,
@@ -164,7 +163,7 @@ export class SqliteLedgerRepository implements LedgerStore {
       unitKey,
       this.deps.clock.now()
     ])
-    return changes === 1 ? 'credited' : 'duplicate'
+    return changes === 1 ? { outcome: 'credited', ledgerEntryId } : { outcome: 'duplicate' }
   }
 
   totals(mineId: MineId): MaterialTotals {
@@ -218,11 +217,6 @@ export class SqliteLedgerRepository implements LedgerStore {
 
   sealedUncredited(mineId: MineId): UnitKey[] {
     return this.deps.db.all(SEALED_UNCREDITED, [mineId]).map((row) => String(row['unit_key']))
-  }
-
-  entryOf(unitKey: UnitKey): string | null {
-    const row = this.deps.db.all(ENTRY_ID, [unitKey])[0]
-    return row === undefined ? null : String(row['id'])
   }
 
   private requireTransaction(method: string): void {

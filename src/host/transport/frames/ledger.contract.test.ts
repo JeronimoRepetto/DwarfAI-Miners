@@ -42,7 +42,7 @@ describe('the ledger frame (14 §2.4 B-F20; 08 §0 LedgerTotalsChanged)', () => 
     const mineB = w.addMine('gold')
     const dwarfA = w.addDwarf(mineA, 'transcript')
     const dwarfB = w.addDwarf(mineB, 'transcript')
-    const commands = w.ledger.commandsFor('transcript')
+    const commands = w.ledger.commands
 
     const connections = new ConnectionRegistry()
     publishLedgerFrames({ events: w.bus, ledger: w.ledger.queries, frames: connections })
@@ -58,9 +58,9 @@ describe('the ledger frame (14 §2.4 B-F20; 08 §0 LedgerTotalsChanged)', () => 
     const client = new FrameClient(faults.client)
 
     // A stored observation (not sealed yet) sends nothing.
-    commands.creditUsage({ ...usage(dwarfA, 'u-0', 1), sealed: false })
+    commands.creditUsage({ ...usage(dwarfA, 'u-0', 1), sealed: false }, 'transcript')
     // The first credit goes out at once.
-    commands.creditUsage(usage(dwarfA, 'u-1', 30_000))
+    commands.creditUsage(usage(dwarfA, 'u-1', 30_000), 'transcript')
     // The client stops reading and a frame larger than the socket's high water fills it: the next
     // frames wait in the queue, where a newer ledger.changed of the same mine replaces the waiting
     // one at the highest seq (14 §1.8).
@@ -68,9 +68,9 @@ describe('the ledger frame (14 §2.4 B-F20; 08 §0 LedgerTotalsChanged)', () => 
     const filler = { mine: { name: 'x'.repeat(faults.host.writableHighWaterMark) } }
     connections.publishFrame('mine.changed', filler as unknown as HostFrameData['mine.changed'])
     expect(faults.host.writableNeedDrain).toBe(true)
-    commands.creditUsage(usage(dwarfB, 'u-2', 100_000))
-    commands.creditUsage(usage(dwarfA, 'u-3', 20_000))
-    commands.creditUsage(usage(dwarfA, 'u-4', 25_000))
+    commands.creditUsage(usage(dwarfB, 'u-2', 100_000), 'transcript')
+    commands.creditUsage(usage(dwarfA, 'u-3', 20_000), 'transcript')
+    commands.creditUsage(usage(dwarfA, 'u-4', 25_000), 'transcript')
     faults.resumeReads()
     await client.settle()
 
