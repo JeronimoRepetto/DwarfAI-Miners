@@ -142,8 +142,14 @@ export function attributeSession(
 // ---------------------------------------------------------------------------------------------------------------
 // The per-OS listings.
 
-/** The bound on one listing query; Windows compiles its reader first, which takes a few seconds on a cold machine. */
-export const LISTING_TIMEOUT_MS = 20_000
+/**
+ * The bound on one listing query: a hang detector, never a speed check (the report records `listingMs`). Windows
+ * compiles its reader (Add-Type) and queries CIM, which took 0.7-2.2 s in eight Windows CI runs of 2026-10-05, 11.5 s
+ * on a loaded runner (run 37287673670) and more than 20 s in run 37284110939, where the OS lane's other files ran 5 to
+ * 22 times slower than usual (S-030-1 0.1 s → 7.3 s, sqlite fileProtection 1.6 s → 36 s). 60 s is over 25 times the
+ * usual worst.
+ */
+export const LISTING_TIMEOUT_MS = 60_000
 
 function run(
   file: string,
