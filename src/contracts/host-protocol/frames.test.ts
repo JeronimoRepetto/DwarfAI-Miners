@@ -4,6 +4,8 @@ import type {
   AttentionKind,
   DwarfId,
   DwarfWire,
+  Material,
+  MaterialAmount,
   MineId,
   MineWire,
   OsNotification,
@@ -327,5 +329,47 @@ describe('attention.notify and attention.withdraw payloads (14 §3.5, B-F22, B-F
   it('[NFR-SEC-12] attention.notify is a sensitive frame: its payload is never logged (14 §3.5)', () => {
     expect(SENSITIVE_FRAMES).toContain('attention.notify')
     expect(SENSITIVE_FRAMES).not.toContain('attention.withdraw')
+  })
+})
+
+describe('ledger.changed payload (14 §3.5, B-F20)', () => {
+  const MINE = '01920000-0000-7000-8000-00000000000a'
+  const TOTALS = {
+    coal: { tokens: 2_600 },
+    bronze: { tokens: 0 },
+    copper: { tokens: 30_000 },
+    silver: { tokens: 0 },
+    gold: { tokens: 0 },
+    uranium: { tokens: 0 }
+  }
+
+  it('[US-MINE-010.AC02, ADR-006] the ledger.changed schema infers exactly its 14 §3.5 payload with six separate material totals and refuses any other key', () => {
+    expectTypeOf<HostFrames['ledger.changed']>().toEqualTypeOf<{
+      mineId: MineId
+      totals: Record<Material, MaterialAmount>
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ledger.changed']>>().toEqualTypeOf<
+      HostFrames['ledger.changed']
+    >()
+
+    const changed = HOST_FRAME_SCHEMAS['ledger.changed']
+    expect(changed.safeParse({ mineId: MINE, totals: TOTALS }).success).toBe(true)
+    // Six materials, each its own count: never a summed total, never a missing material.
+    expect(
+      changed.safeParse({ mineId: MINE, totals: { ...TOTALS, all: { tokens: 32_600 } } }).success
+    ).toBe(false)
+    const five: Partial<typeof TOTALS> = { ...TOTALS }
+    delete five.uranium
+    expect(changed.safeParse({ mineId: MINE, totals: five }).success).toBe(false)
+    expect(changed.safeParse({ mineId: MINE, totals: TOTALS, total: 32_600 }).success).toBe(false)
+    expect(
+      changed.safeParse({ mineId: MINE, totals: { ...TOTALS, coal: { tokens: -1 } } }).success
+    ).toBe(false)
+    expect(
+      changed.safeParse({ mineId: MINE, totals: { ...TOTALS, coal: { tokens: 1, units: 0 } } })
+        .success
+    ).toBe(false)
+    expect(changed.safeParse({ totals: TOTALS }).success).toBe(false)
+    expect(SENSITIVE_FRAMES).not.toContain('ledger.changed')
   })
 })
