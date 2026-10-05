@@ -4,7 +4,7 @@ import { useDwarfKicking } from './useDwarfKicking'
 import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfPaging } from './useDwarfPaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
-import { useMines } from './useMines'
+import { useMines, type BoardWalk } from './useMines'
 import { useToasts } from './useToasts'
 import { MESSAGE_COPIED } from '../lib/delivery/deliveryVerdict'
 import { shouldHidePanelAfterActivation } from '../lib/delivery/activation'
@@ -52,7 +52,7 @@ import type {
  * across the bridge for the shell to draw.
  */
 export function useMessageDock() {
-  const { state: mines } = useMines()
+  const { state: mines, onWalk } = useMines()
   const { showToast } = useToasts()
   const {
     state: messagingState,
@@ -596,16 +596,31 @@ export function useMessageDock() {
     }
   }
 
+  /**
+   * The open chat when its dwarf's process closes (ISSUE-092; 07 S2.04…S2.06; US-OBS-005.AC03): the board's
+   * walk-outs come only from a Host `dwarf.departed` frame (14 §4.3 rule 6), so on today's feed none arrives and
+   * nothing here changes. A stopped or outside-closed dwarf's panel stays open — the board keeps it as 'leaving'
+   * while it walks out, and `lastSelectedDwarf` after — so the conversation stays with the composer disabled. A
+   * dwarf whose mine was removed closes its panel outright (S2.05).
+   */
+  function followDeparture(walk: BoardWalk): void {
+    if (walk.kind !== 'walk-out' || walk.panel !== 'closed') return
+    if (surface.value.surface === 'message' && openDwarfId.value === walk.dwarfId) close()
+  }
+
   let unlistenLaunchFailures: (() => void) | undefined
   /** Main's verdict for a message it HELD (#457): the bubble waiting on it is drawn here. */
   let unlistenHeldMessages: (() => void) | undefined
+  let unlistenWalks: (() => void) | undefined
   onMounted(() => {
     unlistenLaunchFailures = launch.listenFailures()
     unlistenHeldMessages = listenHeldMessages()
+    unlistenWalks = onWalk(followDeparture)
   })
   onBeforeUnmount(() => {
     unlistenLaunchFailures?.()
     unlistenHeldMessages?.()
+    unlistenWalks?.()
   })
 
   return {
