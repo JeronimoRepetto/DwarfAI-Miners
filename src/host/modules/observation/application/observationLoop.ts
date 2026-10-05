@@ -43,6 +43,7 @@ import type { Scheduler } from '../../../kernel/ports/scheduler'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { ConversationEntry, UsageObservation } from '../../suppliers'
 import { generationStreamId, sourceRestarted } from '../domain/cursor'
+import { holdsFirstMessage } from '../domain/firstMessage'
 import { observedTransition } from '../domain/observedSession'
 import type { CursorStore } from '../ports/cursorStore'
 import type {
@@ -252,7 +253,7 @@ export class ObservationLoop {
       const session = this.deps.sessions.byIdentity(identity)
 
       if (session === null) {
-        const firstMessage = entries.some((e) => e.role === 'person')
+        const firstMessage = holdsFirstMessage(entries)
         const parent = records.find((r) => r.kind === 'session')
         const announceKey = JSON.stringify([key, streamId, firstMessage])
         if (cwd !== undefined && !this.announced.has(announceKey)) {
