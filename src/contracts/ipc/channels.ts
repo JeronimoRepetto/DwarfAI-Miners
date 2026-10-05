@@ -76,6 +76,7 @@ import {
   hostConnectionViewSchema,
   openCodeSettingsViewSchema,
   rendererDiagnosticSchema,
+  revealDwarfChatPushSchema,
   stopEverythingRequestedSchema,
   getUiPreferencesRequestSchema,
   uiPreferencesAnswerSchema,
@@ -773,6 +774,17 @@ export const CHANNELS = {
     request: none,
     response: z.array(hostFrameSchema),
     sensitive: true
+  },
+  // A-N16 `onRevealDwarfChat` (ADR-018 item 6; ADR-025 item 8; PO #96): UI main's reveal of a dwarf's chat after a
+  // notification click, pushed to the mode window it reveals in; the successor of A-P5 `onShowMine` (the Host never
+  // pushes a "show"). Ids only, so not `sensitive`
+  'mode:revealDwarfChat': {
+    name: 'mode:revealDwarfChat',
+    kind: 'push',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: revealDwarfChatPushSchema
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
