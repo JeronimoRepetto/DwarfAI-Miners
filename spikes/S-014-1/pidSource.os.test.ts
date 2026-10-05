@@ -9,7 +9,8 @@
 //                     without asserting it. Needs S0141_STEMS (comma-separated, e.g. `codex`), S0141_CWD (the
 //                     throwaway folder) and S0141_SESSION_START (the session's first record, ISO 8601 or epoch ms).
 //                     Only stems, counts, outcomes and millisecond gaps are recorded: never a pid, a path or a name.
-//   S0141_REPORT      a file to write the JSON report to (the stub run's, or the real run's).
+//   S0141_REPORT      a file to write the JSON report to (the stub run's, or the real run's); or SPIKE_REPORT_DIR, which
+//                     writes <dir>/S-014-1-<platform>-<mode>.json (CI uploads that folder as spike-evidence-<os>).
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { release, tmpdir } from 'node:os'
@@ -36,7 +37,10 @@ const STUB = path.join(here, 'stub', 'codex.cjs')
 const SLEEPER = path.resolve(here, '..', '..', 'fixtures', 'bin', 'sleeper', 'sleeper.mjs')
 const CODEX: ProviderMatcher = { stems: ['codex'] }
 const mode = process.env['S0141_MODE'] ?? 'stub'
-const reportFile = process.env['S0141_REPORT']
+const reportDir = process.env['SPIKE_REPORT_DIR']
+const reportFile =
+  process.env['S0141_REPORT'] ??
+  (reportDir ? path.resolve(reportDir, `S-014-1-${process.platform}-${mode}.json`) : undefined)
 
 const started: ChildProcessWithoutNullStreams[] = []
 
