@@ -27,7 +27,6 @@ import type { DwarfId, ProviderIdentity } from '../../kernel/domain/values'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import { createConversation, type ConversationEvent } from '../../modules/conversation'
-import { SqliteMessageLog } from '../../modules/conversation/adapters/SqliteMessageLog'
 import {
   OBSERVATION_POLL_MS,
   createObservation,
@@ -288,7 +287,6 @@ function host() {
   }
   let running = boot()
 
-  const reader = new SqliteMessageLog({ db, scope: transactions, clock, ids })
   const count = (table: 'messages' | 'message_keys') =>
     Number(db.all(`SELECT count(*) AS n FROM ${table}`)[0]?.['n'])
   const keyRow = (sourceKey: string) =>
@@ -308,8 +306,9 @@ function host() {
     keyRow,
     rowWithKey,
     dwarfOf: (provider: Observer) => dwarfOf.get(provider)!,
-    /** `MessageLog.page` over the Host database: what a reopened chat reads (ADR-007 item 6). */
-    page: (provider: Observer) => reader.page(dwarfOf.get(provider)!, {}),
+    /** `ConversationQueries.feed` over the Host database: what a reopened chat reads (ADR-007 item 6, ISSUE-103). */
+    page: (provider: Observer) =>
+      running.conversation.queries.feed(dwarfOf.get(provider)!).messages,
     get observation() {
       return running.observation
     },

@@ -78,3 +78,24 @@ describe('createConversation', () => {
     expect(bus.published).toEqual([])
   })
 })
+
+describe('the wired conversation queries (16 §4.6 ConversationQueries)', () => {
+  it('[ADR-007] the wired feed pages the stored rows of the Host database newest first by provider time, as MessageView', () => {
+    const { conversation, dwarf } = setUp()
+    // A catch-up read: the later batch carries the older provider times.
+    conversation.commands.ingest(dwarf, [entry(3), entry(4)], 'live-stream')
+    conversation.commands.ingest(dwarf, [entry(1), entry(2)], 'transcript')
+
+    const newest = conversation.queries.feed(dwarf, { limit: 3 })
+    expect(newest.messages.map((m) => [m.text, m.providerTime])).toEqual([
+      ['message 4', T0 + 4],
+      ['message 3', T0 + 3],
+      ['message 2', T0 + 2]
+    ])
+    expect(newest.reachedStart).toBe(false)
+    expect(newest.messages.every((m) => !('sourceKey' in m) && !('origin' in m))).toBe(true)
+    const rest = conversation.queries.feed(dwarf, { before: newest.messages[2]?.id })
+    expect(rest.messages.map((m) => m.text)).toEqual(['message 1'])
+    expect(rest.reachedStart).toBe(true)
+  })
+})

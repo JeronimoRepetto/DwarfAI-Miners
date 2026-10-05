@@ -178,13 +178,15 @@ describe('notificationPresenter (ISSUE-113)', () => {
     }
   })
 
-  it('[ADR-018] a click on a shown notification is handed to the placeholder, which logs the event name only', () => {
+  // AMENDED for ISSUE-114 (was: "…is handed to the placeholder, which logs the event name only"): the reveal landed
+  // (revealDwarfChat.test.ts); a presenter composed without its `click` deps keeps the placeholder's behaviour.
+  it('[ADR-018] a click on a shown notification with no reveal composed logs the event name only', () => {
     const { frames, display, log } = world()
     frames.notify(notification())
 
     expect(display.click(notification().key)).toBe(true)
 
-    // The reveal itself is ISSUE-114's (later); here the click is a no-op that logs the event name.
+    // No `click` deps: the click is a no-op that logs the event name.
     expect(log.byEvent('notification.display')).toEqual([
       {
         level: 'debug',

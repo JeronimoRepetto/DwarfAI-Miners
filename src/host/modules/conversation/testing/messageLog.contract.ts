@@ -90,9 +90,8 @@ export function runMessageLogContract(
       expect(second).toEqual({ inserted: 0, appended: [] })
       expect(s.rowCount(dwarf)).toBe(1)
       expect(s.keyOf(live.sourceKey)).toEqual({ dwarfId: dwarf, messageId: first.appended[0]?.id })
-      expect(s.log.page(dwarf, {})).toEqual([
-        { sourceKey: live.sourceKey, role: 'person', text: 'hello', providerTime: 1_000 }
-      ])
+      // The page holds the stored row itself (16 §4.6 as amended, ISSUE-103).
+      expect(s.log.page(dwarf, {})).toEqual(first.appended)
     })
 
     it('[INV-60] a dropped record claims its key with no message row, and a later replay of that key inserts nothing', async () => {
@@ -187,6 +186,56 @@ export function runMessageLogContract(
       // `before` pages past a row: the rows older than it, newest first.
       expect(keys({ before: untimedId })).toEqual([middle.sourceKey, oldest.sourceKey])
       expect(s.log.page(other, {}).map((e) => e.sourceKey)).toEqual([otherDwarfs.sourceKey])
+    })
+
+    it('[ADR-007] page returns every stored row of the dwarf as a Message, DwarfAI-sent rows and answers-records included with their delivery, newest first by sortAt then id', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      const { appended } = s.inTransaction(() =>
+        s.log.append(
+          dwarf,
+          [
+            entry(1, { providerTime: s.now + 1, role: 'dwarf' }),
+            entry(2, { providerTime: s.now - 1, role: 'person' })
+          ],
+          'transcript'
+        )
+      )
+      // Seeded rows have no provider time: they sort at their createdAt (`now`), ties by id.
+      const waiting = s.seedWaitingRow(dwarf, 'send-request-9', 'waiting')
+      const sending = s.seedSendingRow(dwarf, 'sending')
+      const record = s.seedAnswersRecord(dwarf, 'Answers: yes')
+      s.seedSendingRow(other, 'elsewhere')
+      const [newer, older] = appended
+
+      const page = s.log.page(dwarf, {})
+      expect(page.map((m) => m.id)).toEqual([newer?.id, record, sending, waiting, older?.id])
+      expect(page[0]).toEqual(newer)
+      expect(page.map((m) => [m.role, m.origin, m.text])).toEqual([
+        ['dwarf', 'transcript', 'message 1'],
+        ['answers-record', 'dwarfai', 'Answers: yes'],
+        ['person', 'dwarfai', 'sending'],
+        ['person', 'dwarfai', 'waiting'],
+        ['person', 'transcript', 'message 2']
+      ])
+      const sendingRow = page.find((m) => m.id === sending)
+      expect(sendingRow?.sourceKey).toBeNull()
+      expect(sendingRow?.delivery).toEqual({
+        messageId: sending,
+        dwarfId: dwarf,
+        kind: 'message',
+        phase: 'sending',
+        attempts: 1,
+        phaseAt: s.now
+      })
+      expect(page.find((m) => m.id === record)?.delivery).toMatchObject({
+        kind: 'answers-record',
+        phase: 'delivered'
+      })
+      expect(page.find((m) => m.id === waiting)?.delivery).toBeUndefined()
+      // `before` and `limit` page over the same rows.
+      expect(s.log.page(dwarf, { before: sending, limit: 1 }).map((m) => m.id)).toEqual([waiting])
+      expect(s.log.page(dwarf, { before: waiting }).map((m) => m.id)).toEqual([older?.id])
     })
 
     it('[ADR-007] append outside an open transaction throws HostInvariantError', async () => {

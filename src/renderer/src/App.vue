@@ -185,6 +185,28 @@ const {
 } = useNotificationSettings()
 /* --- end of the #316 block ------------------------------------------------- */
 
+/* --- Notification reveal (ISSUE-114) — one block, appended ------------------ */
+// The reveal a notification click runs (ADR-018 item 6; ADR-025 item 8; 14 §2.2 A-N16): UI main chose the mode and
+// pushes `{ mineId, dwarfId | null }` here; the Panel selects the mine, brings the dwarf's card into view and opens its
+// chat. `dwarfId` null, or a dwarf no longer on the mine's board, is the mine with no chat ('mine-only'). Unlike #316's
+// `onShowMine`, which stays beside it until the cut-1 switch drops A-P5 (ISSUE-123), the chat IS opened: the person
+// asked for that dwarf. No voice plays: a click on the dwarf itself is the only thing that makes one speak (#173).
+let unlistenRevealDwarfChat: (() => void) | undefined
+async function revealDwarfChat(target: { mineId: string; dwarfId: string | null }): Promise<void> {
+  showMineFromNotification(target.mineId)
+  // The mine watch closes the dock when the mine changes: the chat opens after it ran, not before.
+  await nextTick()
+  const dwarfId = target.dwarfId
+  if (dwarfId === null || !currentMine.value?.dwarfs.some((d) => d.id === dwarfId)) return
+  rememberDockOpener()
+  dock.openMessage(target.mineId, dwarfId)
+  await nextTick()
+  const cards = shellEl.value?.querySelectorAll<HTMLElement>('button.dm-dwarf[data-dwarf]') ?? []
+  const card = [...cards].find((el) => el.dataset['dwarf'] === dwarfId)
+  card?.scrollIntoView?.({ block: 'nearest' })
+}
+/* --- end of the ISSUE-114 block --------------------------------------------- */
+
 /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
 /**
  * Settings' Jev API-key control (#509).
@@ -1172,6 +1194,9 @@ onMounted(() => {
   void syncNotifications()
   unlistenShowMine = window.api.onShowMine((mineId) => showMineFromNotification(mineId))
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
+  unlistenRevealDwarfChat = window.api.onRevealDwarfChat((target) => void revealDwarfChat(target))
+  /* --- end of the ISSUE-114 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   // Adopts the stored faces, and listens to main's broadcast of them — which
   // since #635 only ever comes from this window's own Settings, applied twice.
@@ -1199,6 +1224,9 @@ onBeforeUnmount(() => {
   /* --- System notifications (#316) — one block, appended ------------------- */
   unlistenShowMine?.()
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
+  unlistenRevealDwarfChat?.()
+  /* --- end of the ISSUE-114 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   unlistenTypography?.()
   /* --- end of the #370 block ----------------------------------------------- */

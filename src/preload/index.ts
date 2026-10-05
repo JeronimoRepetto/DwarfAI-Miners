@@ -329,6 +329,10 @@ export interface DwarfAiMinersApi {
   ) => Promise<TargetResult<'host:snapshot'>>
   /** A-N02 · `host:event` · push · NEW · target shape */
   onHostEvent: (listener: (payload: TargetResult<'host:event'>) => void) => () => void
+  /** A-N16 · `mode:revealDwarfChat` · push · NEW · target shape */
+  onRevealDwarfChat: (
+    listener: (payload: TargetResult<'mode:revealDwarfChat'>) => void
+  ) => () => void
 }
 
 const api: DwarfAiMinersApi = {
@@ -599,6 +603,13 @@ const api: DwarfAiMinersApi = {
     }
     ipcRenderer.on('host:event', wrapped)
     return () => ipcRenderer.removeListener('host:event', wrapped)
+  },
+  onRevealDwarfChat: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
+      listener(payload as TargetResult<'mode:revealDwarfChat'>)
+    }
+    ipcRenderer.on('mode:revealDwarfChat', wrapped)
+    return () => ipcRenderer.removeListener('mode:revealDwarfChat', wrapped)
   }
 }
 

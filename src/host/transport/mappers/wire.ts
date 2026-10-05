@@ -11,11 +11,23 @@
 //   true value of a mine nothing has been credited to.
 // - A removed mine never crosses as a `MineWire` (its state has no wire value; it is
 //   `mine.removed`, later: ISSUE-080): mapping one is a defect.
+// - A stored message crosses as 14 §3.6 `MessageView` (06 §0.2): the domain view already left out
+//   the row's `sourceKey`, `origin` and `askId` (conversation `toMessageView`); here each wire
+//   field is named and copied, so a field the domain grows never crosses unseen.
 // - `DwarfWire.workplace` (the worktree chip, mines' stamp, ADR-030 D4) and `outcome` (the outcome
 //   line, conversation's, INV-67) are not in `DwarfView`; they join when their owners do.
-import type { DwarfWire, FolderPath, Material, MaterialAmount, MineWire } from '@dwarfai/contracts'
+import type {
+  Delivery as DeliveryWire,
+  DwarfWire,
+  FolderPath,
+  Material,
+  MaterialAmount,
+  MessageView as MessageWire,
+  MineWire
+} from '@dwarfai/contracts'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { MineId } from '../../kernel/domain/values'
+import type { Delivery, MessageView } from '../../modules/conversation'
 import type { DwarfView } from '../../modules/crew'
 import type { MineView } from '../../modules/mines'
 
@@ -95,5 +107,40 @@ export function toDwarfWire(view: DwarfView): DwarfWire {
     stopUnavailableReason: view.stopUnavailableReason,
     owned: view.owned,
     arrivedAt: view.arrivedAt
+  }
+}
+
+/** 14 §3.6 `MessageView` of a stored message (06 §0.2): no `sourceKey`, `origin` or `askId`. */
+export function toMessageWire(view: MessageView): MessageWire {
+  return {
+    id: view.id,
+    dwarfId: view.dwarfId,
+    role: view.role,
+    text: view.text,
+    ...(view.issuer === undefined ? {} : { issuer: { dwarfId: view.issuer.dwarfId } }),
+    ...(view.activity === undefined
+      ? {}
+      : { activity: { steps: view.activity.steps, summaries: [...view.activity.summaries] } }),
+    attachments: view.attachments.map((a) => ({ name: a.name, bytes: a.bytes })),
+    ...(view.delivery === undefined ? {} : { delivery: toDeliveryWire(view.delivery) }),
+    providerTime: view.providerTime,
+    createdAt: view.createdAt
+  }
+}
+
+/** ADR-022 item 1 `Delivery` as it crosses seam B. */
+function toDeliveryWire(delivery: Delivery): DeliveryWire {
+  return {
+    messageId: delivery.messageId,
+    dwarfId: delivery.dwarfId,
+    kind: delivery.kind,
+    phase: delivery.phase,
+    ...(delivery.confidence === undefined ? {} : { confidence: delivery.confidence }),
+    ...(delivery.heldUntilTurnEnd === undefined
+      ? {}
+      : { heldUntilTurnEnd: delivery.heldUntilTurnEnd }),
+    ...(delivery.failure === undefined ? {} : { failure: { ...delivery.failure } }),
+    attempts: delivery.attempts,
+    phaseAt: delivery.phaseAt
   }
 }
