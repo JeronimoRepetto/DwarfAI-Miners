@@ -21,6 +21,9 @@
 - **Updated for ISSUE-059:** A-N17 `getUiSession`, A-N18 `patchUiSession` and A-N19 `onUiSessionChanged`
   (`ui:session:*`, NEW) are declared in the registry and have generated preload members, so their rows moved to the
   found table, as A-N30 did. The counts below also take in A-N34, which the ISSUE-316 update left out of them.
+- **Updated for ISSUE-082:** A-N01 `getHostSnapshot` (`host:snapshot`) and A-N02 `onHostEvent` (`host:event`), NEW,
+  are declared in the registry and have generated preload members, so their rows moved to the found table, as A-N30
+  did.
 - **Compared with:** `14-ipc-contract.md` §2.1, §2.2, §7 and §8 I-21 of the architecture package. `14` is frozen
   and lives in the package, not in this repository.
 - **For the registry issue (ISSUE-007):** `dwarf:setName` and `dwarf:resetName` have no `14` §2 id. Their
@@ -49,11 +52,11 @@ pushes were evaluated against `14` §2 and none of them was changed.
 
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
-| Request / one-way channels (`ipcMain` handlers)   | 32   | 16     | 9   | 11     | 0        | 68    |
-| Pushes                                            | 2    | 0      | 3   | 4      | 0        | 9     |
+| Request / one-way channels (`ipcMain` handlers)   | 32   | 16     | 10  | 11     | 0        | 69    |
+| Pushes                                            | 2    | 0      | 4   | 4      | 0        | 10    |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 16     | 12  | 15     | 0        | 78    |
-| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 22  | —      | —        | 22    |
+| **Found total**                                   | 35   | 16     | 14  | 15     | 0        | 80    |
+| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 20  | —      | —        | 20    |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
 constants (63 + 2) and 66 preload members (64 + 2). The two extra channels are `dwarf:setName` and
@@ -111,6 +114,8 @@ kind `14` gives it.
 | `host:connection:confirm-restart` | `confirmHostRestart`          | invoke | src/preload/index.ts:542                                                                                                          | A-N33   | NEW    | —                 | Declared by ISSUE-052 (AMENDMENT-11); its preload member is generated (ISSUE-045); unrouted until generation-2, no handler in v1          |
 | `host:connection:get`             | `getHostConnection`           | invoke | src/preload/index.ts:533                                                                                                          | A-N03   | NEW    | —                 | Declared by ISSUE-052; its preload member is generated (ISSUE-045); unrouted until cut 0                                                  |
 | `host:connection:retry`           | `retryHostConnection`         | invoke | src/preload/index.ts:541                                                                                                          | A-N05   | NEW    | —                 | Declared by ISSUE-052; its preload member is generated (ISSUE-045); unrouted until cut 0                                                  |
+| `host:event`                      | `onHostEvent`                 | push   | src/preload/index.ts:573                                                                                                          | A-N02   | NEW    | —                 | Declared by ISSUE-082; its preload member is generated (ISSUE-045); UI main pushes it, unrouted until cut 1                               |
+| `host:snapshot`                   | `getHostSnapshot`             | invoke | src/preload/index.ts:572                                                                                                          | A-N01   | NEW    | —                 | Declared by ISSUE-082; its preload member is generated (ISSUE-045); unrouted until cut 1                                                  |
 | —                                 | `pathForDroppedFile`          | helper | src/preload/index.ts:707                                                                                                          | A-X1    | KEEP   | —                 |                                                                                                                                           |
 | `jev:apiKey:clear`                | `clearJevApiKey`              | invoke | src/main/index.ts:1498<br>src/preload/index.ts:932<br>src/shared/contracts.ts:5456                                                | A-49    | KEEP   | —                 |                                                                                                                                           |
 | `jev:apiKey:set`                  | `setJevApiKey`                | invoke | src/main/index.ts:1476<br>src/preload/index.ts:925<br>src/shared/contracts.ts:5455                                                | A-48    | KEEP   | —                 |                                                                                                                                           |
@@ -164,8 +169,6 @@ kind `14` gives it.
 
 | Wire name               | Member                  | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
 | ----------------------- | ----------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
-| `host:snapshot`         | `getHostSnapshot`       | invoke | not found | A-N01 | NEW    | —                 |                                                                                               |
-| `host:event`            | `onHostEvent`           | push   | not found | A-N02 | NEW    | —                 |                                                                                               |
 | `dwarf:message:retry`   | `retryDwarfMessage`     | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
 | `ask:step:set`          | `setAskStep`            | invoke | not found | A-N07 | NEW    | —                 |                                                                                               |
 | `dwarf:rename`          | `renameDwarf`           | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
