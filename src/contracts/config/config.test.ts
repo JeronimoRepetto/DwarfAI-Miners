@@ -21,6 +21,9 @@ describe('defaultConfig', () => {
       livenessWindowS: 90,
       dwarfLeaveGraceS: 20,
       tierCacheTtlS: 600,
+      // AMENDED for ISSUE-065 (was: no measurement delay). A new mine is measured automatically
+      // shortly after it is created (06 INV-04, 07 S3.08).
+      mineMeasureDelayMs: 5000,
       // AMENDED for ISSUE-010 (was: tierThresholds). Tier thresholds are mines configuration
       // (06 §0.2 `TierThresholds`, defaults and validated overrides built by ISSUE-062).
       sendTextRelayModel: 'haiku',
@@ -326,6 +329,21 @@ describe('loadConfig', () => {
 
   it('fails fast on non-integer values', () => {
     expect(() => loadConfig({ LIVENESS_WINDOW_S: '90.5' })).toThrowError(/LIVENESS_WINDOW_S/)
+  })
+
+  // ADDED for ISSUE-065: the delay of the automatic scoring walk of a new mine (07 S3.08).
+  describe('automatic measurement delay', () => {
+    it('reads MINE_MEASURE_DELAY_MS, where 0 means at once', () => {
+      expect(loadConfig({ MINE_MEASURE_DELAY_MS: '12000' }).mineMeasureDelayMs).toBe(12000)
+      expect(loadConfig({ MINE_MEASURE_DELAY_MS: '0' }).mineMeasureDelayMs).toBe(0)
+      expect(loadConfig({ MINE_MEASURE_DELAY_MS: '  ' }).mineMeasureDelayMs).toBe(5000)
+    })
+
+    it.each(['-1', '2.5', 'abc', '600001'])('fails fast on the unusable delay %j', (value) => {
+      expect(() => loadConfig({ MINE_MEASURE_DELAY_MS: value })).toThrowError(
+        /MINE_MEASURE_DELAY_MS/
+      )
+    })
   })
 
   describe('send-text delivery', () => {

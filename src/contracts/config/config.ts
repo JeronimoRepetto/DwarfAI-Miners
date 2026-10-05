@@ -175,6 +175,12 @@ export interface AppConfig {
   dwarfLeaveGraceS: number
   /** How long a computed project tier stays cached, in seconds. */
   tierCacheTtlS: number
+  /**
+   * How long after a mine is created the Host starts measuring it, in milliseconds (06 INV-04,
+   * 07 S3.08: "shortly after creation"). Zero measures it at once; capped at ten minutes, since a
+   * longer wait would leave "not recorded yet" looking permanent (PO #47).
+   */
+  mineMeasureDelayMs: number
   // No tier thresholds here (ISSUE-010): they are the mines domain's `TierThresholds`, "defaults and
   // validated overrides" with their own shape and fallback rule (06 §0.2 row `TierThresholds`, 06 §4.1;
   // built by ISSUE-062). The legacy parser keeps TIER_COPPER_KB … TIER_URANIUM_KB until then.
@@ -244,6 +250,7 @@ export function defaultConfig(): AppConfig {
     livenessWindowS: 90,
     dwarfLeaveGraceS: 20,
     tierCacheTtlS: 600,
+    mineMeasureDelayMs: 5000,
     sendTextRelayModel: 'haiku',
     sendTextTimeoutS: 60,
     hooksPort: 47821,
@@ -456,6 +463,9 @@ function readOpenCodeConfig(env: ConfigEnv, fallback: OpenCodeConfig): OpenCodeC
   }
 }
 
+/** The longest automatic measurement delay: ten minutes (see `AppConfig.mineMeasureDelayMs`). */
+const MAX_MINE_MEASURE_DELAY_MS = 600_000
+
 export function loadConfig(env: ConfigEnv): AppConfig {
   const defaults = defaultConfig()
   return {
@@ -463,6 +473,12 @@ export function loadConfig(env: ConfigEnv): AppConfig {
     livenessWindowS: readPositiveInt(env, 'LIVENESS_WINDOW_S', defaults.livenessWindowS),
     dwarfLeaveGraceS: readPositiveInt(env, 'DWARF_LEAVE_GRACE_S', defaults.dwarfLeaveGraceS),
     tierCacheTtlS: readPositiveInt(env, 'TIER_CACHE_TTL_S', defaults.tierCacheTtlS),
+    mineMeasureDelayMs: readNonNegativeInt(
+      env,
+      'MINE_MEASURE_DELAY_MS',
+      defaults.mineMeasureDelayMs,
+      MAX_MINE_MEASURE_DELAY_MS
+    ),
     sendTextRelayModel: readTrimmed(env, 'SENDTEXT_RELAY_MODEL', defaults.sendTextRelayModel),
     sendTextTimeoutS: readPositiveInt(env, 'SENDTEXT_TIMEOUT_S', defaults.sendTextTimeoutS),
     hooksPort: readPort(env, 'HOOKS_PORT', defaults.hooksPort),
