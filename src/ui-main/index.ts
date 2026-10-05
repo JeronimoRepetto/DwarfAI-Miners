@@ -30,7 +30,8 @@ import {
   type LegacyLaunchedSessions
 } from '../legacy-bridge/LegacyEndFirstAdapter'
 import { createLegacySettingsWriteHub } from '../legacy-bridge/settingsMirror/legacySettingsWrites'
-import { createBoardFacadeAdapter } from '../legacy-bridge/BoardFacadeAdapter'
+import { createBoardFacadeAdapter, type LegacyAskFields } from '../legacy-bridge/BoardFacadeAdapter'
+import { createLegacyAskRelay, legacyOpenAsksOf } from '../legacy-bridge/LegacyAskRelay'
 import {
   createLegacyAgentRegistryFeed,
   LEGACY_FEED_PROVIDERS_CUT_1,
@@ -44,6 +45,7 @@ import {
   createLegacyDwarfIdRows,
   createLegacyPushTap,
   createLegacyRegistryTap,
+  type LegacyDwarfIdBridge,
   type LegacyPushTap,
   type LegacyRegistry
 } from '../legacy-bridge/LegacyDwarfIdBridge'
@@ -130,6 +132,7 @@ import {
   DEFAULT_TOGGLE_ACCELERATOR,
   PROTOCOL_VERSION,
   type ChannelKey,
+  type DwarfId,
   type StepId
 } from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
@@ -329,6 +332,8 @@ const BOARD_PUSH = 'mines:update' satisfies ChannelKey
 export interface BoardFacadeComposition {
   /** The `host` target part serving A-12. */
   part: RouteTargetPart
+  /** Pushes the board again (the relayed ask fields changed, `LegacyAskRelay`). */
+  refresh(): void
   dispose(): void
 }
 
@@ -337,13 +342,15 @@ export interface BoardFacadeComposition {
  * composables not yet switched to A-N01/A-N02. Composed once the table routes A-12 to the Host (the cut-1 switch,
  * ISSUE-123), as a part of the `host` target; A-P2 reaches the mode windows only while the table routes it to the Host
  * too, so today's runtime and the facade never push the board together (21 §1 item 4). `undefined` in a table that
- * serves A-12 `legacy`. Deleted at cut 5 after a test proves no consumer (ISSUE-242).
+ * serves A-12 `legacy`. In cuts 1–4 its dwarfs carry today's ask fields from `LegacyAskRelay` (`askFields`, 21 §3).
+ * Deleted at cut 5 after a test proves no consumer (ISSUE-242).
  */
 export function composeBoardFacade(deps: {
   routes: readonly ChannelRoute[]
   client: Pick<HostClient, 'subscribe'>
   windows: () => readonly WindowContents[]
   defer?: (run: () => void) => void
+  askFields?: (dwarfId: DwarfId) => LegacyAskFields
 }): BoardFacadeComposition | undefined {
   const toHost = (channel: ChannelKey): boolean =>
     deps.routes.some((r) => r.channel === channel && r.owner === 'host')
@@ -354,13 +361,15 @@ export function composeBoardFacade(deps: {
     push: (board) => {
       if (pushes) for (const window of deps.windows()) window.send(BOARD_PUSH, board)
     },
-    ...(deps.defer === undefined ? {} : { defer: deps.defer })
+    ...(deps.defer === undefined ? {} : { defer: deps.defer }),
+    ...(deps.askFields === undefined ? {} : { askFields: deps.askFields })
   })
   return {
     part: {
       channels: [BOARD_READ],
       target: { serve: () => Promise.resolve(facade.getMines()) }
     },
+    refresh: () => facade.refresh(),
     dispose: () => facade.dispose()
   }
 }
@@ -427,6 +436,10 @@ export interface LegacyDwarfIdComposition {
   registry: LegacyRuntimeSurface & { registry: LegacyRegistry }
   /** The today wires of the rows the bridge is composed on (A-13, A-23, A-26, A-27, A-P3, A-P4). */
   channels: readonly string[]
+  /** The join itself, for `LegacyAskRelay` (A-40, A-41 under their qualifier, 21 §3). */
+  bridge: LegacyDwarfIdBridge
+  /** Today's sessions as the feed last wrote them through `registry` (the legacy side of the join). */
+  sessions(): Parameters<LegacyRegistry['replace']>[0]
   dispose(): void
 }
 
@@ -464,10 +477,73 @@ export function composeLegacyDwarfIdBridge(deps: {
     legacy: { serve: (channel, payload) => rows.serve(channel, payload) },
     registry: { ...registry, registry: tap.registry },
     channels: [...rows.requestChannels, ...rows.pushChannels],
+    bridge,
+    sessions: tap.sessions,
     dispose() {
       uninstall?.()
       bridge.dispose()
     }
+  }
+}
+
+/** `LegacyAskRelay` as the root composes it on `LegacyDwarfIdBridge` (21 §3, cuts 1–4). */
+export interface LegacyAskRelayComposition {
+  /** Today's runtime as the router's `legacy` target, A-40 / A-41 answers to `legacy:` asks translated. */
+  legacy: RouteTarget
+  /** Today's runtime as `LegacyAgentRegistryFeed` is handed it: after each registry write the open asks are re-read. */
+  registry: LegacyRuntimeSurface & { registry: LegacyRegistry }
+  /** The today wires of the rows the relay is composed on (A-40, A-41). */
+  channels: readonly string[]
+  /** Today's ask fields of a Host dwarf, for `BoardFacadeAdapter`. */
+  askFields(dwarfId: DwarfId): LegacyAskFields
+  /** Runs `h` when a card opened, changed or closed (the root refreshes the facade's board). */
+  onChanged(h: () => void): void
+  /** Settles once the read started by the last registry write is applied. */
+  whenIdle(): Promise<void>
+  dispose(): void
+}
+
+/**
+ * `LegacyAskRelay` (21 §3, cuts 1–4; 14 §8 I-11), cut-1 half: today's runtime's open asks, read from the registry the
+ * feed writes, are shown as ask cards in `legacy:<legacyAskId>` ids on the Host dwarf through `BoardFacadeAdapter`, and
+ * an A-40 / A-41 answer to one reaches today's runtime with the legacy ids. A-40 and A-41 keep their `legacy` route
+ * (21 §2 cut 1); the relay is composed in front of the bridged legacy target, in the releases it is listed for (cut 1,
+ * its rollback build included, to the end of 4b), never in the cut-0 table, and only over a composed
+ * `LegacyDwarfIdBridge` (whose join it uses). No Host command path. Deleted at the end of cut 4 (ISSUE-241).
+ */
+export function composeLegacyAskRelay(deps: {
+  release: StepId
+  dwarfIds: LegacyDwarfIdComposition | undefined
+}): LegacyAskRelayComposition | undefined {
+  const { dwarfIds } = deps
+  if (dwarfIds === undefined || !bridgeLivesIn('LegacyAskRelay', deps.release)) return undefined
+  let changed: () => void = () => {}
+  const relay = createLegacyAskRelay({
+    bridge: dwarfIds.bridge,
+    asks: { openAsks: () => legacyOpenAsksOf(dwarfIds.sessions()) },
+    legacy: dwarfIds.legacy,
+    changed: () => changed()
+  })
+  let reading: Promise<void> = Promise.resolve()
+  const written = dwarfIds.registry
+  return {
+    legacy: { serve: (channel, payload) => relay.serve(channel, payload) },
+    registry: {
+      ...written,
+      registry: {
+        replace(sessions) {
+          written.registry.replace(sessions)
+          reading = relay.update()
+        }
+      }
+    },
+    channels: relay.requestChannels,
+    askFields: (dwarfId) => relay.askFields(dwarfId),
+    onChanged(h) {
+      changed = h
+    },
+    whenIdle: () => reading,
+    dispose: () => relay.dispose()
   }
 }
 
@@ -765,9 +841,11 @@ export async function startUiMain({
     registry: legacyRegistry,
     ...(legacyPushes === undefined ? {} : { pushes: legacyPushes })
   })
+  // Today's open asks are shown as ask cards through the facade and answered through the bridge (21 §3, cuts 1–4).
+  const askRelay = composeLegacyAskRelay({ release, dwarfIds })
   const registryFeed = composeLegacyAgentRegistryFeed({
     release,
-    legacy: dwarfIds?.registry ?? legacyRegistry
+    legacy: askRelay?.registry ?? dwarfIds?.registry ?? legacyRegistry
   })
 
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
@@ -793,7 +871,13 @@ export async function startUiMain({
   const boardFacade =
     host === undefined
       ? undefined
-      : composeBoardFacade({ routes, client: host.client, windows: modeWindowList })
+      : composeBoardFacade({
+          routes,
+          client: host.client,
+          windows: modeWindowList,
+          ...(askRelay === undefined ? {} : { askFields: askRelay.askFields })
+        })
+  askRelay?.onChanged(() => boardFacade?.refresh())
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
     boardFacade === undefined
@@ -883,7 +967,7 @@ export async function startUiMain({
   })
   createRouter({
     routes,
-    legacy: dwarfIds?.legacy ?? legacyRuntime,
+    legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
     // A-N26, the one `host` row of cut 0: its handler relays `host.shutdown` on the confirmation's `ui` connection.
     ...(hostTarget === undefined ? {} : { host: hostTarget }),
@@ -926,6 +1010,7 @@ export async function startUiMain({
     mirror?.dispose()
     boardFacade?.dispose()
     registryFeed?.stop()
+    askRelay?.dispose()
     dwarfIds?.dispose()
     host?.client.dispose()
     legacyRuntime.willQuit()

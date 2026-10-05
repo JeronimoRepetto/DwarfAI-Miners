@@ -17,6 +17,7 @@ import {
 import {
   composeBoardFacade,
   composeLegacyAgentRegistryFeed,
+  composeLegacyAskRelay,
   composeLegacyDwarfIdBridge,
   composeLegacyLaunchObservation,
   composeStopAllRelay,
@@ -945,5 +946,201 @@ describe('cut-1 legacy composition', () => {
     // It reads only B-M41 from the Host.
     expect(new Set(reads)).toEqual(new Set(['strangler.dwarfIdentities']))
     composed?.dispose()
+  })
+
+  it('[ADR-001] LegacyAskRelay is listed for cuts 1 to 4', async () => {
+    // TC-089 (21 §3; 14 §8 I-11): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
+    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyAskRelay')).toEqual({
+      name: 'LegacyAskRelay',
+      cuts: span('cut-1', 'cut-4b'),
+      shapeAdapter: false
+    })
+    // A-40 and A-41 stay `legacy` with today's shape in this release (21 §2 cut 1 "Legacy still serves").
+    for (const key of ['agent:answerQuestion', 'agent:answerPermission'] as ChannelKey[]) {
+      expect(
+        ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
+        key
+      ).toEqual([['legacy', 'today']])
+    }
+    const HOST_DWARF = '01920000-0000-7000-9000-0000000e0001'
+    const SESSION = 's-1'
+    const LEGACY_DWARF = `claude:${SESSION}`
+    const reads: string[] = []
+    const client = {
+      call: (method: string) => {
+        reads.push(method)
+        return Promise.resolve([
+          {
+            dwarfId: HOST_DWARF,
+            providerId: 'claude',
+            identity: { providerId: 'claude', providerSessionId: SESSION }
+          }
+        ])
+      },
+      subscribe: () => () => {}
+    } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client']
+    const served: Array<[string, unknown]> = []
+    const legacy = {
+      serve: (channel: string, payload: unknown) => {
+        served.push([channel, payload])
+        return Promise.resolve({ answered: true })
+      }
+    }
+    const { surface } = legacySurface()
+    const dwarfIds = composeLegacyDwarfIdBridge({
+      release: 'cut-1',
+      client,
+      legacy,
+      registry: surface
+    })
+    // Composed exactly in the releases it is listed for: not in this release's cut-0 table, and no longer once deleted.
+    for (const release of span('cut-1', 'cut-4b')) {
+      const relay = composeLegacyAskRelay({ release, dwarfIds })
+      expect(relay, release).toBeDefined()
+      relay?.dispose()
+    }
+    for (const release of [ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1'] as StepId[]) {
+      expect(composeLegacyAskRelay({ release, dwarfIds }), release).toBeUndefined()
+    }
+    expect(composeLegacyAskRelay({ release: 'cut-1', dwarfIds: undefined })).toBeUndefined()
+
+    // In cut 1 it is composed on A-40 and A-41, and on no other row.
+    const relay = composeLegacyAskRelay({ release: 'cut-1', dwarfIds })
+    expect(relay?.channels.map((channel) => ROW_IDS[channel]).sort()).toEqual(['A-40', 'A-41'])
+    let changes = 0
+    relay?.onChanged(() => (changes += 1))
+    // The feed writes today's registry through it: the open ask is read after the write and shown on the Host dwarf.
+    relay?.registry.registry.replace([
+      {
+        provider: 'claude',
+        sessionId: SESSION,
+        cwd: '/work/moria',
+        status: 'busy',
+        dwarfs: [
+          {
+            id: LEGACY_DWARF,
+            provider: 'claude',
+            role: 'foreman',
+            name: 'Thorin',
+            status: 'waiting',
+            sessionId: SESSION,
+            pendingPermission: {
+              toolUseId: 'toolu_1',
+              toolName: 'Bash',
+              input: 'ls',
+              channel: 'held',
+              askedAt: '2026-10-05T10:00:00.000Z'
+            }
+          }
+        ],
+        updatedAt: 1
+      }
+    ])
+    await relay?.whenIdle()
+    expect(changes).toBe(1)
+    expect(relay?.askFields(HOST_DWARF as DwarfId).pendingPermission?.toolUseId).toBe(
+      'legacy:toolu_1'
+    )
+    // An answer to the relayed card reaches today's runtime with the legacy ids; every other row passes unchanged.
+    await relay?.legacy.serve('agent:answerPermission', {
+      dwarfId: HOST_DWARF,
+      toolUseId: 'legacy:toolu_1',
+      decision: 'allow'
+    })
+    await relay?.legacy.serve('mine:history', 'mine-1')
+    expect(served).toEqual([
+      [
+        'agent:answerPermission',
+        { dwarfId: LEGACY_DWARF, toolUseId: 'toolu_1', decision: 'allow' }
+      ],
+      ['mine:history', 'mine-1']
+    ])
+    // It reads only B-M41 from the Host (through the bridge).
+    expect(new Set(reads)).toEqual(new Set(['strangler.dwarfIdentities']))
+
+    // The facade shows the relay's ask fields on the Host dwarf (in a table that routes A-12 to the Host, as cut 1 will).
+    let handler: ((event: HostEvent) => void) | null = null
+    const board = composeBoardFacade({
+      routes: [
+        ...ROUTES.filter((r) => r.channel !== 'mines:get'),
+        { channel: 'mines:get', owner: 'host', since: 'cut-1', parity: 'passed', shape: 'target' }
+      ],
+      client: {
+        subscribe: (h: (event: HostEvent) => void) => {
+          handler = h
+          return () => (handler = null)
+        }
+      },
+      windows: () => [],
+      defer: (run) => run(),
+      ...(relay === undefined ? {} : { askFields: relay.askFields })
+    })
+    const MINE = '01920000-0000-7000-9000-0000000c0001'
+    const ore = { tokens: 0 }
+    ;(handler as ((event: HostEvent) => void) | null)?.({
+      kind: 'snapshot',
+      snapshot: {
+        snapshotId: 's-1',
+        seq: 1,
+        epoch: 'epoch-1',
+        chunks: [
+          {
+            section: 'mines',
+            data: [
+              {
+                id: MINE as MineId,
+                path: '/work/moria' as FolderPath,
+                name: 'moria',
+                state: 'active',
+                tier: 'silver',
+                hasBeenMeasured: true,
+                lastUsedAt: 1,
+                totals: {
+                  coal: ore,
+                  bronze: ore,
+                  copper: ore,
+                  silver: ore,
+                  gold: ore,
+                  uranium: ore
+                }
+              }
+            ]
+          },
+          {
+            section: 'dwarfs',
+            data: [
+              {
+                id: HOST_DWARF as DwarfId,
+                mineId: MINE as MineId,
+                providerId: 'claude',
+                baseName: 'Thorin',
+                customName: null,
+                rank: 'foreman',
+                parentDwarfId: null,
+                delegated: false,
+                sessionProfile: { providerId: 'claude' },
+                presence: 'present',
+                processState: 'running',
+                status: 'asking',
+                needsYou: true,
+                canReceiveMessages: true,
+                stopInFlight: false,
+                stopUnavailableReason: null,
+                owned: false,
+                arrivedAt: 1
+              }
+            ]
+          }
+        ]
+      }
+    })
+    const shown = (await board?.part.target.serve('mines:get', undefined)) as {
+      mines: Array<{ dwarfs: Array<{ id: string; pendingPermission?: { toolUseId: string } }> }>
+    }
+    expect(CHANNELS['mines:get'].response.safeParse(shown).success).toBe(true)
+    expect(shown.mines[0]?.dwarfs[0]?.pendingPermission?.toolUseId).toBe('legacy:toolu_1')
+    board?.dispose()
+    relay?.dispose()
+    dwarfIds?.dispose()
   })
 })
