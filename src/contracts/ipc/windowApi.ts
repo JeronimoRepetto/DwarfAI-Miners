@@ -406,6 +406,20 @@ export const uiPreferencesResetSchema = z
   .strict() satisfies z.ZodType<{ epoch: number }>
 
 /**
+ * A-N16 `onRevealDwarfChat`'s payload (14 §2.2, §3.8 `{ mineId: MineId; dwarfId: DwarfId | null }`; ADR-018 item 6;
+ * ADR-025 item 8): the mine to bring into view and the dwarf whose chat opens there, `null` when the dwarf left (the
+ * reveal is then `'mine-only'`). Ids only: nothing a person or a provider said.
+ */
+export interface RevealDwarfChatPush {
+  mineId: MineId
+  dwarfId: DwarfId | null
+}
+
+export const revealDwarfChatPushSchema = z
+  .object({ mineId: mineIdSchema, dwarfId: dwarfIdSchema.nullable() })
+  .strict() satisfies z.ZodType<RevealDwarfChatPush>
+
+/**
  * A-N21's request and answer: one key and its value. Only the keys a renderer may write are listed: `lastMode` and
  * `resetEpochApplied` are UI main's own (14 §3.9), so a write of either is refused `INVALID_PARAMS` by the seam A gate.
  */

@@ -208,6 +208,8 @@ export function goldenApi(sample: GoldenSample): Api {
     // A-N01, A-N02: the board a golden draws is the sample's, not the Host's; no renderer reads the Host before the
     // cut-1 switch (ISSUE-092, ISSUE-123), so a snapshot request is refused by name and no Host frame ever arrives.
     getHostSnapshot: refuse('getHostSnapshot'),
-    onHostEvent: unsubscribe
+    onHostEvent: unsubscribe,
+    // A-N16: a golden draws a fixed sample and shows no OS notification, so no reveal is ever pushed.
+    onRevealDwarfChat: unsubscribe
   }
 }

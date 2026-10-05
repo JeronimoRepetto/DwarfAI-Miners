@@ -88,5 +88,6 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'ui:preferences:set': 'A-N21',
   'ui:preferences:reset': 'A-N12',
   'host:snapshot': 'A-N01',
-  'host:event': 'A-N02'
+  'host:event': 'A-N02',
+  'mode:revealDwarfChat': 'A-N16'
 }
