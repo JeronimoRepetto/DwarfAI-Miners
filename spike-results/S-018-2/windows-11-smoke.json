@@ -1,0 +1,37 @@
+{
+  "spike": "S-018-2",
+  "platform": "win32",
+  "osRelease": "10.0.26200",
+  "electron": "44.0.0",
+  "variant": "behind",
+  "mode": "smoke",
+  "events": [
+    {
+      "event": "ready",
+      "atMs": 52,
+      "electron": "44.0.0",
+      "variant": "behind",
+      "mode": "smoke",
+      "notificationSupported": true
+    },
+    {
+      "event": "smoke",
+      "atMs": 84,
+      "window": true,
+      "visible": false,
+      "minimized": false,
+      "focused": false,
+      "focusedWindowIsMode": false
+    },
+    {
+      "event": "done",
+      "atMs": 85,
+      "reason": "smoke",
+      "window": true,
+      "visible": false,
+      "minimized": false,
+      "focused": false,
+      "focusedWindowIsMode": false
+    }
+  ]
+}
