@@ -28,16 +28,25 @@
 //   that dwarf (ADR-031 item 2). It is the only walk-out trigger (14 §4.3 rule 6), and no departure
 //   cause sends anything else from here: an observed dwarf whose process died on its own departs
 //   `closed-elsewhere` with no toast, like any outside closure (S2.06; US-RES-001.AC01; FM-059).
-//   The toasts of 14 §2.4 B-F28 come from their own events (later: ISSUE-080, ISSUE-084).
+//   The other toasts of 14 §2.4 B-F28 come from their own events (later: ISSUE-080).
+// - `toast {kind: 'provider-error', providerId, cause, dwarfId?}` (B-F28, 14 §3.6 `HostToast`) ←
+//   observation's `ProviderErrorObserved` (ISSUE-084; 05 §4; US-RES-004), for `ui`. Observation
+//   already folds it to one per `(providerId, cause, dwarfId?)` and poll cycle (08 §2.3), so each
+//   event is one toast. The frame is built field by field from the event: a typed cause, never
+//   the provider's text (16 §2.1; ADR-026 item 4). A drift that surfaced is the same toast, worded
+//   no differently (US-RES-004.AC04). Nothing else is sent: the dwarf keeps its status, with no
+//   errored state (US-RES-004.AC02; ADR-032), and a session that did not survive departs through
+//   crew's own `DwarfDeparted` (US-RES-004.AC03).
 // - `DwarfRebound` has no frame (14 §2.4 "No frame exists for").
 //
-// Nothing here logs: the board frames carry custom names and folder paths (14 §3.5
+// Nothing here logs: the board frames carry custom names, folder paths and provider causes (14 §3.5
 // SENSITIVE_FRAMES).
 import type { HostFrameData, HostFrameName } from '@dwarfai/contracts'
 import type { DwarfId, MineId } from '../../kernel/domain/values'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { CrewEvent, CrewQueries } from '../../modules/crew'
 import type { MinesEvent, MinesQueries } from '../../modules/mines'
+import type { ObservationEvent } from '../../modules/observation'
 import type { FrameAudience } from '../events/framePublisher'
 import { toDwarfWire, toMineWire, type MineTotalsReader } from '../mappers/wire'
 
@@ -46,7 +55,8 @@ export const BOARD_FRAMES: readonly HostFrameName[] = Object.freeze([
   'mine.changed',
   'dwarf.arrived',
   'dwarf.changed',
-  'dwarf.departed'
+  'dwarf.departed',
+  'toast'
 ])
 
 /** Where the frames go: the connection registry (connectionRegistry.ts). */
@@ -63,6 +73,7 @@ export interface BoardFramesDeps {
   events: {
     mines: Pick<DomainEventBus<MinesEvent>, 'subscribe'>
     crew: Pick<DomainEventBus<CrewEvent>, 'subscribe'>
+    observation: Pick<DomainEventBus<ObservationEvent>, 'subscribe'>
   }
   mines: Pick<MinesQueries, 'get'>
   crew: Pick<CrewQueries, 'get'>
@@ -118,6 +129,15 @@ export function publishBoardFrames(deps: BoardFramesDeps): () => void {
     deps.events.crew.subscribe('DwarfDeparted', (event) => {
       const { dwarfId, mineId, cause } = event.payload
       frames.publishFrame('dwarf.departed', { dwarfId, mineId, cause }, { dwarfId })
+    }),
+    deps.events.observation.subscribe('ProviderErrorObserved', (event) => {
+      const { providerId, cause, dwarfId } = event.payload
+      frames.publishFrame('toast', {
+        kind: 'provider-error',
+        providerId,
+        cause,
+        ...(dwarfId === undefined ? {} : { dwarfId })
+      })
     })
   ]
   return () => {

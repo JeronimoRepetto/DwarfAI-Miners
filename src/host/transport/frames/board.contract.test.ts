@@ -1,7 +1,8 @@
 // layer: L6
 // L6 (17 §1.6): the board frames of seam B — B-F06 `mine.changed`, B-F08 `dwarf.arrived`, B-F09
-// `dwarf.changed`, B-F10 `dwarf.departed` (14 §2.4, §3.5, §3.6, §1.8, frozen) — projected from the
-// mines and crew events (08 §2.1, §2.2) by frames/board.ts. The crew is the real crew application
+// `dwarf.changed`, B-F10 `dwarf.departed`, B-F28 `toast {kind: 'provider-error'}` (14 §2.4, §3.5,
+// §3.6, §1.8, frozen) — projected from the mines, crew and observation events (08 §2.1–§2.3) by
+// frames/board.ts. The crew is the real crew application
 // over its in-memory doubles (its bus refuses a publish inside a transaction, 16 §2.3); the mines
 // reads are faked. Every frame is checked against its 14 §3.5 strict() schema (14 §1.4). The
 // coalescing case runs the frames through the real connection registry and outbound queue behind
@@ -20,6 +21,7 @@ import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import type { CrewEvent } from '../../modules/crew'
 import { inMemoryCrew, CREW_EPOCH } from '../../modules/crew/testing/inMemoryCrew'
 import type { MinePath, MineName, MinesEvent } from '../../modules/mines'
+import type { ObservationEvent } from '../../modules/observation'
 import { ConnectionRegistry } from '../connectionRegistry'
 import type { FrameAudience } from '../events/framePublisher'
 import { Outbound } from '../events/outbound'
@@ -87,8 +89,9 @@ function board(beforeFrames: (crew: ReturnType<typeof inMemoryCrew>) => void = (
     transactionScope: { isInTransaction: () => open }
   })
   const frames = new RecordingFrames()
+  const observationBus = new RecordingEventBus<ObservationEvent>()
   publishBoardFrames({
-    events: { mines: minesBus, crew: crew.bus },
+    events: { mines: minesBus, crew: crew.bus, observation: observationBus },
     mines,
     crew: crew.queries,
     ledger: NO_LEDGER_TOTALS,
@@ -109,7 +112,10 @@ function board(beforeFrames: (crew: ReturnType<typeof inMemoryCrew>) => void = (
       name: name as MineName,
       origin: 'observed'
     })
-  return { crew, mines, minesBus, frames, commitMine, created }
+  /** Observation reports a provider error (08 §0 `ProviderErrorObserved`, ISSUE-084). */
+  const providerError = (payload: { providerId: string; cause: string; dwarfId?: DwarfId }) =>
+    observationBus.publish(event<ObservationEvent>('ProviderErrorObserved', payload))
+  return { crew, mines, minesBus, observationBus, frames, commitMine, created, providerError }
 }
 
 /** Lets the current macrotask's queued microtasks run: the next Host turn. */
@@ -196,7 +202,11 @@ describe('the board frames (14 §2.4 B-F06, B-F08, B-F09, B-F10; 08 §2.1, §2.2
     const crewBus = new RecordingEventBus<CrewEvent>()
     const connections = new ConnectionRegistry()
     publishBoardFrames({
-      events: { mines: new RecordingEventBus<MinesEvent>(), crew: crewBus },
+      events: {
+        mines: new RecordingEventBus<MinesEvent>(),
+        crew: crewBus,
+        observation: new RecordingEventBus<ObservationEvent>()
+      },
       mines: new FakeMinesQueries(),
       crew,
       ledger: NO_LEDGER_TOTALS,
@@ -356,7 +366,82 @@ describe('the board frames (14 §2.4 B-F06, B-F08, B-F09, B-F10; 08 §2.1, §2.2
       'mine.changed',
       'dwarf.arrived',
       'dwarf.changed',
-      'dwarf.departed'
+      'dwarf.departed',
+      'toast'
     ])
+  })
+
+  it('[US-RES-004.AC01, FM-067] ProviderErrorObserved sends one toast provider-error naming the provider and the dwarf', () => {
+    const b = board()
+
+    b.providerError({ providerId: 'claude', cause: 'provider-error', dwarfId: DWARF_A })
+    // A provider-wide failure names no dwarf: the toast carries none (14 §3.6 `dwarfId?`).
+    b.providerError({ providerId: 'codex', cause: 'unreadable' })
+
+    expect(b.frames.sent).toEqual([
+      {
+        name: 'toast',
+        data: {
+          kind: 'provider-error',
+          providerId: 'claude',
+          cause: 'provider-error',
+          dwarfId: DWARF_A
+        }
+      },
+      { name: 'toast', data: { kind: 'provider-error', providerId: 'codex', cause: 'unreadable' } }
+    ])
+    expect(b.observationBus.handlerErrors).toEqual([])
+  })
+
+  it('[US-RES-004.AC02, US-RES-004.AC04, FM-068] a provider error or a format drift is the same toast and sends no dwarf frame', async () => {
+    const b = board()
+    b.mines.put(mineView(MINE_A, 'alpha'))
+    const dwarfId = b.crew.commands.arrive({
+      mineId: MINE_A,
+      identity: identity('s-1'),
+      rank: 'foreman',
+      status: 'working'
+    })
+    await nextTurn()
+    const before = b.frames.sent.length
+
+    b.providerError({ providerId: 'claude', cause: 'provider-error', dwarfId })
+    b.providerError({ providerId: 'claude', cause: 'unreadable', dwarfId })
+
+    const after = b.frames.sent.slice(before)
+    // Toasts only: the dwarf keeps its status, there is no errored state to send (ADR-032).
+    expect(after.map((frame) => frame.name)).toEqual(['toast', 'toast'])
+    // Drift is told as the same kind of toast as any provider error, worded by the UI (PO #11).
+    expect(after.map((frame) => (frame.data as { kind: string }).kind)).toEqual([
+      'provider-error',
+      'provider-error'
+    ])
+    expect(b.crew.queries.get(dwarfId)?.status).toBe('working')
+  })
+
+  it('[ADR-026, 16 §2.1] the toast carries the typed cause and nothing else the event held', () => {
+    const b = board()
+    // Whatever else reached the event, the frame is built field by field: the strict() schema of
+    // `toast` (14 §1.4) refuses any other key, so a leak would throw in RecordingFrames.
+    b.providerError({
+      providerId: 'claude',
+      cause: 'rate-limited',
+      dwarfId: DWARF_B,
+      detail: 'the provider said: quota exceeded for account j'
+    } as { providerId: string; cause: string; dwarfId: DwarfId })
+
+    expect(b.observationBus.handlerErrors).toEqual([])
+    expect(b.frames.sent).toEqual([
+      {
+        name: 'toast',
+        data: {
+          kind: 'provider-error',
+          providerId: 'claude',
+          cause: 'rate-limited',
+          dwarfId: DWARF_B
+        }
+      }
+    ])
+    expect(JSON.stringify(b.frames.sent)).not.toMatch(/provider said|quota/)
   })
 })
