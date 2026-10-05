@@ -6,7 +6,7 @@
 // observed entries — the typed-echo merge, and an ingest that joins observation's batch
 // transaction and holds its events for `joinedEvents` (AMENDMENT-10).
 // Conversation imports only suppliers and crew (05 §1.3, R4).
-import type { HostEpoch } from '../../kernel/domain/values'
+import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
@@ -16,6 +16,7 @@ import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { SqliteMessageLog } from './adapters/SqliteMessageLog'
 import { ConversationIngest, type ConversationCommands } from './application/ingest'
 import type { ConversationEvent } from './domain/events'
+import type { FeedPage, FeedPageRequest } from './domain/messages'
 
 export type { ConversationEvent, MessagesAppended } from './domain/events'
 export type {
@@ -24,6 +25,8 @@ export type {
   Delivery,
   DeliveryFailure,
   DeliveryPhase,
+  FeedPage,
+  FeedPageRequest,
   Message,
   MessageOrigin,
   MessageRole,
@@ -32,6 +35,14 @@ export type {
 export type { ConversationCommands }
 /** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
 export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
+
+/**
+ * 16 §4.6 `ConversationQueries` (driving): a dwarf's feed, newest first, at most 50 rows (INV-61).
+ * `mineHistory` joins with its issue (later: ISSUE-104).
+ */
+export interface ConversationQueries {
+  feed(dwarfId: DwarfId, page?: FeedPageRequest): FeedPage
+}
 
 export interface ConversationDeps {
   /** The Host's one writer (09 §8.1). */
