@@ -6,7 +6,8 @@
 // (ISSUE-073) is exported for the composition; the other provider adapters (later: ISSUE-071,
 // ISSUE-074, ISSUE-075), the ended-agent ledger (later: ISSUE-072) and `catchUp` (later:
 // ISSUE-078) join with their issues; `host/main.ts` composes it (later: ISSUE-095).
-import type { HostEpoch } from '../../kernel/domain/values'
+import type { ProcessIdentity } from '../../kernel/domain/processIdentity'
+import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
@@ -91,9 +92,27 @@ export interface ObservationDeps {
   pollMs?: number
 }
 
+/**
+ * The process identity (pid + start time + boot id) an observation adapter recorded for an
+ * observed session's provider process (ADR-014 item 2; 15 §5 "Ending observed sessions without a
+ * process identity"), read by the `SessionTerminator` bridge (05 §4 item 1). Read only; `null`
+ * when none was recorded. Package gap: 16 §4.3 names no read for it; this is the read 05 §4
+ * item 1 needs, kept off the frozen `ObservationQueries`.
+ */
+export interface ObservedProcessIdentities {
+  processIdentityOf(dwarfId: DwarfId): ProcessIdentity | null
+}
+
 export interface Observation {
   control: ObservationControlSoFar
   queries: ObservationQueries
+  /**
+   * No adapter of this build records a process identity: Codex, Antigravity and OpenCode files
+   * carry no pid and spike S-014-1 is `partial` (its default: `no-identity`), and the Claude
+   * adapter, which reads the registry pid and start time, is not built yet (later: ISSUE-071,
+   * ISSUE-072). So every observed session answers `null` and ends `failed: 'no-identity'`.
+   */
+  processIdentities: ObservedProcessIdentities
   /** Resolves once no observation cycle is in flight (tests and an orderly shutdown). */
   whenIdle(): Promise<void>
 }
@@ -108,6 +127,7 @@ export function createObservation(deps: ObservationDeps): Observation {
       nudge: (hint) => loop.nudge(hint)
     },
     queries: createObservationQueries({ sessions: deps.sessions }),
+    processIdentities: { processIdentityOf: () => null },
     whenIdle: () => loop.whenIdle()
   }
 }
