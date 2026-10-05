@@ -3,9 +3,11 @@
 // batch committed (16 §2.3, §4.3 "Ordering"). Here, not in `domain/`, because two payloads carry
 // suppliers' `ConversationEntry` / `UsageObservation` and the domain imports no other module (R1).
 //
-// The asks, turn ends, subagents and provider errors of 05 §3.3 join with the provider adapters
-// that observe them (later: ISSUE-071…ISSUE-075, ISSUE-084).
+// Turn ends joined with the Codex adapter (ISSUE-073). The asks, subagents and provider errors of
+// 05 §3.3 join with the provider adapters that observe them (later: ISSUE-071…ISSUE-075,
+// ISSUE-084).
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
+import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
 import type { FolderPath, Instant, ProviderIdentity } from '../../../kernel/domain/values'
 import type { ConversationEntry, SourceKey, UsageObservation } from '../../suppliers'
 
@@ -42,6 +44,15 @@ export type SessionClosedObserved = DomainEvent<
   { identity: ProviderIdentity; at: Instant }
 >
 
+/**
+ * A turn end the provider recorded (08 §0; ADR-021 item 1), stamped with the dwarf. Routed to
+ * conversation `recordTurnEnd`, which publishes `TurnEnded` once per turn key (AMENDMENT-10).
+ */
+export type ObservedTurnEnded = DomainEvent<
+  'ObservedTurnEnded',
+  { identity: ProviderIdentity; end: TurnEnded }
+>
+
 /** Every event the module publishes so far. */
 export type ObservationEvent =
   | SessionObserved
@@ -49,3 +60,4 @@ export type ObservationEvent =
   | TranscriptEntriesObserved
   | UsageObserved
   | SessionClosedObserved
+  | ObservedTurnEnded

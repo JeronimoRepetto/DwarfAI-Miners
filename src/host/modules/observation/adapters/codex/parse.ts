@@ -53,15 +53,6 @@ export interface RolloutHead {
   exec: boolean
 }
 
-/** A turn's end, before the loop knows the dwarf (ADR-021 item 1, `TurnEndedInput`). */
-export interface CodexTurnEnd {
-  sourceEventId: string
-  identity: ProviderIdentity
-  cwd?: FolderPath
-  at: Instant
-  end: TurnEndedInput
-}
-
 /** A lifetime counter as `token_count` reports it. */
 export interface TokenTotals {
   input: number
@@ -105,7 +96,6 @@ export interface RolloutContext {
 export interface RolloutStep {
   state: RolloutState
   events: ObservedEvent[]
-  turnEnds: CodexTurnEnd[]
   warnings: string[]
 }
 
@@ -304,7 +294,6 @@ export function stepRollout(
   const identity: ProviderIdentity = { providerId, providerSessionId: head.threadId }
   const base = { identity, ...(head.cwd === null ? {} : { cwd: head.cwd }) }
   const events: ObservedEvent[] = []
-  const turnEnds: CodexTurnEnd[] = []
   const warnings: string[] = []
   let next: RolloutState = state
 
@@ -400,8 +389,9 @@ export function stepRollout(
         if (record.at === null) {
           warnings.push(`turn end without a time at byte ${line.offset}`)
         } else {
-          turnEnds.push({
+          events.push({
             ...base,
+            kind: 'turn-ended',
             sourceEventId: eventId,
             at: record.at,
             end: {
@@ -435,7 +425,7 @@ export function stepRollout(
   const entry = entryOf(record, head, keyOf(eventId))
   if (entry !== null)
     events.push({ ...base, kind: 'entries', sourceEventId: eventId, entries: [entry] })
-  return { state: next, events, turnEnds, warnings }
+  return { state: next, events, warnings }
 }
 
 /** The thread id a rollout file name carries (`rollout-<time>-<thread id>.jsonl`), if any. */

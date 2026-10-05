@@ -27,7 +27,14 @@ import {
   type ReadOnlySnapshot
 } from '../../../../platform/sqlite/readOnlySnapshot'
 import type { Cursor, SourceFile } from '../../ports/observationAdapter'
-import { CodexObservationAdapter, codexHomeOf, type CodexRead } from './CodexObservationAdapter'
+import { CodexObservationAdapter, codexHomeOf } from './CodexObservationAdapter'
+
+type CodexRead = Awaited<ReturnType<CodexObservationAdapter['read']>>
+
+/** The turn ends a read carries (ADR-021 item 1, without the dwarf). */
+function turnEndsOf(read: CodexRead) {
+  return read.events.flatMap((e) => (e.kind === 'turn-ended' ? [e.end] : []))
+}
 
 const T0 = 1_790_800_000_000
 const FIXTURES = join(
@@ -125,7 +132,7 @@ function summary(read: CodexRead) {
         : []
     ),
     activity: read.events.flatMap((e) => (e.kind === 'activity' ? [e.activity] : [])),
-    turnEnds: read.turnEnds.map((t) => t.end),
+    turnEnds: turnEndsOf(read),
     usage: read.events.flatMap((e) =>
       e.kind === 'usage'
         ? [
@@ -148,7 +155,7 @@ function keysOf(read: CodexRead): string[] {
     ...read.events.map((e) => `${e.kind}:${e.sourceEventId}`),
     ...read.events.flatMap((e) => (e.kind === 'entries' ? e.entries.map((x) => x.sourceKey) : [])),
     ...read.events.flatMap((e) => (e.kind === 'usage' ? [e.usage.sourceKey] : [])),
-    ...read.turnEnds.map((t) => `turn:${t.sourceEventId}:${t.end.turnKey}`)
+    ...read.events.flatMap((e) => (e.kind === 'turn-ended' ? [`turn:${e.end.turnKey}`] : []))
   ]
 }
 
@@ -180,18 +187,17 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
       const { home } = await homeWithRollout(file)
       const adapter = adapterAt(home)
       const source = await onlySource(adapter, 'rollout')
-      const first = await adapter.readWithTurnEnds(source, null)
+      const first = await adapter.read(source, null)
       expect(summary(first), file).toEqual(await expectation(expected))
       expect(first.next.value, file).toBe(source.size)
 
       // Read again from the cursor it returned: nothing new.
-      const again = await adapter.readWithTurnEnds(source, first.next)
+      const again = await adapter.read(source, first.next)
       expect(again.events, file).toEqual([])
-      expect(again.turnEnds, file).toEqual([])
       expect(again.next, file).toEqual(first.next)
 
       // Replayed from the start by a fresh adapter (a Host restart): the same keys, in order.
-      const replay = await adapterAt(home).readWithTurnEnds(source, null)
+      const replay = await adapterAt(home).read(source, null)
       expect(keysOf(replay), file).toEqual(keysOf(first))
       expect(new Set(keysOf(first)).size, file).toBe(keysOf(first).length)
     }
@@ -199,12 +205,12 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
     const home = await homeWithState()
     const adapter = adapterAt(home)
     const state = await onlySource(adapter, 'state')
-    const first = await adapter.readWithTurnEnds(state, null)
+    const first = await adapter.read(state, null)
     expect(stateSummary(first)).toEqual(await expectation('state.expected.json'))
     expect(first.next.kind).toBe('watermark')
-    const again = await adapter.readWithTurnEnds(state, first.next)
+    const again = await adapter.read(state, first.next)
     expect(again.events).toEqual([])
-    const replay = await adapterAt(home).readWithTurnEnds(state, null)
+    const replay = await adapterAt(home).read(state, null)
     expect(keysOf(replay)).toEqual(keysOf(first))
   })
 
@@ -213,7 +219,7 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
       const { home } = await homeWithRollout(file)
       const adapter = adapterAt(home)
       const source = await onlySource(adapter, 'rollout')
-      const read = await adapter.readWithTurnEnds(source, null)
+      const read = await adapter.read(source, null)
       // Three unreadable lines, each a warning naming its byte offset and nothing it held.
       expect(read.warnings, file).toHaveLength(3)
       for (const warning of read.warnings) {
@@ -225,7 +231,7 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
         file
       ).toEqual(['Is the build green?', 'Yes, all checks passed.'])
       expect(
-        read.turnEnds.map((t) => t.end.kind),
+        turnEndsOf(read).map((e) => e.kind),
         file
       ).toEqual(['concluded'])
       expect(read.next.value, file).toBe(source.size)
@@ -237,9 +243,9 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
     for (const file of ['turn-with-usage.jsonl', 'turn-aborted.jsonl']) {
       const { home } = await homeWithRollout(file)
       const adapter = adapterAt(home)
-      const read = await adapter.readWithTurnEnds(await onlySource(adapter, 'rollout'), null)
-      ends.push(...read.turnEnds.map((t) => t.end))
-      for (const { end } of read.turnEnds) {
+      const read = await adapter.read(await onlySource(adapter, 'rollout'), null)
+      ends.push(...turnEndsOf(read))
+      for (const end of turnEndsOf(read)) {
         expect(end.reliability).toBe('reliable')
         expect(end.cancelledFromApp).toBe(false)
       }
@@ -261,7 +267,7 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
     // Whole file at once.
     const whole = await homeWithRollout('turn-with-usage.jsonl')
     const adapter = adapterAt(whole.home)
-    const read = await adapter.readWithTurnEnds(await onlySource(adapter, 'rollout'), null)
+    const read = await adapter.read(await onlySource(adapter, 'rollout'), null)
     expect(summary(read).usage).toEqual(expected)
 
     // One line per poll: the same units, each sealed exactly once.
@@ -275,7 +281,7 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
     const units: unknown[] = []
     for (const line of lines) {
       await appendFile(path, line + '\n')
-      const step = await streamed.readWithTurnEnds(await onlySource(streamed, 'rollout'), cursor)
+      const step = await streamed.read(await onlySource(streamed, 'rollout'), cursor)
       units.push(...summary(step).usage)
       cursor = step.next
     }
@@ -286,7 +292,7 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
     const between = Buffer.byteLength(lines.slice(0, 12).join('\n') + '\n')
     const restarted = adapterAt(whole.home)
     const source = await onlySource(restarted, 'rollout')
-    const resumed = await restarted.readWithTurnEnds(source, {
+    const resumed = await restarted.read(source, {
       adapterId: 'codex',
       kind: 'byte-offset',
       value: between,
@@ -304,7 +310,7 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
     for (const { file } of await rolloutCases()) {
       const { home } = await homeWithRollout(file)
       const fresh = adapterAt(home)
-      const read = await fresh.readWithTurnEnds(await onlySource(fresh, 'rollout'), null)
+      const read = await fresh.read(await onlySource(fresh, 'rollout'), null)
       expect(JSON.stringify(read), file).not.toMatch(/"pid"|processIdentity/i)
     }
   })
@@ -332,12 +338,12 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
     busy = false
     const state = await onlySource(adapter, 'state')
     busy = true
-    const blocked = await adapter.readWithTurnEnds(state, null)
+    const blocked = await adapter.read(state, null)
     expect(blocked.events).toEqual([])
     expect(blocked.warnings).toEqual([])
     expect(blocked.next.value).toBe(0)
     busy = false
-    const next = await adapter.readWithTurnEnds(state, null)
+    const next = await adapter.read(state, null)
     expect(stateSummary(next).sessions).toHaveLength(3)
   })
 })

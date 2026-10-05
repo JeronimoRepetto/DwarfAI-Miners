@@ -17,8 +17,7 @@
 //
 // Identity: the thread id (the registry row's, which a rollout's `session_meta` repeats; a rollout
 // whose head is unreadable falls back to the id in its file name). Turn ends are reliable
-// (`task_complete`, `turn_aborted`); the port has no observed kind for them yet, so they are
-// returned by `readWithTurnEnds` beside the port's events, and `read` (the port) carries the rest.
+// (`task_complete`, `turn_aborted`) and leave as `turn-ended` events (08 §0 `ObservedTurnEnded`).
 // No pid is readable (`codexProvider.ts:700-706`): `processIdentitySource` is `none`, so ending an
 // observed Codex session answers `no-identity` until spike S-014-1 (15 §5, ADR-014 item 2).
 //
@@ -60,7 +59,6 @@ import {
   rolloutHeadOf,
   stepRollout,
   threadIdOfRolloutName,
-  type CodexTurnEnd,
   type RolloutContext,
   type RolloutHead,
   type RolloutState
@@ -72,8 +70,6 @@ import {
   sessionsOfThreadRows,
   THREADS_SINCE_SQL
 } from './state'
-
-export type { CodexTurnEnd } from './parse'
 
 /** How far before a cursor a read with no kept stream state looks to rebuild it. */
 export const CODEX_LOOKBACK_BYTES = OBSERVATION_TAIL_GATE_BYTES
@@ -115,13 +111,8 @@ export function codexHomeOf(
   return set !== undefined && set !== '' ? set : join(home, '.codex')
 }
 
-/** A read with the turn ends the port cannot carry yet. */
-export interface CodexRead {
-  events: ObservedEvent[]
-  turnEnds: CodexTurnEnd[]
-  next: Cursor
-  warnings: string[]
-}
+/** What a read answers (16 §4.3). */
+type CodexRead = Awaited<ReturnType<ObservationAdapter['read']>>
 
 export interface CodexObservationAdapterOptions {
   /** The Codex catalog id (the catalog's, passed in by the composition). */
@@ -202,16 +193,7 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
     return registry === null ? rollouts : [registry, ...rollouts]
   }
 
-  async read(
-    source: SourceFile,
-    from: Cursor | null
-  ): Promise<{ events: ObservedEvent[]; next: Cursor; warnings: string[] }> {
-    const { events, next, warnings } = await this.readWithTurnEnds(source, from)
-    return { events, next, warnings }
-  }
-
-  /** `read`, with the stream's turn ends (ADR-021) that `ObservedEvent` has no kind for yet. */
-  readWithTurnEnds(source: SourceFile, from: Cursor | null): Promise<CodexRead> {
+  read(source: SourceFile, from: Cursor | null): Promise<CodexRead> {
     return this.isRegistry(source)
       ? this.readRegistry(source, from)
       : this.readRollout(source, from)
@@ -260,7 +242,6 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
     const start = from?.value ?? 0
     const nothing: CodexRead = {
       events: [],
-      turnEnds: [],
       next: {
         adapterId: this.providerId,
         kind: 'byte-offset',
@@ -299,7 +280,6 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
     if (lines.length > 0 && lines[0]![0] > start) state = ROLLOUT_GAP
     const out: CodexRead = {
       events: [],
-      turnEnds: [],
       next: batch.next,
       warnings: [...batch.warnings]
     }
@@ -309,7 +289,6 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
       const step = stepRollout(state, record, { text, offset }, context)
       state = step.state
       out.events.push(...step.events)
-      out.turnEnds.push(...step.turnEnds)
       out.warnings.push(...step.warnings)
     }
     if (batch.next.value > start) {
@@ -416,13 +395,13 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
       value,
       fileIdentity: source.fileIdentity
     })
-    const nothing: CodexRead = { events: [], turnEnds: [], next: at(start), warnings: [] }
+    const nothing: CodexRead = { events: [], next: at(start), warnings: [] }
     if (source.size <= start) return nothing
     const result = await this.query(source.path, THREADS_SINCE_SQL, [start])
     if (result.kind === 'retry') return nothing
     if (result.kind === 'failed') return { ...nothing, warnings: [result.warning] }
     const read = sessionsOfThreadRows(result.rows, start, this.providerId)
-    return { events: read.events, turnEnds: [], next: at(read.watermark), warnings: read.warnings }
+    return { events: read.events, next: at(read.watermark), warnings: read.warnings }
   }
 
   /** One query on a fresh snapshot; a busy file is `retry`, never a warning (FM-090). */
