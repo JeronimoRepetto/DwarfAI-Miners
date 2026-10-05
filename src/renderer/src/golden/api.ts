@@ -200,6 +200,9 @@ export function goldenApi(sample: GoldenSample): Api {
       }),
     patchUiSession: none,
     onUiSessionChanged: unsubscribe,
+    // A-N20, A-N21: a golden stores no UI preference, so none is answered and none is written.
+    getUiPreferences: () => Promise.resolve({}),
+    setUiPreference: refuse('setUiPreference'),
     // A-N01, A-N02: the board a golden draws is the sample's, not the Host's; no renderer reads the Host before the
     // cut-1 switch (ISSUE-092, ISSUE-123), so a snapshot request is refused by name and no Host frame ever arrives.
     getHostSnapshot: refuse('getHostSnapshot'),

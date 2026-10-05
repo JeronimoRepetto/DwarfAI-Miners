@@ -35,7 +35,14 @@ import { CHANNELS, PRELOAD_HELPERS, todayShapeOf } from './channels'
 import type { ChannelSpec } from './channelSpec'
 import { ROW_IDS } from './rowIds'
 import { TODAY_SHAPES } from './todayShapes'
-import type { ActivateDwarfRequest, ConsoleOpenResult, OpenCodeSettingsView } from './windowApi'
+import type {
+  ActivateDwarfRequest,
+  ConsoleOpenResult,
+  OpenCodeSettingsView,
+  UiPreferenceKey,
+  UiPreferenceWrite,
+  UiPreferencesMap
+} from './windowApi'
 
 /** One row of `__fixtures__/today-rows.json`: 14 §2.1 as written (hand-kept test data). */
 interface TodayRow {
@@ -165,6 +172,23 @@ const NEW_ROWS = [
     wire: 'ui:session:changed',
     member: 'onUiSessionChanged',
     kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  // ISSUE-060: the UI-main preference map (ADR-024 items 1, 9; AMENDMENT-6 `startWithSystem`), born `ui-local` in cut 1
+  {
+    id: 'A-N20',
+    wire: 'ui:preferences:get',
+    member: 'getUiPreferences',
+    kind: 'invoke',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N21',
+    wire: 'ui:preferences:set',
+    member: 'setUiPreference',
+    kind: 'invoke',
     placement: 'ui-local',
     sensitive: false
   },
@@ -359,6 +383,8 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'host:connection:confirm-restart': undefined,
   'ui:session:get': undefined,
   'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' },
+  'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
+  'ui:preferences:set': { key: 'startWithSystem', value: false },
   'host:snapshot': { sections: ['mines', 'dwarfs'] }
 }
 
@@ -743,6 +769,12 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     expectTypeOf<Res<'tray:stopEverything:confirm'>>().toEqualTypeOf<IpcResult<StopAllOutcome>>()
     expectTypeOf<Req<'tray:stopEverything:cancel'>>().toEqualTypeOf<{ confirmationId: string }>()
     expectTypeOf<Res<'tray:stopEverything:cancel'>>().toEqualTypeOf<undefined>()
+    // A-N20, A-N21 (ISSUE-060): the request asks for any key of the map; the answers and the renderer's writes hold the
+    // keys built so far, each typed as 14 §3.9 types it (lastMode and resetEpochApplied are never a renderer's write).
+    expectTypeOf<Req<'ui:preferences:get'>>().toEqualTypeOf<{ keys: UiPreferenceKey[] }>()
+    expectTypeOf<Res<'ui:preferences:get'>>().toMatchTypeOf<Partial<UiPreferencesMap>>()
+    expectTypeOf<Req<'ui:preferences:set'>>().toMatchTypeOf<UiPreferenceWrite>()
+    expectTypeOf<Res<'ui:preferences:set'>>().toMatchTypeOf<UiPreferenceWrite>()
   })
 
   it('[ADR-002] the Stop everything rows carry the confirmationId UI main issued and A-N26 the requestId of host.shutdown', () => {

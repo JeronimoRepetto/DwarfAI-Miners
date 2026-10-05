@@ -77,6 +77,9 @@ import {
   openCodeSettingsViewSchema,
   rendererDiagnosticSchema,
   stopEverythingRequestedSchema,
+  getUiPreferencesRequestSchema,
+  uiPreferencesAnswerSchema,
+  uiPreferenceWriteSchema,
   uiSessionChangeSchema,
   uiSessionPatchSchema,
   uiSessionSnapshotSchema
@@ -718,6 +721,25 @@ export const CHANNELS = {
     status: 'new',
     request: none,
     response: uiSessionChangeSchema
+  },
+  // A-N20 `getUiPreferences`, A-N21 `setUiPreference` (ADR-024 items 1, 9; AMENDMENT-6): the persisted UI preferences
+  // UI main owns; the setter answers what was stored, for `startWithSystem` the verified login-entry state (ADR-027
+  // item 7)
+  'ui:preferences:get': {
+    name: 'ui:preferences:get',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: getUiPreferencesRequestSchema,
+    response: uiPreferencesAnswerSchema
+  },
+  'ui:preferences:set': {
+    name: 'ui:preferences:set',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: uiPreferenceWriteSchema,
+    response: uiPreferenceWriteSchema
   },
   // A-N01 `getHostSnapshot`, A-N02 `onHostEvent` (ADR-003 item 7; ADR-033 item 3; 14 §1.2): the Host read path of every
   // Host-fed read model, born `host` in cut 1. A-N01 relays B-M04 `session.snapshot` page by page, its params and page
