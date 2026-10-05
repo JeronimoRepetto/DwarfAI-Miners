@@ -2,13 +2,9 @@
 // and two dwarfs seeded in bound SQL, and read-backs of `messages` / `message_keys` the port does
 // not expose. Never imported by production code (R14).
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
-import type { Clock } from '../../../kernel/ports/clock'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
-import type { TransactionScope } from '../../../kernel/ports/transactionScope'
-import { SqliteMessageLog } from '../adapters/SqliteMessageLog'
-import type { MessageLog } from '../ports/messageLog'
 
 const MINE = '00000000-0000-7000-8000-0000000000f1'
 export const CONVERSATION_DWARFS = [
@@ -120,17 +116,4 @@ export function sqliteProbe(
     })
     return id
   }
-}
-
-/**
- * The module's `MessageLog` over the same database, for a test that reads what `ingest` wrote
- * through the port (`page`) where the module exposes no query yet (feed paging: ISSUE-103).
- */
-export function sqliteMessageLog(deps: {
-  db: SqliteDatabase
-  scope: TransactionScope
-  clock: Clock
-  ids: IdGenerator
-}): MessageLog {
-  return new SqliteMessageLog(deps)
 }

@@ -13,9 +13,9 @@
 // The observed dwarfs exist already (seeded `dwarfs` rows, as `crew.arrive` leaves them), so every
 // batch is written at once instead of held for the arrival route (that route is
 // observedSessionAppears.test.ts). The provider observation adapters are not built yet (later:
-// ISSUE-071…ISSUE-075), so each observer's transcript is a stand-in fixture replayed by the
-// `FakeObservationAdapter`: the records its adapter yields, with 15 §1.5 source keys and the
-// control-plane records that adapter drops (ADR-007 item 3). Every text is invented.
+// ISSUE-071…ISSUE-075), so each observer's transcript is a stand-in fixture replayed by a
+// test-local `FixtureObserver`: the records its adapter yields, with 15 §1.5 source keys and the
+// control-plane records that adapter flags (ADR-007 item 3). Every text is invented.
 import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { FakeFs } from '../../kernel/fakes/FakeFs'
@@ -32,16 +32,16 @@ import {
   OBSERVATION_POLL_MS,
   createObservation,
   createSqliteObservationStores,
+  type Cursor,
+  type ObservationAdapter,
   type ObservationEvent,
   type ObservedBatchSink,
-  type ObservedEvent
+  type ObservedEvent,
+  type SourceFile
 } from '../../modules/observation'
-import { FakeObservationAdapter } from '../../modules/observation/ports/fakes/FakeObservationAdapter'
 import type { ConversationEntry } from '../../modules/suppliers'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
-
-type HostEvent = ObservationEvent | ConversationEvent
 
 const T0 = 1_790_000_000_000
 const MINE = '00000000-0000-7000-8000-0000000000f9'
@@ -119,6 +119,55 @@ function fixtureOf(provider: Observer): ObservedEvent[] {
 const messagesIn = (events: ObservedEvent[]) =>
   events.flatMap((e) => (e.kind === 'entries' ? e.entries : []))
 
+/**
+ * A stand-in observer over in-memory transcript files (16 §4.3 `ObservationAdapter`): one stream
+ * per file, read from a watermark cursor (the count of records read), the same records with the
+ * same ids at every read (HO-37).
+ */
+class FixtureObserver implements ObservationAdapter {
+  readonly cursorKind = 'watermark' as const
+  private readonly files = new Map<string, ObservedEvent[]>()
+
+  constructor(readonly providerId: Observer) {}
+
+  capabilities(): ReturnType<ObservationAdapter['capabilities']> {
+    return {}
+  }
+
+  write(copy: string, records: ObservedEvent[]): void {
+    this.files.set(copy, records)
+  }
+
+  discover(): Promise<SourceFile[]> {
+    return Promise.resolve(
+      [...this.files].map(([copy, records]) => ({
+        streamId: `${this.providerId}:file-${copy}`,
+        adapterId: this.providerId,
+        path: copy,
+        fileIdentity: `${this.providerId}-${copy}`,
+        size: records.length
+      }))
+    )
+  }
+
+  read(
+    source: SourceFile,
+    from: Cursor | null
+  ): Promise<{ events: ObservedEvent[]; next: Cursor; warnings: string[] }> {
+    const records = this.files.get(source.path) ?? []
+    return Promise.resolve({
+      events: records.slice(from?.value ?? 0),
+      next: {
+        adapterId: this.providerId,
+        kind: 'watermark',
+        value: records.length,
+        fileIdentity: source.fileIdentity
+      },
+      warnings: []
+    })
+  }
+}
+
 /** A `SqliteDatabase` whose next `INSERT INTO messages` after `armAt` successful ones throws. */
 function faultyMessageInserts(db: SqliteDatabase) {
   let armed: number | null = null
@@ -154,7 +203,10 @@ function host() {
   const clock = new FakeClock(T0)
   const scheduler = new FakeScheduler(clock)
   const ids = new SequenceIdGenerator()
-  const bus = new RecordingEventBus<HostEvent>({ transactionScope: transactions })
+  // One bus per module's event union (as each module's composition is typed), both refusing a
+  // publish inside a transaction (16 §2.3).
+  const bus = new RecordingEventBus<ConversationEvent>({ transactionScope: transactions })
+  const observationBus = new RecordingEventBus<ObservationEvent>({ transactionScope: transactions })
   const log = new RecordingDiagnosticsLog()
   const faulty = faultyMessageInserts(db)
 
@@ -178,39 +230,15 @@ function host() {
     })
   })
 
-  // What each observer's files hold, per source (stream id → records).
-  const transcripts = new Map<string, ObservedEvent[]>()
-  const adapters = new Map<Observer, FakeObservationAdapter>()
-  for (const provider of OBSERVERS) {
-    adapters.set(provider, new FakeObservationAdapter(provider, { cursorKind: 'watermark' }))
-  }
-  /** A source of `provider` (a transcript file) holding `records`; `copy` is a second path. */
-  const write = (provider: Observer, records: ObservedEvent[], copy = 'main') => {
-    const adapter = adapters.get(provider)!
-    const streamId = `${provider}:file-${copy}`
-    transcripts.set(streamId, records)
-    const source = {
-      streamId,
-      adapterId: provider,
-      path: `fixture/${provider}/${copy}.jsonl`,
-      fileIdentity: `${provider}-${copy}`,
-      size: records.length
-    }
-    adapter.sources = [...adapter.sources.filter((s) => s.streamId !== streamId), source]
-    adapter.onRead(streamId, (from) => {
-      const all = transcripts.get(streamId) ?? []
-      return {
-        events: all.slice(from?.value ?? 0),
-        next: {
-          adapterId: provider,
-          kind: 'watermark',
-          value: all.length,
-          fileIdentity: source.fileIdentity
-        },
-        warnings: []
-      }
-    })
-  }
+  const observers = new Map<Observer, FixtureObserver>(
+    OBSERVERS.map((provider): [Observer, FixtureObserver] => [
+      provider,
+      new FixtureObserver(provider)
+    ])
+  )
+  /** `provider`'s transcript file `copy` now holds `records`; another `copy` is a second path. */
+  const write = (provider: Observer, records: ObservedEvent[], copy = 'main') =>
+    observers.get(provider)!.write(copy, records)
 
   const stores = createSqliteObservationStores({ db, scope: transactions, clock })
   let epoch = 0
@@ -244,12 +272,12 @@ function host() {
       }
     }
     const observation = createObservation({
-      adapters: [...adapters.values()],
+      adapters: [...observers.values()],
       fs: new FakeFs(),
       ...stores,
       sink,
       transactions: batchTransactions,
-      bus,
+      bus: observationBus,
       clock,
       scheduler,
       ids,
@@ -271,6 +299,7 @@ function host() {
   return {
     clock,
     bus,
+    observationBus,
     log,
     stores,
     faulty,
@@ -402,7 +431,7 @@ describe('reopen with offline activity (UC-024)', () => {
     expect(h.count('message_keys')).toBe(0)
     expect(h.stores.cursors.get('opencode:file-main')).toBeNull()
     expect(h.bus.ofType('MessagesAppended')).toEqual([])
-    expect(h.bus.ofType('TranscriptEntriesObserved')).toEqual([])
+    expect(h.observationBus.ofType('TranscriptEntriesObserved')).toEqual([])
     expect(h.log.entries.map((e) => e.event)).toContain('observation.batch-failed')
 
     // The next cycle re-reads the batch from the old position and writes each message once.
