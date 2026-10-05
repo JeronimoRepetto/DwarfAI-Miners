@@ -55,6 +55,12 @@ export {
   type CodexObservationAdapterOptions
 } from './adapters/codex/CodexObservationAdapter'
 export {
+  ANTIGRAVITY_OBSERVED_CAPABILITIES,
+  AntigravityObservationAdapter,
+  antigravityGeminiDirOf,
+  type AntigravityObservationAdapterOptions
+} from './adapters/antigravity/AntigravityObservationAdapter'
+export {
   OPENCODE_OBSERVED_CAPABILITIES,
   OpenCodeObservationAdapter,
   openCodeStoreRootOf,

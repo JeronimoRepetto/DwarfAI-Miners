@@ -1,0 +1,12 @@
+{
+  "$comment": "A presence lock appearing and disappearing (FM-059): each step sets presence/<conversationId>.lock, advances the clock by advanceMs, then discovers and reads the conversation's transcript from its cursor. The last step is the conversation resumed with the same id (`agy --conversation <id>`, AMENDMENT-13): its lock is back.",
+  "conversationId": "11111111-1111-4111-8111-111111111111",
+  "steps": [
+    { "lock": true, "advanceMs": 0 },
+    { "lock": false, "advanceMs": 0 },
+    { "lock": false, "advanceMs": 29999 },
+    { "lock": false, "advanceMs": 1 },
+    { "lock": false, "advanceMs": 30000 },
+    { "lock": true, "advanceMs": 0 }
+  ]
+}
