@@ -40,6 +40,14 @@ import {
   type LegacyRuntimeSurface
 } from '../legacy-bridge/LegacyAgentRegistryFeed'
 import {
+  createLegacyDwarfIdBridge,
+  createLegacyDwarfIdRows,
+  createLegacyPushTap,
+  createLegacyRegistryTap,
+  type LegacyPushTap,
+  type LegacyRegistry
+} from '../legacy-bridge/LegacyDwarfIdBridge'
+import {
   createLegacyLaunchObservation,
   type LegacyLaunchObservation
 } from '../legacy-bridge/LegacyLaunchObservation'
@@ -411,6 +419,58 @@ export function composeLegacyLaunchObservation(deps: {
   return createLegacyLaunchObservation({ launches: deps.launches })
 }
 
+/** `LegacyDwarfIdBridge` as the root composes it on today's runtime (21 §3, cuts 1–4). */
+export interface LegacyDwarfIdComposition {
+  /** Today's runtime as the router's `legacy` target, the bridged rows' dwarf ids mapped. */
+  legacy: RouteTarget
+  /** Today's runtime as `LegacyAgentRegistryFeed` is handed it: what the feed writes is the bridge's legacy side. */
+  registry: LegacyRuntimeSurface & { registry: LegacyRegistry }
+  /** The today wires of the rows the bridge is composed on (A-13, A-23, A-26, A-27, A-P3, A-P4). */
+  channels: readonly string[]
+  dispose(): void
+}
+
+/**
+ * `LegacyDwarfIdBridge` (21 §3, cuts 1–4; 14 §5; AMENDMENT-8, OQ-69): from cut 1 the renderer knows only Host ids, so
+ * the legacy rows that carry a dwarf id reach today's runtime with the legacy id of the dwarf with the same provider
+ * identity, or answer their own not-found shape, and A-P4 leaves with the Host id. Composed in the releases it is listed
+ * for (cut 1, its rollback build included, to the end of 4b), never in the cut-0 table, and only over the Host attach
+ * and a bound legacy registry (the legacy side of the join). Read-only toward the Host: it reads B-M41 only. Deleted at
+ * the end of cut 4 with B-M41 (ISSUE-241).
+ */
+export function composeLegacyDwarfIdBridge(deps: {
+  release: StepId
+  client: Pick<HostClient, 'call' | 'subscribe'> | undefined
+  legacy: RouteTarget
+  registry: LegacyRuntimeSurface | undefined
+  pushes?: LegacyPushTap
+}): LegacyDwarfIdComposition | undefined {
+  const { client, registry } = deps
+  if (
+    client === undefined ||
+    registry === undefined ||
+    !bridgeLivesIn('LegacyDwarfIdBridge', deps.release)
+  ) {
+    return undefined
+  }
+  const tap = createLegacyRegistryTap(registry.registry)
+  const bridge = createLegacyDwarfIdBridge({ client, legacy: { sessions: tap.sessions } })
+  const rows = createLegacyDwarfIdRows({
+    bridge,
+    legacy: { serve: (channel, payload) => deps.legacy.serve(channel, payload) }
+  })
+  const uninstall = deps.pushes?.install(rows)
+  return {
+    legacy: { serve: (channel, payload) => rows.serve(channel, payload) },
+    registry: { ...registry, registry: tap.registry },
+    channels: [...rows.requestChannels, ...rows.pushChannels],
+    dispose() {
+      uninstall?.()
+      bridge.dispose()
+    }
+  }
+}
+
 /** An open window of the app, as the pushes reach it. */
 export interface AppWindow extends WindowContents {
   close(): void
@@ -507,6 +567,11 @@ export interface UiMainDeps {
    * in-memory agent registry. Without it, or in a release the feed is not listed for, no feed is composed.
    */
   legacyRegistry?: LegacyRuntimeSurface
+  /**
+   * Where today's runtime sends its pushes (built before it composes): `LegacyDwarfIdBridge` installs its A-P4 mapping
+   * there in the releases it is listed for (21 §3, cuts 1–4).
+   */
+  legacyPushes?: LegacyPushTap
   /** Every open window of the app (A-N04, A-N25 pushes; the tray's Quit closes them). */
   appWindows?: () => readonly AppWindow[]
   /** The rebuilt tray (ISSUE-053): its icon and the id of each new confirmation. */
@@ -618,6 +683,7 @@ export async function startUiMain({
   routes = ROUTES,
   release = ROUTES_RELEASE,
   legacyRegistry,
+  legacyPushes,
   appWindows = () => [],
   tray,
   shortcut,
@@ -691,7 +757,18 @@ export async function startUiMain({
   // From cut 1 to the end of cut 4 (21 §3): a session today's runtime launched is observed by the Host like any other,
   // and today's runtime keeps its launch channel; only the registry-only discovery of today's observer stays composed.
   const launchObservation = composeLegacyLaunchObservation({ release, launches: legacyRuntime })
-  const registryFeed = composeLegacyAgentRegistryFeed({ release, legacy: legacyRegistry })
+  // The legacy rows that carry a dwarf id map Host ids to legacy ones through the registry the feed writes (21 §3).
+  const dwarfIds = composeLegacyDwarfIdBridge({
+    release,
+    client: host?.client,
+    legacy: legacyRuntime,
+    registry: legacyRegistry,
+    ...(legacyPushes === undefined ? {} : { pushes: legacyPushes })
+  })
+  const registryFeed = composeLegacyAgentRegistryFeed({
+    release,
+    legacy: dwarfIds?.registry ?? legacyRegistry
+  })
 
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
   const toggle = rebuilt && panel !== undefined ? shortcut?.(panel) : undefined
@@ -806,7 +883,7 @@ export async function startUiMain({
   })
   createRouter({
     routes,
-    legacy: legacyRuntime,
+    legacy: dwarfIds?.legacy ?? legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
     // A-N26, the one `host` row of cut 0: its handler relays `host.shutdown` on the confirmation's `ui` connection.
     ...(hostTarget === undefined ? {} : { host: hostTarget }),
@@ -849,6 +926,7 @@ export async function startUiMain({
     mirror?.dispose()
     boardFacade?.dispose()
     registryFeed?.stop()
+    dwarfIds?.dispose()
     host?.client.dispose()
     legacyRuntime.willQuit()
   })
@@ -1179,10 +1257,14 @@ if (process.type === 'browser') {
     BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
   const rebuiltPanel = electronPanelWindow(uiPreferenceStore)
   // Today's runtime, without its window, tray and shortcut once the table serves the window family `ui-local`: its
-  // pushes, pickers and notification click reach the rebuilt Panel (21 §2 cut 0; LegacyRuntimeRoute).
+  // pushes, pickers and notification click reach the rebuilt Panel (21 §2 cut 0; LegacyRuntimeRoute). Its pushes pass
+  // through the tap where `LegacyDwarfIdBridge` maps A-P4 in the releases it is listed for (21 §3, cuts 1–4).
+  const legacyPushes = createLegacyPushTap()
   const legacyPanel: LegacyPanelSurface = {
     send: (channel, payload) => {
-      for (const window of appWindows()) window.send(channel, payload)
+      legacyPushes.send(channel, payload, (push, mapped) => {
+        for (const window of appWindows()) window.send(push, mapped)
+      })
     },
     visible: () => rebuiltPanel.composed()?.visible() ?? false,
     show: () => rebuiltPanel.composed()?.show(),
@@ -1211,6 +1293,7 @@ if (process.type === 'browser') {
     lock: new ElectronSingleInstanceLock(app),
     lifecycle: electronLifecycle(),
     legacyRuntime,
+    legacyPushes,
     ipc: electronIpcMain(),
     appEntry: appEntryUrl(),
     appWindows,
