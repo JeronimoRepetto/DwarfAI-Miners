@@ -204,6 +204,10 @@ export function goldenApi(sample: GoldenSample): Api {
     getUiPreferences: () => Promise.resolve({}),
     setUiPreference: refuse('setUiPreference'),
     // A-N12: a golden runs no Reset metrics, so no reset is ever pushed.
-    onUiPreferencesReset: unsubscribe
+    onUiPreferencesReset: unsubscribe,
+    // A-N01, A-N02: the board a golden draws is the sample's, not the Host's; no renderer reads the Host before the
+    // cut-1 switch (ISSUE-092, ISSUE-123), so a snapshot request is refused by name and no Host frame ever arrives.
+    getHostSnapshot: refuse('getHostSnapshot'),
+    onHostEvent: unsubscribe
   }
 }

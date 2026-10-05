@@ -425,6 +425,8 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     // with that step (22 §5): A-N17…A-N19, born `ui-local` in cut 1 and routed by the cut-1 switch (ISSUE-123).
     // AMENDED for ISSUE-060 (was: A-N33 and A-N17…A-N19): A-N20 and A-N21 join them, born `ui-local` in cut 1 and
     // routed by the same switch.
+    // AMENDED for ISSUE-082 (was: A-N33 and A-N17…A-N21): A-N01 and A-N02, born `host` in cut 1, join them, routed by
+    // the same cut-1 switch (ISSUE-123).
     expect(UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
       'ui:session:get': 'cut-1',
@@ -433,7 +435,9 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       'ui:preferences:get': 'cut-1',
       'ui:preferences:set': 'cut-1',
       // AMENDED for ISSUE-061: A-N12 joins them, born `ui-local` in cut 1 and routed by the same switch.
-      'ui:preferences:reset': 'cut-1'
+      'ui:preferences:reset': 'cut-1',
+      'host:snapshot': 'cut-1',
+      'host:event': 'cut-1'
     })
   })
 

@@ -7,23 +7,36 @@
 // mapping is Partial only because a test may merge a frame of its own into HostFrames.
 import { z } from 'zod'
 import {
+  dwarfIdSchema,
+  dwarfWireSchema,
+  mineIdSchema,
+  mineWireSchema,
   osNotificationSchema,
   preferencesViewSchema,
   resetIdSchema,
+  type DwarfId,
+  type DwarfWire,
+  type MineId,
+  type MineWire,
   type OsNotification,
   type PreferencesView,
   type ResetId
 } from '../wire'
 import type { HelloOk } from './adr-003'
+import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
   'host.state':           { state: HelloOk['state']; jobStatus: HelloOk['jobStatus'] }
   'host.closing':         { reason: 'idle' | 'stop-all' | 'upgrade' | 'os-session-end'; clean: true }   // 'idle' retired by AMENDMENT-5 (OQ-63), never sent
+  'mine.changed':         { mine: MineWire }
+  'dwarf.arrived':        { dwarf: DwarfWire; announce: boolean }
+  'dwarf.changed':        { dwarf: DwarfWire }
+  'dwarf.departed':       { dwarfId: DwarfId; mineId: MineId; cause: DepartureCause }
   'attention.notify':     OsNotification
   'attention.withdraw':   { keys: string[] }
   'preferences.changed':  PreferencesView
@@ -56,6 +69,12 @@ export const HOST_FRAME_SCHEMAS = {
       reason: z.enum(['idle', 'stop-all', 'upgrade', 'os-session-end']),
       clean: z.literal(true)
     })
+    .strict(),
+  'mine.changed': z.object({ mine: mineWireSchema }).strict(),
+  'dwarf.arrived': z.object({ dwarf: dwarfWireSchema, announce: z.boolean() }).strict(),
+  'dwarf.changed': z.object({ dwarf: dwarfWireSchema }).strict(),
+  'dwarf.departed': z
+    .object({ dwarfId: dwarfIdSchema, mineId: mineIdSchema, cause: departureCauseSchema })
     .strict(),
   'attention.notify': osNotificationSchema,
   'attention.withdraw': z.object({ keys: z.array(z.string()) }).strict(),

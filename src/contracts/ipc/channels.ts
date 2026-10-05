@@ -14,7 +14,9 @@ import {
   stopAllOutcomeSchema,
   supplierEntryViewSchema
 } from '../wire'
+import { hostFrameSchema } from '../host-protocol/envelope'
 import { ipcResultSchema } from '../host-protocol/errors'
+import { snapshotPageSchema, snapshotParamsSchema } from '../host-protocol/snapshot'
 import {
   answerOutcomeSchema,
   answerPermissionParamsSchema,
@@ -749,6 +751,28 @@ export const CHANNELS = {
     status: 'new',
     request: none,
     response: uiPreferencesResetSchema
+  },
+  // A-N01 `getHostSnapshot`, A-N02 `onHostEvent` (ADR-003 item 7; ADR-033 item 3; 14 §1.2): the Host read path of every
+  // Host-fed read model, born `host` in cut 1. A-N01 relays B-M04 `session.snapshot` page by page, its params and page
+  // unchanged; A-N02 is the one push every Host frame reaches renderers through, as ordered `HostFrame[]` batches.
+  // Both carry sensitive Host data (14 §3.5 `session.snapshot` result, SENSITIVE_FRAMES): never logged
+  'host:snapshot': {
+    name: 'host:snapshot',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: snapshotParamsSchema,
+    response: ipcResultSchema(snapshotPageSchema),
+    sensitive: true
+  },
+  'host:event': {
+    name: 'host:event',
+    kind: 'push',
+    placement: 'host',
+    status: 'new',
+    request: none,
+    response: z.array(hostFrameSchema),
+    sensitive: true
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

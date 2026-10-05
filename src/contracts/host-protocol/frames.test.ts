@@ -3,13 +3,16 @@ import type { z } from 'zod'
 import type {
   AttentionKind,
   DwarfId,
+  DwarfWire,
   MineId,
+  MineWire,
   OsNotification,
   PreferencesView,
   ResetId
 } from '../wire'
 import type { HelloOk } from './adr-003'
 import { HOST_FRAME_SCHEMAS, SENSITIVE_FRAMES, type HostFrames } from './frames'
+import type { DepartureCause } from './params/crew'
 import type { ResetStep } from './params/preferences'
 
 // The B-F04 and B-F05 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
@@ -142,6 +145,124 @@ describe('ui.resetPreferences and reset.progress payloads (14 §3.5, B-F26, B-F2
     expect(progress.safeParse({ resetId: RESET_ID, epoch: 1 }).success).toBe(false)
     expect(
       progress.safeParse({ resetId: RESET_ID, epoch: 1, step: 'db', reason: 'x' }).success
+    ).toBe(false)
+  })
+})
+
+// The B-F06, B-F08, B-F09 and B-F10 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
+
+describe('board frame payloads (14 §3.5, B-F06, B-F08, B-F09, B-F10)', () => {
+  const MINE = '01920000-0000-7000-8000-000000000001'
+  const DWARF = '01920000-0000-7000-8000-000000000002'
+  const totals = {
+    coal: { tokens: 1 },
+    bronze: { tokens: 0 },
+    copper: { tokens: 0 },
+    silver: { tokens: 0 },
+    gold: { tokens: 0 },
+    uranium: { tokens: 0 }
+  }
+  const mine = {
+    id: MINE,
+    path: '/work/alpha',
+    name: 'alpha',
+    state: 'unrecorded',
+    tier: null,
+    hasBeenMeasured: false,
+    lastUsedAt: 1,
+    totals
+  }
+  const dwarf = {
+    id: DWARF,
+    mineId: MINE,
+    providerId: 'claude',
+    baseName: 'Borin',
+    customName: null,
+    rank: 'foreman',
+    parentDwarfId: null,
+    delegated: false,
+    sessionProfile: { providerId: 'claude' },
+    presence: 'present',
+    processState: 'running',
+    status: 'idle',
+    needsYou: false,
+    canReceiveMessages: false,
+    stopInFlight: false,
+    stopUnavailableReason: null,
+    owned: false,
+    arrivedAt: 1
+  }
+
+  it('[ADR-003] each board frame schema infers exactly its 14 §3.5 payload, carries the full MineWire or DwarfWire and refuses any other key', () => {
+    expectTypeOf<HostFrames['mine.changed']>().toEqualTypeOf<{ mine: MineWire }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['mine.changed']>>().toEqualTypeOf<
+      HostFrames['mine.changed']
+    >()
+    expectTypeOf<HostFrames['dwarf.arrived']>().toEqualTypeOf<{
+      dwarf: DwarfWire
+      announce: boolean
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['dwarf.arrived']>>().toEqualTypeOf<
+      HostFrames['dwarf.arrived']
+    >()
+    expectTypeOf<HostFrames['dwarf.changed']>().toEqualTypeOf<{ dwarf: DwarfWire }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['dwarf.changed']>>().toEqualTypeOf<
+      HostFrames['dwarf.changed']
+    >()
+    expectTypeOf<HostFrames['dwarf.departed']>().toEqualTypeOf<{
+      dwarfId: DwarfId
+      mineId: MineId
+      cause: DepartureCause
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['dwarf.departed']>>().toEqualTypeOf<
+      HostFrames['dwarf.departed']
+    >()
+    expectTypeOf<DepartureCause>().toEqualTypeOf<
+      | 'stopped'
+      | 'mine-removed'
+      | 'closed-elsewhere'
+      | 'crashed'
+      | 'recovery-dismissed'
+      | 'recovery-failed'
+    >()
+
+    const changed = HOST_FRAME_SCHEMAS['mine.changed']
+    expect(changed.safeParse({ mine }).success).toBe(true)
+    expect(changed.safeParse({ mine: { ...mine, state: 'removed' } }).success).toBe(false)
+    expect(changed.safeParse({ mine, seq: 3 }).success).toBe(false)
+
+    const arrived = HOST_FRAME_SCHEMAS['dwarf.arrived']
+    expect(arrived.safeParse({ dwarf, announce: true }).success).toBe(true)
+    expect(arrived.safeParse({ dwarf }).success).toBe(false)
+    // No status facts and no process id cross the channel (14 §3.6 DwarfWire).
+    expect(arrived.safeParse({ dwarf: { ...dwarf, pid: 4242 }, announce: false }).success).toBe(
+      false
+    )
+    expect(
+      arrived.safeParse({ dwarf: { ...dwarf, facts: { openAsk: null } }, announce: false }).success
+    ).toBe(false)
+
+    const dwarfChanged = HOST_FRAME_SCHEMAS['dwarf.changed']
+    expect(dwarfChanged.safeParse({ dwarf }).success).toBe(true)
+    expect(dwarfChanged.safeParse({ dwarf, announce: false }).success).toBe(false)
+
+    const departed = HOST_FRAME_SCHEMAS['dwarf.departed']
+    for (const cause of [
+      'stopped',
+      'mine-removed',
+      'closed-elsewhere',
+      'crashed',
+      'recovery-dismissed',
+      'recovery-failed'
+    ]) {
+      expect(departed.safeParse({ dwarfId: DWARF, mineId: MINE, cause }).success, cause).toBe(true)
+    }
+    expect(departed.safeParse({ dwarfId: DWARF, mineId: MINE, cause: 'killed' }).success).toBe(
+      false
+    )
+    expect(departed.safeParse({ dwarfId: DWARF, cause: 'stopped' }).success).toBe(false)
+    expect(
+      departed.safeParse({ dwarfId: DWARF, mineId: MINE, cause: 'stopped', toast: true }).success
     ).toBe(false)
   })
 })
