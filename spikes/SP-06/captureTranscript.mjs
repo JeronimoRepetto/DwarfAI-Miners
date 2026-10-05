@@ -15,6 +15,7 @@
  *
  * - Writes `fixtures/<p>/observer/<version>/<case>.raw.jsonl` (or `<case>.raw.<stream>.jsonl` with `--stream`, for a
  *   second file of the same case, such as the live stream SP-06 compares) and `<case>.raw.meta.json`.
+ * - A leading byte order mark is dropped (Windows PowerShell 5.1 writes UTF-8 with one).
  * - `--sse` reads a captured Server-Sent Events body (`data: {…}` lines) and keeps one JSON event per line.
  * - Refuses (exit 2) when `CI` is set, `RUN_INTEGRATION` is not `1` or the provider is not in `DWARFAI_REAL_CLI`.
  * - Reads only the `--source` file: never a provider config, credential file or keychain entry (ADR-008 item 2).
@@ -114,7 +115,9 @@ export function runCapture(request) {
     log(`capture: could not read the source (${error.code ?? 'error'})`)
     return 1
   }
-  const body = sse ? sseToJsonl(text) : text
+  // A leading byte order mark (Windows PowerShell 5.1 writes one) would hide the first record from every parser.
+  const unmarked = text.replace(/^\uFEFF/, '')
+  const body = sse ? sseToJsonl(unmarked) : unmarked
   if (body.trim() === '') {
     log('capture: the source holds no record')
     return 1

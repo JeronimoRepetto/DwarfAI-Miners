@@ -160,6 +160,30 @@ describe('SP-06 recording tools (OS lane, synthetic input)', () => {
     expect(sseToJsonl(body)).toBe('{"type":"session.idle","properties":{}}\n{"type":"x"}\n')
   })
 
+  // Windows PowerShell 5.1 writes UTF-8 files with a byte order mark; the first record must still parse.
+  it('[SP-06] the capture drops a leading byte order mark from the source', () => {
+    const root = tempDir()
+    const source = path.join(root, 'bom.jsonl')
+    writeFileSync(source, '﻿{"type":"user"}\n')
+    const fixturesRoot = path.join(root, 'fixtures')
+    const code = runCapture({
+      provider: 'claude',
+      version: '2.1.99',
+      caseName: 'bom',
+      repo: root,
+      source,
+      fixturesRoot,
+      env: LANE,
+      log: quiet
+    })
+    expect(code).toBe(0)
+    const raw = readFileSync(
+      path.join(fixturesRoot, 'claude', 'observer', '2.1.99', 'bom.raw.jsonl'),
+      'utf8'
+    )
+    expect(raw).toBe('{"type":"user"}\n')
+  })
+
   it('[SP-06, ADR-006] the id correspondence reports the unit keys a live stream and a transcript share and whether their usage agrees', () => {
     const { transcript, stream } = claudeSession('/work/repo')
     const result = idCorrespondence('claude', stream, transcript)
