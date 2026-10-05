@@ -202,6 +202,12 @@ test.describe('E2E harness: a bounded teardown (17 §1.9)', () => {
     const { app, profile } = current
     // Held before teardown: Playwright refuses `app.process()` once the app is closed.
     const child = app.process()
+    // The app's start is over first: until the UI attached to its Host, the start runs one synchronous step on the
+    // main thread, the Host's breakaway launch (a CreateProcess of the fresh versioned copy on Windows: about 0.1 s
+    // here, seconds on a stalling CI disk), and a diagnosis asked inside it gets no answer (run 37287673670: "the main
+    // process did not answer within 3000 ms", the quit 40 ms after the page's load). The case asks a main process
+    // that has nothing left to do, the responsive one its second assertion describes.
+    await waitForHostAttached(profile)
     const pids = await app.evaluate(({ app: electronApp }) =>
       electronApp.getAppMetrics().map((metric) => metric.pid)
     )
