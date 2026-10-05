@@ -58,9 +58,14 @@ const TEST_FRAMES = new Set(['mine.changed'])
 
 function validateFrame(name: string, data: unknown): void {
   const schemas: Readonly<Record<string, z.ZodTypeAny | undefined>> = HOST_FRAME_SCHEMAS
+  // AMENDED for ISSUE-082 (was: a contract schema, when one exists, was checked before TEST_FRAMES):
+  // B-F06 and B-F08…B-F10 now have their schemas, and these cases publish those names with data of
+  // their own to prove ordering, not payloads; the payloads are proven in frames.test.ts and
+  // frames/board.contract.test.ts.
+  if (TEST_FRAMES.has(name)) return
   const schema = schemas[name]
   if (schema !== undefined) schema.parse(data)
-  else if (!TEST_FRAMES.has(name)) throw new Error(`no contract schema for ${name}`)
+  else throw new Error(`no contract schema for ${name}`)
 }
 
 /** The cut-0 boot values of the `meta` section (ISSUE-026 lead decision: a fresh DB, no mine row). */

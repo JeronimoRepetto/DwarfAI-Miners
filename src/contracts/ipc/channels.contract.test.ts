@@ -200,6 +200,24 @@ const NEW_ROWS = [
     kind: 'push',
     placement: 'ui-local',
     sensitive: false
+  },
+  // ISSUE-082: the Host read path of every Host-fed read model (ADR-033 item 3), born `host` in cut 1; both carry
+  // sensitive Host data (14 §3.5 `session.snapshot` result, SENSITIVE_FRAMES)
+  {
+    id: 'A-N01',
+    wire: 'host:snapshot',
+    member: 'getHostSnapshot',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: true
+  },
+  {
+    id: 'A-N02',
+    wire: 'host:event',
+    member: 'onHostEvent',
+    kind: 'push',
+    placement: 'host',
+    sensitive: true
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -375,7 +393,8 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'ui:session:get': undefined,
   'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' },
   'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
-  'ui:preferences:set': { key: 'startWithSystem', value: false }
+  'ui:preferences:set': { key: 'startWithSystem', value: false },
+  'host:snapshot': { sections: ['mines', 'dwarfs'] }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */

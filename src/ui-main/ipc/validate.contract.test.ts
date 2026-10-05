@@ -124,7 +124,8 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'ui:session:get': undefined,
   'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' },
   'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
-  'ui:preferences:set': { key: 'startWithSystem', value: false }
+  'ui:preferences:set': { key: 'startWithSystem', value: false },
+  'host:snapshot': { sections: ['mines', 'dwarfs'] }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */
