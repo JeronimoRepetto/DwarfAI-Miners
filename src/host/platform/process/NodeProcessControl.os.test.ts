@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   PROCESS_START_TOLERANCE_MS,
+  matchesRecorded,
   type ProcessIdentity
 } from '../../kernel/domain/processIdentity'
 import type { SpawnedProcess } from '../../kernel/ports/processControl'
@@ -56,7 +57,16 @@ function probeCases(): void {
       ),
       new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000))
     ])
-    if (!settled && pid !== null) process.kill(pid)
+    // Only while the pid is still the stub's identity (ADR-014): never a pid the OS handed on.
+    if (!settled && pid !== null) {
+      const identity = await child.identity.catch(() => null)
+      if (
+        identity !== null &&
+        matchesRecorded(await new NodeProcessControl().probe(identity.pid), identity)
+      ) {
+        process.kill(identity.pid)
+      }
+    }
   })
 
   const startSleeper = (control: NodeProcessControl): SpawnedProcess => {

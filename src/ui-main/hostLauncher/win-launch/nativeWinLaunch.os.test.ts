@@ -151,9 +151,20 @@ describe.runIf(WINDOWS)('the launch helper (ADR-002 D6 item 1, SP-02), built and
       pid = result.status === 'launched' ? result.pid : 0
       const watched = binding.open(pid)
       if (watched === null) throw new Error('open(pid) found no process')
+      let exitSeen = false
       try {
         expect(await exitOf(binding, watched, 20_000)).toBe(7)
+        exitSeen = true
       } finally {
+        // Ended only while its handle is still open: an open handle keeps Windows from handing the
+        // pid to another process, so this can reach no process but the one started here (ADR-014).
+        if (!exitSeen) {
+          try {
+            process.kill(pid)
+          } catch {
+            // already gone
+          }
+        }
         binding.release(watched)
       }
       const seen = JSON.parse(readFileSync(report, 'utf8')) as {
@@ -167,13 +178,8 @@ describe.runIf(WINDOWS)('the launch helper (ADR-002 D6 item 1, SP-02), built and
       )
       expect(seen.cwd.toLowerCase()).toBe(dir.toLowerCase())
     } finally {
-      if (pid !== 0) {
-        try {
-          process.kill(pid)
-        } catch {
-          // already gone
-        }
-      }
+      // No kill by pid here: once its handle is released, the pid may already name another process.
+      // The script ends itself 1.5 s after it starts.
       rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
     }
   })

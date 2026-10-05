@@ -13,6 +13,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -24,6 +25,8 @@ import type { HostEndpoint } from '@dwarfai/contracts'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
 import { buildManifest, serializeManifest } from './hostManifest'
 import { createNodeHostLauncher } from './index'
+import { IDENTITY_TOLERANCE_MS, createProcessStartReader } from './processStart'
+import { osQueryRunner, thisPlatform } from './testing/osQueryRunner'
 import { copySourceOf, type CopyPlatform } from './versionedCopy'
 
 const WINDOWS = process.platform === 'win32'
@@ -78,6 +81,17 @@ function hostReports(hostDataDir: string): FakeHostReport[] {
     .map((name) => JSON.parse(readFileSync(path.join(hostDataDir, name), 'utf8')) as FakeHostReport)
 }
 
+/** Each fake Host's pid and when its report was last written (it was running then). */
+function hostRecords(hostDataDir: string): Array<{ pid: number; recordedAtMs: number }> {
+  return readdirSync(hostDataDir)
+    .filter((name) => /^fake-host-\d+\.json$/.test(name))
+    .map((name) => {
+      const file = path.join(hostDataDir, name)
+      const report = JSON.parse(readFileSync(file, 'utf8')) as FakeHostReport
+      return { pid: report.pid, recordedAtMs: statSync(file).mtimeMs }
+    })
+}
+
 /** Real paths on both sides: on macOS `/var/folders/…` is a link to `/private/var/folders/…` (SP-03). */
 function isInside(file: string, folder: string): boolean {
   const real = (target: string): string => {
@@ -105,17 +119,39 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** Ends `pid` and waits until it is gone; true when nothing is left. */
-async function endProcess(pid: number): Promise<boolean> {
-  if (isAlive(pid)) {
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      // already gone
-    }
+const readStart = createProcessStartReader({ platform: thisPlatform(), runQuery: osQueryRunner() })
+
+/**
+ * Whether `pid` is still the process that was running when its record was written at
+ * `recordedAtMs` (ADR-014: never a bare pid): it runs and started no later than that, within the
+ * one tolerance. A pid that is gone or started later is another process or none.
+ */
+async function recordedState(
+  pid: number,
+  recordedAtMs: number
+): Promise<'recorded' | 'other' | 'unknown'> {
+  const start = await readStart(pid)
+  if (start.kind === 'unknown') return 'unknown'
+  return start.kind === 'started' && start.ms <= recordedAtMs + IDENTITY_TOLERANCE_MS
+    ? 'recorded'
+    : 'other'
+}
+
+/**
+ * Ends `pid` only while it is the recorded process, and waits until it is gone; true when the
+ * recorded process is not left running. A pid Windows or the kernel handed to another process is
+ * never signalled, and neither is one whose start time cannot be read (that answers false).
+ */
+async function endProcess(pid: number, recordedAtMs: number): Promise<boolean> {
+  const state = await recordedState(pid, recordedAtMs)
+  if (state !== 'recorded') return state === 'other'
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // already gone
   }
   for (let waited = 0; waited < 5_000 && isAlive(pid); waited += 100) await sleep(100)
-  return !isAlive(pid)
+  return !isAlive(pid) || (await recordedState(pid, recordedAtMs)) === 'other'
 }
 
 /** Removes `dir`, retrying while Windows still holds a just-ended process's files for up to 10 s. */
@@ -169,8 +205,8 @@ describe('the Host runs from its versioned copy (ADR-002 D5, ADR-027 item 2)', (
         expect(readdirSync(world.copyRoot), 'no temporary directory is left').toEqual([VERSION])
         expect(log.byEvent('versioned-copy')).toMatchObject([{ outcome: 'ok', causeClass: 'copy' }])
       } finally {
-        for (const report of hostReports(world.hostDataDir)) {
-          if (!(await endProcess(report.pid))) survivors.push(report.pid)
+        for (const host of hostRecords(world.hostDataDir)) {
+          if (!(await endProcess(host.pid, host.recordedAtMs))) survivors.push(host.pid)
         }
         const removed = await removeFolder(world.root)
         expect(survivors, 'no Host process is left running').toEqual([])
