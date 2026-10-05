@@ -6,6 +6,10 @@
 // `host/wiring` (later: ISSUE-096), which also runs the backfill at Host `ready`.
 import type { UsageObservation } from '../../kernel/domain/sharedContracts'
 import type { MineId } from '../../kernel/domain/values'
+import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
+import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
+import type { TransactionScope } from '../../kernel/ports/transactionScope'
+import { LedgerResetStep } from './adapters/sqlite/LedgerResetStep'
 import { runCoalBackfill, type CoalBackfillDeps } from './application/coalBackfill'
 import { creditSealedUnits } from './application/creditSealedUnits'
 import { creditUsage, totals } from './application/creditUsage'
@@ -102,4 +106,22 @@ export function createLedger(deps: LedgerDeps): Ledger {
       discard: () => crediting.discardJoined()
     }
   }
+}
+
+/**
+ * The ledger step of the Reset-metrics saga (ADR-023; 09 §7.2): the shape of the preferences
+ * module's `ResetDbStep` (16 §4.12), stated here so the ledger imports nothing from preferences
+ * (05 §1.3, R4). It joins the saga's one `db` transaction.
+ */
+export interface LedgerResetDbStep {
+  readonly name: string
+  reset(tx: TransactionRunner): void
+}
+
+/** `name: 'ledger'`; registered with the saga by host/wiring/resetParticipants.ts. */
+export function createLedgerResetStep(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+}): LedgerResetDbStep {
+  return new LedgerResetStep(deps)
 }
