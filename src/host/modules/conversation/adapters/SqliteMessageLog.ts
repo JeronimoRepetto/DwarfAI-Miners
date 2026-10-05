@@ -12,11 +12,12 @@
 //   a message DwarfAI typed into the terminal. Anything else is a new row the key then points at. A statement failure (a CHECK, a foreign key) throws and the
 //   caller's transaction rolls the whole batch back (16 §2.1).
 // - It returns the rows this batch inserted, merged echoes excluded (amendment of 2026-10-02 to
-//   16 §4.6). `activity_json` is left NULL: activity runs are ISSUE-101.
+//   16 §4.6). An entry's tool steps are stored as its `ActivitySummary` in `activity_json`
+//   (ADR-007 items 2, 4; ISSUE-101), NULL when it has none.
 // - `page` reads newest first by `sort_at DESC, id DESC` (the `messages_feed` index), at most the
 //   limit (default 50), every stored row of the dwarf as a `Message` with its `deliveries` row
 //   (amendment of 2026-10-05 to 16 §4.6, ISSUE-103): DwarfAI-sent rows and answers-records too.
-//   `activity_json` is not read yet: nothing writes it before activity runs (ISSUE-101).
+//   A row's `activity_json` comes back as its `activity`.
 // - `trim` is 09 §5.2 step 3, inside the caller's transaction: at most `MESSAGES_PER_DWARF` stored
 //   rows of the dwarf stay, every role counted, `sending` rows ranked first so a row still being
 //   handed over is kept, then the newest by `sort_at`, `id` (06 INV-61). The foreign keys of 09
@@ -33,9 +34,11 @@ import type { SqliteDatabase, SqliteParam } from '../../../kernel/ports/sqliteDa
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ConversationEntry } from '../../suppliers'
 import {
+  activitySummaryOf,
   classifyEntry,
   echoesTypedSend,
   mayEchoTypedSend,
+  type ActivitySummary,
   type Delivery,
   type DeliveryFailure,
   type FeedPageRequest,
@@ -72,8 +75,8 @@ const MERGE_ECHO = `UPDATE messages SET source_key = ?, pending_echo = NULL, pro
   WHERE id = ?`
 
 const INSERT_ROW = `INSERT INTO messages
-  (id, dwarf_id, source_key, role, text, origin, provider_time, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  (id, dwarf_id, source_key, role, text, activity_json, origin, provider_time, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const POINT_KEY = 'UPDATE message_keys SET message_id = ? WHERE source_key = ?'
 
@@ -87,7 +90,7 @@ const TRIM = `DELETE FROM messages
                    LIMIT ?)`
 
 const PAGE_SELECT = `SELECT m.id, m.dwarf_id, m.source_key, m.role, m.text, m.issuer_dwarf_id,
-    m.attachments_json, m.origin, m.provider_time, m.created_at, m.ask_id,
+    m.activity_json, m.attachments_json, m.origin, m.provider_time, m.created_at, m.ask_id,
     d.kind, d.phase, d.confidence, d.held_until_turn_end, d.failure_kind, d.failure_reason,
     d.attempts, d.phase_at
   FROM messages m LEFT JOIN deliveries d ON d.message_id = m.id
@@ -130,12 +133,14 @@ export class SqliteMessageLog implements MessageLog {
         continue
       }
       // Step 2b: a new row, then the key points at it.
+      const activity = activitySummaryOf(entry.activity)
       const message: Message = {
         id: ids.uuidv7() as MessageId,
         dwarfId,
         sourceKey: entry.sourceKey,
         role: entry.role,
         text: entry.text,
+        ...(activity === undefined ? {} : { activity }),
         attachments: [],
         origin,
         providerTime: entry.providerTime,
@@ -147,6 +152,7 @@ export class SqliteMessageLog implements MessageLog {
         entry.sourceKey,
         entry.role,
         entry.text,
+        activity === undefined ? null : JSON.stringify(activity),
         origin,
         entry.providerTime,
         now
@@ -229,6 +235,7 @@ function messageOf(row: Row): Message {
   const dwarfId = text(row, 'dwarf_id') as DwarfId
   const issuer = optionalText(row, 'issuer_dwarf_id')
   const askId = optionalText(row, 'ask_id')
+  const activity = optionalText(row, 'activity_json')
   return {
     id,
     dwarfId,
@@ -236,6 +243,7 @@ function messageOf(row: Row): Message {
     role: text(row, 'role') as Message['role'],
     text: text(row, 'text'),
     ...(issuer === null ? {} : { issuer: { dwarfId: issuer as DwarfId } }),
+    ...(activity === null ? {} : { activity: JSON.parse(activity) as ActivitySummary }),
     attachments: JSON.parse(text(row, 'attachments_json')) as Message['attachments'],
     ...(row['phase'] === null || row['phase'] === undefined
       ? {}
