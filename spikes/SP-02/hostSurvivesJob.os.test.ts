@@ -1,11 +1,24 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import {
+  IDENTITY_TOLERANCE_MS,
+  createProcessStartReader
+} from '../../src/ui-main/hostLauncher/processStart'
+import { osQueryRunner, thisPlatform } from '../../src/ui-main/hostLauncher/testing/osQueryRunner'
 
 /**
  * Spike SP-02, L8 Windows (testing strategy `17` §4; ADR-002 D6; spike register SP-02).
@@ -315,12 +328,22 @@ function isAlive(pid: number): boolean {
   }
 }
 
+const readStart = createProcessStartReader({ platform: thisPlatform(), runQuery: osQueryRunner() })
+
 /**
- * Ends `pid` at cleanup. A process that already exited is the end state cleanup wants, so ESRCH (no such process)
- * answers `gone`; every other error still throws. Asking `isAlive` first cannot replace this: the process can exit
- * between the check and the kill (the Host does, right after it answers `quit`).
+ * Ends `pid` at cleanup, only while it is still the process that was running at `recordedAtMs` (ADR-014: never a
+ * bare pid): it started no later than that, within the one tolerance. A pid that is gone or that the OS handed to a
+ * later process is `gone`, never signalled; one whose start time cannot be read is `unconfirmed`, never signalled. A
+ * process that exits between that check and the kill is the end state cleanup wants, so ESRCH (no such process)
+ * answers `gone`; every other error still throws (the Host exits right after it answers `quit`).
  */
-function endIfAlive(pid: number): 'ended' | 'gone' {
+async function endIfAlive(
+  pid: number,
+  recordedAtMs: number
+): Promise<'ended' | 'gone' | 'unconfirmed'> {
+  const start = await readStart(pid)
+  if (start.kind === 'unknown') return 'unconfirmed'
+  if (start.kind === 'gone' || start.ms > recordedAtMs + IDENTITY_TOLERANCE_MS) return 'gone'
   try {
     process.kill(pid)
     return 'ended'
@@ -375,6 +398,9 @@ async function runChain(jobKind: JobKind, mode: StartMode): Promise<Measurement>
   createInterface({ input: holder.stdout }).on('line', (line) => lines.push(line))
   let hostPid = 0
   let uiPid = 0
+  // When each pid was known to be its process: the UI when the holder named it, the Host when the UI wrote its report.
+  let uiSeenAtMs = 0
+  let hostSeenAtMs = 0
   try {
     const childLine = await waitFor(
       () => lines.find((line) => line.startsWith('child ') || line.startsWith('error')),
@@ -383,6 +409,7 @@ async function runChain(jobKind: JobKind, mode: StartMode): Promise<Measurement>
     )
     expect(childLine, `job holder (${jobKind})`).toMatch(/^child \d+$/)
     uiPid = Number(childLine.slice('child '.length))
+    uiSeenAtMs = Date.now()
     const report = await waitFor(
       () =>
         existsSync(outFile) ? (JSON.parse(readFileSync(outFile, 'utf8')) as UiReport) : undefined,
@@ -390,6 +417,7 @@ async function runChain(jobKind: JobKind, mode: StartMode): Promise<Measurement>
       `the UI report (${jobKind}, ${mode})`
     )
     hostPid = report.hostPid
+    hostSeenAtMs = statSync(outFile).mtimeMs
     const hostInJobBeforeClose = inJob(hostPid) === 'true'
     holder.stdin.write('close\n')
     const exitedLine = await waitFor(
@@ -413,10 +441,10 @@ async function runChain(jobKind: JobKind, mode: StartMode): Promise<Measurement>
       await ask(pipe, 'quit')
       // AMENDED: was `if (isAlive(hostPid)) process.kill(hostPid)`. The Host exits from `quit` between the check and
       // the kill, which threw `kill ESRCH` and failed a passing run (PR #1126 Windows OS lane); gone is the end state.
-      endIfAlive(hostPid)
+      await endIfAlive(hostPid, hostSeenAtMs)
     }
     // AMENDED: was `if (uiPid && isAlive(uiPid)) process.kill(uiPid)`, the same check-then-kill race (see above).
-    if (uiPid) endIfAlive(uiPid)
+    if (uiPid) await endIfAlive(uiPid, uiSeenAtMs)
     if (holder.exitCode === null) holder.kill()
   }
 }
@@ -464,10 +492,10 @@ async function runRealShimChain(shimSource: string): Promise<Measurement> {
     if (report && isAlive(report.hostPid)) {
       await ask(pipe, 'quit')
       // AMENDED: was `if (isAlive(report.hostPid)) process.kill(report.hostPid)`, the check-then-kill race of runChain.
-      endIfAlive(report.hostPid)
+      await endIfAlive(report.hostPid, statSync(outFile).mtimeMs)
     }
     // AMENDED: was `if (report && isAlive(report.uiPid)) process.kill(report.uiPid)`, the same race.
-    if (report) endIfAlive(report.uiPid)
+    if (report) await endIfAlive(report.uiPid, statSync(outFile).mtimeMs)
     if (shim.exitCode === null) shim.kill()
   }
 }
@@ -490,12 +518,14 @@ const exitOf = (child: ChildProcessWithoutNullStreams): Promise<void> =>
 describe('SP-02 harness cleanup', () => {
   it('[SP-02] ending a process that has already exited reports it gone instead of throwing ESRCH', async () => {
     const child = startIdleChild(0)
+    // The process exists once spawn returns: it started no later than this.
+    const seenAtMs = Date.now()
     await exitOf(child)
     const pid = child.pid ?? 0
     expect(pid).toBeGreaterThan(0)
     let outcome: string
     try {
-      outcome = endIfAlive(pid)
+      outcome = await endIfAlive(pid, seenAtMs)
     } catch (error) {
       outcome = `threw ${(error as NodeJS.ErrnoException).code ?? String(error)}`
     }
@@ -504,10 +534,11 @@ describe('SP-02 harness cleanup', () => {
 
   it('[SP-02] ending a process that still runs ends it', async () => {
     const child = startIdleChild(60_000)
+    const seenAtMs = Date.now()
     try {
       const pid = child.pid ?? 0
       expect(pid).toBeGreaterThan(0)
-      expect(endIfAlive(pid)).toBe('ended')
+      expect(await endIfAlive(pid, seenAtMs)).toBe('ended')
       await exitOf(child)
       expect(isAlive(pid)).toBe(false)
     } finally {

@@ -64,6 +64,7 @@ export type ObservedEvent =
       cwd: FolderPath
       at: Instant
       parentIdentity?: ProviderIdentity
+      previousProviderSessionId?: string
     })
   | (ObservedRecord & { kind: 'entries'; entries: ConversationEntry[] })
   | (ObservedRecord & { kind: 'usage'; usage: UsageObservationInput })
