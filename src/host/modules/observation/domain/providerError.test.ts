@@ -48,7 +48,7 @@ describe('ProviderErrorFold', () => {
     expect(reported[3]).toEqual({ providerId: 'claude', cause: 'provider-error', dwarfId: D1 })
   })
 
-  it('[US-RES-004.AC01, 16 §2.1] a report without a dwarf carries no dwarfId and the causes are the typed four', () => {
+  it('[US-RES-004.AC01] a report without a dwarf carries no dwarfId and the causes are the typed four', () => {
     const fold = new ProviderErrorFold()
     fold.beginCycle()
     expect(fold.error({ providerId: 'codex', cause: 'auth-required' })).toEqual({

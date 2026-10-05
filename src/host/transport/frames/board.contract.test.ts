@@ -419,7 +419,7 @@ describe('the board frames (14 §2.4 B-F06, B-F08, B-F09, B-F10; 08 §2.1, §2.2
     expect(b.crew.queries.get(dwarfId)?.status).toBe('working')
   })
 
-  it('[ADR-026, 16 §2.1] the toast carries the typed cause and nothing else the event held', () => {
+  it('[ADR-026] the toast carries the typed cause and nothing else the event held', () => {
     const b = board()
     // Whatever else reached the event, the frame is built field by field: the strict() schema of
     // `toast` (14 §1.4) refuses any other key, so a leak would throw in RecordingFrames.
