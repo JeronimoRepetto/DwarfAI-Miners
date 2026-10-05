@@ -48,6 +48,7 @@ function setUp() {
   const ingest = new ConversationIngest({
     log,
     transactions,
+    scope: runner,
     bus,
     clock,
     ids,

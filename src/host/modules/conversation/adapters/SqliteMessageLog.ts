@@ -6,8 +6,10 @@
 //   0 rows changed means the key was seen before (even if its row was trimmed long ago), and the
 //   entry writes nothing. Then `classifyEntry` decides: a dropped record keeps its key with
 //   `message_id` NULL and no row (INV-68); an echo of a waiting DwarfAI row is merged into it
-//   (`source_key` set, `pending_echo` cleared, the key points at it; INV-60); anything else is a
-//   new row the key then points at. A statement failure (a CHECK, a foreign key) throws and the
+//   (`source_key` set, `pending_echo` cleared, the key points at it; INV-60). An observed person
+//   entry with no correlation merges into the oldest waiting row of its dwarf with the exact same
+//   text inside the typed-echo window (`echoesTypedSend`, ADR-007 item 3): the transcript echo of
+//   a message DwarfAI typed into the terminal. Anything else is a new row the key then points at. A statement failure (a CHECK, a foreign key) throws and the
 //   caller's transaction rolls the whole batch back (16 §2.1).
 // - It returns the rows this batch inserted, merged echoes excluded (amendment of 2026-10-02 to
 //   16 §4.6). `activity_json` is left NULL: activity runs are ISSUE-101.
@@ -27,7 +29,13 @@ import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { SqliteDatabase, SqliteParam } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ConversationEntry } from '../../suppliers'
-import { classifyEntry, type FeedPageRequest, type Message } from '../domain/messages'
+import {
+  classifyEntry,
+  echoesTypedSend,
+  mayEchoTypedSend,
+  type FeedPageRequest,
+  type Message
+} from '../domain/messages'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { MessageLog } from '../ports/messageLog'
 
@@ -49,6 +57,11 @@ const CLAIM_KEY = `INSERT INTO message_keys (source_key, dwarf_id, first_seen_at
 
 const WAITING_ROW = `SELECT id FROM messages WHERE dwarf_id = ? AND pending_echo = ?
   ORDER BY created_at, id LIMIT 1`
+
+// The waiting rows an uncorrelated observed entry may echo, oldest first (`messages_pending_echo`).
+const TYPED_CANDIDATES = `SELECT id, created_at FROM messages
+  WHERE dwarf_id = ? AND pending_echo IS NOT NULL AND text = ?
+  ORDER BY created_at, id`
 
 const MERGE_ECHO = `UPDATE messages SET source_key = ?, pending_echo = NULL, provider_time = ?
   WHERE id = ?`
@@ -90,8 +103,15 @@ export class SqliteMessageLog implements MessageLog {
       // Step 1: claim the key; a key already claimed means this entry was seen before.
       if (db.run(CLAIM_KEY, [entry.sourceKey, dwarfId, now]).changes === 0) continue
       // The waiting DwarfAI row this entry echoes, if any (one lookup per entry).
-      const waiting = entry.echoOf === undefined ? null : this.waitingRow(dwarfId, entry.echoOf)
-      const disposition = classifyEntry(entry, () => waiting !== null)
+      const waiting =
+        entry.echoOf !== undefined
+          ? this.waitingRow(dwarfId, entry.echoOf)
+          : this.typedEchoRow(dwarfId, entry, origin, now)
+      const disposition = classifyEntry(
+        entry,
+        () => waiting !== null,
+        entry.echoOf === undefined && waiting !== null
+      )
       if (disposition === 'drop-keep-key') continue
       if (disposition === 'merge-echo' && waiting !== null) {
         // Step 2a: the echo of a DwarfAI row: no second bubble.
@@ -161,6 +181,27 @@ export class SqliteMessageLog implements MessageLog {
       throw new HostInvariantError(`MessageLog.trim keeps MESSAGES_PER_DWARF rows, not ${keep}`)
     }
     this.deps.db.run(TRIM, [dwarfId, dwarfId, keep])
+  }
+
+  /** The waiting DwarfAI row an uncorrelated observed entry echoes, if any (ADR-007 item 3). */
+  private typedEchoRow(
+    dwarfId: DwarfId,
+    entry: ConversationEntry,
+    origin: 'live-stream' | 'transcript',
+    now: Instant
+  ): string | null {
+    if (!mayEchoTypedSend(entry, origin)) return null
+    const row = this.deps.db
+      .all(TYPED_CANDIDATES, [dwarfId, entry.text])
+      .find((r) =>
+        echoesTypedSend(
+          entry,
+          origin,
+          { text: entry.text, createdAt: Number(r['created_at']) },
+          now
+        )
+      )
+    return row === undefined ? null : String(row['id'])
   }
 
   private waitingRow(dwarfId: DwarfId, correlation: string): string | null {
