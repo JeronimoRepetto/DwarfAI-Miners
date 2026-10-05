@@ -24,14 +24,23 @@
 // A session that is closed (a close record, or its dwarf departed) takes no further transition
 // from a late write (S4.40): its records move the cursor and nothing else.
 //
-// `catchUp` (later: ISSUE-078) and `recordEnded` with the `EndedAgentLedger` (later: ISSUE-072)
-// join with their issues.
+// Anti-ghost (INV-36; 16 §4.3 `EndedAgentLedger`; 15 §5 item 2): every identity DwarfAI ended or
+// saw end joins the ledger, whatever path ended it: the terminator's `recordEnded` (ADR-014
+// item 7), or an adapter's `closed` fact, recorded in its batch's transaction. A subagent of an
+// ended session is ended too: it ran inside that session's process. An ended identity with no
+// dwarf is dropped before `SessionObserved` (07 S4.30 guard; S3.22, S4.40; FM-092): its records
+// move the cursor and nothing else, so a late write raises no ghost and rediscovers no removed
+// mine. An ended identity whose dwarf is still present (it arrived while its ending was being
+// read) is closed (S4.33), because an `active` session is never in the ledger (07 §4B).
+//
+// `catchUp` (later: ISSUE-078) joins with its issue.
 import { providerIdentityKey } from '../../../kernel/domain/providerIdentity'
 import type {
   DwarfId,
   EventId,
   FolderPath,
   HostEpoch,
+  Instant,
   ProviderIdentity
 } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
@@ -52,6 +61,7 @@ import type {
   ObservedEvent,
   SourceFile
 } from '../ports/observationAdapter'
+import type { EndedAgentLedger } from '../ports/endedAgentLedger'
 import type { ObservedBatchSink } from '../ports/observedBatchSink'
 import type { ObservedSession, ObservedSessionStore } from '../ports/observedSessionStore'
 import type { ObservationEvent } from './events'
@@ -68,6 +78,11 @@ export interface ObservationLoopDeps {
   fs: FileSystem
   cursors: CursorStore
   sessions: ObservedSessionStore
+  /**
+   * The identities DwarfAI ended or saw end (16 §4.3; INV-36). `createObservation` always passes
+   * it; it is absent only where a test composes the loop without the module's stores.
+   */
+  ended?: EndedAgentLedger
   /** The `host/wiring` bridge to conversation and ledger (AMENDMENT-10). */
   sink: ObservedBatchSink
   transactions: TransactionRunner
@@ -104,6 +119,8 @@ interface IdentityRecords {
 /** What a batch writes and publishes once its plan is made. */
 interface BatchPlan {
   held: boolean
+  /** Identities the batch saw end, recorded in its transaction. */
+  ended: Array<{ identity: ProviderIdentity; at: Instant }>
   sinks: Array<{ dwarfId: DwarfId; entries: ConversationEntry[]; usage: UsageObservation[] }>
   sessions: ObservedSession[]
   links: Array<{ dwarfId: DwarfId; streamId: string }>
@@ -120,6 +137,8 @@ export class ObservationLoop {
   private readonly announced = new Set<string>()
   /** The cwd of an identity seen in an earlier batch, for a later batch that carries none. */
   private readonly cwdOf = new Map<string, FolderPath>()
+  /** The identity of each dwarf a batch was written to this Host run. */
+  private readonly identityOfDwarf = new Map<DwarfId, ProviderIdentity>()
 
   constructor(private readonly deps: ObservationLoopDeps) {}
 
@@ -139,6 +158,21 @@ export class ObservationLoop {
   nudge(_hint: NudgeHint): void {
     if (!this.running) return
     this.kick()
+  }
+
+  /**
+   * 16 §4.3 `ObservationControl.recordEnded`: the terminator bridge ended this identity (ADR-014
+   * item 7); it joins the ledger and never arrives again. A second record is a no-op.
+   */
+  recordEnded(identity: ProviderIdentity, at: Instant): void {
+    const ended = this.deps.ended
+    if (ended === undefined) return
+    this.deps.transactions.inTransaction(() => ended.record(identity, at))
+  }
+
+  /** The identity of a dwarf a batch was written to this Host run, or null. */
+  identityOf(dwarfId: DwarfId): ProviderIdentity | null {
+    return this.identityOfDwarf.get(dwarfId) ?? null
   }
 
   /** Resolves once no cycle is in flight, including the reruns nudges asked for. */
@@ -211,6 +245,7 @@ export class ObservationLoop {
     }
     try {
       this.deps.transactions.inTransaction(() => {
+        for (const { identity, at } of plan.ended) this.deps.ended?.record(identity, at)
         for (const sink of plan.sinks) this.deps.sink.apply(sink)
         this.deps.cursors.advance(streamId, batch.next)
         for (const session of plan.sessions) this.deps.sessions.save(session)
@@ -242,15 +277,38 @@ export class ObservationLoop {
   }
 
   private plan(adapter: ObservationAdapter, streamId: string, events: ObservedEvent[]): BatchPlan {
-    const plan: BatchPlan = { held: false, sinks: [], sessions: [], links: [], events: [] }
+    const plan: BatchPlan = {
+      held: false,
+      ended: [],
+      sinks: [],
+      sessions: [],
+      links: [],
+      events: []
+    }
     const now = this.deps.clock.now()
     for (const { identity, events: records } of byIdentity(events)) {
       const key = providerIdentityKey(identity)
+      const alreadyEnded = this.hasEnded(identity)
+      const closing = records.find((r) => r.kind === 'closed')
+      if (closing?.kind === 'closed' && !alreadyEnded) {
+        plan.ended.push({ identity, at: closing.at })
+      }
+      const session = this.deps.sessions.byIdentity(identity)
+      // Only its ending, and no dwarf: it ends without ever arriving (a subagent's ending read in
+      // its session's transcript).
+      const endsUnseen = session === null && records.every((r) => r.kind === 'closed')
+      if (alreadyEnded || endsUnseen) {
+        // Anti-ghost (INV-36): no arrival, no write; a dwarf still present is closed (S4.33).
+        if (session !== null && session.closedAt === null) {
+          plan.sessions.push({ ...session, closedAt: now })
+          plan.events.push({ type: 'SessionClosedObserved', payload: { identity, at: now } })
+        }
+        continue
+      }
       const cwd = records.map((r) => r.cwd).find((c) => c !== undefined) ?? this.cwdOf.get(key)
       if (cwd !== undefined) this.cwdOf.set(key, cwd)
       const entries = records.flatMap((r) => (r.kind === 'entries' ? r.entries : []))
       const usage = records.flatMap((r) => (r.kind === 'usage' ? [r.usage] : []))
-      const session = this.deps.sessions.byIdentity(identity)
 
       if (session === null) {
         const firstMessage = holdsFirstMessage(entries)
@@ -277,7 +335,6 @@ export class ObservationLoop {
         continue
       }
 
-      const closing = records.find((r) => r.kind === 'closed')
       const step = observedTransition(session.closedAt === null ? 'active' : 'closed', {
         type: closing === undefined ? 'records' : 'closed-elsewhere'
       })
@@ -285,6 +342,7 @@ export class ObservationLoop {
       if (!step.ok || session.closedAt !== null) continue
 
       const dwarfId = session.dwarfId
+      this.identityOfDwarf.set(dwarfId, identity)
       if (entries.length > 0 || usage.length > 0) {
         plan.sinks.push({
           dwarfId,
@@ -300,7 +358,10 @@ export class ObservationLoop {
         lastRecordAt: Math.max(session.lastRecordAt, now),
         closedAt: closing?.kind === 'closed' ? closing.at : null
       })
-      if (!this.deps.sessions.streams(dwarfId).some((s) => s.streamId === streamId)) {
+      // A stream that only carries this identity's ending (a subagent's, in its session's
+      // transcript) does not feed it.
+      const feeds = records.some((r) => r.kind !== 'closed')
+      if (feeds && !this.deps.sessions.streams(dwarfId).some((s) => s.streamId === streamId)) {
         plan.links.push({ dwarfId, streamId })
       }
       plan.events.push(...this.eventsOf(adapter, streamId, identity, records, dwarfId, now))
@@ -317,6 +378,7 @@ export class ObservationLoop {
     now: number
   ): Pending[] {
     const out: Pending[] = []
+    let closed = false
     for (const r of records) {
       switch (r.kind) {
         case 'entries':
@@ -351,13 +413,27 @@ export class ObservationLoop {
           })
           break
         case 'closed':
-          out.push({ type: 'SessionClosedObserved', payload: { identity, at: r.at } })
+          // A session closes once: Claude Code writes one ending twice (queued, then delivered).
+          if (!closed) out.push({ type: 'SessionClosedObserved', payload: { identity, at: r.at } })
+          closed = true
           break
         case 'session':
           break
       }
     }
     return out
+  }
+
+  /** Whether the ledger holds the identity, or the session a subagent ran in. */
+  private hasEnded(identity: ProviderIdentity): boolean {
+    const ended = this.deps.ended
+    if (ended === undefined) return false
+    if (ended.has(identity)) return true
+    if (identity.providerAgentId === undefined) return false
+    return ended.has({
+      providerId: identity.providerId,
+      providerSessionId: identity.providerSessionId
+    })
   }
 
   private publishAll(events: Pending[]): void {
