@@ -68,5 +68,30 @@ export const en = {
   // display name, customName ?? baseName (ADR-018 item 9; PO #88). The body is the mine's own name, not copy.
   'attention.level3Title.permission': '{dwarf} asks for permission',
   'attention.level3Title.question': '{dwarf} has a question',
-  'attention.level3Title.turnFinished': '{dwarf} finished the turn'
+  'attention.level3Title.turnFinished': '{dwarf} finished the turn',
+
+  // The turn outcome line under a dwarf's header (US-MSG-011 "States and copy"; 06 §9.2 parts), joined by " · ".
+  'outcomeLine.separator': ' · ',
+  'outcomeLine.status.working': 'Working',
+  'outcomeLine.status.waitingOnYou': 'Waiting on you',
+  'outcomeLine.status.concluded': 'Turn finished',
+  'outcomeLine.status.capped': 'Turn stopped at a limit',
+  'outcomeLine.status.errored': 'Turn failed',
+  'outcomeLine.status.interrupted': 'Turn interrupted',
+  'outcomeLine.status.noReliableEnd':
+    '⟦COPY NEEDED: US-MSG-011 outcome line of a dwarf that became idle without a reliable end-of-turn signal (FUNCTIONAL-SPEC §9)⟧',
+  'outcomeLine.part.steps': { one: '{count} step', other: '{count} steps' },
+  'outcomeLine.part.stepsSoFar': { one: '{count} step so far', other: '{count} steps so far' },
+  'outcomeLine.part.waitingQuestions': {
+    one: '⟦COPY NEEDED: US-MSG-011 "Waiting on you" question count, singular form⟧',
+    other: '{count} questions'
+  },
+  'outcomeLine.part.waitingPermission': 'permission',
+  'outcomeLine.part.answersReceived': 'answers received',
+  'outcomeLine.part.readingYourMessage': 'reading your message',
+  'outcomeLine.part.idleFor': 'idle for {time}',
+  // Idle time (NFR-TIM-15): minutes, hours, days, each rounded down, no larger unit ("41m", "2h", "7d").
+  'outcomeLine.idle.minutes': '{count}m',
+  'outcomeLine.idle.hours': '{count}h',
+  'outcomeLine.idle.days': '{count}d'
 } as const satisfies CopyCatalog

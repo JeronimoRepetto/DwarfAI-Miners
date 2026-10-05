@@ -14,8 +14,11 @@
 //
 // - A new end closes the dwarf's open activity run in the same transaction (07 S11.04, reliable
 //   or inferred, any kind; ISSUE-101), and its `ActivityChanged` follows the `TurnEnded` after the
-//   commit. A duplicate closes nothing. The outcome line a new end changes joins with its issue
-//   (later: ISSUE-102).
+//   commit. A duplicate closes nothing.
+// - A new end recomputes the outcome line in the same transaction (ISSUE-102; 16 §4.6 amendment
+//   B): the dwarf is idle after its end (07 S1.03; crew's status moves only after `TurnEnded` is
+//   published, so it is never read here), the line carries the end as recorded and the running step
+//   total, and its `OutcomeLineChanged` follows the `ActivityChanged` after the commit.
 import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
 import type { EventId, HostEpoch } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
@@ -27,6 +30,7 @@ import { applyTurnEnded, type ActivityDisclosure } from '../domain/activityRun'
 import type { ConversationEvent } from '../domain/events'
 import type { ActivityLog } from '../ports/activityLog'
 import { activityChanged } from './activityChanged'
+import { outcomeLineChanged, recomputeOutcome } from './outcomeRecompute'
 import type { ConversationCommands } from './ingest'
 
 export interface TurnEndRecorderDeps {
@@ -52,18 +56,34 @@ export class TurnEndRecorder implements Pick<ConversationCommands, 'recordTurnEn
   recordTurnEnd(end: TurnEnded): void {
     const { facts, activity, transactions, scope, emit, clock, ids, hostEpoch } = this.deps
     const joined = scope.isInTransaction()
-    const { recorded, closed } = transactions.inTransaction(() => {
+    const { recorded, closed, outcome } = transactions.inTransaction(() => {
       const outcome = facts.record({
         type: 'TurnEnded',
         dwarfId: end.dwarfId,
         turnKey: end.turnKey,
         occurredAt: end.at
       })
-      if (outcome === 'duplicate') return { recorded: outcome, closed: null }
+      if (outcome === 'duplicate') return { recorded: outcome, closed: null, outcome: null }
       const change = applyTurnEnded(activity.openRun(end.dwarfId), end.at)
       const run: ActivityDisclosure | null = change.changed ? change.run : null
       if (run !== null) activity.saveDisclosure(run)
-      return { recorded: outcome, closed: run }
+      const line = recomputeOutcome(
+        activity,
+        end.dwarfId,
+        (previous) => ({
+          status: 'idle',
+          stepsSinceLastPersonMessage: previous?.stepsSinceLastPersonMessage ?? 0,
+          lastTurnEnd: {
+            kind: end.kind,
+            reliability: end.reliability,
+            at: end.at,
+            ...(end.detail === undefined ? {} : { detail: end.detail })
+          },
+          frontAsk: null
+        }),
+        clock.now()
+      )
+      return { recorded: outcome, closed: run, outcome: line }
     })
     if (recorded === 'duplicate') return
     emit(
@@ -78,5 +98,6 @@ export class TurnEndRecorder implements Pick<ConversationCommands, 'recordTurnEn
       joined
     )
     if (closed !== null) emit(activityChanged(closed, { clock, ids, hostEpoch }), joined)
+    if (outcome !== null) emit(outcomeLineChanged(outcome, { clock, ids, hostEpoch }), joined)
   }
 }

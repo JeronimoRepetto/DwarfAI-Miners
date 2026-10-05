@@ -10,12 +10,18 @@
 //   verbatim: the dwarf's newest `ACTIVITY_RUNS_PER_DWARF` runs stay, the open one ranked first so
 //   it is never trimmed.
 // - `openRun` reads the dwarf's open run through `activity_disclosures_one_open` (16 §4.6, amendment A).
+// - `saveOutcome` writes the dwarf's one row of `outcome_lines` (09 §4.4, keyed by `dwarf_id`),
+//   replacing every column, so an optional field the new line lacks is cleared; the parts are stored
+//   as given in `parts_json` (its CHECK refuses more than three).
+// - `outcomeOf` reads that row back by its key (16 §4.6, amendment B); a NULL optional column is an
+//   absent field.
 // - Summaries are one line per step and never tool output (ADR-007 item 4): stored as given.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId } from '../../../kernel/domain/values'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ActivityDisclosure } from '../domain/activityRun'
+import type { OutcomeLine, OutcomeLinePart, TurnOutcomeKind } from '../domain/outcomeLine'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
 import type { ActivityLog } from '../ports/activityLog'
 
@@ -41,6 +47,21 @@ const TRIM = `DELETE FROM activity_disclosures
    AND id NOT IN (SELECT id FROM activity_disclosures WHERE dwarf_id = ?
                   ORDER BY open DESC, opened_at DESC, id DESC LIMIT ?)`
 
+const SAVE_OUTCOME = `INSERT INTO outcome_lines
+    (dwarf_id, kind, step_count, parts_json, detail, closing_words, reliability, at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT (dwarf_id) DO UPDATE SET
+    kind = excluded.kind,
+    step_count = excluded.step_count,
+    parts_json = excluded.parts_json,
+    detail = excluded.detail,
+    closing_words = excluded.closing_words,
+    reliability = excluded.reliability,
+    at = excluded.at`
+
+const OUTCOME_OF = `SELECT dwarf_id, kind, step_count, parts_json, detail, closing_words, reliability, at
+  FROM outcome_lines WHERE dwarf_id = ?`
+
 const OPEN_RUN = `SELECT id, dwarf_id, turn_key, open, step_count, summaries_json, opened_at, closed_at
   FROM activity_disclosures WHERE dwarf_id = ? AND open = 1`
 
@@ -61,6 +82,26 @@ export class SqliteActivityLog implements ActivityLog {
       d.closedAt ?? null
     ])
     db.run(TRIM, [d.dwarfId, d.dwarfId, ACTIVITY_RUNS_PER_DWARF])
+  }
+
+  saveOutcome(o: OutcomeLine): void {
+    this.inTransaction('saveOutcome')
+    this.deps.db.run(SAVE_OUTCOME, [
+      o.dwarfId,
+      o.kind,
+      o.stepCount,
+      JSON.stringify(o.parts),
+      o.detail ?? null,
+      o.closingWords ?? null,
+      o.reliability,
+      o.at
+    ])
+  }
+
+  outcomeOf(dwarfId: DwarfId): OutcomeLine | null {
+    this.inTransaction('outcomeOf')
+    const row = this.deps.db.all(OUTCOME_OF, [dwarfId])[0]
+    return row === undefined ? null : outcomeOfRow(row)
   }
 
   openRun(dwarfId: DwarfId): ActivityDisclosure | null {
@@ -90,5 +131,23 @@ function disclosureOf(row: Record<string, unknown>): ActivityDisclosure {
     summaries: JSON.parse(String(row['summaries_json'])) as string[],
     openedAt: Number(row['opened_at']),
     ...(closedAt === null || closedAt === undefined ? {} : { closedAt: Number(closedAt) })
+  }
+}
+
+/** One `outcome_lines` row as the aggregate `OutcomeLine`. */
+function outcomeOfRow(row: Record<string, unknown>): OutcomeLine {
+  const detail = row['detail']
+  const closingWords = row['closing_words']
+  return {
+    dwarfId: String(row['dwarf_id']) as DwarfId,
+    kind: String(row['kind']) as TurnOutcomeKind,
+    stepCount: Number(row['step_count']),
+    parts: JSON.parse(String(row['parts_json'])) as OutcomeLinePart[],
+    ...(detail === null || detail === undefined ? {} : { detail: String(detail) }),
+    ...(closingWords === null || closingWords === undefined
+      ? {}
+      : { closingWords: String(closingWords) }),
+    reliability: String(row['reliability']) === 'inferred' ? 'inferred' : 'reliable',
+    at: Number(row['at'])
   }
 }

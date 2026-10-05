@@ -3,11 +3,16 @@
 // closes in place under its id; the store refuses a second open run for a dwarf (INV-66,
 // `activity_disclosures_one_open`); each save keeps the dwarf's newest 50 runs and never trims the
 // open one (09 §5.2 step 4; ADR-007); every write runs inside the caller's transaction (16 §2.2).
-// `openRun` (16 §4.6, amendment A): null with no run, the open run, null after it closes, and the\n// same answer from a reopened store.
+// `openRun` (16 §4.6, amendment A): null with no run, the open run, null after it closes, and the
+// same answer from a reopened store. `saveOutcome` (16 §4.6, ISSUE-102): one outcome line per dwarf
+// over `outcome_lines`, replaced by the next save, the same line twice changing nothing, inside the
+// caller's transaction (INV-67; 09 §4.4). `outcomeOf` (16 §4.6, amendment B): null with no line, the
+// saved line, the same from a reopened store, refused outside the caller's transaction.
 import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
 import type { ActivityDisclosure } from '../domain/activityRun'
+import type { OutcomeLine } from '../domain/outcomeLine'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
 import type { ActivityLog } from '../ports/activityLog'
 
@@ -19,6 +24,8 @@ export interface ActivityLogSubject {
   inTransaction<T>(work: () => T): T
   /** Every stored run of the dwarf, by `openedAt` then id. */
   runs(dwarfId: DwarfId): ActivityDisclosure[]
+  /** The dwarf's stored outcome line, or null. */
+  outcome(dwarfId: DwarfId): OutcomeLine | null
   /** A new store over the same stored runs: what a Host restart opens (S11.07). */
   reopen(): ActivityLog
   dispose(): void | Promise<void>
@@ -54,6 +61,35 @@ function openRunOf(dwarfId: DwarfId, n: number, steps = 1): ActivityDisclosure {
   })
   void closedAt
   return rest
+}
+
+/** A working line with `n` steps so far. */
+function workingLine(dwarfId: DwarfId, n: number): OutcomeLine {
+  return {
+    dwarfId,
+    kind: 'working',
+    stepCount: n,
+    parts: [{ kind: 'steps-so-far', n }],
+    reliability: 'reliable',
+    at: T0 + n
+  }
+}
+
+/** A finished line with every optional field and the most parts the rule makes. */
+function finishedLine(dwarfId: DwarfId): OutcomeLine {
+  return {
+    dwarfId,
+    kind: 'capped',
+    stepCount: 5,
+    parts: [
+      { kind: 'steps', n: 5 },
+      { kind: 'idle-since', at: T0 + 100 }
+    ],
+    detail: 'max_turns',
+    closingWords: 'I stopped at the limit — “quoted” ✓',
+    reliability: 'reliable',
+    at: T0 + 100
+  }
 }
 
 export function runActivityLogContract(
@@ -177,6 +213,65 @@ export function runActivityLogContract(
         Array.from({ length: 49 }, (_, i) => T0 + 12 + i)
       )
       expect(s.runs(other)).toEqual(theirs)
+    })
+
+    it('[INV-67] saveOutcome keeps one outcome line per dwarf: a later save replaces it, the same line twice changes nothing, and another dwarf keeps its own', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      expect(s.outcome(dwarf)).toBeNull()
+
+      s.inTransaction(() => s.log.saveOutcome(workingLine(dwarf, 1)))
+      expect(s.outcome(dwarf)).toEqual(workingLine(dwarf, 1))
+
+      // Replaced at every turn change: every field, the optional ones included.
+      s.inTransaction(() => s.log.saveOutcome(finishedLine(dwarf)))
+      expect(s.outcome(dwarf)).toEqual(finishedLine(dwarf))
+      // The same line again changes nothing.
+      s.inTransaction(() => s.log.saveOutcome(finishedLine(dwarf)))
+      expect(s.outcome(dwarf)).toEqual(finishedLine(dwarf))
+
+      // A line without the optional fields clears them; another dwarf's line is its own.
+      s.inTransaction(() => {
+        s.log.saveOutcome(workingLine(dwarf, 2))
+        s.log.saveOutcome({ ...workingLine(other, 0), parts: [] })
+      })
+      expect(s.outcome(dwarf)).toEqual(workingLine(dwarf, 2))
+      expect(s.outcome(other)).toEqual({ ...workingLine(other, 0), parts: [] })
+    })
+
+    it("[INV-67] saveOutcome outside the caller's transaction throws HostInvariantError, and a rolled-back save leaves the previous line", async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+
+      expect(() => s.log.saveOutcome(workingLine(dwarf, 1))).toThrow(HostInvariantError)
+      expect(s.outcome(dwarf)).toBeNull()
+
+      s.inTransaction(() => s.log.saveOutcome(workingLine(dwarf, 1)))
+      expect(() =>
+        s.inTransaction(() => {
+          s.log.saveOutcome(finishedLine(dwarf))
+          throw new Error('the batch failed')
+        })
+      ).toThrow('the batch failed')
+      expect(s.outcome(dwarf)).toEqual(workingLine(dwarf, 1))
+    })
+
+    it("[INV-67] outcomeOf answers null with no line, the saved line, the same from a reopened store, and is refused outside the caller's transaction", async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      expect(s.inTransaction(() => s.log.outcomeOf(dwarf))).toBeNull()
+
+      s.inTransaction(() => s.log.saveOutcome(finishedLine(dwarf)))
+      expect(s.inTransaction(() => s.log.outcomeOf(dwarf))).toEqual(finishedLine(dwarf))
+      expect(s.inTransaction(() => s.log.outcomeOf(other))).toBeNull()
+
+      // Replaced in place, and read back as the latest line, also after a Host restart.
+      s.inTransaction(() => s.log.saveOutcome(workingLine(dwarf, 3)))
+      const reopened = s.reopen()
+      expect(s.inTransaction(() => reopened.outcomeOf(dwarf))).toEqual(workingLine(dwarf, 3))
+
+      // Outside the caller's transaction the read is refused (16 §2.2).
+      expect(() => reopened.outcomeOf(dwarf)).toThrow(HostInvariantError)
     })
 
     it("[ADR-007] saveDisclosure outside the caller's transaction throws HostInvariantError and stores nothing", async () => {

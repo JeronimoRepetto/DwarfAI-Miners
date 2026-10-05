@@ -4,6 +4,7 @@ import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId } from '../../../kernel/domain/values'
 import type { MessageView } from './messages'
+import type { OutcomeLine } from './outcomeLine'
 
 /** 08 §0: the rows one batch inserted, never a merged echo or a dropped record. */
 export type MessagesAppended = DomainEvent<
@@ -26,4 +27,14 @@ export type ActivityChanged = DomainEvent<
   { dwarfId: DwarfId; disclosureId: string; open: boolean; stepCount: number }
 >
 
-export type ConversationEvent = MessagesAppended | TurnEndedEvent | ActivityChanged
+/**
+ * 08 §0, §2.6: the dwarf's outcome line changed, keyed (dwarfId, at); one per committed change, never
+ * for a recompute that left the line as it was (INV-67; frame `dwarf.changed`, later: ISSUE-108).
+ */
+export type OutcomeLineChanged = DomainEvent<
+  'OutcomeLineChanged',
+  { dwarfId: DwarfId; outcome: OutcomeLine }
+>
+
+export type ConversationEvent =
+  MessagesAppended | TurnEndedEvent | ActivityChanged | OutcomeLineChanged

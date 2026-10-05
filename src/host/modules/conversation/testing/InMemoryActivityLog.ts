@@ -6,12 +6,14 @@
 // id (the dwarf, the key and the opening instant kept); a second open run of a dwarf, or a second
 // run under the same `(dwarfId, turnKey)`, is refused like `activity_disclosures_one_open` and the
 // UNIQUE of 09 §4.4; then the dwarf's newest `ACTIVITY_RUNS_PER_DWARF` runs stay, the open one
-// ranked first (09 §5.2 step 4). Every call runs only inside the caller's transaction; a test's
-// transaction rolls it back with `snapshot` / `restore`.
+// ranked first (09 §5.2 step 4). An outcome line is kept per dwarf, a save replacing the previous
+// one (09 §4.4). Every call runs only inside the caller's transaction; a test's transaction rolls it
+// back with `snapshot` / `restore`.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId } from '../../../kernel/domain/values'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ActivityDisclosure } from '../domain/activityRun'
+import type { OutcomeLine } from '../domain/outcomeLine'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
 import type { ActivityLog } from '../ports/activityLog'
 
@@ -20,13 +22,19 @@ export interface InMemoryActivityLogDeps {
   scope: TransactionScope
 }
 
+/** What the store holds: the runs and each dwarf's outcome line. */
+export interface ActivityStore {
+  runs: ActivityDisclosure[]
+  outcomes: Map<DwarfId, OutcomeLine>
+}
+
 export class InMemoryActivityLog implements ActivityLog {
-  /** The stored runs, shared with every store `reopen` returns. */
-  private readonly box: { runs: ActivityDisclosure[] }
+  /** The stored runs and lines, shared with every store `reopen` returns. */
+  private readonly box: ActivityStore
 
   constructor(
     private readonly deps: InMemoryActivityLogDeps,
-    box: { runs: ActivityDisclosure[] } = { runs: [] }
+    box: ActivityStore = { runs: [], outcomes: new Map() }
   ) {
     this.box = box
   }
@@ -60,6 +68,22 @@ export class InMemoryActivityLog implements ActivityLog {
     this.trim(saved.dwarfId)
   }
 
+  saveOutcome(o: OutcomeLine): void {
+    this.inTransaction('saveOutcome')
+    this.box.outcomes.set(o.dwarfId, structuredClone(o))
+  }
+
+  outcomeOf(dwarfId: DwarfId): OutcomeLine | null {
+    this.inTransaction('outcomeOf')
+    return this.outcome(dwarfId)
+  }
+
+  /** The dwarf's stored outcome line, or null: the test probe, outside any transaction. */
+  outcome(dwarfId: DwarfId): OutcomeLine | null {
+    const line = this.box.outcomes.get(dwarfId)
+    return line === undefined ? null : structuredClone(line)
+  }
+
   openRun(dwarfId: DwarfId): ActivityDisclosure | null {
     this.inTransaction('openRun')
     const run = this.box.runs.find((r) => r.dwarfId === dwarfId && r.open)
@@ -75,12 +99,14 @@ export class InMemoryActivityLog implements ActivityLog {
     )
   }
 
-  snapshot(): ActivityDisclosure[] {
-    return structuredClone(this.box.runs)
+  snapshot(): ActivityStore {
+    return structuredClone(this.box)
   }
 
-  restore(snapshot: ActivityDisclosure[]): void {
-    this.box.runs = structuredClone(snapshot)
+  restore(snapshot: ActivityStore): void {
+    const copy = structuredClone(snapshot)
+    this.box.runs = copy.runs
+    this.box.outcomes = copy.outcomes
   }
 
   /** 09 §5.2 step 4: `ORDER BY open DESC, opened_at DESC, id DESC LIMIT 50`, closed runs only go. */
