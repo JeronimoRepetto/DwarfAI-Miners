@@ -1,6 +1,7 @@
 // The LedgerRepository double (16 §4.10 `InMemoryLedgerRepository`; 16 §2.8): the rows of
-// `usage_units`, `usage_observations`, `ledger_entries` and the facts of `dwarfs`, `mines`,
-// `install_moment` and `reset_journal` that 09 §5.3 reads, kept in one `InMemoryLedgerWorld`
+// `usage_units`, `usage_observations`, `ledger_entries`, the coal backfill's
+// `install_moment.backfill_*` and `coal_backfill_units` (09 §5.5), and the facts of `dwarfs`,
+// `mines`, `install_moment` and `reset_journal` that 09 §5.3 reads, kept in one `InMemoryLedgerWorld`
 // that every instance over the same storage shares. It passes `runLedgerRepositoryContract`, as the
 // SQLite adapter does. Never imported by production code (R14).
 import { HostInvariantError } from '../../../kernel/domain/errors'
@@ -9,6 +10,7 @@ import type { DwarfId, Instant, MineId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
+import type { CoalBackfillState } from '../domain/coalBackfill'
 import { usageTokens, type UnitKey, type UsagePath } from '../domain/credit'
 import {
   zeroTotals,
@@ -17,10 +19,12 @@ import {
   type MaterialTotals
 } from '../domain/materials'
 import type {
+  BackfillState,
   BestObservation,
   CreditOutcome,
   CreditSubject,
   LedgerRepository,
+  ScanUnitKey,
   StoredUsageUnit
 } from '../ports/ledgerRepository'
 
@@ -53,6 +57,24 @@ export interface EntryRow {
   creditedAt: Instant
 }
 
+/** One `coal_backfill_units` row. */
+interface ScanUnitRow {
+  adapterId: string
+  tokensCredited: number
+  creditedAt: Instant
+}
+
+/** `install_moment.backfill_*` and the moment's `coal_backfill_units` (cascade on deletion). */
+interface BackfillRows {
+  state: CoalBackfillState
+  doneAt: Instant | null
+  scanUnits: Map<string, ScanUnitRow>
+}
+
+function freshBackfill(): BackfillRows {
+  return { state: 'not-started', doneAt: null, scanUnits: new Map() }
+}
+
 interface WorldRows {
   dwarfs: Map<DwarfId, CreditSubject>
   tiers: Map<MineId, LiveMaterial | null>
@@ -61,6 +83,7 @@ interface WorldRows {
   units: Map<UnitKey, UnitRow>
   observations: Map<string, ObservationRow>
   entries: Map<UnitKey, EntryRow>
+  backfill: BackfillRows
 }
 
 function copyRows(rows: WorldRows): WorldRows {
@@ -71,7 +94,8 @@ function copyRows(rows: WorldRows): WorldRows {
     resetInProgress: rows.resetInProgress,
     units: new Map([...rows.units].map(([key, row]) => [key, { ...row }])),
     observations: new Map(rows.observations),
-    entries: new Map(rows.entries)
+    entries: new Map(rows.entries),
+    backfill: { ...rows.backfill, scanUnits: new Map(rows.backfill.scanUnits) }
   }
 }
 
@@ -84,7 +108,8 @@ export class InMemoryLedgerWorld {
     resetInProgress: false,
     units: new Map(),
     observations: new Map(),
-    entries: new Map()
+    entries: new Map(),
+    backfill: freshBackfill()
   }
 
   snapshot(): WorldRows {
@@ -93,6 +118,15 @@ export class InMemoryLedgerWorld {
 
   restore(snapshot: WorldRows): void {
     this.rows = copyRows(snapshot)
+  }
+
+  /**
+   * Deletes the install moment and writes `at` (`null`: none), as migration 1 and a reset's
+   * steps do: the old moment's backfill progress goes with it and a new one is `not-started`.
+   */
+  writeInstallMoment(at: Instant | null): void {
+    this.rows.installMomentAt = at
+    this.rows.backfill = freshBackfill()
   }
 }
 
@@ -208,6 +242,48 @@ export class InMemoryLedgerRepository implements LedgerRepository {
       .filter((u) => u.mineId === mineId && u.sealed && !this.rows.entries.has(u.unitKey))
       .sort((a, b) => a.firstObservedAt - b.firstObservedAt || compare(a.unitKey, b.unitKey))
       .map((u) => u.unitKey)
+  }
+
+  backfillState(): BackfillState {
+    if (this.rows.installMomentAt === null) return { state: 'not-started', creditedScanUnits: [] }
+    const { state, doneAt, scanUnits } = this.rows.backfill
+    return {
+      state,
+      creditedScanUnits: [...scanUnits.keys()].sort(compare),
+      ...(doneAt === null ? {} : { doneAt })
+    }
+  }
+
+  setBackfillState(s: BackfillState): void {
+    this.requireTransaction('setBackfillState')
+    const doneAt = s.doneAt ?? null
+    // No row (between a reset's `db` and `install-moment` steps): the UPDATE writes nothing.
+    if (this.rows.installMomentAt === null) return
+    // The table CHECK: `backfill_done_at` is set exactly when the state is `done`.
+    if ((s.state === 'done') !== (doneAt !== null)) {
+      throw new HostInvariantError(
+        `a ${s.state} backfill with done instant ${String(doneAt)} violates the install_moment CHECK`
+      )
+    }
+    this.rows.backfill.state = s.state
+    this.rows.backfill.doneAt = doneAt
+  }
+
+  markScanUnit(unit: ScanUnitKey, at: Instant): 'new' | 'duplicate' {
+    this.requireTransaction('markScanUnit')
+    if (this.rows.installMomentAt === null) {
+      throw new HostInvariantError(
+        'a coal_backfill_units row without an install moment violates its foreign key'
+      )
+    }
+    const units = this.rows.backfill.scanUnits
+    if (units.has(unit.scanUnit)) return 'duplicate'
+    units.set(unit.scanUnit, {
+      adapterId: unit.adapterId,
+      tokensCredited: unit.tokensCredited,
+      creditedAt: at
+    })
+    return 'new'
   }
 
   /** `usage_observations_unit`: highest fidelity, ties to the earlier, then by key (ADR-006 item 5). */

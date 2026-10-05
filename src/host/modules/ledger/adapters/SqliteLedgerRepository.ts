@@ -18,6 +18,10 @@
 //   observation on the dwarf's stored path. The `ledger_entries_accumulate` trigger adds it to
 //   `material_totals` in the same transaction (ADR-006 item 9); the coal CHECK and
 //   `ledger_entries_immutable` stay the database's backstops (INV-95, INV-99).
+// - The coal backfill's progress (09 §5.5): `install_moment.backfill_*` and one
+//   `coal_backfill_units` row per finished scan unit (`ON CONFLICT (scan_unit) DO NOTHING`), whose
+//   foreign key ties it to the current moment and goes with it (cascade). The table CHECK keeps
+//   `backfill_done_at` set exactly when the state is `done`.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { UsageObservation } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, Instant, MineId } from '../../../kernel/domain/values'
@@ -25,6 +29,7 @@ import type { Clock } from '../../../kernel/ports/clock'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { SqliteDatabase, SqliteRow } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
+import type { CoalBackfillState } from '../domain/coalBackfill'
 import type { UnitKey, UsagePath } from '../domain/credit'
 import {
   MATERIALS,
@@ -34,10 +39,12 @@ import {
   type MaterialTotals
 } from '../domain/materials'
 import type {
+  BackfillState,
   BestObservation,
   CreditOutcome,
   CreditSubject,
   LedgerRepository,
+  ScanUnitKey,
   StoredUsageUnit
 } from '../ports/ledgerRepository'
 
@@ -105,6 +112,20 @@ const SEALED_UNCREDITED = `SELECT u.unit_key FROM usage_units u
   WHERE u.mine_id = ? AND u.sealed = 1
     AND NOT EXISTS (SELECT 1 FROM ledger_entries e WHERE e.unit_key = u.unit_key)
   ORDER BY u.first_observed_at, u.unit_key`
+
+const BACKFILL_STATE = 'SELECT backfill_state, backfill_done_at FROM install_moment WHERE id = 1'
+
+const SCAN_UNITS = 'SELECT scan_unit FROM coal_backfill_units ORDER BY scan_unit'
+
+// No row (between a reset's `db` and `install-moment` steps): nothing to write.
+const SET_BACKFILL_STATE =
+  'UPDATE install_moment SET backfill_state = ?, backfill_done_at = ? WHERE id = 1'
+
+// `install_moment_id` defaults to the one moment; without it the foreign key refuses the row.
+const MARK_SCAN_UNIT = `INSERT INTO coal_backfill_units
+    (scan_unit, adapter_id, tokens_credited, credited_at)
+  VALUES (?, ?, ?, ?)
+  ON CONFLICT (scan_unit) DO NOTHING`
 
 const PATHS: readonly UsagePath[] = ['driver', 'transcript']
 
@@ -217,6 +238,34 @@ export class SqliteLedgerRepository implements LedgerRepository {
 
   sealedUncredited(mineId: MineId): UnitKey[] {
     return this.deps.db.all(SEALED_UNCREDITED, [mineId]).map((row) => String(row['unit_key']))
+  }
+
+  backfillState(): BackfillState {
+    const row = this.deps.db.all(BACKFILL_STATE)[0]
+    if (row === undefined) return { state: 'not-started', creditedScanUnits: [] }
+    const creditedScanUnits = this.deps.db.all(SCAN_UNITS).map((unit) => String(unit['scan_unit']))
+    const doneAt = row['backfill_done_at']
+    return {
+      state: row['backfill_state'] as CoalBackfillState,
+      creditedScanUnits,
+      ...(doneAt === null ? {} : { doneAt: Number(doneAt) })
+    }
+  }
+
+  setBackfillState(s: BackfillState): void {
+    this.requireTransaction('setBackfillState')
+    this.deps.db.run(SET_BACKFILL_STATE, [s.state, s.doneAt ?? null])
+  }
+
+  markScanUnit(unit: ScanUnitKey, at: Instant): 'new' | 'duplicate' {
+    this.requireTransaction('markScanUnit')
+    const { changes } = this.deps.db.run(MARK_SCAN_UNIT, [
+      unit.scanUnit,
+      unit.adapterId,
+      unit.tokensCredited,
+      at
+    ])
+    return changes === 1 ? 'new' : 'duplicate'
   }
 
   private requireTransaction(method: string): void {

@@ -6,9 +6,9 @@
 // `unit`, `sealedUncredited`), `record` takes the observation's `path` (09 §4.7
 // `usage_observations.path` is NOT NULL), and `credit` returns the new entry's id, which
 // `LedgerTotalsChanged` carries (08 §0). Every other member keeps its 16 §4.10 signature. The
-// members this issue builds are declared here; `setInstallMoment` and `wipe` join with the Reset
-// steps (later: ISSUE-097), `backfillState`, `setBackfillState` and `markScanUnit` with the coal
-// backfill (later: ISSUE-077), unchanged by the amendment.
+// members built so far are declared here; `setInstallMoment` and `wipe` join with the Reset
+// steps (later: ISSUE-097). `backfillState`, `setBackfillState` and `markScanUnit` (ISSUE-077)
+// keep their 16 §4.10 signatures, unchanged by the amendment.
 //
 // - `record(o, mineId, path)` stores the observation by its `sourceKey` (INV-90) and upserts its
 //   unit (09 §5.3 step 1: `sealed = max(sealed, excluded.sealed)`, the unit's `provider_time` and
@@ -20,8 +20,17 @@
 //   written. Entries are never updated (`ledger_entries_immutable`, INV-99).
 // - Both writes join the caller's transaction (16 §2.2); outside one they throw. The reads see the
 //   caller's open transaction.
+// - `backfillState()` reads `install_moment.backfill_state`, `backfill_done_at` and the current
+//   moment's `coal_backfill_units` (09 §5.5); with no install moment it is `not-started` with no
+//   units. `setBackfillState(s)` writes `s.state` and `s.doneAt` (set exactly when `done`, the
+//   table CHECK); scan units are rows only `markScanUnit` adds and only the install moment's
+//   deletion removes (cascade), so `s.creditedScanUnits` is not written, and with no install moment
+//   it writes nothing. `markScanUnit(unit, at)` inserts the unit's `coal_backfill_units` row
+//   (`'duplicate'`: already recorded, nothing written); with no install moment it throws (the
+//   foreign key). The three writes join the caller's transaction; outside one they throw.
 import type { UsageObservation } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, Instant, MineId } from '../../../kernel/domain/values'
+import type { CoalBackfillProgress } from '../domain/coalBackfill'
 import type { UnitKey, UsagePath, UsageUnit } from '../domain/credit'
 import type { LiveMaterial, Material, MaterialTotals } from '../domain/materials'
 
@@ -51,6 +60,24 @@ export interface StoredUsageUnit extends UsageUnit {
 export type CreditOutcome =
   { outcome: 'credited'; ledgerEntryId: string } | { outcome: 'duplicate' }
 
+/** 16 §4.10 `BackfillState`: 06 §0 `CoalBackfillProgress` (package gap: 16 names it without fields). */
+export type BackfillState = CoalBackfillProgress
+
+/**
+ * 16 §4.10 `ScanUnitKey`: one finished scan unit as its `coal_backfill_units` row records it.
+ * Package gap: 16 names the type without fields; the row it keys (09 §4, 10 `coal_backfill_units`)
+ * also needs the scanning adapter and the coal tokens credited from the unit, and
+ * `markScanUnit(unit, at)` has no other argument to carry them.
+ */
+export interface ScanUnitKey {
+  /** `scan_unit` (PK): a Claude project directory, a Codex day directory, the OpenCode store. */
+  scanUnit: string
+  /** `adapter_id`: the provider whose history it is (open vocabulary). */
+  adapterId: string
+  /** `tokens_credited`: coal tokens credited from this unit (diagnostics). */
+  tokensCredited: number
+}
+
 export interface LedgerRepository {
   /** Amended: + `path`, the observation's path (`usage_observations.path`, 09 §4.7). */
   record(o: UsageObservation, mineId: MineId, path: UsagePath): 'new' | 'duplicate'
@@ -75,4 +102,10 @@ export interface LedgerRepository {
   unit(unitKey: UnitKey): StoredUsageUnit | null
   /** Amended: the mine's stored, sealed units without an entry (`usage_units_mine_sealed`), oldest first. */
   sealedUncredited(mineId: MineId): UnitKey[]
+  /** 16 §4.10: `install_moment.backfill_*` and the moment's `coal_backfill_units`. */
+  backfillState(): BackfillState
+  /** 16 §4.10: writes `backfill_state` and `backfill_done_at`. */
+  setBackfillState(s: BackfillState): void
+  /** 16 §4.10: one `coal_backfill_units` row per finished scan unit, with its credits' transaction. */
+  markScanUnit(unit: ScanUnitKey, at: Instant): 'new' | 'duplicate'
 }

@@ -1,6 +1,7 @@
 // The public events of the ledger (08 §0; 16 §4.10). Published after commit (16 §2.3).
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { MineId } from '../../../kernel/domain/values'
+import type { BackfillReport } from './coalBackfill'
 import type { UnitKey } from './credit'
 import type { Material, MaterialTotals } from './materials'
 
@@ -23,5 +24,8 @@ export type LedgerTotalsChanged = DomainEvent<
   { mineId: MineId; ledgerEntryId: string; totals: MaterialTotals }
 >
 
-/** Every event this module publishes in cut 1 (`CoalBackfillFinished` joins with ISSUE-077). */
-export type LedgerEvent = MaterialCredited | LedgerTotalsChanged
+/** 08 `CoalBackfillFinished`: once per install moment, when its scan is complete (S19.05; no frame). */
+export type CoalBackfillFinished = DomainEvent<'CoalBackfillFinished', { report: BackfillReport }>
+
+/** Every event this module publishes. */
+export type LedgerEvent = MaterialCredited | LedgerTotalsChanged | CoalBackfillFinished
