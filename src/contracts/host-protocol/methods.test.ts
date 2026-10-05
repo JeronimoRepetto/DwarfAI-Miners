@@ -24,6 +24,7 @@ import type {
   PreferenceSetParams,
   ResetMetricsParams
 } from './params/preferences'
+import type { MineListParams, MineListResult, MineSummaryWire } from './params/mines'
 
 // The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
 
@@ -383,5 +384,45 @@ describe('presence params and result (14 §3.4, B-M07)', () => {
     expect(params.safeParse({ onScreenMineIds: [MINE], seq: 1 }).success).toBe(false)
     expect(result.safeParse({}).success).toBe(true)
     expect(result.safeParse({ seq: 1 }).success).toBe(false)
+  })
+})
+
+describe('mines.list params and result (14 §3.4, B-M19)', () => {
+  it('[ADR-019] the mines.list schemas infer exactly the 14 §3.4 entry and refuse any other key', () => {
+    expectTypeOf<HostMethods['mines.list']['params']>().toEqualTypeOf<MineListParams>()
+    expectTypeOf<HostMethods['mines.list']['result']>().toEqualTypeOf<MineListResult>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['mines.list']['result']>
+    >().toEqualTypeOf<MineListResult>()
+    expectTypeOf<MineListResult['mines'][number]>().toEqualTypeOf<MineSummaryWire>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['mines.list']
+    expect(params.safeParse({ sortBy: 'lastUsed', direction: 'desc' }).success).toBe(true)
+    expect(
+      params.safeParse({
+        tier: 'uranium',
+        sortBy: 'ore',
+        direction: 'asc',
+        nameContains: 'repo',
+        limit: 500,
+        offset: 0
+      }).success
+    ).toBe(true)
+    expect(params.safeParse({ sortBy: 'lastOpenedAt', direction: 'desc' }).success).toBe(false)
+    expect(params.safeParse({ sortBy: 'name', direction: 'asc', requestId: 'x' }).success).toBe(
+      false
+    )
+    const summary = {
+      mineId: '01890a5d-ac96-774b-bcce-b302099a8057',
+      name: 'repo',
+      path: '/work/repo',
+      tier: null,
+      lastUsedAt: 1,
+      presentDwarfs: 0,
+      removed: false
+    }
+    expect(result.safeParse({ mines: [summary], total: 1 }).success).toBe(true)
+    expect(result.safeParse({ mines: [{ ...summary, ore: 1 }], total: 1 }).success).toBe(false)
+    expect(result.safeParse({ mines: [], total: -1 }).success).toBe(false)
   })
 })
