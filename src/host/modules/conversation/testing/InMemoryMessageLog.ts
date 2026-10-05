@@ -10,8 +10,8 @@
 // it back with `snapshot` / `restore`. `trim` keeps the newest `MESSAGES_PER_DWARF` rows of the
 // dwarf by the domain rule `rowsToTrim` (`sending` first), and a trimmed row's key stays with no
 // row. `page` returns every stored row as a `Message` with its delivery, newest first by
-// `sortAt` then id (amendment of 2026-10-05 to 16 §4.6, ISSUE-103). `setDelivery` is not built
-// (ISSUE-166).
+// `sortAt` then id (amendment of 2026-10-05 to 16 §4.6, ISSUE-103). An entry's tool steps are kept on
+// its row as its `ActivitySummary` (ISSUE-101). `setDelivery` is not built (ISSUE-166).
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
@@ -19,6 +19,7 @@ import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ConversationEntry } from '../../suppliers'
 import {
+  activitySummaryOf,
   classifyEntry,
   echoesTypedSend,
   MESSAGE_TEXT_MAX_BYTES,
@@ -103,12 +104,14 @@ export class InMemoryMessageLog implements MessageLog {
       if (utf8.encode(entry.text).length > MESSAGE_TEXT_MAX_BYTES) {
         throw new HostInvariantError('message text over 64 KiB (09 §4.4 CHECK)')
       }
+      const activity = activitySummaryOf(entry.activity)
       const message: Message = {
         id: this.deps.ids.uuidv7() as MessageId,
         dwarfId,
         sourceKey: entry.sourceKey,
         role: entry.role,
         text: entry.text,
+        ...(activity === undefined ? {} : { activity }),
         attachments: [],
         origin,
         providerTime: entry.providerTime,
