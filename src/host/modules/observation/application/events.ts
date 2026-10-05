@@ -3,12 +3,17 @@
 // batch committed (16 §2.3, §4.3 "Ordering"). Here, not in `domain/`, because two payloads carry
 // suppliers' `ConversationEntry` / `UsageObservation` and the domain imports no other module (R1).
 //
-// Turn ends joined with the Codex adapter (ISSUE-073). The asks, subagents and provider errors of
-// 05 §3.3 join with the provider adapters that observe them (later: ISSUE-071…ISSUE-075,
-// ISSUE-084).
+// Turn ends joined with the Codex adapter (ISSUE-073), provider errors with ISSUE-084. The asks and
+// subagents of 05 §3.3 join with the provider adapters that observe them (later: ISSUE-071…ISSUE-075).
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
-import type { FolderPath, Instant, ProviderIdentity } from '../../../kernel/domain/values'
+import type {
+  DwarfId,
+  FolderPath,
+  Instant,
+  ProviderId,
+  ProviderIdentity
+} from '../../../kernel/domain/values'
 import type { ConversationEntry, SourceKey, UsageObservation } from '../../suppliers'
 
 /** A session the observer saw (08 §0). Routed to `mines.resolveForSession` → `crew.arrive` (05 §4). */
@@ -53,6 +58,18 @@ export type ObservedTurnEnded = DomainEvent<
   { identity: ProviderIdentity; end: TurnEnded }
 >
 
+/**
+ * A provider of an observed session errored or became unreadable (08 §0; 13 FM-067, FM-068), once
+ * per `(providerId, cause, dwarfId?)` and poll cycle (08 §2.3). The payload is 08 §0's verbatim
+ * (`cause: string`, as 14 §3.6 `HostToast` carries it); the loop only ever publishes one of the
+ * typed `ProviderErrorCause` values of domain/providerError.ts, never the provider's text (16 §2.1). Routed to diagnostics and the transport's `toast {kind:
+ * 'provider-error'}` (05 §4; 14 §2.4 B-F28); the dwarf's status does not change (US-RES-004.AC02).
+ */
+export type ProviderErrorObserved = DomainEvent<
+  'ProviderErrorObserved',
+  { providerId: ProviderId; cause: string; dwarfId?: DwarfId }
+>
+
 /** Every event the module publishes so far. */
 export type ObservationEvent =
   | SessionObserved
@@ -61,3 +78,4 @@ export type ObservationEvent =
   | UsageObserved
   | SessionClosedObserved
   | ObservedTurnEnded
+  | ProviderErrorObserved

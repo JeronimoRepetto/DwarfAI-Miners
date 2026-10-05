@@ -1,0 +1,14 @@
+{
+  "$comment": "format-changed.jsonl and its -crlf variant: after its first step the CLI changed its format (every field renamed); each step of the new format is skipped with one warning (drift, FM-068, INV-38) and nothing of it is read. The observation loop's case (ISSUE-084) replays the drifted steps one poll at a time.",
+  "warnings": 3,
+  "session": {
+    "providerSessionId": "11111111-1111-4111-8111-111111111111",
+    "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+    "at": 1788548473000
+  },
+  "entries": [{ "role": "person", "text": "Is the build green?", "providerTime": 1788548473000 }],
+  "activity": ["turn-started"],
+  "closes": 0,
+  "turnEnds": 0,
+  "usage": []
+}
