@@ -738,3 +738,33 @@ export const jevSuggestionSchema = z
     fallback: jevFallbackReasonSchema.optional()
   })
   .strict()
+
+// ---- attention (ADR-018 "Host side (pure; module attention)"; 14 §3 intro: imported, never restated)
+
+/** ADR-018 `AttentionKind`: unchanged; no Host-crash kind. */
+export type AttentionKind = 'permission' | 'question' | 'turn-finished'
+
+/** ADR-018 `OsNotification`: the B-F22 `attention.notify` payload (14 §3.5), sensitive (never logged). */
+export interface OsNotification {
+  key: string
+  kind: AttentionKind
+  title: string // PO #44 template with customName ?? baseName
+  body: string // mine display name
+  mineId: MineId
+  dwarfId: DwarfId
+  sensitive: true // never logged (ADR-026)
+}
+
+export const attentionKindSchema = z.enum(['permission', 'question', 'turn-finished'])
+
+export const osNotificationSchema = z
+  .object({
+    key: z.string(),
+    kind: attentionKindSchema,
+    title: z.string(),
+    body: z.string(),
+    mineId: mineIdSchema,
+    dwarfId: dwarfIdSchema,
+    sensitive: z.literal(true)
+  })
+  .strict()

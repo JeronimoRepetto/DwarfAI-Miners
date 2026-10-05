@@ -11,12 +11,14 @@ import {
   dwarfWireSchema,
   mineIdSchema,
   mineWireSchema,
+  osNotificationSchema,
   preferencesViewSchema,
   resetIdSchema,
   type DwarfId,
   type DwarfWire,
   type MineId,
   type MineWire,
+  type OsNotification,
   type PreferencesView,
   type ResetId
 } from '../wire'
@@ -25,7 +27,7 @@ import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
@@ -35,6 +37,8 @@ export interface HostFrames {
   'dwarf.arrived':        { dwarf: DwarfWire; announce: boolean }
   'dwarf.changed':        { dwarf: DwarfWire }
   'dwarf.departed':       { dwarfId: DwarfId; mineId: MineId; cause: DepartureCause }
+  'attention.notify':     OsNotification
+  'attention.withdraw':   { keys: string[] }
   'preferences.changed':  PreferencesView
   'ui.resetPreferences':  { epoch: number }
   'reset.progress':       { resetId: ResetId; epoch: number; step: ResetStep }
@@ -72,9 +76,29 @@ export const HOST_FRAME_SCHEMAS = {
   'dwarf.departed': z
     .object({ dwarfId: dwarfIdSchema, mineId: mineIdSchema, cause: departureCauseSchema })
     .strict(),
+  'attention.notify': osNotificationSchema,
+  'attention.withdraw': z.object({ keys: z.array(z.string()) }).strict(),
   'preferences.changed': preferencesViewSchema,
   'ui.resetPreferences': z.object({ epoch: resetEpochSchema }).strict(),
   'reset.progress': z
     .object({ resetId: resetIdSchema, epoch: resetEpochSchema, step: resetStepSchema })
     .strict()
 } as const satisfies Partial<{ [F in keyof HostFrames]: z.ZodType<HostFrames[F]> }>
+
+// Every name of the 14 §3.5 list, also those whose frame lands with a later issue: the list is the
+// contract's, and the transport logs a frame's name, seq and size only, never its data (14 §1.10).
+// verbatim: 14 §3.5 (SENSITIVE_FRAMES, byte-for-byte; `prettier-ignore` keeps its alignment)
+/** Payloads never written to a log, debug dump or crash report (§1.10); the transport logs names, ids, seq and sizes only. */
+// prettier-ignore
+export const SENSITIVE_FRAMES = [
+  'attention.notify',        // OsNotification: custom names, question text
+  'conversation.appended',   // message text
+  'dwarf.arrived', 'dwarf.changed',   // custom names, outcome line
+  'ask.opened',              // ask payloads (question steps, tool summaries)
+  'activity.changed',        // tool-step summaries
+  'launch.changed', 'launch.failed',  // LaunchFailure.toolOutputTail
+  'host.recovered',          // report items (dwarf names, provider causes)
+  'toast',                   // provider-error cause
+  'mine.changed',            // folder paths
+] as const
+// end verbatim: 14 §3.5
