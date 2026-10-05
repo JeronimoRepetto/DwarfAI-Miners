@@ -5,22 +5,29 @@
 // transaction (INV-61, ISSUE-105), and publishes `MessagesAppended` after the commit. ISSUE-099:
 // observed entries — the typed-echo merge, and an ingest that joins observation's batch
 // transaction and holds its events for `joinedEvents` (AMENDMENT-10). ISSUE-103: `queries.feed`,
-// a dwarf's feed from the log (`ConversationQueries`, application/queries.ts).
+// a dwarf's feed from the log (`ConversationQueries`, application/queries.ts). ISSUE-100:
+// `recordTurnEnd` records each reported turn end once per `turn:<dwarfId>:<turnKey>` through the
+// kernel `LifecycleFactLog` and publishes `TurnEnded` after the commit; `announceable` and
+// `downgrade` are the ADR-021 rules its routes and consumers apply (domain/turnEnd.ts).
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
+import type { LifecycleFactLog } from '../../kernel/ports/lifecycleFactLog'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { SqliteMessageLog } from './adapters/SqliteMessageLog'
 import { ConversationIngest, type ConversationCommands } from './application/ingest'
 import { ConversationFeedQueries } from './application/queries'
+import { TurnEndRecorder } from './application/recordTurnEnd'
 import type { ConversationEvent } from './domain/events'
 import type { FeedPage, FeedPageRequest } from './domain/messages'
 
-export type { ConversationEvent, MessagesAppended } from './domain/events'
+export type { ConversationEvent, MessagesAppended, TurnEndedEvent } from './domain/events'
+export type { TurnEnded, TurnEndKind } from '../../kernel/domain/sharedContracts'
+export { announceable, downgrade, type TurnEndCapability } from './domain/turnEnd'
 export type {
   ActivitySummary,
   AttachmentMeta,
@@ -53,6 +60,8 @@ export interface ConversationDeps {
   transactions: TransactionRunner & TransactionScope
   /** Where the module publishes its events after commit (16 §2.3). */
   bus: DomainEventBus<ConversationEvent>
+  /** The kernel log of `dwarf_lifecycle_facts`, shared with crew (16 §3): the turn-end facts. */
+  lifecycleFacts: LifecycleFactLog
   clock: Clock
   ids: IdGenerator
   /** This boot's epoch. */
@@ -85,7 +94,7 @@ export function createConversation(deps: ConversationDeps): Conversation {
     clock: deps.clock,
     ids: deps.ids
   })
-  const commands = new ConversationIngest({
+  const ingest = new ConversationIngest({
     log,
     transactions: deps.transactions,
     scope: deps.transactions,
@@ -94,12 +103,26 @@ export function createConversation(deps: ConversationDeps): Conversation {
     ids: deps.ids,
     hostEpoch: deps.hostEpoch
   })
+  const turnEnds = new TurnEndRecorder({
+    facts: deps.lifecycleFacts,
+    transactions: deps.transactions,
+    scope: deps.transactions,
+    // One held queue for the module: a caller's commit publishes every event it held, in order.
+    emit: (event, joined) => ingest.emit(event, joined),
+    clock: deps.clock,
+    ids: deps.ids,
+    hostEpoch: deps.hostEpoch
+  })
+  const commands: ConversationCommands = {
+    ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
+    recordTurnEnd: (end) => turnEnds.recordTurnEnd(end)
+  }
   return {
     commands,
     queries: new ConversationFeedQueries({ log }),
     joinedEvents: {
-      publish: () => commands.publishJoined(),
-      discard: () => commands.discardJoined()
+      publish: () => ingest.publishJoined(),
+      discard: () => ingest.discardJoined()
     }
   }
 }

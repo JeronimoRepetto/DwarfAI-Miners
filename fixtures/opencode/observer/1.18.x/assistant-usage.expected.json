@@ -1,0 +1,90 @@
+{
+  "$comment": "Hand-written from 15 §5 OpenCode row (unitKey = assistant message id), ADR-006 item 4 and docs/opencode-format.md Row 14: one sealed observation per finished assistant message from message.data.tokens (input is net of the cache, output is net of reasoning), never one per step-finish part; a finished message that spent nothing yields none. The lifetime total is session.tokens_*.",
+  "warnings": 0,
+  "watermark": 1790830040000,
+  "sessions": [
+    {
+      "providerSessionId": "ses_usage_0004",
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790830000000,
+      "parentProviderSessionId": null
+    }
+  ],
+  "entries": [
+    {
+      "providerSessionId": "ses_usage_0004",
+      "sourceKey": "opencode:opencode:ses_usage_0004:prt_usage_0001",
+      "role": "person",
+      "text": "Fix the lint error.",
+      "providerTime": 1790830001000
+    },
+    {
+      "providerSessionId": "ses_usage_0004",
+      "sourceKey": "opencode:opencode:ses_usage_0004:prt_usage_0006",
+      "role": "dwarf",
+      "text": "Fixed: the unused import is gone.",
+      "providerTime": 1790830008300
+    },
+    {
+      "providerSessionId": "ses_usage_0004",
+      "sourceKey": "opencode:opencode:ses_usage_0004:prt_usage_0008",
+      "role": "person",
+      "text": "Run the tests too.",
+      "providerTime": 1790830021000
+    },
+    {
+      "providerSessionId": "ses_usage_0004",
+      "sourceKey": "opencode:opencode:ses_usage_0004:prt_usage_0009",
+      "role": "dwarf",
+      "text": "All tests pass.",
+      "providerTime": 1790830031000
+    }
+  ],
+  "usage": [
+    {
+      "providerSessionId": "ses_usage_0004",
+      "sourceKey": "opencode:opencode:ses_usage_0004:msg_usage_0002",
+      "unitKey": "msg_usage_0002",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 1500,
+        "output": 100,
+        "cacheRead": 3500,
+        "cacheWrite": 150,
+        "reasoning": 60
+      },
+      "sealed": true,
+      "providerTime": 1790830020000
+    },
+    {
+      "providerSessionId": "ses_usage_0004",
+      "sourceKey": "opencode:opencode:ses_usage_0004:msg_usage_0005",
+      "unitKey": "msg_usage_0005",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 300,
+        "output": 50,
+        "cacheRead": 500,
+        "cacheWrite": 50,
+        "reasoning": 0
+      },
+      "sealed": true,
+      "providerTime": 1790830040000
+    }
+  ],
+  "turnEnds": [],
+  "lifetimeTotals": [
+    {
+      "providerSessionId": "ses_usage_0004",
+      "unitKey": "coal:opencode:session:ses_usage_0004",
+      "tokens": {
+        "inputNet": 1800,
+        "output": 150,
+        "cacheRead": 4000,
+        "cacheWrite": 200,
+        "reasoning": 60
+      },
+      "newestRecordAt": 1790830040000
+    }
+  ]
+}

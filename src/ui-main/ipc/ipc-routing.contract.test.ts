@@ -17,6 +17,7 @@ import {
 import {
   composeBoardFacade,
   composeLegacyAgentRegistryFeed,
+  composeLegacyDwarfIdBridge,
   composeLegacyLaunchObservation,
   composeStopAllRelay,
   type LegacyRuntimeSurface
@@ -863,5 +864,86 @@ describe('cut-1 legacy composition', () => {
     const observation = composeLegacyLaunchObservation({ release: 'cut-1', launches })
     expect(Object.keys(observation ?? {})).toEqual(['channel'])
     expect(await observation?.channel.liveLaunches()).toEqual([{ launchId: 'launch:1' }])
+  })
+
+  it('[ADR-001] LegacyDwarfIdBridge is listed for cuts 1 to 4 and composed on A-13, A-23, A-26, A-27, A-P3, A-P4', async () => {
+    // TC-088-03 (21 §3; 14 §5; AMENDMENT-8): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
+    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyDwarfIdBridge')).toEqual({
+      name: 'LegacyDwarfIdBridge',
+      cuts: span('cut-1', 'cut-4b'),
+      shapeAdapter: false
+    })
+    const HOST_DWARF = '01920000-0000-7000-9000-0000000e0001'
+    const SESSION = 's-1'
+    const reads: string[] = []
+    const client = {
+      call: (method: string) => {
+        reads.push(method)
+        return Promise.resolve([
+          {
+            dwarfId: HOST_DWARF,
+            providerId: 'claude',
+            identity: { providerId: 'claude', providerSessionId: SESSION }
+          }
+        ])
+      },
+      subscribe: () => () => {}
+    } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client']
+    const served: Array<[string, unknown]> = []
+    const legacy = {
+      serve: (channel: string, payload: unknown) => {
+        served.push([channel, payload])
+        return Promise.resolve(undefined)
+      }
+    }
+    const { surface } = legacySurface()
+    const compose = (release: StepId) =>
+      composeLegacyDwarfIdBridge({ release, client, legacy, registry: surface })
+    // Composed exactly in the releases it is listed for: not in this release's cut-0 table, and no longer once deleted.
+    for (const release of span('cut-1', 'cut-4b')) {
+      const composed = compose(release)
+      expect(composed, release).toBeDefined()
+      composed?.dispose()
+    }
+    for (const release of [ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1'] as StepId[]) {
+      expect(compose(release), release).toBeUndefined()
+    }
+    expect(reads).toEqual([])
+
+    // In cut 1 it is composed on the six legacy rows that carry a dwarf id, and on no other row.
+    const composed = compose('cut-1')
+    expect(composed?.channels.map((channel) => ROW_IDS[channel]).sort()).toEqual(
+      ['A-13', 'A-23', 'A-26', 'A-27', 'A-P3', 'A-P4'].sort()
+    )
+    // The legacy side is what the registry feed writes through it; a bridged row reaches today's runtime with the
+    // legacy id, and every other row passes unchanged.
+    composed?.registry.registry.replace([
+      {
+        provider: 'claude',
+        sessionId: SESSION,
+        cwd: '/work/moria',
+        status: 'busy',
+        dwarfs: [
+          {
+            id: `claude:${SESSION}`,
+            provider: 'claude',
+            role: 'foreman',
+            name: 'Thorin',
+            status: 'working',
+            sessionId: SESSION
+          }
+        ],
+        updatedAt: 1
+      }
+    ])
+    await composed?.legacy.serve('dwarf:activate', HOST_DWARF)
+    await composed?.legacy.serve('mine:history', 'mine-1')
+    expect(served).toEqual([
+      ['dwarf:activate', `claude:${SESSION}`],
+      ['mine:history', 'mine-1']
+    ])
+    // It reads only B-M41 from the Host.
+    expect(new Set(reads)).toEqual(new Set(['strangler.dwarfIdentities']))
+    composed?.dispose()
   })
 })

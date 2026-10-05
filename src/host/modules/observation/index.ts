@@ -60,6 +60,14 @@ export {
   antigravityGeminiDirOf,
   type AntigravityObservationAdapterOptions
 } from './adapters/antigravity/AntigravityObservationAdapter'
+export {
+  OPENCODE_OBSERVED_CAPABILITIES,
+  OpenCodeObservationAdapter,
+  openCodeStoreRootOf,
+  type OpenCodeLifetimeTotal,
+  type OpenCodeLifetimeTotals,
+  type OpenCodeObservationAdapterOptions
+} from './adapters/opencode/OpenCodeObservationAdapter'
 export { OBSERVATION_POLL_MS, type NudgeHint } from './application/observationLoop'
 export type { ObservationQueries } from './application/observationQueries'
 export {

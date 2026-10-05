@@ -1,0 +1,105 @@
+{
+  "$comment": "Hand-written from 15 §5 OpenCode row and ADR-015: the child session is its own identity whose parent is the session its parent_id names (message.data.parentID is never read as topology). The forward-slash Windows directory is read in its native spelling. Each session's lifetime total is its own stream.",
+  "warnings": 0,
+  "watermark": 1790810020000,
+  "sessions": [
+    {
+      "providerSessionId": "ses_root_0002",
+      "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+      "at": 1790810000000,
+      "parentProviderSessionId": null
+    },
+    {
+      "providerSessionId": "ses_child_0002",
+      "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+      "at": 1790810005000,
+      "parentProviderSessionId": "ses_root_0002"
+    }
+  ],
+  "entries": [
+    {
+      "providerSessionId": "ses_root_0002",
+      "sourceKey": "opencode:opencode:ses_root_0002:prt_root_0001",
+      "role": "person",
+      "text": "How many test files are there?",
+      "providerTime": 1790810001000
+    },
+    {
+      "providerSessionId": "ses_child_0002",
+      "sourceKey": "opencode:opencode:ses_child_0002:prt_child_0001",
+      "role": "person",
+      "text": "Count the test files in the project.",
+      "providerTime": 1790810005000
+    },
+    {
+      "providerSessionId": "ses_child_0002",
+      "sourceKey": "opencode:opencode:ses_child_0002:prt_child_0002",
+      "role": "dwarf",
+      "text": "There are 42 test files.",
+      "providerTime": 1790810011000
+    },
+    {
+      "providerSessionId": "ses_root_0002",
+      "sourceKey": "opencode:opencode:ses_root_0002:prt_root_0005",
+      "role": "dwarf",
+      "text": "The project has 42 test files.",
+      "providerTime": 1790810015000
+    }
+  ],
+  "usage": [
+    {
+      "providerSessionId": "ses_root_0002",
+      "sourceKey": "opencode:opencode:ses_root_0002:msg_root_0002",
+      "unitKey": "msg_root_0002",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 500,
+        "output": 30,
+        "cacheRead": 500,
+        "cacheWrite": 100,
+        "reasoning": 0
+      },
+      "sealed": true,
+      "providerTime": 1790810013000
+    },
+    {
+      "providerSessionId": "ses_child_0002",
+      "sourceKey": "opencode:opencode:ses_child_0002:msg_child_0002",
+      "unitKey": "msg_child_0002",
+      "fidelity": 1,
+      "tokens": { "inputNet": 300, "output": 20, "cacheRead": 0, "cacheWrite": 0, "reasoning": 10 },
+      "sealed": true,
+      "providerTime": 1790810012000
+    },
+    {
+      "providerSessionId": "ses_root_0002",
+      "sourceKey": "opencode:opencode:ses_root_0002:msg_root_0003",
+      "unitKey": "msg_root_0003",
+      "fidelity": 1,
+      "tokens": { "inputNet": 400, "output": 30, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790810020000
+    }
+  ],
+  "turnEnds": [],
+  "lifetimeTotals": [
+    {
+      "providerSessionId": "ses_root_0002",
+      "unitKey": "coal:opencode:session:ses_root_0002",
+      "tokens": {
+        "inputNet": 900,
+        "output": 60,
+        "cacheRead": 500,
+        "cacheWrite": 100,
+        "reasoning": 0
+      },
+      "newestRecordAt": 1790810020000
+    },
+    {
+      "providerSessionId": "ses_child_0002",
+      "unitKey": "coal:opencode:session:ses_child_0002",
+      "tokens": { "inputNet": 300, "output": 20, "cacheRead": 0, "cacheWrite": 0, "reasoning": 10 },
+      "newestRecordAt": 1790810012000
+    }
+  ]
+}
