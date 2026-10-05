@@ -1,0 +1,17 @@
+{
+  "providerVersion": "1.1.26",
+  "capturedAt": "2026-10-05",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §5 (Antigravity row, AMENDMENT-13) and the record shapes of the scrubbed agy 1.1.26 captures under src/main/providers/__fixtures__/antigravity (transcript.jsonl, history.jsonl) and docs/provider-formats.md §3.1; the conversations-database blobs are synthetic protobuf built to the field paths of 15 §5; no real CLI was run. Replace with the scrubbed ISSUE-319 recordings (S-032-1 two-turns; a recorded conversations/<uuid>.db dumped to SQL text) when the maintainer records them.",
+  "capabilities": {
+    "observe": true,
+    "turnEnd": "none",
+    "usage": { "fidelity": 1, "rateLimits": false },
+    "console": "log",
+    "observedPermission": "none",
+    "observedQuestion": "none"
+  }
+}

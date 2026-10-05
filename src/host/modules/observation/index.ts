@@ -54,6 +54,12 @@ export {
   codexHomeOf,
   type CodexObservationAdapterOptions
 } from './adapters/codex/CodexObservationAdapter'
+export {
+  ANTIGRAVITY_OBSERVED_CAPABILITIES,
+  AntigravityObservationAdapter,
+  antigravityGeminiDirOf,
+  type AntigravityObservationAdapterOptions
+} from './adapters/antigravity/AntigravityObservationAdapter'
 export { OBSERVATION_POLL_MS, type NudgeHint } from './application/observationLoop'
 export type { ObservationQueries } from './application/observationQueries'
 export {
