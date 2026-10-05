@@ -22,9 +22,11 @@ import {
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
+import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { createMines } from '../../modules/mines'
+import { NodeFs } from '../../platform/fs/NodeFs'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { emptyDrainGate } from '../../wiring/emptyDrainGate'
@@ -193,8 +195,19 @@ async function host() {
     seat(ALPHA, false)
     seat(DELTA, true)
   })
-  const mines = createMines({ db, transactions, mapSites: [], random: () => 0 })
-  registerMines(dispatcher, { mines: mines.queries })
+  const mines = createMines({
+    db,
+    transactions,
+    mapSites: [],
+    random: () => 0,
+    fs: new NodeFs(),
+    clock,
+    ids,
+    bus: new RecordingEventBus(),
+    hostEpoch: EPOCH,
+    remeasure: () => undefined
+  })
+  registerMines(dispatcher, { mines: mines.queries, commands: mines.commands })
 
   const throttle = new HelloThrottle(clock)
   /** Connects with `role` and returns the client once hello.ok arrived. */

@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import type {
   DwarfId,
+  FolderPath,
   HostEpoch,
   HostPreferences,
   Instant,
@@ -24,7 +25,14 @@ import type {
   PreferenceSetParams,
   ResetMetricsParams
 } from './params/preferences'
-import type { MineListParams, MineListResult, MineSummaryWire } from './params/mines'
+import type {
+  AdoptMainProjectResult,
+  DeclareMineResult,
+  MineListParams,
+  MineListResult,
+  MineSummaryWire,
+  ResolveFileResult
+} from './params/mines'
 
 // The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
 
@@ -387,6 +395,29 @@ describe('presence params and result (14 §3.4, B-M07)', () => {
   })
 })
 
+// The B-M08 entry of 14 §3.4 and its strict() schemas (14 §1.4): the notifier reports a click on a
+// level-3 notification by its key, for a diagnostics counter only (ADR-018 item 6).
+
+describe('attention.clicked params and result (14 §3.4, B-M08)', () => {
+  it('[ADR-003] the attention.clicked schemas infer exactly {key} and {}, and refuse any other key', () => {
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('attention.clicked')
+    expectTypeOf<HostMethods['attention.clicked']['params']>().toEqualTypeOf<{ key: string }>()
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+    expectTypeOf<HostMethods['attention.clicked']['result']>().toEqualTypeOf<{}>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['attention.clicked']['params']>
+    >().toEqualTypeOf<{ key: string }>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['attention.clicked']
+    expect(params.safeParse({ key: 'd:question:ask-1' }).success).toBe(true)
+    expect(params.safeParse({ key: 1 }).success).toBe(false)
+    expect(params.safeParse({}).success).toBe(false)
+    expect(params.safeParse({ key: 'k', requestId: 'r' }).success).toBe(false)
+    expect(result.safeParse({}).success).toBe(true)
+    expect(result.safeParse({ counted: 1 }).success).toBe(false)
+  })
+})
+
 describe('mines.list params and result (14 §3.4, B-M19)', () => {
   it('[ADR-019] the mines.list schemas infer exactly the 14 §3.4 entry and refuse any other key', () => {
     expectTypeOf<HostMethods['mines.list']['params']>().toEqualTypeOf<MineListParams>()
@@ -424,5 +455,67 @@ describe('mines.list params and result (14 §3.4, B-M19)', () => {
     expect(result.safeParse({ mines: [summary], total: 1 }).success).toBe(true)
     expect(result.safeParse({ mines: [{ ...summary, ore: 1 }], total: 1 }).success).toBe(false)
     expect(result.safeParse({ mines: [], total: -1 }).success).toBe(false)
+  })
+})
+
+describe('mines.declare, mines.adoptMainProject and mines.resolveFile (14 §3.4, B-M16, B-M17, B-M20)', () => {
+  it('[ADR-019] the B-M16, B-M17 and B-M20 schemas infer exactly the 14 §3.4 entries and refuse any other key', () => {
+    expectTypeOf<HostMethods['mines.declare']['params']>().toEqualTypeOf<{
+      path: FolderPath
+      requestId: string
+    }>()
+    expectTypeOf<HostMethods['mines.declare']['result']>().toEqualTypeOf<DeclareMineResult>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['mines.declare']['result']>
+    >().toEqualTypeOf<DeclareMineResult>()
+    expectTypeOf<HostMethods['mines.adoptMainProject']['params']>().toEqualTypeOf<{
+      worktreePath: FolderPath
+      requestId: string
+    }>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['mines.adoptMainProject']['result']>
+    >().toEqualTypeOf<AdoptMainProjectResult>()
+    expectTypeOf<HostMethods['mines.resolveFile']['params']>().toEqualTypeOf<{
+      mineId: MineId
+      dwarfId?: DwarfId
+      target: string
+    }>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['mines.resolveFile']['result']>
+    >().toEqualTypeOf<ResolveFileResult>()
+
+    const MINE = '01890a5d-ac96-774b-bcce-b302099a8057'
+    const REQUEST = '01890a5d-ac96-774b-bcce-b302099a8058'
+    const declare = HOST_METHOD_SCHEMAS['mines.declare']
+    expect(declare.params.safeParse({ path: '/work/repo', requestId: REQUEST }).success).toBe(true)
+    expect(declare.params.safeParse({ path: '/work/repo' }).success).toBe(false)
+    expect(
+      declare.params.safeParse({ path: '/work/repo', requestId: REQUEST, name: 'x' }).success
+    ).toBe(false)
+    expect(declare.result.safeParse({ ok: true, value: { worktreeOf: MINE } }).success).toBe(true)
+    expect(
+      declare.result.safeParse({ ok: true, value: { mineId: MINE, worktreeOf: MINE } }).success
+    ).toBe(false)
+    expect(declare.result.safeParse({ ok: false, error: 'cancelled' }).success).toBe(false)
+
+    const adopt = HOST_METHOD_SCHEMAS['mines.adoptMainProject']
+    expect(adopt.params.safeParse({ worktreePath: '/work/feat', requestId: REQUEST }).success).toBe(
+      true
+    )
+    expect(adopt.params.safeParse({ path: '/work/feat', requestId: REQUEST }).success).toBe(false)
+    expect(adopt.result.safeParse({ ok: false, error: 'no-main-project' }).success).toBe(true)
+    expect(adopt.result.safeParse({ ok: true, value: { worktreeOf: MINE } }).success).toBe(false)
+
+    const resolve = HOST_METHOD_SCHEMAS['mines.resolveFile']
+    expect(resolve.params.safeParse({ mineId: MINE, target: 'src/a.ts' }).success).toBe(true)
+    expect(resolve.params.safeParse({ mineId: MINE, dwarfId: MINE, target: 'a' }).success).toBe(
+      true
+    )
+    expect(resolve.params.safeParse({ mineId: MINE, target: '' }).success).toBe(false)
+    expect(
+      resolve.params.safeParse({ mineId: MINE, target: 'a', requestId: REQUEST }).success
+    ).toBe(false)
+    expect(resolve.result.safeParse({ ok: true, value: { path: '/work/a.ts' } }).success).toBe(true)
+    expect(resolve.result.safeParse({ ok: false, error: 'outside' }).success).toBe(false)
   })
 })

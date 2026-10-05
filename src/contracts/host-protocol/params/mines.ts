@@ -1,6 +1,9 @@
-// Seam-B params and results of `mines.list` (B-M19) that A-34 relays (14 §3.4, §1.2, §8 I-10).
+// Seam-B params and results of the mines rows (14 §3.4, §1.2): B-M16 `mines.declare`, B-M17
+// `mines.adoptMainProject`, B-M19 `mines.list` (relayed by A-34, §8 I-10) and B-M20
+// `mines.resolveFile`.
 import { z } from 'zod'
 import {
+  dwarfIdSchema,
   folderPathSchema,
   instantSchema,
   mineIdSchema,
@@ -10,6 +13,17 @@ import {
   type MineId,
   type Tier
 } from '../../wire'
+import { outcomeSchema, type Outcome } from '../errors'
+import { requestIdSchema } from '../requestId'
+import { WIRE_PATH_MAX_CHARS, wirePathSchema } from './bounds'
+
+// As 14 §3.4 writes them (names, fields and comments; layout by prettier): mines, B-M16, B-M17, B-M20
+export type DeclareMineResult = Outcome<
+  { mineId: MineId } | { worktreeOf: MineId },
+  'not-a-folder' | 'invalid-path'
+> // = 05 declare; main keeps the path it picked for A-31
+export type AdoptMainProjectResult = Outcome<{ mineId: MineId }, 'no-main-project'>
+export type ResolveFileResult = Outcome<{ path: FolderPath }, 'escapes-mine' | 'missing'>
 
 // As 14 §3.4 writes them (names, fields and comments; layout by prettier): mines, B-M19
 export interface MineListParams {
@@ -79,3 +93,53 @@ export const mineListResultSchema = z
     total: z.number().int().nonnegative()
   })
   .strict()
+
+/**
+ * A folder path on the wire, at most `WIRE_PATH_MAX_CHARS`. Whether it names a folder is the
+ * Host's re-validation (14 §1.10, ADR-019 item 9: `not-a-folder` / `invalid-path`), not the wire's.
+ */
+const wireFolderPathSchema = z.custom<FolderPath>(
+  (value) => typeof value === 'string' && value.length <= WIRE_PATH_MAX_CHARS,
+  { message: 'expected a folder path string' }
+)
+
+/** B-M16 params, strict: the folder UI main's picker produced (14 §1.10). */
+export const declareMineParamsSchema = z
+  .object({ path: wireFolderPathSchema, requestId: requestIdSchema })
+  .strict()
+
+export const declareMineResultSchema = outcomeSchema(
+  z.union([
+    z.object({ mineId: mineIdSchema }).strict(),
+    z.object({ worktreeOf: mineIdSchema }).strict()
+  ]),
+  z.enum(['not-a-folder', 'invalid-path'])
+)
+
+/** B-M17 params, strict: the worktree path UI main remembered for A-31. */
+export const adoptMainProjectParamsSchema = z
+  .object({ worktreePath: wireFolderPathSchema, requestId: requestIdSchema })
+  .strict()
+
+export const adoptMainProjectResultSchema = outcomeSchema(
+  z.object({ mineId: mineIdSchema }).strict(),
+  z.literal('no-main-project')
+)
+
+/**
+ * B-M20 params, strict: a mine id and a target relative to the mine (14 §1.10). Package gap (14 is
+ * silent): an empty target names nothing, so it is refused, as today's `openMinePath` does.
+ * `dwarfId` is accepted and has no counterpart in the frozen `resolveFileInMine` (16 §4.1).
+ */
+export const resolveFileParamsSchema = z
+  .object({
+    mineId: mineIdSchema,
+    dwarfId: dwarfIdSchema.optional(),
+    target: wirePathSchema.min(1)
+  })
+  .strict()
+
+export const resolveFileResultSchema = outcomeSchema(
+  z.object({ path: folderPathSchema }).strict(),
+  z.enum(['escapes-mine', 'missing'])
+)
