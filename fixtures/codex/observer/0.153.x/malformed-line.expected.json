@@ -1,0 +1,25 @@
+{
+  "$comment": "Hand-written from 15 §5 and 13 FM-086: a truncated line, a JSON value that is not a record and a record without a payload are skipped with one warning each; a record of an unknown type (world_state) is no warning; shared by malformed-line-crlf.jsonl.",
+  "warnings": 3,
+  "session": {
+    "providerSessionId": "01a0b000-0000-7000-8000-000000000733",
+    "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+    "at": 1790769599000,
+    "parentProviderSessionId": null
+  },
+  "entries": [
+    { "role": "person", "text": "Is the build green?", "providerTime": 1790769601500 },
+    { "role": "dwarf", "text": "Yes, all checks passed.", "providerTime": 1790769602000 }
+  ],
+  "activity": ["turn-started"],
+  "turnEnds": [
+    {
+      "turnKey": "01a0b000-0000-7000-8000-0000000007c1",
+      "kind": "concluded",
+      "at": 1790769602100,
+      "reliability": "reliable",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": []
+}
