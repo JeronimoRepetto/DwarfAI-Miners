@@ -30,7 +30,14 @@ import {
   type SetOpenCodePermissionsResult
 } from '../host-protocol/params'
 import type { IpcResult } from '../host-protocol'
-import type { FeedPage, MineHistoryView, MineId, StopAllOutcome, SupplierEntryView } from '../wire'
+import type {
+  DwarfId,
+  FeedPage,
+  MineHistoryView,
+  MineId,
+  StopAllOutcome,
+  SupplierEntryView
+} from '../wire'
 import { CHANNELS, PRELOAD_HELPERS, todayShapeOf } from './channels'
 import type { ChannelSpec } from './channelSpec'
 import { ROW_IDS } from './rowIds'
@@ -218,6 +225,16 @@ const NEW_ROWS = [
     kind: 'push',
     placement: 'host',
     sensitive: true
+  },
+  // ISSUE-114: the reveal a notification click runs (ADR-018 item 6; ADR-025 item 8), born `ui-local` in cut 1; ids
+  // only, nothing a person or a provider said
+  {
+    id: 'A-N16',
+    wire: 'mode:revealDwarfChat',
+    member: 'onRevealDwarfChat',
+    kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -784,6 +801,12 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     expectTypeOf<Res<'ui:preferences:get'>>().toMatchTypeOf<Partial<UiPreferencesMap>>()
     expectTypeOf<Req<'ui:preferences:set'>>().toMatchTypeOf<UiPreferenceWrite>()
     expectTypeOf<Res<'ui:preferences:set'>>().toMatchTypeOf<UiPreferenceWrite>()
+    // A-N16 (ISSUE-114): the reveal push, as 14 §2.2 and §3.8 write it.
+    expectTypeOf<Req<'mode:revealDwarfChat'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<Res<'mode:revealDwarfChat'>>().toEqualTypeOf<{
+      mineId: MineId
+      dwarfId: DwarfId | null
+    }>()
   })
 
   it('[ADR-002] the Stop everything rows carry the confirmationId UI main issued and A-N26 the requestId of host.shutdown', () => {

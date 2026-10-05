@@ -28,6 +28,8 @@
 - **Updated for ISSUE-082:** A-N01 `getHostSnapshot` (`host:snapshot`) and A-N02 `onHostEvent` (`host:event`), NEW,
   are declared in the registry and have generated preload members, so their rows moved to the found table, as A-N30
   did.
+- **Updated for ISSUE-114:** A-N16 `onRevealDwarfChat` (`mode:revealDwarfChat`, NEW) is declared in the registry and
+  has a generated preload member, so its row moved to the found table.
 - **Compared with:** `14-ipc-contract.md` §2.1, §2.2, §7 and §8 I-21 of the architecture package. `14` is frozen
   and lives in the package, not in this repository.
 - **For the registry issue (ISSUE-007):** `dwarf:setName` and `dwarf:resetName` have no `14` §2 id. Their
@@ -57,10 +59,10 @@ pushes were evaluated against `14` §2 and none of them was changed.
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
 | Request / one-way channels (`ipcMain` handlers)   | 32   | 16     | 12  | 11     | 0        | 71    |
-| Pushes                                            | 2    | 0      | 5   | 4      | 0        | 11    |
+| Pushes                                            | 2    | 0      | 6   | 4      | 0        | 12    |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 16     | 17  | 15     | 0        | 83    |
-| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 17  | —      | —        | 17    |
+| **Found total**                                   | 35   | 16     | 18  | 15     | 0        | 84    |
+| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 16  | —      | —        | 16    |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
 constants (63 + 2) and 66 preload members (64 + 2). The two extra channels are `dwarf:setName` and
@@ -136,6 +138,7 @@ kind `14` gives it.
 | `mine:undeclare`                  | `undeclareMine`               | invoke | src/main/index.ts:1900<br>src/preload/index.ts:781<br>src/shared/contracts.ts:5289                                                | A-32    | KEEP   | —                 |                                                                                                                                           |
 | `mines:get`                       | `getMines`                    | invoke | src/main/index.ts:1677<br>src/preload/index.ts:608<br>src/shared/contracts.ts:5089                                                | A-12    | RETIRE | —                 |                                                                                                                                           |
 | `mines:update`                    | `onMinesUpdated`              | push   | src/legacy-bridge/LegacyRuntimeRoute.ts:742<br>src/main/index.ts:1121<br>src/preload/index.ts:609<br>src/shared/contracts.ts:5090 | A-P2    | RETIRE | —                 |                                                                                                                                           |
+| `mode:revealDwarfChat`            | `onRevealDwarfChat`           | push   | src/preload/index.ts:607                                                                                                          | A-N16   | NEW    | —                 | Declared by ISSUE-114; its preload member is generated (ISSUE-045); UI main pushes it, unrouted until cut 1                               |
 | `notifications:enabled:get`       | `getNotificationsEnabled`     | invoke | src/main/index.ts:1425<br>src/preload/index.ts:873<br>src/shared/contracts.ts:5394                                                | A-42    | KEEP   | —                 |                                                                                                                                           |
 | `notifications:enabled:set`       | `setNotificationsEnabled`     | invoke | src/main/index.ts:1426<br>src/preload/index.ts:877<br>src/shared/contracts.ts:5395                                                | A-43    | KEEP   | —                 |                                                                                                                                           |
 | `opencode:password:clear`         | `clearOpenCodeServerPassword` | invoke | src/main/index.ts:1609<br>src/preload/index.ts:973<br>src/shared/contracts.ts:5490                                                | A-55    | CHANGE | —                 |                                                                                                                                           |
@@ -185,7 +188,6 @@ kind `14` gives it.
 | `mode:move`             | `moveToMode`            | invoke | not found | A-N13 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `mode:transition`       | `onModeTransition`      | push   | not found | A-N14 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `mode:transition:done`  | `modeTransitionDone`    | send   | not found | A-N15 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `mode:revealDwarfChat`  | `onRevealDwarfChat`     | push   | not found | A-N16 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `veta:clickThrough`     | `setVetaClickThrough`   | send   | not found | A-N22 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `veta:layout`           | `layoutVeta`            | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `window:limits`         | `getWindowingLimits`    | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |

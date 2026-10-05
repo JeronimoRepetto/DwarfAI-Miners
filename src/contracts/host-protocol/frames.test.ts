@@ -7,13 +7,14 @@ import type {
   Material,
   MaterialAmount,
   MineId,
+  MessageView,
   MineWire,
   OsNotification,
   PreferencesView,
   ResetId
 } from '../wire'
 import type { HelloOk } from './adr-003'
-import { HOST_FRAME_SCHEMAS, SENSITIVE_FRAMES, type HostFrames } from './frames'
+import { HOST_FRAME_SCHEMAS, SENSITIVE_FRAMES, SENSITIVE_METHODS, type HostFrames } from './frames'
 import type { DepartureCause } from './params/crew'
 import type { ResetStep } from './params/preferences'
 
@@ -371,5 +372,43 @@ describe('ledger.changed payload (14 §3.5, B-F20)', () => {
     ).toBe(false)
     expect(changed.safeParse({ totals: TOTALS }).success).toBe(false)
     expect(SENSITIVE_FRAMES).not.toContain('ledger.changed')
+  })
+})
+
+// The B-F11 payload of 14 §3.5 and its strict() schema (14 §1.4); 14 §3.5 SENSITIVE_METHODS.
+
+describe('conversation.appended payload (14 §3.5, B-F11) and SENSITIVE_METHODS', () => {
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099a8057'
+  const view = {
+    id: '01890a5d-ac96-774b-bcce-b302099a8058',
+    dwarfId: DWARF,
+    role: 'person',
+    text: 'hello',
+    attachments: [],
+    providerTime: null,
+    createdAt: 1_001
+  }
+
+  it('[ADR-003] the conversation.appended schema infers exactly its 14 §3.5 payload of MessageView rows, and the frame and the feed result are never logged', () => {
+    expectTypeOf<HostFrames['conversation.appended']>().toEqualTypeOf<{
+      dwarfId: DwarfId
+      messages: MessageView[]
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['conversation.appended']>>().toEqualTypeOf<
+      HostFrames['conversation.appended']
+    >()
+
+    const appended = HOST_FRAME_SCHEMAS['conversation.appended']
+    expect(appended.safeParse({ dwarfId: DWARF, messages: [view] }).success).toBe(true)
+    expect(appended.safeParse({ dwarfId: DWARF, messages: [] }).success).toBe(true)
+    expect(
+      appended.safeParse({ dwarfId: DWARF, messages: [{ ...view, sourceKey: 'k' }] }).success
+    ).toBe(false)
+    expect(appended.safeParse({ dwarfId: DWARF, messages: [view], seq: 1 }).success).toBe(false)
+    expect(appended.safeParse({ messages: [view] }).success).toBe(false)
+
+    expect(SENSITIVE_FRAMES).toContain('conversation.appended')
+    expect(SENSITIVE_METHODS['conversation.feed']).toBe('result')
+    expect(SENSITIVE_METHODS['session.snapshot']).toBe('result')
   })
 })

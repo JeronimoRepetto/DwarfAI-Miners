@@ -142,6 +142,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     onPanelVisibility: vi.fn().mockReturnValue(() => undefined),
     setOpenMine: vi.fn(),
     onShowMine: vi.fn().mockReturnValue(() => undefined),
+    // AMENDED for ISSUE-114 (was: absent): the shell also hears A-N16.
+    onRevealDwarfChat: vi.fn().mockReturnValue(() => undefined),
     getNotificationsEnabled: vi.fn().mockResolvedValue(true),
     getJevSettings: vi.fn().mockResolvedValue({ ...DEFAULT_JEV_SETTINGS }),
     getOpenCodeSettings: vi
