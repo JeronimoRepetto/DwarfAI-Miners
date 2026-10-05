@@ -305,6 +305,9 @@ switches are in the [configuration reference](docs/guide.md#configuration-refere
 row: `GUILD_AREAS_ENABLED` shows the nav's Guild group and the Lab, Market and Laboral Union pages
 while they are being built. The configuration reference has the accepted values.
 
+**A new mine is scored on its own** a few seconds after it appears: `MINE_MEASURE_DELAY_MS`
+(default `5000`, `0` scores it at once) sets how long it shows "not recorded yet" first.
+
 **The Jev API key is not one of those layers.** It is a secret you type into Settings, not an
 operator value, so it is never read from `.env` or written into `config-v1.json` — enter, replace
 or clear it from the Jev section of Settings only, on either setup. It is stored encrypted on this
