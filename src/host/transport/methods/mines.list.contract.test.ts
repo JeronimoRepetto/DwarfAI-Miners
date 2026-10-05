@@ -193,7 +193,7 @@ async function host() {
     seat(ALPHA, false)
     seat(DELTA, true)
   })
-  const mines = createMines({ db, transactions, mapSites: [], random: () => 0 })
+  const mines = createMines({ db, transactions, mapSites: [], random: () => 0, style: 'posix' })
   registerMines(dispatcher, { mines: mines.queries })
 
   const throttle = new HelloThrottle(clock)
