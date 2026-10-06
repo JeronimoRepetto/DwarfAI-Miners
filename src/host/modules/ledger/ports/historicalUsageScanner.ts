@@ -8,8 +8,9 @@
 //
 // - Per-unit records carry the live `unitKey` (ADR-006 item 8); a stream that only yields a
 //   lifetime total carries `coal:<streamId>` and its newest record time (`span: 'lifetime'`).
-// - Only records whose folder resolves to a mine are yielded (`11` O-11-10 stays open: no coal
-//   for folders that are not mines).
+// - Only records whose folder resolves to a mine are yielded: a folder that is no mine earns no
+//   coal until it becomes one, and then the per-mine run pays its history (`11` O-11-10, owner
+//   ruling 2026-10-06; `runMineCoalBackfill`).
 // - The scan spends nothing on `budget.finishedScanUnits`, stops between units once the per-boot
 //   budget is reached (yielding `budget-reached` last), and stops at once when `signal` aborts.
 // - A unit that cannot be read is yielded as `unreadable` and never as `scanned` (S19.08).
