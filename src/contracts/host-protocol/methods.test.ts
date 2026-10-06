@@ -34,7 +34,7 @@ import type {
   MineSummaryWire,
   ResolveFileResult
 } from './params/mines'
-import type { FeedPage } from '../wire'
+import type { FeedPage, MineHistoryView } from '../wire'
 import type { FeedParams } from './params/conversation'
 
 // The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
@@ -580,6 +580,69 @@ describe('conversation.feed params and result (14 §3.4, §3.6, B-M26)', () => {
     expect(
       result.safeParse({ dwarfId: DWARF, messages: [], reachedStart: true, next: MESSAGE }).success
     ).toBe(false)
+  })
+})
+
+// The B-M27 entry of 14 §3.4 and 14 §3.6 `MineHistoryView`, with their strict() schemas (14 §1.4).
+
+describe('conversation.mineHistory params and result (14 §3.4, §3.6, B-M27)', () => {
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a8050'
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099a8057'
+  const MESSAGE = '01890a5d-ac96-774b-bcce-b302099a8058'
+  const view = {
+    id: MESSAGE,
+    dwarfId: DWARF,
+    role: 'person',
+    text: 'hello',
+    attachments: [],
+    delivery: {
+      messageId: MESSAGE,
+      dwarfId: DWARF,
+      kind: 'message',
+      phase: 'failed',
+      failure: { kind: 'session-closed' },
+      attempts: 1,
+      phaseAt: 1_002
+    },
+    providerTime: null,
+    createdAt: 1_001
+  }
+  const speaker = { dwarfId: DWARF, displayName: 'Dáin', departed: true, messages: [view] }
+
+  it('[ADR-003] the conversation.mineHistory schemas infer exactly { mineId } and MineHistoryView, and refuse any other key', () => {
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('conversation.mineHistory')
+    expectTypeOf<HostMethods['conversation.mineHistory']['params']>().toEqualTypeOf<{
+      mineId: MineId
+    }>()
+    expectTypeOf<
+      HostMethods['conversation.mineHistory']['result']
+    >().toEqualTypeOf<MineHistoryView>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['conversation.mineHistory']['params']>
+    >().toEqualTypeOf<{ mineId: MineId }>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['conversation.mineHistory']['result']>
+    >().toEqualTypeOf<MineHistoryView>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['conversation.mineHistory']
+    expect(params.safeParse({ mineId: MINE }).success).toBe(true)
+    expect(params.safeParse({ mineId: MINE, limit: 50 }).success).toBe(false)
+    expect(params.safeParse({ mineId: 7 }).success).toBe(false)
+    expect(params.safeParse({ mineId: 'mine-one' }).success).toBe(false)
+    expect(params.safeParse({}).success).toBe(false)
+
+    expect(result.safeParse({ mineId: MINE, speakers: [] }).success).toBe(true)
+    expect(result.safeParse({ mineId: MINE, speakers: [speaker] }).success).toBe(true)
+    expect(
+      result.safeParse({ mineId: MINE, speakers: [{ ...speaker, retry: true }] }).success
+    ).toBe(false)
+    expect(
+      result.safeParse({
+        mineId: MINE,
+        speakers: [{ ...speaker, messages: [{ ...view, origin: 'transcript' }] }]
+      }).success
+    ).toBe(false)
+    expect(result.safeParse({ mineId: MINE }).success).toBe(false)
   })
 })
 
