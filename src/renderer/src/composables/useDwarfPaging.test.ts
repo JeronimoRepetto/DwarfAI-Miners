@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DwarfId, FeedPage, IpcResult, MessageId, MessageView } from '@dwarfai/contracts'
 import {
   BEYOND_REACH_NOTE,
   CONVERSATION_START_NOTE,
@@ -9,7 +10,7 @@ import {
   joinFeedPages
 } from '../lib/message/feedPages'
 import type { DwarfFeedPage, FeedMessage, FeedPageCursor } from '../types'
-import { useDwarfPaging } from './useDwarfPaging'
+import { useDwarfPaging, type HostFeedPageRead } from './useDwarfPaging'
 
 /**
  * #364: the pages of conversation older than the newest feed, held for the
@@ -361,5 +362,100 @@ describe('useDwarfPaging', () => {
     hold('claude:s2')
 
     expect(note.value).toBeNull()
+  })
+})
+
+/*
+ * SCROLL-BACK FROM THE HOST (ISSUE-106; 14 §2.1 row A-15, §3.6, §6.4 row `useDwarfPaging`; ADR-007).
+ *
+ * A-15 pages the Host's message log in its 14 shape: `FeedParams` `{ dwarfId, page: { before, limit } }`, with
+ * `before` the `MessageId` of the oldest row held, answered by `IpcResult<FeedPage>` of `MessageView` rows that the
+ * composable maps to today's `FeedMessage`. The call is injected until the cut-1 switch (ISSUE-123) regenerates
+ * `window.api` with A-15's target shape; it stands in for `window.api.getDwarfFeedPage`.
+ */
+describe('useDwarfPaging from the Host', () => {
+  const BORIN = '01920000-0000-7000-8000-00000000d001' as DwarfId
+  const id = (n: number) =>
+    `01920000-0000-7000-8000-00000000e${String(n).padStart(3, '0')}` as MessageId
+  /** 2026-10-06T09:00:00.000Z, in epoch ms. */
+  const NINE = 1_791_277_200_000
+
+  function view(n: number): MessageView {
+    return {
+      id: id(n),
+      dwarfId: BORIN,
+      role: 'dwarf',
+      text: `line ${n}`,
+      attachments: [],
+      providerTime: null,
+      createdAt: NINE + n * 60_000
+    }
+  }
+
+  function feedPage(messages: MessageView[], reachedStart: boolean): IpcResult<FeedPage> {
+    return { ok: true, value: { dwarfId: BORIN, messages, reachedStart } }
+  }
+
+  beforeEach(() => {
+    useDwarfPaging().clear()
+  })
+
+  it('[ADR-007] scrolling back calls getDwarfFeedPage with the 14 FeedParams shape and stops at reachedStart', async () => {
+    const getDwarfFeedPage = vi
+      .fn<HostFeedPageRead>()
+      .mockResolvedValueOnce(feedPage([view(3), view(4)], false))
+      .mockResolvedValueOnce(feedPage([view(2)], true))
+    const { state, hold, olderFromHost } = useDwarfPaging()
+
+    hold(BORIN)
+    await olderFromHost(BORIN, id(5), getDwarfFeedPage)
+    expect(getDwarfFeedPage).toHaveBeenLastCalledWith({
+      dwarfId: BORIN,
+      page: { before: id(5), limit: 50 }
+    })
+    expect(state.pages).toEqual([
+      [
+        { role: 'assistant', text: 'line 3', timestamp: '2026-10-06T09:03:00.000Z' },
+        { role: 'assistant', text: 'line 4', timestamp: '2026-10-06T09:04:00.000Z' }
+      ]
+    ])
+
+    // The next page hangs off the oldest row now held, whatever the tail's oldest was.
+    await olderFromHost(BORIN, id(5), getDwarfFeedPage)
+    expect(getDwarfFeedPage).toHaveBeenLastCalledWith({
+      dwarfId: BORIN,
+      page: { before: id(3), limit: 50 }
+    })
+    expect(state.pages.map((rows) => rows.map((row) => row.text))).toEqual([
+      ['line 2'],
+      ['line 3', 'line 4']
+    ])
+    expect(state.reachedStart).toBe(true)
+
+    await olderFromHost(BORIN, id(5), getDwarfFeedPage)
+    expect(getDwarfFeedPage).toHaveBeenCalledTimes(2)
+  })
+
+  it('[ADR-007] a refused or malformed Host page claims nothing about the conversation', async () => {
+    const getDwarfFeedPage = vi
+      .fn<HostFeedPageRead>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: 'HOST_NOT_READY', message: 'starting', retryable: true }
+      })
+      .mockResolvedValueOnce({ readable: true, messages: [], reachedStart: true })
+    const { state, hold, olderFromHost } = useDwarfPaging()
+
+    hold(BORIN)
+    await olderFromHost(BORIN, id(5), getDwarfFeedPage)
+    await olderFromHost(BORIN, id(5), getDwarfFeedPage)
+    expect(getDwarfFeedPage).toHaveBeenCalledTimes(2)
+    expect(state).toMatchObject({
+      pages: [],
+      loading: false,
+      reachedStart: false,
+      unpageable: false,
+      beyondReach: false
+    })
   })
 })

@@ -1,5 +1,14 @@
 import { reactive, shallowRef } from 'vue'
 import {
+  HOST_FRAME_SCHEMAS,
+  type DwarfId,
+  type HostFrame,
+  type MessageId,
+  type MessageRole,
+  type MessageView,
+  type SnapshotChunk
+} from '@dwarfai/contracts'
+import {
   REACTION_WINDOW_MS,
   observeReaction,
   openReactionWatch,
@@ -7,12 +16,14 @@ import {
   type ReactionWatch
 } from '../lib/delivery/reaction'
 import { rememberRoutes, routeWentAway } from '../lib/delivery/deliveryRoute'
+import { createReadModel, followHost, type HostFollower } from './readModel'
 import { useHostConnection } from './useHostConnection'
 import { boundEchoes, reconcileEchoes, type MessageEcho } from '../lib/message/echo'
 import {
   defaultDwarfMessagingState,
   type Dwarf,
   type DwarfAttachment,
+  type DwarfFeedResult,
   type DwarfSendSettledPush,
   type DwarfSendState,
   type DwarfTextResult,
@@ -418,6 +429,134 @@ function recordVerdict(dwarfId: string, echoId: string, result: DwarfTextResult)
   return result.delivered
 }
 
+/*
+ * THE CHAT FROM THE HOST (ISSUE-106; ADR-033 item 3; 14 §4.3, §6.4 row `useDwarfMessaging`).
+ *
+ * Every dwarf's chat as a read model of the snapshot `tails` section and the `conversation.appended` frames (14 §3.5,
+ * §4.1), relayed by A-N01 `getHostSnapshot` and A-N02 `onHostEvent` and driven by `followHost` like `useMines`.
+ *
+ * - One row per `MessageId`. The Host merges a provider's echo of a DwarfAI message by `source_key` (INV-60), so a
+ *   row it sends again under the same id replaces the one held, in place; the renderer reconciles no echo of its own.
+ * - A snapshot replaces every chat whole: a dwarf missing from it is simply gone, never a departure (14 §4.3 rule 6).
+ * - No watched feed and no manual refresh: retired A-14 `getDwarfFeed`, A-16 `setWatchedDwarf` and A-17
+ *   `refreshDwarfTelemetry` are never called on this path (14 §2.1).
+ * - Hidden until built (21 §1 item 8): the half runs only once a caller `startChat`s it, and until the cut-1 switch
+ *   (ISSUE-123) routes A-N01/A-N02 the router refuses the snapshot, so `hostFeedOf` holds nothing and the dock keeps
+ *   reading today's feed. Delivery marks (`marks`, `message.delivery`) join with ISSUE-179.
+ */
+
+/** One dwarf's chat as the Host sent it, oldest first, keyed by `MessageId`. */
+interface HostChat {
+  rows: Map<MessageId, MessageView>
+  reachedStart: boolean
+}
+
+type HostChats = Map<DwarfId, HostChat>
+
+/** Today's `FeedMessage.role` of each Host role: the person's half of the exchange, or the dwarf's side of it. */
+const FEED_ROLE: Record<MessageRole, FeedMessage['role']> = {
+  person: 'user',
+  'answers-record': 'user',
+  dwarf: 'assistant',
+  'system-line': 'assistant'
+}
+
+/** Today's `FeedMessage` of one Host `MessageView` (14 §1.2: the composable maps it, never `lib/**`). */
+export function feedMessageOf(view: MessageView): FeedMessage {
+  return {
+    role: FEED_ROLE[view.role],
+    text: view.text,
+    timestamp: new Date(view.providerTime ?? view.createdAt).toISOString()
+  }
+}
+
+/** Every chat the Host feeds; the reactive mirror below is what renders. */
+const chats: HostChats = new Map()
+/** The chats in today's shape, per dwarf id, rewritten whenever a snapshot or a batch of frames settled. */
+const hostFeeds = shallowRef<ReadonlyMap<string, DwarfFeedResult>>(new Map())
+
+function publishChats(): void {
+  const next = new Map<string, DwarfFeedResult>()
+  for (const [dwarfId, chat] of chats) {
+    next.set(dwarfId, { readable: true, messages: [...chat.rows.values()].map(feedMessageOf) })
+  }
+  hostFeeds.value = next
+}
+
+/** Applies one frame newer than the snapshot; a frame whose data is not its 14 §3.5 payload is ignored. */
+function applyChatFrame(frame: HostFrame): void {
+  if (frame.name !== 'conversation.appended') return
+  const parsed = HOST_FRAME_SCHEMAS['conversation.appended'].safeParse(frame.data)
+  if (!parsed.success) return
+  const { dwarfId, messages } = parsed.data
+  let chat = chats.get(dwarfId)
+  if (chat === undefined) {
+    // A dwarf the snapshot had no tail for: whether older rows exist is the scroll-back's answer, not a guess here.
+    chat = { rows: new Map(), reachedStart: false }
+    chats.set(dwarfId, chat)
+  }
+  for (const message of messages) chat.rows.set(message.id, message)
+}
+
+const chatModel = createReadModel<HostChats, HostFrame>({
+  state: chats,
+  replace(data) {
+    chats.clear()
+    for (const [dwarfId, chat] of data) chats.set(dwarfId, chat)
+  },
+  apply: applyChatFrame
+})
+
+function chatsOf(chunks: readonly SnapshotChunk[]): HostChats {
+  const next: HostChats = new Map()
+  for (const chunk of chunks) {
+    if (chunk.section !== 'tails') continue
+    for (const tail of chunk.data) {
+      next.set(tail.dwarfId, {
+        rows: new Map(tail.messages.map((message) => [message.id, message])),
+        reachedStart: tail.reachedStart
+      })
+    }
+  }
+  return next
+}
+
+let chatFollower: HostFollower | null = null
+
+/** Follows the Host's chat read path (A-N02 first, then A-N01); answers whether the Host now feeds the chats. */
+async function startChat(): Promise<boolean> {
+  chatFollower ??= followHost(
+    {
+      subscribe: (listener) => window.api.onHostEvent((frames) => listener(frames as HostFrame[])),
+      snapshot: (params) => window.api.getHostSnapshot(params)
+    },
+    { model: chatModel, sections: ['tails'], dataOf: chatsOf, settled: publishChats }
+  )
+  return chatFollower.start()
+}
+
+/** Stops following the Host's chat read path and forgets what it held. */
+function stopChat(): void {
+  chatFollower?.stop()
+  chatFollower = null
+  chatModel.seq = 0
+  chats.clear()
+  hostFeeds.value = new Map()
+}
+
+/** One dwarf's chat as the Host feeds it, in today's `DwarfFeedResult` shape, or undefined when it holds none. */
+function hostFeedOf(dwarfId: string): DwarfFeedResult | undefined {
+  return hostFeeds.value.get(dwarfId)
+}
+
+/** The id of the oldest row the Host's chat holds for one dwarf: where a scroll-back page hangs off. */
+function hostOldestMessageId(dwarfId: string): MessageId | null {
+  const chat = chats.get(dwarfId as DwarfId)
+  if (chat === undefined) return null
+  for (const id of chat.rows.keys()) return id
+  return null
+}
+
 export function useDwarfMessaging() {
   function stateFor(dwarfId: string): DwarfSendState | undefined {
     return state.byDwarfId[dwarfId]
@@ -760,6 +899,10 @@ export function useDwarfMessaging() {
     keepEchoesFor,
     routeGone,
     clear,
-    clearAll
+    clearAll,
+    startChat,
+    stopChat,
+    hostFeedOf,
+    hostOldestMessageId
   }
 }

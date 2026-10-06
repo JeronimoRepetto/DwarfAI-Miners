@@ -1,6 +1,8 @@
 import { computed, reactive } from 'vue'
+import { CHANNELS, type DwarfId, type FeedParams, type MessageId } from '@dwarfai/contracts'
 import { pagingNoteOf } from '../lib/message/feedPages'
 import type { DwarfFeedPage, FeedMessage, FeedPageCursor } from '../types'
+import { feedMessageOf } from './useDwarfMessaging'
 
 /**
  * The pages of conversation OLDER than the newest feed, for the dwarf the
@@ -35,6 +37,15 @@ import type { DwarfFeedPage, FeedMessage, FeedPageCursor } from '../types'
  * genuine switch — another dwarf, a held session taking over the source, the
  * panel closing — throws them away.
  */
+
+/** A-15 `getDwarfFeedPage` in its 14 shape (`FeedParams` → `IpcResult<FeedPage>`), injected until ISSUE-123. */
+export type HostFeedPageRead = (params: FeedParams) => Promise<unknown>
+
+/** Rows asked per Host page: all there can be, as at most 50 exist per dwarf (14 §3.6 `FeedPageRequest`, PO #87). */
+const HOST_PAGE_LIMIT = 50
+
+/** A-15's target answer, read with the registry's own schema so a malformed answer is never taken for a page. */
+const hostPageAnswer = CHANNELS['dwarf:feed:page'].response
 
 export interface DwarfPagingState {
   /** Which dwarf these pages belong to, or nobody. */
@@ -74,12 +85,15 @@ function emptyState(): DwarfPagingState {
 const state = reactive<DwarfPagingState>(emptyState())
 /** Which read is the current one, so a slow answer cannot land on a later dwarf. */
 let pageToken = 0
+/** The oldest Host row a scroll-back page brought, which the next Host page hangs off; null before the first. */
+let hostCursor: MessageId | null = null
 
 /** Whose pages these are now, throwing away whatever was held for anybody else. */
 function open(dwarfId: string | null): void {
   // Bumped first: a page already in flight belongs to the conversation being
   // left, and its answer has to be refused rather than prepended here.
   pageToken++
+  hostCursor = null
   Object.assign(state, emptyState(), { dwarfId })
 }
 
@@ -153,6 +167,47 @@ export function useDwarfPaging() {
     if (page.messages.length === 0 && !page.reachedStart) state.beyondReach = true
   }
 
+  /**
+   * Ask the Host for the page before the oldest row held, with A-15 in its 14 shape (ISSUE-106; 14 §2.1 row A-15).
+   *
+   * The cursor is a `MessageId`: the oldest row of the last Host page, or, before the first, `tailOldest` (the
+   * oldest row of the Host's chat, `useDwarfMessaging().hostOldestMessageId`). The refusals are `older`'s: a dwarf
+   * not held, a read in flight, the start reached, and nothing to page before. A lost round trip, a refused call or
+   * an answer that is not a `FeedPage` claims nothing about the conversation; the next scroll asks again. The rows
+   * are mapped to today's `FeedMessage` here, so the panel draws a Host page as it draws today's.
+   */
+  async function olderFromHost(
+    dwarfId: DwarfId,
+    tailOldest: MessageId | null,
+    read: HostFeedPageRead
+  ): Promise<void> {
+    if (state.dwarfId !== dwarfId) return
+    if (state.loading || state.reachedStart || state.unpageable || state.beyondReach) return
+    const before = hostCursor ?? tailOldest
+    if (before === null) return
+
+    const token = ++pageToken
+    state.loading = true
+    let answered: unknown
+    try {
+      answered = await read({ dwarfId, page: { before, limit: HOST_PAGE_LIMIT } })
+    } catch {
+      answered = undefined
+    }
+    if (token !== pageToken) return
+    state.loading = false
+    const parsed = hostPageAnswer.safeParse(answered)
+    if (!parsed.success || !parsed.data.ok) return
+
+    const page = parsed.data.value
+    const oldest = page.messages[0]
+    if (oldest !== undefined) {
+      hostCursor = oldest.id
+      state.pages = [page.messages.map(feedMessageOf), ...state.pages]
+    }
+    state.reachedStart = page.reachedStart
+  }
+
   /** The one line the panel says about the reading, or nothing. */
   const note = computed(() => pagingNoteOf(state))
 
@@ -161,5 +216,5 @@ export function useDwarfPaging() {
     open(null)
   }
 
-  return { state, note, hold, older, clear }
+  return { state, note, hold, older, olderFromHost, clear }
 }
