@@ -6,11 +6,12 @@
 //   until then the dispatcher answers HOST_NOT_READY before any handler runs (14 §3.3), and the
 //   section is never read before `ready`. The `dwarf.*` board frames are the mines wiring's
 //   (`publishBoardFrames`, frames/board.ts), over this instance's queries (`WiredCrew.mines`).
-// - `wire`, run by boot step 4 before mines: `createCrew` over the Host database, the one kernel
-//   `LifecycleFactLog` (16 §3, shared with conversation, 05 §4 item 1) and the kernel clock and
-//   scheduler, the `SessionTerminator` bridge (bridges/sessionTerminator.ts, ADR-014) over the
-//   kernel's process control and observation's process-identity read and `recordEnded`, and
-//   crew's half of the mines wiring (`MinesCrewBinding`: `mineOf`, `ends`, `queries`).
+// - `wire`, run by boot step 4 after observation and before mines: `createCrew` over the Host
+//   database, the one kernel `LifecycleFactLog` (16 §3, shared with conversation, 05 §4 item 1) and
+//   the kernel clock and scheduler, the `SessionTerminator` bridge (bridges/sessionTerminator.ts,
+//   ADR-014) over the kernel's process control and observation's process-identity read and
+//   `recordEnded` (`WiredObservation.crew`, routes/observation.ts), and crew's half of the mines
+//   wiring (`MinesCrewBinding`: `mineOf`, `ends`, `queries`).
 // - `route`, run by boot step 4 once mines exists, the 05 §4 routes of this module and the boot
 //   recompute of machine 1 (S1.18):
 //   - `SessionObserved` (observation) → `mines.resolveForSession(cwd, firstMessage)` →
@@ -21,15 +22,17 @@
 //   - `SessionClosedObserved` (observation) → `crew.sessionClosed` with `departureCause` of the
 //     dwarf's pending end, else `closed-elsewhere` (observed) / `crashed` (owned); `host-recovery`
 //     departs nobody (08 §2.3; 06 §5.1).
+//   - `SessionActivityObserved` (observation) → `crew.recordActivity` (08 §2.3): a turn start
+//     (`'turn-started'`, S1.08), any other record as activity that is not one (`'message'`,
+//     S1.06); a session with no dwarf is nobody's activity.
 //   - every present dwarf's status recomputed from its persisted facts, with its wake-up scheduled
 //     again; no timer is persisted (ADR-032 item 3; S1.18).
 //   A session's dwarf is read through observation's `ProviderIdentity → DwarfId` index
 //   (`ObservedSessionStore.byIdentity`, 16 §4.3), which answers from the dwarf's own UNIQUE key.
 //
 // Not routed here, and why:
-// - `SessionActivityObserved` → `crew.recordActivity` (08 §2.3): `CrewCommands` has no
-//   `recordActivity` yet (crew/application/arrival.ts), and adding it is module code (ISSUE-094 is
-//   binding only).
+// - `TurnEnded` → `crew.recordActivity('turn-finished')` (05 §4): conversation publishes it
+//   (later: ISSUE-108, ISSUE-120).
 // - `SubagentObserved` (08 §0): observation publishes no such event yet; a subagent arrives through
 //   `SessionObserved` with its `parentIdentity`, which this route ranks by depth.
 // - `DwarfStopRequested` → launching `markStoppedByPerson` (required handler, 16 §2.3): launching is
@@ -64,7 +67,8 @@ import type {
   ObservationControl,
   ObservationEvent,
   ObservedProcessIdentities,
-  ObservedSessionStore
+  ObservedSessionStore,
+  SessionActivityObserved
 } from '../../modules/observation'
 import type { Dispatcher } from '../../transport/dispatcher'
 import { registerStranglerDwarfIdentities } from '../../transport/methods/strangler'
@@ -90,16 +94,6 @@ export interface CrewObservationBinding {
   control: Pick<ObservationControl, 'recordEnded'>
   /** The `ProviderIdentity → DwarfId` index (16 §4.3), for the routes' session → dwarf reads. */
   sessions: Pick<ObservedSessionStore, 'byIdentity'>
-}
-
-/**
- * Observation is not constructed by the Host yet (later: ISSUE-095): no session is observed, so no
- * dwarf has a recorded process identity and no end is recorded. Its index (`sessions`) is the
- * real store, which `host/main.ts` builds over the Host database.
- */
-export const noObservationYet: Omit<CrewObservationBinding, 'sessions'> = {
-  processIdentities: { processIdentityOf: () => null },
-  control: { recordEnded: () => undefined }
 }
 
 export interface CrewServeDeps {
@@ -256,6 +250,11 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
         const cause = departureCause(dwarf.pendingEnd, dwarf.owned)
         if (cause !== null) crew.commands.sessionClosed(dwarf.id, cause)
       })
+      bus.subscribe('SessionActivityObserved', ({ payload }) => {
+        const dwarfId = dwarfOf(payload.identity)
+        if (dwarfId === null) return
+        crew.commands.recordActivity(dwarfId, ACTIVITY_KIND[payload.kind])
+      })
       // S1.18: every present dwarf of every mine on the board, from its persisted facts.
       crew.statusTimer.recompute(
         mines.queries
@@ -269,6 +268,14 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
     }
   }
 }
+
+/**
+ * An observed record's activity as crew records it (07 §1): a turn start is S1.08; any other
+ * record is activity that is not a turn start (S1.06, the row `MessageSent` shares as `'message'`).
+ */
+const ACTIVITY_KIND: Readonly<
+  Record<SessionActivityObserved['payload']['kind'], 'turn-started' | 'message'>
+> = { 'turn-started': 'turn-started', record: 'message' }
 
 /** The depth each rank stands for (`rankForDepth`'s inverse; `worker2` is every deeper level). */
 const DEPTH_OF: Readonly<Record<DwarfRank, number>> = { foreman: 0, worker: 1, worker2: 2 }

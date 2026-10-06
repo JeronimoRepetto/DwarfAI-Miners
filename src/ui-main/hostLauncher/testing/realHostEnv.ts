@@ -11,7 +11,9 @@
 // - a home of its own (HOME, USERPROFILE, APPDATA, LOCALAPPDATA, the XDG data folders), so every
 //   package-manager folder derived from it is empty;
 // - none of the variables naming a person's tool folders (PNPM_HOME, VOLTA_HOME, BUN_INSTALL,
-//   SCOOP, npm_config_prefix), the provider path overrides (DWARFAI_AGY_PATH) or their SHELL.
+//   SCOOP, npm_config_prefix), the provider path overrides (DWARFAI_AGY_PATH), the provider data
+//   folders the observation adapters read (CLAUDE_CONFIG_DIR, CODEX_HOME; Antigravity and
+//   OpenCode read only the home) or their SHELL.
 //
 // The test's own overrides (the case's HOME and XDG_RUNTIME_DIR, which the endpoint is derived
 // from on POSIX) are applied last. Windows variable names are matched without case.
@@ -50,6 +52,10 @@ const REMOVED = new Set([
   'SCOOP',
   'NPM_CONFIG_PREFIX',
   'DWARFAI_AGY_PATH',
+  // The provider data folders the observation adapters honour before the home (15 §5; HO-09):
+  // a test Host never reads a person's transcripts (AGENTS §6).
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
   'SHELL'
 ])
 

@@ -38,16 +38,22 @@
 // and before any command is accepted (05 §2.3; 16 §8.2). Boot step 4 constructs the other modules,
 // each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
 // SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
-// crew (ISSUE-094: wiring/routes/crew.ts) with the one SqliteLifecycleFactLog (shared with
-// conversation, later: ISSUE-099), the SessionTerminator bridge over the kernel's process control
-// and its `dwarfs` section and B-M41 served before the bind; mines (ISSUE-093: wiring/routes/mines.ts)
-// over crew's ends and queries, with the FsSourceWeightScanner of its scoring walks, its seam-B
-// members (B-M16…B-M20) and `mines` section served before the bind, its board frames and the
-// provider-error route to `checkFolder`; then crew's observation routes and the boot recompute of
-// the dwarf statuses from their persisted facts (S1.18). Observation is not constructed yet
-// (later: ISSUE-095): crew reads its identity index over the Host database and `noObservationYet`
-// for the rest. The others join later. After step 7 (`startModules`) the
-// mines restart the walks a stopped Host left and start their folder-check schedule.
+// observation (ISSUE-095: wiring/routes/observation.ts) over its three SQLite stores, the Claude,
+// Codex, Antigravity and OpenCode adapters reading the providers' own folders (read only; SQLite
+// files through the read-only snapshot) and its provider-error route to diagnostics, with no batch
+// sink module yet (later: ISSUE-096, ISSUE-108); crew (ISSUE-094: wiring/routes/crew.ts) with the
+// one SqliteLifecycleFactLog (shared with conversation, later: ISSUE-099), the SessionTerminator
+// bridge over the kernel's process control and observation's process identities and
+// `recordEnded`, its identity index over observation's stores, and its `dwarfs` section and B-M41
+// served before the bind; mines (ISSUE-093: wiring/routes/mines.ts) over crew's ends and queries,
+// with the FsSourceWeightScanner of its scoring walks, its seam-B members (B-M16…B-M20) and
+// `mines` section served before the bind, its board frames (the provider-error toast among them)
+// and the provider-error route to `checkFolder`; then crew's observation routes and the boot
+// recompute of the dwarf statuses from their persisted facts (S1.18). The others join later.
+// Observation is composed but not started: step 7 stays a placeholder until its batch sink is real
+// (ISSUE-108, after ISSUE-096). After step 7 (`startModules`) the mines restart the walks a stopped
+// Host left and start their folder-check schedule.
+import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
@@ -62,6 +68,7 @@ import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
 import { SqliteLifecycleFactLog } from './platform/sqlite/SqliteLifecycleFactLog'
+import { openReadOnlySnapshot } from './platform/sqlite/readOnlySnapshot'
 import { createNativeOwnerOnlyDirectory } from './platform/endpoint/win-pipe/nativeOwnerOnlyDirectory'
 import { createNativeProcessInJob } from './platform/endpoint/win-pipe/nativeProcessInJob'
 import {
@@ -112,18 +119,20 @@ import {
   unavailableSecretStore,
   type WiredPreferences
 } from './wiring/preferencesWiring'
-import {
-  noObservationYet,
-  serveCrew,
-  type CrewRouteEvent,
-  type WiredCrew
-} from './wiring/routes/crew'
+import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import {
   DEFAULT_MINES_SETTINGS,
   serveMines,
   type MinesRouteEvent,
   type WiredMines
 } from './wiring/routes/mines'
+import {
+  noObservedBatchSinkYet,
+  observationAdapters,
+  observedProviderFolders,
+  wireObservation,
+  type WiredObservation
+} from './wiring/routes/observation'
 import { isPublicBuild, wireSuppliers } from './wiring/suppliersWiring'
 import { HostInvariantError, InProcessEventBus } from './kernel'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
@@ -208,6 +217,7 @@ async function main(): Promise<void> {
   const modules: {
     preferences?: WiredPreferences
     suppliers?: Suppliers
+    observation?: WiredObservation
     crew?: WiredCrew
     mines?: WiredMines
   } = {}
@@ -422,6 +432,31 @@ async function main(): Promise<void> {
             // A new demo world each Host start (15 §4.12); development builds only.
             simulatedSeed: epoch
           })
+          // Observation first: crew's terminator and index read it, and every route that reads its
+          // events is subscribed here, before step 7's catch-up (16 §8.2).
+          modules.observation = wireObservation({
+            // One set of the module's stores: crew's `ProviderIdentity → DwarfId` reads share it.
+            stores: createSqliteObservationStores({ db, scope: transactions, clock }),
+            ...observationAdapters({
+              // The providers' own folders: the environment overrides they honour, else the
+              // person's home folder (15 §5; HO-09). Read only.
+              folders: observedProviderFolders(process.env, homedir()),
+              fs,
+              clock,
+              processes: processControl,
+              openSnapshot: openReadOnlySnapshot
+            }),
+            // Neither the ledger nor conversation is wired yet (later: ISSUE-096, ISSUE-108).
+            sink: noObservedBatchSinkYet,
+            transactions,
+            bus,
+            fs,
+            clock,
+            scheduler,
+            ids,
+            hostEpoch: epoch,
+            log
+          })
           // The kernel LifecycleFactLog: one SQLite adapter, shared by crew and conversation (05 §4).
           const lifecycleFacts = new SqliteLifecycleFactLog({ db, scope: transactions, ids, clock })
           modules.crew = servedCrew.wire({
@@ -434,13 +469,10 @@ async function main(): Promise<void> {
             ids,
             hostEpoch: epoch,
             log,
-            // No launch and no delivery route reach the Host yet (later: EPIC-10, ISSUE-095).
+            // No launch and no delivery route reach the Host yet (later: EPIC-10).
             links: { owned: () => false, hasDeliveryRoute: () => false },
             processes: processControl,
-            observation: {
-              ...noObservationYet,
-              sessions: createSqliteObservationStores({ db, scope: transactions, clock }).sessions
-            }
+            observation: modules.observation.crew
           })
           modules.mines = servedMines.wire({
             db,
@@ -465,6 +497,10 @@ async function main(): Promise<void> {
             queries: modules.mines.mines.queries
           })
         },
+        // Step 7 (`startObservation`: catch-up, then the live loop) is not passed: with the
+        // placeholder batch sink a running loop would move every cursor past messages and usage
+        // nothing stores, lost for good (INV-98), and `WiredObservation.start` is null with it.
+        // ISSUE-108 (after ISSUE-096) turns observation on here, once the sink is real.
         startModules: () => modules.mines?.start()
       })
     },

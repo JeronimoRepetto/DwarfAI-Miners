@@ -56,6 +56,14 @@ export interface BootPorts {
    */
   constructModules?: () => void
   /**
+   * Step 7: `observation.catchUp()` then `start()` (16 §8.2; ADR-015 item 3), after recovery's
+   * classification (step 5) and before `ready` (step 8). `ready` does not wait for the catch-up
+   * pass, which may go on after it (16 §4.3 `catchUp`). The composition root passes it
+   * (wiring/routes/observation.ts `start`) once the batch sink is real (ISSUE-108, after
+   * ISSUE-096); without it the step is a placeholder.
+   */
+  startObservation?: () => void
+  /**
    * After step 7, before `ready`: starts the modules' own background work over what step 4
    * constructed (the mines' boot walks and folder-check schedule: ISSUE-093). Without it nothing
    * is started.
@@ -77,7 +85,7 @@ function placeholder(name: BootStepName, owner: string): BootStep {
 }
 
 export function createBootSteps(ports: BootPorts): readonly BootStep[] {
-  const { resumeResetSaga, constructModules, startModules } = ports
+  const { resumeResetSaga, constructModules, startObservation, startModules } = ports
   return [
     // 1. Bind the UI endpoint; the bind is the single-instance mutex (decideBind, ADR-002 D3).
     {
@@ -110,7 +118,9 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
           }
         },
     // 4. Construct the modules, wire bridges and event routes (05 §4), over the database step 2
-    //    opened; each module joins in its own wiring issue (suppliers: ISSUE-159).
+    //    opened; each module joins in its own wiring issue (suppliers: ISSUE-159, mines: ISSUE-093,
+    //    crew: ISSUE-094, observation: ISSUE-095). Every route that reads an observation event is
+    //    subscribed here, before step 7's catch-up publishes the first one.
     constructModules === undefined
       ? placeholder('construct-modules', 'ISSUE-093')
       : {
@@ -124,8 +134,17 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     placeholder('recover-sessions', 'ISSUE-173'),
     // 6. The MCP endpoint (DelegationServer.listen) and the hook ingress.
     placeholder('start-endpoints', 'ISSUE-209'),
-    // 7. observation.catchUp(), then start().
-    placeholder('start-observation', 'ISSUE-095'),
+    // 7. observation.catchUp(), then start() (ISSUE-095). The catch-up pass of what providers
+    //    wrote while no Host ran may go on after `ready` (16 §4.3 `catchUp`).
+    startObservation === undefined
+      ? placeholder('start-observation', 'ISSUE-108')
+      : {
+          name: 'start-observation',
+          run: () => {
+            startObservation()
+            return Promise.resolve({ kind: 'done' })
+          }
+        },
     // 8. hello answers `ready`: the boot reports `ready` into the lifecycle state holder
     //    (transport/lifecycle/hostState.ts) once this last step is done (S12.06), which answers
     //    every later `hello.ok` with it and sends `host.state` to the `ui` connections. First, once

@@ -93,6 +93,25 @@ describe('isolatedHostEnv', () => {
     }
   })
 
+  it('[ADR-008] a test Host never inherits the folder overrides of the providers it observes', () => {
+    // The observation adapters read CLAUDE_CONFIG_DIR and CODEX_HOME before the home folder
+    // (15 §5; HO-09); Antigravity and OpenCode read only the home, which is the Host's own.
+    const overrides = {
+      CLAUDE_CONFIG_DIR: 'C:\\Users\\j\\.claude-work',
+      codex_home: 'C:\\Users\\j\\.codex-work'
+    }
+    for (const [base, platform, home] of [
+      [WINDOWS_PERSON, 'win32', 'C:\\tmp\\host-home'],
+      [POSIX_PERSON, 'linux', '/tmp/host-home'],
+      [POSIX_PERSON, 'darwin', '/tmp/host-home']
+    ] as const) {
+      const env = isolatedHostEnv({ base: { ...base, ...overrides }, home, platform })
+      for (const gone of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME']) {
+        expect(keyOf(env, gone), `${platform} ${gone}`).toEqual([])
+      }
+    }
+  })
+
   it("[ADR-009] the test's own overrides win over the isolation", () => {
     const env = isolatedHostEnv({
       base: POSIX_PERSON,
