@@ -59,8 +59,8 @@ export interface BootPorts {
    * Step 7: `observation.catchUp()` then `start()` (16 §8.2; ADR-015 item 3), after recovery's
    * classification (step 5) and before `ready` (step 8). `ready` does not wait for the catch-up
    * pass, which may go on after it (16 §4.3 `catchUp`). The composition root passes it
-   * (wiring/routes/observation.ts `start`) once the batch sink is real (ISSUE-108, after
-   * ISSUE-096); without it the step is a placeholder.
+   * (wiring/routes/observation.ts `start`) once the batch sink has its conversation half
+   * (ISSUE-108; the ledger's is ISSUE-096's); without it the step is a placeholder.
    */
   startObservation?: () => void
   /**

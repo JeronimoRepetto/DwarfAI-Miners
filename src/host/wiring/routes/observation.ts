@@ -19,19 +19,20 @@
 //   live loop's first cycle runs after it. Every route that reads an observation event is
 //   subscribed at step 4, before `catchUp` publishes its first event. It is `null` while the batch
 //   sink is the placeholder: a cursor moved past a batch nothing stored would lose its messages and
-//   usage for good (INV-98), so observation cannot start before the sink is real (ISSUE-108,
-//   after ISSUE-096, turns it on in `host/main.ts`).
+//   usage for good (INV-98), so observation cannot start before the sink is real (ISSUE-108
+//   turns it on in `host/main.ts`).
 // - `nudge`, the hook ingress's entry point (05 §3.3; the ingress is EPIC-08's, later: ISSUE-133):
 //   it only brings the next poll cycle forward.
 //
 // Composed only where the module exists, and why:
-// - The `ObservedBatchSink` bridge (AMENDMENT-10): its ledger half is ISSUE-096's and its
-//   conversation half ISSUE-108's (and ISSUE-120's), neither wired yet, so a batch's messages and
-//   usage would reach no module (`noObservedBatchSinkYet`), and with it the module is composed but
-//   never started; each of those issues adds its half and publishes its held events after each
-//   batch commit.
+// - The `ObservedBatchSink` bridge (AMENDMENT-10; bridges/observedBatchSink.ts): its ledger half
+//   is built (ISSUE-096) and its conversation half is ISSUE-108's (and ISSUE-120's). Until that
+//   half exists the bridge hands this wiring `noObservedBatchSinkYet`, since a batch's messages
+//   would reach no module, and with it the module is composed but never started. The bridge's
+//   runner publishes each half's held events after each batch commit.
 // - `TranscriptEntriesObserved` / `UsageObserved` / `ObservedTurnEnded` (05 §4): conversation and
-//   ledger routes (later: ISSUE-108, ISSUE-096, ISSUE-120).
+//   routes of conversation (later: ISSUE-108, ISSUE-120); the ledger takes usage through the bridge,
+//   not through `UsageObserved` (05 §4).
 // - No simulated observation adapter: the simulated provider's sessions are the suppliers'
 //   `SimulatedDriver` (15 §4.12), and 15 §5 lists four observed providers.
 import type { HostEpoch, ProviderId } from '../../kernel/domain/values'
@@ -71,8 +72,8 @@ import type { CrewObservationBinding } from './crew'
 export const PROVIDER_ERROR_EVENT = 'observation.provider-error'
 
 /**
- * The batch sink while neither the ledger (later: ISSUE-096) nor conversation (later: ISSUE-108)
- * is wired. A module wired with it never starts (`WiredObservation.start` is `null`).
+ * The batch sink while the bridge's conversation half is not wired (later: ISSUE-108): the bridge
+ * hands it out then. A module wired with it never starts (`WiredObservation.start` is `null`).
  */
 export const noObservedBatchSinkYet: ObservedBatchSink = { apply: () => undefined }
 
@@ -190,7 +191,7 @@ export interface ObservationWiringDeps {
   ids: IdGenerator
   hostEpoch: HostEpoch
   log: DiagnosticsLog
-  /** The `ObservedBatchSink` bridge; `noObservedBatchSinkYet` until ISSUE-096 / ISSUE-108. */
+  /** The `ObservedBatchSink` bridge's sink; `noObservedBatchSinkYet` until ISSUE-108. */
   sink: ObservedBatchSink
 }
 

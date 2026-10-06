@@ -5,7 +5,9 @@
 //   `mines.remove`, B-M19 `mines.list`, B-M20 `mines.resolveFile`) on the Host dispatcher and its
 //   `mines` snapshot section (14 §4.1), so every `hello.ok` lists them (14 §1.3). They forward to
 //   the one instance boot step 4 constructs; until then the dispatcher answers HOST_NOT_READY
-//   before any handler runs (14 §3.3), and the section is never read before `ready`.
+//   before any handler runs (14 §3.3), and the section is never read before `ready`. The section
+//   and the board frames read each mine's totals from the ledger `wire` is given
+//   (`WiredLedger.totals`, routes/ledger.ts, ISSUE-096).
 // - `wire`, run by boot step 4 over the database step 2 opened and the adapters the composition
 //   root built (`host/main.ts`, the only file that `new`s them, R6): `createMines` with its scoring
 //   walks (`Mines.measurement`, to which `MinesDeps.remeasure` is bound), Remove mine over crew's
@@ -25,7 +27,7 @@
 //   mine's `lastUsedAt` itself (07 S3.03), and a launch records it in its own use case.
 // - `SessionObserved` → `resolveForSession` → `crew.arrive`: crew's route (routes/crew.ts,
 //   ISSUE-094). The Reset step's `walkRecreatedMines` on `MetricsResetStarted` (later: ISSUE-121)
-//   and `MineMeasured` → the ledger (later: ISSUE-096).
+//   and `MineMeasured` → the ledger's `creditSealedUnits` (routes/ledger.ts, ISSUE-096).
 //
 // Crew's half (`MinesCrewBinding`) is `WiredCrew.mines` (routes/crew.ts, ISSUE-094): boot step 4
 // constructs crew first, so Remove mine ends dwarfs through crew's ends over the Host's
@@ -62,7 +64,7 @@ import type { ObservationEvent } from '../../modules/observation'
 import type { ConnectionRegistry } from '../../transport/connectionRegistry'
 import type { Dispatcher } from '../../transport/dispatcher'
 import { publishBoardFrames } from '../../transport/frames/board'
-import { NO_LEDGER_TOTALS } from '../../transport/mappers/wire'
+import { NO_LEDGER_TOTALS, type MineTotalsReader } from '../../transport/mappers/wire'
 import { registerMineRemoval, registerMines } from '../../transport/methods/mines'
 import { registerMinesSection } from '../../transport/snapshot/sections/mines'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
@@ -145,6 +147,11 @@ export interface MinesWiringDeps {
   folderCheckMs: number
   /** `WiredCrew.mines` (routes/crew.ts). */
   crew: MinesCrewBinding
+  /**
+   * The ledger's totals of each mine (`WiredLedger.totals`, routes/ledger.ts), read by the `mines`
+   * section and the board frames; a Host slice without the ledger reads `NO_LEDGER_TOTALS`.
+   */
+  ledger?: MineTotalsReader
 }
 
 export interface WiredMines {
@@ -172,6 +179,7 @@ type ServedMembers = {
 /** Serves the module's seam-B members before it exists; `wire` constructs it at boot step 4. */
 export function serveMines(serve: MinesServeDeps): ServedMines {
   let wired: ServedMembers | undefined
+  let ledger: MineTotalsReader = NO_LEDGER_TOTALS
   const current = (): ServedMembers => {
     if (wired === undefined) throw new HostInvariantError('mines are served from boot step 4 on')
     return wired
@@ -190,12 +198,16 @@ export function serveMines(serve: MinesServeDeps): ServedMines {
   }
   registerMines(serve.dispatcher, { mines: served.queries, commands: served.commands })
   registerMineRemoval(serve.dispatcher, served.commands)
-  // The ledger's totals join with the ledger (later: ISSUE-096).
-  registerMinesSection(serve.sections, { mines: served.queries, ledger: NO_LEDGER_TOTALS })
+  // The ledger's totals, from the instance boot step 4 wires with mines (ISSUE-096).
+  registerMinesSection(serve.sections, {
+    mines: served.queries,
+    ledger: { totalsOf: (mineId) => ledger.totalsOf(mineId) }
+  })
   return {
     wire: (deps) => {
       if (wired !== undefined) throw new HostInvariantError('mines are wired once')
       const result = wireMines(deps, serve.connections)
+      ledger = deps.ledger ?? NO_LEDGER_TOTALS
       wired = {
         queries: result.mines.queries,
         commands: { ...result.mines.commands, ...result.removal }
@@ -236,7 +248,7 @@ function wireMines(
     events: { mines: bus, crew: bus, observation: bus },
     mines: mines.queries,
     crew: deps.crew.queries,
-    ledger: NO_LEDGER_TOTALS,
+    ledger: deps.ledger ?? NO_LEDGER_TOTALS,
     frames: connections
   })
 

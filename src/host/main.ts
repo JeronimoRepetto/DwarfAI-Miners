@@ -38,30 +38,39 @@
 // and before any command is accepted (05 §2.3; 16 §8.2). Boot step 4 constructs the other modules,
 // each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
 // SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
-// observation (ISSUE-095: wiring/routes/observation.ts) over its three SQLite stores, the Claude,
-// Codex, Antigravity and OpenCode adapters reading the providers' own folders (read only; SQLite
-// files through the read-only snapshot) and its provider-error route to diagnostics, with no batch
-// sink module yet (later: ISSUE-096, ISSUE-108); crew (ISSUE-094: wiring/routes/crew.ts) with the
+// the ledger (ISSUE-096: wiring/routes/ledger.ts) over the SqliteLedgerRepository and the coal
+// backfill's ProviderHistoryScanner (its folders folded by the mines' git inspector), with its
+// `ledger.changed` frame and its `MineMeasured` → `creditSealedUnits` route; observation (ISSUE-095:
+// wiring/routes/observation.ts) over its three SQLite stores, the Claude, Codex, Antigravity and
+// OpenCode adapters reading the providers' own folders (read only; SQLite files through the
+// read-only snapshot), its provider-error route to diagnostics and the ObservedBatchSink bridge
+// (wiring/bridges/observedBatchSink.ts) with the ledger's half only (conversation's: later:
+// ISSUE-108); crew (ISSUE-094: wiring/routes/crew.ts) with the
 // one SqliteLifecycleFactLog (shared with conversation, later: ISSUE-099), the SessionTerminator
 // bridge over the kernel's process control and observation's process identities and
 // `recordEnded`, its identity index over observation's stores, and its `dwarfs` section and B-M41
 // served before the bind; mines (ISSUE-093: wiring/routes/mines.ts) over crew's ends and queries,
 // with the FsSourceWeightScanner of its scoring walks, its seam-B members (B-M16…B-M20) and
 // `mines` section served before the bind, its board frames (the provider-error toast among them)
-// and the provider-error route to `checkFolder`; then crew's observation routes and the boot
-// recompute of the dwarf statuses from their persisted facts (S1.18). The others join later.
-// Observation is composed but not started: step 7 stays a placeholder until its batch sink is real
-// (ISSUE-108, after ISSUE-096). After step 7 (`startModules`) the mines restart the walks a stopped
-// Host left and start their folder-check schedule.
+// and the provider-error route to `checkFolder`, reading each mine's totals from the ledger; then
+// crew's observation routes, the boot recompute of the dwarf statuses from their persisted facts
+// (S1.18) and the ledger's backfill folder resolution over the mines' queries. The others join
+// later. Observation is composed but not started: step 7 stays a placeholder while the bridge's
+// sink is (ISSUE-108). After step 7 (`startModules`) the mines restart the walks a stopped Host
+// left and start their folder-check schedule. The coal backfill, after `ready`, is held off with
+// observation (ISSUE-108 turns both on).
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
+import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
+import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
+import { createHostGitRepoInspector } from './modules/mines/adapters/FsGitRepoInspector'
 import { FsSourceWeightScanner } from './modules/mines/adapters/FsSourceWeightScanner'
 import type { PreferencesEvent } from './modules/preferences'
 import type { Suppliers, SuppliersEvent } from './modules/suppliers'
-import { createSqliteObservationStores } from './modules/observation'
+import { createSqliteObservationStores, type ObservedBatchSink } from './modules/observation'
 import { createHostInstallResolver } from './modules/suppliers/adapters/install/hostInstallResolver'
 import { SqliteCapabilityRecordStore } from './modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
@@ -94,6 +103,7 @@ import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
 import { BOARD_FRAMES } from './transport/frames/board'
+import { LEDGER_FRAMES } from './transport/frames/ledger'
 import { createUpgradeDrain } from './transport/lifecycle/drain'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
@@ -106,6 +116,7 @@ import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
 import { errorCode, runBoot } from './wiring/boot'
 import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
+import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
@@ -121,13 +132,18 @@ import {
 } from './wiring/preferencesWiring'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import {
+  startBackfillWhenObserving,
+  wireLedger,
+  type LedgerRouteEvent,
+  type WiredLedger
+} from './wiring/routes/ledger'
+import {
   DEFAULT_MINES_SETTINGS,
   serveMines,
   type MinesRouteEvent,
   type WiredMines
 } from './wiring/routes/mines'
 import {
-  noObservedBatchSinkYet,
   observationAdapters,
   observedProviderFolders,
   wireObservation,
@@ -138,7 +154,8 @@ import { HostInvariantError, InProcessEventBus } from './kernel'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
 
 /** Every event the Host's one bus carries so far. */
-type HostEvent = PreferencesEvent | SuppliersEvent | MinesRouteEvent | CrewRouteEvent
+type HostEvent =
+  PreferencesEvent | SuppliersEvent | MinesRouteEvent | CrewRouteEvent | LedgerRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -217,6 +234,9 @@ async function main(): Promise<void> {
   const modules: {
     preferences?: WiredPreferences
     suppliers?: Suppliers
+    ledger?: WiredLedger
+    /** Observation's batch sink: the placeholder until the conversation half (ISSUE-108). */
+    batchSink?: ObservedBatchSink
     observation?: WiredObservation
     crew?: WiredCrew
     mines?: WiredMines
@@ -282,7 +302,7 @@ async function main(): Promise<void> {
     void log.flush().finally(() => process.exit(code))
   }
 
-  await runBoot(
+  const booted = await runBoot(
     (dataDir) => {
       // Opened by boot step 2; the epoch it keeps is this boot's (mintBootEpoch, one owner).
       const opened = createHostDatabase({
@@ -337,7 +357,8 @@ async function main(): Promise<void> {
           ...TRANSPORT_FRAMES,
           ...PREFERENCES_FRAMES,
           ...RESET_FRAMES,
-          ...BOARD_FRAMES
+          ...BOARD_FRAMES,
+          ...LEDGER_FRAMES
         ],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
@@ -397,8 +418,8 @@ async function main(): Promise<void> {
               db,
               path: join(dataDir.userDataDir, HOST_DB_FILE)
             }),
-            // Cut 1: no ledger, OS secret store or owned config entry yet (later: ISSUE-096,
-            // ISSUE-324, ISSUE-323).
+            // Cut 1: no ledger install-moment writer (`LedgerRepository.setInstallMoment`, later:
+            // ISSUE-097), OS secret store or owned config entry yet (later: ISSUE-324, ISSUE-323).
             ledger: emptyLedgerInstallMoment,
             secrets: unavailableSecretStore,
             externalConfig: noOwnedConfigWriter,
@@ -432,23 +453,55 @@ async function main(): Promise<void> {
             // A new demo world each Host start (15 §4.12); development builds only.
             simulatedSeed: epoch
           })
-          // Observation first: crew's terminator and index read it, and every route that reads its
+          // The providers' own folders: the environment overrides they honour, else the person's
+          // home folder (15 §5; HO-09). Read only, by observation and by the coal backfill.
+          const folders = observedProviderFolders(process.env, homedir())
+          // The ledger first: observation's batch sink holds its half and the mines' section and
+          // frames read its totals.
+          const ledger = wireLedger({
+            repository: new SqliteLedgerRepository({ db, scope: transactions, ids, clock }),
+            transactions,
+            bus,
+            clock,
+            ids,
+            hostEpoch: epoch,
+            log,
+            frames: connections,
+            resolver: createHostGitRepoInspector({ fs, clock }),
+            scanner: (resolveMine) =>
+              new ProviderHistoryScanner({
+                fs,
+                clock,
+                openSnapshot: openReadOnlySnapshot,
+                claudeRoots: [folders.claudeConfigDir],
+                codexHome: folders.codexHome,
+                opencodeStoreRoot: folders.openCodeStoreRoot,
+                resolveMine
+              })
+          })
+          modules.ledger = ledger
+          // The ObservedBatchSink bridge: the ledger's half; conversation's is not wired yet
+          // (later: ISSUE-108), so the sink stays the placeholder and observation is not started.
+          const batches = composeObservedBatchSink({
+            transactions,
+            ledger: ledger.batchHalf,
+            conversation: null
+          })
+          modules.batchSink = batches.sink
+          // Observation next: crew's terminator and index read it, and every route that reads its
           // events is subscribed here, before step 7's catch-up (16 §8.2).
           modules.observation = wireObservation({
             // One set of the module's stores: crew's `ProviderIdentity → DwarfId` reads share it.
             stores: createSqliteObservationStores({ db, scope: transactions, clock }),
             ...observationAdapters({
-              // The providers' own folders: the environment overrides they honour, else the
-              // person's home folder (15 §5; HO-09). Read only.
-              folders: observedProviderFolders(process.env, homedir()),
+              folders,
               fs,
               clock,
               processes: processControl,
               openSnapshot: openReadOnlySnapshot
             }),
-            // Neither the ledger nor conversation is wired yet (later: ISSUE-096, ISSUE-108).
-            sink: noObservedBatchSinkYet,
-            transactions,
+            sink: batches.sink,
+            transactions: batches.transactions,
             bus,
             fs,
             clock,
@@ -490,17 +543,19 @@ async function main(): Promise<void> {
             random: Math.random,
             scanner: new FsSourceWeightScanner(),
             ...DEFAULT_MINES_SETTINGS,
-            crew: modules.crew.mines
+            crew: modules.crew.mines,
+            ledger: ledger.totals
           })
           modules.crew.route({
             commands: modules.mines.mines.commands,
             queries: modules.mines.mines.queries
           })
+          ledger.route({ mines: modules.mines.mines.queries })
         },
-        // Step 7 (`startObservation`: catch-up, then the live loop) is not passed: with the
-        // placeholder batch sink a running loop would move every cursor past messages and usage
-        // nothing stores, lost for good (INV-98), and `WiredObservation.start` is null with it.
-        // ISSUE-108 (after ISSUE-096) turns observation on here, once the sink is real.
+        // Step 7 (`startObservation`: catch-up, then the live loop) is not passed: until the
+        // bridge has its conversation half the batch sink is the placeholder, a running loop
+        // would move every cursor past messages nothing stores, lost for good (INV-98), and
+        // `WiredObservation.start` is null with it. ISSUE-108 turns observation on here.
         startModules: () => modules.mines?.start()
       })
     },
@@ -514,6 +569,14 @@ async function main(): Promise<void> {
       exit
     }
   )
+  // Once the Host answers `ready`: the coal backfill (07 S19.02, S19.04), held off with
+  // observation while the batch sink is the placeholder. It pays only folders that are already
+  // mines, so a run before observation creates any would end `done` with nothing paid, for good.
+  // ISSUE-108 turns it on together with observation; what a mine first seen after the backfill
+  // finished receives is O-11-10's ruling (owner).
+  if (booted.kind === 'ready' && modules.ledger !== undefined && modules.batchSink !== undefined) {
+    void startBackfillWhenObserving(modules.ledger, modules.batchSink)
+  }
 }
 
 function isInside(folder: string, file: string): boolean {

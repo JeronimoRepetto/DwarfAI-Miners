@@ -52,7 +52,9 @@ const SERVED_SINCE_CUT_0 = [
   'section:mines',
   // The crew module's section and B-M41, served from cut 1 (ISSUE-094).
   'section:dwarfs',
-  'strangler.dwarfIdentities'
+  'strangler.dwarfIdentities',
+  // The ledger's frame, served from cut 1 (ISSUE-096).
+  'frame:ledger.changed'
 ]
 const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs']
 
