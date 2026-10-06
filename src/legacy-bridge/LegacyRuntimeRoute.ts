@@ -3,7 +3,11 @@ import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PanelWindowController } from '../ui-main/window/ports/panelWindowController'
-import { LegacyLaunchRegister, type LegacyLaunchedSessions } from './LegacyEndFirstAdapter'
+import {
+  LegacyLaunchRegister,
+  type LegacyLaunchedSessions,
+  type LegacyLaunchesByDwarf
+} from './LegacyEndFirstAdapter'
 import { createLegacyDiagnostics, type LegacyArea, type LegacyLog } from './legacyDiagnostics'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
@@ -179,8 +183,11 @@ export interface LegacyRuntimeComposition {
    * Panel (`LegacyPanelSurface`) because the route table serves the window family `ui-local` (21 §2 cut 0).
    */
   readonly panelWindow: PanelWindowController | null
-  /** Today's launched register, for `LegacyEndFirstAdapter` (21 §3, cuts 0–4). */
-  readonly launches: LegacyLaunchedSessions
+  /**
+   * Today's launched register, for `LegacyEndFirstAdapter` (21 §3, cuts 0–4): its live launches and kill (A-N26), and
+   * which launch started a legacy dwarf (the A-32 half, ISSUE-090).
+   */
+  readonly launches: LegacyLaunchedSessions & LegacyLaunchesByDwarf
 }
 
 /**
@@ -201,7 +208,7 @@ export interface LegacyRuntimeComposer {
  * with today's handler, unchanged. Through cut 4 it is also the way `LegacyEndFirstAdapter`
  * reaches today's launched register (ISSUE-054), composing the runtime first when needed.
  */
-export interface LegacyRuntimeRoute extends LegacyLaunchedSessions {
+export interface LegacyRuntimeRoute extends LegacyLaunchedSessions, LegacyLaunchesByDwarf {
   /** Composes the legacy runtime (once) and answers its Panel window, `null` when it composed none. */
   compose(): Promise<PanelWindowController | null>
   /** Serves a `legacy` row by today's wire name with today's handler result. */
@@ -212,7 +219,10 @@ export interface LegacyRuntimeRoute extends LegacyLaunchedSessions {
 
 export function createLegacyRuntimeRoute(composer: LegacyRuntimeComposer): LegacyRuntimeRoute {
   let composing: Promise<LegacyRuntimeComposition> | null = null
-  const composition = (): Promise<LegacyRuntimeComposition> => (composing ??= composer.compose())
+  /** The runtime once composed: until then today's runtime launched nothing, so no dwarf has a launch. */
+  let composed: LegacyRuntimeComposition | null = null
+  const composition = (): Promise<LegacyRuntimeComposition> =>
+    (composing ??= composer.compose().then((done) => (composed = done)))
 
   return {
     async compose() {
@@ -236,6 +246,9 @@ export function createLegacyRuntimeRoute(composer: LegacyRuntimeComposer): Legac
     },
     async endLaunch(launchId) {
       return (await composition()).launches.endLaunch(launchId)
+    },
+    launchIdOfDwarf(dwarfId) {
+      return composed?.launches.launchIdOfDwarf(dwarfId)
     }
   }
 }

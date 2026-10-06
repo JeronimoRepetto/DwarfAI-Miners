@@ -1,7 +1,7 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
 import { FakePanelWindowController } from '../ui-main/window/ports/fakes/FakePanelWindowController'
-import type { LegacyLaunchedSessions } from './LegacyEndFirstAdapter'
+import type { LegacyLaunchedSessions, LegacyLaunchesByDwarf } from './LegacyEndFirstAdapter'
 import {
   createLegacyRuntimeRoute,
   type LegacyHandler,
@@ -17,9 +17,12 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
   /** A stand-in for today's composition that counts how many times it was composed. */
   function countingComposer(
     handlers: Record<string, LegacyHandler>,
-    launches: LegacyLaunchedSessions = {
+    // AMENDED for ISSUE-091 (was: `LegacyLaunchedSessions` only): the register also answers which launch started a
+    // legacy dwarf (`LegacyLaunchesByDwarf`, the A-32 half of LegacyEndFirstAdapter, ISSUE-090).
+    launches: LegacyLaunchedSessions & LegacyLaunchesByDwarf = {
       liveLaunches: async () => [],
-      endLaunch: async () => 'already-ended'
+      endLaunch: async () => 'already-ended',
+      launchIdOfDwarf: () => undefined
     }
   ) {
     const counts = { composed: 0, beforeQuit: 0, willQuit: 0 }
@@ -114,7 +117,9 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
         endLaunch: async (launchId) => {
           ended.push(launchId)
           return 'ended'
-        }
+        },
+        // AMENDED for ISSUE-091: the widened register (see `countingComposer`).
+        launchIdOfDwarf: () => undefined
       }
     )
     const route = createLegacyRuntimeRoute(composer)
@@ -126,5 +131,27 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
     expect(live).toEqual([{ launchId: 'launch:1' }])
     expect(verdict).toBe('ended')
     expect(ended).toEqual(['launch:1'])
+  })
+
+  it('[ADR-001] LegacyRuntimeRoute answers which launch started a legacy dwarf from today’s register, and none before the runtime is composed', async () => {
+    const { composer, counts } = countingComposer(
+      {},
+      {
+        liveLaunches: async () => [{ launchId: 'launch:7' }],
+        endLaunch: async () => 'ended',
+        launchIdOfDwarf: (dwarfId) => (dwarfId === 'codex:thread-7' ? 'launch:7' : undefined)
+      }
+    )
+    const route = createLegacyRuntimeRoute(composer)
+
+    // Nothing composed: today's runtime launched nothing yet, so no dwarf has a launch, and asking composes nothing.
+    expect(route.launchIdOfDwarf('codex:thread-7')).toBeUndefined()
+    expect(counts.composed).toBe(0)
+
+    await route.compose()
+
+    expect(route.launchIdOfDwarf('codex:thread-7')).toBe('launch:7')
+    expect(route.launchIdOfDwarf('codex:someone-else')).toBeUndefined()
+    expect(counts.composed).toBe(1)
   })
 })
