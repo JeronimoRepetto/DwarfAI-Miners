@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive } from 'vue'
+import type {
+  DwarfId,
+  HostFrame,
+  HostFrames,
+  IpcResult,
+  MessageId,
+  MessageView,
+  SnapshotPage,
+  SnapshotParams
+} from '@dwarfai/contracts'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { REACTION_WINDOW_MS } from '../lib/delivery/reaction'
 import { ECHO_LIMIT } from '../lib/message/echo'
 import { defaultDwarf } from '../testing/factories'
 import type { Dwarf, DwarfAttachment, DwarfTextResult, FeedMessage } from '../types'
-import { RESULT_VISIBLE_MS, useDwarfMessaging } from './useDwarfMessaging'
+import { RESULT_VISIBLE_MS, feedMessageOf, useDwarfMessaging } from './useDwarfMessaging'
 
 function stubApi(sendDwarfText: (...args: never[]) => Promise<DwarfTextResult>): void {
   Object.defineProperty(window, 'api', {
@@ -1304,5 +1315,207 @@ describe('useDwarfMessaging: the composer reads messages only', () => {
     const { send, recordAnswer } = useDwarfMessaging()
     recordAnswer('claude:s1', 'Answers:\n\n- Which store: **Redis**', 'toolu_01')
     expect(await send('claude:s1', 'meanwhile', true)).toBe(true)
+  })
+})
+
+/*
+ * THE CHAT FROM THE HOST (ISSUE-106; ADR-033 item 3; 14 §4.3, §6.4 row `useDwarfMessaging`).
+ *
+ * Every dwarf's chat becomes a read model of the snapshot `tails` section and the `conversation.appended` frames,
+ * relayed by A-N01 `getHostSnapshot` and A-N02 `onHostEvent`: subscribe first, read the snapshot, then apply only the
+ * frames newer than it. The Host merges a provider's echo of a DwarfAI message by `source_key` (INV-60), so the chat
+ * keeps one row per `MessageId` and never reconciles echoes of its own. Retired A-14 `getDwarfFeed`, A-16
+ * `setWatchedDwarf` and A-17 `refreshDwarfTelemetry` are never called on this path. Tested against the generated fake
+ * `window.api` with scripted frames (ADR-033 item 7).
+ */
+describe('useDwarfMessaging chat from the Host read model', () => {
+  type Api = Window['api']
+  type SnapshotAnswer = IpcResult<SnapshotPage>
+
+  const EPOCH = 'epoch-1'
+  const BORIN = '01920000-0000-7000-8000-00000000d001' as DwarfId
+  const DAIN = '01920000-0000-7000-8000-00000000d002' as DwarfId
+  const id = (n: number) =>
+    `01920000-0000-7000-8000-00000000e${String(n).padStart(3, '0')}` as MessageId
+  /** 2026-10-06T09:00:00.000Z, in epoch ms. */
+  const NINE = 1_791_277_200_000
+
+  function view(n: number, overrides: Partial<MessageView> = {}): MessageView {
+    return {
+      id: id(n),
+      dwarfId: BORIN,
+      role: n % 2 === 1 ? 'person' : 'dwarf',
+      text: `line ${n}`,
+      attachments: [],
+      providerTime: null,
+      createdAt: NINE + n * 60_000,
+      ...overrides
+    }
+  }
+
+  function tails(
+    ...entries: Array<{ dwarfId: DwarfId; messages: MessageView[] }>
+  ): SnapshotPage['chunks'] {
+    return [{ section: 'tails', data: entries.map((entry) => ({ ...entry, reachedStart: false })) }]
+  }
+
+  function page(seq: number, chunks: SnapshotPage['chunks']): SnapshotAnswer {
+    return { ok: true, value: { snapshotId: `snap-${seq}`, seq, epoch: EPOCH, chunks } }
+  }
+
+  function frame<F extends keyof HostFrames>(seq: number, name: F, data: HostFrames[F]): HostFrame {
+    return { type: 'evt', seq, epoch: EPOCH, name, data } as HostFrame
+  }
+
+  interface Host {
+    push(frames: HostFrame[]): void
+    requests: SnapshotParams[]
+    api: Api
+  }
+
+  /** The fake `window.api`: A-N01 answers each scripted answer in turn (the last repeats); A-N02 is scripted. */
+  function installHost(answers: Array<SnapshotAnswer | (() => SnapshotAnswer)>): Host {
+    let listener: ((frames: HostFrame[]) => void) | null = null
+    const requests: SnapshotParams[] = []
+    let next = 0
+    const api = createFakeWindowApi({
+      getHostSnapshot: vi.fn((request: SnapshotParams) => {
+        requests.push(request)
+        const answer = answers[Math.min(next, answers.length - 1)]!
+        next += 1
+        return Promise.resolve(typeof answer === 'function' ? answer() : answer)
+      }) as unknown as Api['getHostSnapshot'],
+      onHostEvent: vi.fn((follow: (frames: HostFrame[]) => void) => {
+        listener = follow
+        return () => {
+          listener = null
+        }
+      }) as unknown as Api['onHostEvent'],
+      getDwarfFeed: vi.fn() as unknown as Api['getDwarfFeed'],
+      setWatchedDwarf: vi.fn() as unknown as Api['setWatchedDwarf'],
+      refreshDwarfTelemetry: vi.fn() as unknown as Api['refreshDwarfTelemetry']
+    })
+    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    return {
+      push(frames) {
+        if (listener === null) throw new Error('nothing follows onHostEvent')
+        listener(frames)
+      },
+      requests,
+      api
+    }
+  }
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 10; i += 1) await Promise.resolve()
+  }
+
+  const chatOf = (dwarfId: DwarfId) => useDwarfMessaging().hostFeedOf(dwarfId)
+  const textsOf = (dwarfId: DwarfId) => chatOf(dwarfId)?.messages.map((message) => message.text)
+
+  beforeEach(() => {
+    useDwarfMessaging().stopChat()
+  })
+
+  afterEach(() => {
+    useDwarfMessaging().stopChat()
+  })
+
+  it("[ADR-033] a dwarf's chat is built from its tails chunk and then from conversation.appended frames with a higher seq", async () => {
+    const host = installHost([page(5, tails({ dwarfId: BORIN, messages: [view(1), view(2)] }))])
+    expect(await useDwarfMessaging().startChat()).toBe(true)
+    host.push([frame(6, 'conversation.appended', { dwarfId: BORIN, messages: [view(3)] })])
+    expect(chatOf(BORIN)).toEqual({
+      readable: true,
+      messages: [
+        { role: 'user', text: 'line 1', timestamp: '2026-10-06T09:01:00.000Z' },
+        { role: 'assistant', text: 'line 2', timestamp: '2026-10-06T09:02:00.000Z' },
+        { role: 'user', text: 'line 3', timestamp: '2026-10-06T09:03:00.000Z' }
+      ]
+    })
+    expect(useDwarfMessaging().hostOldestMessageId(BORIN)).toBe(id(1))
+    expect(host.api.getDwarfFeed).not.toHaveBeenCalled()
+    expect(host.api.setWatchedDwarf).not.toHaveBeenCalled()
+    expect(host.api.refreshDwarfTelemetry).not.toHaveBeenCalled()
+  })
+
+  it('[ADR-033] a frame with seq at or below the snapshot seq is ignored, and resync-required re-reads the snapshot', async () => {
+    let host: Host | null = null
+    host = installHost([
+      () => {
+        // Arrives while the snapshot is read: buffered, then dropped, as the snapshot already reflects seq 5.
+        host!.push([frame(5, 'conversation.appended', { dwarfId: BORIN, messages: [view(9)] })])
+        return page(5, tails({ dwarfId: BORIN, messages: [view(1)] }))
+      },
+      page(8, tails({ dwarfId: BORIN, messages: [view(1), view(2), view(3)] }))
+    ])
+    await useDwarfMessaging().startChat()
+    await settle()
+    host.push([frame(4, 'conversation.appended', { dwarfId: BORIN, messages: [view(7)] })])
+    expect(textsOf(BORIN)).toEqual(['line 1'])
+
+    host.push([frame(6, 'resync-required', { reason: 'ring-overrun' })])
+    await settle()
+    expect(host.requests).toHaveLength(2)
+    expect(textsOf(BORIN)).toEqual(['line 1', 'line 2', 'line 3'])
+  })
+
+  it('[INV-60] a message the Host sent twice with the same id is shown once, with no client echo merging', async () => {
+    const host = installHost([page(5, tails({ dwarfId: BORIN, messages: [view(1)] }))])
+    await useDwarfMessaging().startChat()
+    host.push([
+      frame(6, 'conversation.appended', { dwarfId: BORIN, messages: [view(2)] }),
+      frame(7, 'conversation.appended', {
+        dwarfId: BORIN,
+        messages: [view(2, { text: 'line 2, as the Host merged it' })]
+      })
+    ])
+    expect(textsOf(BORIN)).toEqual(['line 1', 'line 2, as the Host merged it'])
+    // The panel's own echoes are not this chat's rows: the Host's chat holds only what the Host sent.
+    expect(useDwarfMessaging().echoesFor(BORIN)).toEqual([])
+  })
+
+  it('[ADR-033] a dwarf missing from a re-snapshot is removed without a walk-out', async () => {
+    const host = installHost([
+      page(
+        5,
+        tails(
+          { dwarfId: BORIN, messages: [view(1)] },
+          { dwarfId: DAIN, messages: [view(2, { dwarfId: DAIN })] }
+        )
+      ),
+      page(9, tails({ dwarfId: BORIN, messages: [view(1)] }))
+    ])
+    await useDwarfMessaging().startChat()
+    expect(textsOf(DAIN)).toEqual(['line 2'])
+    host.push([frame(6, 'resync-required', { reason: 'seq-not-in-ring' })])
+    await settle()
+    expect(chatOf(DAIN)).toBeUndefined()
+    expect(textsOf(BORIN)).toEqual(['line 1'])
+  })
+
+  it('[ADR-033] until the route switch a refused snapshot leaves the chat unfed', async () => {
+    installHost([
+      { ok: false, error: { code: 'METHOD_NOT_FOUND', message: 'unrouted', retryable: false } }
+    ])
+    expect(await useDwarfMessaging().startChat()).toBe(false)
+    expect(chatOf(BORIN)).toBeUndefined()
+    expect(useDwarfMessaging().hostOldestMessageId(BORIN)).toBeNull()
+  })
+
+  it("[ADR-033] a Host row maps to today's FeedMessage by its role and its provider time when it has one", () => {
+    expect(
+      [
+        view(1, { role: 'person' }),
+        view(2, { role: 'dwarf', providerTime: NINE }),
+        view(3, { role: 'answers-record' }),
+        view(4, { role: 'system-line' })
+      ].map(feedMessageOf)
+    ).toEqual([
+      { role: 'user', text: 'line 1', timestamp: '2026-10-06T09:01:00.000Z' },
+      { role: 'assistant', text: 'line 2', timestamp: '2026-10-06T09:00:00.000Z' },
+      { role: 'user', text: 'line 3', timestamp: '2026-10-06T09:03:00.000Z' },
+      { role: 'assistant', text: 'line 4', timestamp: '2026-10-06T09:04:00.000Z' }
+    ])
   })
 })
