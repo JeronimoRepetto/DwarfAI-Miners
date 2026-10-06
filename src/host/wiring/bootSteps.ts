@@ -56,12 +56,12 @@ export interface BootPorts {
    */
   constructModules?: () => void
   /**
-   * Step 7: `observation.catchUp()` then `start()` (16 §8.2; ADR-015 item 3), after recovery
-   * (step 5) and before `ready` (step 8), so the classification of what providers wrote while no
-   * Host ran is done before any `hello.ok` says `ready`. The composition root passes it
+   * Step 7: `observation.catchUp()` then `start()` (16 §8.2; ADR-015 item 3), after recovery's
+   * classification (step 5) and before `ready` (step 8). `ready` does not wait for the catch-up
+   * pass, which may go on after it (16 §4.3 `catchUp`). The composition root passes it
    * (wiring/routes/observation.ts `start`, ISSUE-095); without it the step is a placeholder.
    */
-  startObservation?: () => Promise<void>
+  startObservation?: () => void
   /**
    * After step 7, before `ready`: starts the modules' own background work over what step 4
    * constructed (the mines' boot walks and folder-check schedule: ISSUE-093). Without it nothing
@@ -133,15 +133,15 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     placeholder('recover-sessions', 'ISSUE-173'),
     // 6. The MCP endpoint (DelegationServer.listen) and the hook ingress.
     placeholder('start-endpoints', 'ISSUE-209'),
-    // 7. observation.catchUp(), then start() (ISSUE-095): what providers wrote while no Host ran
-    //    is classified before `ready` (16 §4.3 `catchUp`).
+    // 7. observation.catchUp(), then start() (ISSUE-095). The catch-up pass of what providers
+    //    wrote while no Host ran may go on after `ready` (16 §4.3 `catchUp`).
     startObservation === undefined
       ? placeholder('start-observation', 'ISSUE-095')
       : {
           name: 'start-observation',
-          run: async () => {
-            await startObservation()
-            return { kind: 'done' }
+          run: () => {
+            startObservation()
+            return Promise.resolve({ kind: 'done' })
           }
         },
     // 8. hello answers `ready`: the boot reports `ready` into the lifecycle state holder

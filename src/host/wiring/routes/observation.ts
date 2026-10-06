@@ -15,8 +15,9 @@
 //   takes through its #45 guard, `recordEnded` for the `SessionTerminator` bridge and the index) is
 //   `WiredObservation.crew`.
 // - `start`, run by boot step 7 (16 §8.2) after recovery (step 5) and before `ready` (step 8):
-//   `catchUp()` and then `start()`. Every route that reads an observation event is subscribed at
-//   step 4, before `catchUp` publishes its first event.
+//   `catchUp()` and then `start()`; the catch-up pass may go on after `ready` (16 §4.3), and the
+//   live loop's first cycle runs after it. Every route that reads an observation event is
+//   subscribed at step 4, before `catchUp` publishes its first event.
 // - `nudge`, the hook ingress's entry point (05 §3.3; the ingress is EPIC-08's, later: ISSUE-133):
 //   it only brings the next poll cycle forward.
 //
@@ -59,6 +60,7 @@ import {
   type ObservedSessionStore
 } from '../../modules/observation'
 import type { ReadOnlySnapshotOpener } from '../../platform/sqlite/readOnlySnapshot'
+import { errorCode } from '../boot'
 import type { CrewObservationBinding } from './crew'
 
 /** The diagnostics event of an observed provider error (19 §9.4 `observation.*` events, ADR-026). */
@@ -193,8 +195,8 @@ export interface WiredObservation {
   observation: Observation
   /** Crew's half of the binding (routes/crew.ts). */
   crew: CrewObservationBinding
-  /** Boot step 7 (16 §8.2): `catchUp()`, then `start()`. */
-  start(): Promise<void>
+  /** Boot step 7 (16 §8.2): `catchUp()`, then `start()`; the pass may go on after `ready`. */
+  start(): void
   /** The hook ingress's entry point (05 §3.3): brings the next cycle forward. */
   nudge(hint: NudgeHint): void
   /** Resolves once no observation cycle is in flight (tests; drain). */
@@ -242,11 +244,21 @@ export function wireObservation(deps: ObservationWiringDeps): WiredObservation {
       control: observation.control,
       sessions: stores.sessions
     },
-    start: async () => {
-      // ADR-015 item 3, 16 §4.3: offline activity first, from the cursors the last Host left;
-      // the live loop only then (INV-98).
-      await observation.control.catchUp()
+    start: () => {
+      // 16 §8.2 step 7: the catch-up pass first, from the cursors the last Host left (INV-98),
+      // then the live loop, whose first cycle the loop runs after the pass. `ready` does not wait
+      // for the pass: before `ready` only the recovery classification (16 §4.3 `catchUp`; ADR-015
+      // item 3), so a long offline history never delays the window.
+      const pass = observation.control.catchUp()
       observation.control.start()
+      pass.catch((error: unknown) =>
+        log.record({
+          level: 'error',
+          event: 'uncaught',
+          subsystem: 'host',
+          errCode: errorCode(error)
+        })
+      )
     },
     nudge: (hint) => observation.control.nudge(hint),
     idle: () => observation.whenIdle()

@@ -414,7 +414,7 @@ async function bootHost(options: HostOptions) {
         },
         startObservation: () => {
           if (host.observation === undefined) throw new Error('step 7 before step 4')
-          return host.observation.start()
+          host.observation.start()
         },
         startModules: () => host.mines?.start()
       }),
@@ -539,16 +539,18 @@ describe('observation wired into the Host (ISSUE-095)', () => {
     await host.settle()
     host.stop()
 
+    // Recovery's classification (step 5) precedes the catch-up, the catch-up the live loop, and
+    // `ready` follows step 7 …
     const at = (marker: string) => trace.indexOf(marker)
     expect(at('step:recover-sessions')).toBeGreaterThanOrEqual(0)
     expect(at('step:recover-sessions')).toBeLessThan(at('catchUp'))
-    expect(at('catchUp')).toBeLessThan(at('catchUp:done:starting'))
-    expect(at('catchUp:done:starting')).toBeLessThan(at('start'))
-    expect(at('start')).toBeLessThan(at('state:ready'))
-    // The classification (every session catch-up found) happened before `ready`.
-    const observed = trace.flatMap((marker, index) => (marker === 'observed' ? [index] : []))
-    expect(observed).toHaveLength(4)
-    expect(Math.max(...observed)).toBeLessThan(at('catchUp:done:starting'))
+    expect(at('catchUp')).toBeLessThan(at('start'))
+    expect(at('start')).toBeLessThan(at('step:start-observation'))
+    expect(at('step:start-observation')).toBeLessThan(at('state:ready'))
+    // … without waiting for the pass, which goes on after `ready` (16 §4.3 `catchUp`): before
+    // `ready` only the classification. Every session it found is observed all the same.
+    expect(at('state:ready')).toBeLessThan(at('catchUp:done:ready'))
+    expect(trace.filter((marker) => marker === 'observed')).toHaveLength(4)
   })
 
   it('[INV-36] a session ended by the wired terminator is not observed again', async () => {

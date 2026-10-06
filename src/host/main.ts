@@ -50,8 +50,9 @@
 // `mines` section served before the bind, its board frames (the provider-error toast among them)
 // and the provider-error route to `checkFolder`; then crew's observation routes and the boot
 // recompute of the dwarf statuses from their persisted facts (S1.18). The others join later. Step
-// 7 runs observation's catch-up and then its live loop, before `ready`; then (`startModules`) the
-// mines restart the walks a stopped Host left and start their folder-check schedule.
+// 7 starts observation's catch-up and then its live loop (the pass may go on after `ready`, 16
+// §4.3); then (`startModules`) the mines restart the walks a stopped Host left and start their
+// folder-check schedule.
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -496,12 +497,12 @@ async function main(): Promise<void> {
             queries: modules.mines.mines.queries
           })
         },
-        // Step 7: catch-up, then the live loop (16 §8.2), before `ready`.
+        // Step 7: catch-up, then the live loop (16 §8.2); the pass may go on after `ready`.
         startObservation: () => {
           if (modules.observation === undefined) {
             throw new HostInvariantError('boot step 7 runs after step 4 wired observation')
           }
-          return modules.observation.start()
+          modules.observation.start()
         },
         startModules: () => modules.mines?.start()
       })

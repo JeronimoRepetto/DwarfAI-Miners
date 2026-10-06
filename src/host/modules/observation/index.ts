@@ -2,10 +2,10 @@
 // observation loop (ISSUE-070) polls every provider's `ObservationAdapter`, reads each stream from
 // its forward-only cursor and turns the records into events, writing only its own tables
 // (`source_cursors`, `observed_sessions`, `observed_session_streams`; INV-37): messages and usage
-// go to conversation and ledger through the `ObservedBatchSink` bridge. The Claude (ISSUE-071) and
-// Codex (ISSUE-073) adapters are exported for the composition; the other provider adapters (later:
-// ISSUE-074, ISSUE-075) join with their issues; `host/main.ts` composes it and calls `catchUp`
-// then `start` at boot (later: ISSUE-095). `catchUp` (ISSUE-078) reads every stream from its cursor,
+// go to conversation and ledger through the `ObservedBatchSink` bridge. The Claude (ISSUE-071),
+// Codex (ISSUE-073), Antigravity (ISSUE-074) and OpenCode (ISSUE-075) adapters are exported for
+// the composition; `host/wiring/routes/observation.ts` composes the module at boot step 4 and
+// calls `catchUp` then `start` at step 7 (ISSUE-095). `catchUp` (ISSUE-078) reads every stream from its cursor,
 // so what providers wrote while no Host ran is observed and credited once (INV-98). The `EndedAgentLedger` (`ended_agents`) keeps every identity
 // DwarfAI ended or saw end from arriving again (ISSUE-072, INV-36), and the Claude adapter answers
 // a session's process identity through its #45 guard (`processRegistries`).
