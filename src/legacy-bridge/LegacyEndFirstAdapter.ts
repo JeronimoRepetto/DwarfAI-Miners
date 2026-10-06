@@ -11,9 +11,23 @@
 // A-N26, eB), which A-N26 answers as its error branch; the Host, the windows and the tray stay (ADR-002 D7 step 3).
 //
 // Only launches are ended (INV-120): a session the person started in their own terminal is observed, never retained,
-// so it is not in the register and the adapter never touches it. Waiting for `dwarf.departed` and the A-32 and A-N29
-// halves come later (ISSUE-090, ISSUE-178). Deleted at the end of cut 4 with `LegacyDwarfIdBridge`.
-import type { IpcError, StopAllOutcome } from '@dwarfai/contracts'
+// so it is not in the register and the adapter never touches it.
+//
+// The A-32 half (ISSUE-090, from cut 1, composed only with `LegacyDwarfIdBridge`): `beforeRemoveMine` takes the Host
+// mine's present dwarfs (the HostClient's whole snapshot and the `dwarf.*` frames after it), joins each to today's
+// dwarf through the bridge's exact `ProviderIdentity` join and to the launch today's register bound it to; a dwarf with
+// no such launch is the Host's to end (B-M18). It ends each of those launches through the same legacy kill, in
+// parallel, and waits, within the legacy kill's own bound, for both the end report and the Host's `dwarf.departed`
+// (B-F10) for that dwarf: relaying earlier would find the dwarf still present, and the Host has no process identity
+// for it (15 §5 `no-identity`). Only then does it relay `mines.remove {mineId, requestId}` through `remove`; a refused
+// or thrown kill, or a departure that does not arrive in time, answers A-32's "unchanged" shape
+// (./rowShapes/mineNotRemoved.ts) and relays nothing (INV-06). It reads the Host only (snapshot and frames); the one
+// command it relays is the caller's. The A-N29 half comes later (ISSUE-178). Deleted at the end of cut 4 with
+// `LegacyDwarfIdBridge` (later: ISSUE-241).
+//
+// Candidate decision (21 §6): no candidate exists for the A-32 half; new code.
+import type { HostFrames, IpcError, StopAllOutcome } from '@dwarfai/contracts'
+import type { MineUndeclareResult } from '../main/domain/types'
 import {
   LaunchedSessionRegistry,
   type EndLaunchVerdict,
@@ -25,6 +39,9 @@ import type {
   LaunchedSessionStore,
   PersistedLaunch
 } from '../main/sessionLaunch/launchedSessionStore'
+import type { HostClient, HostEvent } from '../ui-main/window/ports/hostClient'
+import type { LegacyDwarfIdBridge } from './LegacyDwarfIdBridge'
+import { MINE_DWARF_NOT_ENDED } from './rowShapes/mineNotRemoved'
 
 /**
  * The legacy kill's own bound: today's process-tree end runs its OS command with a 5 000 ms timeout
@@ -55,6 +72,24 @@ export interface LegacyEndFirstAdapterDeps {
   timers: EndFirstTimers
 }
 
+/** Today's launched register, asked which launch started a legacy dwarf (the register's own binding). */
+export interface LegacyLaunchesByDwarf {
+  /** The launch that started the legacy dwarf `dwarfId`, or undefined when today's runtime did not launch it. */
+  launchIdOfDwarf(dwarfId: string): string | undefined
+}
+
+/** What the A-32 half needs from cut 1: the Host's present dwarfs and departures, and the join to legacy ids. */
+export interface LegacyEndFirstRemovalDeps {
+  legacy: LegacyLaunchedSessions & LegacyLaunchesByDwarf
+  timers: EndFirstTimers
+  host: {
+    /** Read only: the snapshot and the `dwarf.arrived` / `dwarf.departed` frames (B-F10); no Host command path. */
+    client: Pick<HostClient, 'subscribe'>
+    /** The exact `ProviderIdentity` join (21 §3 `LegacyDwarfIdBridge`). */
+    bridge: Pick<LegacyDwarfIdBridge, 'toLegacy'>
+  }
+}
+
 export interface LegacyEndFirstAdapter {
   /**
    * The A-N26 relay (`StopAllRelay`, window/application/stopEverything.ts): ends every legacy-launched session, then
@@ -64,6 +99,22 @@ export interface LegacyEndFirstAdapter {
     requestId: string,
     shutdown: (requestId: string) => Promise<StopAllOutcome>
   ): Promise<StopAllOutcome>
+}
+
+/** The A-32 half (cut 1 on), composed only where the bridge exists. */
+export interface LegacyEndFirstRemoval {
+  /**
+   * The A-32 relay: ends every legacy-launched session of the Host mine `mineId`, waits for each one's
+   * `dwarf.departed` (B-F10), then relays through `remove`; otherwise answers A-32's "unchanged" shape and relays
+   * nothing.
+   */
+  beforeRemoveMine(
+    mineId: string,
+    requestId: string,
+    remove: (mineId: string, requestId: string) => Promise<MineUndeclareResult>
+  ): Promise<MineUndeclareResult>
+  /** Unsubscribes; nothing is read after. */
+  dispose(): void
 }
 
 /**
@@ -81,28 +132,48 @@ export class LegacyEndFailed extends Error {
   }
 }
 
-export function createLegacyEndFirstAdapter({
-  legacy,
-  timers
-}: LegacyEndFirstAdapterDeps): LegacyEndFirstAdapter {
-  /** Whether the launch ended (or was already gone) within the bound; a refusal, a throw or no report is a failure. */
-  function endWithinBound(launchId: string): Promise<boolean> {
+export function createLegacyEndFirstAdapter(
+  deps: LegacyEndFirstRemovalDeps
+): LegacyEndFirstAdapter & LegacyEndFirstRemoval
+export function createLegacyEndFirstAdapter(deps: LegacyEndFirstAdapterDeps): LegacyEndFirstAdapter
+export function createLegacyEndFirstAdapter(
+  deps: LegacyEndFirstAdapterDeps | LegacyEndFirstRemovalDeps
+): LegacyEndFirstAdapter | (LegacyEndFirstAdapter & LegacyEndFirstRemoval) {
+  const { legacy, timers } = deps
+  /**
+   * Whether the launch ended (or was already gone) within the bound and, when `departure` is given, the Host also saw
+   * its dwarf depart within that same bound; a refusal, a throw, no report or no departure is a failure.
+   */
+  function endWithinBound(launchId: string, departure?: Departure): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
-      const cancel = timers.after(LEGACY_KILL_BOUND_MS, () => resolve(false))
+      let ended = false
+      let departed = departure === undefined
+      let settled = false
+      const finish = (done: boolean): void => {
+        if (settled) return
+        settled = true
+        cancel()
+        stopWatching()
+        resolve(done)
+      }
+      const cancel = timers.after(LEGACY_KILL_BOUND_MS, () => finish(false))
+      const stopWatching =
+        departure?.(() => {
+          departed = true
+          if (ended) finish(true)
+        }) ?? (() => {})
       legacy.endLaunch(launchId).then(
         (verdict) => {
-          cancel()
-          resolve(verdict !== 'refused')
+          if (verdict === 'refused') return finish(false)
+          ended = true
+          if (departed) finish(true)
         },
-        () => {
-          cancel()
-          resolve(false)
-        }
+        () => finish(false)
       )
     })
   }
 
-  return {
+  const stopAll: LegacyEndFirstAdapter = {
     async beforeStopAll(requestId, shutdown) {
       const launches = await legacy.liveLaunches()
       const ended = await Promise.all(launches.map((launch) => endWithinBound(launch.launchId)))
@@ -111,7 +182,86 @@ export function createLegacyEndFirstAdapter({
       return shutdown(requestId)
     }
   }
+  if (!('host' in deps)) return stopAll
+  const { client, bridge } = deps.host
+  const launches = deps.legacy
+
+  /** The Host's present dwarfs (DwarfId → MineId), from the client's whole snapshot and every frame after it. */
+  let present = new Map<string, string>()
+  /** Who waits for a dwarf to leave the Host's board. */
+  const watchers = new Map<string, Set<() => void>>()
+  const told = (dwarfId: string): void => {
+    for (const gone of [...(watchers.get(dwarfId) ?? [])]) gone()
+  }
+  const unsubscribe = client.subscribe((event: HostEvent) => {
+    if (event.kind === 'snapshot') {
+      const before = present
+      present = new Map()
+      for (const chunk of event.snapshot.chunks)
+        if (chunk.section === 'dwarfs')
+          for (const dwarf of chunk.data) present.set(dwarf.id, dwarf.mineId)
+      for (const dwarfId of before.keys()) if (!present.has(dwarfId)) told(dwarfId)
+      return
+    }
+    const { frame } = event
+    if (frame.name === 'dwarf.arrived' || frame.name === 'dwarf.changed') {
+      const { dwarf } = frame.data as HostFrames['dwarf.changed']
+      present.set(dwarf.id, dwarf.mineId)
+    } else if (frame.name === 'dwarf.departed') {
+      const { dwarfId } = frame.data as HostFrames['dwarf.departed']
+      present.delete(dwarfId)
+      told(dwarfId)
+    }
+  })
+
+  /** Watches for the Host's `dwarf.departed` of `dwarfId` (B-F10); told at once when it is already off the board. */
+  const departureOf =
+    (dwarfId: string): Departure =>
+    (gone) => {
+      if (!present.has(dwarfId)) {
+        gone()
+        return () => {}
+      }
+      const waiting = watchers.get(dwarfId) ?? new Set<() => void>()
+      watchers.set(dwarfId, waiting)
+      waiting.add(gone)
+      return () => {
+        waiting.delete(gone)
+        if (waiting.size === 0) watchers.delete(dwarfId)
+      }
+    }
+
+  /** The mine's Host dwarfs that today's runtime launched, each with its launch (the exact join, 21 §3). */
+  async function legacyLaunchedIn(mineId: string): Promise<Array<[string, string]>> {
+    const inMine = [...present].filter(([, of]) => of === mineId).map(([dwarfId]) => dwarfId)
+    const joined = await Promise.all(
+      inMine.map(async (dwarfId): Promise<[string, string] | null> => {
+        const legacyId = await bridge.toLegacy(dwarfId)
+        const launchId = legacyId === null ? undefined : launches.launchIdOfDwarf(legacyId)
+        return launchId === undefined ? null : [dwarfId, launchId]
+      })
+    )
+    return joined.filter((pair): pair is [string, string] => pair !== null)
+  }
+
+  return {
+    ...stopAll,
+    async beforeRemoveMine(mineId, requestId, remove) {
+      const targets = await legacyLaunchedIn(mineId)
+      const ended = await Promise.all(
+        targets.map(([dwarfId, launchId]) => endWithinBound(launchId, departureOf(dwarfId)))
+      )
+      if (ended.some((done) => !done)) return { ...MINE_DWARF_NOT_ENDED }
+      return remove(mineId, requestId)
+    },
+    dispose() {
+      unsubscribe()
+    }
+  }
 }
+
+/** Starts watching for one departure; `gone` runs once it is seen; the answer stops watching. */
+type Departure = (gone: () => void) => () => void
 
 /**
  * Today's `LaunchedSessionRegistry`, unchanged in what it does, that also answers which of its launches are still
