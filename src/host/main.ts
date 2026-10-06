@@ -54,7 +54,12 @@
 // `mines` section served before the bind, its board frames (the provider-error toast among them)
 // and the provider-error route to `checkFolder`, reading each mine's totals from the ledger; then
 // crew's observation routes, the boot recompute of the dwarf statuses from their persisted facts
-// (S1.18) and the ledger's backfill folder resolution over the mines' queries. The others join
+// (S1.18) and the ledger's backfill folder resolution over the mines' queries; attention (ISSUE-119:
+// wiring/routes/attentionTransport.ts) over the SqliteAttentionLedger, the TransportLevel3Sink, the
+// AppBackgroundNotifierLauncher (this executable `--background`, after the app folder in a
+// development build) and the `AttentionSettings` bridge to preferences, with B-M07 `presence` and
+// B-M08 `attention.clicked` served before the bind, the attention frames advertised, and the
+// connection registry feeding the presence union and the tray notifier supervisor. The others join
 // later. Observation is composed but not started: step 7 stays a placeholder while the bridge's
 // sink is (ISSUE-108). After step 7 (`startModules`) the mines restart the walks a stopped Host
 // left and start their folder-check schedule. The coal backfill, after `ready`, is held off with
@@ -63,6 +68,8 @@ import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
+import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
+import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
@@ -100,6 +107,7 @@ import { hostRuntime } from './platform/process/runtimeFacts'
 import { createHostFileProtection } from './platform/sqlite/fileProtection'
 import { SqliteResetCleanup } from './platform/sqlite/resetCleanup'
 import { migrationsFor } from './platform/sqlite/migrations'
+import { TransportLevel3Sink } from './transport/attention/TransportLevel3Sink'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
 import { BOARD_FRAMES } from './transport/frames/board'
@@ -130,6 +138,13 @@ import {
   unavailableSecretStore,
   type WiredPreferences
 } from './wiring/preferencesWiring'
+import {
+  ATTENTION_FRAMES,
+  onNotifierAttach,
+  serveAttention,
+  type AttentionRouteEvent,
+  type WiredAttention
+} from './wiring/routes/attentionTransport'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import {
   startBackfillWhenObserving,
@@ -155,7 +170,12 @@ import type { CleanExit } from './transport/lifecycle/cleanExit'
 
 /** Every event the Host's one bus carries so far. */
 type HostEvent =
-  PreferencesEvent | SuppliersEvent | MinesRouteEvent | CrewRouteEvent | LedgerRouteEvent
+  | PreferencesEvent
+  | SuppliersEvent
+  | MinesRouteEvent
+  | CrewRouteEvent
+  | LedgerRouteEvent
+  | AttentionRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -240,6 +260,7 @@ async function main(): Promise<void> {
     observation?: WiredObservation
     crew?: WiredCrew
     mines?: WiredMines
+    attention?: WiredAttention
   } = {}
   // The Host's one event bus (16 §2.3), created by boot step 3 over the connection step 2 opened;
   // each module's events join its union with the module.
@@ -290,6 +311,7 @@ async function main(): Promise<void> {
   const servedPreferences = servePreferences({ dispatcher, sections, connections })
   const servedMines = serveMines({ dispatcher, sections, connections })
   const servedCrew = serveCrew({ dispatcher, sections })
+  const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
     diagnostics: log,
@@ -358,7 +380,8 @@ async function main(): Promise<void> {
           ...PREFERENCES_FRAMES,
           ...RESET_FRAMES,
           ...BOARD_FRAMES,
-          ...LEDGER_FRAMES
+          ...LEDGER_FRAMES,
+          ...ATTENTION_FRAMES
         ],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
@@ -551,6 +574,28 @@ async function main(): Promise<void> {
             queries: modules.mines.mines.queries
           })
           ledger.route({ mines: modules.mines.mines.queries })
+          // Attention: its routes from the other modules' events join with ISSUE-120.
+          modules.attention = servedAttention.wire({
+            ledger: new SqliteAttentionLedger({ db, scope: transactions, clock, hostEpoch: epoch }),
+            sink: new TransportLevel3Sink(connections),
+            launcher: new AppBackgroundNotifierLauncher({
+              processes: processControl,
+              paths: dataDir,
+              // A development build's executable is Electron itself: it needs the app folder.
+              appArgs: dataDir.isPackaged ? [] : [appRoot],
+              env: process.env,
+              scheduler,
+              onNotifierAttach: onNotifierAttach(connections)
+            }),
+            preferences: modules.preferences.preferences.queries,
+            transactions,
+            bus,
+            clock,
+            scheduler,
+            ids,
+            hostEpoch: epoch,
+            log
+          })
         },
         // Step 7 (`startObservation`: catch-up, then the live loop) is not passed: until the
         // bridge has its conversation half the batch sink is the placeholder, a running loop

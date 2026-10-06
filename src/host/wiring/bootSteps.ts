@@ -119,8 +119,10 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
         },
     // 4. Construct the modules, wire bridges and event routes (05 §4), over the database step 2
     //    opened; each module joins in its own wiring issue (suppliers: ISSUE-159, mines: ISSUE-093,
-    //    crew: ISSUE-094, observation: ISSUE-095). Every route that reads an observation event is
-    //    subscribed here, before step 7's catch-up publishes the first one.
+    //    crew: ISSUE-094, observation: ISSUE-095, attention: ISSUE-119). Every route that reads an
+    //    observation event is subscribed here, before step 7's catch-up publishes the first one.
+    //    Attention's tray notifier supervisor starts here too, after step 1's endpoint is
+    //    listening, fed with the clients already attached and every later attach and detach.
     constructModules === undefined
       ? placeholder('construct-modules', 'ISSUE-093')
       : {
