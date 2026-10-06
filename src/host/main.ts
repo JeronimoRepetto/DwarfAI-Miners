@@ -38,11 +38,15 @@
 // and before any command is accepted (05 §2.3; 16 §8.2). Boot step 4 constructs the other modules,
 // each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
 // SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
-// the others join later.
+// mines (ISSUE-093: wiring/routes/mines.ts) with the FsSourceWeightScanner of its scoring walks, its
+// seam-B members (B-M16…B-M20) and `mines` section served before the bind, its board frames and the
+// provider-error route to `checkFolder`; the others join later. After step 7 (`startModules`) the
+// mines restart the walks a stopped Host left and start their folder-check schedule.
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
+import { FsSourceWeightScanner } from './modules/mines/adapters/FsSourceWeightScanner'
 import type { PreferencesEvent } from './modules/preferences'
 import type { Suppliers, SuppliersEvent } from './modules/suppliers'
 import { createHostInstallResolver } from './modules/suppliers/adapters/install/hostInstallResolver'
@@ -74,6 +78,7 @@ import { SqliteResetCleanup } from './platform/sqlite/resetCleanup'
 import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
+import { BOARD_FRAMES } from './transport/frames/board'
 import { createUpgradeDrain } from './transport/lifecycle/drain'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
@@ -99,9 +104,19 @@ import {
   unavailableSecretStore,
   type WiredPreferences
 } from './wiring/preferencesWiring'
+import {
+  DEFAULT_MINES_SETTINGS,
+  noCrewYet,
+  serveMines,
+  type MinesRouteEvent,
+  type WiredMines
+} from './wiring/routes/mines'
 import { isPublicBuild, wireSuppliers } from './wiring/suppliersWiring'
 import { HostInvariantError, InProcessEventBus } from './kernel'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
+
+/** Every event the Host's one bus carries so far. */
+type HostEvent = PreferencesEvent | SuppliersEvent | MinesRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -177,10 +192,10 @@ async function main(): Promise<void> {
   // Host is past `starting` and `migrating` (HOST_NOT_READY before), so after step 2 opened it.
   let database: HostDatabase | undefined
   // The modules boot steps 3 and 4 construct, for the bridges and transport methods that join later.
-  const modules: { preferences?: WiredPreferences; suppliers?: Suppliers } = {}
+  const modules: { preferences?: WiredPreferences; suppliers?: Suppliers; mines?: WiredMines } = {}
   // The Host's one event bus (16 §2.3), created by boot step 3 over the connection step 2 opened;
   // each module's events join its union with the module.
-  let bus: InProcessEventBus<PreferencesEvent | SuppliersEvent> | undefined
+  let bus: InProcessEventBus<HostEvent> | undefined
   // The module sections join this registry here, each with its module (16 §8.2 step 4).
   const sections = new SectionRegistry()
   const snapshotMeta: SnapshotMetaSource = {
@@ -225,6 +240,7 @@ async function main(): Promise<void> {
   // Served before the boot binds the endpoint, so every hello.ok lists them (14 §1.3); boot step 3
   // constructs the module they forward to.
   const servedPreferences = servePreferences({ dispatcher, sections, connections })
+  const servedMines = serveMines({ dispatcher, sections, connections })
   const processControl = new NodeProcessControl({
     scheduler,
     diagnostics: log,
@@ -287,7 +303,13 @@ async function main(): Promise<void> {
         state: () => hostState.current(),
         dispatcher,
         connections,
-        frames: [...LIFECYCLE_FRAMES, ...TRANSPORT_FRAMES, ...PREFERENCES_FRAMES, ...RESET_FRAMES],
+        frames: [
+          ...LIFECYCLE_FRAMES,
+          ...TRANSPORT_FRAMES,
+          ...PREFERENCES_FRAMES,
+          ...RESET_FRAMES,
+          ...BOARD_FRAMES
+        ],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
         sections: () => sections.names(),
@@ -318,7 +340,7 @@ async function main(): Promise<void> {
         // Step 3: preferences first, then the saga's boot resume (07 S13.08).
         resumeResetSaga: async () => {
           const { db, transactions } = opened.connection()
-          bus = new InProcessEventBus<PreferencesEvent | SuppliersEvent>({
+          bus = new InProcessEventBus<HostEvent>({
             transactionScope: transactions,
             onHandlerError: (failure) =>
               log.record({
@@ -381,7 +403,27 @@ async function main(): Promise<void> {
             // A new demo world each Host start (15 §4.12); development builds only.
             simulatedSeed: epoch
           })
-        }
+          modules.mines = servedMines.wire({
+            db,
+            transactions,
+            bus,
+            clock,
+            scheduler,
+            ids,
+            fs,
+            hostEpoch: epoch,
+            log,
+            // No spawn-site table reaches the Host yet: no site is stored, and the map places each
+            // marker itself (chooseMapSite's documented fallback).
+            mapSites: [],
+            random: Math.random,
+            scanner: new FsSourceWeightScanner(),
+            ...DEFAULT_MINES_SETTINGS,
+            // Crew is constructed by ISSUE-094.
+            crew: noCrewYet
+          })
+        },
+        startModules: () => modules.mines?.start()
       })
     },
     {

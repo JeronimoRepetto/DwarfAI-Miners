@@ -55,6 +55,12 @@ export interface BootPorts {
    * at a time (suppliers: ISSUE-159). Until it is passed the step is a placeholder.
    */
   constructModules?: () => void
+  /**
+   * After step 7, before `ready`: starts the modules' own background work over what step 4
+   * constructed (the mines' boot walks and folder-check schedule: ISSUE-093). Without it nothing
+   * is started.
+   */
+  startModules?: () => void
 }
 
 /** The Host's UI endpoint as the boot sees it. */
@@ -71,7 +77,7 @@ function placeholder(name: BootStepName, owner: string): BootStep {
 }
 
 export function createBootSteps(ports: BootPorts): readonly BootStep[] {
-  const { resumeResetSaga, constructModules } = ports
+  const { resumeResetSaga, constructModules, startModules } = ports
   return [
     // 1. Bind the UI endpoint; the bind is the single-instance mutex (decideBind, ADR-002 D3).
     {
@@ -122,9 +128,15 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     placeholder('start-observation', 'ISSUE-095'),
     // 8. hello answers `ready`: the boot reports `ready` into the lifecycle state holder
     //    (transport/lifecycle/hostState.ts) once this last step is done (S12.06), which answers
-    //    every later `hello.ok` with it and sends `host.state` to the `ui` connections. Nothing is
-    //    left to run here.
-    { name: 'answer-ready', run: () => Promise.resolve({ kind: 'done' }) }
+    //    every later `hello.ok` with it and sends `host.state` to the `ui` connections. First, once
+    //    step 7 is done, the modules' own background work starts (`startModules`).
+    {
+      name: 'answer-ready',
+      run: () => {
+        startModules?.()
+        return Promise.resolve({ kind: 'done' })
+      }
+    }
   ]
 }
 
