@@ -1,7 +1,7 @@
 // The conversation log's aggregate (06 §9.1; ADR-007 item 2) and the ingest rule for one entry
 // (09 §5.2 steps 1–2 and "Dropped records"). Pure: no I/O, no clock read (05 §2.2, R1).
 import type { AnswerRefusalReason, SourceKey } from '../../../kernel/domain/sharedContracts'
-import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
+import type { AskId, DwarfId, Instant, MessageId, MineId } from '../../../kernel/domain/values'
 
 /** `MessageText` bound (06 §9.1; 09 §4.4 CHECK): UTF-8 bytes, truncated with a marker upstream. */
 export const MESSAGE_TEXT_MAX_BYTES = 65_536
@@ -112,6 +112,20 @@ export interface FeedPage {
   dwarfId: DwarfId
   messages: MessageView[]
   reachedStart: boolean
+}
+
+/**
+ * 14 §3.6 `MineHistoryView`, copied field for field like `FeedPage` above (05 R2, R3): every dwarf
+ * that worked in the mine, present or departed, with its stored rows (at most 50, oldest first).
+ */
+export interface MineHistoryView {
+  mineId: MineId
+  speakers: Array<{
+    dwarfId: DwarfId
+    displayName: string
+    departed: boolean
+    messages: MessageView[]
+  }>
 }
 
 /** What one ingested entry does (09 §5.2): a new row, a merge into a waiting row, or its key only. */

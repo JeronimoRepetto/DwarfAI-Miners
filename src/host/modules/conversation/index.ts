@@ -16,9 +16,10 @@
 // `ingest`, `recordTurnEnd`, `recordSessionEnd` and `noteAsk` (amended B2) recomputes it in its
 // transaction through `ActivityLog.outcomeOf` / `saveOutcome` (amendment B) and publishes
 // `OutcomeLineChanged` after the commit when it changed. ISSUE-107: the Reset-metrics step
-// (`createConversationResetStep`), which reaches the saga structurally.
+// (`createConversationResetStep`), which reaches the saga structurally. ISSUE-104: `mineHistory`
+// (`Conversation.history`), over crew's public queries that host/wiring passes (later: ISSUE-108).
 // Conversation imports only suppliers and crew (05 §1.3, R4).
-import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
+import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
@@ -31,11 +32,15 @@ import { SqliteMessageLog } from './adapters/SqliteMessageLog'
 import { ConversationResetStep } from './adapters/sqlite/ConversationResetStep'
 import { ConversationIngest, type AskChange, type ConversationCommands } from './application/ingest'
 import { AskNoter } from './application/noteAsk'
-import { ConversationFeedQueries } from './application/queries'
+import {
+  ConversationFeedQueries,
+  ConversationMineHistory,
+  type MineCrew
+} from './application/queries'
 import { SessionEndRecorder } from './application/recordSessionEnd'
 import { TurnEndRecorder } from './application/recordTurnEnd'
 import type { ConversationEvent } from './domain/events'
-import type { FeedPage, FeedPageRequest } from './domain/messages'
+import type { FeedPage, FeedPageRequest, MineHistoryView } from './domain/messages'
 
 export type {
   ActivityChanged,
@@ -59,18 +64,21 @@ export type {
   Message,
   MessageOrigin,
   MessageRole,
-  MessageView
+  MessageView,
+  MineHistoryView
 } from './domain/messages'
+export type { MineCrew }
 export type { AskChange, ConversationCommands }
 /** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
 export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
 
 /**
- * 16 §4.6 `ConversationQueries` (driving): a dwarf's feed, newest first, at most 50 rows (INV-61).
- * `mineHistory` joins with its issue (later: ISSUE-104).
+ * 16 §4.6 `ConversationQueries` (driving): a dwarf's feed, newest first, at most 50 rows (INV-61),
+ * and a mine's history, the same ≤ 50 rows per dwarf, undelivered ones included.
  */
 export interface ConversationQueries {
   feed(dwarfId: DwarfId, page?: FeedPageRequest): FeedPage
+  mineHistory(mineId: MineId): MineHistoryView
 }
 
 export interface ConversationDeps {
@@ -102,7 +110,14 @@ export interface JoinedEvents {
 
 export interface Conversation {
   commands: ConversationCommands
-  queries: ConversationQueries
+  /** The feed (ISSUE-103). */
+  queries: Pick<ConversationQueries, 'feed'>
+  /**
+   * `ConversationQueries.mineHistory` (ISSUE-104) over crew's `crewOf` (the conversation → crew
+   * edge, 05 §1.3): `host/wiring` passes crew's public queries when it composes both modules
+   * (later: ISSUE-108).
+   */
+  history(deps: { crew: MineCrew }): Pick<ConversationQueries, 'mineHistory'>
   joinedEvents: JoinedEvents
 }
 
@@ -181,6 +196,7 @@ export function createConversation(deps: ConversationDeps): Conversation {
   return {
     commands,
     queries: new ConversationFeedQueries({ log }),
+    history: ({ crew }) => new ConversationMineHistory({ log, crew }),
     joinedEvents: {
       publish: () => ingest.publishJoined(),
       discard: () => ingest.discardJoined()

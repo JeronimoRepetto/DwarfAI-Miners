@@ -24,6 +24,7 @@ import {
   echoesTypedSend,
   MESSAGE_TEXT_MAX_BYTES,
   type Delivery,
+  type DeliveryFailure,
   type DeliveryPhase,
   type FeedPageRequest,
   type Message
@@ -187,6 +188,14 @@ export class InMemoryMessageLog implements MessageLog {
   }
 
   /**
+   * Test seam: a DwarfAI-sent person row whose delivery failed with `failure` (ISSUE-166 settles
+   * these through `setDelivery`).
+   */
+  seedFailedRow(dwarfId: DwarfId, text: string, failure: DeliveryFailure): MessageId {
+    return this.seedDwarfAiRow(dwarfId, 'person', text, null, 'failed', failure)
+  }
+
+  /**
    * Test seam: an "Answers:" record of `dwarfId`, delivered unless `phase` says otherwise (asking
    * writes these through `AnswerRecords`).
    */
@@ -243,7 +252,8 @@ export class InMemoryMessageLog implements MessageLog {
     role: 'person' | 'answers-record',
     text: string,
     pendingEcho: string | null,
-    delivery: DeliveryPhase | null
+    delivery: DeliveryPhase | null,
+    failure?: DeliveryFailure
   ): MessageId {
     const now = this.deps.clock.now()
     const message: Message = {
@@ -268,6 +278,7 @@ export class InMemoryMessageLog implements MessageLog {
               dwarfId,
               kind: role === 'answers-record' ? 'answers-record' : 'message',
               phase: delivery,
+              ...(failure === undefined ? {} : { failure }),
               attempts: 1,
               phaseAt: now
             }

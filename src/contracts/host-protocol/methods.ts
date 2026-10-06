@@ -15,12 +15,14 @@ import {
   stopAllOutcomeSchema,
   stranglerDwarfIdentitySchema,
   feedPageSchema,
+  mineHistoryViewSchema,
   type DwarfId,
   type FeedPage,
   type FolderPath,
   type HostEpoch,
   type HostPreferences,
   type Instant,
+  type MineHistoryView,
   type MineId,
   type PreferencesView,
   type StopAllOutcome,
@@ -61,7 +63,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26, B-M27 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -90,6 +92,7 @@ export interface HostMethods {
   'mines.resolveFile':               { params: { mineId: MineId; dwarfId?: DwarfId; target: string }; result: ResolveFileResult }
   // conversation
   'conversation.feed':               { params: FeedParams; result: FeedPage }
+  'conversation.mineHistory':        { params: { mineId: MineId }; result: MineHistoryView }
   // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
@@ -255,6 +258,12 @@ export const HOST_METHOD_SCHEMAS = {
   'conversation.feed': {
     params: feedParamsSchema,
     result: feedPageSchema
+  },
+  // B-M27 (14 §2.3, §3.6): `ui` only (host/transport/methods/conversationMineHistory.ts); a query, so no
+  // requestId (14 §1.6). Its result is sensitive (14 §3.5 SENSITIVE_METHODS).
+  'conversation.mineHistory': {
+    params: z.object({ mineId: mineIdSchema }).strict(),
+    result: mineHistoryViewSchema
   },
   // B-M41 (14 §2.3, §1.10; AMENDMENT-8, OQ-69): `ui` only, never relayed to seam A; deleted with
   // LegacyDwarfIdBridge at the end of cut 4 (later: ISSUE-241).
