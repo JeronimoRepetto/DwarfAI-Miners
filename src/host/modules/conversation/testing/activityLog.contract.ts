@@ -8,18 +8,19 @@
 // over `outcome_lines`, replaced by the next save, the same line twice changing nothing, inside the
 // caller's transaction (INV-67; 09 §4.4). `outcomeOf` (16 §4.6, amendment B): null with no line, the
 // saved line, the same from a reopened store, refused outside the caller's transaction.
-// `storedOutcomeOf` (owner amendment E, 2026-10-06, behind `ConversationQueries.outcomeOf`): the same
-// line read outside any transaction, null with none, the latest after a replace and a reopen.
+// `storedOutcomeOf` (16 §4.6, owner amendment E, 2026-10-06; behind `ConversationQueries.outcomeOf`):
+// the same line read outside any transaction, null with none, the latest after a replace and a
+// reopen.
 import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
 import type { ActivityDisclosure } from '../domain/activityRun'
 import type { OutcomeLine } from '../domain/outcomeLine'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
-import type { ActivityLog, StoredOutcomeReads } from '../ports/activityLog'
+import type { ActivityLog } from '../ports/activityLog'
 
 export interface ActivityLogSubject {
-  log: ActivityLog & StoredOutcomeReads
+  log: ActivityLog
   /** Two dwarfs that exist in the subject's store (the SQLite half seeds their rows). */
   dwarfIds: readonly [DwarfId, DwarfId]
   /** The caller's transaction: commits when `work` returns, rolls back when it throws. */
@@ -29,7 +30,7 @@ export interface ActivityLogSubject {
   /** The dwarf's stored outcome line, or null. */
   outcome(dwarfId: DwarfId): OutcomeLine | null
   /** A new store over the same stored runs: what a Host restart opens (S11.07). */
-  reopen(): ActivityLog & StoredOutcomeReads
+  reopen(): ActivityLog
   dispose(): void | Promise<void>
 }
 

@@ -24,7 +24,7 @@ import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ActivityDisclosure } from '../domain/activityRun'
 import type { OutcomeLine, OutcomeLinePart, TurnOutcomeKind } from '../domain/outcomeLine'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
-import type { ActivityLog, StoredOutcomeReads } from '../ports/activityLog'
+import type { ActivityLog } from '../ports/activityLog'
 
 export interface SqliteActivityLogDeps {
   /** The Host's one writer (09 §8.1). */
@@ -66,7 +66,7 @@ const OUTCOME_OF = `SELECT dwarf_id, kind, step_count, parts_json, detail, closi
 const OPEN_RUN = `SELECT id, dwarf_id, turn_key, open, step_count, summaries_json, opened_at, closed_at
   FROM activity_disclosures WHERE dwarf_id = ? AND open = 1`
 
-export class SqliteActivityLog implements ActivityLog, StoredOutcomeReads {
+export class SqliteActivityLog implements ActivityLog {
   constructor(private readonly deps: SqliteActivityLogDeps) {}
 
   saveDisclosure(d: ActivityDisclosure): void {
@@ -105,7 +105,7 @@ export class SqliteActivityLog implements ActivityLog, StoredOutcomeReads {
     return row === undefined ? null : outcomeOfRow(row)
   }
 
-  // Amended: 16 §4.6 ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)
+  // Amended: 16 §4.6 storedOutcomeOf, the read-side half of owner amendment E (2026-10-06)
   storedOutcomeOf(dwarfId: DwarfId): OutcomeLine | null {
     // The read side (09 §8.1): no transaction is needed or opened for one keyed row.
     const row = this.deps.db.all(OUTCOME_OF, [dwarfId])[0]

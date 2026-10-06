@@ -15,7 +15,7 @@ import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ActivityDisclosure } from '../domain/activityRun'
 import type { OutcomeLine } from '../domain/outcomeLine'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
-import type { ActivityLog, StoredOutcomeReads } from '../ports/activityLog'
+import type { ActivityLog } from '../ports/activityLog'
 
 export interface InMemoryActivityLogDeps {
   /** The caller's transaction probe (16 §2.2). */
@@ -28,7 +28,7 @@ export interface ActivityStore {
   outcomes: Map<DwarfId, OutcomeLine>
 }
 
-export class InMemoryActivityLog implements ActivityLog, StoredOutcomeReads {
+export class InMemoryActivityLog implements ActivityLog {
   /** The stored runs and lines, shared with every store `reopen` returns. */
   private readonly box: ActivityStore
 
@@ -78,7 +78,7 @@ export class InMemoryActivityLog implements ActivityLog, StoredOutcomeReads {
     return this.outcome(dwarfId)
   }
 
-  // Amended: 16 §4.6 ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)
+  // Amended: 16 §4.6 storedOutcomeOf, the read-side half of owner amendment E (2026-10-06)
   storedOutcomeOf(dwarfId: DwarfId): OutcomeLine | null {
     return this.outcome(dwarfId)
   }
