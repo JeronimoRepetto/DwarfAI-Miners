@@ -583,7 +583,9 @@ async function main(): Promise<void> {
             // No launch and no delivery route reach the Host yet (later: EPIC-10).
             links: { owned: () => false, hasDeliveryRoute: () => false },
             processes: processControl,
-            observation: modules.observation.crew
+            observation: modules.observation.crew,
+            // The `dwarfs` section's stored outcome lines (owner amendment E).
+            outcomes: conversation.conversation.queries
           })
           modules.mines = servedMines.wire({
             db,
@@ -602,7 +604,9 @@ async function main(): Promise<void> {
             scanner: new FsSourceWeightScanner(),
             ...DEFAULT_MINES_SETTINGS,
             crew: modules.crew.mines,
-            ledger: ledger.totals
+            ledger: ledger.totals,
+            // The board frames' stored outcome lines (owner amendment E).
+            outcomes: conversation.conversation.queries
           })
           modules.crew.route({
             commands: modules.mines.mines.commands,

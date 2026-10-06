@@ -64,6 +64,7 @@ const SERVED_SINCE_CUT_0 = [
   // (ISSUE-108).
   'conversation.feed',
   'conversation.mineHistory',
+  'frame:activity.changed',
   'frame:conversation.appended',
   'frame:turn.ended',
   'section:tails'

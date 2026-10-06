@@ -16,9 +16,11 @@
 //   field is named and copied, so a field the domain grows never crosses unseen.
 // - `DwarfWire.workplace` (the worktree chip, mines' stamp, ADR-030 D4) and `outcome` (the outcome
 //   line, conversation's, INV-67) are not in `DwarfView`. The outcome joins through `toDwarfWire`'s
-//   second argument: the line an `OutcomeLineChanged` carries (ISSUE-108,
-//   wiring/routes/conversationFrames.ts), mapped by `toOutcomeLineWire`, whose domain and wire
-//   types are held equal by wire.types.test.ts. The workplace joins with mines' stamp.
+//   second argument, mapped by `toOutcomeLineWire` (domain and wire types held equal by
+//   wire.types.test.ts): the line an `OutcomeLineChanged` carries (wiring/routes/conversationFrames.ts),
+//   or, for every other dwarf frame and the `dwarfs` section, the stored line `DwarfOutcomeReader`
+//   reads (`ConversationQueries.outcomeOf`, owner amendment E, 2026-10-06; ISSUE-108). The
+//   workplace joins with mines' stamp.
 import type {
   Delivery as DeliveryWire,
   DwarfWire,
@@ -30,7 +32,7 @@ import type {
   OutcomeLine as OutcomeLineWire
 } from '@dwarfai/contracts'
 import { HostInvariantError } from '../../kernel/domain/errors'
-import type { MineId } from '../../kernel/domain/values'
+import type { DwarfId, MineId } from '../../kernel/domain/values'
 import type { Delivery, MessageView, OutcomeLine } from '../../modules/conversation'
 import type { DwarfView } from '../../modules/crew'
 import type { MineView } from '../../modules/mines'
@@ -81,6 +83,21 @@ export function toMineWire(view: MineView, totals: MaterialTotals): MineWire {
       uranium: { tokens: totals.uranium.tokens }
     }
   }
+}
+
+// Amended: 16 §4.6 ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)
+/** Reads a dwarf's stored outcome line (`ConversationQueries.outcomeOf`), at the instant of mapping. */
+export interface DwarfOutcomeReader {
+  outcomeOf(dwarfId: DwarfId): OutcomeLine | null
+}
+
+/** No conversation is wired: no dwarf has a stored line, and `DwarfWire.outcome` is absent. */
+export const NO_OUTCOMES: DwarfOutcomeReader = Object.freeze({ outcomeOf: () => null })
+
+/** 14 §3.6 `DwarfWire` of a dwarf with its stored outcome line, when it has one. */
+export function toDwarfWireWithOutcome(view: DwarfView, outcomes: DwarfOutcomeReader): DwarfWire {
+  const outcome = outcomes.outcomeOf(view.id)
+  return toDwarfWire(view, outcome === null ? {} : { outcome })
 }
 
 /** What other owners join to a dwarf's wire (14 §3.6 `DwarfWire`): conversation's outcome line. */

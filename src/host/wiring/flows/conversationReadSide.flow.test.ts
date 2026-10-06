@@ -350,7 +350,8 @@ async function bootHost(options: { world: World; rolledBack?: boolean }) {
             log,
             links: { owned: () => false, hasDeliveryRoute: () => false },
             processes,
-            observation: observation.crew
+            observation: observation.crew,
+            outcomes: conversation.conversation.queries
           })
           const mines = servedMines.wire({
             db,
@@ -367,7 +368,8 @@ async function bootHost(options: { world: World; rolledBack?: boolean }) {
             scanner: new FsSourceWeightScanner(),
             ...DEFAULT_MINES_SETTINGS,
             crew: crew.mines,
-            ledger: ledger.totals
+            ledger: ledger.totals,
+            outcomes: conversation.conversation.queries
           })
           crew.route({ commands: mines.mines.commands, queries: mines.mines.queries })
           ledger.route({ mines: mines.mines.queries })
@@ -548,12 +550,30 @@ function entry(n: number, role: ConversationEntry['role'], text: string): Conver
   }
 }
 
+/** `e` with one folded tool step (15 §1.2 `ActivityStep`), its summary one invented line. */
+function withStep(e: ConversationEntry, n: number): ConversationEntry {
+  return {
+    ...e,
+    activity: [
+      {
+        sourceKey: `claude:session-a:tool-${n}`,
+        turnKey: 'turn-1',
+        kind: 'tool',
+        toolName: 'Read',
+        summary: `Read step ${n}`,
+        state: 'finished',
+        at: (T0 + n) as Instant
+      }
+    ]
+  }
+}
+
 function count(db: SqliteDatabase, sql: string, params: unknown[] = []): number {
   return Number(db.all(sql, params as never)[0]?.['n'])
 }
 
 describe('the conversation read side wired into the Host (ISSUE-108)', () => {
-  it('[ADR-003] after boot hello.ok advertises conversation.feed, conversation.mineHistory, section:tails and the frames conversation.appended and turn.ended', async () => {
+  it('[ADR-003] after boot hello.ok advertises conversation.feed, conversation.mineHistory, section:tails and the frames conversation.appended, activity.changed and turn.ended', async () => {
     const w = world()
     const h = await bootHost({ world: w })
 
@@ -566,6 +586,7 @@ describe('the conversation read side wired into the Host (ISSUE-108)', () => {
         methodCapability('conversation.mineHistory'),
         sectionCapability('tails'),
         frameCapability('conversation.appended'),
+        frameCapability('activity.changed'),
         frameCapability('turn.ended'),
         frameCapability('dwarf.changed')
       ])
@@ -675,6 +696,82 @@ describe('the conversation read side wired into the Host (ISSUE-108)', () => {
     })
   })
 
+  it('[S11.03] a run closing reaches the ui as activity.changed with open false', async () => {
+    const w = world()
+    w.seedDwarf()
+    const h = await bootHost({ world: w })
+    const ui = await h.attach('ui')
+
+    // Two tool steps open and grow the dwarf's run; the dwarf speaking closes it (07 S11.03).
+    h.batches.transactions.inTransaction(() =>
+      h.sink.apply({
+        dwarfId: DWARF,
+        entries: [withStep(entry(1, 'dwarf', ''), 1), withStep(entry(2, 'dwarf', ''), 2)],
+        usage: []
+      })
+    )
+    await h.settle(ui)
+    h.batches.transactions.inTransaction(() =>
+      h.sink.apply({ dwarfId: DWARF, entries: [entry(3, 'dwarf', 'The seam holds.')], usage: [] })
+    )
+    await h.settle(ui)
+    h.stop()
+
+    const changes = evts(ui, 'activity.changed') as Array<{ disclosureId: string }>
+    expect(changes).toStrictEqual([
+      {
+        dwarfId: DWARF,
+        disclosureId: changes[0]?.disclosureId,
+        open: true,
+        stepCount: 2,
+        summaries: ['Read step 1', 'Read step 2']
+      },
+      {
+        dwarfId: DWARF,
+        disclosureId: changes[0]?.disclosureId,
+        open: false,
+        stepCount: 2,
+        summaries: ['Read step 1', 'Read step 2']
+      }
+    ])
+  })
+
+  it("[INV-67] a reconnecting ui's snapshot shows each dwarf's stored outcome line, and every later dwarf.changed carries it", async () => {
+    const w = world()
+    w.seedDwarf()
+    const first = await bootHost({ world: w })
+    first.conversation.conversation.commands.recordTurnEnd({
+      dwarfId: DWARF,
+      turnKey: 'turn-1',
+      kind: 'concluded',
+      at: T0 + 10,
+      reliability: 'reliable',
+      cancelledFromApp: false
+    })
+    await first.settle()
+    first.stop()
+
+    // The next Host over the same database; a ui attaches and reads the board.
+    const h = await bootHost({ world: w })
+    const ui = await h.attach('ui')
+    const snapshot = await h.call(ui, 'session.snapshot', { sections: ['dwarfs'] })
+    // A status change of the dwarf (crew's board frame) after the snapshot.
+    h.crew.crew.commands.recordActivity(DWARF, 'turn-started')
+    await h.settle(ui)
+    h.stop()
+
+    const stored = { dwarfId: DWARF, kind: 'concluded', reliability: 'reliable', at: T0 + 10 }
+    const page = (snapshot.ok ? snapshot.result : null) as {
+      chunks: Array<{ section: string; data: Array<{ id: DwarfId; outcome?: unknown }> }>
+    } | null
+    const dwarfs = page?.chunks.find((chunk) => chunk.section === 'dwarfs')?.data
+    expect(dwarfs?.map((dwarf) => dwarf.id)).toEqual([DWARF])
+    expect(dwarfs?.[0]?.outcome).toMatchObject(stored)
+    const changed = evts(ui, 'dwarf.changed') as Array<{ dwarf: { outcome?: unknown } }>
+    expect(changed.length).toBeGreaterThan(0)
+    for (const frame of changed) expect(frame.dwarf.outcome).toMatchObject(stored)
+  })
+
   it('[ADR-003] a notifier connection receives none of these frames', async () => {
     const w = world()
     w.seedDwarf()
@@ -683,7 +780,11 @@ describe('the conversation read side wired into the Host (ISSUE-108)', () => {
     const ui = await h.attach('ui')
 
     h.batches.transactions.inTransaction(() =>
-      h.sink.apply({ dwarfId: DWARF, entries: [entry(1, 'dwarf', 'Struck gold.')], usage: [] })
+      h.sink.apply({
+        dwarfId: DWARF,
+        entries: [withStep(entry(1, 'dwarf', 'Struck gold.'), 1)],
+        usage: []
+      })
     )
     h.conversation.conversation.commands.recordTurnEnd({
       dwarfId: DWARF,
@@ -698,7 +799,12 @@ describe('the conversation read side wired into the Host (ISSUE-108)', () => {
 
     // The ui got them, so they were sent; the notifier role is in no 14 §2.4 audience of them.
     expect(evtNames(ui)).toEqual(
-      expect.arrayContaining(['conversation.appended', 'turn.ended', 'dwarf.changed'])
+      expect.arrayContaining([
+        'conversation.appended',
+        'activity.changed',
+        'turn.ended',
+        'dwarf.changed'
+      ])
     )
     expect(
       evtNames(notifier).filter((name) =>
