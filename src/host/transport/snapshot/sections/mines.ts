@@ -14,7 +14,7 @@ import type { SectionProvider, SectionRegistry } from '../sectionRegistry'
 
 export interface MinesSectionDeps {
   mines: Pick<MinesQueries, 'list' | 'get'>
-  /** The ledger's totals (`NO_LEDGER_TOTALS` until the ledger is wired, later: ISSUE-096). */
+  /** The ledger's totals (`WiredLedger.totals`, ISSUE-096; `NO_LEDGER_TOTALS` without a ledger). */
   ledger: MineTotalsReader
 }
 

@@ -10,7 +10,7 @@
 //   `mineId`, at the highest seq (14 §1.8, events/outbound.ts); each frame is the mine's whole
 //   totals, so the one that stays is the latest.
 // - `ledger.changed` is not a sensitive frame (14 §3.5 SENSITIVE_FRAMES): ids and counts only.
-// - Unbound until the ledger is wired into the Host (later: ISSUE-096).
+// - Bound by the ledger's wiring to the Host's connection registry (routes/ledger.ts, ISSUE-096).
 import type { HostFrameData, HostFrameName } from '@dwarfai/contracts'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { LedgerEvent, LedgerQueries } from '../../modules/ledger'

@@ -3,7 +3,8 @@
 // `creditSealedUnits` and `totals` (ISSUE-076) and the coal backfill `runCoalBackfill`
 // (ISSUE-077); offline catch-up is observation's (ISSUE-078), and the Reset step comes with
 // ISSUE-097. It imports no other module (05 §1.3): it is driven by event routes composed in
-// `host/wiring` (later: ISSUE-096), which also runs the backfill at Host `ready`.
+// `host/wiring` (routes/ledger.ts and the ObservedBatchSink bridge, ISSUE-096), which also runs
+// the backfill once the Host is `ready`.
 import type { UsageObservation } from '../../kernel/domain/sharedContracts'
 import type { MineId } from '../../kernel/domain/values'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
@@ -90,7 +91,7 @@ export interface Ledger {
   joinedEvents: JoinedEvents
 }
 
-/** The module over its driven ports; the adapters are composed by `host/main.ts` (ISSUE-096). */
+/** The module over its driven ports; `host/main.ts` composes the adapters (ISSUE-096). */
 export function createLedger(deps: LedgerDeps): Ledger {
   const crediting = new Crediting(deps)
   const backfill: CoalBackfillDeps = { scanner: deps.scanner, log: deps.log }
