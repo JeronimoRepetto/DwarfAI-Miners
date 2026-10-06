@@ -17,6 +17,12 @@
 // dwarf's stored line by the `outcome_lines` key, so a recompute knows the previous line (publish
 // only on change, 08 §5.1), the running step total since the person's last message, and the last
 // turn end and front ask the line carries.
+//
+// Amendment E to frozen 16 §4.6 (owner-approved 2026-10-06, ISSUE-108): `ConversationQueries` gains
+// `outcomeOf`, served on the read connection (09 §8.1) outside any transaction, so the board's
+// frames and the `dwarfs` section carry each dwarf's stored line. `StoredOutcomeReads` is the
+// driven read behind it, over the same `outcome_lines` row; `ActivityLog.outcomeOf` stays the
+// in-transaction read of a recompute.
 import type { DwarfId } from '../../../kernel/domain/values'
 import type { ActivityDisclosure } from '../domain/activityRun'
 import type { OutcomeLine } from '../domain/outcomeLine'
@@ -33,4 +39,11 @@ export interface ActivityLog {
   // Amended: 16 §4.6 openRun (owner amendment A, 2026-10-05)
   /** The dwarf's open run, or null when it has none (INV-66: at most one); inside the caller's transaction. */
   openRun(dwarfId: DwarfId): ActivityDisclosure | null
+}
+
+// Amended: 16 §4.6 ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)
+/** The read behind `ConversationQueries.outcomeOf`: the dwarf's stored line, outside any transaction. */
+export interface StoredOutcomeReads {
+  /** The dwarf's stored outcome line, or null; never opens or needs a transaction. */
+  storedOutcomeOf(dwarfId: DwarfId): OutcomeLine | null
 }

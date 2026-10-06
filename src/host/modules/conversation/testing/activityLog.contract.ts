@@ -8,16 +8,18 @@
 // over `outcome_lines`, replaced by the next save, the same line twice changing nothing, inside the
 // caller's transaction (INV-67; 09 §4.4). `outcomeOf` (16 §4.6, amendment B): null with no line, the
 // saved line, the same from a reopened store, refused outside the caller's transaction.
+// `storedOutcomeOf` (owner amendment E, 2026-10-06, behind `ConversationQueries.outcomeOf`): the same
+// line read outside any transaction, null with none, the latest after a replace and a reopen.
 import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
 import type { ActivityDisclosure } from '../domain/activityRun'
 import type { OutcomeLine } from '../domain/outcomeLine'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
-import type { ActivityLog } from '../ports/activityLog'
+import type { ActivityLog, StoredOutcomeReads } from '../ports/activityLog'
 
 export interface ActivityLogSubject {
-  log: ActivityLog
+  log: ActivityLog & StoredOutcomeReads
   /** Two dwarfs that exist in the subject's store (the SQLite half seeds their rows). */
   dwarfIds: readonly [DwarfId, DwarfId]
   /** The caller's transaction: commits when `work` returns, rolls back when it throws. */
@@ -27,7 +29,7 @@ export interface ActivityLogSubject {
   /** The dwarf's stored outcome line, or null. */
   outcome(dwarfId: DwarfId): OutcomeLine | null
   /** A new store over the same stored runs: what a Host restart opens (S11.07). */
-  reopen(): ActivityLog
+  reopen(): ActivityLog & StoredOutcomeReads
   dispose(): void | Promise<void>
 }
 
@@ -272,6 +274,19 @@ export function runActivityLogContract(
 
       // Outside the caller's transaction the read is refused (16 §2.2).
       expect(() => reopened.outcomeOf(dwarf)).toThrow(HostInvariantError)
+    })
+
+    it('[INV-67] storedOutcomeOf reads the saved line outside any transaction: null with none, the latest after a replace and a reopen', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      expect(s.log.storedOutcomeOf(dwarf)).toBeNull()
+
+      s.inTransaction(() => s.log.saveOutcome(finishedLine(dwarf)))
+      expect(s.log.storedOutcomeOf(dwarf)).toEqual(finishedLine(dwarf))
+      expect(s.log.storedOutcomeOf(other)).toBeNull()
+
+      s.inTransaction(() => s.log.saveOutcome(workingLine(dwarf, 3)))
+      expect(s.reopen().storedOutcomeOf(dwarf)).toEqual(workingLine(dwarf, 3))
     })
 
     it("[ADR-007] saveDisclosure outside the caller's transaction throws HostInvariantError and stores nothing", async () => {

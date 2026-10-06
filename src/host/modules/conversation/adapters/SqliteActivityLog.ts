@@ -14,7 +14,8 @@
 //   replacing every column, so an optional field the new line lacks is cleared; the parts are stored
 //   as given in `parts_json` (its CHECK refuses more than three).
 // - `outcomeOf` reads that row back by its key (16 §4.6, amendment B); a NULL optional column is an
-//   absent field.
+//   absent field. `storedOutcomeOf` (amendment E) reads the same row outside any transaction, for
+//   `ConversationQueries.outcomeOf`.
 // - Summaries are one line per step and never tool output (ADR-007 item 4): stored as given.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId } from '../../../kernel/domain/values'
@@ -23,7 +24,7 @@ import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ActivityDisclosure } from '../domain/activityRun'
 import type { OutcomeLine, OutcomeLinePart, TurnOutcomeKind } from '../domain/outcomeLine'
 import { ACTIVITY_RUNS_PER_DWARF } from '../domain/retention'
-import type { ActivityLog } from '../ports/activityLog'
+import type { ActivityLog, StoredOutcomeReads } from '../ports/activityLog'
 
 export interface SqliteActivityLogDeps {
   /** The Host's one writer (09 §8.1). */
@@ -65,7 +66,7 @@ const OUTCOME_OF = `SELECT dwarf_id, kind, step_count, parts_json, detail, closi
 const OPEN_RUN = `SELECT id, dwarf_id, turn_key, open, step_count, summaries_json, opened_at, closed_at
   FROM activity_disclosures WHERE dwarf_id = ? AND open = 1`
 
-export class SqliteActivityLog implements ActivityLog {
+export class SqliteActivityLog implements ActivityLog, StoredOutcomeReads {
   constructor(private readonly deps: SqliteActivityLogDeps) {}
 
   saveDisclosure(d: ActivityDisclosure): void {
@@ -100,6 +101,13 @@ export class SqliteActivityLog implements ActivityLog {
 
   outcomeOf(dwarfId: DwarfId): OutcomeLine | null {
     this.inTransaction('outcomeOf')
+    const row = this.deps.db.all(OUTCOME_OF, [dwarfId])[0]
+    return row === undefined ? null : outcomeOfRow(row)
+  }
+
+  // Amended: 16 §4.6 ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)
+  storedOutcomeOf(dwarfId: DwarfId): OutcomeLine | null {
+    // The read side (09 §8.1): no transaction is needed or opened for one keyed row.
     const row = this.deps.db.all(OUTCOME_OF, [dwarfId])[0]
     return row === undefined ? null : outcomeOfRow(row)
   }

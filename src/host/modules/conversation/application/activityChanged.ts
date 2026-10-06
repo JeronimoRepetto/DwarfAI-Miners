@@ -1,5 +1,5 @@
 // `ActivityChanged` (08 §0, §2.6) for a run that a committed transaction changed: its final state,
-// keyed (disclosureId, stepCount, open). Built after the commit by ingest, recordTurnEnd and
+// keyed (disclosureId, stepCount, open), with its step summaries (owner amendment E). Built after the commit by ingest, recordTurnEnd and
 // recordSessionEnd alike, so the three routes publish one shape.
 import type { EventId, HostEpoch } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
@@ -24,7 +24,9 @@ export function activityChanged(run: ActivityDisclosure, stamp: EventStamp): Act
       dwarfId: run.dwarfId,
       disclosureId: run.id,
       open: run.open,
-      stepCount: run.stepCount
+      stepCount: run.stepCount,
+      // Amended: 08 §0 ActivityChanged gains summaries (owner amendment E, 2026-10-06)
+      summaries: [...run.summaries]
     }
   }
 }

@@ -92,7 +92,14 @@ describe('activity runs through ingest, recordTurnEnd and recordSessionEnd', () 
         id: expect.any(String),
         at: CONVERSATION_T0,
         hostEpoch: 'epoch-0098',
-        payload: { dwarfId: CONVERSATION_DWARF, disclosureId: run!.id, open: false, stepCount: 3 }
+        // Owner amendment E (2026-10-06): the payload carries the run's summaries.
+        payload: {
+          dwarfId: CONVERSATION_DWARF,
+          disclosureId: run!.id,
+          open: false,
+          stepCount: 3,
+          summaries: ['Ran step 1', 'Ran step 2', 'Ran step 3']
+        }
       }
     ])
     // After the MessagesAppended of the same commit, one transaction in all; the outcome line the
@@ -103,6 +110,23 @@ describe('activity runs through ingest, recordTurnEnd and recordSessionEnd', () 
       'OutcomeLineChanged'
     ])
     expect(c.transactions()).toBe(1)
+  })
+
+  it('[US-MSG-004.AC03] ActivityChanged carries the summaries of the run it changed, open or closed', () => {
+    const c = inMemoryConversation()
+
+    c.commands.ingest(CONVERSATION_DWARF, [entry(1, { activity: [step(1)] })], 'live-stream')
+    c.commands.ingest(CONVERSATION_DWARF, [entry(2, { activity: [step(2)] })], 'live-stream')
+    c.commands.recordTurnEnd(turnEnd())
+
+    // Owner amendment E (2026-10-06): the event holds the run's one-line summaries.
+    expect(
+      c.bus.ofType('ActivityChanged').map((e) => [e.payload.open, e.payload.summaries])
+    ).toEqual([
+      [true, ['Ran step 1']],
+      [true, ['Ran step 1', 'Ran step 2']],
+      [false, ['Ran step 1', 'Ran step 2']]
+    ])
   })
 
   it('[S11.02, US-MSG-014.AC01, INV-66] a run grows across batches, one ActivityChanged per commit; the person speaking keeps it open', () => {

@@ -94,7 +94,7 @@ export interface ServedConversation {
 
 /** The members the served methods and section forward to. */
 type ServedMembers = {
-  conversation: ConversationQueries
+  conversation: Pick<ConversationQueries, 'feed' | 'mineHistory'>
   crew: Pick<CrewQueries, 'crewOf'>
   mines: Pick<MinesQueries, 'list'>
 }

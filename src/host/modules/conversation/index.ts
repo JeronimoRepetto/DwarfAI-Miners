@@ -18,6 +18,8 @@
 // `OutcomeLineChanged` after the commit when it changed. ISSUE-107: the Reset-metrics step
 // (`createConversationResetStep`), which reaches the saga structurally. ISSUE-104: `mineHistory`
 // (`Conversation.history`), over crew's public queries that host/wiring passes (ISSUE-108).
+// Owner amendment E (2026-10-06, ISSUE-108): `ActivityChanged` carries the run's summaries (08 §0),
+// and `queries.outcomeOf` reads a dwarf's stored outcome line outside any transaction (16 §4.6).
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
@@ -41,6 +43,7 @@ import { SessionEndRecorder } from './application/recordSessionEnd'
 import { TurnEndRecorder } from './application/recordTurnEnd'
 import type { ConversationEvent } from './domain/events'
 import type { FeedPage, FeedPageRequest, MineHistoryView } from './domain/messages'
+import type { OutcomeLine } from './domain/outcomeLine'
 
 export type {
   ActivityChanged,
@@ -74,11 +77,14 @@ export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
 
 /**
  * 16 §4.6 `ConversationQueries` (driving): a dwarf's feed, newest first, at most 50 rows (INV-61),
- * and a mine's history, the same ≤ 50 rows per dwarf, undelivered ones included.
+ * a mine's history, the same ≤ 50 rows per dwarf, undelivered ones included, and the dwarf's stored
+ * outcome line (amendment E), read on the read connection outside any transaction (09 §8.1).
  */
 export interface ConversationQueries {
   feed(dwarfId: DwarfId, page?: FeedPageRequest): FeedPage
   mineHistory(mineId: MineId): MineHistoryView
+  // Amended: 16 §4.6 ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)
+  outcomeOf(dwarfId: DwarfId): OutcomeLine | null
 }
 
 export interface ConversationDeps {
@@ -110,8 +116,8 @@ export interface JoinedEvents {
 
 export interface Conversation {
   commands: ConversationCommands
-  /** The feed (ISSUE-103). */
-  queries: Pick<ConversationQueries, 'feed'>
+  /** The feed (ISSUE-103) and the stored outcome line (owner amendment E, ISSUE-108). */
+  queries: Pick<ConversationQueries, 'feed' | 'outcomeOf'>
   /**
    * `ConversationQueries.mineHistory` (ISSUE-104) over crew's `crewOf` (the conversation → crew
    * edge, 05 §1.3): `host/wiring` passes crew's public queries when it composes both modules
@@ -187,6 +193,7 @@ export function createConversation(deps: ConversationDeps): Conversation {
     ids: deps.ids,
     hostEpoch: deps.hostEpoch
   })
+  const feed = new ConversationFeedQueries({ log })
   const commands: ConversationCommands = {
     ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
     recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
@@ -195,7 +202,11 @@ export function createConversation(deps: ConversationDeps): Conversation {
   }
   return {
     commands,
-    queries: new ConversationFeedQueries({ log }),
+    queries: {
+      feed: (dwarfId, page) => feed.feed(dwarfId, page),
+      // Amended: 16 §4.6 ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)
+      outcomeOf: (dwarfId) => activity.storedOutcomeOf(dwarfId)
+    },
     history: ({ crew }) => new ConversationMineHistory({ log, crew }),
     joinedEvents: {
       publish: () => ingest.publishJoined(),
