@@ -27,7 +27,8 @@ import {
 import {
   createLegacyEndFirstAdapter,
   type EndFirstTimers,
-  type LegacyLaunchedSessions
+  type LegacyLaunchedSessions,
+  type LegacyLaunchesByDwarf
 } from '../legacy-bridge/LegacyEndFirstAdapter'
 import { createLegacySettingsWriteHub } from '../legacy-bridge/settingsMirror/legacySettingsWrites'
 import { createBoardFacadeAdapter, type LegacyAskFields } from '../legacy-bridge/BoardFacadeAdapter'
@@ -137,7 +138,13 @@ import {
 } from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
-import { createNativeActions } from './window/application/nativeActions'
+import { createNativeActions, type ServedNativeActions } from './window/application/nativeActions'
+import { ElectronFolderPicker } from './window/adapters/ElectronFolderPicker'
+import {
+  createMinesAdminRows,
+  MINES_ADMIN_ROWS,
+  type MinesAdminDeps
+} from './ipc/handlers/minesAdmin'
 import { createToggleShortcut } from './window/application/toggleShortcut'
 import { ElectronClipboard } from './window/adapters/ElectronClipboard'
 import { ElectronExternalOpener } from './window/adapters/ElectronExternalOpener'
@@ -323,6 +330,70 @@ export function composeStopAllRelay(
 ): StopAllRelay {
   const adapter = createLegacyEndFirstAdapter({ legacy, timers })
   return (requestId, shutdown) => adapter.beforeStopAll(requestId, shutdown)
+}
+
+/** The mines admin rows as the root composes them: their `host` target part, and the release of what they hold. */
+export interface MinesAdminComposition {
+  part: RouteTargetPart
+  dispose(): void
+}
+
+/**
+ * The Mines page's admin rows A-20, A-30, A-31, A-32, A-34 (ISSUE-091; 14 §2.1; 21 §2 cut 1 "New core serves"), a part
+ * of the `host` target, composed only for a table that routes one of them `host` (the cut-1 switch, ISSUE-123): in a
+ * table that serves them `legacy` nothing new is composed. A-32 is relayed through `LegacyEndFirstAdapter`'s
+ * `beforeRemoveMine` (ISSUE-090; 21 §3) in the releases the adapter lives in, so a mine's legacy-launched sessions end
+ * before `mines.remove` is sent; there the rows are composed only over `LegacyDwarfIdBridge` and today's launched
+ * register (`launchIdOfDwarf`), never with a removal that skips the legacy end. After the adapter's last cut the hook is
+ * a pass-through. `undefined` when the table routes none of the rows `host` or a dependency is missing.
+ */
+export function composeMinesAdmin(deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+  client: Pick<HostClient, 'call' | 'state' | 'subscribe'>
+  native: Pick<ServedNativeActions, 'chooseFolder' | 'openPath'> | undefined
+  legacy: LegacyLaunchedSessions & Partial<LegacyLaunchesByDwarf>
+  bridge: Pick<LegacyDwarfIdBridge, 'toLegacy'> | undefined
+  newRequestId?: () => string
+  timers?: EndFirstTimers
+}): MinesAdminComposition | undefined {
+  const rows: readonly ChannelKey[] = MINES_ADMIN_ROWS
+  const toHost = deps.routes.some((r) => rows.includes(r.channel) && r.owner === 'host')
+  if (!toHost || deps.native === undefined) return undefined
+  let beforeRemoveMine: MinesAdminDeps['beforeRemoveMine'] = (mineId, requestId, remove) =>
+    remove(mineId, requestId)
+  let dispose = (): void => {}
+  if (bridgeLivesIn('LegacyEndFirstAdapter', deps.release)) {
+    const { legacy, bridge } = deps
+    const launchIdOfDwarf = legacy.launchIdOfDwarf?.bind(legacy)
+    if (bridge === undefined || launchIdOfDwarf === undefined) return undefined
+    const endFirst = createLegacyEndFirstAdapter({
+      legacy: {
+        liveLaunches: () => legacy.liveLaunches(),
+        endLaunch: (launchId) => legacy.endLaunch(launchId),
+        launchIdOfDwarf
+      },
+      timers: deps.timers ?? realTimers,
+      host: { client: deps.client, bridge }
+    })
+    beforeRemoveMine = (mineId, requestId, remove) =>
+      endFirst.beforeRemoveMine(mineId, requestId, remove)
+    dispose = () => endFirst.dispose()
+  }
+  return {
+    part: {
+      channels: rows,
+      target: createMinesAdminRows({
+        client: deps.client,
+        native: deps.native,
+        newRequestId:
+          deps.newRequestId ??
+          (() => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })),
+        beforeRemoveMine
+      })
+    },
+    dispose
+  }
 }
 
 /** A-12 `getMines` (invoke) and A-P2 `onMinesUpdated` (push): RETIRE rows of the Host (14 §2.1). */
@@ -633,7 +704,9 @@ export interface UiMainDeps {
   legacyRuntime: Pick<
     LegacyRuntimeRoute,
     'compose' | 'serve' | 'beforeQuit' | 'willQuit' | 'liveLaunches' | 'endLaunch'
-  >
+  > &
+    // Which launch started a legacy dwarf, for A-32's end-first relay (ISSUE-091); the root's route always has it.
+    Partial<Pick<LegacyRuntimeRoute, 'launchIdOfDwarf'>>
   /** The route table (default `ROUTES`, the release's own); a test or a rollback table is passed here. */
   routes?: readonly ChannelRoute[]
   /** The release the table is for (default `ROUTES_RELEASE`): which legacy-bridge adapters live (21 §3). */
@@ -656,6 +729,8 @@ export interface UiMainDeps {
   shortcut?: (panel: PanelWindowController) => ToggleShortcut
   /** The links, clipboard, pickers and build info rows (ISSUE-050). */
   nativeRows?: RouteTarget
+  /** The folder picker and the file opener of the mines admin rows A-30, A-20 (ISSUE-091). */
+  minesNative?: Pick<ServedNativeActions, 'chooseFolder' | 'openPath'>
   /** Electron's `ipcMain`, where the router registers the seam A listeners (ADR-001 item 3). */
   ipc: IpcMainRegistrar
   /** The app's own entry, the only page whose calls the seam A gate accepts (ADR-019 item 8). */
@@ -764,6 +839,7 @@ export async function startUiMain({
   tray,
   shortcut,
   nativeRows,
+  minesNative,
   uiPreferences,
   uiLog,
   panelWindow,
@@ -878,9 +954,21 @@ export async function startUiMain({
           ...(askRelay === undefined ? {} : { askFields: askRelay.askFields })
         })
   askRelay?.onChanged(() => boardFacade?.refresh())
+  // The mines admin rows, once the table routes them to the Host (the cut-1 switch, ISSUE-123; 21 §2 cut 1).
+  const minesAdmin =
+    host === undefined
+      ? undefined
+      : composeMinesAdmin({
+          routes,
+          release,
+          client: host.client,
+          native: minesNative,
+          legacy: legacyRuntime,
+          bridge: dwarfIds?.bridge
+        })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
-    boardFacade === undefined
+    boardFacade === undefined && minesAdmin === undefined
       ? stopRows
       : composeRouteTargets([
           ...(stopRows === undefined
@@ -888,7 +976,8 @@ export async function startUiMain({
             : [
                 { channels: [STOP_EVERYTHING_CONFIRM], target: stopRows } satisfies RouteTargetPart
               ]),
-          boardFacade.part
+          ...(boardFacade === undefined ? [] : [boardFacade.part]),
+          ...(minesAdmin === undefined ? [] : [minesAdmin.part])
         ])
 
   // Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the notifier connection's frames, from the start of the
@@ -1009,6 +1098,7 @@ export async function startUiMain({
     stopResetListening?.()
     mirror?.dispose()
     boardFacade?.dispose()
+    minesAdmin?.dispose()
     registryFeed?.stop()
     askRelay?.dispose()
     dwarfIds?.dispose()
@@ -1186,9 +1276,13 @@ function electronPanelWindow(store: UiPreferenceStore): {
  * the Panel window, the system clipboard, the allowlisted external opener, and the build info and feature flags. The
  * flags are read on the first call (`contracts/config` over the environment and the userData config file): today's
  * runtime reads the same layers when it is composed and stops the start on a wrong value, so UI main never answers
- * from a configuration today's runtime refused.
+ * from a configuration today's runtime refused. The same actions carry A-30's folder picker and A-20's opener for the
+ * mines admin rows (ISSUE-091).
  */
-function electronNativeRows(panelWindow: () => BrowserWindow | undefined): RouteTarget {
+function electronNativeRows(panelWindow: () => BrowserWindow | undefined): {
+  rows: RouteTarget
+  actions: ServedNativeActions
+} {
   let info: AppInfo | null = null
   const appInfo = (): AppInfo =>
     (info ??= createAppInfo({
@@ -1196,19 +1290,28 @@ function electronNativeRows(panelWindow: () => BrowserWindow | undefined): Route
       env: process.env,
       readConfigFile: () => readUserDataConfigFile(app.getPath('userData'))
     }))
-  return createNativeRows({
-    actions: createNativeActions({
-      files: new ElectronFilePicker({
-        dialog,
-        windowOf: (ref) => BrowserWindow.fromId(ref.windowId)
-      }),
-      clipboard: new ElectronClipboard(clipboard),
-      opener: new ElectronExternalOpener(shell),
-      // Cut 0 has one mode window, the Panel, where every attach control is pressed.
-      parentWindow: () => ({ windowId: panelWindow()?.id ?? -1 })
+  const actions = createNativeActions({
+    files: new ElectronFilePicker({
+      dialog,
+      windowOf: (ref) => BrowserWindow.fromId(ref.windowId)
     }),
-    appInfo: { build: () => appInfo().build(), featureFlags: () => appInfo().featureFlags() }
+    // A-30's folder picker (ISSUE-091), attached like the attachment picker.
+    folders: new ElectronFolderPicker({
+      dialog,
+      windowOf: (ref) => BrowserWindow.fromId(ref.windowId)
+    }),
+    clipboard: new ElectronClipboard(clipboard),
+    opener: new ElectronExternalOpener(shell),
+    // Cut 0 has one mode window, the Panel, where every attach and add control is pressed.
+    parentWindow: () => ({ windowId: panelWindow()?.id ?? -1 })
   })
+  return {
+    rows: createNativeRows({
+      actions,
+      appInfo: { build: () => appInfo().build(), featureFlags: () => appInfo().featureFlags() }
+    }),
+    actions
+  }
 }
 
 /** The git commit (short) of this build (20 §3.1), stamped by the app's electron-vite build. */
@@ -1385,7 +1488,10 @@ if (process.type === 'browser') {
     uiPreferences: { store: uiPreferenceStore, windows: appWindows },
     uiLog,
     panelWindow: rebuiltPanel.factory,
-    nativeRows: electronNativeRows(panelBrowserWindow),
+    ...(() => {
+      const native = electronNativeRows(panelBrowserWindow)
+      return { nativeRows: native.rows, minesNative: native.actions }
+    })(),
     shortcut: (panel) =>
       createToggleShortcut({
         registry: new ElectronGlobalShortcut(globalShortcut),

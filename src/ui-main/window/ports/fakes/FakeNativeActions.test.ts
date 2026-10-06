@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { EXTERNAL_LINK_REFUSED_REASON } from '../../application/nativeActions'
+import {
+  EXTERNAL_LINK_REFUSED_REASON,
+  MINE_PATH_UNOPENABLE_REASON
+} from '../../application/nativeActions'
 import { FakeNativeActions } from './FakeNativeActions'
 
 describe('FakeNativeActions', () => {
@@ -34,5 +37,27 @@ describe('FakeNativeActions', () => {
     })
 
     expect(actions.opened).toEqual(['https://example.org/'])
+  })
+
+  it('[ADR-019] chooseFolder answers the chosen folder and counts the picker, and a cancelled one answers null', async () => {
+    const chosen = new FakeNativeActions({ folder: 'C:/work/ore' })
+    const cancelled = new FakeNativeActions()
+
+    expect(await chosen.chooseFolder()).toBe('C:/work/ore')
+    expect(await cancelled.chooseFolder()).toBeNull()
+    expect(chosen.folderPickerOpened).toBe(1)
+  })
+
+  it('[ADR-019] openPath records what was opened, and an OS that will not open it answers the fixed reason', async () => {
+    const actions = new FakeNativeActions()
+
+    expect(await actions.openPath('C:/work/ore/a.ts')).toEqual({ opened: true })
+    actions.refusePaths = true
+    expect(await actions.openPath('C:/work/ore/b.ts')).toEqual({
+      opened: false,
+      reason: MINE_PATH_UNOPENABLE_REASON
+    })
+
+    expect(actions.openedPaths).toEqual(['C:/work/ore/a.ts'])
   })
 })

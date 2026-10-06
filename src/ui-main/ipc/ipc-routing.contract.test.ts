@@ -20,6 +20,7 @@ import {
   composeLegacyAskRelay,
   composeLegacyDwarfIdBridge,
   composeLegacyLaunchObservation,
+  composeMinesAdmin,
   composeStopAllRelay,
   type LegacyRuntimeSurface
 } from '../index'
@@ -1142,5 +1143,157 @@ describe('cut-1 legacy composition', () => {
     board?.dispose()
     relay?.dispose()
     dwarfIds?.dispose()
+  })
+})
+
+// AMENDED for ISSUE-091 (appended): the mines admin rows' future `host` routes.
+describe('cut-1 mines admin rows (ISSUE-091)', () => {
+  const ADMIN_ROWS: ChannelKey[] = [
+    'mine:openPath',
+    'mine:declare',
+    'mine:declare-main',
+    'mine:undeclare',
+    'projects:query'
+  ]
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a0001'
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  /** A KEEP row routed `host` keeps today's shape: its target shape is today's (14 §2.1 KEEP). */
+  const hostKept = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-1',
+    parity: 'passed',
+    shape: 'target'
+  })
+  const cut1Table = (): RouteTable => {
+    let table: RouteTable = { ...routedBase, release: 'cut-1' }
+    for (const channel of ADMIN_ROWS) table = withRoutes(table, channel, hostKept(channel))
+    return table
+  }
+  /** A connected HostClient that records each call and answers each mines method. */
+  function recordingClient() {
+    const sent: string[] = []
+    const answers: Record<string, unknown> = {
+      'mines.resolveFile': { ok: true, value: { path: '/work/moria/src/a.ts' } },
+      'mines.declare': { ok: true, value: { mineId: MINE } },
+      'mines.adoptMainProject': { ok: true, value: { mineId: MINE } },
+      'mines.remove': { ok: true, value: {} },
+      'mines.list': { mines: [], total: 0 }
+    }
+    const client = {
+      call: async (method: string) => {
+        sent.push(method)
+        return answers[method]
+      },
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      subscribe: () => () => {}
+    } as unknown as Parameters<typeof composeMinesAdmin>[0]['client']
+    return { client, sent }
+  }
+  const native = {
+    chooseFolder: async () => '/work/moria',
+    openPath: async () => ({ opened: true as const })
+  }
+  const legacy = {
+    liveLaunches: async () => [],
+    endLaunch: async () => 'ended' as const,
+    launchIdOfDwarf: () => undefined
+  }
+  const bridge = { toLegacy: async () => null }
+
+  it('[ADR-001] in this release A-20, A-30, A-31, A-32 and A-34 stay legacy with today’s shape and the root composes no mines admin part', () => {
+    for (const key of ADMIN_ROWS) {
+      expect(CHANNELS[key].status, key).toBe('kept')
+      expect(
+        ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
+        key
+      ).toEqual([['legacy', 'today']])
+    }
+    expect(
+      composeMinesAdmin({
+        routes: ROUTES,
+        release: ROUTES_RELEASE,
+        client: recordingClient().client,
+        native,
+        legacy,
+        bridge
+      })
+    ).toBeUndefined()
+  })
+
+  it('[ADR-001] a cut-1 table routing A-20, A-30, A-31, A-32 and A-34 host with today’s shape passes the router test, and each row reaches its handler', async () => {
+    const table = cut1Table()
+    expect(reasons(table)).toEqual([])
+
+    const { client, sent } = recordingClient()
+    const composed = composeMinesAdmin({
+      routes: table.routes,
+      release: 'cut-1',
+      client,
+      native,
+      legacy,
+      bridge,
+      newRequestId: () => '01890a5d-ac96-774b-bcce-b302099a8001'
+    })
+    expect(composed?.part.channels).toEqual(ADMIN_ROWS)
+    const router = createRouter({
+      routes: table.routes.filter((r) => ADMIN_ROWS.includes(r.channel)),
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(composed === undefined ? {} : { host: composed.part.target }),
+      senders: { appEntry: APP_ENTRY, isModeWindow: (id) => id === 7 }
+    })
+    // Today's member names are registered unchanged: the renderer calls each row as it does today.
+    const registered: string[] = []
+    router.register({
+      handle: (channel) => void registered.push(channel),
+      on: (channel) => void registered.push(channel)
+    })
+    expect(registered.filter((wire) => ADMIN_ROWS.includes(wire as ChannelKey))).toEqual(ADMIN_ROWS)
+
+    const payloads: Partial<Record<ChannelKey, unknown>> = {
+      'mine:openPath': { mineId: MINE, target: 'src/a.ts' },
+      'mine:undeclare': MINE,
+      'projects:query': { sortBy: 'lastOpenedAt', direction: 'desc' }
+    }
+    for (const key of ADMIN_ROWS) {
+      const answer = await router.dispatch(key, FROM_PANEL, payloads[key])
+      expect(CHANNELS[key].response.safeParse(answer).success, key).toBe(true)
+    }
+    // Each row went to its Host method; A-31 had no worktree waiting, so it sent nothing.
+    expect(sent).toEqual(['mines.resolveFile', 'mines.declare', 'mines.remove', 'mines.list'])
+    composed?.dispose()
+  })
+
+  it('[ADR-001] the mines admin rows are composed with LegacyEndFirstAdapter only over LegacyDwarfIdBridge through cut 4, and with a pass-through after it', async () => {
+    const routes = cut1Table().routes
+    const { client } = recordingClient()
+    // Through cut 4 (21 §3): no bridge, or no launched register to join, composes no removal that skips the legacy end.
+    expect(
+      composeMinesAdmin({ routes, release: 'cut-1', client, native, legacy, bridge: undefined })
+    ).toBeUndefined()
+    expect(
+      composeMinesAdmin({
+        routes,
+        release: 'cut-4b',
+        client,
+        native,
+        legacy: { liveLaunches: legacy.liveLaunches, endLaunch: legacy.endLaunch },
+        bridge
+      })
+    ).toBeUndefined()
+    // From cut 5 the adapter is gone: A-32 relays mines.remove directly.
+    const late = composeMinesAdmin({
+      routes,
+      release: 'cut-5',
+      client,
+      native,
+      legacy: { liveLaunches: legacy.liveLaunches, endLaunch: legacy.endLaunch },
+      bridge: undefined,
+      newRequestId: () => '01890a5d-ac96-774b-bcce-b302099a8001'
+    })
+    expect(await late?.part.target.serve('mine:undeclare', MINE, FROM_PANEL)).toEqual({
+      outcome: 'removed'
+    })
   })
 })
