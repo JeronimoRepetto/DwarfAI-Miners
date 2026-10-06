@@ -380,4 +380,24 @@ describe('useAudio', () => {
     surface.dispose()
     expect(player.live()).toHaveLength(0)
   })
+
+  /*
+   * ISSUE-117: the attention cue composable plays only while this window is the shown mode window (ADR-018 item 8),
+   * so the one place that hears the window being shown or hidden says so, rather than a second listener restating it.
+   */
+  it('[NFR-SND-07] says whether this window is shown, as read at sync and as every push restates it', async () => {
+    stubApi({ getPanelVisible: () => Promise.resolve(false) })
+    const surface = audio(player)
+    await surface.sync()
+    const stop = surface.listen()
+    expect(surface.windowShown.value).toBe(false)
+
+    pushVisibility!(true)
+    expect(surface.windowShown.value).toBe(true)
+    pushVisibility!(false)
+    expect(surface.windowShown.value).toBe(false)
+
+    stop()
+    surface.dispose()
+  })
 })
