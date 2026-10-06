@@ -57,7 +57,8 @@
 // (S1.18) and the ledger's backfill folder resolution over the mines' queries. The others join
 // later. Observation is composed but not started: step 7 stays a placeholder while the bridge's
 // sink is (ISSUE-108). After step 7 (`startModules`) the mines restart the walks a stopped Host
-// left and start their folder-check schedule. Once the boot answered `ready`, the coal backfill runs.
+// left and start their folder-check schedule. The coal backfill, after `ready`, is held off with
+// observation (ISSUE-108 turns both on).
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -69,7 +70,7 @@ import { createHostGitRepoInspector } from './modules/mines/adapters/FsGitRepoIn
 import { FsSourceWeightScanner } from './modules/mines/adapters/FsSourceWeightScanner'
 import type { PreferencesEvent } from './modules/preferences'
 import type { Suppliers, SuppliersEvent } from './modules/suppliers'
-import { createSqliteObservationStores } from './modules/observation'
+import { createSqliteObservationStores, type ObservedBatchSink } from './modules/observation'
 import { createHostInstallResolver } from './modules/suppliers/adapters/install/hostInstallResolver'
 import { SqliteCapabilityRecordStore } from './modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
@@ -130,7 +131,12 @@ import {
   type WiredPreferences
 } from './wiring/preferencesWiring'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
-import { wireLedger, type LedgerRouteEvent, type WiredLedger } from './wiring/routes/ledger'
+import {
+  startBackfillWhenObserving,
+  wireLedger,
+  type LedgerRouteEvent,
+  type WiredLedger
+} from './wiring/routes/ledger'
 import {
   DEFAULT_MINES_SETTINGS,
   serveMines,
@@ -229,6 +235,8 @@ async function main(): Promise<void> {
     preferences?: WiredPreferences
     suppliers?: Suppliers
     ledger?: WiredLedger
+    /** Observation's batch sink: the placeholder until the conversation half (ISSUE-108). */
+    batchSink?: ObservedBatchSink
     observation?: WiredObservation
     crew?: WiredCrew
     mines?: WiredMines
@@ -479,6 +487,7 @@ async function main(): Promise<void> {
             ledger: ledger.batchHalf,
             conversation: null
           })
+          modules.batchSink = batches.sink
           // Observation next: crew's terminator and index read it, and every route that reads its
           // events is subscribed here, before step 7's catch-up (16 §8.2).
           modules.observation = wireObservation({
@@ -560,9 +569,14 @@ async function main(): Promise<void> {
       exit
     }
   )
-  // Once the Host answers `ready`: the coal backfill (07 S19.02, S19.04), which runs only while
-  // no Reset saga is unfinished and resumes a `paused` scan at each boot until it is `done`.
-  if (booted.kind === 'ready') void modules.ledger?.startBackfill()
+  // Once the Host answers `ready`: the coal backfill (07 S19.02, S19.04), held off with
+  // observation while the batch sink is the placeholder. It pays only folders that are already
+  // mines, so a run before observation creates any would end `done` with nothing paid, for good.
+  // ISSUE-108 turns it on together with observation; what a mine first seen after the backfill
+  // finished receives is O-11-10's ruling (owner).
+  if (booted.kind === 'ready' && modules.ledger !== undefined && modules.batchSink !== undefined) {
+    void startBackfillWhenObserving(modules.ledger, modules.batchSink)
+  }
 }
 
 function isInside(folder: string, file: string): boolean {

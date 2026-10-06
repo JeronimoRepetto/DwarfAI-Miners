@@ -14,7 +14,8 @@
 //     after the walk's commit, so the credit runs in its own transaction and publishes after it.
 // - `route`, run by boot step 4 once mines exists: the backfill's folder → mine resolution reads
 //   mines' public queries (05 §1.3 has no ledger → mines edge: the resolution is composed here).
-// - `startBackfill`, run by the composition root once the boot answered `ready` (07 S19.02,
+// - `startBackfill`, run once the boot answered `ready` through `startBackfillWhenObserving`
+//   (held off while the batch sink is the placeholder, as observation is) (07 S19.02,
 //   S19.04): `runCoalBackfill`, which runs only while an install moment exists, no reset saga is
 //   unfinished (INV-97) and the backfill is not `done`, so each Host `ready` resumes a `paused` one
 //   until it is. A failed run is logged as an uncaught error and resolves null: the Host goes on,
@@ -49,10 +50,12 @@ import {
   type LedgerRepository
 } from '../../modules/ledger'
 import type { MinesEvent, MinesQueries } from '../../modules/mines'
+import type { ObservedBatchSink } from '../../modules/observation'
 import { publishLedgerFrames, type LedgerFramePublisher } from '../../transport/frames/ledger'
 import type { MineTotalsReader } from '../../transport/mappers/wire'
 import { errorCode } from '../boot'
 import { ledgerBatchHalf, type ObservedBatchHalf } from '../bridges/observedBatchSink'
+import { noObservedBatchSinkYet } from './observation'
 
 /** The events the ledger wiring routes or projects: one Host bus carries them all (16 §2.3). */
 export type LedgerRouteEvent = LedgerEvent | MinesEvent
@@ -155,4 +158,20 @@ export function wireLedger(deps: LedgerWiringDeps): WiredLedger {
         return null
       })
   }
+}
+
+/**
+ * The production start of the coal backfill once the Host is `ready`: null, and nothing run, while
+ * observation's batch sink is `noObservedBatchSinkYet`, the same gate that keeps observation
+ * stopped (routes/observation.ts). The backfill pays only folders that are already mines, and
+ * mines appear through observation. A run before observation could create any would end `done`
+ * with nothing paid, and the history before the install moment would never become coal.
+ * ISSUE-108 turns both on together. What a mine first seen after the backfill finished receives
+ * is O-11-10's ruling (owner).
+ */
+export function startBackfillWhenObserving(
+  ledger: Pick<WiredLedger, 'startBackfill'>,
+  sink: ObservedBatchSink
+): Promise<BackfillReport | null> | null {
+  return sink === noObservedBatchSinkYet ? null : ledger.startBackfill()
 }
