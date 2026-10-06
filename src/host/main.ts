@@ -63,7 +63,9 @@
 // later. Observation is composed but not started: step 7 stays a placeholder while the bridge's
 // sink is (ISSUE-108). After step 7 (`startModules`) the mines restart the walks a stopped Host
 // left and start their folder-check schedule. The coal backfill, after `ready`, is held off with
-// observation (ISSUE-108 turns both on).
+// observation (ISSUE-108 turns both on). A cut-1 rollback build (wiring/cut1Rollback.ts, ISSUE-122) wires
+// observation over a sink that writes nothing, so neither ever runs, and attention over a level-3 sink that
+// delivers nothing: the legacy observer, ledger and notifier are the one observer, ledger and notifier again.
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -125,6 +127,7 @@ import { errorCode, runBoot } from './wiring/boot'
 import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
+import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
@@ -510,7 +513,9 @@ async function main(): Promise<void> {
             ledger: ledger.batchHalf,
             conversation: null
           })
-          modules.batchSink = batches.sink
+          // A cut-1 rollback build (21 §2 cut 1 row "Rollback") wires observation over a sink that writes
+          // nothing, so it is never started and the coal backfill never runs (wiring/cut1Rollback.ts).
+          modules.batchSink = CUT_1_ROLLBACK_CHOICES.observedBatchSink(batches.sink)
           // Observation next: crew's terminator and index read it, and every route that reads its
           // events is subscribed here, before step 7's catch-up (16 §8.2).
           modules.observation = wireObservation({
@@ -523,7 +528,7 @@ async function main(): Promise<void> {
               processes: processControl,
               openSnapshot: openReadOnlySnapshot
             }),
-            sink: batches.sink,
+            sink: modules.batchSink,
             transactions: batches.transactions,
             bus,
             fs,
@@ -577,7 +582,9 @@ async function main(): Promise<void> {
           // Attention: its routes from the other modules' events join with ISSUE-120.
           modules.attention = servedAttention.wire({
             ledger: new SqliteAttentionLedger({ db, scope: transactions, clock, hostEpoch: epoch }),
-            sink: new TransportLevel3Sink(connections),
+            // A cut-1 rollback build sends no level-3 notification: the legacy notifier is the one notifier
+            // (21 §2 cut 1 row "Rollback"; wiring/cut1Rollback.ts).
+            sink: CUT_1_ROLLBACK_CHOICES.level3Sink(new TransportLevel3Sink(connections), log),
             launcher: new AppBackgroundNotifierLauncher({
               processes: processControl,
               paths: dataDir,

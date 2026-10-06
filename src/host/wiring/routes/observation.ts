@@ -20,7 +20,9 @@
 //   subscribed at step 4, before `catchUp` publishes its first event. It is `null` while the batch
 //   sink is the placeholder: a cursor moved past a batch nothing stored would lose its messages and
 //   usage for good (INV-98), so observation cannot start before the sink is real (ISSUE-108
-//   turns it on in `host/main.ts`).
+//   turns it on in `host/main.ts`). It is `null` as well in a cut-1 rollback build, whose sink is
+//   `observationWritesOff` (host/wiring/cut1Rollback.ts; 21 §2 cut 1 row "Rollback"): the legacy observer
+//   is the one observer again, so the Host observer writes no cursor, session, usage or credit.
 // - `nudge`, the hook ingress's entry point (05 §3.3; the ingress is EPIC-08's, later: ISSUE-133):
 //   it only brings the next poll cycle forward.
 //
@@ -76,6 +78,23 @@ export const PROVIDER_ERROR_EVENT = 'observation.provider-error'
  * hands it out then. A module wired with it never starts (`WiredObservation.start` is `null`).
  */
 export const noObservedBatchSinkYet: ObservedBatchSink = { apply: () => undefined }
+
+/**
+ * The batch sink of a cut-1 rollback build (21 §2 cut 1 row "Rollback"; `cut1Rollback.ts`): the legacy observer is
+ * the one observer again, so the Host observer writes nothing. A module wired with it is composed (crew's identity
+ * reads keep the rows the Host wrote before) but never started (`WiredObservation.start` is `null`), whatever the
+ * bridge's halves are.
+ */
+export const observationWritesOff: ObservedBatchSink = { apply: () => undefined }
+
+/**
+ * Whether a module wired with `sink` may run: false for `noObservedBatchSinkYet` and `observationWritesOff`. The one
+ * gate of every path that writes what observation feeds: step 7's `start`, the coal backfill
+ * (`startBackfillWhenObserving`) and the per-mine backfill of O-11-10 (later: ISSUE-108 routes it behind this gate).
+ */
+export function observesWith(sink: ObservedBatchSink): boolean {
+  return sink !== noObservedBatchSinkYet && sink !== observationWritesOff
+}
 
 /** Where each observed provider keeps its data (15 §5 "Sources"), resolved once at Host start. */
 export interface ObservedProviderFolders {
@@ -191,7 +210,10 @@ export interface ObservationWiringDeps {
   ids: IdGenerator
   hostEpoch: HostEpoch
   log: DiagnosticsLog
-  /** The `ObservedBatchSink` bridge's sink; `noObservedBatchSinkYet` until ISSUE-108. */
+  /**
+   * The `ObservedBatchSink` bridge's sink, as `cut1Rollback.ts` chose it; `noObservedBatchSinkYet` until
+   * ISSUE-108, `observationWritesOff` in a cut-1 rollback build.
+   */
   sink: ObservedBatchSink
 }
 
@@ -202,7 +224,8 @@ export interface WiredObservation {
   crew: CrewObservationBinding
   /**
    * Boot step 7 (16 §8.2): `catchUp()`, then `start()`; the pass may go on after `ready`. `null`
-   * while the sink is `noObservedBatchSinkYet`: nothing may move a cursor past what nothing stores.
+   * while the sink is `noObservedBatchSinkYet` (nothing may move a cursor past what nothing stores) or
+   * `observationWritesOff` (a cut-1 rollback build): `observesWith`.
    */
   start: (() => void) | null
   /** The hook ingress's entry point (05 §3.3): brings the next cycle forward. */
@@ -252,25 +275,24 @@ export function wireObservation(deps: ObservationWiringDeps): WiredObservation {
       control: observation.control,
       sessions: stores.sessions
     },
-    start:
-      deps.sink === noObservedBatchSinkYet
-        ? null
-        : () => {
-            // 16 §8.2 step 7: the catch-up pass first, from the cursors the last Host left (INV-98),
-            // then the live loop, whose first cycle the loop runs after the pass. `ready` does not wait
-            // for the pass: before `ready` only the recovery classification (16 §4.3 `catchUp`; ADR-015
-            // item 3), so a long offline history never delays the window.
-            const pass = observation.control.catchUp()
-            observation.control.start()
-            pass.catch((error: unknown) =>
-              log.record({
-                level: 'error',
-                event: 'uncaught',
-                subsystem: 'host',
-                errCode: errorCode(error)
-              })
-            )
-          },
+    start: observesWith(deps.sink)
+      ? () => {
+          // 16 §8.2 step 7: the catch-up pass first, from the cursors the last Host left (INV-98),
+          // then the live loop, whose first cycle the loop runs after the pass. `ready` does not wait
+          // for the pass: before `ready` only the recovery classification (16 §4.3 `catchUp`; ADR-015
+          // item 3), so a long offline history never delays the window.
+          const pass = observation.control.catchUp()
+          observation.control.start()
+          pass.catch((error: unknown) =>
+            log.record({
+              level: 'error',
+              event: 'uncaught',
+              subsystem: 'host',
+              errCode: errorCode(error)
+            })
+          )
+        }
+      : null,
     nudge: (hint) => observation.control.nudge(hint),
     idle: () => observation.whenIdle()
   }
