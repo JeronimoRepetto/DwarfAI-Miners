@@ -5,9 +5,9 @@
 // "Add a mine" and the worktree dialog (`declare`, `adoptMainProject`), the mine of a session's
 // cwd (`resolveForSession`) and `resolveFileInMine`, every path re-validated on the real disk
 // (18 C-17). ISSUE-085: `checkFolder`, run by `resolveForSession` for a known mine, and the
-// folder-check schedule that `host/wiring` starts (later: ISSUE-093). ISSUE-080: Remove mine
-// (`remove`) over crew's `endAllIn` and the running walk (`Mines.removal`). The other commands grow
-// in later issues (later: ISSUE-065).
+// folder-check schedule that `host/wiring` starts. ISSUE-080: Remove mine (`remove`) over crew's
+// `endAllIn` and the running walk (`Mines.removal`). ISSUE-065: the scoring walks
+// (`Mines.measurement`). ISSUE-093 wires them into the Host (host/wiring/routes/mines.ts).
 import type { HostEpoch, MineId } from '../../kernel/domain/values'
 import type { CrewEnds } from '../crew'
 import type { Clock } from '../../kernel/ports/clock'
@@ -27,12 +27,15 @@ import { createCheckFolder } from './application/checkFolder'
 import { createDeclareCommands, type MinesCommands } from './application/declare'
 import type { MineRemovalEvent } from './application/events'
 import { FolderCheckSchedule } from './application/folderCheckSchedule'
+import { MineMeasurement } from './application/measure'
 import { MineReadModel, type MinesQueries } from './application/mineQueries'
 import { resolveFileInMine } from './application/resolveFile'
 import { createRemove } from './application/remove'
 import { createResolveForSession } from './application/resolveForSession'
 import type { MinesEvent as MineLifecycleEvent } from './domain/events'
 import type { MapSite } from './domain/mine'
+import type { TierThresholds } from './domain/tier'
+import type { SourceWeightScanner } from './ports/sourceWeightScanner'
 
 export type { MinesCommands } from './application/declare'
 export type { MinesQueries, MineSummary, MineView } from './application/mineQueries'
@@ -54,8 +57,9 @@ export type {
 export type { FolderUnenterableReason } from './domain/folderCheck'
 export type { MapMarker, MapSite, Mine, MineName, MineState, MineTransitionId } from './domain/mine'
 export type { MinePath, PathStyle } from './domain/minePath'
-export type { Tier } from './domain/tier'
+export { DEFAULT_TIER_THRESHOLDS, type Tier, type TierThresholds } from './domain/tier'
 export type { MineQuery } from './ports/mineRepository'
+export type { SourceWeightScanner } from './ports/sourceWeightScanner'
 
 export interface MinesDeps {
   /** The Host's one writer (09 §8.1). */
@@ -76,7 +80,10 @@ export interface MinesDeps {
   /** The Host bus: the lifecycle events of `domain/events.ts` and Remove mine's (`MinesEvent`). */
   bus: DomainEventBus<MineLifecycleEvent> & Pick<DomainEventBus<MineRemovalEvent>, 'publish'>
   hostEpoch: HostEpoch
-  /** Interim, until ISSUE-065 composes `MinesCommands.remeasure` here: a new mine's walk. */
+  /**
+   * The walk a created, reattached or found-again mine is due: `host/wiring` binds it to
+   * `Mines.measurement(…).walkDue` of this instance.
+   */
   remeasure(mineId: MineId): void
 }
 
@@ -90,15 +97,49 @@ export interface Mines {
   /**
    * The folder check of every mine with a present dwarf, every `intervalMs` (05 §3.1; 07 S3.12
    * trigger (c)), over this instance's `checkFolder`; `host/wiring` starts it after boot with the
-   * kernel `Scheduler` and `MINE_FOLDER_CHECK_MS` (later: ISSUE-093).
+   * kernel `Scheduler` and `MINE_FOLDER_CHECK_MS`.
    */
   folderCheckSchedule(deps: { scheduler: Scheduler; intervalMs: number }): FolderCheckSchedule
   /**
    * `MinesCommands.remove` (ISSUE-080) over crew's `endAllIn` (the mines → crew edge, 05 §1.3) and
    * the abort of the mine's running walk (S3.15, `MinesCommands.remeasure`'s walk): `host/wiring`
-   * passes both when it composes crew and the measurement (later: ISSUE-093).
+   * passes both when it composes crew and the measurement.
    */
   removal(deps: { crew: CrewEnds; abortWalk(mineId: MineId): void }): Pick<MinesCommands, 'remove'>
+  /**
+   * The scoring walks of this instance's mines (`MinesCommands.remeasure`, ISSUE-065; 07 S3.04,
+   * S3.08…S3.11, S3.15, S3.25), over the kernel `Scheduler` and the `SourceWeightScanner` the
+   * composition root builds. `host/wiring` binds `MinesDeps.remeasure` to its `walkDue`.
+   */
+  measurement(deps: MineWalksDeps): MineWalks
+}
+
+export interface MineWalksDeps {
+  scanner: SourceWeightScanner
+  scheduler: Scheduler
+  /** Read once at Host start (06 §4.1). */
+  thresholds: TierThresholds
+  /** How long after its creation an `unrecorded` mine is walked (`AppConfig.mineMeasureDelayMs`). */
+  automaticWalkDelayMs: number
+}
+
+export interface MineWalks {
+  /**
+   * The walk a created, reattached or found-again mine is due: an `unrecorded` one waits for the
+   * automatic walk (S3.01, S3.08, S3.19), any other is walked now (S3.04, S3.10, S3.13, S3.14,
+   * S3.20, S3.21). The binding of `MinesDeps.remeasure`.
+   */
+  walkDue(mineId: MineId): void
+  /** `MinesCommands.remeasure`. */
+  remeasure(mineId: MineId): void
+  /** Removal (S3.15): the mine's running walk is aborted and a pending one dropped. */
+  abort(mineId: MineId): void
+  /** Reset metrics: every walk aborted, every pending one dropped. */
+  abortAll(): void
+  /** Host boot (S3.25): measuring mines walked from scratch, unrecorded ones scheduled. */
+  resumeAtBoot(): void
+  /** Resolves once every started walk has been answered (tests; the Host's drain). */
+  idle(): Promise<void>
 }
 
 /** The module over the Host database and the real disk, with the Host OS's path rules. */
@@ -148,7 +189,32 @@ export function createMines(deps: MinesDeps): Mines {
     },
     folderCheckSchedule: ({ scheduler, intervalMs }) =>
       new FolderCheckSchedule({ scheduler, intervalMs, minesWithPresentDwarfs, checkFolder }),
-    removal: ({ crew, abortWalk }) => createRemove({ ...commandDeps, crew, abortWalk })
+    removal: ({ crew, abortWalk }) => createRemove({ ...commandDeps, crew, abortWalk }),
+    measurement: (walkDeps) => {
+      const walks = new MineMeasurement({
+        repository,
+        transactions: deps.transactions,
+        scanner: walkDeps.scanner,
+        scheduler: walkDeps.scheduler,
+        clock: deps.clock,
+        bus: deps.bus,
+        ids: deps.ids,
+        hostEpoch: deps.hostEpoch,
+        thresholds: walkDeps.thresholds,
+        automaticWalkDelayMs: walkDeps.automaticWalkDelayMs
+      })
+      return {
+        walkDue: (mineId) =>
+          repository.byId(mineId)?.state === 'unrecorded'
+            ? walks.mineCreated(mineId)
+            : walks.remeasure(mineId),
+        remeasure: (mineId) => walks.remeasure(mineId),
+        abort: (mineId) => walks.abort(mineId),
+        abortAll: () => walks.abortAll(),
+        resumeAtBoot: () => walks.resumeAtBoot(),
+        idle: () => walks.idle()
+      }
+    }
   }
 }
 
