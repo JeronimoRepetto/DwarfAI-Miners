@@ -1,6 +1,7 @@
 // The arrival and departure members of `CrewCommands` (05 §3.2; 16 §4.2): `arrive`, `rebind`,
-// `sessionClosed` and `markUnrecovered`. The others (`recordActivity`, `startAsking`, `stop`,
-// `rename`, the ends…) join with their issues (later: ISSUE-079, ISSUE-080, ISSUE-172, EPIC-10).
+// `sessionClosed` and `markUnrecovered`, and `recordActivity` (ISSUE-095, for the observed route
+// `SessionActivityObserved`). The others (`startAsking`, `stop`, `rename`, the ends…) join with
+// their issues (later: ISSUE-080, ISSUE-172, EPIC-10).
 //
 // Each command runs in one synchronous transaction (16 §2.2): it reads the dwarf, writes the next
 // aggregate through `DwarfRepository` and its lifecycle fact through the kernel
@@ -27,6 +28,7 @@ import type { CrewEvent } from '../domain/events'
 import { isGone, type DepartureCause } from '../domain/presence'
 import type { DwarfRank } from '../domain/rank'
 import { classifyDwarfStatus } from '../domain/status'
+import { otherActivity, turnStarted } from '../domain/statusFacts'
 import type { DwarfRepository } from '../ports/dwarfRepository'
 import type { StatusTimer } from './statusTimer'
 
@@ -42,6 +44,13 @@ export interface CrewCommands {
   }): DwarfId
   /** Host-driven resume only (INV-22). */
   rebind(dwarfId: DwarfId, next: ProviderIdentity): void
+  /**
+   * 16 §4.2: moves the status facts (S1.06, S1.08); the status is derived (INV-23). The frozen
+   * kind `'turn-finished'` joins with its route (`TurnEnded`, later: ISSUE-120): the persisted
+   * facts need the end's reliability (09 `dwarfs.turn_end_reliability`), which this signature
+   * does not carry (package gap, reported with ISSUE-095).
+   */
+  recordActivity(dwarfId: DwarfId, kind: 'turn-started' | 'message'): void
   /** The single departure path (06 §5.1); publishes `DwarfDeparted`. */
   sessionClosed(dwarfId: DwarfId, cause: DepartureCause): void
   /** Host recovery pass: `processState` `unrecovered`, the dwarf stays present (INV-26). */
@@ -125,6 +134,21 @@ export class CrewArrivals implements CrewCommands {
     })
     if (rebound !== null)
       this.publish('DwarfRebound', { dwarfId, previous: rebound.previous, next })
+  }
+
+  recordActivity(dwarfId: DwarfId, kind: 'turn-started' | 'message'): void {
+    const { repository, transactions, clock } = this.deps
+    const at = clock.now()
+    const moved = transactions.inTransaction(() => {
+      const dwarf = this.existing(dwarfId)
+      if (isGone(dwarf)) return null
+      const facts =
+        kind === 'turn-started' ? turnStarted(dwarf.facts, at) : otherActivity(dwarf.facts, at)
+      repository.save({ ...dwarf, facts })
+      return facts
+    })
+    // 16 §4.2: the status is derived; the timer publishes only on a status change (S1.06, S1.08).
+    if (moved !== null) this.deps.statusTimer.factsChanged(dwarfId, moved)
   }
 
   sessionClosed(dwarfId: DwarfId, cause: DepartureCause): void {
