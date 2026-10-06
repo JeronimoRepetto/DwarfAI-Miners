@@ -1,7 +1,8 @@
 // The ledger module (05 §3.10): ore, six materials per mine, never converted or summed (INV-93),
 // credited once per usage unit (ADR-006 items 4–9). Cut 1 serves `creditUsage`,
-// `creditSealedUnits` and `totals` (ISSUE-076) and the coal backfill `runCoalBackfill`
-// (ISSUE-077); offline catch-up is observation's (ISSUE-078), and the Reset step comes with
+// `creditSealedUnits` and `totals` (ISSUE-076), the coal backfill `runCoalBackfill`
+// (ISSUE-077) and its per-mine run `runMineCoalBackfill` (11 O-11-10, owner ruling 2026-10-06;
+// its route lands with ISSUE-108); offline catch-up is observation's (ISSUE-078), and the Reset step comes with
 // ISSUE-097. It imports no other module (05 §1.3): it is driven by event routes composed in
 // `host/wiring` (routes/ledger.ts and the ObservedBatchSink bridge, ISSUE-096), which also runs
 // the backfill once the Host is `ready`.
@@ -11,7 +12,11 @@ import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { LedgerResetStep } from './adapters/sqlite/LedgerResetStep'
-import { runCoalBackfill, type CoalBackfillDeps } from './application/coalBackfill'
+import {
+  runCoalBackfill,
+  runMineCoalBackfill,
+  type CoalBackfillDeps
+} from './application/coalBackfill'
 import { creditSealedUnits } from './application/creditSealedUnits'
 import { creditUsage, totals } from './application/creditUsage'
 import { Crediting, type CreditingDeps } from './application/crediting'
@@ -60,11 +65,20 @@ export interface LedgerDeps extends CreditingDeps, CoalBackfillDeps {}
 /**
  * 16 §4.10 `LedgerCommands` as amended 2026-10-05 (`creditUsage` takes the route's `path`);
  * `runCoalBackfill` and `creditSealedUnits` keep their 16 §4.10 signatures.
+ *
+ * Amended: 05 §3.10 and its 16 §4.10 copy gain `runMineCoalBackfill` (owner amendment D, 2026-10-06,
+ * implementing the owner ruling on 11 O-11-10).
  */
 export interface LedgerCommands {
   creditUsage(o: UsageObservation, path: UsagePath): 'credited' | 'stored' | 'duplicate'
   runCoalBackfill(signal: AbortSignal): Promise<BackfillReport>
   creditSealedUnits(mineId: MineId): { credited: number }
+  /**
+   * A mine's pre-install usage as coal, once (O-11-10): routed from `MineCreated` and
+   * `MineReattached` (a removed mine's folder resolved to no mine while it was removed; its kept
+   * entries are never touched, only units no path paid are added).
+   */
+  runMineCoalBackfill(mineId: MineId, signal: AbortSignal): Promise<BackfillReport>
 }
 
 /** 16 §4.10 `LedgerQueries`. */
@@ -99,7 +113,9 @@ export function createLedger(deps: LedgerDeps): Ledger {
     commands: {
       creditUsage: (o, path) => creditUsage(crediting, o, path),
       runCoalBackfill: (signal) => runCoalBackfill(crediting, backfill, signal),
-      creditSealedUnits: (mineId) => creditSealedUnits(crediting, mineId)
+      creditSealedUnits: (mineId) => creditSealedUnits(crediting, mineId),
+      runMineCoalBackfill: (mineId, signal) =>
+        runMineCoalBackfill(crediting, backfill, mineId, signal)
     },
     queries: { totals: (mineId) => totals(crediting, mineId) },
     joinedEvents: {
