@@ -66,8 +66,8 @@ export interface LedgerDeps extends CreditingDeps, CoalBackfillDeps {}
  * 16 §4.10 `LedgerCommands` as amended 2026-10-05 (`creditUsage` takes the route's `path`);
  * `runCoalBackfill` and `creditSealedUnits` keep their 16 §4.10 signatures.
  *
- * Amendment request (owner ruling on 11 O-11-10, 2026-10-06; to be recorded in 05 §3.10 and its
- * 16 §4.10 copy): `runMineCoalBackfill` is the one member the ruling adds.
+ * Amended: 05 §3.10 and its 16 §4.10 copy gain `runMineCoalBackfill` (owner amendment D, 2026-10-06,
+ * implementing the owner ruling on 11 O-11-10).
  */
 export interface LedgerCommands {
   creditUsage(o: UsageObservation, path: UsagePath): 'credited' | 'stored' | 'duplicate'
