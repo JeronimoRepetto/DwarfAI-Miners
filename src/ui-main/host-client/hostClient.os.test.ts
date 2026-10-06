@@ -54,7 +54,12 @@ const SERVED_SINCE_CUT_0 = [
   'section:dwarfs',
   'strangler.dwarfIdentities',
   // The ledger's frame, served from cut 1 (ISSUE-096).
-  'frame:ledger.changed'
+  'frame:ledger.changed',
+  // The attention frames, B-M07 and B-M08, served from cut 1 (ISSUE-119).
+  'attention.clicked',
+  'frame:attention.notify',
+  'frame:attention.withdraw',
+  'presence'
 ]
 const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs']
 
