@@ -5,6 +5,7 @@ import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import type { TurnEnded } from '../../kernel/domain/sharedContracts'
+import type { DwarfId, MineId } from '../../kernel/domain/values'
 import { SqliteLifecycleFactLog } from '../../platform/sqlite/SqliteLifecycleFactLog'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
@@ -101,6 +102,38 @@ describe('the wired conversation queries (16 §4.6 ConversationQueries)', () => 
     const rest = conversation.queries.feed(dwarf, { before: newest.messages[2]?.id })
     expect(rest.messages.map((m) => m.text)).toEqual(['message 1'])
     expect(rest.reachedStart).toBe(true)
+  })
+})
+
+describe('the wired mine history (16 §4.6 ConversationQueries.mineHistory)', () => {
+  it('[US-MINE-006.AC01] the wired mineHistory reads each dwarf crew lists from the Host database, oldest first, departed dwarfs included', () => {
+    const { conversation, dwarf } = setUp()
+    const MINE = '00000000-0000-7000-8000-0000000000f1' as MineId
+    const left = '00000000-0000-7000-8000-0000000000d2' as DwarfId
+    conversation.commands.ingest(dwarf, [entry(2), entry(1)], 'live-stream')
+    conversation.commands.ingest(
+      left,
+      [entry(3, { sourceKey: 'claude:claude:session-1:event-3' })],
+      'transcript'
+    )
+    const crew = {
+      crewOf: (mineId: MineId, opts: { includeDeparted: true }) =>
+        mineId === MINE && opts.includeDeparted
+          ? [
+              { id: dwarf, displayName: 'Durin', departed: false },
+              { id: left, displayName: 'Thrór', departed: true }
+            ]
+          : []
+    }
+
+    const view = conversation.history({ crew }).mineHistory(MINE)
+
+    expect(
+      view.speakers.map((s) => [s.displayName, s.departed, s.messages.map((m) => m.text)])
+    ).toEqual([
+      ['Durin', false, ['message 1', 'message 2']],
+      ['Thrór', true, ['message 3']]
+    ])
   })
 })
 

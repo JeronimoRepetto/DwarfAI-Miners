@@ -13,9 +13,24 @@
 //   holds exactly the oldest row says so, and the UI asks for nothing further.
 // - `before` an unknown message: no row is older than it in this dwarf's log, an empty page at its
 //   start.
-// - `mineHistory` joins with its issue (later: ISSUE-104).
-import type { DwarfId } from '../../../kernel/domain/values'
-import { toMessageView, type FeedPage, type FeedPageRequest } from '../domain/messages'
+//
+// `mineHistory` (ISSUE-104; 14 §3.6 `MineHistoryView`; ADR-007 item 5; PO #87): the history panel's
+// read, from the same log and the same ≤ 50 rows as the feed (INV-61).
+//
+// - Speakers are crew's `crewOf(mineId, { includeDeparted: true })` in its order (AMENDMENT-10):
+//   present and departed dwarfs alike, each marked, with crew's `displayName`; a mine where no dwarf
+//   was ever recorded has none ("Nobody has worked here yet.").
+// - Each speaker's messages are its stored rows, oldest first for reading, undelivered ones
+//   included with their `delivery` (06 §0.2 `MessageView`; no Retry, the history is read-only). A
+//   dwarf with no row has none: nothing is ever read from a provider file (PO #87).
+import type { DwarfId, MineId } from '../../../kernel/domain/values'
+import type { DwarfView } from '../../crew'
+import {
+  toMessageView,
+  type FeedPage,
+  type FeedPageRequest,
+  type MineHistoryView
+} from '../domain/messages'
 import type { MessageLog } from '../ports/messageLog'
 
 /** 14 §3.6: a page never exceeds 50 rows (at most 50 exist per dwarf, PO #87). */
@@ -38,6 +53,43 @@ export class ConversationFeedQueries {
       dwarfId,
       messages: rows.slice(0, limit).map(toMessageView),
       reachedStart: rows.length <= limit
+    }
+  }
+}
+
+/**
+ * What mine history reads of crew: 16 §4.2 `CrewQueries.crewOf` with `includeDeparted`
+ * (AMENDMENT-10), over the conversation → crew edge (05 §1.3, R4). `CrewQueries` is assignable.
+ */
+export interface MineCrew {
+  crewOf(
+    mineId: MineId,
+    opts: { includeDeparted: true }
+  ): ReadonlyArray<Pick<DwarfView, 'id' | 'displayName' | 'departed'>>
+}
+
+export interface ConversationMineHistoryDeps {
+  log: Pick<MessageLog, 'page'>
+  crew: MineCrew
+}
+
+export class ConversationMineHistory {
+  constructor(private readonly deps: ConversationMineHistoryDeps) {}
+
+  mineHistory(mineId: MineId): MineHistoryView {
+    const crew = this.deps.crew.crewOf(mineId, { includeDeparted: true })
+    return {
+      mineId,
+      speakers: crew.map((dwarf) => ({
+        dwarfId: dwarf.id,
+        displayName: dwarf.displayName,
+        departed: dwarf.departed,
+        // The feed's own read (newest first, at most 50), turned oldest first for reading.
+        messages: this.deps.log
+          .page(dwarf.id, { limit: FEED_PAGE_LIMIT })
+          .reverse()
+          .map(toMessageView)
+      }))
     }
   }
 }

@@ -2,9 +2,10 @@
 // (R14). A test seeds each dwarf's rows newest first; `feed` pages them by the 14 §3.6 rule — rows
 // older than `before`, at most `limit` (default and maximum 50, INV-61), `reachedStart` once the
 // oldest seeded row is in the page — and records every call, so a transport test can assert what
-// reached the module and what never did.
-import type { DwarfId } from '../../../kernel/domain/values'
-import type { FeedPage, FeedPageRequest, MessageView } from '../domain/messages'
+// reached the module and what never did. `mineHistory` answers the history seeded for the mine, or
+// no speakers (a mine where nobody ever worked), and records each call in `historyCalls`.
+import type { DwarfId, MineId } from '../../../kernel/domain/values'
+import type { FeedPage, FeedPageRequest, MessageView, MineHistoryView } from '../domain/messages'
 import type { ConversationQueries } from '../index'
 
 const PAGE_LIMIT = 50
@@ -12,11 +13,24 @@ const PAGE_LIMIT = 50
 export class FakeConversationQueries implements ConversationQueries {
   /** Every `feed` call, in call order. */
   readonly calls: Array<{ dwarfId: DwarfId; page?: FeedPageRequest }> = []
+  /** Every `mineHistory` call, in call order. */
+  readonly historyCalls: MineId[] = []
   private readonly rows = new Map<DwarfId, MessageView[]>()
+  private readonly histories = new Map<MineId, MineHistoryView>()
 
   /** Sets `dwarfId`'s stored rows, newest first. */
   seed(dwarfId: DwarfId, newestFirst: readonly MessageView[]): void {
     this.rows.set(dwarfId, structuredClone([...newestFirst]))
+  }
+
+  /** Sets the history `mineHistory` answers for `view.mineId`. */
+  seedHistory(view: MineHistoryView): void {
+    this.histories.set(view.mineId, structuredClone(view))
+  }
+
+  mineHistory(mineId: MineId): MineHistoryView {
+    this.historyCalls.push(mineId)
+    return structuredClone(this.histories.get(mineId) ?? { mineId, speakers: [] })
   }
 
   feed(dwarfId: DwarfId, page?: FeedPageRequest): FeedPage {
