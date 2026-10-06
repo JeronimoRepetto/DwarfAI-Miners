@@ -3,6 +3,7 @@ import type { BaseWindow, OpenDialogOptions, OpenDialogReturnValue } from 'elect
 import { describe, expect, it } from 'vitest'
 import type { WindowRef } from '../ports/nativeActions'
 import { ElectronFolderPicker } from './ElectronFolderPicker'
+import { runFolderPickerContract } from '../ports/folderPicker.contract'
 
 /**
  * The real `ElectronFolderPicker` over a recording `dialog` double (16 §4.14; 05 §3.14 ← today's `declareMine`
@@ -67,4 +68,16 @@ describe('ElectronFolderPicker (16 §4.14)', () => {
     expect(await picker.pick({ windowId: 3 })).toBe('/home/j/ore')
     expect(dialog.calls).toEqual([{ parent: undefined, options: FOLDER_DIALOG }])
   })
+})
+
+runFolderPickerContract('ElectronFolderPicker over Electron dialog', (chosen) => {
+  const { dialog, picker } = subject({
+    canceled: chosen === null,
+    filePaths: chosen === null ? [] : [chosen]
+  })
+  return {
+    picker,
+    attachedTo: () =>
+      dialog.calls.map((call) => (call.parent === PANEL ? { windowId: 3 } : { windowId: -1 }))
+  }
 })

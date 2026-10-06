@@ -3,23 +3,27 @@ import { describe, expect, it } from 'vitest'
 import { FakeClipboard } from '../ports/fakes/FakeClipboard'
 import { FakeExternalOpener } from '../ports/fakes/FakeExternalOpener'
 import { FakeFilePicker } from '../ports/fakes/FakeFilePicker'
-import { createNativeActions } from './nativeActions'
+import { FakeFolderPicker } from '../ports/fakes/FakeFolderPicker'
+import { createNativeActions, MINE_PATH_UNOPENABLE_REASON } from './nativeActions'
 
 /**
  * The native actions of cut 0 over their port doubles (05 §3.14; 16 §4.14): today's answers of A-22 and A-24 (14
  * §2.1 KEEP; ADR-033 item 6), a cancelled picker answering `[]`, and a picker that yields paths only (ADR-019 item 9).
  */
-function subject(picked: readonly string[] | null = null) {
+// AMENDED for ISSUE-091 (was: no folder picker): the folder the person picks for A-30, `null` for a cancelled dialog.
+function subject(picked: readonly string[] | null = null, folder: string | null = null) {
   const files = new FakeFilePicker(picked)
+  const folders = new FakeFolderPicker(folder)
   const clipboard = new FakeClipboard()
   const opener = new FakeExternalOpener()
   const actions = createNativeActions({
     files,
+    folders,
     clipboard,
     opener,
     parentWindow: () => ({ windowId: 7 })
   })
-  return { files, clipboard, opener, actions }
+  return { files, folders, clipboard, opener, actions }
 }
 
 describe('native actions (05 §3.14; 14 §2.1 A-21, A-22, A-24)', () => {
@@ -76,5 +80,38 @@ describe('native actions (05 §3.14; 14 §2.1 A-21, A-22, A-24)', () => {
       reason: 'That link could not be opened.'
     })
     expect(opener.opened).toEqual([])
+  })
+
+  it('[ADR-019, NFR-PLAT-09] chooseFolder answers the picked folder over the window the control was pressed in, and null when cancelled', async () => {
+    const picked = subject(null, '/home/j/work/ore')
+    expect(await picked.actions.chooseFolder()).toBe('/home/j/work/ore')
+    expect(picked.folders.parents).toEqual([{ windowId: 7 }])
+
+    const cancelled = subject(null, null)
+    expect(await cancelled.actions.chooseFolder()).toBeNull()
+  })
+
+  it('[ADR-019] chooseFolder with no folder picker composed rejects rather than answering a cancel', async () => {
+    const actions = createNativeActions({
+      files: new FakeFilePicker(null),
+      clipboard: new FakeClipboard(),
+      opener: new FakeExternalOpener(),
+      parentWindow: () => ({ windowId: 7 })
+    })
+
+    await expect(actions.chooseFolder()).rejects.toThrow('no folder picker')
+  })
+
+  it('[ADR-019] openPath opens the path and answers opened, and an OS error answers the fixed reason, never the OS text', async () => {
+    const { opener, actions } = subject()
+
+    expect(await actions.openPath('/home/j/work/ore/src/a.ts')).toEqual({ opened: true })
+    opener.openPathError = 'Failed to open: access denied for C:\Users\j'
+    expect(await actions.openPath('/home/j/work/ore/src/b.ts')).toEqual({
+      opened: false,
+      reason: MINE_PATH_UNOPENABLE_REASON
+    })
+    expect(MINE_PATH_UNOPENABLE_REASON).toBe('That file could not be opened.')
+    expect(opener.openedPaths).toEqual(['/home/j/work/ore/src/a.ts', '/home/j/work/ore/src/b.ts'])
   })
 })
