@@ -49,9 +49,12 @@ const SERVED_SINCE_CUT_0 = [
   'mines.list',
   'mines.remove',
   'mines.resolveFile',
-  'section:mines'
+  'section:mines',
+  // The crew module's section and B-M41, served from cut 1 (ISSUE-094).
+  'section:dwarfs',
+  'strangler.dwarfIdentities'
 ]
-const SERVED_SECTIONS = ['meta', 'preferences', 'mines']
+const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs']
 
 let entry = ''
 let root = ''

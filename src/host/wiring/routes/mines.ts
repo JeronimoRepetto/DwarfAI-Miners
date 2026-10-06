@@ -23,12 +23,13 @@
 // - `DwarfArrived` → project recency (08 §2.2): the frozen `MinesCommands` (16 §4.1) has no
 //   recency command; an observed arrival lands through `resolveForSession`, which refreshes the
 //   mine's `lastUsedAt` itself (07 S3.03), and a launch records it in its own use case.
-// - `SessionObserved` → `resolveForSession` → `crew.arrive` (later: ISSUE-094), the Reset step's
-//   `walkRecreatedMines` on `MetricsResetStarted` (later: ISSUE-121) and `MineMeasured` → the
-//   ledger (later: ISSUE-096).
+// - `SessionObserved` → `resolveForSession` → `crew.arrive`: crew's route (routes/crew.ts,
+//   ISSUE-094). The Reset step's `walkRecreatedMines` on `MetricsResetStarted` (later: ISSUE-121)
+//   and `MineMeasured` → the ledger (later: ISSUE-096).
 //
-// Crew is not constructed by the Host yet (later: ISSUE-094), so `noCrewYet` stands in: no dwarf
-// exists, so a dwarf has no mine, Remove mine has nothing to end, and the board reads no dwarf.
+// Crew's half (`MinesCrewBinding`) is `WiredCrew.mines` (routes/crew.ts, ISSUE-094): boot step 4
+// constructs crew first, so Remove mine ends dwarfs through crew's ends over the Host's
+// `SessionTerminator` bridge and the board frames read crew's queries.
 import { defaultConfig } from '@dwarfai/contracts'
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import { HostInvariantError } from '../../kernel/domain/errors'
@@ -86,7 +87,7 @@ export interface MinesCrewBinding {
   queries: Pick<CrewQueries, 'get'>
 }
 
-/** No crew module is constructed yet (later: ISSUE-094): no dwarf exists. */
+/** A Host whose crew is not bound (a mines-only flow): no dwarf exists. */
 export const noCrewYet: MinesCrewBinding = {
   mineOf: () => null,
   ends: { endAllIn: () => Promise.resolve({ ended: [], failed: [] }) },
@@ -142,7 +143,7 @@ export interface MinesWiringDeps {
   automaticWalkDelayMs: number
   /** `MINE_FOLDER_CHECK_MS` (05 §3.1). */
   folderCheckMs: number
-  /** `noCrewYet` until ISSUE-094. */
+  /** `WiredCrew.mines` (routes/crew.ts). */
   crew: MinesCrewBinding
 }
 
