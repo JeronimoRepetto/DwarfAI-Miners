@@ -1,8 +1,8 @@
 // B-M41 `strangler.dwarfIdentities` (14 §2.3, §3.4 `StranglerDwarfIdentity`, §1.10 "Strangler-only
 // read", §5 `LegacyDwarfIdBridge`; AMENDMENT-8, OQ-69): the exact join source of the legacy id
 // bridge, one `(DwarfId, ProviderId, ProviderIdentity)` record per present dwarf, read from crew's
-// strangler-only `presentIdentities()` (05 §3.2; ADR-015 item 7). The composition root registers it
-// (later: ISSUE-094).
+// strangler-only `presentIdentities()` (05 §3.2; ADR-015 item 7). host/wiring/routes/crew.ts registers it
+// before the boot binds the endpoint, over the crew instance boot step 4 wires (ISSUE-094).
 //
 // - `ui` only (roles.ts): a `notifier` or `viewer` gets FORBIDDEN before the handler runs
 //   (ADR-003 item 12). Its only caller is `LegacyDwarfIdBridge` in Electron main.

@@ -38,9 +38,15 @@
 // and before any command is accepted (05 §2.3; 16 §8.2). Boot step 4 constructs the other modules,
 // each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
 // SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
-// mines (ISSUE-093: wiring/routes/mines.ts) with the FsSourceWeightScanner of its scoring walks, its
-// seam-B members (B-M16…B-M20) and `mines` section served before the bind, its board frames and the
-// provider-error route to `checkFolder`; the others join later. After step 7 (`startModules`) the
+// crew (ISSUE-094: wiring/routes/crew.ts) with the one SqliteLifecycleFactLog (shared with
+// conversation, later: ISSUE-099), the SessionTerminator bridge over the kernel's process control
+// and its `dwarfs` section and B-M41 served before the bind; mines (ISSUE-093: wiring/routes/mines.ts)
+// over crew's ends and queries, with the FsSourceWeightScanner of its scoring walks, its seam-B
+// members (B-M16…B-M20) and `mines` section served before the bind, its board frames and the
+// provider-error route to `checkFolder`; then crew's observation routes and the boot recompute of
+// the dwarf statuses from their persisted facts (S1.18). Observation is not constructed yet
+// (later: ISSUE-095): crew reads its identity index over the Host database and `noObservationYet`
+// for the rest. The others join later. After step 7 (`startModules`) the
 // mines restart the walks a stopped Host left and start their folder-check schedule.
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,11 +55,13 @@ import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { FsSourceWeightScanner } from './modules/mines/adapters/FsSourceWeightScanner'
 import type { PreferencesEvent } from './modules/preferences'
 import type { Suppliers, SuppliersEvent } from './modules/suppliers'
+import { createSqliteObservationStores } from './modules/observation'
 import { createHostInstallResolver } from './modules/suppliers/adapters/install/hostInstallResolver'
 import { SqliteCapabilityRecordStore } from './modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
+import { SqliteLifecycleFactLog } from './platform/sqlite/SqliteLifecycleFactLog'
 import { createNativeOwnerOnlyDirectory } from './platform/endpoint/win-pipe/nativeOwnerOnlyDirectory'
 import { createNativeProcessInJob } from './platform/endpoint/win-pipe/nativeProcessInJob'
 import {
@@ -105,8 +113,13 @@ import {
   type WiredPreferences
 } from './wiring/preferencesWiring'
 import {
+  noObservationYet,
+  serveCrew,
+  type CrewRouteEvent,
+  type WiredCrew
+} from './wiring/routes/crew'
+import {
   DEFAULT_MINES_SETTINGS,
-  noCrewYet,
   serveMines,
   type MinesRouteEvent,
   type WiredMines
@@ -116,7 +129,7 @@ import { HostInvariantError, InProcessEventBus } from './kernel'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
 
 /** Every event the Host's one bus carries so far. */
-type HostEvent = PreferencesEvent | SuppliersEvent | MinesRouteEvent
+type HostEvent = PreferencesEvent | SuppliersEvent | MinesRouteEvent | CrewRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -192,7 +205,12 @@ async function main(): Promise<void> {
   // Host is past `starting` and `migrating` (HOST_NOT_READY before), so after step 2 opened it.
   let database: HostDatabase | undefined
   // The modules boot steps 3 and 4 construct, for the bridges and transport methods that join later.
-  const modules: { preferences?: WiredPreferences; suppliers?: Suppliers; mines?: WiredMines } = {}
+  const modules: {
+    preferences?: WiredPreferences
+    suppliers?: Suppliers
+    crew?: WiredCrew
+    mines?: WiredMines
+  } = {}
   // The Host's one event bus (16 §2.3), created by boot step 3 over the connection step 2 opened;
   // each module's events join its union with the module.
   let bus: InProcessEventBus<HostEvent> | undefined
@@ -241,6 +259,7 @@ async function main(): Promise<void> {
   // constructs the module they forward to.
   const servedPreferences = servePreferences({ dispatcher, sections, connections })
   const servedMines = serveMines({ dispatcher, sections, connections })
+  const servedCrew = serveCrew({ dispatcher, sections })
   const processControl = new NodeProcessControl({
     scheduler,
     diagnostics: log,
@@ -403,6 +422,26 @@ async function main(): Promise<void> {
             // A new demo world each Host start (15 §4.12); development builds only.
             simulatedSeed: epoch
           })
+          // The kernel LifecycleFactLog: one SQLite adapter, shared by crew and conversation (05 §4).
+          const lifecycleFacts = new SqliteLifecycleFactLog({ db, scope: transactions, ids, clock })
+          modules.crew = servedCrew.wire({
+            db,
+            transactions,
+            lifecycleFacts,
+            bus,
+            clock,
+            scheduler,
+            ids,
+            hostEpoch: epoch,
+            log,
+            // No launch and no delivery route reach the Host yet (later: EPIC-10, ISSUE-095).
+            links: { owned: () => false, hasDeliveryRoute: () => false },
+            processes: processControl,
+            observation: {
+              ...noObservationYet,
+              sessions: createSqliteObservationStores({ db, scope: transactions, clock }).sessions
+            }
+          })
           modules.mines = servedMines.wire({
             db,
             transactions,
@@ -419,8 +458,11 @@ async function main(): Promise<void> {
             random: Math.random,
             scanner: new FsSourceWeightScanner(),
             ...DEFAULT_MINES_SETTINGS,
-            // Crew is constructed by ISSUE-094.
-            crew: noCrewYet
+            crew: modules.crew.mines
+          })
+          modules.crew.route({
+            commands: modules.mines.mines.commands,
+            queries: modules.mines.mines.queries
           })
         },
         startModules: () => modules.mines?.start()

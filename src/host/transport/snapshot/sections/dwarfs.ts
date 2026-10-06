@@ -1,8 +1,9 @@
 // The snapshot's `dwarfs` section (14 §4.1, frozen; ADR-003 item 7): the present crew of every
 // mine on the board as `DwarfWire` — `resuming` and `unrecovered` dwarfs included, a departed one
 // never — read from the mines and crew public queries within the one event-loop turn the snapshot
-// is built in (14 §4.2). `ui` only. Registered by the composition root over the wired modules
-// (later: ISSUE-094), it is advertised as `section:dwarfs` from then on (14 §4.4). Live updates:
+// is built in (14 §4.2). `ui` only. Registered before the boot binds the endpoint by host/wiring/routes/crew.ts
+// (ISSUE-094), forwarding to the modules boot step 4 wires, it is advertised as `section:dwarfs`
+// in every `hello.ok` (14 §4.4). Live updates:
 // `dwarf.arrived`, `dwarf.changed`, `dwarf.departed` (frames/board.ts).
 //
 // A dwarf absent from a later snapshot disappears without a walk-out in the UI: `dwarf.departed`

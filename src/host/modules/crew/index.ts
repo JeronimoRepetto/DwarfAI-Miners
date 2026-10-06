@@ -84,7 +84,7 @@ export interface Crew {
   /**
    * `endAllIn` over the Host's `SessionTerminator`, which `host/wiring` binds from suppliers and the
    * kernel's process control (16 §4.2), publishing `CrewEndEvent` on the Host bus it passes
-   * (later: ISSUE-093). Mines calls it for Remove mine.
+   * (host/wiring/routes/crew.ts, ISSUE-094). Mines calls it for Remove mine.
    */
   ends(deps: {
     terminator: SessionTerminator
