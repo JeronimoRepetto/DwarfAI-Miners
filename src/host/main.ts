@@ -44,9 +44,13 @@
 // wiring/routes/observation.ts) over its three SQLite stores, the Claude, Codex, Antigravity and
 // OpenCode adapters reading the providers' own folders (read only; SQLite files through the
 // read-only snapshot), its provider-error route to diagnostics and the ObservedBatchSink bridge
-// (wiring/bridges/observedBatchSink.ts) with the ledger's half only (conversation's: later:
-// ISSUE-108); crew (ISSUE-094: wiring/routes/crew.ts) with the
-// one SqliteLifecycleFactLog (shared with conversation, later: ISSUE-099), the SessionTerminator
+// (wiring/bridges/observedBatchSink.ts) with the ledger's half and conversation's; conversation
+// (ISSUE-108: wiring/routes/conversation.ts) before it, over the SqliteMessageLog and
+// SqliteActivityLog and the one SqliteLifecycleFactLog it shares with crew (05 §4), with B-M26
+// `conversation.feed`, B-M27 `conversation.mineHistory` and the `tails` section served before the
+// bind and its `conversation.appended`, `turn.ended` and outcome `dwarf.changed` frames
+// (wiring/routes/conversationFrames.ts); crew (ISSUE-094: wiring/routes/crew.ts) with that
+// SqliteLifecycleFactLog, the SessionTerminator
 // bridge over the kernel's process control and observation's process identities and
 // `recordEnded`, its identity index over observation's stores, and its `dwarfs` section and B-M41
 // served before the bind; mines (ISSUE-093: wiring/routes/mines.ts) over crew's ends and queries,
@@ -59,13 +63,16 @@
 // AppBackgroundNotifierLauncher (this executable `--background`, after the app folder in a
 // development build) and the `AttentionSettings` bridge to preferences, with B-M07 `presence` and
 // B-M08 `attention.clicked` served before the bind, the attention frames advertised, and the
-// connection registry feeding the presence union and the tray notifier supervisor. The others join
-// later. Observation is composed but not started: step 7 stays a placeholder while the bridge's
-// sink is (ISSUE-108). After step 7 (`startModules`) the mines restart the walks a stopped Host
-// left and start their folder-check schedule. The coal backfill, after `ready`, is held off with
-// observation (ISSUE-108 turns both on). A cut-1 rollback build (wiring/cut1Rollback.ts, ISSUE-122) wires
-// observation over a sink that writes nothing, so neither ever runs, and attention over a level-3 sink that
-// delivers nothing: the legacy observer, ledger and notifier are the one observer, ledger and notifier again.
+// connection registry feeding the presence union and the tray notifier supervisor; then the
+// conversation's routes (its mine history, tails and frames over crew's and mines' queries) and the
+// per-mine coal backfill (`MineCreated` / `MineReattached` → `runMineCoalBackfill`, O-11-10). The
+// others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
+// starts observation (`WiredObservation.start`: the catch-up, then the live loop). After step 7
+// (`startModules`) the mines restart the walks a stopped Host left and start their folder-check
+// schedule. After `ready`, the coal backfill. A cut-1 rollback build (wiring/cut1Rollback.ts,
+// ISSUE-122) wires observation over a sink that writes nothing, so observation, the coal backfill
+// and the per-mine backfill never run, and attention over a level-3 sink that delivers nothing: the
+// legacy observer, ledger and notifier are the one observer, ledger and notifier again.
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -148,8 +155,15 @@ import {
   type AttentionRouteEvent,
   type WiredAttention
 } from './wiring/routes/attentionTransport'
+import {
+  serveConversation,
+  type ConversationRouteEvent,
+  type WiredConversation
+} from './wiring/routes/conversation'
+import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import {
+  routeMineBackfillWhenObserving,
   startBackfillWhenObserving,
   wireLedger,
   type LedgerRouteEvent,
@@ -178,6 +192,7 @@ type HostEvent =
   | MinesRouteEvent
   | CrewRouteEvent
   | LedgerRouteEvent
+  | ConversationRouteEvent
   | AttentionRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
@@ -258,7 +273,8 @@ async function main(): Promise<void> {
     preferences?: WiredPreferences
     suppliers?: Suppliers
     ledger?: WiredLedger
-    /** Observation's batch sink: the placeholder until the conversation half (ISSUE-108). */
+    conversation?: WiredConversation
+    /** Observation's batch sink, as the cut-1 rollback choice returned it. */
     batchSink?: ObservedBatchSink
     observation?: WiredObservation
     crew?: WiredCrew
@@ -314,6 +330,8 @@ async function main(): Promise<void> {
   const servedPreferences = servePreferences({ dispatcher, sections, connections })
   const servedMines = serveMines({ dispatcher, sections, connections })
   const servedCrew = serveCrew({ dispatcher, sections })
+  // After the board's sections: `tails` follows the board chunks (14 §4.2).
+  const servedConversation = serveConversation({ dispatcher, sections })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -384,6 +402,7 @@ async function main(): Promise<void> {
           ...RESET_FRAMES,
           ...BOARD_FRAMES,
           ...LEDGER_FRAMES,
+          ...CONVERSATION_READ_FRAMES,
           ...ATTENTION_FRAMES
         ],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
@@ -506,12 +525,25 @@ async function main(): Promise<void> {
               })
           })
           modules.ledger = ledger
-          // The ObservedBatchSink bridge: the ledger's half; conversation's is not wired yet
-          // (later: ISSUE-108), so the sink stays the placeholder and observation is not started.
+          // The kernel LifecycleFactLog: one SQLite adapter, shared by crew and conversation (05 §4).
+          const lifecycleFacts = new SqliteLifecycleFactLog({ db, scope: transactions, ids, clock })
+          // Conversation next: the bridge holds its half; its frames are routed once crew exists.
+          const conversation = servedConversation.wire({
+            db,
+            transactions,
+            lifecycleFacts,
+            bus,
+            clock,
+            ids,
+            hostEpoch: epoch,
+            frames: connections
+          })
+          modules.conversation = conversation
+          // The ObservedBatchSink bridge: conversation's half (the messages), the ledger's (the usage).
           const batches = composeObservedBatchSink({
             transactions,
             ledger: ledger.batchHalf,
-            conversation: null
+            conversation: conversation.batchHalf
           })
           // A cut-1 rollback build (21 §2 cut 1 row "Rollback") wires observation over a sink that writes
           // nothing, so it is never started and the coal backfill never runs (wiring/cut1Rollback.ts).
@@ -538,8 +570,6 @@ async function main(): Promise<void> {
             hostEpoch: epoch,
             log
           })
-          // The kernel LifecycleFactLog: one SQLite adapter, shared by crew and conversation (05 §4).
-          const lifecycleFacts = new SqliteLifecycleFactLog({ db, scope: transactions, ids, clock })
           modules.crew = servedCrew.wire({
             db,
             transactions,
@@ -579,6 +609,13 @@ async function main(): Promise<void> {
             queries: modules.mines.mines.queries
           })
           ledger.route({ mines: modules.mines.mines.queries })
+          conversation.route({
+            crew: modules.crew.crew.queries,
+            mines: modules.mines.mines.queries
+          })
+          // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
+          // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).
+          routeMineBackfillWhenObserving(ledger, bus, modules.batchSink)
           // Attention: its routes from the other modules' events join with ISSUE-120.
           modules.attention = servedAttention.wire({
             ledger: new SqliteAttentionLedger({ db, scope: transactions, clock, hostEpoch: epoch }),
@@ -604,10 +641,9 @@ async function main(): Promise<void> {
             log
           })
         },
-        // Step 7 (`startObservation`: catch-up, then the live loop) is not passed: until the
-        // bridge has its conversation half the batch sink is the placeholder, a running loop
-        // would move every cursor past messages nothing stores, lost for good (INV-98), and
-        // `WiredObservation.start` is null with it. ISSUE-108 turns observation on here.
+        // Step 7: the catch-up, then the live loop, through the wiring's own `start`, which is null
+        // in a cut-1 rollback build (and over any sink that stores nothing, INV-98).
+        startObservation: () => modules.observation?.start?.(),
         startModules: () => modules.mines?.start()
       })
     },
@@ -621,11 +657,9 @@ async function main(): Promise<void> {
       exit
     }
   )
-  // Once the Host answers `ready`: the coal backfill (07 S19.02, S19.04), held off with
-  // observation while the batch sink is the placeholder. It pays only folders that are already
-  // mines, so a run before observation creates any would end `done` with nothing paid, for good.
-  // ISSUE-108 turns it on together with observation; what a mine first seen after the backfill
-  // finished receives is O-11-10's ruling (owner).
+  // Once the Host answers `ready`: the coal backfill (07 S19.02, S19.04), behind the same gate as
+  // observation (a cut-1 rollback build runs neither). A mine first seen after it finished is paid
+  // by the per-mine run routed at step 4 (O-11-10).
   if (booted.kind === 'ready' && modules.ledger !== undefined && modules.batchSink !== undefined) {
     void startBackfillWhenObserving(modules.ledger, modules.batchSink)
   }

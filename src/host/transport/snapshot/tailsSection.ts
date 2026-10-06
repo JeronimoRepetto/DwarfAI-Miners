@@ -4,8 +4,8 @@
 // Host's message log through `ConversationQueries.feed` — the same read `conversation.feed` pages
 // (methods/conversationFeed.ts) — never from a provider, so a reopened chat paints at once and
 // pages the rest on demand (ADR-007 item 6). `ui` only. Live updates: `conversation.appended`
-// (frames/conversationAppended.ts). Registered by the composition root over the wired modules
-// (later: ISSUE-108), it is advertised as `section:tails` from then on (14 §4.4).
+// (frames/conversationAppended.ts). Registered before the bind by the conversation wiring
+// (host/wiring/routes/conversation.ts, ISSUE-108), it is advertised as `section:tails` (14 §4.4).
 //
 // - Present dwarfs only, in the `dwarfs` section's order (sections/dwarfs.ts: the mines in board
 //   order, each mine's crew in `crewOf` order), so a tail is never sent for a dwarf the board does

@@ -27,7 +27,7 @@ export function dwarfsSection(deps: DwarfsSectionDeps): SectionProvider<'dwarfs'
       .list({ sortBy: 'name', direction: 'asc' })
       .flatMap((mine) => deps.crew.crewOf(mine.mineId))
       .filter((dwarf) => !dwarf.departed)
-      .map(toDwarfWire)
+      .map((dwarf) => toDwarfWire(dwarf))
 }
 
 /** Registers the `dwarfs` section (`ui` only), so it is advertised as `section:dwarfs`. */

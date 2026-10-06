@@ -32,7 +32,7 @@
 //
 // Not routed here, and why:
 // - `TurnEnded` → `crew.recordActivity('turn-finished')` (05 §4): conversation publishes it
-//   (later: ISSUE-108, ISSUE-120).
+//   (ISSUE-108 wires conversation); the route is ISSUE-120's.
 // - `SubagentObserved` (08 §0): observation publishes no such event yet; a subagent arrives through
 //   `SessionObserved` with its `parentIdentity`, which this route ranks by depth.
 // - `DwarfStopRequested` → launching `markStoppedByPerson` (required handler, 16 §2.3): launching is

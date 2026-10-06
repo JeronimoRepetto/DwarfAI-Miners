@@ -17,7 +17,7 @@
 // transaction through `ActivityLog.outcomeOf` / `saveOutcome` (amendment B) and publishes
 // `OutcomeLineChanged` after the commit when it changed. ISSUE-107: the Reset-metrics step
 // (`createConversationResetStep`), which reaches the saga structurally. ISSUE-104: `mineHistory`
-// (`Conversation.history`), over crew's public queries that host/wiring passes (later: ISSUE-108).
+// (`Conversation.history`), over crew's public queries that host/wiring passes (ISSUE-108).
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
@@ -115,7 +115,7 @@ export interface Conversation {
   /**
    * `ConversationQueries.mineHistory` (ISSUE-104) over crew's `crewOf` (the conversation → crew
    * edge, 05 §1.3): `host/wiring` passes crew's public queries when it composes both modules
-   * (later: ISSUE-108).
+   * (wiring/routes/conversation.ts, ISSUE-108).
    */
   history(deps: { crew: MineCrew }): Pick<ConversationQueries, 'mineHistory'>
   joinedEvents: JoinedEvents

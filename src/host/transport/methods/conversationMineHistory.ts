@@ -1,8 +1,8 @@
 // B-M27 `conversation.mineHistory` (14 §2.3, §3.4, §3.6 `MineHistoryView`, frozen; ADR-003 item 12;
 // ADR-007 item 5; PO #87): a mine's history from the Host's message log — every dwarf that worked
 // there, present or departed, with the same ≤ 50 rows the feed pages, undelivered ones included. It
-// never reads a provider file. The composition root registers it over the conversation module
-// (later: ISSUE-108); UI main's A-19 relays it (ui-main/ipc/handlers/getMineHistory.host.ts, routed
+// never reads a provider file. The conversation wiring registers it over the module
+// (host/wiring/routes/conversation.ts, ISSUE-108); UI main's A-19 relays it (ui-main/ipc/handlers/getMineHistory.host.ts, routed
 // by ISSUE-123).
 //
 // - Roles (roles.ts): `ui` only; a `notifier` or a `viewer` gets FORBIDDEN before the handler runs.

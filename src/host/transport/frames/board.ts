@@ -22,9 +22,10 @@
 //   is how the observer's one route lands a session in a folder that was not a mine (US-OBS-001;
 //   US-OBS-002.AC08; 11 §2 steps 4–7). Package gap: 08 §2.2 does not define "known"; this is the
 //   owner-consistent reading, recorded in the ISSUE-082 hand-off.
-// - `dwarf.changed {dwarf}` (B-F09) ← `DwarfStatusChanged`, `DwarfPresenceChanged`; `DwarfRenamed`,
-//   `DwarfStopRequested` and `OutcomeLineChanged` join with their commands and owners (later:
-//   ISSUE-079, EPIC-10, EPIC-06). The outbound queue folds a waiting `dwarf.changed` into the newer
+// - `dwarf.changed {dwarf}` (B-F09) ← `DwarfStatusChanged`, `DwarfPresenceChanged`; `DwarfRenamed`
+//   and `DwarfStopRequested` join with their commands and owners (later: ISSUE-079, EPIC-10);
+//   `OutcomeLineChanged` is conversation's route (host/wiring/routes/conversationFrames.ts,
+//   ISSUE-108), the only `dwarf.changed` that carries `outcome`. The outbound queue folds a waiting `dwarf.changed` into the newer
 //   one of the same dwarf within a Host tick (14 §1.8, events/outbound.ts); each frame here is the
 //   whole dwarf, so the one that stays is the latest. A departed dwarf sends no `dwarf.changed`:
 //   `dwarf.departed` is its last frame.

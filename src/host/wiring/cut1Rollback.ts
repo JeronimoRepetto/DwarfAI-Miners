@@ -11,15 +11,15 @@
 // - the observer's writes: observation is constructed over `observationWritesOff` (routes/observation.ts) and never
 //   started, so no cursor, session, usage or ledger credit is written. Every path that writes what observation feeds
 //   is gated by `observesWith` on the sink this file chose: step 7's `WiredObservation.start` (null), the coal
-//   backfill (`startBackfillWhenObserving`, null) and, when ISSUE-108 routes it, the per-mine backfill
-//   `runMineCoalBackfill` (O-11-10). The issue names "ledger credits": both backfills credit the ledger, so both are
+//   backfill (`startBackfillWhenObserving`, null) and the per-mine backfill `runMineCoalBackfill`
+//   (`routeMineBackfillWhenObserving`, not subscribed; O-11-10). The issue names "ledger credits": both backfills credit the ledger, so both are
 //   included. Rows the Host wrote before stay (forward-only, 21 §5.1): nothing here deletes;
 // - its level-3 OS notifications: attention's `Level3Sink` delivers nothing (no `attention.notify` or
 //   `attention.withdraw` frame reaches the tray `notifier`). The policy still decides and records its keys, and
 //   each withheld notification is logged as `attention.decision` by its event name, kind and dwarf only, never the
 //   notification's title or body (19 §9.4; ADR-026; ADR-018 item 9).
 //
-// Hook for ISSUE-108 (it turns observation and the coal backfill on): keep passing the bridge's sink through
+// How host/main.ts keeps these choices since ISSUE-108 turned observation and the coal backfills on: keep passing the bridge's sink through
 // `CUT_1_ROLLBACK_CHOICES.observedBatchSink(batches.sink)` and keep that returned sink as `modules.batchSink`;
 // start step 7 only through `modules.observation.start?.()` (never `observation.control.start()` or `catchUp()`
 // directly); start the coal backfill only through `startBackfillWhenObserving(modules.ledger, modules.batchSink)`;
