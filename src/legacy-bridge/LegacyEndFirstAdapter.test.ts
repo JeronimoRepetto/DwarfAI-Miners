@@ -1,14 +1,21 @@
 // layer: L2
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   stopAllOutcomeSchema,
   type DwarfId,
+  type DwarfWire,
   type HostParams,
   type HostResult,
-  type StopAllOutcome
+  type MineId,
+  type SnapshotChunk,
+  type StopAllOutcome,
+  type StranglerDwarfIdentity
 } from '@dwarfai/contracts'
+import { RecordingUiLog } from '../ui-main/hostLauncher/fakes/RecordingUiLog'
+import { createHostClient, type HostClientService } from '../ui-main/host-client/HostClient'
+import { FAKE_HOST_CAPABILITIES, FakeHost } from '../ui-main/host-client/testing/FakeHost'
 import { FakeHostClientTimers } from '../ui-main/host-client/testing/FakeHostClientTimers'
-import type { Dwarf, Mine } from '../main/domain/types'
+import type { Dwarf, Mine, MineUndeclareResult, ProviderSnapshot } from '../main/domain/types'
 import type { LaunchedProcess } from '../main/sessionLaunch/launchedSessions'
 import type {
   LaunchedSessionStore,
@@ -17,8 +24,11 @@ import type {
 import {
   createLegacyEndFirstAdapter,
   LEGACY_KILL_BOUND_MS,
-  LegacyLaunchRegister
+  LegacyLaunchRegister,
+  type LegacyEndFirstRemoval
 } from './LegacyEndFirstAdapter'
+import { createLegacyDwarfIdBridge, type LegacyDwarfIdBridge } from './LegacyDwarfIdBridge'
+import { MINE_DWARF_NOT_ENDED } from './rowShapes/mineNotRemoved'
 
 // L2 (17 §1): `LegacyEndFirstAdapter` (21 §3, cuts 0–4) on the A-N26 path of Stop everything and quit (ADR-002 D7;
 // ADR-014 items 2, 9). The fake legacy runtime is today's launched register (`LegacyLaunchRegister` over the legacy
@@ -299,5 +309,260 @@ describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
     expect(world.events.filter((e) => e.startsWith('ended'))).toEqual(['ended 101', 'ended 102'])
     expect(stopAllOutcomeSchema.safeParse(outcome).success).toBe(true)
     expect([...outcome.ended, ...outcome.failed]).toEqual([H1, H2, H3])
+  })
+})
+
+// L2 (17 §1): the A-32 half (21 §3 row `LegacyEndFirstAdapter`, from cut 1; 14 §2.1 A-32, §2.4 B-F10). The fake legacy
+// runtime is the same scripted register; the Host is FakeHost behind the real HostClient, serving the board's `dwarfs`
+// section, `dwarf.departed` frames and B-M41 for the bridge; the join is the real `LegacyDwarfIdBridge` over today's
+// sessions. The Host sees a legacy launch as an observed dwarf with no process identity (15 §5), so the legacy kill ends
+// it and the Host's `dwarf.departed` proves it gone before `mines.remove` is relayed. TC-090-01, TC-090-02.
+
+const ALPHA = '01890a5d-ac96-774b-bcce-b302099ad201' as MineId
+const BETA = '01890a5d-ac96-774b-bcce-b302099ad202' as MineId
+const H4 = '01890a5d-ac96-774b-bcce-b302099ad104'
+
+/** A present Host dwarf observed in `mineId` (14 §3.6 `DwarfWire`): observed, so not owned. */
+function hostDwarf(id: string, mineId: MineId, providerId: string): DwarfWire {
+  return {
+    id: id as DwarfId,
+    mineId,
+    providerId,
+    baseName: 'Thorin',
+    customName: null,
+    rank: 'worker',
+    parentDwarfId: null,
+    delegated: false,
+    sessionProfile: { providerId },
+    presence: 'present',
+    processState: 'running',
+    status: 'working',
+    needsYou: false,
+    canReceiveMessages: true,
+    stopInFlight: false,
+    stopUnavailableReason: null,
+    owned: false,
+    arrivedAt: 1_700_000_000_500
+  }
+}
+
+const META: SnapshotChunk = {
+  section: 'meta',
+  data: {
+    hostVersion: '0.0.0-fake',
+    state: 'ready',
+    resetEpoch: 0,
+    snapshotTail: 20,
+    minesEverKnown: true
+  }
+}
+
+const REMOVAL_CAPABILITIES = [
+  ...FAKE_HOST_CAPABILITIES,
+  'section:dwarfs',
+  'frame:dwarf.arrived',
+  'frame:dwarf.departed',
+  'strangler.dwarfIdentities'
+]
+
+/** One Host dwarf: where it is, and the provider session it is (the join's key, ADR-015 item 7). */
+interface Present {
+  dwarfId: string
+  mineId: MineId
+  providerId: 'codex' | 'claude'
+  sessionId: string
+}
+
+const removalCleanups: Array<() => void> = []
+afterEach(() => {
+  for (const cleanup of removalCleanups.splice(0)) cleanup()
+})
+
+/** The legacy world of `legacyWorld`, plus FakeHost, the HostClient, the bridge and the adapter's A-32 half. */
+async function removalWorld(kills: Record<number, KillScript>, present: Present[]) {
+  const world = legacyWorld(kills)
+  let dwarfs = present.map((p) => hostDwarf(p.dwarfId, p.mineId, p.providerId))
+  const host = new FakeHost({ capabilities: REMOVAL_CAPABILITIES })
+  host.board = [META, { section: 'dwarfs', data: dwarfs }]
+  host.handle('strangler.dwarfIdentities', (): StranglerDwarfIdentity[] =>
+    present
+      .filter((p) => dwarfs.some((d) => d.id === p.dwarfId))
+      .map((p) => ({
+        dwarfId: p.dwarfId as DwarfId,
+        providerId: p.providerId,
+        identity: { providerId: p.providerId, providerSessionId: p.sessionId }
+      }))
+  )
+  const client: HostClientService = createHostClient({
+    launcher: { ensureHostRunning: () => Promise.resolve('attached') },
+    connect: host.connect,
+    readToken: () => Promise.resolve(host.token),
+    protocolVersion: 1,
+    client: { appVersion: '0.0.0-test', buildId: 'test', pid: 4242 },
+    timers: new FakeHostClientTimers(),
+    log: new RecordingUiLog(),
+    hungHost: { endHungHost: () => Promise.resolve({ outcome: 'identity-missing' }) }
+  })
+  // Today's sessions as `LegacyAgentRegistryFeed` wrote them: today's ids are `<provider>:<session>`.
+  const legacyDwarfs = present.map((p) =>
+    dwarf(p.sessionId, { id: `${p.providerId}:${p.sessionId}`, provider: p.providerId })
+  )
+  const sessions: ProviderSnapshot[] = legacyDwarfs.map((d) => ({
+    provider: d.provider as ProviderSnapshot['provider'],
+    sessionId: d.sessionId,
+    cwd: MINE_PATH,
+    status: 'busy',
+    dwarfs: [d],
+    updatedAt: 1
+  }))
+  const bridge: LegacyDwarfIdBridge = createLegacyDwarfIdBridge({
+    client,
+    legacy: { sessions: () => sessions }
+  })
+  const adapter: LegacyEndFirstRemoval = createLegacyEndFirstAdapter({
+    legacy: world.register,
+    timers: world.timers,
+    host: { client, bridge }
+  })
+  removalCleanups.push(
+    () => adapter.dispose(),
+    () => bridge.dispose(),
+    () => client.dispose()
+  )
+  await client.ensureHost()
+  await settle(20)
+  /** The relay ISSUE-091 hands the adapter: `mines.remove {mineId, requestId}`, recorded. */
+  const removes: Array<[string, string]> = []
+  const remove = async (mineId: string, requestId: string): Promise<MineUndeclareResult> => {
+    removes.push([mineId, requestId])
+    world.events.push(`mines.remove ${requestId}`)
+    return { outcome: 'removed' }
+  }
+  return {
+    ...world,
+    adapter,
+    remove,
+    removes,
+    /** Binds today's register to today's board, as the legacy runtime's own `observe` does. */
+    observeLegacy: () => world.register.observe([mine(legacyDwarfs)]),
+    /** The Host saw the dwarf go (B-F10): off the board, and the frame on the `ui` connection. */
+    depart: (dwarfId: string) => {
+      const gone = dwarfs.find((d) => d.id === dwarfId)
+      dwarfs = dwarfs.filter((d) => d.id !== dwarfId)
+      host.board = [META, { section: 'dwarfs', data: dwarfs }]
+      world.events.push(`departed ${dwarfId}`)
+      host.publish('dwarf.departed', {
+        dwarfId,
+        mineId: gone?.mineId ?? ALPHA,
+        cause: 'closed-elsewhere'
+      })
+    }
+  }
+}
+
+describe('A-32', () => {
+  it('[ADR-014] every legacy-launched session of the mine is ended and its dwarf.departed received before mines.remove is relayed', async () => {
+    // TC-090-01
+    const world = await removalWorld({ 101: 'held', 102: 'held', 103: 'ends' }, [
+      { dwarfId: H1, mineId: ALPHA, providerId: 'codex', sessionId: 's-a' },
+      { dwarfId: H2, mineId: ALPHA, providerId: 'codex', sessionId: 's-b' },
+      { dwarfId: H3, mineId: BETA, providerId: 'codex', sessionId: 's-c' }
+    ])
+    world.launch(101)
+    world.launch(102)
+    world.launch(103)
+    world.observeLegacy()
+
+    const answer = world.adapter.beforeRemoveMine(ALPHA, 'req-1', world.remove)
+    await settle(20)
+    // Only the mine's own launches are ended, in parallel; the other mine's launch is untouched.
+    expect(world.events).toEqual(['kill 101', 'kill 102'])
+
+    world.release(101)
+    world.release(102)
+    await settle(20)
+    // Both kills reported success, but the Host has not seen either dwarf go: nothing is relayed yet.
+    expect(world.removes).toEqual([])
+
+    world.depart(H1)
+    await settle(20)
+    expect(world.removes).toEqual([])
+
+    world.depart(H2)
+    expect(await answer).toEqual({ outcome: 'removed' })
+    expect(world.events).toEqual([
+      'kill 101',
+      'kill 102',
+      'ended 101',
+      'ended 102',
+      `departed ${H1}`,
+      `departed ${H2}`,
+      'mines.remove req-1'
+    ])
+    expect(world.removes).toEqual([[ALPHA, 'req-1']])
+    expect(world.timers.pending()).toBe(0)
+  })
+
+  it('[ADR-014] a failed legacy kill answers unchanged with dwarf-could-not-be-ended and relays nothing', async () => {
+    // TC-090-02
+    const world = await removalWorld({ 101: 'refused', 102: 'ends' }, [
+      { dwarfId: H1, mineId: ALPHA, providerId: 'codex', sessionId: 's-a' },
+      { dwarfId: H2, mineId: ALPHA, providerId: 'codex', sessionId: 's-b' }
+    ])
+    world.launch(101)
+    world.launch(102)
+    world.observeLegacy()
+
+    const answer = world.adapter.beforeRemoveMine(ALPHA, 'req-2', world.remove)
+    await settle(20)
+    world.depart(H2)
+
+    expect(await answer).toEqual({ outcome: 'unchanged', reason: 'dwarf-could-not-be-ended' })
+    expect(MINE_DWARF_NOT_ENDED).toEqual({
+      outcome: 'unchanged',
+      reason: 'dwarf-could-not-be-ended'
+    })
+    expect(world.removes).toEqual([])
+    expect(world.timers.pending()).toBe(0)
+  })
+
+  it('[ADR-014] a departure that does not arrive within the legacy bound counts as failed', async () => {
+    // TC-090-02
+    const world = await removalWorld({ 101: 'ends' }, [
+      { dwarfId: H1, mineId: ALPHA, providerId: 'codex', sessionId: 's-a' }
+    ])
+    world.launch(101)
+    world.observeLegacy()
+
+    let settled: MineUndeclareResult | undefined
+    void world.adapter.beforeRemoveMine(ALPHA, 'req-3', world.remove).then((r) => (settled = r))
+    await settle(20)
+    expect(world.events.slice(0, 2)).toEqual(['kill 101', 'ended 101'])
+    world.timers.advance(LEGACY_KILL_BOUND_MS - 1)
+    await settle(20)
+    expect(settled).toBeUndefined()
+
+    world.timers.advance(1)
+    await settle(20)
+    expect(settled).toEqual(MINE_DWARF_NOT_ENDED)
+    expect(world.removes).toEqual([])
+    expect(world.timers.pending()).toBe(0)
+  })
+
+  it('[ADR-014] a mine with no legacy-launched session relays mines.remove at once', async () => {
+    // A session the person started in their own terminal (INV-120) and a Host dwarf of another mine are never ended
+    // here: the Host ends what it can itself (B-M18).
+    const world = await removalWorld({ 101: 'ends' }, [
+      { dwarfId: H4, mineId: ALPHA, providerId: 'claude', sessionId: 'own' },
+      { dwarfId: H1, mineId: BETA, providerId: 'codex', sessionId: 's-a' }
+    ])
+    world.launch(101)
+    world.observeLegacy()
+
+    expect(await world.adapter.beforeRemoveMine(ALPHA, 'req-4', world.remove)).toEqual({
+      outcome: 'removed'
+    })
+    expect(world.events).toEqual(['mines.remove req-4'])
+    expect(world.timers.pending()).toBe(0)
   })
 })
