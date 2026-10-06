@@ -26,8 +26,9 @@ import {
 } from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
 import { createStopEverything } from '../window/application/stopEverything'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { CUT_1_ROLLBACK } from '../../contracts/strangler'
 import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
@@ -1295,5 +1296,87 @@ describe('cut-1 mines admin rows (ISSUE-091)', () => {
     expect(await late?.part.target.serve('mine:undeclare', MINE, FROM_PANEL)).toEqual({
       outcome: 'removed'
     })
+  })
+})
+
+describe('cut-1 rollback (21 §2 cut 1)', () => {
+  /**
+   * The table of a cut-1 rollback build (21 §2 cut 1 row "Rollback", §2.1 item 1): a cut-1 release whose rows the cut-1
+   * switch moved off legacy code route `legacy` again (`rollbackOf`), so the legacy observer, ledger and notifier are
+   * composed again. Only then must the Host's observer writes and level-3 notifications be off (21 §1 item 4). The
+   * legacy writers' composition gated by this table is the cut-1 route switch's (later: ISSUE-123), which derives it
+   * from the same table this rule reads.
+   */
+  const cut1RowsRouteLegacy = (table: RouteTable): boolean =>
+    table.release === 'cut-1' &&
+    !table.routes.some(
+      (r) => r.since === 'cut-1' && r.owner !== 'legacy' && CHANNELS[r.channel].status !== 'new'
+    )
+
+  /** A cut-1 table as its switch would build it from this table: the cut-1 NEW rows born, A-19 moved to the Host. */
+  const cut1: RouteTable = {
+    ...preCut,
+    release: 'cut-1',
+    routes: [
+      ...ROUTES.filter((r) => r.channel !== 'mine:history'),
+      { channel: 'mine:history', owner: 'host', since: 'cut-1', parity: 'passed', shape: 'target' },
+      ...(Object.entries(UNROUTED) as [ChannelKey, StepId][])
+        .filter(([, step]) => step === 'cut-1')
+        .map(([channel]): ChannelRoute => ({
+          channel,
+          owner: CHANNELS[channel].placement === 'host' ? 'host' : 'ui-local',
+          since: 'cut-1',
+          parity: CHANNELS[channel].placement === 'host' ? 'passed' : 'n/a',
+          shape: 'target'
+        }))
+    ],
+    unrouted: Object.fromEntries(
+      Object.entries(UNROUTED).filter(([, step]) => step !== 'cut-1')
+    ) as RouteTable['unrouted']
+  }
+
+  it('[ADR-001] the cut-1 rollback setting is on if and only if the cut-1 rows route legacy with the legacy observer, ledger and notifier composed', () => {
+    // TC-122-02: this build's setting against this build's table (the setting is false in every normal build).
+    expect(CUT_1_ROLLBACK).toBe(cut1RowsRouteLegacy(preCut))
+    // The rule tells the two cut-1 builds apart: the release build keeps the Host observer, the rollback build does
+    // not; an earlier or later release never carries the setting (a later one is past cut 1's retirement, 21 §2.1).
+    expect(checkRouteTable(cut1, KEYS)).toEqual([])
+    expect(cut1RowsRouteLegacy(cut1)).toBe(false)
+    const rolledBack = rollbackOf(cut1, 'cut-1')
+    expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+    expect(cut1RowsRouteLegacy(rolledBack)).toBe(true)
+    expect(rolledBack.routes.find((r) => r.channel === 'mine:history')?.owner).toBe('legacy')
+    expect(cut1RowsRouteLegacy({ ...preCut, release: 'cut-0' })).toBe(false)
+    expect(cut1RowsRouteLegacy({ ...rolledBack, release: 'cut-2' })).toBe(false)
+  })
+
+  it('[ADR-001] no renderer, preload or Settings code references the rollback setting', () => {
+    // TC-122-03 (21 §2 cut 1 row "Rollback": never a person-facing option): the renderer and preload trees whole, and
+    // every Settings file of the UI main process, the legacy bridges and the Host's preferences module.
+    const SRC = resolve(import.meta.dirname, '../..')
+    const files = (folder: string): string[] =>
+      readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+        const path = resolve(folder, entry.name)
+        if (entry.isDirectory()) return files(path)
+        return /\.(ts|mts|cts|vue|js|mjs)$/.test(entry.name) ? [path] : []
+      })
+    const relativeOf = (path: string) =>
+      path
+        .slice(SRC.length + 1)
+        .split('\\')
+        .join('/')
+    const scanned = [
+      ...files(resolve(SRC, 'renderer')),
+      ...files(resolve(SRC, 'preload')),
+      ...files(resolve(SRC, 'host/modules/preferences')),
+      ...[resolve(SRC, 'ui-main'), resolve(SRC, 'legacy-bridge')]
+        .flatMap((folder) => files(folder))
+        .filter((path) => /settings|preferences/i.test(relativeOf(path)))
+    ]
+    expect(scanned.length).toBeGreaterThan(0)
+    const readers = scanned
+      .filter((path) => /CUT_1_ROLLBACK\b|contracts\/strangler/.test(readFileSync(path, 'utf8')))
+      .map(relativeOf)
+    expect(readers).toEqual([])
   })
 })
