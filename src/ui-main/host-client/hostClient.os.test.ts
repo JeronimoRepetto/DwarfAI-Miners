@@ -26,7 +26,7 @@ const CUT_0_CAPABILITIES = JSON.parse(
   readFileSync(path.join(REPO_ROOT, 'fixtures', 'ipc', 'capabilities', 'cut-0.json'), 'utf8')
 ) as string[]
 // What this checkout's Host serves beyond the cut-0 release list: the preferences module's members and
-// section, served from cut 1 (ISSUE-226). Each release commits its own list (17 §1.6 "Versioning and
+// section, served from cut 1 (ISSUE-226), and the mines module's (ISSUE-093). Each release commits its own list (17 §1.6 "Versioning and
 // capabilities"); until the cut-1 list is committed, the cut-0 list plus these is the exact set.
 const SERVED_SINCE_CUT_0 = [
   'frame:preferences.changed',
@@ -36,9 +36,22 @@ const SERVED_SINCE_CUT_0 = [
   'preferences.resetMetrics',
   'preferences.set',
   'section:preferences',
-  'ui.resetPreferences.ack'
+  'ui.resetPreferences.ack',
+  // The mines module's members, section and board frames, served from cut 1 (ISSUE-093).
+  'frame:dwarf.arrived',
+  'frame:dwarf.changed',
+  'frame:dwarf.departed',
+  'frame:mine.changed',
+  'frame:mine.removed',
+  'frame:toast',
+  'mines.adoptMainProject',
+  'mines.declare',
+  'mines.list',
+  'mines.remove',
+  'mines.resolveFile',
+  'section:mines'
 ]
-const SERVED_SECTIONS = ['meta', 'preferences']
+const SERVED_SECTIONS = ['meta', 'preferences', 'mines']
 
 let entry = ''
 let root = ''
