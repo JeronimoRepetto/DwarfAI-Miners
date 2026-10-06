@@ -42,8 +42,8 @@ export interface SqliteConversationProbe {
   seedWaitingRow(dwarfId: DwarfId, correlation: string, text: string): MessageId
   /** A DwarfAI-sent person row with its `deliveries` row in phase `sending`. */
   seedSendingRow(dwarfId: DwarfId, text: string): MessageId
-  /** An "Answers:" record (no ask) with its `deliveries` row in phase `delivered`. */
-  seedAnswersRecord(dwarfId: DwarfId, text: string): MessageId
+  /** An "Answers:" record (no ask) with its `deliveries` row in `phase` (default `delivered`). */
+  seedAnswersRecord(dwarfId: DwarfId, text: string, phase?: 'sending' | 'delivered'): MessageId
   keyOf(sourceKey: string): { dwarfId: DwarfId; messageId: MessageId | null } | null
   rowCount(dwarfId: DwarfId): number
   rowIds(dwarfId: DwarfId): MessageId[]
@@ -70,8 +70,8 @@ export function sqliteProbe(
     seedSendingRow(dwarfId, text) {
       return seedWithDelivery(dwarfId, 'person', 'message', 'sending', text)
     },
-    seedAnswersRecord(dwarfId, text) {
-      return seedWithDelivery(dwarfId, 'answers-record', 'answers-record', 'delivered', text)
+    seedAnswersRecord(dwarfId, text, phase = 'delivered') {
+      return seedWithDelivery(dwarfId, 'answers-record', 'answers-record', phase, text)
     },
     keyOf(sourceKey) {
       const row = db.all('SELECT dwarf_id, message_id FROM message_keys WHERE source_key = ?', [

@@ -15,7 +15,8 @@
 // publishing `ActivityChanged` after its commit. ISSUE-102: the outcome line (06 §9.2) — each of
 // `ingest`, `recordTurnEnd`, `recordSessionEnd` and `noteAsk` (amended B2) recomputes it in its
 // transaction through `ActivityLog.outcomeOf` / `saveOutcome` (amendment B) and publishes
-// `OutcomeLineChanged` after the commit when it changed.
+// `OutcomeLineChanged` after the commit when it changed. ISSUE-107: the Reset-metrics step
+// (`createConversationResetStep`), which reaches the saga structurally.
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
@@ -27,6 +28,7 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { SqliteActivityLog } from './adapters/SqliteActivityLog'
 import { SqliteMessageLog } from './adapters/SqliteMessageLog'
+import { ConversationResetStep } from './adapters/sqlite/ConversationResetStep'
 import { ConversationIngest, type AskChange, type ConversationCommands } from './application/ingest'
 import { AskNoter } from './application/noteAsk'
 import { ConversationFeedQueries } from './application/queries'
@@ -102,6 +104,24 @@ export interface Conversation {
   commands: ConversationCommands
   queries: ConversationQueries
   joinedEvents: JoinedEvents
+}
+
+/**
+ * The conversation step of the Reset-metrics saga (ADR-023; 09 §7.2): the shape of the preferences
+ * module's `ResetDbStep` (16 §4.12), stated here so conversation imports nothing from preferences
+ * (05 §1.3, R4). It joins the saga's one `db` transaction.
+ */
+export interface ConversationResetDbStep {
+  readonly name: string
+  reset(tx: TransactionRunner): void
+}
+
+/** `name: 'conversation'`; registered with the saga by host/wiring/resetParticipants.ts. */
+export function createConversationResetStep(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+}): ConversationResetDbStep {
+  return new ConversationResetStep(deps)
 }
 
 /** The module over the Host database. */

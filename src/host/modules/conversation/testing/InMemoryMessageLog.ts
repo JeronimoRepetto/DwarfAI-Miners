@@ -186,9 +186,33 @@ export class InMemoryMessageLog implements MessageLog {
     return this.seedDwarfAiRow(dwarfId, 'person', text, null, 'sending')
   }
 
-  /** Test seam: an "Answers:" record of `dwarfId`, delivered (asking writes these through `AnswerRecords`). */
-  seedAnswersRecord(dwarfId: DwarfId, text: string): MessageId {
-    return this.seedDwarfAiRow(dwarfId, 'answers-record', text, null, 'delivered')
+  /**
+   * Test seam: an "Answers:" record of `dwarfId`, delivered unless `phase` says otherwise (asking
+   * writes these through `AnswerRecords`).
+   */
+  seedAnswersRecord(
+    dwarfId: DwarfId,
+    text: string,
+    phase: 'sending' | 'delivered' = 'delivered'
+  ): MessageId {
+    return this.seedDwarfAiRow(dwarfId, 'answers-record', text, null, phase)
+  }
+
+  /**
+   * Test seam for the Reset step double (09 §7.2): every row goes with its delivery except one whose
+   * delivery is still `sending`; every key stays, pointing at no row once its row went.
+   */
+  resetKeepingSending(): void {
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError('the Reset step runs inside the caller transaction (16 §2.2)')
+    }
+    this.rows = this.rows.filter((r) => r.delivery?.phase === 'sending')
+    const kept = new Set(this.rows.map((r) => r.message.id))
+    for (const [sourceKey, key] of this.keys) {
+      if (key.messageId !== null && !kept.has(key.messageId)) {
+        this.keys.set(sourceKey, { ...key, messageId: null })
+      }
+    }
   }
 
   /** The ids of the dwarf's stored rows, in insertion order. */
