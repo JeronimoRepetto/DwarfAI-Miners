@@ -75,15 +75,23 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
           : { HOME: path.join(root, 'home'), XDG_RUNTIME_DIR: path.join(root, 'xdg') }
         for (const dir of Object.values(env)) mkdirSync(dir, { recursive: true, mode: 0o700 })
         const hosts: RealHost[] = []
+        // The Hosts this test ended. The client can see a killed Host's endpoint close before Node reports the
+        // process's exit (on Windows the pipe instances close during the teardown, the exit is signalled once it is
+        // complete), so `alive` alone may still be true while nothing listens any more.
+        const ended = new Set<RealHost>()
         let client: HostClientService | undefined
         try {
           const launches: string[] = []
           const log = new RecordingUiLog()
           client = createHostClient({
-            // The launcher's part, as ADR-002 D4 has it: a Host that is gone is started again.
+            // The launcher's part, as ADR-002 D4 has it: a Host that is gone is started again. Like the real
+            // launcher, which attaches only to a Host that answers its hello probe, it never attaches to a Host this
+            // test ended; it waits for that Host's exit before spawning the next one.
             launcher: {
               async ensureHostRunning() {
-                if (hosts.at(-1)?.alive === true) return 'attached'
+                const last = hosts.at(-1)
+                if (last !== undefined && ended.has(last)) await last.exited
+                else if (last?.alive === true) return 'attached'
                 launches.push('spawned')
                 hosts.push(await startRealHost({ entry, hostDataDir, env }))
                 return 'spawned'
@@ -145,9 +153,18 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
           expect(page.chunks.map((c) => c.section)).toEqual(SERVED_SECTIONS)
 
           // The Host dies: the client reconnects, the launcher starts a new Host, and the new epoch is a fresh snapshot.
+          // Every state change is recorded from before the kill, so the short-lived `reconnecting` is never missed.
+          const states: string[] = []
+          client.onStateChange((s) =>
+            states.push(s.state === 'unavailable' ? `unavailable:${s.reason}` : s.state)
+          )
+          ended.add(hosts[0] as RealHost)
           await (hosts[0] as RealHost).kill()
-          await until(() => client?.state().state === 'reconnecting')
-          await until(() => snapshots().length === 2, 30_000)
+          await until(() => snapshots().length === 2, 30_000).catch((error: unknown) => {
+            const cause = error instanceof Error ? error.message : String(error)
+            throw new Error(`${cause}; states since the kill: ${states.join(' → ')}`)
+          })
+          expect(states).toEqual(['reconnecting', 'connected'])
           expect(client.state()).toMatchObject({ state: 'connected' })
           expect(launches).toEqual(['spawned', 'spawned'])
           expect(snapshots()[1]?.epoch).not.toBe(first.epoch)
