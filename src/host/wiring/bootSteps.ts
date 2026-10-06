@@ -59,7 +59,8 @@ export interface BootPorts {
    * Step 7: `observation.catchUp()` then `start()` (16 §8.2; ADR-015 item 3), after recovery's
    * classification (step 5) and before `ready` (step 8). `ready` does not wait for the catch-up
    * pass, which may go on after it (16 §4.3 `catchUp`). The composition root passes it
-   * (wiring/routes/observation.ts `start`, ISSUE-095); without it the step is a placeholder.
+   * (wiring/routes/observation.ts `start`) once the batch sink is real (ISSUE-108, after
+   * ISSUE-096); without it the step is a placeholder.
    */
   startObservation?: () => void
   /**
@@ -136,7 +137,7 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     // 7. observation.catchUp(), then start() (ISSUE-095). The catch-up pass of what providers
     //    wrote while no Host ran may go on after `ready` (16 §4.3 `catchUp`).
     startObservation === undefined
-      ? placeholder('start-observation', 'ISSUE-095')
+      ? placeholder('start-observation', 'ISSUE-108')
       : {
           name: 'start-observation',
           run: () => {

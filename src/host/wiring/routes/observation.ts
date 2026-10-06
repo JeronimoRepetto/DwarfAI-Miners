@@ -17,15 +17,19 @@
 // - `start`, run by boot step 7 (16 §8.2) after recovery (step 5) and before `ready` (step 8):
 //   `catchUp()` and then `start()`; the catch-up pass may go on after `ready` (16 §4.3), and the
 //   live loop's first cycle runs after it. Every route that reads an observation event is
-//   subscribed at step 4, before `catchUp` publishes its first event.
+//   subscribed at step 4, before `catchUp` publishes its first event. It is `null` while the batch
+//   sink is the placeholder: a cursor moved past a batch nothing stored would lose its messages and
+//   usage for good (INV-98), so observation cannot start before the sink is real (ISSUE-108,
+//   after ISSUE-096, turns it on in `host/main.ts`).
 // - `nudge`, the hook ingress's entry point (05 §3.3; the ingress is EPIC-08's, later: ISSUE-133):
 //   it only brings the next poll cycle forward.
 //
 // Composed only where the module exists, and why:
 // - The `ObservedBatchSink` bridge (AMENDMENT-10): its ledger half is ISSUE-096's and its
 //   conversation half ISSUE-108's (and ISSUE-120's), neither wired yet, so a batch's messages and
-//   usage reach no module and the batch commits its cursor alone (`noObservedBatchSinkYet`); each
-//   of those issues adds its half and publishes its held events after each batch commit.
+//   usage would reach no module (`noObservedBatchSinkYet`), and with it the module is composed but
+//   never started; each of those issues adds its half and publishes its held events after each
+//   batch commit.
 // - `TranscriptEntriesObserved` / `UsageObserved` / `ObservedTurnEnded` (05 §4): conversation and
 //   ledger routes (later: ISSUE-108, ISSUE-096, ISSUE-120).
 // - No simulated observation adapter: the simulated provider's sessions are the suppliers'
@@ -68,7 +72,7 @@ export const PROVIDER_ERROR_EVENT = 'observation.provider-error'
 
 /**
  * The batch sink while neither the ledger (later: ISSUE-096) nor conversation (later: ISSUE-108)
- * is wired: a batch's messages and usage reach no module; its cursor and index rows commit alone.
+ * is wired. A module wired with it never starts (`WiredObservation.start` is `null`).
  */
 export const noObservedBatchSinkYet: ObservedBatchSink = { apply: () => undefined }
 
@@ -195,8 +199,11 @@ export interface WiredObservation {
   observation: Observation
   /** Crew's half of the binding (routes/crew.ts). */
   crew: CrewObservationBinding
-  /** Boot step 7 (16 §8.2): `catchUp()`, then `start()`; the pass may go on after `ready`. */
-  start(): void
+  /**
+   * Boot step 7 (16 §8.2): `catchUp()`, then `start()`; the pass may go on after `ready`. `null`
+   * while the sink is `noObservedBatchSinkYet`: nothing may move a cursor past what nothing stores.
+   */
+  start: (() => void) | null
   /** The hook ingress's entry point (05 §3.3): brings the next cycle forward. */
   nudge(hint: NudgeHint): void
   /** Resolves once no observation cycle is in flight (tests; drain). */
@@ -244,22 +251,25 @@ export function wireObservation(deps: ObservationWiringDeps): WiredObservation {
       control: observation.control,
       sessions: stores.sessions
     },
-    start: () => {
-      // 16 §8.2 step 7: the catch-up pass first, from the cursors the last Host left (INV-98),
-      // then the live loop, whose first cycle the loop runs after the pass. `ready` does not wait
-      // for the pass: before `ready` only the recovery classification (16 §4.3 `catchUp`; ADR-015
-      // item 3), so a long offline history never delays the window.
-      const pass = observation.control.catchUp()
-      observation.control.start()
-      pass.catch((error: unknown) =>
-        log.record({
-          level: 'error',
-          event: 'uncaught',
-          subsystem: 'host',
-          errCode: errorCode(error)
-        })
-      )
-    },
+    start:
+      deps.sink === noObservedBatchSinkYet
+        ? null
+        : () => {
+            // 16 §8.2 step 7: the catch-up pass first, from the cursors the last Host left (INV-98),
+            // then the live loop, whose first cycle the loop runs after the pass. `ready` does not wait
+            // for the pass: before `ready` only the recovery classification (16 §4.3 `catchUp`; ADR-015
+            // item 3), so a long offline history never delays the window.
+            const pass = observation.control.catchUp()
+            observation.control.start()
+            pass.catch((error: unknown) =>
+              log.record({
+                level: 'error',
+                event: 'uncaught',
+                subsystem: 'host',
+                errCode: errorCode(error)
+              })
+            )
+          },
     nudge: (hint) => observation.control.nudge(hint),
     idle: () => observation.whenIdle()
   }

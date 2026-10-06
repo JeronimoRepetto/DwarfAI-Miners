@@ -49,10 +49,10 @@
 // with the FsSourceWeightScanner of its scoring walks, its seam-B members (B-M16…B-M20) and
 // `mines` section served before the bind, its board frames (the provider-error toast among them)
 // and the provider-error route to `checkFolder`; then crew's observation routes and the boot
-// recompute of the dwarf statuses from their persisted facts (S1.18). The others join later. Step
-// 7 starts observation's catch-up and then its live loop (the pass may go on after `ready`, 16
-// §4.3); then (`startModules`) the mines restart the walks a stopped Host left and start their
-// folder-check schedule.
+// recompute of the dwarf statuses from their persisted facts (S1.18). The others join later.
+// Observation is composed but not started: step 7 stays a placeholder until its batch sink is real
+// (ISSUE-108, after ISSUE-096). After step 7 (`startModules`) the mines restart the walks a stopped
+// Host left and start their folder-check schedule.
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -497,13 +497,10 @@ async function main(): Promise<void> {
             queries: modules.mines.mines.queries
           })
         },
-        // Step 7: catch-up, then the live loop (16 §8.2); the pass may go on after `ready`.
-        startObservation: () => {
-          if (modules.observation === undefined) {
-            throw new HostInvariantError('boot step 7 runs after step 4 wired observation')
-          }
-          modules.observation.start()
-        },
+        // Step 7 (`startObservation`: catch-up, then the live loop) is not passed: with the
+        // placeholder batch sink a running loop would move every cursor past messages and usage
+        // nothing stores, lost for good (INV-98), and `WiredObservation.start` is null with it.
+        // ISSUE-108 (after ISSUE-096) turns observation on here, once the sink is real.
         startModules: () => modules.mines?.start()
       })
     },

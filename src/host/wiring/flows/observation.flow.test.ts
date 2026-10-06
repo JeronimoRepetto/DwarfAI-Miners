@@ -41,7 +41,11 @@ import { InProcessEventBus } from '../../kernel/InProcessEventBus'
 import type { DiagnosticEntry } from '../../kernel/ports/diagnosticsLog'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import { FsSourceWeightScanner } from '../../modules/mines/adapters/FsSourceWeightScanner'
-import { OBSERVATION_POLL_MS, createSqliteObservationStores } from '../../modules/observation'
+import {
+  OBSERVATION_POLL_MS,
+  createSqliteObservationStores,
+  type ObservedBatchSink
+} from '../../modules/observation'
 import { NodeFs } from '../../platform/fs/NodeFs'
 import { NodeSqliteDatabase } from '../../platform/sqlite/NodeSqliteDatabase'
 import { openReadOnlySnapshot } from '../../platform/sqlite/readOnlySnapshot'
@@ -258,7 +262,15 @@ interface HostOptions {
   trace?: string[]
   /** Where the tables the observation module writes are noted (INV-37). */
   observationWrites?: Set<string>
+  /** The batch sink; default `STAND_IN_SINK`. */
+  sink?: ObservedBatchSink
 }
+
+/**
+ * The batch sink the ledger and conversation halves will be (later: ISSUE-096, ISSUE-108), played
+ * here: the flows read what observation does, not where a batch's messages and usage go.
+ */
+const STAND_IN_SINK: ObservedBatchSink = { apply: () => undefined }
 
 /**
  * One Host start: the real boot step list, with step 4 wiring observation, crew and mines over
@@ -352,7 +364,7 @@ async function bootHost(options: HostOptions) {
               processes,
               openSnapshot: openReadOnlySnapshot
             }),
-            sink: noObservedBatchSinkYet,
+            sink: options.sink ?? STAND_IN_SINK,
             transactions,
             bus,
             fs,
@@ -412,9 +424,10 @@ async function bootHost(options: HostOptions) {
           host.crew = crew
           host.mines = mines
         },
+        // Composed here for every sink, so a placeholder sink is held off by the wiring itself.
         startObservation: () => {
           if (host.observation === undefined) throw new Error('step 7 before step 4')
-          host.observation.start()
+          host.observation.start?.()
         },
         startModules: () => host.mines?.start()
       }),
@@ -667,5 +680,19 @@ describe('observation wired into the Host (ISSUE-095)', () => {
       }
     ])
     expect(host.log.refused.filter((r) => r.entry.event === PROVIDER_ERROR_EVENT)).toEqual([])
+  })
+
+  it('[INV-98] with the placeholder batch sink observation never starts, so no cursor passes what nothing stores', async () => {
+    // What host/main.ts composes until the ledger and conversation halves exist (later: ISSUE-096,
+    // ISSUE-108): a cursor moved past a batch nothing stored would lose it for good.
+    const w = world()
+    const host = await bootHost({ ...w, startAt: T0, sink: noObservedBatchSinkYet })
+    await host.poll()
+    await host.poll()
+    host.stop()
+
+    expect(w.db.all(`SELECT stream_id FROM source_cursors`)).toEqual([])
+    expect(dwarfRows(w.db)).toEqual([])
+    expect(host.observation.start).toBeNull()
   })
 })
