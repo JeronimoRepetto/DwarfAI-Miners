@@ -35,7 +35,11 @@ export function creditUsage(
   })
 }
 
-/** `LedgerQueries.totals`: the mine's six materials, each its own count (INV-93). */
+/**
+ * `LedgerQueries.totals`: the mine's six materials, each its own count (INV-93). A removed mine
+ * keeps its rows, and a reattached one reads them unchanged: neither step writes the ledger (INV-96,
+ * NFR-PERS-08), so its ore is what it had before removal (ISSUE-081).
+ */
 export function totals(crediting: Crediting, mineId: MineId): MaterialTotals {
   return crediting.repository.totals(mineId)
 }
