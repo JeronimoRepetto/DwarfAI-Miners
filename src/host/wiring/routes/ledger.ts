@@ -20,6 +20,9 @@
 //   unfinished (INV-97) and the backfill is not `done`, so each Host `ready` resumes a `paused` one
 //   until it is. A failed run is logged as an uncaught error and resolves null: the Host goes on,
 //   and the next `ready` runs it again from its recorded scan units (S19.07).
+// - `routeMineBackfillWhenObserving`, run by boot step 4 behind the same gate (ISSUE-108; owner
+//   amendment D, 11 O-11-10): `MineCreated` / `MineReattached` → `runMineCoalBackfill(mineId)`
+//   (`startMineBackfill`), fire and forget, a failure logged as `startBackfill`'s.
 //
 // The backfill's folders (`resolveMine`): the mine on the board whose identity is the folder's mine
 // key, the worktree fold included (`MineIdentityResolver`, ADR-030; 11 F10 step 3). Package gap:
@@ -102,6 +105,8 @@ export interface WiredLedger {
   route(deps: { mines: Pick<MinesQueries, 'list'> }): void
   /** After `ready`: one run of the coal backfill (S19.02, S19.04); null when it failed (logged). */
   startBackfill(): Promise<BackfillReport | null>
+  /** One run of the per-mine coal backfill (O-11-10); null when it failed (logged). */
+  startMineBackfill(mineId: MineId): Promise<BackfillReport | null>
 }
 
 /** Boot step 4: constructs the module, its frame and its batch half, and subscribes its route. */
@@ -139,6 +144,11 @@ export function wireLedger(deps: LedgerWiringDeps): WiredLedger {
   })
 
   const backfill = new AbortController()
+  /** A failed backfill run: logged as an uncaught error (its code only), and the Host goes on. */
+  const logUncaught = (error: unknown): null => {
+    log.record({ level: 'error', event: 'uncaught', subsystem: 'host', errCode: errorCode(error) })
+    return null
+  }
   return {
     ledger,
     totals: { totalsOf: (mineId) => ledger.queries.totals(mineId) },
@@ -147,16 +157,9 @@ export function wireLedger(deps: LedgerWiringDeps): WiredLedger {
       if (bound.mines !== undefined) throw new HostInvariantError('the ledger is routed once')
       bound.mines = mines
     },
-    startBackfill: () =>
-      ledger.commands.runCoalBackfill(backfill.signal).catch((error: unknown) => {
-        log.record({
-          level: 'error',
-          event: 'uncaught',
-          subsystem: 'host',
-          errCode: errorCode(error)
-        })
-        return null
-      })
+    startBackfill: () => ledger.commands.runCoalBackfill(backfill.signal).catch(logUncaught),
+    startMineBackfill: (mineId) =>
+      ledger.commands.runMineCoalBackfill(mineId, backfill.signal).catch(logUncaught)
   }
 }
 
@@ -167,12 +170,33 @@ export function wireLedger(deps: LedgerWiringDeps): WiredLedger {
  * ledger is the one crediting again (21 §2 cut 1 row "Rollback"; cut1Rollback.ts). The backfill
  * pays only folders that are already mines, and mines appear through observation. A run before observation could create any would end `done`
  * with nothing paid, and the history before the install moment would never become coal.
- * ISSUE-108 turns both on together. What a mine first seen after the backfill finished receives
- * is O-11-10's ruling (owner).
+ * Observation and the backfill run together since ISSUE-108; a mine first seen after the
+ * backfill finished is paid by the per-mine run (`routeMineBackfillWhenObserving`, O-11-10).
  */
 export function startBackfillWhenObserving(
   ledger: Pick<WiredLedger, 'startBackfill'>,
   sink: ObservedBatchSink
 ): Promise<BackfillReport | null> | null {
   return observesWith(sink) ? ledger.startBackfill() : null
+}
+
+/**
+ * The per-mine coal backfill's route (owner amendment D, 11 O-11-10): `MineCreated` and
+ * `MineReattached` → `runMineCoalBackfill(mineId)`, fire and forget, a failure logged as
+ * `startBackfill`'s. A folder that becomes a mine after the full backfill ran, or a removed mine's
+ * folder that comes back, has its pre-install usage credited as coal; a unit any path already
+ * credited is never credited again (ADR-006). Subscribed only while observation runs
+ * (`observesWith`, the same gate as step 7 and `startBackfillWhenObserving`): a cut-1 rollback
+ * build's legacy ledger is the one crediting (21 §2 cut 1 row "Rollback"; cut1Rollback.ts). Returns
+ * whether it subscribed. Run by boot step 4, before step 7's catch-up creates the first mine.
+ */
+export function routeMineBackfillWhenObserving(
+  ledger: Pick<WiredLedger, 'startMineBackfill'>,
+  bus: Pick<DomainEventBus<MinesEvent>, 'subscribe'>,
+  sink: ObservedBatchSink
+): boolean {
+  if (!observesWith(sink)) return false
+  bus.subscribe('MineCreated', ({ payload }) => void ledger.startMineBackfill(payload.mineId))
+  bus.subscribe('MineReattached', ({ payload }) => void ledger.startMineBackfill(payload.mineId))
+  return true
 }
