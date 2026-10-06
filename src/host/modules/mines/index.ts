@@ -5,9 +5,11 @@
 // "Add a mine" and the worktree dialog (`declare`, `adoptMainProject`), the mine of a session's
 // cwd (`resolveForSession`) and `resolveFileInMine`, every path re-validated on the real disk
 // (18 C-17). ISSUE-085: `checkFolder`, run by `resolveForSession` for a known mine, and the
-// folder-check schedule that `host/wiring` starts (later: ISSUE-093). The other commands grow in
-// later issues (later: ISSUE-065, ISSUE-080).
+// folder-check schedule that `host/wiring` starts (later: ISSUE-093). ISSUE-080: Remove mine
+// (`remove`) over crew's `endAllIn` and the running walk (`Mines.removal`). The other commands grow
+// in later issues (later: ISSUE-065).
 import type { HostEpoch, MineId } from '../../kernel/domain/values'
+import type { CrewEnds } from '../crew'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { FileSystem } from '../../kernel/ports/fileSystem'
@@ -23,11 +25,13 @@ import { SqliteMineRepository } from './adapters/SqliteMineRepository'
 import { hostVolumeRules } from './adapters/volumeCase'
 import { createCheckFolder } from './application/checkFolder'
 import { createDeclareCommands, type MinesCommands } from './application/declare'
+import type { MineRemovalEvent } from './application/events'
 import { FolderCheckSchedule } from './application/folderCheckSchedule'
 import { MineReadModel, type MinesQueries } from './application/mineQueries'
 import { resolveFileInMine } from './application/resolveFile'
+import { createRemove } from './application/remove'
 import { createResolveForSession } from './application/resolveForSession'
-import type { MinesEvent } from './domain/events'
+import type { MinesEvent as MineLifecycleEvent } from './domain/events'
 import type { MapSite } from './domain/mine'
 
 export type { MinesCommands } from './application/declare'
@@ -37,9 +41,16 @@ export type {
   MineBecameEnterable,
   MineBecameUnenterable,
   MineCreated,
-  MineReattached,
-  MinesEvent
+  MineMeasured,
+  MineMeasurementStarted,
+  MineReattached
 } from './domain/events'
+export type {
+  MineRemovalEvent,
+  MineRemovalFailed,
+  MineRemoved,
+  MinesEvent
+} from './application/events'
 export type { FolderUnenterableReason } from './domain/folderCheck'
 export type { MapMarker, MapSite, Mine, MineName, MineState, MineTransitionId } from './domain/mine'
 export type { MinePath, PathStyle } from './domain/minePath'
@@ -62,7 +73,8 @@ export interface MinesDeps {
   fs: Pick<FileSystem, 'stat' | 'readTextHead' | 'listDirWithSizes'>
   clock: Clock
   ids: IdGenerator
-  bus: DomainEventBus<MinesEvent>
+  /** The Host bus: the lifecycle events of `domain/events.ts` and Remove mine's (`MinesEvent`). */
+  bus: DomainEventBus<MineLifecycleEvent> & Pick<DomainEventBus<MineRemovalEvent>, 'publish'>
   hostEpoch: HostEpoch
   /** Interim, until ISSUE-065 composes `MinesCommands.remeasure` here: a new mine's walk. */
   remeasure(mineId: MineId): void
@@ -81,6 +93,12 @@ export interface Mines {
    * kernel `Scheduler` and `MINE_FOLDER_CHECK_MS` (later: ISSUE-093).
    */
   folderCheckSchedule(deps: { scheduler: Scheduler; intervalMs: number }): FolderCheckSchedule
+  /**
+   * `MinesCommands.remove` (ISSUE-080) over crew's `endAllIn` (the mines → crew edge, 05 §1.3) and
+   * the abort of the mine's running walk (S3.15, `MinesCommands.remeasure`'s walk): `host/wiring`
+   * passes both when it composes crew and the measurement (later: ISSUE-093).
+   */
+  removal(deps: { crew: CrewEnds; abortWalk(mineId: MineId): void }): Pick<MinesCommands, 'remove'>
 }
 
 /** The module over the Host database and the real disk, with the Host OS's path rules. */
@@ -129,7 +147,8 @@ export function createMines(deps: MinesDeps): Mines {
       checkFolder
     },
     folderCheckSchedule: ({ scheduler, intervalMs }) =>
-      new FolderCheckSchedule({ scheduler, intervalMs, minesWithPresentDwarfs, checkFolder })
+      new FolderCheckSchedule({ scheduler, intervalMs, minesWithPresentDwarfs, checkFolder }),
+    removal: ({ crew, abortWalk }) => createRemove({ ...commandDeps, crew, abortWalk })
   }
 }
 

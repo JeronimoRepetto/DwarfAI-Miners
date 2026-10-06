@@ -1,4 +1,5 @@
-// The board frames of seam B (14 §2.4 B-F06, B-F08, B-F09, B-F10; 14 §3.5, §3.6, frozen),
+// The board frames of seam B (14 §2.4 B-F06, B-F07, B-F08, B-F09, B-F10, B-F28; 14 §3.5, §3.6,
+// frozen),
 // projected from the mines and crew events (08 §2.1, §2.2). Each event is published after its
 // commit (16 §2.3) and handled synchronously, so its frame is enqueued before the command that
 // caused it answers (14 §1.7 "effects before response"). A frame carries the full read model as it
@@ -6,11 +7,14 @@
 // by mappers/wire.ts — never the event payload, so every frame of one kind has the same shape as
 // the snapshot section it updates (sections/mines.ts, sections/dwarfs.ts).
 //
-// - `mine.changed {mine}` (B-F06) ← `MineCreated`, `MineReattached`. The measurement events
-//   (`MineMeasurementStarted`, `MineMeasured`, `MineBecameUnenterable/Enterable`) join with their
-//   module (later: ISSUE-065), `DwarfWorkplaceChanged` (→ `dwarf.changed`) with the workplace
-//   stamp (ADR-030 D4). A mine no longer on the board when its event is handled sends nothing: it
-//   is `mine.removed`'s (later: ISSUE-080).
+// - `mine.changed {mine}` (B-F06) ← `MineCreated`, `MineReattached`, the scoring walk's
+//   `MineMeasurementStarted` and `MineMeasured` (ISSUE-065), and `MineBecameUnenterable` /
+//   `MineBecameEnterable` (the walk's and the folder check's, ISSUE-085). `DwarfWorkplaceChanged`
+//   (→ `dwarf.changed`) joins with the workplace stamp (ADR-030 D4). A mine no longer on the board
+//   when its event is handled sends nothing: it is `mine.removed`'s.
+// - `mine.removed {mineId, removedAt}` (B-F07) ← `MineRemoved` (ISSUE-080; S3.16): the marker and
+//   the mine's ore leave the board; its dwarfs' `dwarf.departed {mine-removed}` came first, from
+//   crew's ends (UC-020).
 // - `dwarf.arrived {dwarf, announce}` (B-F08) ← `DwarfArrived`. `announce` is the toast "`<d>`
 //   started in `<mine>`" (08 §2.2; US-OBS-002.AC07): true for an observed arrival in a known mine.
 //   Observed: the dwarf is not `owned` (no live `LaunchRecord`, 14 §3.6, INV-30). Known: the mine
@@ -28,7 +32,7 @@
 //   that dwarf (ADR-031 item 2). It is the only walk-out trigger (14 §4.3 rule 6), and no departure
 //   cause sends anything else from here: an observed dwarf whose process died on its own departs
 //   `closed-elsewhere` with no toast, like any outside closure (S2.06; US-RES-001.AC01; FM-059).
-//   The other toasts of 14 §2.4 B-F28 come from their own events (later: ISSUE-080).
+//   The other toasts of 14 §2.4 B-F28 come from their own events.
 // - `toast {kind: 'provider-error', providerId, cause, dwarfId?}` (B-F28, 14 §3.6 `HostToast`) ←
 //   observation's `ProviderErrorObserved` (ISSUE-084; 05 §4; US-RES-004), for `ui`. Observation
 //   already folds it to one per `(providerId, cause, dwarfId?)` and poll cycle (08 §2.3), so each
@@ -37,6 +41,10 @@
 //   no differently (US-RES-004.AC04). Nothing else is sent: the dwarf keeps its status, with no
 //   errored state (US-RES-004.AC02; ADR-032), and a session that did not survive departs through
 //   crew's own `DwarfDeparted` (US-RES-004.AC03).
+// - `toast {kind: 'mine-removal-failed', requestId, mineId, failed}` (B-F28) ← mines'
+//   `MineRemovalFailed` (ISSUE-080; S3.17; ADR-014 item 6): the ONE danger toast of a partial
+//   Remove mine, naming every dwarf that could not be ended (PO #79). Crew's per-dwarf
+//   `DwarfStopFailed{why: 'remove-mine'}` sends no toast (08 §2.2), so it is not routed here.
 // - `DwarfRebound` has no frame (14 §2.4 "No frame exists for").
 //
 // Nothing here logs: the board frames carry custom names, folder paths and provider causes (14 §3.5
@@ -56,7 +64,8 @@ export const BOARD_FRAMES: readonly HostFrameName[] = Object.freeze([
   'dwarf.arrived',
   'dwarf.changed',
   'dwarf.departed',
-  'toast'
+  'toast',
+  'mine.removed'
 ])
 
 /** Where the frames go: the connection registry (connectionRegistry.ts). */
@@ -113,6 +122,29 @@ export function publishBoardFrames(deps: BoardFramesDeps): () => void {
     deps.events.mines.subscribe('MineReattached', (event) => {
       cameOntoBoard(event.payload.mineId)
       mineChanged(event.payload.mineId)
+    }),
+    deps.events.mines.subscribe('MineMeasurementStarted', (event) =>
+      mineChanged(event.payload.mineId)
+    ),
+    deps.events.mines.subscribe('MineMeasured', (event) => mineChanged(event.payload.mineId)),
+    deps.events.mines.subscribe('MineBecameUnenterable', (event) =>
+      mineChanged(event.payload.mineId)
+    ),
+    deps.events.mines.subscribe('MineBecameEnterable', (event) =>
+      mineChanged(event.payload.mineId)
+    ),
+    deps.events.mines.subscribe('MineRemoved', (event) => {
+      const { mineId, removedAt } = event.payload
+      frames.publishFrame('mine.removed', { mineId, removedAt })
+    }),
+    deps.events.mines.subscribe('MineRemovalFailed', (event) => {
+      const { mineId, requestId, failed } = event.payload
+      frames.publishFrame('toast', {
+        kind: 'mine-removal-failed',
+        requestId,
+        mineId,
+        failed: [...failed]
+      })
     }),
     deps.events.crew.subscribe('DwarfArrived', (event) => {
       const view = deps.crew.get(event.payload.dwarfId)

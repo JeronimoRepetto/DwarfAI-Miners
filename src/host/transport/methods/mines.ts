@@ -1,12 +1,17 @@
-// The mines rows of seam B (14 §2.3, §3.4) over the mines module: B-M16 `mines.declare` and B-M17
-// `mines.adoptMainProject` over `MinesCommands`, B-M19 `mines.list` and B-M20 `mines.resolveFile`
-// over `MinesQueries`. The composition root registers them (later: ISSUE-093); UI main's A-30,
-// A-31, A-34 and A-20 relay them (later: ISSUE-091).
+// The mines rows of seam B (14 §2.3, §3.4) over the mines module: B-M16 `mines.declare`, B-M17
+// `mines.adoptMainProject` and B-M18 `mines.remove` over `MinesCommands`, B-M19 `mines.list` and
+// B-M20 `mines.resolveFile` over `MinesQueries`. The composition root registers them (later:
+// ISSUE-093); UI main's A-30, A-31, A-32, A-34 and A-20 relay them (later: ISSUE-091).
 //
 // - B-M16 and B-M17 are mutating (14 §1.6): a repeated `requestId` gets the first answer with no
 //   second effect (dispatcher.ts, 16 §2.4), and the effect is committed before the answer (14 §1.7).
 //   Their path comes from UI main's folder picker and is re-validated by the module (14 §1.10,
 //   ADR-019 item 9): the wire checks only its shape.
+// - B-M18 is mutating too, and answers after it settled (14 §1.7): once every end of the mine's
+//   dwarfs settled, after the frames they caused — `dwarf.departed` per ended dwarf, then
+//   `mine.removed`, or the one `toast {mine-removal-failed}` — which frames/board.ts enqueues
+//   synchronously as the events are published. Its result carries no dwarf: the failed ones reach
+//   the UI in that toast (PO #79).
 // - B-M20 is a query: the module resolves the target inside the mine's folder on the real disk and
 //   refuses an escape (18 C-17). Its optional `dwarfId` has no counterpart in the frozen
 //   `resolveFileInMine` (16 §4.1), so it is accepted and not used (package gap).
@@ -70,6 +75,25 @@ export function registerMines(dispatcher: Dispatcher, deps: MinesMethodsDeps): v
         mines: deps.mines.list(query).map(toWire),
         total: deps.mines.list(unpaged).length
       }
+    }
+  )
+}
+
+/**
+ * Serves B-M18 `mines.remove` on `dispatcher`, over the removal `host/wiring` composes from crew's
+ * ends and the measurement (`Mines.removal`; later: ISSUE-093).
+ */
+export function registerMineRemoval(
+  dispatcher: Dispatcher,
+  removal: Pick<MinesCommands, 'remove'>
+): void {
+  dispatcher.registerMutating(
+    'mines.remove',
+    HOST_METHOD_SCHEMAS['mines.remove'].params,
+    METHOD_ROLES['mines.remove'] ?? [],
+    async (params): Promise<HostMethods['mines.remove']['result']> => {
+      const removed = await removal.remove(params.mineId, params.requestId)
+      return removed.ok ? { ok: true, value: {} } : removed
     }
   )
 }

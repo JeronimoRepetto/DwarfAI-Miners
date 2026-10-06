@@ -51,6 +51,7 @@ import {
   type ResetMetricsParams
 } from './params/preferences'
 import { feedParamsSchema, type FeedParams } from './params/conversation'
+import { outcomeSchema, type Outcome } from './errors'
 import { requestIdSchema } from './requestId'
 import {
   snapshotPageSchema,
@@ -60,7 +61,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M19, B-M20, B-M26 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -84,6 +85,7 @@ export interface HostMethods {
   // mines
   'mines.declare':                   { params: { path: FolderPath; requestId: string }; result: DeclareMineResult }
   'mines.adoptMainProject':          { params: { worktreePath: FolderPath; requestId: string }; result: AdoptMainProjectResult }
+  'mines.remove':                    { params: { mineId: MineId; requestId: string }; result: RemoveMineResult }
   'mines.list':                      { params: MineListParams; result: MineListResult }
   'mines.resolveFile':               { params: { mineId: MineId; dwarfId?: DwarfId; target: string }; result: ResolveFileResult }
   // conversation
@@ -120,6 +122,10 @@ export interface PresenceParams {
   anyWindowVisible: boolean
   seq: number // UI-side counter; the Host ignores an older seq
 }
+
+// As 14 §3.4 writes it (names, fields and comments; layout by prettier): mines, B-M18
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty value as {}
+export type RemoveMineResult = Outcome<{}, 'dwarf-could-not-be-ended'> // the ONE toast arrives as a frame (PO #79)
 
 /** The strict() schemas of each method's `params` and `result`, by method name. */
 export const HOST_METHOD_SCHEMAS = {
@@ -225,6 +231,12 @@ export const HOST_METHOD_SCHEMAS = {
   'mines.adoptMainProject': {
     params: adoptMainProjectParamsSchema,
     result: adoptMainProjectResultSchema
+  },
+  // B-M18 (14 §2.3, §1.7): `ui` only, mutating (requestId); answered after every end settled. The
+  // dwarfs that could not be ended reach the UI in the one `toast {mine-removal-failed}` frame.
+  'mines.remove': {
+    params: z.object({ mineId: mineIdSchema, requestId: requestIdSchema }).strict(),
+    result: outcomeSchema(z.object({}).strict(), z.literal('dwarf-could-not-be-ended'))
   },
   // B-M19 (14 §2.3): `ui` only; a query, so no requestId (14 §1.6). The field names are today's
   // ProjectQuery's (14 §8 I-10); the page bounds are params/mines.ts's.

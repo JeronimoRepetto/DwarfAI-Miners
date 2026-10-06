@@ -11,6 +11,7 @@ import {
   dwarfIdSchema,
   dwarfWireSchema,
   hostToastSchema,
+  instantSchema,
   materialTotalsSchema,
   messageViewSchema,
   mineIdSchema,
@@ -22,6 +23,7 @@ import {
   type DwarfId,
   type DwarfWire,
   type HostToast,
+  type Instant,
   type Material,
   type MaterialAmount,
   type MessageView,
@@ -37,13 +39,14 @@ import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F11, B-F13, B-F14, B-F20, B-F22, B-F23, B-F24, B-F26, B-F27 and B-F28 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F07, B-F08, B-F09, B-F10, B-F11, B-F13, B-F14, B-F20, B-F22, B-F23, B-F24, B-F26, B-F27 and B-F28 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
   'host.state':           { state: HelloOk['state']; jobStatus: HelloOk['jobStatus'] }
   'host.closing':         { reason: 'idle' | 'stop-all' | 'upgrade' | 'os-session-end'; clean: true }   // 'idle' retired by AMENDMENT-5 (OQ-63), never sent
   'mine.changed':         { mine: MineWire }
+  'mine.removed':         { mineId: MineId; removedAt: Instant }
   'dwarf.arrived':        { dwarf: DwarfWire; announce: boolean }
   'dwarf.changed':        { dwarf: DwarfWire }
   'dwarf.departed':       { dwarfId: DwarfId; mineId: MineId; cause: DepartureCause }
@@ -86,6 +89,7 @@ export const HOST_FRAME_SCHEMAS = {
     })
     .strict(),
   'mine.changed': z.object({ mine: mineWireSchema }).strict(),
+  'mine.removed': z.object({ mineId: mineIdSchema, removedAt: instantSchema }).strict(),
   'dwarf.arrived': z.object({ dwarf: dwarfWireSchema, announce: z.boolean() }).strict(),
   'dwarf.changed': z.object({ dwarf: dwarfWireSchema }).strict(),
   'dwarf.departed': z
