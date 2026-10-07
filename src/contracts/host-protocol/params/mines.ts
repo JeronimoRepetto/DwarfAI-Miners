@@ -18,8 +18,9 @@ import { requestIdSchema } from '../requestId'
 import { WIRE_PATH_MAX_CHARS, wirePathSchema } from './bounds'
 
 // As 14 §3.4 writes them (names, fields and comments; layout by prettier): mines, B-M16, B-M17, B-M20
+// Amended: a worktree answer names its main working tree's path, `mainPath` (owner amendment G, 2026-10-07).
 export type DeclareMineResult = Outcome<
-  { mineId: MineId } | { worktreeOf: MineId },
+  { mineId: MineId } | { worktreeOf: MineId; mainPath: FolderPath },
   'not-a-folder' | 'invalid-path'
 > // = 05 declare; main keeps the path it picked for A-31
 export type AdoptMainProjectResult = Outcome<{ mineId: MineId }, 'no-main-project'>
@@ -111,7 +112,8 @@ export const declareMineParamsSchema = z
 export const declareMineResultSchema = outcomeSchema(
   z.union([
     z.object({ mineId: mineIdSchema }).strict(),
-    z.object({ worktreeOf: mineIdSchema }).strict()
+    // Amended: `mainPath` (owner amendment G, 2026-10-07).
+    z.object({ worktreeOf: mineIdSchema, mainPath: folderPathSchema }).strict()
   ]),
   z.enum(['not-a-folder', 'invalid-path'])
 )

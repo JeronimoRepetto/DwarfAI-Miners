@@ -6,7 +6,8 @@
 // - A-20 (split, 14 §1.10): `mines.resolveFile` (B-M20) resolves the renderer's mine-relative target inside the mine,
 //   and main opens only the path the Host answered (`NativeActions.openPath`); the OS error text is never shown.
 // - A-30 (split): main's folder picker produces the path (the renderer sends none), `mines.declare` (B-M16) settles it,
-//   and a `{worktreeOf}` answer is remembered per window, in memory only, for A-31.
+//   and a `{worktreeOf, mainPath}` answer is remembered per window, in memory only, for A-31; its `mainPath` is today's
+//   `MineWorktreeOf.root` (owner amendment G, 2026-10-07).
 // - A-31: `mines.adoptMainProject` (B-M17) with the path A-30 remembered for the calling window; it is spent once sent.
 // - A-32: `mines.remove` (B-M18) through the injected `beforeRemoveMine` hook, which the root binds to
 //   `LegacyEndFirstAdapter` (ISSUE-090, 21 §3) so a mine's legacy-launched sessions end first; the ONE danger toast of
@@ -65,7 +66,7 @@ export const MINES_ADMIN_MEMBERS: Readonly<
   Record<(typeof MINES_ADMIN_ROWS)[number], readonly HostMethod[]>
 > = {
   [MINE_OPEN_PATH]: ['mines.resolveFile'],
-  [MINE_DECLARE]: ['mines.declare', 'mines.list'],
+  [MINE_DECLARE]: ['mines.declare'],
   [MINE_DECLARE_MAIN]: ['mines.adoptMainProject'],
   [MINE_UNDECLARE]: ['mines.remove'],
   [PROJECTS_QUERY]: ['mines.list']
@@ -144,30 +145,6 @@ export function createMinesAdminRows(deps: MinesAdminDeps): RouteTarget {
     }
   }
 
-  /**
-   * The display path of the main project's mine A-30's `{worktreeOf}` names, read from `mines.list` page by page; `''`
-   * when no listed mine has that id. Package gap: the Host mints a fresh id for a main tree that has no mine yet
-   * (`host/modules/mines/application/declare.ts`) and no seam-B member names that tree's folder, so today's
-   * `MineWorktreeOf.root` stays empty then (ISSUE-123 / EPIC-16 follow-up).
-   */
-  async function rootOf(mineId: MineId): Promise<string> {
-    try {
-      for (let offset = 0; ; offset += MINE_LIST_MAX_LIMIT) {
-        const page = await client.call('mines.list', {
-          sortBy: 'name',
-          direction: 'asc',
-          limit: MINE_LIST_MAX_LIMIT,
-          offset
-        })
-        const found = page.mines.find((mine) => mine.mineId === mineId)
-        if (found !== undefined) return found.path
-        if (page.mines.length === 0 || offset + page.mines.length >= page.total) return ''
-      }
-    } catch {
-      return ''
-    }
-  }
-
   async function declareMine(window: number): Promise<DeclareAnswer> {
     // A new Add supersedes the question an earlier one left for this window.
     remembered.delete(window)
@@ -189,7 +166,8 @@ export function createMinesAdminRows(deps: MinesAdminDeps): RouteTarget {
       remembered.set(window, folder)
       return {
         outcome: 'worktree-of',
-        worktreeOf: { worktree: folder, root: await rootOf(declared.value.worktreeOf) }
+        // Amended: the root is the main working tree the Host named (owner amendment G, 2026-10-07).
+        worktreeOf: { worktree: folder, root: declared.value.mainPath }
       }
     } catch {
       return { outcome: 'failed', reason: DECLARE_FAILED }

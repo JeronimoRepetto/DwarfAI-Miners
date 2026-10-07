@@ -495,7 +495,12 @@ describe('mines.declare, mines.adoptMainProject and mines.resolveFile (14 §3.4,
     expect(
       declare.params.safeParse({ path: '/work/repo', requestId: REQUEST, name: 'x' }).success
     ).toBe(false)
-    expect(declare.result.safeParse({ ok: true, value: { worktreeOf: MINE } }).success).toBe(true)
+    // Amended: a worktree answer carries the main working tree's path (owner amendment G, 2026-10-07).
+    expect(
+      declare.result.safeParse({ ok: true, value: { worktreeOf: MINE, mainPath: '/work/repo' } })
+        .success
+    ).toBe(true)
+    expect(declare.result.safeParse({ ok: true, value: { worktreeOf: MINE } }).success).toBe(false)
     expect(
       declare.result.safeParse({ ok: true, value: { mineId: MINE, worktreeOf: MINE } }).success
     ).toBe(false)
