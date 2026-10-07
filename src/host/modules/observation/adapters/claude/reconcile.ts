@@ -23,6 +23,10 @@
 //   aside and keeps the registry's record, where the kernel's #231 rule (`matchesRecorded`) treats
 //   no answer as a mismatch; that rule still runs before any kill (ADR-014), so standing aside can
 //   never end a stranger's process. A pid with no recorded start is never evidence (INV-51).
+// - Closure (FM-059; 07 S4.33): a session whose recorded process is gone (`registryVerdict`
+//   `gone`) has closed, whether or not its registry entry outlived it (a killed process leaves
+//   it behind). Only the pid with its recorded start tells the session's process from another
+//   one on a recycled pid; no answer is no evidence, so presence fails open.
 //
 // Reimplemented from the candidate `src/main/providers/claude/{claudeProvider,parse}.ts`
 // (`terminalAgents`, `notificationStrings`, `procStartVerdicts`; R16).
@@ -144,24 +148,41 @@ export function registryEntryOf(text: string): RegistryEntry | null {
 }
 
 /**
- * The #45 guard: the process identity of a registry entry, given a probe of its pid and the
- * current boot id. Null when the pid is not the session's process (nothing runs on it, or a probe
- * further than the kernel's tolerance from the recorded start), when the entry records no start,
- * or when no boot id is known. A probe with no answer stands aside (#45 polarity) and keeps the
- * registry's record. The identity always carries the recorded start, so every later check is
- * against the session's own process, never against whatever the probe found.
+ * The #45 guard over one probe: what it says of a registry entry's process (FM-059): `live` with
+ * its identity, `gone`
+ * when it provably ended, or `unknown` when nothing can be told.
+ *
+ * - `gone`: nothing runs on the pid, or the process on it started further than the kernel's
+ *   tolerance from the recorded start (another process on a recycled pid, #45). Either way the
+ *   session's own process is not running, and a process that ended never comes back.
+ * - `unknown`: the entry records no start, so a running pid is no evidence of the session
+ *   (INV-51), or the probe gave no answer and no boot id is known.
+ * - `live`: the probe found the recorded process, or gave no answer while a boot id is known: the
+ *   #45 guard stands aside (its own polarity) and keeps the registry's record, so presence fails
+ *   open. The identity always carries the recorded start, so every later check is against the
+ *   session's own process, never against whatever the probe found.
  */
-export function registryIdentity(
+export type RegistryVerdict =
+  { kind: 'live'; identity: ProcessIdentity } | { kind: 'gone' } | { kind: 'unknown' }
+
+export function registryVerdict(
   entry: RegistryEntry,
   probe: ProbeResult,
   currentBootId: string | 'unknown'
-): ProcessIdentity | null {
-  if (entry.recordedStartMs === null || probe === 'absent') return null
+): RegistryVerdict {
+  if (probe === 'absent') return { kind: 'gone' }
+  if (entry.recordedStartMs === null) return { kind: 'unknown' }
   if (probe === 'unknown') {
-    if (currentBootId === 'unknown') return null
-    return { pid: entry.pid, processStartTimeMs: entry.recordedStartMs, bootId: currentBootId }
+    if (currentBootId === 'unknown') return { kind: 'unknown' }
+    return {
+      kind: 'live',
+      identity: { pid: entry.pid, processStartTimeMs: entry.recordedStartMs, bootId: currentBootId }
+    }
   }
   const apart = Math.abs(probe.processStartTimeMs - entry.recordedStartMs)
-  if (!Number.isFinite(apart) || apart > PROCESS_START_TOLERANCE_MS) return null
-  return { pid: entry.pid, processStartTimeMs: entry.recordedStartMs, bootId: probe.bootId }
+  if (!Number.isFinite(apart) || apart > PROCESS_START_TOLERANCE_MS) return { kind: 'gone' }
+  return {
+    kind: 'live',
+    identity: { pid: entry.pid, processStartTimeMs: entry.recordedStartMs, bootId: probe.bootId }
+  }
 }

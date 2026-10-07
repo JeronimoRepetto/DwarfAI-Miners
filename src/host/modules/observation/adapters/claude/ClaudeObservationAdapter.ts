@@ -20,19 +20,27 @@
 //   is a `closed` fact of its identity, which the loop records in `EndedAgentLedger` (INV-36); a
 //   resumed session's replayed records keep their first keys (C-16).
 // - The session registry `sessions/<pid>.json` is read, when the composition gives a
-//   `ProcessControl`, for one fact only: the process identity of a session (pid and the recorded
+//   `ProcessControl`, for two facts: the process identity of a session (pid and the recorded
 //   start, through the #45 guard of `reconcile.ts`), which the module answers for ending an
-//   observed session (ADR-014 item 2; 05 §4 item 1). Each (pid, recorded start) pair is probed once
-//   and its verdict kept while the entry exists (the poll runs every 2 s and a probe may spawn a
-//   process); an entry that disappears drops its verdict. Its `waitingFor` ask evidence belongs
-//   to an observed-ask port that does not exist yet, so `observedPermission` /
-//   `observedQuestion` are `none` here although 15 §2.5 measured `detected` (hidden until built).
+//   observed session (ADR-014 item 2; 05 §4 item 1), and whether that process is gone (FM-059).
+//   Claude Code removes an entry when its session exits, but a killed process leaves its entry
+//   behind, so an entry is no evidence of a live session: every `discover` probes the recorded
+//   process of each session last found live, also after its entry left the registry, and a
+//   session whose process is gone (nothing on the pid, or another process on a recycled pid) is
+//   closed: every read of its transcript states one `closed` fact, which the loop turns into one
+//   `SessionClosedObserved` (07 S4.33) and the ledger keeps (INV-36). A process that ended never
+//   comes back, so a `gone` verdict is kept while its entry exists and its pid is not probed
+//   again. A probe with no answer is no evidence: presence fails open (#45 polarity). A probe of
+//   a dead pid costs no process; a probe of a live one may spawn one (the Windows start-time
+//   query), once per live session per cycle. Its `waitingFor` ask evidence belongs to an
+//   observed-ask port that does not exist yet, so `observedPermission` / `observedQuestion` are
+//   `none` here although 15 §2.5 measured `detected` (hidden until built).
 //
 // Candidate decision (21 §6): `src/main/providers/claude/parse.ts` and `subagents.ts` are replaced;
 // the evidence is in `ClaudeObservationAdapter.conformance.test.ts`.
 import { join } from 'node:path'
 import type { ProbeResult, ProcessIdentity } from '../../../../kernel/domain/processIdentity'
-import type { ProviderId, ProviderIdentity } from '../../../../kernel/domain/values'
+import type { Instant, ProviderId, ProviderIdentity } from '../../../../kernel/domain/values'
 import type { Clock } from '../../../../kernel/ports/clock'
 import type { FileSystem } from '../../../../kernel/ports/fileSystem'
 import type { ProcessControl } from '../../../../kernel/ports/processControl'
@@ -62,7 +70,12 @@ import {
   type TranscriptFile,
   type TranscriptState
 } from './parse'
-import { registryEntryOf, registryIdentity, type RegistryEntry } from './reconcile'
+import {
+  registryEntryOf,
+  registryVerdict,
+  type RegistryEntry,
+  type RegistryVerdict
+} from './reconcile'
 import { isTranscriptName, parentAgentIdOf, SIDECAR_MAX_BYTES, transcriptFileOf } from './subagents'
 
 /** How far before a cursor a read with no kept stream state looks to rebuild it. */
@@ -148,8 +161,12 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
   private readonly reading = new Map<string, Map<number, string>>()
   /** The process identity the #45 guard took for each registered session, by session id. */
   private registered = new Map<string, ProcessIdentity | null>()
-  /** The guard's verdict per (pid, recorded start), kept while that registry entry exists. */
-  private readonly verdicts = new Map<string, ProcessIdentity | null>()
+  /** Each (session, pid, recorded start) whose process is gone, kept while that entry exists. */
+  private readonly gone = new Set<string>()
+  /** The entry of each session whose process was last found live, by session id. */
+  private readonly running = new Map<string, RegistryEntry>()
+  /** When each session was found closed in this Host run, by session id (FM-059). */
+  private readonly closedAt = new Map<string, Instant>()
 
   constructor(private readonly options: ClaudeObservationAdapterOptions) {
     this.providerId = options.providerId
@@ -220,6 +237,16 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     if (batch.next.value > start) {
       this.checkpoints.set(source.streamId, { offset: batch.next.value, state })
     }
+    // A session's own transcript states its closure; a subagent ends with its session (INV-36).
+    const closedAt = file.agentId === null ? this.closedAt.get(file.sessionId) : undefined
+    if (closedAt !== undefined) {
+      out.events.push({
+        kind: 'closed',
+        sourceEventId: 'registry-closed',
+        identity: { providerId: this.providerId, providerSessionId: file.sessionId },
+        at: closedAt
+      })
+    }
     return out
   }
 
@@ -274,7 +301,10 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     ]
   }
 
-  /** Reads the session registry and takes each entry's process identity through the #45 guard. */
+  /**
+   * Reads the session registry, takes each entry's process identity through the #45 guard, and
+   * closes every session whose recorded process is gone (FM-059).
+   */
   private async readRegistry(): Promise<void> {
     const processes = this.options.processes
     if (processes === undefined) return
@@ -287,6 +317,7 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     }
     const registered = new Map<string, ProcessIdentity | null>()
     const present = new Set<string>()
+    const named = new Set<string>()
     for (const file of listed) {
       if (file.isDirectory || !REGISTRY_FILE.test(file.name)) continue
       let text: string
@@ -297,25 +328,42 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
       }
       const entry = registryEntryOf(text)
       if (entry === null) continue
-      const key = `${entry.pid}|${entry.recordedStartMs ?? ''}`
+      named.add(entry.sessionId)
+      const key = `${entry.sessionId}|${entry.pid}|${entry.recordedStartMs ?? ''}`
       present.add(key)
-      let identity = this.verdicts.get(key)
-      if (identity === undefined) {
-        identity = await this.guard(entry, processes)
-        this.verdicts.set(key, identity)
-      }
-      registered.set(entry.sessionId, identity)
+      const verdict: RegistryVerdict = this.gone.has(key)
+        ? { kind: 'gone' }
+        : await this.guard(entry, processes)
+      if (verdict.kind === 'gone') this.gone.add(key)
+      this.follow(entry, verdict)
+      registered.set(entry.sessionId, verdict.kind === 'live' ? verdict.identity : null)
     }
-    for (const key of [...this.verdicts.keys()]) if (!present.has(key)) this.verdicts.delete(key)
+    // A live session's entry can leave the registry before its process ends (an entry rewritten,
+    // or one this read could not parse): its last entry is probed until that process is gone.
+    for (const [sessionId, entry] of [...this.running]) {
+      if (!named.has(sessionId)) this.follow(entry, await this.guard(entry, processes))
+    }
+    for (const key of [...this.gone]) if (!present.has(key)) this.gone.delete(key)
     this.registered = registered
+  }
+
+  /** Keeps following a session whose process is live; closes it once that process is gone. */
+  private follow(entry: RegistryEntry, verdict: RegistryVerdict): void {
+    if (verdict.kind === 'live') {
+      this.running.set(entry.sessionId, entry)
+    } else if (verdict.kind === 'gone') {
+      this.running.delete(entry.sessionId)
+      if (!this.closedAt.has(entry.sessionId)) {
+        this.closedAt.set(entry.sessionId, this.options.clock.now())
+      }
+    }
   }
 
   /** The #45 guard over one entry: one probe of its pid, and the boot id when it answers none. */
   private async guard(
     entry: RegistryEntry,
     processes: Pick<ProcessControl, 'probe' | 'currentBootIdentity'>
-  ): Promise<ProcessIdentity | null> {
-    if (entry.recordedStartMs === null) return null
+  ): Promise<RegistryVerdict> {
     let probe: ProbeResult
     try {
       probe = await processes.probe(entry.pid)
@@ -330,7 +378,7 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
         bootId = 'unknown'
       }
     }
-    return registryIdentity(entry, probe, bootId)
+    return registryVerdict(entry, probe, bootId)
   }
 
   /** Which transcript the source is, with its subagent's parent from the sidecar. */
