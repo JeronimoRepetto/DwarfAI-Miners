@@ -10,6 +10,10 @@ export type { EndOutcome, ProcessIdentity } from '../domain/processIdentity'
 
 export interface ProcessControl {
   probe(pid: number): Promise<ProcessIdentity | 'absent' | 'unknown'>
+  // Amended: 16 §3 ProcessControl.isRunning (owner amendment H, 2026-10-07). Whether any process
+  // has `pid`, by existence only (signal 0 / ESRCH): it never spawns and never reads a start time,
+  // so it is never evidence of identity (06 INV-51); only `absent` is evidence, of no process.
+  isRunning(pid: number): 'running' | 'absent' | 'unknown'
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean
   spawn(spec: SpawnSpec): SpawnedProcess
   killTree(

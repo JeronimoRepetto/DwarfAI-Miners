@@ -46,7 +46,7 @@ import { InMemoryObservedSessionStore } from '../../ports/fakes/InMemoryObserved
 import { RecordingObservedBatchSink } from '../../ports/fakes/RecordingObservedBatchSink'
 import { InMemoryBoundDwarfs } from '../../testing/inMemoryBoundDwarfs'
 import { InMemoryTransactions } from '../../testing/inMemoryTransactions'
-import { ClaudeObservationAdapter } from './ClaudeObservationAdapter'
+import { ClaudeObservationAdapter, IDENTITY_RECHECK_MS } from './ClaudeObservationAdapter'
 
 const T0 = 1_790_800_000_000
 const FIXTURES = join(
@@ -527,16 +527,35 @@ describe('Claude sessions close once their recorded process is gone (FM-059)', (
     w.loop.stop()
   })
 
-  it('[FM-059, ADR-014] a pid reused by another process after the session ended closes the session', async () => {
+  it('[FM-059, ADR-014] a pid reused by another process after the session ended closes the session within the identity recheck bound', async () => {
     const { w, processes, closings } = await presentSession(await tempDir())
 
-    // The session's process ended and another process now runs on its pid: a bare pid is no
-    // evidence of the session (INV-51), only the pid with its recorded start is.
+    // The session's process ended and another process now runs on its pid, between two cycles,
+    // so the cheap existence check keeps answering running: a bare pid is no evidence of the
+    // session (INV-51), only the pid with its recorded start is, read at most every
+    // IDENTITY_RECHECK_MS (owner amendment H). Presence is not destructive: every kill re-checks.
+    const reusedAt = w.clock.now()
     processes.script(32896, running(RECORDED + PROCESS_START_TOLERANCE_MS + 1))
-    await w.poll()
+    for (let n = 0; n < IDENTITY_RECHECK_MS / OBSERVATION_POLL_MS && closings().length === 0; n++) {
+      await w.poll()
+    }
 
     expect(closings().map((c) => c.identity)).toEqual([claude(PLAIN_SESSION)])
+    expect(w.clock.now() - reusedAt).toBeLessThanOrEqual(IDENTITY_RECHECK_MS)
     expect(w.adapter.processIdentityOf(claude(PLAIN_SESSION))).toBeNull()
+    w.loop.stop()
+  })
+
+  it('[FM-059, ADR-014] a live session is identity-checked at most once per IDENTITY_RECHECK_MS, not every cycle', async () => {
+    const { w, processes, closings } = await presentSession(await tempDir())
+
+    // 60 s of cycles: the cheap existence check runs every cycle, the start-time query does not.
+    for (let n = 0; n < 60_000 / OBSERVATION_POLL_MS; n++) await w.poll()
+
+    const queries = processes.probed.filter((pid) => pid === 32896).length
+    expect(queries).toBeGreaterThanOrEqual(2)
+    expect(queries).toBeLessThanOrEqual(3)
+    expect(closings()).toEqual([])
     w.loop.stop()
   })
 

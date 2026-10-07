@@ -66,6 +66,7 @@ type ExitOutcome = { code: number | null; signal: string | null }
 
 export class FakeProcessControl implements ProcessControl {
   private readonly answers = new Map<number, ProbeResult>()
+  private readonly probedPids: number[] = []
   private readonly exits = new Map<number, (outcome: ExitOutcome) => void>()
   private readonly trees = new Map<number, ScriptedTree>()
   private readonly recorded: RecordedSpawn[] = []
@@ -88,6 +89,11 @@ export class FakeProcessControl implements ProcessControl {
   /** Every spawn so far, in order. */
   get spawns(): readonly RecordedSpawn[] {
     return this.recorded
+  }
+
+  /** The pid of every `probe` so far, in order: each one a start-time read on a real OS. */
+  get probed(): readonly number[] {
+    return this.probedPids
   }
 
   /** Every signal killTree tried to send so far, in order. */
@@ -126,8 +132,17 @@ export class FakeProcessControl implements ProcessControl {
   }
 
   probe(pid: number): Promise<ProcessIdentity | 'absent' | 'unknown'> {
+    this.probedPids.push(pid)
     const answer = this.answers.get(pid) ?? 'absent'
     return Promise.resolve(typeof answer === 'string' ? answer : { ...answer })
+  }
+
+  /**
+   * Existence only (16 §3, owner amendment H): `absent` where `probe` answers `absent`, else
+   * `running`, an unreadable start time included. It records no probe: it reads no start time.
+   */
+  isRunning(pid: number): 'running' | 'absent' | 'unknown' {
+    return (this.answers.get(pid) ?? 'absent') === 'absent' ? 'absent' : 'running'
   }
 
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean {

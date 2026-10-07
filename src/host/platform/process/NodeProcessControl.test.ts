@@ -930,3 +930,43 @@ describe('NodeProcessControl', () => {
     })
   })
 })
+
+describe('NodeProcessControl.isRunning (owner amendment H)', () => {
+  it('[INV-51] isRunning reads no start time and runs no query; a liveness error it cannot read is unknown', () => {
+    let reads = 0
+    const reader: OsProcessReader = {
+      startTimeMs: () => {
+        reads += 1
+        return Promise.resolve({ ok: true, value: T0 })
+      },
+      bootId: () => Promise.resolve({ ok: true, value: BOOT })
+    }
+    let queries = 0
+    const control = new NodeProcessControl({
+      platform: 'win32',
+      reader,
+      runCommand: () => {
+        queries += 1
+        return Promise.resolve(FAILED)
+      },
+      bootSources: scriptedBootSources('working'),
+      signalZero: (pid) => {
+        if (pid === OWN_PID) return
+        if (pid === ABSENT_PID) throw errno('ESRCH')
+        if (pid === UNREADABLE_PID) throw errno('EPERM')
+        throw errno('EIO')
+      }
+    })
+
+    expect(control.isRunning(OWN_PID)).toBe('running')
+    // Another user's process: it exists, though this user may not signal it.
+    expect(control.isRunning(UNREADABLE_PID)).toBe('running')
+    expect(control.isRunning(ABSENT_PID)).toBe('absent')
+    expect(control.isRunning(4_002)).toBe('unknown')
+    // pid 0 and negative pids name process groups, never one process.
+    expect(control.isRunning(0)).toBe('absent')
+    expect(control.isRunning(-1)).toBe('absent')
+    expect(reads).toBe(0)
+    expect(queries).toBe(0)
+  })
+})

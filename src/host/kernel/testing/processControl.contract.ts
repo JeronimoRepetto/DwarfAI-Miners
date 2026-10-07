@@ -120,6 +120,14 @@ export function runProcessControlContract(makeSubject: () => ProcessControlSubje
       expect(await control.probe(absentPid)).toBe('absent')
     })
 
+    it('[INV-51] isRunning answers by existence only: running for a live pid, even one whose start time is unreadable, absent for a pid no process has', () => {
+      const { control, ownPid, unreadablePid, absentPid } = setUp()
+
+      expect(control.isRunning(ownPid)).toBe('running')
+      expect(control.isRunning(unreadablePid)).toBe('running')
+      expect(control.isRunning(absentPid)).toBe('absent')
+    })
+
     it('[INV-51] sameProcess applies the one 2 000 ms tolerance at its boundary', () => {
       const { control } = setUp()
       const a: ProcessIdentity = { pid: 7, processStartTimeMs: 1_000_000, bootId: 'boot' }
