@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   CHANNELS,
   PRELOAD_HELPERS,
+  RETIRED,
   ROW_IDS,
   STEP_ORDER,
+  TODAY_SHAPES,
   UNROUTED,
   type ChannelKey,
   type DwarfId,
@@ -20,8 +22,13 @@ import {
   composeLegacyAskRelay,
   composeLegacyDwarfIdBridge,
   composeLegacyLaunchObservation,
+  composeHostReads,
   composeMinesAdmin,
+  composePresence,
+  composeResetFanout,
   composeStopAllRelay,
+  legacyObserverComposition,
+  legacyObserverOwner,
   type LegacyRuntimeSurface
 } from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
@@ -34,6 +41,8 @@ import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRo
 import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
 import { rollbackOf } from './rollbackTable'
 import { createRouter } from './router'
+import { CUT_0_ROUTES, CUT_0_TABLE, CUT_0_UI_LOCAL_IDS, CUT_0_UNROUTED } from './testing/cut0Routes'
+import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import {
   HOST_ROUTE_MEMBERS,
   LEGACY_BRIDGE_ADAPTERS,
@@ -57,32 +66,39 @@ function keyOfWire(wire: string): string {
   return matches.length === 1 ? (matches[0] ?? wire) : wire
 }
 
+// AMENDED for ISSUE-123 (was: no `retired`): from cut 1 the release table lists the rows it retired (`RETIRED`).
 const preCut: RouteTable = {
   release: ROUTES_RELEASE,
   routes: ROUTES,
   unrouted: UNROUTED,
+  retired: RETIRED,
   adapters: LEGACY_BRIDGE_ADAPTERS
 }
 
 /**
  * The pre-cut table with every unrouted NEW row routed as its step will route it (its registry placement, target
  * shape), so a table built for another release or with other unrouted entries checks only the change under test.
+ *
+ * AMENDED for ISSUE-123 (was: the release table `ROUTES` plus its unrouted entries): from cut 1 the release table names
+ * a shape adapter that lives only in cuts 1–3e (A-33, `ResetFanout`) and has no route for the rows it retired, so the
+ * base is the pre-cut table (every today row `legacy` with today's shape) with every NEW row routed by its placement.
  */
 const routedBase: RouteTable = {
   ...preCut,
   routes: [
-    ...ROUTES,
-    ...(Object.entries(UNROUTED) as [ChannelKey, StepId][]).map(
-      ([channel, since]): ChannelRoute => ({
+    ...PRE_CUT_0_ROUTES,
+    ...KEYS.filter((channel) => CHANNELS[channel].status === 'new').map(
+      (channel): ChannelRoute => ({
         channel,
         owner: CHANNELS[channel].placement === 'host' ? 'host' : 'ui-local',
-        since,
+        since: CUT_0_UNROUTED[channel] ?? 'cut-0',
         parity: CHANNELS[channel].placement === 'host' ? 'passed' : 'n/a',
         shape: 'target'
       })
     )
   ],
-  unrouted: {}
+  unrouted: {},
+  retired: {}
 }
 
 /** The pre-cut table with one change: the route of `channel` replaced by `routes` (none when empty). */
@@ -109,7 +125,8 @@ describe('pre-cut table', () => {
     expect(checkRouteTable(preCut, KEYS)).toEqual([])
     for (const key of KEYS) {
       const routes = ROUTES.filter((r) => r.channel === key)
-      expect(routes.length + (UNROUTED[key] ? 1 : 0), key).toBe(1)
+      // AMENDED for ISSUE-123 (was: a route or an unrouted entry): or one retired entry (`RETIRED`, lead resolution H1).
+      expect(routes.length + (UNROUTED[key] ? 1 : 0) + (RETIRED[key] ? 1 : 0), key).toBe(1)
     }
   })
 
@@ -405,16 +422,17 @@ describe('pre-cut table', () => {
     })
     // A-12 and A-P2 are RETIRE rows of the Host (14 §2.1) that keep today's shape, served by today's runtime until the
     // cut-1 switch (ISSUE-123) routes them through the facade.
+    // AMENDED for ISSUE-123 (was: `ROUTES`, the cut-0 release table): the cut-0 table is the fixture it shipped as.
     const BOARD_ROWS: ChannelKey[] = ['mines:get', 'mines:update']
     for (const key of BOARD_ROWS) {
       expect([CHANNELS[key].status, CHANNELS[key].placement], key).toEqual(['retired', 'host'])
       expect(
-        ROUTES.filter((r) => r.channel === key).map((r) => r.owner),
+        CUT_0_ROUTES.filter((r) => r.channel === key).map((r) => r.owner),
         key
       ).toEqual(['legacy'])
     }
 
-    // The root composes the facade only once the table routes A-12 to the Host: not in this release.
+    // The root composes the facade only once the table routes A-12 to the Host: not in the cut-0 table.
     let handler: ((event: HostEvent) => void) | null = null
     const client = {
       subscribe: (h: (event: HostEvent) => void) => {
@@ -428,7 +446,7 @@ describe('pre-cut table', () => {
     ]
     const macrotasks: Array<() => void> = []
     const defer = (run: () => void) => void macrotasks.push(run)
-    expect(composeBoardFacade({ routes: ROUTES, client, windows, defer })).toBeUndefined()
+    expect(composeBoardFacade({ routes: CUT_0_ROUTES, client, windows, defer })).toBeUndefined()
     expect(handler).toBeNull()
 
     // In a table that routes A-12 and A-P2 to the Host (as the cut-1 switch will), the facade is A-12's `host` handler
@@ -441,7 +459,7 @@ describe('pre-cut table', () => {
       shape: 'target'
     })
     const cut1Routes = [
-      ...ROUTES.filter((r) => !BOARD_ROWS.includes(r.channel)),
+      ...CUT_0_ROUTES.filter((r) => !BOARD_ROWS.includes(r.channel)),
       ...BOARD_ROWS.map(hostRoute)
     ]
     const facade = composeBoardFacade({ routes: cut1Routes, client, windows, defer })
@@ -492,33 +510,22 @@ describe('pre-cut table', () => {
   })
 })
 
-/**
- * The 14 ids of the rows cut 0 serves `ui-local` (21 §2 cut 0 "New core serves" U), plus A-N34 (owner-approved
- * amendment 2026-10-01, ISSUE-316: the renderer's entry to the tray's Stop everything and quit, `ui-local`).
- */
-// prettier-ignore
-const CUT_0_UI_LOCAL_IDS = [
-  'A-01', 'A-02', 'A-03', 'A-04', 'A-05', 'A-06', 'A-07', 'A-08', 'A-09', 'A-10', 'A-11',
-  'A-21', 'A-22', 'A-24', 'A-28', 'A-29', 'A-45', 'A-46', 'A-56', 'A-57', 'A-P1', 'A-P6', 'A-X1',
-  'A-N03', 'A-N04', 'A-N05', 'A-N30', 'A-N25', 'A-N27', 'A-N34'
-]
+// AMENDED for ISSUE-123 (was: `CUT_0_UI_LOCAL_IDS` declared here): the cut-0 ids live with the cut-0 table fixture
+// (`testing/cut0Routes.ts`), the table this describe proves now that the release table is cut 1's.
 
 /** The registry keys of the given 14 ids (A-44's today wire is not a registry key, so no row matches twice). */
 const keysOf = (ids: readonly string[]): ChannelKey[] =>
   KEYS.filter((key) => ids.includes(ROW_IDS[key] ?? ''))
 
+// AMENDED for ISSUE-123 (was: the release table `ROUTES` / `ROUTES_RELEASE` / `UNROUTED`): from the cut-1 switch the
+// release table is cut 1's, so these cases prove the cut-0 table as it shipped (`testing/cut0Routes.ts`).
 describe('release cut-0 (21 §2 cut 0)', () => {
-  const cut0: RouteTable = {
-    release: ROUTES_RELEASE,
-    routes: ROUTES,
-    unrouted: UNROUTED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
-  }
+  const cut0: RouteTable = CUT_0_TABLE
   const uiLocal = keysOf(CUT_0_UI_LOCAL_IDS)
-  const routeOf = (key: ChannelKey): ChannelRoute[] => ROUTES.filter((r) => r.channel === key)
+  const routeOf = (key: ChannelKey): ChannelRoute[] => CUT_0_ROUTES.filter((r) => r.channel === key)
 
   it('[ADR-001] in cut 0 the window family, A-N03 to A-N05, A-N30, A-N25 and A-N27 route ui-local', () => {
-    expect(ROUTES_RELEASE).toBe('cut-0')
+    expect(cut0.release).toBe('cut-0')
     expect(checkRouteTable(cut0, KEYS)).toEqual([])
     expect(uiLocal).toHaveLength(CUT_0_UI_LOCAL_IDS.length)
     for (const key of uiLocal) {
@@ -535,7 +542,7 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     // routed by the same switch.
     // AMENDED for ISSUE-082 (was: A-N33 and A-N17…A-N21): A-N01 and A-N02, born `host` in cut 1, join them, routed by
     // the same cut-1 switch (ISSUE-123).
-    expect(UNROUTED).toEqual({
+    expect(CUT_0_UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
       'ui:session:get': 'cut-1',
       'ui:session:patch': 'cut-1',
@@ -561,19 +568,19 @@ describe('release cut-0 (21 §2 cut 0)', () => {
         shape: 'target'
       }
     ])
-    expect(ROUTES.filter((r) => r.owner === 'host').map((r) => r.channel)).toEqual([
+    expect(CUT_0_ROUTES.filter((r) => r.owner === 'host').map((r) => r.channel)).toEqual([
       STOP_EVERYTHING_CONFIRM
     ])
     // The relay that ends the legacy-launched sessions first lives in this release (21 §3), and the root composes it
     // as A-N26's only path (`composeStopAllRelay`, the LegacyEndFirstAdapter case above; index.cut0.test.ts).
     expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')?.cuts).toContain(
-      ROUTES_RELEASE
+      cut0.release
     )
   })
 
   it('[ADR-001] in cut 0 every other row routes legacy with shape today, RETIRE rows included', () => {
     const moved = new Set<ChannelKey>([...uiLocal, STOP_EVERYTHING_CONFIRM])
-    const others = KEYS.filter((key) => !moved.has(key) && UNROUTED[key] === undefined)
+    const others = KEYS.filter((key) => !moved.has(key) && CUT_0_UNROUTED[key] === undefined)
     for (const key of others) {
       expect(routeOf(key), key).toEqual([legacyToday(key)])
     }
@@ -585,12 +592,12 @@ describe('release cut-0 (21 §2 cut 0)', () => {
         routeOf(key).map((r) => r.owner),
         key
       ).toEqual(['legacy'])
-    expect(others.length + moved.size + Object.keys(UNROUTED).length).toBe(KEYS.length)
+    expect(others.length + moved.size + Object.keys(CUT_0_UNROUTED).length).toBe(KEYS.length)
   })
 
   it('[ADR-001] in cut 0 every host route uses only seam-B members born in cut 0 and none has parity pending', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
-    for (const route of ROUTES.filter((r) => r.owner === 'host')) {
+    for (const route of CUT_0_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).not.toBe('pending')
       const members = HOST_ROUTE_MEMBERS[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
@@ -598,34 +605,38 @@ describe('release cut-0 (21 §2 cut 0)', () => {
         const born = SEAM_B_METHODS_BORN[member]
         expect(born, `${member} has a birth release`).toBeDefined()
         expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
-          at(ROUTES_RELEASE)
+          at(cut0.release)
         )
       }
     }
     // 21 §2 "Seam B members: the cut in which each is born", row 0 (B-M02…B-M06; B-M01 `hello` is the handshake).
-    expect(SEAM_B_METHODS_BORN).toEqual({
+    // AMENDED for ISSUE-123 (was: the whole `SEAM_B_METHODS_BORN` and `HOST_ROUTE_MEMBERS`): from cut 1 they also hold
+    // the cut-1 members and routes, so the cut-0 entries are read out of them.
+    expect(
+      Object.fromEntries(Object.entries(SEAM_B_METHODS_BORN).filter(([, step]) => step === 'cut-0'))
+    ).toEqual({
       ping: 'cut-0',
       'events.subscribe': 'cut-0',
       'session.snapshot': 'cut-0',
       'host.shutdown': 'cut-0',
       'host.upgrade.request': 'cut-0'
     })
-    expect(HOST_ROUTE_MEMBERS).toEqual({ [STOP_EVERYTHING_CONFIRM]: ['host.shutdown'] })
+    expect(HOST_ROUTE_MEMBERS[STOP_EVERYTHING_CONFIRM]).toEqual(['host.shutdown'])
   })
 
   it('[ADR-001] in cut 0 LegacyRuntimeRoute and LegacyEndFirstAdapter are the only adapters composed', () => {
     expect(
-      LEGACY_BRIDGE_ADAPTERS.filter((a) => a.cuts.includes(ROUTES_RELEASE)).map((a) => a.name)
+      LEGACY_BRIDGE_ADAPTERS.filter((a) => a.cuts.includes(cut0.release)).map((a) => a.name)
     ).toEqual(['LegacyRuntimeRoute', 'LegacyEndFirstAdapter'])
     // No route of this release names a shape adapter (21 §3.1: the first is born in cut 1).
-    expect(ROUTES.filter((r) => r.shapeAdapter !== undefined)).toEqual([])
+    expect(CUT_0_ROUTES.filter((r) => r.shapeAdapter !== undefined)).toEqual([])
   })
 
   it('[ADR-019] every ipcMain registration, preload member and push of the cut-0 build maps to exactly one CHANNELS entry and back', () => {
     // ipcMain: the router registers one listener per invoke and send row, under the wire its route speaks.
     const registered: string[] = []
     createRouter({
-      routes: ROUTES,
+      routes: CUT_0_ROUTES,
       legacy: { serve: async () => undefined },
       uiLocal: { serve: async () => undefined },
       host: { serve: async () => undefined },
@@ -656,7 +667,7 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     // AMENDED for ISSUE-059 (was: `expect(routeOf(key), key).toHaveLength(1)`): a push row declared ahead of the step
     // that routes it (A-N19, `UNROUTED` until cut 1, 22 §5) has no owner yet, and nothing pushes it in this release.
     for (const key of pushes) {
-      expect(routeOf(key).length + (UNROUTED[key] ? 1 : 0), key).toBe(1)
+      expect(routeOf(key).length + (CUT_0_UNROUTED[key] ? 1 : 0), key).toBe(1)
     }
     const uiLocalPushes = pushes.filter((key) => routeOf(key)[0]?.owner === 'ui-local').sort()
     expect([...UI_MAIN_PUSHES].sort()).toEqual(uiLocalPushes)
@@ -669,13 +680,9 @@ describe('release cut-0 (21 §2 cut 0)', () => {
  * passes the same router test as a release table, and it never gives a row back to legacy code an earlier cut's
  * retirement already deleted (21 §2.1 item 4: after a retirement only forward fixes exist).
  */
+// AMENDED for ISSUE-123 (was: the release table as the cut-0 table): the cut-0 table is the fixture it shipped as.
 describe('rollback', () => {
-  const cut0: RouteTable = {
-    release: ROUTES_RELEASE,
-    routes: ROUTES,
-    unrouted: UNROUTED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
-  }
+  const cut0: RouteTable = CUT_0_TABLE
   /**
    * A cut-1 table as its switch would build it from the cut-0 table: the NEW rows unrouted until cut 1 born there, one
    * kept row moved to the Host. It stands for the first table whose rollback meets rows of an earlier, retired cut.
@@ -684,9 +691,9 @@ describe('rollback', () => {
     ...cut0,
     release: 'cut-1',
     routes: [
-      ...ROUTES.filter((r) => r.channel !== 'mine:history'),
+      ...CUT_0_ROUTES.filter((r) => r.channel !== 'mine:history'),
       { channel: 'mine:history', owner: 'host', since: 'cut-1', parity: 'passed', shape: 'target' },
-      ...(Object.entries(UNROUTED) as [ChannelKey, StepId][])
+      ...(Object.entries(CUT_0_UNROUTED) as [ChannelKey, StepId][])
         .filter(([, step]) => step === 'cut-1')
         .map(([channel]): ChannelRoute => ({
           channel,
@@ -697,7 +704,7 @@ describe('rollback', () => {
         }))
     ],
     unrouted: Object.fromEntries(
-      Object.entries(UNROUTED).filter(([, step]) => step !== 'cut-1')
+      Object.entries(CUT_0_UNROUTED).filter(([, step]) => step !== 'cut-1')
     ) as RouteTable['unrouted']
   }
 
@@ -706,7 +713,7 @@ describe('rollback', () => {
     expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
     for (const key of KEYS) {
       const routes = rolledBack.routes.filter((r) => r.channel === key)
-      expect(routes.length + (UNROUTED[key] ? 1 : 0), key).toBe(1)
+      expect(routes.length + (CUT_0_UNROUTED[key] ? 1 : 0), key).toBe(1)
     }
     // The window family and A-28, A-29 go back to today's runtime; the NEW rows of cut 0 have no legacy code and keep
     // their owner, so the rollback build still reaches its Host and the tray's Stop everything and quit.
@@ -765,7 +772,7 @@ describe('rollback', () => {
       legacyToday('mine:history')
     ])
     expect(rolledBack1.routes.filter((r) => r.since === 'cut-0')).toEqual(
-      ROUTES.filter((r) => r.since === 'cut-0')
+      CUT_0_ROUTES.filter((r) => r.since === 'cut-0')
     )
   })
 })
@@ -832,7 +839,8 @@ describe('cut-1 legacy composition', () => {
       ).toBeDefined()
       expect(composeLegacyLaunchObservation({ release, launches }), release).toBeDefined()
     }
-    for (const release of [ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1'] as StepId[]) {
+    // AMENDED for ISSUE-123 (was: `[ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1']`): the release is cut 1 from the switch.
+    for (const release of ['cut-0', 'cut-5', 'v1'] as StepId[]) {
       expect(
         composeLegacyAgentRegistryFeed({ release, legacy: surface, timers }),
         release
@@ -908,7 +916,8 @@ describe('cut-1 legacy composition', () => {
       expect(composed, release).toBeDefined()
       composed?.dispose()
     }
-    for (const release of [ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1'] as StepId[]) {
+    // AMENDED for ISSUE-123 (was: `[ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1']`): the release is cut 1 from the switch.
+    for (const release of ['cut-0', 'cut-5', 'v1'] as StepId[]) {
       expect(compose(release), release).toBeUndefined()
     }
     expect(reads).toEqual([])
@@ -1001,7 +1010,8 @@ describe('cut-1 legacy composition', () => {
       expect(relay, release).toBeDefined()
       relay?.dispose()
     }
-    for (const release of [ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1'] as StepId[]) {
+    // AMENDED for ISSUE-123 (was: `[ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1']`): the release is cut 1 from the switch.
+    for (const release of ['cut-0', 'cut-5', 'v1'] as StepId[]) {
       expect(composeLegacyAskRelay({ release, dwarfIds }), release).toBeUndefined()
     }
     expect(composeLegacyAskRelay({ release: 'cut-1', dwarfIds: undefined })).toBeUndefined()
@@ -1203,18 +1213,20 @@ describe('cut-1 mines admin rows (ISSUE-091)', () => {
   }
   const bridge = { toLegacy: async () => null }
 
-  it('[ADR-001] in this release A-20, A-30, A-31, A-32 and A-34 stay legacy with today’s shape and the root composes no mines admin part', () => {
+  // AMENDED for ISSUE-123 (was: "in this release …" over `ROUTES` / `ROUTES_RELEASE`): the cut-1 switch routed them,
+  // so the case proves the cut-0 table as it shipped; the cut-1 routes are pinned in `describe('release cut 1')`.
+  it('[ADR-001] in the cut-0 table A-20, A-30, A-31, A-32 and A-34 stay legacy with today’s shape and the root composes no mines admin part', () => {
     for (const key of ADMIN_ROWS) {
       expect(CHANNELS[key].status, key).toBe('kept')
       expect(
-        ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
+        CUT_0_ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
         key
       ).toEqual([['legacy', 'today']])
     }
     expect(
       composeMinesAdmin({
-        routes: ROUTES,
-        release: ROUTES_RELEASE,
+        routes: CUT_0_ROUTES,
+        release: 'cut-0',
         client: recordingClient().client,
         native,
         legacy,
@@ -1299,19 +1311,22 @@ describe('cut-1 mines admin rows (ISSUE-091)', () => {
   })
 })
 
+/**
+ * The table of a cut-1 rollback build (21 §2 cut 1 row "Rollback", §2.1 item 1): a cut-1 release whose rows the cut-1
+ * switch moved off legacy code route `legacy` again (`rollbackOf`), so the legacy observer, ledger and notifier are
+ * composed again. Only then must the Host's observer writes and level-3 notifications be off (21 §1 item 4). The
+ * legacy writers' composition gated by this table is the cut-1 route switch's (ISSUE-123), which derives it from the
+ * same table this rule reads (`legacyObserverOwner`).
+ */
+const cut1RowsRouteLegacy = (table: RouteTable): boolean =>
+  table.release === 'cut-1' &&
+  !table.routes.some(
+    (r) => r.since === 'cut-1' && r.owner !== 'legacy' && CHANNELS[r.channel].status !== 'new'
+  )
+
 describe('cut-1 rollback (21 §2 cut 1)', () => {
-  /**
-   * The table of a cut-1 rollback build (21 §2 cut 1 row "Rollback", §2.1 item 1): a cut-1 release whose rows the cut-1
-   * switch moved off legacy code route `legacy` again (`rollbackOf`), so the legacy observer, ledger and notifier are
-   * composed again. Only then must the Host's observer writes and level-3 notifications be off (21 §1 item 4). The
-   * legacy writers' composition gated by this table is the cut-1 route switch's (later: ISSUE-123), which derives it
-   * from the same table this rule reads.
-   */
-  const cut1RowsRouteLegacy = (table: RouteTable): boolean =>
-    table.release === 'cut-1' &&
-    !table.routes.some(
-      (r) => r.since === 'cut-1' && r.owner !== 'legacy' && CHANNELS[r.channel].status !== 'new'
-    )
+  // AMENDED for ISSUE-123 (was: `cut1RowsRouteLegacy` declared here): it moved to module scope, unchanged, so the
+  // cut-1 release cases read the same rule.
 
   /** A cut-1 table as its switch would build it from this table: the cut-1 NEW rows born, A-19 moved to the Host. */
   const cut1: RouteTable = {
@@ -1378,5 +1393,515 @@ describe('cut-1 rollback (21 §2 cut 1)', () => {
       .filter((path) => /CUT_1_ROLLBACK\b|contracts\/strangler/.test(readFileSync(path, 'utf8')))
       .map(relativeOf)
     expect(readers).toEqual([])
+  })
+})
+
+// AMENDED for ISSUE-123 (appended): the cut-1 route switch (21 §2 cut 1; TC-123-01, TC-123-06).
+describe('release cut 1 (21 §2 cut 1)', () => {
+  const cut1: RouteTable = {
+    release: ROUTES_RELEASE,
+    routes: ROUTES,
+    unrouted: UNROUTED,
+    retired: RETIRED,
+    adapters: LEGACY_BRIDGE_ADAPTERS
+  }
+  /** The one registry key of a 14 id. */
+  const keyOf = (id: string): ChannelKey => {
+    const keys = KEYS.filter((key) => ROW_IDS[key] === id)
+    expect(keys, id).toHaveLength(1)
+    return keys[0] as ChannelKey
+  }
+  const routeOf = (key: ChannelKey): ChannelRoute[] => ROUTES.filter((r) => r.channel === key)
+  const bornIn1 = (
+    channel: ChannelKey,
+    owner: ChannelRoute['owner'],
+    parity: ChannelRoute['parity']
+  ): ChannelRoute => ({ channel, owner, since: 'cut-1', parity, shape: 'target' })
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a0001'
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099ad001'
+
+  /** A connected HostClient recording every method it is asked and answering each with a valid result. */
+  function recordingHost() {
+    const sent: string[] = []
+    const answers: Record<string, unknown> = {
+      'conversation.feed': { dwarfId: DWARF, messages: [], reachedStart: true },
+      'conversation.mineHistory': { mineId: MINE, speakers: [] },
+      'mines.resolveFile': { ok: true, value: { path: '/work/moria/src/a.ts' } },
+      'mines.declare': { ok: true, value: { mineId: MINE } },
+      'mines.adoptMainProject': { ok: true, value: { mineId: MINE } },
+      'mines.remove': { ok: true, value: {} },
+      'mines.list': { mines: [], total: 0 },
+      'preferences.resetMetrics': { outcome: 'reset', epoch: 2 }
+    }
+    let handler: ((event: HostEvent) => void) | null = null
+    const call = async (method: string): Promise<unknown> => {
+      sent.push(method)
+      return answers[method]
+    }
+    const client = {
+      call,
+      snapshot: async (): Promise<SnapshotPage> => {
+        sent.push('session.snapshot')
+        return {
+          snapshotId: 'snap-1',
+          seq: 1,
+          epoch: 'epoch-1' as SnapshotPage['epoch'],
+          chunks: []
+        }
+      },
+      subscribe: (h: (event: HostEvent) => void) => {
+        handler = h
+        return () => (handler = null)
+      },
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      withUiConnection: <T>(use: (ui: { call: typeof call }) => Promise<T>) => use({ call }),
+      reportPresence: (presence: unknown) => void sent.push(`presence ${JSON.stringify(presence)}`)
+    }
+    return { client, sent, emit: (event: HostEvent) => handler?.(event) }
+  }
+
+  it('[ADR-001] in cut 1 A-N01, A-N02, A-15, A-19, A-31 and A-34 route host with shape target', async () => {
+    expect(ROUTES_RELEASE).toBe('cut-1')
+    expect(checkRouteTable(cut1, KEYS)).toEqual([])
+    for (const id of ['A-N01', 'A-N02', 'A-15', 'A-19', 'A-31', 'A-34']) {
+      const key = keyOf(id)
+      expect(routeOf(key), id).toEqual([bornIn1(key, 'host', 'passed')])
+    }
+    // The root composes their handlers: A-N01 relays `session.snapshot`, A-15 and A-19 relay `conversation.feed` and
+    // `conversation.mineHistory`, each answering its target shape, and A-N02 forwards every Host frame to the mode
+    // windows as one batch per macrotask.
+    const { client, sent, emit } = recordingHost()
+    const pushed: Array<[string, unknown]> = []
+    const macrotasks: Array<() => void> = []
+    const reads = composeHostReads({
+      routes: ROUTES,
+      client: client as unknown as Parameters<typeof composeHostReads>[0]['client'],
+      windows: () => [
+        {
+          webContentsId: 7,
+          send: (push: string, batch: unknown) => void pushed.push([push, batch])
+        }
+      ],
+      defer: (run) => void macrotasks.push(run)
+    })
+    expect(reads?.part.channels).toEqual(['host:snapshot', 'dwarf:feed:page', 'mine:history'])
+    const router = createRouter({
+      routes: ROUTES.filter((r) => (reads?.part.channels ?? []).includes(r.channel)),
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(reads === undefined ? {} : { host: reads.part.target }),
+      senders
+    })
+    const payloads: Partial<Record<ChannelKey, unknown>> = {
+      'host:snapshot': {},
+      'dwarf:feed:page': { dwarfId: DWARF },
+      'mine:history': MINE
+    }
+    for (const key of ['host:snapshot', 'dwarf:feed:page', 'mine:history'] as ChannelKey[]) {
+      const answer = await router.dispatch(key, FROM_PANEL, payloads[key])
+      expect(CHANNELS[key].response.safeParse(answer).success, key).toBe(true)
+      expect((answer as { ok: boolean }).ok, key).toBe(true)
+    }
+    expect(sent).toEqual(['session.snapshot', 'conversation.feed', 'conversation.mineHistory'])
+    const frame = { kind: 'evt', seq: 2, event: 'dwarf.departed' }
+    emit({ kind: 'frame', frame } as unknown as HostEvent)
+    emit({ kind: 'frame', frame } as unknown as HostEvent)
+    for (const run of macrotasks.splice(0)) run()
+    expect(pushed).toEqual([['host:event', [frame, frame]]])
+    reads?.dispose()
+    emit({ kind: 'frame', frame } as unknown as HostEvent)
+    for (const run of macrotasks.splice(0)) run()
+    expect(pushed).toHaveLength(1)
+
+    // A-31 and A-34 are mines admin rows of the `host` target (A-20, A-30 and A-32 are pinned below).
+    const admin = composeMinesAdmin({
+      routes: ROUTES,
+      release: ROUTES_RELEASE,
+      client: client as unknown as Parameters<typeof composeMinesAdmin>[0]['client'],
+      native: {
+        chooseFolder: async () => '/work/moria',
+        openPath: async () => ({ opened: true as const })
+      },
+      legacy: {
+        liveLaunches: async () => [],
+        endLaunch: async () => 'ended' as const,
+        launchIdOfDwarf: () => undefined
+      },
+      bridge: { toLegacy: async () => null }
+    })
+    expect(admin?.part.channels).toEqual(
+      expect.arrayContaining(['mine:declare-main', 'projects:query'])
+    )
+    admin?.dispose()
+  })
+
+  it('[ADR-001] in cut 1 A-20 and A-30 are split between host and ui-local, and A-32 composes LegacyEndFirstAdapter', async () => {
+    for (const id of ['A-20', 'A-30', 'A-32']) {
+      const key = keyOf(id)
+      expect(routeOf(key), id).toEqual([bornIn1(key, 'host', 'passed')])
+    }
+    // Each row has one `host` route; its handler runs the UI-main half (the folder picker, the file opener) around the
+    // Host half (`mines.declare`, `mines.resolveFile`): the Host never opens a dialog or a file (14 §2.1 A-20, A-30).
+    const events: string[] = []
+    const { client, sent } = recordingHost()
+    const native = {
+      chooseFolder: async () => {
+        events.push('ui-local chooseFolder')
+        return '/work/moria'
+      },
+      openPath: async (path: string) => {
+        events.push(`ui-local openPath ${path}`)
+        return { opened: true as const }
+      }
+    }
+    const recorded = {
+      ...client,
+      call: async (method: string) => {
+        events.push(`host ${method}`)
+        return client.call(method)
+      }
+    } as unknown as Parameters<typeof composeMinesAdmin>[0]['client']
+    const legacy = {
+      liveLaunches: async () => [],
+      endLaunch: async () => 'ended' as const,
+      launchIdOfDwarf: () => undefined
+    }
+    const bridge = { toLegacy: async () => null }
+    const admin = composeMinesAdmin({
+      routes: ROUTES,
+      release: ROUTES_RELEASE,
+      client: recorded,
+      native,
+      legacy,
+      bridge,
+      newRequestId: () => '01890a5d-ac96-774b-bcce-b302099a8001'
+    })
+    const router = createRouter({
+      routes: ROUTES.filter((r) => (admin?.part.channels ?? []).includes(r.channel)),
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(admin === undefined ? {} : { host: admin.part.target }),
+      senders
+    })
+    await router.dispatch('mine:openPath', FROM_PANEL, { mineId: MINE, target: 'src/a.ts' })
+    await router.dispatch('mine:declare', FROM_PANEL, undefined)
+    expect(events).toEqual([
+      'host mines.resolveFile',
+      'ui-local openPath /work/moria/src/a.ts',
+      'ui-local chooseFolder',
+      'host mines.declare'
+    ])
+    expect(sent).toEqual(['mines.resolveFile', 'mines.declare'])
+    admin?.dispose()
+
+    // A-32 is composed only with LegacyEndFirstAdapter in cut 1: without the dwarf id bridge or today's launched
+    // register to join, the root composes no removal at all (21 §3; ISSUE-090).
+    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')?.cuts).toContain(
+      ROUTES_RELEASE
+    )
+    const composedWith = (deps: Partial<Parameters<typeof composeMinesAdmin>[0]>) =>
+      composeMinesAdmin({
+        routes: ROUTES,
+        release: ROUTES_RELEASE,
+        client: recorded,
+        native,
+        legacy,
+        bridge,
+        ...deps
+      })
+    expect(composedWith({ bridge: undefined })).toBeUndefined()
+    expect(
+      composedWith({ legacy: { liveLaunches: legacy.liveLaunches, endLaunch: legacy.endLaunch } })
+    ).toBeUndefined()
+  })
+
+  it('[ADR-001] in cut 1 A-12 and A-P2 go through BoardFacadeAdapter and A-33 through ResetFanout', async () => {
+    // Lead resolution H3: A-12 and A-P2 are RETIRE rows routed `host` with the target shape, and a RETIRE row's
+    // registry entry is today's shape (14 §2.1), so the generated preload keeps today's `MinesSnapshot` for both.
+    for (const id of ['A-12', 'A-P2']) {
+      const key = keyOf(id)
+      expect(routeOf(key), id).toEqual([bornIn1(key, 'host', 'passed')])
+      expect(CHANNELS[key].status, id).toBe('retired')
+      expect(CHANNELS[key].response, id).toBe(TODAY_SHAPES[key]?.response)
+    }
+    const preload = readFileSync(resolve(import.meta.dirname, '../../preload/index.ts'), 'utf8')
+    expect(preload).toContain('/** A-12 · `mines:get` · invoke · RETIRE · target shape */')
+    expect(preload).toContain('/** A-P2 · `mines:update` · push · RETIRE · target shape */')
+
+    // The root composes the facade as A-12's `host` handler, and it pushes A-P2.
+    const { client } = recordingHost()
+    const facade = composeBoardFacade({
+      routes: ROUTES,
+      client,
+      windows: () => [],
+      defer: (run) => run()
+    })
+    expect(facade?.part.channels).toEqual(['mines:get'])
+    facade?.dispose()
+
+    // A-33 is `legacy` + `target` through its shape adapter ResetFanout: the legacy reset first, then the Host saga.
+    const a33 = keyOf('A-33')
+    expect(routeOf(a33)).toEqual([
+      {
+        channel: a33,
+        owner: 'legacy',
+        since: 'cut-1',
+        parity: 'n/a',
+        shape: 'target',
+        shapeAdapter: 'ResetFanout'
+      }
+    ])
+    const order: string[] = []
+    const legacy = {
+      serve: async (channel: string) => {
+        order.push(`legacy ${channel}`)
+        return { outcome: 'reset' }
+      }
+    }
+    const host = recordingHost()
+    const adapters = composeResetFanout({
+      routes: ROUTES,
+      release: ROUTES_RELEASE,
+      legacy,
+      client: host.client as unknown as Parameters<typeof composeResetFanout>[0]['client'],
+      now: () => 0
+    })
+    expect(Object.keys(adapters ?? {})).toEqual(['ResetFanout'])
+    // Without it the router does not start: a route naming a shape adapter needs it bound.
+    expect(() =>
+      createRouter({ routes: ROUTES.filter((r) => r.channel === a33), legacy, senders })
+    ).toThrow()
+    const router = createRouter({
+      routes: ROUTES.filter((r) => r.channel === a33),
+      legacy,
+      ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
+      senders
+    })
+    const answer = await router.dispatch(a33, FROM_PANEL, {
+      confirmed: 'yes',
+      requestId: '01890a5d-ac96-774b-bcce-b302099a8002'
+    })
+    expect(CHANNELS[a33].response.safeParse(answer).success).toBe(true)
+    expect(order).toEqual(['legacy metrics:reset'])
+    expect(host.sent).toEqual(['preferences.resetMetrics'])
+  })
+
+  it('[ADR-001] in cut 1 A-14, A-16, A-17, A-18 and A-P5 have no route and no handler, and A-N16 exists', async () => {
+    const retired = ['A-14', 'A-16', 'A-17', 'A-18', 'A-P5'].map(keyOf)
+    expect(RETIRED).toEqual(Object.fromEntries(retired.map((key) => [key, 'cut-1'])))
+    const reached: string[] = []
+    const router = createRouter({
+      routes: ROUTES,
+      legacy: { serve: async (channel) => void reached.push(`legacy ${channel}`) },
+      uiLocal: { serve: async (channel) => void reached.push(`ui-local ${channel}`) },
+      host: { serve: async (channel) => void reached.push(`host ${channel}`) },
+      shapeAdapters: { ResetFanout: { serve: async () => undefined } },
+      senders
+    })
+    for (const key of retired) {
+      // The registry row stays until the legacy code it spoke to is deleted (21 §2 cut 1 "Retired rows").
+      expect(CHANNELS[key], key).toBeDefined()
+      expect(routeOf(key), key).toEqual([])
+      if (CHANNELS[key].kind === 'push') continue
+      const answer = await router.dispatch(key, FROM_PANEL, undefined)
+      expect(answer, key).toMatchObject({ ok: false, error: { code: 'METHOD_NOT_FOUND' } })
+    }
+    expect(reached).toEqual([])
+    // A-N16 replaces A-P5: born `ui-local` in cut 1 and pushed by UI main (ISSUE-114).
+    const an16 = keyOf('A-N16')
+    expect(CHANNELS[an16].kind).toBe('push')
+    expect(routeOf(an16)).toEqual([bornIn1(an16, 'ui-local', 'n/a')])
+    expect(UNROUTED[an16]).toBeUndefined()
+  })
+
+  it('[ADR-001] in cut 1 A-44, A-N17 to A-N21 and A-N12 route ui-local with shape target, and A-44 feeds presence', async () => {
+    const a44 = keyOf('A-44')
+    expect(routeOf(a44)).toEqual([bornIn1(a44, 'ui-local', 'passed')])
+    for (const id of ['A-N17', 'A-N18', 'A-N19', 'A-N20', 'A-N21', 'A-N12']) {
+      const key = keyOf(id)
+      expect(routeOf(key), id).toEqual([bornIn1(key, 'ui-local', 'n/a')])
+    }
+    // Only A-N33 is still unrouted (AMENDMENT-11).
+    expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
+    // A-44 on its 14 wire feeds UI main's PresenceTracker, which tells the Host (B-M07) once the report settled.
+    const host = recordingHost()
+    const timers: Array<() => void> = []
+    const presence = composePresence({
+      routes: ROUTES,
+      client: host.client,
+      timers: {
+        after: (_ms, run) => {
+          timers.push(run)
+          return () => {}
+        }
+      },
+      visibleWindows: () => [7]
+    })
+    expect(presence?.part.channels).toEqual([a44])
+    const router = createRouter({
+      routes: routeOf(a44),
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(presence === undefined ? {} : { uiLocal: presence.part.target }),
+      senders
+    })
+    const registered: string[] = []
+    router.register({
+      handle: (wire) => void registered.push(wire),
+      on: (wire) => void registered.push(wire)
+    })
+    expect(registered).toContain('presence:visibleMines')
+    expect(registered).not.toContain('panel:openMine')
+    await router.dispatch(a44, FROM_PANEL, { mineIds: [MINE] })
+    for (const run of timers.splice(0)) run()
+    expect(host.sent).toEqual([
+      `presence ${JSON.stringify({ onScreenMineIds: [MINE], anyWindowVisible: true, seq: 1 })}`
+    ])
+  })
+
+  it('[ADR-001] in cut 1 no legacy publish, crediting or notifier is composed and LegacyAgentRegistryFeed is composed', async () => {
+    // TC-123-01, TC-123-06: the table routes the cut-1 board and read rows to the Host, so today's composition gets
+    // none of its observer sinks (21 §2 cut 1 "Switched off in legacy"); the feed's cycles are the only ticks.
+    expect(legacyObserverOwner(ROUTES)).toBe('host')
+    expect(legacyObserverComposition(legacyObserverOwner(ROUTES))).toEqual({
+      pollTimer: false,
+      boardPublish: false,
+      ledgerCrediting: false,
+      projectsObserverWrites: false,
+      notifier: false
+    })
+    const reached: string[] = []
+    const surface: LegacyRuntimeSurface = {
+      pollIntervalMs: 2_000,
+      discovery: [
+        {
+          kind: 'claude',
+          scan: async () => {
+            reached.push('discovery')
+            return []
+          }
+        }
+      ],
+      registry: { replace: () => void reached.push('registry') },
+      board: { publish: () => void reached.push('board publish') },
+      ledger: { credit: () => void reached.push('crediting') },
+      projects: { record: () => void reached.push('projects-store write') },
+      notifier: { update: () => void reached.push('notifier') }
+    }
+    const feed = composeLegacyAgentRegistryFeed({
+      release: ROUTES_RELEASE,
+      legacy: surface,
+      timers: { every: () => () => {} }
+    })
+    expect(feed).toBeDefined()
+    feed?.start()
+    await feed?.whenIdle()
+    expect(reached).toEqual(['discovery', 'registry'])
+    feed?.stop()
+  })
+
+  it("[ADR-001] with the cut-1 rows flipped back to legacy the legacy observer, crediting and notifier are composed again, and never together with the Host observer's writes", async () => {
+    const rolledBack = rollbackOf(cut1, 'cut-1')
+    expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+    // Today's composition gets every observer sink back, and the build's Host rollback setting must be on with it.
+    expect(legacyObserverOwner(rolledBack.routes)).toBe('legacy')
+    expect(legacyObserverComposition(legacyObserverOwner(rolledBack.routes))).toEqual({
+      pollTimer: true,
+      boardPublish: true,
+      ledgerCrediting: true,
+      projectsObserverWrites: true,
+      notifier: true
+    })
+    expect(cut1RowsRouteLegacy(rolledBack)).toBe(true)
+    // In the release table the reverse: the Host observer writes and today's sinks are off. The two never meet.
+    for (const table of [cut1, rolledBack]) {
+      const legacyWrites = legacyObserverComposition(legacyObserverOwner(table.routes))
+      const hostWrites = !cut1RowsRouteLegacy(table)
+      for (const sink of ['ledgerCrediting', 'notifier', 'boardPublish'] as const) {
+        expect(legacyWrites[sink], `${table === cut1 ? 'release' : 'rollback'} ${sink}`).toBe(
+          !hostWrites
+        )
+      }
+    }
+    // Lead resolution H1: the rows cut 1 retired route `legacy` with today's shape again, and the router serves them
+    // through today's runtime; the rows of earlier cuts keep their routes.
+    expect(rolledBack.retired).toEqual({})
+    const served: string[] = []
+    const router = createRouter({
+      routes: rolledBack.routes,
+      legacy: { serve: async (channel) => void served.push(channel) },
+      uiLocal: { serve: async () => undefined },
+      host: { serve: async () => undefined },
+      senders
+    })
+    const retired = Object.keys(RETIRED) as ChannelKey[]
+    expect(retired.length).toBeGreaterThan(0)
+    // Each in today's request shape (TODAY_SHAPES).
+    const todayPayloads: Partial<Record<ChannelKey, unknown>> = {
+      'dwarf:feed': 'claude:s1',
+      'panel:watchDwarfFeed': 'claude:s1',
+      'dwarf:refreshTelemetry': 'claude:s1',
+      'dwarf:setTuning': { dwarfId: 'claude:s1', change: { kind: 'model', model: 'opus' } }
+    }
+    for (const key of retired) {
+      expect(
+        rolledBack.routes.filter((r) => r.channel === key),
+        key
+      ).toEqual([legacyToday(key)])
+      if (CHANNELS[key].kind !== 'push') await router.dispatch(key, FROM_PANEL, todayPayloads[key])
+    }
+    expect(served.sort()).toEqual(retired.filter((key) => CHANNELS[key].kind !== 'push').sort())
+    expect(rolledBack.routes.filter((r) => r.since === 'cut-0')).toEqual(
+      ROUTES.filter((r) => r.since === 'cut-0')
+    )
+  })
+
+  it('[ADR-001] in cut 1 every host route uses only seam-B members born by cut 1 and none has parity pending', () => {
+    const at = (step: StepId) => STEP_ORDER.indexOf(step)
+    for (const route of ROUTES.filter((r) => r.owner === 'host')) {
+      expect(route.parity, route.channel).toBe('passed')
+      const members = HOST_ROUTE_MEMBERS[route.channel]
+      expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
+      for (const member of members ?? []) {
+        const born = SEAM_B_METHODS_BORN[member]
+        expect(born, `${member} has a birth release`).toBeDefined()
+        expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
+          at(ROUTES_RELEASE)
+        )
+      }
+    }
+    // 21 §2 "Seam B members: the cut in which each is born", row 1 (`21-migration-plan.md:352-362`).
+    expect(
+      Object.fromEntries(Object.entries(SEAM_B_METHODS_BORN).filter(([, step]) => step === 'cut-1'))
+    ).toEqual({
+      presence: 'cut-1', // B-M07
+      'attention.clicked': 'cut-1', // B-M08
+      'ui.resetPreferences.ack': 'cut-1', // B-M09
+      'preferences.get': 'cut-1', // B-M12
+      'preferences.set': 'cut-1', // B-M13
+      'preferences.resetMetrics': 'cut-1', // B-M15
+      'mines.declare': 'cut-1', // B-M16
+      'mines.adoptMainProject': 'cut-1', // B-M17
+      'mines.remove': 'cut-1', // B-M18
+      'mines.list': 'cut-1', // B-M19
+      'mines.resolveFile': 'cut-1', // B-M20
+      'conversation.feed': 'cut-1', // B-M26
+      'conversation.mineHistory': 'cut-1', // B-M27
+      'strangler.dwarfIdentities': 'cut-1' // B-M41
+    })
+    expect(HOST_ROUTE_MEMBERS).toEqual({
+      'tray:stopEverything:confirm': ['host.shutdown'],
+      'host:snapshot': ['session.snapshot'],
+      'host:event': ['events.subscribe'],
+      'mines:get': ['session.snapshot', 'events.subscribe'],
+      'mines:update': ['session.snapshot', 'events.subscribe'],
+      'dwarf:feed:page': ['conversation.feed'],
+      'mine:history': ['conversation.mineHistory'],
+      'mine:openPath': ['mines.resolveFile'],
+      'mine:declare': ['mines.declare'],
+      'mine:declare-main': ['mines.adoptMainProject'],
+      'mine:undeclare': ['mines.remove'],
+      'projects:query': ['mines.list']
+    })
   })
 })

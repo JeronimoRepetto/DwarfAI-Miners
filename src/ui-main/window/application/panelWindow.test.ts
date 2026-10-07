@@ -532,4 +532,23 @@ describe('the Panel window built again after it closed (ISSUE-056)', () => {
     const docked = panelBounds(PRIMARY.workArea, 'right', { mineOpen: false, dockOpen: false }, 32)
     expect(placed).toEqual([docked, docked])
   })
+
+  // AMENDED for ISSUE-123 (appended): UI main's PresenceTracker hears the Panel being shown, hidden or minimized
+  // (ADR-024 item 7; 14 A-44, B-M07), exactly when A-P1 tells the page.
+  it('[ADR-024] every change of whether the Panel is on screen is heard once, with A-P1, and nothing else is', () => {
+    const { panel, surface, window } = subject()
+    const heard: boolean[] = []
+    const stop = panel.onVisibleChanged?.(() => heard.push(panel.visible()))
+    panel.show()
+    panel.show()
+    surface.setMinimized(true)
+    surface.setMinimized(false)
+    panel.setLayout({ mineOpen: true, dockOpen: false })
+    panel.hide()
+    expect(heard).toEqual([true, false, true, false])
+    expect(visibilityPushes(window())).toEqual(heard)
+    stop?.()
+    panel.show()
+    expect(heard).toHaveLength(4)
+  })
 })

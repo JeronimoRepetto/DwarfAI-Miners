@@ -7,6 +7,7 @@ import { FakeAutostartPort } from '../../window/ports/fakes/FakeAutostartPort'
 import { InMemoryUiPreferenceStore } from '../../window/ports/fakes/InMemoryUiPreferenceStore'
 import type { ChannelRoute } from '../channelRoute'
 import { createRouter, type RouteTarget } from '../router'
+import { ROUTES } from '../routes'
 import type { IpcSenderEvent, SenderPolicy } from '../senderCheck'
 import {
   createUiPreferenceMapRows,
@@ -57,7 +58,12 @@ describe('the UI preference map rows over seam A (14 §2.2 A-N20, A-N21)', () =>
   it('[ADR-024] setUiPreference answers the verified value, and lastMode or resetEpochApplied from a renderer is INVALID_PARAMS', async () => {
     for (const key of UI_PREFERENCE_MAP_ROWS) {
       expect(CHANNELS[key].placement, key).toBe('ui-local')
-      expect(UNROUTED[key], key).toBe('cut-1')
+      // AMENDED for ISSUE-123 (was: `UNROUTED[key]` is 'cut-1'): the cut-1 switch routed it `ui-local`.
+      expect(UNROUTED[key], key).toBeUndefined()
+      expect(
+        ROUTES.filter((route) => route.channel === key).map((route) => [route.owner, route.since]),
+        key
+      ).toEqual([['ui-local', 'cut-1']])
     }
     const { router, entry, store } = world()
     const answerSchema = CHANNELS[UI_PREFERENCES_SET].response

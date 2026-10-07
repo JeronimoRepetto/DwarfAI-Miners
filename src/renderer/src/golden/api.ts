@@ -121,8 +121,9 @@ export function goldenApi(sample: GoldenSample): Api {
     // Dwarf names (#635): the golden stage renames nothing.
     setDwarfName: refuse('setDwarfName'),
     resetDwarfName: refuse('resetDwarfName'),
-    getMineHistory: (mineId) =>
-      Promise.resolve(sample.histories[mineId] ?? { readable: true, speakers: [] }),
+    // A-19 reads the Host's message log from the cut-1 switch (ISSUE-123), keyed by Host ids the sample does not carry:
+    // a full-screen history state is one this fake does not model yet, and the page's error list says so.
+    getMineHistory: refuse('getMineHistory'),
     openMinePath: refuse('openMinePath'),
     openExternalLink: refuse('openExternalLink'),
     copyText: refuse('copyText'),
@@ -156,7 +157,8 @@ export function goldenApi(sample: GoldenSample): Api {
     launchHostedProcess: refuse('launchHostedProcess'),
     getNotificationsEnabled: () => Promise.resolve(DEFAULT_NOTIFICATIONS_ENABLED),
     setNotificationsEnabled: (enabled) => Promise.resolve(enabled),
-    setOpenMine: none,
+    // A-44 under its 14 name from the cut-1 switch (ISSUE-123): a golden reports no mine on screen to anyone.
+    reportVisibleMines: none,
     onShowMine: unsubscribe,
     getTypographyPreferences: () => Promise.resolve({ ...DEFAULT_TYPOGRAPHY_PREFERENCES }),
     setTypographyPreferences: (preferences) => Promise.resolve(preferences),

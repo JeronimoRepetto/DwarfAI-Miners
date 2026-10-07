@@ -195,6 +195,41 @@ import { createStartWithSystem, type StartWithSystem } from './window/applicatio
 import { ElectronAutostart } from './window/adapters/autostart/ElectronAutostart'
 import { loginEntryOffered } from './window/domain/loginEntryGate'
 import { LOGIN_ENTRY_ARGS, uiStartPlanOf, type UiStartPlan } from './window/domain/uiStart'
+import {
+  legacyObserverComposition,
+  type LegacyObserverOwner
+} from '../legacy-bridge/legacyObserverSwitch'
+import {
+  createPresenceTracker,
+  type PresenceTimers,
+  type PresenceTracker
+} from './window/application/presenceTracker'
+import {
+  createHostReadRows,
+  forwardHostEvents,
+  HOST_EVENT,
+  HOST_READ_ROWS,
+  HOST_SNAPSHOT
+} from './ipc/handlers/hostRead'
+import {
+  createGetDwarfFeedPageRow,
+  GET_DWARF_FEED_PAGE,
+  GET_DWARF_FEED_PAGE_ROWS
+} from './ipc/handlers/getDwarfFeedPage.host'
+import {
+  createGetMineHistoryRow,
+  GET_MINE_HISTORY,
+  GET_MINE_HISTORY_ROWS
+} from './ipc/handlers/getMineHistory.host'
+import {
+  createReportVisibleMinesRow,
+  REPORT_VISIBLE_MINES
+} from './ipc/handlers/reportVisibleMines'
+import {
+  createResetFanout,
+  RESET_FANOUT_CUTS,
+  RESET_FANOUT_NAME
+} from '../legacy-bridge/reset/resetFanout'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -220,6 +255,7 @@ export function composeUiLocal({
   stopEverything,
   uiSession,
   startWithSystem,
+  presence,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
@@ -233,6 +269,8 @@ export function composeUiLocal({
   uiSession?: Pick<UiSession, 'get' | 'patch'>
   /** "Start with the system", served by A-N20 / A-N21 only where S-027-4 passed (loginEntryGate.ts). */
   startWithSystem?: Pick<StartWithSystem, 'stored' | 'toggle'>
+  /** A-44 `reportVisibleMines` feeding the PresenceTracker, once the table routes it `ui-local` (ISSUE-123). */
+  presence?: RouteTargetPart
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -307,6 +345,7 @@ export function composeUiLocal({
       target: createUiSessionRows(uiSession, (id) => (modeWindows.has(id) ? 'panel' : undefined))
     })
   }
+  if (presence !== undefined) parts.push(presence)
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
 
@@ -442,6 +481,144 @@ export function composeBoardFacade(deps: {
     },
     refresh: () => facade.refresh(),
     dispose: () => facade.dispose()
+  }
+}
+
+export { legacyObserverComposition }
+
+/**
+ * The cut-1 board and read rows (A-12, A-P2, A-15, A-19), as 21 §2 cut 1 moves them together: `legacy` (before cut 1,
+ * or a rollback build whose cut-1 rows route `legacy` again, 21 §2.1) or no longer (from the cut-1 switch, ISSUE-123).
+ */
+const OBSERVER_ROWS: readonly ChannelKey[] = [
+  'mines:get',
+  'mines:update',
+  'dwarf:feed:page',
+  'mine:history'
+]
+
+/**
+ * Who observes in a route table (21 §2 cut 1 "Switched off in legacy"; ISSUE-123): today's runtime while the table routes
+ * the cut-1 board and read rows `legacy`, the Host once it routes them elsewhere (`BoardFacadeAdapter` and the Host
+ * message log). Today's composition composes its observer sinks only for `legacy` (`legacyObserverComposition`), so
+ * there is one observer and one notifier per build (21 §1 item 4): the Host's in the release build, today's in a
+ * rollback build, whose `CUT_1_ROLLBACK` stops the Host observer's writes (ISSUE-122). A table that splits the rows is a
+ * composition defect and stops the start.
+ */
+export function legacyObserverOwner(routes: readonly ChannelRoute[]): LegacyObserverOwner {
+  const owners = new Set(
+    routes.filter((route) => OBSERVER_ROWS.includes(route.channel)).map((route) => route.owner)
+  )
+  if (owners.size === 1) return owners.has('legacy') ? 'legacy' : 'host'
+  throw new Error(`the route table splits the cut-1 board and read rows: ${[...owners].join(', ')}`)
+}
+
+/** Whether the table routes `channel` to `owner`. */
+const routedTo = (
+  routes: readonly ChannelRoute[],
+  channel: ChannelKey,
+  owner: ChannelRoute['owner']
+): boolean => routes.some((route) => route.channel === channel && route.owner === owner)
+
+/** The Host read rows as the root composes them: their `host` target part, and the stop of the A-N02 forwarding. */
+export interface HostReadsComposition {
+  part: RouteTargetPart
+  dispose(): void
+}
+
+/**
+ * The Host-fed read path (21 §2 cut 1 "New core serves" H; ISSUE-082, ISSUE-111): A-N01 `getHostSnapshot` relays
+ * `session.snapshot` and A-N02 `onHostEvent` forwards the Host's frames to the mode windows (window/…/hostRead.ts);
+ * A-15 `getDwarfFeedPage` and A-19 `getMineHistory` relay `conversation.feed` and `conversation.mineHistory` over the
+ * Host message log (14 §2.1 CHANGE). Each row is a part of the `host` target only where the table routes it `host` (the
+ * cut-1 switch); A-N02 is forwarded only where it is routed. `undefined` when the table routes none of them `host`.
+ */
+export function composeHostReads(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'snapshot' | 'subscribe' | 'call'>
+  windows: () => readonly WindowContents[]
+  defer?: (run: () => void) => void
+}): HostReadsComposition | undefined {
+  const { routes, client } = deps
+  const toHost = (channel: ChannelKey): boolean => routedTo(routes, channel, 'host')
+  const parts: RouteTargetPart[] = []
+  if (toHost(HOST_SNAPSHOT))
+    parts.push({ channels: HOST_READ_ROWS, target: createHostReadRows(client) })
+  if (toHost(GET_DWARF_FEED_PAGE)) {
+    parts.push({ channels: GET_DWARF_FEED_PAGE_ROWS, target: createGetDwarfFeedPageRow(client) })
+  }
+  if (toHost(GET_MINE_HISTORY)) {
+    parts.push({ channels: GET_MINE_HISTORY_ROWS, target: createGetMineHistoryRow(client) })
+  }
+  const stopForwarding = toHost(HOST_EVENT)
+    ? forwardHostEvents({
+        client,
+        windows: deps.windows,
+        ...(deps.defer === undefined ? {} : { defer: deps.defer })
+      })
+    : undefined
+  if (parts.length === 0 && stopForwarding === undefined) return undefined
+  return {
+    part: {
+      channels: parts.flatMap((part) => part.channels),
+      target: composeRouteTargets(parts)
+    },
+    dispose: () => stopForwarding?.()
+  }
+}
+
+/** A-44 as the root composes it: its `ui-local` target part, and the tracker the window events reach. */
+export interface PresenceComposition {
+  part: RouteTargetPart
+  tracker: PresenceTracker
+}
+
+/**
+ * A-44 `reportVisibleMines` (14 §2.1 CHANGE, `ui-local`; ADR-024 item 7; ISSUE-106): each mode window's report reaches
+ * UI main's `PresenceTracker`, which tells the Host what is on screen (B-M07 `presence`) when it changed. A part of the
+ * `ui-local` target only where the table routes A-44 `ui-local` (the cut-1 switch); `undefined` otherwise, so today's
+ * runtime keeps answering `setOpenMine` before cut 1 and in a rollback build.
+ */
+export function composePresence(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'reportPresence'>
+  timers: PresenceTimers
+  visibleWindows: () => readonly number[]
+}): PresenceComposition | undefined {
+  if (!routedTo(deps.routes, REPORT_VISIBLE_MINES, 'ui-local')) return undefined
+  const tracker = createPresenceTracker({
+    host: deps.client,
+    timers: deps.timers,
+    visibleWindows: deps.visibleWindows
+  })
+  return {
+    part: { channels: [REPORT_VISIBLE_MINES], target: createReportVisibleMinesRow(tracker) },
+    tracker
+  }
+}
+
+/**
+ * A-33's shape adapter `ResetFanout` (21 §3, §3.1, cuts 1–3e; ISSUE-121): today's reset through `LegacyRuntimeRoute`
+ * first, then the Host saga (B-M15). Bound under its name only where a route of the table names it and it lives in the
+ * release, over the Host attach; `undefined` otherwise, so the router starts only where the table and the composition
+ * agree (a route naming an unbound shape adapter stops the router).
+ */
+export function composeResetFanout(deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+  legacy: RouteTarget
+  client: Pick<HostClient, 'withUiConnection'> | undefined
+  now?: () => number
+}): Readonly<Record<string, RouteTarget>> | undefined {
+  const named = deps.routes.some((route) => route.shapeAdapter === RESET_FANOUT_NAME)
+  const { client } = deps
+  if (!named || client === undefined || !RESET_FANOUT_CUTS.includes(deps.release)) return undefined
+  return {
+    [RESET_FANOUT_NAME]: createResetFanout({
+      legacy: deps.legacy,
+      hostClient: client,
+      now: deps.now ?? (() => Date.now())
+    })
   }
 }
 
@@ -857,9 +1034,14 @@ export async function startUiMain({
   // so the window is known before its page is loaded. Since cut 0 that is the rebuilt Panel; in a rollback build,
   // today's Panel shell window.
   const modeWindows = createModeWindowRegistry()
+  /** A closed mode window's presence report goes with it (ADR-024 item 7); bound once A-44 is composed below. */
+  let windowClosed: (webContentsId: number) => void = () => {}
   lifecycle.onWindowCreated(({ webContentsId, onClosed }) => {
     modeWindows.register(webContentsId)
-    onClosed(() => modeWindows.drop(webContentsId))
+    onClosed(() => {
+      modeWindows.drop(webContentsId)
+      windowClosed(webContentsId)
+    })
   })
   const rebuilt = windowFamilyOwner(routes) === 'ui-local'
   const panel = panelWindow?.(modeWindows)
@@ -943,6 +1125,34 @@ export async function startUiMain({
         })
       : undefined
 
+  // The Host read path (21 §2 cut 1 "New core serves" H): A-N01 relays the snapshot, A-N02 pushes every Host frame to
+  // the mode windows, and A-15, A-19 read the Host message log, once the table routes them `host` (ISSUE-123).
+  const hostReads =
+    host === undefined
+      ? undefined
+      : composeHostReads({ routes, client: host.client, windows: modeWindowList })
+  // A-44 feeds UI main's PresenceTracker (ADR-024 item 7; B-M07), once the table routes it `ui-local` (ISSUE-123): the
+  // on-screen set is the Panel's report while the Panel is shown and not minimized (in v1 the one mode window).
+  const presence =
+    host === undefined || panel === undefined
+      ? undefined
+      : composePresence({
+          routes,
+          client: host.client,
+          timers: realTimers,
+          visibleWindows: () =>
+            panel.visible() ? modeWindowList().map((window) => window.webContentsId) : []
+        })
+  const stopHearingVisibility = panel?.onVisibleChanged?.(() => presence?.tracker.windowsChanged())
+  windowClosed = (webContentsId) => presence?.tracker.windowClosed(webContentsId)
+  // A-33 through its shape adapter `ResetFanout` (21 §3.1): today's reset first, then the Host saga (ISSUE-121).
+  const shapeAdapters = composeResetFanout({
+    routes,
+    release,
+    legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
+    client: host?.client
+  })
+
   // A-12 and A-P2 from the Host board, once the table routes them there (the cut-1 switch, ISSUE-123; 21 §3).
   const boardFacade =
     host === undefined
@@ -968,7 +1178,7 @@ export async function startUiMain({
         })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
-    boardFacade === undefined && minesAdmin === undefined
+    boardFacade === undefined && minesAdmin === undefined && hostReads === undefined
       ? stopRows
       : composeRouteTargets([
           ...(stopRows === undefined
@@ -977,7 +1187,8 @@ export async function startUiMain({
                 { channels: [STOP_EVERYTHING_CONFIRM], target: stopRows } satisfies RouteTargetPart
               ]),
           ...(boardFacade === undefined ? [] : [boardFacade.part]),
-          ...(minesAdmin === undefined ? [] : [minesAdmin.part])
+          ...(minesAdmin === undefined ? [] : [minesAdmin.part]),
+          ...(hostReads === undefined ? [] : [hostReads.part])
         ])
 
   // Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the notifier connection's frames, from the start of the
@@ -1052,12 +1263,14 @@ export async function startUiMain({
     ...(stop === undefined ? {} : { stopEverything: stop }),
     ...(uiSession === undefined ? {} : { uiSession }),
     ...(startWithSystem === undefined ? {} : { startWithSystem }),
+    ...(presence === undefined ? {} : { presence: presence.part }),
     modeWindows
   })
   createRouter({
     routes,
     legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
+    ...(shapeAdapters === undefined ? {} : { shapeAdapters }),
     // A-N26, the one `host` row of cut 0: its handler relays `host.shutdown` on the confirmation's `ui` connection.
     ...(hostTarget === undefined ? {} : { host: hostTarget }),
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
@@ -1099,6 +1312,8 @@ export async function startUiMain({
     mirror?.dispose()
     boardFacade?.dispose()
     minesAdmin?.dispose()
+    hostReads?.dispose()
+    stopHearingVisibility?.()
     registryFeed?.stop()
     askRelay?.dispose()
     dwarfIds?.dispose()
@@ -1470,9 +1685,13 @@ if (process.type === 'browser') {
     createLegacyRuntimeRoute(
       composeLegacyRuntime(
         { app, dialog, nativeImage, shell, clipboard, globalShortcut },
-        windowFamilyOwner(ROUTES) === 'ui-local'
-          ? { panel: legacyPanel, log: uiLog }
-          : { log: uiLog }
+        {
+          ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
+          log: uiLog,
+          // Today's observer sinks, composed only while the table routes the cut-1 board and read rows `legacy`
+          // (21 §2 cut 1 "Switched off in legacy"; a rollback build gets them back, 21 §2.1).
+          observer: legacyObserverComposition(legacyObserverOwner(ROUTES))
+        }
       )
     ),
     legacySettingsWrites

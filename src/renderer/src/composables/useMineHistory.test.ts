@@ -8,7 +8,7 @@ import type {
   MineHistoryView,
   MineId
 } from '@dwarfai/contracts'
-import { useMineHistory, type HostMineHistoryRead } from './useMineHistory'
+import { historyAsToday, useMineHistory, type HostMineHistoryRead } from './useMineHistory'
 
 /*
  * THE HISTORY PANEL FROM THE HOST (ISSUE-106; 14 §2.1 row A-19, §3.6 `MineHistoryView`; ADR-007 item 5).
@@ -161,5 +161,67 @@ describe('useMineHistory', () => {
     await first
 
     expect(state).toEqual({ mineId: BETA, readable: true, tabs: [] })
+  })
+
+  // AMENDED for ISSUE-123 (appended): the history panel draws today's `MineHistoryResult` (lib/history), so the
+  // shell hands it the Host's tabs in that shape once A-19 is routed `host`.
+  it('[ADR-007] the Host history reads as today’s history: in flight, unreadable, or one speaker per tab', async () => {
+    const getMineHistory = vi
+      .fn<HostMineHistoryRead>()
+      .mockResolvedValueOnce(
+        history(ALPHA, [
+          {
+            dwarfId: BORIN,
+            displayName: 'Borin',
+            rank: 'foreman',
+            providerId: 'codex',
+            departed: true,
+            messages: [view(1, BORIN), view(2, BORIN, { providerTime: NINE })]
+          },
+          {
+            dwarfId: DAIN,
+            displayName: 'Dain',
+            rank: 'worker',
+            providerId: 'claude',
+            departed: false,
+            messages: []
+          }
+        ])
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: 'HOST_NOT_READY', message: 'x', retryable: true }
+      })
+    const { state, open, close } = useMineHistory()
+
+    close()
+    expect(historyAsToday(state)).toBeUndefined()
+    await open(ALPHA, getMineHistory)
+    expect(historyAsToday(state)).toEqual({
+      readable: true,
+      speakers: [
+        {
+          id: BORIN,
+          provider: 'codex',
+          role: 'foreman',
+          name: 'Borin',
+          lastMessageAt: NINE + 60_000,
+          messages: [
+            { role: 'user', text: 'line 1', timestamp: '2026-10-06T09:01:00.000Z' },
+            { role: 'assistant', text: 'line 2', timestamp: '2026-10-06T09:00:00.000Z' }
+          ]
+        },
+        {
+          id: DAIN,
+          provider: 'claude',
+          role: 'worker',
+          name: 'Dain',
+          lastMessageAt: 0,
+          messages: []
+        }
+      ]
+    })
+    await open(ALPHA, getMineHistory)
+    expect(historyAsToday(state)).toEqual({ readable: false, speakers: [] })
   })
 })

@@ -25,6 +25,8 @@ import GuildPage from './components/shell/GuildPage.vue'
 import { useAudio } from './composables/useAudio'
 import { useMessageDock } from './composables/useMessageDock'
 import { useMines } from './composables/useMines'
+import { historyAsToday, useMineHistory } from './composables/useMineHistory'
+import type { MineId } from '@dwarfai/contracts'
 import { useMapTime } from './composables/useMapTime'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
@@ -878,15 +880,14 @@ function selectDwarf(dwarf: Dwarf): void {
 const historyOpen = ref(false)
 
 /**
- * What main read for the open mine's history. `undefined` means no answer has
- * come back yet, which the panel says out loud rather than drawing as an empty
- * mine. Deliberately NOT reset when a re-read starts: the previous answer stays
- * on screen until the next lands, or a live update would flash "reading" over
- * a transcript somebody is in the middle of.
+ * What the Host read for the open mine's history (A-19 from its message log, routed `host` by the cut-1 switch,
+ * ISSUE-123; `useMineHistory`), in the shape the panel draws. `undefined` means no answer has come back yet, which
+ * the panel says out loud rather than drawing as an empty mine. Deliberately NOT reset when a re-read starts: the
+ * previous answer stays on screen until the next lands, or a live update would flash "reading" over a transcript
+ * somebody is in the middle of; a slow answer for a mine the panel left never lands (the store's own token).
  */
-const mineHistory = ref<MineHistoryResult | undefined>(undefined)
-/** Which read is the current one, so a slow answer cannot land on a later mine. */
-let historyToken = 0
+const { state: hostHistory, open: readHostHistory, close: closeHostHistory } = useMineHistory()
+const mineHistory = computed<MineHistoryResult | undefined>(() => historyAsToday(hostHistory))
 
 /**
  * The mine's History action (#192), and the MessagePanel's (#635): the history opens in the dock's
@@ -954,17 +955,10 @@ watch(dock.error, (text) => {
   if (text !== null) showToast(text, 'warning')
 })
 
-async function readMineHistory(mineId: string): Promise<void> {
-  const token = ++historyToken
-  try {
-    const result = await window.api.getMineHistory(mineId)
-    if (historyToken === token) mineHistory.value = result
-  } catch {
-    // The bridge is the only source there is. "Could not be read" is exactly
-    // what happened, and it is a different statement from "nobody has spoken".
-    if (historyToken === token) mineHistory.value = { readable: false, speakers: [] }
-  }
-}
+/*
+ * AMENDED for ISSUE-123 (was: `readMineHistory`, A-19 in today's shape): the store reads the Host's message log, and
+ * a refused or lost read is "could not be read", a different statement from "nobody has spoken" (useMineHistory).
+ */
 
 /**
  * The refusal main gave for the LAST History path click (#279), keyed by the
@@ -1029,13 +1023,11 @@ watch(
   [historyOpen, () => viewState.mineId, crewSignal],
   ([open, mineId]) => {
     if (!open || mineId === null) {
-      // Nothing to show: bump the token so a read still in flight cannot land
-      // on a panel that has since closed or moved to another mine.
-      historyToken++
-      mineHistory.value = undefined
+      // Nothing to show: a read still in flight cannot land on a panel that has since closed or moved on.
+      closeHostHistory()
       return
     }
-    void readMineHistory(mineId)
+    void readHostHistory(mineId as MineId, window.api.getMineHistory)
   },
   { immediate: true }
 )
@@ -1117,7 +1109,13 @@ watch(
  * width — are stated with the reason neither is enough on its own.
  */
 const openMineOnScreen = computed(() => mineOnScreen(viewState.mineId, layout.value))
-watch(openMineOnScreen, (mineId) => window.api.setOpenMine(mineId), { immediate: true })
+// A-44 under its 14 name from the cut-1 switch (ISSUE-123; 14 §2.1 A-44): the mines this window shows, which UI main's
+// PresenceTracker tells the Host (B-M07). The Panel shows one mine interior at most.
+watch(
+  openMineOnScreen,
+  (mineId) => window.api.reportVisibleMines({ mineIds: mineId === null ? [] : [mineId as MineId] }),
+  { immediate: true }
+)
 
 /** Released with the window, like every other subscription here. */
 let unlistenShowMine: (() => void) | undefined

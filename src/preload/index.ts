@@ -41,26 +41,6 @@ function providerOf(value: unknown): string {
 }
 
 /**
- * The one act a tuning request names. An unrecognised kind crosses as a shape main refuses, never as either real
- * act: this changes a running session.
- */
-function tuningChangeOf(change: unknown): {
-  kind: string
-  model?: string
-  effort?: string
-  value?: string
-} {
-  const record =
-    typeof change === 'object' && change !== null ? (change as Record<string, unknown>) : {}
-  if (record.kind === 'model' && typeof record.model === 'string')
-    return { kind: 'model', model: record.model }
-  if (record.kind === 'effort' && typeof record.effort === 'string') {
-    return { kind: 'effort', effort: record.effort }
-  }
-  return { kind: '', value: '' }
-}
-
-/**
  * An answer rebuilt from string pairs only. The person's own words (`text`) cross alone, never beside a record;
  * a non-string value is dropped, so main refuses an answer that names no option.
  */
@@ -133,28 +113,28 @@ export interface DwarfAiMinersApi {
   setToggleShortcut: (
     request: TargetRequest<'shortcut:set'>
   ) => Promise<TargetResult<'shortcut:set'>>
-  /** A-12 · `mines:get` · invoke · RETIRE · today shape */
-  getMines: () => Promise<TodayResult<'mines:get'>>
+  /** A-12 · `mines:get` · invoke · RETIRE · target shape */
+  getMines: () => Promise<TargetResult<'mines:get'>>
   /** A-13 · `dwarf:activate` · invoke · CHANGE · today shape */
   activateDwarf: (request: TodayRequest<'dwarf:activate'>) => Promise<TodayResult<'dwarf:activate'>>
-  /** A-14 · `dwarf:feed` · invoke · RETIRE · today shape */
-  getDwarfFeed: (request: TodayRequest<'dwarf:feed'>) => Promise<TodayResult<'dwarf:feed'>>
-  /** A-15 · `dwarf:feed:page` · invoke · CHANGE · today shape */
+  /** A-14 · `dwarf:feed` · invoke · RETIRE · target shape */
+  getDwarfFeed: (request: TargetRequest<'dwarf:feed'>) => Promise<TargetResult<'dwarf:feed'>>
+  /** A-15 · `dwarf:feed:page` · invoke · CHANGE · target shape */
   getDwarfFeedPage: (
-    request: TodayRequest<'dwarf:feed:page'>
-  ) => Promise<TodayResult<'dwarf:feed:page'>>
-  /** A-16 · `panel:watchDwarfFeed` · send · RETIRE · today shape */
-  setWatchedDwarf: (request: TodayRequest<'panel:watchDwarfFeed'>) => void
-  /** A-17 · `dwarf:refreshTelemetry` · send · RETIRE · today shape */
-  refreshDwarfTelemetry: (request: TodayRequest<'dwarf:refreshTelemetry'>) => void
-  /** A-18 · `dwarf:setTuning` · invoke · RETIRE · today shape */
+    request: TargetRequest<'dwarf:feed:page'>
+  ) => Promise<TargetResult<'dwarf:feed:page'>>
+  /** A-16 · `panel:watchDwarfFeed` · send · RETIRE · target shape */
+  setWatchedDwarf: (request: TargetRequest<'panel:watchDwarfFeed'>) => void
+  /** A-17 · `dwarf:refreshTelemetry` · send · RETIRE · target shape */
+  refreshDwarfTelemetry: (request: TargetRequest<'dwarf:refreshTelemetry'>) => void
+  /** A-18 · `dwarf:setTuning` · invoke · RETIRE · target shape */
   setDwarfTuning: (
-    request: TodayRequest<'dwarf:setTuning'>
-  ) => Promise<TodayResult<'dwarf:setTuning'>>
-  /** A-19 · `mine:history` · invoke · CHANGE · today shape */
-  getMineHistory: (request: TodayRequest<'mine:history'>) => Promise<TodayResult<'mine:history'>>
-  /** A-20 · `mine:openPath` · invoke · KEEP · today shape */
-  openMinePath: (request: TodayRequest<'mine:openPath'>) => Promise<TodayResult<'mine:openPath'>>
+    request: TargetRequest<'dwarf:setTuning'>
+  ) => Promise<TargetResult<'dwarf:setTuning'>>
+  /** A-19 · `mine:history` · invoke · CHANGE · target shape */
+  getMineHistory: (request: TargetRequest<'mine:history'>) => Promise<TargetResult<'mine:history'>>
+  /** A-20 · `mine:openPath` · invoke · KEEP · target shape */
+  openMinePath: (request: TargetRequest<'mine:openPath'>) => Promise<TargetResult<'mine:openPath'>>
   /** A-21 · `shell:openExternalLink` · invoke · KEEP · target shape */
   openExternalLink: (
     request: TargetRequest<'shell:openExternalLink'>
@@ -177,16 +157,20 @@ export interface DwarfAiMinersApi {
   getAppBuild: () => Promise<TargetResult<'app:build'>>
   /** A-29 · `app:features` · invoke · KEEP · target shape */
   getFeatureFlags: () => Promise<TargetResult<'app:features'>>
-  /** A-30 · `mine:declare` · invoke · KEEP · today shape */
-  declareMine: () => Promise<TodayResult<'mine:declare'>>
-  /** A-31 · `mine:declare-main` · invoke · KEEP · today shape */
-  declareMainProject: () => Promise<TodayResult<'mine:declare-main'>>
-  /** A-32 · `mine:undeclare` · invoke · KEEP · today shape */
-  undeclareMine: (request: TodayRequest<'mine:undeclare'>) => Promise<TodayResult<'mine:undeclare'>>
-  /** A-33 · `metrics:reset` · invoke · CHANGE · today shape */
-  resetMetrics: () => Promise<TodayResult<'metrics:reset'>>
-  /** A-34 · `projects:query` · invoke · KEEP · today shape */
-  queryProjects: (request: TodayRequest<'projects:query'>) => Promise<TodayResult<'projects:query'>>
+  /** A-30 · `mine:declare` · invoke · KEEP · target shape */
+  declareMine: () => Promise<TargetResult<'mine:declare'>>
+  /** A-31 · `mine:declare-main` · invoke · KEEP · target shape */
+  declareMainProject: () => Promise<TargetResult<'mine:declare-main'>>
+  /** A-32 · `mine:undeclare` · invoke · KEEP · target shape */
+  undeclareMine: (
+    request: TargetRequest<'mine:undeclare'>
+  ) => Promise<TargetResult<'mine:undeclare'>>
+  /** A-33 · `metrics:reset` · invoke · CHANGE · target shape */
+  resetMetrics: (request: TargetRequest<'metrics:reset'>) => Promise<TargetResult<'metrics:reset'>>
+  /** A-34 · `projects:query` · invoke · KEEP · target shape */
+  queryProjects: (
+    request: TargetRequest<'projects:query'>
+  ) => Promise<TargetResult<'projects:query'>>
   /** A-35 · `agent:launch` · invoke · CHANGE · today shape */
   launchAgent: (request: TodayRequest<'agent:launch'>) => Promise<TodayResult<'agent:launch'>>
   /** A-36 · `agent:providers` · invoke · CHANGE · today shape */
@@ -215,8 +199,8 @@ export interface DwarfAiMinersApi {
   setNotificationsEnabled: (
     request: TodayRequest<'notifications:enabled:set'>
   ) => Promise<TodayResult<'notifications:enabled:set'>>
-  /** A-44 · `panel:openMine` · send · CHANGE · today shape */
-  setOpenMine: (request: TodayRequest<'presence:visibleMines'>) => void
+  /** A-44 · `presence:visibleMines` · send · CHANGE · target shape */
+  reportVisibleMines: (request: TargetRequest<'presence:visibleMines'>) => void
   /** A-45 · `typography:preferences:get` · invoke · KEEP · target shape */
   getTypographyPreferences: () => Promise<TargetResult<'typography:preferences:get'>>
   /** A-46 · `typography:preferences:set` · invoke · KEEP · target shape */
@@ -255,16 +239,16 @@ export interface DwarfAiMinersApi {
   onPanelVisibility: (
     listener: (payload: TargetResult<'panel:visible:changed'>) => void
   ) => () => void
-  /** A-P2 · `mines:update` · push · RETIRE · today shape */
-  onMinesUpdated: (listener: (payload: TodayResult<'mines:update'>) => void) => () => void
+  /** A-P2 · `mines:update` · push · RETIRE · target shape */
+  onMinesUpdated: (listener: (payload: TargetResult<'mines:update'>) => void) => () => void
   /** A-P3 · `agent:launchFailed` · push · RETIRE · today shape */
   onLaunchFailed: (listener: (payload: TodayResult<'agent:launchFailed'>) => void) => () => void
   /** A-P4 · `dwarf:sendText:settled` · push · RETIRE · today shape */
   onDwarfSendSettled: (
     listener: (payload: TodayResult<'dwarf:sendText:settled'>) => void
   ) => () => void
-  /** A-P5 · `panel:mine:show` · push · RETIRE · today shape */
-  onShowMine: (listener: (payload: TodayResult<'panel:mine:show'>) => void) => () => void
+  /** A-P5 · `panel:mine:show` · push · RETIRE · target shape */
+  onShowMine: (listener: (payload: TargetResult<'panel:mine:show'>) => void) => () => void
   /** A-P6 · `typography:preferences:changed` · push · KEEP · target shape */
   onTypographyPreferences: (
     listener: (payload: TargetResult<'typography:preferences:changed'>) => void
@@ -359,33 +343,14 @@ const api: DwarfAiMinersApi = {
     invokeOrReject(() => ipcRenderer.invoke('shortcut:set', textOf(request))),
   getMines: () => invokeOrReject(() => ipcRenderer.invoke('mines:get')),
   activateDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:activate', request)),
-  getDwarfFeed: (request) =>
-    invokeOrReject(() => ipcRenderer.invoke('dwarf:feed', textOf(request))),
+  getDwarfFeed: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:feed', request)),
   getDwarfFeedPage: (request) =>
-    invokeOrReject(() =>
-      ipcRenderer.invoke('dwarf:feed:page', {
-        dwarfId: textOf(request?.dwarfId),
-        before: {
-          timestamp: textOf(request?.before?.timestamp),
-          text: textOf(request?.before?.text)
-        }
-      })
-    ),
-  setWatchedDwarf: (request) =>
-    sendOrDrop(() =>
-      ipcRenderer.send('panel:watchDwarfFeed', typeof request === 'string' ? request : null)
-    ),
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:feed:page', request)),
+  setWatchedDwarf: (request) => sendOrDrop(() => ipcRenderer.send('panel:watchDwarfFeed', request)),
   refreshDwarfTelemetry: (request) =>
-    sendOrDrop(() => ipcRenderer.send('dwarf:refreshTelemetry', textOf(request))),
-  setDwarfTuning: (request) =>
-    invokeOrReject(() =>
-      ipcRenderer.invoke('dwarf:setTuning', {
-        dwarfId: textOf(request?.dwarfId),
-        change: tuningChangeOf(request?.change)
-      })
-    ),
-  getMineHistory: (request) =>
-    invokeOrReject(() => ipcRenderer.invoke('mine:history', textOf(request))),
+    sendOrDrop(() => ipcRenderer.send('dwarf:refreshTelemetry', request)),
+  setDwarfTuning: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:setTuning', request)),
+  getMineHistory: (request) => invokeOrReject(() => ipcRenderer.invoke('mine:history', request)),
   openMinePath: (request) =>
     invokeOrReject(() =>
       ipcRenderer.invoke('mine:openPath', {
@@ -416,7 +381,7 @@ const api: DwarfAiMinersApi = {
   declareMainProject: () => invokeOrReject(() => ipcRenderer.invoke('mine:declare-main')),
   undeclareMine: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('mine:undeclare', textOf(request))),
-  resetMetrics: () => invokeOrReject(() => ipcRenderer.invoke('metrics:reset')),
+  resetMetrics: (request) => invokeOrReject(() => ipcRenderer.invoke('metrics:reset', request)),
   queryProjects: (request) => invokeOrReject(() => ipcRenderer.invoke('projects:query', request)),
   launchAgent: (request) =>
     invokeOrReject(() =>
@@ -470,10 +435,8 @@ const api: DwarfAiMinersApi = {
     invokeOrReject(() => ipcRenderer.invoke('notifications:enabled:get')),
   setNotificationsEnabled: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('notifications:enabled:set', request === true)),
-  setOpenMine: (request) =>
-    sendOrDrop(() =>
-      ipcRenderer.send('panel:openMine', typeof request === 'string' ? request : null)
-    ),
+  reportVisibleMines: (request) =>
+    sendOrDrop(() => ipcRenderer.send('presence:visibleMines', request)),
   getTypographyPreferences: () =>
     invokeOrReject(() => ipcRenderer.invoke('typography:preferences:get')),
   setTypographyPreferences: (request) =>
@@ -502,7 +465,7 @@ const api: DwarfAiMinersApi = {
   },
   onMinesUpdated: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
-      listener(payload as TodayResult<'mines:update'>)
+      listener(payload as TargetResult<'mines:update'>)
     }
     ipcRenderer.on('mines:update', wrapped)
     return () => ipcRenderer.removeListener('mines:update', wrapped)
@@ -523,7 +486,7 @@ const api: DwarfAiMinersApi = {
   },
   onShowMine: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
-      if (typeof payload === 'string' && payload !== '') listener(payload)
+      listener(payload as TargetResult<'panel:mine:show'>)
     }
     ipcRenderer.on('panel:mine:show', wrapped)
     return () => ipcRenderer.removeListener('panel:mine:show', wrapped)

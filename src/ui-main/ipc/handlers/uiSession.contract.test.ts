@@ -6,6 +6,7 @@ import { RecordingHostClient } from '../../window/ports/fakes/RecordingHostClien
 import { createUiSession, UI_SESSION_CHANGED_PUSH } from '../../window/application/uiSession'
 import type { ChannelRoute } from '../channelRoute'
 import { createRouter, type RouteTarget } from '../router'
+import { ROUTES } from '../routes'
 import type { IpcSenderEvent, SenderPolicy } from '../senderCheck'
 import { createUiSessionRows, UI_SESSION_GET, UI_SESSION_PATCH, UI_SESSION_ROWS } from './uiSession'
 
@@ -61,7 +62,12 @@ describe('the UI session rows over seam A (14 §2.2 A-N17…A-N19)', () => {
     // The registry places the three rows `ui-local`, unrouted until the cut-1 switch routes them.
     for (const key of ['ui:session:get', 'ui:session:patch', 'ui:session:changed'] as const) {
       expect(CHANNELS[key].placement, key).toBe('ui-local')
-      expect(UNROUTED[key], key).toBe('cut-1')
+      // AMENDED for ISSUE-123 (was: `UNROUTED[key]` is 'cut-1'): the cut-1 switch routed it `ui-local`.
+      expect(UNROUTED[key], key).toBeUndefined()
+      expect(
+        ROUTES.filter((route) => route.channel === key).map((route) => [route.owner, route.since]),
+        key
+      ).toEqual([['ui-local', 'cut-1']])
     }
     const snapshotSchema = CHANNELS['ui:session:get'].response
     const changeSchema = CHANNELS['ui:session:changed'].response

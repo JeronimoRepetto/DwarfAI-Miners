@@ -1,6 +1,12 @@
 // layer: L2
 import { afterEach, describe, expect, it } from 'vitest'
-import type { DwarfId, HostConnectionView, StopAllOutcome } from '@dwarfai/contracts'
+import type {
+  DwarfId,
+  HostConnectionView,
+  MineId,
+  StepId,
+  StopAllOutcome
+} from '@dwarfai/contracts'
 import { createHostClient, type HostClientService } from './host-client/HostClient'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from './host-client/testing/FakeHost'
 import { FakeHostClientTimers } from './host-client/testing/FakeHostClientTimers'
@@ -16,8 +22,11 @@ import {
 import type { ChannelRoute } from './ipc/channelRoute'
 import type { IpcMainRegistrar } from './ipc/router'
 import type { UiLogEntry } from './diagnostics/uiLogger'
-import { ROUTES } from './ipc/routes'
+// AMENDED for ISSUE-123 (was: the release table `ROUTES` of './ipc/routes'): the release table is cut 1's from the
+// cut-1 switch, so these cases compose the cut-0 table as it shipped, with its release.
+import { CUT_0_ROUTES as ROUTES } from './ipc/testing/cut0Routes'
 import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
+import { ROUTES as RELEASE_ROUTES, ROUTES_RELEASE } from './ipc/routes'
 import type { IpcSenderEvent } from './ipc/senderCheck'
 import { createPanelWindow, type PanelWindowUseCases } from './window/application/panelWindow'
 import { createToggleShortcut } from './window/application/toggleShortcut'
@@ -111,8 +120,15 @@ class RecordingIpcMain implements IpcMainRegistrar {
   }
 }
 
-/** Today's runtime as the root reaches it: no window of its own in cut 0, one live legacy launch. */
-function legacyWithoutWindow(endVerdict: 'ended' | 'refused' = 'ended', composeFails = false) {
+/**
+ * Today's runtime as the root reaches it: no window of its own in cut 0, one live legacy launch. AMENDED for ISSUE-123
+ * (was: every row answered `undefined`): a row named in `answers` answers that, so a case can pin a legacy answer.
+ */
+function legacyWithoutWindow(
+  endVerdict: 'ended' | 'refused' = 'ended',
+  composeFails = false,
+  answers: Readonly<Record<string, unknown>> = {}
+) {
   const events: string[] = []
   const counts = { composed: 0 }
   const legacyRuntime: UiMainDeps['legacyRuntime'] = {
@@ -123,7 +139,7 @@ function legacyWithoutWindow(endVerdict: 'ended' | 'refused' = 'ended', composeF
     },
     async serve(channel) {
       events.push(`legacy serve ${channel}`)
-      return undefined
+      return answers[channel]
     },
     beforeQuit() {},
     willQuit() {},
@@ -224,12 +240,21 @@ async function cut0App(
     // pass through, as the production root passes both; absent, the start is the one every case above pins.
     legacyRegistry?: UiMainDeps['legacyRegistry']
     legacyPushes?: UiMainDeps['legacyPushes']
+    // AMENDED for ISSUE-123 (was: none of the three): the release the table is for (default the cut-0 table's), the
+    // Host methods advertised beyond the cut-0 ones, and the answers of today's rows.
+    release?: StepId
+    capabilities?: readonly string[]
+    legacyAnswers?: Readonly<Record<string, unknown>>
   } = {}
 ) {
   const lifecycle = new RecordingLifecycle()
   const ipc = new RecordingIpcMain()
   const lock = new FakeSingleInstanceLock(true)
-  const legacy = legacyWithoutWindow(options.endVerdict, options.composeFails === true)
+  const legacy = legacyWithoutWindow(
+    options.endVerdict,
+    options.composeFails === true,
+    options.legacyAnswers
+  )
   // The UI log, in the lifecycle's own order: a record made before an exit shows before it.
   const log: UiLogEntry[] = []
   const uiLog = {
@@ -244,7 +269,12 @@ async function cut0App(
   // AMENDED for ISSUE-114 (was: without 'attention.clicked'): the Host serves B-M08 (host/transport), so a click's
   // counter is advertised as the real Host does; no other request uses it.
   const host = new FakeHost({
-    capabilities: [...FAKE_HOST_CAPABILITIES, 'section:dwarfs', 'attention.clicked']
+    capabilities: [
+      ...FAKE_HOST_CAPABILITIES,
+      'section:dwarfs',
+      'attention.clicked',
+      ...(options.capabilities ?? [])
+    ]
   })
   host.board = [
     {
@@ -277,6 +307,7 @@ async function cut0App(
     ipc,
     appEntry: APP_ENTRY,
     routes: options.routes ?? ROUTES,
+    release: options.release ?? 'cut-0',
     panelWindow: panel.factory,
     uiLog,
     host: { client },
@@ -678,5 +709,100 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     expect(cut1.reveals).toEqual([
       ['mode:revealDwarfChat', { mineId: notification.mineId, dwarfId: HOST_DWARF }]
     ])
+  })
+})
+
+// AMENDED for ISSUE-123 (appended): the same root over the release table of the cut-1 switch (21 §2 cut 1).
+describe('the cut-1 composition of UI main (21 §2 cut 1)', () => {
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a0001' as MineId
+  /** The cut-1 Host methods the rows below relay (21 §2 "Seam B members", row 1). */
+  const CUT_1_METHODS = [
+    'conversation.feed',
+    'conversation.mineHistory',
+    'presence',
+    'preferences.resetMetrics'
+  ]
+  const cut1App = (options: Parameters<typeof cut0App>[0] = {}) =>
+    cut0App({
+      routes: RELEASE_ROUTES,
+      release: ROUTES_RELEASE,
+      capabilities: CUT_1_METHODS,
+      ...options
+    })
+
+  it('[ADR-001] in cut 1 the root relays A-N01, pushes every Host frame as A-N02 and reads A-15 and A-19 from the Host message log', async () => {
+    expect(ROUTES_RELEASE).toBe('cut-1')
+    const { ipc, host, appWindows } = await cut1App()
+    host.handle('conversation.feed', () => ({
+      dwarfId: HOST_DWARF,
+      messages: [],
+      reachedStart: true
+    }))
+    host.handle('conversation.mineHistory', () => ({ mineId: MINE, speakers: [] }))
+
+    const snapshot = (await ipc.handled.get('host:snapshot')?.(FROM_PANEL, {})) as {
+      ok: boolean
+    }
+    expect(snapshot.ok).toBe(true)
+    expect(await ipc.handled.get('dwarf:feed:page')?.(FROM_PANEL, { dwarfId: HOST_DWARF })).toEqual(
+      { ok: true, value: { dwarfId: HOST_DWARF, messages: [], reachedStart: true } }
+    )
+    expect(await ipc.handled.get('mine:history')?.(FROM_PANEL, MINE)).toEqual({
+      ok: true,
+      value: { mineId: MINE, speakers: [] }
+    })
+    expect(host.methods('ui')).toEqual(
+      expect.arrayContaining(['session.snapshot', 'conversation.feed', 'conversation.mineHistory'])
+    )
+
+    // A Host frame reaches the Panel as one A-N02 batch.
+    host.publish('dwarf.departed', { dwarfId: HOST_DWARF, mineId: MINE, cause: 'stopped' })
+    await settle()
+    const batches = appWindows.windows.flatMap((w) => w.pushes.filter(([p]) => p === 'host:event'))
+    expect(
+      batches.map(([, batch]) => (batch as Array<{ name: string }>).map((f) => f.name))
+    ).toEqual([['dwarf.departed']])
+  })
+
+  it('[ADR-024] in cut 1 A-44 tells the Host which mines the shown Panel draws, once its report settled', async () => {
+    const { ipc, host, panel } = await cut1App()
+    expect(ipc.listened.has('panel:openMine')).toBe(false)
+    panel.panel()?.show()
+    ipc.listened.get('presence:visibleMines')?.(FROM_PANEL, { mineIds: [MINE] })
+    // ADR-024 item 7: a report settles once it held for 100 ms.
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    await settle()
+    const sent = host.received.filter((r) => r.method === 'presence').map((r) => r.params)
+    expect(sent.at(-1)).toMatchObject({ onScreenMineIds: [MINE], anyWindowVisible: true })
+  })
+
+  it('[ADR-001] in cut 1 A-33 runs today’s reset first and then the Host saga through ResetFanout', async () => {
+    const { ipc, host, legacy } = await cut1App({
+      legacyAnswers: { 'metrics:reset': { outcome: 'reset' } }
+    })
+    host.handle('preferences.resetMetrics', () => ({ outcome: 'reset', epoch: 1 }))
+    const answer = await ipc.handled.get('metrics:reset')?.(FROM_PANEL, {
+      confirmed: 'yes',
+      requestId: REQUEST
+    })
+    expect(answer).toEqual({ ok: true, value: { outcome: 'reset', epoch: 1 } })
+    expect(legacy.events).toContain('legacy serve metrics:reset')
+    expect(host.methods('ui')).toContain('preferences.resetMetrics')
+  })
+
+  it('[ADR-001] in cut 1 the retired rows reach neither today’s runtime nor the Host', async () => {
+    const { ipc, host, legacy } = await cut1App()
+    const before = host.received.length
+    for (const wire of ['dwarf:feed', 'dwarf:setTuning']) {
+      expect(await ipc.handled.get(wire)?.(FROM_PANEL, 'claude:s1'), wire).toMatchObject({
+        ok: false,
+        error: { code: 'METHOD_NOT_FOUND' }
+      })
+    }
+    ipc.listened.get('panel:watchDwarfFeed')?.(FROM_PANEL, 'claude:s1')
+    ipc.listened.get('dwarf:refreshTelemetry')?.(FROM_PANEL, 'claude:s1')
+    await settle()
+    expect(legacy.events.filter((e) => e.startsWith('legacy serve'))).toEqual([])
+    expect(host.received.length).toBe(before)
   })
 })

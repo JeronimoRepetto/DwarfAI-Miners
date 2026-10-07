@@ -13,6 +13,7 @@ import { createUiPreferencesReset } from '../../window/application/uiPreferences
 import { createUiSession } from '../../window/application/uiSession'
 import { InMemoryUiPreferenceStore } from '../../window/ports/fakes/InMemoryUiPreferenceStore'
 import { RecordingHostClient } from '../../window/ports/fakes/RecordingHostClient'
+import { ROUTES } from '../routes'
 import { createUiPreferencesResetPush, UI_PREFERENCES_RESET_PUSH } from './uiPreferencesReset'
 
 /**
@@ -48,7 +49,11 @@ describe('A-N12 onUiPreferencesReset and B-M09 ui.resetPreferences.ack (14 §2.2
     expect(CHANNELS[key]?.placement).toBe('ui-local')
     expect(CHANNELS[key]?.status).toBe('new')
     expect(ROW_IDS[key]).toBe('A-N12')
-    expect(UNROUTED[key]).toBe('cut-1')
+    // AMENDED for ISSUE-123 (was: `UNROUTED[key]` is 'cut-1'): the cut-1 switch routed it `ui-local`.
+    expect(UNROUTED[key]).toBeUndefined()
+    expect(ROUTES.filter((route) => route.channel === key).map((route) => route.owner)).toEqual([
+      'ui-local'
+    ])
     const payloadSchema = CHANNELS[key].response
     const ackSchema = HOST_METHOD_SCHEMAS['ui.resetPreferences.ack'].params
 

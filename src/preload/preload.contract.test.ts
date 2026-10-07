@@ -99,18 +99,29 @@ const catalog14: CatalogRow[] = JSON.parse(
 const KEYS = Object.keys(CHANNELS) as ChannelKey[]
 const helpers: readonly string[] = PRELOAD_HELPERS
 
-/** A row's member name in 14 (today's name: every route of this release keeps `shape: 'today'`). */
+/** Whether this release's routes of a row keep today's shape (21 §1 item 2a). */
+const speaksToday = (key: ChannelKey): boolean =>
+  ROUTES.some((route) => route.channel === key && route.shape === 'today')
+
+/**
+ * A row's member name in 14. AMENDED for ISSUE-123 (was: today's name for every row): a CHANGE that renames its member
+ * (14 §1.1: A-44, `setOpenMine` → `reportVisibleMines`) carries the 14 name once its route is `target` (cut 1 on).
+ */
 function memberOf(key: ChannelKey): string | undefined {
   const id = ROW_IDS[key]
+  if (key === 'presence:visibleMines' && !speaksToday(key)) return 'reportVisibleMines'
   return catalog14.find((row) => row.id === id && (id !== I21 || row.wire === key))?.member
 }
 
-/** Today's wire of a row: the ROW_IDS entry of the same row that is not a registry key (A-44), else the key. */
+/**
+ * The wire a row is spoken on in this release: today's (the ROW_IDS entry of the same row that is not a registry key,
+ * A-44) while its route keeps today's shape, the registry key otherwise. AMENDED for ISSUE-123 (was: always today's).
+ */
 function todayWireOf(key: ChannelKey): string {
   const wire = Object.keys(ROW_IDS).find(
     (w) => w !== key && ROW_IDS[w] === ROW_IDS[key] && !(w in CHANNELS)
   )
-  return wire ?? key
+  return speaksToday(key) ? (wire ?? key) : key
 }
 
 const kindOf = (key: ChannelKey): string => (helpers.includes(key) ? 'helper' : CHANNELS[key].kind)
@@ -174,6 +185,9 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // Premise: every member keeps today's name and wire. AMENDED for ISSUE-056 (was: every route keeps today's shape,
     // true before cut 0): from cut 0 a `target` route is a KEEP row, whose target shape is today's (14 §2.1), or a
     // NEW row (14 §2.2), which has no today shape; no CHANGE or RETIRE row is `target` yet.
+    // AMENDED for ISSUE-123 (was: no CHANGE or RETIRE row is `target`): the cut-1 switch moves the CHANGE rows A-15,
+    // A-19, A-33, A-44 and the RETIRE rows A-12, A-P2 to their target shape (21 §3.1), and a RETIRE row it retired has
+    // no route, so the preload speaks it with its registry entry, which is today's shape (14 §2.1).
     expect(
       ROUTES.filter(
         (route) =>
@@ -181,7 +195,9 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
           CHANNELS[route.channel].status !== 'kept' &&
           CHANNELS[route.channel].status !== 'new'
       )
-    ).toEqual([])
+        .map((route) => ROW_IDS[route.channel])
+        .sort()
+    ).toEqual(['A-12', 'A-15', 'A-19', 'A-33', 'A-44', 'A-P2'])
     const expected = KEYS.map(memberOf)
     expect(
       KEYS.filter((key) => memberOf(key) === undefined),
@@ -302,7 +318,14 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
   it("[ADR-033] a member whose route shape is today exposes today's result type", () => {
     // AMENDED for ISSUE-056 (was: 'panel:getAlwaysOnTop' as the KEEP row): A-03 is `ui-local` + `target` from cut 0, so
     // A-42, a KEEP row still served `legacy`, stands for it.
-    const today = ['dwarf:activate', 'mines:get', 'notifications:enabled:get', 'dwarf:sendText']
+    // AMENDED for ISSUE-123 (was: with 'mines:get'): the cut-1 switch routes A-12 `host` with its target shape, which for
+    // a RETIRE row is today's `MinesSnapshot`; the RETIRE row still `today` is A-P3.
+    const today = [
+      'dwarf:activate',
+      'agent:launchFailed',
+      'notifications:enabled:get',
+      'dwarf:sendText'
+    ]
     for (const key of today) {
       expect(
         ROUTES.filter((route) => route.channel === key).map((route) => route.shape),
@@ -326,15 +349,21 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     expectTypeOf<DwarfAiMinersApi['sendDwarfText']>().returns.resolves.toEqualTypeOf<
       TodayResult<'dwarf:sendText'>
     >()
-    // RETIRE row and KEEP row.
+    // RETIRE row and KEEP row. AMENDED for ISSUE-123 (was: A-12 `getMines` as the RETIRE row): A-12's target shape is
+    // today's `MinesSnapshot` (H3), so its result type is unchanged; A-P3 stands for a RETIRE row still `today`.
     expectTypeOf<DwarfAiMinersApi['getMines']>().returns.resolves.toEqualTypeOf<
       TodayResult<'mines:get'>
     >()
-    expectTypeOf<DwarfAiMinersApi['getAlwaysOnTop']>().returns.resolves.toEqualTypeOf<boolean>()
-    // A-44 keeps today's member name and today's request while its route is today.
-    expectTypeOf<DwarfAiMinersApi['setOpenMine']>()
+    expectTypeOf<DwarfAiMinersApi['onLaunchFailed']>()
       .parameter(0)
-      .toEqualTypeOf<TodayRequest<'presence:visibleMines'>>()
+      .parameter(0)
+      .toEqualTypeOf<TodayResult<'agent:launchFailed'>>()
+    expectTypeOf<DwarfAiMinersApi['getAlwaysOnTop']>().returns.resolves.toEqualTypeOf<boolean>()
+    // A-44 keeps today's member name and today's request while its route is today. AMENDED for ISSUE-123 (was: the
+    // `setOpenMine` member): from cut 1 its route is `target`, so it is `reportVisibleMines` with its 14 request.
+    expectTypeOf<z.input<(typeof CHANNELS)['presence:visibleMines']['request']>>().toExtend<
+      Parameters<DwarfAiMinersApi['reportVisibleMines']>[0]
+    >()
     // A push hands its listener today's payload; the helper answers synchronously.
     expectTypeOf<DwarfAiMinersApi['onMinesUpdated']>()
       .parameter(0)

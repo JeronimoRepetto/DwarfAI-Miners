@@ -144,6 +144,15 @@ const HOST_CONNECTION_UNROUTED = {
   error: { code: 'METHOD_NOT_FOUND', message: 'no route', retryable: false }
 }
 
+/** A Host snapshot of the `tails` section with nothing said in it (ADDED for ISSUE-123). */
+const EMPTY_HOST_TAILS = {
+  ok: true,
+  value: { snapshotId: 'snap-1', seq: 1, epoch: 'epoch-1', chunks: [] }
+}
+
+/** The mine id a Host history answer names (a UUIDv7, as `MineHistoryView.mineId` is); ADDED for ISSUE-123. */
+const HISTORY_MINE_ID = '01890a5d-ac96-774b-bcce-b302099a0001'
+
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     hidePanel: vi.fn(),
@@ -162,7 +171,12 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     setWatchedDwarf: vi.fn(),
     // The Mine History panel reads the mine's transcripts on open (#192); a
     // readable mine nobody has spoken in is the quiet default.
-    getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [] }),
+    // AMENDED for ISSUE-123 (was: today's `{ readable, speakers }`): A-19 reads the Host's message log from the cut-1
+    // switch and answers `IpcResult<MineHistoryView>`.
+    getMineHistory: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { mineId: HISTORY_MINE_ID, speakers: [] }
+    }),
     sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
     kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
     // A promoted kick retires its dwarf through this (#46). Stubbed rather
@@ -209,7 +223,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     declareMine: vi.fn().mockResolvedValue({ outcome: 'cancelled' }),
     // Settings' "Reset metrics" action (#138). Answered as a no-op success by
     // default; only the tests about it care what main actually did.
-    resetMetrics: vi.fn().mockResolvedValue({ outcome: 'reset' }),
+    // AMENDED for ISSUE-123 (was: today's `{ outcome }`): A-33's target answer, `IpcResult<MetricsResetResult>`.
+    resetMetrics: vi.fn().mockResolvedValue({ ok: true, value: { outcome: 'reset', epoch: 1 } }),
     // The launch surface (#86). Both are AWAITED, so both resolve their real
     // shape for the reason stated at length above. Claude detected and
     // launchable is the ordinary machine; a launch answers "started", the
@@ -278,7 +293,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * an unsubscribe, exactly like `onMinesUpdated`. The switch answers ON,
      * which is what main's own default is. No existing assertion changed.
      */
-    setOpenMine: vi.fn(),
+    // AMENDED for ISSUE-123 (was: `setOpenMine`): A-44 under its 14 name, `reportVisibleMines`, a plain spy too.
+    reportVisibleMines: vi.fn(),
     onShowMine: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-114 (was: absent): the shell also hears A-N16, the reveal a notification click runs.
     onRevealDwarfChat: vi.fn().mockReturnValue(() => undefined),
@@ -361,6 +377,17 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     getHostConnection: vi.fn().mockResolvedValue(HOST_CONNECTION_UNROUTED),
     onHostConnection: vi.fn().mockReturnValue(() => undefined),
     retryHostConnection: vi.fn().mockResolvedValue(HOST_CONNECTION_UNROUTED),
+    /*
+     * AMENDED for ISSUE-123 (was: absent). The dock follows the Host's chats from mount (A-N02, then A-N01): the
+     * snapshot answers a Host with nothing said for the `tails` section, so every chat is an empty conversation until a
+     * test says otherwise, and refuses any other section, so the board stays on A-12/A-P2 in these tests.
+     */
+    onHostEvent: vi.fn().mockReturnValue(() => undefined),
+    getHostSnapshot: vi.fn((params: { sections?: string[] } | undefined) =>
+      Promise.resolve(
+        params?.sections?.includes('tails') === true ? EMPTY_HOST_TAILS : HOST_CONNECTION_UNROUTED
+      )
+    ),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -1139,7 +1166,10 @@ describe('App reset metrics', () => {
   }
 
   it('opens the modal from Data Base and confirms only once "yes" is typed', async () => {
-    const resetMetrics = vi.fn().mockResolvedValue({ outcome: 'reset' })
+    // AMENDED for ISSUE-123 (was: today's `{ outcome: 'reset' }`): A-33's target answer.
+    const resetMetrics = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { outcome: 'reset', epoch: 1 } })
     const { wrapper } = await openSettings({ resetMetrics })
 
     await openReset(wrapper)
@@ -1156,9 +1186,11 @@ describe('App reset metrics', () => {
   })
 
   it('shows main’s refusal reason without closing the modal', async () => {
-    const resetMetrics = vi
-      .fn()
-      .mockResolvedValue({ outcome: 'failed', reason: 'Nothing was deleted.' })
+    // AMENDED for ISSUE-123 (was: today's `{ outcome: 'failed', reason }`): A-33's target answer.
+    const resetMetrics = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { outcome: 'failed', reason: 'Nothing was deleted.', resumesOnNextStart: false }
+    })
     const { wrapper } = await openSettings({ resetMetrics })
 
     await openReset(wrapper)
@@ -2188,14 +2220,34 @@ describe('App mine history', () => {
     updatedAt: 0
   }
 
+  /*
+   * AMENDED for ISSUE-123 (was: today's `MineHistorySpeaker` with the id 'claude:older', answered in today's
+   * `{ readable, speakers }`): A-19 reads the Host's message log from the cut-1 switch, so the speaker is a Host one and
+   * every answer is an `IpcResult<MineHistoryView>`.
+   */
+  const OLDER = '01890a5d-ac96-774b-bcce-b302099ad0aa'
   const SPEAKER = {
-    id: 'claude:older',
-    provider: 'claude',
-    role: 'foreman',
-    name: 'older-se',
-    lastMessageAt: SPOKE_AT,
-    messages: [{ role: 'assistant', text: 'Done long ago.', timestamp: '2026-09-04T09:05:00Z' }]
+    dwarfId: OLDER,
+    displayName: 'older-se',
+    rank: 'foreman',
+    providerId: 'claude',
+    departed: true,
+    messages: [
+      {
+        id: '01890a5d-ac96-774b-bcce-b302099ae0aa',
+        dwarfId: OLDER,
+        role: 'dwarf',
+        text: 'Done long ago.',
+        attachments: [],
+        providerTime: SPOKE_AT,
+        createdAt: SPOKE_AT
+      }
+    ]
   }
+  const historyOf = (speakers: unknown[]) => ({
+    ok: true,
+    value: { mineId: HISTORY_MINE_ID, speakers }
+  })
 
   beforeEach(() => {
     useView().clear()
@@ -2219,7 +2271,7 @@ describe('App mine history', () => {
 
   it('opens the panel from the mine own History action and asks main for that mine by id', async () => {
     const { wrapper, api } = await openMineWith([], {
-      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] })
+      getMineHistory: vi.fn().mockResolvedValue(historyOf([SPEAKER]))
     })
     expect(wrapper.find('.dm-hist').exists()).toBe(false)
 
@@ -2288,7 +2340,7 @@ describe('App mine history', () => {
     let release: ((value: unknown) => void) | undefined
     const getMineHistory = vi
       .fn()
-      .mockResolvedValueOnce({ readable: true, speakers: [SPEAKER] })
+      .mockResolvedValueOnce(historyOf([SPEAKER]))
       .mockImplementationOnce(() => new Promise((resolve) => (release = resolve)))
     const { wrapper, api } = await openMineWith([CREW_DWARF], { getMineHistory })
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
@@ -2301,7 +2353,7 @@ describe('App mine history', () => {
     await flushPromises()
     expect(wrapper.find('.dm-bubble__text').text()).toBe('Done long ago.')
 
-    release!({ readable: true, speakers: [] })
+    release!(historyOf([]))
     await flushPromises()
     expect(wrapper.find('.dm-hist__note').text()).toBe('Nobody has worked here yet.')
   })
@@ -2357,7 +2409,7 @@ describe('App mine history', () => {
   it('relays a link pressed in the history to main', async () => {
     const openExternalLink = vi.fn().mockResolvedValue({ opened: true })
     const { wrapper } = await openMineWith([], {
-      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] }),
+      getMineHistory: vi.fn().mockResolvedValue(historyOf([SPEAKER])),
       openExternalLink
     })
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
@@ -2373,10 +2425,10 @@ describe('App mine history', () => {
   // that failed is a real one.
   it("draws a failed message from the app's own record of the send", async () => {
     const { wrapper } = await openMineWith([], {
-      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] }),
+      getMineHistory: vi.fn().mockResolvedValue(historyOf([SPEAKER])),
       sendDwarfText: vi.fn().mockResolvedValue({ delivered: false, error: 'no session' })
     })
-    await useDwarfMessaging().send('claude:older', 'Never got there.', true, [])
+    await useDwarfMessaging().send(OLDER, 'Never got there.', true, [])
     await flushPromises()
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
@@ -2718,8 +2770,12 @@ describe('App system notifications (#316)', () => {
    * reported is true of this window either way; asserting which call came last
    * would be asserting the order two windows happened to run in.
    */
+  // AMENDED for ISSUE-123 (was: `setOpenMine`'s string-or-null): A-44 under its 14 name, `reportVisibleMines`, carries
+  // `{ mineIds }`, so "no mine on screen" is an empty list, read here as the null it was.
   function reports(api: Record<string, ReturnType<typeof vi.fn>>): unknown[] {
-    return api.setOpenMine!.mock.calls.map((call) => call[0])
+    return api.reportVisibleMines!.mock.calls.map(
+      (call) => (call[0] as { mineIds: string[] }).mineIds[0] ?? null
+    )
   }
 
   it('reports no mine on screen while nothing is open', async () => {
@@ -2738,7 +2794,7 @@ describe('App system notifications (#316)', () => {
     const { wrapper, api } = await notifiedApp()
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
-    api.setOpenMine.mockClear()
+    api.reportVisibleMines.mockClear()
     wrapper.findComponent(MineColumn).vm.$emit('close')
     await flushPromises()
     expect(reports(api)).toContain(null)
