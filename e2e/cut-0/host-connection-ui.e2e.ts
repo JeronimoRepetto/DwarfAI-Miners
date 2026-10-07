@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import {
   chooseTrayItem,
@@ -10,13 +11,19 @@ import {
   type IsolatedProfile,
   type LaunchedApp
 } from '../_harness/launchApp.ts'
+import { STUB_BIN } from '../_harness/stubs.ts'
+import { seedClaudeStubSession } from '../cut-1/claudeStubWorld.ts'
 
 /**
  * L9, cut 0 (moved from ISSUE-316, review R8B-02; TC-056-06; ADR-002 D9; 13 FM-007): the Host is killed three times
  * within five minutes (CH-02, each time after UI main started it again), and the Panel shows the one crash-loop message
  * with Retry; Retry asks main (A-N05) and the Host is reached again; and the dwarfs the board shows stay drawn
- * throughout. The board is the simulated valley of today's runtime (`skills/simulated-valley`), with the Panel open on
- * one of its mines.
+ * throughout. The Panel is open on the one mine of the board.
+ *
+ * The board's world (ISSUE-123): from cut 1 the board is the Host's (A-12, A-P2 through `BoardFacadeAdapter`), so the
+ * case observes one Claude session the kit's claude stub replayed into the profile (`e2e/cut-1/claudeStubWorld.ts`),
+ * one present dwarf in one mine. Until cut 0 it was the simulated valley of today's runtime, which feeds only today's
+ * runtime and so draws nothing from cut 1 on.
  *
  * What this world cannot show stays at L2, where ISSUE-316's `App.messageDock.test.ts` carries it (orchestrator
  * decision 2026-10-02, option (a)): the composer keeping its draft, and the composer and the Host-owned actions sending
@@ -27,16 +34,6 @@ import {
  */
 
 test.describe.configure({ timeout: 300_000 })
-
-/** The simulated valley: two mines, a small crew, frozen so the board does not change on its own. */
-const VALLEY: Readonly<Record<string, string>> = {
-  DWARFAI_SIMULATE: '1',
-  DWARFAI_SIMULATE_SEED: 'host-connection-ui',
-  DWARFAI_SIMULATE_MINES: '2',
-  DWARFAI_SIMULATE_CREW: '3',
-  DWARFAI_SIMULATE_ANIMATE: 'false',
-  DWARFAI_SIMULATE_STEP_MS: '600000'
-}
 
 /**
  * Kills the profile's running Host (CH-02) and waits until UI main started the next one, unless `last`. SIGKILL, so the
@@ -72,7 +69,11 @@ test.describe('cut 0: the Host connection in the Panel (ISSUE-316)', () => {
   test("[FM-007, CH-02] after three Host kills within five minutes the Panel shows one crash-loop message with Retry, Retry reaches the Host again, and the board's dwarfs stay drawn", async () => {
     launched = await launchApp({
       trayProbe: true,
-      env: (profile) => ({ ...homeIn(profile), ...VALLEY }),
+      stubs: path.join(STUB_BIN, 'claude'),
+      beforeLaunch: async (profile) => {
+        seedClaudeStubSession(profile)
+      },
+      env: (profile) => homeIn(profile),
       tracePath: test.info().outputPath('trace.zip')
     })
     const { app, window, profile } = launched
