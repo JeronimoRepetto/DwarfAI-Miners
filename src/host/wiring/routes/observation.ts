@@ -49,8 +49,11 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import {
   AntigravityObservationAdapter,
   ClaudeObservationAdapter,
+  CODEX_PROCESS_STEMS,
   CodexObservationAdapter,
   OpenCodeObservationAdapter,
+  ProcessGoneWatch,
+  SharedProcessListing,
   antigravityGeminiDirOf,
   claudeConfigDirOf,
   codexHomeOf,
@@ -126,8 +129,11 @@ export interface ObservationAdapterDeps {
   /** Read only: the adapters never write a provider's files (09 §1; T-30). */
   fs: FileSystem
   clock: Clock
-  /** The kernel probe the Claude adapter's #45 guard reads (ADR-014 item 2). */
-  processes: Pick<ProcessControl, 'probe' | 'isRunning' | 'currentBootIdentity'>
+  /**
+   * The kernel probe the Claude adapter's #45 guard reads (ADR-014 item 2), and the process listing
+   * the Codex and OpenCode adapters close a session by (owner amendment I).
+   */
+  processes: Pick<ProcessControl, 'probe' | 'isRunning' | 'currentBootIdentity' | 'listProcesses'>
   /** `openReadOnlySnapshot` of `host/platform/sqlite` (R11): the only way a provider DB is read. */
   openSnapshot: ReadOnlySnapshotOpener
 }
@@ -162,6 +168,8 @@ export function observationAdapters(deps: ObservationAdapterDeps): {
     clock,
     processes
   })
+  // Owner amendment I: one process listing, shared by the providers that close by process.
+  const listing = new SharedProcessListing({ processes, stems: CODEX_PROCESS_STEMS, clock })
   return {
     adapters: [
       claude,
@@ -171,7 +179,8 @@ export function observationAdapters(deps: ObservationAdapterDeps): {
         claimedRoots: others('codexHome'),
         fs,
         clock,
-        openSnapshot
+        openSnapshot,
+        processWatch: new ProcessGoneWatch({ listing, stems: CODEX_PROCESS_STEMS, clock })
       }),
       new AntigravityObservationAdapter({
         providerId: OBSERVED.geminiDir,
@@ -237,6 +246,10 @@ export interface WiredObservation {
 /** Boot step 4: constructs the module over its stores and adapters and subscribes its route. */
 export function wireObservation(deps: ObservationWiringDeps): WiredObservation {
   const { bus, log, stores } = deps
+  // Owner amendment I: a resumed Codex or OpenCode session's identity depends on the ledger.
+  for (const adapter of deps.adapters) {
+    if (adapter instanceof CodexObservationAdapter) adapter.useEndedLedger(stores.ended)
+  }
   const observation = createObservation({
     adapters: deps.adapters,
     processRegistries: deps.processRegistries,

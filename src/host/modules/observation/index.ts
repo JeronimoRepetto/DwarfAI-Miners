@@ -53,10 +53,12 @@ export {
 } from './adapters/claude/ClaudeObservationAdapter'
 export {
   CODEX_OBSERVED_CAPABILITIES,
+  CODEX_PROCESS_STEMS,
   CodexObservationAdapter,
   codexHomeOf,
   type CodexObservationAdapterOptions
 } from './adapters/codex/CodexObservationAdapter'
+export { ProcessGoneWatch, SharedProcessListing } from './adapters/base/processGone'
 export {
   ANTIGRAVITY_OBSERVED_CAPABILITIES,
   AntigravityObservationAdapter,
