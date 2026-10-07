@@ -220,6 +220,10 @@ async function cut0App(
     launch?: UiMainDeps['launch']
     startWithSystem?: UiMainDeps['startWithSystem']
     onPanelBuilt?: () => void
+    // AMENDED for ISSUE-123 stage (a) (was: neither): today's runtime as the feed is handed it, and the tap its pushes
+    // pass through, as the production root passes both; absent, the start is the one every case above pins.
+    legacyRegistry?: UiMainDeps['legacyRegistry']
+    legacyPushes?: UiMainDeps['legacyPushes']
   } = {}
 ) {
   const lifecycle = new RecordingLifecycle()
@@ -287,7 +291,9 @@ async function cut0App(
         platform: 'win32'
       }),
     ...(options.launch === undefined ? {} : { launch: options.launch }),
-    ...(options.startWithSystem === undefined ? {} : { startWithSystem: options.startWithSystem })
+    ...(options.startWithSystem === undefined ? {} : { startWithSystem: options.startWithSystem }),
+    ...(options.legacyRegistry === undefined ? {} : { legacyRegistry: options.legacyRegistry }),
+    ...(options.legacyPushes === undefined ? {} : { legacyPushes: options.legacyPushes })
   })
   lifecycle.becomeReady()
   await started
@@ -309,6 +315,67 @@ async function cut0App(
 }
 
 describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
+  it('[ADR-001] in cut 0 the legacy runtime surface composes no cut-1 bridge: no discovery, no B-M41 read, A-13 and A-40 reach today’s runtime unchanged and A-P4 leaves unmapped', async () => {
+    // ISSUE-123 stage (a): the production root now passes today's runtime as the feed is handed it and the push tap.
+    // In this release's table none of the adapters 21 §3 lists from cut 1 is composed over them
+    // (`LEGACY_BRIDGE_ADAPTERS`), so the start is today's: nothing new runs and no row or push changes.
+    const scans: string[] = []
+    const written: unknown[] = []
+    const reached: string[] = []
+    const surface: NonNullable<UiMainDeps['legacyRegistry']> = {
+      pollIntervalMs: 2_000,
+      discovery: (['claude', 'codex', 'antigravity', 'opencode'] as const).map((kind) => ({
+        kind,
+        scan: async () => {
+          scans.push(kind)
+          return []
+        }
+      })),
+      registry: { replace: (sessions) => written.push(sessions) },
+      board: { publish: () => reached.push('board') },
+      ledger: { credit: () => reached.push('ledger') },
+      projects: { record: () => reached.push('projects') },
+      notifier: { update: () => reached.push('notifier') }
+    }
+    // The tap today's pushes pass through: a mapping installed on it is `LegacyDwarfIdBridge`'s A-P4 mapping.
+    let installed = 0
+    const pushes: NonNullable<UiMainDeps['legacyPushes']> = {
+      send: (channel, payload, deliver) => deliver(channel, payload),
+      install: () => {
+        installed += 1
+        return () => {}
+      }
+    }
+    const { ipc, host, legacy } = await cut0App({ legacyRegistry: surface, legacyPushes: pushes })
+    const call = (channel: string, payload: unknown) =>
+      (ipc.handled.get(channel) ?? ipc.listened.get(channel))?.(FROM_PANEL, payload)
+
+    await call('dwarf:activate', 'claude:s-1')
+    await call('agent:answerQuestion', {
+      dwarfId: 'claude:s-1',
+      toolUseId: 'legacy:toolu_1',
+      answers: { 'Which one?': 'The first' }
+    })
+    const delivered: Array<[string, unknown]> = []
+    const settled = { dwarfId: 'claude:s-1', holdId: 'hold-1', delivered: true }
+    pushes.send('dwarf:sendText:settled', settled, (push, payload) =>
+      delivered.push([push, payload])
+    )
+    await settle()
+
+    expect(scans).toEqual([])
+    expect(written).toEqual([])
+    expect(reached).toEqual([])
+    expect(host.received.map((request) => request.method)).not.toContain(
+      'strangler.dwarfIdentities'
+    )
+    expect(legacy.events).toEqual(
+      expect.arrayContaining(['legacy serve dwarf:activate', 'legacy serve agent:answerQuestion'])
+    )
+    expect(installed).toBe(0)
+    expect(delivered).toEqual([['dwarf:sendText:settled', settled]])
+  })
+
   it('[ADR-001] in cut 0 the root loads the rebuilt Panel hidden once the app is ready, a second launch shows it, and today’s runtime is composed without a window', async () => {
     const { factory, panel, lock, legacy, lifecycle } = await cut0App()
 

@@ -12,6 +12,12 @@
 // candidate, because its one callback runs the board publish, the crediting, the projects store and the notifier
 // together with the registry write, so it cannot be composed registry-only.
 //
+// In production the surface is `LegacyRuntimeSurface.ts` (ISSUE-123 stage (a)): today's providers, held registry and
+// hook registry are private to today's runtime, and today's legacy handlers read the board only its poll tick writes, so
+// each discovery cycle is one tick of today's composed runtime and lists the board that tick stamped. The feed still
+// composes none of today's board publish, crediting, projects-store write or notifier: whether that tick runs them is
+// decided by today's runtime composition (`LegacyRuntimeRoute.ts`), which the cut-1 switch gates on the route table.
+//
 // The per-provider switch shrinks the feed step by step (21 §3): a provider whose rows moved to the Host is `off`;
 // Codex keeps `pending-questions` (its pending questions only) for `LegacyAskRelay` until the end of cut 4, when the
 // bridge is deleted with `LegacyDwarfIdBridge` (21 §2 cut 4b).

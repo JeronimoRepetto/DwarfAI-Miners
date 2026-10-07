@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { FakePanelWindowController } from '../ui-main/window/ports/fakes/FakePanelWindowController'
 import type { LegacyLaunchedSessions, LegacyLaunchesByDwarf } from './LegacyEndFirstAdapter'
+import type { LegacyBoardSource } from './LegacyRuntimeSurface'
 import {
   createLegacyRuntimeRoute,
   type LegacyHandler,
@@ -23,6 +24,13 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
       liveLaunches: async () => [],
       endLaunch: async () => 'already-ended',
       launchIdOfDwarf: () => undefined
+    },
+    // AMENDED for ISSUE-123 stage (a) (was: no board): the composition also hands over today's board as one tick of
+    // today's poll leaves it, for the production `LegacyRuntimeSurface`; none of the cases above reads it.
+    board: LegacyBoardSource = {
+      pollIntervalMs: 2_000,
+      refresh: async () => {},
+      current: () => []
     }
   ) {
     const counts = { composed: 0, beforeQuit: 0, willQuit: 0 }
@@ -30,7 +38,7 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
     const composer: LegacyRuntimeComposer = {
       async compose() {
         counts.composed += 1
-        return { handlers: new Map(Object.entries(handlers)), panelWindow, launches }
+        return { handlers: new Map(Object.entries(handlers)), panelWindow, launches, board }
       },
       beforeQuit() {
         counts.beforeQuit += 1
@@ -153,5 +161,52 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
     expect(route.launchIdOfDwarf('codex:thread-7')).toBe('launch:7')
     expect(route.launchIdOfDwarf('codex:someone-else')).toBeUndefined()
     expect(counts.composed).toBe(1)
+  })
+
+  it('[ADR-001] LegacyRuntimeRoute hands LegacyAgentRegistryFeed today’s composed board: a discovery cycle composes the runtime once and runs one tick of it', async () => {
+    // ISSUE-123 stage (a) (21 §3 `LegacyAgentRegistryFeed`; lead resolution H2): the production `LegacyRuntimeSurface`.
+    let ticks = 0
+    const { composer, counts } = countingComposer({}, undefined, {
+      pollIntervalMs: 1_500,
+      refresh: async () => {
+        ticks += 1
+      },
+      current: () => [
+        {
+          id: 'mine-1',
+          path: '/work/moria',
+          name: 'moria',
+          tier: 'bronze',
+          tokensObserved: 0,
+          updatedAt: 3,
+          dwarfs: [
+            {
+              id: 'claude:s-1',
+              provider: 'claude',
+              role: 'foreman',
+              name: 'Thorin',
+              status: 'working',
+              sessionId: 's-1'
+            }
+          ]
+        }
+      ]
+    })
+    const route = createLegacyRuntimeRoute(composer)
+
+    // Nothing composed yet: the feed starts only after today's runtime is composed, so its interval is not known.
+    expect(() => route.surface.pollIntervalMs).toThrow(/before today’s runtime is composed/)
+    const [claude, codex] = await Promise.all([
+      route.surface.discovery.find((p) => p.kind === 'claude')?.scan(),
+      route.surface.discovery.find((p) => p.kind === 'codex')?.scan()
+    ])
+
+    expect(counts.composed).toBe(1)
+    expect(ticks).toBe(1)
+    expect(route.surface.pollIntervalMs).toBe(1_500)
+    expect(claude?.map((session) => [session.provider, session.sessionId])).toEqual([
+      ['claude', 's-1']
+    ])
+    expect(codex).toEqual([])
   })
 })

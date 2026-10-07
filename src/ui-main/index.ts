@@ -1481,6 +1481,9 @@ if (process.type === 'browser') {
     lock: new ElectronSingleInstanceLock(app),
     lifecycle: electronLifecycle(),
     legacyRuntime,
+    // Today's runtime as `LegacyAgentRegistryFeed` is handed it (21 §3, cuts 1–4; ISSUE-123): composed over only in the
+    // releases the feed, `LegacyDwarfIdBridge` and `LegacyAskRelay` are listed for, never in the cut-0 table.
+    legacyRegistry: legacyRuntime.surface,
     legacyPushes,
     ipc: electronIpcMain(),
     appEntry: appEntryUrl(),

@@ -9,6 +9,12 @@ import {
   type LegacyLaunchesByDwarf
 } from './LegacyEndFirstAdapter'
 import { createLegacyDiagnostics, type LegacyArea, type LegacyLog } from './legacyDiagnostics'
+import type { LegacyRuntimeSurface } from './LegacyAgentRegistryFeed'
+import {
+  createLegacyRuntimeSurface,
+  legacyBoardOf,
+  type LegacyBoardSource
+} from './LegacyRuntimeSurface'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
   AgentLaunchRequest,
@@ -188,6 +194,11 @@ export interface LegacyRuntimeComposition {
    * which launch started a legacy dwarf (the A-32 half, ISSUE-090).
    */
   readonly launches: LegacyLaunchedSessions & LegacyLaunchesByDwarf
+  /**
+   * Today's board as one tick of today's poll leaves it, for the production `LegacyRuntimeSurface` (21 §3
+   * `LegacyAgentRegistryFeed`, cuts 1–4; ./LegacyRuntimeSurface.ts).
+   */
+  readonly board: LegacyBoardSource
 }
 
 /**
@@ -215,6 +226,11 @@ export interface LegacyRuntimeRoute extends LegacyLaunchedSessions, LegacyLaunch
   serve(channel: string, payload: unknown): Promise<unknown>
   beforeQuit(): void
   willQuit(): void
+  /**
+   * Today's runtime as `LegacyAgentRegistryFeed` is handed it (21 §3, cuts 1–4): its discovery runs one tick of the
+   * composed runtime per feed cycle, composing it first when needed (./LegacyRuntimeSurface.ts).
+   */
+  readonly surface: LegacyRuntimeSurface
 }
 
 export function createLegacyRuntimeRoute(composer: LegacyRuntimeComposer): LegacyRuntimeRoute {
@@ -249,7 +265,20 @@ export function createLegacyRuntimeRoute(composer: LegacyRuntimeComposer): Legac
     },
     launchIdOfDwarf(dwarfId) {
       return composed?.launches.launchIdOfDwarf(dwarfId)
-    }
+    },
+    surface: createLegacyRuntimeSurface({
+      // Read when the feed starts, which the root does only once today's runtime is composed (index.ts).
+      get pollIntervalMs() {
+        if (composed === null) {
+          throw new Error(
+            'LegacyRuntimeRoute: the poll interval is read before today’s runtime is composed'
+          )
+        }
+        return composed.board.pollIntervalMs
+      },
+      refresh: async () => (await composition()).board.refresh(),
+      current: () => composed?.board.current() ?? []
+    })
   }
 }
 
@@ -1365,7 +1394,10 @@ export function composeLegacyRuntime(
     })
 
     // Today's window only: loaded last, after every handler exists (#570). The rebuilt Panel loads its own page.
-    if (mainWindow === null) return { handlers, panelWindow: null, launches }
+    // Today's board for the production `LegacyRuntimeSurface`: read through the module-level `runtime`, so a tick after
+    // the quit teardown released it does nothing (./LegacyRuntimeSurface.ts).
+    const board = legacyBoardOf(() => runtime, config.pollIntervalMs)
+    if (mainWindow === null) return { handlers, panelWindow: null, launches, board }
     const window = mainWindow
     loadPanelPage()
 
@@ -1392,7 +1424,7 @@ export function composeLegacyRuntime(
       }
     }
 
-    return { handlers, panelWindow, launches }
+    return { handlers, panelWindow, launches, board }
   }
 
   return {
