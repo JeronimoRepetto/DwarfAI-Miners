@@ -12,6 +12,8 @@
 // of the mine's confirmed tier at that poll; a session seen for the first time only sets a baseline.
 // A session observed from its first record is first polled at that record, before any usage
 // (counter 0: the first record of a session is the person's prompt), then once per usage record.
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { UsageObservation } from '../../host/kernel/domain/sharedContracts'
 import type { DwarfId } from '../../host/kernel/domain/values'
@@ -140,8 +142,11 @@ function record(dwarfId: DwarfId, name: string, n: number, tokens: number): Usag
   }
 }
 
+// AMENDED for ISSUE-123 (was: `ledgerParity.cut-1.test.ts`, titled "…equal today's ledger except the listed parity
+// differences"): renamed to the file and title the issue names, and the differences are now read out of
+// `docs/strangler/parity-cut-1.md` too, which this switch writes. Nothing else changed.
 describe('ledger observer parity, cut 1 (21 §2)', () => {
-  it("[ADR-006] for every fixture session observed from its first record the credited tokens equal today's ledger except the listed parity differences", () => {
+  it("[ADR-006] for every fixture session observed from its first record the credited tokens equal the legacy ledger's, except the differences listed in parity-cut-1.md", () => {
     const outcomes = FIXTURE_WORLD.map((session) => ({
       name: session.name,
       legacy: legacyCredited(session),
@@ -164,5 +169,13 @@ describe('ledger observer parity, cut 1 (21 §2)', () => {
     expect(
       Object.keys(PARITY_DIFFERENCES).every((name) => outcomes.some((o) => o.name === name))
     ).toBe(true)
+    // Each difference this suite measures is a row of the parity record, under its own name and decision.
+    const record = readFileSync(
+      resolve(import.meta.dirname, '../../../docs/strangler/parity-cut-1.md'),
+      'utf8'
+    ).toLowerCase()
+    for (const difference of Object.values(PARITY_DIFFERENCES)) {
+      expect(record, difference).toContain(difference.split(':')[0]!.toLowerCase())
+    }
   })
 })
