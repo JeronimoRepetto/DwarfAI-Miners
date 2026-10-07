@@ -127,7 +127,7 @@ export interface ObservationAdapterDeps {
   fs: FileSystem
   clock: Clock
   /** The kernel probe the Claude adapter's #45 guard reads (ADR-014 item 2). */
-  processes: Pick<ProcessControl, 'probe' | 'currentBootIdentity'>
+  processes: Pick<ProcessControl, 'probe' | 'isRunning' | 'currentBootIdentity'>
   /** `openReadOnlySnapshot` of `host/platform/sqlite` (R11): the only way a provider DB is read. */
   openSnapshot: ReadOnlySnapshotOpener
 }

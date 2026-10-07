@@ -37,6 +37,10 @@ export class StubCliProcessControl implements ProcessControl {
     return this.fake.probe(pid)
   }
 
+  isRunning(pid: number): 'running' | 'absent' | 'unknown' {
+    return this.fake.isRunning(pid)
+  }
+
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean {
     return this.fake.sameProcess(a, b)
   }

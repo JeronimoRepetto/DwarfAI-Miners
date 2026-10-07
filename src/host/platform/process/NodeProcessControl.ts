@@ -174,6 +174,17 @@ export class NodeProcessControl implements ProcessControl {
     return (await this.inspect(pid)).result
   }
 
+  /**
+   * 16 §3 `isRunning` (owner amendment H, 2026-10-07): signal 0 only, the same liveness read that
+   * opens every probe, so it never spawns and never reads a start time. Never evidence of identity
+   * (INV-51); pid 0 and negative pids name process groups, never one process.
+   */
+  isRunning(pid: number): 'running' | 'absent' | 'unknown' {
+    if (!Number.isSafeInteger(pid) || pid <= 0) return 'absent'
+    const liveness = this.liveness(pid)
+    return liveness === 'alive' ? 'running' : liveness === 'gone' ? 'absent' : 'unknown'
+  }
+
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean {
     return sameProcess(a, b)
   }

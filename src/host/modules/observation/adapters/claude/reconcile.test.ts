@@ -46,7 +46,7 @@ import { InMemoryObservedSessionStore } from '../../ports/fakes/InMemoryObserved
 import { RecordingObservedBatchSink } from '../../ports/fakes/RecordingObservedBatchSink'
 import { InMemoryBoundDwarfs } from '../../testing/inMemoryBoundDwarfs'
 import { InMemoryTransactions } from '../../testing/inMemoryTransactions'
-import { ClaudeObservationAdapter } from './ClaudeObservationAdapter'
+import { ClaudeObservationAdapter, IDENTITY_RECHECK_MS } from './ClaudeObservationAdapter'
 
 const T0 = 1_790_800_000_000
 const FIXTURES = join(
@@ -459,6 +459,120 @@ describe('Claude reconciliation without ghosts (ISSUE-072)', () => {
     expect(new Set(w.sink.applied.map((b) => b.dwarfId)).size).toBe(1)
     const position = await w.cursorAt(path)
     expect(position.stored).toBe(position.size)
+    w.loop.stop()
+  })
+})
+
+describe('Claude sessions close once their recorded process is gone (FM-059)', () => {
+  // The registry's procStart, a Windows FILETIME, in epoch ms.
+  const RECORDED = 1_788_001_972_136
+  const running = (startMs: number = RECORDED): ProcessIdentity => ({
+    pid: 32896,
+    processStartTimeMs: startMs,
+    bootId: 'boot-a'
+  })
+
+  /** A registered Claude session whose recorded process runs, observed until its dwarf is present. */
+  async function presentSession(configDir: string) {
+    await placeSession(configDir, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
+    await mkdir(join(configDir, 'sessions'), { recursive: true })
+    await writeFile(
+      join(configDir, 'sessions', '32896.json'),
+      await fixture('session-registry.json')
+    )
+    const processes = new FakeProcessControl({ bootId: 'boot-a' })
+    processes.script(32896, running())
+    const w = world(configDir, processes)
+    w.loop.start()
+    await w.loop.whenIdle()
+    w.dwarfs.bind(claude(PLAIN_SESSION), CWD as FolderPath, T0)
+    await w.poll()
+    expect(w.sessions.byIdentity(claude(PLAIN_SESSION))?.closedAt).toBeNull()
+    const closings = () =>
+      w.bus.published.flatMap((e) => (e.type === 'SessionClosedObserved' ? [e.payload] : []))
+    expect(closings()).toEqual([])
+    return { w, processes, closings }
+  }
+
+  it('[FM-059, S4.33] a Claude session whose recorded process was killed closes within one observation cycle although its registry entry stays', async () => {
+    const { w, processes, closings } = await presentSession(await tempDir())
+
+    // The process is ended (an identity-checked kill); Claude Code's registry entry outlives it.
+    processes.script(32896, 'absent')
+    await w.poll()
+
+    expect(closings().map((c) => c.identity)).toEqual([claude(PLAIN_SESSION)])
+    expect(w.sessions.byIdentity(claude(PLAIN_SESSION))?.closedAt).not.toBeNull()
+    expect(w.ended.has(claude(PLAIN_SESSION))).toBe(true)
+    expect(w.adapter.processIdentityOf(claude(PLAIN_SESSION))).toBeNull()
+
+    // It closes once: later cycles state the same ending and publish nothing new (INV-36).
+    await w.poll()
+    await w.poll()
+    expect(closings()).toHaveLength(1)
+    w.loop.stop()
+  })
+
+  it('[US-OBS-005.AC01] a Claude session whose recorded process still runs stays present', async () => {
+    const { w, processes, closings } = await presentSession(await tempDir())
+    for (let n = 0; n < 5; n++) await w.poll()
+    expect(closings()).toEqual([])
+    expect(w.adapter.processIdentityOf(claude(PLAIN_SESSION))).toEqual(running())
+
+    // A probe with no answer is no evidence that it ended: presence fails open (#45 polarity).
+    processes.script(32896, 'unknown')
+    for (let n = 0; n < 3; n++) await w.poll()
+    expect(closings()).toEqual([])
+    expect(w.sessions.byIdentity(claude(PLAIN_SESSION))?.closedAt).toBeNull()
+    w.loop.stop()
+  })
+
+  it('[FM-059, ADR-014] a pid reused by another process after the session ended closes the session within the identity recheck bound', async () => {
+    const { w, processes, closings } = await presentSession(await tempDir())
+
+    // The session's process ended and another process now runs on its pid, between two cycles,
+    // so the cheap existence check keeps answering running: a bare pid is no evidence of the
+    // session (INV-51), only the pid with its recorded start is, read at most every
+    // IDENTITY_RECHECK_MS (owner amendment H). Presence is not destructive: every kill re-checks.
+    const reusedAt = w.clock.now()
+    processes.script(32896, running(RECORDED + PROCESS_START_TOLERANCE_MS + 1))
+    for (let n = 0; n < IDENTITY_RECHECK_MS / OBSERVATION_POLL_MS && closings().length === 0; n++) {
+      await w.poll()
+    }
+
+    expect(closings().map((c) => c.identity)).toEqual([claude(PLAIN_SESSION)])
+    expect(w.clock.now() - reusedAt).toBeLessThanOrEqual(IDENTITY_RECHECK_MS)
+    expect(w.adapter.processIdentityOf(claude(PLAIN_SESSION))).toBeNull()
+    w.loop.stop()
+  })
+
+  it('[FM-059, ADR-014] a live session is identity-checked at most once per IDENTITY_RECHECK_MS, not every cycle', async () => {
+    const { w, processes, closings } = await presentSession(await tempDir())
+
+    // 60 s of cycles: the cheap existence check runs every cycle, the start-time query does not.
+    for (let n = 0; n < 60_000 / OBSERVATION_POLL_MS; n++) await w.poll()
+
+    const queries = processes.probed.filter((pid) => pid === 32896).length
+    expect(queries).toBeGreaterThanOrEqual(2)
+    expect(queries).toBeLessThanOrEqual(3)
+    expect(closings()).toEqual([])
+    w.loop.stop()
+  })
+
+  it('[FM-059] a Claude session that left the registry closes once its recorded process is gone', async () => {
+    const configDir = await tempDir()
+    const { w, processes, closings } = await presentSession(configDir)
+
+    // Its registry entry goes while its process still runs (a rewrite in flight): still present,
+    // with no identity to end it by (15 §5: registry file gone → no-identity).
+    await rm(join(configDir, 'sessions', '32896.json'))
+    await w.poll()
+    expect(closings()).toEqual([])
+    expect(w.adapter.processIdentityOf(claude(PLAIN_SESSION))).toBeNull()
+
+    processes.script(32896, 'absent')
+    await w.poll()
+    expect(closings().map((c) => c.identity)).toEqual([claude(PLAIN_SESSION)])
     w.loop.stop()
   })
 })
