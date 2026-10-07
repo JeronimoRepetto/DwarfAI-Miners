@@ -1,7 +1,8 @@
 // The ProcessControl double (16 §3, 17 §1.4): scripted probe answers ('absent' / 'unknown' /
 // an identity per pid), a recording spawner that keeps executable, argv and env of every spawn
 // (the driver conformance harness reads them), scripted process trees for killTree (exits,
-// `access-denied`, survivors) and a scripted boot identity (AMENDMENT-3). It never starts or
+// `access-denied`, survivors), a scripted boot identity (AMENDMENT-3) and a scripted process
+// listing of stems and working folders (owner amendment I). It never starts or
 // signals a real process. Grows from the legacy `worktreePlatformAdapters()` seed, without its
 // `vi.fn` mocks (17 §2.2).
 import { PassThrough } from 'node:stream'
@@ -75,6 +76,9 @@ export class FakeProcessControl implements ProcessControl {
   private readonly clock: Clock
   private bootIdentity: FakeBootIdentity
   private nextPid: number
+  private readonly listed: Array<{ stem: string; cwd: string | null }> = []
+  private listingMode: 'readable' | 'unreadable' = 'readable'
+  private listingCalls = 0
 
   constructor(options: FakeProcessControlOptions = {}) {
     this.bootId = options.bootId ?? 'fake-boot'
@@ -118,6 +122,28 @@ export class FakeProcessControl implements ProcessControl {
     this.trees.set(root.pid, tree)
   }
 
+  /** Adds a running process to the listing: its executable stem and its working folder. */
+  scriptProcess(process: { stem: string; cwd: string | null }): void {
+    this.listed.push({ ...process })
+  }
+
+  /** Ends every listed process in `cwd` (or every one, without `cwd`). */
+  endListed(cwd?: string | null): void {
+    for (let n = this.listed.length - 1; n >= 0; n--) {
+      if (cwd === undefined || this.listed[n]!.cwd === cwd) this.listed.splice(n, 1)
+    }
+  }
+
+  /** `unreadable`: every `listProcesses` from now on answers `'unreadable'`. */
+  scriptListing(mode: 'readable' | 'unreadable'): void {
+    this.listingMode = mode
+  }
+
+  /** How many times `listProcesses` was called. */
+  get listings(): number {
+    return this.listingCalls
+  }
+
   /** What `currentBootIdentity()` answers from now on; each field may be `'unknown'`. */
   scriptBootIdentity(identity: Partial<FakeBootIdentity>): void {
     this.bootIdentity = { ...this.bootIdentity, ...identity }
@@ -143,6 +169,25 @@ export class FakeProcessControl implements ProcessControl {
    */
   isRunning(pid: number): 'running' | 'absent' | 'unknown' {
     return (this.answers.get(pid) ?? 'absent') === 'absent' ? 'absent' : 'running'
+  }
+
+  /**
+   * The scripted processes carrying a wanted stem (equal, or a native build's `<stem>-…`), named by
+   * that stem (16 §3, owner amendment I); `'unreadable'` once scripted so.
+   */
+  listProcesses(filter: {
+    stems: readonly string[]
+  }): Promise<ReadonlyArray<{ stem: string; cwd: string | null }> | 'unreadable'> {
+    this.listingCalls += 1
+    if (this.listingMode === 'unreadable') return Promise.resolve('unreadable')
+    const rows: Array<{ stem: string; cwd: string | null }> = []
+    for (const process of this.listed) {
+      const stem = filter.stems.find(
+        (wanted) => process.stem === wanted || process.stem.startsWith(`${wanted}-`)
+      )
+      if (stem !== undefined) rows.push({ stem, cwd: process.cwd })
+    }
+    return Promise.resolve(rows)
   }
 
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean {

@@ -1,6 +1,7 @@
 // The production ProcessControl (16 §3 row `ProcessControl`, ADR-014, ADR-015): probe,
 // sameProcess and a shell-free spawn (ISSUE-018); the identity-checked tree kill and the boot
-// identity (ISSUE-019). Only host/platform/process/** imports node:child_process (R17).
+// identity (ISSUE-019); the read-only process listing of owner amendment I. Only
+// host/platform/process/** imports node:child_process (R17).
 //
 // Candidates (ISSUE-018): the legacy process probe's per-OS start-time parsing is kept behind the
 // per-OS readers (Linux now reads procfs directly instead of spawning `cat`); its
@@ -14,6 +15,7 @@
 // check, reports success when a command exits 0 instead of when the root's exit is observed, and
 // answers `false` for every Windows observed session (the observed-tree gap of 16 §3).
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { readdir, readFile, readlink } from 'node:fs/promises'
 import {
   sameProcess,
   type ProbeResult,
@@ -41,6 +43,13 @@ import {
   type SignalOutcome
 } from './kill/types'
 import { killWin32Tree, taskkillArgs } from './kill/win32'
+import {
+  createDarwinListing,
+  createLinuxListing,
+  createWin32Listing,
+  matchedStem,
+  type RawListing
+} from './list/listing'
 import { createDarwinReader } from './probe/darwin'
 import { createLinuxReader } from './probe/linux'
 import {
@@ -106,6 +115,8 @@ export interface NodeProcessControlOptions {
   runCommand?: QueryRunner
   /** A listing of every process; default the listing of `platform`. */
   snapshot?: () => Promise<ReadOutcome<readonly ProcessRow[]>>
+  /** The processes carrying a stem, with their working folders (owner amendment I); default `platform`'s. */
+  listing?: RawListing
   /** The kill waits run on it (16 §2.6); default Node timers. */
   scheduler?: Scheduler
   /** The bootTimeMs and logonSessionId sources; default those of `platform` (ADR-015 item 4). */
@@ -140,7 +151,8 @@ export class NodeProcessControl implements ProcessControl {
   private readonly sendSignal: (pid: number, signal: 'SIGTERM' | 'SIGKILL') => void
   private readonly platform: Platform
   private readonly runCommand: QueryRunner
-  private readonly listProcesses: () => Promise<ReadOutcome<readonly ProcessRow[]>>
+  private readonly listSnapshot: () => Promise<ReadOutcome<readonly ProcessRow[]>>
+  private readonly listing: RawListing
   private readonly scheduler: Scheduler
   private readonly bootSources: BootSourceReader
   private readonly diagnostics: DiagnosticsLog
@@ -160,9 +172,10 @@ export class NodeProcessControl implements ProcessControl {
     this.signalZero = options.signalZero ?? ((pid) => process.kill(pid, 0))
     this.spawnProcess = options.spawnProcess ?? spawn
     this.sendSignal = options.sendSignal ?? ((pid, signal) => process.kill(pid, signal))
-    this.listProcesses =
+    this.listSnapshot =
       options.snapshot ??
       createSnapshotReader(this.platform, { runQuery: this.runCommand, env: this.env })
+    this.listing = options.listing ?? listingFor(this.platform, this.runCommand, this.env)
     this.scheduler = options.scheduler ?? NODE_SCHEDULER
     this.bootSources =
       options.bootSources ?? bootSourcesFor(this.platform, this.runCommand, this.env)
@@ -183,6 +196,35 @@ export class NodeProcessControl implements ProcessControl {
     if (!Number.isSafeInteger(pid) || pid <= 0) return 'absent'
     const liveness = this.liveness(pid)
     return liveness === 'alive' ? 'running' : liveness === 'gone' ? 'absent' : 'unknown'
+  }
+
+  /**
+   * 16 §3 `listProcesses` (owner amendment I, 2026-10-07): this OS's listing (`list/listing.ts`),
+   * each match named by the wanted stem it carries. Read only, no pid: never evidence of identity
+   * (INV-51). An unreadable listing is `'unreadable'` and logged by its cause code only (ADR-026: a
+   * cause may name a path), never an empty list.
+   */
+  async listProcesses(filter: {
+    stems: readonly string[]
+  }): Promise<ReadonlyArray<{ stem: string; cwd: string | null }> | 'unreadable'> {
+    if (filter.stems.length === 0) return []
+    const listed = await settle(() => this.listing(filter.stems))
+    if (!listed.ok) {
+      this.record({
+        level: 'warn',
+        event: 'process.listing.unreadable',
+        subsystem: 'kernel',
+        outcome: 'degraded',
+        ...errCodeOf(listed.cause)
+      })
+      return 'unreadable'
+    }
+    const rows: Array<{ stem: string; cwd: string | null }> = []
+    for (const process of listed.value) {
+      const stem = matchedStem(process, filter.stems)
+      if (stem !== null) rows.push({ stem, cwd: process.cwd })
+    }
+    return rows
   }
 
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean {
@@ -305,7 +347,7 @@ export class NodeProcessControl implements ProcessControl {
   }
 
   private async snapshot(): Promise<readonly ProcessRow[] | null> {
-    const listed = await this.listProcesses().catch(readFailed)
+    const listed = await this.listSnapshot().catch(readFailed)
     if (listed.ok) return listed.value
     this.record({
       level: 'warn',
@@ -538,6 +580,20 @@ function readerFor(
   if (platform === 'win32') return createWin32Reader({ runQuery, env })
   if (platform === 'darwin') return createDarwinReader({ runQuery })
   return createLinuxReader()
+}
+
+function listingFor(
+  platform: Platform,
+  runQuery: QueryRunner,
+  env: Readonly<Record<string, string | undefined>>
+): RawListing {
+  if (platform === 'win32') return createWin32Listing({ runQuery, env })
+  if (platform === 'darwin') return createDarwinListing({ runQuery })
+  return createLinuxListing({
+    readText: (path) => readFile(path, 'utf8'),
+    listDir: (path) => readdir(path),
+    readLink: (path) => readlink(path)
+  })
 }
 
 function bootSourcesFor(
