@@ -35,8 +35,14 @@ export function turnStarted(f: StatusFacts, at: number): StatusFacts {
   return { ...f, turn: { state: 'active' }, lastActivityAt: Math.max(f.lastActivityAt, at) }
 }
 
-/** S1.03, S1.04, S1.19: a reliable or inferred end moves the status alike (ADR-032 item 5). */
-export function turnEnded(f: StatusFacts, end: TurnEnd): StatusFacts {
+/**
+ * S1.03, S1.04, S1.19: a reliable or inferred end moves the status alike (ADR-032 item 5). It reads
+ * only the end's instant and reliability: `cancelledFromApp` decides the cue, never the status.
+ */
+export function turnEnded<E extends Pick<TurnEnd, 'at' | 'reliability'>>(
+  f: StatusFacts,
+  end: E
+): StatusFacts {
   return { ...f, turn: { state: 'ended', endedAt: end.at, reliability: end.reliability } }
 }
 

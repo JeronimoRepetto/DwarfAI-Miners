@@ -33,8 +33,8 @@
 //   with it the module is composed but never started. The bridge's runner publishes each half's
 //   held events after each batch commit.
 // - `TranscriptEntriesObserved` / `UsageObserved` / `ObservedTurnEnded` (05 §4): the batch's
-//   entries reach conversation through the bridge; `ObservedTurnEnded` → `recordTurnEnd` is
-//   ISSUE-120's; the ledger takes usage through the bridge, not through `UsageObserved` (05 §4).
+//   entries reach conversation through the bridge; `ObservedTurnEnded` → `recordTurnEnd` is a
+//   cut-1 route (routes/cut1Routes.ts, ISSUE-120); the ledger takes usage through the bridge, not through `UsageObserved` (05 §4).
 // - No simulated observation adapter: the simulated provider's sessions are the suppliers'
 //   `SimulatedDriver` (15 §4.12), and 15 §5 lists four observed providers.
 import type { HostEpoch, ProviderId } from '../../kernel/domain/values'
