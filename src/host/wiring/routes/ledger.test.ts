@@ -5,7 +5,7 @@
 // is not started, and the backfill must not run either. A run over a Host with no mines would end
 // `done` with nothing paid, so the history before the install moment could never be credited.
 import { describe, expect, it } from 'vitest'
-import type { HostEpoch, Instant } from '../../kernel/domain/values'
+import type { HostEpoch, Instant, MineId } from '../../kernel/domain/values'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
@@ -16,7 +16,13 @@ import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedg
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { composeObservedBatchSink, type ObservedBatchHalf } from '../bridges/observedBatchSink'
-import { startBackfillWhenObserving, wireLedger, type LedgerRouteEvent } from './ledger'
+import {
+  routeMineBackfillWhenObserving,
+  startBackfillWhenObserving,
+  wireLedger,
+  type LedgerRouteEvent
+} from './ledger'
+import { observationWritesOff } from './observation'
 
 const T0 = 1_790_800_000_000 as Instant
 
@@ -92,5 +98,57 @@ describe('the coal backfill start of the production Host (ISSUE-096)', () => {
 
     expect(report).toMatchObject({ outcome: 'done' })
     expect(backfillState(db).state).toBe('done')
+  })
+})
+
+describe('the per-mine coal backfill route (ISSUE-108; O-11-10)', () => {
+  const MINE = '00000000-0000-7000-8000-0000000108a2' as MineId
+
+  /** The route over a bus of its own and a ledger that records each per-mine run it is asked for. */
+  function routed(sink: Parameters<typeof routeMineBackfillWhenObserving>[2]) {
+    const { db } = openTemplateCopy()
+    const bus = new InProcessEventBus<LedgerRouteEvent>({
+      transactionScope: new SqliteTransactionRunner(db),
+      onHandlerError: (failure) => {
+        throw failure.error
+      }
+    })
+    const runs: MineId[] = []
+    const subscribed = routeMineBackfillWhenObserving(
+      {
+        startMineBackfill: (mineId) => {
+          runs.push(mineId)
+          return Promise.resolve(null)
+        }
+      },
+      bus,
+      sink
+    )
+    const envelope = { eventId: 'e-1', hostEpoch: 'epoch-108', at: T0 }
+    const publish = (type: 'MineCreated' | 'MineReattached') =>
+      bus.publish({ ...envelope, type, payload: { mineId: MINE } } as never)
+    return { subscribed, runs, publish }
+  }
+
+  it('[INV-95] MineCreated and MineReattached each start one per-mine coal backfill of that mine while observation runs', () => {
+    const h = routed(compose(CONVERSATION).sink)
+
+    h.publish('MineCreated')
+    h.publish('MineReattached')
+
+    expect(h.subscribed).toBe(true)
+    expect(h.runs).toEqual([MINE, MINE])
+  })
+
+  it('[ADR-001] over a sink that writes nothing (the placeholder or a cut-1 rollback build) no per-mine backfill is routed', () => {
+    for (const sink of [compose(null).sink, observationWritesOff]) {
+      const h = routed(sink)
+
+      h.publish('MineCreated')
+      h.publish('MineReattached')
+
+      expect(h.subscribed).toBe(false)
+      expect(h.runs).toEqual([])
+    }
   })
 })

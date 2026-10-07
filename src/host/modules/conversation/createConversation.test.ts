@@ -137,6 +137,29 @@ describe('the wired mine history (16 §4.6 ConversationQueries.mineHistory)', ()
   })
 })
 
+describe('the wired ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)', () => {
+  it('[INV-67] outcomeOf reads the stored outcome line outside any transaction, and null for a dwarf without one', () => {
+    const { conversation, dwarf } = setUp()
+    expect(conversation.queries.outcomeOf(dwarf)).toBeNull()
+
+    conversation.commands.recordTurnEnd({
+      dwarfId: dwarf,
+      turnKey: 'claude:claude:session-0:turn-9',
+      kind: 'concluded',
+      at: T0 - 500,
+      reliability: 'reliable',
+      cancelledFromApp: false
+    })
+
+    expect(conversation.queries.outcomeOf(dwarf)).toMatchObject({
+      dwarfId: dwarf,
+      kind: 'concluded',
+      reliability: 'reliable',
+      at: T0 - 500
+    })
+  })
+})
+
 describe('the wired recordTurnEnd (16 §4.6; 09 §5.6)', () => {
   const end = (dwarfId: TurnEnded['dwarfId'], extra: Partial<TurnEnded> = {}): TurnEnded => ({
     dwarfId,

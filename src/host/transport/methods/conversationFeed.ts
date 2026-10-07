@@ -2,7 +2,7 @@
 // ADR-007 item 6; ADR-031 item 2): one page of a dwarf's feed from the Host's message log, newest
 // first, at most 50 rows (INV-61). A reopened chat paints from the snapshot's `tails` and pages the
 // rest from here: nothing waits for a provider read (ADR-007 item 6). The composition root registers
-// it over the conversation module (later: ISSUE-108); UI main's A-15 relays it
+// it over the conversation module (host/wiring/routes/conversation.ts, ISSUE-108); UI main's A-15 relays it
 // (ui-main/ipc/handlers/getDwarfFeedPage.host.ts, routed by ISSUE-123).
 //
 // - Roles (roles.ts): `ui` pages any dwarf; a `viewer` pages only the dwarf its per-view token is

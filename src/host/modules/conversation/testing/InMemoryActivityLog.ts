@@ -78,6 +78,11 @@ export class InMemoryActivityLog implements ActivityLog {
     return this.outcome(dwarfId)
   }
 
+  // Amended: 16 §4.6 storedOutcomeOf, the read-side half of owner amendment E (2026-10-06)
+  storedOutcomeOf(dwarfId: DwarfId): OutcomeLine | null {
+    return this.outcome(dwarfId)
+  }
+
   /** The dwarf's stored outcome line, or null: the test probe, outside any transaction. */
   outcome(dwarfId: DwarfId): OutcomeLine | null {
     const line = this.box.outcomes.get(dwarfId)

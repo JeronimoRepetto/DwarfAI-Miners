@@ -5,7 +5,7 @@
 // The aggregate is 06 §9.2's, field for field as the wire copy in `contracts/wire` (`OutcomeLine`,
 // `OutcomeLinePart`, `TurnOutcomeKind`): the Host core never imports `contracts` (R9), so the domain
 // holds it as `ActivityDisclosure` and `Message` are held; the transport mapper that puts it on
-// `DwarfWire.outcome` holds the two equal (later: ISSUE-108). `OutcomeStatus` is crew's
+// `DwarfWire.outcome` holds the two equal (mappers/wire.types.test.ts). `OutcomeStatus` is crew's
 // `DwarfStatus` (ADR-032 item 2), referenced, not restated: a type test holds it equal.
 //
 // The rule, in order:

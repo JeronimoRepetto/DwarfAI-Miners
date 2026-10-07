@@ -12,12 +12,14 @@
 // own events of the batch follow, in its own order, after the same commit (16 §4.3 "Ordering").
 //
 // Built in halves. The ledger's is ISSUE-096's (`ledgerBatchHalf`: usage on the transcript path,
-// 11 F2); the conversation half is ISSUE-108's (and ISSUE-120's). Until it exists the bridge's sink
-// is `noObservedBatchSinkYet`: a cursor moved past a batch whose messages nothing stored would lose
-// them for good (INV-98), so observation, which never starts over that placeholder
-// (routes/observation.ts), stays stopped, and ISSUE-108 adds only its half.
+// 11 F2); the conversation's is ISSUE-108's (`conversationBatchHalf`: the batch's entries →
+// `ingest(dwarfId, entries, 'transcript')`, an observed batch being read from a provider's
+// transcript or store). Without the conversation half the bridge's sink is
+// `noObservedBatchSinkYet`: a cursor moved past a batch whose messages nothing stored would lose
+// them for good (INV-98), so observation never starts over it (routes/observation.ts).
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
+import type { ConversationCommands } from '../../modules/conversation'
 import type { JoinedEvents, LedgerCommands } from '../../modules/ledger'
 import type { ObservedBatchSink } from '../../modules/observation'
 import { noObservedBatchSinkYet } from '../routes/observation'
@@ -45,11 +47,22 @@ export function ledgerBatchHalf(ledger: {
   }
 }
 
+/** The conversation's half: the batch's entries → `ingest(dwarfId, entries, 'transcript')`. */
+export function conversationBatchHalf(conversation: {
+  commands: Pick<ConversationCommands, 'ingest'>
+  joinedEvents: JoinedEvents
+}): ObservedBatchHalf {
+  return {
+    apply: (batch) => conversation.commands.ingest(batch.dwarfId, batch.entries, 'transcript'),
+    joinedEvents: conversation.joinedEvents
+  }
+}
+
 export interface ObservedBatchBridgeDeps {
   /** The Host's transaction runner and its probe (16 §2.2). */
   transactions: TransactionRunner & TransactionScope
   ledger: ObservedBatchHalf
-  /** Null until conversation is wired (later: ISSUE-108). */
+  /** Conversation's half; null leaves the sink the placeholder, so observation never starts. */
   conversation: ObservedBatchHalf | null
 }
 

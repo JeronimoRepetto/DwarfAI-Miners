@@ -11,8 +11,7 @@
 // - A batch that inserted nothing publishes no event, so sends no frame.
 // - `conversation.appended` is a sensitive frame (14 §3.5 SENSITIVE_FRAMES: message text): the
 //   transport logs its name, seq and size only, and nothing here logs.
-// - Unbound until the composition root registers it over the wired conversation module (later:
-//   ISSUE-108).
+// - Routed by the conversation wiring (host/wiring/routes/conversationFrames.ts, ISSUE-108).
 import type { HostFrameData, HostFrameName } from '@dwarfai/contracts'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { ConversationEvent } from '../../modules/conversation'

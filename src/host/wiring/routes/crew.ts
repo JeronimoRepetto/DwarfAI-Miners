@@ -32,7 +32,7 @@
 //
 // Not routed here, and why:
 // - `TurnEnded` → `crew.recordActivity('turn-finished')` (05 §4): conversation publishes it
-//   (later: ISSUE-108, ISSUE-120).
+//   (ISSUE-108 wires conversation); the route is ISSUE-120's.
 // - `SubagentObserved` (08 §0): observation publishes no such event yet; a subagent arrives through
 //   `SessionObserved` with its `parentIdentity`, which this route ranks by depth.
 // - `DwarfStopRequested` → launching `markStoppedByPerson` (required handler, 16 §2.3): launching is
@@ -73,6 +73,7 @@ import type {
 import type { Dispatcher } from '../../transport/dispatcher'
 import { registerStranglerDwarfIdentities } from '../../transport/methods/strangler'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
+import { NO_OUTCOMES, type DwarfOutcomeReader } from '../../transport/mappers/wire'
 import { registerDwarfsSection } from '../../transport/snapshot/sections/dwarfs'
 import { errorCode } from '../boot'
 import { createSessionTerminator } from '../bridges/sessionTerminator'
@@ -123,6 +124,11 @@ export interface CrewWiringDeps {
   /** The kernel's identity-checked tree kill, for the terminator bridge (ADR-014; R17). */
   processes: Pick<ProcessControl, 'killTree'>
   observation: CrewObservationBinding
+  /**
+   * Each dwarf's stored outcome line for the `dwarfs` section (`ConversationQueries.outcomeOf`, owner
+   * amendment E, 2026-10-06); a Host slice without conversation reads `NO_OUTCOMES`.
+   */
+  outcomes?: DwarfOutcomeReader
 }
 
 /** Mines' half of the crew routes, through mines' public door. */
@@ -153,6 +159,7 @@ export interface ServedCrew {
 type ServedMembers = {
   crew: Pick<CrewQueries, 'crewOf' | 'presentIdentities'>
   mines: Pick<MinesQueries, 'list'>
+  outcomes: DwarfOutcomeReader
 }
 
 /** Serves the module's seam-B members before it exists; `wire` constructs it at boot step 4. */
@@ -164,7 +171,8 @@ export function serveCrew(serve: CrewServeDeps): ServedCrew {
   }
   registerDwarfsSection(serve.sections, {
     mines: { list: (query) => current().mines.list(query) },
-    crew: { crewOf: (mineId, opts) => current().crew.crewOf(mineId, opts) }
+    crew: { crewOf: (mineId, opts) => current().crew.crewOf(mineId, opts) },
+    outcomes: { outcomeOf: (dwarfId) => current().outcomes.outcomeOf(dwarfId) }
   })
   registerStranglerDwarfIdentities(serve.dispatcher, {
     crew: { presentIdentities: () => current().crew.presentIdentities() }
@@ -180,7 +188,11 @@ export function serveCrew(serve: CrewServeDeps): ServedCrew {
         route: (mines) => {
           if (served !== undefined) throw new HostInvariantError('crew is routed once')
           result.route(mines)
-          served = { crew: result.crew.queries, mines: mines.queries }
+          served = {
+            crew: result.crew.queries,
+            mines: mines.queries,
+            outcomes: deps.outcomes ?? NO_OUTCOMES
+          }
         }
       }
     }

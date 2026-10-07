@@ -22,9 +22,11 @@
 //   is how the observer's one route lands a session in a folder that was not a mine (US-OBS-001;
 //   US-OBS-002.AC08; 11 §2 steps 4–7). Package gap: 08 §2.2 does not define "known"; this is the
 //   owner-consistent reading, recorded in the ISSUE-082 hand-off.
-// - `dwarf.changed {dwarf}` (B-F09) ← `DwarfStatusChanged`, `DwarfPresenceChanged`; `DwarfRenamed`,
-//   `DwarfStopRequested` and `OutcomeLineChanged` join with their commands and owners (later:
-//   ISSUE-079, EPIC-10, EPIC-06). The outbound queue folds a waiting `dwarf.changed` into the newer
+// - `dwarf.changed {dwarf}` (B-F09) ← `DwarfStatusChanged`, `DwarfPresenceChanged`; `DwarfRenamed`
+//   and `DwarfStopRequested` join with their commands and owners (later: ISSUE-079, EPIC-10);
+//   `OutcomeLineChanged` is conversation's route (host/wiring/routes/conversationFrames.ts,
+//   ISSUE-108). Every `dwarf.changed` and `dwarf.arrived` here carries the dwarf's stored outcome
+//   line (`ConversationQueries.outcomeOf`, owner amendment E, 2026-10-06). The outbound queue folds a waiting `dwarf.changed` into the newer
 //   one of the same dwarf within a Host tick (14 §1.8, events/outbound.ts); each frame here is the
 //   whole dwarf, so the one that stays is the latest. A departed dwarf sends no `dwarf.changed`:
 //   `dwarf.departed` is its last frame.
@@ -56,7 +58,13 @@ import type { CrewEvent, CrewQueries } from '../../modules/crew'
 import type { MinesEvent, MinesQueries } from '../../modules/mines'
 import type { ObservationEvent } from '../../modules/observation'
 import type { FrameAudience } from '../events/framePublisher'
-import { toDwarfWire, toMineWire, type MineTotalsReader } from '../mappers/wire'
+import {
+  NO_OUTCOMES,
+  toDwarfWireWithOutcome,
+  toMineWire,
+  type DwarfOutcomeReader,
+  type MineTotalsReader
+} from '../mappers/wire'
 
 /** The frames this file publishes, for `hello.ok.capabilities` (14 §1.3). */
 export const BOARD_FRAMES: readonly HostFrameName[] = Object.freeze([
@@ -88,12 +96,15 @@ export interface BoardFramesDeps {
   crew: Pick<CrewQueries, 'get'>
   /** The ledger's totals (`WiredLedger.totals`, ISSUE-096; `NO_LEDGER_TOTALS` without a ledger). */
   ledger: MineTotalsReader
+  /** Each dwarf's stored outcome line (owner amendment E); `NO_OUTCOMES` without conversation. */
+  outcomes?: DwarfOutcomeReader
   frames: BoardFramePublisher
 }
 
 /** Routes the board events to their frames; returns the unsubscribe. */
 export function publishBoardFrames(deps: BoardFramesDeps): () => void {
   const { frames } = deps
+  const outcomes = deps.outcomes ?? NO_OUTCOMES
   /** The mines that came onto the board in this Host turn: an arrival there is not announced. */
   const newThisTurn = new Set<MineId>()
   const cameOntoBoard = (mineId: MineId): void => {
@@ -111,7 +122,7 @@ export function publishBoardFrames(deps: BoardFramesDeps): () => void {
   const dwarfChanged = (dwarfId: DwarfId): void => {
     const view = deps.crew.get(dwarfId)
     if (view === null || view.departed) return
-    frames.publishFrame('dwarf.changed', { dwarf: toDwarfWire(view) })
+    frames.publishFrame('dwarf.changed', { dwarf: toDwarfWireWithOutcome(view, outcomes) })
   }
 
   const unsubscribes = [
@@ -150,7 +161,10 @@ export function publishBoardFrames(deps: BoardFramesDeps): () => void {
       const view = deps.crew.get(event.payload.dwarfId)
       if (view === null || view.departed) return
       const announce = !view.owned && !newThisTurn.has(view.mineId)
-      frames.publishFrame('dwarf.arrived', { dwarf: toDwarfWire(view), announce })
+      frames.publishFrame('dwarf.arrived', {
+        dwarf: toDwarfWireWithOutcome(view, outcomes),
+        announce
+      })
     }),
     deps.events.crew.subscribe('DwarfStatusChanged', (event) =>
       dwarfChanged(event.payload.dwarfId)

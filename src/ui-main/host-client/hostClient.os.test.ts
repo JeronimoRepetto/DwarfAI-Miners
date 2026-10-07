@@ -59,9 +59,17 @@ const SERVED_SINCE_CUT_0 = [
   'attention.clicked',
   'frame:attention.notify',
   'frame:attention.withdraw',
-  'presence'
+  'presence',
+  // The conversation read side: B-M26, B-M27, the `tails` section and its frames, served from cut 1
+  // (ISSUE-108).
+  'conversation.feed',
+  'conversation.mineHistory',
+  'frame:activity.changed',
+  'frame:conversation.appended',
+  'frame:turn.ended',
+  'section:tails'
 ]
-const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs']
+const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'tails']
 
 let entry = ''
 let root = ''

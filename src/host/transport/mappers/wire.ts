@@ -15,7 +15,12 @@
 //   the row's `sourceKey`, `origin` and `askId` (conversation `toMessageView`); here each wire
 //   field is named and copied, so a field the domain grows never crosses unseen.
 // - `DwarfWire.workplace` (the worktree chip, mines' stamp, ADR-030 D4) and `outcome` (the outcome
-//   line, conversation's, INV-67) are not in `DwarfView`; they join when their owners do.
+//   line, conversation's, INV-67) are not in `DwarfView`. The outcome joins through `toDwarfWire`'s
+//   second argument, mapped by `toOutcomeLineWire` (domain and wire types held equal by
+//   wire.types.test.ts): the line an `OutcomeLineChanged` carries (wiring/routes/conversationFrames.ts),
+//   or, for every other dwarf frame and the `dwarfs` section, the stored line `DwarfOutcomeReader`
+//   reads (`ConversationQueries.outcomeOf`, owner amendment E, 2026-10-06; ISSUE-108). The
+//   workplace joins with mines' stamp.
 import type {
   Delivery as DeliveryWire,
   DwarfWire,
@@ -23,11 +28,12 @@ import type {
   Material,
   MaterialAmount,
   MessageView as MessageWire,
-  MineWire
+  MineWire,
+  OutcomeLine as OutcomeLineWire
 } from '@dwarfai/contracts'
 import { HostInvariantError } from '../../kernel/domain/errors'
-import type { MineId } from '../../kernel/domain/values'
-import type { Delivery, MessageView } from '../../modules/conversation'
+import type { DwarfId, MineId } from '../../kernel/domain/values'
+import type { Delivery, MessageView, OutcomeLine } from '../../modules/conversation'
 import type { DwarfView } from '../../modules/crew'
 import type { MineView } from '../../modules/mines'
 
@@ -79,8 +85,28 @@ export function toMineWire(view: MineView, totals: MaterialTotals): MineWire {
   }
 }
 
+// Amended: 16 §4.6 ConversationQueries.outcomeOf (owner amendment E, 2026-10-06)
+/** Reads a dwarf's stored outcome line (`ConversationQueries.outcomeOf`), at the instant of mapping. */
+export interface DwarfOutcomeReader {
+  outcomeOf(dwarfId: DwarfId): OutcomeLine | null
+}
+
+/** No conversation is wired: no dwarf has a stored line, and `DwarfWire.outcome` is absent. */
+export const NO_OUTCOMES: DwarfOutcomeReader = Object.freeze({ outcomeOf: () => null })
+
+/** 14 §3.6 `DwarfWire` of a dwarf with its stored outcome line, when it has one. */
+export function toDwarfWireWithOutcome(view: DwarfView, outcomes: DwarfOutcomeReader): DwarfWire {
+  const outcome = outcomes.outcomeOf(view.id)
+  return toDwarfWire(view, outcome === null ? {} : { outcome })
+}
+
+/** What other owners join to a dwarf's wire (14 §3.6 `DwarfWire`): conversation's outcome line. */
+export interface DwarfWireJoins {
+  outcome?: OutcomeLine
+}
+
 /** 14 §3.6 `DwarfWire` of a dwarf: the wire subset of its view, no status facts, no process ids. */
-export function toDwarfWire(view: DwarfView): DwarfWire {
+export function toDwarfWire(view: DwarfView, joins: DwarfWireJoins = {}): DwarfWire {
   const profile = view.sessionProfile
   return {
     id: view.id,
@@ -106,7 +132,23 @@ export function toDwarfWire(view: DwarfView): DwarfWire {
     stopInFlight: view.stopInFlight,
     stopUnavailableReason: view.stopUnavailableReason,
     owned: view.owned,
+    ...(joins.outcome === undefined ? {} : { outcome: toOutcomeLineWire(joins.outcome) }),
     arrivedAt: view.arrivedAt
+  }
+}
+
+/** 06 §9.2 `OutcomeLine` as it crosses seam B on `DwarfWire.outcome` (INV-67): field by field. */
+export function toOutcomeLineWire(line: OutcomeLine): OutcomeLineWire {
+  return {
+    dwarfId: line.dwarfId,
+    kind: line.kind,
+    stepCount: line.stepCount,
+    // Each part is a closed variant of the same union on both sides (wire.types.test.ts).
+    parts: line.parts.map((part) => ({ ...part })),
+    ...(line.detail === undefined ? {} : { detail: line.detail }),
+    ...(line.closingWords === undefined ? {} : { closingWords: line.closingWords }),
+    reliability: line.reliability,
+    at: line.at
   }
 }
 

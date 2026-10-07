@@ -64,7 +64,12 @@ import type { ObservationEvent } from '../../modules/observation'
 import type { ConnectionRegistry } from '../../transport/connectionRegistry'
 import type { Dispatcher } from '../../transport/dispatcher'
 import { publishBoardFrames } from '../../transport/frames/board'
-import { NO_LEDGER_TOTALS, type MineTotalsReader } from '../../transport/mappers/wire'
+import {
+  NO_LEDGER_TOTALS,
+  NO_OUTCOMES,
+  type DwarfOutcomeReader,
+  type MineTotalsReader
+} from '../../transport/mappers/wire'
 import { registerMineRemoval, registerMines } from '../../transport/methods/mines'
 import { registerMinesSection } from '../../transport/snapshot/sections/mines'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
@@ -152,6 +157,12 @@ export interface MinesWiringDeps {
    * section and the board frames; a Host slice without the ledger reads `NO_LEDGER_TOTALS`.
    */
   ledger?: MineTotalsReader
+  /**
+   * Each dwarf's stored outcome line (`ConversationQueries.outcomeOf`, owner amendment E), carried by
+   * the board's `dwarf.arrived` and `dwarf.changed`; a Host slice without conversation reads
+   * `NO_OUTCOMES`.
+   */
+  outcomes?: DwarfOutcomeReader
 }
 
 export interface WiredMines {
@@ -249,6 +260,7 @@ function wireMines(
     mines: mines.queries,
     crew: deps.crew.queries,
     ledger: deps.ledger ?? NO_LEDGER_TOTALS,
+    outcomes: deps.outcomes ?? NO_OUTCOMES,
     frames: connections
   })
 

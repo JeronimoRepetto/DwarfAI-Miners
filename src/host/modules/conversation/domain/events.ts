@@ -20,16 +20,19 @@ export type TurnEndedEvent = DomainEvent<'TurnEnded', { dwarfId: DwarfId; end: T
 
 /**
  * 08 §0, §2.6: an activity run opened, grew or closed (07 §11), keyed (disclosureId, stepCount,
- * open); one per changed run per committed transaction, with the run's final state in it.
+ * open); one per changed run per committed transaction, with the run's final state in it, its
+ * one-line step summaries included (never tool output, ADR-007 item 4), so the `activity.changed`
+ * frame (14 §3.6 `ActivityWire`) is built from the event alone, also for a closed run.
  */
+// Amended: 08 §0 ActivityChanged gains summaries (owner amendment E, 2026-10-06)
 export type ActivityChanged = DomainEvent<
   'ActivityChanged',
-  { dwarfId: DwarfId; disclosureId: string; open: boolean; stepCount: number }
+  { dwarfId: DwarfId; disclosureId: string; open: boolean; stepCount: number; summaries: string[] }
 >
 
 /**
  * 08 §0, §2.6: the dwarf's outcome line changed, keyed (dwarfId, at); one per committed change, never
- * for a recompute that left the line as it was (INV-67; frame `dwarf.changed`, later: ISSUE-108).
+ * for a recompute that left the line as it was (INV-67; frame `dwarf.changed`, ISSUE-108).
  */
 export type OutcomeLineChanged = DomainEvent<
   'OutcomeLineChanged',
