@@ -51,6 +51,7 @@ import {
   ClaudeObservationAdapter,
   CODEX_PROCESS_STEMS,
   CodexObservationAdapter,
+  OPENCODE_PROCESS_STEMS,
   OpenCodeObservationAdapter,
   ProcessGoneWatch,
   SharedProcessListing,
@@ -169,7 +170,11 @@ export function observationAdapters(deps: ObservationAdapterDeps): {
     processes
   })
   // Owner amendment I: one process listing, shared by the providers that close by process.
-  const listing = new SharedProcessListing({ processes, stems: CODEX_PROCESS_STEMS, clock })
+  const listing = new SharedProcessListing({
+    processes,
+    stems: [...CODEX_PROCESS_STEMS, ...OPENCODE_PROCESS_STEMS],
+    clock
+  })
   return {
     adapters: [
       claude,
@@ -193,7 +198,8 @@ export function observationAdapters(deps: ObservationAdapterDeps): {
       new OpenCodeObservationAdapter({
         providerId: OBSERVED.openCodeStoreRoot,
         storeRoot: folders.openCodeStoreRoot,
-        openSnapshot
+        openSnapshot,
+        processWatch: new ProcessGoneWatch({ listing, stems: OPENCODE_PROCESS_STEMS, clock })
       })
     ],
     processRegistries: [claude]
@@ -248,7 +254,12 @@ export function wireObservation(deps: ObservationWiringDeps): WiredObservation {
   const { bus, log, stores } = deps
   // Owner amendment I: a resumed Codex or OpenCode session's identity depends on the ledger.
   for (const adapter of deps.adapters) {
-    if (adapter instanceof CodexObservationAdapter) adapter.useEndedLedger(stores.ended)
+    if (
+      adapter instanceof CodexObservationAdapter ||
+      adapter instanceof OpenCodeObservationAdapter
+    ) {
+      adapter.useEndedLedger(stores.ended)
+    }
   }
   const observation = createObservation({
     adapters: deps.adapters,

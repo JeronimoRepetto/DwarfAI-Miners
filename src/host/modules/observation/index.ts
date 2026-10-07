@@ -67,6 +67,7 @@ export {
 } from './adapters/antigravity/AntigravityObservationAdapter'
 export {
   OPENCODE_OBSERVED_CAPABILITIES,
+  OPENCODE_PROCESS_STEMS,
   OpenCodeObservationAdapter,
   openCodeStoreRootOf,
   type OpenCodeLifetimeTotal,

@@ -133,6 +133,11 @@ export class ProcessGoneWatch {
     this.watched.delete(key)
   }
 
+  /** The Host time the watch decides by: the instant a `closed` fact states. */
+  now(): number {
+    return this.deps.clock.now()
+  }
+
   /**
    * Whether the session's process is gone by the three conditions above. Once it is, it stays gone
    * until `active`. A session first seen now counts as active now.

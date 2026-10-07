@@ -17,6 +17,14 @@
 //   `turn-ended` event is ever emitted; ISSUE-100 infers them (ADR-032 item 5).
 // - No pid in the store (Row 2): `processIdentitySource` is `none`, so ending an observed OpenCode
 //   session answers `no-identity` (or `protocol-error` through the person's server, SP-14).
+// - Closing (owner amendment I, 2026-10-07; 13 FM-059 as amended): no row says a session ended, so
+//   a session closes once it is quiet for 300 s (no changed message, no `session.time_updated`
+//   movement) and two process listings 30 s apart show no OpenCode process in its folder
+//   (`../base/processGone.ts`), or once the person archives it (`session.time_archived`). A closed
+//   session resumed under its own id (`opencode --session`) is a new session,
+//   `<session id>~resumed-<marker>`, derived from its message times and the ended-agents ledger
+//   alone (`../base/generations.ts`): a Host restart derives the same identity, and its keys stay
+//   the session's, so messages read again add no rows.
 // - `lifetimeTotals` exposes each session's `session.tokens_*` for the coal backfill (09 §5.5,
 //   ISSUE-077); they never travel as live usage.
 //
@@ -32,8 +40,16 @@ import type {
   ReadOnlySnapshotOpener
 } from '../../../../platform/sqlite/readOnlySnapshot'
 import type { ObservedCapabilities } from '../../../suppliers'
-import type { Cursor, ObservationAdapter, SourceFile } from '../../ports/observationAdapter'
+import type {
+  Cursor,
+  ObservationAdapter,
+  ObservedEvent,
+  SourceFile
+} from '../../ports/observationAdapter'
+import type { EndedAgentLedger } from '../../ports/endedAgentLedger'
 import { nodeFileIdentity, type FileIdentifier } from '../base/fileIdentity'
+import { generationAt, RecordTimeline } from '../base/generations'
+import type { ProcessGoneWatch } from '../base/processGone'
 import {
   CHANGED_MESSAGES_SQL,
   changedMessagesOf,
@@ -43,10 +59,15 @@ import {
   LOOKBACK_MS,
   MAX_CHANGED_SQL,
   maxChangedOf,
+  messageTimesOf,
+  messageTimesSql,
   partsSql,
   READ_LIMIT,
+  SESSION_STATES_SQL,
   SESSIONS_SQL,
-  type OpenCodeLifetimeTotal
+  sessionStatesOf,
+  type OpenCodeLifetimeTotal,
+  type SessionState
 } from './state'
 import { openCodeDbPath } from './store'
 
@@ -96,7 +117,14 @@ export interface OpenCodeObservationAdapterOptions {
   /** `openReadOnlySnapshot` of `host/platform/sqlite` (R11). */
   openSnapshot: ReadOnlySnapshotOpener
   identify?: FileIdentifier
+  /** Closes a quiet session whose OpenCode process is gone (owner amendment I); without it, only archiving does. */
+  processWatch?: ProcessGoneWatch
+  /** The ended-agents ledger (INV-36), for a resumed session's generation; or `useEndedLedger`. */
+  ended?: Pick<EndedAgentLedger, 'has'>
 }
+
+/** The stems an OpenCode process carries (`opencode`, `opencode.exe`, `opencode-<target>`). */
+export const OPENCODE_PROCESS_STEMS: readonly string[] = Object.freeze(['opencode'])
 
 type Snapshotted<T> =
   { kind: 'ok'; value: T } | { kind: 'retry' } | { kind: 'failed'; code: string }
@@ -126,15 +154,30 @@ export class OpenCodeObservationAdapter implements ObservationAdapter {
     string,
     { value: number; seen: Map<string, number>; storeKey: string | undefined }
   >()
+  /** Every session's row as the last changed read saw it (owner amendment I). */
+  private states = new Map<string, SessionState>()
+  /** Each session's message times; `complete` once read whole from the store. */
+  private readonly timelines = new Map<string, { timeline: RecordTimeline; complete: boolean }>()
+  /** The sessions whose closing generation is in the ledger, until they show activity again. */
+  private readonly settled = new Set<string>()
+  /** The sessions the last changed read saw archived for the first time this Host run. */
+  private newlyArchived = new Set<string>()
+  private ended: Pick<EndedAgentLedger, 'has'> | undefined
 
   constructor(private readonly options: OpenCodeObservationAdapterOptions) {
     this.providerId = options.providerId
+    this.ended = options.ended
     this.identify = options.identify ?? nodeFileIdentity
     this.dbPath = openCodeDbPath(options.storeRoot)
   }
 
   capabilities(): ObservedCapabilities {
     return { ...OPENCODE_OBSERVED_CAPABILITIES }
+  }
+
+  /** The ended-agents ledger the observation module records closings in (bound by `host/wiring`). */
+  useEndedLedger(ended: Pick<EndedAgentLedger, 'has'>): void {
+    this.ended = ended
   }
 
   /** The store as a source, sized by its newest change; absent while it cannot be read. */
@@ -185,7 +228,8 @@ export class OpenCodeObservationAdapter implements ObservationAdapter {
     // alone cannot tell, since a row that commits late is stamped below the watermark.
     const storeKey = this.store?.key
     if (from !== null && kept?.value === start && storeKey !== undefined) {
-      if (kept.storeKey === storeKey) return nothing
+      if (kept.storeKey === storeKey)
+        return { ...nothing, events: await this.closings(source.path) }
     }
     const seen = kept?.value === start ? kept.seen : new Map<string, number>()
     const result = await this.withSnapshot(source.path, (reader) => {
@@ -205,9 +249,25 @@ export class OpenCodeObservationAdapter implements ObservationAdapter {
       const sessions = reader.all(SESSIONS_SQL, [lower, watermark])
       const ids = messages.map((m) => m.id)
       const parts = ids.length === 0 ? [] : reader.all(partsSql(ids.length), ids)
+      const states = sessionStatesOf(reader.all(SESSION_STATES_SQL))
+      for (const message of messages) this.timelineOf(message.sessionId).add(message.createdAt)
+      const resumable = [...new Set(messages.map((m) => m.sessionId))].filter((id) =>
+        this.hasEnded(id)
+      )
+      this.completeTimelines(reader, resumable)
       return {
         watermark,
-        facts: factsOfBatch({ providerId: this.providerId, sessions, messages, parts, seen })
+        states,
+        active: [...new Set(messages.filter((m) => m.changed >= start).map((m) => m.sessionId))],
+        facts: factsOfBatch({
+          providerId: this.providerId,
+          sessions,
+          messages,
+          parts,
+          seen,
+          generationOf: (sessionId, createdAt) => this.generationOf(sessionId, createdAt),
+          folderOf: (sessionId) => states.get(sessionId)?.directory ?? null
+        })
       }
     })
     if (result.kind === 'retry') return nothing
@@ -216,12 +276,121 @@ export class OpenCodeObservationAdapter implements ObservationAdapter {
     }
 
     const { watermark, facts } = result.value
+    this.noteActivity(result.value.states, result.value.active)
     const floor = watermark - LOOKBACK_MS
     const remembered = new Map<string, number>()
     for (const [key, value] of seen) if (value >= floor) remembered.set(key, value)
     for (const { key, at: value } of facts.observed) if (value >= floor) remembered.set(key, value)
     this.recent.set(stream, { value: watermark, seen: remembered, storeKey })
-    return { events: facts.events, next: at(watermark), warnings: facts.warnings }
+    const closings = await this.closings(source.path)
+    return { events: [...facts.events, ...closings], next: at(watermark), warnings: facts.warnings }
+  }
+
+  // ---------- closing and resuming (owner amendment I) ----------
+
+  /** Whether the ledger holds this session id (INV-36). */
+  private hasEnded(sessionId: string): boolean {
+    return this.ended?.has({ providerId: this.providerId, providerSessionId: sessionId }) === true
+  }
+
+  /** A session's message times, kept for this Host run. */
+  private timesOf(sessionId: string): { timeline: RecordTimeline; complete: boolean } {
+    let times = this.timelines.get(sessionId)
+    if (times === undefined) {
+      times = { timeline: new RecordTimeline(), complete: false }
+      this.timelines.set(sessionId, times)
+    }
+    return times
+  }
+
+  private timelineOf(sessionId: string): RecordTimeline {
+    return this.timesOf(sessionId).timeline
+  }
+
+  /** Reads the whole message timeline of each session in `ids` not yet read whole. */
+  private completeTimelines(reader: SqliteReader, ids: readonly string[]): void {
+    const missing = ids.filter((id) => this.timelines.get(id)?.complete !== true)
+    for (let n = 0; n < missing.length; n += READ_LIMIT) {
+      const chunk = missing.slice(n, n + READ_LIMIT)
+      const rows = reader.all(messageTimesSql(chunk.length), chunk)
+      for (const { sessionId, at } of messageTimesOf(rows)) this.timelineOf(sessionId).add(at)
+      for (const id of chunk) this.timesOf(id).complete = true
+    }
+  }
+
+  /**
+   * The session a message of `sessionId` created at `at` belongs to (`../base/generations.ts`): its
+   * own id until that is in the ledger; then the generation its markers lead to.
+   */
+  private generationOf(sessionId: string, at: number): string {
+    if (!this.hasEnded(sessionId)) return sessionId
+    const markers = this.timelines.get(sessionId)?.timeline.markers() ?? []
+    return generationAt(sessionId, markers, at, (id) => this.hasEnded(id))
+  }
+
+  /**
+   * Activity (owner amendment I): a changed message of a session, or its row's `time_updated`
+   * moving since the last read. A session seen for the first time is active from now.
+   */
+  private noteActivity(states: Map<string, SessionState>, changed: readonly string[]): void {
+    const watch = this.options.processWatch
+    const active = new Set(changed)
+    for (const [id, state] of states) {
+      const before = this.states.get(id)
+      if (before !== undefined && before.updated !== state.updated) active.add(id)
+      if (state.archivedAt !== null && before?.archivedAt !== state.archivedAt) {
+        this.newlyArchived.add(id)
+      }
+    }
+    for (const id of active) {
+      watch?.active(id)
+      this.settled.delete(id)
+    }
+    this.states = states
+  }
+
+  /**
+   * The `closed` facts this read states (owner amendment I): for every session archived by the
+   * person, or whose OpenCode process is gone (`../base/processGone.ts`), its current generation,
+   * until the ledger holds it. A session that may have a resumed generation is named only once its
+   * whole timeline is read; a busy store is tried again next read.
+   */
+  private async closings(path: string): Promise<ObservedEvent[]> {
+    const watch = this.options.processWatch
+    const due: Array<{ id: string; state: SessionState; archived: boolean }> = []
+    // An archive is stated in the read that sees it; with the ledger bound, until it holds it.
+    const newlyArchived = this.newlyArchived
+    this.newlyArchived = new Set()
+    for (const [id, state] of this.states) {
+      if (this.settled.has(id)) continue
+      const archived = state.archivedAt !== null
+      if (archived) {
+        if (newlyArchived.has(id) || this.ended !== undefined) due.push({ id, state, archived })
+      } else if (watch !== undefined && (await watch.gone(id, state.directory))) {
+        due.push({ id, state, archived })
+      }
+    }
+    const unnamed = due.map((d) => d.id).filter((id) => this.hasEnded(id))
+    if (unnamed.some((id) => this.timelines.get(id)?.complete !== true)) {
+      await this.withSnapshot(path, (reader) => this.completeTimelines(reader, unnamed))
+    }
+    const out: ObservedEvent[] = []
+    for (const { id, state, archived } of due) {
+      if (this.hasEnded(id) && this.timelines.get(id)?.complete !== true) continue
+      const sessionId = this.generationOf(id, Number.POSITIVE_INFINITY)
+      if (this.hasEnded(sessionId)) {
+        this.settled.add(id)
+        continue
+      }
+      out.push({
+        kind: 'closed',
+        sourceEventId: archived ? 'archived' : 'process-gone',
+        identity: { providerId: this.providerId, providerSessionId: sessionId },
+        ...(state.directory === null ? {} : { cwd: state.directory }),
+        at: archived ? (state.archivedAt as number) : (watch?.now() ?? state.updated ?? 0)
+      })
+    }
+    return out
   }
 
   /** Every observed session's lifetime token total, for the coal backfill (09 §5.5). */
