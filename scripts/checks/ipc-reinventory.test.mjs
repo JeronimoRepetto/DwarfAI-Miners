@@ -114,9 +114,22 @@ const catalog14 = JSON.parse(
 ).rows
 const I21 = '§8 I-21'
 
+/**
+ * The `14` §2.1 CHANGE rows that rename their channel, keyed by id: the fixture keeps today's name, this is the new
+ * one. Once the tree exposes the new name (A-44 since ISSUE-123's cut-1 switch), it has its own row under the same id.
+ */
+const RENAMED_14 = {
+  'A-44': { wire: 'presence:visibleMines', member: 'reportVisibleMines', kind: 'send' }
+}
+
 /** The fixture entry a row's `14` reference names, or undefined when there is none. */
-const entryOf = (row) =>
-  catalog14.find((entry) => entry.id === row.id && (row.id !== I21 || entry.wire === row.wire))
+const entryOf = (row) => {
+  const renamed = RENAMED_14[row.id]
+  const entry = catalog14.find(
+    (entry) => entry.id === row.id && (row.id !== I21 || entry.wire === row.wire)
+  )
+  return renamed && entry && row.wire === renamed.wire ? { ...entry, ...renamed } : entry
+}
 
 /** A channel is known by its wire name; the one preload helper with no wire, by its member name. */
 const keyOf = (wire, member) => wire ?? `helper ${member}`
@@ -203,7 +216,7 @@ describe('registry re-inventory (14 §6.5, P-3)', () => {
       const listed = `${entry.wire} ${entry.member} ${entry.kind}`
       if (said !== listed)
         problems.push(`${key}: ${row.id} is ${listed} in 14, the row says ${said}`)
-      const reference = row.id === I21 ? `${row.id} ${row.wire}` : row.id
+      const reference = row.id === I21 || RENAMED_14[row.id] ? `${row.id} ${row.wire}` : row.id
       if (seenIds.has(reference)) problems.push(`${key}: ${reference} has a second row`)
       if (row.request !== null) problems.push(`${key}: a listed row carries ${row.request}`)
       seenIds.add(reference)

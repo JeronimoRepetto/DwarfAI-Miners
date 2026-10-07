@@ -89,6 +89,59 @@ export function replayPath(stubDirs: string): string {
   return [stubDirs, path.dirname(process.execPath), ...os].join(path.delimiter)
 }
 
+/** A recording as `record-seam-a.mjs` writes it: each call's answer and each push row's payloads. */
+export interface Recorded {
+  calls: Array<{ row: string; channel: string; member: string; answer: unknown }>
+  pushes: Record<string, unknown[]>
+}
+
+/** A row of the route table as the replay reads it (`src/ui-main/ipc/routes.ts`). */
+export interface ReplayRoute {
+  channel: string
+  owner: string
+  shape: string
+}
+
+/**
+ * The part of a recorded scenario a later release still routes `legacy` with today's shape: the replay proves the
+ * router serves today's answers for exactly those rows, so a row the release moved (to the Host or `ui-local`),
+ * reshaped (a `target` shape adapter) or retired (no route) leaves both the scenario and the recording. Its parity is
+ * the release's own record (`docs/strangler/parity-cut-<n>.md`). The recording keeps the steps of the build it was made
+ * on, so its calls must follow the scenario one for one; a recording out of step is refused, never compared.
+ */
+export function legacyTodayPart(
+  scenario: Scenario,
+  recorded: Recorded,
+  routes: readonly ReplayRoute[]
+): { scenario: Scenario; recorded: Recorded } {
+  const kept = new Set(
+    routes
+      .filter((route) => route.owner === 'legacy' && route.shape === 'today')
+      .map((route) => route.channel)
+  )
+  const inStep =
+    recorded.calls.length === scenario.calls.length &&
+    recorded.calls.every(
+      (call, at) =>
+        call.channel === scenario.calls[at]!.channel && call.member === scenario.calls[at]!.member
+    )
+  if (!inStep) throw new Error('the recording does not follow the scenario call for call')
+  const keptAt = scenario.calls.flatMap((call, at) => (kept.has(call.channel) ? [at] : []))
+  return {
+    scenario: {
+      ...scenario,
+      calls: keptAt.map((at) => scenario.calls[at]!),
+      pushes: scenario.pushes.filter((push) => kept.has(push.channel))
+    },
+    recorded: {
+      calls: keptAt.map((at) => recorded.calls[at]!),
+      pushes: Object.fromEntries(
+        Object.entries(recorded.pushes).filter(([channel]) => kept.has(channel))
+      )
+    }
+  }
+}
+
 /** The recording of a release made on this OS (the mine ids of the simulated world carry the OS's separator). */
 export function recordingFile(release: string, platform: string = process.platform): string {
   return path.join(replayDir(release), `recording.${platform}.json`)

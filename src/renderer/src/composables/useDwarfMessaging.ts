@@ -440,9 +440,9 @@ function recordVerdict(dwarfId: string, echoId: string, result: DwarfTextResult)
  * - A snapshot replaces every chat whole: a dwarf missing from it is simply gone, never a departure (14 §4.3 rule 6).
  * - No watched feed and no manual refresh: retired A-14 `getDwarfFeed`, A-16 `setWatchedDwarf` and A-17
  *   `refreshDwarfTelemetry` are never called on this path (14 §2.1).
- * - Hidden until built (21 §1 item 8): the half runs only once a caller `startChat`s it, and until the cut-1 switch
- *   (ISSUE-123) routes A-N01/A-N02 the router refuses the snapshot, so `hostFeedOf` holds nothing and the dock keeps
- *   reading today's feed. Delivery marks (`marks`, `message.delivery`) join with ISSUE-179.
+ * - From the cut-1 switch (ISSUE-123) the dock `startChat`s it on mount and draws every chat from it (`chatFeedOf`):
+ *   A-14, A-16 are retired. Delivery marks (`marks`, `message.delivery`) join with ISSUE-179; until A-23 is the
+ *   Host's (cut 3a) the send is today's, so the panel's own echoes are still reconciled against the Host's rows.
  */
 
 /** One dwarf's chat as the Host sent it, oldest first, keyed by `MessageId`. */
@@ -474,8 +474,11 @@ export function feedMessageOf(view: MessageView): FeedMessage {
 const chats: HostChats = new Map()
 /** The chats in today's shape, per dwarf id, rewritten whenever a snapshot or a batch of frames settled. */
 const hostFeeds = shallowRef<ReadonlyMap<string, DwarfFeedResult>>(new Map())
+/** Whether a Host snapshot fed the chats since `startChat` (cleared by `stopChat`). */
+const hostChatFed = shallowRef(false)
 
 function publishChats(): void {
+  hostChatFed.value = true
   const next = new Map<string, DwarfFeedResult>()
   for (const [dwarfId, chat] of chats) {
     next.set(dwarfId, { readable: true, messages: [...chat.rows.values()].map(feedMessageOf) })
@@ -542,11 +545,24 @@ function stopChat(): void {
   chatModel.seq = 0
   chats.clear()
   hostFeeds.value = new Map()
+  hostChatFed.value = false
 }
 
 /** One dwarf's chat as the Host feeds it, in today's `DwarfFeedResult` shape, or undefined when it holds none. */
 function hostFeedOf(dwarfId: string): DwarfFeedResult | undefined {
   return hostFeeds.value.get(dwarfId)
+}
+
+/** The answer of a dwarf whose chat the fed Host holds no row for: nobody has said anything yet. */
+const EMPTY_CHAT: DwarfFeedResult = { readable: true, messages: [] }
+
+/**
+ * One dwarf's chat as the dock draws it (ISSUE-123: A-14 and A-16 are retired, so the Host is its only source): the
+ * Host's rows, an empty conversation once the Host fed the chats and holds none for it, or undefined while the chat
+ * has not been read (the panel says so rather than drawing an empty conversation).
+ */
+function chatFeedOf(dwarfId: string): DwarfFeedResult | undefined {
+  return hostFeeds.value.get(dwarfId) ?? (hostChatFed.value ? EMPTY_CHAT : undefined)
 }
 
 /** The id of the oldest row the Host's chat holds for one dwarf: where a scroll-back page hangs off. */
@@ -903,6 +919,7 @@ export function useDwarfMessaging() {
     startChat,
     stopChat,
     hostFeedOf,
+    chatFeedOf,
     hostOldestMessageId
   }
 }

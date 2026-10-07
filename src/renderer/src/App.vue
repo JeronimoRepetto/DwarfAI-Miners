@@ -25,6 +25,8 @@ import GuildPage from './components/shell/GuildPage.vue'
 import { useAudio } from './composables/useAudio'
 import { useMessageDock } from './composables/useMessageDock'
 import { useMines } from './composables/useMines'
+import { historyAsToday, useMineHistory } from './composables/useMineHistory'
+import type { MineId } from '@dwarfai/contracts'
 import { useMapTime } from './composables/useMapTime'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
@@ -32,14 +34,14 @@ import { useShellFold } from './composables/useShellFold'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
-import { createAttentionWatch } from './lib/audio/attentionCues'
+import { useAttentionCues } from './composables/useAttentionCues'
 import { browseRows } from './lib/browse/boardRows'
 import { createBrowseRefresh } from './lib/browse/browseRefresh'
 import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/columnMine'
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
-import { useStopEverything, type StopEverythingDwarf } from './composables/useStopEverything'
+import { useStopEverything } from './composables/useStopEverything'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { takeLaunchMine, useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
@@ -100,7 +102,13 @@ const stopWatchingReducedMotion = watchReducedMotion((asked) => {
 })
 onBeforeUnmount(stopWatchingReducedMotion)
 
-const { state, setMines } = useMines()
+const {
+  state,
+  setMines,
+  start: followHostBoard,
+  stop: stopFollowingHostBoard,
+  hostDwarfs
+} = useMines()
 /** The painting the Map page wears, by the time of day (#136). */
 const mapVariant = useMapTime()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
@@ -189,8 +197,8 @@ const {
 // The reveal a notification click runs (ADR-018 item 6; ADR-025 item 8; 14 §2.2 A-N16): UI main chose the mode and
 // pushes `{ mineId, dwarfId | null }` here; the Panel selects the mine, brings the dwarf's card into view and opens its
 // chat. `dwarfId` null, or a dwarf no longer on the mine's board, is the mine with no chat ('mine-only'). Unlike #316's
-// `onShowMine`, which stays beside it until the cut-1 switch drops A-P5 (ISSUE-123), the chat IS opened: the person
-// asked for that dwarf. No voice plays: a click on the dwarf itself is the only thing that makes one speak (#173).
+// `onShowMine` (A-P5, retired by the cut-1 switch, ISSUE-123), the chat IS opened: the person asked for that dwarf. No
+// voice plays: a click on the dwarf itself is the only thing that makes one speak (#173).
 let unlistenRevealDwarfChat: (() => void) | undefined
 async function revealDwarfChat(target: { mineId: string; dwarfId: string | null }): Promise<void> {
   showMineFromNotification(target.mineId)
@@ -286,16 +294,19 @@ const {
   playVoice,
   playSfx,
   playCrew,
-  dispose: disposeAudio
+  dispose: disposeAudio,
+  windowShown
 } = useAudio()
 
-/**
- * The attention cues (#635): every snapshot, however it arrived, goes through
- * one watch, which answers the cues whose state BEGAN since the last one — never
- * a state that was already pending at launch or merely re-polled. The engine
- * decides whether each is heard (Notification sounds, the hidden window).
+/*
+ * The attention cues (#635; level 2, ISSUE-117): from the cut-1 switch (ISSUE-123) they come from Host facts, the board
+ * read model (its asks, which `LegacyAskRelay` brings until cut 2) and the `turn.ended` frames, through
+ * `useAttentionCues`, started once the stored Audio settings are read and stopped with the window. AMENDED (was:
+ * `createAttentionWatch`, fed every A-P2 snapshot): the two never run together.
  */
-const attentionWatch = createAttentionWatch()
+let stopAttentionCues: (() => void) | undefined
+/** Set once the window is torn down, so settings that arrive after it start no cues. */
+let unmounted = false
 
 /**
  * The docked shell's own shape (#90). `layout` is only ever what MAIN reported,
@@ -800,7 +811,6 @@ function update(snapshot: MinesSnapshot): void {
   if (viewState.area === 'mines' && browseRefresh.due(snapshot.mines, projects.value)) {
     void refreshProjects()
   }
-  for (const cue of attentionWatch.observe(snapshot.mines)) playSfx(cue)
   loading.value = false
   boardRead = true
   pruneOpenMine()
@@ -878,15 +888,14 @@ function selectDwarf(dwarf: Dwarf): void {
 const historyOpen = ref(false)
 
 /**
- * What main read for the open mine's history. `undefined` means no answer has
- * come back yet, which the panel says out loud rather than drawing as an empty
- * mine. Deliberately NOT reset when a re-read starts: the previous answer stays
- * on screen until the next lands, or a live update would flash "reading" over
- * a transcript somebody is in the middle of.
+ * What the Host read for the open mine's history (A-19 from its message log, routed `host` by the cut-1 switch,
+ * ISSUE-123; `useMineHistory`), in the shape the panel draws. `undefined` means no answer has come back yet, which
+ * the panel says out loud rather than drawing as an empty mine. Deliberately NOT reset when a re-read starts: the
+ * previous answer stays on screen until the next lands, or a live update would flash "reading" over a transcript
+ * somebody is in the middle of; a slow answer for a mine the panel left never lands (the store's own token).
  */
-const mineHistory = ref<MineHistoryResult | undefined>(undefined)
-/** Which read is the current one, so a slow answer cannot land on a later mine. */
-let historyToken = 0
+const { state: hostHistory, open: readHostHistory, close: closeHostHistory } = useMineHistory()
+const mineHistory = computed<MineHistoryResult | undefined>(() => historyAsToday(hostHistory))
 
 /**
  * The mine's History action (#192), and the MessagePanel's (#635): the history opens in the dock's
@@ -954,17 +963,10 @@ watch(dock.error, (text) => {
   if (text !== null) showToast(text, 'warning')
 })
 
-async function readMineHistory(mineId: string): Promise<void> {
-  const token = ++historyToken
-  try {
-    const result = await window.api.getMineHistory(mineId)
-    if (historyToken === token) mineHistory.value = result
-  } catch {
-    // The bridge is the only source there is. "Could not be read" is exactly
-    // what happened, and it is a different statement from "nobody has spoken".
-    if (historyToken === token) mineHistory.value = { readable: false, speakers: [] }
-  }
-}
+/*
+ * AMENDED for ISSUE-123 (was: `readMineHistory`, A-19 in today's shape): the store reads the Host's message log, and
+ * a refused or lost read is "could not be read", a different statement from "nobody has spoken" (useMineHistory).
+ */
 
 /**
  * The refusal main gave for the LAST History path click (#279), keyed by the
@@ -1029,13 +1031,11 @@ watch(
   [historyOpen, () => viewState.mineId, crewSignal],
   ([open, mineId]) => {
     if (!open || mineId === null) {
-      // Nothing to show: bump the token so a read still in flight cannot land
-      // on a panel that has since closed or moved to another mine.
-      historyToken++
-      mineHistory.value = undefined
+      // Nothing to show: a read still in flight cannot land on a panel that has since closed or moved on.
+      closeHostHistory()
       return
     }
-    void readMineHistory(mineId)
+    void readHostHistory(mineId as MineId, window.api.getMineHistory)
   },
   { immediate: true }
 )
@@ -1117,10 +1117,13 @@ watch(
  * width — are stated with the reason neither is enough on its own.
  */
 const openMineOnScreen = computed(() => mineOnScreen(viewState.mineId, layout.value))
-watch(openMineOnScreen, (mineId) => window.api.setOpenMine(mineId), { immediate: true })
-
-/** Released with the window, like every other subscription here. */
-let unlistenShowMine: (() => void) | undefined
+// A-44 under its 14 name from the cut-1 switch (ISSUE-123; 14 §2.1 A-44): the mines this window shows, which UI main's
+// PresenceTracker tells the Host (B-M07). The Panel shows one mine interior at most.
+watch(
+  openMineOnScreen,
+  (mineId) => window.api.reportVisibleMines({ mineIds: mineId === null ? [] : [mineId as MineId] }),
+  { immediate: true }
+)
 
 /**
  * A click on a system notification (#316). Main already showed and raised the
@@ -1182,8 +1185,19 @@ onMounted(() => {
   // The features that ship hidden (#635): pulled once, like the build.
   void loadFeatureFlags()
   // Adopts the stored Audio settings and the window's REAL visibility, then
-  // starts the music if the settings say it should be playing (#174).
-  void syncAudio()
+  // starts the music if the settings say it should be playing (#174). The attention cues start once the settings are
+  // read, so a cue is judged against the person's own Notification sounds (ISSUE-117, ISSUE-123).
+  void syncAudio().then(() => {
+    if (unmounted) return
+    stopAttentionCues ??= useAttentionCues().start({
+      settings: audioSettings,
+      windowShown,
+      playSfx
+    })
+  })
+  // The board from the Host (ISSUE-092, ISSUE-123): its snapshot and frames, so a dwarf walks in and out as the Host
+  // says; A-12/A-P2 keep coming through `BoardFacadeAdapter` and bring today's open asks onto it until cut 2.
+  void followHostBoard()
   // Hears the window being shown or hidden, and gives the engine its tick.
   unlistenAudio = listenAudio()
   unsubscribe = window.api.onMinesUpdated(update)
@@ -1192,7 +1206,8 @@ onMounted(() => {
   // raised. Subscribed rather than pulled, like the message panel above: a
   // click can land at any moment and there is no state to poll for.
   void syncNotifications()
-  unlistenShowMine = window.api.onShowMine((mineId) => showMineFromNotification(mineId))
+  // AMENDED for ISSUE-123 (was: `onShowMine`, A-P5): A-P5 is retired by the cut-1 switch; a notification click reaches
+  // this window as A-N16 `onRevealDwarfChat` below.
   /* --- end of the #316 block ---------------------------------------------- */
   /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
   unlistenRevealDwarfChat = window.api.onRevealDwarfChat((target) => void revealDwarfChat(target))
@@ -1221,9 +1236,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribe?.()
   unlistenAudio?.()
-  /* --- System notifications (#316) — one block, appended ------------------- */
-  unlistenShowMine?.()
-  /* --- end of the #316 block ---------------------------------------------- */
+  unmounted = true
+  stopAttentionCues?.()
+  stopAttentionCues = undefined
+  stopFollowingHostBoard()
   /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
   unlistenRevealDwarfChat?.()
   /* --- end of the ISSUE-114 block ------------------------------------------- */
@@ -1241,17 +1257,14 @@ onBeforeUnmount(() => {
 /* --- Stop everything and quit (ISSUE-317) — one block, appended ----------- */
 // The confirmation UI main asks for with A-N25, over the current window. App
 // owns the composable and therefore the IPC (ADR-033 item 2). Its count is
-// the Host read model's owned dwarfs only (OQ-78). The renderer has no Host
-// read model of dwarfs yet: in cut 0 the snapshot has no `dwarfs` section
-// (ISSUE-026), so it holds none and the count is 0. Later: ISSUE-092 hands in
-// the board read model here.
-const NO_HOST_DWARFS: readonly StopEverythingDwarf[] = []
+// the Host read model's owned dwarfs only (OQ-78). AMENDED for ISSUE-123 (was: none, the cut-0 snapshot having no
+// `dwarfs` section): the board read model's Host dwarfs, kept current by its frames.
 const {
   view: stopEverythingView,
   confirm: confirmStopEverything,
   cancel: cancelStopEverything,
   dismiss: dismissStopEverything
-} = useStopEverything({ readModel: { dwarfs: () => NO_HOST_DWARFS } })
+} = useStopEverything({ readModel: { dwarfs: () => hostDwarfs() } })
 /* --- end of the ISSUE-317 block ------------------------------------------- */
 </script>
 

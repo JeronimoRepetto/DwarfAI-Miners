@@ -86,7 +86,12 @@ describe('useMessageDock on a departure', () => {
     }
   }
 
-  let push: (frames: HostFrame[]) => void = () => undefined
+  // AMENDED for ISSUE-123 (was: one listener, the board's): the dock follows the Host's chats too from mount, so A-N02
+  // has two listeners and a frame reaches both.
+  const listeners = new Set<(frames: HostFrame[]) => void>()
+  const push = (frames: HostFrame[]): void => {
+    for (const listener of listeners) listener(frames)
+  }
   let wrapper: VueWrapper | null = null
 
   function departed(cause: DepartureCause): HostFrame {
@@ -99,9 +104,9 @@ describe('useMessageDock on a departure', () => {
     const api = createFakeWindowApi({
       getHostSnapshot: vi.fn(() => Promise.resolve(snapshot)) as unknown as Api['getHostSnapshot'],
       onHostEvent: vi.fn((follow: (frames: HostFrame[]) => void) => {
-        push = follow
+        listeners.add(follow)
         return () => {
-          push = () => undefined
+          listeners.delete(follow)
         }
       }) as unknown as Api['onHostEvent'],
       getDwarfFeed: vi.fn(() =>

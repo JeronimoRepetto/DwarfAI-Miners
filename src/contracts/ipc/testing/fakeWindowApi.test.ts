@@ -31,10 +31,21 @@ const catalog14: CatalogRow[] = JSON.parse(
 const KEYS = Object.keys(CHANNELS) as ChannelKey[]
 const helpers: readonly string[] = PRELOAD_HELPERS
 
-/** A row's 14 member name (today's: every route before cut 0 keeps `shape: 'today'`). */
+/**
+ * The member each row's CHANGE renames once its route is `target` (14 §1.1: A-44 only). AMENDED for ISSUE-123 (was:
+ * today's name for every row): the cut-1 switch routes A-44 with its target shape, so the fake carries its 14 name.
+ */
+const RENAMED_FROM_CUT_1: Partial<Record<ChannelKey, string>> = {
+  'presence:visibleMines': 'reportVisibleMines'
+}
+
+/** A row's 14 member name. */
 function memberOf(key: ChannelKey): string | undefined {
   const id = ROW_IDS[key]
-  return catalog14.find((row) => row.id === id && (id !== I21 || row.wire === key))?.member
+  return (
+    RENAMED_FROM_CUT_1[key] ??
+    catalog14.find((row) => row.id === id && (id !== I21 || row.wire === key))?.member
+  )
 }
 
 describe('fake window.api (ADR-033 item 7; 17 §1.6)', () => {

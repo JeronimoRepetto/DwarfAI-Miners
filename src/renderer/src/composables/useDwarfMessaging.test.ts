@@ -1518,4 +1518,17 @@ describe('useDwarfMessaging chat from the Host read model', () => {
       { role: 'assistant', text: 'line 4', timestamp: '2026-10-06T09:04:00.000Z' }
     ])
   })
+
+  // AMENDED for ISSUE-123 (appended): the dock reads the chat from the Host only (A-14 and A-16 are retired), so a dwarf
+  // the fed Host holds no row for is a readable empty conversation, a different statement from one not read yet.
+  it('[ADR-033] once the Host fed the chat, a dwarf it holds no row for reads as an empty conversation', async () => {
+    const { chatFeedOf, startChat, stopChat } = useDwarfMessaging()
+    expect(chatFeedOf(DAIN)).toBeUndefined()
+    installHost([page(5, tails({ dwarfId: BORIN, messages: [view(1)] }))])
+    await startChat()
+    expect(chatFeedOf(DAIN)).toEqual({ readable: true, messages: [] })
+    expect(chatFeedOf(BORIN)?.messages.map((message) => message.text)).toEqual(['line 1'])
+    stopChat()
+    expect(chatFeedOf(DAIN)).toBeUndefined()
+  })
 })

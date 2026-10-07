@@ -438,4 +438,47 @@ describe('useMines from the Host read model', () => {
         .map((dwarf) => dwarf.id)
     ).toEqual([BORIN])
   })
+
+  // AMENDED for ISSUE-123 (appended): until cut 2 the asks of the rows still `legacy` reach the renderer only through
+  // A-P2 (`LegacyAskRelay` folds them into `BoardFacadeAdapter`'s board, 21 §3), so the Host board carries them.
+  it('[ADR-001] in cut 1 the Host board carries the open asks today’s runtime holds, which only A-P2 brings, and nothing else of A-P2', async () => {
+    installHost([page(3, [mineWire()], [dwarfWire(BORIN), dwarfWire(DAIN)])])
+    await useMines().start()
+    const permission = {
+      toolUseId: 'legacy:toolu_1',
+      toolName: 'Bash',
+      input: 'ls',
+      channel: 'held' as const,
+      askedAt: '2026-10-07T10:00:00.000Z'
+    }
+    const facade = (asks: Partial<ReturnType<typeof defaultDwarf>>) => ({
+      mines: [
+        defaultMine({
+          id: ALPHA,
+          name: 'facade',
+          dwarfs: [defaultDwarf({ id: BORIN, name: 'Other', ...asks }), defaultDwarf({ id: DAIN })]
+        })
+      ],
+      tokensObserved: 99
+    })
+    useMines().setMines(facade({ pendingPermission: permission, waitingReason: 'approval' }))
+    const borin = () => boardDwarfs().find((dwarf) => dwarf.id === BORIN)
+    expect(borin()).toMatchObject({ pendingPermission: permission, waitingReason: 'approval' })
+    expect(borin()?.name).toBe('Borin')
+    expect(boardDwarfs().find((dwarf) => dwarf.id === DAIN)?.pendingPermission).toBeUndefined()
+    expect(useMines().state.mines.map((mine) => mine.name)).toEqual(['alpha'])
+    expect(useMines().state.tokensObserved).toBe(0)
+    // An arrival the Host just announced is still to be drawn when A-P2 follows it.
+    const host = installHost([page(3, [mineWire()], [dwarfWire(BORIN)])])
+    useMines().stop()
+    await useMines().start()
+    host.push([frame(4, 'dwarf.arrived', { dwarf: dwarfWire(DAIN), announce: false })])
+    useMines().setMines(facade({ pendingPermission: permission }))
+    expect(borin()?.pendingPermission).toEqual(permission)
+    expect([...useMines().state.arrived]).toEqual([DAIN])
+    // The ask closes when A-P2 no longer carries it.
+    useMines().setMines(facade({}))
+    expect(borin()?.pendingPermission).toBeUndefined()
+    expect(borin()?.waitingReason).toBeUndefined()
+  })
 })

@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import type { DwarfId, MessageId, MineId } from '@dwarfai/contracts'
 import type { DwarfAiMinersApi } from './index'
 
 /**
@@ -524,21 +525,30 @@ describe('preload panel-layout contract (#90, #138)', () => {
 })
 
 describe('preload metrics-reset contract (#138)', () => {
-  it('asks on the metrics:reset channel with no payload at all', async () => {
-    // The typed confirmation lives entirely on the renderer side; nothing
-    // about it crosses the bridge.
-    invoke.mockResolvedValueOnce({ outcome: 'reset' })
-    await expect(api.resetMetrics()).resolves.toEqual({ outcome: 'reset' })
-    expect(invoke).toHaveBeenLastCalledWith('metrics:reset')
+  // AMENDED for ISSUE-123 (was: no payload, today's `{outcome}` answer): the cut-1 switch routes A-33 with its target
+  // shape through `ResetFanout` (21 §3.1), so the confirmation and its request id cross (14 §2.1 A-33, §1.6).
+  const RESET = { confirmed: 'yes', requestId: '01890a5d-ac96-774b-bcce-b302099a8002' } as const
+
+  it('asks on the metrics:reset channel with the typed confirmation and its request id', async () => {
+    invoke.mockResolvedValueOnce({ ok: true, value: { outcome: 'reset', epoch: 2 } })
+    await expect(api.resetMetrics(RESET)).resolves.toEqual({
+      ok: true,
+      value: { outcome: 'reset', epoch: 2 }
+    })
+    expect(invoke).toHaveBeenLastCalledWith('metrics:reset', RESET)
   })
 
   it('hands back a refusal and its reason rather than flattening it to nothing', async () => {
     const refused = {
-      outcome: 'failed',
-      reason: 'The metrics could not be reset. Nothing was deleted.'
+      ok: true,
+      value: {
+        outcome: 'failed',
+        reason: 'The metrics could not be reset. Nothing was deleted.',
+        resumesOnNextStart: false
+      }
     }
     invoke.mockResolvedValueOnce(refused)
-    await expect(api.resetMetrics()).resolves.toEqual(refused)
+    await expect(api.resetMetrics(RESET)).resolves.toEqual(refused)
   })
 })
 
@@ -939,21 +949,21 @@ describe('preload launch-failure contract (#263)', () => {
 describe('preload mine-history contract (#192)', () => {
   it('asks on the mine:history channel by mine id, exactly as given', async () => {
     invoke.mockResolvedValueOnce({ readable: true, speakers: [] })
-    await api.getMineHistory('mine:c:\\x\\anvil')
+    // AMENDED for ISSUE-123 (was: an untyped string): A-19's target request is a `MineId`.
+    await api.getMineHistory('mine:c:\\x\\anvil' as MineId)
     expect(invoke).toHaveBeenLastCalledWith('mine:history', 'mine:c:\\x\\anvil')
   })
 
-  it('collapses a non-string id to an empty string before it crosses the bridge', async () => {
-    invoke.mockResolvedValueOnce({ readable: false, speakers: [] })
-    await api.getMineHistory(42 as unknown as string)
-    expect(invoke).toHaveBeenLastCalledWith('mine:history', '')
-  })
+  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "collapses a non-string id to an empty string before it crosses the bridge" (A-19). The cut-1 switch routes
+  // this row `host` with its target shape (`MineId` → `IpcResult<MineHistoryView>`), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
+  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
+  // preload member given a value it cannot coerce passes it on and never throws") and `src/ui-main/ipc/handlers/getMineHistory.host.contract.test.ts` ("[ADR-019] A-19 relays conversation.mineHistory and answers IpcResult<MineHistoryView>; a non-string mineId is refused in main").
 
   it("hands back main's answer untouched, unreadable included", async () => {
     // `readable: false` is a different fact from "nobody has spoken here", and
     // the bridge must not flatten one into the other.
     invoke.mockResolvedValueOnce({ readable: false, speakers: [] })
-    await expect(api.getMineHistory('mine:nowhere')).resolves.toEqual({
+    await expect(api.getMineHistory('mine:nowhere' as MineId)).resolves.toEqual({
       readable: false,
       speakers: []
     })
@@ -997,47 +1007,36 @@ describe('preload open-path contract (#279)', () => {
  * one is asked for only when somebody actually scrolls.
  */
 describe('preload dwarf feed-page contract (#364)', () => {
-  const CURSOR = { timestamp: '2026-09-10T08:00:00.000Z', text: 'dig here' }
-  const PAGE = { readable: true, messages: [], reachedStart: false }
+  // AMENDED for ISSUE-123 (was: today's `{dwarfId, before: {timestamp, text}}` request and `DwarfFeedPage` answer): the
+  // cut-1 switch routes A-15 `host` with its target shape, `FeedParams` → `IpcResult<FeedPage>` (14 §2.1, §3.6).
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099ad001' as DwarfId
+  const CURSOR = '01890a5d-ac96-774b-a000-000000000001' as MessageId
 
   it('asks on the dwarf:feed:page channel with the request rebuilt field by field', async () => {
-    invoke.mockResolvedValueOnce(PAGE)
-    await api.getDwarfFeedPage({ dwarfId: 'claude:s1', before: CURSOR })
+    invoke.mockResolvedValueOnce({
+      ok: true,
+      value: { dwarfId: DWARF, messages: [], reachedStart: false }
+    })
+    await api.getDwarfFeedPage({ dwarfId: DWARF, page: { before: CURSOR } })
     expect(invoke).toHaveBeenLastCalledWith('dwarf:feed:page', {
-      dwarfId: 'claude:s1',
-      before: CURSOR
+      dwarfId: DWARF,
+      page: { before: CURSOR }
     })
   })
 
-  it('collapses anything that is not a string, so main only ever reasons about strings', async () => {
-    invoke.mockResolvedValueOnce({ readable: false, messages: [], reachedStart: false })
-    await (api.getDwarfFeedPage as unknown as (value: unknown) => Promise<unknown>)({
-      dwarfId: 42,
-      before: { timestamp: undefined, text: null }
-    })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:feed:page', {
-      dwarfId: '',
-      before: { timestamp: '', text: '' }
-    })
-  })
-
-  it('crosses an absent cursor as one main refuses rather than throwing on the way', async () => {
-    invoke.mockResolvedValueOnce({ readable: false, messages: [], reachedStart: false })
-    await (api.getDwarfFeedPage as unknown as (value: unknown) => Promise<unknown>)(undefined)
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:feed:page', {
-      dwarfId: '',
-      before: { timestamp: '', text: '' }
-    })
-  })
+  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "collapses anything that is not a string, so main only ever reasons about strings" and "crosses an absent cursor as one main refuses rather than throwing on the way" (A-15). The cut-1 switch routes
+  // this row `host` with its target shape (`FeedParams`), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
+  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
+  // preload member given a value it cannot coerce passes it on and never throws") and `src/ui-main/ipc/handlers/getDwarfFeedPage.host.contract.test.ts` ("[ADR-019] A-15 validates FeedParams in main and relays conversation.feed; an invalid payload never reaches the Host").
 
   it("hands back main's answer untouched, the end-of-pages flag included", async () => {
     // `reachedStart` is what stops the panel asking, so a bridge that dropped
     // or defaulted it would leave the reader pulling empty pages forever.
-    const last = { readable: true, messages: [], reachedStart: true }
+    const last = { ok: true, value: { dwarfId: DWARF, messages: [], reachedStart: true } }
     invoke.mockResolvedValueOnce(last)
-    await expect(api.getDwarfFeedPage({ dwarfId: 'claude:s1', before: CURSOR })).resolves.toEqual(
-      last
-    )
+    await expect(
+      api.getDwarfFeedPage({ dwarfId: DWARF, page: { before: CURSOR } })
+    ).resolves.toEqual(last)
   })
 })
 
@@ -1057,10 +1056,10 @@ describe('preload watched-dwarf-feed contract (#196)', () => {
     expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', null)
   })
 
-  it('collapses anything that is not a string to null before it crosses the bridge', () => {
-    ;(api.setWatchedDwarf as unknown as (value: unknown) => void)(42)
-    expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', null)
-  })
+  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "collapses anything that is not a string to null before it crosses the bridge" (A-16). The cut-1 switch routes
+  // this row nowhere (retired with no route, `RETIRED`), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
+  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
+  // preload member given a value it cannot coerce passes it on and never throws").
 })
 
 /**
@@ -1078,12 +1077,10 @@ describe('preload session-telemetry refresh contract (#96)', () => {
     expect(send).toHaveBeenLastCalledWith('dwarf:refreshTelemetry', 'claude:s1')
   })
 
-  it("collapses anything that is not a string to '' before it crosses the bridge", () => {
-    // The same discipline every other id here holds: main's boundary check
-    // only ever reasons about a string, and refuses an empty one.
-    ;(api.refreshDwarfTelemetry as unknown as (value: unknown) => void)(42)
-    expect(send).toHaveBeenLastCalledWith('dwarf:refreshTelemetry', '')
-  })
+  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "collapses anything that is not a string to '' before it crosses the bridge" (A-17). The cut-1 switch routes
+  // this row nowhere (retired with no route, `RETIRED`), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
+  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
+  // preload member given a value it cannot coerce passes it on and never throws").
 })
 
 /**
@@ -1118,43 +1115,10 @@ describe('preload session-tuning contract (#96)', () => {
     })
   })
 
-  it('rebuilds the request rather than forwarding whatever the caller attached', async () => {
-    // Same discipline as launchAgent's own field-by-field rebuild: nothing
-    // beyond the one act may cross, whatever else is hung off the object.
-    invoke.mockResolvedValueOnce({ applied: false, reason: 'no' })
-    await api.setDwarfTuning({
-      dwarfId: 'claude:s1',
-      change: { kind: 'model', model: 'claude-sonnet-5' },
-      cwd: '/home/j/secrets'
-    } as unknown as Parameters<typeof api.setDwarfTuning>[0])
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
-      dwarfId: 'claude:s1',
-      change: { kind: 'model', model: 'claude-sonnet-5' }
-    })
-  })
-
-  it('collapses a change it cannot read to a kind main refuses, rather than guessing one', () => {
-    // A tuning change NAMES AN ACT, so there is no safe default — picking one
-    // would change a running session in a way nobody asked for. An
-    // unrecognised kind crosses as `''`, which main refuses outright, the
-    // same treatment launchAgent gives an unrecognised provider.
-    ;(api.setDwarfTuning as unknown as (value: unknown) => void)({
-      dwarfId: 'claude:s1',
-      change: { kind: 'temperature', model: 'hot' }
-    })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
-      dwarfId: 'claude:s1',
-      change: { kind: '', value: '' }
-    })
-  })
-
-  it('collapses a missing payload to one main refuses, without throwing', () => {
-    ;(api.setDwarfTuning as unknown as (value: unknown) => void)(undefined)
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
-      dwarfId: '',
-      change: { kind: '', value: '' }
-    })
-  })
+  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "rebuilds the request rather than forwarding whatever the caller attached", "collapses a change it cannot read to a kind main refuses, rather than guessing one" and "collapses a missing payload to one main refuses, without throwing" (A-18, RETIRE with no story). The cut-1 switch routes
+  // this row nowhere (retired with no route, `RETIRED`), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
+  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
+  // preload member given a value it cannot coerce passes it on and never throws").
 })
 /*
  * REMOVED for #635, stated rather than passing unseen: 'preload message-panel contract (#162)', its
@@ -1244,19 +1208,18 @@ describe('preload notifications contract (#316)', () => {
     await expect(api.setNotificationsEnabled(false)).resolves.toBe(true)
   })
 
-  it('reports the open mine one-way on panel:openMine', () => {
-    api.setOpenMine('mine-42')
-    expect(send).toHaveBeenLastCalledWith('panel:openMine', 'mine-42')
+  // AMENDED for ISSUE-123 (was: "reports the open mine one-way on panel:openMine", `setOpenMine('mine-42')`): the cut-1
+  // switch routes A-44 `ui-local` with its target shape, renamed `reportVisibleMines` (14 §2.1 A-44, §1.1).
+  it('reports the mines on screen one-way on presence:visibleMines', () => {
+    const mineIds = ['01890a5d-ac96-774b-bcce-b302099a0001' as MineId]
+    api.reportVisibleMines({ mineIds })
+    expect(send).toHaveBeenLastCalledWith('presence:visibleMines', { mineIds })
   })
 
-  it('reports "no mine open" as null rather than as an empty string', () => {
-    // string-or-null, like setWatchedDwarf: null is a real answer here, and the
-    // map with no interior open is exactly that state.
-    api.setOpenMine(null)
-    expect(send).toHaveBeenLastCalledWith('panel:openMine', null)
-    api.setOpenMine(7 as unknown as string)
-    expect(send).toHaveBeenLastCalledWith('panel:openMine', null)
-  })
+  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "reports \"no mine open\" as null rather than as an empty string" (A-44: its target request is `{ mineIds }`, so no mine on screen is an empty list). The cut-1 switch routes
+  // this row `ui-local` with its target shape, so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
+  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
+  // preload member given a value it cannot coerce passes it on and never throws") and `src/ui-main/ipc/ipc-routing.contract.test.ts` ("[ADR-001] in cut 1 A-44, A-N17 to A-N21 and A-N12 route ui-local with shape target, and A-44 feeds presence").
 
   it('subscribes to the open-this-mine push on panel:mine:show', () => {
     const listener = vi.fn()
@@ -1269,15 +1232,10 @@ describe('preload notifications contract (#316)', () => {
     expect(removeListener).toHaveBeenLastCalledWith('panel:mine:show', wrapped)
   })
 
-  it('drops a push that names no mine instead of forwarding an id nothing can open', () => {
-    const listener = vi.fn()
-    api.onShowMine(listener)
-    const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
-    wrapped(null, '')
-    wrapped(null, undefined)
-    wrapped(null, 42)
-    expect(listener).not.toHaveBeenCalled()
-  })
+  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "drops a push that names no mine instead of forwarding an id nothing can open" (A-P5, successor A-N16). The cut-1 switch routes
+  // this row nowhere (retired with no route, `RETIRED`; nothing sends it), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
+  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
+  // preload member given a value it cannot coerce passes it on and never throws").
 })
 
 /**

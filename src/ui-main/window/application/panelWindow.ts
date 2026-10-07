@@ -79,6 +79,11 @@ export interface PanelWindowUseCases extends PanelWindowController {
   /** Where a new Panel window opens, pinned as stored (#35) and docked to the stored edge (#138). */
   panelStart(): { alwaysOnTop: boolean; bounds: Rect }
   /**
+   * Hears every change of whether the Panel is on screen, when A-P1 is pushed (UI main's PresenceTracker, ADR-024
+   * item 7; ISSUE-123); answers the stop. Optional: a Panel the root does not track presence for need not offer it.
+   */
+  onVisibleChanged?(h: () => void): () => void
+  /**
    * Builds the Panel window hidden, its page loading, as today's start did (legacy `createMainWindow` then
    * `loadPanelPage`): the cut-0 entry calls it once the router serves the rows (ISSUE-056; 21 §2 cut 0, "same app").
    */
@@ -202,11 +207,15 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
 
   const visible = (): boolean => shown() && !surface.isMinimized()
 
+  /** Who hears a change of whether the Panel is on screen (`onVisibleChanged`). */
+  const visibilityListeners = new Set<() => void>()
+
   const publish = (): void => {
     const now = visible()
     if (now === told) return
     told = now
     panel().send(PANEL_VISIBILITY_PUSH, now)
+    for (const listener of visibilityListeners) listener()
   }
 
   const persist = <K extends 'alwaysOnTop' | 'dockSide'>(
@@ -244,6 +253,12 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   })
 
   return {
+    onVisibleChanged(h) {
+      visibilityListeners.add(h)
+      return () => {
+        visibilityListeners.delete(h)
+      }
+    },
     hide,
     show,
     toggleVisible: () => (shown() ? hide() : show()),

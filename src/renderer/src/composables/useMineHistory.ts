@@ -7,10 +7,10 @@ import {
   type MineId,
   type ProviderId
 } from '@dwarfai/contracts'
-import type { FeedMessage } from '../types'
+import type { DwarfProvider, FeedMessage, MineHistoryResult } from '../types'
 import { feedMessageOf } from './useDwarfMessaging'
 
-/** A-19 `getMineHistory` in its 14 shape (`MineId` → `IpcResult<MineHistoryView>`), injected until ISSUE-123. */
+/** A-19 `getMineHistory` in its 14 shape (`MineId` → `IpcResult<MineHistoryView>`): `window.api.getMineHistory`. */
 export type HostMineHistoryRead = (mineId: MineId) => Promise<unknown>
 
 /** One tab of the history panel: one dwarf that worked in the mine, with its stored rows in today's shape. */
@@ -63,9 +63,30 @@ function tabOf(speaker: MineHistoryView['speakers'][number]): MineHistoryTab {
  * by the same mapper as the chat. A refused call, a lost round trip or an answer that is not a `MineHistoryView`
  * reads as unreadable, which is a different statement from a mine nobody has worked in.
  *
- * Hidden until built (21 §1 item 8): the call is injected, and nothing opens this store until the cut-1 switch
- * (ISSUE-123) regenerates `window.api` with A-19's target shape and the shell passes `window.api.getMineHistory`.
+ * From the cut-1 switch (ISSUE-123) A-19 is routed `host` with its target shape and the shell opens this store with
+ * `window.api.getMineHistory`; the history panel draws it through `historyAsToday`.
  */
+/**
+ * The Host history as the history panel draws it (ISSUE-123): today's `MineHistoryResult` (lib/history), one speaker
+ * per tab, in the Host's order. `undefined` while nothing was answered, `readable: false` when it could not be read;
+ * a speaker's rank and provider are its portrait's (owner amendment F), and a tab with no row has no last time (0).
+ */
+export function historyAsToday(state: MineHistoryState): MineHistoryResult | undefined {
+  if (state.readable === null) return undefined
+  if (!state.readable) return { readable: false, speakers: [] }
+  return {
+    readable: true,
+    speakers: state.tabs.map((tab) => ({
+      id: tab.dwarfId,
+      provider: tab.providerId as DwarfProvider,
+      role: tab.rank,
+      name: tab.displayName,
+      lastMessageAt: tab.lastMessageAt ?? 0,
+      messages: tab.messages
+    }))
+  }
+}
+
 export function useMineHistory() {
   async function open(mineId: MineId, read: HostMineHistoryRead): Promise<void> {
     const token = ++historyToken

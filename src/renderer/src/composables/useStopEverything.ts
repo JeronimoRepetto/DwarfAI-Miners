@@ -1,5 +1,6 @@
 import { computed, getCurrentScope, onScopeDispose, shallowRef, type ComputedRef } from 'vue'
 import type { DwarfWire } from '@dwarfai/contracts'
+import { mintRequestId } from './requestIds'
 
 /*
  * The renderer half of Stop everything and quit (ISSUE-317; 07 S10.18…S10.21; ADR-002 D7 steps 1–4; UC-023).
@@ -50,20 +51,6 @@ type State =
   | { kind: 'confirming'; confirmationId: string; sending: boolean }
   | { kind: 'incomplete'; failed: readonly string[] }
   | { kind: 'unfinished' }
-
-/** A UUIDv7 (RFC 9562): 48 bits of epoch milliseconds, version 7, variant 10, the rest random. */
-function mintRequestId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16))
-  let ms = Date.now()
-  for (let index = 5; index >= 0; index -= 1) {
-    bytes[index] = ms % 256
-    ms = Math.floor(ms / 256)
-  }
-  bytes[6] = 0x70 | (bytes[6]! & 0x0f)
-  bytes[8] = 0x80 | (bytes[8]! & 0x3f)
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
 
 export function useStopEverything(deps: StopEverythingDeps): {
   view: ComputedRef<StopEverythingView>

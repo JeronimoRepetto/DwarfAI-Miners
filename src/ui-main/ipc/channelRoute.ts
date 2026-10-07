@@ -34,6 +34,8 @@ export interface RouteTable {
   release: StepId
   routes: readonly ChannelRoute[]
   unrouted: Partial<Record<ChannelKey, StepId>>
+  /** The RETIRE rows retired with no route, with the step that retired each (`RETIRED`, lead resolution H1). */
+  retired?: Partial<Record<ChannelKey, StepId>>
   adapters: readonly LegacyBridgeAdapter[]
 }
 
@@ -44,6 +46,8 @@ export type RouteTableProblemReason =
   | 'unknown-channel'
   | 'unrouted-not-later'
   | 'routed-and-unrouted'
+  | 'retired-not-reached'
+  | 'routed-and-retired'
   | 'target-without-shape-adapter'
   | 'host-with-today-shape'
   | 'host-pending-in-release'
@@ -79,17 +83,33 @@ export function checkRouteTable(
   channels: readonly string[]
 ): RouteTableProblem[] {
   const { release, routes, unrouted, adapters } = table
+  const retired: Partial<Record<string, StepId>> = table.retired ?? {}
   const problems: RouteTableProblem[] = []
   const known = new Set(channels)
   const unroutedSteps: Partial<Record<string, StepId>> = unrouted
+  const listed = [
+    ...routes.map((r) => r.channel),
+    ...Object.keys(unrouted),
+    ...Object.keys(retired)
+  ]
 
-  for (const channel of new Set([...routes.map((r) => r.channel), ...Object.keys(unrouted)])) {
+  for (const channel of new Set(listed)) {
     if (!known.has(channel)) problems.push({ reason: 'unknown-channel', channel })
   }
 
-  // One owner per (channel, qualifier) per release, or one unrouted entry naming a later step (22 §5).
+  // One owner per (channel, qualifier) per release, or one unrouted entry naming a later step (22 §5), or one retired
+  // entry naming this release or an earlier step (a RETIRE row with no route from that step, lead resolution H1).
   for (const channel of channels) {
     const own = routes.filter((r) => r.channel === channel)
+    const retiredAt = retired[channel]
+    if (retiredAt !== undefined) {
+      if (own.length > 0 || unroutedSteps[channel] !== undefined) {
+        problems.push({ reason: 'routed-and-retired', channel })
+      } else if (stepIndex(retiredAt) > stepIndex(release)) {
+        problems.push({ reason: 'retired-not-reached', channel })
+      }
+      continue
+    }
     const step = unroutedSteps[channel]
     if (step !== undefined) {
       if (own.length > 0) problems.push({ reason: 'routed-and-unrouted', channel })

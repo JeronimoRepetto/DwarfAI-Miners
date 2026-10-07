@@ -1,4 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import type { DwarfId } from '@dwarfai/contracts'
 import { useAgentLaunch } from './useAgentLaunch'
 import { useDwarfKicking } from './useDwarfKicking'
 import { useDwarfMessaging } from './useDwarfMessaging'
@@ -9,7 +10,7 @@ import { useToasts } from './useToasts'
 import { MESSAGE_COPIED } from '../lib/delivery/deliveryVerdict'
 import { shouldHidePanelAfterActivation } from '../lib/delivery/activation'
 import { feedMessagesOf } from '../lib/message/conversation'
-import { feedPageCursorOf, heldFeedPageCursorOf, joinFeedPages } from '../lib/message/feedPages'
+import { joinFeedPages } from '../lib/message/feedPages'
 import type { AskAnswer } from '../lib/question/questionAnswer'
 import type {
   Dwarf,
@@ -22,8 +23,7 @@ import type {
   FeedMessage,
   MessagePanelState,
   Mine,
-  MinesSnapshot,
-  WatchedFeedPush
+  MinesSnapshot
 } from '../types'
 
 /**
@@ -66,7 +66,11 @@ export function useMessageDock() {
     keepEchoesFor,
     failedSends,
     routeGone,
-    messageStateFor
+    messageStateFor,
+    hostOldestMessageId,
+    chatFeedOf,
+    startChat,
+    stopChat
   } = useDwarfMessaging()
   /**
    * The pages of conversation older than the newest feed (#364) — held beside `selectedFeed`
@@ -74,12 +78,7 @@ export function useMessageDock() {
    * asked for lives there; this joins what it holds to the newest page for drawing, and says which
    * dwarf the pages belong to.
    */
-  const {
-    state: paging,
-    note: pagingNote,
-    hold: holdOlderPages,
-    older: readOlderPage
-  } = useDwarfPaging()
+  const { state: paging, note: pagingNote, hold: holdOlderPages, olderFromHost } = useDwarfPaging()
   const { state: kickingState, kick, observe: observeKicks } = useDwarfKicking()
   const {
     state: questionState,
@@ -137,18 +136,19 @@ export function useMessageDock() {
   const openDwarfId = computed(() => launch.state.value.launchedDwarfId ?? askedDwarfId.value)
 
   /**
-   * The feed read for the open dwarf, whichever kind of session it is (#436 unified the channel —
-   * a held session's own rows answer here exactly as an observed session's transcript tail does,
-   * marked `source: 'held'`). `undefined` means the read has not come back — which the panel says
-   * out loud rather than drawing as an empty conversation.
+   * The open dwarf's chat as the Host feeds it (ISSUE-123; 14 §6.4 row `useDwarfMessaging`): the snapshot `tails`
+   * and the `conversation.appended` frames over A-N01/A-N02, followed from mount (`startChat`). It replaced today's
+   * pull of A-14 `getDwarfFeed` on every sign of activity (#183, #195), A-16 `setWatchedDwarf` and the feed main pushed
+   * with the poll (#196): those rows are retired from the cut-1 switch, and the Host's frames are the one source.
+   * `undefined` means the Host has not fed the chat yet, which the panel says out loud rather than drawing as an empty
+   * conversation.
    *
-   * The NEWEST page of it (#364): this holds the latest FEED_LIMIT things said and is replaced
-   * whole by every re-read and every watched push, while the pages a reader scrolled back to are
-   * held separately (`useDwarfPaging`) and joined to it in `pagedMessages`.
+   * The NEWEST rows (#364): the pages a reader scrolled back to are held separately (`useDwarfPaging`) and joined to
+   * it in `pagedMessages`, so they survive a session that keeps talking.
    */
-  const selectedFeed = ref<DwarfFeedResult | undefined>(undefined)
-  /** Which read is the current one, so a slow answer cannot land on a later dwarf. */
-  let feedToken = 0
+  const selectedFeed = computed<DwarfFeedResult | undefined>(() =>
+    openDwarfId.value === null ? undefined : chatFeedOf(openDwarfId.value)
+  )
 
   /**
    * What the panel DRAWS: every older page the reader has fetched, oldest first, with the newest
@@ -160,12 +160,6 @@ export function useMessageDock() {
   )
 
   /**
-   * The pages the reader scrolled back to, joined and standing on their own (#430) — what
-   * `pageBack` hands `heldFeedPageCursorOf`, so the row a cursor names is the row on screen.
-   */
-  const olderPages = computed<FeedMessage[]>(() => joinFeedPages(paging.pages, []))
-
-  /**
    * The same answer `selectedFeed` carries, with the drawn conversation in place of its own page.
    * Spread rather than rebuilt so `source` rides along unchanged: the panel reads it to say which
    * claim the conversation carries (#436).
@@ -175,24 +169,6 @@ export function useMessageDock() {
       ? undefined
       : { ...selectedFeed.value, messages: pagedMessages.value }
   )
-
-  /**
-   * Which dwarf `selectedFeed` currently answers for — so a re-read for that SAME dwarf can leave
-   * the previous result on screen while it is in flight, and only a genuine switch (or a skip)
-   * clears it back to `undefined` (#195).
-   */
-  let selectedFeedDwarfId: string | null = null
-
-  /**
-   * The signal a pushed `watchedFeed` last satisfied (#196), so the re-read watch below can tell
-   * "this exact change already arrived with its feed" apart from a change nothing has answered.
-   */
-  let pushedFeedSignal: string | null = null
-
-  /** The composite key both the push-adoption and the pull-watch compare (#196). */
-  function watchedFeedSignalKey(dwarfId: string, dwarf: Dwarf | undefined): string {
-    return `${dwarfId}|${dwarf?.lastMessage ?? ''}|${dwarf?.transcriptUpdatedAt ?? ''}`
-  }
 
   /** The open dwarf as the CURRENT snapshot reports it, or nothing once the board dropped it. */
   const liveSelectedDwarf = computed<Dwarf | undefined>(() =>
@@ -232,51 +208,18 @@ export function useMessageDock() {
   )
 
   /**
-   * Every replacement of `selectedFeed` goes through here (#249), so a panel that lost the words it
-   * was showing leaves a line in the dev console naming which path did it. Compared on the NEWEST
-   * PAGE only (#364): once a reader has paged back, the drawn conversation is far longer than any
-   * push, and every ordinary push would read as a shrink.
+   * The pages a reader scrolled back to belong to the open dwarf: a switch to another dwarf, or to none, throws them
+   * away, and every frame for the same dwarf keeps them (#364, #430).
    */
-  function replaceSelectedFeed(dwarfId: string, next: DwarfFeedResult, via: 'push' | 'pull'): void {
-    if (import.meta.env.DEV) {
-      const previousPage = selectedFeed.value
-      const lost =
-        previousPage !== undefined &&
-        selectedFeedDwarfId === dwarfId &&
-        (next.messages.length < previousPage.messages.length ||
-          (previousPage.readable && !next.readable))
-      if (lost) {
-        console.warn(
-          `[panel] newest feed page for ${dwarfId} shrank via ${via}: ${previousPage.messages.length} -> ${next.messages.length}, readable=${next.readable}`
-        )
-      }
-    }
-    selectedFeedDwarfId = dwarfId
-    holdOlderPages(dwarfId)
-    selectedFeed.value = next
-  }
-
-  /**
-   * Adopt a feed main pushed with this snapshot (#196), when it is for the dwarf currently open.
-   * Bumps `feedToken` so a pull already in flight cannot land after it with a stale answer, and
-   * records the signal it satisfied so the re-read watch does not pull the same change again.
-   */
-  function adoptWatchedFeed(watchedFeed: WatchedFeedPush | undefined): void {
-    if (watchedFeed === undefined || watchedFeed.dwarfId !== openDwarfId.value) return
-    feedToken++
-    replaceSelectedFeed(watchedFeed.dwarfId, watchedFeed.feed, 'push')
-    pushedFeedSignal = watchedFeedSignalKey(watchedFeed.dwarfId, selectedDwarf.value)
-  }
+  watch(openDwarfId, (dwarfId) => holdOlderPages(dwarfId), { immediate: true })
 
   /**
    * One poll's whole board, as App has just stored it: a launch in flight is watching for its own
-   * dwarf, which arrives on an ordinary poll like every other session's, and the one dwarf's feed
-   * main re-read on the SAME pass (#196) is adopted here, after the board, so `selectedDwarf`
-   * already reflects this snapshot.
+   * dwarf, which arrives on an ordinary poll like every other session's. AMENDED for ISSUE-123
+   * (was: also adopting the feed main pushed with the poll, #196): the chat is the Host's.
    */
   function observeSnapshot(snapshot: MinesSnapshot): void {
     launch.observe(snapshot.mines)
-    adoptWatchedFeed(snapshot.watchedFeed)
   }
 
   /**
@@ -336,86 +279,17 @@ export function useMessageDock() {
   )
 
   /**
-   * (Re-)read the open dwarf's feed. Bumps `feedToken` first, so only the newest read's answer is
-   * kept (#183); blanks `selectedFeed` only on the FIRST read for `dwarfId`, so a busy session's
-   * re-read leaves the previous words on screen while it is in flight (#195).
-   */
-  async function readSelectedFeed(dwarfId: string): Promise<void> {
-    const token = ++feedToken
-    const isFirstRead = selectedFeedDwarfId !== dwarfId
-    selectedFeedDwarfId = dwarfId
-    // Before the await: on a first read the last dwarf's pages must go with its feed (#364).
-    holdOlderPages(dwarfId)
-    if (isFirstRead) selectedFeed.value = undefined
-    try {
-      const result = await window.api.getDwarfFeed(dwarfId)
-      if (feedToken === token) replaceSelectedFeed(dwarfId, result, 'pull')
-    } catch {
-      // "No transcript this panel can read" is exactly what happened, and the panel draws it.
-      if (feedToken === token) selectedFeed.value = { readable: false, messages: [] }
-    }
-  }
-
-  /**
-   * Read nothing, and leave nothing of the last dwarf's behind — the chat open on no dwarf. The
-   * older pages are HELD for `dwarfId` (#430): thrown away here would mean thrown away on every
-   * poll this runs on.
-   */
-  function skipSelectedFeed(dwarfId: string | null): void {
-    feedToken++
-    selectedFeedDwarfId = null
-    holdOlderPages(dwarfId)
-    selectedFeed.value = undefined
-  }
-
-  /**
-   * Read the open dwarf's conversation, re-read when `lastMessage` or `transcriptUpdatedAt` moves
-   * (#183), and once when the dwarf turns 'leaving' (#192) — never for a dwarf the board has
-   * dropped, whose read would replace the words with "no transcript". A held session is kept live
-   * by main's own push instead (#436).
-   */
-  watch(
-    [
-      openDwarfId,
-      () => selectedDwarf.value?.lastMessage,
-      () => selectedDwarf.value?.transcriptUpdatedAt,
-      () => liveSelectedDwarf.value?.status === 'leaving'
-    ],
-    ([dwarfId]) => {
-      if (dwarfId === null) {
-        skipSelectedFeed(dwarfId)
-        return
-      }
-      if (liveSelectedDwarf.value === undefined) return
-      if (pushedFeedSignal === watchedFeedSignalKey(dwarfId, selectedDwarf.value)) return
-      void readSelectedFeed(dwarfId)
-    },
-    { immediate: true }
-  )
-
-  /** Tell main which dwarf the chat has open, so a poll can carry its feed (#196, #436). */
-  watch(
-    openDwarfId,
-    (dwarfId) => {
-      window.api.setWatchedDwarf(dwarfId)
-    },
-    { immediate: true }
-  )
-
-  /**
-   * Fetch the page before the oldest row on screen (#364). For a held session the cursor comes off
-   * the rows that certainly came out of its transcript (#430); for an observed one, off the
-   * transcript rows themselves. Refusing a repeated report is `useDwarfPaging`'s.
+   * Fetch the page before the oldest row on screen (#364), from the Host's message log (A-15 in its target shape from
+   * the cut-1 switch, ISSUE-123; 14 §6.4 row `useDwarfPaging`): the cursor is the oldest Host row held. Refusing a
+   * repeated report is `useDwarfPaging`'s.
    */
   function pageBack(): void {
     const dwarfId = openDwarfId.value
     if (dwarfId === null) return
-    const feed = selectedFeed.value
-    void readOlderPage(
-      dwarfId,
-      feed?.source === 'held'
-        ? heldFeedPageCursorOf(olderPages.value, feed.messages)
-        : feedPageCursorOf(pagedMessages.value)
+    void olderFromHost(
+      dwarfId as DwarfId,
+      hostOldestMessageId(dwarfId),
+      window.api.getDwarfFeedPage
     )
   }
 
@@ -476,14 +350,13 @@ export function useMessageDock() {
   }
 
   /**
-   * Hand the composer's text over, then refresh on the verdict (#183). Fire-and-observe: the panel
-   * stays usable, and the verdict lands on the dwarf itself rather than in a modal.
+   * Hand the composer's text over. Fire-and-observe: the panel stays usable, and the verdict lands
+   * on the dwarf itself rather than in a modal. AMENDED for ISSUE-123 (was: then re-read the feed on
+   * a delivery, #183): the words the session took arrive as Host frames, with nothing to ask for.
    */
   function sendText(dwarf: Dwarf, payload: ComposerSend): void {
     setDraft(dwarf.id, '')
-    void sendDwarfText(dwarf.id, payload.text, payload.pressEnter, payload.attachments ?? []).then(
-      (delivered) => refreshAfterDelivery(dwarf.id, delivered)
-    )
+    void sendDwarfText(dwarf.id, payload.text, payload.pressEnter, payload.attachments ?? [])
   }
 
   /**
@@ -491,9 +364,7 @@ export function useMessageDock() {
    * (decision log, Failed delivery), with a send's aftermath.
    */
   function retryMessage(dwarf: Dwarf, echoId: string): void {
-    void retryDwarfText(dwarf.id, echoId).then((delivered) =>
-      refreshAfterDelivery(dwarf.id, delivered)
-    )
+    void retryDwarfText(dwarf.id, echoId)
   }
 
   /**
@@ -508,16 +379,6 @@ export function useMessageDock() {
     } catch {
       // The bridge failing is a copy that did not happen, and claims nothing.
     }
-  }
-
-  /**
-   * A delivered send is also a reason to re-read the feed (#183), checked against the CURRENT
-   * chat: the relay can take seconds, and the person may have moved on meanwhile.
-   */
-  function refreshAfterDelivery(dwarfId: string, delivered: boolean): void {
-    if (!delivered) return
-    if (openDwarfId.value !== dwarfId) return
-    void readSelectedFeed(dwarfId)
   }
 
   /** Same reasoning as sendText: fire-and-observe, the verdict lands on the dwarf itself. */
@@ -616,11 +477,14 @@ export function useMessageDock() {
     unlistenLaunchFailures = launch.listenFailures()
     unlistenHeldMessages = listenHeldMessages()
     unlistenWalks = onWalk(followDeparture)
+    // The chats from the Host (ISSUE-123): followed for as long as the dock lives.
+    void startChat()
   })
   onBeforeUnmount(() => {
     unlistenLaunchFailures?.()
     unlistenHeldMessages?.()
     unlistenWalks?.()
+    stopChat()
   })
 
   return {

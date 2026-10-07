@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { MineId } from '@dwarfai/contracts'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
 import { goldenApi } from './api'
@@ -46,10 +47,13 @@ describe('goldenApi — the board', () => {
     expect(snapshot.tokensObserved).toBe(0)
   })
 
-  it("reads a mine's history from its dwarfs' conversations", async () => {
+  // AMENDED for ISSUE-123 (was: "reads a mine's history from its dwarfs' conversations", answering the sample's
+  // history in today's shape): from the cut-1 switch A-19 reads the Host's message log, keyed by Host ids the sample
+  // does not carry, so the full-screen bridge refuses it by name like every member it does not model.
+  it("refuses a mine's history by name, since A-19 reads the Host's message log", async () => {
     const sample = sampleOf({ mines: [shaft] })
-    expect(await goldenApi(sample).getMineHistory('north-shaft')).toEqual(
-      sample.histories['north-shaft']
+    await expect(goldenApi(sample).getMineHistory('north-shaft' as MineId)).rejects.toThrow(
+      /getMineHistory/
     )
   })
 })

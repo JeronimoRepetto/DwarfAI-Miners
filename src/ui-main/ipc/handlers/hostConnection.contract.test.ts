@@ -230,6 +230,8 @@ describe('A-N03…A-N05 Host connection rows (14 §2.2; ADR-002 D9)', () => {
       uiLocal: w.rows,
       // AMENDED for ISSUE-056 (was: no host target): the cut-0 table routes A-N26 `host`, so the router needs one.
       host: { serve: () => Promise.resolve(undefined) },
+      // AMENDED for ISSUE-123: the cut-1 table routes A-33 through its shape adapter, so the router needs it bound.
+      shapeAdapters: { ResetFanout: { serve: () => Promise.resolve(undefined) } },
       senders
     })
     const noRoute = {

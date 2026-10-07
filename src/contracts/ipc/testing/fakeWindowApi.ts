@@ -50,7 +50,7 @@ export const WINDOW_API_MEMBERS = {
   answerDwarfPermission: 'invoke',
   getNotificationsEnabled: 'invoke',
   setNotificationsEnabled: 'invoke',
-  setOpenMine: 'send',
+  reportVisibleMines: 'send',
   getTypographyPreferences: 'invoke',
   setTypographyPreferences: 'invoke',
   getJevSettings: 'invoke',

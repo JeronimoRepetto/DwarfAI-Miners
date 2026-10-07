@@ -46,27 +46,26 @@ export const STEP_ORDER: readonly StepId[] = [
 
 /** Each registry-declared but unrouted NEW row, with the step that will route it. */
 export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
-  // The cut-0 entries (A-N03…A-N05, A-N25…A-N27, A-N30, A-N34) were routed by the cut-0 switch (ISSUE-056).
+  // The cut-0 entries (A-N03…A-N05, A-N25…A-N27, A-N30, A-N34) were routed by the cut-0 switch (ISSUE-056), and the
+  // cut-1 entries (A-N01, A-N02, A-N12, A-N16…A-N21) by the cut-1 switch (ISSUE-123).
   // A-N33, born with the first release that bumps `endpointGeneration` (AMENDMENT-11; 21 "Different-generation
   // restart"); no handler in v1 (review R8B-06)
-  'host:connection:confirm-restart': 'generation-2',
-  // A-N17…A-N19, born `ui-local` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by their
-  // handler issue (ISSUE-059)
-  'ui:session:get': 'cut-1',
-  'ui:session:patch': 'cut-1',
-  'ui:session:changed': 'cut-1',
-  // A-N20, A-N21, born `ui-local` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by their
-  // handler issue (ISSUE-060)
-  'ui:preferences:get': 'cut-1',
-  'ui:preferences:set': 'cut-1',
-  // A-N12, born `ui-local` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by its handler issue
-  // (ISSUE-061)
-  'ui:preferences:reset': 'cut-1',
-  // A-N01, A-N02, born `host` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by their handler
-  // issue (ISSUE-082)
-  'host:snapshot': 'cut-1',
-  'host:event': 'cut-1',
-  // A-N16, born `ui-local` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by its handler issue
-  // (ISSUE-114)
-  'mode:revealDwarfChat': 'cut-1'
+  'host:connection:confirm-restart': 'generation-2'
+}
+
+/**
+ * Each RETIRE row a step retired with no successor route (21 §2 "Retired rows"), with that step. Its registry row
+ * stays (the preload member and the schemas outlive the route until the step's deletion issue), but from that step on
+ * it has no route and no handler: the router refuses a call to it like a channel with no route. The router test
+ * accepts an entry only while its step is not later than the release, and a rollback build of that step routes the row
+ * `legacy` again with today's shape (`rollbackTable.ts`). Lead resolution H1 (ISSUE-123): `ChannelRoute` is ADR-001
+ * item 3's, not frozen, and the table check demands a route or an entry for every registry key.
+ */
+export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
+  // A-14, A-16, A-17 (no handler from cut 1), A-18 (RETIRE, no story) and A-P5 (successor A-N16): 21 §2 cut 1
+  'dwarf:feed': 'cut-1',
+  'panel:watchDwarfFeed': 'cut-1',
+  'dwarf:refreshTelemetry': 'cut-1',
+  'dwarf:setTuning': 'cut-1',
+  'panel:mine:show': 'cut-1'
 }

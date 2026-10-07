@@ -55,9 +55,10 @@ function dwarfIdsIn(snapshot: MinesSnapshot): Set<string> {
  * way `BoardFacadeAdapter` (ISSUE-086) folds the same facts for A-12/A-P2, so both sources show one board.
  *
  * - One writer at a time (21 §1 item 4). Until the first Host snapshot is read, `setMines` (today's A-12/A-P2 feed)
- *   writes the board; from then on the Host does and `setMines` leaves the board alone. The Host half runs only
- *   once a caller `start`s it, and until the cut-1 switch (ISSUE-123) routes A-N01/A-N02 the router refuses the
- *   snapshot, so the board stays on today's feed either way (hidden until built, 21 §1 item 8).
+ *   writes the board; from then on the Host does, and `setMines` brings only today's open asks onto it (from cut 1
+ *   A-P2 is `BoardFacadeAdapter`'s, which folds `LegacyAskRelay`'s asks onto the Host dwarfs until cut 2). The shell
+ *   `start`s the Host half at mount from the cut-1 switch (ISSUE-123); a table that refuses A-N01 leaves the board on
+ *   today's feed.
  * - Arrivals: a snapshot is never an arrival (S2.03); a `dwarf.arrived` frame emits one walk-in and puts the dwarf in
  *   `state.arrived` for the batch it came in (S2.02), and with `announce` raises the toast "<d> started in <name>"
  *   (US-OBS-002.AC07; 08 §2.2).
@@ -109,6 +110,26 @@ const leaving = new Map<DwarfId, { dwarf: DwarfWire; timer: ReturnType<typeof se
 let arrivals = new Set<string>()
 /** Whether the Host feeds the board: set by the first Host snapshot, cleared by `stop`. */
 let hostFed = false
+
+/** Today's ask fields of a dwarf, the only part of A-P2 a Host-fed board takes (see `setMines`). */
+type LegacyAsks = Partial<Pick<Dwarf, 'pendingQuestion' | 'pendingPermission' | 'waitingReason'>>
+
+/**
+ * The open asks today's runtime holds, per Host dwarf id, as A-P2 last carried them (21 §3 `LegacyAskRelay`, cuts 1–4:
+ * until cut 2 the ask cards of the rows still `legacy` reach the renderer only through `BoardFacadeAdapter`'s board,
+ * which folds them onto the Host dwarf). Cut 2 moves the asks to the Host broker and its `asks` section.
+ */
+let legacyAsks = new Map<string, LegacyAsks>()
+
+function asksOf(dwarf: Dwarf): LegacyAsks {
+  return {
+    ...(dwarf.pendingQuestion === undefined ? {} : { pendingQuestion: dwarf.pendingQuestion }),
+    ...(dwarf.pendingPermission === undefined
+      ? {}
+      : { pendingPermission: dwarf.pendingPermission }),
+    ...(dwarf.waitingReason === undefined ? {} : { waitingReason: dwarf.waitingReason })
+  }
+}
 const walkers = new Set<(walk: BoardWalk) => void>()
 
 function emit(walk: BoardWalk): void {
@@ -157,12 +178,16 @@ function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): Dwarf {
             ...(dwarf.workplace.branch === undefined ? {} : { branch: dwarf.workplace.branch })
           }
         }),
-    startedAt: dwarf.arrivedAt
+    startedAt: dwarf.arrivedAt,
+    ...legacyAsks.get(dwarf.id)
   }
 }
 
-/** Writes the Host board into `state`, in today's shape, with the arrivals of this batch. */
-function publish(): void {
+/**
+ * Writes the Host board into `state`, in today's shape, with the arrivals of this batch. A republish for new asks only
+ * (`asksOnly`) leaves the arrivals alone: they belong to the Host batch that brought them, still to be drawn.
+ */
+function publish(asksOnly = false): void {
   hostFed = true
   const shown: Array<{ dwarf: DwarfWire; status: Dwarf['status'] }> = [
     ...[...board.dwarfs.values()].map((dwarf) => ({ dwarf, status: statusOf(dwarf) })),
@@ -190,6 +215,7 @@ function publish(): void {
   state.mines = mines
   state.tokensObserved = mines.reduce((sum, mine) => sum + mine.tokensObserved, 0)
   state.materials = vault
+  if (asksOnly) return
   state.arrived = arrivals
   arrivals = new Set()
 }
@@ -298,12 +324,21 @@ function stop(): void {
   board.dwarfs = new Map()
   arrivals = new Set()
   hostFed = false
+  legacyAsks = new Map()
 }
 
 export function useMines() {
   function setMines(snapshot: MinesSnapshot): void {
-    // One writer at a time (21 §1 item 4): once the Host feeds the board, today's feed no longer writes it.
-    if (hostFed) return
+    // One writer at a time (21 §1 item 4): once the Host feeds the board, today's feed no longer writes it. From the
+    // cut-1 switch that feed is `BoardFacadeAdapter`'s, and the one thing it still brings is today's open asks
+    // (`legacyAsks`), which only it carries until cut 2.
+    if (hostFed) {
+      legacyAsks = new Map(
+        snapshot.mines.flatMap((mine) => mine.dwarfs).map((dwarf) => [dwarf.id, asksOf(dwarf)])
+      )
+      publish(true)
+      return
+    }
     const ids = dwarfIdsIn(snapshot)
     state.arrived =
       previousDwarfIds === null

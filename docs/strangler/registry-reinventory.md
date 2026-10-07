@@ -30,6 +30,9 @@
   did.
 - **Updated for ISSUE-114:** A-N16 `onRevealDwarfChat` (`mode:revealDwarfChat`, NEW) is declared in the registry and
   has a generated preload member, so its row moved to the found table.
+- **Updated for ISSUE-123:** A-44 is renamed by the cut-1 switch (14 §2.1 CHANGE): the generated preload member
+  `reportVisibleMines` sends `presence:visibleMines`, so it has its own row under the same id, and the `panel:openMine`
+  row lost its preload location. Today's `setOpenMine` registration and constant stay until cut 5.
 - **Compared with:** `14-ipc-contract.md` §2.1, §2.2, §7 and §8 I-21 of the architecture package. `14` is frozen
   and lives in the package, not in this repository.
 - **For the registry issue (ISSUE-007):** `dwarf:setName` and `dwarf:resetName` have no `14` §2 id. Their
@@ -58,10 +61,10 @@ pushes were evaluated against `14` §2 and none of them was changed.
 
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
-| Request / one-way channels (`ipcMain` handlers)   | 32   | 16     | 12  | 11     | 0        | 71    |
+| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 12  | 11     | 0        | 72    |
 | Pushes                                            | 2    | 0      | 6   | 4      | 0        | 12    |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 16     | 18  | 15     | 0        | 84    |
+| **Found total**                                   | 35   | 17     | 18  | 15     | 0        | 85    |
 | `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 16  | —      | —        | 16    |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
@@ -150,12 +153,13 @@ kind `14` gives it.
 | `panel:layout:get`                | `getPanelLayout`              | invoke | src/main/index.ts:1623<br>src/preload/index.ts:585<br>src/shared/contracts.ts:5045                                                | A-08    | KEEP   | —                 |                                                                                                                                           |
 | `panel:layout:set`                | `setPanelLayout`              | invoke | src/main/index.ts:1624<br>src/preload/index.ts:593<br>src/shared/contracts.ts:5046                                                | A-09    | KEEP   | —                 |                                                                                                                                           |
 | `panel:mine:show`                 | `onShowMine`                  | push   | src/legacy-bridge/LegacyRuntimeRoute.ts:625<br>src/main/index.ts:923<br>src/preload/index.ts:884<br>src/shared/contracts.ts:5421  | A-P5    | RETIRE | —                 |                                                                                                                                           |
-| `panel:openMine`                  | `setOpenMine`                 | send   | src/main/index.ts:1443<br>src/preload/index.ts:882<br>src/shared/contracts.ts:5409                                                | A-44    | CHANGE | —                 | 14 renames it to `reportVisibleMines` / `presence:visibleMines` within this CHANGE row                                                    |
+| `panel:openMine`                  | `setOpenMine`                 | send   | src/main/index.ts:1443<br>src/shared/contracts.ts:5409                                                                            | A-44    | CHANGE | —                 | 14 renames it to `reportVisibleMines` / `presence:visibleMines` within this CHANGE row                                                    |
 | `panel:raise`                     | `raisePanel`                  | send   | src/main/index.ts:1339<br>src/preload/index.ts:565<br>src/shared/contracts.ts:5031                                                | A-02    | KEEP   | —                 |                                                                                                                                           |
 | `panel:setAlwaysOnTop`            | `setAlwaysOnTop`              | invoke | src/main/index.ts:1341<br>src/preload/index.ts:569<br>src/shared/contracts.ts:5038                                                | A-04    | KEEP   | —                 |                                                                                                                                           |
 | `panel:visible:changed`           | `onPanelVisibility`           | push   | src/legacy-bridge/LegacyRuntimeRoute.ts:605<br>src/main/index.ts:878<br>src/preload/index.ts:571<br>src/shared/contracts.ts:5070  | A-P1    | KEEP   | —                 |                                                                                                                                           |
 | `panel:visible:get`               | `getPanelVisible`             | invoke | src/main/index.ts:1362<br>src/preload/index.ts:570<br>src/shared/contracts.ts:5069                                                | A-05    | KEEP   | —                 |                                                                                                                                           |
 | `panel:watchDwarfFeed`            | `setWatchedDwarf`             | send   | src/main/index.ts:1703<br>src/preload/index.ts:635<br>src/shared/contracts.ts:5120                                                | A-16    | RETIRE | —                 |                                                                                                                                           |
+| `presence:visibleMines`           | `reportVisibleMines`          | send   | src/preload/index.ts:438                                                                                                          | A-44    | CHANGE | —                 | The new name of A-44; its preload member is generated (ISSUE-045); `ui-local` from cut 1 (ISSUE-123)                                      |
 | `projects:query`                  | `queryProjects`               | invoke | src/main/index.ts:1932<br>src/preload/index.ts:792<br>src/shared/contracts.ts:5308                                                | A-34    | KEEP   | —                 |                                                                                                                                           |
 | `shell:copyText`                  | `copyText`                    | invoke | src/main/index.ts:1809<br>src/preload/index.ts:690<br>src/shared/contracts.ts:5206                                                | A-22    | KEEP   | —                 |                                                                                                                                           |
 | `shell:openExternalLink`          | `openExternalLink`            | invoke | src/main/index.ts:1790<br>src/preload/index.ts:687<br>src/shared/contracts.ts:5199                                                | A-21    | KEEP   | —                 |                                                                                                                                           |

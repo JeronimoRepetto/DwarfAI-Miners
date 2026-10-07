@@ -1,7 +1,7 @@
 import { computed, reactive } from 'vue'
 import { CHANNELS, type DwarfId, type FeedParams, type MessageId } from '@dwarfai/contracts'
 import { pagingNoteOf } from '../lib/message/feedPages'
-import type { DwarfFeedPage, FeedMessage, FeedPageCursor } from '../types'
+import type { FeedMessage } from '../types'
 import { feedMessageOf } from './useDwarfMessaging'
 
 /**
@@ -38,7 +38,7 @@ import { feedMessageOf } from './useDwarfMessaging'
  * panel closing — throws them away.
  */
 
-/** A-15 `getDwarfFeedPage` in its 14 shape (`FeedParams` → `IpcResult<FeedPage>`), injected until ISSUE-123. */
+/** A-15 `getDwarfFeedPage` in its 14 shape (`FeedParams` → `IpcResult<FeedPage>`): `window.api.getDwarfFeedPage`. */
 export type HostFeedPageRead = (params: FeedParams) => Promise<unknown>
 
 /** Rows asked per Host page: all there can be, as at most 50 exist per dwarf (14 §3.6 `FeedPageRequest`, PO #87). */
@@ -111,61 +111,12 @@ export function useDwarfPaging() {
     open(dwarfId)
   }
 
-  /**
-   * Ask for the page before `before` — the row the panel decided its next page
-   * hangs off, so the cursor walks back one page per request.
-   *
-   * AMENDED for #430 (was: `shown`, the rows on screen, with the cursor derived
-   * from them here). WHICH row a page is asked for is `lib/message/feedPages`'s
-   * decision and always was; it moved out of this store because the answer now
-   * depends on where the newest rows came from — a held session's exchange is
-   * this app's own first-hand copy of the transcript, and only some of its rows
-   * can name a place in the file (`heldFeedPageCursorOf`). This store owns WHEN
-   * a page is asked for, and a null cursor is one of the refusals below.
-   *
-   * Refused without a word in five cases, none of them an error: nothing that
-   * can name a place to page before, a read already in flight, the start
-   * already reached, a conversation that cannot be paged, and one whose
-   * transcript outran the read's own ceiling. Refused too for a dwarf whose
-   * pages this store is not holding, because the answer would have nowhere to
-   * go.
+  /*
+   * REMOVED for ISSUE-123: `older`, today's scroll-back over A-15 in today's shape (a transcript walk from a
+   * `FeedPageCursor`). The cut-1 switch routes A-15 `host` with its target shape, so the one scroll-back left is
+   * `olderFromHost` below; `unpageable` and `beyondReach` stay in the state for `pagingNoteOf`, and the Host never sets
+   * them (its log holds at most 50 rows per dwarf, PO #87).
    */
-  async function older(dwarfId: string, before: FeedPageCursor | null): Promise<void> {
-    if (state.dwarfId !== dwarfId) return
-    if (state.loading || state.reachedStart || state.unpageable || state.beyondReach) return
-    if (before === null) return
-
-    const token = ++pageToken
-    state.loading = true
-    let page: DwarfFeedPage
-    try {
-      page = await window.api.getDwarfFeedPage({ dwarfId, before })
-    } catch {
-      // A lost round trip says nothing about the transcript, so it claims
-      // nothing about it: not unpageable, not the start. The reader's next
-      // scroll asks again, which is the one recovery available from here.
-      if (token === pageToken) state.loading = false
-      return
-    }
-    if (token !== pageToken) return
-
-    state.loading = false
-    if (!page.readable) {
-      state.unpageable = true
-      return
-    }
-    // An empty last page is a real answer: the cursor was the transcript's own
-    // oldest row. What it carries is the flag, not the rows.
-    if (page.messages.length > 0) state.pages = [[...page.messages], ...state.pages]
-    state.reachedStart = page.reachedStart
-    // Empty AND not the start is the wall: `readFeedPage`'s widest window
-    // filled without holding the cursor, so the file goes on past
-    // FEED_WINDOW_CEILING_BYTES and no page can come from behind it. Read off
-    // the two fields together because neither says it alone — an empty page at
-    // the start is the ordinary end of the conversation, and a short page that
-    // is not the start is the ordinary middle of a walk.
-    if (page.messages.length === 0 && !page.reachedStart) state.beyondReach = true
-  }
 
   /**
    * Ask the Host for the page before the oldest row held, with A-15 in its 14 shape (ISSUE-106; 14 §2.1 row A-15).
@@ -216,5 +167,5 @@ export function useDwarfPaging() {
     open(null)
   }
 
-  return { state, note, hold, older, olderFromHost, clear }
+  return { state, note, hold, olderFromHost, clear }
 }

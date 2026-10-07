@@ -3,7 +3,13 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CHANNELS, type ChannelKey } from '@dwarfai/contracts'
-import { ROUTES, ROUTES_RELEASE } from './routes'
+// AMENDED for ISSUE-123 (was: the release table `ROUTES` / `ROUTES_RELEASE`): the replay is cut 0's exit evidence (21 §2
+// cut 0 "Exit criteria"), so it covers the cut-0 table as it shipped, whatever the release.
+import { ROUTES as RELEASE_ROUTES } from './routes'
+import { CUT_0_TABLE } from './testing/cut0Routes'
+
+const ROUTES = CUT_0_TABLE.routes
+const ROUTES_RELEASE = CUT_0_TABLE.release
 
 /**
  * The legacy seam-A replay's scenario covers the table it proves (21 §2 note 1; TC-056-02): every row the cut-0 table
@@ -44,9 +50,15 @@ describe('the legacy seam-A replay scenario (21 §2 note 1)', () => {
     const todayWire: Partial<Record<ChannelKey, string>> = {
       'presence:visibleMines': 'panel:openMine'
     }
+    // AMENDED for ISSUE-123 (was: every entry): the generated preload is the release's, so only a row the release still
+    // speaks with today's shape is looked up in it; a row a later cut moved spoke its cut-0 member in the cut-0 build.
+    const spokenToday = new Set(
+      RELEASE_ROUTES.filter((route) => route.shape === 'today').map((route) => route.channel)
+    )
     for (const entry of [...scenario.calls, ...scenario.pushes]) {
       const key = entry.channel as ChannelKey
       expect(CHANNELS[key], entry.channel).toBeDefined()
+      if (!spokenToday.has(key)) continue
       expect(members.get(todayWire[key] ?? key), entry.channel).toBe(entry.member)
     }
     // A push row is listened to, never called; every other row is called.
