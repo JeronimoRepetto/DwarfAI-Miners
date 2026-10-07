@@ -135,3 +135,10 @@ criteria on the three OSes and then ran for 7 days of normal use with no blockin
 | Soak end                     | pending                  |
 | Blocking problems            | pending                  |
 | Retirement or deletion issue | ISSUE-124, ISSUE-125     |
+
+## Updates
+
+- **2026-10-07, `test/e2e-remove-mine-legacy-first` (L9).** `e2e/cut-1/remove-mine-legacy-first.e2e.ts` is added now that
+  the Host closes an observed Claude session once its recorded process is gone (#1240). Remove mine on a
+  legacy-launched session ends it through today's identity-checked kill first, then removes the mine; the dwarf departs
+  as `closed-elsewhere`. This settles the case listed as waiting under "Deferred cases" above.
