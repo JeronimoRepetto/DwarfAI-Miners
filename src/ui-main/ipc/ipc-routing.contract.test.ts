@@ -1904,4 +1904,51 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       'projects:query': ['mines.list']
     })
   })
+  it('[ADR-001] in cut 1 the bridges composed over today’s runtime read its poll interval only once the feed starts', async () => {
+    // Today's runtime answers its poll interval only once it is composed (`LegacyRuntimeRoute.surface`), which the
+    // root does after the bridges are composed: composing them must not read it, or the start fails.
+    let composed = false
+    const reads: string[] = []
+    const surface: LegacyRuntimeSurface = {
+      get pollIntervalMs() {
+        if (!composed)
+          throw new Error('the poll interval is read before today’s runtime is composed')
+        return 2_000
+      },
+      discovery: [],
+      registry: { replace: () => {} },
+      board: { publish: () => {} },
+      ledger: { credit: () => {} },
+      projects: { record: () => {} },
+      notifier: { update: () => {} }
+    }
+    const client = {
+      call: () => Promise.resolve([]),
+      subscribe: () => () => {}
+    } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client']
+    const dwarfIds = composeLegacyDwarfIdBridge({
+      release: ROUTES_RELEASE,
+      client,
+      legacy: { serve: () => Promise.resolve(undefined) },
+      registry: surface
+    })
+    const relay = composeLegacyAskRelay({ release: ROUTES_RELEASE, dwarfIds })
+    const feed = composeLegacyAgentRegistryFeed({
+      release: ROUTES_RELEASE,
+      legacy: relay?.registry,
+      timers: {
+        every: (ms) => {
+          reads.push(`every ${ms}`)
+          return () => {}
+        }
+      }
+    })
+    expect(feed).toBeDefined()
+    composed = true
+    feed?.start()
+    expect(reads).toEqual(['every 2000'])
+    feed?.stop()
+    relay?.dispose()
+    dwarfIds?.dispose()
+  })
 })

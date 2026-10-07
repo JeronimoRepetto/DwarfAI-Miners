@@ -676,6 +676,27 @@ export function composeLegacyLaunchObservation(deps: {
   return createLegacyLaunchObservation({ launches: deps.launches })
 }
 
+/**
+ * `surface` with its registry replaced and every other member read through it, its poll interval only when asked:
+ * today's runtime answers it only once it is composed, which the root does after the bridges (`LegacyRuntimeRoute`).
+ */
+function withRegistry(
+  surface: LegacyRuntimeSurface,
+  registry: LegacyRegistry
+): LegacyRuntimeSurface & { registry: LegacyRegistry } {
+  return {
+    get pollIntervalMs() {
+      return surface.pollIntervalMs
+    },
+    discovery: surface.discovery,
+    board: surface.board,
+    ledger: surface.ledger,
+    projects: surface.projects,
+    notifier: surface.notifier,
+    registry
+  }
+}
+
 /** `LegacyDwarfIdBridge` as the root composes it on today's runtime (21 §3, cuts 1–4). */
 export interface LegacyDwarfIdComposition {
   /** Today's runtime as the router's `legacy` target, the bridged rows' dwarf ids mapped. */
@@ -723,7 +744,7 @@ export function composeLegacyDwarfIdBridge(deps: {
   const uninstall = deps.pushes?.install(rows)
   return {
     legacy: { serve: (channel, payload) => rows.serve(channel, payload) },
-    registry: { ...registry, registry: tap.registry },
+    registry: withRegistry(registry, tap.registry),
     channels: [...rows.requestChannels, ...rows.pushChannels],
     bridge,
     sessions: tap.sessions,
@@ -776,15 +797,12 @@ export function composeLegacyAskRelay(deps: {
   const written = dwarfIds.registry
   return {
     legacy: { serve: (channel, payload) => relay.serve(channel, payload) },
-    registry: {
-      ...written,
-      registry: {
-        replace(sessions) {
-          written.registry.replace(sessions)
-          reading = relay.update()
-        }
+    registry: withRegistry(written, {
+      replace(sessions) {
+        written.registry.replace(sessions)
+        reading = relay.update()
       }
-    },
+    }),
     channels: relay.requestChannels,
     askFields: (dwarfId) => relay.askFields(dwarfId),
     onChanged(h) {
