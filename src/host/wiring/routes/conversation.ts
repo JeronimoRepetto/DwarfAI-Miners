@@ -17,7 +17,8 @@
 //
 // Not routed here, and why:
 // - `ObservedTurnEnded` (observation) → `recordTurnEnd`, `TurnEnded` → crew and attention,
-//   `DwarfDeparted` → `recordSessionEnd`, the ask routes → `noteAsk` (05 §4): ISSUE-120.
+//   `DwarfDeparted` → `recordSessionEnd` (05 §4): the cut-1 routes (routes/cut1Routes.ts,
+//   ISSUE-120). The ask routes → `noteAsk`: no ask event reaches the Host bus yet (later: ISSUE-140).
 // - The Reset saga's conversation step (`createConversationResetStep`): ISSUE-121.
 // - The write side (`send`, `retry`, `AnswerRecords`, `message.delivery`): EPIC-10 (ISSUE-182).
 import { HostInvariantError } from '../../kernel/domain/errors'

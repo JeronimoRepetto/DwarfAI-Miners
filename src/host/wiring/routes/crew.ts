@@ -31,13 +31,14 @@
 //   (`ObservedSessionStore.byIdentity`, 16 §4.3), which answers from the dwarf's own UNIQUE key.
 //
 // Not routed here, and why:
-// - `TurnEnded` → `crew.recordActivity('turn-finished')` (05 §4): conversation publishes it
-//   (ISSUE-108 wires conversation); the route is ISSUE-120's.
+// - `TurnEnded` → `crew.recordActivity('turn-finished', end)` (05 §4; owner amendment C): one of
+//   the cut-1 cross-epic routes (routes/cut1Routes.ts, ISSUE-120).
 // - `SubagentObserved` (08 §0): observation publishes no such event yet; a subagent arrives through
 //   `SessionObserved` with its `parentIdentity`, which this route ranks by depth.
 // - `DwarfStopRequested` → launching `markStoppedByPerson` (required handler, 16 §2.3): launching is
 //   not constructed by the Host yet (later: EPIC-10); without a handler every end runs.
-// - The cut-1 cross-epic routes (`TurnEnded`, `ask.*`, `DwarfDeparted` clean-ups; later: ISSUE-120).
+// - The cut-1 cross-epic routes (`TurnEnded`, `DwarfDeparted` clean-ups): routes/cut1Routes.ts
+//   (ISSUE-120); `ask.*` → `startAsking` / `stopAsking` join with asking (later: ISSUE-140).
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { Clock } from '../../kernel/ports/clock'

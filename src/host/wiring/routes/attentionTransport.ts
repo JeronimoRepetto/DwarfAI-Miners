@@ -30,10 +30,12 @@
 // The Reset saga's attention step is registered by preferencesWiring.ts (resetParticipants.ts,
 // ISSUE-118, ISSUE-226), in the saga's one `db` transaction.
 //
-// Not routed here (ISSUE-120): `ask.opened` / `ask.closed`, `TurnEnded` (`onFact` only when
-// `reliability === 'reliable' && !cancelledFromApp`) and `DwarfDeparted` → attention, with the names
-// resolved at emit time; the carry-over drop of a person-initiated turn. The 24-hour sweep of
-// withdrawn keys (09 §7.1, `Attention.sweep`) is not scheduled yet.
+// Not routed here: `TurnEnded` (`onFact` only when `reliability === 'reliable' && !cancelledFromApp`,
+// with the names resolved at emit time), the next turn start and `DwarfDeparted` → attention are
+// the cut-1 routes (routes/cut1Routes.ts, ISSUE-120); `ask.opened` / `ask.closed` join with asking
+// (later: ISSUE-140); the carry-over drop of a person-initiated turn with the Host's own sends
+// (later: EPIC-10). The 24-hour sweep of withdrawn keys (09 §7.1, `Attention.sweep`) is not
+// scheduled yet.
 import { t, type HostFrameName } from '@dwarfai/contracts'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { HostEpoch } from '../../kernel/domain/values'

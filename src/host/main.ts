@@ -65,8 +65,10 @@
 // B-M08 `attention.clicked` served before the bind, the attention frames advertised, and the
 // connection registry feeding the presence union and the tray notifier supervisor; then the
 // conversation's routes (its mine history, tails and frames over crew's and mines' queries) and the
-// per-mine coal backfill (`MineCreated` / `MineReattached` → `runMineCoalBackfill`, O-11-10). The
-// others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
+// per-mine coal backfill (`MineCreated` / `MineReattached` → `runMineCoalBackfill`, O-11-10); last,
+// the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
+// conversation, `TurnEnded` into crew and attention, the next turn start and the departures
+// withdrawing attention keys and closing activity runs. The others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
 // starts observation (`WiredObservation.start`: the catch-up, then the live loop). After step 7
 // (`startModules`) the mines restart the walks a stopped Host left and start their folder-check
 // schedule. After `ready`, the coal backfill. A cut-1 rollback build (wiring/cut1Rollback.ts,
@@ -162,6 +164,7 @@ import {
 } from './wiring/routes/conversation'
 import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
+import { routeCut1Events } from './wiring/routes/cut1Routes'
 import {
   routeMineBackfillWhenObserving,
   startBackfillWhenObserving,
@@ -548,18 +551,21 @@ async function main(): Promise<void> {
           // A cut-1 rollback build (21 §2 cut 1 row "Rollback") wires observation over a sink that writes
           // nothing, so it is never started and the coal backfill never runs (wiring/cut1Rollback.ts).
           modules.batchSink = CUT_1_ROLLBACK_CHOICES.observedBatchSink(batches.sink)
+          // The four observation adapters: observation reads through them, and the cut-1 turn-end
+          // route reads each session's declared `turnEnd` capability from them (ADR-009 D3).
+          const observed = observationAdapters({
+            folders,
+            fs,
+            clock,
+            processes: processControl,
+            openSnapshot: openReadOnlySnapshot
+          })
           // Observation next: crew's terminator and index read it, and every route that reads its
           // events is subscribed here, before step 7's catch-up (16 §8.2).
           modules.observation = wireObservation({
             // One set of the module's stores: crew's `ProviderIdentity → DwarfId` reads share it.
             stores: createSqliteObservationStores({ db, scope: transactions, clock }),
-            ...observationAdapters({
-              folders,
-              fs,
-              clock,
-              processes: processControl,
-              openSnapshot: openReadOnlySnapshot
-            }),
+            ...observed,
             sink: modules.batchSink,
             transactions: batches.transactions,
             bus,
@@ -620,7 +626,7 @@ async function main(): Promise<void> {
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
           // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).
           routeMineBackfillWhenObserving(ledger, bus, modules.batchSink)
-          // Attention: its routes from the other modules' events join with ISSUE-120.
+          // Attention, whose inputs the cut-1 routes below feed.
           modules.attention = servedAttention.wire({
             ledger: new SqliteAttentionLedger({ db, scope: transactions, clock, hostEpoch: epoch }),
             // A cut-1 rollback build sends no level-3 notification: the legacy notifier is the one notifier
@@ -643,6 +649,18 @@ async function main(): Promise<void> {
             ids,
             hostEpoch: epoch,
             log
+          })
+          // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
+          // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
+          // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.
+          routeCut1Events({
+            bus,
+            observed: observed.adapters,
+            sessions: modules.observation.crew.sessions,
+            conversation: conversation.conversation.commands,
+            crew: modules.crew.crew,
+            mines: modules.mines.mines.queries,
+            attention: modules.attention.attention
           })
         },
         // Step 7: the catch-up, then the live loop, through the wiring's own `start`, which is null
