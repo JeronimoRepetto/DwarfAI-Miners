@@ -1,5 +1,12 @@
 import { reactive } from 'vue'
-import { CHANNELS, type DwarfId, type MineHistoryView, type MineId } from '@dwarfai/contracts'
+import {
+  CHANNELS,
+  type DwarfId,
+  type DwarfRank,
+  type MineHistoryView,
+  type MineId,
+  type ProviderId
+} from '@dwarfai/contracts'
 import type { FeedMessage } from '../types'
 import { feedMessageOf } from './useDwarfMessaging'
 
@@ -10,6 +17,9 @@ export type HostMineHistoryRead = (mineId: MineId) => Promise<unknown>
 export interface MineHistoryTab {
   dwarfId: DwarfId
   displayName: string
+  /** Its rank and provider, so a departed dwarf keeps its role portrait (owner amendment F, 2026-10-07). */
+  rank: DwarfRank
+  providerId: ProviderId
   departed: boolean
   /** When its newest row was said (its provider time when it has one), or null when it has no row. */
   lastMessageAt: number | null
@@ -37,6 +47,8 @@ function tabOf(speaker: MineHistoryView['speakers'][number]): MineHistoryTab {
   return {
     dwarfId: speaker.dwarfId,
     displayName: speaker.displayName,
+    rank: speaker.rank,
+    providerId: speaker.providerId,
     departed: speaker.departed,
     lastMessageAt: said.length === 0 ? null : Math.max(...said),
     messages: speaker.messages.map(feedMessageOf)

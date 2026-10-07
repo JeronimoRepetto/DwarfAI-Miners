@@ -1,7 +1,8 @@
 // B-M27 `conversation.mineHistory` (14 §2.3, §3.4, §3.6 `MineHistoryView`, frozen; ADR-003 item 12;
 // ADR-007 item 5; PO #87): a mine's history from the Host's message log — every dwarf that worked
 // there, present or departed, with the same ≤ 50 rows the feed pages, undelivered ones included. It
-// never reads a provider file. The conversation wiring registers it over the module
+// never reads a provider file. Amended (owner amendment F, 2026-10-07): each speaker carries crew's
+// `rank` and `providerId`. The conversation wiring registers it over the module
 // (host/wiring/routes/conversation.ts, ISSUE-108); UI main's A-19 relays it (ui-main/ipc/handlers/getMineHistory.host.ts, routed
 // by ISSUE-123).
 //
@@ -37,6 +38,8 @@ export function registerConversationMineHistory(
         speakers: history.speakers.map((speaker) => ({
           dwarfId: speaker.dwarfId,
           displayName: speaker.displayName,
+          rank: speaker.rank,
+          providerId: speaker.providerId,
           departed: speaker.departed,
           messages: speaker.messages.map(toMessageWire)
         }))

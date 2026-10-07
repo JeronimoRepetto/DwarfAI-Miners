@@ -193,9 +193,19 @@ const activityWire = {
 
 const feedPageRequest = { before: MESSAGE, limit: 50 } satisfies FeedPageRequest
 const feedPage = { dwarfId: DWARF, messages: [messageView], reachedStart: false } satisfies FeedPage
+// Amended: each speaker carries its rank and provider (owner amendment F, 2026-10-07).
 const mineHistoryView = {
   mineId: MINE,
-  speakers: [{ dwarfId: DWARF, displayName: 'Borin', departed: false, messages: [messageView] }]
+  speakers: [
+    {
+      dwarfId: DWARF,
+      displayName: 'Borin',
+      rank: 'worker',
+      providerId: 'codex',
+      departed: false,
+      messages: [messageView]
+    }
+  ]
 } satisfies MineHistoryView
 
 const modelOptionView = {
@@ -513,6 +523,21 @@ describe('wire view types (14 §3.6)', () => {
     expect(stopUnavailableReasonSchema.safeParse('already-stopping').success).toBe(true)
     expect(stopUnavailableReasonSchema.safeParse('turn-open').success).toBe(false)
     expect(mineWireSchema.safeParse({ ...mineWire, state: 'removed' }).success).toBe(false)
+    // Amended (owner amendment F, 2026-10-07): a history speaker needs a known rank and its provider.
+    const speaker = mineHistoryView.speakers[0]!
+    const speakerWithoutProvider = Object.fromEntries(
+      Object.entries(speaker).filter(([key]) => key !== 'providerId')
+    )
+    expect(
+      mineHistoryViewSchema.safeParse({
+        ...mineHistoryView,
+        speakers: [{ ...speaker, rank: 'boss' }]
+      }).success
+    ).toBe(false)
+    expect(
+      mineHistoryViewSchema.safeParse({ ...mineHistoryView, speakers: [speakerWithoutProvider] })
+        .success
+    ).toBe(false)
     expect(hostToastSchema.safeParse({ kind: 'unknown', requestId: 'r' }).success).toBe(false)
     expect(mineWireSchema.safeParse({ ...mineWire, id: 'mine-1' }).success).toBe(false)
     const uuidV4 = '01920000-0000-4000-8000-000000000001'

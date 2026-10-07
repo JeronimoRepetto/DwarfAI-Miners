@@ -140,12 +140,17 @@ export interface FeedPage {
   reachedStart: boolean
 }
 
-/** 14 §3.6 `MineHistoryView`: ≤ 50 messages per speaker. */
+/**
+ * 14 §3.6 `MineHistoryView`: ≤ 50 messages per speaker. Amended (owner amendment F, 2026-10-07): each speaker
+ * carries its `rank` and `providerId`, so a departed speaker keeps its role portrait.
+ */
 export interface MineHistoryView {
   mineId: MineId
   speakers: Array<{
     dwarfId: DwarfId
     displayName: string
+    rank: DwarfRank // Amended: owner amendment F, 2026-10-07
+    providerId: ProviderId // Amended: owner amendment F, 2026-10-07
     departed: boolean
     messages: MessageView[]
   }>
@@ -299,6 +304,8 @@ export const mineHistoryViewSchema = z
         .object({
           dwarfId: dwarfIdSchema,
           displayName: z.string(),
+          rank: dwarfRankSchema, // Amended: owner amendment F, 2026-10-07
+          providerId: providerIdSchema, // Amended: owner amendment F, 2026-10-07
           departed: z.boolean(),
           messages: z.array(messageViewSchema).max(FEED_PAGE_LIMIT_MAX)
         })

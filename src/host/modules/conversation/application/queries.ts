@@ -18,8 +18,9 @@
 // read, from the same log and the same ≤ 50 rows as the feed (INV-61).
 //
 // - Speakers are crew's `crewOf(mineId, { includeDeparted: true })` in its order (AMENDMENT-10):
-//   present and departed dwarfs alike, each marked, with crew's `displayName`; a mine where no dwarf
-//   was ever recorded has none ("Nobody has worked here yet.").
+//   present and departed dwarfs alike, each marked, with crew's `displayName`, `rank` and
+//   `providerId` (owner amendment F, 2026-10-07: a departed speaker keeps its role portrait); a mine
+//   where no dwarf was ever recorded has none ("Nobody has worked here yet.").
 // - Each speaker's messages are its stored rows, oldest first for reading, undelivered ones
 //   included with their `delivery` (06 §0.2 `MessageView`; no Retry, the history is read-only). A
 //   dwarf with no row has none: nothing is ever read from a provider file (PO #87).
@@ -65,7 +66,7 @@ export interface MineCrew {
   crewOf(
     mineId: MineId,
     opts: { includeDeparted: true }
-  ): ReadonlyArray<Pick<DwarfView, 'id' | 'displayName' | 'departed'>>
+  ): ReadonlyArray<Pick<DwarfView, 'id' | 'displayName' | 'rank' | 'providerId' | 'departed'>>
 }
 
 export interface ConversationMineHistoryDeps {
@@ -83,6 +84,8 @@ export class ConversationMineHistory {
       speakers: crew.map((dwarf) => ({
         dwarfId: dwarf.id,
         displayName: dwarf.displayName,
+        rank: dwarf.rank,
+        providerId: dwarf.providerId,
         departed: dwarf.departed,
         // The feed's own read (newest first, at most 50), turned oldest first for reading.
         messages: this.deps.log

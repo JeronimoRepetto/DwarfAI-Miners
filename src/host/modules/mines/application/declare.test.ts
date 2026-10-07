@@ -157,9 +157,10 @@ describe('declare and adoptMainProject (16 §4.1, UC-039)', () => {
     const repo = await declared(w, '/work/repo')
     const before = { mines: w.mines(), events: w.bus.published.length }
 
+    // Amended: the answer names the main working tree's path (owner amendment G, 2026-10-07).
     expect(await w.commands.declare(at('/work/feat'))).toEqual({
       ok: true,
-      value: { worktreeOf: repo }
+      value: { worktreeOf: repo, mainPath: '/work/repo' }
     })
     expect(w.mines()).toEqual(before.mines)
     expect(w.bus.published).toHaveLength(before.events)
@@ -170,7 +171,11 @@ describe('declare and adoptMainProject (16 §4.1, UC-039)', () => {
 
     // UC-039 "worktreeOf mineId of T (or of a new main tree)": the id is minted, never stored.
     const asked = await w.commands.declare(at('/work/feat'))
-    expect(asked).toEqual({ ok: true, value: { worktreeOf: expect.any(String) } })
+    // Amended: the main tree's path is named even though it is no mine yet (owner amendment G, 2026-10-07).
+    expect(asked).toEqual({
+      ok: true,
+      value: { worktreeOf: expect.any(String), mainPath: '/work/repo' }
+    })
     const fresh = (asked as { value: { worktreeOf: MineId } }).value.worktreeOf
     expect(w.repository.byId(fresh)).toBeNull()
     expect(w.mines()).toEqual([])

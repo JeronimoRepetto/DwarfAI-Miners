@@ -52,6 +52,7 @@ const R1 = '01890a5d-ac96-774b-bcce-b302099a8001'
 const R2 = '01890a5d-ac96-774b-bcce-b302099a8002'
 const PICKED = '/home/j/work/ore'
 const WORKTREE = '/home/j/work/ore-feat'
+const MAIN_TREE = '/home/j/work/ore-main'
 const MINE_CAPABILITIES = [
   'mines.declare',
   'mines.adoptMainProject',
@@ -181,7 +182,11 @@ describe('Mines admin rows through UI main (14 §2.1 A-20, A-30, A-31, A-32, A-3
 
   it("[ADR-019] a worktree answer is mapped to today's outcome and declareMainProject then adopts the remembered path", async () => {
     const { host, dialog, call, sent } = await world()
-    host.handle('mines.declare', () => ({ ok: true, value: { worktreeOf: MAIN_MINE } }))
+    // Amended: the Host names the main working tree's path (owner amendment G, 2026-10-07).
+    host.handle('mines.declare', () => ({
+      ok: true,
+      value: { worktreeOf: MAIN_MINE, mainPath: PICKED }
+    }))
     host.handle('mines.adoptMainProject', () => ({ ok: true, value: { mineId: MAIN_MINE } }))
     // The main project's mine is listed: its folder is the worktree's root the dialog names.
     host.handle('mines.list', () => ({
@@ -379,20 +384,24 @@ describe('Mines admin rows through UI main (14 §2.1 A-20, A-30, A-31, A-32, A-3
 })
 
 describe('Mines admin rows: the cases around the issue list (14 §2.1)', () => {
-  it('[ADR-019] a worktree whose main project has no mine yet answers an empty root, and the remembered path stays per window', async () => {
-    // Package gap (pinned so it stays visible, for ISSUE-123 / EPIC-16): the Host answers `{worktreeOf}` with a fresh
-    // id when the main tree has no mine (declare.ts), and no seam-B member names that tree's folder, so today's
-    // `MineWorktreeOf.root` has nothing to hold.
+  it('[ADR-019] a worktree whose main project has no mine yet answers the main path the Host named as its root, and the remembered path stays per window', async () => {
+    // Amended (owner amendment G, 2026-10-07; was the pinned package gap of an empty root): the Host answers
+    // `{worktreeOf, mainPath}` with a fresh id when the main tree has no mine (declare.ts), and `mainPath` names that
+    // tree's folder, so today's `MineWorktreeOf.root` holds it and no mine list is read for it.
     const { host, dialog, call, sent } = await world()
-    host.handle('mines.declare', () => ({ ok: true, value: { worktreeOf: MAIN_MINE } }))
+    host.handle('mines.declare', () => ({
+      ok: true,
+      value: { worktreeOf: MAIN_MINE, mainPath: MAIN_TREE }
+    }))
     host.handle('mines.list', () => ({ mines: [], total: 0 }))
     host.handle('mines.adoptMainProject', () => ({ ok: true, value: { mineId: MAIN_MINE } }))
     dialog.picks(WORKTREE)
 
     expect(await call(MINE_DECLARE)).toEqual({
       outcome: 'worktree-of',
-      worktreeOf: { worktree: WORKTREE, root: '' }
+      worktreeOf: { worktree: WORKTREE, root: MAIN_TREE }
     })
+    expect(sent().filter(([method]) => method === 'mines.list')).toEqual([])
 
     // Another window asked nothing: it has no project waiting, and nothing is sent for it.
     expect(await call(MINE_DECLARE_MAIN, undefined, FROM_OTHER)).toEqual({
@@ -415,7 +424,10 @@ describe('Mines admin rows: the cases around the issue list (14 §2.1)', () => {
       reason: 'That folder could not be saved as a mine.'
     })
 
-    host.handle('mines.declare', () => ({ ok: true, value: { worktreeOf: MAIN_MINE } }))
+    host.handle('mines.declare', () => ({
+      ok: true,
+      value: { worktreeOf: MAIN_MINE, mainPath: MAIN_TREE }
+    }))
     host.handle('mines.list', () => ({ mines: [], total: 0 }))
     host.handle('mines.adoptMainProject', () => ({ ok: false, error: 'no-main-project' }))
     await call(MINE_DECLARE)

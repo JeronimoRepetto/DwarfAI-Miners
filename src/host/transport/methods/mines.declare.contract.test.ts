@@ -256,7 +256,11 @@ describe('mines.declare, mines.adoptMainProject and mines.resolveFile over seam 
       'mines.declare',
       await call(ui, 'mines.declare', { path: join(root, 'feat'), requestId: uuid(3) })
     )
-    expect(asked).toEqual({ ok: true, value: { worktreeOf: expect.any(String) } })
+    // Amended: the answer names the main working tree's path (owner amendment G, 2026-10-07).
+    expect(asked).toEqual({
+      ok: true,
+      value: { worktreeOf: expect.any(String), mainPath: expect.any(String) }
+    })
     expect(bus.ofType('MineCreated')).toHaveLength(1)
     const adopted = resultOf(
       'mines.adoptMainProject',
@@ -271,6 +275,10 @@ describe('mines.declare, mines.adoptMainProject and mines.resolveFile over seam 
       name: 'repo',
       origin: 'worktree-fold'
     })
+    // The main path the worktree answer named is the key the adopted mine was created at.
+    expect((asked as { value: { mainPath: string } }).value.mainPath).toBe(
+      bus.ofType('MineCreated').at(-1)?.payload.path
+    )
     expect(
       resultOf(
         'mines.adoptMainProject',

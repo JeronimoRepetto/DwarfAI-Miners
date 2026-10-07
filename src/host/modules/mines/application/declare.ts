@@ -7,10 +7,12 @@
 //   `not-a-folder`. Everything after uses the real path.
 // - The identity is the exact folder (ADR-030 item 1): `MineIdentityResolver` never walks up, except
 //   from a linked worktree to its main working tree (item 2). A linked worktree is never declared:
-//   `declare` answers `{ worktreeOf }` and writes nothing, so the UI asks the PO #41 question.
-//   When the main tree has no mine yet, `worktreeOf` is a fresh id from the `IdGenerator` that
-//   names no stored mine (UC-039 "mineId of T (or of a new main tree)"): UI main never resolves
-//   it, it only remembers the worktree path for A-31, and `adoptMainProject` answers the real id.
+//   `declare` answers `{ worktreeOf, mainPath }` and writes nothing, so the UI asks the PO #41
+//   question. `mainPath` is the main working tree's key the resolver found, whether or not it is a
+//   mine yet (owner amendment G, 2026-10-07): the dialog names it. When the main tree has no mine
+//   yet, `worktreeOf` is a fresh id from the `IdGenerator` that names no stored mine (UC-039 "mineId
+//   of T (or of a new main tree)"): UI main never resolves it, it only remembers the worktree path
+//   for A-31, and `adoptMainProject` answers the real id.
 // - A folder that never was a mine becomes `measuring` (S3.04, INV-04); a removed one is reattached
 //   with its id and ledger (S3.20 measured → `active`, S3.21 → `measuring`; INV-07); a live one is
 //   answered as is (UNIQUE `canonical_path`: a second declare returns the same `mineId`). The
@@ -51,7 +53,12 @@ export interface MinesCommands {
   ): Promise<{ mineId: MineId; created: boolean } | { unenterable: string } | { waiting: true }> // { waiting }: unknown folder, no first message yet → no mine, no dwarf, cursor only (06 INV-39; AMENDMENT-2, SC-AR-01)
   declare(
     path: FolderPath
-  ): Promise<Result<{ mineId: MineId } | { worktreeOf: MineId }, 'not-a-folder' | 'invalid-path'>>
+  ): Promise<
+    Result<
+      { mineId: MineId } | { worktreeOf: MineId; mainPath: FolderPath },
+      'not-a-folder' | 'invalid-path'
+    >
+  > // Amended: mainPath (owner amendment G, 2026-10-07)
   adoptMainProject(worktreePath: FolderPath): Promise<Result<{ mineId: MineId }, 'no-main-project'>>
   remove(mineId: MineId, requestId: string): Promise<Result<void, 'dwarf-could-not-be-ended'>> // OQ-06, OQ-11: keeps the mine on failure; requestId → MineRemovalFailed (08 §0)
   remeasure(mineId: MineId): void
@@ -87,7 +94,13 @@ export function createDeclareCommands(
       const { mineKey, workplace } = await deps.resolver.resolve(real.value)
       if (workplace !== undefined) {
         const main = deps.repository.byPath(mineKey as FolderPath)
-        return { ok: true, value: { worktreeOf: main?.id ?? mineIdOf(deps.ids.uuidv7()) } }
+        return {
+          ok: true,
+          value: {
+            worktreeOf: main?.id ?? mineIdOf(deps.ids.uuidv7()),
+            mainPath: mineKey as FolderPath
+          }
+        }
       }
       const mineId = settle(deps, mineKey as MinePath, 'declared')
       return { ok: true, value: { mineId } }
