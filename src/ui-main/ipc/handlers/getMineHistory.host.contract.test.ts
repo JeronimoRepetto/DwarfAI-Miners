@@ -28,6 +28,9 @@ const HISTORY: MineHistoryView = {
     {
       dwarfId: DWARF,
       displayName: 'Dáin',
+      // Amended: each speaker carries its rank and provider (owner amendment F, 2026-10-07).
+      rank: 'foreman',
+      providerId: 'claude',
       departed: true,
       messages: [
         {

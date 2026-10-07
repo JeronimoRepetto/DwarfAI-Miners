@@ -120,8 +120,21 @@ describe('the wired mine history (16 §4.6 ConversationQueries.mineHistory)', ()
       crewOf: (mineId: MineId, opts: { includeDeparted: true }) =>
         mineId === MINE && opts.includeDeparted
           ? [
-              { id: dwarf, displayName: 'Durin', departed: false },
-              { id: left, displayName: 'Thrór', departed: true }
+              // Amended: crew's rank and provider (owner amendment F, 2026-10-07).
+              {
+                id: dwarf,
+                displayName: 'Durin',
+                rank: 'foreman' as const,
+                providerId: 'claude',
+                departed: false
+              },
+              {
+                id: left,
+                displayName: 'Thrór',
+                rank: 'worker' as const,
+                providerId: 'codex',
+                departed: true
+              }
             ]
           : []
     }
@@ -129,10 +142,16 @@ describe('the wired mine history (16 §4.6 ConversationQueries.mineHistory)', ()
     const view = conversation.history({ crew }).mineHistory(MINE)
 
     expect(
-      view.speakers.map((s) => [s.displayName, s.departed, s.messages.map((m) => m.text)])
+      view.speakers.map((s) => [
+        s.displayName,
+        s.rank,
+        s.providerId,
+        s.departed,
+        s.messages.map((m) => m.text)
+      ])
     ).toEqual([
-      ['Durin', false, ['message 1', 'message 2']],
-      ['Thrór', true, ['message 3']]
+      ['Durin', 'foreman', 'claude', false, ['message 1', 'message 2']],
+      ['Thrór', 'worker', 'codex', true, ['message 3']]
     ])
   })
 })

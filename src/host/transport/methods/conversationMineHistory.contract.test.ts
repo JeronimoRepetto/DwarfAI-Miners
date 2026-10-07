@@ -115,10 +115,19 @@ async function host() {
       {
         dwarfId: DWARF_A,
         displayName: 'Dáin',
+        rank: 'foreman',
+        providerId: 'claude',
         departed: false,
         messages: rows(DWARF_A, 0x100, 50)
       },
-      { dwarfId: DWARF_B, displayName: 'Thráin', departed: true, messages: rows(DWARF_B, 0x200, 3) }
+      {
+        dwarfId: DWARF_B,
+        displayName: 'Thráin',
+        rank: 'worker',
+        providerId: 'codex',
+        departed: true,
+        messages: rows(DWARF_B, 0x200, 3)
+      }
     ]
   })
   registerConversationMineHistory(dispatcher, { conversation })
@@ -202,9 +211,12 @@ describe('conversation.mineHistory over seam B (B-M27)', () => {
     // Every speaker, present or departed, with its stored rows (at most 50), oldest first.
     const history = historyOf(await call(ui, 'conversation.mineHistory', { mineId: MINE }))
     expect(history.mineId).toBe(MINE)
-    expect(history.speakers.map((s) => [s.dwarfId, s.displayName, s.departed])).toEqual([
-      [DWARF_A, 'Dáin', false],
-      [DWARF_B, 'Thráin', true]
+    // Amended: each speaker's rank and provider reach the wire (owner amendment F, 2026-10-07).
+    expect(
+      history.speakers.map((s) => [s.dwarfId, s.displayName, s.rank, s.providerId, s.departed])
+    ).toEqual([
+      [DWARF_A, 'Dáin', 'foreman', 'claude', false],
+      [DWARF_B, 'Thráin', 'worker', 'codex', true]
     ])
     expect(history.speakers[0]?.messages).toHaveLength(50)
     expect(history.speakers[0]?.messages.at(-1)?.text).toBe(`${CANARY} 49`)

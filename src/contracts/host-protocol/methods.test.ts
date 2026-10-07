@@ -612,7 +612,15 @@ describe('conversation.mineHistory params and result (14 §3.4, §3.6, B-M27)', 
     providerTime: null,
     createdAt: 1_001
   }
-  const speaker = { dwarfId: DWARF, displayName: 'Dáin', departed: true, messages: [view] }
+  // Amended: each speaker carries its rank and provider (owner amendment F, 2026-10-07).
+  const speaker = {
+    dwarfId: DWARF,
+    displayName: 'Dáin',
+    rank: 'foreman',
+    providerId: 'claude',
+    departed: true,
+    messages: [view]
+  }
 
   it('[ADR-003] the conversation.mineHistory schemas infer exactly { mineId } and MineHistoryView, and refuse any other key', () => {
     expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('conversation.mineHistory')
@@ -638,6 +646,10 @@ describe('conversation.mineHistory params and result (14 §3.4, §3.6, B-M27)', 
 
     expect(result.safeParse({ mineId: MINE, speakers: [] }).success).toBe(true)
     expect(result.safeParse({ mineId: MINE, speakers: [speaker] }).success).toBe(true)
+    const speakerWithoutRank = Object.fromEntries(
+      Object.entries(speaker).filter(([key]) => key !== 'rank')
+    )
+    expect(result.safeParse({ mineId: MINE, speakers: [speakerWithoutRank] }).success).toBe(false)
     expect(
       result.safeParse({ mineId: MINE, speakers: [{ ...speaker, retry: true }] }).success
     ).toBe(false)

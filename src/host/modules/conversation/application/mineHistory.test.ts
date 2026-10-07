@@ -6,9 +6,11 @@
 // from a provider file.
 //
 // TC-104-01 (present and departed speakers, each with its stored rows only).
-import { describe, expect, it } from 'vitest'
-import type { DwarfId, MineId } from '../../../kernel/domain/values'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import type { DwarfId, MineId, ProviderId } from '../../../kernel/domain/values'
+import type { DwarfRank } from '../../crew'
 import type { ConversationEntry } from '../../suppliers'
+import type { HistorySpeakerRank } from '../domain/messages'
 import { CONVERSATION_T0 as T0, inMemoryConversation } from '../testing/inMemoryConversation'
 import { ConversationFeedQueries, ConversationMineHistory, type MineCrew } from './queries'
 
@@ -24,6 +26,8 @@ interface CrewRow {
   id: DwarfId
   mineId: MineId
   displayName: string
+  rank: DwarfRank
+  providerId: ProviderId
   departed: boolean
 }
 
@@ -41,10 +45,38 @@ class FakeMineCrew implements MineCrew {
 }
 
 const CREW: CrewRow[] = [
-  { id: DAIN, mineId: MINE, displayName: 'Dáin', departed: false },
-  { id: THRAIN, mineId: MINE, displayName: 'Thráin', departed: true },
-  { id: NORI, mineId: MINE, displayName: 'Nori', departed: false },
-  { id: STRANGER, mineId: OTHER_MINE, displayName: 'Stranger', departed: false }
+  {
+    id: DAIN,
+    mineId: MINE,
+    displayName: 'Dáin',
+    rank: 'foreman',
+    providerId: 'claude',
+    departed: false
+  },
+  {
+    id: THRAIN,
+    mineId: MINE,
+    displayName: 'Thráin',
+    rank: 'worker',
+    providerId: 'codex',
+    departed: true
+  },
+  {
+    id: NORI,
+    mineId: MINE,
+    displayName: 'Nori',
+    rank: 'worker2',
+    providerId: 'claude',
+    departed: false
+  },
+  {
+    id: STRANGER,
+    mineId: OTHER_MINE,
+    displayName: 'Stranger',
+    rank: 'foreman',
+    providerId: 'codex',
+    departed: false
+  }
 ]
 
 /** What a transcript observer reads (15 §1.5 key shape); never real conversation text. */
@@ -85,11 +117,17 @@ describe('mineHistory', () => {
     // Departed dwarfs are asked for (AMENDMENT-10): Thráin left, and its rows are kept (09 §7.1).
     expect(fakeCrew.calls).toEqual([{ mineId: MINE, opts: { includeDeparted: true } }])
     expect(view.mineId).toBe(MINE)
-    expect(view.speakers.map((s) => [s.dwarfId, s.displayName, s.departed])).toEqual([
-      [DAIN, 'Dáin', false],
-      [THRAIN, 'Thráin', true],
-      [NORI, 'Nori', false]
+    // Amended: each speaker carries crew's rank and provider, so a departed one keeps its role
+    // portrait (owner amendment F, 2026-10-07).
+    expect(
+      view.speakers.map((s) => [s.dwarfId, s.displayName, s.rank, s.providerId, s.departed])
+    ).toEqual([
+      [DAIN, 'Dáin', 'foreman', 'claude', false],
+      [THRAIN, 'Thráin', 'worker', 'codex', true],
+      [NORI, 'Nori', 'worker2', 'claude', false]
     ])
+    // The conversation domain's copy of the rank is crew's `DwarfRank`, its owner (06 §5.1).
+    expectTypeOf<HistorySpeakerRank>().toEqualTypeOf<DwarfRank>()
     // Each speaker carries its own stored rows only, oldest first for reading; the last one is its
     // last timed entry ("last · <time>").
     const [dain, thrain, nori] = view.speakers

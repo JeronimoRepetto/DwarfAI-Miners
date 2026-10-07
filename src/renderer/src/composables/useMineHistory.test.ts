@@ -68,10 +68,19 @@ describe('useMineHistory', () => {
         {
           dwarfId: BORIN,
           displayName: 'Borin',
+          rank: 'foreman',
+          providerId: 'claude',
           departed: false,
           messages: [view(1, BORIN), view(2, BORIN, { providerTime: NINE + 150_000 })]
         },
-        { dwarfId: DAIN, displayName: 'Dain', departed: true, messages: [] }
+        {
+          dwarfId: DAIN,
+          displayName: 'Dain',
+          rank: 'worker',
+          providerId: 'codex',
+          departed: true,
+          messages: []
+        }
       ])
     )
     const { state, open } = useMineHistory()
@@ -79,6 +88,8 @@ describe('useMineHistory', () => {
     await open(ALPHA, getMineHistory)
 
     expect(getMineHistory).toHaveBeenCalledWith(ALPHA)
+    // Amended: each tab carries its speaker's rank and provider, so a departed dwarf keeps its role
+    // portrait (owner amendment F, 2026-10-07).
     expect(state).toEqual({
       mineId: ALPHA,
       readable: true,
@@ -86,6 +97,8 @@ describe('useMineHistory', () => {
         {
           dwarfId: BORIN,
           displayName: 'Borin',
+          rank: 'foreman',
+          providerId: 'claude',
           departed: false,
           lastMessageAt: NINE + 150_000,
           messages: [
@@ -93,7 +106,15 @@ describe('useMineHistory', () => {
             { role: 'assistant', text: 'line 2', timestamp: '2026-10-06T09:02:30.000Z' }
           ]
         },
-        { dwarfId: DAIN, displayName: 'Dain', departed: true, lastMessageAt: null, messages: [] }
+        {
+          dwarfId: DAIN,
+          displayName: 'Dain',
+          rank: 'worker',
+          providerId: 'codex',
+          departed: true,
+          lastMessageAt: null,
+          messages: []
+        }
       ]
     })
   })
@@ -126,7 +147,16 @@ describe('useMineHistory', () => {
     const first = open(ALPHA, getMineHistory)
     await open(BETA, getMineHistory)
     slow.release(
-      history(ALPHA, [{ dwarfId: BORIN, displayName: 'Borin', departed: false, messages: [] }])
+      history(ALPHA, [
+        {
+          dwarfId: BORIN,
+          displayName: 'Borin',
+          rank: 'foreman',
+          providerId: 'claude',
+          departed: false,
+          messages: []
+        }
+      ])
     )
     await first
 
