@@ -22,6 +22,9 @@
 //   `coal_backfill_units` row per finished scan unit (`ON CONFLICT (scan_unit) DO NOTHING`), whose
 //   foreign key ties it to the current moment and goes with it (cascade). The table CHECK keeps
 //   `backfill_done_at` set exactly when the state is `done`.
+// - `setInstallMoment(t)` (16 §4.10; 07 S13.05, S19.01; 09 §7.2): the Reset saga's new moment
+//   `(t, 'reset')`, replacing any moment there (its scan units go by cascade), in the caller's
+//   transaction.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { UsageObservation } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, Instant, MineId } from '../../../kernel/domain/values'
@@ -90,6 +93,11 @@ const INSERT_ENTRY = `INSERT INTO ledger_entries
 const TOTALS = 'SELECT material, tokens FROM material_totals WHERE mine_id = ?'
 
 const INSTALL_MOMENT = 'SELECT at FROM install_moment WHERE id = 1'
+
+// 16 §4.10 `setInstallMoment(t)`: only the Reset saga's `install-moment` step writes a moment
+// after the fresh install's (07 S13.05), so the reason is `reset` and the backfill starts over.
+const DELETE_INSTALL_MOMENT = 'DELETE FROM install_moment WHERE id = 1'
+const INSERT_RESET_MOMENT = "INSERT INTO install_moment (id, at, reason) VALUES (1, ?, 'reset')"
 
 const SUBJECT = 'SELECT mine_id, usage_path FROM dwarfs WHERE id = ?'
 
@@ -199,6 +207,13 @@ export class SqliteLedgerRepository implements LedgerRepository {
   installMoment(): Instant | null {
     const row = this.deps.db.all(INSTALL_MOMENT)[0]
     return row === undefined ? null : Number(row['at'])
+  }
+
+  setInstallMoment(t: Instant): void {
+    this.requireTransaction('setInstallMoment')
+    // The old moment goes first, and its scan units with it (cascade, S19.01).
+    this.deps.db.run(DELETE_INSTALL_MOMENT)
+    this.deps.db.run(INSERT_RESET_MOMENT, [t])
   }
 
   subjectOf(dwarfId: DwarfId): CreditSubject | null {

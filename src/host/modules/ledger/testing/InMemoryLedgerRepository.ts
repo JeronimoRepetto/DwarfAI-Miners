@@ -213,6 +213,11 @@ export class InMemoryLedgerRepository implements LedgerRepository {
     return this.rows.installMomentAt
   }
 
+  setInstallMoment(t: Instant): void {
+    this.requireTransaction('setInstallMoment')
+    this.deps.world.writeInstallMoment(t)
+  }
+
   subjectOf(dwarfId: DwarfId): CreditSubject | null {
     const subject = this.rows.dwarfs.get(dwarfId)
     return subject === undefined ? null : { ...subject }
