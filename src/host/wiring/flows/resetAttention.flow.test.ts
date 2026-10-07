@@ -30,6 +30,7 @@ import {
 } from '../../modules/preferences'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
+import { createModuleResetSteps } from '../moduleResetSteps'
 import { resetParticipants } from '../resetParticipants'
 
 const T0 = 1_790_000_000_000
@@ -109,6 +110,14 @@ function host(options: { laterStep?: ResetDbStep } = {}) {
   // The saga as the composition root wires it, with the attention step registered.
   const participants = resetParticipants({
     preferences: createPreferencesResetStep({ db, clock }),
+    // The cut-1 module steps (ISSUE-121), as host/main.ts builds them at boot step 3.
+    modules: createModuleResetSteps({
+      db,
+      scope: transactions,
+      clock,
+      mapSites: [],
+      random: () => 0
+    }).steps,
     attention: createAttentionResetStep({ db, scope: transactions }),
     ledger: { setInstallMoment: () => undefined },
     clock

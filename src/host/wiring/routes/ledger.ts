@@ -20,6 +20,8 @@
 //   unfinished (INV-97) and the backfill is not `done`, so each Host `ready` resumes a `paused` one
 //   until it is. A failed run is logged as an uncaught error and resolves null: the Host goes on,
 //   and the next `ready` runs it again from its recorded scan units (S19.07).
+// - `routeResetFinished`, run by boot step 4 (ISSUE-121; 08 §2.9): `MetricsResetFinished` → the
+//   sealed units of every mine credited, then the backfill through `startBackfillWhenObserving`.
 // - `routeMineBackfillWhenObserving`, run by boot step 4 behind the same gate (ISSUE-108; owner
 //   amendment D, 11 O-11-10): `MineCreated` / `MineReattached` → `runMineCoalBackfill(mineId)`
 //   (`startMineBackfill`), fire and forget, a failure logged as `startBackfill`'s.
@@ -34,8 +36,10 @@
 // Not routed here, and why:
 // - `DriverUsageReported` (suppliers) → `creditUsage(…, 'driver')`: suppliers publishes no usage of
 //   an owned session yet (later: EPIC-10).
-// - The Reset saga's ledger step (`createLedgerResetStep`) and the backfill's abort on a new Reset
-//   (S19.06): later: ISSUE-097, ISSUE-121, EPIC-13. The abort signal is this wiring's own.
+//
+// The Reset saga's ledger step (`createLedgerResetStep`) is registered by moduleResetSteps.ts and
+// resetParticipants.ts (ISSUE-121). `MetricsResetStarted` (preferences, after the saga's `db` commit)
+// aborts a running coal backfill (07 S19.06): the abort signal is this wiring's own.
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { FolderPath, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
@@ -54,6 +58,7 @@ import {
 } from '../../modules/ledger'
 import type { MinesEvent, MinesQueries } from '../../modules/mines'
 import type { ObservedBatchSink } from '../../modules/observation'
+import type { PreferencesEvent } from '../../modules/preferences'
 import { publishLedgerFrames, type LedgerFramePublisher } from '../../transport/frames/ledger'
 import type { MineTotalsReader } from '../../transport/mappers/wire'
 import { errorCode } from '../boot'
@@ -61,11 +66,12 @@ import { ledgerBatchHalf, type ObservedBatchHalf } from '../bridges/observedBatc
 import { observesWith } from './observation'
 
 /** The events the ledger wiring routes or projects: one Host bus carries them all (16 §2.3). */
-export type LedgerRouteEvent = LedgerEvent | MinesEvent
+export type LedgerRouteEvent = LedgerEvent | MinesEvent | PreferencesEvent
 
 /** The Host bus as the ledger wiring uses it: the ledger publishes; mines is read. */
 export type LedgerWiringBus = Pick<DomainEventBus<LedgerEvent>, 'publish' | 'subscribe'> &
-  Pick<DomainEventBus<MinesEvent>, 'subscribe'>
+  Pick<DomainEventBus<MinesEvent>, 'subscribe'> &
+  Pick<DomainEventBus<PreferencesEvent>, 'subscribe'>
 
 /** Which mine a folder belongs to: the mines module's `MineIdentityResolver` adapter (ADR-030). */
 export interface MineKeyResolver {
@@ -107,6 +113,8 @@ export interface WiredLedger {
   startBackfill(): Promise<BackfillReport | null>
   /** One run of the per-mine coal backfill (O-11-10); null when it failed (logged). */
   startMineBackfill(mineId: MineId): Promise<BackfillReport | null>
+  /** After a Reset metrics: the sealed units of every mine on the board credited (08 §2.9). */
+  creditHeldUnits(): void
 }
 
 /** Boot step 4: constructs the module, its frame and its batch half, and subscribes its route. */
@@ -143,7 +151,13 @@ export function wireLedger(deps: LedgerWiringDeps): WiredLedger {
     ledger.commands.creditSealedUnits(payload.mineId)
   })
 
-  const backfill = new AbortController()
+  // S19.06: a new Reset metrics aborts a running backfill (its `db` step deleted the install moment
+  // the scan reads before); the runs after it get a fresh signal.
+  let backfill = new AbortController()
+  bus.subscribe('MetricsResetStarted', () => {
+    backfill.abort()
+    backfill = new AbortController()
+  })
   /** A failed backfill run: logged as an uncaught error (its code only), and the Host goes on. */
   const logUncaught = (error: unknown): null => {
     log.record({ level: 'error', event: 'uncaught', subsystem: 'host', errCode: errorCode(error) })
@@ -159,7 +173,16 @@ export function wireLedger(deps: LedgerWiringDeps): WiredLedger {
     },
     startBackfill: () => ledger.commands.runCoalBackfill(backfill.signal).catch(logUncaught),
     startMineBackfill: (mineId) =>
-      ledger.commands.runMineCoalBackfill(mineId, backfill.signal).catch(logUncaught)
+      ledger.commands.runMineCoalBackfill(mineId, backfill.signal).catch(logUncaught),
+    creditHeldUnits: () => {
+      const mines = bound.mines
+      if (mines === undefined) {
+        throw new HostInvariantError('held units are credited after mines is routed')
+      }
+      for (const mine of mines.list({ sortBy: 'name', direction: 'asc' })) {
+        ledger.commands.creditSealedUnits(mine.mineId)
+      }
+    }
   }
 }
 
@@ -199,4 +222,26 @@ export function routeMineBackfillWhenObserving(
   bus.subscribe('MineCreated', ({ payload }) => void ledger.startMineBackfill(payload.mineId))
   bus.subscribe('MineReattached', ({ payload }) => void ledger.startMineBackfill(payload.mineId))
   return true
+}
+
+/**
+ * The end of a Reset metrics (08 §2.9 `MetricsResetFinished`: the ledger credits the held usage and
+ * schedules the backfill; ADR-023 item 4). While the saga ran no unit was credited (INV-97), and a
+ * recreated mine whose walk ended before `done` was refused by its own `MineMeasured` route, so
+ * the sealed units of every mine on the board are credited now (`creditSealedUnits`, INV-94; a
+ * unit already credited is never credited again). Then the coal backfill re-runs over the new
+ * install moment only as `startBackfillWhenObserving` allows it (07 S19.01, S19.02): never in a
+ * cut-1 rollback build, whose legacy ledger is the one crediting (21 §2 cut 1 row "Rollback").
+ * Run by boot step 4 once mines is routed; a saga resumed at boot step 3 finishes before it, and
+ * that Host's `ready` starts the backfill.
+ */
+export function routeResetFinished(
+  ledger: Pick<WiredLedger, 'creditHeldUnits' | 'startBackfill'>,
+  bus: Pick<DomainEventBus<PreferencesEvent>, 'subscribe'>,
+  sink: ObservedBatchSink
+): void {
+  bus.subscribe('MetricsResetFinished', () => {
+    ledger.creditHeldUnits()
+    void startBackfillWhenObserving(ledger, sink)
+  })
 }

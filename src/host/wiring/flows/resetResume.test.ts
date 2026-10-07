@@ -37,6 +37,7 @@ import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransaction
 import { copyTemplateDb } from '../../platform/sqlite/testing/templateDb'
 import { runBoot } from '../boot'
 import { createBootSteps } from '../bootSteps'
+import { createModuleResetSteps } from '../moduleResetSteps'
 import { resetParticipants } from '../resetParticipants'
 
 const T = 1_790_000_000_000
@@ -135,6 +136,14 @@ function host(m: Machine, killAt?: ResetStep | 'cleanup') {
   }
   const participants = resetParticipants({
     preferences: createPreferencesResetStep({ db, clock: m.clock }),
+    // The cut-1 module steps (ISSUE-121), as host/main.ts builds them at boot step 3.
+    modules: createModuleResetSteps({
+      db,
+      scope: transactions,
+      clock: m.clock,
+      mapSites: [],
+      random: () => 0
+    }).steps,
     attention: createAttentionResetStep({ db, scope: transactions }),
     ledger: {
       setInstallMoment: (at) =>
