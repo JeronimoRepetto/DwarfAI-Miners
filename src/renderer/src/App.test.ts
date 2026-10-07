@@ -2690,6 +2690,11 @@ describe('App audio (#174, #173)', () => {
     }
   })
 
+  /*
+   * AMENDED for ISSUE-123 (was: the same ask, `p1`, cued again once a poll had shown it closed, as `createAttentionWatch`
+   * judged each snapshot against the last): from the cut-1 switch the cues come from `useAttentionCues` (ISSUE-117),
+   * which hears each need once per key (ADR-018 item 3), so the ask that begins after launch is a new one.
+   */
   it('cues a permission when a snapshot begins one, not at launch and not on a re-poll (#635)', async () => {
     const { api } = await audioApp({
       getMines: vi
@@ -2701,13 +2706,17 @@ describe('App audio (#174, #173)', () => {
     expect(cues()).toHaveLength(0)
 
     const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const ASKING_AGAIN = defaultDwarf({
+      ...ASKING,
+      pendingPermission: { ...ASKING.pendingPermission!, toolUseId: 'p2' }
+    })
     push({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
-    push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    push({ mines: [{ ...MINE, dwarfs: [ASKING_AGAIN] }], tokensObserved: 0 })
     await flushPromises()
     expect(cues()).toHaveLength(1)
     expect(cues()[0]).toContain('attention-permission')
 
-    push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    push({ mines: [{ ...MINE, dwarfs: [ASKING_AGAIN] }], tokensObserved: 0 })
     await flushPromises()
     expect(cues()).toHaveLength(1)
   })
@@ -2811,9 +2820,15 @@ describe('App system notifications (#316)', () => {
    * the computed above is its only caller.
    */
 
+  // AMENDED for ISSUE-123 (was: through A-P5 `onShowMine`, retired by the cut-1 switch): a click reaches the window as
+  // A-N16 `onRevealDwarfChat`, which for a mine alone (`dwarfId: null`) opens it as A-P5 did.
   it('opens the mine main asked for, and gives its column the width to be drawn in', async () => {
     const { wrapper, api } = await notifiedApp()
-    const open = api.onShowMine.mock.calls[0]![0] as (mineId: string) => void
+    const open = (mineId: string) =>
+      (api.onRevealDwarfChat.mock.calls[0]![0] as (t: { mineId: string; dwarfId: null }) => void)({
+        mineId,
+        dwarfId: null
+      })
     open(MINE.id)
     await flushPromises()
     expect(wrapper.find('.dm-minecol').exists()).toBe(true)
@@ -2834,7 +2849,12 @@ describe('App system notifications (#316)', () => {
     await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
     expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
-    const open = api.onShowMine.mock.calls[0]![0] as (mineId: string) => void
+    // AMENDED for ISSUE-123 (was: A-P5 `onShowMine`): A-N16 for the mine alone, as above.
+    const open = (mineId: string) =>
+      (api.onRevealDwarfChat.mock.calls[0]![0] as (t: { mineId: string; dwarfId: null }) => void)({
+        mineId,
+        dwarfId: null
+      })
     open(MINE.id)
     await flushPromises()
     expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
@@ -2845,6 +2865,13 @@ describe('App system notifications (#316)', () => {
    * ISSUE-114 (ADR-018 item 6; ADR-025 item 8; 14 §2.2 A-N16) — APPENDED. The reveal a notification click runs:
    * unlike #316's click, it opens that dwarf's chat, or the mine alone when the dwarf left.
    */
+  // AMENDED for ISSUE-123 (appended): A-P5 is retired by the cut-1 switch, so the window hears A-N16 alone.
+  it('[ADR-019] after the cut-1 switch the notification composable subscribes to onRevealDwarfChat only and no longer to onShowMine', async () => {
+    const { api } = await notifiedApp()
+    expect(api.onRevealDwarfChat).toHaveBeenCalledOnce()
+    expect(api.onShowMine).not.toHaveBeenCalled()
+  })
+
   type Reveal = (t: { mineId: string; dwarfId: string | null }) => void
   const revealOf = (api: { onRevealDwarfChat: { mock: { calls: unknown[][] } } }): Reveal =>
     api.onRevealDwarfChat.mock.calls[0]![0] as Reveal
