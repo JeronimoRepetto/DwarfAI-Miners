@@ -36,11 +36,11 @@ legacy-row parity through the bridges, the router case, L4 observer conformance,
 - **L4 observer conformance** (C-11, C-16, C-19, C-20, C-21): `src/host/modules/observation/adapters/*/`
   `*ObservationAdapter.conformance.test.ts` (Claude, Codex, Antigravity, OpenCode) and `providerErrors.conformance.test.ts`.
 - **L9** (`e2e/cut-1/`): `observation.e2e.ts` and `stub-observed.e2e.ts` (a stub CLI session observed through the Host,
-  and again after a reopen), and `remove-mine-legacy-first.e2e.ts` (Remove mine on a legacy-launched session ends it
-  through today's identity-checked kill first, then removes the mine; the dwarf departs as `closed-elsewhere`).
+  and again after a reopen).
 - **Deferred cases.** `e2e/cut-1/notifications-window-closed.e2e.ts` is not added in cut 1: S-018-1 is partial, so
   level-3 notifications are window-only (row S-018-1 below), and observed asks arrive in cut 2 (ISSUE-140). The S-018-1
-  row covers it. Decided by: lead decision 2026-10-07.
+  row covers it. Decided by: lead decision 2026-10-07. `e2e/cut-1/remove-mine-legacy-first.e2e.ts` waits for a separate
+  Host fix of an observed Claude session's presence.
 - **L2 flows of `11`**: F1 (observed session appears) `src/host/wiring/flows/observedSessionAppears.test.ts` and
   `observation.flow.test.ts`; F2 (usage → ledger → ore) `ledger.flow.test.ts` and `conversationReadSide.flow.test.ts`;
   F10 (coal backfill from the install moment) `ledger.flow.test.ts` ("[S19.02] …", "[S19.04] …") with
@@ -135,3 +135,10 @@ criteria on the three OSes and then ran for 7 days of normal use with no blockin
 | Soak end                     | pending                  |
 | Blocking problems            | pending                  |
 | Retirement or deletion issue | ISSUE-124, ISSUE-125     |
+
+## Updates
+
+- **2026-10-07, `test/e2e-remove-mine-legacy-first` (L9).** `e2e/cut-1/remove-mine-legacy-first.e2e.ts` is added now that
+  the Host closes an observed Claude session once its recorded process is gone (#1240). Remove mine on a
+  legacy-launched session ends it through today's identity-checked kill first, then removes the mine; the dwarf departs
+  as `closed-elsewhere`. This settles the case listed as waiting under "Deferred cases" above.
