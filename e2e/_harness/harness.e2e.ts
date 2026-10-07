@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
 import {
   APP_DIAGNOSTICS_DIR,
+  appEnv,
+  createIsolatedProfile,
   killProcessTree,
   launchApp,
   waitForHostAttached,
@@ -283,6 +285,93 @@ test.describe('E2E harness: main-process errors (17 §1.9)', () => {
     } finally {
       clearTimeout(guard)
       killProcessTree(child)
+    }
+  })
+})
+
+/** The per-user folders a provider's data is found under (Antigravity `~/.gemini`, OpenCode `~/.local/share`, …). */
+const HOME_VARIABLES = [
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'XDG_CONFIG_HOME',
+  'XDG_STATE_HOME'
+] as const
+
+/** Whether `inner` is `outer` or a path under it. */
+function isWithin(inner: string, outer: string): boolean {
+  const relative = path.relative(outer, inner)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+test.describe('E2E harness: the home folder of every launched app is the profile (17 §1.9; ADR-008 item 2)', () => {
+  const profiles: { root: string; dataRoot: string }[] = []
+
+  test.afterEach(() => {
+    for (const profile of profiles.splice(0)) {
+      rmSync(profile.root, { recursive: true, force: true })
+      rmSync(profile.dataRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("[ADR-008] by default the app's HOME, USERPROFILE, APPDATA and XDG config and state homes are inside the profile, never the developer's own", () => {
+    const profile = createIsolatedProfile()
+    profiles.push(profile)
+
+    const env = appEnv(profile, {})
+
+    for (const name of HOME_VARIABLES) {
+      const value = env[name]
+      expect(value, `${name} is set for the app`).toBeDefined()
+      expect(
+        isWithin(value ?? '', profile.root) || isWithin(value ?? '', profile.dataRoot),
+        `${name} (${value}) is inside the profile`
+      ).toBe(true)
+      if (process.env[name] !== undefined) {
+        expect(value, `${name} is not the developer's own`).not.toBe(process.env[name])
+      }
+    }
+    // macOS: HOME is the profile's short data root, so the Host's socket path under it fits sun_path (FM-037).
+    if (process.platform === 'darwin') expect(env.HOME).toBe(profile.dataRoot)
+  })
+
+  test("[ADR-008] a case's own env still overrides a home variable explicitly", () => {
+    const profile = createIsolatedProfile()
+    profiles.push(profile)
+    const chosen = path.join(profile.root, 'chosen-home')
+
+    const env = appEnv(profile, { env: { HOME: chosen } })
+
+    expect(env.HOME).toBe(chosen)
+    expect(
+      isWithin(env.USERPROFILE ?? '', profile.root) ||
+        isWithin(env.USERPROFILE ?? '', profile.dataRoot)
+    ).toBe(true)
+  })
+
+  test("[ADR-008] the launched app's main process sees its home folder inside the profile", async () => {
+    const launched = await launchApp({ tracePath: test.info().outputPath('trace.zip') })
+    try {
+      const seen = await launched.app.evaluate((_electron, names) => {
+        const values: Record<string, string | undefined> = {}
+        for (const name of names) values[name] = process.env[name]
+        return { homedir: process.getBuiltinModule('node:os').homedir(), values }
+      }, HOME_VARIABLES)
+      const { root, dataRoot } = launched.profile
+      const inProfile = (value: string): boolean =>
+        isWithin(realpathSync(value), realpathSync(root)) ||
+        isWithin(realpathSync(value), realpathSync(dataRoot))
+
+      expect(inProfile(seen.homedir), `the app's home folder (${seen.homedir})`).toBe(true)
+      for (const name of HOME_VARIABLES) {
+        const value = seen.values[name]
+        expect(value, `${name} is set in the app`).toBeDefined()
+        // The XDG folders need not exist yet: their parent, the profile's home, does.
+        const existing = existsSync(value ?? '') ? (value ?? '') : seen.homedir
+        expect(inProfile(existing), `${name} (${value}) is inside the profile`).toBe(true)
+      }
+    } finally {
+      await launched.teardown()
     }
   })
 })

@@ -28,6 +28,10 @@ import { resolveEntry, type AppEntry } from './resolveEntry.ts'
  * - `stubs`, when given, is prepended to `PATH`, so detection and spawn resolve the stub CLIs
  *   first (the stub kit is later: ISSUE-313); temp `CLAUDE_CONFIG_DIR` and `CODEX_HOME` keep the
  *   app away from the developer's provider data.
+ * - The app's home folders (HOME, USERPROFILE, APPDATA, the XDG config and state homes; `homeIn`) point into the
+ *   profile by default, so a case never reads the developer's own sessions, settings or provider data (the Host
+ *   observes Antigravity and OpenCode under the home folder; ADR-008 item 2). A case that needs another value names
+ *   the variable in `env`, which wins over the default.
  * - `launchApp` returns once the first window has loaded its page, so no case quits a half-started app:
  *   once the page's `load` event fired (Playwright, the renderer's view) and the main process, too, sees no
  *   window loading (`webContents.isLoading()`), which it takes in a moment later and, on a slow runner, after a
@@ -180,9 +184,13 @@ const TRAY_LOG_FILE = 'tray.log'
 
 /**
  * The app's environment: the runner's, minus Electron start-up switches, with the stub directory
- * first on `PATH` (whatever its spelling on Windows) and the provider homes in the profile.
+ * first on `PATH` (whatever its spelling on Windows), the provider homes in the profile and the
+ * per-user folders (`homeIn`) in the profile, then the case's own `env` last. The home folders are
+ * the default so that no case reads the developer's own provider data unless it says so: the Host
+ * observes Antigravity and OpenCode under the home folder (ADR-008 item 2). A case that needs another
+ * value names it in `env`, which overrides the default variable by variable.
  */
-function appEnv(profile: IsolatedProfile, options: LaunchOptions): Record<string, string> {
+export function appEnv(profile: IsolatedProfile, options: LaunchOptions): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !DROPPED_ENV.has(key.toUpperCase())) env[key] = value
@@ -196,6 +204,7 @@ function appEnv(profile: IsolatedProfile, options: LaunchOptions): Record<string
         ? options.stubs
         : options.stubs + path.delimiter + current
   }
+  for (const [key, value] of Object.entries(homeIn(profile))) setVariable(env, key, value)
   env.CLAUDE_CONFIG_DIR = profile.claudeConfigDir
   env.CODEX_HOME = profile.codexHome
   env[dataRootVariable()] = profile.dataRoot
@@ -204,6 +213,17 @@ function appEnv(profile: IsolatedProfile, options: LaunchOptions): Record<string
   if (options.trayProbe === true) env.DWARFAI_E2E_TRAY_LOG = path.join(profile.root, TRAY_LOG_FILE)
   const extra = typeof options.env === 'function' ? options.env(profile) : options.env
   return { ...env, ...extra }
+}
+
+/**
+ * Sets `key` in `env`, dropping any other spelling of it first: Windows reads variable names without regard to case,
+ * so a runner's `UserProfile` beside the harness's `USERPROFILE` would leave the app either one.
+ */
+function setVariable(env: Record<string, string>, key: string, value: string): void {
+  for (const existing of Object.keys(env)) {
+    if (existing.toUpperCase() === key.toUpperCase()) delete env[existing]
+  }
+  env[key] = value
 }
 
 /** A started app quits in well under a second on every OS; this is the bound, not the expectation. */
@@ -729,8 +749,9 @@ export const TRAY_ITEMS = {
 
 /**
  * The per-user folders of the app pointed into the profile (HOME, USERPROFILE, APPDATA, the XDG config and state
- * homes), for a case whose app must read none of the developer's own sessions, settings or provider data. Pass it as
- * `env`, alone or spread with others.
+ * homes), so the app reads none of the developer's own sessions, settings or provider data. `launchApp` applies it to
+ * every launch by default; a case overrides one of these variables by naming it in its own `env`. Spreading it into
+ * `env` as well, as some cases still do, changes nothing.
  *
  * On macOS HOME is the profile's short data root under /tmp, as `appEnv` already sets it: the Host's socket lives under
  * HOME (`endpoint.ts`, `~/Library/Application Support/<app>/run/host-<key>.sock`), and under the per-user temp folder
