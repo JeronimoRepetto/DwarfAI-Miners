@@ -6,8 +6,9 @@
 // `unit`, `sealedUncredited`), `record` takes the observation's `path` (09 §4.7
 // `usage_observations.path` is NOT NULL), and `credit` returns the new entry's id, which
 // `LedgerTotalsChanged` carries (08 §0). Every other member keeps its 16 §4.10 signature. The
-// members built so far are declared here; `setInstallMoment` and `wipe` join with the Reset
-// steps (later: ISSUE-097). `backfillState`, `setBackfillState` and `markScanUnit` (ISSUE-077)
+// members built so far are declared here; `wipe` is not (the Reset saga's ledger step,
+// `LedgerResetStep`, deletes the ledger's tables in its `db` transaction, ISSUE-097).
+// `setInstallMoment` joined with the Reset steps' registration (ISSUE-121). `backfillState`, `setBackfillState` and `markScanUnit` (ISSUE-077)
 // keep their 16 §4.10 signatures, unchanged by the amendment.
 //
 // - `record(o, mineId, path)` stores the observation by its `sourceKey` (INV-90) and upserts its
@@ -28,6 +29,10 @@
 //   it writes nothing. `markScanUnit(unit, at)` inserts the unit's `coal_backfill_units` row
 //   (`'duplicate'`: already recorded, nothing written); with no install moment it throws (the
 //   foreign key). The three writes join the caller's transaction; outside one they throw.
+// - `setInstallMoment(t)` writes the install moment `t` that the Reset saga's `install-moment`
+//   step records (07 S13.05), replacing any moment there: the old moment's backfill progress goes
+//   with it and the new one is `not-started` with no scan units (S19.01). It joins the caller's
+//   transaction; outside one it throws and writes nothing.
 import type { UsageObservation } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, Instant, MineId } from '../../../kernel/domain/values'
 import type { CoalBackfillProgress } from '../domain/coalBackfill'
@@ -92,6 +97,8 @@ export interface LedgerRepository {
   ): CreditOutcome
   totals(mineId: MineId): MaterialTotals
   installMoment(): Instant | null
+  /** 16 §4.10: the Reset saga's new install moment (07 S13.05). */
+  setInstallMoment(t: Instant): void
   /** Amended: the dwarf's mine and stored authoritative path; null for a dwarf the database does not hold. */
   subjectOf(dwarfId: DwarfId): CreditSubject | null
   /** Amended: `mines.tier` once `has_been_measured = 1`; null for a never-measured or unknown mine. */

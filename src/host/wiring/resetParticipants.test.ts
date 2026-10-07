@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../kernel/fakes/FakeClock'
 import type { TransactionRunner } from '../kernel/ports/transactionRunner'
 import type { ResetDbStep } from '../modules/preferences'
-import { resetParticipants } from './resetParticipants'
+import { resetParticipants, type ModuleResetSteps } from './resetParticipants'
 
 // L2 (17 §1.2): the Reset saga's participant list (ADR-023 item 4; 09 §7.2; lead decision
 // 2026-09-30: the ledger's install moment is a `ResetDbStep`-shaped step registered here).
@@ -25,22 +25,46 @@ function recordingRunner(): TransactionRunner & { runs: number; open: boolean } 
   return runner
 }
 
+/** Each module's step, named as its `create…ResetStep` names it; none writes in this test. */
+function moduleSteps(): ModuleResetSteps {
+  const step = (name: string): ResetDbStep => ({ name, reset: () => undefined })
+  return {
+    mines: step('mines'),
+    crew: step('crew'),
+    observation: step('observation'),
+    ledger: step('ledger'),
+    conversation: step('conversation')
+  }
+}
+
 describe('resetParticipants', () => {
   it('[ADR-023, S13.05] the db transaction runs the preferences step and the install-moment step writes install_moment now through the ledger in its own transaction', () => {
     const clock = new FakeClock(1_750_000_000_000)
     const preferences: ResetDbStep = { name: 'preferences', reset: () => undefined }
     const attention: ResetDbStep = { name: 'attention', reset: () => undefined }
+    const modules = moduleSteps()
     const written: Array<{ at: number; inTransaction: boolean }> = []
     const tx = recordingRunner()
     const participants = resetParticipants({
       preferences,
+      modules,
       attention,
       ledger: { setInstallMoment: (at) => written.push({ at, inTransaction: tx.open }) },
       clock
     })
 
-    // ISSUE-118 registers the attention step after the preferences step, both of 09 §7.2 (3).
-    expect(participants.dbSteps).toStrictEqual([preferences, attention])
+    // ISSUE-118 registers the attention step after the preferences step, both of 09 §7.2 (3);
+    // ISSUE-121 the module steps around them, in the 09 §7.2 order (amended with ISSUE-121: the
+    // list was the two steps cut 1 had before the module steps were registered).
+    expect(participants.dbSteps).toStrictEqual([
+      modules.mines,
+      modules.crew,
+      preferences,
+      modules.observation,
+      modules.ledger,
+      modules.conversation,
+      attention
+    ])
     expect(participants.installMoment.name).toBe('ledger-install-moment')
     clock.advance(42)
     participants.installMoment.reset(tx)

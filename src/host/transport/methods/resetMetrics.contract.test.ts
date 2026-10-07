@@ -40,6 +40,7 @@ import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransaction
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { emptyDrainGate } from '../../wiring/emptyDrainGate'
 import { createHostDispatcher } from '../../wiring/hostDispatcher'
+import { createModuleResetSteps } from '../../wiring/moduleResetSteps'
 import { resetParticipants } from '../../wiring/resetParticipants'
 import { HelloThrottle } from '../auth/throttle'
 import { UI_TOKEN_FILE, UiToken } from '../auth/uiToken'
@@ -149,6 +150,14 @@ async function host() {
   const fanout = new ConnectionResetUiFanout(connections)
   const participants = resetParticipants({
     preferences: createPreferencesResetStep({ db, clock }),
+    // The cut-1 module steps (ISSUE-121), as host/main.ts builds them at boot step 3.
+    modules: createModuleResetSteps({
+      db,
+      scope: transactions,
+      clock,
+      mapSites: [],
+      random: () => 0
+    }).steps,
     attention: createAttentionResetStep({ db, scope: transactions }),
     // The ledger's LedgerRepository.setInstallMoment (16 §11) over the same table.
     ledger: {
@@ -337,11 +346,14 @@ describe('preferences.resetMetrics over seam B', () => {
     )
     await ackResets(runner)
     await other.settle()
-    // One UI has not acked yet: the saga waits at ui-prefs (no timeout, 07 §24 I-14).
-    expect(moment()).toBe('fresh-install')
+    // One UI has not acked yet: the saga waits at ui-prefs (no timeout, 07 §24 I-14). The `db`
+    // step's ledger step deleted the install moment, and only the install-moment step after
+    // ui-prefs writes the new one (09 §7.2; amended with ISSUE-121, which registered that step:
+    // the fresh-install moment used to survive until then).
+    expect(moment()).toBeUndefined()
     await ackResets(other)
     await runner.settle()
-    expect(moment()).toBe('fresh-install')
+    expect(moment()).toBeUndefined()
 
     leaving.stream.destroy()
     const res = await response(runner, id)

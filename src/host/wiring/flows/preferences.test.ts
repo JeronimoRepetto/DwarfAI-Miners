@@ -39,6 +39,7 @@ import type { FileSystem } from '../../kernel/ports/fileSystem'
 import type { SecretName } from '../../kernel/ports/secretReader'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { PreferencesEvent, SecretStore } from '../../modules/preferences'
+import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedgerRepository'
 import { migrationsFor } from '../../platform/sqlite/migrations'
 import { SqliteResetCleanup } from '../../platform/sqlite/resetCleanup'
 import { HelloThrottle } from '../../transport/auth/throttle'
@@ -62,12 +63,12 @@ import { createFeatureFlagReader, featureFlagConfigFilePath } from '../featureFl
 import { createHostDatabase, HOST_DB_FILE } from '../hostDatabase'
 import { createHostDispatcher } from '../hostDispatcher'
 import {
-  emptyLedgerInstallMoment,
   noOwnedConfigWriter,
   servePreferences,
   unavailableSecretStore,
   type WiredPreferences
 } from '../preferencesWiring'
+import { createModuleResetSteps } from '../moduleResetSteps'
 
 const T0 = 1_790_000_000_000
 const HOUR_MS = 3_600_000
@@ -333,7 +334,20 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
               log
             }),
             maintenance: new SqliteResetCleanup({ db, path }),
-            ledger: emptyLedgerInstallMoment,
+            // The ledger's install-moment writer and the cut-1 module steps, as host/main.ts binds them.
+            ledger: new SqliteLedgerRepository({
+              db,
+              scope: connection.transactions,
+              ids: m.ids,
+              clock: m.clock
+            }),
+            moduleSteps: createModuleResetSteps({
+              db,
+              scope: connection.transactions,
+              clock: m.clock,
+              mapSites: [],
+              random: () => 0
+            }).steps,
             secrets,
             externalConfig: noOwnedConfigWriter,
             ready: () => state.current().state === 'ready'

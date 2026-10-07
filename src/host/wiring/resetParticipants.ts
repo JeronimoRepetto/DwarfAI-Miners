@@ -3,24 +3,42 @@
 // wiring hands it every module's table set here (hot spot, 22 §5):
 //
 // - `dbSteps`: joined in the one `db` transaction, in the 09 §7.2 order — (2) mines and crew,
-//   (3) the other per-table deletions, (4) launching. Cut 1 registers the preferences and the
-//   attention (ISSUE-118) steps, both of (3); the others join with their issues, each in its place
-//   (later: ISSUE-097, ISSUE-107, ISSUE-121, ISSUE-139, ISSUE-181, ISSUE-208).
+//   (3) the other per-table deletions, (4) launching. Cut 1 registers (2) the mines and crew steps
+//   and (3) the preferences, observation, ledger, conversation and attention steps (ISSUE-121,
+//   ISSUE-118; the module steps are built by moduleResetSteps.ts). The deletions of (2) go first:
+//   their cascades take the departed dwarfs' rows (messages, keys, usage), so the steps of (3)
+//   delete only what the present dwarfs and the kept mines leave. The others join with their
+//   issues, each in its place (later: ISSUE-139, ISSUE-181, ISSUE-208).
 // - `installMoment`: the ledger's `install_moment(now, 'reset')` (07 S13.05), written through
-//   `LedgerRepository.setInstallMoment` (16 §11) in its own transaction at that step (lead
-//   decision 2026-09-30: the `ResetDbStep` shape, no new port type).
-import type { Instant } from '../kernel/domain/values'
+//   `LedgerRepository.setInstallMoment` (16 §4.10; `SqliteLedgerRepository`) in its own
+//   transaction at that step (lead decision 2026-09-30: the `ResetDbStep` shape, no new port
+//   type).
 import type { Clock } from '../kernel/ports/clock'
+import type { LedgerRepository } from '../modules/ledger'
 import type { ResetDbStep } from '../modules/preferences'
 
-/** The member of the ledger's `LedgerRepository` (16 §11) the install-moment step calls. */
-export interface LedgerInstallMoment {
-  setInstallMoment(t: Instant): void
+/** The member of the ledger's `LedgerRepository` (16 §4.10) the install-moment step calls. */
+export type LedgerInstallMoment = Pick<LedgerRepository, 'setInstallMoment'>
+
+/** The cut-1 board and conversation modules' steps (moduleResetSteps.ts, ISSUE-121). */
+export interface ModuleResetSteps {
+  /** `createMinesResetStep`: 09 §7.2 (2), mines with no present dwarf deleted (cascades). */
+  mines: ResetDbStep
+  /** `createCrewResetStep`: 09 §7.2 (2), departed dwarfs deleted (cascades). */
+  crew: ResetDbStep
+  /** `createObservationResetStep`: 09 §7.2 (3). */
+  observation: ResetDbStep
+  /** `createLedgerResetStep`: 09 §7.2 (3). */
+  ledger: ResetDbStep
+  /** `createConversationResetStep`: 09 §7.2 (3). */
+  conversation: ResetDbStep
 }
 
 export interface ResetParticipantsDeps {
   /** The preferences module's step (`createPreferencesResetStep`). */
   preferences: ResetDbStep
+  /** The mines, crew, observation, ledger and conversation steps. */
+  modules: ModuleResetSteps
   /** The attention module's step (`createAttentionResetStep`). */
   attention: ResetDbStep
   ledger: LedgerInstallMoment
@@ -33,8 +51,19 @@ export interface ResetParticipants {
 }
 
 export function resetParticipants(deps: ResetParticipantsDeps): ResetParticipants {
+  const { modules } = deps
   return {
-    dbSteps: [deps.preferences, deps.attention],
+    dbSteps: [
+      // (2): the mines with no present dwarf, then the departed dwarfs (both cascade).
+      modules.mines,
+      modules.crew,
+      // (3): the other per-table deletions; attention's follows the asks (ISSUE-118).
+      deps.preferences,
+      modules.observation,
+      modules.ledger,
+      modules.conversation,
+      deps.attention
+    ],
     installMoment: {
       name: 'ledger-install-moment',
       reset: (tx) => tx.inTransaction(() => deps.ledger.setInstallMoment(deps.clock.now()))

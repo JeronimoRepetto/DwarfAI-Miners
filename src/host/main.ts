@@ -33,9 +33,12 @@
 // boot-state SnapshotMetaSource bound here (`resetEpoch` from `app_meta`, `minesEverKnown` false
 // until the mines module reads its table, later: ISSUE-082). Boot step 3 wires the preferences module
 // over the database step 2 opened (ISSUE-226: wiring/preferencesWiring.ts, with the FeatureFlagReader,
-// the Reset saga's cleanup and the cut-1 bindings that stand in for the OS secret store, the config
-// writers and the ledger) and resumes an unfinished Reset saga before anything else is constructed
-// and before any command is accepted (05 §2.3; 16 §8.2). Boot step 4 constructs the other modules,
+// the Reset saga's cleanup and the cut-1 bindings that stand in for the OS secret store and the
+// config writers; ISSUE-121: the saga's participants are the mines, crew, observation, ledger and
+// conversation steps of wiring/moduleResetSteps.ts, built over the database alone, and the ledger's
+// install-moment writer, the one SqliteLedgerRepository the ledger is wired over at step 4) and
+// resumes an unfinished Reset saga before anything else is constructed and before any command is
+// accepted (05 §2.3; 16 §8.2). Boot step 4 constructs the other modules,
 // each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
 // SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
 // the ledger (ISSUE-096: wiring/routes/ledger.ts) over the SqliteLedgerRepository and the coal
@@ -56,7 +59,9 @@
 // served before the bind; mines (ISSUE-093: wiring/routes/mines.ts) over crew's ends and queries,
 // with the FsSourceWeightScanner of its scoring walks, its seam-B members (B-M16…B-M20) and
 // `mines` section served before the bind, its board frames (the provider-error toast among them)
-// and the provider-error route to `checkFolder`, reading each mine's totals from the ledger; then
+// and the provider-error route to `checkFolder`, reading each mine's totals from the ledger, and the
+// Reset saga's walk route (`MetricsResetStarted` → every walk aborted, each recreated mine walked,
+// ISSUE-121); then
 // crew's observation routes, the boot recompute of the dwarf statuses from their persisted facts
 // (S1.18) and the ledger's backfill folder resolution over the mines' queries; attention (ISSUE-119:
 // wiring/routes/attentionTransport.ts) over the SqliteAttentionLedger, the TransportLevel3Sink, the
@@ -65,7 +70,8 @@
 // B-M08 `attention.clicked` served before the bind, the attention frames advertised, and the
 // connection registry feeding the presence union and the tray notifier supervisor; then the
 // conversation's routes (its mine history, tails and frames over crew's and mines' queries) and the
-// per-mine coal backfill (`MineCreated` / `MineReattached` → `runMineCoalBackfill`, O-11-10); last,
+// per-mine coal backfill (`MineCreated` / `MineReattached` → `runMineCoalBackfill`, O-11-10) and the
+// end of a Reset metrics (`MetricsResetFinished` → held units credited, then the backfill, ISSUE-121); last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
 // withdrawing attention keys and closing activity runs. The others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
@@ -86,6 +92,8 @@ import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistor
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
 import { createHostGitRepoInspector } from './modules/mines/adapters/FsGitRepoInspector'
 import { FsSourceWeightScanner } from './modules/mines/adapters/FsSourceWeightScanner'
+import type { LedgerRepository } from './modules/ledger'
+import type { MapSite } from './modules/mines'
 import type { PreferencesEvent } from './modules/preferences'
 import type { Suppliers, SuppliersEvent } from './modules/suppliers'
 import { createSqliteObservationStores, type ObservedBatchSink } from './modules/observation'
@@ -141,10 +149,10 @@ import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/fea
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
 import { installUncaughtHandlers } from './wiring/uncaught'
+import { createModuleResetSteps, type WiredModuleResetSteps } from './wiring/moduleResetSteps'
 import { emptyDrainGate } from './wiring/emptyDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
-  emptyLedgerInstallMoment,
   noOwnedConfigWriter,
   servePreferences,
   unavailableSecretStore,
@@ -167,6 +175,7 @@ import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/
 import { routeCut1Events } from './wiring/routes/cut1Routes'
 import {
   routeMineBackfillWhenObserving,
+  routeResetFinished,
   startBackfillWhenObserving,
   wireLedger,
   type LedgerRouteEvent,
@@ -284,6 +293,14 @@ async function main(): Promise<void> {
     mines?: WiredMines
     attention?: WiredAttention
   } = {}
+  // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
+  // install-moment writer, then the module's) and the cut-1 module steps, whose walk route step 4
+  // binds once mines exists (ISSUE-121).
+  let ledgerRepository: LedgerRepository | undefined
+  let resetSteps: WiredModuleResetSteps | undefined
+  // No spawn-site table reaches the Host yet: no site is stored, and the map places each marker
+  // itself (chooseMapSite's documented fallback). The mines module and its Reset step share it.
+  const mapSites: readonly MapSite[] = []
   // The Host's one event bus (16 §2.3), created by boot step 3 over the connection step 2 opened;
   // each module's events join its union with the module.
   let bus: InProcessEventBus<HostEvent> | undefined
@@ -448,6 +465,14 @@ async function main(): Promise<void> {
                 errCode: errorCode(failure.error)
               })
           })
+          ledgerRepository = new SqliteLedgerRepository({ db, scope: transactions, ids, clock })
+          resetSteps = createModuleResetSteps({
+            db,
+            scope: transactions,
+            clock,
+            mapSites,
+            random: Math.random
+          })
           const preferences = servedPreferences.wire({
             db,
             transactions,
@@ -466,9 +491,10 @@ async function main(): Promise<void> {
               db,
               path: join(dataDir.userDataDir, HOST_DB_FILE)
             }),
-            // Cut 1: no ledger install-moment writer (`LedgerRepository.setInstallMoment`, later:
-            // ISSUE-097), OS secret store or owned config entry yet (later: ISSUE-324, ISSUE-323).
-            ledger: emptyLedgerInstallMoment,
+            // `LedgerRepository.setInstallMoment` (16 §4.10) and the cut-1 module steps (ISSUE-121).
+            ledger: ledgerRepository,
+            moduleSteps: resetSteps.steps,
+            // Cut 1: no OS secret store or owned config entry yet (later: ISSUE-324, ISSUE-323).
             secrets: unavailableSecretStore,
             externalConfig: noOwnedConfigWriter,
             ready: () => hostState.current().state === 'ready'
@@ -478,7 +504,12 @@ async function main(): Promise<void> {
         },
         constructModules: () => {
           const { db, transactions } = opened.connection()
-          if (bus === undefined || modules.preferences === undefined) {
+          if (
+            bus === undefined ||
+            modules.preferences === undefined ||
+            ledgerRepository === undefined ||
+            resetSteps === undefined
+          ) {
             throw new HostInvariantError('boot step 4 runs after step 3 wired preferences')
           }
           modules.suppliers = wireSuppliers({
@@ -507,7 +538,7 @@ async function main(): Promise<void> {
           // The ledger first: observation's batch sink holds its half and the mines' section and
           // frames read its totals.
           const ledger = wireLedger({
-            repository: new SqliteLedgerRepository({ db, scope: transactions, ids, clock }),
+            repository: ledgerRepository,
             transactions,
             bus,
             clock,
@@ -603,9 +634,7 @@ async function main(): Promise<void> {
             fs,
             hostEpoch: epoch,
             log,
-            // No spawn-site table reaches the Host yet: no site is stored, and the map places each
-            // marker itself (chooseMapSite's documented fallback).
-            mapSites: [],
+            mapSites,
             random: Math.random,
             scanner: new FsSourceWeightScanner(),
             ...DEFAULT_MINES_SETTINGS,
@@ -614,6 +643,8 @@ async function main(): Promise<void> {
             // The board frames' stored outcome lines (owner amendment E).
             outcomes: conversation.conversation.queries
           })
+          // The Reset saga's walks of the mines its step recreated (moduleResetSteps.ts).
+          resetSteps.route({ bus, walks: modules.mines.walks })
           modules.crew.route({
             commands: modules.mines.mines.commands,
             queries: modules.mines.mines.queries
@@ -626,6 +657,9 @@ async function main(): Promise<void> {
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
           // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).
           routeMineBackfillWhenObserving(ledger, bus, modules.batchSink)
+          // 08 §2.9: the end of a Reset metrics credits the units held during it, then restarts the
+          // backfill behind the same gate (ISSUE-121).
+          routeResetFinished(ledger, bus, modules.batchSink)
           // Attention, whose inputs the cut-1 routes below feed.
           modules.attention = servedAttention.wire({
             ledger: new SqliteAttentionLedger({ db, scope: transactions, clock, hostEpoch: epoch }),

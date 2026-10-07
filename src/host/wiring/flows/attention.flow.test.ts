@@ -38,6 +38,7 @@ import { InProcessEventBus } from '../../kernel/InProcessEventBus'
 import type { AttentionFact } from '../../modules/attention'
 import { AppBackgroundNotifierLauncher } from '../../modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from '../../modules/attention/adapters/SqliteAttentionLedger'
+import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedgerRepository'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { TransportLevel3Sink } from '../../transport/attention/TransportLevel3Sink'
@@ -58,12 +59,12 @@ import { createBootSteps, mintBootEpoch } from '../bootSteps'
 import { emptyDrainGate } from '../emptyDrainGate'
 import { createHostDispatcher } from '../hostDispatcher'
 import {
-  emptyLedgerInstallMoment,
   noOwnedConfigWriter,
   servePreferences,
   unavailableSecretStore,
   type WiredPreferences
 } from '../preferencesWiring'
+import { createModuleResetSteps } from '../moduleResetSteps'
 import {
   ATTENTION_FRAMES,
   onNotifierAttach,
@@ -223,7 +224,15 @@ async function bootHost() {
               truncateWal: () => undefined,
               vacuum: () => undefined
             },
-            ledger: emptyLedgerInstallMoment,
+            // The ledger's install-moment writer and the cut-1 module steps, as host/main.ts binds them.
+            ledger: new SqliteLedgerRepository({ db, scope: transactions, ids, clock }),
+            moduleSteps: createModuleResetSteps({
+              db,
+              scope: transactions,
+              clock,
+              mapSites: [],
+              random: () => 0
+            }).steps,
             secrets: unavailableSecretStore,
             externalConfig: noOwnedConfigWriter,
             ready: () => state.current().state === 'ready'

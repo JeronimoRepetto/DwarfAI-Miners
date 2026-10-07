@@ -11,12 +11,13 @@
 //   because step 3 resumes an unfinished Reset saga before the rest is constructed and before any
 //   command is accepted (05 §2.3; ADR-023 item 4; 07 S13.08): `createPreferences` with the wiring
 //   `FeatureFlagReader` (ISSUE-211), the Reset saga with the participant list of
-//   resetParticipants.ts (ISSUE-212), `resetMetrics` joined to the module's commands (16 §4.12
+//   resetParticipants.ts (ISSUE-212; the cut-1 module steps of moduleResetSteps.ts, ISSUE-121, and
+//   the ledger's install-moment writer, `SqliteLedgerRepository`), `resetMetrics` joined to the module's commands (16 §4.12
 //   `PreferencesCommands.resetMetrics`), its event routes (routes/preferencesRoutes.ts: B-F24,
 //   B-F03, B-F26, B-F27), and the bridges other modules read it through, never by a module import
 //   (R4): the kernel `SecretReader` and the suppliers `IntegrationGateReader` (bridges/).
 //
-// Until later steps wire them, three bindings of cut 1 stand in, each the true value while nothing
+// Until later steps wire them, two bindings of cut 1 stand in, each the true value while nothing
 // exists to read or write (fail closed):
 // - `unavailableSecretStore`: the Host has no OS secret store yet (`OsKeyringSecretStore`, later:
 //   ISSUE-324). Nothing can have been stored, so the saga's `secrets` step completes as a no-op
@@ -25,9 +26,6 @@
 //   OpenCode writers, later: ISSUE-218…ISSUE-221, ISSUE-323): with no active `config_writes` row
 //   the `external-config` step is a no-op (lead decision 2026-09-30, ISSUE-212), and nothing is
 //   installed.
-// - `emptyLedgerInstallMoment`: the ledger module, which owns `install_moment`, is not built yet
-//   (later: ISSUE-096 binds `LedgerRepository.setInstallMoment`, ISSUE-121 registers its step), so
-//   the `install-moment` step writes nothing, as no ledger step deletes the moment either.
 import { HostInvariantError } from '../kernel/domain/errors'
 import type { HostEpoch } from '../kernel/domain/values'
 import type { Clock } from '../kernel/ports/clock'
@@ -61,7 +59,11 @@ import { ConnectionResetUiFanout, registerResetMetrics } from '../transport/meth
 import type { SectionRegistry } from '../transport/snapshot/sectionRegistry'
 import { preferencesIntegrationGate } from './bridges/integrationGateReader'
 import { failClosedSecretReader } from './bridges/secretReader'
-import { resetParticipants, type LedgerInstallMoment } from './resetParticipants'
+import {
+  resetParticipants,
+  type LedgerInstallMoment,
+  type ModuleResetSteps
+} from './resetParticipants'
 import { routePreferences } from './routes/preferencesRoutes'
 
 /** No OS secret store is wired (later: ISSUE-324): nothing is stored, nothing can be. */
@@ -81,11 +83,6 @@ export const noOwnedConfigWriter: ExternalConfigWriter = {
   findLegacy: () => Promise.resolve(false)
 }
 
-/** No ledger module owns `install_moment` yet (later: ISSUE-096). */
-export const emptyLedgerInstallMoment: LedgerInstallMoment = {
-  setInstallMoment: () => undefined
-}
-
 export interface PreferencesWiringDeps {
   /** The Host's one writer (09 §8.1), opened by boot step 2. */
   db: SqliteDatabase
@@ -101,8 +98,10 @@ export interface PreferencesWiringDeps {
   featureFlags: FeatureFlagReader
   /** The `db` step's post-commit cleanup (`SqliteResetCleanup`, host/platform/sqlite). */
   maintenance: ResetDbMaintenance
-  /** The ledger's install-moment writer (`emptyLedgerInstallMoment` until ISSUE-096). */
+  /** The ledger's install-moment writer: the `SqliteLedgerRepository` boot step 4 wires. */
   ledger: LedgerInstallMoment
+  /** The cut-1 module steps (`createModuleResetSteps(...).steps`, moduleResetSteps.ts). */
+  moduleSteps: ModuleResetSteps
   /** `unavailableSecretStore` until ISSUE-324. */
   secrets: SecretStore
   /** `noOwnedConfigWriter` until ISSUE-323. */
@@ -192,6 +191,7 @@ function wirePreferences(
   })
   const participants = resetParticipants({
     preferences: createPreferencesResetStep({ db, clock }),
+    modules: deps.moduleSteps,
     attention: createAttentionResetStep({ db, scope: transactions }),
     ledger: deps.ledger,
     clock

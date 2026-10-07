@@ -425,5 +425,36 @@ export function runLedgerRepositoryContract(
       s.inTransaction(() => store.setBackfillState({ state: 'running', creditedScanUnits: [] }))
       expect(store.backfillState()).toEqual({ state: 'not-started', creditedScanUnits: [] })
     })
+
+    // The Reset saga's install moment (16 §4.10 `setInstallMoment`; 07 S13.05; ISSUE-121).
+
+    it("[S13.05, S19.01] setInstallMoment writes the new moment in the caller's transaction and the old moment's backfill progress goes with it", async () => {
+      const s = await setUp()
+      const store = s.repository
+      const T = CONTRACT_INSTALL_MOMENT
+      s.inTransaction(() => {
+        store.markScanUnit(
+          { scanUnit: 'claude:/history/a', adapterId: 'claude', tokensCredited: 3 },
+          T
+        )
+        store.setBackfillState({ state: 'done', creditedScanUnits: [], doneAt: T + 1 })
+      })
+
+      s.inTransaction(() => store.setInstallMoment(T + 2_000))
+
+      expect(store.installMoment()).toBe(T + 2_000)
+      expect(store.backfillState()).toEqual({ state: 'not-started', creditedScanUnits: [] })
+    })
+
+    it('[S13.05] setInstallMoment outside a transaction throws and keeps the moment', async () => {
+      const s = await setUp()
+      const store = s.repository
+
+      expect(() => store.setInstallMoment(CONTRACT_INSTALL_MOMENT + 2_000)).toThrow(
+        HostInvariantError
+      )
+
+      expect(store.installMoment()).toBe(CONTRACT_INSTALL_MOMENT)
+    })
   })
 }
