@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { runProcessControlContract, type KillWorld } from '../testing/processControl.contract'
+import {
+  runProcessControlContract,
+  type KillWorld,
+  type ListingWorld
+} from '../testing/processControl.contract'
 import { FakeClock } from './FakeClock'
 import { FakeProcessControl } from './FakeProcessControl'
 
@@ -36,8 +40,24 @@ describe('FakeProcessControl', () => {
       signals: () => control.signals,
       isRunning: async (pid) => (await control.probe(pid)) !== 'absent'
     }
+    let nextFolder = 0
+    const listing: ListingWorld = {
+      stem: 'stubcli',
+      folder: () => Promise.resolve(`/work/folder-${nextFolder++}`),
+      start: (cwd, kind) => {
+        control.scriptProcess({ stem: kind === 'stem' ? 'stubcli' : 'other-program', cwd })
+        return Promise.resolve()
+      },
+      sameFolder: (listed, folder) => listed === folder,
+      unreadable: () => {
+        const failing = new FakeProcessControl()
+        failing.scriptListing('unreadable')
+        return failing
+      }
+    }
     return {
       control,
+      listing,
       ownPid: OWN_PID,
       unreadablePid: UNREADABLE_PID,
       absentPid: ABSENT_PID,

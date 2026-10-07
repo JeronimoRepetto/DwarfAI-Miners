@@ -14,6 +14,15 @@ export interface ProcessControl {
   // has `pid`, by existence only (signal 0 / ESRCH): it never spawns and never reads a start time,
   // so it is never evidence of identity (06 INV-51); only `absent` is evidence, of no process.
   isRunning(pid: number): 'running' | 'absent' | 'unknown'
+  // Amended: 16 §3 ProcessControl.listProcesses (owner amendment I, 2026-10-07). A read-only
+  // listing of the running processes that carry one of `filter.stems` (their executable's stem, a
+  // native build's `<stem>-…`, or a script's stem under node/bun/deno), each named by the matched
+  // stem and its working folder as the OS reports it (`null` when it cannot be read). No pid, so
+  // never evidence of identity (06 INV-51); `'unreadable'` when the listing itself cannot be read.
+  // It never spawns a provider, signals or kills anything.
+  listProcesses(filter: {
+    stems: readonly string[]
+  }): Promise<ReadonlyArray<{ stem: string; cwd: string | null }> | 'unreadable'>
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean
   spawn(spec: SpawnSpec): SpawnedProcess
   killTree(

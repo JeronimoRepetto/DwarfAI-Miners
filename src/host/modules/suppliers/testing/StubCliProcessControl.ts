@@ -41,6 +41,10 @@ export class StubCliProcessControl implements ProcessControl {
     return this.fake.isRunning(pid)
   }
 
+  listProcesses(filter: { stems: readonly string[] }): ReturnType<ProcessControl['listProcesses']> {
+    return this.fake.listProcesses(filter)
+  }
+
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean {
     return this.fake.sameProcess(a, b)
   }

@@ -41,8 +41,27 @@ export interface KillWorld {
   isRunning(pid: number): Promise<boolean>
 }
 
+/**
+ * The subject's processes for the listing case (owner amendment I): scripted for a fake, stubs for a
+ * real OS. Every process it starts carries `stem`; an `other` one carries no wanted stem.
+ */
+export interface ListingWorld {
+  /** The stem the subject's listed processes carry (never a provider's). */
+  stem: string
+  /** A fresh folder a process can run in. */
+  folder(): Promise<string>
+  /** Starts a process in `cwd`: one carrying `stem`, or one carrying none; resolves once listable. */
+  start(cwd: string, kind: 'stem' | 'other'): Promise<void>
+  /** Whether a listed working folder names `folder` (the OS may report it in its own spelling). */
+  sameFolder(listed: string, folder: string): boolean
+  /** A control of the same kind whose process listing cannot be read. */
+  unreadable(): ProcessControl
+}
+
 export interface ProcessControlSubject {
   control: ProcessControl
+  /** Processes to list (owner amendment I). */
+  listing: ListingWorld
   /** The pid of the process the subject's control runs in; its identity is readable. */
   ownPid: number
   /** A pid that is alive but whose start time this subject cannot read. */
@@ -126,6 +145,34 @@ export function runProcessControlContract(makeSubject: () => ProcessControlSubje
       expect(control.isRunning(ownPid)).toBe('running')
       expect(control.isRunning(unreadablePid)).toBe('running')
       expect(control.isRunning(absentPid)).toBe('absent')
+    })
+
+    it('[INV-51, FM-059] listProcesses names the stem and working folder of each process carrying a wanted stem, and no other process', async () => {
+      const { control, listing } = setUp()
+      const here = await listing.folder()
+      const there = await listing.folder()
+      await listing.start(here, 'stem')
+      await listing.start(there, 'other')
+
+      const listed = await control.listProcesses({ stems: [listing.stem] })
+
+      expect(listed).not.toBe('unreadable')
+      const rows = listed as ReadonlyArray<{ stem: string; cwd: string | null }>
+      expect(rows.every((row) => row.stem === listing.stem)).toBe(true)
+      const inHere = rows.filter((row) => row.cwd !== null && listing.sameFolder(row.cwd, here))
+      expect(inHere.length).toBeGreaterThanOrEqual(1)
+      expect(rows.filter((row) => row.cwd !== null && listing.sameFolder(row.cwd, there))).toEqual(
+        []
+      )
+      expect(await control.listProcesses({ stems: ['dwarfai-no-process-has-this-stem'] })).toEqual(
+        []
+      )
+    })
+
+    it('[INV-51, FM-059] a process listing that cannot be read answers unreadable, never an empty list', async () => {
+      const { listing } = setUp()
+
+      expect(await listing.unreadable().listProcesses({ stems: [listing.stem] })).toBe('unreadable')
     })
 
     it('[INV-51] sameProcess applies the one 2 000 ms tolerance at its boundary', () => {

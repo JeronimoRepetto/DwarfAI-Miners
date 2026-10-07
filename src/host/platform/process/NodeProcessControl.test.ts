@@ -8,7 +8,8 @@ import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnostics
 import type { SpawnedProcess } from '../../kernel/ports/processControl'
 import {
   runProcessControlContract,
-  type KillWorld
+  type KillWorld,
+  type ListingWorld
 } from '../../kernel/testing/processControl.contract'
 import {
   NodeProcessControl,
@@ -58,6 +59,7 @@ function scriptedControl(os: FakeOs, diagnostics?: RecordingDiagnosticsLog): Nod
     sendSignal: os.sendSignal,
     runCommand: os.runCommand,
     snapshot: os.snapshot,
+    listing: os.listing,
     scheduler: os.scheduler,
     bootSources: scriptedBootSources('working'),
     ...(diagnostics === undefined ? {} : { diagnostics })
@@ -135,8 +137,31 @@ describe('NodeProcessControl', () => {
         signals: () => os.sent,
         isRunning: (pid) => Promise.resolve(os.isRunning(pid))
       }
+      let nextFolder = 0
+      const listing: ListingWorld = {
+        stem: 'stubcli',
+        folder: () => Promise.resolve(`/work/folder-${nextFolder++}`),
+        start: (cwd, kind) => {
+          os.listed.push({
+            executable: kind === 'stem' ? '/opt/stubcli-x86_64' : '/opt/other-program',
+            argv: [],
+            cwd
+          })
+          return Promise.resolve()
+        },
+        sameFolder: (listed, folder) => listed === folder,
+        unreadable: () =>
+          new NodeProcessControl({
+            platform,
+            reader: os.reader,
+            signalZero: os.signalZero,
+            bootSources: scriptedBootSources('working'),
+            listing: () => Promise.resolve({ ok: false, cause: 'failed for the test' })
+          })
+      }
       return {
         control,
+        listing,
         ownPid: OWN_PID,
         unreadablePid: UNREADABLE_PID,
         absentPid: ABSENT_PID,
@@ -968,5 +993,52 @@ describe('NodeProcessControl.isRunning (owner amendment H)', () => {
     expect(control.isRunning(-1)).toBe('absent')
     expect(reads).toBe(0)
     expect(queries).toBe(0)
+  })
+})
+
+describe('NodeProcessControl.listProcesses (owner amendment I)', () => {
+  it('[INV-51, FM-059] listProcesses names each match by the wanted stem it carries, and logs an unreadable listing by its cause code only', async () => {
+    const os = new FakeOs('linux')
+    os.listed.push(
+      { executable: '/opt/codex-x86_64-unknown-linux-musl', argv: [], cwd: '/home/j/a' },
+      { executable: '/usr/bin/node', argv: ['node', '/opt/opencode/bin/opencode'], cwd: null },
+      { executable: '/usr/bin/bash', argv: ['bash'], cwd: '/home/j/a' }
+    )
+    const listed = scriptedControl(os)
+
+    expect(await listed.listProcesses({ stems: ['codex', 'opencode'] })).toEqual([
+      { stem: 'codex', cwd: '/home/j/a' },
+      { stem: 'opencode', cwd: null }
+    ])
+    expect(await listed.listProcesses({ stems: [] })).toEqual([])
+
+    const diagnostics = new RecordingDiagnosticsLog()
+    const failing = new NodeProcessControl({
+      platform: 'linux',
+      reader: os.reader,
+      signalZero: os.signalZero,
+      bootSources: scriptedBootSources('working'),
+      diagnostics,
+      listing: () => Promise.resolve({ ok: false, cause: 'could not read /proc (EACCES)' })
+    })
+    const throwing = new NodeProcessControl({
+      platform: 'linux',
+      reader: os.reader,
+      signalZero: os.signalZero,
+      bootSources: scriptedBootSources('working'),
+      listing: () => Promise.reject(new Error('boom'))
+    })
+
+    expect(await failing.listProcesses({ stems: ['codex'] })).toBe('unreadable')
+    expect(await throwing.listProcesses({ stems: ['codex'] })).toBe('unreadable')
+    expect(diagnostics.byEvent('process.listing.unreadable')).toEqual([
+      {
+        level: 'warn',
+        event: 'process.listing.unreadable',
+        subsystem: 'kernel',
+        outcome: 'degraded',
+        errCode: 'EACCES'
+      }
+    ])
   })
 })

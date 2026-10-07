@@ -5,6 +5,7 @@
 import type { Scheduler } from '../../../kernel/ports/scheduler'
 import type { SentSignal } from '../../../kernel/testing/processControl.contract'
 import type { ProcessRow } from '../kill/types'
+import type { RawListing, RawProcess } from '../list/listing'
 import type {
   BootSourceReader,
   OsProcessReader,
@@ -138,6 +139,14 @@ export class FakeOs {
           startTimeMs: entry.readable ? entry.startTimeMs : null
         }))
     })
+
+  /**
+   * The processes the listing of owner amendment I sees, as the OS would report them; the listing
+   * answers every one, and the adapter applies the stem rule.
+   */
+  readonly listed: RawProcess[] = []
+
+  readonly listing: RawListing = () => Promise.resolve({ ok: true, value: [...this.listed] })
 
   /** Runs every task at once (no real time), recording the delay it was asked for. */
   readonly scheduler: Scheduler = {

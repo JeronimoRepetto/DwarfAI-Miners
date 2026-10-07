@@ -24,6 +24,19 @@ export const CODEX_STATE_FILE = 'state_5.sqlite'
 /** The highest rowid of the registry: the size of the database source. */
 export const MAX_ROW_SQL = 'SELECT MAX(rowid) AS max_row FROM threads'
 
+/** The archived threads (owner amendment I: archiving closes an observed session). */
+export const ARCHIVED_THREADS_SQL = 'SELECT id FROM threads WHERE archived = 1'
+
+/** The thread ids an `ARCHIVED_THREADS_SQL` answer holds. */
+export function archivedThreadsOf(rows: readonly SqliteRow[]): Set<string> {
+  const ids = new Set<string>()
+  for (const row of rows) {
+    const id = asString(row['id'])
+    if (id !== undefined) ids.add(id)
+  }
+  return ids
+}
+
 /** The rows past a watermark, oldest first. */
 export const THREADS_SINCE_SQL =
   'SELECT rowid AS row_id, id, cwd, source, archived, created_at, created_at_ms ' +

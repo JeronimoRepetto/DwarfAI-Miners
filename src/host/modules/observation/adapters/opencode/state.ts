@@ -20,7 +20,12 @@
 // - The lifetime total of a session (Row 14) is its own stream for the coal backfill (09 §5.5):
 //   `streamId = <providerId>:session:<sessionId>`, `unitKey = coal:<streamId>`, newest record =
 //   `session.time_updated`. It is never a live usage event: the live units are the messages.
-import type { Instant, ProviderId, ProviderIdentity } from '../../../../kernel/domain/values'
+import type {
+  FolderPath,
+  Instant,
+  ProviderId,
+  ProviderIdentity
+} from '../../../../kernel/domain/values'
 import type { SqliteRow } from '../../../../kernel/ports/sqliteDatabase'
 import type { ConversationEntry } from '../../../suppliers'
 import type { ObservedEvent } from '../../ports/observationAdapter'
@@ -59,6 +64,55 @@ export const SESSIONS_SQL =
   'SELECT id, directory, parent_id, time_created FROM session ' +
   'WHERE time_archived IS NULL AND time_created >= ? AND time_created <= ? ' +
   'ORDER BY time_created, id'
+
+/** Every session's folder, newest change and archive time (owner amendment I: closing). */
+export const SESSION_STATES_SQL =
+  'SELECT id, directory, time_updated, time_archived FROM session ORDER BY time_created, id'
+
+/** What closing a session reads of its row (owner amendment I). */
+export interface SessionState {
+  /** The folder its process runs in (`nativeDirectory`), or null when the row has none. */
+  directory: FolderPath | null
+  /** `session.time_updated`: its movement is activity. */
+  updated: number | null
+  /** `session.time_archived`: archiving closes the session. */
+  archivedAt: number | null
+}
+
+/** The rows of a `SESSION_STATES_SQL` answer, by session id. */
+export function sessionStatesOf(rows: readonly SqliteRow[]): Map<string, SessionState> {
+  const states = new Map<string, SessionState>()
+  for (const row of rows) {
+    const id = asString(row['id'])
+    if (id === undefined) continue
+    const directory = asString(row['directory'])
+    states.set(id, {
+      directory: directory === undefined ? null : nativeDirectory(directory),
+      updated: asNumber(row['time_updated']) ?? null,
+      archivedAt: asNumber(row['time_archived']) ?? null
+    })
+  }
+  return states
+}
+
+/** The creation times of the messages of `count` sessions (a resumed session's markers). */
+export function messageTimesSql(count: number): string {
+  const slots = Array.from({ length: count }, () => '?').join(', ')
+  return `SELECT session_id, time_created FROM message WHERE session_id IN (${slots})`
+}
+
+/** The rows of a `messageTimesSql` answer: each session's message creation times. */
+export function messageTimesOf(
+  rows: readonly SqliteRow[]
+): Array<{ sessionId: string; at: number }> {
+  const out: Array<{ sessionId: string; at: number }> = []
+  for (const row of rows) {
+    const sessionId = asString(row['session_id'])
+    const at = asNumber(row['time_created'])
+    if (sessionId !== undefined && at !== undefined) out.push({ sessionId, at })
+  }
+  return out
+}
 
 /** The parts of `count` messages, in their order. */
 export function partsSql(count: number): string {
@@ -129,6 +183,13 @@ export interface StoreBatch {
    * change it was observed at (a message changed since is observed again).
    */
   seen: ReadonlyMap<string, number>
+  /**
+   * The session a message created at `createdAt` belongs to: its own id, or a resumed generation
+   * of it (owner amendment I, `../base/generations.ts`). Default: its own id.
+   */
+  generationOf?: (sessionId: string, createdAt: Instant) => string
+  /** A session's folder, carried by a resumed generation's facts (its id is new to the loop). */
+  folderOf?: (sessionId: string) => FolderPath | null
 }
 
 export interface StoreFacts {
@@ -192,7 +253,11 @@ export function factsOfBatch(batch: StoreBatch): StoreFacts {
     if (message.role === 'assistant' && message.completedAt === null) continue
     facts.observed.push({ key: `m:${row.id}`, at: row.changed })
 
-    const identity = identityOf(row.sessionId)
+    // Keys stay the session's own whatever its generation: records read again add no rows.
+    const generation = batch.generationOf?.(row.sessionId, row.createdAt) ?? row.sessionId
+    const identity = identityOf(generation)
+    const folder = generation === row.sessionId ? null : (batch.folderOf?.(row.sessionId) ?? null)
+    const located = folder === null ? {} : { cwd: folder }
     const keyOf = (id: string) => `${providerId}:opencode:${row.sessionId}:${id}`
     const role: ConversationEntry['role'] = message.role === 'user' ? 'person' : 'dwarf'
     for (const partRow of partsOf.get(row.id) ?? []) {
@@ -206,6 +271,7 @@ export function factsOfBatch(batch: StoreBatch): StoreFacts {
       if (part.type !== 'text') continue
       facts.events.push({
         kind: 'entries',
+        ...located,
         sourceEventId: partId,
         identity,
         entries: [
@@ -222,6 +288,7 @@ export function factsOfBatch(batch: StoreBatch): StoreFacts {
     if (message.role === 'assistant' && message.tokens !== null && spentAnything(message.tokens)) {
       facts.events.push({
         kind: 'usage',
+        ...located,
         sourceEventId: row.id,
         identity,
         usage: {

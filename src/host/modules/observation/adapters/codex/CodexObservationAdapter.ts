@@ -21,12 +21,21 @@
 // No pid is readable (`codexProvider.ts:700-706`): `processIdentitySource` is `none`, so ending an
 // observed Codex session answers `no-identity` until spike S-014-1 (15 §5, ADR-014 item 2).
 //
+// Closing (owner amendment I, 2026-10-07; 13 FM-059 as amended): no rollout record ends a session
+// (`task_complete` ends a turn, 15 §5), so a thread is closed once its rollout is quiet for 300 s
+// and two process listings 30 s apart show no Codex process in its folder (`../base/processGone.ts`;
+// rollout growth is its activity: `logs_2.sqlite`, the heartbeat, is not read, and `codex exec`
+// writes none), or once the person archives it (`threads.archived = 1`). A closed thread resumed
+// under its own id (`codex resume`) is a new session, `<thread id>~resumed-<marker>`, derived from
+// the rollout's record times and the ended-agents ledger alone (`../base/generations.ts`), so a Host
+// restart derives the same identity and records read again add no rows.
+//
 // Candidate decision (21 §6): `src/main/providers/codex/*` is replaced; the evidence is in
 // `CodexObservationAdapter.conformance.test.ts`.
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { SqliteInfrastructureError } from '../../../../kernel/domain/errors'
-import type { ProviderId } from '../../../../kernel/domain/values'
+import type { Instant, ProviderId } from '../../../../kernel/domain/values'
 import type { Clock } from '../../../../kernel/ports/clock'
 import type { FileSystem } from '../../../../kernel/ports/fileSystem'
 import type { SqliteRow } from '../../../../kernel/ports/sqliteDatabase'
@@ -41,6 +50,7 @@ import type {
   ObservedEvent,
   SourceFile
 } from '../../ports/observationAdapter'
+import type { EndedAgentLedger } from '../../ports/endedAgentLedger'
 import type { ObservedSessionRef } from '../../ports/observedSessionStore'
 import type { TranscriptEntry, TranscriptReader } from '../../ports/transcriptReader'
 import { nodeFileIdentity, type FileIdentifier } from '../base/fileIdentity'
@@ -49,6 +59,8 @@ import {
   OBSERVATION_TAIL_GATE_BYTES,
   type JsonlLine
 } from '../base/jsonlObservationAdapter'
+import { generationAt, RecordTimeline } from '../base/generations'
+import type { ProcessGoneWatch } from '../base/processGone'
 import { splitTail } from '../base/tailRead'
 import {
   entryOf,
@@ -64,6 +76,8 @@ import {
   type RolloutState
 } from './parse'
 import {
+  ARCHIVED_THREADS_SQL,
+  archivedThreadsOf,
   CODEX_STATE_FILE,
   MAX_ROW_SQL,
   maxRowOf,
@@ -76,6 +90,13 @@ export const CODEX_LOOKBACK_BYTES = OBSERVATION_TAIL_GATE_BYTES
 
 /** The most read of a rollout's head to find its `session_meta` line. */
 const HEAD_BYTES = 1024 * 1024
+
+/**
+ * The most of a rollout read again to rebuild its record times (the generation markers of a resumed
+ * thread) after a Host restart. Past it only the markers of the first bytes are known: a rollout
+ * that long is rare, and a later resume of it may then be named from an earlier marker.
+ */
+const TIMELINE_MAX_BYTES = 64 * 1024 * 1024
 
 /**
  * What an observed Codex session can do, declared as data (HO-14; 15 §3 rows A/B X3); an omitted
@@ -126,7 +147,14 @@ export interface CodexObservationAdapterOptions {
   /** `openReadOnlySnapshot` of `host/platform/sqlite` (R11). */
   openSnapshot: ReadOnlySnapshotOpener
   identify?: FileIdentifier
+  /** Closes a quiet session whose Codex process is gone (owner amendment I); without it, only archiving does. */
+  processWatch?: ProcessGoneWatch
+  /** The ended-agents ledger (INV-36), for a resumed session's generation; or `useEndedLedger`. */
+  ended?: Pick<EndedAgentLedger, 'has'>
 }
+
+/** The stems a Codex process carries (`codex`, `codex.js`, `codex-<target>`), for the listing. */
+export const CODEX_PROCESS_STEMS: readonly string[] = Object.freeze(['codex'])
 
 /** A stream's state at a byte offset: the end of the last read. */
 interface Checkpoint {
@@ -142,6 +170,15 @@ function hash(text: string): string {
 
 function baseStreamId(streamId: string): string {
   return streamId.replace(/#\d+$/, '')
+}
+
+/** A rollout fact of the thread's own identity, moved to the generation `sessionId` names. */
+function inGeneration(event: ObservedEvent, threadId: string, sessionId: string): ObservedEvent {
+  if (sessionId === threadId || event.kind === 'session') return event
+  const identity = event.identity
+  if (identity.providerSessionId !== threadId || identity.providerAgentId !== undefined)
+    return event
+  return { ...event, identity: { ...identity, providerSessionId: sessionId } }
 }
 
 function isRolloutName(name: string): boolean {
@@ -165,9 +202,20 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
   private reading: { streamId: string; lines: Map<number, string> } | null = null
   /** The registry's highest rowid, while its files are unchanged. */
   private registry: { key: string; maxRow: number } | null = null
+  /** The registry's archived thread ids, and the registry state they were read at. */
+  private archived = new Set<string>()
+  private archivedKey: string | null = null
+  /** Each stream's record times; `complete` once they include every record before the cursor. */
+  private readonly timelines = new Map<string, { timeline: RecordTimeline; complete: boolean }>()
+  /** The stream of each thread read, for the registry's archived closings. */
+  private readonly streamOfThread = new Map<string, string>()
+  /** The streams whose closing generation is in the ledger, until they grow again. */
+  private readonly settled = new Set<string>()
+  private ended: Pick<EndedAgentLedger, 'has'> | undefined
 
   constructor(private readonly options: CodexObservationAdapterOptions) {
     this.providerId = options.providerId
+    this.ended = options.ended
     this.identify = options.identify ?? nodeFileIdentity
     this.statePath = join(options.codexHome, CODEX_STATE_FILE)
     this.rollouts = new JsonlObservationAdapter({
@@ -185,6 +233,11 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
 
   capabilities(): ObservedCapabilities {
     return { ...CODEX_OBSERVED_CAPABILITIES }
+  }
+
+  /** The ended-agents ledger the observation module records closings in (bound by `host/wiring`). */
+  useEndedLedger(ended: Pick<EndedAgentLedger, 'has'>): void {
+    this.ended = ended
   }
 
   async discover(fs: FileSystem): Promise<SourceFile[]> {
@@ -283,16 +336,135 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
       next: batch.next,
       warnings: [...batch.warnings]
     }
+    const threadId = head.threadId
+    this.streamOfThread.set(threadId, source.streamId)
+    const times = await this.timelineOf(source, start, threadId)
     for (const [offset, text] of lines) {
       const record = parseRolloutLine(text)
       if (record === null) continue
+      if (record.at !== null) times.timeline.add(record.at)
       const step = stepRollout(state, record, { text, offset }, context)
       state = step.state
-      out.events.push(...step.events)
+      const sessionId = this.generationOf(threadId, times.timeline, record.at)
+      out.events.push(...step.events.map((event) => inGeneration(event, threadId, sessionId)))
       out.warnings.push(...step.warnings)
     }
     if (batch.next.value > start) {
       this.checkpoints.set(source.streamId, { offset: batch.next.value, state })
+      // Rollout growth is the session's activity (owner amendment I).
+      this.options.processWatch?.active(source.streamId)
+      this.settled.delete(source.streamId)
+    }
+    const closing = await this.closing(source, head, times.timeline)
+    if (closing !== null) out.events.push(closing)
+    return out
+  }
+
+  // ---------- closing and resuming (owner amendment I) ----------
+
+  /** Whether the ledger holds this thread session id (INV-36). */
+  private hasEnded(sessionId: string): boolean {
+    return this.ended?.has({ providerId: this.providerId, providerSessionId: sessionId }) === true
+  }
+
+  /**
+   * The session a record of the thread at `at` belongs to (`../base/generations.ts`): the thread's
+   * own id until that is in the ledger; then the generation its markers lead to.
+   */
+  private generationOf(threadId: string, timeline: RecordTimeline, at: Instant | null): string {
+    if (!this.hasEnded(threadId)) return threadId
+    const when = at ?? timeline.newest() ?? Number.POSITIVE_INFINITY
+    return generationAt(threadId, timeline.markers(), when, (id) => this.hasEnded(id))
+  }
+
+  /**
+   * The stream's record times. Kept per stream; after a Host restart they are rebuilt from the
+   * rollout's bytes before the cursor, once the thread's own id is in the ledger: before that every
+   * record is the thread's own and no marker matters.
+   */
+  private async timelineOf(
+    source: SourceFile,
+    start: number,
+    threadId: string
+  ): Promise<{ timeline: RecordTimeline; complete: boolean }> {
+    let times = this.timelines.get(source.streamId)
+    if (times === undefined) {
+      times = { timeline: new RecordTimeline(), complete: start === 0 }
+      this.timelines.set(source.streamId, times)
+    }
+    if (!times.complete && this.hasEnded(threadId)) {
+      try {
+        const text = await this.options.fs.readTextHead(
+          source.path,
+          Math.min(start, TIMELINE_MAX_BYTES)
+        )
+        for (const line of splitTail(text, 0, false).lines) {
+          const at = parseRolloutLine(line.text)?.at ?? null
+          if (at !== null) times.timeline.add(at)
+        }
+        times.complete = true
+      } catch {
+        // Unreadable now: the next read tries again; until then no marker before the cursor.
+      }
+    }
+    return times
+  }
+
+  /**
+   * The `closed` fact a read states for the thread's current generation (owner amendment I): once
+   * the person archived it, or once its Codex process is gone (`../base/processGone.ts`). Stated on
+   * every read until the ledger holds it, then not again until the rollout grows.
+   */
+  private async closing(
+    source: SourceFile,
+    head: RolloutHead,
+    timeline: RecordTimeline
+  ): Promise<ObservedEvent | null> {
+    if (this.settled.has(source.streamId)) return null
+    const archived = this.archived.has(head.threadId)
+    const watch = this.options.processWatch
+    const gone = !archived && watch !== undefined && (await watch.gone(source.streamId, head.cwd))
+    if (!archived && !gone) return null
+    const sessionId = this.generationOf(head.threadId, timeline, null)
+    if (this.hasEnded(sessionId)) {
+      this.settled.add(source.streamId)
+      return null
+    }
+    return {
+      kind: 'closed',
+      sourceEventId: archived ? 'archived' : 'process-gone',
+      identity: { providerId: this.providerId, providerSessionId: sessionId },
+      ...(head.cwd === null ? {} : { cwd: head.cwd }),
+      at: this.options.clock.now()
+    }
+  }
+
+  /**
+   * The `closed` facts of archived threads, stated by the first registry read after each registry
+   * change (an archived thread's rollout may no longer be under `sessions/`, owner amendment I). The
+   * archived ids are read then, and kept for the rollout reads; a busy registry is read again next
+   * cycle, with no event.
+   */
+  private async archivedClosings(source: SourceFile): Promise<ObservedEvent[]> {
+    const key = this.registry?.key ?? `unsized:${source.fileIdentity}`
+    if (this.archivedKey === key) return []
+    const rows = await this.query(source.path, ARCHIVED_THREADS_SQL, [])
+    if (rows.kind !== 'rows') return []
+    this.archived = archivedThreadsOf(rows.rows)
+    this.archivedKey = key
+    const out: ObservedEvent[] = []
+    for (const threadId of this.archived) {
+      const stream = this.streamOfThread.get(threadId)
+      const times = stream === undefined ? undefined : this.timelines.get(stream)
+      const sessionId =
+        times?.complete === true ? this.generationOf(threadId, times.timeline, null) : threadId
+      if (this.hasEnded(sessionId)) continue
+      out.push({
+        kind: 'closed',
+        sourceEventId: 'archived',
+        identity: { providerId: this.providerId, providerSessionId: sessionId },
+        at: this.options.clock.now()
+      })
     }
     return out
   }
@@ -395,13 +567,18 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
       value,
       fileIdentity: source.fileIdentity
     })
-    const nothing: CodexRead = { events: [], next: at(start), warnings: [] }
+    const closings = await this.archivedClosings(source)
+    const nothing: CodexRead = { events: closings, next: at(start), warnings: [] }
     if (source.size <= start) return nothing
     const result = await this.query(source.path, THREADS_SINCE_SQL, [start])
     if (result.kind === 'retry') return nothing
     if (result.kind === 'failed') return { ...nothing, warnings: [result.warning] }
     const read = sessionsOfThreadRows(result.rows, start, this.providerId)
-    return { events: read.events, next: at(read.watermark), warnings: read.warnings }
+    return {
+      events: [...read.events, ...closings],
+      next: at(read.watermark),
+      warnings: read.warnings
+    }
   }
 
   /** One query on a fresh snapshot; a busy file is `retry`, never a warning (FM-090). */
