@@ -584,7 +584,8 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     // The table also lists the 34 NEW rows of 14 §2.2 that the found tree does not have yet.
     // AMENDED for the A-N34 amendment (owner-approved 2026-10-01, ISSUE-316; was: 33): seam A NEW 33 → 34.
     const found = table.filter((row) => row.status !== 'NEW')
-    expect(found).toHaveLength(66)
+    // AMENDED for ISSUE-123 (was: 66): the A-44 rename gives its new wire `presence:visibleMines` its own found row.
+    expect(found).toHaveLength(67)
     expect(table.filter((row) => row.status === 'NEW')).toHaveLength(34)
     const resolveEntry = (key: string): string[] => {
       if (key in registry) return [key]
