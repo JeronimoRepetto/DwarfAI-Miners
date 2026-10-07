@@ -1,6 +1,7 @@
 // The arrival and departure members of `CrewCommands` (05 §3.2; 16 §4.2): `arrive`, `rebind`,
 // `sessionClosed` and `markUnrecovered`, and `recordActivity` (ISSUE-095, for the observed route
-// `SessionActivityObserved`). The others (`startAsking`, `stop`, `rename`, the ends…) join with
+// `SessionActivityObserved`; ISSUE-120, its `'turn-finished'` for the `TurnEnded` route, owner
+// amendment C). The others (`startAsking`, `stop`, `rename`, the ends…) join with
 // their issues (later: ISSUE-080, ISSUE-172, EPIC-10).
 //
 // Each command runs in one synchronous transaction (16 §2.2): it reads the dwarf, writes the next
@@ -28,9 +29,15 @@ import type { CrewEvent } from '../domain/events'
 import { isGone, type DepartureCause } from '../domain/presence'
 import type { DwarfRank } from '../domain/rank'
 import { classifyDwarfStatus } from '../domain/status'
-import { otherActivity, turnStarted } from '../domain/statusFacts'
+import { otherActivity, turnEnded, turnStarted } from '../domain/statusFacts'
 import type { DwarfRepository } from '../ports/dwarfRepository'
 import type { StatusTimer } from './statusTimer'
+
+/** A turn's end as `TurnEnded` reports it (ADR-021): the provider's own instant and reliability. */
+export interface TurnFinished {
+  at: number
+  reliability: 'reliable' | 'inferred'
+}
 
 /** Driving port (05 §3.2): the members of ISSUE-069; the others join with their issues. */
 export interface CrewCommands {
@@ -45,12 +52,18 @@ export interface CrewCommands {
   /** Host-driven resume only (INV-22). */
   rebind(dwarfId: DwarfId, next: ProviderIdentity): void
   /**
-   * 16 §4.2: moves the status facts (S1.06, S1.08); the status is derived (INV-23). The frozen
-   * kind `'turn-finished'` joins with its route (`TurnEnded`, later: ISSUE-120): the persisted
-   * facts need the end's reliability (09 `dwarfs.turn_end_reliability`), which this signature
-   * does not carry (package gap, reported with ISSUE-095).
+   * 16 §4.2: moves the status facts (S1.03, S1.04, S1.06, S1.08); the status is derived (INV-23).
+   * `end` is given iff `kind` is `'turn-finished'` (else `HostInvariantError`): the `TurnEnded`
+   * route (host/wiring/routes/cut1Routes.ts, ISSUE-120) passes `TurnEnded.at` and `.reliability`,
+   * which 09 `dwarfs` persists. A reliable and an inferred end move the status alike (OQ-36 A);
+   * whether the end may be announced (`cancelledFromApp`) is the route's, not crew's.
    */
-  recordActivity(dwarfId: DwarfId, kind: 'turn-started' | 'message'): void
+  // Amended: 05 §3.2 / 16 §4.2 recordActivity end (owner amendment C, 2026-10-06)
+  recordActivity(
+    dwarfId: DwarfId,
+    kind: 'turn-started' | 'turn-finished' | 'message',
+    end?: TurnFinished
+  ): void
   /** The single departure path (06 §5.1); publishes `DwarfDeparted`. */
   sessionClosed(dwarfId: DwarfId, cause: DepartureCause): void
   /** Host recovery pass: `processState` `unrecovered`, the dwarf stays present (INV-26). */
@@ -136,14 +149,29 @@ export class CrewArrivals implements CrewCommands {
       this.publish('DwarfRebound', { dwarfId, previous: rebound.previous, next })
   }
 
-  recordActivity(dwarfId: DwarfId, kind: 'turn-started' | 'message'): void {
+  recordActivity(
+    dwarfId: DwarfId,
+    kind: 'turn-started' | 'turn-finished' | 'message',
+    end?: TurnFinished
+  ): void {
+    // Amended: 05 §3.2 / 16 §4.2 recordActivity end (owner amendment C, 2026-10-06)
+    if ((kind === 'turn-finished') !== (end !== undefined)) {
+      throw new HostInvariantError(
+        `recordActivity '${kind}' takes an end iff it is 'turn-finished'`
+      )
+    }
     const { repository, transactions, clock } = this.deps
     const at = clock.now()
     const moved = transactions.inTransaction(() => {
       const dwarf = this.existing(dwarfId)
       if (isGone(dwarf)) return null
       const facts =
-        kind === 'turn-started' ? turnStarted(dwarf.facts, at) : otherActivity(dwarf.facts, at)
+        end !== undefined
+          ? // S1.03, S1.04: the end's own instant, the base of the 60 s asleep timer (INV-25).
+            turnEnded(dwarf.facts, end)
+          : kind === 'turn-started'
+            ? turnStarted(dwarf.facts, at)
+            : otherActivity(dwarf.facts, at)
       repository.save({ ...dwarf, facts })
       return facts
     })
