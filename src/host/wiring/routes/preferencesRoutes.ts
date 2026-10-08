@@ -1,10 +1,8 @@
 // The preferences module's event routes to the transport (05 §4 "event routes"; 14 §2.4):
 //
-// - `HostPreferencesChanged` → B-F24 `preferences.changed` to every `ui` connection
-//   (transport/methods/preferences.ts `publishPreferencesChanged`; ADR-024 D9);
-// - `WelcomeStepChanged` → B-F24 `preferences.changed` with the step's new state as `welcome`
-//   (07 S41.05 "→ preferences.changed"; 16 §4.12; ISSUE-222). Until the transport's view reads
-//   `welcome()` itself (the snapshot section, later in ISSUE-222), the route sets it from the event;
+// - `HostPreferencesChanged` and `WelcomeStepChanged` → B-F24 `preferences.changed` to every `ui`
+//   connection (transport/methods/preferences.ts `publishPreferencesChanged`; ADR-024 D9; 07
+//   S41.05 "→ preferences.changed"; ISSUE-222);
 // - `MetricsResetStarted` → B-F03 `resync-required {metrics-reset}` (transport/methods/resetMetrics.ts
 //   `publishResetFrames`; 14 §1.9);
 // - the Reset saga's way to the attached UIs, B-F27 `reset.progress` and B-F26 `ui.resetPreferences`,
@@ -27,7 +25,7 @@ import type {
   WelcomeQueries
 } from '../../modules/preferences'
 import type { ConnectionRegistry } from '../../transport/connectionRegistry'
-import { preferencesView, publishPreferencesChanged } from '../../transport/methods/preferences'
+import { publishPreferencesChanged } from '../../transport/methods/preferences'
 import {
   publishResetFrames,
   type ConnectionResetUiFanout
@@ -48,13 +46,7 @@ export interface PreferencesRoutesDeps {
 /** Routes the module's events; returns the saga's `ResetUiFanout`, with the boot rule above. */
 export function routePreferences(deps: PreferencesRoutesDeps): ResetUiFanout {
   const { acks } = deps
-  publishPreferencesChanged(deps.bus, deps.connections)
-  deps.bus.subscribe('WelcomeStepChanged', (event) =>
-    deps.connections.publish('preferences.changed', {
-      ...preferencesView(deps.queries.get()),
-      welcome: event.payload.state
-    })
-  )
+  publishPreferencesChanged(deps.bus, deps.connections, deps.queries)
   publishResetFrames(deps.bus, deps.connections, deps.log)
   return {
     progress: (progress) => acks.progress(progress),

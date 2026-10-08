@@ -13,10 +13,14 @@
 //   nothing new publishes nothing (ADR-024 D9).
 // - The snapshot section and the frame carry the same `PreferencesView` as B-M12.
 //
-// Lead decision (2026-09-30): the view's `secrets`, `secretBackend` and `welcome` have no source in
-// cut 1 (SecretStore: ISSUE-215; the first-run evaluation: ISSUE-222), so they are served as none
-// configured, `'unavailable'` and not due; `integrations` likewise until its store joins (later:
-// ISSUE-218…ISSUE-221). No renderer reads them before 3a / cut 2.
+// - `welcome` is the first-run consent step the module evaluated at boot (`queries.welcome()`, 07
+//   machine 41; 16 §4.12; ISSUE-222), in B-M12, the snapshot section and B-F24 alike; its
+//   `WelcomeStepChanged` is sent as `preferences.changed` with the same view (07 S41.05).
+//
+// Lead decision (2026-09-30): the view's `secrets` and `secretBackend` have no source in cut 1
+// (SecretStore: ISSUE-215), so they are served as none configured and `'unavailable'`;
+// `integrations` likewise until its store joins (later: ISSUE-218…ISSUE-221). No renderer reads
+// them before 3a / cut 2.
 import {
   HOST_METHOD_SCHEMAS,
   type HostFrameName,
@@ -25,7 +29,13 @@ import {
   type PreferencesView
 } from '@dwarfai/contracts'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
-import type { Preferences, PreferencesEvent } from '../../modules/preferences'
+import type {
+  Preferences,
+  PreferencesEvent,
+  PreferencesQueries,
+  WelcomeQueries,
+  WelcomeStepState
+} from '../../modules/preferences'
 import type { FramePublisher } from '../connectionRegistry'
 import type { Dispatcher } from '../dispatcher'
 import { METHOD_ROLES } from '../roles'
@@ -34,19 +44,25 @@ import type { SectionProvider } from '../snapshot/sectionRegistry'
 /** The frames this file publishes, for `hello.ok.capabilities` (14 §1.3). */
 export const PREFERENCES_FRAMES: readonly HostFrameName[] = Object.freeze(['preferences.changed'])
 
-/** 14 §3.6 `PreferencesView` of cut 1 over the stored `preferences` (see the lead decision above). */
-export function preferencesView(preferences: HostPreferences): PreferencesView {
+/** The module as these members read it: its queries with the first-run step's `welcome()`. */
+export type ServedPreferences = Preferences & { queries: PreferencesQueries & WelcomeQueries }
+
+/** 14 §3.6 `PreferencesView` over the stored `preferences` and the step (see the notes above). */
+export function preferencesView(
+  preferences: HostPreferences,
+  welcome: WelcomeStepState
+): PreferencesView {
   return {
     preferences,
     secrets: [],
     secretBackend: 'unavailable',
     integrations: [],
-    welcome: { due: false, legacyFound: [], offered: [] }
+    welcome
   }
 }
 
 export interface PreferencesMethodsDeps {
-  preferences: Preferences
+  preferences: ServedPreferences
 }
 
 /** Serves `preferences.get` (B-M12) and `preferences.set` (B-M13) on `dispatcher`. */
@@ -56,7 +72,8 @@ export function registerPreferences(dispatcher: Dispatcher, deps: PreferencesMet
     'preferences.get',
     HOST_METHOD_SCHEMAS['preferences.get'].params,
     METHOD_ROLES['preferences.get'] ?? [],
-    (): HostMethods['preferences.get']['result'] => preferencesView(queries.get())
+    (): HostMethods['preferences.get']['result'] =>
+      preferencesView(queries.get(), queries.welcome())
   )
   dispatcher.registerMutating(
     'preferences.set',
@@ -67,19 +84,31 @@ export function registerPreferences(dispatcher: Dispatcher, deps: PreferencesMet
 }
 
 /** The snapshot's `preferences` section (14 §4.1): the same view as `preferences.get`. */
-export function preferencesSection(preferences: Preferences): SectionProvider<'preferences'> {
-  return () => preferencesView(preferences.queries.get())
+export function preferencesSection(preferences: ServedPreferences): SectionProvider<'preferences'> {
+  return () => preferencesView(preferences.queries.get(), preferences.queries.welcome())
 }
 
 /**
- * Routes `HostPreferencesChanged` to `preferences.changed` (B-F24) on `frames`; returns the
- * unsubscribe.
+ * Routes `HostPreferencesChanged` and `WelcomeStepChanged` (07 S41.05) to `preferences.changed`
+ * (B-F24) on `frames`, each with the full view; returns the unsubscribe. The step's state is read
+ * from `queries`, which already holds the new state when its event is published.
  */
 export function publishPreferencesChanged(
   bus: DomainEventBus<PreferencesEvent>,
-  frames: FramePublisher
+  frames: FramePublisher,
+  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries
 ): () => void {
-  return bus.subscribe('HostPreferencesChanged', (event) =>
-    frames.publish('preferences.changed', preferencesView(event.payload.preferences))
+  const offPreferences = bus.subscribe('HostPreferencesChanged', (event) =>
+    frames.publish(
+      'preferences.changed',
+      preferencesView(event.payload.preferences, queries.welcome())
+    )
   )
+  const offWelcome = bus.subscribe('WelcomeStepChanged', (event) =>
+    frames.publish('preferences.changed', preferencesView(queries.get(), event.payload.state))
+  )
+  return () => {
+    offPreferences()
+    offWelcome()
+  }
 }
