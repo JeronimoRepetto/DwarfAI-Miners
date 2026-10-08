@@ -154,6 +154,21 @@ export class NodeFs implements FileSystem {
     }
   }
 
+  async writeFileInPlace(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
+    // Owner amendment J: 'r+' opens an existing file only (a missing one is ENOENT, never
+    // created); truncate, then write from offset 0, no temporary file and no rename.
+    return settled(async () => {
+      const handle = await open(path, 'r+')
+      try {
+        await handle.truncate(0)
+        await handle.writeFile(data)
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+    })
+  }
+
   async appendFile(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
     // Flag 'a' creates a missing file but never a missing parent (ENOENT → not-found), so a
     // deleted folder is recreated only by an explicit makeDir (13 FM-108).

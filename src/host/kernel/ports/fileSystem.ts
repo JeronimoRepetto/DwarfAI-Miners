@@ -58,6 +58,12 @@ export interface FileSystem {
    * temporary file is left behind. A missing parent directory is `not-found`.
    */
   writeFileAtomic(path: string, data: Uint8Array | string): Promise<Result<void, FsError>>
+  // Amended: 16 §3 FileSystem.writeFileInPlace (owner amendment J, 2026-10-08). The last resort of
+  // ADR-016 item 6.4, taken only after `writeFileAtomic` kept failing on a sharing violation and
+  // its retries ran out: it opens the EXISTING file, truncates it and writes `data` into it. It
+  // never creates a file (a missing one is `not-found`) and never renames, so a crash part-way
+  // can leave a truncated or partial file: its caller persists a snapshot of the bytes first.
+  writeFileInPlace(path: string, data: Uint8Array | string): Promise<Result<void, FsError>>
 
   // --- typed writes of the diagnostics segment writer (16 §3 row `FileSystem`: "writes ... by
   // diagnostics"; ADR-026 items 1–2; 13 FM-108) ---------------------------------------------

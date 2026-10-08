@@ -1,4 +1,4 @@
-import { describe } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { runFileSystemContract, runFileSystemFaultContract } from '../testing/fileSystem.contract'
 import { FakeFs } from './FakeFs'
 
@@ -20,4 +20,25 @@ describe('FakeFs', () => {
 
   runFileSystemContract(makeSubject)
   runFileSystemFaultContract(makeSubject)
+
+  it('[CH-11] a crash scripted part-way through an in-place write leaves only the bytes that landed', async () => {
+    const fs = new FakeFs()
+    const target = '/fake-root/tool/settings.ini'
+    fs.addFile(target, 'the previous content')
+    fs.scriptInPlaceCrash(target, 4)
+
+    await expect(fs.writeFileInPlace(target, 'next content')).rejects.toThrow(
+      'FakeFs: simulated crash'
+    )
+    const partial = await fs.readFile(target)
+    expect(partial.ok && Buffer.from(partial.value).toString('utf8')).toBe('next')
+
+    // One crash only: the next in-place write lands whole.
+    await expect(fs.writeFileInPlace(target, 'next content')).resolves.toEqual({
+      ok: true,
+      value: undefined
+    })
+    const whole = await fs.readFile(target)
+    expect(whole.ok && Buffer.from(whole.value).toString('utf8')).toBe('next content')
+  })
 })

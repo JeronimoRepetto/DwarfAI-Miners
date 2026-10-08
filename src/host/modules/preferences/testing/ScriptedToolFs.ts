@@ -73,6 +73,10 @@ export class ScriptedToolFs implements FileSystem {
     return this.dataWrite(path, () => this.inner.writeFileAtomic(path, data))
   }
 
+  async writeFileInPlace(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
+    return this.inner.writeFileInPlace(path, data)
+  }
+
   async appendFile(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
     return this.dataWrite(path, () => this.inner.appendFile(path, data))
   }
