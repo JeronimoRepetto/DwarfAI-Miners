@@ -185,3 +185,19 @@ three OSes and then ran for 7 days of normal use with no blocking problem (the s
 | Soak end                     | pending                                                                                                              |
 | Blocking problems            | pending                                                                                                              |
 | Retirement or deletion issue | ISSUE-058                                                                                                            |
+
+## Soak record and deletion (ISSUE-058)
+
+Appended for the retirement work unit (ISSUE-058; 21 §2 cut 0 "Retired at the end"; OQ-71). The table of "Soak record for
+the deletion" above is left as written; this section records what the deletion rests on.
+
+| Field                        | Value                                                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exit criteria met on Windows | the Windows runs of "Parity suite and run evidence" above (2026-10-01)                                                                                                                                                                                  |
+| Exit criteria met on macOS   | the CI runs listed above (main push run 36977223262, E2E release lane included; the WU-2 items in PR #1137 run 36985038479) (2026-10-02)                                                                                                                |
+| Exit criteria met on Linux   | the same CI runs (2026-10-02)                                                                                                                                                                                                                           |
+| Soak (OQ-71)                 | the owner attested on 2026-10-08 that the cut-0 build, with the cut-1 changes, ran more than 7 days of normal use with no blocking problem; the attestation is the owner's word, with no build id or date range recorded beyond this entry              |
+| Deleted                      | `src/main/shell/window.ts`, `src/main/shell/tray.ts`, `src/main/shell/window.test.ts`; `LegacyRuntimeRoute` no longer composes today's window, tray, toggle shortcut or window-family handlers; `src/main/index.ts` no longer imports or registers them |
+| Rows                         | every window-family row (A-01…A-05, A-08…A-11) and A-24 stay served `ui-local`; no legacy handler is registered for them (`ipc-routing.contract.test.ts`, describe 'cut-0 retirement')                                                                  |
+| Rollback                     | a cut-0 rollback build is no longer possible: after a retirement only forward fixes exist (21 §2.1)                                                                                                                                                     |
+| Deletion commit              | pending                                                                                                                                                                                                                                                 |
