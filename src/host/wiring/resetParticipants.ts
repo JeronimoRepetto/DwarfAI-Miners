@@ -4,11 +4,11 @@
 //
 // - `dbSteps`: joined in the one `db` transaction, in the 09 §7.2 order — (2) mines and crew,
 //   (3) the other per-table deletions, (4) launching. Cut 1 registers (2) the mines and crew steps
-//   and (3) the preferences, observation, ledger, conversation and attention steps (ISSUE-121,
-//   ISSUE-118; the module steps are built by moduleResetSteps.ts). The deletions of (2) go first:
+//   and (3) the preferences, observation, ledger, conversation, asking and attention steps
+//   (ISSUE-121, ISSUE-118, ISSUE-139; the module steps are built by moduleResetSteps.ts). The deletions of (2) go first:
 //   their cascades take the departed dwarfs' rows (messages, keys, usage), so the steps of (3)
 //   delete only what the present dwarfs and the kept mines leave. The others join with their
-//   issues, each in its place (later: ISSUE-139, ISSUE-181, ISSUE-208).
+//   issues, each in its place (later: ISSUE-181, ISSUE-208).
 // - `installMoment`: the ledger's `install_moment(now, 'reset')` (07 S13.05), written through
 //   `LedgerRepository.setInstallMoment` (16 §4.10; `SqliteLedgerRepository`) in its own
 //   transaction at that step (lead decision 2026-09-30: the `ResetDbStep` shape, no new port
@@ -32,12 +32,14 @@ export interface ModuleResetSteps {
   ledger: ResetDbStep
   /** `createConversationResetStep`: 09 §7.2 (3). */
   conversation: ResetDbStep
+  /** `createAskingResetStep`: 09 §7.2 (3), closed asks deleted (cascades) before attention's. */
+  asking: ResetDbStep
 }
 
 export interface ResetParticipantsDeps {
   /** The preferences module's step (`createPreferencesResetStep`). */
   preferences: ResetDbStep
-  /** The mines, crew, observation, ledger and conversation steps. */
+  /** The mines, crew, observation, ledger, conversation and asking steps. */
   modules: ModuleResetSteps
   /** The attention module's step (`createAttentionResetStep`). */
   attention: ResetDbStep
@@ -62,6 +64,9 @@ export function resetParticipants(deps: ResetParticipantsDeps): ResetParticipant
       modules.observation,
       modules.ledger,
       modules.conversation,
+      // The closed asks go first (their keys cascade), so attention finds only the keys that
+      // remain (ISSUE-139).
+      modules.asking,
       deps.attention
     ],
     installMoment: {

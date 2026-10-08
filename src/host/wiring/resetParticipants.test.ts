@@ -33,7 +33,8 @@ function moduleSteps(): ModuleResetSteps {
     crew: step('crew'),
     observation: step('observation'),
     ledger: step('ledger'),
-    conversation: step('conversation')
+    conversation: step('conversation'),
+    asking: step('asking')
   }
 }
 
@@ -63,6 +64,7 @@ describe('resetParticipants', () => {
       modules.observation,
       modules.ledger,
       modules.conversation,
+      modules.asking,
       attention
     ])
     expect(participants.installMoment.name).toBe('ledger-install-moment')
