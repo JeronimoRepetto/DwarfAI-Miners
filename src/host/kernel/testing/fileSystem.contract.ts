@@ -92,6 +92,29 @@ export function runFileSystemContract(
       await expect(fs.exists(pathOf('nowhere'))).resolves.toBe(false)
     })
 
+    it('[ADR-016] an in-place write keeps the path and replaces the whole content; a missing file is not-found and is not created', async () => {
+      const { fs, pathOf, seed } = await makeSubject()
+      const target = pathOf('tool', 'settings.json')
+      await seed(target, '{"long":"a previous content longer than the next one"}')
+
+      await expect(fs.writeFileInPlace(target, '{"next":1}')).resolves.toEqual({
+        ok: true,
+        value: undefined
+      })
+      const read = await fs.readFile(target)
+      expect(read.ok && utf8(read.value)).toBe('{"next":1}')
+      // Written in place: no temporary sibling, the directory holds the target alone.
+      const listed = await fs.listDirWithSizes(pathOf('tool'))
+      expect(listed.ok && listed.value.map((entry) => entry.name)).toEqual(['settings.json'])
+
+      const missing = pathOf('tool', 'missing.json')
+      await expect(fs.writeFileInPlace(missing, 'x')).resolves.toEqual({
+        ok: false,
+        error: 'not-found'
+      })
+      await expect(fs.exists(missing)).resolves.toBe(false)
+    })
+
     it('[ADR-006] a bounded tail read returns at most the requested bytes from the end', async () => {
       const { fs, pathOf, seed } = await makeSubject()
       const log = pathOf('provider', 'session.jsonl')

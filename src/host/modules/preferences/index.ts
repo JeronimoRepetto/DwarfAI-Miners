@@ -39,8 +39,14 @@ export type {
 export type { MetricsResetResult, ResetMetricsCommand, ResetStep } from './domain/resetSaga'
 export type { ResetDbStep } from './ports/resetJournal'
 export type { SecretStore } from './ports/secretStore'
-export type { ExternalConfigWriter } from './ports/externalConfigWriter'
+export type {
+  ChannelToken,
+  ConfigTarget,
+  ConsentOrigin,
+  ExternalConfigWriter
+} from './ports/externalConfigWriter'
 export type { ChannelTokenStore, TokenChannel } from './ports/channelTokenStore'
+export type { IntegrationSetting, IntegrationSettingStore } from './ports/integrationSettingStore'
 export type { FeatureFlagReader, FeatureFlags } from './ports/featureFlagReader'
 export type {
   HostPreferenceKey,

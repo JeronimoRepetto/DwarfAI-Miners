@@ -52,6 +52,7 @@ export class FakeFs implements FileSystem {
   private readonly files = new Map<string, FakeFile>()
   private readonly faults = new Map<string, ScriptedFsFault>()
   private readonly dirs = new Set<string>()
+  private readonly inPlaceCrashes = new Map<string, number>()
 
   /**
    * Awaited before every read. Tests set it to suspend a scan mid-flight and
@@ -197,6 +198,32 @@ export class FakeFs implements FileSystem {
     if (this.isDir(path)) return { ok: false, error: 'io' }
     const content = typeof data === 'string' ? Buffer.from(data, 'utf8') : new Uint8Array(data)
     this.files.set(key, { content, mtimeMs: this.files.get(key)?.mtimeMs ?? 0 })
+    return { ok: true, value: undefined }
+  }
+
+  /**
+   * The Host dies part-way through the next in-place write of `path` (owner amendment J; 17 §1.10
+   * CH-11): the file keeps only the first `keptBytes` of the new content and the call rejects.
+   */
+  scriptInPlaceCrash(path: string, keptBytes: number): void {
+    this.inPlaceCrashes.set(normalize(path), keptBytes)
+  }
+
+  async writeFileInPlace(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
+    const key = normalize(path)
+    const fault = this.faults.get(key)
+    if (fault) return { ok: false, error: FAULT_ERRORS[fault] }
+    const file = this.files.get(key)
+    // Opening an existing file only: never created; a directory is not a file (EISDIR).
+    if (!file) return { ok: false, error: this.isDir(path) ? 'io' : 'not-found' }
+    const content = typeof data === 'string' ? Buffer.from(data, 'utf8') : new Uint8Array(data)
+    const kept = this.inPlaceCrashes.get(key)
+    if (kept !== undefined) {
+      this.inPlaceCrashes.delete(key)
+      this.files.set(key, { content: content.slice(0, kept), mtimeMs: file.mtimeMs })
+      throw new Error('FakeFs: simulated crash during an in-place write')
+    }
+    this.files.set(key, { content, mtimeMs: file.mtimeMs })
     return { ok: true, value: undefined }
   }
 
