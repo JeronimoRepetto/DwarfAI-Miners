@@ -95,7 +95,7 @@ import { FsSourceWeightScanner } from './modules/mines/adapters/FsSourceWeightSc
 import type { LedgerRepository } from './modules/ledger'
 import type { MapSite } from './modules/mines'
 import type { PreferencesEvent } from './modules/preferences'
-import type { Suppliers, SuppliersEvent } from './modules/suppliers'
+import type { SuppliersEvent } from './modules/suppliers'
 import { createSqliteObservationStores, type ObservedBatchSink } from './modules/observation'
 import { createHostInstallResolver } from './modules/suppliers/adapters/install/hostInstallResolver'
 import { SqliteCapabilityRecordStore } from './modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
@@ -142,7 +142,13 @@ import { SectionRegistry } from './transport/snapshot/sectionRegistry'
 import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
 import { errorCode, runBoot } from './wiring/boot'
 import { createHostDispatcher } from './wiring/hostDispatcher'
-import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
+import {
+  createBootSteps,
+  createUiEndpoint,
+  evaluateWelcomeAfterDetection,
+  mintBootEpoch
+} from './wiring/bootSteps'
+import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
@@ -193,7 +199,7 @@ import {
   wireObservation,
   type WiredObservation
 } from './wiring/routes/observation'
-import { isPublicBuild, wireSuppliers } from './wiring/suppliersWiring'
+import { isPublicBuild, wireSuppliers, type WiredSuppliers } from './wiring/suppliersWiring'
 import { HostInvariantError, InProcessEventBus } from './kernel'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
 
@@ -283,7 +289,7 @@ async function main(): Promise<void> {
   // The modules boot steps 3 and 4 construct, for the bridges and transport methods that join later.
   const modules: {
     preferences?: WiredPreferences
-    suppliers?: Suppliers
+    suppliers?: WiredSuppliers
     ledger?: WiredLedger
     conversation?: WiredConversation
     /** Observation's batch sink, as the cut-1 rollback choice returned it. */
@@ -497,6 +503,9 @@ async function main(): Promise<void> {
             // Cut 1: no OS secret store or owned config entry yet (later: ISSUE-324, ISSUE-323).
             secrets: unavailableSecretStore,
             externalConfig: noOwnedConfigWriter,
+            // The first-run step's installed tools: suppliers' detection cache, once step 4 wired
+            // suppliers (nothing installed before; the step is evaluated in step 8, ISSUE-222).
+            installedTools: suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
             ready: () => hostState.current().state === 'ready'
           })
           modules.preferences = preferences
@@ -700,7 +709,20 @@ async function main(): Promise<void> {
         // Step 7: the catch-up, then the live loop, through the wiring's own `start`, which is null
         // in a cut-1 rollback build (and over any sink that stores nothing, INV-98).
         startObservation: () => modules.observation?.start?.(),
-        startModules: () => modules.mines?.start()
+        startModules: () => modules.mines?.start(),
+        // Step 8, before `ready`: the first-run consent step, right after the start-up installed
+        // detection (07 S41.01, S41.09; ISSUE-222).
+        evaluateWelcome: () => {
+          const { preferences, suppliers } = modules
+          if (preferences === undefined || suppliers === undefined) {
+            throw new HostInvariantError('boot step 8 runs after steps 3 and 4 wired the modules')
+          }
+          return evaluateWelcomeAfterDetection({
+            detection: suppliers.bootDetection,
+            evaluate: () => preferences.evaluateWelcomeAtBoot(),
+            log
+          })
+        }
       })
     },
     {

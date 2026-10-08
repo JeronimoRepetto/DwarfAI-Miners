@@ -13,9 +13,13 @@
 //   `FeatureFlagReader` (ISSUE-211), the Reset saga with the participant list of
 //   resetParticipants.ts (ISSUE-212; the cut-1 module steps of moduleResetSteps.ts, ISSUE-121, and
 //   the ledger's install-moment writer, `SqliteLedgerRepository`), `resetMetrics` joined to the module's commands (16 §4.12
-//   `PreferencesCommands.resetMetrics`), its event routes (routes/preferencesRoutes.ts: B-F24,
-//   B-F03, B-F26, B-F27), and the bridges other modules read it through, never by a module import
-//   (R4): the kernel `SecretReader` and the suppliers `IntegrationGateReader` (bridges/).
+//   `PreferencesCommands.resetMetrics`), the first-run consent step (`createWelcomeStep`,
+//   ISSUE-222: `welcome` joined to the module's queries, its boot evaluation run by boot step 8,
+//   07 machine 41) over the suppliers installed detection (`installedTools`,
+//   bridges/installedTools.ts) and the config writer's legacy probe, its event routes
+//   (routes/preferencesRoutes.ts: B-F24, B-F03, B-F26, B-F27), and the bridges other modules read
+//   it through, never by a module import (R4): the kernel `SecretReader` and the suppliers
+//   `IntegrationGateReader` (bridges/).
 //
 // Until later steps wire them, two bindings of cut 1 stand in, each the true value while nothing
 // exists to read or write (fail closed):
@@ -41,15 +45,20 @@ import {
   createPreferences,
   createPreferencesResetStep,
   createResetSaga,
+  createWelcomeStep,
   type ExternalConfigWriter,
   type FeatureFlagReader,
+  type InstalledToolsReader,
   type MetricsResetResult,
   type Preferences,
   type PreferencesCommands,
   type PreferencesEvent,
+  type PreferencesQueries,
   type ResetDbMaintenance,
   type ResetMetricsCommands,
-  type SecretStore
+  type SecretStore,
+  type WelcomeQueries,
+  type WelcomeStepState
 } from '../modules/preferences'
 import type { IntegrationGateReader } from '../modules/suppliers'
 import type { ConnectionRegistry } from '../transport/connectionRegistry'
@@ -74,6 +83,13 @@ export const unavailableSecretStore: SecretStore = {
   set: () => Promise.reject(new Error('SecretStoreUnavailable')),
   delete: () => Promise.resolve('unavailable')
 }
+
+/**
+ * Nothing counts as installed: the first-run step is skipped, never answered (07 S41.09). The
+ * stand-in of a wiring with no installed detection to read (host/main.ts passes the suppliers
+ * bridge, bridges/installedTools.ts).
+ */
+export const noInstalledTools: InstalledToolsReader = { installed: () => [] }
 
 /** DwarfAI owns no config entry yet (later: ISSUE-218…ISSUE-221, ISSUE-323). */
 export const noOwnedConfigWriter: ExternalConfigWriter = {
@@ -106,6 +122,12 @@ export interface PreferencesWiringDeps {
   secrets: SecretStore
   /** `noOwnedConfigWriter` until ISSUE-323. */
   externalConfig: ExternalConfigWriter
+  /**
+   * The suppliers installed detection, through bridges/installedTools.ts (16 §4.12
+   * `InstalledToolsReader`): the first-run step offers only installed tools (AMENDMENT-9).
+   * `noInstalledTools` when absent.
+   */
+  installedTools?: InstalledToolsReader
   /** Whether the Host answers commands (its lifecycle state is `ready`). */
   ready: () => boolean
 }
@@ -124,10 +146,18 @@ export interface ServedPreferences {
 }
 
 export interface WiredPreferences {
-  /** The module, with `resetMetrics` joined to its commands. */
-  preferences: Preferences & { commands: PreferencesCommands & ResetMetricsCommands }
+  /** The module, with `resetMetrics` joined to its commands and `welcome` to its queries. */
+  preferences: Preferences & {
+    commands: PreferencesCommands & ResetMetricsCommands
+    queries: PreferencesQueries & WelcomeQueries
+  }
   /** 07 S13.08: the saga's boot resume, run by boot step 3. */
   resumeOnBoot(): Promise<MetricsResetResult | null>
+  /**
+   * 07 S41.01, S41.02, S41.09: the first-run step's boot evaluation, run by boot step 8 right after
+   * the start-up installed detection (bootSteps.ts `evaluateWelcomeAfterDetection`).
+   */
+  evaluateWelcomeAtBoot(): Promise<WelcomeStepState>
   /** The suppliers bridge (16 §4.4). */
   integrationGate: IntegrationGateReader
   /** The kernel bridge (16 §3), fail closed until ISSUE-324. */
@@ -152,7 +182,8 @@ export function servePreferences(serve: PreferencesServeDeps): ServedPreferences
     queries: {
       get: () => current().queries.get(),
       featureFlags: () => current().queries.featureFlags(),
-      integrationState: (id) => current().queries.integrationState(id)
+      integrationState: (id) => current().queries.integrationState(id),
+      welcome: () => current().queries.welcome()
     }
   }
   registerPreferences(serve.dispatcher, { preferences: served })
@@ -182,12 +213,28 @@ function wirePreferences(
     hostEpoch,
     featureFlags: deps.featureFlags
   })
+  const welcome = createWelcomeStep({
+    db,
+    bus,
+    clock,
+    ids,
+    hostEpoch,
+    installedTools: deps.installedTools ?? noInstalledTools,
+    externalConfig: deps.externalConfig
+  })
+  const queries: WiredPreferences['preferences']['queries'] = {
+    get: () => module.queries.get(),
+    featureFlags: () => module.queries.featureFlags(),
+    integrationState: (id) => module.queries.integrationState(id),
+    welcome: () => welcome.welcome()
+  }
   const sagaUi = routePreferences({
     bus,
     connections: transport.connections,
     log,
     acks: transport.acks,
-    ready: deps.ready
+    ready: deps.ready,
+    queries
   })
   const participants = resetParticipants({
     preferences: createPreferencesResetStep({ db, clock }),
@@ -216,11 +263,12 @@ function wirePreferences(
       set: (key, value) => module.commands.set(key, value),
       resetMetrics: (cmd) => saga.resetMetrics(cmd)
     },
-    queries: module.queries
+    queries
   }
   return {
     preferences,
     resumeOnBoot: () => saga.resumeOnBoot(),
+    evaluateWelcomeAtBoot: () => welcome.evaluateWelcomeAtBoot(),
     integrationGate: preferencesIntegrationGate(module.queries),
     secretReader: failClosedSecretReader
   }

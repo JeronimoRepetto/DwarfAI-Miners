@@ -12,7 +12,9 @@
 //   longer than the 500 ms budget (a cold Windows start), and without it every CLI would read "not
 //   installed" at the first Add-panel open. Its answers only land in the detection cache; nothing
 //   is pushed (AMENDMENT-10). A rejection is logged (19 §9.1 `uncaught`), never left unhandled,
-//   since the Host never exits on its own (ADR-002 D1, D7).
+//   since the Host never exits on its own (ADR-002 D1, D7). Its completion is `bootDetection`
+//   (ISSUE-222): the first-run step is evaluated right after it (07 S41.09), so a check slower than
+//   the budget is waited for there, and only there.
 import { CATALOG_PROVIDER_IDS } from '@dwarfai/contracts'
 import type { HostEpoch } from '../kernel/domain/values'
 import type { Clock } from '../kernel/ports/clock'
@@ -65,7 +67,44 @@ export function isPublicBuild(kind: 'release' | 'dev' | 'test'): boolean {
 /** No consumer routes a driver event yet (05 §4: each route arrives with its consumer's wiring). */
 const unroutedSuppliedEvents: SuppliedEventSink = { deliver: () => undefined }
 
-export function wireSuppliers(deps: SuppliersWiringDeps): Suppliers {
+export interface WiredSuppliers extends Suppliers {
+  /**
+   * The start-up detection's completion (07 S41.09: the first-run step is evaluated right after
+   * it): `detected` once every CLI check of the start-up pass has answered and its answer is in the
+   * detection cache, even a check slower than the 500 ms budget; `failed` when the pass itself
+   * failed (logged). Never rejects. Nothing else in the boot waits for it.
+   */
+  readonly bootDetection: Promise<'detected' | 'failed'>
+}
+
+/**
+ * The resolver the suppliers module is given, with the resolves still running counted: the
+ * start-up pass's budget can run out before a check answers (that check goes on in the background,
+ * detection.ts), so the boot detection waits for them.
+ */
+function trackResolves(resolver: InstallResolver): {
+  resolver: InstallResolver
+  settled(): Promise<void>
+} {
+  const running = new Set<Promise<unknown>>()
+  return {
+    resolver: {
+      resolve: (binaries) => {
+        const answer = resolver.resolve(binaries)
+        running.add(answer)
+        const done = (): void => void running.delete(answer)
+        answer.then(done, done)
+        return answer
+      }
+    },
+    async settled() {
+      while (running.size > 0) await Promise.allSettled([...running])
+    }
+  }
+}
+
+export function wireSuppliers(deps: SuppliersWiringDeps): WiredSuppliers {
+  const resolves = trackResolves(deps.installResolver)
   const suppliers = createSuppliers({
     catalogIds: CATALOG_PROVIDER_IDS,
     publicBuild: deps.publicBuild,
@@ -73,7 +112,7 @@ export function wireSuppliers(deps: SuppliersWiringDeps): Suppliers {
     scheduler: deps.scheduler,
     simulatedSeed: deps.simulatedSeed,
     sink: unroutedSuppliedEvents,
-    installResolver: deps.installResolver,
+    installResolver: resolves.resolver,
     fs: deps.fs,
     capabilityRecords: deps.capabilityRecords,
     integrationGate: deps.integrationGate,
@@ -81,13 +120,23 @@ export function wireSuppliers(deps: SuppliersWiringDeps): Suppliers {
     ids: deps.ids,
     hostEpoch: deps.hostEpoch
   })
-  suppliers.catalogue.launchable().catch((error: unknown) =>
-    deps.log.record({
-      level: 'error',
-      event: 'uncaught',
-      subsystem: 'suppliers',
-      errCode: errorCode(error)
-    })
-  )
-  return suppliers
+  // The start-up pass, then every check it left running, then one more pass over the filled cache
+  // (a check that answered late is read from the cache; an installed one is not resolved again).
+  const bootDetection = suppliers.catalogue
+    .launchable()
+    .then(() => resolves.settled())
+    .then(() => suppliers.catalogue.launchable())
+    .then(
+      () => 'detected' as const,
+      (error: unknown) => {
+        deps.log.record({
+          level: 'error',
+          event: 'uncaught',
+          subsystem: 'suppliers',
+          errCode: errorCode(error)
+        })
+        return 'failed' as const
+      }
+    )
+  return { ...suppliers, bootDetection }
 }

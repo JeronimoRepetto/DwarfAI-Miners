@@ -69,6 +69,43 @@ export interface BootPorts {
    * is started.
    */
   startModules?: () => void
+  /**
+   * In step 8, before `ready`: the first-run consent step's boot evaluation (07 S41.01, S41.02,
+   * S41.09; ISSUE-222), after the saga resume (step 3) and the modules (step 4), before any command
+   * is accepted. The composition root passes `evaluateWelcomeAfterDetection`. Without it nothing is
+   * evaluated.
+   */
+  evaluateWelcome?: () => Promise<void>
+}
+
+/**
+ * The first-run step's boot evaluation, right after the start-up installed detection (07 S41.09:
+ * "right after the installed detection, before S41.01/S41.02"; suppliersWiring.ts `bootDetection`).
+ *
+ * Fail closed. A failed detection evaluates nothing: the step keeps its not-evaluated state (not
+ * due, nothing offered), so nothing is shown, written, reverted or answered, and
+ * `welcome_answered_at` is untouched, so the next Host start evaluates again. That is S41.09's
+ * outcome for "no tool known to be installed" (a skip, never an answer) and keeps OQ-17 / ADR-016
+ * (nothing written and no old-app entry adopted without the person's click). A failed evaluation
+ * (the legacy probe's I/O, say) ends the same way, logged, and never fails the boot: the Host never
+ * exits on its own (ADR-002 D1, D7).
+ */
+export async function evaluateWelcomeAfterDetection(deps: {
+  detection: Promise<'detected' | 'failed'>
+  evaluate: () => Promise<unknown>
+  log: DiagnosticsLog
+}): Promise<void> {
+  if ((await deps.detection) !== 'detected') return
+  try {
+    await deps.evaluate()
+  } catch (error) {
+    deps.log.record({
+      level: 'error',
+      event: 'uncaught',
+      subsystem: 'preferences',
+      errCode: errorCode(error)
+    })
+  }
 }
 
 /** The Host's UI endpoint as the boot sees it. */
@@ -85,7 +122,8 @@ function placeholder(name: BootStepName, owner: string): BootStep {
 }
 
 export function createBootSteps(ports: BootPorts): readonly BootStep[] {
-  const { resumeResetSaga, constructModules, startObservation, startModules } = ports
+  const { resumeResetSaga, constructModules, startObservation, startModules, evaluateWelcome } =
+    ports
   return [
     // 1. Bind the UI endpoint; the bind is the single-instance mutex (decideBind, ADR-002 D3).
     {
@@ -107,7 +145,7 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     // 3. Resume an unfinished Reset saga, before commands and observation (ADR-023). A step that
     //    fails again is recorded by the saga and resumes at the next boot; the boot goes on.
     //    Commands are accepted only from `ready` (step 8). Later: ISSUE-323 inserts the boot
-    //    re-verification of config writes and the first-run evaluation between the two.
+    //    re-verification of config writes here; the first-run evaluation runs in step 8 (ISSUE-222).
     resumeResetSaga === undefined
       ? placeholder('resume-reset-saga', 'ISSUE-226')
       : {
@@ -150,12 +188,16 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     // 8. hello answers `ready`: the boot reports `ready` into the lifecycle state holder
     //    (transport/lifecycle/hostState.ts) once this last step is done (S12.06), which answers
     //    every later `hello.ok` with it and sends `host.state` to the `ui` connections. First, once
-    //    step 7 is done, the modules' own background work starts (`startModules`).
+    //    step 7 is done, the first-run consent step is evaluated (`evaluateWelcome`, 07 S41.01:
+    //    after the saga resume, before commands; it waits for the start-up installed detection,
+    //    S41.09, which ran beside steps 5–7), then the modules' own background work starts
+    //    (`startModules`).
     {
       name: 'answer-ready',
-      run: () => {
+      run: async () => {
+        await evaluateWelcome?.()
         startModules?.()
-        return Promise.resolve({ kind: 'done' })
+        return { kind: 'done' }
       }
     }
   ]

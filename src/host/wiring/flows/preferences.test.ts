@@ -38,7 +38,7 @@ import { InProcessEventBus } from '../../kernel/InProcessEventBus'
 import type { FileSystem } from '../../kernel/ports/fileSystem'
 import type { SecretName } from '../../kernel/ports/secretReader'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
-import type { PreferencesEvent, SecretStore } from '../../modules/preferences'
+import type { ExternalConfigWriter, PreferencesEvent, SecretStore } from '../../modules/preferences'
 import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedgerRepository'
 import { migrationsFor } from '../../platform/sqlite/migrations'
 import { SqliteResetCleanup } from '../../platform/sqlite/resetCleanup'
@@ -69,6 +69,9 @@ import {
   type WiredPreferences
 } from '../preferencesWiring'
 import { createModuleResetSteps } from '../moduleResetSteps'
+import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
+import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
+import { Dispatcher } from '../../transport/dispatcher'
 
 const T0 = 1_790_000_000_000
 const HOUR_MS = 3_600_000
@@ -682,5 +685,110 @@ describe('preferences wiring', () => {
     expect(names(next.early as FrameClient, (item) => item.name === 'ui.resetPreferences')).toEqual(
       []
     )
+  })
+})
+
+// Added for ISSUE-222: the wiring joins the first-run consent step to the module's queries (16
+// §4.12 `welcome()`), runs its boot evaluation over the installed-tools bridge and the config
+// writer's legacy probe, and routes `WelcomeStepChanged` to B-F24 `preferences.changed` with the
+// new step state (07 S41.05 "→ preferences.changed"; 14 §2.4).
+describe('first-run consent step wiring (07 machine 41)', () => {
+  /** A connection registry that records every frame published to it. */
+  class RecordingConnections extends ConnectionRegistry {
+    readonly frames: Array<{ name: string; data: unknown }> = []
+    override publish: ConnectionRegistry['publish'] = (name, data) => {
+      this.frames.push({ name, data })
+    }
+  }
+
+  it('[S41.02, ADR-016] the wired step is evaluated at boot, served by welcome() and sent as preferences.changed; an old-app entry is listed, never adopted', async () => {
+    const clock = new FakeClock(T0)
+    const scheduler = new FakeScheduler(clock)
+    const log = new RecordingDiagnosticsLog()
+    const connections = new RecordingConnections()
+    const served = servePreferences({
+      dispatcher: new Dispatcher({ log, clock, scheduler, state: () => 'starting' }),
+      sections: new SectionRegistry(),
+      connections
+    })
+    const { db } = openTemplateCopy()
+    const transactions = new SqliteTransactionRunner(db)
+    const ids = new SequenceIdGenerator()
+    // Both tools installed; the old app's Claude hook entry is on disk. The writer records every
+    // write and revert, and keeps the old entry until one of them happens.
+    const installedTools = {
+      installed: () => ['claude-hooks' as const, 'opencode-permissions' as const]
+    }
+    const touched: string[] = []
+    const writer: ExternalConfigWriter = {
+      install: (target) => {
+        touched.push(`install ${target}`)
+        return Promise.resolve({ ok: false, error: 'io' })
+      },
+      verify: () => Promise.resolve('absent'),
+      revert: (target) => {
+        touched.push(`revert ${target}`)
+        return Promise.resolve({ ok: true, value: undefined })
+      },
+      findLegacy: (target) => Promise.resolve(target === 'claude-hooks' && touched.length === 0)
+    }
+    const wired = served.wire({
+      db,
+      transactions,
+      bus: new InProcessEventBus<PreferencesEvent>({
+        transactionScope: transactions,
+        onHandlerError: (failure) => {
+          throw failure.error
+        }
+      }),
+      clock,
+      ids,
+      hostEpoch: 'epoch-0222' as HostEpoch,
+      log,
+      featureFlags: await createFeatureFlagReader({
+        env: {},
+        fs: new FakeFs(),
+        configFilePath: featureFlagConfigFilePath('/data'),
+        log
+      }),
+      maintenance: {
+        deleteBackups: () => undefined,
+        truncateWal: () => undefined,
+        vacuum: () => undefined
+      },
+      ledger: new SqliteLedgerRepository({ db, scope: transactions, ids, clock }),
+      moduleSteps: createModuleResetSteps({
+        db,
+        scope: transactions,
+        clock,
+        mapSites: [],
+        random: () => 0
+      }).steps,
+      secrets: unavailableSecretStore,
+      externalConfig: writer,
+      installedTools,
+      ready: () => false
+    })
+    expect(wired.preferences.queries.welcome()).toStrictEqual({
+      due: false,
+      legacyFound: [],
+      offered: []
+    })
+
+    const due = {
+      due: true,
+      reason: 'legacy-entries',
+      legacyFound: ['claude-hooks'],
+      offered: ['claude-hooks']
+    }
+    expect(await wired.evaluateWelcomeAtBoot()).toStrictEqual(due)
+    expect(wired.preferences.queries.welcome()).toStrictEqual(due)
+
+    const sent = connections.frames.filter((frame) => frame.name === 'preferences.changed')
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.data).toMatchObject({ welcome: due })
+    validateFrame('preferences.changed', sent[0]?.data)
+    expect(touched).toStrictEqual([])
+    expect(await writer.findLegacy('claude-hooks')).toBe(true)
   })
 })

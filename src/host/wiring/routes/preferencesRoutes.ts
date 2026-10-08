@@ -2,6 +2,9 @@
 //
 // - `HostPreferencesChanged` → B-F24 `preferences.changed` to every `ui` connection
 //   (transport/methods/preferences.ts `publishPreferencesChanged`; ADR-024 D9);
+// - `WelcomeStepChanged` → B-F24 `preferences.changed` with the step's new state as `welcome`
+//   (07 S41.05 "→ preferences.changed"; 16 §4.12; ISSUE-222). Until the transport's view reads
+//   `welcome()` itself (the snapshot section, later in ISSUE-222), the route sets it from the event;
 // - `MetricsResetStarted` → B-F03 `resync-required {metrics-reset}` (transport/methods/resetMetrics.ts
 //   `publishResetFrames`; 14 §1.9);
 // - the Reset saga's way to the attached UIs, B-F27 `reset.progress` and B-F26 `ui.resetPreferences`,
@@ -17,9 +20,14 @@
 // ISSUE-323, ISSUE-324).
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
-import type { PreferencesEvent, ResetUiFanout } from '../../modules/preferences'
+import type {
+  PreferencesEvent,
+  PreferencesQueries,
+  ResetUiFanout,
+  WelcomeQueries
+} from '../../modules/preferences'
 import type { ConnectionRegistry } from '../../transport/connectionRegistry'
-import { publishPreferencesChanged } from '../../transport/methods/preferences'
+import { preferencesView, publishPreferencesChanged } from '../../transport/methods/preferences'
 import {
   publishResetFrames,
   type ConnectionResetUiFanout
@@ -33,12 +41,20 @@ export interface PreferencesRoutesDeps {
   acks: ConnectionResetUiFanout
   /** Whether the Host answers commands: its lifecycle state is `ready`. */
   ready: () => boolean
+  /** The module's queries, for the view `WelcomeStepChanged` is sent with. */
+  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries
 }
 
 /** Routes the module's events; returns the saga's `ResetUiFanout`, with the boot rule above. */
 export function routePreferences(deps: PreferencesRoutesDeps): ResetUiFanout {
   const { acks } = deps
   publishPreferencesChanged(deps.bus, deps.connections)
+  deps.bus.subscribe('WelcomeStepChanged', (event) =>
+    deps.connections.publish('preferences.changed', {
+      ...preferencesView(deps.queries.get()),
+      welcome: event.payload.state
+    })
+  )
   publishResetFrames(deps.bus, deps.connections, deps.log)
   return {
     progress: (progress) => acks.progress(progress),
