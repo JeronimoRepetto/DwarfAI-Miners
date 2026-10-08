@@ -33,7 +33,7 @@ import {
 } from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
 import { createStopEverything } from '../window/application/stopEverything'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { CUT_1_ROLLBACK } from '../../contracts/strangler'
 import { UI_MAIN_PUSHES } from '../index'
@@ -1950,5 +1950,59 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     feed?.stop()
     relay?.dispose()
     dwarfIds?.dispose()
+  })
+})
+
+describe('cut-0 retirement', () => {
+  // ISSUE-058 (21 §2 cut 0 "Retired at the end"; 21 §1 items 3, 6, 7): after the cut-0 soak (OQ-71) today's window,
+  // tray and window-family handlers leave the tree. The rows they served keep exactly one owner, `ui-local`
+  // (ADR-001 item 3).
+  const WINDOW_FAMILY_WIRES: readonly string[] = [
+    'panel:hide',
+    'panel:raise',
+    'panel:getAlwaysOnTop',
+    'panel:setAlwaysOnTop',
+    'panel:visible:get',
+    'panel:layout:get',
+    'panel:layout:set',
+    'shortcut:get',
+    'shortcut:set',
+    // A-24 opened its picker on today's window: it left with it.
+    'dwarf:attachments:choose'
+  ]
+  const SRC = resolve(import.meta.dirname, '../..')
+  const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
+
+  /** `IPC_CHANNELS` member names by wire, read from the shared constants' own text (a test may not import src/shared). */
+  function memberOfWire(wire: string): string {
+    const block = read('shared/contracts.ts').split('export const IPC_CHANNELS = {')[1] ?? ''
+    const match = new RegExp(`^ {2}([A-Za-z]+): '${wire}'`, 'm').exec(block)
+    if (match?.[1] === undefined) throw new Error(`no IPC_CHANNELS member for ${wire}`)
+    return match[1]
+  }
+
+  it('[ADR-001] after the cut-0 retirement no legacy handler is registered for a window-family row', () => {
+    for (const wire of WINDOW_FAMILY_WIRES) {
+      const key = keyOfWire(wire) as ChannelKey
+      const routes = ROUTES.filter((route) => route.channel === key)
+      expect(
+        routes.map((route) => route.owner),
+        wire
+      ).toEqual(['ui-local'])
+    }
+    // No composition of today's runtime names a window-family wire: neither the bridge nor the legacy root.
+    const composers = ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']
+    for (const file of composers) {
+      const source = read(file)
+      for (const wire of WINDOW_FAMILY_WIRES) {
+        expect(source, `${file} ${wire}`).not.toMatch(
+          new RegExp(String.raw`IPC_CHANNELS\.${memberOfWire(wire)}\b`)
+        )
+      }
+      // And none of them reaches today's window, tray or shortcut modules.
+      expect(source, file).not.toMatch(/shell\/(window|tray)'/)
+    }
+    expect(existsSync(resolve(SRC, 'main/shell/window.ts'))).toBe(false)
+    expect(existsSync(resolve(SRC, 'main/shell/tray.ts'))).toBe(false)
   })
 })

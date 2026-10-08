@@ -3,17 +3,15 @@ import {
   app,
   clipboard,
   dialog,
-  globalShortcut,
   ipcMain,
   nativeImage,
   shell,
-  type BrowserWindow,
+  BrowserWindow,
   type WebContents
 } from 'electron'
 import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
   AgentLaunchRequest,
   AgentModelCatalogList,
@@ -49,7 +47,6 @@ import type {
   MineOpenPathResult,
   MinesSnapshot,
   MineUndeclareResult,
-  PanelEdge,
   ProjectQuery,
   ProjectQueryResult,
   ProjectSortDirection,
@@ -160,27 +157,8 @@ import {
 } from './shell/jevPreferences'
 import { createJevLaunchRouter } from './jev/routeLaunch'
 import { createTypesafeJevRouter, jevDebugEnabled } from './jev/typesafeJevRouter'
-import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
-import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
-import { createShortcutPreferenceStore } from './shell/shortcutPreference'
 import { createTypographyPreferenceStore } from './shell/typographyPreference'
-import { createToggleShortcut, type ToggleShortcutController } from './shell/shortcuts'
-import { createTray } from './shell/tray'
-import {
-  applyAlwaysOnTop,
-  createMainWindow,
-  hidePanel,
-  loadPanelPage,
-  markQuitting,
-  panelLayout,
-  raiseWindowOf,
-  seedPanelEdge,
-  setPanelLayout,
-  shellWebContents,
-  showPanel,
-  togglePanel
-} from './shell/window'
 import { parseAnswerRequest } from './shell/answerRequest'
 /* --- System notifications (#316) — one block, appended --------------------- */
 import { APP_USER_MODEL_ID, needsAppUserModelId } from './notifications/appUserModelId'
@@ -206,18 +184,6 @@ let hookListener: HookListener | null = null
 let openCodePlugin: OpenCodePluginChannel | null = null
 /** Held at module scope so the quit handler can close the database handle. */
 let projects: ProjectsStore | null = null
-/** Held at module scope so the will-quit handler can release the OS claim. */
-let toggleShortcut: ToggleShortcutController | null = null
-
-/**
- * Only the distinctions that change a modifier's printed NAME matter to the
- * settings panel (Cmd/Option vs Ctrl/Alt vs Win); everything else is 'other'.
- */
-function shortcutPlatform(): ShortcutPlatform {
-  if (process.platform === 'darwin') return 'darwin'
-  if (process.platform === 'win32') return 'win32'
-  return 'other'
-}
 
 /**
  * The `warn` every port here is handed.
@@ -250,13 +216,6 @@ function warnWithOptionalCause(message: string, error?: unknown): void {
 }
 
 function removeIpcHandlers(): void {
-  ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
-  ipcMain.removeAllListeners(IPC_CHANNELS.raisePanel)
-  ipcMain.removeHandler(IPC_CHANNELS.getAlwaysOnTop)
-  ipcMain.removeHandler(IPC_CHANNELS.setAlwaysOnTop)
-  ipcMain.removeHandler(IPC_CHANNELS.getPanelLayout)
-  ipcMain.removeHandler(IPC_CHANNELS.setPanelLayout)
-  ipcMain.removeHandler(IPC_CHANNELS.getPanelVisible)
   ipcMain.removeHandler(IPC_CHANNELS.getAudioPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.setAudioPreferences)
   /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
@@ -267,8 +226,6 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getTypographyPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.setTypographyPreferences)
   /* --- end of the #370 block ----------------------------------------------- */
-  ipcMain.removeHandler(IPC_CHANNELS.getToggleShortcut)
-  ipcMain.removeHandler(IPC_CHANNELS.setToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeed)
@@ -300,7 +257,6 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfPermission)
   ipcMain.removeHandler(IPC_CHANNELS.launchHostedProcess)
   /* --- Message attachments (#408) — one block, appended -------------------- */
-  ipcMain.removeHandler(IPC_CHANNELS.chooseDwarfAttachments)
   ipcMain.removeHandler(IPC_CHANNELS.describeDwarfAttachments)
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- System notifications (#316) — one block, appended ------------------- */
@@ -564,28 +520,10 @@ function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value
  * renderer never reaches this: it asks on `mine:declare`, and the path exists
  * only inside main.
  */
-async function chooseProjectDirectory(parent: BrowserWindow): Promise<string | null> {
-  const result = await dialog.showOpenDialog(parent, { properties: ['openDirectory'] })
+async function chooseProjectDirectory(): Promise<string | null> {
+  const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
   if (result.canceled) return null
   return result.filePaths[0] ?? null
-}
-
-/**
- * The composer's attach control, the second dialog in the app (#408).
- *
- * Files only and no directory, which is the issue's own rule and is enforced
- * again in `describeAttachments` — the picker's `properties` govern this one
- * button, and a dropped folder never passed through it at all.
- *
- * It answers PATHS, and stops. What each path is comes back from
- * `describeDwarfAttachments`, the same call a drop makes, so neither entry
- * point can grow a rule the other lacks.
- */
-async function chooseAttachmentFiles(parent: BrowserWindow): Promise<string[]> {
-  const result = await dialog.showOpenDialog(parent, {
-    properties: ['openFile', 'multiSelections']
-  })
-  return result.canceled ? [] : result.filePaths
 }
 
 /**
@@ -681,7 +619,11 @@ function toMinesSnapshot(
  * call site, and the list shape stays for the pushes that go to every page.
  */
 function appWebContents(): WebContents[] {
-  return [shellWebContents()].filter((contents): contents is WebContents => contents !== null)
+  // Today's own window is retired (ISSUE-058): the rebuilt window module owns the Panel, so this entry reaches
+  // whatever window the process holds, none of its own.
+  return BrowserWindow.getAllWindows()
+    .filter((window) => !window.isDestroyed())
+    .map((window) => window.webContents)
 }
 
 async function init(): Promise<void> {
@@ -733,33 +675,6 @@ async function init(): Promise<void> {
     enable: enableAutostart,
     warn: warnWithOptionalCause
   })
-
-  // The pin ("always on top") preference lives next to the autostart marker
-  // in userData (see #35). It is loaded before the window exists so the very
-  // first frame already has the right stacking, with pinned as the default.
-  const pinStore = createPinPreferenceStore({
-    filePath: join(app.getPath('userData'), 'pin-preference-v1.json')
-  })
-
-  // The Settings position preference (#138) is the fourth userData
-  // preference, read before the window exists for the same reason the pin
-  // preference is: the very first frame should already open on the user's
-  // chosen edge rather than always starting 'right' and jumping the moment
-  // the renderer syncs.
-  const panelEdgeStore = createPanelEdgePreferenceStore({
-    filePath: join(app.getPath('userData'), 'panel-edge-v1.json')
-  })
-  seedPanelEdge(await panelEdgeStore.load())
-
-  /*
-   * REMOVED for #635, stated rather than passing unseen: the message panel's remembered position
-   * (#296, `message-panel-position-v1.json`), read here before any window existed. The panel is
-   * anchored in the shell's dock slot and remembers no position of its own (decision log). A file a
-   * past run left in userData is never read again; it is not deleted, because a leftover file of a
-   * few bytes that nothing opens is harmless and a startup that deletes files the person may be
-   * looking at is not.
-   */
-  const mainWindow = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
 
   // Settings' Audio section (#174, #173) is the sixth userData preference.
   // Read AFTER the window exists, unlike the pin and the edge: nothing about
@@ -865,25 +780,9 @@ async function init(): Promise<void> {
   })
   /* --- end of the #635 launch view block --------------------------------------- */
 
-  /*
-   * Whether the shell is really on screen (#174, #173).
-   *
-   * `isVisible()` alone is not the answer on every platform: a minimised
-   * window reports differently on Windows and macOS, and the renderer's rule
-   * is "every sound stops while the app is not on screen" — which minimised
-   * plainly is not. Both are asked, and main is the one process that can.
-   */
-  const panelVisible = (): boolean => mainWindow.isVisible() && !mainWindow.isMinimized()
-  const publishPanelVisibility = (): void => {
-    shellWebContents()?.send(IPC_CHANNELS.panelVisibilityChanged, panelVisible())
-  }
-  // Subscribed to the window rather than to `showPanel`/`hidePanel`, so the
-  // ways round those two — a minimise from the OS, the tray, a shortcut, the
-  // app mark — all reach the renderer through one path.
-  mainWindow.on('show', publishPanelVisibility)
-  mainWindow.on('hide', publishPanelVisibility)
-  mainWindow.on('minimize', publishPanelVisibility)
-  mainWindow.on('restore', publishPanelVisibility)
+  // Whether any window of the process is on screen: visible and not minimised (#174, #173).
+  const panelVisible = (): boolean =>
+    BrowserWindow.getAllWindows().some((window) => window.isVisible() && !window.isMinimized())
 
   /* --- System notifications (#316) — one block, appended ------------------- */
   // The seventh userData preference, read the same way the audio settings are
@@ -919,19 +818,10 @@ async function init(): Promise<void> {
     // and a notification that opened a message panel for them would be
     // choosing what they look at.
     openMine: (mineId: string) => {
-      showPanel()
-      shellWebContents()?.send(IPC_CHANNELS.showMine, mineId)
+      for (const contents of appWebContents()) contents.send(IPC_CHANNELS.showMine, mineId)
     }
   })
   /* --- end of the #316 block ---------------------------------------------- */
-
-  // The panel-toggle shortcut is the third userData preference (see #17), read
-  // here so the accelerator is in hand before anything is claimed from the OS.
-  // A missing or unusable file yields the documented Ctrl+Alt+Shift+P default.
-  const shortcutStore = createShortcutPreferenceStore({
-    filePath: join(app.getPath('userData'), 'shortcut-preference-v1.json')
-  })
-  const storedAccelerator = await shortcutStore.load()
 
   // The app's own database, and the only one it writes (#93). Both tenants —
   // the material vault and the projects list — share this ONE handle, because
@@ -1054,7 +944,7 @@ async function init(): Promise<void> {
     fs,
     appPaths,
     platformAdapters,
-    chooseDirectory: () => chooseProjectDirectory(mainWindow),
+    chooseDirectory: () => chooseProjectDirectory(),
     readAttachment,
     /* --- MCP subtask delegation: the gate's live inputs and the service's own port (#511 T4) — one block, appended --- */
     // `keyConfigured`/`delegationAllowed` read exactly the same two stores
@@ -1290,21 +1180,6 @@ async function init(): Promise<void> {
   // press, rather than a console line nobody reads.
   openCodePluginError = (await openCodePlugin.restore())?.error
 
-  await createTray({ hooks })
-
-  // Claim the shortcut. A refusal is no longer just a console warning: the
-  // failure lives in the state the settings panel reads, so the user can see
-  // which combination is unavailable and record a different one.
-  const toggle = createToggleShortcut({
-    initial: storedAccelerator,
-    onToggle: togglePanel,
-    globalShortcut,
-    platform: shortcutPlatform()
-  })
-  toggleShortcut = toggle
-  const startupState = toggle.start()
-  if (startupState.error !== undefined) console.warn(`[shortcuts] ${startupState.error}`)
-
   // Which build is running (#79). Asked of Electron rather than answered from
   // anything this repo compiles in, so the panel's number is the executable's
   // number by construction instead of by coincidence.
@@ -1330,36 +1205,6 @@ async function init(): Promise<void> {
    * conversation nobody could read a word of, and it would stop asking.
    */
   const noFeedPage: DwarfFeedPage = { readable: false, messages: [], reachedStart: false }
-  ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
-  // The shell reports every click on itself, because a frameless transparent
-  // window is not reliably raised by the platform's own click-to-front (#165).
-  // It also gives the keyboard to the chat's composer, which is in the shell's
-  // own dock slot since #635: a press on the composer raises and focuses the
-  // window it is in.
-  ipcMain.on(IPC_CHANNELS.raisePanel, (event) => raiseWindowOf(event.sender))
-  ipcMain.handle(IPC_CHANNELS.getAlwaysOnTop, () => mainWindow.isAlwaysOnTop())
-  ipcMain.handle(IPC_CHANNELS.setAlwaysOnTop, async (_event, payload: unknown) => {
-    // Boundary discipline as elsewhere: a malformed payload changes nothing
-    // and the caller still gets the real state back.
-    if (typeof payload !== 'boolean') return mainWindow.isAlwaysOnTop()
-    const real = applyAlwaysOnTop(mainWindow, payload)
-    try {
-      // Persist what the window actually is, not the request — a declined
-      // change must not resurrect itself as a stored preference.
-      await pinStore.save(real)
-    } catch (error) {
-      // The toggle itself already happened; a persistence hiccup only means
-      // the next launch falls back to whatever the file still says.
-      console.warn('[pin] Failed to persist the always-on-top preference:', error)
-    }
-    return real
-  })
-  /*
-   * Whether the shell is on screen (#174, #173) — pulled once on the page's
-   * own mount, which is the moment no push can reach because the window is
-   * still hidden while its page loads.
-   */
-  ipcMain.handle(IPC_CHANNELS.getPanelVisible, () => panelVisible())
   /*
    * Settings' Audio section (#174, over #173's two volumes).
    *
@@ -1616,39 +1461,6 @@ async function init(): Promise<void> {
     return openCodeSettings()
   })
   /* --- end of the #588 T6 block --------------------------------------------- */
-  // The docked shell's own shape (#90). Both channels answer with what the
-  // window IS after the move, never the request: main derives the rectangle
-  // from the display, so a screen that could not hold the whole composition has
-  // to reach the renderer as a fact.
-  ipcMain.handle(IPC_CHANNELS.getPanelLayout, () => panelLayout())
-  ipcMain.handle(IPC_CHANNELS.setPanelLayout, async (_event, payload: unknown) => {
-    // Boundary discipline as elsewhere: a malformed payload moves nothing and
-    // the caller still gets the real layout back.
-    if (typeof payload !== 'object' || payload === null) return panelLayout()
-    const { mineOpen, dockOpen, edge } = payload as Record<string, unknown>
-    if (typeof mineOpen !== 'boolean' || typeof dockOpen !== 'boolean') return panelLayout()
-    // edge is optional (#138): only the Settings position control ever sends
-    // one, and an unrecognised value is treated exactly like an absent one —
-    // a mine opening and the dock opening must never nudge the docked side by
-    // accident.
-    const requestedEdge: PanelEdge | undefined =
-      edge === 'left' || edge === 'right' ? edge : undefined
-    const result = setPanelLayout({
-      mineOpen,
-      dockOpen,
-      ...(requestedEdge ? { edge: requestedEdge } : {})
-    })
-    if (requestedEdge !== undefined) {
-      try {
-        // Persist what the window actually ended up on, not the request —
-        // same discipline as the pin preference just above.
-        await panelEdgeStore.save(result.edge)
-      } catch (error) {
-        console.warn('[panel] Failed to persist the position preference:', error)
-      }
-    }
-    return result
-  })
   /*
    * REMOVED for #635, stated rather than passing unseen: the message panel's own window's nine
    * channels (#162, #296, #389) — its surface and the push to the other window, its height report,
@@ -1656,24 +1468,6 @@ async function init(): Promise<void> {
    * its deferred hide waited on, and the delivery report relayed to the shell. The panel is in the
    * shell's dock slot, so none of them had two windows to join any more.
    */
-  ipcMain.handle(IPC_CHANNELS.getToggleShortcut, () => toggle.state())
-  ipcMain.handle(IPC_CHANNELS.setToggleShortcut, async (_event, payload: unknown) => {
-    // Boundary discipline as elsewhere: a malformed payload changes nothing
-    // and the caller still gets the real state back.
-    if (typeof payload !== 'string') return toggle.state()
-    const state = toggle.apply(payload)
-    try {
-      // Persist the VERDICT, not the request: a combination another
-      // application owns was reverted, and must not resurrect itself on the
-      // next launch as a shortcut that never worked.
-      await shortcutStore.save(state.accelerator)
-    } catch (error) {
-      // The re-binding itself already happened; a persistence hiccup only
-      // means the next launch falls back to whatever the file still says.
-      console.warn('[shortcuts] Failed to persist the panel-toggle shortcut:', error)
-    }
-    return state
-  })
   ipcMain.handle(IPC_CHANNELS.getMines, () =>
     toMinesSnapshot(runtime?.getMines() ?? [], runtime?.materialTotals())
   )
@@ -1820,8 +1614,6 @@ async function init(): Promise<void> {
     if (request === null) return notDelivered
     return runtime?.sendDwarfText(request) ?? notDelivered
   })
-
-  ipcMain.handle(IPC_CHANNELS.chooseDwarfAttachments, () => chooseAttachmentFiles(mainWindow))
 
   ipcMain.handle(IPC_CHANNELS.describeDwarfAttachments, (_event, payload: unknown) => {
     // A path is a string and nothing here defaults one: a payload that is not a
@@ -1982,27 +1774,12 @@ async function init(): Promise<void> {
     if (typeof dwarfId !== 'string' || dwarfId === '') return
     runtime?.retireDwarf(dwarfId)
   })
-
-  // Loaded LAST, after every ipcMain.handle/on above (#570): the window was
-  // built near the top of this function so the tray, the shortcut and the
-  // panel placement could all have it early, but starting the page load that
-  // early let a fast-mounting renderer invoke a channel before its handler
-  // existed. Nothing above this line pushes into the page rather than
-  // registering a listener for later — see window.ts's own comment on
-  // loadPanelPage for the two exceptions that are pushes (onMinesUpdated's
-  // first poll, and the panel-visibility relay), both of which are safe here
-  // for the same reason: the renderer re-asks for its own state on mount, so
-  // a push that arrives before the page exists is merely one this ordering
-  // does not depend on.
-  loadPanelPage()
 }
 
-// Single instance: a second launch just shows the existing panel.
+// Single instance. Today's window is retired (ISSUE-058), so a second launch has no panel of this entry to show.
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => showPanel())
-
   app
     .whenReady()
     .then(init)
@@ -2039,13 +1816,7 @@ if (!app.requestSingleInstanceLock()) {
     void projects?.close()
     projects = null
     removeIpcHandlers()
-    markQuitting()
   })
-  app.on('will-quit', () => {
-    toggleShortcut?.dispose()
-    toggleShortcut = null
-  })
-
   // Keep running in the tray even with every window hidden.
   app.on('window-all-closed', () => {
     // no-op: quitting happens only via the tray "Quit" item
