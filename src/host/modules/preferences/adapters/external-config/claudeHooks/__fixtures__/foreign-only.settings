@@ -1,0 +1,17 @@
+{
+    "model": "opus",
+    "env": {"EDITOR":"vim", "LANG" : "C.UTF-8"},
+    "ratio": 1.0,
+    "greeting": "café",
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [ { "type": "command", "command": "echo foreign-pre-tool" } ]
+            }
+        ],
+        "Stop": [
+            {"matcher": "", "hooks": [{"type": "command", "command": "notify-send dwarfai-miners-hook-watcher x-dwarfai-token", "timeout": 3}]}
+        ]
+    }
+}
