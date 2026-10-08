@@ -30,8 +30,12 @@ export class ScriptedToolFs implements FileSystem {
   private readonly locks = new Set<string>()
   private readonly transientFaults = new Map<string, { error: FsError; left: number }>()
   private readonly crashes = new Map<string, 'before-write' | 'after-write'>()
+  private readonly renamesRefused = new Set<string>()
+  private readonly inPlaceCrashes = new Map<string, number>()
   /** Every data write that reached the wrapped FileSystem, by path, in order. */
   readonly writes: string[] = []
+  /** Every whole-file write asked for, refused or not, in order (owner amendment J). */
+  readonly attempts: Array<{ path: string; kind: 'atomic' | 'in-place' }> = []
 
   constructor(private readonly inner: FileSystem) {}
 
@@ -52,6 +56,19 @@ export class ScriptedToolFs implements FileSystem {
     this.transientFaults.set(path, { error, left: times })
   }
 
+  /**
+   * A sharing violation that never clears for the temp-and-rename write of `path`, while the file
+   * itself can still be opened and rewritten in place (ADR-016 item 6.4).
+   */
+  refuseRenames(path: string): void {
+    this.renamesRefused.add(path)
+  }
+
+  /** The Host dies part-way through the next in-place write of `path`, after `keptBytes` landed. */
+  crashPartWayInPlace(path: string, keptBytes: number): void {
+    this.inPlaceCrashes.set(path, keptBytes)
+  }
+
   /** The Host dies at the next data write of `path`: before it lands, or right after. */
   crashAt(path: string, when: 'before-write' | 'after-write'): void {
     this.crashes.set(path, when)
@@ -70,11 +87,21 @@ export class ScriptedToolFs implements FileSystem {
   }
 
   async writeFileAtomic(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
+    this.attempts.push({ path, kind: 'atomic' })
+    if (this.renamesRefused.has(path)) return { ok: false, error: 'busy' }
     return this.dataWrite(path, () => this.inner.writeFileAtomic(path, data))
   }
 
   async writeFileInPlace(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
-    return this.inner.writeFileInPlace(path, data)
+    this.attempts.push({ path, kind: 'in-place' })
+    const kept = this.inPlaceCrashes.get(path)
+    if (kept !== undefined) {
+      this.inPlaceCrashes.delete(path)
+      const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+      await this.inner.writeFileInPlace(path, bytes.slice(0, kept))
+      throw new SimulatedCrash()
+    }
+    return this.dataWrite(path, () => this.inner.writeFileInPlace(path, data))
   }
 
   async appendFile(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {

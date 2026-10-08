@@ -8,7 +8,9 @@
 //   `<file>.dwarfai-bak-<timestamp>` before the first modification per enable, a re-read compared
 //   with the first read just before the atomic temp-and-rename write (a change restarts the
 //   enable once, a second one gives up with `concurrent-modification`), and a read-back of the
-//   written bytes. Tx B then marks the row verified and the integration `on-verified` with its
+//   written bytes. A sharing violation that outlasts the write's retries falls back to an in-place
+//   rewrite behind a fresh pre-write snapshot, restored at boot if the Host died part-way (owner
+//   amendment J). Tx B then marks the row verified and the integration `on-verified` with its
 //   consent origin, or deletes the Tx A row and leaves the integration as it was.
 // - `revert` (16 §7.4): removes exactly DwarfAI's entry (and an old-app entry), foreign bytes
 //   identical; a locked file returns `locked` and changes nothing. Then one transaction sets
@@ -72,6 +74,12 @@ function sameBytes(a: Uint8Array | null, b: Uint8Array | null): boolean {
   return true
 }
 
+/**
+ * Owner amendment J: the pre-write snapshot of an in-place write, beside the backups and named by
+ * its `config_writes` row, so the boot finds it from the ledger with no schema change.
+ */
+const snapshotPathOf = (path: string, rowId: string): string => `${path}.dwarfai-prewrite-${rowId}`
+
 /** `20261008T120000123Z`: a UTC instant sortable by name and valid in every OS's file names. */
 function backupStamp(at: Instant): string {
   return new Date(at).toISOString().replace(/[-:.]/g, '')
@@ -129,7 +137,11 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
   /**
    * Host boot (16 §7.3, 07 S14.11): every live write a crash left unverified is verified again;
    * `verified` turns the integration `on-verified` with the row's consent, anything else reverts it
-   * to `off`. A revert that fails (a locked file) leaves the row for the next boot.
+   * to `off`. A revert that fails (a locked file) leaves the row for the next boot. Owner amendment
+   * J: when the crash hit an in-place write, its pre-write snapshot is still on disk; a file that is
+   * neither DwarfAI's verified write nor the snapshot (partial, truncated, malformed) gets the
+   * snapshot back byte for byte first. A restore that fails keeps the row and the snapshot for the
+   * next boot.
    */
   async settleUnverified(): Promise<void> {
     for (const row of this.deps.ledger.unverified()) {
@@ -138,7 +150,9 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
       )
       if (adapter === undefined) continue
       await this.queued(row.kind, async () => {
-        if ((await this.check(adapter)) === 'verified') {
+        const status = await this.check(adapter)
+        if (!(await this.settleSnapshot(adapter, row, status === 'verified'))) return
+        if (status === 'verified') {
           this.deps.transactions.inTransaction(() => this.markOn(row, row.backupPath))
         } else {
           await this.disable(adapter)
@@ -179,7 +193,14 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
     // Tx A: the attempt is on record before the file is touched (16 §7.3).
     transactions.inTransaction(() => ledger.record(row))
 
-    const written = await this.writeOwned(adapter, token)
+    const outcome = await this.writeOwned(adapter, token, row.id)
+    if (outcome === 'leave-for-boot') {
+      // An in-place write left the file in an unknown state: like a crash between Tx A and Tx B,
+      // the row and the snapshot stay for the boot settlement (owner amendment J).
+      this.logWrite(adapter.target, origin, 'failed', 'io')
+      return { ok: false, error: 'io' }
+    }
+    const written = outcome
 
     if (written.ok) {
       // Tx B (success).
@@ -196,7 +217,11 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
   }
 
   /** Steps 1–6 of 16 §7.2; no transaction is open while it runs. */
-  private async writeOwned(adapter: Adapter, token: ChannelToken): Promise<InstallResult> {
+  private async writeOwned(
+    adapter: Adapter,
+    token: ChannelToken,
+    rowId: string
+  ): Promise<InstallResult | 'leave-for-boot'> {
     let backupPath: string | null = null
     let backedUp = false
     for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -221,18 +246,94 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
       const now = await this.readTarget(adapter)
       if (!now.ok) return { ok: false, error: 'io' }
       if (!sameBytes(now.value, before.value)) continue
-      // 4. The atomic write.
+      // 4. The atomic write, retried on a sharing violation; in place only as the last resort.
+      let inPlace = false
       const write = await this.writeWithRetries(adapter.path, next)
-      if (!write.ok) return { ok: false, error: 'io' }
+      if (!write.ok) {
+        if (!isLock(write.error) || before.value === null) return { ok: false, error: 'io' }
+        const fallback = await this.writeInPlaceBehindSnapshot(adapter, rowId, before.value, next)
+        if (fallback === 'changed') continue
+        if (fallback === 'failed') return { ok: false, error: 'io' }
+        if (fallback === 'leave-for-boot') return fallback
+        inPlace = true
+      }
       // 6. The read-back.
       const back = await this.readTarget(adapter)
       if (!back.ok || !sameBytes(back.value, next)) {
+        if (inPlace) return 'leave-for-boot'
         await this.removeEntries(adapter, false)
         return { ok: false, error: 'io' }
       }
+      if (inPlace) await this.deps.fs.deleteFile(snapshotPathOf(adapter.path, rowId))
       return { ok: true, value: { verified: true, backupPath } }
     }
     return { ok: false, error: 'concurrent-modification' }
+  }
+
+  /**
+   * Owner amendment J: the in-place rewrite of ADR-016 item 6.4, behind a snapshot of the file's
+   * bytes as they are at this moment, persisted before the write (the per-enable backup may be
+   * older). `changed`: the tool changed the file, the enable restarts. `failed`: nothing of the
+   * write stayed. `leave-for-boot`: a failed write that could not be undone.
+   */
+  private async writeInPlaceBehindSnapshot(
+    adapter: Adapter,
+    rowId: string,
+    expected: Uint8Array,
+    next: Uint8Array
+  ): Promise<'written' | 'changed' | 'failed' | 'leave-for-boot'> {
+    const { fs } = this.deps
+    const fresh = await this.readTarget(adapter)
+    if (!fresh.ok || fresh.value === null) return 'failed'
+    const snapshot = fresh.value
+    if (!sameBytes(snapshot, expected)) return 'changed'
+    const snapshotPath = snapshotPathOf(adapter.path, rowId)
+    const saved = await fs.writeFileAtomic(snapshotPath, snapshot)
+    if (!saved.ok) return 'failed'
+    const written = await this.withRetries(() => fs.writeFileInPlace(adapter.path, next))
+    if (written.ok) return 'written'
+    // The failed write may have left part of the file: the snapshot goes back first.
+    const restored = await this.withRetries(() => fs.writeFileInPlace(adapter.path, snapshot))
+    if (!restored.ok) return 'leave-for-boot'
+    await fs.deleteFile(snapshotPath)
+    return 'failed'
+  }
+
+  /**
+   * The boot half of owner amendment J. Returns whether the row may be settled now: `false` when a
+   * needed restore failed (the row and the snapshot wait for the next boot).
+   */
+  private async settleSnapshot(
+    adapter: Adapter,
+    row: ConfigWriteRow,
+    verified: boolean
+  ): Promise<boolean> {
+    const { fs } = this.deps
+    const snapshotPath = snapshotPathOf(row.targetPath, row.id)
+    const snapshot = await fs.readFile(snapshotPath)
+    if (!snapshot.ok) return true
+    const current = await this.readTarget(adapter)
+    const intact = current.ok && sameBytes(current.value, snapshot.value)
+    if (!verified && !intact) {
+      const restored = await this.restoreSnapshot(adapter.path, snapshot.value)
+      // ADR-026: ids, outcome and cause only, never a byte of the file.
+      this.logWrite(
+        adapter.target,
+        row.consentOrigin,
+        restored.ok ? 'degraded' : 'failed',
+        restored.ok ? 'partial-write-restored' : 'io'
+      )
+      if (!restored.ok) return false
+    }
+    await fs.deleteFile(snapshotPath)
+    return true
+  }
+
+  /** The snapshot back, byte for byte: atomically when possible, else in place. */
+  private async restoreSnapshot(path: string, bytes: Uint8Array): Promise<Result<void, FsError>> {
+    const atomic = await this.writeWithRetries(path, bytes)
+    if (atomic.ok || !isLock(atomic.error)) return atomic
+    return this.withRetries(() => this.deps.fs.writeFileInPlace(path, bytes))
   }
 
   /** Tx B (success), and the boot settlement of a verified row. */
@@ -323,10 +424,7 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
     return written.ok ? { ok: true, value: candidate } : written
   }
 
-  /**
-   * ADR-016 item 6.4: temp-and-rename, retried on a sharing violation. Package gap: the kernel
-   * `FileSystem` has no in-place rewrite, so the last fallback of item 6.4 is not taken here.
-   */
+  /** ADR-016 item 6.4: temp-and-rename, retried on a sharing violation. */
   private writeWithRetries(path: string, bytes: Uint8Array): Promise<Result<void, FsError>> {
     return this.withRetries(() => this.deps.fs.writeFileAtomic(path, bytes))
   }
@@ -369,8 +467,8 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
   private logWrite(
     target: ConfigTarget,
     origin: ConsentOrigin,
-    outcome: 'ok' | 'failed' | 'skipped',
-    cause?: InstallError
+    outcome: 'ok' | 'failed' | 'skipped' | 'degraded',
+    cause?: InstallError | 'partial-write-restored'
   ): void {
     this.deps.log.record({
       level: outcome === 'failed' ? 'warn' : 'info',

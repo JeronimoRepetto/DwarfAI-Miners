@@ -158,6 +158,22 @@ export async function engineWorld(storage: FileSystemSubject) {
     const bytes = await storage.fs.readFile(at)
     return bytes.ok ? decoder.decode(bytes.value) : null
   }
+  const siblings = async (
+    prefix: string
+  ): Promise<Array<{ path: string; text: string | null }>> => {
+    const listed = await storage.fs.listDirWithSizes(dir)
+    if (!listed.ok) return []
+    const names = listed.value
+      .map((entry) => entry.name)
+      .filter((name) => name.startsWith(prefix))
+      .sort()
+    return Promise.all(
+      names.map(async (name) => {
+        const at = storage.pathOf('tool', name)
+        return { path: at, text: await read(at) }
+      })
+    )
+  }
   return {
     fs,
     db,
@@ -171,20 +187,9 @@ export async function engineWorld(storage: FileSystemSubject) {
     seed: (text: string, at = path) => storage.seed(at, text),
     read,
     /** The backups of `config.ini`, by path, oldest name first, with their text. */
-    async backups(): Promise<Array<{ path: string; text: string | null }>> {
-      const listed = await storage.fs.listDirWithSizes(dir)
-      if (!listed.ok) return []
-      const names = listed.value
-        .map((entry) => entry.name)
-        .filter((name) => name.startsWith('config.ini.dwarfai-bak-'))
-        .sort()
-      return Promise.all(
-        names.map(async (name) => {
-          const at = storage.pathOf('tool', name)
-          return { path: at, text: await read(at) }
-        })
-      )
-    },
+    backups: () => siblings('config.ini.dwarfai-bak-'),
+    /** The pre-write snapshots of `config.ini` (owner amendment J), with their text. */
+    snapshots: () => siblings('config.ini.dwarfai-prewrite-'),
     rows: () =>
       db
         .all(
@@ -487,6 +492,62 @@ export function runConfigWriterEngineContract(
       expect(await w.read()).toBe('x=1\n')
       expect(w.rows()).toMatchObject([{ verified_at: START, reverted_at: START }])
       expect(w.setting().state).toBe('off')
+    })
+
+    it('[ADR-016, CH-07] a sharing violation that outlasts the retries falls back to an in-place write behind a snapshot, removed once verified', async () => {
+      const w = await world()
+      await w.seed('x=1\n')
+      w.fs.refuseRenames(w.path)
+
+      const installed = await w.writer.install('opencode-plugin', TOKEN, 'settings')
+
+      expect(installed.ok && installed.value.verified).toBe(true)
+      expect(await w.read()).toBe(`x=1\n${syntheticEntry(TOKEN)}\n`)
+      // In place only after the atomic write and its two retries...
+      const onTarget = w.fs.attempts.filter((a) => a.path === w.path).map((a) => a.kind)
+      expect(onTarget).toStrictEqual(['atomic', 'atomic', 'atomic', 'in-place'])
+      // ...and only once the snapshot of the bytes it replaces is on disk.
+      const snapshotAt = w.fs.writes.findIndex((path) => path.includes('.dwarfai-prewrite-'))
+      expect(snapshotAt).toBeGreaterThanOrEqual(0)
+      expect(snapshotAt).toBeLessThan(w.fs.writes.indexOf(w.path))
+      expect(await w.snapshots()).toStrictEqual([])
+      expect(await w.backups()).toHaveLength(1)
+      expect(w.setting().state).toBe('on-verified')
+    })
+
+    it('[FM-020, S14.11, CH-11] a crash part-way through the in-place write is restored at boot from the fresh snapshot, byte for byte, and the integration is off', async () => {
+      const w = await world()
+      const original = 'theme=dark\r\nlast=1\r\n'
+      const edited = `${original}added=by-tool\r\n`
+      await w.seed(original)
+      // The tool edits the file after the per-enable backup was taken: that backup is stale.
+      w.fs.toolEditsBeforeRead(w.path, [2], (text) => `${text}added=by-tool\r\n`)
+      w.fs.refuseRenames(w.path)
+      w.fs.crashPartWayInPlace(w.path, 7)
+
+      await expect(w.writer.install('opencode-plugin', TOKEN, 'settings')).rejects.toThrow(
+        SimulatedCrash
+      )
+      expect(await w.read()).toBe(edited.slice(0, 7))
+      expect((await w.backups()).map((backup) => backup.text)).toStrictEqual([original])
+
+      w.clock.advance(60_000)
+      await w.boot().settleUnverified()
+
+      expect(await w.read()).toBe(edited)
+      expect(await w.snapshots()).toStrictEqual([])
+      expect(w.rows()).toMatchObject([{ verified_at: null, reverted_at: START + 60_000 }])
+      expect(w.setting().state).toBe('off')
+      expect(w.log.entries).toContainEqual(
+        expect.objectContaining({
+          event: 'config.write',
+          outcome: 'degraded',
+          causeClass: 'partial-write-restored'
+        })
+      )
+      // ADR-026: the recovery is logged without a byte of the file.
+      expect(JSON.stringify(w.log.entries)).not.toContain('theme')
+      expect(w.log.refused).toStrictEqual([])
     })
 
     it('[S14.01] claude-hooks refuses the add-panel consent origin before anything is recorded or written', async () => {
