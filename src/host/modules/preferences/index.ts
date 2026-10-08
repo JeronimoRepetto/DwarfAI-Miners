@@ -40,6 +40,7 @@ export type { MetricsResetResult, ResetMetricsCommand, ResetStep } from './domai
 export type { ResetDbStep } from './ports/resetJournal'
 export type { SecretStore } from './ports/secretStore'
 export type { ExternalConfigWriter } from './ports/externalConfigWriter'
+export type { ChannelTokenStore, TokenChannel } from './ports/channelTokenStore'
 export type { FeatureFlagReader, FeatureFlags } from './ports/featureFlagReader'
 export type {
   HostPreferenceKey,
