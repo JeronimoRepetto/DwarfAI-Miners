@@ -128,6 +128,22 @@ describe('ChannelTokenCheck (ADR-016 items 1–2)', () => {
     check.authenticate('opencode-plugin', plugin)
 
     expect(log.byEvent('ingress.rejected').length).toBeGreaterThan(0)
+    // The exact shape of every record: no field, and so no fragment of a token, beyond these four.
+    const rejected = (subsystem: TokenChannel) => ({
+      level: 'warn',
+      event: 'ingress.rejected',
+      subsystem,
+      causeClass: '401'
+    })
+    expect(log.entries).toStrictEqual([
+      rejected('claude-hooks'),
+      rejected('opencode-plugin'),
+      rejected('opencode-plugin'),
+      rejected('claude-hooks'),
+      rejected('claude-hooks'),
+      rejected('opencode-plugin')
+    ])
+    expect(log.refused).toStrictEqual([])
     const logged = JSON.stringify([log.entries, log.refused]).toLowerCase()
     for (const secret of [hooks, plugin, stranger]) {
       expect(logged).not.toContain(secret)
