@@ -19,8 +19,10 @@
 // 7. a body above 256 KiB → 413 `413`: a declared `content-length` is refused before a byte is
 //    read, a chunked body as soon as it passes the cap; the bytes are counted, never kept;
 // 8. the route's schema → 400 `400`;
-// 9. otherwise 204 with no body, and only then the route's delivery runs: the answer never waits
-//    for downstream work, and a failure there never reaches the caller.
+// 9. otherwise 204 with no body, and the route's delivery runs only once that is flushed: the
+//    answer never waits for downstream work, and a failure there never reaches the caller.
+// A dependency that throws at any step (the database under the admission, a route bug) is answered
+// with a bodyless 500 `500`: nothing a request triggers escapes the listener (ADR-002 D7).
 // Logged records carry the channel and the cause class only, never a token or a payload
 // (NFR-SEC-12, ADR-026).
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -42,6 +44,23 @@ export const MAX_INGRESS_BODY_BYTES = 256 * 1024
 export const INGRESS_RATE_LIMIT_REQUESTS = 120
 /** The sliding window the rate limit counts in. */
 export const INGRESS_RATE_LIMIT_WINDOW_MS = 1_000
+/** A request whose headers and body have not all arrived by then is closed (T-40). */
+export const INGRESS_REQUEST_TIMEOUT_MS = 10_000
+/** A request whose headers have not all arrived by then is closed (slow-header flood, T-40). */
+export const INGRESS_HEADERS_TIMEOUT_MS = 5_000
+/** Open connections at once; one hook call is one short POST on its own connection. */
+export const INGRESS_MAX_CONNECTIONS = 64
+/** An idle kept-alive connection buys nothing and holds the Host's exit. */
+const INGRESS_KEEP_ALIVE_TIMEOUT_MS = 1_000
+
+/** The ingress listener's bounds on slow and parallel clients. */
+export function applyIngressServerLimits(server: Server): Server {
+  server.requestTimeout = INGRESS_REQUEST_TIMEOUT_MS
+  server.headersTimeout = INGRESS_HEADERS_TIMEOUT_MS
+  server.maxConnections = INGRESS_MAX_CONNECTIONS
+  server.keepAliveTimeout = INGRESS_KEEP_ALIVE_TIMEOUT_MS
+  return server
+}
 /** The custom header that carries a channel token (ADR-016 item 2). */
 export const INGRESS_TOKEN_HEADER = 'x-dwarfai-token'
 
@@ -72,7 +91,7 @@ export interface HttpIngress {
   close(): Promise<void>
 }
 
-type CauseClass = '400' | '403-origin' | '403-host' | '413' | 'rate-limited'
+type CauseClass = '400' | '403-origin' | '403-host' | '413' | '500' | 'rate-limited'
 
 export function createHttpIngress(deps: HttpIngressDeps): HttpIngress {
   const recent = new Map<TokenChannel, Instant[]>()
@@ -83,7 +102,33 @@ export function createHttpIngress(deps: HttpIngressDeps): HttpIngress {
     deps.log.record({ level: 'warn', event: 'ingress.rejected', subsystem: channel, causeClass })
   }
 
-  /** Counts one request of `channel` now; false once the window is full. */
+  /**
+   * A dependency that threw (a locked database under the admission, a bug in a route): a bodyless
+   * 500 and the cause class only, never the error, whose text could carry a token or a payload.
+   * Package gap (ISSUE-133): 500 rather than 401, because no credential verdict was reached; both
+   * are a non-blocking hook failure to Claude Code. The Host never exits on its own (ADR-002 D7),
+   * so nothing a request triggers may escape the listener.
+   */
+  const fail = (
+    request: IncomingMessage,
+    response: ServerResponse,
+    channel: TokenChannel
+  ): void => {
+    reject(channel, '500')
+    try {
+      answer(request, response, 500)
+    } catch {
+      response.destroy()
+    }
+  }
+
+  /**
+   * Counts one request of `channel` now; false once the window is full. Unauthenticated requests
+   * count too (before the token check, so a flood costs no hashing): another local process can
+   * then crowd out the real hooks for a moment, but the ingress is loopback only and Claude Code
+   * treats a 429 as a non-blocking hook failure, so only a nudge is lost and observation's polling
+   * still sees the change (FM-038).
+   */
   const withinRate = (channel: TokenChannel): boolean => {
     const now = deps.clock.now()
     const window = (recent.get(channel) ?? []).filter(
@@ -97,9 +142,18 @@ export function createHttpIngress(deps: HttpIngressDeps): HttpIngress {
 
   const handle = (request: IncomingMessage, response: ServerResponse): void => {
     const path = (request.url ?? '').split('?')[0] ?? ''
-    const route = deps.routes.find((candidate) => path.startsWith(candidate.prefix))
-    if (route === undefined) return answer(request, response, 404)
-    const channel = route.channel
+    const owner = deps.routes.find((candidate) => path.startsWith(candidate.prefix))
+    if (owner === undefined) return answer(request, response, 404)
+    try {
+      serve(owner, request, response)
+    } catch {
+      fail(request, response, owner.channel)
+    }
+  }
+
+  /** Steps 2–9 for a request `owner` owns; anything that throws is answered by `fail`. */
+  const serve = (owner: IngressRoute, request: IncomingMessage, response: ServerResponse): void => {
+    const channel = owner.channel
     if (request.headers.origin !== undefined) {
       reject(channel, '403-origin')
       return answer(request, response, 403)
@@ -113,7 +167,7 @@ export function createHttpIngress(deps: HttpIngressDeps): HttpIngress {
       reject(channel, 'rate-limited')
       return answer(request, response, 429)
     }
-    if (!route.admits(request.headers[INGRESS_TOKEN_HEADER])) {
+    if (!owner.admits(request.headers[INGRESS_TOKEN_HEADER])) {
       return answer(request, response, 401)
     }
     const declared = Number(request.headers['content-length'] ?? '0')
@@ -122,16 +176,33 @@ export function createHttpIngress(deps: HttpIngressDeps): HttpIngress {
       return answer(request, response, 413)
     }
     readCapped(request, (body) => {
-      if (body === null) {
-        reject(channel, '413')
-        return answer(request, response, 413)
+      try {
+        finish(owner, body, request, response)
+      } catch {
+        fail(request, response, channel)
       }
-      const delivery = route.accept(body)
-      if (delivery === null) {
-        reject(channel, '400')
-        return answer(request, response, 400)
-      }
-      response.writeHead(204).end()
+    })
+  }
+
+  /** Steps 7–9 once the body is read (or passed the cap). */
+  const finish = (
+    owner: IngressRoute,
+    body: string | null,
+    request: IncomingMessage,
+    response: ServerResponse
+  ): void => {
+    if (body === null) {
+      reject(owner.channel, '413')
+      return answer(request, response, 413)
+    }
+    const delivery = owner.accept(body)
+    if (delivery === null) {
+      reject(owner.channel, '400')
+      return answer(request, response, 400)
+    }
+    // The delivery runs once the answer is flushed: the hook never waits for downstream work, and
+    // a failure there can no longer reach it.
+    response.writeHead(204).end(() => {
       try {
         delivery()
       } catch {
@@ -143,9 +214,7 @@ export function createHttpIngress(deps: HttpIngressDeps): HttpIngress {
   return {
     async start(): Promise<number> {
       if (server !== null) return port
-      const created = createServer(handle)
-      // A hook call is one short POST; an idle connection buys nothing and holds the Host's exit.
-      created.keepAliveTimeout = 1_000
+      const created = applyIngressServerLimits(createServer(handle))
       created.on('clientError', (_error, socket) => socket.destroy())
       server = created
       port = await openIngressPort({

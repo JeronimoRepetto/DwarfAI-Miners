@@ -3,14 +3,26 @@
 // T-40; 19 §9.2 `ingress.rejected`; 13 FM-038), over the real `node:http` listener on 127.0.0.1 and
 // an OS-chosen port. The tokens are drawn at run time, so no token value is written into the
 // repository.
-import { afterEach, describe, expect, it } from 'vitest'
+import { createServer, ServerResponse } from 'node:http'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { hashOf } from '../../modules/preferences/testing/inMemoryChannelTokens'
 import {
+  applyIngressServerLimits,
+  INGRESS_HEADERS_TIMEOUT_MS,
+  INGRESS_MAX_CONNECTIONS,
   INGRESS_RATE_LIMIT_REQUESTS,
+  INGRESS_REQUEST_TIMEOUT_MS,
   INGRESS_RATE_LIMIT_WINDOW_MS,
   MAX_INGRESS_BODY_BYTES
 } from './httpIngress'
-import { hookBody, post, startHarness, T0, type Harness } from './testing/ingressHarness'
+import {
+  FAULT_MARKER,
+  hookBody,
+  post,
+  startHarness,
+  T0,
+  type Harness
+} from './testing/ingressHarness'
 
 const cleanups: Array<() => Promise<void>> = []
 
@@ -329,5 +341,130 @@ describe('the Claude hooks route of the loopback ingress (ADR-016)', () => {
     for (const secret of [h.token, plugin, hashOf(h.token), secretish, 'permission']) {
       expect(logged).not.toContain(secret.toLowerCase())
     }
+  })
+
+  it('[ADR-016, ADR-002] a dependency that throws during admission gets a bodyless 500, escapes nothing, and the ingress keeps serving', async () => {
+    const uncaught: unknown[] = []
+    const onUncaught = (error: unknown): void => void uncaught.push(error)
+    process.on('uncaughtException', onUncaught)
+    try {
+      for (const fault of ['integrationState', 'tokensActive'] as const) {
+        const h = await setUp({ fault })
+        const auth = { 'x-dwarfai-token': h.token }
+
+        const first = await post(h.port, { headers: auth, body: hookBody(), answerWithinMs: 1_500 })
+        const second = await post(h.port, {
+          headers: auth,
+          body: hookBody(),
+          answerWithinMs: 1_500
+        })
+        for (const answer of [first, second]) {
+          expect(answer, fault).not.toBe('no-answer')
+          if (answer === 'no-answer') continue
+          expect(answer.status, fault).toBe(500)
+          expect(answer.body, fault).toBe('')
+        }
+        // A request refused before admission is still answered as before.
+        const origin = await post(h.port, { headers: { ...auth, origin: 'http://x.example' } })
+        expect(origin.status, fault).toBe(403)
+
+        expect(h.observation.calls, fault).toStrictEqual([])
+        expect(h.evidence, fault).toStrictEqual([])
+        expect(h.log.byEvent('ingress.rejected'), fault).toStrictEqual([
+          rejected('500'),
+          rejected('500'),
+          rejected('403-origin')
+        ])
+        const logged = JSON.stringify([h.log.entries, h.log.refused]).toLowerCase()
+        for (const secret of [h.token, FAULT_MARKER, 'db locked']) {
+          expect(logged, fault).not.toContain(secret.toLowerCase())
+        }
+      }
+      expect(uncaught).toStrictEqual([])
+    } finally {
+      process.off('uncaughtException', onUncaught)
+    }
+  })
+
+  it('[ADR-016] the hook has its answer before the observer is nudged or the evidence handed on', async () => {
+    const end = vi.spyOn(ServerResponse.prototype, 'end')
+    try {
+      const seen: Array<{ at: 'nudge' | 'evidence'; answered: boolean }> = []
+      let endsBefore = 0
+      const answered = (): boolean => {
+        const responses = end.mock.contexts as ServerResponse[]
+        const last = responses.at(-1)
+        return responses.length > endsBefore && last !== undefined && last.writableFinished
+      }
+      const h = await setUp({
+        observation: { nudge: () => void seen.push({ at: 'nudge', answered: answered() }) },
+        evidence: { accept: () => void seen.push({ at: 'evidence', answered: answered() }) }
+      })
+
+      for (let i = 0; i < 3; i++) {
+        endsBefore = end.mock.contexts.length
+        const answer = await post(h.port, {
+          headers: { 'x-dwarfai-token': h.token },
+          body: hookBody()
+        })
+        expect(answer.status).toBe(204)
+      }
+
+      expect(seen).toStrictEqual(
+        [0, 1, 2].flatMap(() => [
+          { at: 'nudge', answered: true },
+          { at: 'evidence', answered: true }
+        ])
+      )
+    } finally {
+      end.mockRestore()
+    }
+  })
+
+  it('[ADR-016] the listener bounds a stalled request and the number of open connections', () => {
+    const server = applyIngressServerLimits(createServer())
+
+    expect(INGRESS_REQUEST_TIMEOUT_MS).toBe(10_000)
+    expect(INGRESS_HEADERS_TIMEOUT_MS).toBe(5_000)
+    expect(INGRESS_MAX_CONNECTIONS).toBe(64)
+    expect({
+      requestTimeout: server.requestTimeout,
+      headersTimeout: server.headersTimeout,
+      maxConnections: server.maxConnections,
+      keepAliveTimeout: server.keepAliveTimeout
+    }).toStrictEqual({
+      requestTimeout: INGRESS_REQUEST_TIMEOUT_MS,
+      headersTimeout: INGRESS_HEADERS_TIMEOUT_MS,
+      maxConnections: INGRESS_MAX_CONNECTIONS,
+      keepAliveTimeout: 1_000
+    })
+  })
+
+  it('[ADR-016] the evidence carries ids and paths exactly as Claude sent them', async () => {
+    const h = await setUp()
+    const auth = { 'x-dwarfai-token': h.token }
+
+    const answer = await post(h.port, {
+      headers: auth,
+      body: hookBody({
+        session_id: ' session-1',
+        cwd: '/home/j/mine ',
+        transcript_path: '/home/j/.claude/projects/-home-j-mine/session-1.jsonl '
+      })
+    })
+    expect(answer.status).toBe(204)
+    expect(h.evidence).toStrictEqual([
+      {
+        event: 'Notification',
+        sessionId: ' session-1',
+        cwd: '/home/j/mine ',
+        transcriptPath: '/home/j/.claude/projects/-home-j-mine/session-1.jsonl ',
+        notificationType: 'permission_prompt'
+      }
+    ])
+
+    // Blank text is still refused.
+    const blank = await post(h.port, { headers: auth, body: hookBody({ cwd: '   ' }) })
+    expect(blank.status).toBe(400)
   })
 })

@@ -19,6 +19,9 @@ import { z } from 'zod'
  * here when the hook entry (ISSUE-220) installs another event.
  */
 export const CLAUDE_HOOK_EVENTS = [
+  // Never arrives over HTTP: Claude Code runs `SessionStart` hooks only as `type: "command"` or
+  // `type: "mcp_tool"` (https://code.claude.com/docs/en/hooks), so ISSUE-220 must not install it
+  // as an http hook. Kept for a command hook that relays it to the ingress.
   'SessionStart',
   'SessionEnd',
   'UserPromptSubmit',
@@ -50,7 +53,11 @@ export interface ClaudeHookEvidence {
 /** Longest text field read: a path or an id never comes near it. */
 const MAX_FIELD_CHARS = 4_096
 
-const text = z.string().trim().min(1).max(MAX_FIELD_CHARS)
+/** Text with something in it besides blanks, handed on exactly as sent (a path may end in a space). */
+const text = z
+  .string()
+  .max(MAX_FIELD_CHARS)
+  .refine((value) => value.trim().length > 0)
 
 const claudeHookPayload = z.object({
   hook_event_name: z.enum(CLAUDE_HOOK_EVENTS),

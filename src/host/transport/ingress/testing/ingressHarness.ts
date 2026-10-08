@@ -16,6 +16,9 @@ import type { IngressPortRecord } from '../ingressPort'
 
 export const T0 = 1_750_000_000_000
 
+/** Text carried by an injected fault's error: it must never reach a log record. */
+export const FAULT_MARKER = 'fault-marker-91c2'
+
 /** `app_meta.ingress_port` in memory. */
 export class InMemoryIngressPortRecord implements IngressPortRecord {
   writes: number[] = []
@@ -56,6 +59,8 @@ export class RecordingObservationControl implements ObservationControl {
 export interface HarnessOptions {
   evidence?: ClaudeHookEvidenceSink
   observation?: Pick<ObservationControl, 'nudge'>
+  /** A dependency of the admission that throws, as a locked database would. */
+  fault?: 'integrationState' | 'tokensActive'
 }
 
 export interface Harness {
@@ -78,8 +83,21 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   const evidence: ClaudeHookEvidence[] = []
   let state: IntegrationState = 'on-verified'
   const route = createClaudeHooksRoute({
-    tokens: new ChannelTokenCheck({ tokens: channelTokens.store, log }),
-    preferences: { integrationState: () => state },
+    tokens: new ChannelTokenCheck({
+      tokens: {
+        active: (channel) => {
+          if (options.fault === 'tokensActive') throw new Error(`db locked ${FAULT_MARKER}`)
+          return channelTokens.store.active(channel)
+        }
+      },
+      log
+    }),
+    preferences: {
+      integrationState: () => {
+        if (options.fault === 'integrationState') throw new Error(`db locked ${FAULT_MARKER}`)
+        return state
+      }
+    },
     observation: options.observation ?? observation,
     evidence: options.evidence ?? { accept: (item) => void evidence.push(item) },
     log
@@ -123,11 +141,25 @@ export interface PostOptions {
   keepOpen?: boolean
   /** Sends the body as many chunks with no Content-Length (chunked transfer). */
   chunked?: boolean
+  /** Resolves `'no-answer'` when no answer arrived within this many ms. */
+  answerWithinMs?: number
 }
 
 /** One request to the ingress on 127.0.0.1, on a fresh connection. */
-export function post(port: number, options: PostOptions = {}): Promise<Answer> {
+export function post(
+  port: number,
+  options: PostOptions & { answerWithinMs: number }
+): Promise<Answer | 'no-answer'>
+export function post(port: number, options?: PostOptions): Promise<Answer>
+export function post(port: number, options: PostOptions = {}): Promise<Answer | 'no-answer'> {
   return new Promise((resolve, reject) => {
+    if (options.answerWithinMs !== undefined) {
+      const timer = setTimeout(() => {
+        req.destroy()
+        resolve('no-answer')
+      }, options.answerWithinMs)
+      timer.unref()
+    }
     const body = options.body ?? ''
     const headers: Record<string, string> = { host: `${INGRESS_HOST}:${port}`, ...options.headers }
     if (options.chunked !== true && headers['content-length'] === undefined) {
