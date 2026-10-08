@@ -441,14 +441,15 @@ describe('Reset scope, cut-1 modules (09 §6.5)', () => {
     const result = await saga.resetMetrics(YES)
 
     expect(result).toStrictEqual({ outcome: 'reset', epoch: 1 })
-    // 09 §7.2: (2) mines and crew, then (3) the other per-table deletions, attention last.
-    expect(order.slice(0, 7)).toStrictEqual([
+    // 09 §7.2: (2) mines and crew, then (3) the other per-table deletions, asking before attention (ISSUE-139).
+    expect(order.slice(0, 8)).toStrictEqual([
       'mines',
       'crew',
       'preferences',
       'observation',
       'ledger',
       'conversation',
+      'asking',
       'attention'
     ])
     expect(column(raw, 'SELECT id FROM mines')).toStrictEqual([MINE.occupied])
@@ -576,6 +577,7 @@ describe('Reset scope, cut-1 modules (09 §6.5)', () => {
       'observation',
       'ledger',
       'conversation',
+      'asking',
       'attention'
     ])
     expect(snapshot(raw)).toStrictEqual(before)

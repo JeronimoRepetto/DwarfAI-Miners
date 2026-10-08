@@ -18,6 +18,7 @@ import type { Clock } from '../kernel/ports/clock'
 import type { DomainEventBus } from '../kernel/ports/domainEventBus'
 import type { SqliteDatabase } from '../kernel/ports/sqliteDatabase'
 import type { TransactionScope } from '../kernel/ports/transactionScope'
+import { createAskingResetStep } from '../modules/asking'
 import { createConversationResetStep } from '../modules/conversation'
 import { createCrewResetStep } from '../modules/crew'
 import { createLedgerResetStep } from '../modules/ledger'
@@ -75,7 +76,8 @@ export function createModuleResetSteps(deps: ModuleResetStepsDeps): WiredModuleR
       crew: createCrewResetStep({ db, scope }),
       observation: createObservationResetStep({ db, scope }),
       ledger: createLedgerResetStep({ db, scope }),
-      conversation: createConversationResetStep({ db, scope })
+      conversation: createConversationResetStep({ db, scope }),
+      asking: createAskingResetStep({ db, scope })
     },
     route: ({ bus, walks }) => {
       if (bound.walks !== undefined) throw new HostInvariantError('the reset walks are routed once')
