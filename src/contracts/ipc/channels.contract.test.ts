@@ -27,6 +27,8 @@ import {
   type SendMessageParams,
   type SendMessageResult,
   type SetOpenCodePermissionsParams,
+  type SetClaudeHooksParams,
+  type SetClaudeHooksResult,
   type SetOpenCodePermissionsResult
 } from '../host-protocol/params'
 import type { IpcResult } from '../host-protocol'
@@ -235,6 +237,16 @@ const NEW_ROWS = [
     kind: 'push',
     placement: 'ui-local',
     sensitive: false
+  },
+  // ISSUE-221: Settings → Integrations "Claude Code · instant updates" (AMENDMENT-7, OQ-68; ADR-016 items 5–7), born
+  // `host` in cut 2; a boolean and a requestId, nothing a person or a provider said
+  {
+    id: 'A-N31',
+    wire: 'claude:hooks:set',
+    member: 'setClaudeHooksEnabled',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -411,7 +423,9 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' },
   'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
   'ui:preferences:set': { key: 'startWithSystem', value: false },
-  'host:snapshot': { sections: ['mines', 'dwarfs'] }
+  'host:snapshot': { sections: ['mines', 'dwarfs'] },
+  // A-N31 (ISSUE-221): B-M39's params, no origin (the Host records `settings`)
+  'claude:hooks:set': { on: true, requestId: U1 }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */
@@ -802,6 +816,9 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     expectTypeOf<Res<'ui:preferences:get'>>().toMatchTypeOf<Partial<UiPreferencesMap>>()
     expectTypeOf<Req<'ui:preferences:set'>>().toMatchTypeOf<UiPreferenceWrite>()
     expectTypeOf<Res<'ui:preferences:set'>>().toMatchTypeOf<UiPreferenceWrite>()
+    // A-N31 (ISSUE-221): relays B-M39 unchanged, as 14 §2.2 and §3.8 write it (14 §1.2).
+    expectTypeOf<Req<'claude:hooks:set'>>().toEqualTypeOf<SetClaudeHooksParams>()
+    expectTypeOf<Res<'claude:hooks:set'>>().toEqualTypeOf<IpcResult<SetClaudeHooksResult>>()
     // A-N16 (ISSUE-114): the reveal push, as 14 §2.2 and §3.8 write it.
     expectTypeOf<Req<'mode:revealDwarfChat'>>().toEqualTypeOf<undefined>()
     expectTypeOf<Res<'mode:revealDwarfChat'>>().toEqualTypeOf<{

@@ -118,7 +118,8 @@ const MEMBERS = {
   'ui:preferences:reset': 'onUiPreferencesReset', // A-N12 (unrouted until cut 1)
   'host:snapshot': 'getHostSnapshot', // A-N01 (unrouted until cut 1)
   'host:event': 'onHostEvent', // A-N02 (unrouted until cut 1)
-  'mode:revealDwarfChat': 'onRevealDwarfChat' // A-N16 (unrouted until cut 1)
+  'mode:revealDwarfChat': 'onRevealDwarfChat', // A-N16 (unrouted until cut 1)
+  'claude:hooks:set': 'setClaudeHooksEnabled' // A-N31 (unrouted until cut 2)
 }
 
 /**
