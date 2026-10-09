@@ -21,7 +21,7 @@
 // createNodeHungHostEnder is the hung-Host end of ADR-002 D9 steps 2 and 4 (hungHost.ts; ISSUE-052): it reads
 // `<hostDataDir>/run/host.identity`, matches it by the ADR-014 item 2 rule with this machine's boot id (bootId.ts) and
 // the pid's start time (processStart.ts), and ends that one process with `process.kill`.
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
@@ -54,6 +54,7 @@ import {
   versionedCopyRoot
 } from './versionedCopy'
 import type { HostAttach, UpgradeFlowDeps } from './upgradeFlow'
+import { runHostRevertIntegrations, type RunToExit } from './revertIntegrations'
 import { loadWinLaunch } from './win-launch/nativeWinLaunch'
 import { createWindowsSpawner } from './windows'
 
@@ -281,6 +282,74 @@ export function createNodeHostAttach(options: NodeHostLauncherOptions): {
 } {
   return { launcher: createNodeHostLauncher(options), upgrade: createNodeUpgradePorts(options) }
 }
+
+/**
+ * `--revert-integrations` (ADR-016 item 7; ISSUE-225; revertIntegrations.ts): the Host of this build run from its
+ * versioned copy in the revert mode, with the spawn gate held, as a plain child this process waits for (it is not
+ * the long-lived Host of ADR-002 D6, so it needs no breakaway), answering its exit code.
+ */
+export function createNodeRevertIntegrations(
+  options: Pick<
+    NodeHostLauncherOptions,
+    | 'hostDataDir'
+    | 'execPath'
+    | 'hostManifest'
+    | 'hostEntry'
+    | 'log'
+    | 'client'
+    | 'uiEnv'
+    | 'build'
+    | 'copyRoot'
+  >
+): () => Promise<number> {
+  const platform = thisPlatform()
+  const uiEnv = options.uiEnv ?? process.env
+  const runQuery = createQueryRunner()
+  const runDir = join(options.hostDataDir, RUN_DIR)
+  const readStart = createProcessStartReader({ platform, runQuery, env: uiEnv })
+  return () =>
+    runHostRevertIntegrations({
+      gate: spawnGateIn(runDir, readStart),
+      prepareCopy: createCopyPreparer({
+        execPath: options.execPath,
+        hostManifest: options.hostManifest,
+        appVersion: options.client.appVersion,
+        platform,
+        build: options.build,
+        uiEnv,
+        ...(options.copyRoot === undefined ? {} : { copyRoot: options.copyRoot }),
+        log: options.log
+      }),
+      host: {
+        execPath: options.execPath,
+        hostEntry: options.hostEntry,
+        hostDataDir: options.hostDataDir,
+        uiEnv
+      },
+      run: runToExit,
+      clock: { now: Date.now },
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      log: options.log
+    })
+}
+
+/** One process as an argv array, never through a shell, without a window or captured output (R17). */
+const runToExit: RunToExit = (request) =>
+  new Promise((resolve) => {
+    try {
+      const child = spawn(request.file, [...request.args], {
+        shell: false,
+        windowsHide: true,
+        stdio: 'ignore',
+        env: { ...request.env },
+        cwd: request.cwd
+      })
+      child.once('error', () => resolve(null))
+      child.once('exit', (code) => resolve(code))
+    } catch {
+      resolve(null)
+    }
+  })
 
 /** The spawn gate `<hostDataDir>/run/spawn.gate` (ADR-002 D3), held by this UI process. */
 function spawnGateIn(
