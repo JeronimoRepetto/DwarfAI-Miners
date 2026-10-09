@@ -4,9 +4,14 @@
 // edge (05 §1.3).
 //
 // ISSUE-128: `AskAnswerPaths`, the broker's two answer paths (ADR-010 items 2, 4, 5, 8, 13; 16 §4.7
-// rows `answerPermission` / `answerQuestion`; 09 §8.2). `open`, `setStep`, `resolveExternally`,
-// `closeForDwarf` and `snapshot` join with their issues (later: ISSUE-129, ISSUE-130, ISSUE-136,
-// ISSUE-140).
+// rows `answerPermission` / `answerQuestion`; 09 §8.2). `open`, `setStep`, `closeForDwarf` and
+// `snapshot` join with their issues (later: ISSUE-129, ISSUE-130, ISSUE-140).
+//
+// ISSUE-131: `resolveExternally` for an ask whose answer is in flight — the S6.21 hold of an
+// `elsewhere` resolution until the channel result, and the S6.22 close of a cancellation, after
+// which the result settles as `ask-closed` with no card back. Its `open` branch (S6.11, S6.13) and
+// its route are later: ISSUE-136. The hold lives in this instance only: an ask still `answering`
+// after a Host restart has no call in flight here and is settled by the boot reconcile (07 S6.20).
 //
 // - A repeated `requestId` returns the first result and does nothing again (INV-79): while it is in
 //   flight, the same promise; once settled, `ask_answers.outcome` (`AskRepository.answerOf`), which
@@ -54,7 +59,11 @@ import {
   type AskChannel,
   type AskRecord
 } from '../domain/ask'
-import { channelResult, submit as submitAsk } from '../domain/askMachine'
+import {
+  channelResult,
+  resolveExternally as resolveAsk,
+  submit as submitAsk
+} from '../domain/askMachine'
 import { permissionRecordText, questionRecordText } from '../domain/answersRecordText'
 import type { AskingEvent } from '../domain/events'
 import type { AskAnswerChannel } from '../ports/askAnswerChannel'
@@ -106,9 +115,14 @@ interface Won {
 const NOT_OPEN: AnswerOutcome = { kind: 'not-open' }
 const UNAVAILABLE: AnswerOutcome = { kind: 'refused', reason: 'channel-unavailable' }
 
-export class AskAnswerPaths implements Pick<AskBroker, 'answerPermission' | 'answerQuestion'> {
+export class AskAnswerPaths implements Pick<
+  AskBroker,
+  'answerPermission' | 'answerQuestion' | 'resolveExternally'
+> {
   /** The submits whose hand-over is in flight, by `requestId`. */
   private readonly inFlight = new Map<string, Promise<AnswerOutcome>>()
+  /** The asks resolved elsewhere while their answer is in flight, held for its result (S6.21). */
+  private readonly held = new Set<AskId>()
 
   constructor(private readonly deps: AnswerPathsDeps) {}
 
@@ -126,6 +140,39 @@ export class AskAnswerPaths implements Pick<AskBroker, 'answerPermission' | 'ans
     requestId: string
   ): Promise<AnswerOutcome> {
     return this.answer(askId as AskId, requestId, { kind: 'question', answers })
+  }
+
+  /**
+   * An external resolution of an ask whose answer is in flight (07 §6). `elsewhere` is held until
+   * the channel call returns and settled with its result (S6.21); `cancelled` closes the ask now
+   * (S6.22) and the result then settles as `ask-closed`. Resolving an `open` ask (S6.11, S6.13) is
+   * later: ISSUE-136; until then a resolution of an ask that is not `answering` changes nothing.
+   */
+  resolveExternally(
+    dwarfId: string,
+    providerRequestId: string,
+    by: 'elsewhere' | 'cancelled'
+  ): void {
+    const { asks, transactions, clock, bus } = this.deps
+    const closed = transactions.inTransaction((): Ask | null => {
+      const ask = asks.byProviderRequest({ dwarfId: dwarfId as DwarfId }, providerRequestId)
+      if (ask === null || ask.state !== 'answering') return null
+      const step = resolveAsk(ask, by, clock.now())
+      if (step.held !== null) {
+        this.held.add(ask.id as AskId)
+        return null
+      }
+      asks.save(step.ask)
+      return step.ask
+    })
+    if (closed === null) return
+    bus.publish(
+      this.event('AskClosed', {
+        askId: closed.id as AskId,
+        dwarfId: closed.dwarfId as DwarfId,
+        reason: closed.state
+      })
+    )
   }
 
   private answer(askId: AskId, requestId: string, submit: Submit): Promise<AnswerOutcome> {
@@ -212,17 +259,17 @@ export class AskAnswerPaths implements Pick<AskBroker, 'answerPermission' | 'ans
    * `sending` until the Host's boot reconcile settles them (07 S6.20 for the ask, S7.13 for the
    * record's delivery).
    *
-   * S6.21 is not wired yet: `channelResult` is never given `held`. Whoever builds
-   * `resolveExternally` needs a hold map keyed by ask in `AskAnswerPaths`: an `elsewhere` resolution
-   * that lands while the ask is `answering` is held there and passed here as `held`.
+   * An `elsewhere` resolution held while the call was in flight (S6.21) is passed to
+   * `channelResult` and released once this transaction commits, so it is applied exactly once.
    */
   private settle(won: Won, requestId: string, result: AnswerOutcome): AnswerOutcome {
     const { asks, records, transactions, clock, bus } = this.deps
     const askId = won.ask.id as AskId
     const dwarfId = won.ask.dwarfId as DwarfId
+    const held = this.held.has(askId) ? 'elsewhere' : null
     const { step, outcome } = transactions.inTransaction(() => {
       const current = asks.byId(askId) ?? won.ask
-      const settled = channelResult(current, result, clock.now())
+      const settled = channelResult(current, result, clock.now(), held)
       if (settled.transition !== null) asks.save(settled.ask)
       const final = settled.outcome
       if (final.kind === 'not-open') {
@@ -237,6 +284,7 @@ export class AskAnswerPaths implements Pick<AskBroker, 'answerPermission' | 'ans
       )
       return { step: settled, outcome: final }
     })
+    this.held.delete(askId)
     if (step.transition === 'S6.08' || step.transition === 'S6.10') {
       bus.publish(this.event('AskClosed', { askId, dwarfId, reason: step.ask.state }))
     }
