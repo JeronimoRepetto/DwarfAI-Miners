@@ -21,8 +21,9 @@
 // createNodeHungHostEnder is the hung-Host end of ADR-002 D9 steps 2 and 4 (hungHost.ts; ISSUE-052): it reads
 // `<hostDataDir>/run/host.identity`, matches it by the ADR-014 item 2 rule with this machine's boot id (bootId.ts) and
 // the pid's start time (processStart.ts), and ends that one process with `process.kill`.
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { constants } from 'node:os'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -54,6 +55,9 @@ import {
   versionedCopyRoot
 } from './versionedCopy'
 import type { HostAttach, UpgradeFlowDeps } from './upgradeFlow'
+import { runHostRevertIntegrations, type StartRevertChild } from './revertIntegrations'
+import type { SpawnProcess } from './windows'
+import type { HostIdentityRecord } from '@dwarfai/contracts'
 import { loadWinLaunch } from './win-launch/nativeWinLaunch'
 import { createWindowsSpawner } from './windows'
 
@@ -282,6 +286,146 @@ export function createNodeHostAttach(options: NodeHostLauncherOptions): {
   return { launcher: createNodeHostLauncher(options), upgrade: createNodeUpgradePorts(options) }
 }
 
+/**
+ * `--revert-integrations` (ADR-016 item 7; ISSUE-225; revertIntegrations.ts): the Host of this build run from its
+ * versioned copy in the revert mode, with the spawn gate held, as a plain child this process waits for (it is not
+ * the long-lived Host of ADR-002 D6, so it needs no breakaway), answering its exit code.
+ */
+export function createNodeRevertIntegrations(
+  options: Pick<
+    NodeHostLauncherOptions,
+    | 'hostDataDir'
+    | 'execPath'
+    | 'hostManifest'
+    | 'hostEntry'
+    | 'log'
+    | 'client'
+    | 'uiEnv'
+    | 'build'
+    | 'copyRoot'
+  >
+): () => Promise<number> {
+  const platform = thisPlatform()
+  const uiEnv = options.uiEnv ?? process.env
+  const runQuery = createQueryRunner()
+  const runDir = join(options.hostDataDir, RUN_DIR)
+  const readStart = createProcessStartReader({ platform, runQuery, env: uiEnv })
+  return () =>
+    runHostRevertIntegrations({
+      gate: spawnGateIn(runDir, readStart),
+      prepareCopy: createCopyPreparer({
+        execPath: options.execPath,
+        hostManifest: options.hostManifest,
+        appVersion: options.client.appVersion,
+        platform,
+        build: options.build,
+        uiEnv,
+        ...(options.copyRoot === undefined ? {} : { copyRoot: options.copyRoot }),
+        log: options.log
+      }),
+      host: {
+        execPath: options.execPath,
+        hostEntry: options.hostEntry,
+        hostDataDir: options.hostDataDir,
+        uiEnv
+      },
+      start: createNodeRevertChildStarter({ uiEnv }),
+      clock: { now: Date.now },
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      log: options.log
+    })
+}
+
+/**
+ * The revert child over Node: the request as an argv array (an absolute executable, never resolved
+ * through PATH), never through a shell, without a window or captured output (R17), with the request's
+ * whole environment. Its identity (pid, OS start time, boot; ADR-014 item 2) is read right after it
+ * started, and `end` ends that one process through the hung-Host end (hungHost.ts), never a bare pid.
+ * A signal death is 128 + the signal number, as posix.ts reports it.
+ */
+export function startRevertChild(options: {
+  spawnProcess?: SpawnProcess
+  /** The identity of the started pid, or null when it cannot be read. */
+  readIdentity?: (pid: number) => Promise<HostIdentityRecord | null>
+  /** Ends the process with that identity; true once it was ended. */
+  endIdentified?: (identity: HostIdentityRecord) => Promise<boolean>
+}): StartRevertChild {
+  const spawnProcess = options.spawnProcess ?? spawn
+  return (request) =>
+    new Promise((resolve) => {
+      let reportExit: (code: number | null) => void = () => {}
+      const exited = new Promise<number | null>((done) => (reportExit = done))
+      try {
+        const child = spawnProcess(request.file, [...request.args], {
+          shell: false,
+          windowsHide: true,
+          stdio: 'ignore',
+          env: { ...request.env },
+          cwd: request.cwd
+        })
+        child.once('exit', (code, signal) =>
+          reportExit(code ?? (signal === null ? null : 128 + (constants.signals[signal] ?? 0)))
+        )
+        child.once('error', () => {
+          reportExit(null)
+          resolve(null)
+        })
+        child.once('spawn', () => {
+          const pid = child.pid
+          const identity =
+            pid === undefined || options.readIdentity === undefined
+              ? Promise.resolve(null)
+              : options.readIdentity(pid).catch(() => null)
+          resolve({
+            exited,
+            end: async () => {
+              const known = await identity
+              if (known === null || options.endIdentified === undefined) return false
+              return options.endIdentified(known)
+            }
+          })
+        })
+      } catch {
+        resolve(null)
+      }
+    })
+}
+
+/** startRevertChild over this machine: Node's spawn, and the identity read and end below. */
+export function createNodeRevertChildStarter(
+  options: { uiEnv?: Readonly<Record<string, string | undefined>> } = {}
+): StartRevertChild {
+  return startRevertChild(
+    revertChildIdentity(thisPlatform(), options.uiEnv ?? process.env, createQueryRunner())
+  )
+}
+
+/** The revert child's identity and its end, over this machine's process facts (ADR-014 item 2). */
+function revertChildIdentity(
+  platform: 'win32' | 'darwin' | 'linux',
+  uiEnv: Readonly<Record<string, string | undefined>>,
+  runQuery: QueryRunner
+): {
+  readIdentity: (pid: number) => Promise<HostIdentityRecord | null>
+  endIdentified: (identity: HostIdentityRecord) => Promise<boolean>
+} {
+  const readStart = createProcessStartReader({ platform, runQuery, env: uiEnv })
+  const currentBootId = createBootIdReader({ platform, runQuery, env: uiEnv })
+  return {
+    async readIdentity(pid) {
+      const [start, bootId] = await Promise.all([readStart(pid), currentBootId()])
+      if (start.kind !== 'started' || bootId === null) return null
+      return { pid, processStartTimeMs: start.ms, bootId, epoch: 'revert-integrations' }
+    },
+    async endIdentified(identity) {
+      const end = await endHungHost(
+        nodeHungHostPorts(platform, uiEnv, runQuery, async () => identity)
+      )
+      return end.outcome === 'ended'
+    }
+  }
+}
+
 /** The spawn gate `<hostDataDir>/run/spawn.gate` (ADR-002 D3), held by this UI process. */
 function spawnGateIn(
   runDir: string,
@@ -334,18 +478,29 @@ export function createNodeHungHostEnder(
   const uiEnv = options.uiEnv ?? process.env
   const runQuery = createQueryRunner()
   const identityFile = join(options.hostDataDir, RUN_DIR, HOST_IDENTITY_FILE)
-  const ports: HungHostPorts = {
+  const ports = nodeHungHostPorts(platform, uiEnv, runQuery, async () => {
+    try {
+      const parsed = hostIdentityRecordSchema.safeParse(
+        JSON.parse(await readFile(identityFile, 'utf8'))
+      )
+      return parsed.success ? parsed.data : null
+    } catch {
+      return null
+    }
+  })
+  return { endHungHost: () => endHungHost(ports) }
+}
+
+/** The hung-Host end's ports over this machine, ending the process `readIdentity` names (hungHost.ts). */
+function nodeHungHostPorts(
+  platform: 'win32' | 'darwin' | 'linux',
+  uiEnv: Readonly<Record<string, string | undefined>>,
+  runQuery: QueryRunner,
+  readIdentity: () => Promise<HostIdentityRecord | null>
+): HungHostPorts {
+  return {
     platform,
-    async readIdentity() {
-      try {
-        const parsed = hostIdentityRecordSchema.safeParse(
-          JSON.parse(await readFile(identityFile, 'utf8'))
-        )
-        return parsed.success ? parsed.data : null
-      } catch {
-        return null
-      }
-    },
+    readIdentity,
     currentBootId: createBootIdReader({ platform, runQuery, env: uiEnv }),
     readStart: createProcessStartReader({ platform, runQuery, env: uiEnv }),
     // That one pid (the schema allows only a positive one, so never a process group); on Windows `process.kill` is
@@ -370,7 +525,6 @@ export function createNodeHungHostEnder(
     clock: { now: Date.now },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   }
-  return { endHungHost: () => endHungHost(ports) }
 }
 
 /** One OS query as an argv array, never through a shell, killed at its timeout. */

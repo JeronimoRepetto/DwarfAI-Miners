@@ -9,6 +9,7 @@ import { createUiLogger, type UiLog, type UiLogEntry } from './diagnostics/uiLog
 import {
   composeUiLocal,
   startUiMain as startUiMainOn,
+  startUiProcess,
   type CreatedWindow,
   type UiMainDeps,
   type UiMainLifecycle
@@ -29,6 +30,7 @@ import { createPanelWindow } from './window/application/panelWindow'
 import { FakeScreenAreaProvider } from './window/ports/fakes/FakeScreenAreaProvider'
 import { FakeWindowFactory } from './window/ports/fakes/FakeWindowFactory'
 import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
+import { REVERT_INTEGRATIONS_FLAG } from './hostLauncher'
 
 // AMENDED for ISSUE-056 (was: `startUiMain` on the release's own table, which was the pre-cut table): these cases pin
 // the root with the window family served `legacy`, today's Panel window included, as before the cut-0 switch and in a
@@ -533,5 +535,50 @@ describe('ui-main composition root (05 §2.3)', () => {
         rmSync(dir, { recursive: true, force: true })
       }
     })
+  })
+})
+
+describe('--revert-integrations from the app executable (ADR-016 item 7; ISSUE-225)', () => {
+  it('[ADR-016] --revert-integrations runs the Host revert, never starts the UI (no lock, no window) and exits with its code', async () => {
+    const calls: string[] = []
+    await startUiProcess({
+      argv: ['DwarfAI-Miners.exe', REVERT_INTEGRATIONS_FLAG],
+      revertIntegrations: async () => {
+        calls.push('revert')
+        return 5
+      },
+      // The whole UI start (the lock, the router, the Panel window, the tray) is behind `start`.
+      start: () => void calls.push('start'),
+      exit: (code) => void calls.push(`exit ${code}`)
+    })
+
+    expect(calls).toEqual(['revert', 'exit 5'])
+  })
+
+  it('[ADR-016] a revert that cannot run exits non-zero, still without starting the UI', async () => {
+    const calls: string[] = []
+    await startUiProcess({
+      argv: ['DwarfAI-Miners.exe', REVERT_INTEGRATIONS_FLAG],
+      revertIntegrations: () => Promise.reject(new Error('no copy')),
+      start: () => void calls.push('start'),
+      exit: (code) => void calls.push(`exit ${code}`)
+    })
+
+    expect(calls).toEqual(['exit 1'])
+  })
+
+  it('[ADR-016] a normal launch starts the UI and never runs the revert', async () => {
+    const calls: string[] = []
+    await startUiProcess({
+      argv: ['DwarfAI-Miners.exe', '--background'],
+      revertIntegrations: async () => {
+        calls.push('revert')
+        return 0
+      },
+      start: () => void calls.push('start'),
+      exit: (code) => void calls.push(`exit ${code}`)
+    })
+
+    expect(calls).toEqual(['start'])
   })
 })

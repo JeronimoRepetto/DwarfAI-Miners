@@ -4,7 +4,8 @@
 // (upgradeDecision, runUpgradeFlow over createNodeUpgradePorts; ISSUE-032), composed after every attach by
 // createUpgradingLauncher (createNodeHostAttach gives both over one set of options); createNodeHostConnection
 // is HostClient's connection to the same endpoint (ISSUE-051); createNodeHungHostEnder ends a hung Host after the
-// identity check of ADR-002 D9 step 2 (ISSUE-052).
+// identity check of ADR-002 D9 step 2 (ISSUE-052); createNodeRevertIntegrations runs the Host copy in the
+// `--revert-integrations` mode and answers its exit code (ISSUE-225).
 export {
   createHostLauncher,
   type EnsureHostResult,
@@ -16,6 +17,7 @@ export {
   createNodeHostConnection,
   createNodeHostLauncher,
   createNodeHungHostEnder,
+  createNodeRevertIntegrations,
   createNodeUpgradePorts,
   nodeHostManifestPath,
   type NodeHostConnection,
@@ -23,6 +25,7 @@ export {
   type NodeHungHostEnder,
   type NodeUpgradePorts
 } from './nodeHostLauncher'
+export { REVERT_INTEGRATIONS_FLAG, wantsRevertIntegrations } from './revertIntegrations'
 export { endHungHost, type HungHostEnd, type HungHostPorts } from './hungHost'
 export { decideUpgrade, type UpgradeDecision } from './upgradeDecision'
 export {

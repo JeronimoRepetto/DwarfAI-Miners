@@ -81,6 +81,11 @@
 // ISSUE-122) wires observation over a sink that writes nothing, so observation, the coal backfill
 // and the per-mine backfill never run, and attention over a level-3 sink that delivers nothing: the
 // legacy observer, ledger and notifier are the one observer, ledger and notifier again.
+//
+// `--revert-integrations` (ADR-016 item 7; ISSUE-225): UI main runs the Host copy with the flag, and
+// the process takes the revert mode of wiring/revertIntegrations.ts instead of the boot above:
+// stop a running Host (`host.shutdown {stop-all}`), take the endpoint, revert every active
+// `config_writes` row, exit with its code. No step of the normal boot runs in that mode.
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -155,6 +160,12 @@ import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/fea
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
 import { installUncaughtHandlers } from './wiring/uncaught'
+import { EXIT_CODES } from './wiring/exitCodes'
+import {
+  createNodeRevertIntegrations,
+  dispatchHostMode,
+  runRevertIntegrations
+} from './wiring/revertIntegrations'
 import { createModuleResetSteps, type WiredModuleResetSteps } from './wiring/moduleResetSteps'
 import { emptyDrainGate } from './wiring/emptyDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
@@ -270,6 +281,102 @@ async function main(): Promise<void> {
       })
   })
   const ids = new UuidV7Generator({ clock })
+  const base: HostBase = {
+    appRoot,
+    isPackaged,
+    paths,
+    privilege,
+    runQuery,
+    clock,
+    fs,
+    log,
+    scheduler,
+    ids
+  }
+  // `--revert-integrations` (ADR-016 item 7; ISSUE-225): the revert mode instead of the normal
+  // boot, which then never runs; the process exits with the command's code.
+  await dispatchHostMode({
+    argv: process.argv,
+    revertIntegrations: () => revertIntegrationsHere(base),
+    boot: () => bootHost(base),
+    exit: (code) => {
+      process.exitCode = code
+      void log.flush().finally(() => process.exit(code))
+    }
+  })
+}
+
+/** What every mode of the Host process is built over, before the mode is chosen. */
+interface HostBase {
+  appRoot: string
+  isPackaged: boolean
+  paths: ReturnType<typeof EnvAppPaths.create>
+  privilege: ReturnType<typeof createPrivilegeCheck>
+  runQuery: ReturnType<typeof createQueryRunner>
+  clock: SystemClock
+  fs: NodeFs
+  log: ReturnType<typeof createDiagnostics>
+  scheduler: NodeScheduler
+  ids: UuidV7Generator
+}
+
+/**
+ * The revert mode over this machine (wiring/revertIntegrations.ts): this Host's endpoint, database
+ * and the Claude Code settings file observation reads (`CLAUDE_CONFIG_DIR`, else `~/.claude`). It
+ * needs DWARFAI_HOST_DATA_DIR as the boot does (NO_DATA_DIR otherwise).
+ */
+async function revertIntegrationsHere(base: HostBase): Promise<number> {
+  const { appRoot, paths, runQuery, clock, fs, log, scheduler, ids } = base
+  if (!paths.ok) {
+    log.record({
+      level: 'error',
+      event: 'host.no-data-dir',
+      subsystem: 'host',
+      causeClass: paths.error
+    })
+    return EXIT_CODES.NO_DATA_DIR
+  }
+  const hostDataDir = paths.value.userDataDir
+  const prebuildsDir = winPipePrebuildsDir(appRoot)
+  const protection = createHostFileProtection({
+    log,
+    ownerOnlyDirectory: createNativeOwnerOnlyDirectory({ prebuildsDir })
+  })
+  return runRevertIntegrations(
+    createNodeRevertIntegrations({
+      hostDataDir,
+      facts: createNodeEndpointFacts({ hostDataDir, runQuery }),
+      ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir }),
+      client: {
+        appVersion: __DWARFAI_APP_VERSION__,
+        buildId: __DWARFAI_BUILD_ID__,
+        pid: process.pid
+      },
+      protocolVersion: PROTOCOL_VERSION,
+      open: {
+        buildKind: buildKindOf(paths.value),
+        releaseDataDir: thisProcessReleaseHostDataDir(),
+        appVersion: __DWARFAI_APP_VERSION__,
+        migrations: migrationsFor({ clock, ids })
+      },
+      protectDbFiles: (dbPath) => protection.dbFiles(dbPath),
+      fs,
+      clock,
+      ids,
+      scheduler,
+      log,
+      claudeSettingsPath: join(
+        observedProviderFolders(process.env, homedir()).claudeConfigDir,
+        'settings.json'
+      ),
+      platform: hostRuntime().os as NodeJS.Platform
+    })
+  )
+}
+
+/** The normal boot (16 §8.2): every step, then the Host serves until its clean exit. */
+async function bootHost(base: HostBase): Promise<void> {
+  const { appRoot, isPackaged, paths, privilege, runQuery, clock, fs, log, scheduler, ids } = base
   const epoch = mintBootEpoch(ids)
   const connections = new ConnectionRegistry()
   const hostState = new HostStateHolder(connections)

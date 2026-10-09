@@ -172,7 +172,9 @@ import {
   createNodeHostAttach,
   createNodeHostConnection,
   createNodeHungHostEnder,
+  createNodeRevertIntegrations,
   nodeHostManifestPath,
+  wantsRevertIntegrations,
   winLaunchPrebuildsDir
 } from './hostLauncher'
 import { ElectronWindows, showRendererCrashedMessage } from './window/adapters/ElectronWindows'
@@ -1400,6 +1402,34 @@ export async function startUiMain({
   return { reopen }
 }
 
+/**
+ * What this Electron process was started for. `--revert-integrations` (ADR-016 item 7; ISSUE-225 lead decision) runs
+ * the Host copy in its revert mode (hostLauncher/revertIntegrations.ts) and exits with its code: nothing of the UI
+ * starts, so no single-instance lock is taken (an uninstall hook runs it while the app may be open), no route, window,
+ * tray or shortcut exists and today's runtime is never composed. Every other start is the UI's (`start`).
+ */
+export async function startUiProcess(deps: {
+  argv: readonly string[]
+  revertIntegrations: () => Promise<number>
+  start: () => void
+  exit: (code: number) => void
+}): Promise<void> {
+  if (!wantsRevertIntegrations(deps.argv)) {
+    deps.start()
+    return
+  }
+  let code = REVERT_FAILED_EXIT_CODE
+  try {
+    code = await deps.revertIntegrations()
+  } catch {
+    // The Host copy could not run the revert; the uninstall goes on (FM-128).
+  }
+  deps.exit(code)
+}
+
+/** A revert that could not run (ADR-016 item 7: "a non-zero code"). */
+const REVERT_FAILED_EXIT_CODE = 1
+
 /** The Electron `app` behind `UiMainLifecycle`. */
 function electronLifecycle(): UiMainLifecycle {
   return {
@@ -1648,6 +1678,40 @@ if (process.type === 'browser') {
   // 19 §9.1 `uncaught`, §11 (FM-041): from the first moment the logger exists, an uncaught error is logged, flushed
   // and ends Electron main non-zero; the listener also keeps Electron's own error dialog from opening.
   installUiUncaughtHandlers({ process, log: uiLog, exit: (code) => app.exit(code) })
+  // `--revert-integrations` (ADR-016 item 7; ISSUE-225) runs the Host copy's revert mode and exits; any other start is
+  // the UI's.
+  void startUiProcess({
+    argv: process.argv,
+    revertIntegrations: () => electronRevertIntegrations(uiLog, dataDir),
+    start: () => startElectronUi(dataDir, uiLog),
+    exit: (code) => void uiLog.flush().finally(() => app.exit(code))
+  })
+}
+
+/**
+ * `--revert-integrations` over the Node host launcher (ISSUE-225): the same Host data folder, build manifest, entry
+ * and versioned-copy root as the Host attach (electronHostClient), so the revert runs this build's Host copy against
+ * the Host data of this profile.
+ */
+function electronRevertIntegrations(uiLog: UiLog, dataDir: string): Promise<number> {
+  const outDir = join(import.meta.dirname, '..')
+  return createNodeRevertIntegrations({
+    hostDataDir: join(dataDir, 'host'),
+    build: app.isPackaged ? 'release' : 'dev',
+    execPath: process.execPath,
+    hostManifest: nodeHostManifestPath({
+      packaged: app.isPackaged,
+      outDir,
+      resourcesPath: process.resourcesPath
+    }),
+    hostEntry: join(outDir, 'host', 'main.js'),
+    log: uiLog,
+    client: { appVersion: app.getVersion(), buildId: __DWARFAI_BUILD_ID__ }
+  })()
+}
+
+/** The UI's own start (16 §8.4): everything a normal or `--background` start composes, the lock first. */
+function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogger>): void {
   // ADR-019 items 2–4 (ISSUE-046): the navigation guard from the first webContents, then the permission denial and
   // the CSP once Electron is ready. From cut 0 the secure window factory builds the Panel (ISSUE-047) with a preload
   // that loads sandboxed (ISSUE-045); a rollback build's table gives the window back to today's runtime.
