@@ -24,6 +24,11 @@
 //   §4.4 do the rest in the same statement: the trimmed rows' `deliveries` go, and their
 //   `message_keys.message_id` and `ask_answers.message_id` become NULL; the key stays, so no
 //   replay re-inserts a trimmed message. Any other `keep` is refused: the cap is a constant.
+// - `writeAnswersRecord` and `settleDelivery` (owner amendment K, 2026-10-09) are the answers-record's
+//   writes, inside the caller's transaction: the ask's one record (`role 'answers-record'`, `ask_id`,
+//   origin `dwarfai`) with its delivery `sending`, or, given `existing`, that record updated in place
+//   with its delivery `sending` again, attempts + 1 (ADR-010 item 13, 09 §8.2); then the hand-over
+//   result of a `sending` delivery. Updating or settling a row that is not there is refused.
 // - `setDelivery` is not built yet (later: ISSUE-166).
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts'
@@ -88,6 +93,29 @@ const TRIM = `DELETE FROM messages
                    WHERE m.dwarf_id = ?
                    ORDER BY (d.message_id IS NOT NULL) DESC, m.sort_at DESC, m.id DESC
                    LIMIT ?)`
+
+// Owner amendment K: the ask's one "Answers:" record and its delivery (09 §8.2). A second record of
+// the same ask is refused by `messages_one_record_per_ask`.
+const INSERT_RECORD = `INSERT INTO messages (id, dwarf_id, role, text, origin, created_at, ask_id)
+  VALUES (?, ?, 'answers-record', ?, 'dwarfai', ?, ?)`
+
+const INSERT_RECORD_DELIVERY = `INSERT INTO deliveries
+  (message_id, dwarf_id, kind, phase, sent_at, phase_at)
+  VALUES (?, ?, 'answers-record', 'sending', ?, ?)`
+
+// ADR-010 item 13, 09 §8.2: same id, new text, `created_at` restamped.
+const UPDATE_RECORD = `UPDATE messages SET text = ?, created_at = ?
+  WHERE id = ? AND dwarf_id = ? AND ask_id = ? AND role = 'answers-record'`
+
+// …and its delivery `sending` again: no failure, attempts + 1, sent_at / phase_at now.
+const RESEND_RECORD = `UPDATE deliveries SET phase = 'sending', confidence = NULL,
+    failure_kind = NULL, failure_reason = NULL, attempts = attempts + 1, sent_at = ?, phase_at = ?
+  WHERE message_id = ?`
+
+// The hand-over result of a delivery still `sending`.
+const SETTLE_DELIVERY = `UPDATE deliveries SET phase = ?, failure_kind = ?, failure_reason = ?,
+    phase_at = ?
+  WHERE message_id = ? AND phase = 'sending'`
 
 const PAGE_SELECT = `SELECT m.id, m.dwarf_id, m.source_key, m.role, m.text, m.issuer_dwarf_id,
     m.activity_json, m.attachments_json, m.origin, m.provider_time, m.created_at, m.ask_id,
@@ -192,6 +220,54 @@ export class SqliteMessageLog implements MessageLog {
       throw new HostInvariantError(`MessageLog.trim keeps MESSAGES_PER_DWARF rows, not ${keep}`)
     }
     this.deps.db.run(TRIM, [dwarfId, dwarfId, keep])
+  }
+
+  writeAnswersRecord(
+    dwarfId: DwarfId,
+    askId: AskId,
+    text: string,
+    at: Instant,
+    existing?: MessageId
+  ): MessageId {
+    const { db, ids } = this.deps
+    this.requireTransaction('writeAnswersRecord')
+    if (existing !== undefined) {
+      // ADR-010 item 13: the re-answer updates the record and its delivery in place.
+      if (db.run(UPDATE_RECORD, [text, at, existing, dwarfId, askId]).changes !== 1) {
+        throw new HostInvariantError(`no answers-record ${existing} of ask ${askId} to update`)
+      }
+      db.run(RESEND_RECORD, [at, at, existing])
+      return existing
+    }
+    const id = ids.uuidv7() as MessageId
+    db.run(INSERT_RECORD, [id, dwarfId, text, at, askId])
+    db.run(INSERT_RECORD_DELIVERY, [id, dwarfId, at, at])
+    return id
+  }
+
+  settleDelivery(
+    id: MessageId,
+    result: { phase: 'delivered' } | { phase: 'failed'; failure: DeliveryFailure },
+    at: Instant
+  ): void {
+    this.requireTransaction('settleDelivery')
+    const failure = result.phase === 'failed' ? result.failure : null
+    const changes = this.deps.db.run(SETTLE_DELIVERY, [
+      result.phase,
+      failure?.kind ?? null,
+      failure !== null && 'reason' in failure ? failure.reason : null,
+      at,
+      id
+    ]).changes
+    if (changes !== 1) throw new HostInvariantError(`no sending delivery of message ${id}`)
+  }
+
+  private requireTransaction(method: string): void {
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError(
+        `MessageLog.${method} runs inside the caller transaction (16 §2.2)`
+      )
+    }
   }
 
   /** The waiting DwarfAI row an uncorrelated observed entry echoes, if any (ADR-007 item 3). */

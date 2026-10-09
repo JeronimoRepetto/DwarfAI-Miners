@@ -11,9 +11,12 @@
 // dwarf by the domain rule `rowsToTrim` (`sending` first), and a trimmed row's key stays with no
 // row. `page` returns every stored row as a `Message` with its delivery, newest first by
 // `sortAt` then id (amendment of 2026-10-05 to 16 §4.6, ISSUE-103). An entry's tool steps are kept on
-// its row as its `ActivitySummary` (ISSUE-101). `setDelivery` is not built (ISSUE-166).
+// its row as its `ActivitySummary` (ISSUE-101). `setDelivery` is not built (ISSUE-166). Owner
+// amendment K (2026-10-09): `writeAnswersRecord` keeps one "Answers:" record per ask (the UNIQUE
+// `messages_one_record_per_ask`) and updates it in place given `existing`; `settleDelivery` settles a
+// `sending` delivery.
 import { HostInvariantError } from '../../../kernel/domain/errors'
-import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
+import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
@@ -174,6 +177,91 @@ export class InMemoryMessageLog implements MessageLog {
       if (key.messageId !== null && trimmed.has(key.messageId)) {
         this.keys.set(sourceKey, { ...key, messageId: null })
       }
+    }
+  }
+
+  writeAnswersRecord(
+    dwarfId: DwarfId,
+    askId: AskId,
+    text: string,
+    at: Instant,
+    existing?: MessageId
+  ): MessageId {
+    this.requireTransaction('writeAnswersRecord')
+    if (utf8.encode(text).length > MESSAGE_TEXT_MAX_BYTES) {
+      throw new HostInvariantError('message text over 64 KiB (09 §4.4 CHECK)')
+    }
+    if (existing !== undefined) {
+      const row = this.rows.find(
+        (r) =>
+          r.message.id === existing &&
+          r.message.dwarfId === dwarfId &&
+          r.message.askId === askId &&
+          r.message.role === 'answers-record'
+      )
+      if (row === undefined || row.delivery === null) {
+        throw new HostInvariantError(`no answers-record ${existing} of ask ${askId} to update`)
+      }
+      row.message = { ...row.message, text, createdAt: at }
+      const { failure, confidence, ...rest } = row.delivery
+      void [failure, confidence]
+      row.delivery = { ...rest, phase: 'sending', attempts: rest.attempts + 1, phaseAt: at }
+      return existing
+    }
+    // `messages_one_record_per_ask` (09 §4.4): one record per ask.
+    if (this.rows.some((r) => r.message.askId === askId)) {
+      throw new HostInvariantError(`ask ${askId} already has an answers-record`)
+    }
+    const message: Message = {
+      id: this.deps.ids.uuidv7() as MessageId,
+      dwarfId,
+      sourceKey: null,
+      role: 'answers-record',
+      text,
+      attachments: [],
+      origin: 'dwarfai',
+      providerTime: null,
+      askId,
+      createdAt: at
+    }
+    this.rows.push({
+      message,
+      pendingEcho: null,
+      delivery: {
+        messageId: message.id,
+        dwarfId,
+        kind: 'answers-record',
+        phase: 'sending',
+        attempts: 1,
+        phaseAt: at
+      }
+    })
+    return message.id
+  }
+
+  settleDelivery(
+    id: MessageId,
+    result: { phase: 'delivered' } | { phase: 'failed'; failure: DeliveryFailure },
+    at: Instant
+  ): void {
+    this.requireTransaction('settleDelivery')
+    const row = this.rows.find((r) => r.message.id === id && r.delivery?.phase === 'sending')
+    if (row === undefined || row.delivery === null) {
+      throw new HostInvariantError(`no sending delivery of message ${id}`)
+    }
+    row.delivery = {
+      ...row.delivery,
+      phase: result.phase,
+      ...(result.phase === 'failed' ? { failure: result.failure } : {}),
+      phaseAt: at
+    }
+  }
+
+  private requireTransaction(method: string): void {
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError(
+        `MessageLog.${method} runs inside the caller transaction (16 §2.2)`
+      )
     }
   }
 

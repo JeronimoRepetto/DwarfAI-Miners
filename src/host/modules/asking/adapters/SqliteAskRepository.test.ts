@@ -33,12 +33,13 @@ function interleaving(db: SqliteDatabase, between: () => void): SqliteDatabase {
 // meets the real CHECKs, UNIQUE keys and foreign keys of `asks` and `ask_answers` (09 §4.5).
 describe('SqliteAskRepository', () => {
   runAskRepositoryContract(() => {
-    const { runner, open, dwarfs } = seededAskDb()
+    const { runner, open, seedRecord, dwarfs } = seededAskDb()
     return {
       repository: open(),
       dwarfs,
       inTransaction: (work) => runner.inTransaction(work),
       reopen: () => open(),
+      seedRecord,
       dispose: () => undefined
     }
   })
@@ -99,6 +100,32 @@ describe('SqliteAskRepository', () => {
     expect(() => repository.save(ask)).toThrow()
     expect(() => repository.settle(ask.id as AskId, { requestId: 'r-1' })).toThrow()
     expect(db.all('SELECT id FROM asks')).toStrictEqual([])
+  })
+
+  // Owner amendment K: the ask_answers writes join the caller's transaction too (16 §2.2).
+  it('[INV-72] linkRecord and settleAnswer outside the caller transaction are refused and store nothing', () => {
+    const { db, runner, open, seedRecord, dwarfs } = seededAskDb()
+    const ask = permissionAsk(6, dwarfs[0])
+    const repository = open()
+    runner.inTransaction(() => {
+      repository.save(ask)
+      repository.settle(ask.id as AskId, { requestId: 'r-1' })
+    })
+    const record = seedRecord(dwarfs[0], ask.id as AskId)
+
+    expect(() => repository.linkRecord('r-1', record)).toThrow()
+    expect(() => repository.settleAnswer('r-1', { kind: 'accepted' })).toThrow()
+    expect(answerRows(db)).toStrictEqual([
+      {
+        request_id: 'r-1',
+        ask_id: ask.id,
+        outcome: null,
+        refusal_reason: null,
+        message_id: null,
+        at: T0,
+        settled_at: null
+      }
+    ])
   })
 
   it('[INV-71] a provider request id holding SQL quotes is stored and found exactly as written', () => {

@@ -4,15 +4,31 @@
 // the schema's rules that the contract can see (09 §4.5): `id` and `(dwarfId, providerRequestId)`
 // are unique, at most one ask per dwarf is `answering` (`asks_one_answering`), and only the
 // `AskRecord` fields are stored, so nothing picked on an earlier step survives (INV-75, OQ-03).
-import type { AskId, DwarfId } from '../../../../kernel/domain/values'
+// Owner amendment K (2026-10-09): `settlements` stands for `ask_answers` — `answerOf`, `recordOf`,
+// `linkRecord` and `settleAnswer` (once) read and write it as the SQLite adapter does.
+import type { AskId, DwarfId, MessageId } from '../../../../kernel/domain/values'
 import type { Ask } from '../../domain/ask'
-import type { AskChannelRef, AskRepository, AskSettlement } from '../askRepository'
+import type {
+  AskAnswer,
+  AskChannelRef,
+  AskRepository,
+  AskSettlement,
+  SettledAnswer
+} from '../askRepository'
 
 /** The double's "database": the `asks` rows by id and the settles (`ask_answers`, 09 §4.5). */
 export class InMemoryAskRows {
   readonly asks = new Map<string, Ask>()
-  /** One entry per settle that won its ask, in order. */
-  readonly settlements: { askId: AskId; requestId: string }[] = []
+  /**
+   * One entry per settle that won its ask, in order (`ask_answers`); owner amendment K: with the
+   * record it linked and the outcome it settled to.
+   */
+  readonly settlements: {
+    askId: AskId
+    requestId: string
+    messageId?: MessageId
+    outcome?: SettledAnswer
+  }[] = []
 }
 
 export class InMemoryAskRepository implements AskRepository {
@@ -55,6 +71,46 @@ export class InMemoryAskRepository implements AskRepository {
     this.save({ ...ask, state: 'answering' })
     this.rows.settlements.push({ askId, requestId: outcome.requestId })
     return 'settled'
+  }
+
+  byId(askId: AskId): Ask | null {
+    const ask = this.rows.asks.get(askId)
+    return ask === undefined ? null : stored(ask)
+  }
+
+  answerOf(requestId: string): AskAnswer | null {
+    const row = this.settlementOf(requestId)
+    if (row === undefined) return null
+    return {
+      askId: row.askId,
+      outcome: row.outcome === undefined ? null : structuredClone(row.outcome),
+      messageId: row.messageId ?? null
+    }
+  }
+
+  recordOf(askId: AskId): MessageId | null {
+    const linked = this.rows.settlements.filter(
+      (row) => row.askId === askId && row.messageId !== undefined
+    )
+    return linked.at(-1)?.messageId ?? null
+  }
+
+  linkRecord(requestId: string, messageId: MessageId): void {
+    const row = this.settlementOf(requestId)
+    if (row === undefined) throw new Error(`no ask_answers row ${requestId} to link`)
+    row.messageId = messageId
+  }
+
+  settleAnswer(requestId: string, result: SettledAnswer): void {
+    const row = this.settlementOf(requestId)
+    if (row === undefined || row.outcome !== undefined) {
+      throw new Error(`no pending ask_answers row ${requestId} to settle`)
+    }
+    row.outcome = structuredClone(result)
+  }
+
+  private settlementOf(requestId: string) {
+    return this.rows.settlements.find((row) => row.requestId === requestId)
   }
 }
 

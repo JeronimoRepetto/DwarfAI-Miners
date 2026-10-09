@@ -13,9 +13,14 @@
 // each with its delivery — newest first by `sort_at DESC, id DESC`, at most the limit, so
 // `ConversationQueries.feed` can answer 14 §3.6 `FeedPage` (`MessageView` items, `before` a
 // `MessageId`) over "every stored row" (11 F12 table, the feed tail row).
-import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
+//
+// Owner amendment K (2026-10-09, ISSUE-128): `writeAnswersRecord` and `settleDelivery` are the
+// answers-record's writes, which `AnswerRecords` (16 §4.6) makes inside asking's critical section
+// (ADR-010 items 4, 13; 09 §8.2). With `append`, `setDelivery` and `trim` they are the log's only
+// writes; `trim` still never removes a `sending` row.
+import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
-import type { FeedPageRequest, Message } from '../domain/messages'
+import type { DeliveryFailure, FeedPageRequest, Message } from '../domain/messages'
 
 export interface MessageLog {
   // natural key → idempotent inserts (ADR-006)
@@ -33,4 +38,22 @@ export interface MessageLog {
   ): void
   // retention (ADR-007): keep = MESSAGES_PER_DWARF (50), every stored row counts, a `sending` row is never trimmed (06 INV-61)
   trim(dwarfId: DwarfId, keep: number): void
+  // Amended: 16 §4.6 MessageLog.writeAnswersRecord (owner amendment K, 2026-10-09): the ask's one
+  // "Answers:" record (`role 'answers-record'`, `ask_id`, origin `dwarfai`) with its delivery
+  // `sending`, stamped `at`; given `existing`, that record is updated in place instead (new text,
+  // restamped, `sending` again, attempts + 1, no failure; ADR-010 item 13). Returns its id.
+  writeAnswersRecord(
+    dwarfId: DwarfId,
+    askId: AskId,
+    text: string,
+    at: Instant,
+    existing?: MessageId
+  ): MessageId
+  // Amended: 16 §4.6 MessageLog.settleDelivery (owner amendment K, 2026-10-09): the hand-over
+  // result of a `sending` delivery — delivered, or failed with its ADR-022 failure — stamped `at`.
+  settleDelivery(
+    id: MessageId,
+    result: { phase: 'delivered' } | { phase: 'failed'; failure: DeliveryFailure },
+    at: Instant
+  ): void
 }

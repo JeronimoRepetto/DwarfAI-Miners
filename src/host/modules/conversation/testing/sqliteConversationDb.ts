@@ -1,7 +1,7 @@
 // Test helpers over a template-database copy for conversation's SQLite tests (17 §1.5): one mine
 // and two dwarfs seeded in bound SQL, and read-backs of `messages` / `message_keys` /
 // `activity_disclosures` / `outcome_lines` the ports do not expose. Never imported by production code (R14).
-import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
+import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
@@ -47,6 +47,8 @@ export interface SqliteConversationProbe {
   keyOf(sourceKey: string): { dwarfId: DwarfId; messageId: MessageId | null } | null
   rowCount(dwarfId: DwarfId): number
   rowIds(dwarfId: DwarfId): MessageId[]
+  /** An open permission ask of `dwarfId` (the `asks` row an answers-record's `ask_id` references). */
+  seedAsk(dwarfId: DwarfId, n: number): AskId
 }
 
 export function sqliteProbe(
@@ -72,6 +74,18 @@ export function sqliteProbe(
     },
     seedAnswersRecord(dwarfId, text, phase = 'delivered') {
       return seedWithDelivery(dwarfId, 'answers-record', 'answers-record', phase, text)
+    },
+    seedAsk(dwarfId, n) {
+      const id = answersAskId(n)
+      runner.inTransaction(() => {
+        db.run(
+          `INSERT INTO asks (id, dwarf_id, kind, channel, provider_request_id, payload_json, state,
+             opened_at)
+           VALUES (?, ?, 'permission', 'driver', ?, ?, 'open', ?)`,
+          [id, dwarfId, `request-${n}`, JSON.stringify({ toolName: 'Bash', requestText: 'ls' }), at]
+        )
+      })
+      return id
     },
     keyOf(sourceKey) {
       const row = db.all('SELECT dwarf_id, message_id FROM message_keys WHERE source_key = ?', [
@@ -161,4 +175,9 @@ export function storedOutcome(db: SqliteDatabase, dwarfId: DwarfId): OutcomeLine
     reliability: String(row['reliability']) as OutcomeLine['reliability'],
     at: Number(row['at'])
   }
+}
+
+/** The id of the n-th seeded ask (the `asks.id` CHECK wants 36 characters, 09 §4.5). */
+export function answersAskId(n: number): AskId {
+  return `00000000-0000-7000-8000-${String(n).padStart(12, '0')}` as AskId
 }

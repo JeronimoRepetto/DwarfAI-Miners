@@ -5,6 +5,7 @@ import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import { InMemoryMessageLog } from './InMemoryMessageLog'
 import { runMessageLogContract } from './messageLog.contract'
+import { answersAskId } from './sqliteConversationDb'
 
 // The double runs the same contract as the SQLite adapter (17 §1.3). Its transaction is a
 // TransactionScope fake: open while `work` runs, and a throwing `work` restores what it saw.
@@ -45,6 +46,7 @@ describe('InMemoryMessageLog', () => {
       keyOf: (sourceKey) => log.keyOf(sourceKey),
       rowCount: (dwarfId) => log.rowCount(dwarfId),
       rowIds: (dwarfId) => log.rowIds(dwarfId),
+      seedAsk: (_dwarfId, n) => answersAskId(n),
       dispose: () => undefined
     }
   })

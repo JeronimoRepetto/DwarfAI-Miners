@@ -1,5 +1,5 @@
 import { describe } from 'vitest'
-import type { DwarfId } from '../../../kernel/domain/values'
+import type { DwarfId, MessageId } from '../../../kernel/domain/values'
 import { InMemoryAskRepository, InMemoryAskRows } from '../ports/fakes/InMemoryAskRepository'
 import { runAskRepositoryContract } from './askRepository.contract'
 
@@ -13,6 +13,7 @@ describe('InMemoryAskRepository', () => {
       dwarfs: ['dwarf-0001' as DwarfId, 'dwarf-0002' as DwarfId],
       inTransaction: (work) => work(),
       reopen: () => new InMemoryAskRepository(rows),
+      seedRecord: (_dwarfId, askId) => `record-of-${askId}` as MessageId,
       dispose: () => undefined
     }
   })
