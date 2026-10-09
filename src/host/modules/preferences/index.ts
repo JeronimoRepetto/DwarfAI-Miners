@@ -1,8 +1,9 @@
 // The preferences module (05 §3.12): the Host-read settings in the `host_preferences` singleton
 // (INV-105), the Reset-metrics saga (ADR-023) and the feature flags read once at start (INV-110).
 // Cut 1 serves `get`, `set`, `resetMetrics` and the feature flags; the first-run consent step's
-// state joins in cut 2 (`createWelcomeStep`, ISSUE-222); secrets (only ever in `SecretStore`,
-// ADR-017) and the integration toggles join with their issues. It imports no
+// state joins in cut 2 (`createWelcomeStep`, ISSUE-222), and so does the Claude Code hooks toggle
+// (`setClaudeHooks`, ISSUE-221); secrets (only ever in `SecretStore`, ADR-017) and the OpenCode
+// toggle join with their issues. It imports no
 // other module (05 §1.3, R4): the other modules' Reset steps reach the saga as `ResetDbStep`s from
 // host/wiring/resetParticipants.ts.
 import type { HostEpoch } from '../../kernel/domain/values'
@@ -13,12 +14,17 @@ import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import { PreferencesResetStep } from './adapters/sqlite/PreferencesResetStep'
+import { SqliteChannelTokenStore } from './adapters/sqlite/SqliteChannelTokenStore'
+import { SqliteIntegrationSettingStore } from './adapters/sqlite/SqliteIntegrationSettingStore'
 import { SqlitePreferencesStore } from './adapters/sqlite/SqlitePreferencesStore'
 import { SqliteResetJournal } from './adapters/sqlite/SqliteResetJournal'
 import { SqliteWelcomeAnswerStore } from './adapters/SqliteWelcomeAnswerStore'
 import {
   PreferencesService,
   WelcomeStepService,
+  type CredentialMinter,
+  type IntegrationSettingsQueries,
+  type MintedCredential,
   type PreferencesCommands,
   type PreferencesQueries,
   type WelcomeBoot,
@@ -34,10 +40,19 @@ import type { SecretStore } from './ports/secretStore'
 import type { FeatureFlagReader } from './ports/featureFlagReader'
 import type { InstalledToolsReader } from './ports/installedToolsReader'
 
-export type { PreferencesCommands, PreferencesQueries, WelcomeBoot, WelcomeQueries }
+export type {
+  CredentialMinter,
+  IntegrationSettingsQueries,
+  MintedCredential,
+  PreferencesCommands,
+  PreferencesQueries,
+  WelcomeBoot,
+  WelcomeQueries
+}
 export type { ResetDbMaintenance, ResetUiFanout }
 export type {
   HostPreferencesChanged,
+  IntegrationChanged,
   MetricsResetFailed,
   MetricsResetFinished,
   MetricsResetStarted,
@@ -79,14 +94,21 @@ export interface PreferencesDeps {
   hostEpoch: HostEpoch
   /** The `host/wiring` reader of the two feature flags (05 §5.1 R9); read once, here (INV-110). */
   featureFlags: FeatureFlagReader
+  /** The one config writer (16 §7): the integration toggles write and revert through it. */
+  externalConfig: ExternalConfigWriter
+  /** The transport's token issuance (lead decision 2026-09-30, ISSUE-198), from host/main.ts. */
+  mintCredential: CredentialMinter
 }
 
 export interface Preferences {
   commands: PreferencesCommands
-  queries: PreferencesQueries
+  queries: PreferencesQueries & IntegrationSettingsQueries
 }
 
-/** The module over the Host database. */
+/**
+ * The module over the Host database: `host_preferences`, `integration_settings` and
+ * `channel_tokens` (09 §4.8).
+ */
 export function createPreferences(deps: PreferencesDeps): Preferences {
   const service = new PreferencesService({
     store: new SqlitePreferencesStore({ db: deps.db, clock: deps.clock }),
@@ -95,7 +117,11 @@ export function createPreferences(deps: PreferencesDeps): Preferences {
     clock: deps.clock,
     ids: deps.ids,
     hostEpoch: deps.hostEpoch,
-    featureFlags: deps.featureFlags
+    featureFlags: deps.featureFlags,
+    integrations: new SqliteIntegrationSettingStore({ db: deps.db }),
+    tokens: new SqliteChannelTokenStore({ db: deps.db, ids: deps.ids }),
+    externalConfig: deps.externalConfig,
+    mintCredential: deps.mintCredential
   })
   return { commands: service, queries: service }
 }

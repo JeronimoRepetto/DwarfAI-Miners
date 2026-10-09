@@ -8,7 +8,10 @@ import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { PreferencesEvent } from '../domain/events'
+import { FakeExternalConfigWriter } from '../ports/fakes/FakeExternalConfigWriter'
 import { FakeFeatureFlagReader } from '../ports/fakes/FakeFeatureFlagReader'
+import { InMemoryChannelTokenStore } from '../ports/fakes/InMemoryChannelTokenStore'
+import { InMemoryIntegrationSettingStore } from '../ports/fakes/InMemoryIntegrationSettingStore'
 import { InMemoryPreferencesStore } from '../ports/fakes/InMemoryPreferencesStore'
 import { PreferencesService } from './preferencesService'
 
@@ -45,7 +48,14 @@ function service() {
     clock,
     ids: new SequenceIdGenerator(),
     hostEpoch: EPOCH,
-    featureFlags: new FakeFeatureFlagReader()
+    featureFlags: new FakeFeatureFlagReader(),
+    // AMENDED for ISSUE-221: the integration toggle's deps, never reached by this suite.
+    integrations: new InMemoryIntegrationSettingStore(),
+    tokens: new InMemoryChannelTokenStore(),
+    externalConfig: new FakeExternalConfigWriter(),
+    mintCredential: () => {
+      throw new Error('this suite mints no credential')
+    }
   })
   return { preferences, store, bus, transactions: () => transactions }
 }

@@ -1,5 +1,6 @@
 // The public events of the preferences module (08 §1, §3; 16 §4.12). Published after commit (16 §2.3).
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
+import type { IntegrationId, IntegrationState } from '../../../kernel/domain/values'
 import type { HostPreferences } from './hostPreferences'
 import type { ResetStep } from './resetSaga'
 import type { WelcomeStepState } from './welcomeStep'
@@ -35,9 +36,21 @@ export type MetricsResetFailed = DomainEvent<
  */
 export type WelcomeStepChanged = DomainEvent<'WelcomeStepChanged', { state: WelcomeStepState }>
 
+/**
+ * 16 §4.12 `IntegrationChanged { id: IntegrationId; state: IntegrationState }` (08 §0; ADR-011 item 7;
+ * ADR-016 item 7): published after every enable, revert, failed write or failed revert (07 S14.02,
+ * S14.04, S14.06, S14.07), a failed one carrying the unchanged state, so every window shows the real
+ * state (16 §7.4). It never carries a channel token.
+ */
+export type IntegrationChanged = DomainEvent<
+  'IntegrationChanged',
+  { id: IntegrationId; state: IntegrationState }
+>
+
 /** Every event this module publishes. */
 export type PreferencesEvent =
   | HostPreferencesChanged
+  | IntegrationChanged
   | MetricsResetStarted
   | MetricsResetFinished
   | MetricsResetFailed

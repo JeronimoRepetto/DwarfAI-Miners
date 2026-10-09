@@ -626,16 +626,24 @@ describe('preferences wiring', () => {
     expect(m.fs.calls()).toBe(before)
   })
 
-  it('[ADR-011] before the integrations are wired the IntegrationGateReader bridge answers off for every integration', async () => {
+  // AMENDED for ISSUE-221: the module reads `integration_settings` since the Claude Code hooks
+  // toggle joined it (16 §4.12 `integrationState`), so the bridge answers the stored state. Was:
+  // "before the integrations are wired the IntegrationGateReader bridge answers off for every
+  // integration", whatever the rows held.
+  it('[ADR-011] the IntegrationGateReader bridge answers the stored state of every integration, off on a fresh database', async () => {
     const host = await bootHost(machine())
     const { db, transactions } = host.database.connection()
-    // Whatever the integration rows hold, nothing reads them before the store is wired.
+    const gate = wiredOf(host).integrationGate
+    expect([gate.state('opencode-permissions'), gate.state('claude-hooks')]).toEqual(['off', 'off'])
+
     transactions.inTransaction(() =>
       db.run(`UPDATE integration_settings SET state = 'on-verified', consent_origin = 'settings'`)
     )
-    const gate = wiredOf(host).integrationGate
 
-    expect([gate.state('opencode-permissions'), gate.state('claude-hooks')]).toEqual(['off', 'off'])
+    expect([gate.state('opencode-permissions'), gate.state('claude-hooks')]).toEqual([
+      'on-verified',
+      'on-verified'
+    ])
   })
 
   it('[ADR-017] a SecretReader read of a name other than jev-key or opencode-password is refused', async () => {
