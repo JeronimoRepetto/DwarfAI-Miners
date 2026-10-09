@@ -9,7 +9,7 @@
 // (a repeated requestId returns the first result; a stale submit writes nothing).
 import { describe, expect, it } from 'vitest'
 import type { AnswerOutcome } from '../../../kernel/domain/sharedContracts'
-import { ANSWER_DWARF, answerHarness } from '../testing/answerHarness'
+import { ANSWER_DWARF, OTHER_DWARF, answerHarness } from '../testing/answerHarness'
 
 const R1 = '01890a5d-ac96-774b-bcce-000000000001'
 const R2 = '01890a5d-ac96-774b-bcce-000000000002'
@@ -344,5 +344,82 @@ describe('AskBroker answer paths', () => {
       failure: { kind: 'refused', reason: 'ask-closed' }
     })
     expect(h.eventTypes()).toEqual(['MessageSent', 'MessageDeliveryFailed'])
+  })
+  it('[ADR-010] an answer of the other kind returns not-open and writes nothing', async () => {
+    const h = answerHarness()
+    const question = h.question(18)
+    const permission = h.permission(19, { dwarfId: OTHER_DWARF })
+
+    const outcomes = [
+      await h.paths.answerPermission(question.id, 'allow', R1),
+      await h.paths.answerQuestion(permission.id, [{ step: 0, option: 'Yes' }], R2)
+    ]
+
+    expect(outcomes).toEqual([{ kind: 'not-open' }, { kind: 'not-open' }])
+    expect(h.rows.settlements).toEqual([])
+    expect(h.records()).toEqual([])
+    expect(h.records(OTHER_DWARF)).toEqual([])
+    expect(h.channel.calls).toEqual([])
+    expect(h.bus.published).toEqual([])
+    expect(h.asks.byId(question.id as never)?.state).toBe('open')
+    expect(h.asks.byId(permission.id as never)?.state).toBe('open')
+  })
+
+  it('[S6.10] a channel that answers ask-closed while the ask is still answering closes it answered-elsewhere', async () => {
+    const h = answerHarness()
+    const ask = h.permission(20)
+    h.channel.script({ kind: 'refused', reason: 'ask-closed' })
+
+    expect(await h.paths.answerPermission(ask.id, 'allow', R1)).toEqual({
+      kind: 'refused',
+      reason: 'ask-closed'
+    })
+
+    expect(h.asks.byId(ask.id as never)).toMatchObject({
+      state: 'answered-elsewhere',
+      closedAt: expect.any(Number)
+    })
+    expect(h.records()[0]?.delivery).toMatchObject({
+      phase: 'failed',
+      failure: { kind: 'refused', reason: 'ask-closed' }
+    })
+    expect(h.eventTypes()).toEqual(['MessageSent', 'AskClosed', 'MessageDeliveryFailed'])
+    expect(h.bus.ofType('AskClosed')[0]?.payload).toEqual({
+      askId: ask.id,
+      dwarfId: ANSWER_DWARF,
+      reason: 'answered-elsewhere'
+    })
+  })
+
+  it('[INV-79] a requestId already used for another ask returns not-open and writes nothing', async () => {
+    const h = answerHarness()
+    const first = h.permission(21)
+    expect(await h.paths.answerPermission(first.id, 'allow', R1)).toEqual({ kind: 'accepted' })
+    const second = h.permission(22)
+    const published = h.bus.published.length
+
+    expect(await h.paths.answerPermission(second.id, 'allow', R1)).toEqual({ kind: 'not-open' })
+
+    expect(h.asks.byId(second.id as never)?.state).toBe('open')
+    expect(h.rows.settlements.map((row) => row.askId)).toEqual([first.id])
+    expect(h.records()).toHaveLength(1)
+    expect(h.channel.calls).toHaveLength(1)
+    expect(h.bus.published).toHaveLength(published)
+  })
+
+  it('[INV-79] a subscriber of MessageSent that re-submits the same requestId gets the in-flight answer', async () => {
+    const h = answerHarness()
+    const ask = h.permission(23)
+    let resubmitted: Promise<AnswerOutcome> | null = null
+    h.bus.subscribe('MessageSent', () => {
+      resubmitted ??= h.paths.answerPermission(ask.id, 'allow', R1)
+    })
+
+    const answered = await h.paths.answerPermission(ask.id, 'allow', R1)
+
+    expect(answered).toEqual({ kind: 'accepted' })
+    expect(await resubmitted).toEqual({ kind: 'accepted' })
+    expect(h.channel.calls).toHaveLength(1)
+    expect(h.bus.handlerErrors).toEqual([])
   })
 })

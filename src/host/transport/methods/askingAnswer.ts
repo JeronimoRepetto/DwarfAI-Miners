@@ -2,7 +2,8 @@
 // `AnswerQuestionParams`, `AnswerPermissionParams`, frozen; ADR-010 items 2, 4, 5; ADR-003 items 6,
 // 12): a person's answer to a dwarf's question or permission, handed to the ask broker's two answer
 // paths. UI main's A-40 and A-41 relay them (ui-main/ipc/handlers/answerDwarf.host.ts, routed by the
-// cut-2 switch, later: ISSUE-141); the composition root registers them over the asking module.
+// cut-2 switch, later: ISSUE-141). Nothing registers them yet: the composition root registers them
+// over the asking module with the wiring (later: ISSUE-140, ISSUE-141).
 //
 // - Roles (roles.ts): `ui` only; a `notifier` or `viewer` gets FORBIDDEN before the handler runs.
 // - Mutating (14 §1.6): the caller's `requestId` is the `ask_answers` primary key, a durable key

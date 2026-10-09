@@ -140,6 +140,12 @@ export class AskAnswerPaths implements Pick<AskBroker, 'answerPermission' | 'ans
     }
     if ('kind' in decided) return Promise.resolve(decided)
     const won = decided
+    const settled = this.handOver(won.ask, submit)
+      .then((result) => this.settle(won, requestId, result))
+      .finally(() => this.inFlight.delete(requestId))
+    // In flight before any subscriber runs: a re-submit of this requestId from a `MessageSent`
+    // handler gets this same answer (INV-79).
+    this.inFlight.set(requestId, settled)
     this.deps.bus.publish(
       this.event('MessageSent', {
         messageId: won.messageId,
@@ -147,10 +153,6 @@ export class AskAnswerPaths implements Pick<AskBroker, 'answerPermission' | 'ans
         kind: 'answers-record'
       })
     )
-    const settled = this.handOver(won.ask, submit)
-      .then((result) => this.settle(won, requestId, result))
-      .finally(() => this.inFlight.delete(requestId))
-    this.inFlight.set(requestId, settled)
     return settled
   }
 
@@ -158,7 +160,8 @@ export class AskAnswerPaths implements Pick<AskBroker, 'answerPermission' | 'ans
   private critical(askId: AskId, requestId: string, submit: Submit): Won | AnswerOutcome {
     const { asks, records } = this.deps
     const first = asks.answerOf(requestId)
-    if (first !== null) return first.outcome ?? NOT_OPEN
+    // A requestId names one submit of one ask: reused for another ask, it wins nothing.
+    if (first !== null) return first.askId === askId ? (first.outcome ?? NOT_OPEN) : NOT_OPEN
     const ask = asks.byId(askId)
     if (ask === null || ask.kind !== submit.kind) return NOT_OPEN
     const front = asks.openFor(ask.dwarfId as DwarfId)
@@ -202,7 +205,17 @@ export class AskAnswerPaths implements Pick<AskBroker, 'answerPermission' | 'ans
     })
   }
 
-  /** Transaction 2: the result on the ask as it now stands, then its events. */
+  /**
+   * Transaction 2: the result on the ask as it now stands, then its events.
+   *
+   * If this transaction throws, nothing of it is kept: the ask stays `answering` and its record
+   * `sending` until the Host's boot reconcile settles them (07 S6.20 for the ask, S7.13 for the
+   * record's delivery).
+   *
+   * S6.21 is not wired yet: `channelResult` is never given `held`. Whoever builds
+   * `resolveExternally` needs a hold map keyed by ask in `AskAnswerPaths`: an `elsewhere` resolution
+   * that lands while the ask is `answering` is held there and passed here as `held`.
+   */
   private settle(won: Won, requestId: string, result: AnswerOutcome): AnswerOutcome {
     const { asks, records, transactions, clock, bus } = this.deps
     const askId = won.ask.id as AskId
