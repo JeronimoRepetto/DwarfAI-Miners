@@ -20,6 +20,10 @@
 // (`Conversation.history`), over crew's public queries that host/wiring passes (ISSUE-108).
 // Owner amendment E (2026-10-06, ISSUE-108): `ActivityChanged` carries the run's summaries (08 §0),
 // and `queries.outcomeOf` reads a dwarf's stored outcome line outside any transaction (16 §4.6).
+// ISSUE-128: `AnswerRecords` (16 §4.6), the answers-record writes asking makes inside its critical
+// section (edge asking → conversation), over `MessageLog.writeAnswersRecord` / `settleDelivery`
+// (owner amendment K, 2026-10-09); asking publishes their `MessageSent` / `MessageHandedOver` /
+// `MessageDeliveryFailed` after its commit.
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
@@ -32,6 +36,7 @@ import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { SqliteActivityLog } from './adapters/SqliteActivityLog'
 import { SqliteMessageLog } from './adapters/SqliteMessageLog'
 import { ConversationResetStep } from './adapters/sqlite/ConversationResetStep'
+import { createAnswerRecords, type AnswerRecords } from './application/answerRecords'
 import { ConversationIngest, type AskChange, type ConversationCommands } from './application/ingest'
 import { AskNoter } from './application/noteAsk'
 import {
@@ -71,6 +76,14 @@ export type {
   MineHistoryView
 } from './domain/messages'
 export type { MineCrew }
+export type {
+  AnswerRecordEvent,
+  AnswerRecords,
+  AnswerRecordsDeps,
+  MessageDeliveryFailed,
+  MessageHandedOver,
+  MessageSent
+} from './application/answerRecords'
 export type { AskChange, ConversationCommands }
 /** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
 export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
@@ -125,6 +138,8 @@ export interface Conversation {
    */
   history(deps: { crew: MineCrew }): Pick<ConversationQueries, 'mineHistory'>
   joinedEvents: JoinedEvents
+  /** 16 §4.6 `AnswerRecords`, for asking only: joins asking's open transaction (ISSUE-128). */
+  answerRecords: AnswerRecords
 }
 
 /**
@@ -211,6 +226,7 @@ export function createConversation(deps: ConversationDeps): Conversation {
     joinedEvents: {
       publish: () => ingest.publishJoined(),
       discard: () => ingest.discardJoined()
-    }
+    },
+    answerRecords: createAnswerRecords({ log, scope: deps.transactions, clock: deps.clock })
   }
 }
