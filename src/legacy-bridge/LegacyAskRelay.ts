@@ -17,9 +17,19 @@
 //   "no longer open" shape (./rowShapes/notOpen.ts; ADR-010 stale drop). A permission reaches today's runtime only as
 //   Allow or Deny (INV-73), and only the three fields today's handler reads.
 //
+// The cut-2 half (ISSUE-137): from cut 2 the answers arrive in the 14 shapes and the dispatch sends a `legacy:` AskId
+// here (through `LegacyAnswerShapeAdapter`, ./asks/), never to the broker:
+// - `asks()` exposes each open legacy ask by its `legacy:` id, with the Host dwarf of the exact join and its origin:
+//   a `held` ask belongs to a session today's runtime launched and holds (`legacy-launch`); any other is an ask today's
+//   runtime reads and answers for a session it did not launch, such as an observed Codex question
+//   (`legacy-ask-channel`, 21 §2 cut 2 "Qualified routes"; ADR-011 item 4).
+// - `answer(askId, body)` finds the one card that carries that id for that kind and hands today's runtime the body
+//   with the legacy dwarf id and the legacy ask id, under the same not-found and not-open rules as above. The 14
+//   shapes are converted by the adapter, not here.
+//
 // It writes nothing the Host writes (21 §1 item 4) and has no Host command path: the only Host read is the bridge's B-M41.
 // Composed only by `src/ui-main/index.ts` (R16), in the releases 21 §3 lists it for (cut 1 to the end of 4b); from cut 2
-// it is the legacy source of the dual-source ask read model (later: ISSUE-137), and it is deleted at the end of cut 4
+// it is the legacy source of the dual-source ask read model (later: ISSUE-138), and it is deleted at the end of cut 4
 // with `LegacyDwarfIdBridge` (later: ISSUE-241).
 //
 // Candidate decision (21 §6): no candidate exists; new code.
@@ -75,9 +85,36 @@ export function legacyOpenAsksOf(sessions: readonly ProviderSnapshot[]): LegacyD
   return found
 }
 
+type LegacyQuestion = NonNullable<LegacyAskFields['pendingQuestion']>
+
+/** The route qualifier origin of a legacy ask (21 §2 cut 2 "Qualified routes"; ADR-001 item 3 `RouteQualifier`). */
+export type LegacyAskOrigin = 'legacy-launch' | 'legacy-ask-channel'
+
+/** One open legacy ask, as the cut-2 answer path sees it: its relayed id, its Host dwarf and its origin. */
+export type RelayedLegacyAsk = { askId: string; dwarfId: string; origin: LegacyAskOrigin } & (
+  | {
+      kind: 'question'
+      /** Where today's runtime answers it (today's `DwarfPromptChannel`). */
+      channel: LegacyQuestion['channel']
+      /** Every question of the call, in the agent's order (step `n` is `questions[n]`). */
+      questions: LegacyQuestion['questions']
+    }
+  | { kind: 'permission' }
+)
+
+/** Today's answer, without its address: the relay adds the legacy dwarf id and the legacy ask id. */
+export type LegacyAnswerBody =
+  | { kind: 'question'; answers: Record<string, string>; ownWords?: Record<string, string> }
+  | { kind: 'question'; text: string }
+  | { kind: 'permission'; decision: 'allow' | 'deny' }
+
 export interface LegacyAskRelay {
   /** Today's ask fields of a Host dwarf, ids relayed; none when it has no open legacy ask. */
   askFields(dwarfId: string): LegacyAskFields
+  /** The open legacy asks with a Host dwarf, ids relayed. */
+  asks(): readonly RelayedLegacyAsk[]
+  /** Hands today's runtime `body` for the open ask `askId` (a `legacy:` id); answers today's result shape. */
+  answer(askId: string, body: LegacyAnswerBody): Promise<unknown>
   /** Re-reads today's open asks; `changed` is called when a card opened, changed or closed. */
   update(): Promise<void>
   /** Serves A-40 / A-41 as above; every other row passes to today's runtime unchanged. */
@@ -114,6 +151,11 @@ function relayed(asks: LegacyAskFields): LegacyAskFields {
         }),
     ...(waitingReason === undefined ? {} : { waitingReason })
   }
+}
+
+/** A `held` ask is a session today's runtime launched and holds; any other is one it reads for a session it did not. */
+function originOf(channel: string): LegacyAskOrigin {
+  return channel === 'held' ? 'legacy-launch' : 'legacy-ask-channel'
 }
 
 function sameCards(
@@ -163,16 +205,20 @@ export function createLegacyAskRelay(deps: {
     if (!sameCards(before, next)) deps.changed()
   }
 
-  async function answer(channel: NotOpenRow, payload: unknown): Promise<unknown> {
+  /** The relayed id of the ask of `channel`'s kind open now on a Host dwarf, if any. */
+  function openId(hostId: string, channel: NotOpenRow): string | undefined {
+    const open = cards.get(hostId)
+    return (channel === QUESTION ? open?.pendingQuestion : open?.pendingPermission)?.toolUseId
+  }
+
+  async function serveToday(channel: NotOpenRow, payload: unknown): Promise<unknown> {
     const fields = (payload ?? {}) as { dwarfId?: unknown; toolUseId?: unknown; decision?: unknown }
     const legacyAskId = legacyAskIdOf(fields.toolUseId)
     if (legacyAskId === null) return NOT_OPEN[channel]
     const hostId = typeof fields.dwarfId === 'string' ? fields.dwarfId : null
     const legacyDwarfId = hostId === null ? null : await bridge.toLegacy(hostId)
     if (hostId === null || legacyDwarfId === null) return NOT_FOUND[channel]
-    const open = cards.get(hostId)
-    const card = channel === QUESTION ? open?.pendingQuestion : open?.pendingPermission
-    if (card?.toolUseId !== fields.toolUseId) return NOT_OPEN[channel]
+    if (openId(hostId, channel) !== fields.toolUseId) return NOT_OPEN[channel]
     if (channel === PERMISSION) {
       const { decision } = fields
       if (decision !== 'allow' && decision !== 'deny') return { answered: false }
@@ -185,12 +231,50 @@ export function createLegacyAskRelay(deps: {
     })
   }
 
+  async function answer(askId: string, body: LegacyAnswerBody): Promise<unknown> {
+    const channel = body.kind === 'question' ? QUESTION : PERMISSION
+    const legacyAskId = legacyAskIdOf(askId)
+    // The one Host dwarf whose open ask of this kind carries the id; none, or two, is not open (never a guess).
+    const owners = [...cards.keys()].filter((hostId) => openId(hostId, channel) === askId)
+    const hostId = owners.length === 1 ? owners[0] : undefined
+    if (legacyAskId === null || hostId === undefined) return NOT_OPEN[channel]
+    const legacyDwarfId = await bridge.toLegacy(hostId)
+    if (legacyDwarfId === null) return NOT_FOUND[channel]
+    const today: Record<string, unknown> = { ...body }
+    delete today.kind
+    return legacy.serve(channel, { dwarfId: legacyDwarfId, toolUseId: legacyAskId, ...today })
+  }
+
+  function relayedAsks(): RelayedLegacyAsk[] {
+    const found: RelayedLegacyAsk[] = []
+    for (const [dwarfId, { pendingQuestion, pendingPermission }] of cards) {
+      if (pendingPermission !== undefined) {
+        const { toolUseId: askId, channel } = pendingPermission
+        found.push({ askId, dwarfId, origin: originOf(channel), kind: 'permission' })
+      }
+      if (pendingQuestion !== undefined) {
+        const { toolUseId: askId, channel, questions } = pendingQuestion
+        found.push({
+          askId,
+          dwarfId,
+          origin: originOf(channel),
+          kind: 'question',
+          channel,
+          questions
+        })
+      }
+    }
+    return found
+  }
+
   return {
     askFields: (dwarfId) => cards.get(dwarfId) ?? {},
+    asks: relayedAsks,
+    answer,
     update,
     serve(channel, payload) {
       if ((ASK_ROWS as readonly string[]).includes(channel)) {
-        return answer(channel as NotOpenRow, payload)
+        return serveToday(channel as NotOpenRow, payload)
       }
       return legacy.serve(channel, payload)
     },

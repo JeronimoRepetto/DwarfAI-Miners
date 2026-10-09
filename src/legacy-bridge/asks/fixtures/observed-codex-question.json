@@ -1,0 +1,41 @@
+{
+  "about": "TC-137-03: one question of a person-launched (observed) Codex session, answered with the pre-cut (cut 1) build and with the cut-2 dispatch. Written by hand from the cut-1 relay's call to today's runtime (ISSUE-089, A-40 `shape: 'today'`); the test replays both paths and checks each against `legacyRuntimeCall`.",
+  "legacyDwarfId": "codex:0199aa00-0000-7000-8000-00000000c0de",
+  "hostDwarfId": "01920000-0000-7000-9000-0000000e0002",
+  "pendingQuestion": {
+    "toolUseId": "0199aa00-0000-7000-8000-0000000a5c01",
+    "channel": "terminal",
+    "questions": [
+      {
+        "question": "Which branch should I use?",
+        "multiSelect": false,
+        "options": [{ "label": "main" }, { "label": "develop" }]
+      }
+    ],
+    "askedAt": "2026-10-05T10:00:01.000Z"
+  },
+  "preCut": {
+    "channel": "agent:answerQuestion",
+    "payload": {
+      "dwarfId": "01920000-0000-7000-9000-0000000e0002",
+      "toolUseId": "legacy:0199aa00-0000-7000-8000-0000000a5c01",
+      "answers": { "Which branch should I use?": "develop" }
+    }
+  },
+  "cut2": {
+    "channel": "agent:answerQuestion",
+    "payload": {
+      "askId": "legacy:0199aa00-0000-7000-8000-0000000a5c01",
+      "answers": [{ "step": 0, "option": "develop" }],
+      "requestId": "01920000-0000-7000-a000-000000000001"
+    }
+  },
+  "legacyRuntimeCall": [
+    "agent:answerQuestion",
+    {
+      "dwarfId": "codex:0199aa00-0000-7000-8000-00000000c0de",
+      "toolUseId": "0199aa00-0000-7000-8000-0000000a5c01",
+      "answers": { "Which branch should I use?": "develop" }
+    }
+  ]
+}
