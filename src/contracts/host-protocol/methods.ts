@@ -53,6 +53,14 @@ import {
   type ResetMetricsParams
 } from './params/preferences'
 import { feedParamsSchema, type FeedParams } from './params/conversation'
+import {
+  answerOutcomeSchema,
+  answerPermissionParamsSchema,
+  answerQuestionParamsSchema,
+  type AnswerOutcome,
+  type AnswerPermissionParams,
+  type AnswerQuestionParams
+} from './params/asking'
 import { outcomeSchema, type Outcome } from './errors'
 import { requestIdSchema } from './requestId'
 import {
@@ -63,7 +71,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26, B-M27 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26, B-M27, B-M30, B-M31 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -93,6 +101,9 @@ export interface HostMethods {
   // conversation
   'conversation.feed':               { params: FeedParams; result: FeedPage }
   'conversation.mineHistory':        { params: { mineId: MineId }; result: MineHistoryView }
+  // asking
+  'asking.answerQuestion':           { params: AnswerQuestionParams; result: AnswerOutcome }
+  'asking.answerPermission':         { params: AnswerPermissionParams; result: AnswerOutcome }
   // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
@@ -264,6 +275,17 @@ export const HOST_METHOD_SCHEMAS = {
   'conversation.mineHistory': {
     params: z.object({ mineId: mineIdSchema }).strict(),
     result: mineHistoryViewSchema
+  },
+  // B-M30, B-M31 (14 §2.3, §1.7; ADR-010): `ui` only, mutating (requestId = the `ask_answers` PK, a
+  // durable key, 14 §1.6); answered after the channel result. A permission is Allow or Deny only
+  // (INV-73). B-M30's params are sensitive (14 §3.5 SENSITIVE_METHODS: free-text answers).
+  'asking.answerQuestion': {
+    params: answerQuestionParamsSchema,
+    result: answerOutcomeSchema
+  },
+  'asking.answerPermission': {
+    params: answerPermissionParamsSchema,
+    result: answerOutcomeSchema
   },
   // B-M41 (14 §2.3, §1.10; AMENDMENT-8, OQ-69): `ui` only, never relayed to seam A; deleted with
   // LegacyDwarfIdBridge at the end of cut 4 (later: ISSUE-241).

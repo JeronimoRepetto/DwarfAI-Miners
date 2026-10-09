@@ -5,9 +5,12 @@
 // caller's transaction. ISSUE-105's cap cases: at most `MESSAGES_PER_DWARF` stored rows per
 // dwarf, every role counted, a `sending` row kept, a trimmed key never re-inserted, one dwarf's
 // trim never touching another's rows. The `request_id` case (ISSUE-166) is added by its issue.
+// Owner amendment K (2026-10-09, ISSUE-128): the "Answers:" record of an ask — one row per ask with
+// its delivery `sending`, updated in place by a re-answer (ADR-010 item 13), settled delivered or
+// failed with its refusal reason, never trimmed while it is `sending`.
 import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
-import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
+import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { MessageLog } from '../ports/messageLog'
@@ -32,6 +35,8 @@ export interface MessageLogSubject {
   rowCount(dwarfId: DwarfId): number
   /** The ids of the dwarf's message rows. */
   rowIds(dwarfId: DwarfId): MessageId[]
+  /** An ask of `dwarfId` an answers-record can name (the SQLite half seeds its `asks` row). */
+  seedAsk(dwarfId: DwarfId, n: number): AskId
   dispose(): void | Promise<void>
 }
 
@@ -409,6 +414,169 @@ export function runMessageLogContract(
       expect(paged.find((m) => m.sourceKey === withSteps.sourceKey)?.activity).toEqual(summary)
       expect(paged.find((m) => m.sourceKey === without.sourceKey)).not.toHaveProperty('activity')
       expect(paged.find((m) => m.sourceKey === emptySteps.sourceKey)).not.toHaveProperty('activity')
+    })
+    // ---------- owner amendment K (2026-10-09): the answers-record ----------
+
+    it('[INV-65, ADR-010] writeAnswersRecord inserts one answers-record of the ask with its delivery sending, and page returns it', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const ask = s.seedAsk(dwarf, 1)
+      const at = s.now + 1_000
+
+      const id = s.inTransaction(() =>
+        s.log.writeAnswersRecord(dwarf, ask, 'Answers:\n\n- Run it: **Allow**', at)
+      )
+
+      expect(s.rowIds(dwarf)).toEqual([id])
+      expect(s.log.page(dwarf, {})).toEqual([
+        {
+          id,
+          dwarfId: dwarf,
+          sourceKey: null,
+          role: 'answers-record',
+          text: 'Answers:\n\n- Run it: **Allow**',
+          attachments: [],
+          delivery: {
+            messageId: id,
+            dwarfId: dwarf,
+            kind: 'answers-record',
+            phase: 'sending',
+            attempts: 1,
+            phaseAt: at
+          },
+          origin: 'dwarfai',
+          providerTime: null,
+          askId: ask,
+          createdAt: at
+        }
+      ])
+    })
+
+    it('[INV-65, ADR-010] a re-answer updates the record in place: same id, new text, restamped, sending again with attempts plus one and no failure', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const ask = s.seedAsk(dwarf, 2)
+      const first = s.inTransaction(() =>
+        s.log.writeAnswersRecord(dwarf, ask, 'Answers:\n\n- Pick: **A**', s.now + 1)
+      )
+      s.inTransaction(() =>
+        s.log.settleDelivery(
+          first,
+          { phase: 'failed', failure: { kind: 'refused', reason: 'invalid-answer' } },
+          s.now + 2
+        )
+      )
+
+      const again = s.inTransaction(() =>
+        s.log.writeAnswersRecord(dwarf, ask, 'Answers:\n\n- Pick: **B**', s.now + 3, first)
+      )
+
+      expect(again).toBe(first)
+      expect(s.rowIds(dwarf)).toEqual([first])
+      const [record] = s.log.page(dwarf, {})
+      expect(record).toMatchObject({
+        id: first,
+        text: 'Answers:\n\n- Pick: **B**',
+        askId: ask,
+        createdAt: s.now + 3,
+        delivery: { phase: 'sending', attempts: 2, phaseAt: s.now + 3 }
+      })
+      expect(record?.delivery).not.toHaveProperty('failure')
+    })
+
+    it('[INV-65] a second answers-record for the same ask is refused and the first stays', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const ask = s.seedAsk(dwarf, 3)
+      const first = s.inTransaction(() => s.log.writeAnswersRecord(dwarf, ask, 'one', s.now))
+
+      expect(() =>
+        s.inTransaction(() => s.log.writeAnswersRecord(dwarf, ask, 'two', s.now + 1))
+      ).toThrow()
+      expect(s.rowIds(dwarf)).toEqual([first])
+      expect(s.log.page(dwarf, {})[0]?.text).toBe('one')
+    })
+
+    it('[ADR-022] settleDelivery marks an answers-record delivered, or failed with its refusal reason', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const accepted = s.inTransaction(() =>
+        s.log.writeAnswersRecord(dwarf, s.seedAsk(dwarf, 4), 'accepted', s.now)
+      )
+      const refused = s.inTransaction(() =>
+        s.log.writeAnswersRecord(dwarf, s.seedAsk(dwarf, 5), 'refused', s.now)
+      )
+
+      s.inTransaction(() => {
+        s.log.settleDelivery(accepted, { phase: 'delivered' }, s.now + 10)
+        s.log.settleDelivery(
+          refused,
+          { phase: 'failed', failure: { kind: 'refused', reason: 'ask-closed' } },
+          s.now + 20
+        )
+      })
+
+      const byId = new Map(s.log.page(dwarf, {}).map((m) => [m.id, m.delivery]))
+      expect(byId.get(accepted)).toEqual({
+        messageId: accepted,
+        dwarfId: dwarf,
+        kind: 'answers-record',
+        phase: 'delivered',
+        attempts: 1,
+        phaseAt: s.now + 10
+      })
+      expect(byId.get(refused)).toEqual({
+        messageId: refused,
+        dwarfId: dwarf,
+        kind: 'answers-record',
+        phase: 'failed',
+        failure: { kind: 'refused', reason: 'ask-closed' },
+        attempts: 1,
+        phaseAt: s.now + 20
+      })
+    })
+
+    it('[INV-61] trim never removes an answers-record whose delivery is sending', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const record = s.inTransaction(() =>
+        s.log.writeAnswersRecord(dwarf, s.seedAsk(dwarf, 6), 'Answers:', s.now - 1)
+      )
+      const newer = Array.from({ length: MESSAGES_PER_DWARF }, (_, i) =>
+        entry(i, { providerTime: s.now + i })
+      )
+
+      s.inTransaction(() => {
+        s.log.append(dwarf, newer, 'live-stream')
+        s.log.trim(dwarf, MESSAGES_PER_DWARF)
+      })
+
+      expect(s.rowCount(dwarf)).toBe(MESSAGES_PER_DWARF)
+      expect(s.rowIds(dwarf)).toContain(record)
+    })
+
+    it('[INV-65] the answers-record writes run only inside the caller transaction, and settling an unknown record is refused', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const ask = s.seedAsk(dwarf, 7)
+
+      expect(() => s.log.writeAnswersRecord(dwarf, ask, 'Answers:', s.now)).toThrow(
+        HostInvariantError
+      )
+      const id = s.inTransaction(() => s.log.writeAnswersRecord(dwarf, ask, 'Answers:', s.now))
+      expect(() => s.log.settleDelivery(id, { phase: 'delivered' }, s.now)).toThrow(
+        HostInvariantError
+      )
+      expect(() =>
+        s.inTransaction(() =>
+          s.log.settleDelivery(
+            '00000000-0000-7000-8000-00000000dead' as MessageId,
+            { phase: 'delivered' },
+            s.now
+          )
+        )
+      ).toThrow(HostInvariantError)
+      expect(s.log.page(dwarf, {})[0]?.delivery?.phase).toBe('sending')
     })
   })
 }

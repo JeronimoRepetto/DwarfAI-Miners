@@ -30,6 +30,7 @@ describe('SqliteMessageLog', () => {
       keyOf: probe.keyOf,
       rowCount: probe.rowCount,
       rowIds: probe.rowIds,
+      seedAsk: probe.seedAsk,
       dispose: () => undefined
     }
   })

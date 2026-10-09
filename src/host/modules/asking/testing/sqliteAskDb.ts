@@ -1,7 +1,7 @@
 // Test helpers over a template-database copy for asking's SQLite tests (17 §1.5): one mine and two
 // dwarfs seeded in bound SQL (the rows `asks` references, 09 §4.5), and read-backs of the
 // `asks` / `ask_answers` columns the port does not expose. Never imported by production code (R14).
-import type { DwarfId } from '../../../kernel/domain/values'
+import type { AskId, DwarfId, MessageId } from '../../../kernel/domain/values'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import { SqliteTransactionRunner } from '../../../platform/sqlite/SqliteTransactionRunner'
@@ -40,7 +40,21 @@ export function seededAskDb() {
   const clock = new FakeClock(ASK_T0)
   const open = (on: SqliteDatabase = db): SqliteAskRepository =>
     new SqliteAskRepository({ db: on, scope: runner, clock })
-  return { db, path, runner, clock, open, dwarfs: ASK_DWARFS }
+  let records = 0
+  /** An "Answers:" record of the ask (the `messages` row `ask_answers.message_id` references). */
+  const seedRecord = (dwarfId: DwarfId, askId: AskId): MessageId => {
+    records += 1
+    const id = `00000000-0000-7000-8000-0000001280${String(records).padStart(2, '0')}` as MessageId
+    runner.inTransaction(() => {
+      db.run(
+        `INSERT INTO messages (id, dwarf_id, role, text, origin, created_at, ask_id)
+         VALUES (?, ?, 'answers-record', 'Answers:', 'dwarfai', ?, ?)`,
+        [id, dwarfId, ASK_T0, askId]
+      )
+    })
+    return id
+  }
+  return { db, path, runner, clock, open, seedRecord, dwarfs: ASK_DWARFS }
 }
 
 /** The `ask_answers` rows, as stored. */

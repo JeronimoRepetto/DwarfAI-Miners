@@ -36,6 +36,7 @@ import type {
 } from './params/mines'
 import type { FeedPage, MineHistoryView } from '../wire'
 import type { FeedParams } from './params/conversation'
+import type { AnswerOutcome, AnswerPermissionParams, AnswerQuestionParams } from './params/asking'
 
 // The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
 
@@ -692,5 +693,91 @@ describe('mines.remove params and result (14 §3.4, B-M18)', () => {
     // The failed dwarfs reach the UI only in the one toast frame (PO #79), never in the result.
     expect(result.safeParse({ ok: true, value: { failed: [MINE] } }).success).toBe(false)
     expect(result.safeParse({ ok: false, error: 'could-not-end' }).success).toBe(false)
+  })
+})
+
+// The B-M30 and B-M31 entries of 14 §3.4 (`AnswerQuestionParams`, `AnswerPermissionParams`, ADR-010
+// `AnswerOutcome`) and their strict() schemas (14 §1.4).
+
+describe('asking.answerQuestion and asking.answerPermission params and result (14 §3.4, B-M30, B-M31)', () => {
+  it('[ADR-003] asking.answerPermission accepts only allow or deny and asking.answerQuestion only QuestionAnswers; any other value is refused', () => {
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('asking.answerQuestion')
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('asking.answerPermission')
+    expectTypeOf<
+      HostMethods['asking.answerQuestion']['params']
+    >().toEqualTypeOf<AnswerQuestionParams>()
+    expectTypeOf<HostMethods['asking.answerQuestion']['result']>().toEqualTypeOf<AnswerOutcome>()
+    expectTypeOf<
+      HostMethods['asking.answerPermission']['params']
+    >().toEqualTypeOf<AnswerPermissionParams>()
+    expectTypeOf<HostMethods['asking.answerPermission']['result']>().toEqualTypeOf<AnswerOutcome>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['asking.answerQuestion']['params']>
+    >().toEqualTypeOf<AnswerQuestionParams>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['asking.answerPermission']['params']>
+    >().toEqualTypeOf<AnswerPermissionParams>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['asking.answerQuestion']['result']>
+    >().toEqualTypeOf<AnswerOutcome>()
+
+    const ASK = '01890a5d-ac96-774b-bcce-b302099a8059'
+    const REQUEST = '01890a5d-ac96-774b-bcce-b302099a805a'
+    const question = HOST_METHOD_SCHEMAS['asking.answerQuestion']
+    const permission = HOST_METHOD_SCHEMAS['asking.answerPermission']
+
+    expect(
+      question.params.safeParse({
+        askId: ASK,
+        answers: [
+          { step: 0, option: 'Yes' },
+          { step: 1, freeText: 'Keep them until Friday' }
+        ],
+        requestId: REQUEST
+      }).success
+    ).toBe(true)
+    expect(
+      question.params.safeParse({ askId: ASK, answers: [{ step: -1 }], requestId: REQUEST }).success
+    ).toBe(false)
+    expect(
+      question.params.safeParse({
+        askId: ASK,
+        answers: [{ step: 0, option: 'Yes', picked: true }],
+        requestId: REQUEST
+      }).success
+    ).toBe(false)
+    expect(question.params.safeParse({ askId: ASK, answers: [] }).success).toBe(false)
+    expect(
+      question.params.safeParse({ askId: ASK, decision: 'allow', requestId: REQUEST }).success
+    ).toBe(false)
+
+    expect(
+      permission.params.safeParse({ askId: ASK, decision: 'allow', requestId: REQUEST }).success
+    ).toBe(true)
+    expect(
+      permission.params.safeParse({ askId: ASK, decision: 'deny', requestId: REQUEST }).success
+    ).toBe(true)
+    // Allow or Deny only, never broadened (INV-73).
+    for (const decision of ['always', 'allow_always', 'session', 'Allow', '']) {
+      expect(
+        permission.params.safeParse({ askId: ASK, decision, requestId: REQUEST }).success,
+        decision
+      ).toBe(false)
+    }
+    expect(
+      permission.params.safeParse({ askId: 'ask-1', decision: 'allow', requestId: REQUEST }).success
+    ).toBe(false)
+
+    for (const outcome of [
+      { kind: 'accepted' },
+      { kind: 'not-open' },
+      { kind: 'refused', reason: 'channel-unavailable' },
+      { kind: 'refused', reason: 'ask-closed' }
+    ]) {
+      expect(question.result.safeParse(outcome).success).toBe(true)
+      expect(permission.result.safeParse(outcome).success).toBe(true)
+    }
+    expect(permission.result.safeParse({ kind: 'refused', reason: 'timeout' }).success).toBe(false)
+    expect(permission.result.safeParse({ kind: 'accepted', messageId: ASK }).success).toBe(false)
   })
 })

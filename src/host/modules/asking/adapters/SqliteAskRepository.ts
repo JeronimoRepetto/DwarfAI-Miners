@@ -16,13 +16,25 @@
 //   `ask_answers` row (outcome NULL, `at` from the kernel `Clock`) is inserted; anything else is
 //   `'already-settled'` with nothing written. There is no read before the decision, so no other
 //   settle can land between a check and its write.
+// - Owner amendment K (2026-10-09): `byId` reads an ask in any state; `answerOf` reads a request's
+//   `ask_answers` row (INV-79's durable first result); `recordOf` the record an earlier submit of the
+//   ask linked (ADR-010 item 13); `linkRecord` (transaction 1) and `settleAnswer` (transaction 2,
+//   once, `settled_at` from the `Clock`) write the winning request's row. Writing a row that is not
+//   there, or settling one twice, is refused.
 import { HostInvariantError } from '../../../kernel/domain/errors'
-import type { AskId, DwarfId } from '../../../kernel/domain/values'
+import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts'
+import type { AskId, DwarfId, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { SqliteDatabase, SqliteRow } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { Ask, AskChannel, AskKind, AskState } from '../domain/ask'
-import type { AskChannelRef, AskRepository, AskSettlement } from '../ports/askRepository'
+import type {
+  AskAnswer,
+  AskChannelRef,
+  AskRepository,
+  AskSettlement,
+  SettledAnswer
+} from '../ports/askRepository'
 
 export interface SqliteAskRepositoryDeps {
   /** The Host's one writer (09 §8.1). */
@@ -55,6 +67,23 @@ const SAVE = `INSERT INTO asks (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 const SETTLE = `UPDATE asks SET state = 'answering' WHERE id = ? AND state = 'open'`
 
 const PENDING_ANSWER = `INSERT INTO ask_answers (request_id, ask_id, at) VALUES (?, ?, ?)`
+
+// Owner amendment K: the answer paths' reads and writes of `ask_answers` (09 §8.2).
+const BY_ID = `SELECT ${COLUMNS} FROM asks WHERE id = ?`
+
+const ANSWER_OF = `SELECT ask_id, outcome, refusal_reason, message_id FROM ask_answers
+  WHERE request_id = ?`
+
+// The record an earlier submit of the ask linked; a trimmed record's link is NULL (ON DELETE SET NULL).
+const RECORD_OF = `SELECT message_id FROM ask_answers
+  WHERE ask_id = ? AND message_id IS NOT NULL
+  ORDER BY at DESC, request_id DESC LIMIT 1`
+
+const LINK_RECORD = `UPDATE ask_answers SET message_id = ? WHERE request_id = ?`
+
+// Once: a settled row is never settled again.
+const SETTLE_ANSWER = `UPDATE ask_answers SET outcome = ?, refusal_reason = ?, settled_at = ?
+  WHERE request_id = ? AND outcome IS NULL`
 
 export class SqliteAskRepository implements AskRepository {
   constructor(private readonly deps: SqliteAskRepositoryDeps) {}
@@ -89,6 +118,53 @@ export class SqliteAskRepository implements AskRepository {
     if (this.deps.db.run(SETTLE, [askId]).changes !== 1) return 'already-settled'
     this.deps.db.run(PENDING_ANSWER, [outcome.requestId, askId, this.deps.clock.now()])
     return 'settled'
+  }
+
+  byId(askId: AskId): Ask | null {
+    return firstAsk(this.deps.db.all(BY_ID, [askId]))
+  }
+
+  answerOf(requestId: string): AskAnswer | null {
+    const row = this.deps.db.all(ANSWER_OF, [requestId])[0]
+    if (row === undefined) return null
+    const outcome = row['outcome']
+    const messageId = row['message_id']
+    return {
+      askId: String(row['ask_id']) as AskId,
+      outcome:
+        outcome === null || outcome === undefined
+          ? null
+          : outcome === 'accepted'
+            ? { kind: 'accepted' }
+            : { kind: 'refused', reason: row['refusal_reason'] as AnswerRefusalReason },
+      messageId:
+        messageId === null || messageId === undefined ? null : (String(messageId) as MessageId)
+    }
+  }
+
+  recordOf(askId: AskId): MessageId | null {
+    const row = this.deps.db.all(RECORD_OF, [askId])[0]
+    return row === undefined ? null : (String(row['message_id']) as MessageId)
+  }
+
+  linkRecord(requestId: string, messageId: MessageId): void {
+    this.requireTransaction('linkRecord')
+    if (this.deps.db.run(LINK_RECORD, [messageId, requestId]).changes !== 1) {
+      throw new HostInvariantError(`no ask_answers row ${requestId} to link`)
+    }
+  }
+
+  settleAnswer(requestId: string, result: SettledAnswer): void {
+    this.requireTransaction('settleAnswer')
+    const changes = this.deps.db.run(SETTLE_ANSWER, [
+      result.kind,
+      result.kind === 'refused' ? result.reason : null,
+      this.deps.clock.now(),
+      requestId
+    ]).changes
+    if (changes !== 1) {
+      throw new HostInvariantError(`no pending ask_answers row ${requestId} to settle`)
+    }
   }
 
   private requireTransaction(method: string): void {

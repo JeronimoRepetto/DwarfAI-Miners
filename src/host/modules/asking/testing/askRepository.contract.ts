@@ -3,8 +3,11 @@
 // over the template database. An ask saved by one repository is read back by a new repository over
 // the same storage, as after a Host restart, with its payload and current step and nothing picked
 // on earlier steps (ADR-010 item 9, INV-75, OQ-03). Never imported by production code (R14).
+// Owner amendment K (2026-10-09, ISSUE-128): the `ask_answers` reads and writes of the answer paths
+// (ADR-010 items 4, 5, 13; 09 §8.2; INV-79) — `byId`, `answerOf`, `recordOf`, `linkRecord`,
+// `settleAnswer`.
 import { afterEach, describe, expect, it } from 'vitest'
-import type { AskId, DwarfId } from '../../../kernel/domain/values'
+import type { AskId, DwarfId, MessageId } from '../../../kernel/domain/values'
 import type { Ask } from '../domain/ask'
 import type { AskRepository } from '../ports/askRepository'
 
@@ -16,6 +19,8 @@ export interface AskRepositorySubject {
   inTransaction<T>(work: () => T): T
   /** A new repository over the same storage: what the next Host boot opens. */
   reopen(): AskRepository
+  /** An "Answers:" record of the ask that `ask_answers.message_id` can name (the SQLite half seeds the row). */
+  seedRecord(dwarfId: DwarfId, askId: AskId): MessageId
   dispose(): void | Promise<void>
 }
 
@@ -209,6 +214,109 @@ export function runAskRepositoryContract(
 
       expect(s.repository.openFor(dwarf)).toBeNull()
       expect(s.reopen().openFor(other)).toStrictEqual(othersAsk)
+    })
+    // ---------- owner amendment K (2026-10-09): the ask_answers reads and writes ----------
+
+    it('[ADR-010] byId reads an ask in any state, and null for an unknown id', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfs
+      const open = permissionAsk(11, dwarf)
+      const closed = questionAsk(12, dwarf, { state: 'cancelled', closedAt: T0 + 5 })
+      s.inTransaction(() => {
+        s.repository.save(open)
+        s.repository.save(closed)
+      })
+
+      expect(s.repository.byId(open.id as AskId)).toStrictEqual(open)
+      expect(s.reopen().byId(closed.id as AskId)).toStrictEqual(closed)
+      expect(s.repository.byId(askId(99))).toBeNull()
+    })
+
+    it('[INV-79] answerOf finds the winning requestId with its ask and no outcome until settleAnswer records it; a losing or unknown requestId finds nothing', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfs
+      const ask = permissionAsk(13, dwarf)
+      s.inTransaction(() => s.repository.save(ask))
+      const id = ask.id as AskId
+
+      s.inTransaction(() => s.repository.settle(id, { requestId: 'r-win' }))
+      s.inTransaction(() => s.repository.settle(id, { requestId: 'r-lose' }))
+
+      expect(s.repository.answerOf('r-win')).toStrictEqual({
+        askId: id,
+        outcome: null,
+        messageId: null
+      })
+      expect(s.repository.answerOf('r-lose')).toBeNull()
+      expect(s.repository.answerOf('r-unknown')).toBeNull()
+
+      const record = s.seedRecord(dwarf, id)
+      s.inTransaction(() => {
+        s.repository.linkRecord('r-win', record)
+        s.repository.settleAnswer('r-win', { kind: 'accepted' })
+      })
+
+      // The first result survives a Host restart (ask_answers PK = requestId, 14 §1.6).
+      expect(s.reopen().answerOf('r-win')).toStrictEqual({
+        askId: id,
+        outcome: { kind: 'accepted' },
+        messageId: record
+      })
+    })
+
+    it('[ADR-010] settleAnswer records refused with its reason, and a second settleAnswer of the same request is refused', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfs
+      const ask = questionAsk(14, dwarf)
+      s.inTransaction(() => s.repository.save(ask))
+      s.inTransaction(() => s.repository.settle(ask.id as AskId, { requestId: 'r-1' }))
+
+      s.inTransaction(() =>
+        s.repository.settleAnswer('r-1', { kind: 'refused', reason: 'channel-unavailable' })
+      )
+
+      expect(s.repository.answerOf('r-1')?.outcome).toStrictEqual({
+        kind: 'refused',
+        reason: 'channel-unavailable'
+      })
+      expect(() =>
+        s.inTransaction(() => s.repository.settleAnswer('r-1', { kind: 'accepted' }))
+      ).toThrow()
+      expect(() =>
+        s.inTransaction(() => s.repository.settleAnswer('r-unknown', { kind: 'accepted' }))
+      ).toThrow()
+      expect(s.reopen().answerOf('r-1')?.outcome).toStrictEqual({
+        kind: 'refused',
+        reason: 'channel-unavailable'
+      })
+    })
+
+    it("[ADR-010] recordOf returns the ask's linked record, also once a re-answer settled a new request, and null before any link", async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfs
+      const ask = permissionAsk(15, dwarf)
+      const othersAsk = permissionAsk(16, other)
+      s.inTransaction(() => {
+        s.repository.save(ask)
+        s.repository.save(othersAsk)
+      })
+      const id = ask.id as AskId
+      s.inTransaction(() => s.repository.settle(id, { requestId: 'r-1' }))
+      expect(s.repository.recordOf(id)).toBeNull()
+
+      const record = s.seedRecord(dwarf, id)
+      s.inTransaction(() => {
+        s.repository.linkRecord('r-1', record)
+        s.repository.settleAnswer('r-1', { kind: 'refused', reason: 'invalid-answer' })
+        s.repository.save({ ...ask, state: 'open' })
+      })
+      // The re-answer wins the reopened ask: its new request finds the same record to update.
+      s.inTransaction(() => s.repository.settle(id, { requestId: 'r-2' }))
+
+      expect(s.repository.recordOf(id)).toBe(record)
+      expect(s.reopen().recordOf(id)).toBe(record)
+      expect(s.repository.recordOf(othersAsk.id as AskId)).toBeNull()
+      expect(() => s.inTransaction(() => s.repository.linkRecord('r-unknown', record))).toThrow()
     })
   })
 }
