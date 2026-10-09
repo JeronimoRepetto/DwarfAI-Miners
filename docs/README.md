@@ -45,6 +45,7 @@ per provider, with `[V]` for what was verified on a real machine and `[I]` for w
 | [`command-surface-evaluation.md`](command-surface-evaluation.md)   | How much of a CLI's own command surface a held session exposes — which is what the session strip can offer.          |
 | [`animation-loops.md`](animation-loops.md)                         | Whether two-frame dwarf animations are the reason the motion reads thin, and whether a larger set is worth its cost. |
 | [`ecosystem-research.md`](ecosystem-research.md)                   | The prior-art survey that shaped the whole design: what already existed, what was reusable, what was not.            |
+| [`account-quota-sources.md`](account-quota-sources.md)             | Where each provider exposes the account quota its `/usage` shows, and how the Laboral Union (#335) could read it.    |
 
 ## Audits and measurements
 
