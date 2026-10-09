@@ -22,6 +22,8 @@ import {
   REVERT_STOP_BOUND_MS,
   runRevertIntegrations,
   type RevertHostLink,
+  type RevertIntegrationsDeps,
+  type RevertStore,
   type StopAllAnswer
 } from './revertIntegrations'
 
@@ -75,7 +77,13 @@ class FakeRunningHost {
   }
 }
 
-async function world(options: { host?: (calls: string[]) => FakeRunningHost } = {}) {
+async function world(
+  options: {
+    host?: (calls: string[]) => FakeRunningHost
+    /** Wraps the real store (a fault in one of its steps). */
+    store?: (store: RevertStore) => RevertStore
+  } = {}
+) {
   const storage = memory()
   const { db, path: dbPath } = openTemplateCopy()
   const hooks = await claudeHooksWorld(storage, db)
@@ -109,7 +117,7 @@ async function world(options: { host?: (calls: string[]) => FakeRunningHost } = 
       },
       openStore: async () => {
         calls.push('open-db')
-        return createRevertStore({
+        const store = createRevertStore({
           db,
           transactions: new SqliteTransactionRunner(db),
           fs: hooks.fs,
@@ -121,6 +129,7 @@ async function world(options: { host?: (calls: string[]) => FakeRunningHost } = 
           platform: 'linux',
           close: () => void calls.push('close-db')
         })
+        return options.store?.(store) ?? store
       },
       clock,
       scheduler,
@@ -255,13 +264,18 @@ describe('--revert-integrations: stop the Host, then revert (ADR-016 item 7; 16 
 
   it('[ADR-016] a Host that refuses the ui hello leaves every entry and exits non-zero', async () => {
     const w = await world()
+    const calls: string[] = []
     const code = await runRevertIntegrations({
       attach: async () => ({ kind: 'refused', code: 'AUTH_FAILED' }),
+      // AMENDED (ISSUE-225 verifier, mutant M8; was: both threw, so a run that reached them still
+      // failed): they record, and the record and the cause show the refusal stopped the command.
       takeEndpoint: async () => {
-        throw new Error('the endpoint is never taken while a Host answers')
+        calls.push('take')
+        return { kind: 'taken', release: async () => undefined }
       },
       openStore: async () => {
-        throw new Error('the database is never opened while a Host answers')
+        calls.push('open-db')
+        return 'absent'
       },
       clock: w.clock,
       scheduler: w.scheduler,
@@ -269,7 +283,112 @@ describe('--revert-integrations: stop the Host, then revert (ADR-016 item 7; 16 
     })
 
     expect(code).not.toBe(0)
+    expect(calls).toEqual([])
+    expect(w.log.byEvent('host.revert-integrations')).toMatchObject([
+      { level: 'warn', outcome: 'failed', causeClass: 'host-refused' }
+    ])
     expect(await w.hooks.read()).toBe(w.installedText)
+  })
+
+  /** The command over scripted ports with no Host running and the endpoint free. */
+  function freeEndpoint(
+    w: { clock: FakeClock; scheduler: FakeScheduler; log: RecordingDiagnosticsLog },
+    openStore: RevertIntegrationsDeps['openStore']
+  ): Promise<number> {
+    return runRevertIntegrations({
+      attach: async () => ({ kind: 'none' }),
+      takeEndpoint: async () => ({ kind: 'taken', release: async () => undefined }),
+      openStore,
+      clock: w.clock,
+      scheduler: w.scheduler,
+      log: w.log
+    })
+  }
+
+  it('[ADR-016] with no database file nothing was ever written: the command reverts nothing and exits 0', async () => {
+    const w = await world()
+
+    expect(await freeEndpoint(w, async () => 'absent')).toBe(0)
+    expect(w.log.byEvent('host.revert-integrations')).toEqual([
+      expect.objectContaining({ level: 'info', outcome: 'ok', count: 0 })
+    ])
+  })
+
+  it('[ADR-016, ADR-005] a newer database opened read-only reverts nothing and exits non-zero', async () => {
+    const w = await world()
+
+    expect(await freeEndpoint(w, async () => 'read-only')).not.toBe(0)
+    expect(w.log.byEvent('host.revert-integrations')).toMatchObject([
+      { level: 'warn', outcome: 'failed', causeClass: 'db-read-only' }
+    ])
+  })
+
+  it('[ADR-016] a target whose revert throws fails the command, and every other target is still reverted', async () => {
+    const w = await world()
+    const revoked: string[] = []
+    let closed = 0
+    const code = await freeEndpoint(w, async () => ({
+      activeTargets: () => ['claude-hooks', 'opencode-plugin'],
+      writer: {
+        revert: async (target) => {
+          if (target === 'claude-hooks') throw new Error('engine fault')
+          return { ok: true, value: undefined }
+        }
+      },
+      revokeToken: (target) => void revoked.push(target),
+      revokeOffChannelTokens: () => undefined,
+      close: () => void (closed += 1)
+    }))
+
+    expect(code).not.toBe(0)
+    expect(revoked).toEqual(['opencode-plugin'])
+    expect(closed).toBe(1)
+    expect(w.log.byEvent('host.revert-integrations')).toMatchObject([
+      { outcome: 'failed', causeClass: 'revert-failed' }
+    ])
+  })
+
+  it('[ADR-016, INV-111] a token left live by a failed revoke is revoked by the next run, whose row is already reverted (16 §7.4)', async () => {
+    const w = await world({
+      // Every revoke of this run fails to commit (a busy database, say).
+      store: (store) => ({
+        ...store,
+        revokeToken: () => {
+          throw new Error('the revoke did not commit')
+        },
+        revokeOffChannelTokens: () => {
+          throw new Error('the revoke did not commit')
+        }
+      })
+    })
+    expect(await w.run()).not.toBe(0)
+    expect(rows(w.db)[0]?.['reverted_at']).not.toBeNull()
+    expect(liveTokens(w.db)).toBe(1)
+
+    const again = await runRevertIntegrations({
+      attach: async () => ({ kind: 'none' }),
+      takeEndpoint: async () => ({ kind: 'taken', release: async () => undefined }),
+      openStore: async () =>
+        createRevertStore({
+          db: w.db,
+          transactions: new SqliteTransactionRunner(w.db),
+          fs: w.hooks.fs,
+          clock: w.clock,
+          ids: new SequenceIdGenerator(),
+          scheduler: w.scheduler,
+          log: w.log,
+          claudeSettingsPath: w.hooks.path,
+          platform: 'linux',
+          close: () => undefined
+        }),
+      clock: w.clock,
+      scheduler: w.scheduler,
+      log: w.log
+    })
+
+    expect(again).toBe(0)
+    expect(liveTokens(w.db)).toBe(0)
+    expect(await w.hooks.read()).toBe(fixture('foreign-only.settings'))
   })
 
   it('[ADR-016] the database, logs, preferences and secrets are kept', async () => {

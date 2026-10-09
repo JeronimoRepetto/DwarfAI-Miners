@@ -8,6 +8,7 @@
 // SID and temp paths only (privacy-guard); no real home folder.
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -27,6 +28,7 @@ import { NodeFs } from '../platform/fs/NodeFs'
 import { UuidV7Generator } from '../platform/ids/UuidV7Generator'
 import { migrationsFor } from '../platform/sqlite/migrations'
 import { openHostDb } from '../platform/sqlite/migrations/runner'
+import { HostEpochLog } from '../platform/sqlite/hostEpochLog'
 import { SqliteTransactionRunner } from '../platform/sqlite/SqliteTransactionRunner'
 import { UiToken } from '../transport/auth/uiToken'
 import { HelloThrottle } from '../transport/auth/throttle'
@@ -73,7 +75,10 @@ function endpointInput(root: string, hostDataDir: string): EndpointInput {
   return { platform: 'linux', hostDataDir, sha256 }
 }
 
-/** The database the stopped Host leaves: migrated, with the Host-written entry on record. */
+/**
+ * The database the Host leaves: migrated, with the Host-written entry on record and its epoch, which
+ * its clean exit marked clean (09 §8.4; ADR-002 D7).
+ */
 async function hostWroteItsEntry(hostDataDir: string, settingsPath: string): Promise<void> {
   const clock = new SystemClock()
   const ids = new UuidV7Generator({ clock })
@@ -108,6 +113,16 @@ async function hostWroteItsEntry(hostDataDir: string, settingsPath: string): Pro
     })
     const installed = await writer.install('claude-hooks', HOOK_TOKEN, 'settings')
     if (!installed.ok) throw new Error(`the seed install failed: ${installed.error}`)
+    const transactions = new SqliteTransactionRunner(db)
+    const epochs = new HostEpochLog({ db, transactions })
+    transactions.inTransaction(() =>
+      epochs.beginEpoch(transactions, {
+        epoch: 'epoch-os',
+        startedAt: clock.now(),
+        bootIdentity: { bootId: 'boot-os', bootTimeMs: 1, logonSessionId: 'unknown' }
+      })
+    )
+    epochs.markClean('stop-all', clock.now())
   } finally {
     db.close()
   }
@@ -122,7 +137,11 @@ function scheduler(): NodeScheduler {
 }
 
 /** A Host of the same profile on the real endpoint, serving `hello` and `host.shutdown`. */
-async function runningHost(input: EndpointInput, hostDataDir: string) {
+async function runningHost(
+  input: EndpointInput,
+  hostDataDir: string,
+  options: { ignoresStop?: boolean } = {}
+) {
   const endpoint = endpointFor(input)
   if (!endpoint.ok) throw new Error(`no endpoint: ${endpoint.error.kind}`)
   const clock = new SystemClock()
@@ -139,11 +158,17 @@ async function runningHost(input: EndpointInput, hostDataDir: string) {
   })
   const exited = { value: false }
   let close: () => Promise<void> = async () => {}
+  const held = new Set<Socket>()
   registerHostShutdown(dispatcher, {
     stopAll: emptyOwnerStopAll,
     // The clean exit (ADR-002 D7) as far as the command can see it: the endpoint closes.
     lifecycle: {
       closeCleanly: async () => {
+        if (options.ignoresStop === true) {
+          // It drops its connections and keeps its endpoint, answering every new hello.
+          for (const socket of held) socket.destroy()
+          return
+        }
         exited.value = true
         await close()
       }
@@ -159,7 +184,9 @@ async function runningHost(input: EndpointInput, hostDataDir: string) {
     decide: decideBind,
     probeExisting: () => Promise.resolve('no-hello'),
     ownerOnlyPipe: pipe.listen,
-    accept: (connection) =>
+    accept: (connection) => {
+      held.add(connection)
+      connection.once('close', () => held.delete(connection))
       acceptConnection(connection, {
         token,
         ids: new UuidV7Generator({ clock }),
@@ -178,6 +205,7 @@ async function runningHost(input: EndpointInput, hostDataDir: string) {
         connections,
         throttle: new HelloThrottle(clock)
       })
+    }
   })
   if (bound.kind !== 'bound') throw new Error(`expected a bind, got ${bound.kind}`)
   close = () => bound.endpoint.close()
@@ -186,67 +214,115 @@ async function runningHost(input: EndpointInput, hostDataDir: string) {
   return { exited, log }
 }
 
+/** One case's folders: the Host data, Claude Code's settings with a foreign entry, the endpoint input. */
+async function caseWithHostEntry() {
+  const root = caseRoot()
+  const hostDataDir = join(root, 'app', 'host')
+  mkdirSync(hostDataDir, { recursive: true })
+  const settingsPath = join(root, 'home', '.claude', 'settings.json')
+  mkdirSync(join(root, 'home', '.claude'), { recursive: true })
+  const foreign = fixture('foreign-only.settings')
+  writeFileSync(settingsPath, foreign)
+  await hostWroteItsEntry(hostDataDir, settingsPath)
+  const installed = readFileSync(settingsPath, 'utf8')
+  expect(installed).not.toBe(foreign)
+  const input = endpointInput(root, hostDataDir)
+  return { root, hostDataDir, settingsPath, foreign, installed, input }
+}
+
+function openOptions(root: string, clock: SystemClock) {
+  return {
+    buildKind: 'test' as const,
+    releaseDataDir: join(root, 'release'),
+    appVersion: APP_VERSION,
+    migrations: migrationsFor({ clock, ids: new UuidV7Generator({ clock }) })
+  }
+}
+
+/** The production command over this OS, as host/main.ts composes it. */
+async function revertCommand(
+  c: Awaited<ReturnType<typeof caseWithHostEntry>>,
+  options: { stopBoundMs?: number } = {}
+) {
+  const clock = new SystemClock()
+  const log = new RecordingDiagnosticsLog()
+  const code = await runRevertIntegrations({
+    ...createNodeRevertIntegrations({
+      hostDataDir: c.hostDataDir,
+      facts: async () => ({ ok: true, value: c.input }),
+      ownerOnlyPipe: createFakeOwnerOnlyPipe().listen,
+      client: CLIENT,
+      protocolVersion: PROTOCOL_VERSION,
+      open: openOptions(c.root, clock),
+      protectDbFiles: async () => undefined,
+      fs: new NodeFs(),
+      clock,
+      ids: new UuidV7Generator({ clock }),
+      scheduler: scheduler(),
+      log,
+      claudeSettingsPath: c.settingsPath,
+      platform: PLATFORM
+    }),
+    ...options
+  })
+  return { code, log }
+}
+
+/** The rows and the previous epoch, read with the boot's own reader (hostEpochLog.ts, 09 §8.4 step 1). */
+function databaseState(c: { root: string; hostDataDir: string }) {
+  const clock = new SystemClock()
+  const opened = openHostDb(join(c.hostDataDir, HOST_DB_FILE), {
+    ...openOptions(c.root, clock),
+    clock,
+    log: new RecordingDiagnosticsLog()
+  })
+  if (!opened.ok) throw new Error(`reopen refused: ${opened.error}`)
+  const { db } = opened.value
+  try {
+    const epochs = new HostEpochLog({ db, transactions: new SqliteTransactionRunner(db) })
+    return {
+      rows: db.all('SELECT kind, reverted_at FROM config_writes'),
+      previous: epochs.readPrevious()
+    }
+  } finally {
+    db.close()
+  }
+}
+
 describe('--revert-integrations over this OS (ADR-016 item 7)', () => {
   it('[ADR-016] on each OS the packaged-style command removes a Host-written Claude hook entry from a temp settings.json with a foreign entry byte-identical', async () => {
-    const root = caseRoot()
-    const hostDataDir = join(root, 'app', 'host')
-    mkdirSync(hostDataDir, { recursive: true })
-    const settingsPath = join(root, 'home', '.claude', 'settings.json')
-    mkdirSync(join(root, 'home', '.claude'), { recursive: true })
-    const foreign = fixture('foreign-only.settings')
-    writeFileSync(settingsPath, foreign)
-    await hostWroteItsEntry(hostDataDir, settingsPath)
-    expect(readFileSync(settingsPath, 'utf8')).not.toBe(foreign)
-    const input = endpointInput(root, hostDataDir)
-    const host = await runningHost(input, hostDataDir)
+    const c = await caseWithHostEntry()
+    const before = databaseState(c).previous
+    const host = await runningHost(c.input, c.hostDataDir)
 
-    const clock = new SystemClock()
-    const log = new RecordingDiagnosticsLog()
-    const code = await runRevertIntegrations(
-      createNodeRevertIntegrations({
-        hostDataDir,
-        facts: async () => ({ ok: true, value: input }),
-        ownerOnlyPipe: createFakeOwnerOnlyPipe().listen,
-        client: CLIENT,
-        protocolVersion: PROTOCOL_VERSION,
-        open: {
-          buildKind: 'test',
-          releaseDataDir: join(root, 'release'),
-          appVersion: APP_VERSION,
-          migrations: migrationsFor({ clock, ids: new UuidV7Generator({ clock }) })
-        },
-        protectDbFiles: async () => undefined,
-        fs: new NodeFs(),
-        clock,
-        ids: new UuidV7Generator({ clock }),
-        scheduler: scheduler(),
-        log,
-        claudeSettingsPath: settingsPath,
-        platform: PLATFORM
-      })
-    )
+    const { code, log } = await revertCommand(c)
 
     expect(log.byEvent('host.revert-integrations')).toMatchObject([{ outcome: 'ok', count: 1 }])
     expect(code).toBe(0)
     // The running Host was stopped first (ADR-002 D7), then the entry went, foreign bytes kept.
     expect(host.exited.value).toBe(true)
     expect(host.log.byEvent('host.stop-all')).toMatchObject([{ outcome: 'ok' }])
-    expect(readFileSync(settingsPath, 'utf8')).toBe(foreign)
-    const reopened = openHostDb(join(hostDataDir, HOST_DB_FILE), {
-      buildKind: 'test',
-      releaseDataDir: join(root, 'release'),
-      appVersion: APP_VERSION,
-      clock,
-      log: new RecordingDiagnosticsLog(),
-      migrations: migrationsFor({ clock, ids: new UuidV7Generator({ clock }) })
-    })
-    if (!reopened.ok) throw new Error(`reopen refused: ${reopened.error}`)
-    try {
-      const rows = reopened.value.db.all('SELECT kind, reverted_at FROM config_writes')
-      expect(rows).toHaveLength(1)
-      expect(rows[0]?.['reverted_at']).not.toBeNull()
-    } finally {
-      reopened.value.db.close()
-    }
+    expect(readFileSync(c.settingsPath, 'utf8')).toBe(c.foreign)
+    const after = databaseState(c)
+    expect(after.rows).toHaveLength(1)
+    expect(after.rows[0]?.['reverted_at']).not.toBeNull()
+    // The next boot reads the stopped Host's clean marker unchanged: no epoch began (09 §8.4).
+    expect(before?.marker).toMatchObject({ reason: 'stop-all' })
+    expect(after.previous).toEqual(before)
+  }, 30_000)
+
+  it('[ADR-016, ADR-002] a live Host that keeps its endpoint and answers hello after stop-all is never reverted around: the command exits non-zero', async () => {
+    const c = await caseWithHostEntry()
+    const host = await runningHost(c.input, c.hostDataDir, { ignoresStop: true })
+
+    const { code, log } = await revertCommand(c, { stopBoundMs: 2_000 })
+
+    expect(code).not.toBe(0)
+    expect(host.log.byEvent('host.stop-all')).toMatchObject([{ outcome: 'ok' }])
+    expect(log.byEvent('host.revert-integrations')).toMatchObject([
+      { outcome: 'failed', causeClass: 'host-not-stopped' }
+    ])
+    expect(readFileSync(c.settingsPath, 'utf8')).toBe(c.installed)
+    expect(databaseState(c).rows).toMatchObject([{ kind: 'claude-hooks', reverted_at: null }])
   }, 30_000)
 })

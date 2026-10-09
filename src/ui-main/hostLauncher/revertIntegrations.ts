@@ -12,14 +12,18 @@
 //   GATE_POLL_MS; the gate is a courtesy lock, the endpoint bind stays the mutex (ADR-002 D3). The
 //   gate stays held until the revert Host exited, so no launcher of this profile starts a Host
 //   meanwhile.
-// - Any failure — the gate never freed, no copy, a Host that could not start or ended without an
-//   exit code — is REVERT_FAILED_EXIT_CODE: the uninstall goes on and the person can run the
+// - The child is waited for at most REVERT_CHILD_BOUND_MS on the injected clock, polled every
+//   CHILD_POLL_MS. Past it, it is ended by its identity (ADR-014: pid, start time and boot, through
+//   the hung-Host end of hungHost.ts, never a bare pid) and the command fails.
+// - Any failure — the gate never freed, no copy, a Host that could not start, ended without an
+//   exit code or outlived the bound — is REVERT_FAILED_EXIT_CODE: the uninstall goes on and the person can run the
 //   command again (FM-128). Logged as `host.revert-integrations` with its code, never a path.
 //
 // The flag is the Host's too (host/wiring/revertIntegrations.ts): R10 keeps the two trees from
 // sharing the constant, so each names it, and argv carries nothing else (NFR-SEC-05).
 import type { UiLog, UiLogEntry } from '../diagnostics/uiLogger'
 import type { HostCopyPreparer, HostSpawnRequest, LauncherClock, Sleep } from './ports'
+import { MIGRATING_EXTENSION_MS, READINESS_BUDGET_MS } from './readiness'
 import { buildHostSpawn, hostSpawnInputFromCopy, type HostSpawnInput } from './spawnHost'
 
 /** The command-line flag (ADR-016 item 7; `20` §6). */
@@ -42,8 +46,28 @@ export function buildRevertSpawn(input: HostSpawnInput): HostSpawnRequest {
   return { ...request, args: [...request.args, REVERT_INTEGRATIONS_FLAG] }
 }
 
-/** Starts the request and settles with its exit code, or null when it never ran or ended without one. */
-export type RunToExit = (request: HostSpawnRequest) => Promise<number | null>
+/** A started revert child. */
+export interface RevertChild {
+  /** Its exit code; a signal death is 128 + the signal number; null when unknown. */
+  readonly exited: Promise<number | null>
+  /** Ends it by its identity (ADR-014); true once it was ended. */
+  end(): Promise<boolean>
+}
+
+/** Starts the request; null when it could not start. */
+export type StartRevertChild = (request: HostSpawnRequest) => Promise<RevertChild | null>
+
+/**
+ * The most the revert child is waited for: the Host's own 30 s stop bound (ADR-016 item 7), plus
+ * the launcher's readiness budget for a Host process to start (READINESS_BUDGET_MS, ADR-002 D4) and
+ * its extension while a migration runs (MIGRATING_EXTENSION_MS), since the revert mode opens the
+ * database through the migration runner. A Host that answers in time never meets it; one that
+ * outlives all three is stuck.
+ */
+export const REVERT_CHILD_BOUND_MS =
+  REVERT_GATE_BOUND_MS + READINESS_BUDGET_MS + MIGRATING_EXTENSION_MS
+/** How often the child's exit is looked for while waiting (the launcher's loser poll). */
+export const CHILD_POLL_MS = 250
 
 export interface HostRevertDeps {
   gate: { take(): Promise<'taken' | 'held'>; release(): Promise<void> }
@@ -51,7 +75,7 @@ export interface HostRevertDeps {
   prepareCopy: HostCopyPreparer
   /** The Host as the running app holds it; started from its copy, never from here. */
   host: HostSpawnInput
-  run: RunToExit
+  start: StartRevertChild
   clock: LauncherClock
   sleep: Sleep
   log: UiLog
@@ -75,7 +99,13 @@ export async function runHostRevertIntegrations(deps: HostRevertDeps): Promise<n
     if (!copy.ok) return fail(copy.errCode)
     const host = hostSpawnInputFromCopy(deps.host, copy)
     if (!host.ok) return fail(host.errCode)
-    const code = await deps.run(buildRevertSpawn(host.value))
+    const child = await deps.start(buildRevertSpawn(host.value))
+    if (child === null) return fail('HOST_START_FAILED')
+    const code = await exitWithin(deps, child)
+    if (code === TIMED_OUT) {
+      const ended = await child.end().catch(() => false)
+      return fail(ended ? 'HOST_REVERT_TIMEOUT' : 'HOST_REVERT_TIMEOUT_NOT_ENDED')
+    }
     if (code === null) return fail('HOST_EXIT_UNKNOWN')
     record(
       code === 0
@@ -84,6 +114,33 @@ export async function runHostRevertIntegrations(deps: HostRevertDeps): Promise<n
     )
     return code
   } finally {
-    await deps.gate.release()
+    // A gate that cannot be removed goes stale (HOST_SPAWN_GATE_STALE_MS); it never changes the code.
+    await deps.gate
+      .release()
+      .catch(() =>
+        record({ level: 'warn', outcome: 'failed', errCode: 'SPAWN_GATE_RELEASE_FAILED' })
+      )
+  }
+}
+
+const TIMED_OUT = Symbol('timed-out')
+
+/** The child's code, or TIMED_OUT once the clock passed REVERT_CHILD_BOUND_MS. */
+async function exitWithin(
+  deps: Pick<HostRevertDeps, 'clock' | 'sleep'>,
+  child: RevertChild
+): Promise<number | null | typeof TIMED_OUT> {
+  let settled: { code: number | null } | null = null
+  void child.exited.then(
+    (code) => (settled = { code }),
+    () => (settled = { code: null })
+  )
+  const deadline = deps.clock.now() + REVERT_CHILD_BOUND_MS
+  for (;;) {
+    await Promise.resolve()
+    const done = settled as { code: number | null } | null
+    if (done !== null) return done.code
+    if (deps.clock.now() >= deadline) return TIMED_OUT
+    await deps.sleep(Math.min(CHILD_POLL_MS, deadline - deps.clock.now()))
   }
 }

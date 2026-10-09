@@ -45,6 +45,7 @@ import {
   type HostEndpoint
 } from '@dwarfai/contracts'
 import { HostInvariantError } from '../kernel/domain/errors'
+import type { IntegrationId } from '../kernel/domain/values'
 import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticEntry, DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
 import type { FileSystem } from '../kernel/ports/fileSystem'
@@ -116,6 +117,11 @@ export interface RevertStore {
   readonly writer: Pick<ExternalConfigWriter, 'revert'>
   /** 16 §7.4: the reverted channel's token is revoked. */
   revokeToken(target: ConfigTarget): void
+  /**
+   * The live token of every channel whose integration is `off` is revoked: what a revoke that failed
+   * after its revert left (that row is no longer active, so no later run reverts it again).
+   */
+  revokeOffChannelTokens(): void
   close(): void
 }
 
@@ -129,6 +135,8 @@ export interface RevertIntegrationsDeps {
   clock: Clock
   scheduler: Scheduler
   log: DiagnosticsLog
+  /** The stop bound; REVERT_STOP_BOUND_MS unless an OS-lane test shortens it. */
+  stopBoundMs?: number
 }
 
 /** Why the command reverted nothing, or not everything (`host.revert-integrations` `causeClass`). */
@@ -150,7 +158,7 @@ class RevertStop extends Error {
 
 /** ADR-016 item 7 steps 1–2; resolves with the process exit code and never throws. */
 export async function runRevertIntegrations(deps: RevertIntegrationsDeps): Promise<number> {
-  const deadline = deps.clock.now() + REVERT_STOP_BOUND_MS
+  const deadline = deps.clock.now() + (deps.stopBoundMs ?? REVERT_STOP_BOUND_MS)
   let endpoint: { release(): Promise<void> } | null = null
   try {
     await stopRunningHost(deps, deadline)
@@ -209,19 +217,32 @@ async function takeEndpointBy(
   }
 }
 
-/** Every target with an active row, through the one writer; a failed one keeps its row. */
+/**
+ * Every target with an active row, through the one writer; a failed one keeps its row, and a target
+ * that throws fails the command without stopping the others. Then the tokens of the channels that
+ * are off.
+ */
 async function revertAll(store: RevertStore): Promise<{ count: number; failed: boolean }> {
   let count = 0
   let failed = false
   try {
     for (const target of store.activeTargets()) {
-      const reverted = await store.writer.revert(target)
-      if (!reverted.ok) {
+      try {
+        const reverted = await store.writer.revert(target)
+        if (!reverted.ok) {
+          failed = true
+          continue
+        }
+        store.revokeToken(target)
+        count += 1
+      } catch {
         failed = true
-        continue
       }
-      store.revokeToken(target)
-      count += 1
+    }
+    try {
+      store.revokeOffChannelTokens()
+    } catch {
+      failed = true
     }
   } finally {
     store.close()
@@ -271,6 +292,12 @@ function errorName(error: unknown): string {
 
 // --- the store over the Host database -----------------------------------------------------
 
+/** Each token channel and the integration whose setting says whether it is on (06 §0.1; 09 §4.8). */
+const CHANNEL_INTEGRATIONS: ReadonlyArray<readonly [ConfigTarget, IntegrationId]> = [
+  ['claude-hooks', 'claude-hooks'],
+  ['opencode-plugin', 'opencode-permissions']
+]
+
 export interface RevertStoreDeps {
   db: SqliteDatabase
   transactions: TransactionRunner
@@ -294,6 +321,7 @@ export interface RevertStoreDeps {
 export function createRevertStore(deps: RevertStoreDeps): RevertStore {
   const ledger = new SqliteConfigWriteLedger({ db: deps.db })
   const tokens = new SqliteChannelTokenStore({ db: deps.db, ids: deps.ids })
+  const settings = new SqliteIntegrationSettingStore({ db: deps.db })
   const targets = [
     new ClaudeHooksConfigWriter({
       path: deps.claudeSettingsPath,
@@ -308,7 +336,7 @@ export function createRevertStore(deps: RevertStoreDeps): RevertStore {
     fs: deps.fs,
     transactions: deps.transactions,
     ledger,
-    settings: new SqliteIntegrationSettingStore({ db: deps.db }),
+    settings,
     clock: deps.clock,
     ids: deps.ids,
     scheduler: deps.scheduler,
@@ -323,6 +351,14 @@ export function createRevertStore(deps: RevertStoreDeps): RevertStore {
     writer,
     revokeToken: (target) =>
       deps.transactions.inTransaction(() => tokens.revoke(target, deps.clock.now())),
+    revokeOffChannelTokens: () =>
+      deps.transactions.inTransaction(() => {
+        for (const [channel, integration] of CHANNEL_INTEGRATIONS) {
+          if (settings.get(integration).state === 'off' && tokens.active(channel) !== null) {
+            tokens.revoke(channel, deps.clock.now())
+          }
+        }
+      }),
     close: deps.close
   }
 }

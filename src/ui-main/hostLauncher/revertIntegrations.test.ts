@@ -2,9 +2,12 @@
 import { describe, expect, it } from 'vitest'
 import { FakeCopyPreparer } from './fakes/FakeCopyPreparer'
 import { FakeLauncherClock } from './fakes/FakeLauncherClock'
+import { RecordingSpawnProcess, type SpawnCall } from './fakes/FakeChildProcess'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
+import { startRevertChild } from './nodeHostLauncher'
 import type { HostSpawnRequest } from './ports'
 import {
+  REVERT_CHILD_BOUND_MS,
   REVERT_GATE_BOUND_MS,
   REVERT_INTEGRATIONS_FLAG,
   runHostRevertIntegrations,
@@ -25,7 +28,15 @@ const HOST = {
   uiEnv: { PATH: 'C:\\Windows', DWARFAI_LEGACY_TOKEN: 'never-passed' }
 }
 
-function world(options: { exit?: number | null; gateHeldFor?: number } = {}) {
+function world(
+  options: {
+    /** The Host copy's exit code; 'never' for a child that never exits. */
+    exit?: number | null | 'never'
+    gateHeldFor?: number
+    /** The gate release rejects (its file could not be removed). */
+    releaseFails?: boolean
+  } = {}
+) {
   const calls: string[] = []
   const requests: HostSpawnRequest[] = []
   const clock = new FakeLauncherClock(1_000)
@@ -45,17 +56,29 @@ function world(options: { exit?: number | null; gateHeldFor?: number } = {}) {
             calls.push('take-gate')
             return clock.now() < heldUntil ? 'held' : 'taken'
           },
-          release: async () => void calls.push('release-gate')
+          release: async () => {
+            calls.push('release-gate')
+            if (options.releaseFails === true) throw new Error('EPERM')
+          }
         },
         prepareCopy: async () => {
           calls.push('prepare-copy')
           return copies.prepare()
         },
         host: HOST,
-        run: async (request) => {
+        // AMENDED (ISSUE-225 verifier: the child is bounded; was: `run` answered its code): `start` answers
+        // the child, which the command waits for and can end.
+        start: async (request) => {
           calls.push('run')
           requests.push(request)
-          return options.exit === undefined ? 0 : options.exit
+          const exit = options.exit === undefined ? 0 : options.exit
+          return {
+            exited: exit === 'never' ? new Promise<number | null>(() => {}) : Promise.resolve(exit),
+            end: async () => {
+              calls.push(`end-child at ${clock.now()}`)
+              return true
+            }
+          }
         },
         clock,
         sleep: clock.sleep,
@@ -115,5 +138,86 @@ describe('UI main runs the Host copy in the revert mode (ADR-016 item 7; ISSUE-2
     expect(wantsRevertIntegrations(['electron', '.', REVERT_INTEGRATIONS_FLAG])).toBe(true)
     expect(wantsRevertIntegrations(['DwarfAI-Miners.exe', '--background'])).toBe(false)
     expect(wantsRevertIntegrations(['DwarfAI-Miners.exe', '--revert-integrations=1'])).toBe(false)
+  })
+
+  it('[ADR-016, ADR-014] a Host copy that does not exit within the bound is ended by its identity and the command exits non-zero', async () => {
+    const w = world({ exit: 'never' })
+    const startedAt = w.clock.now()
+
+    expect(await w.run()).not.toBe(0)
+
+    const ended = w.calls.filter((call) => call.startsWith('end-child'))
+    expect(ended).toEqual([`end-child at ${startedAt + REVERT_CHILD_BOUND_MS}`])
+    expect(w.calls.at(-1)).toBe('release-gate')
+    expect(w.log.byEvent('host.revert-integrations')).toMatchObject([
+      { outcome: 'failed', errCode: 'HOST_REVERT_TIMEOUT' }
+    ])
+  })
+
+  it('[ADR-016] a spawn gate that cannot be released never turns the Host copy exit code into a failure', async () => {
+    const w = world({ exit: 0, releaseFails: true })
+
+    expect(await w.run().catch(() => 'rejected')).toBe(0)
+    expect(w.log.byEvent('host.revert-integrations')).toEqual([
+      expect.objectContaining({ outcome: 'ok' }),
+      expect.objectContaining({ level: 'warn', errCode: 'SPAWN_GATE_RELEASE_FAILED' })
+    ])
+  })
+})
+
+describe('the revert child over Node (ADR-016 item 7; ADR-002 D1)', () => {
+  const REQUEST: HostSpawnRequest = {
+    file: `${COPY_DIR}\\DwarfAI-Miners.exe`,
+    args: [`${COPY_DIR}\\resources\\app.asar\\out\\host\\main.js`, REVERT_INTEGRATIONS_FLAG],
+    env: {
+      PATH: 'C:\\Windows',
+      ELECTRON_RUN_AS_NODE: '1',
+      DWARFAI_HOST_DATA_DIR: HOST.hostDataDir
+    },
+    cwd: HOST.hostDataDir
+  }
+
+  function starter() {
+    const spawned = new RecordingSpawnProcess()
+    spawned.onSpawn = (child) => child.emit('spawn')
+    const start = startRevertChild({
+      spawnProcess: spawned.spawn,
+      readIdentity: async () => null,
+      endIdentified: async () => true
+    })
+    return { spawned, start }
+  }
+
+  it('[ADR-016, ADR-002] the revert child is the absolute executable, run without a shell, with the request whole environment, and its exit code passes through', async () => {
+    const { spawned, start } = starter()
+
+    const child = await start(REQUEST)
+    spawned.calls[0]?.child.finish(3)
+
+    expect(await child?.exited).toBe(3)
+    const call = spawned.calls[0] as SpawnCall
+    expect(call.file).toBe(REQUEST.file)
+    expect(call.args).toEqual(REQUEST.args)
+    expect(call.options).toMatchObject({ shell: false, cwd: HOST.hostDataDir })
+    expect(call.options.env).toEqual(REQUEST.env)
+  })
+
+  it('[ADR-016] a revert child ended by a signal, or that could not start, is never an exit code 0', async () => {
+    const killed = starter()
+    const child = await killed.start(REQUEST)
+    killed.spawned.calls[0]?.child.finish(null, 'SIGKILL')
+    const code = await child?.exited
+    expect(code).not.toBe(0)
+    expect(code).not.toBeNull()
+
+    const refused = new RecordingSpawnProcess()
+    refused.onSpawn = (child) =>
+      child.emit('error', Object.assign(new Error('x'), { code: 'ENOENT' }))
+    const start = startRevertChild({
+      spawnProcess: refused.spawn,
+      readIdentity: async () => null,
+      endIdentified: async () => true
+    })
+    expect(await start(REQUEST)).toBeNull()
   })
 })
