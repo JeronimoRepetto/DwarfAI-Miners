@@ -1,7 +1,8 @@
 // The preferences module (05 §3.12): the Host-read settings in the `host_preferences` singleton
 // (INV-105), the Reset-metrics saga (ADR-023) and the feature flags read once at start (INV-110).
-// Cut 1 serves `get`, `set`, `resetMetrics` and the feature flags; secrets (only ever in
-// `SecretStore`, ADR-017), integrations and the first-run step join with their issues. It imports no
+// Cut 1 serves `get`, `set`, `resetMetrics` and the feature flags; the first-run consent step's
+// state joins in cut 2 (`createWelcomeStep`, ISSUE-222); secrets (only ever in `SecretStore`,
+// ADR-017) and the integration toggles join with their issues. It imports no
 // other module (05 §1.3, R4): the other modules' Reset steps reach the saga as `ResetDbStep`s from
 // host/wiring/resetParticipants.ts.
 import type { HostEpoch } from '../../kernel/domain/values'
@@ -14,11 +15,16 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import { PreferencesResetStep } from './adapters/sqlite/PreferencesResetStep'
 import { SqlitePreferencesStore } from './adapters/sqlite/SqlitePreferencesStore'
 import { SqliteResetJournal } from './adapters/sqlite/SqliteResetJournal'
+import { SqliteWelcomeAnswerStore } from './adapters/SqliteWelcomeAnswerStore'
 import {
   PreferencesService,
+  WelcomeStepService,
   type PreferencesCommands,
-  type PreferencesQueries
+  type PreferencesQueries,
+  type WelcomeBoot,
+  type WelcomeQueries
 } from './application/preferencesService'
+import { OFFERED_FILTER } from './domain/offeredFilter'
 import { ResetSaga, type ResetDbMaintenance, type ResetUiFanout } from './application/resetSaga'
 import type { PreferencesEvent } from './domain/events'
 import type { MetricsResetResult, ResetMetricsCommand } from './domain/resetSaga'
@@ -26,16 +32,21 @@ import type { ExternalConfigWriter } from './ports/externalConfigWriter'
 import type { ResetDbStep } from './ports/resetJournal'
 import type { SecretStore } from './ports/secretStore'
 import type { FeatureFlagReader } from './ports/featureFlagReader'
+import type { InstalledToolsReader } from './ports/installedToolsReader'
 
-export type { PreferencesCommands, PreferencesQueries }
+export type { PreferencesCommands, PreferencesQueries, WelcomeBoot, WelcomeQueries }
 export type { ResetDbMaintenance, ResetUiFanout }
 export type {
   HostPreferencesChanged,
   MetricsResetFailed,
   MetricsResetFinished,
   MetricsResetStarted,
-  PreferencesEvent
+  PreferencesEvent,
+  WelcomeStepChanged
 } from './domain/events'
+export type { WelcomeStepState } from './domain/welcomeStep'
+export type { InstalledToolsReader } from './ports/installedToolsReader'
+export type { WelcomeAnswerStore } from './ports/welcomeAnswerStore'
 export type { MetricsResetResult, ResetMetricsCommand, ResetStep } from './domain/resetSaga'
 export type { ResetDbStep } from './ports/resetJournal'
 export type { SecretStore } from './ports/secretStore'
@@ -87,6 +98,38 @@ export function createPreferences(deps: PreferencesDeps): Preferences {
     featureFlags: deps.featureFlags
   })
   return { commands: service, queries: service }
+}
+
+export interface WelcomeStepDeps {
+  /** The Host's one writer (09 §8.1), where `app_meta.welcome_answered_at` lives. */
+  db: SqliteDatabase
+  bus: DomainEventBus<PreferencesEvent>
+  clock: Clock
+  ids: IdGenerator
+  hostEpoch: HostEpoch
+  /** The `host/wiring` bridge to the suppliers installed detection (bridges/installedTools.ts). */
+  installedTools: InstalledToolsReader
+  /** The one config writer; the step only asks its legacy probe (16 §7.1). */
+  externalConfig: Pick<ExternalConfigWriter, 'findLegacy'>
+}
+
+/**
+ * The first-run consent step (07 machine 41; AMENDMENT-7, -9, -10): 16 §4.12
+ * `PreferencesQueries.welcome` and its boot evaluation, over `app_meta.welcome_answered_at` and the
+ * cut's offered filter. host/wiring/preferencesWiring.ts joins `welcome` to the module's queries,
+ * as it joins `resetMetrics` to its commands.
+ */
+export function createWelcomeStep(deps: WelcomeStepDeps): WelcomeQueries & WelcomeBoot {
+  return new WelcomeStepService({
+    answers: new SqliteWelcomeAnswerStore({ db: deps.db }),
+    installed: deps.installedTools,
+    legacy: deps.externalConfig,
+    cutFilter: OFFERED_FILTER.offered,
+    bus: deps.bus,
+    clock: deps.clock,
+    ids: deps.ids,
+    hostEpoch: deps.hostEpoch
+  })
 }
 
 /**

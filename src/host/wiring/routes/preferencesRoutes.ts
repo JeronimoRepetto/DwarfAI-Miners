@@ -1,7 +1,8 @@
 // The preferences module's event routes to the transport (05 §4 "event routes"; 14 §2.4):
 //
-// - `HostPreferencesChanged` → B-F24 `preferences.changed` to every `ui` connection
-//   (transport/methods/preferences.ts `publishPreferencesChanged`; ADR-024 D9);
+// - `HostPreferencesChanged` and `WelcomeStepChanged` → B-F24 `preferences.changed` to every `ui`
+//   connection (transport/methods/preferences.ts `publishPreferencesChanged`; ADR-024 D9; 07
+//   S41.05 "→ preferences.changed"; ISSUE-222);
 // - `MetricsResetStarted` → B-F03 `resync-required {metrics-reset}` (transport/methods/resetMetrics.ts
 //   `publishResetFrames`; 14 §1.9);
 // - the Reset saga's way to the attached UIs, B-F27 `reset.progress` and B-F26 `ui.resetPreferences`,
@@ -17,7 +18,12 @@
 // ISSUE-323, ISSUE-324).
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
-import type { PreferencesEvent, ResetUiFanout } from '../../modules/preferences'
+import type {
+  PreferencesEvent,
+  PreferencesQueries,
+  ResetUiFanout,
+  WelcomeQueries
+} from '../../modules/preferences'
 import type { ConnectionRegistry } from '../../transport/connectionRegistry'
 import { publishPreferencesChanged } from '../../transport/methods/preferences'
 import {
@@ -33,12 +39,14 @@ export interface PreferencesRoutesDeps {
   acks: ConnectionResetUiFanout
   /** Whether the Host answers commands: its lifecycle state is `ready`. */
   ready: () => boolean
+  /** The module's queries, for the view `WelcomeStepChanged` is sent with. */
+  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries
 }
 
 /** Routes the module's events; returns the saga's `ResetUiFanout`, with the boot rule above. */
 export function routePreferences(deps: PreferencesRoutesDeps): ResetUiFanout {
   const { acks } = deps
-  publishPreferencesChanged(deps.bus, deps.connections)
+  publishPreferencesChanged(deps.bus, deps.connections, deps.queries)
   publishResetFrames(deps.bus, deps.connections, deps.log)
   return {
     progress: (progress) => acks.progress(progress),

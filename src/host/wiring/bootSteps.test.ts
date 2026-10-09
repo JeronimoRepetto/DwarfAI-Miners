@@ -17,7 +17,10 @@ import { HostStateHolder, LIFECYCLE_FRAMES } from '../transport/lifecycle/hostSt
 import { FrameClient } from '../transport/testing/frameClient'
 import { fixedSnapshotMeta } from '../transport/testing/fixedSnapshotMeta'
 import { SectionRegistry } from '../transport/snapshot/sectionRegistry'
-import { createUiEndpoint } from './bootSteps'
+import { createBootSteps, createUiEndpoint, evaluateWelcomeAfterDetection } from './bootSteps'
+import { FakeAppPaths } from '../kernel/fakes/FakeAppPaths'
+import { FakeFs } from '../kernel/fakes/FakeFs'
+import { FakeProcessControl } from '../kernel/fakes/FakeProcessControl'
 import { createHostDispatcher } from './hostDispatcher'
 import { emptyOwnerStopAll } from './emptyOwnerStopAll'
 import { emptyDrainGate } from './emptyDrainGate'
@@ -488,5 +491,115 @@ describe('the bind step writes run/host.identity (ADR-002 D3)', () => {
 
     expect(seen).toEqual(['publish: bound true, token false'])
     expect(readToken(input.hostDataDir)).not.toBe('')
+  })
+})
+
+// Added for ISSUE-222: the first-run consent step is evaluated at boot after the Reset saga's
+// resume and before commands (07 S41.01; ADR-015 item 3), and right after the start-up installed
+// detection (S41.09), which the rest of the boot does not wait for.
+describe('first-run step evaluation in the boot (07 S41.01, S41.09)', () => {
+  /** A promise the test settles by hand. */
+  function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+    let resolve: (value: T) => void = () => undefined
+    const promise = new Promise<T>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+  }
+
+  it('[S41.01] the evaluation runs after the saga resume and module construction, and the Host answers ready only once it is done', async () => {
+    const calls: string[] = []
+    const evaluation = deferred<void>()
+    const clock = new FakeClock()
+    const steps = createBootSteps({
+      paths: new FakeAppPaths(),
+      clock,
+      scheduler: new FakeScheduler(clock),
+      ids: new SequenceIdGenerator(),
+      fs: new FakeFs(),
+      processControl: new FakeProcessControl(),
+      log: new RecordingDiagnosticsLog(),
+      endpoint: { bind: () => Promise.resolve('bound'), close: () => Promise.resolve() },
+      database: { open: () => Promise.resolve() },
+      resumeResetSaga: () => {
+        calls.push('resume-reset-saga')
+        return Promise.resolve()
+      },
+      constructModules: () => void calls.push('construct-modules'),
+      startObservation: () => void calls.push('start-observation'),
+      startModules: () => void calls.push('start-modules'),
+      evaluateWelcome: () => {
+        calls.push('evaluate-welcome')
+        return evaluation.promise
+      }
+    })
+    const context = { reportMigrating: () => undefined }
+    const last = steps.at(-1)
+    for (const step of steps.slice(0, -1)) await step.run(context)
+    expect(calls).toStrictEqual(['resume-reset-saga', 'construct-modules', 'start-observation'])
+
+    let ready = false
+    void last?.run(context).then(() => (ready = true))
+    await settle()
+    expect(last?.name).toBe('answer-ready')
+    expect(calls).toStrictEqual([
+      'resume-reset-saga',
+      'construct-modules',
+      'start-observation',
+      'evaluate-welcome'
+    ])
+    expect(ready).toBe(false)
+
+    evaluation.resolve()
+    await settle()
+    expect(ready).toBe(true)
+    expect(calls.at(-1)).toBe('start-modules')
+  })
+
+  it('[US-SET-012.AC07, S41.09] the evaluation waits for the start-up detection, so it never reads a cache that detection has not filled', async () => {
+    const detection = deferred<'detected' | 'failed'>()
+    let evaluated = 0
+    const done = evaluateWelcomeAfterDetection({
+      detection: detection.promise,
+      evaluate: () => {
+        evaluated += 1
+        return Promise.resolve()
+      },
+      log: new RecordingDiagnosticsLog()
+    })
+    await settle()
+    expect(evaluated).toBe(0)
+
+    detection.resolve('detected')
+    await done
+    expect(evaluated).toBe(1)
+  })
+
+  it('[US-SET-012.AC08, S41.09, ADR-016] a failed detection evaluates nothing, and a failed evaluation is logged without failing the boot', async () => {
+    let evaluated = 0
+    const evaluate = (): Promise<void> => {
+      evaluated += 1
+      return Promise.resolve()
+    }
+    await evaluateWelcomeAfterDetection({
+      detection: Promise.resolve('failed'),
+      evaluate,
+      log: new RecordingDiagnosticsLog()
+    })
+    expect(evaluated).toBe(0)
+
+    const log = new RecordingDiagnosticsLog()
+    await expect(
+      evaluateWelcomeAfterDetection({
+        detection: Promise.resolve('detected'),
+        evaluate: () => Promise.reject(new Error('legacy probe failed')),
+        log
+      })
+    ).resolves.toBeUndefined()
+    expect(log.entries).toContainEqual(
+      expect.objectContaining({ level: 'error', event: 'uncaught', subsystem: 'preferences' })
+    )
   })
 })

@@ -7,7 +7,9 @@
 // event bus (14 §2.3 B-M12, B-M13, §2.4 B-F24, §1.6, §1.7, §3.4, §3.6, §4.1; ADR-024 D9; INV-105;
 // ADR-003 items 6, 12). Every frame is validated against its contract schema (14 §1.4).
 //
-// TC-210-01, TC-210-02 and TC-210-04.
+// TC-210-01, TC-210-02 and TC-210-04. Added for ISSUE-222: the view's `welcome` is the first-run
+// consent step the module evaluated at boot (07 machine 41; 16 §4.12 `welcome()`), in
+// `preferences.get`, the snapshot section and `preferences.changed` (TC-222-01, TC-222-04).
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,7 +28,13 @@ import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnostics
 import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { InProcessEventBus, type HandlerFailure } from '../../kernel/InProcessEventBus'
-import { createPreferences, type PreferencesEvent } from '../../modules/preferences'
+import type { IntegrationId } from '../../kernel/domain/values'
+import {
+  createPreferences,
+  createWelcomeStep,
+  type ConfigTarget,
+  type PreferencesEvent
+} from '../../modules/preferences'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { emptyDrainGate } from '../../wiring/emptyDrainGate'
@@ -84,8 +92,15 @@ function validateFrame(name: string, data: unknown): void {
   schema.parse(data)
 }
 
-/** One Host transport serving the preferences methods: real connections, dispatcher and database. */
-async function host() {
+/**
+ * One Host transport serving the preferences methods: real connections, dispatcher and database.
+ * Amended for ISSUE-222: the module's queries carry `welcome()`, the first-run step over the tools
+ * `installed` and the old-app entries `legacy` (none of either unless given); `evaluate` runs its
+ * boot evaluation. Was: the module's queries without `welcome`.
+ */
+async function host(
+  world: { installed?: readonly IntegrationId[]; legacy?: readonly ConfigTarget[] } = {}
+) {
   const root = mkdtempSync(join(tmpdir(), 'dwarfai-210-preferences-'))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const token = new UiToken()
@@ -136,7 +151,7 @@ async function host() {
     transactionScope: transactions,
     onHandlerError: (failure) => handlerErrors.push(failure)
   })
-  const preferences = createPreferences({
+  const module = createPreferences({
     db,
     transactions,
     bus,
@@ -145,9 +160,29 @@ async function host() {
     hostEpoch: EPOCH,
     featureFlags: { read: () => ({ guildAreasEnabled: false, boostEnabled: false }) }
   })
+  const welcome = createWelcomeStep({
+    db,
+    bus,
+    clock,
+    ids,
+    hostEpoch: EPOCH,
+    installedTools: { installed: () => [...(world.installed ?? [])] },
+    externalConfig: {
+      findLegacy: (target) => Promise.resolve((world.legacy ?? []).includes(target))
+    }
+  })
+  const preferences = {
+    commands: module.commands,
+    queries: {
+      get: () => module.queries.get(),
+      featureFlags: () => module.queries.featureFlags(),
+      integrationState: (id: IntegrationId) => module.queries.integrationState(id),
+      welcome: () => welcome.welcome()
+    }
+  }
   registerPreferences(dispatcher, { preferences })
   sections.registerSection('preferences', ['ui'], preferencesSection(preferences))
-  publishPreferencesChanged(bus, connections)
+  publishPreferencesChanged(bus, connections, preferences.queries)
 
   const throttle = new HelloThrottle(clock)
   /** Connects with `role` and returns the client once hello.ok arrived. */
@@ -187,7 +222,7 @@ async function host() {
     return client
   }
 
-  return { attach, handlerErrors, log }
+  return { attach, handlerErrors, log, evaluate: () => welcome.evaluateWelcomeAtBoot() }
 }
 
 let nextId = 0
@@ -379,5 +414,34 @@ describe('preferences.get, preferences.set and preferences.changed over seam B',
       view({ ...DEFAULTS, defaultProvider: 'claude', defaultEffort: 'high' })
     )
     expect(page.chunks).toStrictEqual([{ section: 'preferences', data: read }])
+  })
+
+  it('[US-SET-012.AC07, S41.02, ADR-016] the snapshot preferences section carries welcome with due, reason, legacyFound and offered', async () => {
+    const { attach, evaluate, handlerErrors } = await host({
+      installed: ['claude-hooks', 'opencode-permissions'],
+      legacy: ['claude-hooks', 'opencode-plugin']
+    })
+    const ui = await attach('ui')
+
+    await evaluate()
+    await ui.settle()
+
+    // Cut 2: only Claude Code is offered, and only its old-app entry is listed (21 §2 cut 2).
+    const welcome = {
+      due: true,
+      reason: 'legacy-entries',
+      legacyFound: ['claude-hooks'],
+      offered: ['claude-hooks']
+    }
+    const read = resultOf(await call(ui, 'preferences.get', {}))
+    const page = resultOf(await call(ui, 'session.snapshot', { sections: ['preferences'] })) as {
+      chunks: Array<{ section: string; data: unknown }>
+    }
+    expect(read).toStrictEqual({ ...view(DEFAULTS), welcome })
+    expect(HOST_METHOD_SCHEMAS['preferences.get'].result.safeParse(read).success).toBe(true)
+    expect(page.chunks).toStrictEqual([{ section: 'preferences', data: read }])
+    // `WelcomeStepChanged` reached the ui connection as `preferences.changed` with the same view.
+    expect(changedFrames(ui)).toStrictEqual([read])
+    expect(handlerErrors).toStrictEqual([])
   })
 })
