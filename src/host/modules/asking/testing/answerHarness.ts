@@ -14,7 +14,7 @@ import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { AskId, DwarfId, MessageId } from '../../../kernel/domain/values'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { AnswerRecordEvent } from '../../conversation'
-import { createAsking } from '../index'
+import { AskAnswerPaths } from '../application/askBroker'
 import type { Ask } from '../domain/ask'
 import type { AskingEvent } from '../domain/events'
 import type { AskAnswerChannel } from '../ports/askAnswerChannel'
@@ -100,8 +100,10 @@ export function answerHarness() {
   }
   const bus = new RecordingEventBus<AnswerPathsEvent>({ transactionScope: scope })
 
+  // The answer paths themselves, so a test reaches `resolveExternally` while an answer is in flight
+  // (S6.21, S6.22); `createAsking` exposes it with its route (later: ISSUE-136).
   const boot = () =>
-    createAsking({
+    new AskAnswerPaths({
       asks,
       records,
       channelFor: (kind) => (kind === 'none' ? null : guarded),
@@ -111,7 +113,7 @@ export function answerHarness() {
       scheduler,
       ids,
       hostEpoch: ANSWER_EPOCH
-    }).answers
+    })
 
   /** Saves `ask` as the broker's `open` would have (ISSUE-127's repository; `open` is later work). */
   const seed = (ask: Ask): Ask => {
