@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { FakeExternalConfigWriter } from '../ports/fakes/FakeExternalConfigWriter'
 import type { ChannelToken } from '../ports/externalConfigWriter'
 import { runExternalConfigWriterContract } from './externalConfigWriter.contract'
+import { hashOf } from './inMemoryChannelTokens'
 
 // The double runs the same port-level suite as the config writer engine (17 §1.3; 16 §7.5).
 describe('FakeExternalConfigWriter', () => {
@@ -19,18 +20,30 @@ describe('FakeExternalConfigWriter', () => {
     const writer = new FakeExternalConfigWriter()
     writer.scriptInstall('opencode-plugin', 'concurrent-modification')
 
-    expect(await writer.install('opencode-plugin', 't' as ChannelToken, 'add-panel')).toStrictEqual(
-      {
-        ok: false,
-        error: 'concurrent-modification'
-      }
-    )
+    expect(
+      await writer.install(
+        'opencode-plugin',
+        't' as ChannelToken,
+        'add-panel',
+        hashOf('t' as ChannelToken)
+      )
+    ).toStrictEqual({
+      ok: false,
+      error: 'concurrent-modification'
+    })
     expect(writer.installed('opencode-plugin')).toBe(false)
     expect(writer.installs).toStrictEqual([{ target: 'opencode-plugin', origin: 'add-panel' }])
 
-    expect((await writer.install('opencode-plugin', 't' as ChannelToken, 'add-panel')).ok).toBe(
-      true
-    )
+    expect(
+      (
+        await writer.install(
+          'opencode-plugin',
+          't' as ChannelToken,
+          'add-panel',
+          hashOf('t' as ChannelToken)
+        )
+      ).ok
+    ).toBe(true)
     expect(writer.installed('opencode-plugin')).toBe(true)
   })
 })

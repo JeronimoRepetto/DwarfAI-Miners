@@ -19,10 +19,16 @@ export type ChannelToken = string & { readonly __brand: 'ChannelToken' }
 export type ConfigTarget = 'claude-hooks' | 'opencode-plugin'
 export interface ExternalConfigWriter {
   // ADR-016 item 6 (the one config writer; name as in ADR-016, 07, 09); contract 16 §7
+  // Amended: 16 §4.12 ExternalConfigWriter.install (owner amendment M, 2026-10-09): `tokenSha256`, the SHA-256 of
+  // `token` (lower-case hex), is issued in the writer's own Tx A together with the `config_writes` row, revoking
+  // the channel's previous token (16 §7.3); Tx B (failure) withdraws it in the transaction that deletes the Tx A
+  // rows, so the previous token is active again (`ChannelTokenStore.withdraw`). An enable that is a no-op (16 §7.5)
+  // issues nothing.
   install(
     target: ConfigTarget,
     token: ChannelToken,
-    origin: ConsentOrigin
+    origin: ConsentOrigin,
+    tokenSha256: string
   ): Promise<
     Result<
       { verified: true; backupPath: string | null },

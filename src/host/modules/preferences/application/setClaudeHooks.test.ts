@@ -19,6 +19,7 @@ import { FakeFeatureFlagReader } from '../ports/fakes/FakeFeatureFlagReader'
 import { InMemoryChannelTokenStore } from '../ports/fakes/InMemoryChannelTokenStore'
 import { InMemoryIntegrationSettingStore } from '../ports/fakes/InMemoryIntegrationSettingStore'
 import { InMemoryPreferencesStore } from '../ports/fakes/InMemoryPreferencesStore'
+import type { ChannelTokenStore } from '../ports/channelTokenStore'
 import type { IntegrationSettingStore } from '../ports/integrationSettingStore'
 import { drawToken, hashOf } from '../testing/inMemoryChannelTokens'
 import { PreferencesService, type MintedCredential } from './preferencesService'
@@ -35,19 +36,26 @@ class SettingsKeepingWriter extends FakeExternalConfigWriter {
   readonly tokens: string[] = []
   /** AMENDED for ISSUE-221 (F1, F4): what `verify` answers when set; what `install` sees when it is called. */
   verdict: 'verified' | 'absent' | 'mismatch' | null = null
-  onInstall: (token: string) => void = () => undefined
+  onInstall: (token: string, tokenSha256: string) => void = () => undefined
 
   constructor(
     private readonly settings: IntegrationSettingStore,
-    private readonly clock: FakeClock
+    private readonly clock: FakeClock,
+    // Owner amendment M: the double issues each install's hash in its Tx A and withdraws it on failure.
+    channelTokens: ChannelTokenStore
   ) {
-    super()
+    super({ tokens: channelTokens, now: () => clock.now() })
   }
 
-  override async install(target: ConfigTarget, token: ChannelToken, origin: ConsentOrigin) {
+  override async install(
+    target: ConfigTarget,
+    token: ChannelToken,
+    origin: ConsentOrigin,
+    tokenSha256: string
+  ) {
     this.tokens.push(token)
-    this.onInstall(token)
-    const result = await super.install(target, token, origin)
+    this.onInstall(token, tokenSha256)
+    const result = await super.install(target, token, origin, tokenSha256)
     if (result.ok) {
       this.settings.save({
         id: 'claude-hooks',
@@ -75,7 +83,7 @@ function world() {
   const clock = new FakeClock(T0)
   const settings = new InMemoryIntegrationSettingStore(T0)
   const tokens = new InMemoryChannelTokenStore()
-  const writer = new SettingsKeepingWriter(settings, clock)
+  const writer = new SettingsKeepingWriter(settings, clock, tokens)
   const minted: MintedCredential[] = []
   let open = false
   const transactions: TransactionRunner = {
@@ -297,15 +305,33 @@ describe('PreferencesCommands.setClaudeHooks (16 §4.12, AMENDMENT-7)', () => {
     ])
   })
 
-  it('[ADR-016] the token the writer installs is already the active hash when install is called', async () => {
+  // AMENDED for owner amendment M (was: the hash is already active when install is called): the writer issues the
+  // hash in its own Tx A, so the toggle hands it the minted token with that token's own hash.
+  it('[ADR-016] the writer is given the minted token with its own hash, which is the active one once the write committed', async () => {
     const w = world()
-    const seen: Array<{ token: string; active: { hash: string } | null }> = []
-    w.writer.onInstall = (token) => seen.push({ token, active: w.tokens.active('claude-hooks') })
+    const seen: Array<{ token: string; tokenSha256: string }> = []
+    w.writer.onInstall = (token, tokenSha256) => seen.push({ token, tokenSha256 })
 
     await w.preferences.setClaudeHooks(true, 'settings')
 
     expect(seen).toStrictEqual([
-      { token: w.minted[0]?.value, active: { hash: hashOf(seen[0]?.token ?? '') } }
+      { token: w.minted[0]?.value, tokenSha256: hashOf(w.minted[0]?.value ?? '') }
     ])
+    expect(w.tokens.active('claude-hooks')).toStrictEqual({ hash: seen[0]?.tokenSha256 })
+  })
+
+  it('[FM-148, S14.04, ADR-016] a failed re-enable of an on integration keeps its working token active', async () => {
+    const w = world()
+    await w.preferences.setClaudeHooks(true, 'settings')
+    const working = w.tokens.active('claude-hooks')
+    // The entry no longer verifies (an unreadable file, a foreign entry in DwarfAI's slot), and the write fails.
+    w.writer.verdict = 'mismatch'
+    w.writer.scriptInstall('claude-hooks', 'io')
+
+    const result = await w.preferences.setClaudeHooks(true, 'settings')
+
+    expect(result).toStrictEqual({ ok: false, error: 'config-write-failed' })
+    expect(w.preferences.integrationState('claude-hooks')).toBe('on-verified')
+    expect(w.tokens.active('claude-hooks')).toStrictEqual(working)
   })
 })

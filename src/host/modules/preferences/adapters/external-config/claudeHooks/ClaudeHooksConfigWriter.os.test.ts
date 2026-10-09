@@ -11,6 +11,7 @@ import { NodeFs } from '../../../../../platform/fs/NodeFs'
 import { NodeSqliteDatabase } from '../../../../../platform/sqlite/NodeSqliteDatabase'
 import { buildTemplateDb } from '../../../../../platform/sqlite/testing/templateDb.globalSetup'
 import { claudeHooksWorld, fixture, HOOK_TOKEN } from './testing/claudeHooksWorld'
+import { hashOf } from '../../../testing/inMemoryChannelTokens'
 
 let template: { path: string; dir: string }
 
@@ -53,7 +54,12 @@ describe('ClaudeHooksConfigWriter on this OS', () => {
       expect(original.toString('utf8')).toBe(fixture(name))
       await w.seed(original.toString('utf8'))
 
-      const installed = await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings')
+      const installed = await w.writer.install(
+        'claude-hooks',
+        HOOK_TOKEN,
+        'settings',
+        hashOf(HOOK_TOKEN)
+      )
 
       expect(installed.ok && installed.value.verified).toBe(true)
       expect(await w.writer.verify('claude-hooks')).toBe('verified')

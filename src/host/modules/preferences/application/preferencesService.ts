@@ -175,11 +175,11 @@ export class PreferencesService
    * after it.
    *
    * - On: enabling an `on-verified` integration whose entry still verifies is a no-op (16 §7.5).
-   *   Otherwise a new `claudeHookToken` is minted and its hash issued, which revokes the previous
-   *   one (Tx A, 16 §7.3), then the one config writer installs the entry with the plaintext
-   *   token and records the origin (its Tx B turns the integration `on-verified`). A failed write
-   *   revokes the new token (Tx B failure) and answers `config-write-failed`; the integration
-   *   stays as it was.
+   *   Otherwise a new `claudeHookToken` is minted and the one config writer installs the entry
+   *   with the plaintext token and records the origin; it issues the token's hash in its Tx A,
+   *   revoking the previous one, and its Tx B turns the integration `on-verified` (16 §7.3; owner
+   *   amendment M). A failed write withdraws the new hash, so the previous token is active again,
+   *   and answers `config-write-failed`; the integration stays as it was.
    * - Off: the writer reverts the entry (its transaction turns the integration `off`), then the
    *   token is revoked. A locked file changes nothing: the option stays on, the token stays
    *   active, and the answer is `config-revert-failed` (16 §7.4).
@@ -203,31 +203,25 @@ export class PreferencesService
   }
 
   private async enableClaudeHooks(origin: ConsentOrigin): Promise<ToggleResult> {
-    const { integrations, tokens, externalConfig, transactions, clock } = this.deps
+    const { integrations, externalConfig } = this.deps
     if (
       integrations.get(CLAUDE_HOOKS).state === 'on-verified' &&
       (await externalConfig.verify(CLAUDE_HOOKS)) === 'verified'
     ) {
       return this.settled(CLAUDE_HOOKS, null)
     }
-    // Known gaps, raised as an amendment request (ISSUE-221, review F1). 16 §7.3 puts the new token row in the
-    // writer's Tx A and has Tx B (failure) delete it, restoring the previous one; but `ExternalConfigWriter.install`
-    // opens its own Tx A, and `ChannelTokenStore` can neither delete the new row nor reactivate the previous one
-    // (re-issuing its hash breaks `channel_tokens.token_sha256 UNIQUE`). So the hash is issued in its own transaction
-    // just before `install`: a failed re-enable of an `on-*` integration leaves no active token while the entry
-    // keeps the previous one (the ingress answers 401 until a new enable succeeds), and a Host crash between this
-    // commit and the writer's Tx A leaves the new hash active with no `config_writes` row for the boot to settle.
+    // Owner amendment M: the writer issues the new hash in its own Tx A, together with the `config_writes` row,
+    // and its Tx B (failure) withdraws it in the transaction that deletes the Tx A rows, making the previous token
+    // active again (16 §7.3). A crash between the hash and Tx A is impossible by construction, and a failed
+    // re-enable leaves the working token of an `on-*` integration active.
     const credential = this.deps.mintCredential()
-    transactions.inTransaction(() => tokens.issue(CLAUDE_HOOKS, credential.sha256, clock.now()))
     const installed = await externalConfig.install(
       CLAUDE_HOOKS,
       credential.value as ChannelToken,
-      origin
+      origin,
+      credential.sha256
     )
-    if (!installed.ok) {
-      transactions.inTransaction(() => tokens.revoke(CLAUDE_HOOKS, clock.now()))
-      return this.settled(CLAUDE_HOOKS, 'config-write-failed')
-    }
+    if (!installed.ok) return this.settled(CLAUDE_HOOKS, 'config-write-failed')
     return this.settled(CLAUDE_HOOKS, null)
   }
 

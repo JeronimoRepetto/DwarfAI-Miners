@@ -87,7 +87,8 @@ async function host() {
   // The engine holds the `claude-hooks` target only: the OpenCode target is not built yet (later:
   // ISSUE-227), so DwarfAI owns nothing there and the Reset saga's revert of it has nothing to do.
   const writer: ExternalConfigWriter = {
-    install: (target, token, origin) => world.writer.install(target, token, origin),
+    install: (target, token, origin, tokenSha256) =>
+      world.writer.install(target, token, origin, tokenSha256),
     verify: (target) => world.writer.verify(target),
     revert: (target) =>
       target === 'claude-hooks'
