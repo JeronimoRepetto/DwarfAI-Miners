@@ -33,6 +33,9 @@ const EPOCH = 'epoch-0221'
 class SettingsKeepingWriter extends FakeExternalConfigWriter {
   /** The plaintext token of every install, in order (the only place it may reach). */
   readonly tokens: string[] = []
+  /** AMENDED for ISSUE-221 (F1, F4): what `verify` answers when set; what `install` sees when it is called. */
+  verdict: 'verified' | 'absent' | 'mismatch' | null = null
+  onInstall: (token: string) => void = () => undefined
 
   constructor(
     private readonly settings: IntegrationSettingStore,
@@ -43,6 +46,7 @@ class SettingsKeepingWriter extends FakeExternalConfigWriter {
 
   override async install(target: ConfigTarget, token: ChannelToken, origin: ConsentOrigin) {
     this.tokens.push(token)
+    this.onInstall(token)
     const result = await super.install(target, token, origin)
     if (result.ok) {
       this.settings.save({
@@ -53,6 +57,10 @@ class SettingsKeepingWriter extends FakeExternalConfigWriter {
       })
     }
     return result
+  }
+
+  override verify(target: ConfigTarget): Promise<'verified' | 'absent' | 'mismatch'> {
+    return this.verdict === null ? super.verify(target) : Promise.resolve(this.verdict)
   }
 
   override async revert(target: ConfigTarget): Promise<Result<void, 'locked' | 'io'>> {
@@ -286,6 +294,18 @@ describe('PreferencesCommands.setClaudeHooks (16 §4.12, AMENDMENT-7)', () => {
     expect(w.changes()).toStrictEqual([
       { id: 'claude-hooks', state: 'on-verified' },
       { id: 'claude-hooks', state: 'off' }
+    ])
+  })
+
+  it('[ADR-016] the token the writer installs is already the active hash when install is called', async () => {
+    const w = world()
+    const seen: Array<{ token: string; active: { hash: string } | null }> = []
+    w.writer.onInstall = (token) => seen.push({ token, active: w.tokens.active('claude-hooks') })
+
+    await w.preferences.setClaudeHooks(true, 'settings')
+
+    expect(seen).toStrictEqual([
+      { token: w.minted[0]?.value, active: { hash: hashOf(seen[0]?.token ?? '') } }
     ])
   })
 })

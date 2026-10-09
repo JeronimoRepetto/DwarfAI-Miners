@@ -295,4 +295,29 @@ describe('the Claude Code instant updates toggle, wired (16 §4.12 setClaudeHook
     expect(h.queries.integrationState('claude-hooks')).toBe('off')
     expect(h.minted).toHaveLength(3)
   })
+
+  it('[S14.08, S14.09, ADR-016] turning on again an on-unverified integration whose entry is still on disk writes the new token, so the file and the active hash agree', async () => {
+    const h = await host()
+    await h.world.seed(fixture('foreign-only.settings'))
+    await h.commands.setClaudeHooks(true, 'settings')
+    h.settings.save({
+      id: 'claude-hooks',
+      state: 'on-unverified',
+      consentOrigin: 'settings',
+      changedAt: T0
+    })
+
+    expect(await h.commands.setClaudeHooks(true, 'settings')).toStrictEqual({
+      ok: true,
+      value: { state: 'on-verified' }
+    })
+
+    const second = h.minted[1]
+    expect(h.minted).toHaveLength(2)
+    const text = await h.world.read()
+    expect(text).toContain(second?.value)
+    expect(text).not.toContain(h.minted[0]?.value)
+    expect(h.tokens.active('claude-hooks')).toStrictEqual({ hash: second?.sha256 })
+    expect(h.ingress.admits(second?.value)).toBe(true)
+  })
 })

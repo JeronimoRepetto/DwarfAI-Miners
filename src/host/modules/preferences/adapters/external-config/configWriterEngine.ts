@@ -170,8 +170,11 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
   ): Promise<InstallResult> {
     const { ledger, transactions, clock, ids } = this.deps
     const previous = ledger.active(adapter.target, adapter.path)
-    // 16 §7.5: enabling an `on-verified` target is a no-op returning the current state.
+    // 16 §7.5: enabling an `on-verified` target is a no-op returning the current state. Only `on-verified`: an
+    // `on-unverified` integration (07 S14.08) is written again when turned on (S14.09), even when its entry still
+    // verifies, so the file holds the token the caller has just issued (ISSUE-221, review F2).
     if (
+      this.deps.settings.get(INTEGRATION_OF[adapter.target]).state === 'on-verified' &&
       previous !== null &&
       previous.verifiedAt !== null &&
       (await this.check(adapter)) === 'verified'

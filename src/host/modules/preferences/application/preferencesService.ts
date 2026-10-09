@@ -210,6 +210,13 @@ export class PreferencesService
     ) {
       return this.settled(CLAUDE_HOOKS, null)
     }
+    // Known gaps, raised as an amendment request (ISSUE-221, review F1). 16 §7.3 puts the new token row in the
+    // writer's Tx A and has Tx B (failure) delete it, restoring the previous one; but `ExternalConfigWriter.install`
+    // opens its own Tx A, and `ChannelTokenStore` can neither delete the new row nor reactivate the previous one
+    // (re-issuing its hash breaks `channel_tokens.token_sha256 UNIQUE`). So the hash is issued in its own transaction
+    // just before `install`: a failed re-enable of an `on-*` integration leaves no active token while the entry
+    // keeps the previous one (the ingress answers 401 until a new enable succeeds), and a Host crash between this
+    // commit and the writer's Tx A leaves the new hash active with no `config_writes` row for the boot to settle.
     const credential = this.deps.mintCredential()
     transactions.inTransaction(() => tokens.issue(CLAUDE_HOOKS, credential.sha256, clock.now()))
     const installed = await externalConfig.install(

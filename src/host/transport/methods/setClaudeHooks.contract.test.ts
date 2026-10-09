@@ -43,6 +43,7 @@ import { FrameClient } from '../testing/frameClient'
 import { inProcessDuplex } from '../testing/inProcessDuplex'
 import { createUpgradeTargetRule } from './hostUpgradeRequest'
 import {
+  integrationChangedFrame,
   publishIntegrationChanged,
   registerSetClaudeHooks,
   SET_CLAUDE_HOOKS_FRAMES
@@ -351,5 +352,41 @@ describe('preferences.setClaudeHooks and integration.changed over seam B (B-M39,
       codeOf(await call(ui, 'preferences.setClaudeHooks', { on: 'yes', requestId: RID_3 }))
     ).toBe('INVALID_PARAMS')
     expect(toggle.calls).toStrictEqual([])
+  })
+})
+
+// AMENDED for ISSUE-221 (appended, review F6): the frame names a consent origin only while the integration is on,
+// whatever the stored row still carries.
+describe('integrationChangedFrame (14 §3.5 B-F25)', () => {
+  const event = (state: IntegrationState) =>
+    ({
+      type: 'IntegrationChanged',
+      v: 1,
+      id: 'event-1' as EventId,
+      at: T0,
+      hostEpoch: EPOCH,
+      payload: { id: 'claude-hooks', state }
+    }) as const
+  const stored = (setting: IntegrationSetting) => ({ integrationSettings: () => [setting] })
+
+  it('[ADR-016] an off frame carries no consent origin, even when the stored row still has one', () => {
+    const frame = integrationChangedFrame(
+      event('off'),
+      stored({ id: 'claude-hooks', state: 'off', consentOrigin: 'settings', changedAt: T0 })
+    )
+
+    expect(frame).toStrictEqual({ id: 'claude-hooks', state: 'off' })
+    validateFrame('integration.changed', frame)
+    expect(
+      integrationChangedFrame(
+        event('on-verified'),
+        stored({
+          id: 'claude-hooks',
+          state: 'on-verified',
+          consentOrigin: 'first-run',
+          changedAt: T0
+        })
+      )
+    ).toStrictEqual({ id: 'claude-hooks', state: 'on-verified', consentOrigin: 'first-run' })
   })
 })

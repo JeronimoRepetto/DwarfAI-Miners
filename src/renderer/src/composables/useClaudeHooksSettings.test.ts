@@ -220,4 +220,19 @@ describe('useClaudeHooksSettings (14 §6.4; A-N31, B-F25)', () => {
     expect(hooks.applying.value).toBe(false)
     expect(hooks.state.value).toBe('off')
   })
+
+  // AMENDED for ISSUE-221 (appended, review F5).
+  it('[US-SET-013.AC01, ADR-033] an answer with a state but no frame leaves the state as the frames say', async () => {
+    const host = installHost(page(4, { id: 'claude-hooks', state: 'off', changedAt: 1 }), () =>
+      Promise.resolve({ ok: true, value: { ok: true, value: { state: 'on-verified' } } })
+    )
+    const hooks = settings()
+    await hooks.start()
+
+    await hooks.setEnabled(true)
+
+    expect(host.sent).toHaveLength(1)
+    expect(hooks.failure.value).toBeNull()
+    expect(hooks.state.value).toBe('off')
+  })
 })

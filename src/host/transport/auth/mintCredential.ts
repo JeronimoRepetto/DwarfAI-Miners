@@ -11,7 +11,13 @@ import type { MintedCredential } from '../../modules/preferences'
 
 const CREDENTIAL_BYTES = 32
 
-export function mintCredential(): MintedCredential {
-  const value = randomBytes(CREDENTIAL_BYTES).toString('hex')
+/**
+ * Where a credential's bytes come from: the platform's cryptographic source (ADR-016 item 1). Injectable so a test can
+ * prove the bytes are the source's; never a predictable generator such as `Math.random`.
+ */
+export const CREDENTIAL_RANDOM_SOURCE: (size: number) => Uint8Array = randomBytes
+
+export function mintCredential(random = CREDENTIAL_RANDOM_SOURCE): MintedCredential {
+  const value = Buffer.from(random(CREDENTIAL_BYTES)).toString('hex')
   return { value, sha256: createHash('sha256').update(value, 'utf8').digest('hex') }
 }

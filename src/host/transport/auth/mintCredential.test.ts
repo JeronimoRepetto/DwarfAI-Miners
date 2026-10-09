@@ -3,6 +3,7 @@
 // 2026-09-30, ISSUE-198): 32 random bytes as lower-case hex, and the SHA-256 of that hex text as
 // lower-case hex, the only form a store ever keeps. The hash must be the one the hook ingress
 // verifies (ChannelTokenCheck, ISSUE-219), so the check runs here against a minted pair.
+import { randomBytes } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import {
@@ -10,7 +11,7 @@ import {
   inMemoryChannelTokens
 } from '../../modules/preferences/testing/inMemoryChannelTokens'
 import { ChannelTokenCheck } from './channelTokenCheck'
-import { mintCredential } from './mintCredential'
+import { CREDENTIAL_RANDOM_SOURCE, mintCredential } from './mintCredential'
 
 const AT = 1_760_000_000_000
 
@@ -37,5 +38,21 @@ describe('mintCredential (ADR-016 item 1)', () => {
     expect(check.authenticate('claude-hooks', minted.value)).toBe(true)
     expect(check.authenticate('opencode-plugin', minted.value)).toBe(false)
     expect(check.authenticate('claude-hooks', minted.sha256)).toBe(false)
+  })
+
+  // AMENDED for ISSUE-221 (appended, review F3): the credential's bytes come from the injected source, by default the
+  // platform's cryptographic one, never a predictable generator such as Math.random.
+  it('[ADR-016, NFR-SEC-12] the value is the hex of 32 bytes drawn from the random source, which is node:crypto randomBytes by default', () => {
+    const asked: number[] = []
+    const bytes = Uint8Array.from({ length: 32 }, (_, at) => (at * 37 + 11) % 256)
+    const minted = mintCredential((size) => {
+      asked.push(size)
+      return bytes
+    })
+
+    expect(asked).toStrictEqual([32])
+    expect(minted.value).toBe(Buffer.from(bytes).toString('hex'))
+    expect(minted.sha256).toBe(hashOf(minted.value))
+    expect(CREDENTIAL_RANDOM_SOURCE).toBe(randomBytes)
   })
 })
