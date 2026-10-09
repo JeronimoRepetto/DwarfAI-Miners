@@ -21,6 +21,8 @@
 //   ask linked (ADR-010 item 13); `linkRecord` (transaction 1) and `settleAnswer` (transaction 2,
 //   once, `settled_at` from the `Clock`) write the winning request's row. Writing a row that is not
 //   there, or settling one twice, is refused.
+// - Owner amendment L (2026-10-09): `live` reads every `open` or `answering` row of every dwarf from
+//   the table, oldest first (`asks_needs_you`), never a cache: what the snapshot's `asks` reads.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts'
 import type { AskId, DwarfId, MessageId } from '../../../kernel/domain/values'
@@ -78,6 +80,12 @@ const ANSWER_OF = `SELECT ask_id, outcome, refusal_reason, message_id FROM ask_a
 const RECORD_OF = `SELECT message_id FROM ask_answers
   WHERE ask_id = ? AND message_id IS NOT NULL
   ORDER BY at DESC, request_id DESC LIMIT 1`
+
+// Owner amendment L: every live ask in needs-you order; the `asks_needs_you` index serves it (09
+// §4.11), ties broken by id as `OPEN_FOR` breaks them.
+const LIVE = `SELECT ${COLUMNS} FROM asks
+  WHERE state IN ('open', 'answering')
+  ORDER BY opened_at, id`
 
 const LINK_RECORD = `UPDATE ask_answers SET message_id = ? WHERE request_id = ?`
 
@@ -165,6 +173,10 @@ export class SqliteAskRepository implements AskRepository {
     if (changes !== 1) {
       throw new HostInvariantError(`no pending ask_answers row ${requestId} to settle`)
     }
+  }
+
+  live(): Ask[] {
+    return this.deps.db.all(LIVE, []).map(toAsk)
   }
 
   private requireTransaction(method: string): void {

@@ -7,15 +7,29 @@
 // it (later: ISSUE-140).
 // ISSUE-139: `createAskingResetStep`, the module's step of the Reset-metrics saga (ADR-023).
 // ISSUE-130: the `AskQueries` port and the `AskOpened` / `AskStepChanged` events, for the asks
-// frame projections (transport/frames/askFrames.ts).
+// frame projections (transport/frames/askFrames.ts); `createAskQueries`, the read model behind the
+// snapshot's `asks` section (transport/snapshot/asksSection.ts) over `AskRepository.live` (owner
+// amendment L).
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { AskingResetStep } from './adapters/sqlite/AskingResetStep'
+import {
+  AskReadModel,
+  type AskReadModelDeps,
+  type AskSnapshotQueries
+} from './application/askQueries'
 import { AskAnswerPaths, type AnswerPathsDeps, type AskBroker } from './application/askBroker'
 
 export type { AnswerPathsDeps, AskBroker } from './application/askBroker'
-export type { AskQueries, AskView } from './application/askQueries'
+export type {
+  AskQueries,
+  AskReadModelDeps,
+  AsksSnapshot,
+  AskSnapshotQueries,
+  AskView,
+  NeedsYouEntry
+} from './application/askQueries'
 export type {
   AskClosed,
   AskingEvent,
@@ -63,4 +77,9 @@ export function createAskingResetStep(deps: {
   scope: TransactionScope
 }): AskingResetDbStep {
   return new AskingResetStep(deps)
+}
+
+/** The `AskQueries` read model with the `asks` section's snapshot read (ISSUE-130). */
+export function createAskQueries(deps: AskReadModelDeps): AskSnapshotQueries {
+  return new AskReadModel(deps)
 }
