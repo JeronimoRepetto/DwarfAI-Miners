@@ -6,6 +6,8 @@
 // over the AskRepository, conversation's `AnswerRecords` and the answer channels; the Host composes
 // it (later: ISSUE-140).
 // ISSUE-139: `createAskingResetStep`, the module's step of the Reset-metrics saga (ADR-023).
+// ISSUE-130: the `AskQueries` port and the `AskOpened` / `AskStepChanged` events, for the asks
+// frame projections (transport/frames/askFrames.ts).
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
@@ -13,7 +15,14 @@ import { AskingResetStep } from './adapters/sqlite/AskingResetStep'
 import { AskAnswerPaths, type AnswerPathsDeps, type AskBroker } from './application/askBroker'
 
 export type { AnswerPathsDeps, AskBroker } from './application/askBroker'
-export type { AskClosed, AskingEvent, AskReopened } from './domain/events'
+export type { AskQueries, AskView } from './application/askQueries'
+export type {
+  AskClosed,
+  AskingEvent,
+  AskOpened,
+  AskReopened,
+  AskStepChanged
+} from './domain/events'
 export type { AskAnswerChannel } from './ports/askAnswerChannel'
 export type {
   AnswerOutcome,
