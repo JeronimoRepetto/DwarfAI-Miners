@@ -70,14 +70,15 @@ test.describe('cut 0: the Host connection in the Panel (ISSUE-316)', () => {
     launched = await launchApp({
       trayProbe: true,
       stubs: path.join(STUB_BIN, 'claude'),
-      beforeLaunch: async (profile) => {
-        seedClaudeStubSession(profile)
-      },
       env: (profile) => homeIn(profile),
       tracePath: test.info().outputPath('trace.zip')
     })
     const { app, window, profile } = launched
     await waitForHostAttached(profile)
+    // Seeded once the Host is up, so the stub session is written after the install moment: a
+    // session whose newest record predates it, and whose process is not known to run, is history,
+    // left to the coal backfill (owner decision 2026-10-10, ADR-006 item 8).
+    seedClaudeStubSession(profile)
     await chooseTrayItem(app, TRAY_ITEMS.open)
     await window.locator('.dm-marker').first().click()
     const dwarfs = window.locator('.dm-dwarf')

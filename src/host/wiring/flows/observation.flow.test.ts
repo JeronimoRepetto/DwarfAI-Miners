@@ -522,8 +522,10 @@ function dwarfRows(db: SqliteDatabase) {
 describe('observation wired into the Host (ISSUE-095)', () => {
   it('[US-OBS-005, ADR-006] a fresh install over provider history writes no dwarf and no mine, whatever the providers', async () => {
     // Owner decision 2026-10-10: every fixture session predates the install moment, so its
-    // history reaches the product only through the coal backfill (ADR-029 row 6).
+    // history reaches the product only through the coal backfill (ADR-029 row 6). None runs: a
+    // registered process that runs would arrive present (the next case).
     const w = world()
+    w.processes.script(CLAUDE_PROCESS.pid, 'absent')
     // A day after the newest fixture record (the OpenCode store's, an hour after T0).
     const installed = T0 + 24 * HOUR_MS
     const host = await bootHost({ ...w, startAt: installed, installMoment: installed })
@@ -536,6 +538,21 @@ describe('observation wired into the Host (ISSUE-095)', () => {
     // Every stream was read to its end: a later Host does not read that history again.
     const cursors = w.db.all(`SELECT stream_id FROM source_cursors`)
     expect(cursors.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('[US-OBS-005.AC01, FM-059] the E2E legacy-launched shape: a Claude session whose registered process runs arrives present although its transcript predates the install moment', async () => {
+    const w = world()
+    const installed = T0 + 24 * HOUR_MS
+    const host = await bootHost({ ...w, startAt: installed, installMoment: installed })
+    await host.poll()
+    await host.poll()
+    host.stop()
+
+    expect(
+      dwarfRows(w.db)
+        .filter((d) => d.providerId === 'claude')
+        .map((d) => d.departed)
+    ).toEqual([false])
   })
 
   it('[US-OBS-005, ADR-006] a Claude session the registry no longer names (it exited) arrives already departed: its dwarf in its mine history, its mine made by its first message, never present', async () => {
