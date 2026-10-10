@@ -299,22 +299,37 @@ export function channelResult(
 }
 
 /**
- * S6.11 / S6.13 / S6.21 / S6.22: the provider resolved the request outside DwarfAI (no notice,
- * PO #22) or withdrew it. A closed ask stays closed (terminal once).
+ * S6.11 / S6.12 / S6.13 / S6.21 / S6.22: the provider resolved the request outside DwarfAI (no
+ * notice, PO #22) or withdrew it. An open ask's `elsewhere` resolution that the keystroke channel's
+ * attribution window gives to DwarfAI's injection (`injectedInApp`, ADR-010 item 10;
+ * `domain/attribution.ts`) closes it answered in the app (S6.12). A closed ask stays closed
+ * (terminal once).
  */
 export function resolveExternally(
   ask: Ask,
   by: 'elsewhere' | 'cancelled',
-  now: number
+  now: number,
+  injectedInApp = false
 ): ExternalResolution {
   if (ask.state === 'open') {
-    return by === 'elsewhere'
+    if (by === 'cancelled') {
+      return {
+        ask: applyTransition(ask, 'S6.13', 'cancelled', now),
+        transition: 'S6.13',
+        held: null
+      }
+    }
+    return injectedInApp
       ? {
+          ask: applyTransition(ask, 'S6.12', 'answered-in-app', now),
+          transition: 'S6.12',
+          held: null
+        }
+      : {
           ask: applyTransition(ask, 'S6.11', 'answered-elsewhere', now),
           transition: 'S6.11',
           held: null
         }
-      : { ask: applyTransition(ask, 'S6.13', 'cancelled', now), transition: 'S6.13', held: null }
   }
   if (ask.state === 'answering') {
     return by === 'elsewhere'
