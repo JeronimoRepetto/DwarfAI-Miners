@@ -3,8 +3,10 @@
 // batch committed (16 §2.3, §4.3 "Ordering"). Here, not in `domain/`, because two payloads carry
 // suppliers' `ConversationEntry` / `UsageObservation` and the domain imports no other module (R1).
 //
-// Turn ends joined with the Codex adapter (ISSUE-073), provider errors with ISSUE-084. The asks and
-// subagents of 05 §3.3 join with the provider adapters that observe them (later: ISSUE-071…ISSUE-075).
+// Turn ends joined with the Codex adapter (ISSUE-073), provider errors with ISSUE-084, the
+// answered-elsewhere close of an observed ask with its route (ISSUE-136; no adapter publishes it yet:
+// OpenCode's signal waits on SP-09, ISSUE-229). The ask opening and subagents of 05 §3.3 join with
+// the provider adapters that observe them (later: ISSUE-071…ISSUE-075).
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
 import type {
@@ -70,6 +72,16 @@ export type ProviderErrorObserved = DomainEvent<
   { providerId: ProviderId; cause: string; dwarfId?: DwarfId }
 >
 
+/**
+ * An observed ask was resolved outside DwarfAI, or cancelled or withdrawn (08 §0). Routed to asking
+ * `resolveExternally` after resolving the session to its dwarf (05 §4; 08 §2.3), keyed by
+ * `(dwarfId, providerRequestId)`; the card disappears with no notice (PO #22).
+ */
+export type ObservedAskClosed = DomainEvent<
+  'ObservedAskClosed',
+  { identity: ProviderIdentity; providerRequestId: string; by: 'elsewhere' | 'cancelled' }
+>
+
 /** Every event the module publishes so far. */
 export type ObservationEvent =
   | SessionObserved
@@ -79,3 +91,4 @@ export type ObservationEvent =
   | SessionClosedObserved
   | ObservedTurnEnded
   | ProviderErrorObserved
+  | ObservedAskClosed

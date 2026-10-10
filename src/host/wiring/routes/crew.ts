@@ -38,7 +38,7 @@
 // - `DwarfStopRequested` → launching `markStoppedByPerson` (required handler, 16 §2.3): launching is
 //   not constructed by the Host yet (later: EPIC-10); without a handler every end runs.
 // - The cut-1 cross-epic routes (`TurnEnded`, `DwarfDeparted` clean-ups): routes/cut1Routes.ts
-//   (ISSUE-120); `ask.*` → `startAsking` / `stopAsking` join with asking (later: ISSUE-140).
+//   (ISSUE-120); `ask.*` → `startAsking` / `stopAsking`: routes/askingRoutes.ts (ISSUE-140).
 import { providerIdentityKey } from '../../kernel/domain/providerIdentity'
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import { HostInvariantError } from '../../kernel/domain/errors'

@@ -12,10 +12,18 @@ import { closeOnOsSessionEnd, type OsSessionEndSource } from '../transport/lifec
 export interface HostLifecycleDeps extends CleanExitDeps {
   /** The platform's OS session-end report (host/platform/process/osSessionSignals.ts). */
   sessionEnd: OsSessionEndSource
+  /** Unsubscribes the module routes that must not run once the Host is closing (ISSUE-140). */
+  stopRoutes?: () => void
 }
 
 export function composeHostLifecycle(deps: HostLifecycleDeps): CleanExit {
-  const cleanExit = createCleanExit(deps)
+  const clean = createCleanExit(deps)
+  const cleanExit: CleanExit = {
+    closeCleanly: (reason) => {
+      deps.stopRoutes?.()
+      return clean.closeCleanly(reason)
+    }
+  }
   closeOnOsSessionEnd(deps.sessionEnd, cleanExit)
   return cleanExit
 }

@@ -31,10 +31,10 @@
 // (S17.07).
 //
 // Not routed here, and why:
-// - The ask routes (`ObservedAskOpened` / `ObservedAskClosed` → crew `startAsking` / `stopAsking`,
-//   attention, conversation `noteAsk`; the cut-1 lead decision of ISSUE-120): observation publishes
-//   no ask event yet (no adapter yields an ask record), and crew has no `startAsking` (later:
-//   ISSUE-140 routes `ask.opened` / `ask.closed`).
+// - The ask routes (`ask.opened` / `ask.closed` → crew `startAsking` / `stopAsking`, attention,
+//   conversation `noteAsk`; `DwarfDeparted` → asking `closeForDwarf`): routes/askingRoutes.ts
+//   (ISSUE-140), which replaces the cut-1 lead decision of ISSUE-120. No cut-1 observed-ask route
+//   was ever subscribed here: observation published no ask event in cut 1.
 // - Driver events (`DriverTurnEnded`, `DriverSessionExited` → `recordSessionEnd`): no driver session
 //   reaches the Host bus in cut 1 (later: EPIC-10, ISSUE-182).
 // - `dropCarryOver` on a person-initiated turn: the Host sends no message in cut 1 (later: EPIC-10).
