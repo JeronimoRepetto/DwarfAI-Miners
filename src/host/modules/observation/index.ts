@@ -134,7 +134,7 @@ export interface ObservationDeps {
   processRegistries?: readonly ObservedProcessRegistry[]
   /**
    * The adapters that can tell whether an observed session's process runs (the Claude adapter);
-   * the loop admits no session one of them reports `not-live` (owner decision 2026-10-10).
+   * a session one of them reports `not-live` arrives already departed (owner decision B).
    */
   presence?: readonly ObservedPresence[]
   /** `install_moment.at` (ADR-023 item 2): no session arrives for what it wrote before it. */

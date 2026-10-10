@@ -538,7 +538,7 @@ describe('observation wired into the Host (ISSUE-095)', () => {
     expect(cursors.length).toBeGreaterThanOrEqual(4)
   })
 
-  it('[US-OBS-005, FM-059] a Claude session the registry no longer names (it exited) arrives neither as a dwarf nor as a mine', async () => {
+  it('[US-OBS-005, ADR-006] a Claude session the registry no longer names (it exited) arrives already departed: its dwarf in its mine history, its mine made by its first message, never present', async () => {
     const w = world()
     rmSync(join(w.folders.claudeConfigDir, 'sessions', `${CLAUDE_PROCESS.pid}.json`))
     const host = await bootHost({ ...w, startAt: T0 })
@@ -546,8 +546,16 @@ describe('observation wired into the Host (ISSUE-095)', () => {
     await host.poll()
     host.stop()
 
-    expect(dwarfRows(w.db).map((d) => d.providerId)).not.toContain('claude')
-    expect(dwarfRows(w.db)).toHaveLength(3)
+    const claudeRows = dwarfRows(w.db).filter((d) => d.providerId === 'claude')
+    expect(claudeRows.map((d) => d.departed)).toEqual([true])
+    expect(host.crew.crew.queries.get(claudeRows[0]!.id)?.departureCause).toBe('closed-elsewhere')
+    expect(w.db.all(`SELECT id FROM mines WHERE removed_at IS NULL`)).toHaveLength(4)
+    // The other providers' sessions run: they stay present.
+    expect(
+      dwarfRows(w.db)
+        .filter((d) => d.departed)
+        .map((d) => d.providerId)
+    ).toEqual(['claude'])
   })
 
   it("[ADR-006] each provider's fixture sessions produce their dwarfs once and a second boot adds nothing", async () => {

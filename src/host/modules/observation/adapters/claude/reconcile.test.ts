@@ -597,7 +597,7 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
     if (entry !== undefined) await writeFile(join(configDir, 'sessions', '32896.json'), entry)
   }
 
-  it('[US-OBS-005, FM-059] a session no registry entry names (it exited cleanly) never arrives, nor do its subagents', async () => {
+  it('[US-OBS-005, FM-059] a session no registry entry names (it exited cleanly) arrives already departed, and so do its subagents; their batches are written once', async () => {
     const configDir = await tempDir()
     const path = await placeSession(
       configDir,
@@ -617,11 +617,23 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
     const w = admitting(configDir, new FakeProcessControl({ bootId: 'boot-a' }))
     w.loop.start()
     await w.loop.whenIdle()
-    await w.poll()
 
-    expect(w.observed()).toEqual([])
     expect(w.adapter.presenceOf(claude(SUBAGENT_SESSION))).toBe('not-live')
     expect(w.adapter.presenceOf(claude(SUBAGENT_SESSION, WORKER))).toBe('not-live')
+    const both = [claude(SUBAGENT_SESSION), claude(SUBAGENT_SESSION, WORKER)]
+    expect(w.observedIdentities()).toEqual(both)
+    const closings = () =>
+      w.bus.published.flatMap((e) =>
+        e.type === 'SessionClosedObserved' ? [e.payload.identity] : []
+      )
+    expect(closings()).toEqual(both)
+
+    // Crew's route makes and departs their dwarfs; the next cycle writes each batch once.
+    for (const who of both) w.dwarfs.bind(who, POSIX_CWD as FolderPath, T0)
+    await w.poll()
+    await w.poll()
+    expect(new Set(w.sink.applied.map((b) => b.dwarfId)).size).toBe(2)
+    expect(closings()).toEqual(both)
     const position = await w.cursorAt(path)
     expect(position.stored).toBe(position.size)
     w.loop.stop()
@@ -642,7 +654,7 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
     w.loop.stop()
   })
 
-  it('[FM-059, INV-36] a session whose registry entry outlived its process at the first look never arrives and joins the ledger', async () => {
+  it('[FM-059, INV-36] a session whose registry entry outlived its process at the first look arrives already departed, once, and joins the ledger with its batch', async () => {
     const configDir = await tempDir()
     await placeSession(configDir, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
     await registry(configDir, await fixture('session-registry.json'))
@@ -651,10 +663,16 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
     const w = admitting(configDir, processes)
     w.loop.start()
     await w.loop.whenIdle()
-    await w.poll()
+    const closings = () =>
+      w.bus.published.filter((e) => e.type === 'SessionClosedObserved').map((e) => e.payload)
+    expect(w.observedIdentities()).toEqual([claude(PLAIN_SESSION)])
+    expect(closings().map((c) => c.identity)).toEqual([claude(PLAIN_SESSION)])
 
-    expect(w.observed()).toEqual([])
-    expect(w.bus.published.filter((e) => e.type === 'SessionClosedObserved')).toEqual([])
+    w.dwarfs.bind(claude(PLAIN_SESSION), CWD as FolderPath, T0)
+    await w.poll()
+    await w.poll()
+    expect(w.sink.applied).toHaveLength(1)
+    expect(closings()).toHaveLength(1)
     expect(w.ended.has(claude(PLAIN_SESSION))).toBe(true)
     w.loop.stop()
   })

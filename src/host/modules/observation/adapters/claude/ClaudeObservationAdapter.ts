@@ -43,13 +43,14 @@
 //   That only delays a departure: presence is not destructive, and every kill path re-checks the
 //   identity itself (ADR-014, #231), so a stale `live` verdict never ends a stranger's process.
 // - Presence at first sight (owner decision 2026-10-10; US-OBS-005): `presenceOf` tells the loop
-//   whether a session's process runs, and the loop admits no session it reports `not-live`: one no
-//   registry entry names (Claude Code removes the entry of a session that exits; it keeps one per
-//   live interactive session), or whose recorded process is gone. A session whose entry is already
-//   dead at the first look states its `closed` fact in its first batch, so it never arrives either.
+//   whether a session's process runs, and a session it reports `not-live` at its first sight
+//   arrives already departed (owner decision B): one no registry entry names (Claude Code removes
+//   the entry of a session that exits; it keeps one per live interactive session), or whose
+//   recorded process is gone. A session whose entry is already dead at the first look states its
+//   `closed` fact in its first batch, and arrives already departed too.
 //   With no `ProcessControl` or no readable `sessions/` folder, presence is unknown and every session
 //   is admitted as before (fails open). The registry lists live interactive sessions
-//   (docs/provider-formats.md), so a headless run is not admitted; presence never closes a dwarf.
+//   (docs/provider-formats.md), so a headless run arrives departed; presence never closes a dwarf.
 // - Known limits: an entry with no readable `procStart` (only the Windows FILETIME form is known)
 //   closes when its pid has no process, but a recycled pid there is no evidence and keeps the
 //   session present.
@@ -311,7 +312,7 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
 
   /**
    * Whether a session's process runs, as of the last `discover` (owner decision 2026-10-10;
-   * US-OBS-005): the loop admits a session with no dwarf only unless this is `not-live`. A
+   * US-OBS-005): a session with no dwarf that is `not-live` arrives already departed. A
    * subagent runs inside its session's process, so it answers its session's presence.
    *
    * - `not-live`: its recorded process is gone (FM-059), or the registry was read and no entry of

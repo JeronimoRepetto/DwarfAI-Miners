@@ -263,18 +263,24 @@ async function host() {
     // The 05 §4 routes of this flow, for this Host run.
     const pending = new Set<Promise<void>>()
     routes = pending
+    // As host/wiring/routes/crew.ts does (owner decision B, 2026-10-10): a session whose ending is
+    // observed while its arrival is in flight departs as it arrives.
+    const endedBeforeArrival = new Set<string>()
     const unsubscribe = [
       bus.subscribe('SessionObserved', ({ payload }) => {
         const route = (async () => {
           const firstMessage = payload.firstMessage ?? false
           const resolved = await mines.commands.resolveForSession(payload.cwd, firstMessage)
           if (!('mineId' in resolved)) return
-          crew.commands.arrive({
+          const dwarfId = crew.commands.arrive({
             mineId: resolved.mineId,
             identity: payload.identity,
             rank: 'foreman',
             status: firstMessage ? 'working' : 'idle'
           })
+          if (endedBeforeArrival.delete(payload.identity.providerSessionId)) {
+            crew.commands.sessionClosed(dwarfId, 'closed-elsewhere')
+          }
         })()
         pending.add(route)
         void route.finally(() => pending.delete(route))
@@ -282,6 +288,7 @@ async function host() {
       bus.subscribe('SessionClosedObserved', ({ payload }) => {
         const dwarfId = stores.sessions.byIdentity(payload.identity)?.dwarfId
         if (dwarfId !== undefined) crew.commands.sessionClosed(dwarfId, 'closed-elsewhere')
+        else endedBeforeArrival.add(payload.identity.providerSessionId)
       })
     ]
     return { mines, crew, ledger, observation, unsubscribe }
@@ -444,11 +451,7 @@ describe('offline activity (FM-097)', () => {
     expect(h.crew.queries.crewOf(mineId)).toEqual([])
   })
 
-  it('[INV-98, ADR-006] a session that started and ended while no Host ran never arrives and is not credited live, at any reopen', async () => {
-    // Owner decision 2026-10-10 (a package gap): "A provider transcript whose process is not alive
-    // at first sight, or whose last record predates install_moment, never arrives as a present
-    // dwarf and never creates a mine." 09 §5.4 (ADR-006 item 7) stays for streams that already
-    // have a cursor; this stream has none, and its first read already states its ending.
+  it('[INV-98, ADR-006] a session that started and ended while no Host ran is credited in full, once', async () => {
     const h = await host()
     const { mineId, cwd } = await h.mine('moria')
     await h.start()
@@ -463,21 +466,26 @@ describe('offline activity (FM-097)', () => {
     h.files.spend('s1', 50_000, at + 3)
     h.files.end('s1', at + 4)
     await h.boot()
+    // Catch-up read it from its start (no first-sight baseline, 09 §5.4) and its dwarf arrived; its
+    // messages and usage wait for that dwarf, as in any cycle (16 §4.3) …
+    expect(h.bus.ofType('DwarfArrived')).toHaveLength(1)
+    expect(h.tokens(mineId)).toBe(0)
+    // … and the live loop writes them to it.
     await h.live()
 
-    // No dwarf walks in only to walk out, and nothing is credited to the mine as live.
-    expect(h.bus.ofType('DwarfArrived')).toHaveLength(0)
-    expect(h.bus.ofType('DwarfDeparted')).toHaveLength(0)
+    // It arrived and departed, and every unit it spent is credited, once.
+    expect(h.bus.ofType('DwarfArrived')).toHaveLength(1)
+    expect(h.bus.ofType('DwarfDeparted')).toHaveLength(1)
     expect(h.crew.queries.crewOf(mineId)).toEqual([])
-    expect(h.tokens(mineId)).toBe(0)
-    expect(h.bus.ofType('MaterialCredited')).toHaveLength(0)
+    expect(h.tokens(mineId)).toBe(80_000)
+    expect(h.bus.ofType('MaterialCredited')).toHaveLength(2)
 
     // A second reopen with nothing new adds nothing: no arrival, no credit.
     h.quit()
     await h.boot()
     await h.live()
-    expect(h.tokens(mineId)).toBe(0)
-    expect(h.bus.ofType('MaterialCredited')).toHaveLength(0)
-    expect(h.bus.ofType('DwarfArrived')).toHaveLength(0)
+    expect(h.tokens(mineId)).toBe(80_000)
+    expect(h.bus.ofType('MaterialCredited')).toHaveLength(2)
+    expect(h.bus.ofType('DwarfArrived')).toHaveLength(1)
   })
 })

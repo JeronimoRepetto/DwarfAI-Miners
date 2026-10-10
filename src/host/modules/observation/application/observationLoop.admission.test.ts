@@ -101,7 +101,7 @@ function world(options: { installMoment?: Instant | null } = {}) {
   const adapter = new FakeObservationAdapter('simulated')
   const presence = new ScriptedPresence()
   const moment = options.installMoment === undefined ? INSTALLED : options.installMoment
-  const loop = new ObservationLoop({
+  const deps = {
     adapters: [adapter],
     fs: {} as FileSystem,
     cursors,
@@ -117,7 +117,8 @@ function world(options: { installMoment?: Instant | null } = {}) {
     log: new RecordingDiagnosticsLog(),
     presence: [presence],
     installMoment: () => moment
-  })
+  }
+  const loop = new ObservationLoop(deps)
   /** Scripts `streamId` to answer `events` from no cursor, and nothing more after it. */
   const place = (streamId: string, events: ObservedEvent[]) => {
     adapter.sources.push(source(streamId))
@@ -133,7 +134,19 @@ function world(options: { installMoment?: Instant | null } = {}) {
   }
   const announced = () =>
     bus.published.flatMap((e) => (e.type === 'SessionObserved' ? [e.payload.identity] : []))
+  const closings = () =>
+    bus.published.flatMap((e) => (e.type === 'SessionClosedObserved' ? [e.payload.identity] : []))
+  /** The events that would move a present dwarf or cue the person: none for a departed arrival. */
+  const cues = () =>
+    bus.published.filter(
+      (e) =>
+        e.type === 'TranscriptEntriesObserved' ||
+        e.type === 'UsageObserved' ||
+        e.type === 'SessionActivityObserved' ||
+        e.type === 'ObservedTurnEnded'
+    )
   return {
+    deps,
     cursors,
     dwarfs,
     sessions,
@@ -146,7 +159,9 @@ function world(options: { installMoment?: Instant | null } = {}) {
     loop,
     place,
     poll,
-    announced
+    announced,
+    closings,
+    cues
   }
 }
 
@@ -183,20 +198,53 @@ describe('ObservationLoop admits only live sessions written after the install mo
     w.loop.stop()
   })
 
-  it('[US-OBS-005, FM-059] a session its adapter reports not live at first sight never arrives; its cursor moves and it is not taken for ended', async () => {
+  it('[US-OBS-005, ADR-006] a post-install session its adapter reports not live at first sight arrives already departed: closed with its arrival, its batch written once with no cue, not taken for ended', async () => {
+    // Owner decision B (2026-10-10): it earns its ore and joins its mine's history, never present.
     const w = world()
     w.presence.says.set('session-1', 'not-live')
     w.place('s1', transcript(identity(1), AFTER, 'a'))
     w.loop.start()
     await w.loop.whenIdle()
+
+    // Announced and closed in the same batch, so crew's route departs it as it arrives.
+    expect(w.announced()).toEqual([identity(1)])
+    expect(w.closings()).toEqual([identity(1)])
+    expect(w.cursors.get('s1')).toBeNull()
+
+    // The route made its dwarf (here it never departs it: the loop must not close it twice).
+    w.dwarfs.bind(identity(1), MINE, AFTER)
+    await w.poll()
     await w.poll()
 
-    expect(w.announced()).toEqual([])
+    expect(w.sink.applied).toHaveLength(1)
+    expect(w.sink.applied[0]!.usage.map((u) => u.unitKey)).toEqual(['a-unit'])
+    expect(w.cues()).toEqual([])
+    expect(w.closings()).toEqual([identity(1)])
     expect(w.cursors.get('s1')?.value).toBe(1_000)
-    expect(w.sink.applied).toEqual([])
-    // Not live is not ended: a later record written while its process runs still arrives.
+    expect(w.sessions.byIdentity(identity(1))?.closedAt).not.toBeNull()
+    // Not live is not ended (INV-36 is for endings): nothing is put in the ledger.
     expect(w.ended.has(identity(1))).toBe(false)
     w.loop.stop()
+  })
+
+  it('[ADR-006, INV-98] a departed arrival whose batch was not written before a Host restart is written once by the next Host', async () => {
+    const w = world()
+    w.presence.says.set('session-1', 'not-live')
+    w.place('s1', transcript(identity(1), AFTER, 'a'))
+    w.loop.start()
+    await w.loop.whenIdle()
+    w.loop.stop()
+    // Crew's route made and departed its dwarf; then the Host stopped before the next cycle.
+    const dwarfId = w.dwarfs.bind(identity(1), MINE, AFTER)
+    w.dwarfs.depart(dwarfId, AFTER + 1)
+
+    const next = new ObservationLoop(w.deps)
+    await next.catchUp()
+    await next.catchUp()
+
+    expect(w.sink.applied).toHaveLength(1)
+    expect(w.cues()).toEqual([])
+    expect(w.cursors.get('s1')?.value).toBe(1_000)
   })
 
   it('[US-OBS-005] a session whose presence cannot be told arrives (presence fails open)', async () => {
@@ -208,7 +256,7 @@ describe('ObservationLoop admits only live sessions written after the install mo
     w.loop.stop()
   })
 
-  it('[INV-36, FM-059] a session whose first batch already states its ending never arrives: ledger only, no dwarf, cursor moved', async () => {
+  it('[INV-36, ADR-006] a post-install session whose first batch already states its ending arrives already departed, its batch is written once and its ending joins the ledger with it', async () => {
     const w = world()
     w.presence.says.set('session-1', 'live')
     w.place('s1', [
@@ -217,13 +265,20 @@ describe('ObservationLoop admits only live sessions written after the install mo
     ])
     w.loop.start()
     await w.loop.whenIdle()
+    expect(w.announced()).toEqual([identity(1)])
+    expect(w.closings()).toEqual([identity(1)])
+    // Its ending waits for its batch: in the ledger first, the batch would never be written.
+    expect(w.ended.has(identity(1))).toBe(false)
+
+    w.dwarfs.bind(identity(1), MINE, AFTER)
+    await w.poll()
     await w.poll()
 
-    expect(w.announced()).toEqual([])
-    expect(w.bus.published.filter((e) => e.type === 'SessionClosedObserved')).toEqual([])
+    expect(w.sink.applied).toHaveLength(1)
+    expect(w.cues()).toEqual([])
+    expect(w.closings()).toEqual([identity(1)])
     expect(w.ended.has(identity(1))).toBe(true)
     expect(w.cursors.get('s1')?.value).toBe(1_000)
-    expect(w.sink.applied).toEqual([])
     w.loop.stop()
   })
 
@@ -246,7 +301,7 @@ describe('ObservationLoop admits only live sessions written after the install mo
     w.loop.stop()
   })
 
-  it('[US-OBS-005, ADR-029] regression: a fresh database over many historical transcripts and no live process makes no dwarf and no mine; a live one arrives', async () => {
+  it('[US-OBS-005, ADR-029] regression: over a fresh database, pre-install history makes nothing, post-install sessions not running arrive departed, and the running one arrives present', async () => {
     const w = world()
     // 40 sessions of history, before the install moment, none running; a subagent among them.
     for (let n = 1; n <= 40; n++) {
@@ -266,14 +321,29 @@ describe('ObservationLoop admits only live sessions written after the install mo
     await w.loop.catchUp()
     w.loop.start()
     await w.loop.whenIdle()
+    const late = [41, 42, 43, 44, 45].map((n) => identity(n))
+    expect(w.announced()).toEqual([...late, identity(99)])
+    expect(w.closings()).toEqual(late)
+    for (const who of late) w.dwarfs.bind(who, MINE, AFTER)
+    const liveDwarf = w.dwarfs.bind(identity(99), MINE, AFTER)
     for (let n = 0; n < 3; n++) await w.poll()
 
-    expect(w.announced()).toEqual([identity(99)])
-    for (let n = 1; n <= 45; n++) {
-      const streamId = n <= 40 ? `old-${n}` : `late-${n}`
-      expect(w.cursors.get(streamId)?.value, streamId).toBe(1_000)
-    }
-    expect(w.sink.applied).toEqual([])
+    for (let n = 1; n <= 40; n++) expect(w.cursors.get(`old-${n}`)?.value, `old-${n}`).toBe(1_000)
+    // Every post-install unit is credited once; nothing of the history is.
+    const units = w.sink.applied.flatMap((b) => b.usage.map((u) => u.unitKey)).sort()
+    expect(units).toEqual(
+      ['late-41', 'late-42', 'late-43', 'late-44', 'late-45', 'live-99'].map((t) => `${t}-unit`)
+    )
+    // Only the running session moved like a present dwarf.
+    expect(w.closings()).toEqual(late)
+    const cuedFor = w
+      .cues()
+      .map((e) =>
+        e.type === 'UsageObserved'
+          ? e.payload.observation.dwarfId
+          : e.payload.identity.providerSessionId
+      )
+    expect(new Set(cuedFor)).toEqual(new Set([liveDwarf, 'session-99']))
     w.loop.stop()
   })
 

@@ -347,6 +347,24 @@ async function bootHost(options: HostOptions = {}) {
     })
     await settle()
   }
+  /** A session observed already ended: its arrival and its ending in one batch (owner decision B). */
+  const observedEnded = async (
+    identity: ProviderIdentity,
+    cwd: FolderPath,
+    extra: { firstMessage?: boolean } = {}
+  ) => {
+    bus.publish({
+      type: 'SessionObserved',
+      ...envelope(),
+      payload: { identity, cwd, streamId: `stream-${identity.providerSessionId}`, ...extra }
+    })
+    bus.publish({
+      type: 'SessionClosedObserved',
+      ...envelope(),
+      payload: { identity, at: clock.now() }
+    })
+    await settle()
+  }
   /** The dwarf bound to `identity` in the Host database, if any. */
   const dwarfOf = (identity: ProviderIdentity): DwarfId | null =>
     (db.all(`SELECT id FROM dwarfs WHERE provider_id = ? AND provider_session_id = ?`, [
@@ -380,6 +398,7 @@ async function bootHost(options: HostOptions = {}) {
     elapse,
     declare,
     observed,
+    observedEnded,
     closed,
     dwarfOf,
     evts
@@ -491,6 +510,35 @@ describe('the crew module wired into the Host (ISSUE-094)', () => {
     const departed = h.evts('dwarf.departed') as Array<{ cause: string }>
     expect(departed).toHaveLength(3)
     expect(departed.every((d) => d.cause === 'closed-elsewhere')).toBe(true)
+  })
+
+  it('[US-OBS-005, ADR-006] a session observed already ended arrives departed: in its mine history, never present, with no dwarf.arrived frame', async () => {
+    const h = await bootHost()
+    const mineId = await h.declare(h.folder('old-gallery'))
+
+    await h.observedEnded(session('s-gone'), h.folder('old-gallery'), { firstMessage: true })
+
+    const dwarfId = h.dwarfOf(session('s-gone'))
+    expect(dwarfId).not.toBeNull()
+    expect(h.crew.crew.queries.crewOf(mineId)).toEqual([])
+    expect(
+      h.crew.crew.queries.crewOf(mineId, { includeDeparted: true }).map((d) => [d.id, d.departed])
+    ).toEqual([[dwarfId, true]])
+    expect(h.crew.crew.queries.get(dwarfId as DwarfId)?.departureCause).toBe('closed-elsewhere')
+    // Never shown as present: no walk-in, no "started in" toast.
+    expect(h.evts('dwarf.arrived')).toEqual([])
+  })
+
+  it('[US-OBS-005, ADR-006] a session observed already ended in a folder that is no mine yet makes its mine by the first-message rule and departs', async () => {
+    const h = await bootHost()
+
+    await h.observedEnded(session('s-new'), h.folder('fresh-adit'), { firstMessage: true })
+
+    const mines = h.mines.mines.queries.list({ sortBy: 'name', direction: 'asc' })
+    expect(mines).toHaveLength(1)
+    expect(h.crew.crew.queries.crewOf(mines[0]!.mineId)).toEqual([])
+    expect(h.evts('dwarf.arrived')).toEqual([])
+    expect(h.crew.crew.queries.get(h.dwarfOf(session('s-new')) as DwarfId)?.departed).toBe(true)
   })
 
   it('[ADR-014] a mine removal ends its observed dwarfs through the wired terminator bridge', async () => {
