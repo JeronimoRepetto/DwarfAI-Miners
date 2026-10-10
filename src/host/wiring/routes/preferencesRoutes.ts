@@ -16,8 +16,11 @@
 // `ready`. Such a UI learns the new epoch from the snapshot `meta` section once it is served (14
 // §4.3 rule 4; 07 S13.09), like a UI that was not attached; `reset.progress` still reaches it.
 //
-// Later routes of preferences events join this file with their issues (later: ISSUE-140,
-// ISSUE-323, ISSUE-324).
+// The hook ingress accepts or rejects a request by the active channel token (05 §4): it reads the
+// hashes through `WiredPreferences.channelTokens` (bridges/channelTokens.ts, ISSUE-323), the active
+// row of its channel only, so a rotated-out token is refused. The ingress is bound to that lookup
+// where it is wired (later: ISSUE-140, review R7V-02). Later routes of preferences events join this
+// file with their issues (later: ISSUE-140, ISSUE-324).
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type {
