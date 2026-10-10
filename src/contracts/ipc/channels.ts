@@ -31,6 +31,8 @@ import {
   resetMetricsParamsSchema,
   sendMessageParamsSchema,
   sendMessageResultSchema,
+  setClaudeHooksParamsSchema,
+  setClaudeHooksResultSchema,
   setOpenCodePermissionsParamsSchema,
   setOpenCodePermissionsResultSchema,
   suppliersLaunchableParamsSchema
@@ -785,6 +787,17 @@ export const CHANNELS = {
     status: 'new',
     request: none,
     response: revealDwarfChatPushSchema
+  },
+  // A-N31 `setClaudeHooksEnabled` (AMENDMENT-7, OQ-68; ADR-016 items 5–7): Settings → Integrations "Claude Code ·
+  // instant updates", the equivalent of A-53 for the Claude hook entry; relays B-M39 `preferences.setClaudeHooks`
+  // unchanged (14 §1.2), the Host recording origin `settings`. A boolean and a requestId, so not `sensitive`
+  'claude:hooks:set': {
+    name: 'claude:hooks:set',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: setClaudeHooksParamsSchema,
+    response: ipcResultSchema(setClaudeHooksResultSchema)
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -18,9 +18,10 @@
 //   `WelcomeStepChanged` is sent as `preferences.changed` with the same view (07 S41.05).
 //
 // Lead decision (2026-09-30): the view's `secrets` and `secretBackend` have no source in cut 1
-// (SecretStore: ISSUE-215), so they are served as none configured and `'unavailable'`;
-// `integrations` likewise until its store joins (later: ISSUE-218…ISSUE-221). No renderer reads
-// them before 3a / cut 2.
+// (SecretStore: ISSUE-215), so they are served as none configured and `'unavailable'`. No renderer
+// reads them before 3a / cut 2. `integrations` is the stored `integration_settings` (14 §4.1;
+// `queries.integrationSettings()`, ISSUE-221), whose changes reach the UIs as `integration.changed`
+// (setClaudeHooks.ts), not as `preferences.changed`.
 import {
   HOST_METHOD_SCHEMAS,
   type HostFrameName,
@@ -30,6 +31,8 @@ import {
 } from '@dwarfai/contracts'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type {
+  IntegrationSetting,
+  IntegrationSettingsQueries,
   Preferences,
   PreferencesEvent,
   PreferencesQueries,
@@ -47,16 +50,17 @@ export const PREFERENCES_FRAMES: readonly HostFrameName[] = Object.freeze(['pref
 /** The module as these members read it: its queries with the first-run step's `welcome()`. */
 export type ServedPreferences = Preferences & { queries: PreferencesQueries & WelcomeQueries }
 
-/** 14 §3.6 `PreferencesView` over the stored `preferences` and the step (see the notes above). */
+/** 14 §3.6 `PreferencesView` over the stored `preferences`, integrations and the step (see above). */
 export function preferencesView(
   preferences: HostPreferences,
-  welcome: WelcomeStepState
+  welcome: WelcomeStepState,
+  integrations: IntegrationSetting[]
 ): PreferencesView {
   return {
     preferences,
     secrets: [],
     secretBackend: 'unavailable',
-    integrations: [],
+    integrations,
     welcome
   }
 }
@@ -73,7 +77,7 @@ export function registerPreferences(dispatcher: Dispatcher, deps: PreferencesMet
     HOST_METHOD_SCHEMAS['preferences.get'].params,
     METHOD_ROLES['preferences.get'] ?? [],
     (): HostMethods['preferences.get']['result'] =>
-      preferencesView(queries.get(), queries.welcome())
+      preferencesView(queries.get(), queries.welcome(), queries.integrationSettings())
   )
   dispatcher.registerMutating(
     'preferences.set',
@@ -85,7 +89,12 @@ export function registerPreferences(dispatcher: Dispatcher, deps: PreferencesMet
 
 /** The snapshot's `preferences` section (14 §4.1): the same view as `preferences.get`. */
 export function preferencesSection(preferences: ServedPreferences): SectionProvider<'preferences'> {
-  return () => preferencesView(preferences.queries.get(), preferences.queries.welcome())
+  return () =>
+    preferencesView(
+      preferences.queries.get(),
+      preferences.queries.welcome(),
+      preferences.queries.integrationSettings()
+    )
 }
 
 /**
@@ -96,16 +105,19 @@ export function preferencesSection(preferences: ServedPreferences): SectionProvi
 export function publishPreferencesChanged(
   bus: DomainEventBus<PreferencesEvent>,
   frames: FramePublisher,
-  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries
+  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries & IntegrationSettingsQueries
 ): () => void {
   const offPreferences = bus.subscribe('HostPreferencesChanged', (event) =>
     frames.publish(
       'preferences.changed',
-      preferencesView(event.payload.preferences, queries.welcome())
+      preferencesView(event.payload.preferences, queries.welcome(), queries.integrationSettings())
     )
   )
   const offWelcome = bus.subscribe('WelcomeStepChanged', (event) =>
-    frames.publish('preferences.changed', preferencesView(queries.get(), event.payload.state))
+    frames.publish(
+      'preferences.changed',
+      preferencesView(queries.get(), event.payload.state, queries.integrationSettings())
+    )
   )
   return () => {
     offPreferences()

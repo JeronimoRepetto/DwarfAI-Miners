@@ -34,6 +34,32 @@ export class InMemoryChannelTokenStore implements ChannelTokenStore {
     return row === undefined ? null : { hash: row.hash }
   }
 
+  /**
+   * Owner amendment M: the same refusals as the SQLite adapter, held equal by the contract; a plain `Error` here,
+   * as the double's other refusals, since a port folder imports types only (R2).
+   */
+  withdraw(channel: TokenChannel, hash: string, prior: string | null, _at: Instant): void {
+    const added = this.rows.find(
+      (row) => row.channel === channel && row.hash === hash && row.revokedAt === null
+    )
+    if (added === undefined) {
+      throw new Error('withdraw names a hash that is not the channel’s active token')
+    }
+    const revoked =
+      prior === null
+        ? undefined
+        : this.rows.find(
+            (row) =>
+              row.channel === channel && row.hash === prior && row.revokedAt === added.createdAt
+          )
+    if (prior !== null && revoked === undefined) {
+      throw new Error('withdraw names a prior token that issue did not revoke')
+    }
+    this.rows = this.rows
+      .filter((row) => row !== added)
+      .map((row) => (row === revoked ? { ...row, revokedAt: null } : row))
+  }
+
   revoke(channel: TokenChannel, at: Instant): void {
     this.rows = this.rows.map((row) =>
       row.channel === channel && row.revokedAt === null ? { ...row, revokedAt: at } : row

@@ -50,7 +50,10 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // cut-1 entries (A-N01, A-N02, A-N12, A-N16…A-N21) by the cut-1 switch (ISSUE-123).
   // A-N33, born with the first release that bumps `endpointGeneration` (AMENDMENT-11; 21 "Different-generation
   // restart"); no handler in v1 (review R8B-06)
-  'host:connection:confirm-restart': 'generation-2'
+  'host:connection:confirm-restart': 'generation-2',
+  // A-N31, born `host` in cut 2 (21 §2 cut 2); routed by the cut-2 switch (ISSUE-141), never by its handler issue
+  // (ISSUE-221)
+  'claude:hooks:set': 'cut-2'
 }
 
 /**

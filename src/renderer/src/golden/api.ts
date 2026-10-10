@@ -212,6 +212,8 @@ export function goldenApi(sample: GoldenSample): Api {
     getHostSnapshot: refuse('getHostSnapshot'),
     onHostEvent: unsubscribe,
     // A-N16: a golden draws a fixed sample and shows no OS notification, so no reveal is ever pushed.
-    onRevealDwarfChat: unsubscribe
+    onRevealDwarfChat: unsubscribe,
+    // A-N31: a golden draws a fixed sample and never writes another tool's configuration.
+    setClaudeHooksEnabled: refuse('setClaudeHooksEnabled')
   }
 }

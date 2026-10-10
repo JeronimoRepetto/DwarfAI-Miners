@@ -30,6 +30,8 @@
   did.
 - **Updated for ISSUE-114:** A-N16 `onRevealDwarfChat` (`mode:revealDwarfChat`, NEW) is declared in the registry and
   has a generated preload member, so its row moved to the found table.
+- **Updated for ISSUE-221:** A-N31 `setClaudeHooksEnabled` (`claude:hooks:set`, NEW, AMENDMENT-7) is declared in the
+  registry and has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-123:** A-44 is renamed by the cut-1 switch (14 §2.1 CHANGE): the generated preload member
   `reportVisibleMines` sends `presence:visibleMines`, so it has its own row under the same id, and the `panel:openMine`
   row lost its preload location. Today's `setOpenMine` registration and constant stay until cut 5.
@@ -61,11 +63,11 @@ pushes were evaluated against `14` §2 and none of them was changed.
 
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
-| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 12  | 11     | 0        | 72    |
+| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 13  | 11     | 0        | 73    |
 | Pushes                                            | 2    | 0      | 6   | 4      | 0        | 12    |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 17     | 18  | 15     | 0        | 85    |
-| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 16  | —      | —        | 16    |
+| **Found total**                                   | 35   | 17     | 19  | 15     | 0        | 86    |
+| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 15  | —      | —        | 15    |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
 constants (63 + 2) and 66 preload members (64 + 2). The two extra channels are `dwarf:setName` and
@@ -105,6 +107,7 @@ kind `14` gives it.
 | `app:features`                    | `getFeatureFlags`             | invoke | src/main/index.ts:1322<br>src/preload/index.ts:769<br>src/shared/contracts.ts:5259                                                | A-29    | KEEP   | —                 |                                                                                                                                           |
 | `audio:preferences:get`           | `getAudioPreferences`         | invoke | src/main/index.ts:1371<br>src/preload/index.ts:577<br>src/shared/contracts.ts:5079                                                | A-06    | KEEP   | —                 |                                                                                                                                           |
 | `audio:preferences:set`           | `setAudioPreferences`         | invoke | src/main/index.ts:1372<br>src/preload/index.ts:583<br>src/shared/contracts.ts:5080                                                | A-07    | KEEP   | —                 |                                                                                                                                           |
+| `claude:hooks:set`                | `setClaudeHooksEnabled`       | invoke | src/preload/index.ts:581                                                                                                          | A-N31   | NEW    | —                 | Declared by ISSUE-221 (AMENDMENT-7); its preload member is generated (ISSUE-045); unrouted until cut 2                                    |
 | `diag:renderer:report`            | `reportRendererDiagnostic`    | send   | src/preload/index.ts:437                                                                                                          | A-N30   | NEW    | —                 | Declared by ISSUE-055; its preload member is generated (ISSUE-045); main registers it by the router's registry loop, unrouted until cut 0 |
 | `dwarf:activate`                  | `activateDwarf`               | invoke | src/main/index.ts:1680<br>src/preload/index.ts:615<br>src/shared/contracts.ts:5091                                                | A-13    | CHANGE | —                 |                                                                                                                                           |
 | `dwarf:attachments:choose`        | `chooseDwarfAttachments`      | invoke | src/preload/index.ts:714<br>src/shared/contracts.ts:5228                                                                          | A-24    | KEEP   | —                 |                                                                                                                                           |
@@ -181,23 +184,22 @@ kind `14` gives it.
 
 ### 14 §2.2 rows not in the tree
 
-| Wire name               | Member                  | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
-| ----------------------- | ----------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
-| `dwarf:message:retry`   | `retryDwarfMessage`     | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
-| `ask:step:set`          | `setAskStep`            | invoke | not found | A-N07 | NEW    | —                 |                                                                                               |
-| `dwarf:rename`          | `renameDwarf`           | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
-| `dwarf:name:reset`      | `resetDwarfName`        | invoke | not found | A-N09 | NEW    | —                 | Successor of the found legacy `dwarf:resetName` (14 §8 I-21), which uses the same member name |
-| `host:recovery:retry`   | `retryRecovery`         | invoke | not found | A-N10 | NEW    | —                 |                                                                                               |
-| `host:recovery:dismiss` | `dismissRecovery`       | invoke | not found | A-N11 | NEW    | —                 |                                                                                               |
-| `mode:move`             | `moveToMode`            | invoke | not found | A-N13 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `mode:transition`       | `onModeTransition`      | push   | not found | A-N14 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `mode:transition:done`  | `modeTransitionDone`    | send   | not found | A-N15 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `veta:clickThrough`     | `setVetaClickThrough`   | send   | not found | A-N22 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `veta:layout`           | `layoutVeta`            | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `window:limits`         | `getWindowingLimits`    | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `veta:dock:changed`     | `onVetaDockChanged`     | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `dwarf:stop`            | `stopDwarf`             | invoke | not found | A-N29 | NEW    | —                 |                                                                                               |
-| `claude:hooks:set`      | `setClaudeHooksEnabled` | invoke | not found | A-N31 | NEW    | —                 |                                                                                               |
-| `welcome:answer`        | `answerWelcome`         | invoke | not found | A-N32 | NEW    | —                 |                                                                                               |
+| Wire name               | Member                | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
+| ----------------------- | --------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
+| `dwarf:message:retry`   | `retryDwarfMessage`   | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
+| `ask:step:set`          | `setAskStep`          | invoke | not found | A-N07 | NEW    | —                 |                                                                                               |
+| `dwarf:rename`          | `renameDwarf`         | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
+| `dwarf:name:reset`      | `resetDwarfName`      | invoke | not found | A-N09 | NEW    | —                 | Successor of the found legacy `dwarf:resetName` (14 §8 I-21), which uses the same member name |
+| `host:recovery:retry`   | `retryRecovery`       | invoke | not found | A-N10 | NEW    | —                 |                                                                                               |
+| `host:recovery:dismiss` | `dismissRecovery`     | invoke | not found | A-N11 | NEW    | —                 |                                                                                               |
+| `mode:move`             | `moveToMode`          | invoke | not found | A-N13 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `mode:transition`       | `onModeTransition`    | push   | not found | A-N14 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `mode:transition:done`  | `modeTransitionDone`  | send   | not found | A-N15 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:clickThrough`     | `setVetaClickThrough` | send   | not found | A-N22 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:layout`           | `layoutVeta`          | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `window:limits`         | `getWindowingLimits`  | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:dock:changed`     | `onVetaDockChanged`   | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `dwarf:stop`            | `stopDwarf`           | invoke | not found | A-N29 | NEW    | —                 |                                                                                               |
+| `welcome:answer`        | `answerWelcome`       | invoke | not found | A-N32 | NEW    | —                 |                                                                                               |
 
 <!-- reinventory-table:end -->

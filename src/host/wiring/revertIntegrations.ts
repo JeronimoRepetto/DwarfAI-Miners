@@ -337,6 +337,7 @@ export function createRevertStore(deps: RevertStoreDeps): RevertStore {
     transactions: deps.transactions,
     ledger,
     settings,
+    tokens,
     clock: deps.clock,
     ids: deps.ids,
     scheduler: deps.scheduler,

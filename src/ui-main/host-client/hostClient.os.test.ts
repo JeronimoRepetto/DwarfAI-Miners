@@ -67,7 +67,10 @@ const SERVED_SINCE_CUT_0 = [
   'frame:activity.changed',
   'frame:conversation.appended',
   'frame:turn.ended',
-  'section:tails'
+  'section:tails',
+  // Claude Code instant updates: B-M39 and B-F25, served from cut 2 (ISSUE-221).
+  'preferences.setClaudeHooks',
+  'frame:integration.changed'
 ]
 const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'tails']
 

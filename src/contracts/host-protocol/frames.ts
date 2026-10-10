@@ -11,10 +11,13 @@ import {
   askIdSchema,
   askRecordSchema,
   askStateSchema,
+  consentOriginSchema,
   dwarfIdSchema,
   dwarfWireSchema,
   hostToastSchema,
   instantSchema,
+  integrationIdSchema,
+  integrationStateSchema,
   materialTotalsSchema,
   messageViewSchema,
   mineIdSchema,
@@ -26,10 +29,13 @@ import {
   type AskId,
   type AskRecord,
   type AskState,
+  type ConsentOrigin,
   type DwarfId,
   type DwarfWire,
   type HostToast,
   type Instant,
+  type IntegrationId,
+  type IntegrationState,
   type Material,
   type MaterialAmount,
   type MessageView,
@@ -45,7 +51,7 @@ import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F07, B-F08, B-F09, B-F10, B-F11, B-F13, B-F14, B-F15, B-F16, B-F17, B-F20, B-F22, B-F23, B-F24, B-F26, B-F27 and B-F28 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F07, B-F08, B-F09, B-F10, B-F11, B-F13, B-F14, B-F15, B-F16, B-F17, B-F20, B-F22, B-F23, B-F24, B-F25, B-F26, B-F27 and B-F28 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
@@ -66,6 +72,7 @@ export interface HostFrames {
   'attention.notify':     OsNotification
   'attention.withdraw':   { keys: string[] }
   'preferences.changed':  PreferencesView
+  'integration.changed':  { id: IntegrationId; state: IntegrationState; consentOrigin?: ConsentOrigin; failure?: 'config-write-failed' | 'config-revert-failed' }
   'ui.resetPreferences':  { epoch: number }
   'reset.progress':       { resetId: ResetId; epoch: number; step: ResetStep }
   'toast':                HostToast
@@ -128,6 +135,14 @@ export const HOST_FRAME_SCHEMAS = {
   'attention.notify': osNotificationSchema,
   'attention.withdraw': z.object({ keys: z.array(z.string()) }).strict(),
   'preferences.changed': preferencesViewSchema,
+  'integration.changed': z
+    .object({
+      id: integrationIdSchema,
+      state: integrationStateSchema,
+      consentOrigin: consentOriginSchema.optional(),
+      failure: z.enum(['config-write-failed', 'config-revert-failed']).optional()
+    })
+    .strict(),
   'ui.resetPreferences': z.object({ epoch: resetEpochSchema }).strict(),
   'reset.progress': z
     .object({ resetId: resetIdSchema, epoch: resetEpochSchema, step: resetStepSchema })

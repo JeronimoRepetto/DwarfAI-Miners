@@ -23,7 +23,8 @@
 // An old-app entry (16 §7.1, AMENDMENT-7) is never adopted: `verify` and the boot settlement see
 // only DwarfAI's own entry, `install` replaces the old one in the same write after the backup, and
 // `revert` removes it after a backup. Writing the channel token's hash in Tx A and revoking it on
-// revert belong to `ChannelTokenStore` (ISSUE-219).
+// revert belong to `ChannelTokenStore` (ISSUE-219); since owner amendment M the hash is issued in Tx A here and
+// withdrawn in Tx B (failure), and the caller revokes it after a revert.
 import { HostInvariantError } from '../../../../kernel/domain/errors'
 import type { Instant, IntegrationId, Result } from '../../../../kernel/domain/values'
 import type { Clock } from '../../../../kernel/ports/clock'
@@ -38,6 +39,7 @@ import type {
   ConsentOrigin,
   ExternalConfigWriter
 } from '../../ports/externalConfigWriter'
+import type { ChannelTokenStore } from '../../ports/channelTokenStore'
 import type { IntegrationSettingStore } from '../../ports/integrationSettingStore'
 import type { ConfigTargetAdapter } from './configTargetAdapter'
 import type { ConfigWriteLedger, ConfigWriteRow } from './configWriteLedger'
@@ -90,6 +92,8 @@ export interface ConfigWriterEngineDeps {
   transactions: TransactionRunner
   ledger: ConfigWriteLedger
   settings: IntegrationSettingStore
+  /** `channel_tokens` (owner amendment M): a write's token hash is issued in its Tx A and withdrawn in Tx B (failure). */
+  tokens: ChannelTokenStore
   clock: Clock
   ids: IdGenerator
   /** Schedules the waits between write retries (16 §2.6: every wait is a scheduler task). */
@@ -107,13 +111,14 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
   async install(
     target: ConfigTarget,
     token: ChannelToken,
-    origin: ConsentOrigin
+    origin: ConsentOrigin,
+    tokenSha256: string
   ): Promise<InstallResult> {
     const adapter = this.adapterOf(target)
     if (!ORIGINS_OF[target].includes(origin)) {
       throw new HostInvariantError(`consent origin ${origin} cannot enable ${target} (07 S14.01)`)
     }
-    return this.queued(target, () => this.enable(adapter, token, origin))
+    return this.queued(target, () => this.enable(adapter, token, origin, tokenSha256))
   }
 
   async verify(target: ConfigTarget): Promise<'verified' | 'absent' | 'mismatch'> {
@@ -166,12 +171,16 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
   private async enable(
     adapter: Adapter,
     token: ChannelToken,
-    origin: ConsentOrigin
+    origin: ConsentOrigin,
+    tokenSha256: string
   ): Promise<InstallResult> {
-    const { ledger, transactions, clock, ids } = this.deps
+    const { ledger, tokens, transactions, clock, ids } = this.deps
     const previous = ledger.active(adapter.target, adapter.path)
-    // 16 §7.5: enabling an `on-verified` target is a no-op returning the current state.
+    // 16 §7.5: enabling an `on-verified` target is a no-op returning the current state. Only `on-verified`: an
+    // `on-unverified` integration (07 S14.08) is written again when turned on (S14.09), even when its entry still
+    // verifies, so the file holds the token the caller has just issued (ISSUE-221, review F2).
     if (
+      this.deps.settings.get(INTEGRATION_OF[adapter.target]).state === 'on-verified' &&
       previous !== null &&
       previous.verifiedAt !== null &&
       (await this.check(adapter)) === 'verified'
@@ -190,8 +199,15 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
       verifiedAt: null,
       revertedAt: null
     }
-    // Tx A: the attempt is on record before the file is touched (16 §7.3).
-    transactions.inTransaction(() => ledger.record(row))
+    // Tx A: the attempt is on record before the file is touched (16 §7.3), and so is the new token's hash, which
+    // revokes the channel's previous one (owner amendment M). Both commit together: no crash can leave one without
+    // the other, and the previous hash is read here, in the same transaction, for Tx B (failure) to restore.
+    const prior = transactions.inTransaction(() => {
+      const active = tokens.active(adapter.target)
+      tokens.issue(adapter.target, tokenSha256, clock.now())
+      ledger.record(row)
+      return active === null ? null : active.hash
+    })
 
     const outcome = await this.writeOwned(adapter, token, row.id)
     if (outcome === 'leave-for-boot') {
@@ -207,10 +223,13 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
       transactions.inTransaction(() => this.markOn(row, written.value.backupPath))
       this.logWrite(adapter.target, origin, 'ok')
     } else {
-      // Tx B (failure): nothing of this enable stays on record; the integration is unchanged.
-      transactions.inTransaction(() =>
-        previous === null ? ledger.remove(row.id) : ledger.record(previous)
-      )
+      // Tx B (failure): nothing of this enable stays on record; the integration is unchanged, and the previous
+      // token is the active one again (owner amendment M).
+      transactions.inTransaction(() => {
+        tokens.withdraw(adapter.target, tokenSha256, prior, clock.now())
+        if (previous === null) ledger.remove(row.id)
+        else ledger.record(previous)
+      })
       this.logWrite(adapter.target, origin, 'failed', written.error)
     }
     return written

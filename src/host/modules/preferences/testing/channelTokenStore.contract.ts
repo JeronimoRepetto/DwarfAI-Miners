@@ -3,7 +3,10 @@
 // SHA-256 of a token is ever stored; issuing a new token revokes the channel's previous one and
 // leaves the other channel's token untouched (one active row per channel, 09 §4.8); `revoke` leaves
 // the channel without a token; the store joins the caller's transaction, so a rollback undoes its
-// write. Never imported by production code (R14).
+// write. Owner amendment M (2026-10-09): `withdraw` takes back an issue whose write failed (16 §7.3
+// Tx B failure) — the new row is deleted and the row that issue revoked, named by the caller as
+// `prior`, is active again; a `prior` that is not that row is refused, so a revoked token never
+// comes back by accident (ADR-016). Never imported by production code (R14).
 //
 // The tokens are drawn at run time, so no token value is ever written into the repository.
 import { afterEach, describe, expect, it } from 'vitest'
@@ -147,6 +150,72 @@ export function runChannelTokenStoreContract(
       expect(s.rows()).toStrictEqual([
         { channel: 'claude-hooks', hash: kept, createdAt: T0, revokedAt: null }
       ])
+    })
+
+    // Owner amendment M (2026-10-09; `prior` added on review): `withdraw`.
+    it('[ADR-016] withdraw deletes the new row and makes the prior token, the one that issue revoked, active again', async () => {
+      const s = await setUp()
+      const prior = hashOf(drawToken())
+      const plugin = hashOf(drawToken())
+      const next = hashOf(drawToken())
+      issue(s, 'claude-hooks', prior, T0)
+      issue(s, 'opencode-plugin', plugin, T0)
+      issue(s, 'claude-hooks', next, T1)
+
+      s.inTransaction(() => s.store.withdraw('claude-hooks', next, prior, T2))
+
+      expect(s.store.active('claude-hooks')).toStrictEqual({ hash: prior })
+      expect(s.store.active('opencode-plugin')).toStrictEqual({ hash: plugin })
+      expect(s.rows()).toStrictEqual([
+        { channel: 'claude-hooks', hash: prior, createdAt: T0, revokedAt: null },
+        { channel: 'opencode-plugin', hash: plugin, createdAt: T0, revokedAt: null }
+      ])
+    })
+
+    it('[ADR-016] withdraw with no prior leaves the channel without a token and reactivates nothing, even a row revoked at the same instant', async () => {
+      const s = await setUp()
+      const old = hashOf(drawToken())
+      const next = hashOf(drawToken())
+      // History B: a turn-off revokes `old`, then an enable issues `next` at the very same instant.
+      issue(s, 'claude-hooks', old, T0)
+      s.inTransaction(() => s.store.revoke('claude-hooks', T1))
+      issue(s, 'claude-hooks', next, T1)
+
+      s.inTransaction(() => s.store.withdraw('claude-hooks', next, null, T2))
+
+      expect(s.store.active('claude-hooks')).toBeNull()
+      expect(s.rows()).toStrictEqual([
+        { channel: 'claude-hooks', hash: old, createdAt: T0, revokedAt: T1 }
+      ])
+    })
+
+    it('[ADR-016] withdraw refuses a prior that is not the row this issue revoked, and an unknown or inactive hash; nothing changes', async () => {
+      const s = await setUp()
+      const older = hashOf(drawToken())
+      const prior = hashOf(drawToken())
+      const next = hashOf(drawToken())
+      issue(s, 'claude-hooks', older, T0)
+      issue(s, 'claude-hooks', prior, T1)
+      issue(s, 'claude-hooks', next, T2)
+      const before = s.rows()
+
+      for (const [hash, named] of [
+        [next, older], // revoked, but by an earlier issue
+        [next, hashOf(drawToken())], // no such row
+        [next, next], // the new row itself
+        [prior, older], // the withdrawn hash is not the active row
+        [hashOf(drawToken()), prior] // no such new row
+      ] as const) {
+        expect(() =>
+          s.inTransaction(() => s.store.withdraw('claude-hooks', hash, named, T2))
+        ).toThrow(/withdraw names/)
+      }
+      expect(() =>
+        s.inTransaction(() => s.store.withdraw('opencode-plugin', next, prior, T2))
+      ).toThrow(/withdraw names/)
+
+      expect(s.rows()).toStrictEqual(before)
+      expect(s.store.active('claude-hooks')).toStrictEqual({ hash: next })
     })
   })
 }

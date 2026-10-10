@@ -81,7 +81,11 @@ describe('rollbackOf', () => {
           shape: 'target'
         }))
       ],
-      unrouted: { 'host:connection:confirm-restart': 'generation-2' },
+      // AMENDED for ISSUE-221 (was: A-N33 only): A-N31, born `host` in cut 2, is unrouted in cut 1 too.
+      unrouted: {
+        'host:connection:confirm-restart': 'generation-2',
+        'claude:hooks:set': 'cut-2'
+      },
       // An earlier cut's retired row stands for one whose legacy code that cut's retirement already deleted.
       retired: { 'dwarf:feed': 'cut-1', 'mines:get': 'cut-0' }
     }

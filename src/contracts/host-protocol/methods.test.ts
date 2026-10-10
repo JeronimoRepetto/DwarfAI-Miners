@@ -24,7 +24,10 @@ import type {
   HostPreferenceKey,
   MetricsResetResult,
   PreferenceSetParams,
-  ResetMetricsParams
+  ResetMetricsParams,
+  SetClaudeHooksParams,
+  SetClaudeHooksResult,
+  SetOpenCodePermissionsResult
 } from './params/preferences'
 import type {
   AdoptMainProjectResult,
@@ -331,6 +334,51 @@ describe('ui.resetPreferences.ack and preferences.resetMetrics params and result
     expect(reset.result.safeParse({ outcome: 'reset' }).success).toBe(false)
     expect(reset.result.safeParse({ outcome: 'failed', reason: 'secrets' }).success).toBe(false)
     expect(reset.result.safeParse({ outcome: 'done', epoch: 2 }).success).toBe(false)
+  })
+})
+
+// The B-M39 entry of 14 §3.4 and its strict() schemas (14 §1.4; AMENDMENT-7, OQ-68): Settings only, so
+// the params carry no origin (the Host records `settings`); its two failures are outcomes, never errors.
+
+describe('preferences.setClaudeHooks params and result (14 §3.4, B-M39)', () => {
+  const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8059'
+
+  it('[ADR-016] the preferences.setClaudeHooks schemas infer exactly the 14 §3.4 entry, carry no origin, and answer config-write-failed and config-revert-failed as outcomes', () => {
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('preferences.setClaudeHooks')
+    expectTypeOf<
+      HostMethods['preferences.setClaudeHooks']['params']
+    >().toEqualTypeOf<SetClaudeHooksParams>()
+    expectTypeOf<
+      HostMethods['preferences.setClaudeHooks']['result']
+    >().toEqualTypeOf<SetClaudeHooksResult>()
+    expectTypeOf<SetClaudeHooksParams>().toEqualTypeOf<{ on: boolean; requestId: string }>()
+    expectTypeOf<SetClaudeHooksResult>().toEqualTypeOf<SetOpenCodePermissionsResult>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['preferences.setClaudeHooks']['params']>
+    >().toEqualTypeOf<SetClaudeHooksParams>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['preferences.setClaudeHooks']['result']>
+    >().toEqualTypeOf<SetClaudeHooksResult>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['preferences.setClaudeHooks']
+    expect(params.safeParse({ on: true, requestId: REQUEST_ID }).success).toBe(true)
+    expect(params.safeParse({ on: false, requestId: REQUEST_ID }).success).toBe(true)
+    expect(params.safeParse({ on: true }).success).toBe(false)
+    expect(params.safeParse({ on: 'yes', requestId: REQUEST_ID }).success).toBe(false)
+    for (const origin of ['settings', 'first-run', 'add-panel']) {
+      expect(params.safeParse({ on: true, origin, requestId: REQUEST_ID }).success, origin).toBe(
+        false
+      )
+    }
+    expect(result.safeParse({ ok: true, value: { state: 'on-verified' } }).success).toBe(true)
+    expect(result.safeParse({ ok: true, value: { state: 'off' } }).success).toBe(true)
+    expect(result.safeParse({ ok: false, error: 'config-write-failed' }).success).toBe(true)
+    expect(result.safeParse({ ok: false, error: 'config-revert-failed' }).success).toBe(true)
+    expect(result.safeParse({ ok: false, error: 'locked' }).success).toBe(false)
+    expect(result.safeParse({ ok: true, value: { state: 'on' } }).success).toBe(false)
+    expect(
+      result.safeParse({ ok: true, value: { state: 'off', token: 'a'.repeat(64) } }).success
+    ).toBe(false)
   })
 })
 

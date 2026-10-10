@@ -39,6 +39,7 @@ import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransaction
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { emptyDrainGate } from '../../wiring/emptyDrainGate'
 import { createHostDispatcher } from '../../wiring/hostDispatcher'
+import { noOwnedConfigWriter } from '../../wiring/preferencesWiring'
 import { HelloThrottle } from '../auth/throttle'
 import { UI_TOKEN_FILE, UiToken } from '../auth/uiToken'
 import { collectCapabilities } from '../capabilities'
@@ -76,12 +77,19 @@ const DEFAULTS = {
   openCodePermissionsOn: false
 }
 
-/** The cut-1 view (ISSUE-210 lead decision): the sources of the other members come later. */
+/**
+ * The cut-1 view (ISSUE-210 lead decision): the sources of the other members come later.
+ * AMENDED for ISSUE-221: `integrations` is the stored `integration_settings` (14 §4.1), both `off`
+ * with no consent on a fresh database (migration 1 seed, 09 §4.9). Was: `integrations: []`.
+ */
 const view = (preferences: object) => ({
   preferences,
   secrets: [],
   secretBackend: 'unavailable',
-  integrations: [],
+  integrations: [
+    { id: 'claude-hooks', state: 'off', changedAt: expect.any(Number) as number },
+    { id: 'opencode-permissions', state: 'off', changedAt: expect.any(Number) as number }
+  ],
   welcome: { due: false, legacyFound: [], offered: [] }
 })
 
@@ -158,7 +166,12 @@ async function host(
     clock,
     ids,
     hostEpoch: EPOCH,
-    featureFlags: { read: () => ({ guildAreasEnabled: false, boostEnabled: false }) }
+    featureFlags: { read: () => ({ guildAreasEnabled: false, boostEnabled: false }) },
+    // AMENDED for ISSUE-221: the toggle's writer and minter, never reached by this suite.
+    externalConfig: noOwnedConfigWriter,
+    mintCredential: () => {
+      throw new Error('this suite mints no credential')
+    }
   })
   const welcome = createWelcomeStep({
     db,
@@ -177,6 +190,7 @@ async function host(
       get: () => module.queries.get(),
       featureFlags: () => module.queries.featureFlags(),
       integrationState: (id: IntegrationId) => module.queries.integrationState(id),
+      integrationSettings: () => module.queries.integrationSettings(),
       welcome: () => welcome.welcome()
     }
   }
