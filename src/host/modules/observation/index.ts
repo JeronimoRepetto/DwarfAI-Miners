@@ -11,7 +11,7 @@
 // DwarfAI ended or saw end from arriving again (ISSUE-072, INV-36), and the Claude adapter answers
 // a session's process identity through its #45 guard (`processRegistries`).
 import type { ProcessIdentity } from '../../kernel/domain/processIdentity'
-import type { DwarfId, HostEpoch, ProviderIdentity } from '../../kernel/domain/values'
+import type { DwarfId, HostEpoch, Instant, ProviderIdentity } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
@@ -27,7 +27,7 @@ import { SqliteEndedAgentLedger } from './adapters/SqliteEndedAgentLedger'
 import { SqliteObservedSessionStore } from './adapters/SqliteObservedSessionStore'
 import type { ObservationEvent } from './application/events'
 import type { ObservationControl } from './application/observationControl'
-import { ObservationLoop } from './application/observationLoop'
+import { ObservationLoop, type ObservedPresence } from './application/observationLoop'
 import { createObservationQueries, type ObservationQueries } from './application/observationQueries'
 import type { CursorStore } from './ports/cursorStore'
 import type { ObservationAdapter } from './ports/observationAdapter'
@@ -74,7 +74,11 @@ export {
   type OpenCodeLifetimeTotals,
   type OpenCodeObservationAdapterOptions
 } from './adapters/opencode/OpenCodeObservationAdapter'
-export { OBSERVATION_POLL_MS, type NudgeHint } from './application/observationLoop'
+export {
+  OBSERVATION_POLL_MS,
+  type NudgeHint,
+  type ObservedPresence
+} from './application/observationLoop'
 export type { ObservationQueries } from './application/observationQueries'
 export {
   observedTransition,
@@ -128,6 +132,13 @@ export interface ObservationDeps {
    * registry and #45 guard); none answers `null` for every dwarf.
    */
   processRegistries?: readonly ObservedProcessRegistry[]
+  /**
+   * The adapters that can tell whether an observed session's process runs (the Claude adapter);
+   * the loop admits no session one of them reports `not-live` (owner decision 2026-10-10).
+   */
+  presence?: readonly ObservedPresence[]
+  /** `install_moment.at` (ADR-023 item 2): no session arrives for what it wrote before it. */
+  installMoment?: () => Instant | null
 }
 
 /**

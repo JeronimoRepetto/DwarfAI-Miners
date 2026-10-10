@@ -576,3 +576,100 @@ describe('Claude sessions close once their recorded process is gone (FM-059)', (
     w.loop.stop()
   })
 })
+
+describe('Claude sessions arrive only while their process runs (owner decision 2026-10-10)', () => {
+  const RECORDED = 1_788_001_972_136
+  const running: ProcessIdentity = { pid: 32896, processStartTimeMs: RECORDED, bootId: 'boot-a' }
+
+  /** The loop over the adapter as its presence source, as `createObservation` composes it. */
+  function admitting(configDir: string, processes?: FakeProcessControl) {
+    const w = world(configDir, processes)
+    const loop = new ObservationLoop({ ...w.deps, presence: [w.adapter] })
+    const poll = async () => {
+      w.clock.advance(OBSERVATION_POLL_MS)
+      await loop.whenIdle()
+    }
+    return { ...w, loop, poll }
+  }
+
+  async function registry(configDir: string, entry?: Buffer): Promise<void> {
+    await mkdir(join(configDir, 'sessions'), { recursive: true })
+    if (entry !== undefined) await writeFile(join(configDir, 'sessions', '32896.json'), entry)
+  }
+
+  it('[US-OBS-005, FM-059] a session no registry entry names (it exited cleanly) never arrives, nor do its subagents', async () => {
+    const configDir = await tempDir()
+    const path = await placeSession(
+      configDir,
+      POSIX_CWD,
+      SUBAGENT_SESSION,
+      await fixture('plain-session.jsonl')
+    )
+    await placeSubagent(
+      configDir,
+      POSIX_CWD,
+      SUBAGENT_SESSION,
+      WORKER,
+      await fixture('subagent.jsonl'),
+      await fixture('subagent.meta.json')
+    )
+    await registry(configDir)
+    const w = admitting(configDir, new FakeProcessControl({ bootId: 'boot-a' }))
+    w.loop.start()
+    await w.loop.whenIdle()
+    await w.poll()
+
+    expect(w.observed()).toEqual([])
+    expect(w.adapter.presenceOf(claude(SUBAGENT_SESSION))).toBe('not-live')
+    expect(w.adapter.presenceOf(claude(SUBAGENT_SESSION, WORKER))).toBe('not-live')
+    const position = await w.cursorAt(path)
+    expect(position.stored).toBe(position.size)
+    w.loop.stop()
+  })
+
+  it('[US-OBS-005.AC01] a session a live registry entry names arrives', async () => {
+    const configDir = await tempDir()
+    await placeSession(configDir, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
+    await registry(configDir, await fixture('session-registry.json'))
+    const processes = new FakeProcessControl({ bootId: 'boot-a' })
+    processes.script(32896, running)
+    const w = admitting(configDir, processes)
+    w.loop.start()
+    await w.loop.whenIdle()
+
+    expect(w.observedIdentities()).toEqual([claude(PLAIN_SESSION)])
+    expect(w.adapter.presenceOf(claude(PLAIN_SESSION))).toBe('live')
+    w.loop.stop()
+  })
+
+  it('[FM-059, INV-36] a session whose registry entry outlived its process at the first look never arrives and joins the ledger', async () => {
+    const configDir = await tempDir()
+    await placeSession(configDir, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
+    await registry(configDir, await fixture('session-registry.json'))
+    const processes = new FakeProcessControl({ bootId: 'boot-a' })
+    processes.script(32896, 'absent')
+    const w = admitting(configDir, processes)
+    w.loop.start()
+    await w.loop.whenIdle()
+    await w.poll()
+
+    expect(w.observed()).toEqual([])
+    expect(w.bus.published.filter((e) => e.type === 'SessionClosedObserved')).toEqual([])
+    expect(w.ended.has(claude(PLAIN_SESSION))).toBe(true)
+    w.loop.stop()
+  })
+
+  it('[US-OBS-005] without a readable registry the presence of a session is unknown and it arrives (presence fails open)', async () => {
+    const configDir = await tempDir()
+    await placeSession(configDir, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
+    // No `sessions/` folder at all, and a composition with no process control.
+    for (const processes of [new FakeProcessControl({ bootId: 'boot-a' }), undefined]) {
+      const w = admitting(configDir, processes)
+      w.loop.start()
+      await w.loop.whenIdle()
+      expect(w.adapter.presenceOf(claude(PLAIN_SESSION))).toBe('unknown')
+      expect(w.observedIdentities()).toEqual([claude(PLAIN_SESSION)])
+      w.loop.stop()
+    }
+  })
+})

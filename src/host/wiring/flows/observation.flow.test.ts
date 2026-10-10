@@ -264,6 +264,8 @@ interface HostOptions {
   observationWrites?: Set<string>
   /** The batch sink; default `STAND_IN_SINK`. */
   sink?: ObservedBatchSink
+  /** `install_moment.at`, as host/main.ts reads it from the ledger; default none. */
+  installMoment?: Instant
 }
 
 /**
@@ -365,6 +367,9 @@ async function bootHost(options: HostOptions) {
               openSnapshot: openReadOnlySnapshot
             }),
             sink: options.sink ?? STAND_IN_SINK,
+            ...(options.installMoment === undefined
+              ? {}
+              : { installMoment: () => options.installMoment ?? null }),
             transactions,
             bus,
             fs,
@@ -515,6 +520,36 @@ function dwarfRows(db: SqliteDatabase) {
 }
 
 describe('observation wired into the Host (ISSUE-095)', () => {
+  it('[US-OBS-005, ADR-006] a fresh install over provider history writes no dwarf and no mine, whatever the providers', async () => {
+    // Owner decision 2026-10-10: every fixture session predates the install moment, so its
+    // history reaches the product only through the coal backfill (ADR-029 row 6).
+    const w = world()
+    // A day after the newest fixture record (the OpenCode store's, an hour after T0).
+    const installed = T0 + 24 * HOUR_MS
+    const host = await bootHost({ ...w, startAt: installed, installMoment: installed })
+    await host.poll()
+    await host.poll()
+    host.stop()
+
+    expect(dwarfRows(w.db)).toEqual([])
+    expect(w.db.all(`SELECT id FROM mines`)).toEqual([])
+    // Every stream was read to its end: a later Host does not read that history again.
+    const cursors = w.db.all(`SELECT stream_id FROM source_cursors`)
+    expect(cursors.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('[US-OBS-005, FM-059] a Claude session the registry no longer names (it exited) arrives neither as a dwarf nor as a mine', async () => {
+    const w = world()
+    rmSync(join(w.folders.claudeConfigDir, 'sessions', `${CLAUDE_PROCESS.pid}.json`))
+    const host = await bootHost({ ...w, startAt: T0 })
+    await host.poll()
+    await host.poll()
+    host.stop()
+
+    expect(dwarfRows(w.db).map((d) => d.providerId)).not.toContain('claude')
+    expect(dwarfRows(w.db)).toHaveLength(3)
+  })
+
   it("[ADR-006] each provider's fixture sessions produce their dwarfs once and a second boot adds nothing", async () => {
     const w = world()
     const first = await bootHost({ ...w, startAt: T0 })

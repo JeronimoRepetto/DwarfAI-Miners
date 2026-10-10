@@ -10,7 +10,12 @@
 //    record (INV-38, FM-086): logged without anything the provider wrote, never fatal.
 // 2. A file that shrank below its cursor or was replaced is the next generation of its stream id
 //    (FM-087): the old cursor is never moved back (INV-35).
-// 3. A session whose identity has no dwarf yet is observed (`SessionObserved`, once per identity,
+// 3. A session whose identity has no dwarf yet is admitted only while its process runs and only for
+//    what it wrote at or after the install moment (owner decision 2026-10-10, `admits`): a batch
+//    that already states its ending, a session an adapter reports not live, or records all older
+//    than `install_moment` move the cursor and nothing else, so no dwarf walks in for history and
+//    no mine is made for it (US-OBS-005; pre-install history is the coal backfill's, ADR-006 item
+//    8). An admitted session is observed (`SessionObserved`, once per identity,
 //    stream and first-message flag in a Host run, 08 §2.3), and its messages and usage wait: the
 //    stream's cursor is held so nothing passes an unwritten message (16 §4.3), and the next cycle
 //    writes them to the dwarf the route made (05 §4: `mines.resolveForSession` → `crew.arrive`).
@@ -26,7 +31,8 @@
 //
 // Anti-ghost (INV-36; 16 §4.3 `EndedAgentLedger`; 15 §5 item 2): every identity DwarfAI ended or
 // saw end joins the ledger, whatever path ended it: the terminator's `recordEnded` (ADR-014
-// item 7), or an adapter's `closed` fact, recorded in its batch's transaction. A subagent of an
+// item 7), or an adapter's `closed` fact, recorded in its batch's transaction (a held batch
+// records its endings alone, so a subagent it saw end is not announced by its own stream). A subagent of an
 // ended session is ended too: it ran inside that session's process. An ended identity with no
 // dwarf is dropped before `SessionObserved` (07 S4.30 guard; S3.22, S4.40; FM-092): its records
 // move the cursor and nothing else, so a late write raises no ghost and rediscovers no removed
@@ -107,6 +113,26 @@ export interface ObservationLoopDeps {
   log: DiagnosticsLog
   /** Defaults to `OBSERVATION_POLL_MS`. */
   pollMs?: number
+  /**
+   * The adapters that can tell whether a session's process runs (the Claude adapter, through its
+   * registry and #45 guard). None: every session's presence is unknown, and it is admitted.
+   */
+  presence?: readonly ObservedPresence[]
+  /**
+   * `install_moment.at` (ADR-023 item 2), read by `host/wiring` from the ledger at each batch; null
+   * between a reset's `db` and `install-moment` steps, absent where a test composes no ledger.
+   */
+  installMoment?: () => Instant | null
+}
+
+/**
+ * What an adapter can tell of a session's process (owner decision 2026-10-10): `live` while it
+ * runs, `not-live` when it provably does not, `unknown` when nothing can be told (presence fails
+ * open, #45 polarity). Internal to the module, beside `ObservedProcessRegistry`: not a port (16
+ * §4.3 is unchanged), and read only to admit a session, never to close one.
+ */
+export interface ObservedPresence {
+  presenceOf(identity: ProviderIdentity): 'live' | 'not-live' | 'unknown'
 }
 
 /** The hint a hook ingress passes (05 §3.3); the loop reads every source anyway. */
@@ -186,8 +212,9 @@ export class ObservationLoop {
    * once (INV-98, ADR-006 item 7): a re-read batch carries the same source and unit keys. A session
    * whose ending was written meanwhile is closed and published once (`SessionClosedObserved`, the
    * ordinary departure), and the anti-ghost check runs first, so an ended identity is never
-   * resurrected (INV-36). There is no first-sight baseline: a stream with no cursor is read from its
-   * start (09 §5.4). A batch that fails rolls back alone and the next pass (this Host's live loop,
+   * resurrected (INV-36). A stream with no cursor is read from its start (09 §5.4), and a session
+   * with no dwarf is admitted only as `admits` says (owner decision 2026-10-10): one that started
+   * and ended while no Host ran never arrives, so what it spent is not credited live. A batch that fails rolls back alone and the next pass (this Host's live loop,
    * or the next boot) reads it again from its cursor. A new session's messages wait for its dwarf
    * as in a live cycle (the held stream): the first live cycle after `start` writes them.
    *
@@ -302,6 +329,9 @@ export class ObservationLoop {
       drifted: batch.warnings.length > 0
     }
     if (plan.held) {
+      // The stream waits for a dwarf, but the endings it states join the ledger now (INV-36): a
+      // subagent that ended is never announced by its own stream, read later in the cycle.
+      if (plan.ended.length > 0 && !this.recordEndings(adapter, plan.ended)) return
       this.publishAll(plan.events)
       this.countRead(adapter, streamId, outcome)
       return
@@ -328,6 +358,26 @@ export class ObservationLoop {
     }
     this.publishAll(plan.events)
     this.countRead(adapter, streamId, outcome)
+  }
+
+  /** Records a held batch's endings in their own transaction; false when it rolled back. */
+  private recordEndings(adapter: ObservationAdapter, ended: BatchPlan['ended']): boolean {
+    try {
+      this.deps.transactions.inTransaction(() => {
+        for (const { identity, at } of ended) this.deps.ended?.record(identity, at)
+      })
+      return true
+    } catch {
+      this.deps.log.record({
+        level: 'error',
+        event: 'observation.batch-failed',
+        subsystem: 'observation',
+        provider: adapter.providerId,
+        outcome: 'failed',
+        msg: 'an observed batch was rolled back and will be read again'
+      })
+      return false
+    }
   }
 
   /** Counts one read toward its dwarf's drift; publishes the provider error a streak surfaces. */
@@ -388,6 +438,9 @@ export class ObservationLoop {
         }
         continue
       }
+      // Admission (owner decision 2026-10-10): a session with no dwarf arrives only while its
+      // process runs and only for what it wrote after the install moment.
+      if (session === null && !this.admits(identity, records, closing !== undefined)) continue
       const cwd = records.map((r) => r.cwd).find((c) => c !== undefined) ?? this.cwdOf.get(key)
       if (cwd !== undefined) this.cwdOf.set(key, cwd)
       const entries = records.flatMap((r) => (r.kind === 'entries' ? r.entries : []))
@@ -507,6 +560,27 @@ export class ObservationLoop {
     return out
   }
 
+  /**
+   * Whether a session with no dwarf may arrive (owner decision 2026-10-10; US-OBS-005, FM-059):
+   *
+   * - not when its batch already states its ending: the ending joins the ledger with the batch
+   *   (INV-36) and nothing else is written, so it never walks in only to walk out;
+   * - not when everything it wrote predates the install moment: that history reaches the product
+   *   only through the coal backfill (ADR-006 item 8, ADR-029 row 6). A record with no provider
+   *   time says nothing of when it was written, so it does not count as history;
+   * - not when an adapter knows its process is not running. That is not an ending: it is not
+   *   recorded, so a later record written while its process runs still arrives.
+   *
+   * Refused, its records move the cursor and nothing else (INV-39 "the cursor only").
+   */
+  private admits(identity: ProviderIdentity, records: ObservedEvent[], closed: boolean): boolean {
+    if (closed) return false
+    const moment = this.deps.installMoment?.() ?? null
+    const newest = newestProviderTime(records)
+    if (moment !== null && newest !== null && newest < moment) return false
+    return !(this.deps.presence ?? []).some((p) => p.presenceOf(identity) === 'not-live')
+  }
+
   /** The dwarf of the identity a stream carries, while it is present (not departed). */
   private presentDwarfOf(streamId: string): DwarfId | undefined {
     const identity = this.identityOfStream.get(streamId)
@@ -568,6 +642,37 @@ function errCodeOf(error: unknown): string {
     if (typeof name === 'string') return name
   }
   return 'unknown'
+}
+
+/**
+ * The newest provider time among records (the instant the provider wrote them), or null when none
+ * carries one. A `closed` fact's instant is when the Host saw the ending, never a provider time.
+ */
+function newestProviderTime(records: ObservedEvent[]): Instant | null {
+  let newest: Instant | null = null
+  const see = (at: Instant | null | undefined): void => {
+    if (typeof at === 'number' && Number.isFinite(at) && (newest === null || at > newest)) {
+      newest = at
+    }
+  }
+  for (const r of records) {
+    switch (r.kind) {
+      case 'session':
+      case 'activity':
+      case 'turn-ended':
+        see(r.at)
+        break
+      case 'entries':
+        for (const e of r.entries) see(e.providerTime)
+        break
+      case 'usage':
+        see(r.usage.providerTime)
+        break
+      case 'closed':
+        break
+    }
+  }
+  return newest
 }
 
 /** A batch's records grouped by identity, in first-seen order. */

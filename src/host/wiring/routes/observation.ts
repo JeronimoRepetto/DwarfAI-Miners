@@ -37,7 +37,7 @@
 //   cut-1 route (routes/cut1Routes.ts, ISSUE-120); the ledger takes usage through the bridge, not through `UsageObserved` (05 §4).
 // - No simulated observation adapter: the simulated provider's sessions are the suppliers'
 //   `SimulatedDriver` (15 §4.12), and 15 §5 lists four observed providers.
-import type { HostEpoch, ProviderId } from '../../kernel/domain/values'
+import type { HostEpoch, Instant, ProviderId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
@@ -67,6 +67,7 @@ import {
   type ObservationAdapter,
   type ObservationEvent,
   type ObservedBatchSink,
+  type ObservedPresence,
   type ObservedProcessRegistry,
   type ObservedSessionStore
 } from '../../modules/observation'
@@ -155,6 +156,7 @@ const OBSERVED: Readonly<Record<keyof ObservedProviderFolders, ProviderId>> = {
 export function observationAdapters(deps: ObservationAdapterDeps): {
   adapters: ObservationAdapter[]
   processRegistries: ObservedProcessRegistry[]
+  presence: ObservedPresence[]
 } {
   const { folders, fs, clock, processes, openSnapshot } = deps
   const others = (own: keyof ObservedProviderFolders): string[] =>
@@ -202,7 +204,9 @@ export function observationAdapters(deps: ObservationAdapterDeps): {
         processWatch: new ProcessGoneWatch({ listing, stems: OPENCODE_PROCESS_STEMS, clock })
       })
     ],
-    processRegistries: [claude]
+    processRegistries: [claude],
+    // Owner decision 2026-10-10: only Claude's registry tells a session's process at first sight.
+    presence: [claude]
   }
 }
 
@@ -215,6 +219,14 @@ export interface ObservationWiringDeps {
   /** The adapters and registries `observationAdapters` built. */
   adapters: readonly ObservationAdapter[]
   processRegistries: readonly ObservedProcessRegistry[]
+  /** The adapters that tell a session's presence at first sight (`observationAdapters`). */
+  presence?: readonly ObservedPresence[]
+  /**
+   * `install_moment.at` (ADR-023 item 2), read from the ledger (`LedgerRepository.installMoment`,
+   * 16 §4.10) at each batch: a session arrives only for what it wrote at or after it (owner
+   * decision 2026-10-10; ADR-006 item 8). Absent: no boundary.
+   */
+  installMoment?: () => Instant | null
   /** The Host's transaction runner (16 §2.2), also the bus's transaction scope. */
   transactions: TransactionRunner
   /** The Host's one event bus (16 §2.3). */
@@ -264,6 +276,8 @@ export function wireObservation(deps: ObservationWiringDeps): WiredObservation {
   const observation = createObservation({
     adapters: deps.adapters,
     processRegistries: deps.processRegistries,
+    ...(deps.presence === undefined ? {} : { presence: deps.presence }),
+    ...(deps.installMoment === undefined ? {} : { installMoment: deps.installMoment }),
     fs: deps.fs,
     cursors: stores.cursors,
     sessions: stores.sessions,

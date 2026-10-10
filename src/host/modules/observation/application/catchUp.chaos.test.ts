@@ -177,7 +177,7 @@ function world() {
 }
 
 describe('catch-up under faults (FM-097)', () => {
-  it('[FM-097] a Host started after offline activity credits it once and departs the ended sessions, and a second boot adds nothing', async () => {
+  it('[FM-097] a Host started after offline activity credits what its known sessions spent once, departs the ended ones, admits no session that ended unseen, and a second boot adds nothing', async () => {
     const w = world()
 
     // The Host that ran before observed s1, s2 and s3, and DwarfAI ended s3 before it quit.
@@ -215,32 +215,36 @@ describe('catch-up under faults (FM-097)', () => {
     expect(w.cursors.get('s3')?.value).toBe(1)
 
     // Boot 2: s1's batch fails inside its transaction (rolled back whole), the rest resumes from
-    // each cursor: s2 is not departed twice, s3 is not resurrected, s4 arrives.
+    // each cursor: s2 is not departed twice, s3 is not resurrected, and s4, whose first batch
+    // already states its ending, never arrives (owner decision 2026-10-10: a session whose
+    // process is not alive at first sight never arrives as a present dwarf).
     w.files.hangAt = null
     w.sink.failNext(new Error('disk I/O error while writing the batch'))
     const second = w.boot()
     await second.catchUp()
     expect(w.cursors.get('s1')?.value).toBe(1)
     expect(w.cursors.get('s3')?.value).toBe(3)
-    // Its live loop writes what waited: s1 at the next cycle, and s4 once its dwarf arrived.
+    // Its live loop writes what waited: s1 at the next cycle.
     second.start()
     await second.whenIdle()
     w.clock.advance(OBSERVATION_POLL_MS)
     await second.whenIdle()
     second.stop()
 
-    // Every unit spent while no Host ran credited exactly once; nothing for the ended s3.
+    // Every unit spent while no Host ran by a session the Host knew is credited exactly once;
+    // nothing for the ended s3, and nothing for s4, which never had a dwarf to credit (the owner
+    // decision of 2026-10-10 keeps 09 §5.4 for streams that already have a cursor).
     const credited = w.sink.applied.flatMap((b) => b.usage.map((u) => u.unitKey))
-    expect([...credited].sort()).toEqual(['u1', 'u2', 'u3', 'u5'])
-    // s2 and s4 departed once each; s1 survived; s3 never came back.
+    expect([...credited].sort()).toEqual(['u1', 'u2', 'u3'])
+    // s2 departed once; s1 survived; s3 never came back; s4 never arrived, so never departs.
     const since = w.bus.published.slice(beforeEvents)
     const of = (type: ObservationEvent['type']) =>
       since.flatMap((e) =>
         e.type === type && 'identity' in e.payload ? [e.payload.identity.providerSessionId] : []
       )
-    expect(of('SessionClosedObserved')).toEqual(['s2', 's4'])
+    expect(of('SessionClosedObserved')).toEqual(['s2'])
     expect(w.dwarfs.bound(identity('s1'))?.departedAt).toBeNull()
-    expect(of('SessionObserved')).toEqual(['s4'])
+    expect(of('SessionObserved')).toEqual([])
     // The faults left records without anything the provider wrote (ADR-026 item 4).
     expect(w.log.byEvent('observation.drift')).toHaveLength(1)
     expect(w.log.byEvent('observation.batch-failed')).toHaveLength(1)

@@ -42,13 +42,17 @@
 //   two cycles (the cheap check still answers `running`) is found within `IDENTITY_RECHECK_MS`.
 //   That only delays a departure: presence is not destructive, and every kill path re-checks the
 //   identity itself (ADR-014, #231), so a stale `live` verdict never ends a stranger's process.
-// - Known limits: a registry entry whose pid is already dead at the first look closes in the
-//   batch that first reads its session, and the loop announces `SessionObserved` before it, so
-//   that dwarf arrives once and walks out on the next cycle (the ledger blocks it afterwards). An
-//   entry with no readable `procStart` (only the Windows FILETIME form is known) closes when its
-//   pid has no process, but a recycled pid there is no evidence and keeps the session present.
-//   The Codex and OpenCode adapters emit no `closed` fact at all, so their observed dwarfs never
-//   depart (15 §5: no readable pid for Codex; OpenCode's pid source is UNVERIFIED, S-014-1).
+// - Presence at first sight (owner decision 2026-10-10; US-OBS-005): `presenceOf` tells the loop
+//   whether a session's process runs, and the loop admits no session it reports `not-live`: one no
+//   registry entry names (Claude Code removes the entry of a session that exits; it keeps one per
+//   live interactive session), or whose recorded process is gone. A session whose entry is already
+//   dead at the first look states its `closed` fact in its first batch, so it never arrives either.
+//   With no `ProcessControl` or no readable `sessions/` folder, presence is unknown and every session
+//   is admitted as before (fails open). The registry lists live interactive sessions
+//   (docs/provider-formats.md), so a headless run is not admitted; presence never closes a dwarf.
+// - Known limits: an entry with no readable `procStart` (only the Windows FILETIME form is known)
+//   closes when its pid has no process, but a recycled pid there is no evidence and keeps the
+//   session present.
 //
 // Candidate decision (21 §6): `src/main/providers/claude/parse.ts` and `subagents.ts` are replaced;
 // the evidence is in `ClaudeObservationAdapter.conformance.test.ts`.
@@ -199,6 +203,10 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
   private readonly running = new Map<string, RegistryEntry>()
   /** When each session was found closed in this Host run, by session id (FM-059). */
   private readonly closedAt = new Map<string, Instant>()
+  /** Whether the last `discover` read the registry folder. */
+  private registryRead = false
+  /** The sessions the last read registry names, whose process is not provably gone. */
+  private named = new Set<string>()
 
   constructor(private readonly options: ClaudeObservationAdapterOptions) {
     this.providerId = options.providerId
@@ -302,6 +310,26 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
   }
 
   /**
+   * Whether a session's process runs, as of the last `discover` (owner decision 2026-10-10;
+   * US-OBS-005): the loop admits a session with no dwarf only unless this is `not-live`. A
+   * subagent runs inside its session's process, so it answers its session's presence.
+   *
+   * - `not-live`: its recorded process is gone (FM-059), or the registry was read and no entry of
+   *   it, nor the last entry of a session found live, names it: Claude Code keeps one entry per
+   *   live interactive session and removes it when the session exits.
+   * - `live`: an entry names it and its process is not provably gone (an entry the #45 guard can
+   *   tell nothing of counts: presence fails open), or its last entry's process still runs.
+   * - `unknown`: no registry was read (no `ProcessControl`, or no readable `sessions/` folder).
+   */
+  presenceOf(identity: ProviderIdentity): 'live' | 'not-live' | 'unknown' {
+    if (identity.providerId !== this.providerId) return 'unknown'
+    const sessionId = identity.providerSessionId
+    if (this.closedAt.has(sessionId)) return 'not-live'
+    if (!this.registryRead) return 'unknown'
+    return this.named.has(sessionId) || this.running.has(sessionId) ? 'live' : 'not-live'
+  }
+
+  /**
    * The base's line parser. Stateless, so the base's window reads use it as well; during a read it
    * also hands the consumed line to `read`, which reads the stream in order.
    */
@@ -339,14 +367,20 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
    */
   private async readRegistry(): Promise<void> {
     const processes = this.options.processes
+    this.registryRead = false
     if (processes === undefined) return
     const folder = join(this.options.configDir, 'sessions')
+    // The typed listing: `listDir` answers [] for a missing folder, which would say every session
+    // exited. A registry that is missing or unreadable tells nothing (presence `unknown`).
     let listed: Array<{ name: string; isDirectory: boolean }>
     try {
-      listed = await this.options.fs.listDir(folder)
+      const read = await this.options.fs.listDirWithSizes(folder)
+      if (!read.ok) return
+      listed = read.value
     } catch {
       return
     }
+    const alive = new Set<string>()
     const registered = new Map<string, ProcessIdentity | null>()
     const present = new Set<string>()
     const named = new Set<string>()
@@ -365,6 +399,7 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
       const verdict = await this.check(entry, processes)
       this.follow(entry, verdict)
       registered.set(entry.sessionId, verdict.kind === 'live' ? verdict.identity : null)
+      if (verdict.kind !== 'gone') alive.add(entry.sessionId)
     }
     // A live session's entry can leave the registry before its process ends (an entry rewritten,
     // or one this read could not parse): its last entry is checked until that process is gone.
@@ -375,6 +410,8 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     }
     for (const key of [...this.checks.keys()]) if (!present.has(key)) this.checks.delete(key)
     this.registered = registered
+    this.named = alive
+    this.registryRead = true
   }
 
   /**
