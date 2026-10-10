@@ -556,7 +556,9 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       // AMENDED for ISSUE-114: A-N16 joins them, born `ui-local` in cut 1 and routed by the same switch (ISSUE-123).
       'mode:revealDwarfChat': 'cut-1',
       // AMENDED for ISSUE-221: A-N31 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
-      'claude:hooks:set': 'cut-2'
+      'claude:hooks:set': 'cut-2',
+      // AMENDED for ISSUE-129: A-N07 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
+      'ask:step:set': 'cut-2'
     })
   })
 
@@ -1726,9 +1728,11 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     }
     // Only A-N33 is still unrouted (AMENDMENT-11).
     // AMENDED for ISSUE-221 (was: A-N33 only): A-N31, born `host` in cut 2, waits for the cut-2 switch (ISSUE-141).
+    // AMENDED for ISSUE-129: A-N07, born `host` in cut 2, waits for the same switch.
     expect(UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
-      'claude:hooks:set': 'cut-2'
+      'claude:hooks:set': 'cut-2',
+      'ask:step:set': 'cut-2'
     })
     // A-44 on its 14 wire feeds UI main's PresenceTracker, which tells the Host (B-M07) once the report settled.
     const host = recordingHost()

@@ -15,7 +15,7 @@ import {
   supplierEntryViewSchema
 } from '../wire'
 import { hostFrameSchema } from '../host-protocol/envelope'
-import { ipcResultSchema } from '../host-protocol/errors'
+import { ipcResultSchema, type IpcResult } from '../host-protocol/errors'
 import { snapshotPageSchema, snapshotParamsSchema } from '../host-protocol/snapshot'
 import {
   answerOutcomeSchema,
@@ -33,6 +33,7 @@ import {
   sendMessageResultSchema,
   setClaudeHooksParamsSchema,
   setClaudeHooksResultSchema,
+  setAskStepParamsSchema,
   setOpenCodePermissionsParamsSchema,
   setOpenCodePermissionsResultSchema,
   suppliersLaunchableParamsSchema
@@ -90,6 +91,12 @@ import {
 } from './windowApi'
 
 const none = noPayloadSchema
+
+/**
+ * `IpcResult<void>` (14 §2.2 A-N07): zod infers `value: void` as an optional key, so the schema is typed as 14 writes
+ * the result; it accepts `{ ok: true }` with no value and the error branch, nothing else.
+ */
+const ipcVoidResultSchema = ipcResultSchema(z.void()) as z.ZodType<IpcResult<void>>
 
 export const CHANNELS = {
   // ---- window (ui-local), KEEP
@@ -798,6 +805,17 @@ export const CHANNELS = {
     status: 'new',
     request: setClaudeHooksParamsSchema,
     response: ipcResultSchema(setClaudeHooksResultSchema)
+  },
+  // A-N07 `setAskStep` (OQ-03, PO #92; ADR-010 item 9): the step a person is on while walking a multi-step question;
+  // relays B-M32 `asking.setStep` unchanged (14 §1.2). An askId and a step, never a pick (the picks stay in UI main's
+  // session store, 14 §3.9 `ask-picks`), so not `sensitive`
+  'ask:step:set': {
+    name: 'ask:step:set',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: setAskStepParamsSchema,
+    response: ipcVoidResultSchema
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

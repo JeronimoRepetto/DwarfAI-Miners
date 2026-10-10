@@ -127,7 +127,9 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'ui:preferences:set': { key: 'startWithSystem', value: false },
   'host:snapshot': { sections: ['mines', 'dwarfs'] },
   // A-N31 (ISSUE-221): B-M39's params, no origin (the Host records `settings`)
-  'claude:hooks:set': { on: true, requestId: U1 }
+  'claude:hooks:set': { on: true, requestId: U1 },
+  // A-N07 (ISSUE-129): B-M32's params, no requestId (idempotent) and no picks
+  'ask:step:set': { askId: U1, step: 1 }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */

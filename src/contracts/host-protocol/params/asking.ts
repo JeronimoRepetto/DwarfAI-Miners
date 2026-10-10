@@ -27,6 +27,11 @@ export interface AnswerPermissionParams {
   decision: 'allow' | 'deny'
   requestId: string
 }
+// idempotent; no requestId; a closed or non-front ask → {} with no effect
+export interface SetAskStepParams {
+  askId: AskId
+  step: number
+}
 
 /** An option label or a person's own words: bounded like a message (06 `MessageText`). */
 export const questionAnswersSchema = z.array(
@@ -53,4 +58,12 @@ export const answerQuestionParamsSchema = z
 /** B-M31 `asking.answerPermission` params; A-41's request is this same object (14 §1.2). */
 export const answerPermissionParamsSchema = z
   .object({ askId: askIdSchema, decision: z.enum(['allow', 'deny']), requestId: requestIdSchema })
+  .strict()
+
+/**
+ * B-M32 `asking.setStep` params (14 §3.4; ADR-010 item 9; OQ-03); A-N07's request is this same
+ * object (14 §1.2). Idempotent, so no `requestId`; the step only, never a pick (PO #92).
+ */
+export const setAskStepParamsSchema = z
+  .object({ askId: askIdSchema, step: z.number().int().nonnegative() })
   .strict()

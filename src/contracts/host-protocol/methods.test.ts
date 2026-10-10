@@ -37,9 +37,14 @@ import type {
   MineSummaryWire,
   ResolveFileResult
 } from './params/mines'
-import type { FeedPage, MineHistoryView } from '../wire'
+import type { AskId, FeedPage, MineHistoryView } from '../wire'
 import type { FeedParams } from './params/conversation'
-import type { AnswerOutcome, AnswerPermissionParams, AnswerQuestionParams } from './params/asking'
+import type {
+  AnswerOutcome,
+  AnswerPermissionParams,
+  AnswerQuestionParams,
+  SetAskStepParams
+} from './params/asking'
 
 // The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
 
@@ -827,5 +832,39 @@ describe('asking.answerQuestion and asking.answerPermission params and result (1
     }
     expect(permission.result.safeParse({ kind: 'refused', reason: 'timeout' }).success).toBe(false)
     expect(permission.result.safeParse({ kind: 'accepted', messageId: ASK }).success).toBe(false)
+  })
+})
+
+// The B-M32 entry of 14 §3.4 (`SetAskStepParams`) and its strict() schemas (14 §1.4; ADR-010 item
+// 9; OQ-03): idempotent, so no requestId, and never a pick.
+
+describe('asking.setStep params and result (14 §3.4, B-M32)', () => {
+  it('[ADR-003] asking.setStep takes only an askId and a whole non-negative step, with no requestId and no picks, and answers {}', () => {
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('asking.setStep')
+    expectTypeOf<HostMethods['asking.setStep']['params']>().toEqualTypeOf<SetAskStepParams>()
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+    expectTypeOf<HostMethods['asking.setStep']['result']>().toEqualTypeOf<{}>()
+    expectTypeOf<SetAskStepParams>().toEqualTypeOf<{ askId: AskId; step: number }>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['asking.setStep']['params']>
+    >().toEqualTypeOf<SetAskStepParams>()
+
+    const ASK = '01890a5d-ac96-774b-bcce-b302099a8129'
+    const { params, result } = HOST_METHOD_SCHEMAS['asking.setStep']
+    expect(params.safeParse({ askId: ASK, step: 0 }).success).toBe(true)
+    expect(params.safeParse({ askId: ASK, step: 3 }).success).toBe(true)
+    for (const invalid of [
+      { askId: ASK, step: -1 },
+      { askId: ASK, step: 1.5 },
+      { askId: ASK, step: '1' },
+      { askId: ASK },
+      { askId: 'ask-1', step: 1 },
+      { askId: ASK, step: 1, requestId: '01890a5d-ac96-774b-bcce-b302099a812a' },
+      { askId: ASK, step: 1, picks: [{ step: 0, option: 'All' }] }
+    ]) {
+      expect(params.safeParse(invalid).success, JSON.stringify(invalid)).toBe(false)
+    }
+    expect(result.safeParse({}).success).toBe(true)
+    expect(result.safeParse({ currentStep: 1 }).success).toBe(false)
   })
 })

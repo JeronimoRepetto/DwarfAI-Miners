@@ -4,8 +4,8 @@
 // edge (05 §1.3).
 //
 // ISSUE-128: `AskAnswerPaths`, the broker's two answer paths (ADR-010 items 2, 4, 5, 8, 13; 16 §4.7
-// rows `answerPermission` / `answerQuestion`; 09 §8.2). `setStep`, `closeForDwarf` and
-// `snapshot` join with their issues (later: ISSUE-129, ISSUE-130, ISSUE-140).
+// rows `answerPermission` / `answerQuestion`; 09 §8.2). `closeForDwarf` and `snapshot` join with
+// their issues (later: ISSUE-130, ISSUE-140).
 //
 // ISSUE-132: `open` (`AskOpenPath`, 16 §4.7 row `open`), with ADR-011 item 5's emission resolved
 // from the session's capabilities as data (`domain/emission.ts`, `SessionCapabilities`), never a
@@ -19,6 +19,11 @@
 // - `not-an-ask` (S1.17): the caller reported a kind the session cannot detect; nothing is written
 //   and the call is refused as a programming error (the observer opens nothing then, UC-016 B).
 // - The same `(dwarfId, providerRequestId)` again returns the first record and does nothing (INV-71).
+//
+// ISSUE-129: `setStep` (`AskStepPath`, 16 §4.7 row `setStep`; 07 S6.04; INV-75): one transaction
+// saves the front open ask's new `currentStep`, and `AskStepChanged` follows the commit; anything
+// else is a silent no-op. The picks never reach the Host (OQ-03): they stay in UI main's session
+// store (14 §3.9 `ask-picks`).
 //
 // ISSUE-131: `resolveExternally` for an ask whose answer is in flight — the S6.21 hold of an
 // `elsewhere` resolution until the channel result, and the S6.22 close of a cancellation, after
@@ -82,6 +87,7 @@ import {
   channelResult,
   openAsk,
   resolveExternally as resolveAsk,
+  setStep as stepAsk,
   type AskOpening,
   submit as submitAsk
 } from '../domain/askMachine'
@@ -506,4 +512,51 @@ export class AskOpenPath implements Pick<AskBroker, 'open'> {
 /** The system line's `sourceKey`: one line per auto-denied ask, claimed once (ADR-006). */
 function autoDeniedLineKey(askId: string): string {
   return `ask:${askId}:auto-denied`
+}
+
+export interface StepPathDeps {
+  asks: AskRepository
+  transactions: TransactionRunner
+  /** Publishes after each commit (16 §2.3). */
+  bus: DomainEventBus<AskingEvent>
+  clock: Clock
+  ids: IdGenerator
+  /** This boot's epoch. */
+  hostEpoch: HostEpoch
+}
+
+export class AskStepPath implements Pick<AskBroker, 'setStep'> {
+  constructor(private readonly deps: StepPathDeps) {}
+
+  /**
+   * 16 §4.7 row `setStep` (07 S6.04; INV-75). One transaction reads the ask and its dwarf's front
+   * ask and, when the front open ask moves to another step, saves its `currentStep`;
+   * `AskStepChanged` follows the commit. An unknown, closed or non-front `askId`, or the same step,
+   * is a silent no-op: nothing written, no event, and never a throw for a UI-supplied id (16 §2.1).
+   */
+  setStep(askId: string, step: number): void {
+    const { asks, transactions, bus, clock, ids, hostEpoch } = this.deps
+    const moved = transactions.inTransaction((): Ask | null => {
+      const ask = asks.byId(askId as AskId)
+      if (ask === null) return null
+      const front = asks.openFor(ask.dwarfId as DwarfId)
+      const next = stepAsk(
+        front === null || front.id === ask.id ? [ask] : [front, ask],
+        askId,
+        step
+      )
+      if (next === null) return null
+      asks.save(next.ask)
+      return next.ask
+    })
+    if (moved === null) return
+    bus.publish({
+      type: 'AskStepChanged',
+      v: 1,
+      id: ids.uuidv7() as EventId,
+      at: clock.now(),
+      hostEpoch,
+      payload: { askId: moved.id as AskId, currentStep: moved.currentStep }
+    })
+  }
 }

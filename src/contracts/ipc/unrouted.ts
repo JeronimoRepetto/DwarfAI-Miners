@@ -53,7 +53,10 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   'host:connection:confirm-restart': 'generation-2',
   // A-N31, born `host` in cut 2 (21 §2 cut 2); routed by the cut-2 switch (ISSUE-141), never by its handler issue
   // (ISSUE-221)
-  'claude:hooks:set': 'cut-2'
+  'claude:hooks:set': 'cut-2',
+  // A-N07, born `host` in cut 2 (21 §2 cut 2; 14 §5 "Asks"); routed by the cut-2 switch (ISSUE-141), never by its
+  // handler issue (ISSUE-129)
+  'ask:step:set': 'cut-2'
 }
 
 /**
