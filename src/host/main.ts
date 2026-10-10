@@ -38,7 +38,14 @@
 // conversation steps of wiring/moduleResetSteps.ts, built over the database alone, and the ledger's
 // install-moment writer, the one SqliteLedgerRepository the ledger is wired over at step 4) and
 // resumes an unfinished Reset saga before anything else is constructed and before any command is
-// accepted (05 §2.3; 16 §8.2). Boot step 4 constructs the other modules,
+// accepted (05 §2.3; 16 §8.2). Since cut 2 (ISSUE-323) step 3 also builds the one config writer:
+// the ConfigWriterEngine over the Host database with the Claude Code hooks target
+// (ClaudeHooksConfigWriter on `<CLAUDE_CONFIG_DIR or ~/.claude>/settings.json`, the one file the
+// revert mode reverts too), behind wiring/bridges/hostConfigWriter.ts (the hook entry is written
+// only once the hook ingress persisted its port, `app_meta.ingress_port`; the OpenCode plugin
+// target stays the legacy installer's), the SqliteChannelTokenStore the hook ingress's lookup
+// reads, the first-run step's answer (B-M40), and, right after the saga resume, the boot
+// re-verification of the config writes a crash left unverified (16 §7.3, 07 S14.11). Boot step 4 constructs the other modules,
 // each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
 // SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
 // the ledger (ISSUE-096: wiring/routes/ledger.ts) over the SqliteLedgerRepository and the coal
@@ -95,6 +102,11 @@ import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttent
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
+import { ClaudeHooksConfigWriter } from './modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
+import { ConfigWriterEngine } from './modules/preferences/adapters/external-config/configWriterEngine'
+import { SqliteChannelTokenStore } from './modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
+import { SqliteConfigWriteLedger } from './modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
+import { SqliteIntegrationSettingStore } from './modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
 import { createHostGitRepoInspector } from './modules/mines/adapters/FsGitRepoInspector'
 import { FsSourceWeightScanner } from './modules/mines/adapters/FsSourceWeightScanner'
 import type { LedgerRepository } from './modules/ledger'
@@ -155,6 +167,12 @@ import {
   evaluateWelcomeAfterDetection,
   mintBootEpoch
 } from './wiring/bootSteps'
+import {
+  enablableInstalledTools,
+  hostConfigWriter,
+  persistedIngressPort
+} from './wiring/bridges/hostConfigWriter'
+import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
@@ -172,7 +190,6 @@ import { createModuleResetSteps, type WiredModuleResetSteps } from './wiring/mod
 import { emptyDrainGate } from './wiring/emptyDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
-  noOwnedConfigWriter,
   servePreferences,
   unavailableSecretStore,
   type WiredPreferences
@@ -369,13 +386,20 @@ async function revertIntegrationsHere(base: HostBase): Promise<number> {
       ids,
       scheduler,
       log,
-      claudeSettingsPath: join(
-        observedProviderFolders(process.env, homedir()).claudeConfigDir,
-        'settings.json'
-      ),
+      claudeSettingsPath: claudeSettingsPathHere(),
       platform: hostRuntime().os as NodeJS.Platform
     })
   )
+}
+
+/**
+ * Claude Code's `settings.json` (16 §7.1), the one file DwarfAI's hook entry is written to and
+ * reverted from: `CLAUDE_CONFIG_DIR`, else `~/.claude`, the root Claude Code itself reads its
+ * settings from. The extra roots of `CLAUDE_CONFIG_DIRS` (#1264) are observed, never written: the
+ * hooks writer names one target (16 §7.1), and the boot and the revert mode name the same one.
+ */
+function claudeSettingsPathHere(): string {
+  return join(observedProviderFolders(process.env, homedir()).claudeConfigDir, 'settings.json')
 }
 
 /** The normal boot (16 §8.2): every step, then the Host serves until its clean exit. */
@@ -414,6 +438,9 @@ async function bootHost(base: HostBase): Promise<void> {
   // install-moment writer, then the module's) and the cut-1 module steps, whose walk route step 4
   // binds once mines exists (ISSUE-121).
   let ledgerRepository: LedgerRepository | undefined
+  // Built by boot step 3: the one config writer engine, whose boot re-verification step 3 runs
+  // right after the saga resume (16 §7.3).
+  let configWriter: ConfigWriterEngine | undefined
   let resetSteps: WiredModuleResetSteps | undefined
   // No spawn-site table reaches the Host yet: no site is stored, and the map places each marker
   // itself (chooseMapSite's documented fallback). The mines module and its Reset step share it.
@@ -598,6 +625,27 @@ async function bootHost(base: HostBase): Promise<void> {
             mapSites,
             random: Math.random
           })
+          // Cut 2 (ISSUE-323): the one writer of DwarfAI's entries in other tools' configs (16 §7),
+          // with the Claude Code hooks target; the hook entry carries the ingress's persisted port.
+          const ingressPort = appMetaIngressPort(db)
+          configWriter = new ConfigWriterEngine({
+            fs,
+            transactions,
+            ledger: new SqliteConfigWriteLedger({ db }),
+            settings: new SqliteIntegrationSettingStore({ db }),
+            tokens: new SqliteChannelTokenStore({ db, ids }),
+            clock,
+            ids,
+            scheduler,
+            log,
+            targets: [
+              new ClaudeHooksConfigWriter({
+                path: claudeSettingsPathHere(),
+                platform: hostRuntime().os as NodeJS.Platform,
+                ingressPort: persistedIngressPort(ingressPort)
+              })
+            ]
+          })
           const preferences = servedPreferences.wire({
             db,
             transactions,
@@ -619,12 +667,19 @@ async function bootHost(base: HostBase): Promise<void> {
             // `LedgerRepository.setInstallMoment` (16 §4.10) and the cut-1 module steps (ISSUE-121).
             ledger: ledgerRepository,
             moduleSteps: resetSteps.steps,
-            // Cut 1: no OS secret store or owned config entry yet (later: ISSUE-324, ISSUE-323).
+            // No OS secret store yet (later: ISSUE-324).
             secrets: unavailableSecretStore,
-            externalConfig: noOwnedConfigWriter,
+            externalConfig: hostConfigWriter({ claudeHooks: configWriter, ingressPort, log }),
+            // The hashes the hook ingress's lookup reads (WiredPreferences.channelTokens).
+            channelTokens: new SqliteChannelTokenStore({ db, ids }),
             // The first-run step's installed tools: suppliers' detection cache, once step 4 wired
             // suppliers (nothing installed before; the step is evaluated in step 8, ISSUE-222).
-            installedTools: suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
+            // Only the tools whose integration can be turned on now are offered (hidden until
+            // built): Claude Code once the hook ingress persisted its port (ISSUE-323).
+            installedTools: enablableInstalledTools(
+              suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
+              ingressPort
+            ),
             // The token issuance of the transport (lead decision 2026-09-30, ISSUE-198): the
             // Claude hook token is minted here, never in the module (R3).
             mintCredential,
@@ -632,6 +687,13 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           modules.preferences = preferences
           return preferences.resumeOnBoot()
+        },
+        // Step 3, after the resume: every write a crash left between Tx A and Tx B (07 S14.11).
+        reverifyConfigWrites: () => {
+          if (configWriter === undefined) {
+            throw new HostInvariantError('the config writer is built before its boot settlement')
+          }
+          return configWriter.settleUnverified()
         },
         constructModules: () => {
           const { db, transactions } = opened.connection()
