@@ -5,16 +5,27 @@
 // ISSUE-128: `createAsking`, the broker's two answer paths (`answerPermission`, `answerQuestion`)
 // over the AskRepository, conversation's `AnswerRecords` and the answer channels; the Host composes
 // it (later: ISSUE-140).
+// ISSUE-132: `createAskOpening`, the broker's `open` with ADR-011's capability-based emission over
+// the `SessionCapabilities` port; the Host binds that port to suppliers' capability data and
+// composes it (later: ISSUE-140).
 // ISSUE-139: `createAskingResetStep`, the module's step of the Reset-metrics saga (ADR-023).
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { AskingResetStep } from './adapters/sqlite/AskingResetStep'
-import { AskAnswerPaths, type AnswerPathsDeps, type AskBroker } from './application/askBroker'
+import {
+  AskAnswerPaths,
+  AskOpenPath,
+  type AnswerPathsDeps,
+  type AskBroker,
+  type OpenPathDeps
+} from './application/askBroker'
 
 export type { AnswerPathsDeps, AskBroker } from './application/askBroker'
 export type { AskClosed, AskingEvent, AskReopened } from './domain/events'
 export type { AskAnswerChannel } from './ports/askAnswerChannel'
+export type { OpenPathDeps } from './application/askBroker'
+export type { AskCapabilities, AskSession, SessionCapabilities } from './ports/sessionCapabilities'
 export type {
   AnswerOutcome,
   AnswerRefusalReason,
@@ -54,4 +65,9 @@ export function createAskingResetStep(deps: {
   scope: TransactionScope
 }): AskingResetDbStep {
   return new AskingResetStep(deps)
+}
+
+/** The broker's `open` (16 §4.7 row `open`; ADR-011 item 5), composed by the Host (ISSUE-140). */
+export function createAskOpening(deps: OpenPathDeps): Pick<AskBroker, 'open'> {
+  return new AskOpenPath(deps)
 }

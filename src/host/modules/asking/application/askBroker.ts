@@ -4,8 +4,21 @@
 // edge (05 §1.3).
 //
 // ISSUE-128: `AskAnswerPaths`, the broker's two answer paths (ADR-010 items 2, 4, 5, 8, 13; 16 §4.7
-// rows `answerPermission` / `answerQuestion`; 09 §8.2). `open`, `setStep`, `closeForDwarf` and
+// rows `answerPermission` / `answerQuestion`; 09 §8.2). `setStep`, `closeForDwarf` and
 // `snapshot` join with their issues (later: ISSUE-129, ISSUE-130, ISSUE-140).
+//
+// ISSUE-132: `open` (`AskOpenPath`, 16 §4.7 row `open`), with ADR-011 item 5's emission resolved
+// from the session's capabilities as data (`domain/emission.ts`, `SessionCapabilities`), never a
+// provider name (R12):
+// - `card` (S6.01) and `channel-none` (S6.02, INV-76: every submit `not-open`) save an `open` ask
+//   and publish `AskOpened` after the commit; the FIFO front is the repository's (INV-70).
+// - `auto-denied` (S6.03): the ask is born closed, and conversation's `ingest` writes the one
+//   `system-line` in the same transaction; after the commit `AskClosed{auto-denied}` and the line's
+//   `MessagesAppended`, never `AskOpened` (07 S1.16); then the channel's Deny, or `declineQuestion`
+//   for a question, outside any transaction.
+// - `not-an-ask` (S1.17): the caller reported a kind the session cannot detect; nothing is written
+//   and the call is refused as a programming error (the observer opens nothing then, UC-016 B).
+// - The same `(dwarfId, providerRequestId)` again returns the first record and does nothing (INV-71).
 //
 // ISSUE-131: `resolveExternally` for an ask whose answer is in flight — the S6.21 hold of an
 // `elsewhere` resolution until the channel result, and the S6.22 close of a cancellation, after
@@ -51,7 +64,12 @@ import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { Scheduler } from '../../../kernel/ports/scheduler'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
-import type { AnswerRecordEvent, AnswerRecords } from '../../conversation'
+import type {
+  AnswerRecordEvent,
+  AnswerRecords,
+  ConversationCommands,
+  JoinedEvents
+} from '../../conversation'
 import type { AskInput } from '../../suppliers'
 import {
   ANSWER_HANDOVER_TIMEOUT_MS,
@@ -60,14 +78,19 @@ import {
   type AskRecord
 } from '../domain/ask'
 import {
+  autoDenyAsk,
   channelResult,
+  openAsk,
   resolveExternally as resolveAsk,
+  type AskOpening,
   submit as submitAsk
 } from '../domain/askMachine'
 import { permissionRecordText, questionRecordText } from '../domain/answersRecordText'
+import { AUTO_DENIED_LINE_TEXT, resolveEmission, type Emission } from '../domain/emission'
 import type { AskingEvent } from '../domain/events'
 import type { AskAnswerChannel } from '../ports/askAnswerChannel'
 import type { AskRepository } from '../ports/askRepository'
+import type { SessionCapabilities } from '../ports/sessionCapabilities'
 
 // verbatim: ADR-010 item 5 (`AskBroker`, byte-for-byte with the list indentation removed; `prettier-ignore` keeps its alignment)
 // prettier-ignore
@@ -328,4 +351,159 @@ function recordText(ask: Ask, submit: Submit): string {
   return submit.kind === 'permission'
     ? permissionRecordText(ask.payload as PermissionPayload, submit.decision)
     : questionRecordText(ask.payload as QuestionPayload, submit.answers)
+}
+
+export interface OpenPathDeps {
+  asks: AskRepository
+  /** The dwarf's session origin and capabilities (ADR-011 item 5). */
+  sessions: SessionCapabilities
+  /** conversation's `ingest`: the auto-denied system line joins this module's transaction. */
+  lines: Pick<ConversationCommands, 'ingest'>
+  /** conversation's events held by that joined ingest, published after the commit (16 §2.3). */
+  joinedLines: JoinedEvents
+  /** The answer channel of an ask's `channel` kind, or null when none is composed. */
+  channelFor(channel: AskChannel): AskAnswerChannel | null
+  transactions: TransactionRunner
+  /** Publishes after each commit (16 §2.3). */
+  bus: DomainEventBus<AskingEvent>
+  clock: Clock
+  ids: IdGenerator
+  /** This boot's epoch. */
+  hostEpoch: HostEpoch
+}
+
+/** What one `open` committed: the ask, and whether this call created it. */
+interface Opening {
+  ask: Ask
+  created: boolean
+  emission: Emission
+}
+
+export class AskOpenPath implements Pick<AskBroker, 'open'> {
+  constructor(private readonly deps: OpenPathDeps) {}
+
+  /**
+   * 16 §4.7 row `open`. One transaction writes the ask (and, for an auto-denied request, its
+   * system line through conversation); the events follow the commit; an auto-denied request is
+   * answered through its channel last, outside any transaction (record before acting, 09 §8.2).
+   */
+  open(dwarfId: string, input: AskInput): AskRecord {
+    const { sessions, transactions, joinedLines } = this.deps
+    const session = sessions.sessionOf(dwarfId as DwarfId)
+    const emission = resolveEmission(input, { origin: session.origin, ...session.capabilities })
+    if (emission.kind === 'not-an-ask') {
+      throw new HostInvariantError(
+        'an observed request of a kind the provider cannot detect is not an ask (07 S1.17)'
+      )
+    }
+    let opening: Opening
+    try {
+      opening = transactions.inTransaction(() => this.write(dwarfId as DwarfId, input, emission))
+    } catch (error) {
+      joinedLines.discard()
+      throw error
+    }
+    if (opening.created) this.announce(opening)
+    return opening.ask
+  }
+
+  /** Inside the transaction: the existing ask of the request (INV-71), or the new one. */
+  private write(dwarfId: DwarfId, input: AskInput, emission: Emission): Opening {
+    const { asks, lines, clock, ids } = this.deps
+    const existing = asks.byProviderRequest({ dwarfId }, input.providerRequestId)
+    if (existing !== null) return { ask: existing, created: false, emission }
+    const opening: AskOpening = {
+      id: ids.uuidv7(),
+      dwarfId,
+      kind: input.kind,
+      channel: emission.kind === 'channel-none' ? 'none' : input.channel,
+      providerRequestId: input.providerRequestId,
+      payload: input.payload,
+      options: input.kind === 'permission' ? input.options : null,
+      reannounce: true
+    }
+    const now = clock.now()
+    if (emission.kind === 'auto-denied') {
+      const { ask } = autoDenyAsk(opening, now)
+      asks.save(ask)
+      lines.ingest(
+        dwarfId,
+        [
+          {
+            sourceKey: autoDeniedLineKey(ask.id),
+            role: 'system-line',
+            text: AUTO_DENIED_LINE_TEXT,
+            providerTime: null
+          }
+        ],
+        'live-stream'
+      )
+      return { ask, created: true, emission }
+    }
+    const opened = openAsk(opening, now)
+    if (opened.kind !== 'opened') {
+      throw new HostInvariantError('a card or channel-none emission always opens (ADR-011 item 5)')
+    }
+    asks.save(opened.ask)
+    return { ask: opened.ask, created: true, emission }
+  }
+
+  /** After the commit: the events, then the auto-denied request's answer to the provider. */
+  private announce({ ask, emission }: Opening): void {
+    const { bus, joinedLines } = this.deps
+    if (emission.kind !== 'auto-denied') {
+      bus.publish(this.event('AskOpened', { ask }))
+      return
+    }
+    // Never `AskOpened`: no card, no cue, no notification, the dwarf never asking (07 S1.16).
+    bus.publish(
+      this.event('AskClosed', {
+        askId: ask.id as AskId,
+        dwarfId: ask.dwarfId as DwarfId,
+        reason: 'auto-denied'
+      })
+    )
+    joinedLines.publish()
+    this.refuse(ask, emission.answer)
+  }
+
+  /**
+   * Deny for a permission, the explicit decline for a question (ADR-011 item 3, 16 §4.7
+   * `declineQuestion`). The ask is closed already: whatever the channel answers changes nothing,
+   * and a channel that is not composed or fails leaves the provider to its own launch policy.
+   */
+  private refuse(ask: Ask, answer: 'deny' | 'decline'): void {
+    const channel = this.deps.channelFor(ask.channel)
+    if (channel === null) return
+    const ref = { dwarfId: ask.dwarfId as DwarfId }
+    try {
+      const call =
+        answer === 'deny'
+          ? channel.answerPermission(ref, ask.providerRequestId, 'deny')
+          : channel.declineQuestion(ref, ask.providerRequestId)
+      call.catch(() => undefined)
+    } catch {
+      // A channel that throws is the same as one that refuses: the ask stays auto-denied.
+    }
+  }
+
+  private event<T extends AskingEvent['type']>(
+    type: T,
+    payload: Extract<AskingEvent, { type: T }>['payload']
+  ): Extract<AskingEvent, { type: T }> {
+    const { ids, clock, hostEpoch } = this.deps
+    return {
+      type,
+      v: 1,
+      id: ids.uuidv7() as EventId,
+      at: clock.now(),
+      hostEpoch,
+      payload
+    } as Extract<AskingEvent, { type: T }>
+  }
+}
+
+/** The system line's `sourceKey`: one line per auto-denied ask, claimed once (ADR-006). */
+function autoDeniedLineKey(askId: string): string {
+  return `ask:${askId}:auto-denied`
 }

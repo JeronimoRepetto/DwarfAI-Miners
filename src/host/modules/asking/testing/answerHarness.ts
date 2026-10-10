@@ -7,6 +7,9 @@
 // asks, the `ask_answers` rows and the answers-records back together — the one transaction of 09 §8.2.
 // `faults.link` makes the next `linkRecord` throw, to fail the first transaction at its last write.
 // `reboot()` builds new answer paths over the same rows: a Host restart.
+// `opens` is the broker's `open` (ISSUE-132) over the same rows, channel and bus, with a
+// `FakeSessionCapabilities` and the `FakeConversationLines` double of conversation's `ingest`, whose
+// rows the transaction rolls back with the asks.
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
@@ -14,14 +17,16 @@ import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { AskId, DwarfId, MessageId } from '../../../kernel/domain/values'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { AnswerRecordEvent } from '../../conversation'
-import { AskAnswerPaths } from '../application/askBroker'
+import { AskAnswerPaths, AskOpenPath } from '../application/askBroker'
 import type { Ask } from '../domain/ask'
 import type { AskingEvent } from '../domain/events'
 import type { AskAnswerChannel } from '../ports/askAnswerChannel'
 import { FakeAskAnswerChannel } from '../ports/fakes/FakeAskAnswerChannel'
+import { FakeSessionCapabilities } from '../ports/fakes/FakeSessionCapabilities'
 import { InMemoryAskRepository, InMemoryAskRows } from '../ports/fakes/InMemoryAskRepository'
 import { askId, permissionAsk, questionAsk } from './askRepository.contract'
 import { FakeAnswerRecords } from './FakeAnswerRecords'
+import { FakeConversationLines } from './FakeConversationLines'
 
 export const ANSWER_T0 = 1_790_000_000_000
 export const ANSWER_EPOCH = 'epoch-0128'
@@ -58,6 +63,9 @@ export function answerHarness() {
   const faults = { link: false }
   const asks = new FaultyAskRepository(rows, faults)
   const records = new FakeAnswerRecords({ scope, clock, ids })
+  /** The open path's reads and writes besides the asks (ISSUE-132). */
+  const sessions = new FakeSessionCapabilities()
+  const lines = new FakeConversationLines(scope)
   /** Messages sent through "Other thing…" (the send path's rows; `conversation.send` is ISSUE-166). */
   const otherThings: { dwarfId: DwarfId; text: string }[] = []
   const channel = new FakeAskAnswerChannel()
@@ -72,7 +80,10 @@ export function answerHarness() {
       callsInTransaction.push(open)
       return channel.answerPermission(ref, providerRequestId, decision)
     },
-    declineQuestion: (ref, providerRequestId) => channel.declineQuestion(ref, providerRequestId)
+    declineQuestion: (ref, providerRequestId) => {
+      callsInTransaction.push(open)
+      return channel.declineQuestion(ref, providerRequestId)
+    }
   }
   let transactions = 0
   const transactionRunner: TransactionRunner = {
@@ -81,7 +92,8 @@ export function answerHarness() {
       const before = {
         asks: structuredClone([...rows.asks]),
         settlements: structuredClone(rows.settlements),
-        records: records.snapshot()
+        records: records.snapshot(),
+        lines: lines.snapshot()
       }
       open = true
       transactions += 1
@@ -92,6 +104,7 @@ export function answerHarness() {
         for (const [id, ask] of before.asks) rows.asks.set(id, ask)
         rows.settlements.splice(0, rows.settlements.length, ...before.settlements)
         records.restore(before.records)
+        lines.restore(before.lines)
         throw error
       } finally {
         open = false
@@ -115,7 +128,21 @@ export function answerHarness() {
       hostEpoch: ANSWER_EPOCH
     })
 
-  /** Saves `ask` as the broker's `open` would have (ISSUE-127's repository; `open` is later work). */
+  /** The broker's `open` (ISSUE-132) over the same rows, channels and bus. */
+  const opens = new AskOpenPath({
+    asks,
+    sessions,
+    lines,
+    joinedLines: lines,
+    channelFor: (kind) => (kind === 'none' ? null : guarded),
+    transactions: transactionRunner,
+    bus,
+    clock,
+    ids,
+    hostEpoch: ANSWER_EPOCH
+  })
+
+  /** Saves `ask` directly, as the broker's `open` would have (ISSUE-127's repository). */
   const seed = (ask: Ask): Ask => {
     transactionRunner.inTransaction(() => asks.save(ask))
     return ask
@@ -123,6 +150,9 @@ export function answerHarness() {
 
   return {
     paths: boot(),
+    opens,
+    sessions,
+    lines,
     reboot: boot,
     asks,
     rows,

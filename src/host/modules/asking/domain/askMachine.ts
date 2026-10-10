@@ -195,6 +195,27 @@ export function openAsk(opening: AskOpening, openedAt: number): AskOpened {
 }
 
 /**
+ * S6.03: a request a launched session cannot have answered in the app (no answer channel, or a
+ * permission without `allow_once`) is born `auto-denied` and closed at once; it never opens.
+ */
+export function autoDenyAsk(opening: AskOpening, at: number): AskStep {
+  const ask: Ask = {
+    id: opening.id,
+    dwarfId: opening.dwarfId,
+    kind: opening.kind,
+    channel: opening.channel,
+    providerRequestId: opening.providerRequestId,
+    payload: opening.payload,
+    currentStep: 0,
+    state: 'auto-denied',
+    reannounce: opening.reannounce,
+    openedAt: at,
+    closedAt: at
+  }
+  return { ask, transition: 'S6.03' }
+}
+
+/**
  * The front ask of each dwarf (INV-70, ADR-010 item 7): its oldest ask that is `open` or
  * `answering`, in arrival order (the order of `asks`, never re-sorted by clock). Only the front
  * shows a card; while it is answering, no other ask of the dwarf does.
