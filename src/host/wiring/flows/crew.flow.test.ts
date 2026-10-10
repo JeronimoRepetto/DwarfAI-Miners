@@ -463,6 +463,36 @@ describe('the crew module wired into the Host (ISSUE-094)', () => {
     expect(h.evts('dwarf.departed')).toEqual([{ dwarfId, mineId, cause: 'closed-elsewhere' }])
   })
 
+  it('[INV-36, S2.06] a SessionClosedObserved of a session also departs its present subagents, in every mine, and nobody else', async () => {
+    const h = await bootHost()
+    const north = await h.declare(h.folder('north-seam'))
+    const east = await h.declare(h.folder('east-drift'))
+    const main = session('s-main')
+    const worker = { ...main, providerAgentId: 'worker-1' }
+    const nested = { ...main, providerAgentId: 'worker-2' }
+    const stranger = { ...session('s-other'), providerAgentId: 'worker-9' }
+    await h.observed(main, h.folder('north-seam'))
+    await h.observed(worker, h.folder('north-seam'), { parentIdentity: main })
+    await h.observed(nested, h.folder('east-drift'), { parentIdentity: worker })
+    await h.observed(session('s-other'), h.folder('north-seam'))
+    await h.observed(stranger, h.folder('north-seam'), { parentIdentity: session('s-other') })
+    const present = () =>
+      [north, east].flatMap((mineId) =>
+        h.crew.crew.queries
+          .crewOf(mineId)
+          .map((d) => `${d.identity.providerSessionId}/${d.identity.providerAgentId ?? ''}`)
+      )
+    expect(present()).toHaveLength(5)
+
+    // The session's process is gone: its subagents ran inside it (INV-36), so they leave with it.
+    await h.closed(main)
+
+    expect(present().sort()).toEqual(['s-other/', 's-other/worker-9'])
+    const departed = h.evts('dwarf.departed') as Array<{ cause: string }>
+    expect(departed).toHaveLength(3)
+    expect(departed.every((d) => d.cause === 'closed-elsewhere')).toBe(true)
+  })
+
   it('[ADR-014] a mine removal ends its observed dwarfs through the wired terminator bridge', async () => {
     const h = await bootHost()
     const mineId = await h.declare(h.folder('deep-vein'))

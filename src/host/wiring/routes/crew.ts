@@ -227,6 +227,16 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
   const logFailure = (error: unknown): void =>
     log.record({ level: 'error', event: 'uncaught', subsystem: 'host', errCode: errorCode(error) })
 
+  /** An observed session's dwarf leaves for the cause its pending end gives (08 §2.3). */
+  const depart = (dwarf: {
+    id: DwarfId
+    pendingEnd: Parameters<typeof departureCause>[0]
+    owned: boolean
+  }): void => {
+    const cause = departureCause(dwarf.pendingEnd, dwarf.owned)
+    if (cause !== null) crew.commands.sessionClosed(dwarf.id, cause)
+  }
+
   /** The arrivals the `SessionObserved` route started that have not answered yet. */
   const routed = new Set<Promise<unknown>>()
 
@@ -259,9 +269,24 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
       bus.subscribe('SessionClosedObserved', ({ payload }) => {
         const dwarfId = dwarfOf(payload.identity)
         const dwarf = dwarfId === null ? null : crew.queries.get(dwarfId)
-        if (dwarf === null || dwarf.departed) return
-        const cause = departureCause(dwarf.pendingEnd, dwarf.owned)
-        if (cause !== null) crew.commands.sessionClosed(dwarf.id, cause)
+        if (dwarf !== null && !dwarf.departed) depart(dwarf)
+        // INV-36: a subagent ran inside its session's process, so the session's ending ends every
+        // present subagent of it too, in whichever mine its own folder put it (owner task
+        // 2026-10-10). Its own stream may never be read again to say so.
+        const { identity } = payload
+        if (identity.providerAgentId !== undefined) return
+        for (const mine of mines.queries.list({ sortBy: 'name', direction: 'asc' })) {
+          for (const present of crew.queries.crewOf(mine.mineId)) {
+            const own = present.identity
+            if (
+              own.providerAgentId !== undefined &&
+              own.providerId === identity.providerId &&
+              own.providerSessionId === identity.providerSessionId
+            ) {
+              depart(present)
+            }
+          }
+        }
       })
       bus.subscribe('SessionActivityObserved', ({ payload }) => {
         const dwarfId = dwarfOf(payload.identity)
