@@ -31,7 +31,9 @@ export const CUT_0_UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   'host:event': 'cut-1',
   'mode:revealDwarfChat': 'cut-1',
   // A-N31 was declared after cut 0 shipped (ISSUE-221), born `host` in cut 2: the cut-0 table never routed it.
-  'claude:hooks:set': 'cut-2'
+  'claude:hooks:set': 'cut-2',
+  // A-N07 was declared after cut 0 shipped (ISSUE-129), born `host` in cut 2: the cut-0 table never routed it.
+  'ask:step:set': 'cut-2'
 }
 
 function cut0Route(channel: ChannelKey): ChannelRoute {

@@ -32,6 +32,8 @@
   has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-221:** A-N31 `setClaudeHooksEnabled` (`claude:hooks:set`, NEW, AMENDMENT-7) is declared in the
   registry and has a generated preload member, so its row moved to the found table.
+- **Updated for ISSUE-129:** A-N07 `setAskStep` (`ask:step:set`, NEW) is declared in the registry and has a generated
+  preload member, so its row moved to the found table.
 - **Updated for ISSUE-123:** A-44 is renamed by the cut-1 switch (14 §2.1 CHANGE): the generated preload member
   `reportVisibleMines` sends `presence:visibleMines`, so it has its own row under the same id, and the `panel:openMine`
   row lost its preload location. Today's `setOpenMine` registration and constant stay until cut 5.
@@ -63,11 +65,11 @@ pushes were evaluated against `14` §2 and none of them was changed.
 
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
-| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 13  | 11     | 0        | 73    |
+| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 14  | 11     | 0        | 74    |
 | Pushes                                            | 2    | 0      | 6   | 4      | 0        | 12    |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 17     | 19  | 15     | 0        | 86    |
-| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 15  | —      | —        | 15    |
+| **Found total**                                   | 35   | 17     | 20  | 15     | 0        | 87    |
+| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 14  | —      | —        | 14    |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
 constants (63 + 2) and 66 preload members (64 + 2). The two extra channels are `dwarf:setName` and
@@ -105,6 +107,7 @@ kind `14` gives it.
 | `agent:providers`                 | `listAgentProviders`          | invoke | src/main/index.ts:1863<br>src/preload/index.ts:775<br>src/shared/contracts.ts:5333                                                | A-36    | CHANGE | —                 |                                                                                                                                           |
 | `app:build`                       | `getAppBuild`                 | invoke | src/main/index.ts:1317<br>src/preload/index.ts:768<br>src/shared/contracts.ts:5254                                                | A-28    | KEEP   | —                 |                                                                                                                                           |
 | `app:features`                    | `getFeatureFlags`             | invoke | src/main/index.ts:1322<br>src/preload/index.ts:769<br>src/shared/contracts.ts:5259                                                | A-29    | KEEP   | —                 |                                                                                                                                           |
+| `ask:step:set`                    | `setAskStep`                  | invoke | src/preload/index.ts:585                                                                                                          | A-N07   | NEW    | —                 | Declared by ISSUE-129; its preload member is generated (ISSUE-045); unrouted until cut 2                                                  |
 | `audio:preferences:get`           | `getAudioPreferences`         | invoke | src/main/index.ts:1371<br>src/preload/index.ts:577<br>src/shared/contracts.ts:5079                                                | A-06    | KEEP   | —                 |                                                                                                                                           |
 | `audio:preferences:set`           | `setAudioPreferences`         | invoke | src/main/index.ts:1372<br>src/preload/index.ts:583<br>src/shared/contracts.ts:5080                                                | A-07    | KEEP   | —                 |                                                                                                                                           |
 | `claude:hooks:set`                | `setClaudeHooksEnabled`       | invoke | src/preload/index.ts:581                                                                                                          | A-N31   | NEW    | —                 | Declared by ISSUE-221 (AMENDMENT-7); its preload member is generated (ISSUE-045); unrouted until cut 2                                    |
@@ -187,7 +190,6 @@ kind `14` gives it.
 | Wire name               | Member                | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
 | ----------------------- | --------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
 | `dwarf:message:retry`   | `retryDwarfMessage`   | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
-| `ask:step:set`          | `setAskStep`          | invoke | not found | A-N07 | NEW    | —                 |                                                                                               |
 | `dwarf:rename`          | `renameDwarf`         | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
 | `dwarf:name:reset`      | `resetDwarfName`      | invoke | not found | A-N09 | NEW    | —                 | Successor of the found legacy `dwarf:resetName` (14 §8 I-21), which uses the same member name |
 | `host:recovery:retry`   | `retryRecovery`       | invoke | not found | A-N10 | NEW    | —                 |                                                                                               |
