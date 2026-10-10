@@ -8,12 +8,18 @@
 //   S0181_IDLE_MS    how long the process sits idle, with no window, before it shows the notification
 //   S0181_WAIT_MS    how long it waits for show/click before it gives up
 //   S0181_USER_DATA  a throwaway userData folder, so it never touches a real app's data
+//   S0181_EVENTS     a file that receives a copy of every line (the packaged kit: an app started through
+//                    LaunchServices has no stdout its runner can read)
 //
 // A main-process error must never open a modal on the person's desktop: every failure is printed and ends the
 // process with a non-zero code.
 
+const eventsFile = process.env.S0181_EVENTS
+
 const emit = (event, data) => {
-  process.stdout.write(`${JSON.stringify({ event, ...(data || {}) })}\n`)
+  const line = `${JSON.stringify({ event, ...(data || {}) })}\n`
+  process.stdout.write(line)
+  if (eventsFile) process.getBuiltinModule('node:fs').appendFileSync(eventsFile, line)
 }
 
 const fail = (where, error) => {
