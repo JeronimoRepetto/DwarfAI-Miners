@@ -1,4 +1,5 @@
 import {
+  hostConnectionViewSchema,
   ipcResultSchema,
   snapshotPageSchema,
   type HostEpoch,
@@ -7,6 +8,8 @@ import {
   type SnapshotParams,
   type SnapshotSection
 } from '@dwarfai/contracts'
+import { watch } from 'vue'
+import { useHostConnection } from './useHostConnection'
 
 /*
  * The shape every Host-fed renderer singleton follows (ADR-033 item 3; 14 §4.3; 21 §6 row "Renderer root,
@@ -19,10 +22,13 @@ import {
  *   page, buffering the frames that arrive meanwhile; after the last page, drop the buffered frames with
  *   `seq ≤ snapshot.seq` and apply the rest in order. `resync-required` (any reason) or a frame of another Host epoch
  *   keeps the last state on screen and reads a fresh snapshot, never a replay.
- * - Hidden until built (21 §1 item 8): until the cut-1 switch (ISSUE-123) routes A-N01, the router refuses it, which
- *   is not a `SnapshotPage`. A first snapshot that is not one leaves the follower stopped and the model untouched, so
- *   the store keeps today's feed. A later re-snapshot that fails keeps the last state (ADR-033 item 3: read models
- *   never drop facts while the Host is unreachable) and waits for the next `resync-required`.
+ * - A read that fails (the Host not attached yet, a refusal, a table that does not route A-N01) leaves the model as it
+ *   was and the follower `stale`, still subscribed: never stopped. ADR-033 item 3: read models never drop facts while
+ *   the Host is unreachable, and the store keeps today's feed until a snapshot is applied (`settled`). A stale model
+ *   reads the snapshot again on the next sign the Host is there: a frame on A-N02, or A-N04 reporting `connected`.
+ * - A-N04 reporting `connected` after any other state reads a fresh snapshot in every phase: the renderer does not see
+ *   `hello.ok`, and a reconnect's may carry a new epoch (14 §4.3 rule 3). A push that lands while a read is on its way
+ *   is followed by one more read, since that read may predate the attach.
  */
 
 // As ADR-033 item 3 writes it, with the event type a parameter (its default is ADR-033's `{ seq: number }`)
@@ -60,10 +66,12 @@ export function createReadModel<S, E extends { seq: number }>(
   return model
 }
 
-/** The two members of `window.api` a Host read model reads (A-N02, A-N01). */
+/** The members of `window.api` a Host read model reads (A-N02, A-N01, A-N04). */
 export interface HostReadPath {
   subscribe(listener: (frames: readonly HostFrame[]) => void): () => void
   snapshot(params: SnapshotParams): Promise<unknown>
+  /** A-N04's pushes; the window's `useHostConnection` view when omitted. */
+  connection?(listener: (view: unknown) => void): () => void
 }
 
 export interface HostFollowSpec<S> {
@@ -77,20 +85,39 @@ export interface HostFollowSpec<S> {
 }
 
 export interface HostFollower {
-  /** Subscribes, then reads the first snapshot; answers whether the model is now fed by the Host. */
+  /**
+   * Subscribes, then reads the first snapshot; answers whether the model is now fed by the Host. When it is not, the
+   * follower stays subscribed and feeds the model once a later read succeeds (`settled` tells).
+   */
   start(): Promise<boolean>
   stop(): void
 }
 
 const pageAnswerSchema = ipcResultSchema(snapshotPageSchema)
 
+/**
+ * A-N04 as the window's one follower of it holds it (`useHostConnection`, started by the shell): every Host-fed read
+ * model hears the same connection the composer gates on, without a second subscription.
+ */
+function windowConnection(listener: (view: unknown) => void): () => void {
+  return watch(
+    () => useHostConnection().view.value,
+    (view) => {
+      if (view !== null) listener(view)
+    },
+    { flush: 'sync' }
+  )
+}
+
 export function followHost<S>(path: HostReadPath, spec: HostFollowSpec<S>): HostFollower {
   let phase: 'idle' | 'syncing' | 'live' | 'stale' = 'idle'
-  let unsubscribe: (() => void) | null = null
+  let unsubscribe: Array<() => void> = []
   let buffer: HostFrame[] = []
   let epoch: HostEpoch | null = null
-  /** Whether a snapshot was applied since `start`: a failed first read stops; a failed re-read goes stale. */
-  let fed = false
+  /** The last state A-N04 pushed; null until the first push. */
+  let connection: string | null = null
+  /** A-N04 reported `connected` while a read was on its way: read once more after it. */
+  let again = false
   /** Bumped by `stop`, so a snapshot read before it is never applied after it. */
   let generation = 0
 
@@ -141,33 +168,49 @@ export function followHost<S>(path: HostReadPath, spec: HostFollowSpec<S>): Host
     void load(generation)
   }
 
+  /** One A-N04 push: `connected` after any other state reads a fresh snapshot (14 §4.3 rule 3). */
+  function connectionChanged(view: unknown): void {
+    const parsed = hostConnectionViewSchema.safeParse(view)
+    if (!parsed.success) return
+    const previous = connection
+    connection = parsed.data.state
+    if (connection !== 'connected' || previous === 'connected') return
+    if (phase === 'syncing') again = true
+    else if (phase !== 'idle') resync([])
+  }
+
   async function load(asked: number): Promise<boolean> {
+    again = false
     const snapshot = await readSnapshot()
     if (asked !== generation) return false
     if (snapshot === null) {
       buffer = []
       phase = 'stale'
+      if (again) resync([])
       return false
     }
     spec.model.applySnapshot({ seq: snapshot.seq, data: spec.dataOf(snapshot.chunks) })
     epoch = snapshot.epoch
-    fed = true
     phase = 'live'
     // Frames of an earlier epoch are not this snapshot's; frames at or below its seq are in it already.
     const pending = buffer.filter((frame) => frame.epoch === snapshot.epoch)
     buffer = []
+    if (again) {
+      resync(pending)
+      return true
+    }
     apply(pending)
     return true
   }
 
   function stop(): void {
-    unsubscribe?.()
-    unsubscribe = null
+    for (const leave of unsubscribe.splice(0)) leave()
     generation += 1
     phase = 'idle'
     buffer = []
     epoch = null
-    fed = false
+    connection = null
+    again = false
   }
 
   return {
@@ -175,16 +218,16 @@ export function followHost<S>(path: HostReadPath, spec: HostFollowSpec<S>): Host
       if (phase !== 'idle') return phase === 'live'
       phase = 'syncing'
       // Subscribe first, then read (ADR-033 item 3): a change between the two is never missed.
-      unsubscribe = path.subscribe((frames) => {
-        if (phase === 'syncing') buffer.push(...frames)
-        else if (phase === 'live') apply(frames)
-        else if (phase === 'stale' && frames.some((frame) => frame.name === 'resync-required'))
-          resync([])
-      })
-      const asked = generation
-      const live = await load(asked)
-      if (!live && asked === generation && !fed) stop()
-      return live
+      unsubscribe = [
+        path.subscribe((frames) => {
+          if (phase === 'syncing') buffer.push(...frames)
+          else if (phase === 'live') apply(frames)
+          // A frame is the Host answering again: the snapshot first, then the frames newer than it.
+          else if (phase === 'stale') resync(frames)
+        }),
+        (path.connection ?? windowConnection)(connectionChanged)
+      ]
+      return load(generation)
     },
     stop
   }
