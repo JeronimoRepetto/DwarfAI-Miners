@@ -120,7 +120,8 @@ const MEMBERS = {
   'host:event': 'onHostEvent', // A-N02 (unrouted until cut 1)
   'mode:revealDwarfChat': 'onRevealDwarfChat', // A-N16 (unrouted until cut 1)
   'claude:hooks:set': 'setClaudeHooksEnabled', // A-N31 (unrouted until cut 2)
-  'ask:step:set': 'setAskStep' // A-N07 (unrouted until cut 2)
+  'ask:step:set': 'setAskStep', // A-N07 (unrouted until cut 2)
+  'welcome:answer': 'answerWelcome' // A-N32 (unrouted until cut 2)
 }
 
 /**

@@ -34,6 +34,8 @@
   registry and has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-129:** A-N07 `setAskStep` (`ask:step:set`, NEW) is declared in the registry and has a generated
   preload member, so its row moved to the found table.
+- **Updated for ISSUE-223:** A-N32 `answerWelcome` (`welcome:answer`, NEW, AMENDMENT-7) is declared in the registry and
+  has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-123:** A-44 is renamed by the cut-1 switch (14 §2.1 CHANGE): the generated preload member
   `reportVisibleMines` sends `presence:visibleMines`, so it has its own row under the same id, and the `panel:openMine`
   row lost its preload location. Today's `setOpenMine` registration and constant stay until cut 5.
@@ -65,11 +67,11 @@ pushes were evaluated against `14` §2 and none of them was changed.
 
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
-| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 14  | 11     | 0        | 74    |
+| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 15  | 11     | 0        | 75    |
 | Pushes                                            | 2    | 0      | 6   | 4      | 0        | 12    |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 17     | 20  | 15     | 0        | 87    |
-| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 14  | —      | —        | 14    |
+| **Found total**                                   | 35   | 17     | 21  | 15     | 0        | 88    |
+| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 13  | —      | —        | 13    |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
 constants (63 + 2) and 66 preload members (64 + 2). The two extra channels are `dwarf:setName` and
@@ -184,6 +186,7 @@ kind `14` gives it.
 | `ui:session:changed`              | `onUiSessionChanged`          | push   | src/preload/index.ts:310                                                                                                          | A-N19   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); UI main pushes it, unrouted until cut 1                               |
 | `ui:session:get`                  | `getUiSession`                | invoke | src/preload/index.ts:306                                                                                                          | A-N17   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); unrouted until cut 1                                                  |
 | `ui:session:patch`                | `patchUiSession`              | send   | src/preload/index.ts:308                                                                                                          | A-N18   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); unrouted until cut 1                                                  |
+| `welcome:answer`                  | `answerWelcome`               | invoke | src/preload/index.ts:590                                                                                                          | A-N32   | NEW    | —                 | Declared by ISSUE-223 (AMENDMENT-7); its preload member is generated (ISSUE-045); unrouted until cut 2                                    |
 
 ### 14 §2.2 rows not in the tree
 
@@ -202,6 +205,5 @@ kind `14` gives it.
 | `window:limits`         | `getWindowingLimits`  | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `veta:dock:changed`     | `onVetaDockChanged`   | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `dwarf:stop`            | `stopDwarf`           | invoke | not found | A-N29 | NEW    | —                 |                                                                                               |
-| `welcome:answer`        | `answerWelcome`       | invoke | not found | A-N32 | NEW    | —                 |                                                                                               |
 
 <!-- reinventory-table:end -->
