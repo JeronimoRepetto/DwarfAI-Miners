@@ -79,7 +79,8 @@ describe('readModel', () => {
         // A frame newer than the snapshot arrives between the two pages.
         if (requests.length === 1) listener!([evt(8)])
         return Promise.resolve(pages[requests.length - 1])
-      }
+      },
+      connection: () => () => {}
     }
     const follower = followHost(path, {
       model,
@@ -98,27 +99,135 @@ describe('readModel', () => {
     expect(listener).toBeNull()
   })
 
-  it('[ADR-033] a first snapshot that is refused leaves the follower stopped and the model untouched', async () => {
-    const { state, model } = counter()
-    let subscribed = false
+  /** A scripted read path: A-N02 frames, A-N04 connection pushes, and A-N01 answering each answer in turn. */
+  function scripted(answers: unknown[]) {
+    let frames: ((frames: readonly HostFrame[]) => void) | null = null
+    let connection: ((view: unknown) => void) | null = null
+    const requests: SnapshotParams[] = []
     const path: HostReadPath = {
-      subscribe() {
-        subscribed = true
+      subscribe(follow) {
+        frames = follow
         return () => {
-          subscribed = false
+          frames = null
         }
       },
-      snapshot: () =>
-        Promise.resolve({ ok: false, error: { code: 'INTERNAL', message: 'no route' } })
+      snapshot(params) {
+        requests.push(params)
+        return Promise.resolve(answers[Math.min(requests.length - 1, answers.length - 1)])
+      },
+      connection(follow) {
+        connection = follow
+        return () => {
+          connection = null
+        }
+      }
     }
+    return {
+      path,
+      requests,
+      push: (batch: HostFrame[]) => frames?.(batch),
+      connect: (state: 'connecting' | 'connected' | 'reconnecting') => connection?.({ state }),
+      following: () => frames !== null && connection !== null
+    }
+  }
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 10; i += 1) await Promise.resolve()
+  }
+
+  const NOT_ATTACHED = {
+    ok: false,
+    error: { code: 'HOST_UNAVAILABLE', message: 'not attached', retryable: true }
+  }
+
+  function follow(path: HostReadPath, model: ReturnType<typeof counter>['model']) {
+    let settled = 0
     const follower = followHost(path, {
       model,
       sections: ['meta'],
       dataOf: () => ({ applied: [], snapshots: 0 }),
-      settled() {}
+      settled() {
+        settled += 1
+      }
     })
+    return { follower, settled: () => settled }
+  }
+
+  // AMENDED (was: "leaves the follower stopped"): a stopped follower never read again, so a read model whose first
+  // read came before the Host attached stayed unfed for the window's life (the panel's endless "Reading…" note).
+  it('[ADR-033] a first snapshot that is refused leaves the model untouched and the follower stale, still following', async () => {
+    const { state, model } = counter()
+    const host = scripted([{ ok: false, error: { code: 'INTERNAL', message: 'no route' } }])
+    const { follower } = follow(host.path, model)
     expect(await follower.start()).toBe(false)
-    expect(subscribed).toBe(false)
+    expect(host.following()).toBe(true)
     expect(state.snapshots).toBe(0)
+    follower.stop()
+    expect(host.following()).toBe(false)
+  })
+
+  it('[ADR-033] a first snapshot read before the Host attached is read again when the Host connection reports connected', async () => {
+    const { state, model } = counter()
+    const host = scripted([NOT_ATTACHED, answer({ seq: 4 })])
+    const { follower, settled } = follow(host.path, model)
+    expect(await follower.start()).toBe(false)
+    expect(state.snapshots).toBe(0)
+
+    host.connect('connected')
+    await settle()
+
+    expect(host.requests).toHaveLength(2)
+    expect(state.snapshots).toBe(1)
+    expect(model.seq).toBe(4)
+    expect(settled()).toBe(1)
+    // Fed now: the frames after the snapshot apply.
+    host.push([evt(5)])
+    expect(state.applied).toEqual([5])
+  })
+
+  it('[ADR-033] a stale read model reads the snapshot again when a frame reaches it', async () => {
+    const { state, model } = counter()
+    const host = scripted([NOT_ATTACHED, answer({ seq: 4 })])
+    const { follower } = follow(host.path, model)
+    await follower.start()
+
+    host.push([evt(5)])
+    await settle()
+
+    expect(host.requests).toHaveLength(2)
+    expect(state.snapshots).toBe(1)
+    // The frame that woke it is newer than the snapshot: it applies after it.
+    expect(state.applied).toEqual([5])
+  })
+
+  it('[ADR-033] a live read model reads a fresh snapshot when the Host connection comes back connected, whose hello.ok may carry a new epoch', async () => {
+    const { state, model } = counter()
+    const host = scripted([answer({ seq: 4 }), answer({ seq: 9 })])
+    const { follower } = follow(host.path, model)
+    expect(await follower.start()).toBe(true)
+
+    host.connect('reconnecting')
+    await settle()
+    expect(host.requests).toHaveLength(1)
+    host.connect('connected')
+    await settle()
+
+    expect(host.requests).toHaveLength(2)
+    expect(state.snapshots).toBe(2)
+    expect(model.seq).toBe(9)
+  })
+
+  it('[ADR-033] a connection that reports connected while a snapshot is being read is followed by one more read', async () => {
+    const { state, model } = counter()
+    const host = scripted([NOT_ATTACHED, answer({ seq: 4 })])
+    const { follower } = follow(host.path, model)
+    const started = follower.start()
+    // Connected arrives while the first read is still on its way: that read predates the attach.
+    host.connect('connected')
+    expect(await started).toBe(false)
+    await settle()
+
+    expect(host.requests).toHaveLength(2)
+    expect(state.snapshots).toBe(1)
   })
 })
