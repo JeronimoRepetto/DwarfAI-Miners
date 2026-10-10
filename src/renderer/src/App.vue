@@ -18,6 +18,7 @@ import MinesList from './components/browse/MinesList.vue'
 import ToastHost from './components/overlay/ToastHost.vue'
 import StopEverythingConfirmation from './components/stopEverything/StopEverythingConfirmation.vue'
 import HostStateMessage from './components/hostConnection/HostStateMessage.vue'
+import WelcomeStep from './components/welcome/WelcomeStep.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import PanelNav from './components/shell/PanelNav.vue'
@@ -49,6 +50,7 @@ import { useJevSettings } from './composables/useJevSettings'
 import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
 import { useTypography } from './composables/useTypography'
 import { useHostConnection } from './composables/useHostConnection'
+import { useWelcomeStep } from './composables/useWelcomeStep'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import {
   MINE_COLUMN_ART_INSET,
@@ -1232,6 +1234,9 @@ onMounted(() => {
   /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
   void followHostConnection()
   /* --- end of the ISSUE-316 block --------------------------------------------- */
+  /* --- First-run consent step (ISSUE-224) — one block, appended --------------- */
+  void followWelcomeStep()
+  /* --- end of the ISSUE-224 block --------------------------------------------- */
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
@@ -1252,6 +1257,9 @@ onBeforeUnmount(() => {
   /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
   stopFollowingHostConnection()
   /* --- end of the ISSUE-316 block --------------------------------------------- */
+  /* --- First-run consent step (ISSUE-224) — one block, appended --------------- */
+  stopFollowingWelcomeStep()
+  /* --- end of the ISSUE-224 block --------------------------------------------- */
 })
 
 /* --- Stop everything and quit (ISSUE-317) — one block, appended ----------- */
@@ -1266,6 +1274,22 @@ const {
   dismiss: dismissStopEverything
 } = useStopEverything({ readModel: { dwarfs: () => hostDwarfs() } })
 /* --- end of the ISSUE-317 block ------------------------------------------- */
+
+/* --- First-run consent step (ISSUE-224) — one block, appended --------------- */
+// The step over the Panel while the Host reports it due (07 machine 41; 14 §6.3), or while the answer's failures wait
+// to be read. App owns the singleton and therefore the IPC (ADR-033 item 2); the step only draws it.
+const {
+  shown: welcomeShown,
+  due: welcomeDue,
+  options: welcomeOptions,
+  failures: welcomeFailures,
+  answering: welcomeAnswering,
+  start: followWelcomeStep,
+  stop: stopFollowingWelcomeStep,
+  answer: answerWelcomeStep,
+  acknowledge: acknowledgeWelcomeStep
+} = useWelcomeStep()
+/* --- end of the ISSUE-224 block --------------------------------------------- */
 </script>
 
 <template>
@@ -1627,6 +1651,19 @@ const {
       @confirm="confirmStopEverything"
       @cancel="cancelStopEverything"
       @dismiss="dismissStopEverything"
+    />
+    <!--
+      The first-run consent step (ISSUE-224): over the Panel while it is shown, drawn into <body>
+      by the dialog itself. It has no close or skip control; Activate is the only way out.
+    -->
+    <WelcomeStep
+      :shown="welcomeShown"
+      :due="welcomeDue"
+      :options="welcomeOptions"
+      :failures="[...welcomeFailures]"
+      :answering="welcomeAnswering"
+      @activate="answerWelcomeStep"
+      @acknowledge="acknowledgeWelcomeStep"
     />
   </MotionConfig>
 </template>
