@@ -1,14 +1,31 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  Dwarf,
   DwarfPermissionAnswerRequest,
   DwarfPermissionRequest,
   DwarfQuestion,
   DwarfQuestionAnswerRequest,
   DwarfQuestionAnswerResult
 } from '../types'
+import type {
+  AskId,
+  AskRecord,
+  DwarfId,
+  HostFrame,
+  HostFrames,
+  IpcResult,
+  SnapshotPage,
+  UiSessionChange,
+  UiSessionPatch,
+  UiSessionSnapshot
+} from '@dwarfai/contracts'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
+import { defaultDwarf, defaultMine } from '../testing/factories'
 import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
+import { useMines } from './useMines'
+import { useToasts } from './useToasts'
 
 function stubApi(
   answerDwarfQuestion: (request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>
@@ -599,3 +616,257 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
   })
 })
 /* --- end of the rulings 19 and 20 block ----------------------------------------------------- */
+
+/* --- The dual-source ask read model (ISSUE-138) — one block, appended ------------------------ */
+
+/*
+ * From cut 2 the question store is a read model with two sources (21 §2 cut 2 "Legacy-bridge adapters", §3
+ * `LegacyAskRelay`; 14 §6.4 row `useDwarfQuestion`; ADR-033 items 3, 4): the Host's asks (the snapshot `asks` section
+ * and the `ask.*` frames above its seq) and the legacy overlay the facade's board carries (its own `legacy:` ids,
+ * replaced whole, never sequence-filtered). A card's source is its id namespace. Partial picks live in the UI main
+ * session store (`ask-picks`), never in the Host.
+ */
+describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
+  const EPOCH = 'epoch-0138'
+  const DWARF_A = '01920000-0000-7000-a000-00000000d001'
+  const DWARF_B = '01920000-0000-7000-a000-00000000d002'
+  const ASK_A = '01920000-0000-7000-a000-00000000a001'
+  const ASK_B = '01920000-0000-7000-a000-00000000a002'
+  const ASK_STALE = '01920000-0000-7000-a000-00000000a003'
+
+  type Api = ReturnType<typeof createFakeWindowApi>
+
+  function hostAsk(id: string, dwarfId: string, overrides: Partial<AskRecord> = {}): AskRecord {
+    return {
+      id,
+      dwarfId,
+      kind: 'question',
+      channel: 'driver',
+      providerRequestId: `req-${id.slice(-4)}`,
+      payload: {
+        steps: [
+          { text: 'Which database?', options: ['Postgres', 'SQLite'], allowsFreeText: true },
+          { text: 'Which schema?', options: ['public', 'app'], allowsFreeText: true },
+          { text: 'Run migrations?', options: ['Yes', 'No'], allowsFreeText: true }
+        ]
+      },
+      currentStep: 0,
+      state: 'open',
+      reannounce: true,
+      openedAt: 1_000,
+      ...overrides
+    }
+  }
+
+  function page(seq: number, asks: AskRecord[]): IpcResult<SnapshotPage> {
+    return {
+      ok: true,
+      value: {
+        snapshotId: `snap-${seq}`,
+        seq,
+        epoch: EPOCH,
+        chunks: [{ section: 'asks', data: { asks, needsYou: [] } }]
+      }
+    } as IpcResult<SnapshotPage>
+  }
+
+  function frame<N extends 'ask.opened' | 'ask.closed' | 'ask.step'>(
+    seq: number,
+    name: N,
+    data: HostFrames[N]
+  ): HostFrame {
+    return { type: 'evt', seq, epoch: EPOCH, name, data } as HostFrame
+  }
+
+  interface Fake {
+    push(frames: HostFrame[]): void
+    patches: UiSessionPatch[]
+    session(change: UiSessionChange): void
+  }
+
+  function emptySession(askPicks: UiSessionSnapshot['askPicks'] = {}): UiSessionSnapshot {
+    return { drafts: {}, chatViews: {}, askPicks, openChat: {}, currentMine: {}, valle: {} }
+  }
+
+  /** The fake `window.api`: A-N01/A-N02 for the Host source, A-N17…A-N19 for the UI session store. */
+  function install(
+    snapshot: () => IpcResult<SnapshotPage>,
+    session: UiSessionSnapshot = emptySession()
+  ): Fake {
+    let listener: ((frames: HostFrame[]) => void) | null = null
+    let sessionListener: ((change: UiSessionChange) => void) | null = null
+    const patches: UiSessionPatch[] = []
+    const api = createFakeWindowApi({
+      getHostSnapshot: vi.fn(() =>
+        Promise.resolve(snapshot())
+      ) as unknown as Api['getHostSnapshot'],
+      onHostEvent: vi.fn((follow: (frames: HostFrame[]) => void) => {
+        listener = follow
+        return () => {
+          listener = null
+        }
+      }) as unknown as Api['onHostEvent'],
+      getUiSession: vi.fn(() => Promise.resolve(session)) as unknown as Api['getUiSession'],
+      patchUiSession: vi.fn((patch: UiSessionPatch) => {
+        patches.push(patch)
+      }) as unknown as Api['patchUiSession'],
+      onUiSessionChanged: vi.fn((follow: (change: UiSessionChange) => void) => {
+        sessionListener = follow
+        return () => {
+          sessionListener = null
+        }
+      }) as unknown as Api['onUiSessionChanged']
+    })
+    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    return {
+      push(frames) {
+        if (listener === null) throw new Error('nothing follows onHostEvent')
+        listener(frames)
+      },
+      patches,
+      session(change) {
+        if (sessionListener === null) throw new Error('nothing follows onUiSessionChanged')
+        sessionListener(change)
+      }
+    }
+  }
+
+  /** The facade's board (A-12/A-P2) with today's open asks on its dwarfs, ids in the relay's namespace. */
+  function facadeBoard(dwarfs: Array<Partial<Dwarf> & { id: string }>): void {
+    useMines().setMines({
+      mines: [defaultMine({ dwarfs: dwarfs.map((dwarf) => defaultDwarf(dwarf)) })],
+      tokensObserved: 0
+    })
+  }
+
+  beforeEach(() => {
+    useDwarfQuestion().stopAsks()
+    useDwarfQuestion().clearAll()
+    useMines().stop()
+    useMines().clear()
+  })
+
+  it('[ADR-033] Host asks come from the asks section and ask frames with a higher seq, legacy asks from the facade overlay, each keyed by its own id', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    facadeBoard([{ id: DWARF_B, pendingQuestion: question({ toolUseId: 'legacy:toolu_01' }) }])
+    const store = useDwarfQuestion()
+
+    expect(await store.startAsks()).toBe(true)
+    fake.push([
+      frame(9, 'ask.opened', { ask: hostAsk(ASK_STALE, DWARF_A) }),
+      frame(11, 'ask.opened', { ask: hostAsk(ASK_B, DWARF_B, { openedAt: 2_000 }) })
+    ])
+    facadeBoard([{ id: DWARF_B, pendingQuestion: question({ toolUseId: 'legacy:toolu_02' }) }])
+
+    expect(Object.keys(store.asks.host).sort()).toEqual([ASK_A, ASK_B])
+    expect(Object.keys(store.asks.legacy)).toEqual(['legacy:toolu_02'])
+    expect(store.asks.legacy['legacy:toolu_02']).toMatchObject({
+      source: 'legacy',
+      dwarfId: DWARF_B,
+      kind: 'question'
+    })
+    expect(store.frontAsk(DWARF_A)).toMatchObject({ source: 'host', id: ASK_A })
+  })
+
+  it('[US-RES-003.AC02] after a reopen the card shows on its current step with no earlier pick selected', async () => {
+    install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const store = useDwarfQuestion()
+    await store.startAsks()
+    store.pick(ASK_A, [{ step: 0, option: 'SQLite' }])
+    store.stopAsks()
+
+    // The window reopens: the Host kept the step, the UI session store (never persisted) holds no pick.
+    install(() => page(20, [hostAsk(ASK_A, DWARF_A, { currentStep: 2 })]))
+    await store.startAsks()
+
+    expect(store.stepOf(ASK_A)).toBe(2)
+    expect(store.picksFor(ASK_A)).toEqual([])
+  })
+
+  it('[US-ASK-001.AC07] going back to an answered step shows its pick from the UI session store', async () => {
+    const fake = install(
+      () => page(10, [hostAsk(ASK_A, DWARF_A, { currentStep: 1 })]),
+      emptySession({ [ASK_A]: [{ step: 0, option: 'SQLite' }] } as UiSessionSnapshot['askPicks'])
+    )
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    expect(store.picksFor(ASK_A)).toEqual([{ step: 0, option: 'SQLite' }])
+
+    store.pick(ASK_A, [
+      { step: 0, option: 'SQLite' },
+      { step: 1, option: 'app' }
+    ])
+    expect(fake.patches).toEqual([
+      {
+        kind: 'ask-picks',
+        askId: ASK_A,
+        picks: [
+          { step: 0, option: 'SQLite' },
+          { step: 1, option: 'app' }
+        ]
+      }
+    ])
+
+    // Another window changed the picks: this one follows.
+    fake.session({
+      kind: 'ask-picks',
+      askId: ASK_A as AskId,
+      picks: [{ step: 0, option: 'Postgres' }],
+      origin: 'valle'
+    })
+    expect(store.picksFor(ASK_A)).toEqual([{ step: 0, option: 'Postgres' }])
+  })
+
+  it('[US-ASK-006.AC06] an ask.closed frame lets the card give way to the composer with no notice', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const store = useDwarfQuestion()
+    await store.startAsks()
+    expect(store.frontAsk(DWARF_A)).toMatchObject({ id: ASK_A })
+
+    fake.push([
+      frame(11, 'ask.closed', {
+        askId: ASK_A as AskId,
+        dwarfId: DWARF_A as DwarfId,
+        reason: 'answered-elsewhere'
+      })
+    ])
+
+    expect(store.frontAsk(DWARF_A)).toBeUndefined()
+    expect(store.stateFor(DWARF_A)).toBeUndefined()
+    expect(useToasts().toasts.value).toEqual([])
+  })
+
+  it('[US-ASK-007.AC02] an ask.opened frame re-sent for the same askId after a refusal brings the card back with no alert', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const store = useDwarfQuestion()
+    await store.startAsks()
+    // The card's last verdict was a refusal of this ask, and the ask closed.
+    store.state.byDwarfId[DWARF_A] = { phase: 'refused', toolUseId: ASK_A, error: 'refused' }
+    fake.push([
+      frame(11, 'ask.closed', {
+        askId: ASK_A as AskId,
+        dwarfId: DWARF_A as DwarfId,
+        reason: 'cancelled'
+      })
+    ])
+
+    fake.push([frame(12, 'ask.opened', { ask: hostAsk(ASK_A, DWARF_A, { reannounce: false }) })])
+
+    expect(store.frontAsk(DWARF_A)).toMatchObject({ source: 'host', id: ASK_A })
+    expect(store.stateFor(DWARF_A)).toBeUndefined()
+    expect(useToasts().toasts.value).toEqual([])
+  })
+
+  it('[ADR-033] an ask.step frame above the seq moves the card to the step the Host reports', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    fake.push([frame(11, 'ask.step', { askId: ASK_A as AskId, currentStep: 1 })])
+    fake.push([frame(11, 'ask.step', { askId: ASK_A as AskId, currentStep: 2 })])
+
+    expect(store.stepOf(ASK_A)).toBe(1)
+  })
+})
+/* --- end of the dual-source ask read model block --------------------------------------------- */
