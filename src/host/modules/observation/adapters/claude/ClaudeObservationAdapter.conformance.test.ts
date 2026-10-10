@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { ProviderIdentity } from '../../../../kernel/domain/values'
 import { FakeClock } from '../../../../kernel/fakes/FakeClock'
 import type { FileSystem } from '../../../../kernel/ports/fileSystem'
 import { NodeFs } from '../../../../platform/fs/NodeFs'
@@ -472,6 +473,35 @@ describe('ClaudeObservationAdapter conformance (fixtures/claude/observer)', () =
     // Two dwarfs, two histories: no key is shared.
     const [a, b] = reads.map((read) => new Set(keysOf(read).filter((k) => k.includes(':'))))
     for (const key of a!) expect(b!.has(key), key).toBe(false)
+  })
+
+  it('[S4.41, ADR-015] a message from its coordinator re-announces a subagent at its own time with its parent, read from the cursor alone or after a restart', async () => {
+    // Claude Code's SendMessage to an agent appends to its transcript (owner amendment I): the
+    // loop needs a fact that the agent runs again, and the parent its resumed generation joins.
+    const session = '01a0b000-0000-7000-8000-000000000730'
+    const agent: ProviderIdentity = {
+      providerId: 'claude',
+      providerSessionId: session,
+      providerAgentId: 'e5f60718293abcd01'
+    }
+    const resumedAt = Date.parse('2026-09-30T19:01:00.000Z')
+    for (const file of ['resumed-subagent.jsonl', 'resumed-subagent-crlf.jsonl']) {
+      const configDir = await tempDir()
+      const path = await place(configDir, file)
+      const lines = (await readFile(path, 'utf8')).split(/(?<=\n)/)
+      // Its first turn only, read live; then the coordinator's message and its answer.
+      await writeFile(path, lines.slice(0, 2).join(''))
+      const adapter = adapterAt(configDir)
+      const first = await adapter.read(await onlySource(adapter), null)
+      await appendFile(path, lines.slice(2).join(''))
+      for (const reader of [adapter, adapterAt(configDir)]) {
+        const later = await reader.read(await onlySource(reader), first.next)
+        expect(
+          sessionsOf(later).map((s) => [s.identity, s.parentIdentity, s.at]),
+          file
+        ).toEqual([[agent, { providerId: 'claude', providerSessionId: session }, resumedAt]])
+      }
+    }
   })
 
   it('[FM-091] with no readable configuration folder discover finds nothing and logs no path', async () => {

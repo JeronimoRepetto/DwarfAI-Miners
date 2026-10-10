@@ -41,7 +41,10 @@
 // dwarf is dropped before `SessionObserved` (07 S4.30 guard; S3.22, S4.40; FM-092): its records
 // move the cursor and nothing else, so a late write raises no ghost and rediscovers no removed
 // mine. An ended identity whose dwarf is still present (it arrived while its ending was being
-// read) is closed (S4.33), because an `active` session is never in the ledger (07 §4B).
+// read) is closed (S4.33), because an `active` session is never in the ledger (07 §4B). A subagent
+// its notification ended that its coordinator resumes while its session runs comes back as its
+// resumed generation, a new identity (`resumedSubagentOf`; owner amendment I): the ended identity
+// itself still never arrives.
 //
 // Provider errors (ISSUE-084; 13 FM-067, FM-068; ADR-026 item 6): every read of a stream is
 // counted by the `ProviderErrorFold` of domain/providerError.ts, opened once per poll cycle. A read
@@ -187,6 +190,10 @@ export class ObservationLoop {
   private readonly identityOfDwarf = new Map<DwarfId, ProviderIdentity>()
   /** The identity each stream last carried records of, this Host run (ISSUE-084). */
   private readonly identityOfStream = new Map<string, ProviderIdentity>()
+  /** The newest ending of each ended subagent read this Host run (provider time). */
+  private readonly lastEnding = new Map<string, Instant>()
+  /** When each resumed subagent generation made this Host run resumed (its `session` fact's time). */
+  private readonly resumedAt = new Map<string, Instant>()
   /** Provider errors, folded per cause and cycle, drift counted before it surfaces (ISSUE-084). */
   private readonly errors = new ProviderErrorFold()
 
@@ -445,6 +452,20 @@ export class ObservationLoop {
       // Only its ending, and no dwarf: it ends without ever arriving (a subagent's ending read in
       // its session's transcript).
       const endsUnseen = session === null && records.every((r) => r.kind === 'closed')
+      // A subagent its notification ended and its coordinator resumed: its records belong to its
+      // resumed generation, a new identity (the ended one never arrives again, INV-36).
+      const generation =
+        alreadyEnded && session !== null && session.closedAt !== null
+          ? this.resumedSubagentOf(identity, session, records)
+          : null
+      if (generation !== null) {
+        if (generation.events.length > 0) {
+          const generationKey = providerIdentityKey(generation.identity)
+          presenceOf.set(generationKey, presenceOf.get(key) ?? identity)
+          groups.push(generation)
+        }
+        continue
+      }
       if (alreadyEnded || endsUnseen) {
         // Anti-ghost (INV-36): no arrival, no write; a dwarf still present is closed (S4.33).
         if (session !== null && session.closedAt === null) {
@@ -677,7 +698,8 @@ export class ObservationLoop {
 
   /**
    * The generation a departed session's records belong to: its newest resumed generation while
-   * that one is present; else a new one, `<session id>~resumed-<departure, epoch s>`, when the
+   * that one is present; else a new one (`resumedGeneration`: `<session id>~resumed-<departure,
+   * epoch s>`, on the agent id for a subagent), when the
    * records carry more than an ending and an adapter reports the session's process `live`; else
    * none (S4.40: a late write changes nothing). Derived from the stored departures alone, so a
    * Host restart derives the same identities.
@@ -689,10 +711,7 @@ export class ObservationLoop {
   ): ProviderIdentity | null {
     let departedAt = session.closedAt
     for (let n = 0; n < MAX_GENERATIONS && departedAt !== null; n++) {
-      const next: ProviderIdentity = {
-        ...identity,
-        providerSessionId: `${identity.providerSessionId}~resumed-${Math.floor(departedAt / 1_000)}`
-      }
+      const next = resumedGeneration(identity, departedAt)
       const resumed = this.deps.sessions.byIdentity(next)
       if (resumed === null) {
         const feeds = records.some((r) => r.kind !== 'closed')
@@ -701,6 +720,64 @@ export class ObservationLoop {
       }
       if (resumed.closedAt === null) return next
       departedAt = resumed.closedAt
+    }
+    return null
+  }
+
+  /**
+   * The generation an ended subagent's records belong to (owner amendment I; 07 S4.41), with the
+   * records it takes, or null when they belong to none (INV-36, S4.40: the cursor only). Only for
+   * a subagent the ledger holds itself, ended by its notification.
+   *
+   * - Its newest generation while that one is present takes its records, and the endings written
+   *   after that generation resumed: the next notification ends it. A copy of an earlier ending
+   *   (Claude Code writes one twice, queued then delivered) is no ending of it.
+   * - Else a new generation, `<agent id>~resumed-<departure, epoch s>` (the session id is kept, so
+   *   the session's ending departs it too), when its records state its `session` fact again later
+   *   than every ending of it known (its coordinator's message, `parse.ts`) and an adapter reports
+   *   the session's process `live`. The tail of an ending (its last records, read after the
+   *   notification) states no such fact, so it brings nothing back. A generation whose session
+   *   ended is ended too (`hasEnded`): it never arrives, and a present one is closed (S4.33).
+   *
+   * The names derive from the stored departures alone, so a Host restart derives the same ones;
+   * when a restart lost when the present generation resumed, its predecessor's departure stands in.
+   */
+  private resumedSubagentOf(
+    identity: ProviderIdentity,
+    session: ObservedSession,
+    records: ObservedEvent[]
+  ): IdentityRecords | null {
+    const ended = this.deps.ended
+    if (identity.providerAgentId === undefined || ended === undefined || !ended.has(identity)) {
+      return null
+    }
+    const key = providerIdentityKey(identity)
+    for (const r of records) {
+      if (r.kind === 'closed')
+        this.lastEnding.set(key, Math.max(r.at, this.lastEnding.get(key) ?? r.at))
+    }
+    const taken = (generation: ProviderIdentity, since: Instant): IdentityRecords => ({
+      identity: generation,
+      events: records
+        .filter((r) => r.kind !== 'closed' || r.at > since)
+        .map((r) => ({ ...r, identity: generation }))
+    })
+    let departedAt = session.closedAt
+    for (let n = 0; n < MAX_GENERATIONS && departedAt !== null; n++) {
+      const next = resumedGeneration(identity, departedAt)
+      const nextKey = providerIdentityKey(next)
+      const resumed = this.deps.sessions.byIdentity(next)
+      if (resumed !== null) {
+        if (resumed.closedAt === null) return taken(next, this.resumedAt.get(nextKey) ?? departedAt)
+        departedAt = resumed.closedAt
+        continue
+      }
+      const live = (this.deps.presence ?? []).some((p) => p.presenceOf(identity) === 'live')
+      const after = Math.max(departedAt, this.lastEnding.get(key) ?? departedAt)
+      const resume = records.find((r) => r.kind === 'session' && r.at > after)
+      if (!live || resume?.kind !== 'session') return null
+      this.resumedAt.set(nextKey, resume.at)
+      return taken(next, resume.at)
     }
     return null
   }
@@ -797,6 +874,18 @@ function newestProviderTime(records: ObservedEvent[]): Instant | null {
     }
   }
   return newest
+}
+
+/**
+ * The resumed generation of `identity` after a departure (owner amendment I): `~resumed-<departure,
+ * epoch s>` on the id that names it, its agent id for a subagent (its session id is kept, so it
+ * stays a subagent of that session) and its session id otherwise.
+ */
+function resumedGeneration(identity: ProviderIdentity, departedAt: Instant): ProviderIdentity {
+  const suffix = `~resumed-${Math.floor(departedAt / 1_000)}`
+  return identity.providerAgentId === undefined
+    ? { ...identity, providerSessionId: `${identity.providerSessionId}${suffix}` }
+    : { ...identity, providerAgentId: `${identity.providerAgentId}${suffix}` }
 }
 
 /** A batch's records grouped by identity, in first-seen order. */
