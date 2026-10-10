@@ -82,7 +82,8 @@ export type {
  */
 export interface Asking {
   answers: Pick<AskBroker, 'answerPermission' | 'answerQuestion'>
-  resolutions: Pick<AskBroker, 'resolveExternally'>
+  /** External resolutions and closing by death (`closeForDwarf`, ISSUE-140). */
+  resolutions: Pick<AskBroker, 'resolveExternally' | 'closeForDwarf'>
 }
 
 export function createAsking(deps: AnswerPathsDeps): Asking {
