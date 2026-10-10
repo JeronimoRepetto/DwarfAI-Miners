@@ -123,9 +123,15 @@ export class ProcessGoneWatch {
     this.resolveFolder = deps.resolveFolder ?? canonicalRoot
   }
 
-  /** The session showed activity now: the quiet gate and any confirmation start again. */
-  active(key: string): void {
-    this.watched.set(key, { lastActivity: this.deps.clock.now(), absentSince: null, gone: false })
+  /**
+   * The session showed activity: the quiet gate and any confirmation start again. `at` is the
+   * provider time of its newest record (owner decision 2026-10-10): a backlog read at first sight
+   * is quiet since that record, not since the Host read it. Never later than now.
+   */
+  active(key: string, at?: number): void {
+    const now = this.deps.clock.now()
+    const lastActivity = at === undefined || !Number.isFinite(at) ? now : Math.min(at, now)
+    this.watched.set(key, { lastActivity, absentSince: null, gone: false })
   }
 
   /** Forgets a session (its stream went away). */

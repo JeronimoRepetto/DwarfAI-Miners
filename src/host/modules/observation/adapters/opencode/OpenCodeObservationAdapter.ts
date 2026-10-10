@@ -258,7 +258,7 @@ export class OpenCodeObservationAdapter implements ObservationAdapter {
       return {
         watermark,
         states,
-        active: [...new Set(messages.filter((m) => m.changed >= start).map((m) => m.sessionId))],
+        active: newestChangeBySession(messages.filter((m) => m.changed >= start)),
         facts: factsOfBatch({
           providerId: this.providerId,
           sessions,
@@ -330,20 +330,27 @@ export class OpenCodeObservationAdapter implements ObservationAdapter {
 
   /**
    * Activity (owner amendment I): a changed message of a session, or its row's `time_updated`
-   * moving since the last read. A session seen for the first time is active from now.
+   * moving since the last read, as of when it changed (owner decision 2026-10-10): a session read
+   * for the first time long after its last change is quiet since that change, not since now.
    */
-  private noteActivity(states: Map<string, SessionState>, changed: readonly string[]): void {
+  private noteActivity(states: Map<string, SessionState>, changed: Map<string, number>): void {
     const watch = this.options.processWatch
-    const active = new Set(changed)
+    // By session: when it last changed, or undefined when no time says (activity now).
+    const active = new Map<string, number | undefined>(changed)
     for (const [id, state] of states) {
       const before = this.states.get(id)
-      if (before !== undefined && before.updated !== state.updated) active.add(id)
+      if (before === undefined || before.updated !== state.updated) {
+        const at = state.updated ?? undefined
+        const known = active.get(id)
+        if (at !== undefined) active.set(id, known === undefined ? at : Math.max(known, at))
+        else if (before !== undefined && !active.has(id)) active.set(id, undefined)
+      }
       if (state.archivedAt !== null && before?.archivedAt !== state.archivedAt) {
         this.newlyArchived.add(id)
       }
     }
-    for (const id of active) {
-      watch?.active(id)
+    for (const [id, at] of active) {
+      watch?.active(id, at)
       this.settled.delete(id)
     }
     this.states = states
@@ -430,4 +437,14 @@ export class OpenCodeObservationAdapter implements ObservationAdapter {
       snapshot.reader.close()
     }
   }
+}
+
+/** The newest change of each session among `messages`, by session id. */
+function newestChangeBySession(
+  messages: ReadonlyArray<{ sessionId: string; changed: number }>
+): Map<string, number> {
+  const newest = new Map<string, number>()
+  for (const m of messages)
+    newest.set(m.sessionId, Math.max(newest.get(m.sessionId) ?? m.changed, m.changed))
+  return newest
 }

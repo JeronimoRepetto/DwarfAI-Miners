@@ -40,6 +40,24 @@ function world(options: { platform?: NodeJS.Platform; links?: Record<string, str
 }
 
 describe('ProcessGoneWatch', () => {
+  it('[FM-059, US-OBS-005] a session first seen with its last record long past is quiet from that record, so it closes about 30 s after it is first seen', async () => {
+    const { watch, at } = world()
+    // The backlog read at first sight: its newest record was written 2 h before the Host saw it.
+    watch.active('s1', T0 - 7_200 * S)
+
+    expect(await at(0)).toBe(false)
+    expect(await at(PROCESS_GONE_CONFIRM_MS)).toBe(true)
+  })
+
+  it('[FM-059] a record time ahead of the Host clock counts as activity now, never later', async () => {
+    const { watch, at } = world()
+    watch.active('s1', T0 + 3_600 * S)
+
+    expect(await at(PROCESS_GONE_QUIET_MS - 1)).toBe(false)
+    expect(await at(PROCESS_GONE_QUIET_MS)).toBe(false)
+    expect(await at(PROCESS_GONE_QUIET_MS + PROCESS_GONE_CONFIRM_MS)).toBe(true)
+  })
+
   it('[FM-059, BR-11, INV-26] a session quiet for less than 300 s is never closed and lists no process, even with no process of its provider anywhere', async () => {
     const { watch, processes, at } = world()
     watch.active('s1')
