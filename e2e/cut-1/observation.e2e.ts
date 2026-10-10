@@ -68,12 +68,13 @@ test.describe('cut 1: observation survives a close and reopen (ISSUE-123)', () =
       profile: owned,
       stubs,
       trayProbe: true,
-      beforeLaunch: async (p) => {
-        seedClaudeStubSession(p)
-      },
       tracePath: test.info().outputPath('trace-first.zip')
     })
     await waitForHostAttached(owned)
+    // Seeded once the Host is up, so the stub session is written after the install moment: a
+    // session whose newest record predates it, and whose process is not known to run, is history,
+    // left to the coal backfill (owner decision 2026-10-10, ADR-006 item 8).
+    seedClaudeStubSession(owned)
     const before = await oneObservedDwarf(launched.window)
     await boardDrawsTheDwarf(launched)
 
