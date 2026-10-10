@@ -13,6 +13,8 @@
 // frame projections (transport/frames/askFrames.ts); `createAskQueries`, the read model behind the
 // snapshot's `asks` section (transport/snapshot/asksSection.ts) over `AskRepository.live` (owner
 // amendment L).
+// ISSUE-129: `createAskStep`, the broker's `setStep` (S6.04, INV-75), which B-M32 serves
+// (transport/methods/askingSetStep.ts); the Host composes it (later: ISSUE-140).
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
@@ -25,9 +27,11 @@ import {
 import {
   AskAnswerPaths,
   AskOpenPath,
+  AskStepPath,
   type AnswerPathsDeps,
   type AskBroker,
-  type OpenPathDeps
+  type OpenPathDeps,
+  type StepPathDeps
 } from './application/askBroker'
 
 export type { AnswerPathsDeps, AskBroker } from './application/askBroker'
@@ -47,7 +51,7 @@ export type {
   AskStepChanged
 } from './domain/events'
 export type { AskAnswerChannel } from './ports/askAnswerChannel'
-export type { OpenPathDeps } from './application/askBroker'
+export type { OpenPathDeps, StepPathDeps } from './application/askBroker'
 export type { AskCapabilities, AskSession, SessionCapabilities } from './ports/sessionCapabilities'
 export type {
   AnswerOutcome,
@@ -98,4 +102,9 @@ export function createAskOpening(deps: OpenPathDeps): Pick<AskBroker, 'open'> {
 /** The `AskQueries` read model with the `asks` section's snapshot read (ISSUE-130). */
 export function createAskQueries(deps: AskReadModelDeps): AskSnapshotQueries {
   return new AskReadModel(deps)
+}
+
+/** The broker's `setStep` (16 §4.7 row `setStep`; S6.04), composed by the Host (ISSUE-140). */
+export function createAskStep(deps: StepPathDeps): Pick<AskBroker, 'setStep'> {
+  return new AskStepPath(deps)
 }

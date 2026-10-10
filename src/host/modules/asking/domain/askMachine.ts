@@ -4,6 +4,8 @@
 // - `submit` is the critical section's decision (ADR-010 item 4, INV-72): it wins only on the
 //   dwarf's front ask while that ask is `open` and has an answer channel; everything else is
 //   `not-open` and changes nothing (S6.07, PO #28).
+// - `setStep` keeps the step the person is on (S6.04, INV-75): only the dwarf's front ask while it
+//   is `open` moves, and only to another whole step; everything else changes nothing (16 §4.7).
 // - `channelResult` settles the hand-over: `accepted` closes the ask (S6.08); a refusal other than
 //   `ask-closed` reopens it (S6.09); the provider no longer holding the request closes it
 //   answered-elsewhere (S6.10); an ask already closed meanwhile stays in its closing state and the
@@ -241,6 +243,23 @@ export function submit(asks: readonly Ask[], askId: string): SubmitResult {
     return { kind: 'not-open', transition: 'S6.07' }
   if (frontAsk(asks).get(ask.dwarfId) !== ask) return { kind: 'not-open', transition: null }
   return { kind: 'won', ask: applyTransition(ask, 'S6.06', 'answering'), transition: 'S6.06' }
+}
+
+/**
+ * S6.04: the step the person is on, reported by the UI for the ask `askId` among the broker's asks.
+ * It moves only the dwarf's front ask while that ask is `open`, to a whole step other than the one
+ * it is on; the picks are never part of it (OQ-03). An unknown, closed, `answering` or queued ask,
+ * the same step or a step that is not a whole non-negative number is null: nothing changes.
+ */
+export function setStep(asks: readonly Ask[], askId: string, step: number): AskStep | null {
+  const ask = asks.find((candidate) => candidate.id === askId)
+  if (ask === undefined || ask.state !== 'open') return null
+  if (!Number.isInteger(step) || step < 0 || step === ask.currentStep) return null
+  if (frontAsk(asks).get(ask.dwarfId) !== ask) return null
+  return {
+    ask: { ...applyTransition(ask, 'S6.04', 'open'), currentStep: step },
+    transition: 'S6.04'
+  }
 }
 
 const ASK_CLOSED: AnswerOutcome = { kind: 'refused', reason: 'ask-closed' }
