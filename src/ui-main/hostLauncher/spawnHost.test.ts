@@ -1,6 +1,11 @@
 // Where the Host's executable and entry are inside the versioned copy (ADR-002 D5; SP-03).
 import { describe, expect, it } from 'vitest'
-import { hostSpawnInputFromCopy, type HostSpawnInput } from './spawnHost'
+import {
+  hostEnvironment,
+  hostSpawnInputFromCopy,
+  withDotenvEntries,
+  type HostSpawnInput
+} from './spawnHost'
 
 const WINDOWS_HOST: HostSpawnInput = {
   execPath: 'C:\\Apps\\DwarfAI-Miners\\DwarfAI-Miners.exe',
@@ -81,5 +86,29 @@ describe('hostSpawnInputFromCopy (ADR-002 D5)', () => {
         { sourceDir: 'C:\\Apps\\DwarfAI-Miners', contentDir: 'C:\\copy' }
       )
     ).toEqual({ ok: false, errCode: 'EXEC_OUTSIDE_COPY' })
+  })
+})
+
+// A development checkout's settings live in the repo `.env`, which UI main's legacy composition loads
+// into its own environment only after the Host is started (the attach starts before Electron is
+// ready). The launcher layers it under the Host's environment as dotenv layers it under UI main's:
+// a variable the environment already has wins (HO-09; `contracts/config`, #38).
+describe('withDotenvEntries (the repo .env reaches the Host)', () => {
+  it('[FM-091] a .env setting the UI environment lacks reaches the Host environment; one it has keeps the environment value', () => {
+    const env = withDotenvEntries(
+      { PATH: '/usr/bin', CLAUDE_CONFIG_DIR: '/data/claude' },
+      { CLAUDE_CONFIG_DIRS: '~/.claude;~/.claude-work', CLAUDE_CONFIG_DIR: '/elsewhere' }
+    )
+    const host = hostEnvironment(env, '/home/j/.config/DwarfAI-Miners/host')
+    expect(host['CLAUDE_CONFIG_DIRS']).toBe('~/.claude;~/.claude-work')
+    expect(host['CLAUDE_CONFIG_DIR']).toBe('/data/claude')
+    expect(host['PATH']).toBe('/usr/bin')
+  })
+
+  it('[FM-091, NFR-SEC-05] a DWARFAI_ name in the .env never reaches the Host: the launcher alone sets those', () => {
+    const env = withDotenvEntries({}, { DWARFAI_HOST_DATA_DIR: '/tmp/x', DWARFAI_TOKEN: 't' })
+    const host = hostEnvironment(env, '/data/host')
+    expect(host['DWARFAI_HOST_DATA_DIR']).toBe('/data/host')
+    expect(host['DWARFAI_TOKEN']).toBeUndefined()
   })
 })
