@@ -4,6 +4,7 @@ import {
   createIsolatedProfile,
   disposeProfile,
   launchApp,
+  waitForHostAttached,
   type IsolatedProfile,
   type LaunchedApp
 } from '../_harness/launchApp.ts'
@@ -51,12 +52,14 @@ test.describe('cut 1: a stub CLI session observed by the Host (ISSUE-123)', () =
     launched = await launchApp({
       profile: owned,
       stubs: path.join(STUB_BIN, 'claude'),
-      beforeLaunch: async (p) => {
-        seedClaudeStubSession(p)
-      },
       tracePath: test.info().outputPath('trace.zip')
     })
     const { window } = launched
+    await waitForHostAttached(owned)
+    // Seeded once the Host is up, so the stub session is written after the install moment: a
+    // session whose newest record predates it, and whose process is not known to run, is history,
+    // left to the coal backfill (owner decision 2026-10-10, ADR-006 item 8).
+    seedClaudeStubSession(owned)
 
     let seen: ObservedDwarf[] = []
     await expect
