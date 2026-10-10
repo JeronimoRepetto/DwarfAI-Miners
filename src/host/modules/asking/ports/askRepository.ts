@@ -25,6 +25,9 @@
 // need (ADR-010 items 4, 5, 13; 09 §8.2; INV-79) — `answerOf`, `recordOf`, `linkRecord`,
 // `settleAnswer` — and `byId`, the critical section's read of the submitted ask (09 §8.2 "read the
 // ask's state"). Every write joins the caller's transaction.
+//
+// Owner amendment L (2026-10-09, ISSUE-130): `live`, the open and answering asks of every dwarf in
+// needs-you order, which `AskQueries` and the snapshot's `asks` section read (14 §4.1).
 import type { AnswerOutcome } from '../../../kernel/domain/sharedContracts'
 import type { AskId, DwarfId, MessageId } from '../../../kernel/domain/values'
 import type { Ask } from '../domain/ask'
@@ -81,4 +84,10 @@ export interface AskRepository {
   // Amended: 16 §4.7 AskRepository.settleAnswer (owner amendment K, 2026-10-09): transaction 2 —
   // `outcome`, `refusal_reason` and `settled_at` of the winning request, once.
   settleAnswer(requestId: string, result: SettledAnswer): void
+  // Amended: 16 §4.7 AskRepository.live (owner amendment L, 2026-10-09): every `open` or
+  // `answering` ask of every dwarf, oldest first by `openedAt` (09 `asks_needs_you`; ties by id),
+  // queued non-front asks included (INV-70) — the read behind `AskQueries.openAsks`, the snapshot's
+  // `asks` section and its needs-you order (14 §4.1; ADR-010 item 9), from the stored rows so an
+  // open ask survives a Host restart.
+  live(): Ask[]
 }

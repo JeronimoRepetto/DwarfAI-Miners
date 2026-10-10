@@ -1,6 +1,9 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import type {
+  AskId,
+  AskRecord,
+  AskState,
   AttentionKind,
   ConsentOrigin,
   DwarfId,
@@ -472,6 +475,69 @@ describe('mine.removed payload (14 §3.5, B-F07)', () => {
     const failed = { kind: 'mine-removal-failed', requestId: 'r-1', mineId: MINE, failed: [MINE] }
     expect(toast.safeParse(failed).success).toBe(true)
     expect(toast.safeParse({ ...failed, failed: undefined }).success).toBe(false)
+  })
+})
+
+// The B-F15, B-F16 and B-F17 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
+
+describe('ask.opened, ask.closed and ask.step payloads (14 §3.5, B-F15…B-F17)', () => {
+  const ASK = '01920000-0000-7000-9000-0000000130a1'
+  const DWARF = '01920000-0000-7000-9000-0000000130d1'
+  const record = {
+    id: ASK,
+    dwarfId: DWARF,
+    kind: 'permission',
+    channel: 'driver',
+    providerRequestId: 'req-130',
+    payload: { toolName: 'Bash', requestText: 'run the tests' },
+    currentStep: 0,
+    state: 'open',
+    reannounce: true,
+    openedAt: 1_790_000_000_000
+  }
+
+  it('[ADR-010] ask.opened, ask.closed and ask.step carry exactly their 14 §3.5 payloads and refuse any other key', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toEqual(
+      expect.arrayContaining(['ask.opened', 'ask.closed', 'ask.step'])
+    )
+    expectTypeOf<HostFrames['ask.opened']>().toEqualTypeOf<{ ask: AskRecord }>()
+    expectTypeOf<HostFrames['ask.closed']>().toEqualTypeOf<{
+      askId: AskId
+      dwarfId: DwarfId
+      reason: AskState
+    }>()
+    expectTypeOf<HostFrames['ask.step']>().toEqualTypeOf<{ askId: AskId; currentStep: number }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ask.opened']>>().toEqualTypeOf<
+      HostFrames['ask.opened']
+    >()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ask.closed']>>().toEqualTypeOf<
+      HostFrames['ask.closed']
+    >()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ask.step']>>().toEqualTypeOf<
+      HostFrames['ask.step']
+    >()
+
+    const opened = HOST_FRAME_SCHEMAS['ask.opened']
+    expect(opened.safeParse({ ask: record }).success).toBe(true)
+    expect(opened.safeParse({ ask: { ...record, partialPicks: [0] } }).success).toBe(false)
+    expect(opened.safeParse({ ask: record, reopened: true }).success).toBe(false)
+
+    const closed = HOST_FRAME_SCHEMAS['ask.closed']
+    expect(closed.safeParse({ askId: ASK, dwarfId: DWARF, reason: 'auto-denied' }).success).toBe(
+      true
+    )
+    expect(closed.safeParse({ askId: ASK, dwarfId: DWARF, reason: 'expired' }).success).toBe(false)
+    expect(closed.safeParse({ askId: ASK, reason: 'cancelled' }).success).toBe(false)
+
+    const step = HOST_FRAME_SCHEMAS['ask.step']
+    expect(step.safeParse({ askId: ASK, currentStep: 2 }).success).toBe(true)
+    expect(step.safeParse({ askId: ASK, currentStep: -1 }).success).toBe(false)
+    expect(step.safeParse({ askId: ASK, currentStep: 2, picks: [1] }).success).toBe(false)
+
+    // ask.opened carries question text and tool summaries; the other two carry ids only.
+    expect(SENSITIVE_FRAMES).toContain('ask.opened')
+    expect(SENSITIVE_FRAMES).not.toContain('ask.closed')
+    expect(SENSITIVE_FRAMES).not.toContain('ask.step')
   })
 })
 

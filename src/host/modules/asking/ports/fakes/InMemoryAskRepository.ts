@@ -6,6 +6,7 @@
 // `AskRecord` fields are stored, so nothing picked on an earlier step survives (INV-75, OQ-03).
 // Owner amendment K (2026-10-09): `settlements` stands for `ask_answers` — `answerOf`, `recordOf`,
 // `linkRecord` and `settleAnswer` (once) read and write it as the SQLite adapter does.
+// Owner amendment L (2026-10-09): `live` lists every open or answering ask, oldest first.
 import type { AskId, DwarfId, MessageId } from '../../../../kernel/domain/values'
 import type { Ask } from '../../domain/ask'
 import type {
@@ -107,6 +108,13 @@ export class InMemoryAskRepository implements AskRepository {
       throw new Error(`no pending ask_answers row ${requestId} to settle`)
     }
     row.outcome = structuredClone(result)
+  }
+
+  live(): Ask[] {
+    return [...this.rows.asks.values()]
+      .filter(isLive)
+      .sort((a, b) => a.openedAt - b.openedAt || compare(a.id, b.id))
+      .map(stored)
   }
 
   private settlementOf(requestId: string) {
