@@ -603,3 +603,70 @@ describe('first-run step evaluation in the boot (07 S41.01, S41.09)', () => {
     )
   })
 })
+
+// Added for ISSUE-323: boot step 3 re-verifies the config writes a crash left between Tx A and Tx B
+// right after the saga resume, before the modules are constructed and before any command is
+// accepted (16 §8.2 step 3, §7.3; 07 S14.11).
+describe('config-write re-verification in the boot (16 §7.3, 07 S14.11)', () => {
+  const portsWith = (calls: string[], reverify: () => Promise<unknown>) => {
+    const clock = new FakeClock()
+    const log = new RecordingDiagnosticsLog()
+    return {
+      log,
+      steps: createBootSteps({
+        paths: new FakeAppPaths(),
+        clock,
+        scheduler: new FakeScheduler(clock),
+        ids: new SequenceIdGenerator(),
+        fs: new FakeFs(),
+        processControl: new FakeProcessControl(),
+        log,
+        endpoint: { bind: () => Promise.resolve('bound'), close: () => Promise.resolve() },
+        database: { open: () => Promise.resolve() },
+        resumeResetSaga: () => {
+          calls.push('resume-reset-saga')
+          return Promise.resolve()
+        },
+        reverifyConfigWrites: reverify,
+        constructModules: () => void calls.push('construct-modules'),
+        evaluateWelcome: () => {
+          calls.push('evaluate-welcome')
+          return Promise.resolve()
+        }
+      })
+    }
+  }
+
+  it('[S14.11, S13.08, S41.01] the re-verification runs after the saga resume, before the modules and the first-run evaluation', async () => {
+    const calls: string[] = []
+    const { steps } = portsWith(calls, () => {
+      calls.push('reverify-config-writes')
+      return Promise.resolve()
+    })
+    const context = { reportMigrating: () => undefined }
+    for (const step of steps) await step.run(context)
+
+    expect(calls).toStrictEqual([
+      'resume-reset-saga',
+      'reverify-config-writes',
+      'construct-modules',
+      'evaluate-welcome'
+    ])
+  })
+
+  it('[S14.11, FM-020] a failed re-verification is logged and never fails the boot; the rows wait for the next boot', async () => {
+    const calls: string[] = []
+    const { steps, log } = portsWith(calls, () => Promise.reject(new Error('settings.json io')))
+    const context = { reportMigrating: () => undefined }
+    const outcomes = []
+    for (const step of steps) outcomes.push(await step.run(context))
+
+    expect(outcomes.every((outcome) => outcome.kind === 'done' || outcome.kind === 'skipped')).toBe(
+      true
+    )
+    expect(calls).toStrictEqual(['resume-reset-saga', 'construct-modules', 'evaluate-welcome'])
+    expect(log.entries).toContainEqual(
+      expect.objectContaining({ level: 'error', event: 'uncaught', subsystem: 'preferences' })
+    )
+  })
+})
