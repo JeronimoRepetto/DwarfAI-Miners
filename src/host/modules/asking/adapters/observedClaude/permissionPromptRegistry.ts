@@ -65,6 +65,12 @@ export type PromptChange =
 
 export interface PermissionPromptRegistryDeps {
   transcripts: TranscriptTail
+  /**
+   * Redacts the secrets of a request's text before it leaves for an ask: the one redaction rule
+   * (`contracts/logging` `redactSecrets`), bound by the wiring since an adapter never imports
+   * `contracts` (05 R9).
+   */
+  redact(text: string): string
   /** The key-map measurements (keyMap.ts); the recorded ones by default. */
   measurements?: readonly KeyMapMeasurement[]
 }
@@ -175,7 +181,7 @@ export class PermissionPromptRegistry {
         kind: 'permission',
         providerRequestId: call.id,
         channel: keyMap.kind === 'disabled' ? 'none' : 'hook-keystroke',
-        payload: { toolName: call.toolName, requestText: call.requestText },
+        payload: { toolName: call.toolName, requestText: this.deps.redact(call.requestText) },
         // Claude Code's dialog: "Yes" allows this call once; Esc declines it (ADR-012 item 3).
         options: { hasAllowOnce: true, hasRejectOnce: true }
       }

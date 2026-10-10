@@ -15,6 +15,10 @@
 // amendment L).
 // ISSUE-129: `createAskStep`, the broker's `setStep` (S6.04, INV-75), which B-M32 serves
 // (transport/methods/askingSetStep.ts); the Host composes it (later: ISSUE-140).
+// ISSUE-134: the broker's external resolutions (`Asking.resolutions`, with ADR-010 item 10's
+// keystroke attribution) and the observed-Claude keystroke channel's adapters
+// (`adapters/observedClaude/`: the channel, the prompt registry, the key map, the transcript tail),
+// which host/wiring imports directly (R6); wiring/routes/observedClaudeAsks.ts feeds them.
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
@@ -71,13 +75,19 @@ export type {
   SettledAnswer
 } from './ports/askRepository'
 
-/** The asking module so far: the broker's two answer paths (16 §4.7). */
+/**
+ * The asking module so far: the broker's two answer paths and its external resolutions (16 §4.7),
+ * one instance, so a resolution sees the answer in flight (S6.21) and the keystroke injections it
+ * attributes (S6.12, ISSUE-134).
+ */
 export interface Asking {
   answers: Pick<AskBroker, 'answerPermission' | 'answerQuestion'>
+  resolutions: Pick<AskBroker, 'resolveExternally'>
 }
 
 export function createAsking(deps: AnswerPathsDeps): Asking {
-  return { answers: new AskAnswerPaths(deps) }
+  const paths = new AskAnswerPaths(deps)
+  return { answers: paths, resolutions: paths }
 }
 
 /** Structurally the preferences module's `ResetDbStep` (16 §4.12); asking never imports it. */

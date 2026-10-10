@@ -3,15 +3,17 @@
 // (R14).
 
 /** An assistant record with one `tool_use` call of the main session. */
-export function toolUseLine(id: string, name = 'Bash', version = '2.1.261'): string {
+export function toolUseLine(
+  id: string,
+  name = 'Bash',
+  version = '2.1.261',
+  input: Record<string, unknown> = { command: 'pnpm test' }
+): string {
   return JSON.stringify({
     type: 'assistant',
     isSidechain: false,
     version,
-    message: {
-      role: 'assistant',
-      content: [{ type: 'tool_use', id, name, input: { command: 'pnpm test' } }]
-    }
+    message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] }
   })
 }
 

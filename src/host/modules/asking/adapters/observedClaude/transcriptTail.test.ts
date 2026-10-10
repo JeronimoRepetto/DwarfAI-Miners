@@ -69,7 +69,9 @@ describe('observed-Claude transcript tail (ADR-012 item 3)', () => {
     expect(readTail('')).toEqual({ version: null, ambiguous: false, pending: null })
   })
 
-  it('[ADR-012] the request text is the call subject, capped at 240 characters with secrets redacted', () => {
+  // Its secrets are redacted by the registry's injected `redact`, bound to the one redaction rule by
+  // the wiring (05 R9): proven in wiring/routes/observedClaudeAsks.test.ts.
+  it('[ADR-012] the request text is the call subject, capped at 240 characters', () => {
     const line = (input: Record<string, unknown>): string | undefined =>
       readTail(
         JSON.stringify({
@@ -82,8 +84,6 @@ describe('observed-Claude transcript tail (ADR-012 item 3)', () => {
     expect(line({ path: 'src', pattern: 'FeedMessage' })).toBe('FeedMessage')
     expect(line({ server: 'atlas', ref: 42 })).toBe('{"server":"atlas","ref":42}')
     expect(line({ command: 'x'.repeat(5_000) })?.length).toBe(240)
-    const key = `sk-ant-${'a'.repeat(40)}`
-    expect(line({ command: `curl -H "x-api-key: ${key}" example.test` })).not.toContain(key)
   })
 
   it('[ADR-012] the real tail reads a bounded tail of the file and answers null when it cannot', async () => {

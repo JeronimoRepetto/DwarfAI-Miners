@@ -29,7 +29,7 @@ const REF = { dwarfId: DWARF }
 async function openDialog(version = '2.1.261') {
   const tail = new FakeTranscriptTail()
   tail.set(PATH, transcript(toolUseLine(CALL, 'Bash', version)))
-  const prompts = new PermissionPromptRegistry({ transcripts: tail })
+  const prompts = new PermissionPromptRegistry({ transcripts: tail, redact: (text) => text })
   await prompts.note(
     { event: 'PermissionRequest', sessionId: SESSION, transcriptPath: PATH, toolName: 'Bash' },
     DWARF

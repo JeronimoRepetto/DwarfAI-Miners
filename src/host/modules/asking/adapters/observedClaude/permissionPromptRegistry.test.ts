@@ -25,7 +25,10 @@ const permissionRequest = {
 function registry(text = transcript(toolUseLine(CALL))) {
   const tail = new FakeTranscriptTail()
   tail.set(PATH, text)
-  return { tail, prompts: new PermissionPromptRegistry({ transcripts: tail }) }
+  return {
+    tail,
+    prompts: new PermissionPromptRegistry({ transcripts: tail, redact: (text) => text })
+  }
 }
 
 describe('PermissionPromptRegistry (ADR-012)', () => {
@@ -90,6 +93,7 @@ describe('PermissionPromptRegistry (ADR-012)', () => {
     tail.set(PATH, transcript(toolUseLine(CALL, 'Bash', '2.1.290')))
     const prompts = new PermissionPromptRegistry({
       transcripts: tail,
+      redact: (text) => text,
       measurements: [
         { version: '2.1.261', measuredOn: '2026-09-05', keys: PERMISSION_KEYSTROKES },
         { version: '2.1.290', measuredOn: '2026-10-01', keys: null }
@@ -125,6 +129,21 @@ describe('PermissionPromptRegistry (ADR-012)', () => {
       await anonymous.prompts.note({ event: 'PermissionRequest', transcriptPath: PATH }, DWARF)
     ).toEqual([])
     expect(anonymous.prompts.sessionOf(DWARF)).toBeNull()
+  })
+
+  it('[ADR-012] the request text leaves for the ask only through the injected redaction', async () => {
+    const tail = new FakeTranscriptTail()
+    tail.set(PATH, transcript(toolUseLine(CALL)))
+    const prompts = new PermissionPromptRegistry({
+      transcripts: tail,
+      redact: (text) => `redacted(${text})`
+    })
+
+    const [change] = await prompts.note(permissionRequest, DWARF)
+
+    expect(change).toMatchObject({
+      input: { payload: { toolName: 'Bash', requestText: 'redacted(pnpm test)' } }
+    })
   })
 
   it('[ADR-012] a tool call that only ran, with no prompt open, opens nothing', async () => {

@@ -14,10 +14,11 @@
 //   is skipped. CRLF and fields this reader does not know read exactly like their plain twin.
 // - The request text is legacy `domain/permissionSummary.ts`'s rule (05 §3.7 "Domain ←
 //   domain/permissionSummary.ts"): the first string of `command`, `file_path`, `pattern`, `path`,
-//   `url`, else the input as JSON; capped at 240 characters, then secrets redacted.
+//   `url`, else the input as JSON; capped at 240 characters. Its secrets are redacted by the
+//   registry's injected `redact` (permissionPromptRegistry.ts) before it leaves for an ask: an
+//   adapter never imports `contracts` (05 R9), so the one redaction rule is bound by the wiring.
 // - `AskUserQuestion` is Claude Code's question tool: such a call is a question, which this channel
 //   never answers by keys (ADR-012 item 5).
-import { redactSecrets } from '../../../../../contracts/logging'
 import type { FileSystem } from '../../../../kernel/ports/fileSystem'
 
 /** The bounded tail read before each check (ADR-006 item 3: tails are bounded). */
@@ -132,7 +133,7 @@ function requestTextOf(input: JsonObject): string {
     SUBJECT_FIELDS.map((field) => input[field]).find(
       (value): value is string => typeof value === 'string'
     ) ?? JSON.stringify(input)
-  return redactSecrets(subject.slice(0, REQUEST_TEXT_MAX_CHARS))
+  return subject.slice(0, REQUEST_TEXT_MAX_CHARS)
 }
 
 /** The real tail, over the kernel `FileSystem`'s bounded tail read. */
