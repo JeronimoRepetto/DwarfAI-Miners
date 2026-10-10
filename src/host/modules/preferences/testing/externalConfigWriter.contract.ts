@@ -20,6 +20,7 @@ import { SqliteTransactionRunner } from '../../../platform/sqlite/SqliteTransact
 import { openTemplateCopy } from '../../../platform/sqlite/testing/templateDb'
 import { ConfigWriterEngine } from '../adapters/external-config/configWriterEngine'
 import { SqliteConfigWriteLedger } from '../adapters/sqlite/SqliteConfigWriteLedger'
+import { SqliteChannelTokenStore } from '../adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteIntegrationSettingStore } from '../adapters/sqlite/SqliteIntegrationSettingStore'
 import type {
   ChannelToken,
@@ -32,6 +33,7 @@ import {
   syntheticEntry,
   syntheticLegacyEntry
 } from './syntheticConfigTarget'
+import { hashOf } from './inMemoryChannelTokens'
 
 const TOKEN = 'tok-1' as ChannelToken
 const TOKEN_2 = 'tok-2' as ChannelToken
@@ -58,7 +60,7 @@ export function runExternalConfigWriterContract(
       const { writer, target } = await makeSubject()
       expect(await writer.verify(target)).toBe('absent')
 
-      const installed = await writer.install(target, TOKEN, 'settings')
+      const installed = await writer.install(target, TOKEN, 'settings', hashOf(TOKEN))
       expect(installed.ok && installed.value.verified).toBe(true)
       expect(await writer.verify(target)).toBe('verified')
 
@@ -68,8 +70,8 @@ export function runExternalConfigWriterContract(
 
     it('[ADR-016] a second install of an installed target succeeds, and revert of a target never installed succeeds', async () => {
       const first = await makeSubject()
-      await first.writer.install(first.target, TOKEN, 'settings')
-      const again = await first.writer.install(first.target, TOKEN_2, 'settings')
+      await first.writer.install(first.target, TOKEN, 'settings', hashOf(TOKEN))
+      const again = await first.writer.install(first.target, TOKEN_2, 'settings', hashOf(TOKEN_2))
       expect(again.ok).toBe(true)
       expect(await first.writer.verify(first.target)).toBe('verified')
 
@@ -80,7 +82,7 @@ export function runExternalConfigWriterContract(
 
     it('[S14.07, FM-125] a locked target makes revert return locked and the entry stays verified', async () => {
       const { writer, target, lock } = await makeSubject()
-      await writer.install(target, TOKEN, 'settings')
+      await writer.install(target, TOKEN, 'settings', hashOf(TOKEN))
 
       await lock(true)
       expect(await writer.revert(target)).toStrictEqual({ ok: false, error: 'locked' })
@@ -97,7 +99,7 @@ export function runExternalConfigWriterContract(
       expect(await replaced.writer.findLegacy(replaced.target)).toBe(true)
       // Never adopted: the old entry is not DwarfAI's verified write.
       expect(await replaced.writer.verify(replaced.target)).toBe('absent')
-      await replaced.writer.install(replaced.target, TOKEN, 'first-run')
+      await replaced.writer.install(replaced.target, TOKEN, 'first-run', hashOf(TOKEN))
       expect(await replaced.writer.findLegacy(replaced.target)).toBe(false)
 
       const removed = await makeSubject()
@@ -145,6 +147,7 @@ export async function engineWorld(storage: FileSystemSubject) {
       transactions,
       ledger: new SqliteConfigWriteLedger({ db }),
       settings: new SqliteIntegrationSettingStore({ db }),
+      tokens: new SqliteChannelTokenStore({ db, ids }),
       clock,
       ids,
       scheduler: immediateScheduler,
@@ -216,7 +219,7 @@ export function runConfigWriterEngineContract(
       // The tool edits the file once during the write: the enable restarts, still one backup.
       w.fs.toolEditsBeforeRead(w.path, [2], (text) => `${text}\r\nadded=by-tool`)
 
-      const installed = await w.writer.install('opencode-plugin', TOKEN, 'settings')
+      const installed = await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
 
       expect(await w.read()).toBe(`${edited}\n${syntheticEntry(TOKEN)}`)
       const backups = await w.backups()
@@ -231,7 +234,8 @@ export function runConfigWriterEngineContract(
       expect(await w.read()).toBe(edited)
 
       // A second enable, at the same instant, takes its own backup and never overwrites the first.
-      await w.writer.install('opencode-plugin', TOKEN, 'settings')
+      // AMENDED for owner amendment M (was: TOKEN again): each enable issues its own token's hash, stored once.
+      await w.writer.install('opencode-plugin', TOKEN_2, 'settings', hashOf(TOKEN_2))
       const after = await w.backups()
       expect(after).toHaveLength(2)
       expect(after.find((backup) => backup.path === backups[0]?.path)?.text).toBe(original)
@@ -243,7 +247,9 @@ export function runConfigWriterEngineContract(
       const foreign = 'dwarfai.hook=written-by-someone-else\nx=1\n'
       await w.seed(foreign)
 
-      expect(await w.writer.install('opencode-plugin', TOKEN, 'settings')).toStrictEqual({
+      expect(
+        await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
+      ).toStrictEqual({
         ok: false,
         error: 'foreign-entry-conflict'
       })
@@ -258,7 +264,9 @@ export function runConfigWriterEngineContract(
       await w.seed('x=1\n')
       w.fs.toolEditsBeforeRead(w.path, [2, 4], (text) => `${text}y=2\n`)
 
-      expect(await w.writer.install('opencode-plugin', TOKEN, 'settings')).toStrictEqual({
+      expect(
+        await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
+      ).toStrictEqual({
         ok: false,
         error: 'concurrent-modification'
       })
@@ -279,7 +287,7 @@ export function runConfigWriterEngineContract(
       const w = await world()
       await w.seed('x=1\n')
 
-      const installed = await w.writer.install('opencode-plugin', TOKEN, 'first-run')
+      const installed = await w.writer.install('opencode-plugin', TOKEN, 'first-run', hashOf(TOKEN))
 
       expect(installed.ok && installed.value.verified).toBe(true)
       const backupPath = installed.ok ? installed.value.backupPath : null
@@ -310,7 +318,9 @@ export function runConfigWriterEngineContract(
       const dropped = await world()
       await dropped.seed('x=1\n')
       dropped.fs.toolEditsBeforeRead(dropped.path, [3], () => 'x=1\n')
-      expect(await dropped.writer.install('opencode-plugin', TOKEN, 'settings')).toStrictEqual({
+      expect(
+        await dropped.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
+      ).toStrictEqual({
         ok: false,
         error: 'io'
       })
@@ -321,7 +331,7 @@ export function runConfigWriterEngineContract(
     it("[S14.06, C-20] revert removes exactly DwarfAI's entries, keeps foreign bytes identical and sets reverted_at", async () => {
       const w = await world()
       await w.seed('a=1\nb=2\n')
-      await w.writer.install('opencode-plugin', TOKEN, 'settings')
+      await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
       // The tool keeps editing its file after the enable.
       w.clock.advance(5_000)
       await w.fs.writeFileAtomic(w.path, `${(await w.read()) ?? ''}c=3\n`)
@@ -342,7 +352,7 @@ export function runConfigWriterEngineContract(
     it('[S14.07, FM-125, CH-07] a locked file makes revert return locked and changes nothing', async () => {
       const w = await world()
       await w.seed('a=1\n')
-      await w.writer.install('opencode-plugin', TOKEN, 'settings')
+      await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
       const written = await w.read()
       w.fs.lock(w.path)
 
@@ -363,9 +373,9 @@ export function runConfigWriterEngineContract(
       const landed = await world()
       await landed.seed('x=1\n')
       landed.fs.crashAt(landed.path, 'after-write')
-      await expect(landed.writer.install('opencode-plugin', TOKEN, 'add-panel')).rejects.toThrow(
-        SimulatedCrash
-      )
+      await expect(
+        landed.writer.install('opencode-plugin', TOKEN, 'add-panel', hashOf(TOKEN))
+      ).rejects.toThrow(SimulatedCrash)
       expect(landed.rows()).toMatchObject([{ verified_at: null, reverted_at: null }])
       expect(landed.setting().state).toBe('off')
 
@@ -380,9 +390,9 @@ export function runConfigWriterEngineContract(
       const lost = await world()
       await lost.seed('x=1\n')
       lost.fs.crashAt(lost.path, 'before-write')
-      await expect(lost.writer.install('opencode-plugin', TOKEN, 'settings')).rejects.toThrow(
-        SimulatedCrash
-      )
+      await expect(
+        lost.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
+      ).rejects.toThrow(SimulatedCrash)
       expect(await lost.read()).toBe('x=1\n')
 
       lost.clock.advance(60_000)
@@ -398,7 +408,9 @@ export function runConfigWriterEngineContract(
       const malformed = 'x=1\nthis is not a setting\n'
       await w.seed(malformed)
 
-      expect(await w.writer.install('opencode-plugin', TOKEN, 'settings')).toStrictEqual({
+      expect(
+        await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
+      ).toStrictEqual({
         ok: false,
         error: 'io'
       })
@@ -411,12 +423,14 @@ export function runConfigWriterEngineContract(
     it('[ADR-016] install on an on-verified target is a no-op and revert of an absent entry succeeds', async () => {
       const w = await world()
       await w.seed('x=1\n')
-      const first = await w.writer.install('opencode-plugin', TOKEN, 'settings')
+      const first = await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
       const writes = w.fs.writes.length
       const rows = w.rows()
       const file = await w.read()
 
-      expect(await w.writer.install('opencode-plugin', TOKEN_2, 'settings')).toStrictEqual(first)
+      expect(
+        await w.writer.install('opencode-plugin', TOKEN_2, 'settings', hashOf(TOKEN_2))
+      ).toStrictEqual(first)
       expect(w.fs.writes).toHaveLength(writes)
       expect(w.rows()).toStrictEqual(rows)
       expect(await w.read()).toBe(file)
@@ -449,7 +463,7 @@ export function runConfigWriterEngineContract(
       expect(w.setting().state).toBe('off')
       expect(await w.read()).toBe(original)
 
-      await w.writer.install('opencode-plugin', TOKEN, 'first-run')
+      await w.writer.install('opencode-plugin', TOKEN, 'first-run', hashOf(TOKEN))
 
       expect(await w.read()).toBe(`a=1\n${syntheticEntry(TOKEN)}\nb=2\n`)
       expect((await w.backups()).map((backup) => backup.text)).toStrictEqual([original])
@@ -474,7 +488,7 @@ export function runConfigWriterEngineContract(
       await w.seed('x=1\n')
       w.fs.failWrites(w.path, 'busy', 1)
 
-      const installed = await w.writer.install('opencode-plugin', TOKEN, 'settings')
+      const installed = await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
 
       expect(installed.ok).toBe(true)
       expect(await w.read()).toBe(`x=1\n${syntheticEntry(TOKEN)}\n`)
@@ -484,7 +498,7 @@ export function runConfigWriterEngineContract(
       const w = await world()
       await w.seed('x=1\n')
 
-      const install = w.writer.install('opencode-plugin', TOKEN, 'settings')
+      const install = w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
       const revert = w.writer.revert('opencode-plugin')
       expect((await install).ok).toBe(true)
       expect(await revert).toStrictEqual({ ok: true, value: undefined })
@@ -499,7 +513,7 @@ export function runConfigWriterEngineContract(
       await w.seed('x=1\n')
       w.fs.refuseRenames(w.path)
 
-      const installed = await w.writer.install('opencode-plugin', TOKEN, 'settings')
+      const installed = await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
 
       expect(installed.ok && installed.value.verified).toBe(true)
       expect(await w.read()).toBe(`x=1\n${syntheticEntry(TOKEN)}\n`)
@@ -525,9 +539,9 @@ export function runConfigWriterEngineContract(
       w.fs.refuseRenames(w.path)
       w.fs.crashPartWayInPlace(w.path, 7)
 
-      await expect(w.writer.install('opencode-plugin', TOKEN, 'settings')).rejects.toThrow(
-        SimulatedCrash
-      )
+      await expect(
+        w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
+      ).rejects.toThrow(SimulatedCrash)
       expect(await w.read()).toBe(edited.slice(0, 7))
       expect((await w.backups()).map((backup) => backup.text)).toStrictEqual([original])
 
@@ -554,9 +568,9 @@ export function runConfigWriterEngineContract(
       const w = await world()
       await w.seed('x=1\n', w.hooksPath)
 
-      await expect(w.writer.install('claude-hooks', TOKEN, 'add-panel')).rejects.toThrow(
-        HostInvariantError
-      )
+      await expect(
+        w.writer.install('claude-hooks', TOKEN, 'add-panel', hashOf(TOKEN))
+      ).rejects.toThrow(HostInvariantError)
       expect(w.rows()).toStrictEqual([])
       expect(w.fs.writes).toStrictEqual([])
       expect(await w.read(w.hooksPath)).toBe('x=1\n')

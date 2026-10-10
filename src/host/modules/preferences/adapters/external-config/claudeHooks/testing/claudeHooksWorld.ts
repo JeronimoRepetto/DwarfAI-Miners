@@ -13,6 +13,7 @@ import type { FileSystemSubject } from '../../../../../../kernel/testing/fileSys
 import { SqliteTransactionRunner } from '../../../../../../platform/sqlite/SqliteTransactionRunner'
 import type { ChannelToken, ExternalConfigWriter } from '../../../../ports/externalConfigWriter'
 import { ScriptedToolFs } from '../../../../testing/ScriptedToolFs'
+import { SqliteChannelTokenStore } from '../../../sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from '../../../sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from '../../../sqlite/SqliteIntegrationSettingStore'
 import { ConfigWriterEngine } from '../../configWriterEngine'
@@ -52,13 +53,15 @@ export async function claudeHooksWorld(
   await storage.seed(storage.pathOf('.claude', 'CLAUDE.md'), 'kept')
   const log = new RecordingDiagnosticsLog()
   const settings = new SqliteIntegrationSettingStore({ db })
+  const ids = new SequenceIdGenerator()
   const writer = new ConfigWriterEngine({
     fs,
     transactions: new SqliteTransactionRunner(db),
     ledger: new SqliteConfigWriteLedger({ db }),
     settings,
+    tokens: new SqliteChannelTokenStore({ db, ids }),
     clock: new FakeClock(1_760_000_000_000),
-    ids: new SequenceIdGenerator(),
+    ids,
     scheduler: immediateScheduler,
     log,
     targets: [new ClaudeHooksConfigWriter({ path, platform, ingressPort: () => INGRESS_PORT })]
@@ -102,7 +105,11 @@ export function withHexTokens(writer: ExternalConfigWriter): ExternalConfigWrite
   const hex = (token: ChannelToken): ChannelToken =>
     createHash('sha256').update(token).digest('hex') as ChannelToken
   return {
-    install: (target, token, origin) => writer.install(target, hex(token), origin),
+    // The issued hash is the installed hex token's (owner amendment M), whatever the contract passed for its own.
+    install: (target, token, origin) => {
+      const installed = hex(token)
+      return writer.install(target, installed, origin, hex(installed))
+    },
     verify: (target) => writer.verify(target),
     revert: (target) => writer.revert(target),
     findLegacy: (target) => writer.findLegacy(target)

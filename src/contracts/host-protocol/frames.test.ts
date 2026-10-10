@@ -2,10 +2,13 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import type {
   AttentionKind,
+  ConsentOrigin,
   DwarfId,
   DwarfWire,
   HostToast,
   Instant,
+  IntegrationId,
+  IntegrationState,
   Material,
   MaterialAmount,
   MineId,
@@ -469,5 +472,54 @@ describe('mine.removed payload (14 §3.5, B-F07)', () => {
     const failed = { kind: 'mine-removal-failed', requestId: 'r-1', mineId: MINE, failed: [MINE] }
     expect(toast.safeParse(failed).success).toBe(true)
     expect(toast.safeParse({ ...failed, failed: undefined }).success).toBe(false)
+  })
+})
+
+// The B-F25 payload of 14 §3.5 and its strict() schema (14 §1.4; PO #84, #104; AMENDMENT-7): the
+// real state of one integration, sent to every `ui` connection after every enable, revert, failed
+// write and Reset. It never carries a channel token.
+
+describe('integration.changed payload (14 §3.5, B-F25)', () => {
+  it('[ADR-016] the integration.changed schema infers exactly its 14 §3.5 payload and refuses any other key, a token included', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toContain('integration.changed')
+    expectTypeOf<HostFrames['integration.changed']>().toEqualTypeOf<{
+      id: IntegrationId
+      state: IntegrationState
+      consentOrigin?: ConsentOrigin
+      failure?: 'config-write-failed' | 'config-revert-failed'
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['integration.changed']>>().toEqualTypeOf<
+      HostFrames['integration.changed']
+    >()
+
+    const changed = HOST_FRAME_SCHEMAS['integration.changed']
+    expect(changed.safeParse({ id: 'claude-hooks', state: 'off' }).success).toBe(true)
+    expect(
+      changed.safeParse({ id: 'claude-hooks', state: 'on-verified', consentOrigin: 'settings' })
+        .success
+    ).toBe(true)
+    expect(
+      changed.safeParse({
+        id: 'claude-hooks',
+        state: 'on-verified',
+        consentOrigin: 'settings',
+        failure: 'config-revert-failed'
+      }).success
+    ).toBe(true)
+    expect(
+      changed.safeParse({
+        id: 'opencode-permissions',
+        state: 'off',
+        failure: 'config-write-failed'
+      }).success
+    ).toBe(true)
+    expect(changed.safeParse({ id: 'claude', state: 'off' }).success).toBe(false)
+    expect(changed.safeParse({ id: 'claude-hooks', state: 'on' }).success).toBe(false)
+    expect(changed.safeParse({ id: 'claude-hooks', state: 'off', failure: 'locked' }).success).toBe(
+      false
+    )
+    expect(
+      changed.safeParse({ id: 'claude-hooks', state: 'on-verified', token: 'a'.repeat(64) }).success
+    ).toBe(false)
   })
 })

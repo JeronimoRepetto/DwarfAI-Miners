@@ -317,6 +317,10 @@ export interface DwarfAiMinersApi {
   onRevealDwarfChat: (
     listener: (payload: TargetResult<'mode:revealDwarfChat'>) => void
   ) => () => void
+  /** A-N31 · `claude:hooks:set` · invoke · NEW · target shape */
+  setClaudeHooksEnabled: (
+    request: TargetRequest<'claude:hooks:set'>
+  ) => Promise<TargetResult<'claude:hooks:set'>>
 }
 
 const api: DwarfAiMinersApi = {
@@ -573,7 +577,9 @@ const api: DwarfAiMinersApi = {
     }
     ipcRenderer.on('mode:revealDwarfChat', wrapped)
     return () => ipcRenderer.removeListener('mode:revealDwarfChat', wrapped)
-  }
+  },
+  setClaudeHooksEnabled: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('claude:hooks:set', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

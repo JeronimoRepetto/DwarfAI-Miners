@@ -26,6 +26,7 @@ import {
   type RevertStore,
   type StopAllAnswer
 } from './revertIntegrations'
+import { hashOf } from '../modules/preferences/testing/inMemoryChannelTokens'
 
 // L2 (17 §1.2): the `--revert-integrations` composition (ADR-016 item 7; 16 §7.4; ISSUE-225) over a
 // fake running Host and endpoint, the real config writer engine with the `claude-hooks` target on
@@ -90,7 +91,12 @@ async function world(
   await hooks.seed(fixture('foreign-only.settings'))
   await storage.seed(LOG_FILE, 'kept log segment\n')
   // The Host wrote its entry (ISSUE-220) with the live claude-hooks token (ADR-016 item 1).
-  const installed = await hooks.writer.install('claude-hooks', HOOK_TOKEN, 'settings')
+  const installed = await hooks.writer.install(
+    'claude-hooks',
+    HOOK_TOKEN,
+    'settings',
+    hashOf(HOOK_TOKEN)
+  )
   if (!installed.ok) throw new Error(`the seed install failed: ${installed.error}`)
   new SqliteChannelTokenStore({ db, ids: new SequenceIdGenerator() }).issue(
     'claude-hooks',

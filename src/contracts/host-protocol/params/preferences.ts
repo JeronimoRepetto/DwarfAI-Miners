@@ -114,6 +114,16 @@ export type SetOpenCodePermissionsResult = Outcome<
   { state: IntegrationState },
   'config-write-failed' | 'config-revert-failed'
 >
+// AMENDMENT-7 (OQ-68): Settings only; the Host records origin 'settings'
+export interface SetClaudeHooksParams {
+  on: boolean
+  requestId: string
+}
+// = SetOpenCodePermissionsResult; revert failed: option stays on
+export type SetClaudeHooksResult = Outcome<
+  { state: IntegrationState },
+  'config-write-failed' | 'config-revert-failed'
+>
 // ResetMetricsCommand = { confirmed: 'yes' }
 export interface ResetMetricsParams extends ResetMetricsCommand {
   requestId: string
@@ -163,3 +173,15 @@ export const setOpenCodePermissionsResultSchema = outcomeSchema(
   z.object({ state: integrationStateSchema }).strict(),
   z.enum(['config-write-failed', 'config-revert-failed'])
 )
+
+/**
+ * B-M39 `preferences.setClaudeHooks` params (14 §3.4; AMENDMENT-7, OQ-68); A-N31's request is this same
+ * object (14 §1.2). It carries no origin: the toggle is in Settings only and the Host records `settings`, so
+ * an `origin` key is refused like any other.
+ */
+export const setClaudeHooksParamsSchema = z
+  .object({ on: z.boolean(), requestId: requestIdSchema })
+  .strict()
+
+/** B-M39's result: the stored state, with the two failures as outcomes (= `SetOpenCodePermissionsResult`). */
+export const setClaudeHooksResultSchema = setOpenCodePermissionsResultSchema

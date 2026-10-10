@@ -17,6 +17,7 @@ import {
   INGRESS_PORT,
   withHexTokens
 } from './testing/claudeHooksWorld'
+import { hashOf } from '../../../testing/inMemoryChannelTokens'
 
 // L3 (17 §1.3; 16 §7.6): the `claude-hooks` target through the config writer engine, over FakeFs
 // and over NodeFs in a per-test `mkdtemp` directory, against the hand-written `settings.json`
@@ -91,7 +92,12 @@ function cases(storage: () => FileSystemSubject): void {
       const original = fixture(name)
       await w.seed(original)
 
-      const installed = await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings')
+      const installed = await w.writer.install(
+        'claude-hooks',
+        HOOK_TOKEN,
+        'settings',
+        hashOf(HOOK_TOKEN)
+      )
 
       expect(installed.ok && installed.value.verified).toBe(true)
       const written = await w.read()
@@ -123,14 +129,14 @@ function cases(storage: () => FileSystemSubject): void {
     const w = await world()
     await w.seed(fixture('empty.settings'))
 
-    await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings')
+    await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings', hashOf(HOOK_TOKEN))
 
     expect(await w.read()).toBe(fixture('empty.installed.settings'))
   })
 
   it('[ADR-016] SessionStart is installed as a command hook, never an http hook', async () => {
     const w = await world()
-    await w.writer.install('claude-hooks', HOOK_TOKEN, 'first-run')
+    await w.writer.install('claude-hooks', HOOK_TOKEN, 'first-run', hashOf(HOOK_TOKEN))
 
     const sessionStart = handlers(await w.read()).filter(({ event }) => event === 'SessionStart')
     expect(sessionStart).toStrictEqual([
@@ -144,10 +150,15 @@ function cases(storage: () => FileSystemSubject): void {
       const w = await world()
       const original = fixture(name)
       await w.seed(original)
-      await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings')
+      await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings', hashOf(HOOK_TOKEN))
       // A token rotation rewrites DwarfAI's own entry in place of the old one.
       await w.writer.revert('claude-hooks')
-      await w.writer.install('claude-hooks', 'beef'.repeat(16) as ChannelToken, 'settings')
+      await w.writer.install(
+        'claude-hooks',
+        'beef'.repeat(16) as ChannelToken,
+        'settings',
+        hashOf('beef'.repeat(16) as ChannelToken)
+      )
 
       expect(await w.writer.revert('claude-hooks')).toStrictEqual({ ok: true, value: undefined })
 
@@ -156,7 +167,7 @@ function cases(storage: () => FileSystemSubject): void {
     // A settings.json DwarfAI created is left as an empty settings object: whether one was there
     // before is not on record, and a file of the person's is never deleted.
     const created = await world()
-    await created.writer.install('claude-hooks', HOOK_TOKEN, 'settings')
+    await created.writer.install('claude-hooks', HOOK_TOKEN, 'settings', hashOf(HOOK_TOKEN))
     expect(await created.read()).toBe(fixture('empty.installed.settings'))
     await created.writer.revert('claude-hooks')
     expect(await created.read()).toBe('{}\n')
@@ -174,7 +185,12 @@ function cases(storage: () => FileSystemSubject): void {
         // Never adopted: the old entry is not DwarfAI's verified write.
         expect(await w.writer.verify('claude-hooks')).toBe('absent')
 
-        const installed = await w.writer.install('claude-hooks', HOOK_TOKEN, 'first-run')
+        const installed = await w.writer.install(
+          'claude-hooks',
+          HOOK_TOKEN,
+          'first-run',
+          hashOf(HOOK_TOKEN)
+        )
 
         expect(installed.ok).toBe(true)
         const written = await w.read()
@@ -221,7 +237,9 @@ function cases(storage: () => FileSystemSubject): void {
       const w = await world()
       await w.seed(malformed)
 
-      expect(await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings')).toStrictEqual({
+      expect(
+        await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings', hashOf(HOOK_TOKEN))
+      ).toStrictEqual({
         ok: false,
         error: 'io'
       })
@@ -239,7 +257,9 @@ function cases(storage: () => FileSystemSubject): void {
       const w = await world()
       await w.seed(foreign)
 
-      expect(await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings')).toStrictEqual({
+      expect(
+        await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings', hashOf(HOOK_TOKEN))
+      ).toStrictEqual({
         ok: false,
         error: 'foreign-entry-conflict'
       })
@@ -253,7 +273,12 @@ function cases(storage: () => FileSystemSubject): void {
     const original = fixture('foreign-only.settings')
     await w.seed(original)
 
-    const refused = w.writer.install('claude-hooks', 'tok-1' as ChannelToken, 'settings')
+    const refused = w.writer.install(
+      'claude-hooks',
+      'tok-1' as ChannelToken,
+      'settings',
+      hashOf('tok-1' as ChannelToken)
+    )
 
     await expect(refused).rejects.toThrow(HostInvariantError)
     // The refusal never echoes the value it refused.
@@ -268,8 +293,8 @@ function cases(storage: () => FileSystemSubject): void {
     const w = await world()
     await w.seed(fixture('foreign-and-old-app.settings'))
 
-    await w.writer.install('claude-hooks', HOOK_TOKEN, 'first-run')
-    await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings')
+    await w.writer.install('claude-hooks', HOOK_TOKEN, 'first-run', hashOf(HOOK_TOKEN))
+    await w.writer.install('claude-hooks', HOOK_TOKEN, 'settings', hashOf(HOOK_TOKEN))
     await w.writer.revert('claude-hooks')
 
     expect(w.log.entries.length).toBeGreaterThan(0)

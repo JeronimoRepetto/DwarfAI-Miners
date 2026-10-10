@@ -132,6 +132,7 @@ import { createHostFileProtection } from './platform/sqlite/fileProtection'
 import { SqliteResetCleanup } from './platform/sqlite/resetCleanup'
 import { migrationsFor } from './platform/sqlite/migrations'
 import { TransportLevel3Sink } from './transport/attention/TransportLevel3Sink'
+import { mintCredential } from './transport/auth/mintCredential'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
 import { BOARD_FRAMES } from './transport/frames/board'
@@ -141,6 +142,7 @@ import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostSta
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
 import { PREFERENCES_FRAMES } from './transport/methods/preferences'
 import { RESET_FRAMES } from './transport/methods/resetMetrics'
+import { SET_CLAUDE_HOOKS_FRAMES } from './transport/methods/setClaudeHooks'
 import { HostIdentityFile } from './transport/runFiles/hostIdentityFile'
 import { SNAPSHOT_TAIL, type SnapshotMetaSource } from './transport/snapshot/metaSection'
 import { SectionRegistry } from './transport/snapshot/sectionRegistry'
@@ -532,6 +534,7 @@ async function bootHost(base: HostBase): Promise<void> {
           ...LIFECYCLE_FRAMES,
           ...TRANSPORT_FRAMES,
           ...PREFERENCES_FRAMES,
+          ...SET_CLAUDE_HOOKS_FRAMES,
           ...RESET_FRAMES,
           ...BOARD_FRAMES,
           ...LEDGER_FRAMES,
@@ -613,6 +616,9 @@ async function bootHost(base: HostBase): Promise<void> {
             // The first-run step's installed tools: suppliers' detection cache, once step 4 wired
             // suppliers (nothing installed before; the step is evaluated in step 8, ISSUE-222).
             installedTools: suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
+            // The token issuance of the transport (lead decision 2026-09-30, ISSUE-198): the
+            // Claude hook token is minted here, never in the module (R3).
+            mintCredential,
             ready: () => hostState.current().state === 'ready'
           })
           modules.preferences = preferences

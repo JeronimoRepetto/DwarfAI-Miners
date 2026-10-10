@@ -4,13 +4,23 @@
 // (16 §7.1, AMENDMENT-7) and a scripted install failure, and passes the port-level suite of
 // testing/externalConfigWriter.contract.ts that the real engine passes (ISSUE-218). The file-level
 // rules (foreign bytes, backups, the ledger) are proven on the engine itself.
-import type { Result } from '../../../../kernel/domain/values'
+import type { Instant, Result } from '../../../../kernel/domain/values'
+import type { ChannelTokenStore } from '../channelTokenStore'
 import type {
   ChannelToken,
   ConfigTarget,
   ConsentOrigin,
   ExternalConfigWriter
 } from '../externalConfigWriter'
+
+/**
+ * Owner amendment M: given a `ChannelTokenStore`, the double issues each install's hash as the engine's Tx A does
+ * and withdraws it when the scripted install fails (Tx B failure); without one it keeps no token.
+ */
+export interface FakeExternalConfigWriterDeps {
+  tokens?: ChannelTokenStore
+  now?: () => Instant
+}
 
 export class FakeExternalConfigWriter implements ExternalConfigWriter {
   private readonly owned = new Set<ConfigTarget>()
@@ -24,6 +34,8 @@ export class FakeExternalConfigWriter implements ExternalConfigWriter {
   readonly reverts: ConfigTarget[] = []
   /** Every `install` call, in order, whatever its outcome. */
   readonly installs: Array<{ target: ConfigTarget; origin: ConsentOrigin }> = []
+
+  constructor(private readonly deps: FakeExternalConfigWriterDeps = {}) {}
 
   /** The old app's entry is in the file of `target` (16 §7.1 legacy probe). */
   plantLegacy(target: ConfigTarget): void {
@@ -52,7 +64,8 @@ export class FakeExternalConfigWriter implements ExternalConfigWriter {
   install(
     target: ConfigTarget,
     _token: ChannelToken,
-    origin: ConsentOrigin
+    origin: ConsentOrigin,
+    tokenSha256: string
   ): Promise<
     Result<
       { verified: true; backupPath: string | null },
@@ -60,9 +73,13 @@ export class FakeExternalConfigWriter implements ExternalConfigWriter {
     >
   > {
     this.installs.push({ target, origin })
+    const { tokens, now = () => 0 } = this.deps
+    const prior = tokens?.active(target)?.hash ?? null
+    tokens?.issue(target, tokenSha256, now())
     const error = this.scripted.get(target)
     if (error !== undefined) {
       this.scripted.delete(target)
+      tokens?.withdraw(target, tokenSha256, prior, now())
       return Promise.resolve({ ok: false, error })
     }
     // An old-app entry is replaced in the same write (AMENDMENT-7).

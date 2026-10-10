@@ -20,6 +20,7 @@ import {
   HOOK_TOKEN
 } from '../modules/preferences/adapters/external-config/claudeHooks/testing/claudeHooksWorld'
 import { ConfigWriterEngine } from '../modules/preferences/adapters/external-config/configWriterEngine'
+import { SqliteChannelTokenStore } from '../modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from '../modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from '../modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
 import { NodeScheduler } from '../platform/clock/NodeScheduler'
@@ -45,6 +46,7 @@ import { HOST_DB_FILE } from './hostDatabase'
 import { emptyOwnerStopAll } from './emptyOwnerStopAll'
 import { createNodeRevertIntegrations, runRevertIntegrations } from './revertIntegrations'
 import { decideBind } from './singleInstance'
+import { hashOf } from '../modules/preferences/testing/inMemoryChannelTokens'
 
 const WINDOWS = process.platform === 'win32'
 const PLATFORM: NodeJS.Platform = process.platform
@@ -99,6 +101,7 @@ async function hostWroteItsEntry(hostDataDir: string, settingsPath: string): Pro
       transactions: new SqliteTransactionRunner(db),
       ledger: new SqliteConfigWriteLedger({ db }),
       settings: new SqliteIntegrationSettingStore({ db }),
+      tokens: new SqliteChannelTokenStore({ db, ids }),
       clock,
       ids,
       scheduler: scheduler(),
@@ -111,7 +114,12 @@ async function hostWroteItsEntry(hostDataDir: string, settingsPath: string): Pro
         })
       ]
     })
-    const installed = await writer.install('claude-hooks', HOOK_TOKEN, 'settings')
+    const installed = await writer.install(
+      'claude-hooks',
+      HOOK_TOKEN,
+      'settings',
+      hashOf(HOOK_TOKEN)
+    )
     if (!installed.ok) throw new Error(`the seed install failed: ${installed.error}`)
     const transactions = new SqliteTransactionRunner(db)
     const epochs = new HostEpochLog({ db, transactions })

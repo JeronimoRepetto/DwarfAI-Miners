@@ -3,6 +3,8 @@
 // - `HostPreferencesChanged` and `WelcomeStepChanged` → B-F24 `preferences.changed` to every `ui`
 //   connection (transport/methods/preferences.ts `publishPreferencesChanged`; ADR-024 D9; 07
 //   S41.05 "→ preferences.changed"; ISSUE-222);
+// - `IntegrationChanged` → B-F25 `integration.changed` to every `ui` connection
+//   (transport/methods/setClaudeHooks.ts `publishIntegrationChanged`; 05 §4; ISSUE-221);
 // - `MetricsResetStarted` → B-F03 `resync-required {metrics-reset}` (transport/methods/resetMetrics.ts
 //   `publishResetFrames`; 14 §1.9);
 // - the Reset saga's way to the attached UIs, B-F27 `reset.progress` and B-F26 `ui.resetPreferences`,
@@ -19,6 +21,7 @@
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type {
+  IntegrationSettingsQueries,
   PreferencesEvent,
   PreferencesQueries,
   ResetUiFanout,
@@ -26,6 +29,7 @@ import type {
 } from '../../modules/preferences'
 import type { ConnectionRegistry } from '../../transport/connectionRegistry'
 import { publishPreferencesChanged } from '../../transport/methods/preferences'
+import { publishIntegrationChanged } from '../../transport/methods/setClaudeHooks'
 import {
   publishResetFrames,
   type ConnectionResetUiFanout
@@ -39,14 +43,18 @@ export interface PreferencesRoutesDeps {
   acks: ConnectionResetUiFanout
   /** Whether the Host answers commands: its lifecycle state is `ready`. */
   ready: () => boolean
-  /** The module's queries, for the view `WelcomeStepChanged` is sent with. */
-  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries
+  /**
+   * The module's queries, for the view `WelcomeStepChanged` is sent with and the consent origin
+   * `integration.changed` carries.
+   */
+  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries & IntegrationSettingsQueries
 }
 
 /** Routes the module's events; returns the saga's `ResetUiFanout`, with the boot rule above. */
 export function routePreferences(deps: PreferencesRoutesDeps): ResetUiFanout {
   const { acks } = deps
   publishPreferencesChanged(deps.bus, deps.connections, deps.queries)
+  publishIntegrationChanged(deps.bus, deps.connections, deps.queries)
   publishResetFrames(deps.bus, deps.connections, deps.log)
   return {
     progress: (progress) => acks.progress(progress),

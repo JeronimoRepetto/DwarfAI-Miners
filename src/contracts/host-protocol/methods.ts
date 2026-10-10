@@ -48,9 +48,13 @@ import {
   preferenceSetParamsSchema,
   resetEpochSchema,
   resetMetricsParamsSchema,
+  setClaudeHooksParamsSchema,
+  setClaudeHooksResultSchema,
   type MetricsResetResult,
   type PreferenceSetParams,
-  type ResetMetricsParams
+  type ResetMetricsParams,
+  type SetClaudeHooksParams,
+  type SetClaudeHooksResult
 } from './params/preferences'
 import { feedParamsSchema, type FeedParams } from './params/conversation'
 import {
@@ -71,7 +75,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26, B-M27, B-M30, B-M31 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26, B-M27, B-M30, B-M31, B-M39 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -91,6 +95,7 @@ export interface HostMethods {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'preferences.get':                 { params: {}; result: PreferencesView }
   'preferences.set':                 { params: PreferenceSetParams; result: HostPreferences }
+  'preferences.setClaudeHooks':      { params: SetClaudeHooksParams; result: SetClaudeHooksResult }       // AMENDMENT-7
   'preferences.resetMetrics':        { params: ResetMetricsParams; result: MetricsResetResult }
   // mines
   'mines.declare':                   { params: { path: FolderPath; requestId: string }; result: DeclareMineResult }
@@ -228,6 +233,12 @@ export const HOST_METHOD_SCHEMAS = {
   // B-M09 (14 §2.3): `ui` only; idempotent by its own shape, so it carries no requestId
   // (dedupe/mutatingMethods.ts). B-M15: `confirmed: 'yes'` only (ADR-019; the trimmed,
   // case-insensitive comparison of the typed text is the dialog's, 07 S13.01).
+  // B-M39 (14 §2.3, §3.4; AMENDMENT-7): `ui` only, mutating (requestId). The origin is the Host's
+  // (`settings`, host/transport/methods/setClaudeHooks.ts), never the wire's.
+  'preferences.setClaudeHooks': {
+    params: setClaudeHooksParamsSchema,
+    result: setClaudeHooksResultSchema
+  },
   'ui.resetPreferences.ack': {
     params: z.object({ epoch: resetEpochSchema }).strict(),
     result: z.object({}).strict()

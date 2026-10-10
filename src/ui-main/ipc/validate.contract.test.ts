@@ -125,7 +125,9 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' },
   'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
   'ui:preferences:set': { key: 'startWithSystem', value: false },
-  'host:snapshot': { sections: ['mines', 'dwarfs'] }
+  'host:snapshot': { sections: ['mines', 'dwarfs'] },
+  // A-N31 (ISSUE-221): B-M39's params, no origin (the Host records `settings`)
+  'claude:hooks:set': { on: true, requestId: U1 }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */

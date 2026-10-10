@@ -1,7 +1,7 @@
 // The preferences module's wiring (05 §3.12, §4; 16 §4.12, §8.2), in two parts:
 //
 // - `servePreferences`, run by the composition root before the boot binds the endpoint: the
-//   module's seam-B members (14 §2.3 B-M12, B-M13, B-M15, B-M09) on the Host dispatcher and its
+//   module's seam-B members (14 §2.3 B-M12, B-M13, B-M15, B-M09, B-M39) on the Host dispatcher and its
 //   snapshot section (14 §4.1). A UI that attaches while the Host is `starting` gets a `hello.ok`
 //   whose capabilities already list them (14 §1.3), so its HostClient never refuses them locally.
 //   They forward to the module boot step 3 constructs; until then (`starting`, `migrating`) the
@@ -16,8 +16,10 @@
 //   `PreferencesCommands.resetMetrics`), the first-run consent step (`createWelcomeStep`,
 //   ISSUE-222: `welcome` joined to the module's queries, its boot evaluation run by boot step 8,
 //   07 machine 41) over the suppliers installed detection (`installedTools`,
-//   bridges/installedTools.ts) and the config writer's legacy probe, its event routes
-//   (routes/preferencesRoutes.ts: B-F24, B-F03, B-F26, B-F27), and the bridges other modules read
+//   bridges/installedTools.ts) and the config writer's legacy probe, the "Claude Code · instant
+//   updates" toggle (`setClaudeHooks`, ISSUE-221) with the transport's credential minter
+//   (transport/auth/mintCredential.ts; lead decision 2026-09-30, ISSUE-198), its event routes
+//   (routes/preferencesRoutes.ts: B-F24, B-F25, B-F03, B-F26, B-F27), and the bridges other modules read
 //   it through, never by a module import (R4): the kernel `SecretReader` and the suppliers
 //   `IntegrationGateReader` (bridges/).
 //
@@ -46,9 +48,11 @@ import {
   createPreferencesResetStep,
   createResetSaga,
   createWelcomeStep,
+  type CredentialMinter,
   type ExternalConfigWriter,
   type FeatureFlagReader,
   type InstalledToolsReader,
+  type IntegrationSettingsQueries,
   type MetricsResetResult,
   type Preferences,
   type PreferencesCommands,
@@ -61,10 +65,12 @@ import {
   type WelcomeStepState
 } from '../modules/preferences'
 import type { IntegrationGateReader } from '../modules/suppliers'
+import { mintCredential as transportMintCredential } from '../transport/auth/mintCredential'
 import type { ConnectionRegistry } from '../transport/connectionRegistry'
 import type { Dispatcher } from '../transport/dispatcher'
 import { preferencesSection, registerPreferences } from '../transport/methods/preferences'
 import { ConnectionResetUiFanout, registerResetMetrics } from '../transport/methods/resetMetrics'
+import { registerSetClaudeHooks } from '../transport/methods/setClaudeHooks'
 import type { SectionRegistry } from '../transport/snapshot/sectionRegistry'
 import { preferencesIntegrationGate } from './bridges/integrationGateReader'
 import { failClosedSecretReader } from './bridges/secretReader'
@@ -128,6 +134,11 @@ export interface PreferencesWiringDeps {
    * `noInstalledTools` when absent.
    */
   installedTools?: InstalledToolsReader
+  /**
+   * The transport's token issuance (host/main.ts passes transport/auth/mintCredential.ts, lead
+   * decision 2026-09-30, ISSUE-198); that same minter when absent.
+   */
+  mintCredential?: CredentialMinter
   /** Whether the Host answers commands (its lifecycle state is `ready`). */
   ready: () => boolean
 }
@@ -149,7 +160,7 @@ export interface WiredPreferences {
   /** The module, with `resetMetrics` joined to its commands and `welcome` to its queries. */
   preferences: Preferences & {
     commands: PreferencesCommands & ResetMetricsCommands
-    queries: PreferencesQueries & WelcomeQueries
+    queries: PreferencesQueries & IntegrationSettingsQueries & WelcomeQueries
   }
   /** 07 S13.08: the saga's boot resume, run by boot step 3. */
   resumeOnBoot(): Promise<MetricsResetResult | null>
@@ -177,16 +188,19 @@ export function servePreferences(serve: PreferencesServeDeps): ServedPreferences
   const served: WiredPreferences['preferences'] = {
     commands: {
       set: (key, value) => current().commands.set(key, value),
+      setClaudeHooks: (on, origin) => current().commands.setClaudeHooks(on, origin),
       resetMetrics: (cmd) => current().commands.resetMetrics(cmd)
     },
     queries: {
       get: () => current().queries.get(),
       featureFlags: () => current().queries.featureFlags(),
       integrationState: (id) => current().queries.integrationState(id),
+      integrationSettings: () => current().queries.integrationSettings(),
       welcome: () => current().queries.welcome()
     }
   }
   registerPreferences(serve.dispatcher, { preferences: served })
+  registerSetClaudeHooks(serve.dispatcher, { commands: served.commands })
   registerResetMetrics(serve.dispatcher, { reset: served.commands, fanout: acks })
   serve.sections.registerSection('preferences', ['ui'], preferencesSection(served))
   return {
@@ -211,7 +225,9 @@ function wirePreferences(
     clock,
     ids,
     hostEpoch,
-    featureFlags: deps.featureFlags
+    featureFlags: deps.featureFlags,
+    externalConfig: deps.externalConfig,
+    mintCredential: deps.mintCredential ?? transportMintCredential
   })
   const welcome = createWelcomeStep({
     db,
@@ -226,6 +242,7 @@ function wirePreferences(
     get: () => module.queries.get(),
     featureFlags: () => module.queries.featureFlags(),
     integrationState: (id) => module.queries.integrationState(id),
+    integrationSettings: () => module.queries.integrationSettings(),
     welcome: () => welcome.welcome()
   }
   const sagaUi = routePreferences({
@@ -261,6 +278,7 @@ function wirePreferences(
   const preferences: WiredPreferences['preferences'] = {
     commands: {
       set: (key, value) => module.commands.set(key, value),
+      setClaudeHooks: (on, origin) => module.commands.setClaudeHooks(on, origin),
       resetMetrics: (cmd) => saga.resetMetrics(cmd)
     },
     queries
