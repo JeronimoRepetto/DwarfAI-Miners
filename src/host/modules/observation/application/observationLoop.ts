@@ -17,7 +17,9 @@
 //    reports it not live) arrives already departed (decision B): `SessionClosedObserved` follows
 //    its `SessionObserved` in the same batch, so crew's route departs it as it arrives, and the
 //    next cycle writes its batch once, with no event (its ore and its mine's history, never
-//    present). An admitted session is observed (`SessionObserved`, once per identity,
+//    present); a session whose process an adapter reports live arrives present, whenever it last
+//    wrote, and a departed one that runs and writes again returns as its resumed generation
+//    (`resumedOf`). An admitted session is observed (`SessionObserved`, once per identity,
 //    stream and first-message flag in a Host run, 08 §2.3), and its messages and usage wait: the
 //    stream's cursor is held so nothing passes an unwritten message (16 §4.3), and the next cycle
 //    writes them to the dwarf the route made (05 §4: `mines.resolveForSession` → `crew.arrive`).
@@ -427,7 +429,11 @@ export class ObservationLoop {
       events: []
     }
     const now = this.deps.clock.now()
-    for (const { identity, events: records } of byIdentity(events)) {
+    const groups = byIdentity(events)
+    /** A resumed generation's presence is its first session's (the provider knows only that id). */
+    const presenceOf = new Map<string, ProviderIdentity>()
+    for (let n = 0; n < groups.length; n++) {
+      const { identity, events: records } = groups[n]!
       const key = providerIdentityKey(identity)
       const alreadyEnded = this.hasEnded(identity)
       const closing = records.find((r) => r.kind === 'closed')
@@ -450,7 +456,9 @@ export class ObservationLoop {
       // Admission (owner decisions 2026-10-10): history before the install moment never arrives;
       // a session that is not running arrives already departed.
       const admission =
-        session === null ? this.admission(identity, records, closing !== undefined) : 'present'
+        session === null
+          ? this.admission(presenceOf.get(key) ?? identity, records, closing !== undefined)
+          : 'present'
       if (admission === 'refused') continue
       const cwd = records.map((r) => r.cwd).find((c) => c !== undefined) ?? this.cwdOf.get(key)
       if (cwd !== undefined) this.cwdOf.set(key, cwd)
@@ -525,6 +533,23 @@ export class ObservationLoop {
         })
         if (records.some((r) => r.kind !== 'closed')) plan.links.push({ dwarfId, streamId })
         continue
+      }
+
+      // A departed session (not an ended one) whose process runs again, or whose resumed
+      // generation is present: its records belong to that generation, a new dwarf (07 S4.41;
+      // owner amendment I's `~resumed-` naming). A wrong not-live verdict at first sight is
+      // therefore never final (the #1260 regression).
+      if (session.closedAt !== null) {
+        const resumed = this.resumedOf(identity, session, records)
+        if (resumed !== null) {
+          const resumedKey = providerIdentityKey(resumed)
+          presenceOf.set(resumedKey, presenceOf.get(key) ?? identity)
+          groups.push({
+            identity: resumed,
+            events: records.map((r) => ({ ...r, identity: resumed }))
+          })
+          continue
+        }
       }
 
       const step = observedTransition(session.closedAt === null ? 'active' : 'closed', {
@@ -619,6 +644,8 @@ export class ObservationLoop {
   /**
    * How a session with no dwarf arrives (owner decisions 2026-10-10; US-OBS-005, FM-059):
    *
+   * - `present` whenever an adapter reports its process `live` (and none `not-live`), whenever it
+   *   last wrote: a process that runs now is no history (the #1260 regression);
    * - `refused` when everything it wrote predates the install moment: that history reaches the
    *   product only through the coal backfill (ADR-006 item 8, ADR-029 row 6). Its records move the
    *   cursor and nothing else (INV-39 "the cursor only"). A record with no provider time says
@@ -627,7 +654,10 @@ export class ObservationLoop {
    *   an adapter knows its process is not running. It arrives and departs in the same pass, earns
    *   its ore (ADR-006 item 7, OQ-14) and joins its mine's history (OQ-02), never present. Not
    *   running is not an ending: no ledger row for it;
-   * - `present` otherwise.
+   * - `present` otherwise: an `unknown` presence fails open.
+   *
+   * A wrong `not-live` is not final: once its process runs and it writes again, its records
+   * arrive as its resumed generation (`resumedOf`).
    */
   private admission(
     identity: ProviderIdentity,
@@ -636,10 +666,43 @@ export class ObservationLoop {
   ): 'refused' | 'departed' | 'present' {
     const moment = this.deps.installMoment?.() ?? null
     const newest = newestProviderTime(records)
-    if (moment !== null && newest !== null && newest < moment) return 'refused'
-    if (closed) return 'departed'
-    const notLive = (this.deps.presence ?? []).some((p) => p.presenceOf(identity) === 'not-live')
-    return notLive ? 'departed' : 'present'
+    const history = moment !== null && newest !== null && newest < moment
+    if (closed) return history ? 'refused' : 'departed'
+    const says = (this.deps.presence ?? []).map((p) => p.presenceOf(identity))
+    // A process that runs now is no history, whenever it last wrote (the #1260 regression).
+    if (says.includes('live') && !says.includes('not-live')) return 'present'
+    if (history) return 'refused'
+    return says.includes('not-live') ? 'departed' : 'present'
+  }
+
+  /**
+   * The generation a departed session's records belong to: its newest resumed generation while
+   * that one is present; else a new one, `<session id>~resumed-<departure, epoch s>`, when the
+   * records carry more than an ending and an adapter reports the session's process `live`; else
+   * none (S4.40: a late write changes nothing). Derived from the stored departures alone, so a
+   * Host restart derives the same identities.
+   */
+  private resumedOf(
+    identity: ProviderIdentity,
+    session: ObservedSession,
+    records: ObservedEvent[]
+  ): ProviderIdentity | null {
+    let departedAt = session.closedAt
+    for (let n = 0; n < MAX_GENERATIONS && departedAt !== null; n++) {
+      const next: ProviderIdentity = {
+        ...identity,
+        providerSessionId: `${identity.providerSessionId}~resumed-${Math.floor(departedAt / 1_000)}`
+      }
+      const resumed = this.deps.sessions.byIdentity(next)
+      if (resumed === null) {
+        const feeds = records.some((r) => r.kind !== 'closed')
+        const live = (this.deps.presence ?? []).some((p) => p.presenceOf(identity) === 'live')
+        return feeds && live ? next : null
+      }
+      if (resumed.closedAt === null) return next
+      departedAt = resumed.closedAt
+    }
+    return null
   }
 
   /** The dwarf of the identity a stream carries, while it is present (not departed). */

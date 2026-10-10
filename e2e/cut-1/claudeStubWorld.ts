@@ -35,7 +35,9 @@ export interface ClaudeStubWorld {
 export function seedClaudeStubSession(profile: IsolatedProfile): ClaudeStubWorld {
   const minePath = path.join(profile.root, STUB_MINE_NAME)
   mkdirSync(minePath, { recursive: true })
-  const startedAt = Date.now() - 5_000
+  // Its records are written now (the first a second from now): a case that seeds it once the Host
+  // is up writes it after the install moment (owner decision 2026-10-10, ADR-006 item 8).
+  const startedAt = Date.now()
   const record = (type: 'user' | 'assistant', index: number, message: unknown) => ({
     type,
     uuid: `00000000-0000-4000-8000-00000000020${index}`,
