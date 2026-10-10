@@ -6,9 +6,12 @@ import {
   integrationStateSchema,
   jevRoutingProfileSchema,
   providerIdSchema,
+  welcomeStepStateSchema,
   type ConsentOrigin,
   type HostPreferences,
-  type IntegrationState
+  type IntegrationId,
+  type IntegrationState,
+  type WelcomeStepState
 } from '../../wire'
 import { outcomeSchema, type Outcome } from '../errors'
 import { requestIdSchema } from '../requestId'
@@ -22,6 +25,17 @@ export type MetricsResetResult =
   | { outcome: 'failed'; reason: string; resumesOnNextStart: boolean }
 export type ResetStep =
   'begun' | 'db' | 'secrets' | 'external-config' | 'ui-prefs' | 'install-moment' | 'done'
+
+// As 16 §4.12 writes them (names, members and comments; layout by prettier); 14 §3.4 imports them from 05,
+// never restated (AMENDMENT-7)
+export interface WelcomeChoice {
+  claudeHooks: boolean
+  openCodePermissions: boolean
+} // AMENDMENT-7: the ticks at "Activate" (both pre-selected); "Not now" = both false
+export type WelcomeResult = Record<
+  IntegrationId,
+  { state: IntegrationState; failure?: 'config-write-failed' | 'config-revert-failed' }
+> // AMENDMENT-7: per integration, after its write or revert settled
 
 // As 14 §3.4 writes them (names, fields and comments; layout by prettier): preferences, B-M13
 export type PreferenceSetParams = {
@@ -124,6 +138,15 @@ export type SetClaudeHooksResult = Outcome<
   { state: IntegrationState },
   'config-write-failed' | 'config-revert-failed'
 >
+// AMENDMENT-7: { claudeHooks, openCodePermissions } = the ticks at "Activate"; both false = "Not now"
+export interface AnswerWelcomeParams extends WelcomeChoice {
+  requestId: string
+}
+// AMENDMENT-7: per-integration outcome; welcome.due false once answered
+export interface AnswerWelcomeResult {
+  integrations: WelcomeResult
+  welcome: WelcomeStepState
+}
 // ResetMetricsCommand = { confirmed: 'yes' }
 export interface ResetMetricsParams extends ResetMetricsCommand {
   requestId: string
@@ -185,3 +208,36 @@ export const setClaudeHooksParamsSchema = z
 
 /** B-M39's result: the stored state, with the two failures as outcomes (= `SetOpenCodePermissionsResult`). */
 export const setClaudeHooksResultSchema = setOpenCodePermissionsResultSchema
+
+/**
+ * B-M40 `preferences.answerWelcome` params (14 §3.4; AMENDMENT-7, OQ-68); A-N32's request is this same
+ * object (14 §1.2): the two ticks at "Activate" and a requestId, nothing else (no origin: the Host records
+ * `first-run`).
+ */
+export const answerWelcomeParamsSchema = z
+  .object({
+    claudeHooks: z.boolean(),
+    openCodePermissions: z.boolean(),
+    requestId: requestIdSchema
+  })
+  .strict()
+
+/** 16 §4.12 `WelcomeResult`: every integration's state after its write or revert settled, with its failure. */
+const welcomeIntegrationResultSchema = z
+  .object({
+    state: integrationStateSchema,
+    failure: z.enum(['config-write-failed', 'config-revert-failed']).optional()
+  })
+  .strict()
+
+export const welcomeResultSchema = z
+  .object({
+    'claude-hooks': welcomeIntegrationResultSchema,
+    'opencode-permissions': welcomeIntegrationResultSchema
+  })
+  .strict()
+
+/** B-M40's result: a per-integration failure is in the result, never a call error (14 §2.3). */
+export const answerWelcomeResultSchema = z
+  .object({ integrations: welcomeResultSchema, welcome: welcomeStepStateSchema })
+  .strict()

@@ -21,14 +21,18 @@ import { SqliteResetJournal } from './adapters/sqlite/SqliteResetJournal'
 import { SqliteWelcomeAnswerStore } from './adapters/SqliteWelcomeAnswerStore'
 import {
   PreferencesService,
+  WelcomeAnswerService,
   WelcomeStepService,
   type CredentialMinter,
   type IntegrationSettingsQueries,
   type MintedCredential,
   type PreferencesCommands,
   type PreferencesQueries,
+  type WelcomeAnswer,
   type WelcomeBoot,
-  type WelcomeQueries
+  type WelcomeIntegrations,
+  type WelcomeQueries,
+  type WelcomeSettle
 } from './application/preferencesService'
 import { OFFERED_FILTER } from './domain/offeredFilter'
 import { ResetSaga, type ResetDbMaintenance, type ResetUiFanout } from './application/resetSaga'
@@ -46,8 +50,11 @@ export type {
   MintedCredential,
   PreferencesCommands,
   PreferencesQueries,
+  WelcomeAnswer,
   WelcomeBoot,
-  WelcomeQueries
+  WelcomeIntegrations,
+  WelcomeQueries,
+  WelcomeSettle
 }
 export type { ResetDbMaintenance, ResetUiFanout }
 export type {
@@ -59,7 +66,7 @@ export type {
   PreferencesEvent,
   WelcomeStepChanged
 } from './domain/events'
-export type { WelcomeStepState } from './domain/welcomeStep'
+export type { WelcomeChoice, WelcomeResult, WelcomeStepState } from './domain/welcomeStep'
 export type { InstalledToolsReader } from './ports/installedToolsReader'
 export type { WelcomeAnswerStore } from './ports/welcomeAnswerStore'
 export type { MetricsResetResult, ResetMetricsCommand, ResetStep } from './domain/resetSaga'
@@ -145,11 +152,54 @@ export interface WelcomeStepDeps {
  * cut's offered filter. host/wiring/preferencesWiring.ts joins `welcome` to the module's queries,
  * as it joins `resetMetrics` to its commands.
  */
-export function createWelcomeStep(deps: WelcomeStepDeps): WelcomeQueries & WelcomeBoot {
+export function createWelcomeStep(
+  deps: WelcomeStepDeps
+): WelcomeQueries & WelcomeBoot & WelcomeSettle {
   return new WelcomeStepService({
     answers: new SqliteWelcomeAnswerStore({ db: deps.db }),
     installed: deps.installedTools,
     legacy: deps.externalConfig,
+    cutFilter: OFFERED_FILTER.offered,
+    bus: deps.bus,
+    clock: deps.clock,
+    ids: deps.ids,
+    hostEpoch: deps.hostEpoch
+  })
+}
+
+export interface WelcomeAnswerDeps {
+  /** The Host's one writer (09 §8.1), where `app_meta.welcome_answered_at` lives. */
+  db: SqliteDatabase
+  transactions: TransactionRunner
+  bus: DomainEventBus<PreferencesEvent>
+  clock: Clock
+  ids: IdGenerator
+  hostEpoch: HostEpoch
+  /** The step `createWelcomeStep` built; the answer settles it (07 S41.05). */
+  step: WelcomeQueries & WelcomeSettle
+  /** The module `createPreferences` built: its toggles' enable path and their stored states. */
+  preferences: {
+    commands: Pick<PreferencesCommands, 'setClaudeHooks'>
+    queries: Pick<PreferencesQueries, 'integrationState'>
+  }
+  /** The one config writer: its legacy probe and its revert of an old-app entry (16 §7.1, §7.4). */
+  externalConfig: Pick<ExternalConfigWriter, 'findLegacy' | 'revert'>
+}
+
+/**
+ * 16 §4.12 `PreferencesCommands.answerWelcome` (AMENDMENT-7, OQ-68; 07 S41.04, S41.05): the
+ * first-run step's one answer. host/wiring joins it to the module's commands (later: ISSUE-323).
+ */
+export function createWelcomeAnswer(deps: WelcomeAnswerDeps): WelcomeAnswer {
+  return new WelcomeAnswerService({
+    step: deps.step,
+    answers: new SqliteWelcomeAnswerStore({ db: deps.db }),
+    legacy: deps.externalConfig,
+    integrations: {
+      setClaudeHooks: (on, origin) => deps.preferences.commands.setClaudeHooks(on, origin),
+      integrationState: (id) => deps.preferences.queries.integrationState(id)
+    },
+    transactions: deps.transactions,
     cutFilter: OFFERED_FILTER.offered,
     bus: deps.bus,
     clock: deps.clock,

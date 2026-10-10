@@ -24,6 +24,8 @@ import {
   feedParamsSchema,
   jevSuggestParamsSchema,
   jevSuggestResultSchema,
+  answerWelcomeParamsSchema,
+  answerWelcomeResultSchema,
   launchAcceptedSchema,
   launchCustomParamsSchema,
   launchParamsSchema,
@@ -816,6 +818,17 @@ export const CHANNELS = {
     status: 'new',
     request: setAskStepParamsSchema,
     response: ipcVoidResultSchema
+  },
+  // A-N32 `answerWelcome` (AMENDMENT-7, OQ-68; ADR-016 item 5; 07 machine 41): the first-run consent step's one
+  // answer, "Activate" with its ticks (both false = "Not now"); relays B-M40 `preferences.answerWelcome` unchanged
+  // (14 §1.2), the Host recording origin `first-run`. Two booleans and a requestId, so not `sensitive`
+  'welcome:answer': {
+    name: 'welcome:answer',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: answerWelcomeParamsSchema,
+    response: ipcResultSchema(answerWelcomeResultSchema)
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

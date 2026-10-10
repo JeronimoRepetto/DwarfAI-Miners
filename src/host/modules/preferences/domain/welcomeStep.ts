@@ -14,7 +14,7 @@
 // - otherwise not due (S41.03).
 //
 // `welcomeTransition` is the machine's table, walked by id in its L1 test (17 §1.1).
-import type { Instant, IntegrationId } from '../../../kernel/domain/values'
+import type { Instant, IntegrationId, IntegrationState } from '../../../kernel/domain/values'
 
 // As 05 §3.12 writes it (names, members and comment; layout by prettier)
 export interface WelcomeStepState {
@@ -23,6 +23,16 @@ export interface WelcomeStepState {
   legacyFound: IntegrationId[]
   offered: IntegrationId[]
 } // AMENDMENT-7: 07 machine 41; persisted part app_meta.welcome_answered_at (09); offered = installed tools only (AMENDMENT-9, OQ-70)
+
+// As 16 §4.12 writes them (names, members and comments; layout by prettier)
+export interface WelcomeChoice {
+  claudeHooks: boolean
+  openCodePermissions: boolean
+} // AMENDMENT-7: the ticks at "Activate" (both pre-selected); "Not now" = both false
+export type WelcomeResult = Record<
+  IntegrationId,
+  { state: IntegrationState; failure?: 'config-write-failed' | 'config-revert-failed' }
+> // AMENDMENT-7: per integration, after its write or revert settled
 
 /** The machine's states; `none` is `[*]`, the boot before the step is evaluated. */
 export type WelcomeMachineState = 'none' | 'not-due' | 'due' | 'answering'

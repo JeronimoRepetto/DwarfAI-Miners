@@ -44,12 +44,16 @@ import {
   type ResolveFileResult
 } from './params/mines'
 import {
+  answerWelcomeParamsSchema,
+  answerWelcomeResultSchema,
   metricsResetResultSchema,
   preferenceSetParamsSchema,
   resetEpochSchema,
   resetMetricsParamsSchema,
   setClaudeHooksParamsSchema,
   setClaudeHooksResultSchema,
+  type AnswerWelcomeParams,
+  type AnswerWelcomeResult,
   type MetricsResetResult,
   type PreferenceSetParams,
   type ResetMetricsParams,
@@ -77,7 +81,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26, B-M27, B-M30, B-M31, B-M32, B-M39 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26, B-M27, B-M30, B-M31, B-M32, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -98,6 +102,7 @@ export interface HostMethods {
   'preferences.get':                 { params: {}; result: PreferencesView }
   'preferences.set':                 { params: PreferenceSetParams; result: HostPreferences }
   'preferences.setClaudeHooks':      { params: SetClaudeHooksParams; result: SetClaudeHooksResult }       // AMENDMENT-7
+  'preferences.answerWelcome':       { params: AnswerWelcomeParams; result: AnswerWelcomeResult }         // AMENDMENT-7
   'preferences.resetMetrics':        { params: ResetMetricsParams; result: MetricsResetResult }
   // mines
   'mines.declare':                   { params: { path: FolderPath; requestId: string }; result: DeclareMineResult }
@@ -242,6 +247,13 @@ export const HOST_METHOD_SCHEMAS = {
   'preferences.setClaudeHooks': {
     params: setClaudeHooksParamsSchema,
     result: setClaudeHooksResultSchema
+  },
+  // B-M40 (14 §2.3, §3.4; AMENDMENT-7, OQ-68): `ui` only, mutating (requestId). The origin `first-run` is the
+  // Host's (host/transport/methods/answerWelcome.ts), never the wire's; each integration's failure is in the
+  // result, never a call error.
+  'preferences.answerWelcome': {
+    params: answerWelcomeParamsSchema,
+    result: answerWelcomeResultSchema
   },
   'ui.resetPreferences.ack': {
     params: z.object({ epoch: resetEpochSchema }).strict(),

@@ -8,7 +8,8 @@ import type {
   Instant,
   MineId,
   PreferencesView,
-  StranglerDwarfIdentity
+  StranglerDwarfIdentity,
+  WelcomeStepState
 } from '../wire'
 import {
   HOST_METHOD_SCHEMAS,
@@ -25,9 +26,13 @@ import type {
   MetricsResetResult,
   PreferenceSetParams,
   ResetMetricsParams,
+  AnswerWelcomeParams,
+  AnswerWelcomeResult,
   SetClaudeHooksParams,
   SetClaudeHooksResult,
-  SetOpenCodePermissionsResult
+  SetOpenCodePermissionsResult,
+  WelcomeChoice,
+  WelcomeResult
 } from './params/preferences'
 import type {
   AdoptMainProjectResult,
@@ -384,6 +389,87 @@ describe('preferences.setClaudeHooks params and result (14 §3.4, B-M39)', () =>
     expect(
       result.safeParse({ ok: true, value: { state: 'off', token: 'a'.repeat(64) } }).success
     ).toBe(false)
+  })
+})
+
+// The B-M40 entry of 14 §3.4 and its strict() schemas (14 §1.4; AMENDMENT-7, OQ-68): the first-run
+// step's one answer, its ticks and a requestId; each integration's failure is in the result, never an error.
+
+describe('preferences.answerWelcome params and result (14 §3.4, B-M40)', () => {
+  const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8059'
+  const SETTLED = { due: false, legacyFound: [], offered: ['claude-hooks'] }
+
+  it('[ADR-016] the preferences.answerWelcome schemas infer exactly the 14 §3.4 entry: the two ticks and a requestId, each integration state or failure and the settled step', () => {
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('preferences.answerWelcome')
+    expectTypeOf<
+      HostMethods['preferences.answerWelcome']['params']
+    >().toEqualTypeOf<AnswerWelcomeParams>()
+    expectTypeOf<
+      HostMethods['preferences.answerWelcome']['result']
+    >().toEqualTypeOf<AnswerWelcomeResult>()
+    expectTypeOf<AnswerWelcomeParams>().toEqualTypeOf<{
+      claudeHooks: boolean
+      openCodePermissions: boolean
+      requestId: string
+    }>()
+    expectTypeOf<AnswerWelcomeParams>().toExtend<WelcomeChoice>()
+    expectTypeOf<AnswerWelcomeResult['integrations']>().toEqualTypeOf<WelcomeResult>()
+    expectTypeOf<AnswerWelcomeResult['welcome']>().toEqualTypeOf<WelcomeStepState>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['preferences.answerWelcome']['params']>
+    >().toEqualTypeOf<AnswerWelcomeParams>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['preferences.answerWelcome']['result']>
+    >().toEqualTypeOf<AnswerWelcomeResult>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['preferences.answerWelcome']
+    const ticks = { claudeHooks: true, openCodePermissions: false }
+    expect(params.safeParse({ ...ticks, requestId: REQUEST_ID }).success).toBe(true)
+    expect(
+      params.safeParse({ claudeHooks: false, openCodePermissions: false, requestId: REQUEST_ID })
+        .success
+    ).toBe(true)
+    expect(params.safeParse(ticks).success).toBe(false)
+    expect(params.safeParse({ claudeHooks: true, requestId: REQUEST_ID }).success).toBe(false)
+    expect(params.safeParse({ ...ticks, claudeHooks: 'yes', requestId: REQUEST_ID }).success).toBe(
+      false
+    )
+    expect(params.safeParse({ ...ticks, origin: 'first-run', requestId: REQUEST_ID }).success).toBe(
+      false
+    )
+
+    const integrations = {
+      'claude-hooks': { state: 'on-verified' },
+      'opencode-permissions': { state: 'off', failure: 'config-revert-failed' }
+    }
+    expect(result.safeParse({ integrations, welcome: SETTLED }).success).toBe(true)
+    expect(
+      result.safeParse({
+        integrations: {
+          ...integrations,
+          'claude-hooks': { state: 'off', failure: 'config-write-failed' }
+        },
+        welcome: SETTLED
+      }).success
+    ).toBe(true)
+    expect(
+      result.safeParse({ integrations: { 'claude-hooks': { state: 'off' } }, welcome: SETTLED })
+        .success
+    ).toBe(false)
+    expect(
+      result.safeParse({
+        integrations: { ...integrations, 'claude-hooks': { state: 'off', failure: 'locked' } },
+        welcome: SETTLED
+      }).success
+    ).toBe(false)
+    expect(
+      result.safeParse({
+        integrations: { ...integrations, 'claude-hooks': { state: 'off', token: 'a'.repeat(64) } },
+        welcome: SETTLED
+      }).success
+    ).toBe(false)
+    expect(result.safeParse({ integrations }).success).toBe(false)
+    expect(result.safeParse({ integrations, welcome: SETTLED, extra: 1 }).success).toBe(false)
   })
 })
 

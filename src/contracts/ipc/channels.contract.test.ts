@@ -30,7 +30,9 @@ import {
   type SetClaudeHooksParams,
   type SetClaudeHooksResult,
   type SetAskStepParams,
-  type SetOpenCodePermissionsResult
+  type SetOpenCodePermissionsResult,
+  type AnswerWelcomeParams,
+  type AnswerWelcomeResult
 } from '../host-protocol/params'
 import type { IpcResult } from '../host-protocol'
 import type {
@@ -258,6 +260,16 @@ const NEW_ROWS = [
     kind: 'invoke',
     placement: 'host',
     sensitive: false
+  },
+  // ISSUE-223: the first-run consent step's one answer (AMENDMENT-7, OQ-68; ADR-016 item 5), born `host` in cut 2;
+  // two ticks and a requestId, nothing a person or a provider said
+  {
+    id: 'A-N32',
+    wire: 'welcome:answer',
+    member: 'answerWelcome',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -438,7 +450,9 @@ const VALID_REQUESTS: Record<string, unknown> = {
   // A-N31 (ISSUE-221): B-M39's params, no origin (the Host records `settings`)
   'claude:hooks:set': { on: true, requestId: U1 },
   // A-N07 (ISSUE-129): B-M32's params, no requestId (idempotent) and no picks
-  'ask:step:set': { askId: U1, step: 1 }
+  'ask:step:set': { askId: U1, step: 1 },
+  // A-N32 (ISSUE-223): B-M40's params, the two ticks and no origin (the Host records `first-run`)
+  'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */
@@ -835,6 +849,9 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     // A-N07 (ISSUE-129): relays B-M32 unchanged, as 14 §2.2 and §3.8 write it (14 §1.2).
     expectTypeOf<Req<'ask:step:set'>>().toEqualTypeOf<SetAskStepParams>()
     expectTypeOf<Res<'ask:step:set'>>().toEqualTypeOf<IpcResult<void>>()
+    // A-N32 (ISSUE-223): relays B-M40 unchanged, as 14 §2.2 and §3.8 write it (14 §1.2).
+    expectTypeOf<Req<'welcome:answer'>>().toEqualTypeOf<AnswerWelcomeParams>()
+    expectTypeOf<Res<'welcome:answer'>>().toEqualTypeOf<IpcResult<AnswerWelcomeResult>>()
     // A-N16 (ISSUE-114): the reveal push, as 14 §2.2 and §3.8 write it.
     expectTypeOf<Req<'mode:revealDwarfChat'>>().toEqualTypeOf<undefined>()
     expectTypeOf<Res<'mode:revealDwarfChat'>>().toEqualTypeOf<{

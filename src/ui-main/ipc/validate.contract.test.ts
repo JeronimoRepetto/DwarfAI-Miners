@@ -129,7 +129,9 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   // A-N31 (ISSUE-221): B-M39's params, no origin (the Host records `settings`)
   'claude:hooks:set': { on: true, requestId: U1 },
   // A-N07 (ISSUE-129): B-M32's params, no requestId (idempotent) and no picks
-  'ask:step:set': { askId: U1, step: 1 }
+  'ask:step:set': { askId: U1, step: 1 },
+  // A-N32 (ISSUE-223): B-M40's params, the two ticks and no origin (the Host records `first-run`)
+  'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */

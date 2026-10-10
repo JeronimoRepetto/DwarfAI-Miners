@@ -6,7 +6,7 @@
 //   gets the first answer with no second effect (dispatcher.ts, 14 §1.6). Its params are the
 //   contract's strict() schema, `{ on, requestId }`: the toggle lives in Settings only, so the Host
 //   records the consent origin `settings` itself and any `origin` on the wire is INVALID_PARAMS.
-//   `first-run` reaches the same enable path only through `answerWelcome` (later: ISSUE-223).
+//   `first-run` reaches the same enable path only through `answerWelcome` (answerWelcome.ts, B-M40).
 // - It answers the module's stored state; `config-write-failed` and `config-revert-failed` are
 //   outcomes of the result, never call errors (14 §3.4 `SetClaudeHooksResult`).
 // - `IntegrationChanged`, published by the module after every outcome (a failed one with the

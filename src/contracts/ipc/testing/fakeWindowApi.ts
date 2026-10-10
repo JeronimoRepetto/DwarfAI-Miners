@@ -92,7 +92,8 @@ export const WINDOW_API_MEMBERS = {
   onHostEvent: 'push',
   onRevealDwarfChat: 'push',
   setClaudeHooksEnabled: 'invoke',
-  setAskStep: 'invoke'
+  setAskStep: 'invoke',
+  answerWelcome: 'invoke'
 } as const satisfies Record<keyof DwarfAiMinersApi, WindowApiMemberKind>
 
 const MEMBERS: Readonly<Record<string, WindowApiMemberKind>> = WINDOW_API_MEMBERS

@@ -216,6 +216,9 @@ export function goldenApi(sample: GoldenSample): Api {
     // A-N31: a golden draws a fixed sample and never writes another tool's configuration.
     setClaudeHooksEnabled: refuse('setClaudeHooksEnabled'),
     // A-N07: a golden draws a fixed sample and never moves an ask.
-    setAskStep: refuse('setAskStep')
+    setAskStep: refuse('setAskStep'),
+    // A-N32: a golden draws a fixed sample, never answers the first-run step and never writes another tool's
+    // configuration.
+    answerWelcome: refuse('answerWelcome')
   }
 }
