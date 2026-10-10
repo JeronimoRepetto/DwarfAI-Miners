@@ -5,6 +5,9 @@
 // ISSUE-128: `createAsking`, the broker's two answer paths (`answerPermission`, `answerQuestion`)
 // over the AskRepository, conversation's `AnswerRecords` and the answer channels; the Host composes
 // it (later: ISSUE-140).
+// ISSUE-132: `createAskOpening`, the broker's `open` with ADR-011's capability-based emission over
+// the `SessionCapabilities` port; the Host binds that port to suppliers' capability data and
+// composes it (later: ISSUE-140).
 // ISSUE-139: `createAskingResetStep`, the module's step of the Reset-metrics saga (ADR-023).
 // ISSUE-130: the `AskQueries` port and the `AskOpened` / `AskStepChanged` events, for the asks
 // frame projections (transport/frames/askFrames.ts); `createAskQueries`, the read model behind the
@@ -19,7 +22,13 @@ import {
   type AskReadModelDeps,
   type AskSnapshotQueries
 } from './application/askQueries'
-import { AskAnswerPaths, type AnswerPathsDeps, type AskBroker } from './application/askBroker'
+import {
+  AskAnswerPaths,
+  AskOpenPath,
+  type AnswerPathsDeps,
+  type AskBroker,
+  type OpenPathDeps
+} from './application/askBroker'
 
 export type { AnswerPathsDeps, AskBroker } from './application/askBroker'
 export type {
@@ -38,6 +47,8 @@ export type {
   AskStepChanged
 } from './domain/events'
 export type { AskAnswerChannel } from './ports/askAnswerChannel'
+export type { OpenPathDeps } from './application/askBroker'
+export type { AskCapabilities, AskSession, SessionCapabilities } from './ports/sessionCapabilities'
 export type {
   AnswerOutcome,
   AnswerRefusalReason,
@@ -77,6 +88,11 @@ export function createAskingResetStep(deps: {
   scope: TransactionScope
 }): AskingResetDbStep {
   return new AskingResetStep(deps)
+}
+
+/** The broker's `open` (16 §4.7 row `open`; ADR-011 item 5), composed by the Host (ISSUE-140). */
+export function createAskOpening(deps: OpenPathDeps): Pick<AskBroker, 'open'> {
+  return new AskOpenPath(deps)
 }
 
 /** The `AskQueries` read model with the `asks` section's snapshot read (ISSUE-130). */
