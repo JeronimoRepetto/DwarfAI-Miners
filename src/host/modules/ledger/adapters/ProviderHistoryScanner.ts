@@ -6,7 +6,7 @@
 // Scan units, in order, each finished whole before it is yielded:
 //
 // - Claude: one unit per project directory `<root>/projects/<dir>` of every configured root
-//   (`CLAUDE_CONFIG_DIR`, HO-09). Each top-level `*.jsonl` transcript is read by its bounded tail
+//   (CLAUDE_CONFIG_DIRS, else `CLAUDE_CONFIG_DIR`, HO-09). Each top-level `*.jsonl` transcript is read by its bounded tail
 //   (`CLAUDE_TAIL_BYTES`) and yields per-unit records keyed by the live `unitKey`, the assistant
 //   `message.id` (15 §5 Claude row; ADR-006 item 4): the last row of a message wins (its final
 //   stop-state row, HR O4), its tokens are the four usage fields added together, its provider time
@@ -69,7 +69,7 @@ export interface ProviderHistoryScannerDeps {
   clock: Clock
   /** `openReadOnlySnapshot` of `host/platform/sqlite` (R11). */
   openSnapshot: ReadOnlySnapshotOpener
-  /** Claude config roots, home-expanded (`CLAUDE_CONFIG_DIR` honoured, HO-09). */
+  /** Claude config roots, home-expanded (CLAUDE_CONFIG_DIRS, else `CLAUDE_CONFIG_DIR`, HO-09). */
   claudeRoots: readonly string[]
   /** `CODEX_HOME`, home-expanded; null when Codex is not scanned. */
   codexHome: string | null

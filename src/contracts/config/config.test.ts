@@ -11,8 +11,10 @@ import {
   defaultSimulationConfig,
   loadConfig,
   loadSimulationConfig,
+  readClaudeConfigDirs,
   readSwitchText
 } from './config'
+import { withConfigFileFallback } from './configFile'
 
 describe('defaultConfig', () => {
   it('returns the documented defaults', () => {
@@ -290,6 +292,31 @@ describe('loadConfig', () => {
 
   it('fails fast when CLAUDE_CONFIG_DIRS has no usable entries', () => {
     expect(() => loadConfig({ CLAUDE_CONFIG_DIRS: ' ; ; ' })).toThrowError(/CLAUDE_CONFIG_DIRS/)
+  })
+
+  // The Host reads the same setting with the same parser (HO-09): unset is told apart from the default list, so
+  // the Host can fall back to CLAUDE_CONFIG_DIR, which Claude Code itself honours.
+  it('[FM-091] readClaudeConfigDirs answers the configured roots, and null when CLAUDE_CONFIG_DIRS is unset or blank', () => {
+    expect(readClaudeConfigDirs({ CLAUDE_CONFIG_DIRS: '~/.claude; ~/.claude-work ;' })).toEqual([
+      '~/.claude',
+      '~/.claude-work'
+    ])
+    expect(readClaudeConfigDirs({})).toBeNull()
+    expect(readClaudeConfigDirs({ CLAUDE_CONFIG_DIRS: '  ' })).toBeNull()
+    expect(() => readClaudeConfigDirs({ CLAUDE_CONFIG_DIRS: ' ; ' })).toThrowError(
+      /CLAUDE_CONFIG_DIRS/
+    )
+  })
+
+  it('[FM-091] readClaudeConfigDirs reads the userData file under a blank environment, and the environment over it', () => {
+    const file = { CLAUDE_CONFIG_DIRS: '~/.claude;~/.claude-work' }
+    expect(readClaudeConfigDirs(withConfigFileFallback({ CLAUDE_CONFIG_DIRS: '' }, file))).toEqual([
+      '~/.claude',
+      '~/.claude-work'
+    ])
+    expect(
+      readClaudeConfigDirs(withConfigFileFallback({ CLAUDE_CONFIG_DIRS: '/data/claude' }, file))
+    ).toEqual(['/data/claude'])
   })
 
   it('parses the Codex registry database paths, keeping a leading ~ unexpanded', () => {
