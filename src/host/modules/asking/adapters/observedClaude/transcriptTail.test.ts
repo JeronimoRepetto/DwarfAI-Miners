@@ -31,6 +31,21 @@ describe('observed-Claude transcript tail (ADR-012 item 3)', () => {
     }
   })
 
+  it('[ADR-012] every case reads exactly like its expected file in its CRLF and with-extra variants', async () => {
+    for (const name of [
+      'pending-permission',
+      'resolved-permission',
+      'two-pending-same-tool',
+      'pending-question',
+      'sidechain-pending'
+    ]) {
+      const expected = await expectedOf(name)
+      for (const variant of [`${name}.jsonl`, `${name}-crlf.jsonl`, `${name}-with-extra.jsonl`]) {
+        expect(readTail(await fixture(variant)), variant).toEqual(expected)
+      }
+    }
+  })
+
   it('[FM-082, ADR-012] a call with its tool_result is no longer open', async () => {
     expect(readTail(await fixture('resolved-permission.jsonl'))).toEqual(
       await expectedOf('resolved-permission')
