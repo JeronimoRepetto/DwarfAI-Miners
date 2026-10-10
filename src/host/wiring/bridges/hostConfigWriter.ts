@@ -21,7 +21,7 @@
 // Neither the token nor its hash reaches a log record (NFR-SEC-12, ADR-026).
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
-import type { ExternalConfigWriter } from '../../modules/preferences'
+import type { ExternalConfigWriter, InstalledToolsReader } from '../../modules/preferences'
 import type { IngressPortRecord } from '../../transport/ingress/ingressPort'
 
 export interface HostConfigWriterDeps {
@@ -74,5 +74,25 @@ export function persistedIngressPort(record: Pick<IngressPortRecord, 'read'>): (
       throw new HostInvariantError('a Claude hook entry is rendered only with a persisted port')
     }
     return port
+  }
+}
+
+/**
+ * The first-run step's installed tools as this Host can act on them (21 §1 item 8 "hidden until
+ * built", BR-19; ISSUE-223 decision 4): an installed tool whose integration cannot be turned on yet
+ * is not offered, so the step is not due for it. The step has no close and no skip (ISSUE-224), and
+ * an "Activate" that can only answer `config-write-failed` would hold the Panel. Claude Code counts
+ * once the hook ingress persisted its port (`hostConfigWriter` refuses the enable before that);
+ * OpenCode never in cut 2 (no Host writer, see above). Read on every call, so a later boot with the
+ * port persisted offers it. An old-app entry of a tool not offered is not looked for either (07
+ * S41.02 runs on offered targets only): it is neither adopted nor shown.
+ */
+export function enablableInstalledTools(
+  installed: InstalledToolsReader,
+  ingressPort: Pick<IngressPortRecord, 'read'>
+): InstalledToolsReader {
+  return {
+    installed: () =>
+      installed.installed().filter((id) => id === 'claude-hooks' && ingressPort.read() !== null)
   }
 }

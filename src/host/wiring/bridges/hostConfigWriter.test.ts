@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import type { ChannelToken, ExternalConfigWriter } from '../../modules/preferences'
-import { hostConfigWriter, persistedIngressPort } from './hostConfigWriter'
+import { enablableInstalledTools, hostConfigWriter, persistedIngressPort } from './hostConfigWriter'
 
 const TOKEN = 'a'.repeat(64) as ChannelToken
 const HASH = 'b'.repeat(64)
@@ -116,5 +116,20 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
 
     stored = null
     expect(() => port()).toThrow(HostInvariantError)
+  })
+
+  it('[S41.09, BR-19, ADR-016] the first-run step is offered only the installed tools whose integration this Host can turn on now: Claude Code once the ingress port is persisted, OpenCode never in cut 2', () => {
+    let port: number | null = null
+    const tools = enablableInstalledTools(
+      { installed: () => ['claude-hooks', 'opencode-permissions'] },
+      { read: () => port }
+    )
+
+    expect(tools.installed()).toStrictEqual([])
+    port = 41_234
+    expect(tools.installed()).toStrictEqual(['claude-hooks'])
+    expect(
+      enablableInstalledTools({ installed: () => [] }, { read: () => 41_234 }).installed()
+    ).toStrictEqual([])
   })
 })

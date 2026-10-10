@@ -75,7 +75,11 @@ import { FrameClient } from '../../transport/testing/frameClient'
 import { inProcessDuplex } from '../../transport/testing/inProcessDuplex'
 import { runBoot, type BootOutcome } from '../boot'
 import { createBootSteps, evaluateWelcomeAfterDetection, mintBootEpoch } from '../bootSteps'
-import { hostConfigWriter, persistedIngressPort } from '../bridges/hostConfigWriter'
+import {
+  enablableInstalledTools,
+  hostConfigWriter,
+  persistedIngressPort
+} from '../bridges/hostConfigWriter'
 import { appMetaIngressPort } from '../bridges/ingressPort'
 import { suppliersInstalledTools } from '../bridges/installedTools'
 import { emptyDrainGate } from '../emptyDrainGate'
@@ -217,6 +221,11 @@ interface HostOptions {
   killInDbStep?: boolean
   /** CH-01: the Host is killed right after the Claude Code settings file landed (before Tx B). */
   killAfterSettingsWrite?: boolean
+  /**
+   * The hook ingress bound before the first-run evaluation (16 §8.2 step 6, later: ISSUE-140), so
+   * its port is persisted when step 8 evaluates the step.
+   */
+  ingressBoundAtBoot?: boolean
   /** A `ui` client attached before the boot runs (it connects while the Host is `starting`). */
   attachBeforeBoot?: boolean
 }
@@ -387,6 +396,7 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
           // with the Claude Code hooks target over this machine's disk, behind the Host's per-target
           // writer, and the channel-token lookup the hook ingress reads.
           const ingressPort = appMetaIngressPort(db)
+          if (options.ingressBoundAtBoot === true) ingressPort.write(INGRESS_PORT)
           const engine = new ConfigWriterEngine({
             fs: options.killAfterSettingsWrite === true ? killedAfterWrite(m.fs.fs, db) : m.fs.fs,
             transactions: connection.transactions,
@@ -458,7 +468,10 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
             secrets,
             externalConfig: hostConfigWriter({ claudeHooks: engine, ingressPort, log }),
             channelTokens: new SqliteChannelTokenStore({ db, ids: m.ids }),
-            installedTools: suppliersInstalledTools(() => host.suppliers?.catalogue ?? null),
+            installedTools: enablableInstalledTools(
+              suppliersInstalledTools(() => host.suppliers?.catalogue ?? null),
+              ingressPort
+            ),
             ready: () => state.current().state === 'ready'
           })
           return host.wired.resumeOnBoot()
@@ -1090,14 +1103,14 @@ describe('Claude hooks integration and first-run step wiring (cut 2)', () => {
     m.disk.addFile(CLAUDE_SETTINGS, fixture('foreign-and-old-app.settings'))
     // A Reset killed after its db step: the saga is unfinished, its external-config step (which
     // reverts the Claude hooks target, old-app entry included, 16 §7.4) not run.
-    const killed = await bootHost(m, { killAtSecrets: true })
+    const killed = await bootHost(m, { killAtSecrets: true, ingressBoundAtBoot: true })
     expect(killed.readyFacts).toMatchObject([
       { welcome: { due: true, reason: 'legacy-entries', legacyFound: ['claude-hooks'] } }
     ])
     await killedDuring(wiredOf(killed))
     killed.close()
 
-    const next = await bootHost(m)
+    const next = await bootHost(m, { ingressBoundAtBoot: true })
 
     expect(next.outcome).toEqual({ kind: 'ready' })
     // The resumed saga removed the old-app entry before the step was evaluated, so the step is due
@@ -1116,7 +1129,8 @@ describe('Claude hooks integration and first-run step wiring (cut 2)', () => {
 
   it('[ADR-016] the first-run step is answered over the wired Host: B-M40 records Not now, settles the step in every ui client and the next boot does not show it', async () => {
     const m = machine({ installed: ['claude'] })
-    const first = await bootHost(m)
+    const first = await bootHost(m, { ingressBoundAtBoot: true })
+    expect(first.readyFacts).toMatchObject([{ welcome: { due: true } }])
     const a = await first.attach()
     const b = await first.attach()
 
@@ -1140,12 +1154,35 @@ describe('Claude hooks integration and first-run step wiring (cut 2)', () => {
     }
     first.close()
 
-    const next = await bootHost(m)
+    const next = await bootHost(m, { ingressBoundAtBoot: true })
     expect(next.readyFacts).toMatchObject([{ welcome: { due: false, offered: ['claude-hooks'] } }])
   })
 
+  it('[S41.09, BR-19, ADR-016] before the hook ingress persisted a port, a fresh profile with Claude Code installed boots with the step not due and nothing offered, in the snapshot the renderer reads', async () => {
+    // Claude Code installed, no old-app entry, a fresh database, and no ingress port yet: an
+    // "Activate" could only answer config-write-failed, and the step has no other way out, so it
+    // is hidden until its enable path can succeed (21 §1 item 8).
+    const host = await bootHost(machine({ installed: ['claude'] }))
+    const hidden = { due: false, legacyFound: [], offered: [] }
+
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    expect(host.readyFacts).toMatchObject([{ welcome: hidden }])
+    const a = await host.attach()
+    const snapshot = await response(a, request(a, 'session.snapshot', {}))
+    expect(snapshot.ok).toBe(true)
+    const chunks = (snapshot.ok ? (snapshot.result as { chunks: unknown[] }).chunks : []) as Array<{
+      section: string
+      data: { welcome?: unknown }
+    }>
+    expect(chunks.find((chunk) => chunk.section === 'preferences')?.data.welcome).toStrictEqual(
+      hidden
+    )
+  })
+
   it('[S41.01] a fresh profile with the Claude stub installed boots with the step due and offered claude-hooks', async () => {
-    const host = await bootHost(machine({ installed: ['claude', 'opencode'] }))
+    const host = await bootHost(machine({ installed: ['claude', 'opencode'] }), {
+      ingressBoundAtBoot: true
+    })
     const due = { due: true, reason: 'first-run', legacyFound: [], offered: ['claude-hooks'] }
 
     expect(host.outcome).toEqual({ kind: 'ready' })
@@ -1155,7 +1192,7 @@ describe('Claude hooks integration and first-run step wiring (cut 2)', () => {
     expect(got.ok && got.result).toMatchObject({ welcome: due })
 
     // S41.09: with no tool installed nothing is offered, and the step is not due.
-    const bare = await bootHost(machine())
+    const bare = await bootHost(machine(), { ingressBoundAtBoot: true })
     expect(bare.readyFacts).toMatchObject([
       { welcome: { due: false, legacyFound: [], offered: [] } }
     ])

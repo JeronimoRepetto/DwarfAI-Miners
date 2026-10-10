@@ -167,7 +167,11 @@ import {
   evaluateWelcomeAfterDetection,
   mintBootEpoch
 } from './wiring/bootSteps'
-import { hostConfigWriter, persistedIngressPort } from './wiring/bridges/hostConfigWriter'
+import {
+  enablableInstalledTools,
+  hostConfigWriter,
+  persistedIngressPort
+} from './wiring/bridges/hostConfigWriter'
 import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
@@ -670,7 +674,12 @@ async function bootHost(base: HostBase): Promise<void> {
             channelTokens: new SqliteChannelTokenStore({ db, ids }),
             // The first-run step's installed tools: suppliers' detection cache, once step 4 wired
             // suppliers (nothing installed before; the step is evaluated in step 8, ISSUE-222).
-            installedTools: suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
+            // Only the tools whose integration can be turned on now are offered (hidden until
+            // built): Claude Code once the hook ingress persisted its port (ISSUE-323).
+            installedTools: enablableInstalledTools(
+              suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
+              ingressPort
+            ),
             // The token issuance of the transport (lead decision 2026-09-30, ISSUE-198): the
             // Claude hook token is minted here, never in the module (R3).
             mintCredential,
