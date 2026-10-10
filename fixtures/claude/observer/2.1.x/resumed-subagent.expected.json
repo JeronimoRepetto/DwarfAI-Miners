@@ -1,0 +1,65 @@
+{
+  "$comment": "Hand-written from 15 §5 (subagents/agent-<id>.jsonl) and ADR-015 item 7: a depth-1 subagent that ended and was then resumed by its coordinator (Claude Code's SendMessage appends to the same transcript). The coordinator's message is a `user` line with `isMeta: true` and `origin.kind: \"coordinator\"`: a control-plane `meta` entry (never its text), and a second `session` fact of the same identity at its own time, with the same parent, which is what tells the observation loop that the agent runs again (owner amendment I, resumed generation). Shared by resumed-subagent-crlf.jsonl and resumed-subagent-with-extra.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000730",
+      "providerAgentId": "e5f60718293abcd01",
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790794800000,
+      "parent": {
+        "providerSessionId": "01a0b000-0000-7000-8000-000000000730",
+        "providerAgentId": null
+      }
+    },
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000730",
+      "providerAgentId": "e5f60718293abcd01",
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790794860000,
+      "parent": {
+        "providerSessionId": "01a0b000-0000-7000-8000-000000000730",
+        "providerAgentId": null
+      }
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "Check the migration.", "providerTime": 1790794800000 },
+    { "role": "dwarf", "text": "The migration is safe.", "providerTime": 1790794820000 },
+    { "role": "system-line", "text": "meta", "providerTime": 1790794860000, "controlPlane": true },
+    { "role": "dwarf", "text": "The rollback is safe too.", "providerTime": 1790794875000 }
+  ],
+  "activity": ["turn-started", "record", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000730:e5f60718293abcd01:00000000-0000-4000-8000-000000073002",
+      "kind": "concluded",
+      "at": 1790794820000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    },
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000730:e5f60718293abcd01:00000000-0000-4000-8000-000000073004",
+      "kind": "concluded",
+      "at": 1790794875000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01ResumedSubagentA",
+      "fidelity": 1,
+      "tokens": { "inputNet": 4, "output": 18, "cacheRead": 0, "cacheWrite": 200, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790794820000
+    },
+    {
+      "unitKey": "msg_01ResumedSubagentB",
+      "fidelity": 1,
+      "tokens": { "inputNet": 6, "output": 22, "cacheRead": 200, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790794875000
+    }
+  ]
+}
