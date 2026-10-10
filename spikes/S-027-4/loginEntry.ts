@@ -1,7 +1,13 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import {
+  decideMacLoginSwitch,
+  parseLaunchctlPrint,
+  type BtmSource,
+  type MacSwitchDecision
+} from './macLoginSwitch.ts'
 
 /**
  * Spike S-027-4: the candidate per-user login entry of each OS (ADR-027 item 7; spike register S-027-4), written,
@@ -13,8 +19,10 @@ import path from 'node:path'
  *   `StartupApproved\Run` value of the same name: absent or an even first byte (02) means enabled, an odd one (03)
  *   disabled (UNVERIFIED beyond this spike; Microsoft does not document the format).
  * - macOS: a per-user LaunchAgent `~/Library/LaunchAgents/<label>.plist` (`RunAtLoad`, no `KeepAlive`), read back with
- *   `plutil`; "disabled" is what `launchctl print-disabled gui/<uid>` says for the label. Whether that reflects the
- *   person's switch in System Settings → General → Login Items is the manual half (`clean-vm.md`).
+ *   `plutil`. The person's switch in System Settings → General → Login Items is read from the Background Task
+ *   Management record (`sfltool dumpbtm`, decided in `macLoginSwitch.ts`), with `launchctl print gui/<uid>/<label>`
+ *   kept as evidence: `launchctl print-disabled` does not hold that switch on macOS 26 (owner's Mac, 2026-10-03). BTM
+ *   is read only when asked (`macBtm`), because the privileges `sfltool dumpbtm` needs on macOS 26 are not measured.
  * - Linux: an XDG autostart entry `$XDG_CONFIG_HOME/autostart/<name>.desktop` (default `~/.config`); disabled means
  *   `Hidden=true` or `X-GNOME-Autostart-enabled=false` (Desktop Application Autostart Specification).
  */
@@ -31,6 +39,21 @@ export interface ReadBack {
   readonly disabledByPerson: boolean | null
   /** The entry as stored. */
   readonly raw: string | null
+  /** macOS only: how `disabledByPerson` was decided, and what each source answered. */
+  readonly macSwitch?: MacSwitchReport
+}
+
+/** Where the macOS reader gets the BTM dump: nowhere, `sfltool dumpbtm` run without sudo, or a file. */
+export type MacBtmMode = 'skip' | 'run' | { readonly file: string }
+
+export interface MacSwitchReport extends MacSwitchDecision {
+  /** What the BTM source answered (the command's exit, or the file read); never the dump itself (privacy). */
+  readonly btmSource: string
+}
+
+export interface LoginEntryOptions {
+  /** macOS: where the BTM dump comes from (default `skip`: the switch then reads as `null`). */
+  readonly macBtm?: MacBtmMode
 }
 
 export interface LoginEntry {
@@ -50,9 +73,15 @@ const APPROVED_KEY =
   'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run'
 const LAUNCH_AGENTS = ['Library', 'LaunchAgents'] as const
 
-export function loginEntryFor(platform: NodeJS.Platform, suffix: string): LoginEntry {
+export function loginEntryFor(
+  platform: NodeJS.Platform,
+  suffix: string,
+  options: LoginEntryOptions = {}
+): LoginEntry {
   if (platform === 'win32') return windowsRunValue(`DwarfAI-S0274-${suffix}`)
-  if (platform === 'darwin') return macLaunchAgent(`com.dwarfai.spike.s0274.${suffix}`)
+  if (platform === 'darwin') {
+    return macLaunchAgent(`com.dwarfai.spike.s0274.${suffix}`, options.macBtm ?? 'skip')
+  }
   return linuxAutostart(`dwarfai-spike-s0274-${suffix}`, process.env)
 }
 
@@ -220,16 +249,47 @@ export function launchAgentPlist(label: string, command: EntryCommand): string {
   ].join('\n')
 }
 
-/** What `launchctl print-disabled gui/<uid>` says about `label`: true, false, or null when it cannot be read. */
-export function parsePrintDisabled(output: string, label: string): boolean {
-  for (const line of output.split(/\r?\n/)) {
-    const match = /^\s*"([^"]+)"\s*=>\s*(\w+)/.exec(line)
-    if (match && match[1] === label) return match[2] === 'disabled' || match[2] === 'true'
+/** A command's exit code (null when it did not exit) and its stdout and stderr; `shell: false`, no stdin. */
+function runCaptured(
+  file: string,
+  args: readonly string[]
+): { code: number | null; output: string } {
+  const result = spawnSync(file, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+    shell: false
+  })
+  return {
+    code: result.error === undefined ? result.status : null,
+    output: `${result.stdout ?? ''}${result.stderr ?? ''}`
   }
-  return false
 }
 
-function macLaunchAgent(label: string): LoginEntry {
+function firstLine(text: string): string {
+  return text.split(/\r?\n/).find((line) => line.trim() !== '') ?? '(no output)'
+}
+
+/** The BTM dump, by the mode asked, with a one-line note of what the source answered. */
+function readBtm(mode: MacBtmMode): { source: BtmSource; note: string } {
+  if (mode === 'skip') return { source: { kind: 'not-read', reason: 'skipped' }, note: 'skipped' }
+  if (mode === 'run') {
+    const { code, output } = runCaptured('/usr/bin/sfltool', ['dumpbtm'])
+    const note = `sfltool dumpbtm, no sudo: exit ${String(code)}`
+    return code === 0
+      ? { source: { kind: 'text', text: output }, note }
+      : {
+          source: { kind: 'not-read', reason: 'sfltool failed' },
+          note: `${note}: ${firstLine(output)}`
+        }
+  }
+  if (!existsSync(mode.file)) {
+    return { source: { kind: 'not-read', reason: 'no file' }, note: 'BTM file not found' }
+  }
+  return { source: { kind: 'text', text: readFileSync(mode.file, 'utf8') }, note: 'BTM file read' }
+}
+
+function macLaunchAgent(label: string, btmMode: MacBtmMode): LoginEntry {
   const file = path.join(homedir(), ...LAUNCH_AGENTS, `${label}.plist`)
   return {
     kind: 'macos-launch-agent',
@@ -246,13 +306,23 @@ function macLaunchAgent(label: string): LoginEntry {
         ProgramArguments?: string[]
       }
       const [executable, ...args] = json.ProgramArguments ?? []
-      const uid = process.getuid?.() ?? 0
-      const disabled = tryTool('/bin/launchctl', ['print-disabled', `gui/${String(uid)}`])
+      const uid = process.getuid?.() ?? -1
+      const printed = runCaptured('/bin/launchctl', ['print', `gui/${String(uid)}/${label}`])
+      const btm = readBtm(btmMode)
+      const decision = decideMacLoginSwitch({
+        label,
+        uid,
+        plistPresent: true,
+        btm: btm.source,
+        launchd: parseLaunchctlPrint(printed.code, printed.output, label)
+      })
       return {
         present: true,
         command: executable === undefined ? null : { executable, args },
-        disabledByPerson: disabled === null ? null : parsePrintDisabled(disabled, label),
-        raw: readFileSync(file, 'utf8')
+        // Only an "off" BTM says the person switched it off; anything unsettled is null, never a guess.
+        disabledByPerson: decision.state === 'off' ? true : decision.state === 'on' ? false : null,
+        raw: readFileSync(file, 'utf8'),
+        macSwitch: { ...decision, btmSource: btm.note }
       }
     },
     // Not simulated: `launchctl disable` leaves an override for the label in launchd's own database after the
