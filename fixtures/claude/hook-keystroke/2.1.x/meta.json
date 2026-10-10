@@ -1,0 +1,9 @@
+{
+  "providerVersion": "2.1.x",
+  "capturedAt": "2026-10-10",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written for ISSUE-134 from the Claude Code transcript record shapes of fixtures/claude/observer/2.1.x (assistant tool_use, user tool_result, isSidechain, version) and ADR-012 item 3; no real CLI was run. The expected files are written by hand from the channel's re-read rule: the one unresolved main-session tool_use is the open call, two unresolved calls of the same tool are ambiguous, a sidechain call is never matched."
+}
