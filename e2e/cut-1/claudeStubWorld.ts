@@ -24,6 +24,12 @@ export const STUB_TURN = {
   dwarf: 'The sample project is a placeholder.'
 } as const
 
+/** One exchange of a seeded session: what the person said, then the dwarf's answer. */
+export interface StubTurn {
+  readonly person: string
+  readonly dwarf: string
+}
+
 export interface ClaudeStubWorld {
   /** The mine folder the session works in. */
   readonly minePath: string
@@ -31,17 +37,25 @@ export interface ClaudeStubWorld {
   readonly script: string
 }
 
-/** Writes the re-dated script into `profile` and runs the claude stub once, so the transcript exists before launch. */
-export function seedClaudeStubSession(profile: IsolatedProfile): ClaudeStubWorld {
+/**
+ * Writes the re-dated script into `profile` and runs the claude stub once, so the transcript exists before launch. The
+ * session holds `turns` in order (default: the one `STUB_TURN`).
+ */
+export function seedClaudeStubSession(
+  profile: IsolatedProfile,
+  turns: readonly StubTurn[] = [STUB_TURN]
+): ClaudeStubWorld {
   const minePath = path.join(profile.root, STUB_MINE_NAME)
   mkdirSync(minePath, { recursive: true })
   // Its records are written now (the first a second from now): a case that seeds it once the Host
   // is up writes it after the install moment (owner decision 2026-10-10, ADR-006 item 8).
   const startedAt = Date.now()
+  const recordId = (index: number) =>
+    `00000000-0000-4000-8000-0000000002${String(index).padStart(2, '0')}`
   const record = (type: 'user' | 'assistant', index: number, message: unknown) => ({
     type,
-    uuid: `00000000-0000-4000-8000-00000000020${index}`,
-    parentUuid: index === 1 ? null : `00000000-0000-4000-8000-00000000020${index - 1}`,
+    uuid: recordId(index),
+    parentUuid: index === 1 ? null : recordId(index - 1),
     sessionId: STUB_SESSION_ID,
     cwd: minePath,
     version: '2.1.14',
@@ -57,14 +71,14 @@ export function seedClaudeStubSession(profile: IsolatedProfile): ClaudeStubWorld
         {
           // Claude Code's own project folder name: the working folder with every other character a dash.
           file: `projects/${minePath.replaceAll(/[^A-Za-z0-9]/g, '-')}/${STUB_SESSION_ID}.jsonl`,
-          records: [
-            record('user', 1, { role: 'user', content: STUB_TURN.person }),
-            record('assistant', 2, {
-              id: 'msg_0000000000000000000001a1',
+          records: turns.flatMap((turn, at) => [
+            record('user', at * 2 + 1, { role: 'user', content: turn.person }),
+            record('assistant', at * 2 + 2, {
+              id: `msg_0000000000000000000001a${at + 1}`,
               type: 'message',
               role: 'assistant',
               model: 'sample-model',
-              content: [{ type: 'text', text: STUB_TURN.dwarf }],
+              content: [{ type: 'text', text: turn.dwarf }],
               stop_reason: 'end_turn',
               usage: {
                 input_tokens: 12,
@@ -73,7 +87,7 @@ export function seedClaudeStubSession(profile: IsolatedProfile): ClaudeStubWorld
                 cache_read_input_tokens: 0
               }
             })
-          ]
+          ])
         }
       ],
       exitCode: 0
