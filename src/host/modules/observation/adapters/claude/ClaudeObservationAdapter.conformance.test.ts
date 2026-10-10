@@ -21,14 +21,18 @@
 // meta and tag-opened lines, #180 a message typed mid-turn) and the `tool_result`-only lines.
 import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeClock } from '../../../../kernel/fakes/FakeClock'
 import type { FileSystem } from '../../../../kernel/ports/fileSystem'
 import { NodeFs } from '../../../../platform/fs/NodeFs'
 import type { Cursor, ObservedEvent, SourceFile } from '../../ports/observationAdapter'
-import { ClaudeObservationAdapter, claudeConfigDirOf } from './ClaudeObservationAdapter'
+import {
+  ClaudeObservationAdapter,
+  claudeConfigDirOf,
+  claudeConfigDirsOf
+} from './ClaudeObservationAdapter'
 
 type ClaudeRead = Awaited<ReturnType<ClaudeObservationAdapter['read']>>
 
@@ -498,5 +502,70 @@ describe('ClaudeObservationAdapter conformance (fixtures/claude/observer)', () =
     const found = await blocked.discover(denied)
     expect(found).toEqual([])
     expect(JSON.stringify(found)).not.toContain(configDir)
+  })
+})
+
+// Several Claude accounts, each with its own configuration folder (HO-09; `contracts/config`
+// `ClaudeConfig.configDirs`, CLAUDE_CONFIG_DIRS): the adapter reads every configured root.
+describe('ClaudeObservationAdapter over several configuration roots (CLAUDE_CONFIG_DIRS)', () => {
+  function adapterOver(configDirs: readonly string[]) {
+    return new ClaudeObservationAdapter({
+      providerId: 'claude',
+      // Never read when `configDirs` is given.
+      configDir: join(tmpdir(), 'dwarfai-claude-not-a-root'),
+      configDirs,
+      claimedRoots: [],
+      fs: new NodeFs(),
+      clock: new FakeClock(T0)
+    })
+  }
+
+  it('[FM-091] claudeConfigDirsOf expands a leading ~, keeps the listed order, drops repeats, and else falls back to CLAUDE_CONFIG_DIR, else ~/.claude', () => {
+    const home = join('/home', 'j')
+    expect(claudeConfigDirsOf(['~/.claude', '~/.claude-work', '~/.claude'], {}, home)).toEqual([
+      join(home, '.claude'),
+      join(home, '.claude-work')
+    ])
+    expect(claudeConfigDirsOf(['~', join('/data', 'claude')], {}, home)).toEqual([
+      home,
+      join('/data', 'claude')
+    ])
+    // A listed root wins over CLAUDE_CONFIG_DIR, as the shipped setting does.
+    expect(
+      claudeConfigDirsOf(['~/.claude-work'], { CLAUDE_CONFIG_DIR: join('/data', 'claude') }, home)
+    ).toEqual([join(home, '.claude-work')])
+    expect(claudeConfigDirsOf(null, { CLAUDE_CONFIG_DIR: join('/data', 'claude') }, home)).toEqual([
+      join('/data', 'claude')
+    ])
+    expect(claudeConfigDirsOf(null, {}, home)).toEqual([join(home, '.claude')])
+  })
+
+  it('[FM-091] every configured root is discovered, sessions and subagents alike, and a root that does not exist is skipped', async () => {
+    const first = await tempDir()
+    const second = await tempDir()
+    await place(first, 'plain-session.jsonl')
+    await place(second, 'resumed-session.jsonl')
+    await place(second, 'subagent.jsonl')
+    const adapter = adapterOver([join(first, 'missing'), first, second])
+
+    const sources = await sourcesOf(adapter)
+    expect(sources).toHaveLength(3)
+    const reads = await Promise.all(sources.map((source) => adapter.read(source, null)))
+    const identities = new Set(reads.flatMap((read) => read.events.map(identityKey)))
+    expect([...identities].sort()).toEqual(
+      [
+        '01a0b000-0000-7000-8000-000000000711:',
+        '01a0b000-0000-7000-8000-000000000717:',
+        `${(await writerOf('subagent.jsonl')).sessionId}:${(await writerOf('subagent.jsonl')).agentId}`
+      ].sort()
+    )
+  })
+
+  it('[FM-093] one root listed twice in two spellings yields one stream per file', async () => {
+    const root = await tempDir()
+    await place(root, 'plain-session.jsonl')
+    const adapter = adapterOver([root, `${root}${sep}.`])
+    const sources = await sourcesOf(adapter)
+    expect(sources).toHaveLength(1)
   })
 })

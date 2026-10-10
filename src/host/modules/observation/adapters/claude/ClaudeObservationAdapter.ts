@@ -2,6 +2,12 @@
 // the Host reads Claude Code sessions started outside DwarfAI from Claude Code's own transcripts
 // under its configuration folder (`CLAUDE_CONFIG_DIR`, default `~/.claude`, FM-091), and never
 // writes them (09 §1; T-30).
+// - Several roots (HO-09; the shipped CLAUDE_CONFIG_DIRS setting, one folder per Claude account):
+//   `configDirs` lists every root, and each is read as the one root is, transcripts and its own
+//   `sessions/` registry alike; a root that does not exist yields nothing. A file reached through
+//   two roots is one stream (the base's file-identity dedupe, FM-093), a registry folder named twice
+//   is read once, and a session's presence is told by the registry of the root its transcript is
+//   under: a root with no readable registry leaves its sessions `unknown` (fails open).
 //
 // - Sources: every session transcript `projects/<encoded cwd>/<sessionId>.jsonl` and every subagent
 //   transcript `<sessionId>/subagents/agent-<id>.jsonl` (`subagents.ts`), read by the shared JSONL
@@ -72,12 +78,13 @@ import type {
 } from '../../ports/observationAdapter'
 import type { ObservedSessionRef } from '../../ports/observedSessionStore'
 import type { TranscriptEntry, TranscriptReader } from '../../ports/transcriptReader'
-import { nodeFileIdentity, type FileIdentifier } from '../base/fileIdentity'
+import { canonicalRoot, nodeFileIdentity, type FileIdentifier } from '../base/fileIdentity'
 import {
   JsonlObservationAdapter,
   OBSERVATION_TAIL_GATE_BYTES,
   type JsonlLine
 } from '../base/jsonlObservationAdapter'
+import { underRoot } from '../base/sourceDispatch'
 import { splitTail } from '../base/tailRead'
 import {
   entryOf,
@@ -141,6 +148,34 @@ export function claudeConfigDirOf(
   return set !== undefined && set !== '' ? set : join(home, '.claude')
 }
 
+/**
+ * Every Claude configuration root the Host reads (HO-09; FM-091): the roots CLAUDE_CONFIG_DIRS lists
+ * (`listed`, parsed by `contracts/config` `readClaudeConfigDirs` in the composition, which reads the
+ * userData config file under the environment), each with a leading `~` expanded against `home`, in
+ * their order and each once; else the one `claudeConfigDirOf` resolves. A root that does not exist
+ * is skipped by the reads, not here: it may appear later.
+ */
+export function claudeConfigDirsOf(
+  listed: readonly string[] | null,
+  env: Readonly<Record<string, string | undefined>>,
+  home: string
+): string[] {
+  if (listed === null || listed.length === 0) return [claudeConfigDirOf(env, home)]
+  const out: string[] = []
+  for (const dir of listed) {
+    const expanded = expandLeadingHome(dir, home)
+    if (!out.includes(expanded)) out.push(expanded)
+  }
+  return out
+}
+
+/** A leading `~` (alone, or before a separator) is the person's home folder; any other path is kept. */
+function expandLeadingHome(path: string, home: string): string {
+  if (path === '~') return home
+  if (path.startsWith('~/') || path.startsWith('~\\')) return join(home, path.slice(2))
+  return path
+}
+
 /** What a read answers (16 §4.3). */
 type ClaudeRead = Awaited<ReturnType<ObservationAdapter['read']>>
 
@@ -149,6 +184,11 @@ export interface ClaudeObservationAdapterOptions {
   providerId: ProviderId
   /** `claudeConfigDirOf(env, home)`, resolved by the composition root. */
   configDir: string
+  /**
+   * Every root it reads, in order (`claudeConfigDirsOf`; CLAUDE_CONFIG_DIRS, HO-09): each root's
+   * transcripts and its own `sessions/` registry. Absent: `[configDir]`.
+   */
+  configDirs?: readonly string[]
   /** The other adapters' roots, for the longest-prefix dispatch (FM-093). */
   claimedRoots: readonly string[]
   fs: FileSystem
@@ -204,17 +244,24 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
   private readonly running = new Map<string, RegistryEntry>()
   /** When each session was found closed in this Host run, by session id (FM-059). */
   private readonly closedAt = new Map<string, Instant>()
-  /** Whether the last `discover` read the registry folder. */
+  /** Every configuration root it reads (`configDirs`, else `[configDir]`). */
+  private readonly configDirs: readonly string[]
+  /** Whether the last `discover` read any root's registry folder. */
   private registryRead = false
+  /** The roots (by index in `configDirs`) whose registry folder the last `discover` read. */
+  private readRoots = new Set<number>()
+  /** The roots (by index in `configDirs`) each session's transcripts were found under. */
+  private readonly rootsOfSession = new Map<string, readonly number[]>()
   /** The sessions the last read registry names, whose process is not provably gone. */
   private named = new Set<string>()
 
   constructor(private readonly options: ClaudeObservationAdapterOptions) {
     this.providerId = options.providerId
+    this.configDirs = options.configDirs ?? [options.configDir]
     this.transcripts = new JsonlObservationAdapter({
       providerId: options.providerId,
       capabilities: CLAUDE_OBSERVED_CAPABILITIES,
-      roots: [join(options.configDir, 'projects')],
+      roots: this.configDirs.map((dir) => join(dir, 'projects')),
       claimedRoots: options.claimedRoots,
       matches: isTranscriptName,
       parse: (line) => this.parseLine(line),
@@ -231,7 +278,36 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
   async discover(fs: FileSystem): Promise<SourceFile[]> {
     const found = await this.transcripts.discover(fs)
     await this.readRegistry()
-    return found.filter((source) => transcriptFileOf(source.path) !== null)
+    const sources = found.filter((source) => transcriptFileOf(source.path) !== null)
+    await this.placeSessions(sources)
+    return sources
+  }
+
+  /**
+   * Which roots each found session lives under (those whose canonical `projects` folder is the
+   * longest that holds its transcript, FM-093; several when two roots reach one folder through a
+   * link): its presence is told by those roots' own registries.
+   */
+  private async placeSessions(sources: readonly SourceFile[]): Promise<void> {
+    if (this.configDirs.length < 2) return
+    const projects = await Promise.all(
+      this.configDirs.map((dir) => canonicalRoot(join(dir, 'projects')))
+    )
+    for (const source of sources) {
+      const location = transcriptFileOf(source.path)
+      if (location === null) continue
+      const holding = projects.flatMap((canonical, index) =>
+        canonical !== null && underRoot(source.path, canonical) ? [{ index, canonical }] : []
+      )
+      const longest = Math.max(...holding.map((root) => root.canonical.length))
+      const roots = holding.filter((root) => root.canonical.length === longest)
+      if (roots.length > 0) {
+        this.rootsOfSession.set(
+          location.sessionId,
+          roots.map((root) => root.index)
+        )
+      }
+    }
   }
 
   async read(source: SourceFile, from: Cursor | null): Promise<ClaudeRead> {
@@ -326,7 +402,11 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     if (identity.providerId !== this.providerId) return 'unknown'
     const sessionId = identity.providerSessionId
     if (this.closedAt.has(sessionId)) return 'not-live'
-    if (!this.registryRead) return 'unknown'
+    // A root without a readable registry tells nothing of its sessions, whatever another root read.
+    const roots = this.rootsOfSession.get(sessionId)
+    const read =
+      roots === undefined ? this.registryRead : roots.some((root) => this.readRoots.has(root))
+    if (!read) return 'unknown'
     return this.named.has(sessionId) || this.running.has(sessionId) ? 'live' : 'not-live'
   }
 
@@ -369,27 +449,36 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
   private async readRegistry(): Promise<void> {
     const processes = this.options.processes
     this.registryRead = false
+    this.readRoots = new Set()
     if (processes === undefined) return
-    const folder = join(this.options.configDir, 'sessions')
-    // The typed listing: `listDir` answers [] for a missing folder, which would say every session
-    // exited. A registry that is missing or unreadable tells nothing (presence `unknown`).
-    let listed: Array<{ name: string; isDirectory: boolean }>
-    try {
-      const read = await this.options.fs.listDirWithSizes(folder)
-      if (!read.ok) return
-      listed = read.value
-    } catch {
-      return
+    // Each root's own registry, read once per folder even when two roots name the same one (FM-093).
+    const files: Array<{ folder: string; name: string }> = []
+    const readFolders = new Map<string, boolean>()
+    for (const [index, dir] of this.configDirs.entries()) {
+      const folder = join(dir, 'sessions')
+      const key = (await canonicalRoot(folder)) ?? folder
+      let read = readFolders.get(key)
+      if (read === undefined) {
+        const listed = await this.listRegistry(folder)
+        read = listed !== null
+        readFolders.set(key, read)
+        for (const file of listed ?? []) {
+          if (!file.isDirectory && REGISTRY_FILE.test(file.name)) {
+            files.push({ folder, name: file.name })
+          }
+        }
+      }
+      if (read) this.readRoots.add(index)
     }
+    if (this.readRoots.size === 0) return
     const alive = new Set<string>()
     const registered = new Map<string, ProcessIdentity | null>()
     const present = new Set<string>()
     const named = new Set<string>()
-    for (const file of listed) {
-      if (file.isDirectory || !REGISTRY_FILE.test(file.name)) continue
+    for (const { folder, name } of files) {
       let text: string
       try {
-        text = await this.options.fs.readTextHead(join(folder, file.name), REGISTRY_MAX_BYTES)
+        text = await this.options.fs.readTextHead(join(folder, name), REGISTRY_MAX_BYTES)
       } catch {
         continue
       }
@@ -413,6 +502,22 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     this.registered = registered
     this.named = alive
     this.registryRead = true
+  }
+
+  /**
+   * One registry folder's listing, or null when it is missing or unreadable. The typed listing:
+   * `listDir` answers [] for a missing folder, which would say every session exited. A registry
+   * that is missing or unreadable tells nothing (presence `unknown`).
+   */
+  private async listRegistry(
+    folder: string
+  ): Promise<Array<{ name: string; isDirectory: boolean }> | null> {
+    try {
+      const read = await this.options.fs.listDirWithSizes(folder)
+      return read.ok ? read.value : null
+    } catch {
+      return null
+    }
   }
 
   /**

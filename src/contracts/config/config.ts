@@ -318,6 +318,9 @@ function readNonNegativeInt(env: ConfigEnv, key: string, fallback: number, max: 
   return value
 }
 
+/** The setting naming several Claude configuration roots (`ClaudeConfig.configDirs`). */
+export const CLAUDE_CONFIG_DIRS_KEY = 'CLAUDE_CONFIG_DIRS'
+
 function readDirList(env: ConfigEnv, key: string, fallback: string[]): string[] {
   const raw = env[key]
   if (raw === undefined || raw.trim() === '') {
@@ -331,6 +334,16 @@ function readDirList(env: ConfigEnv, key: string, fallback: string[]): string[] 
     throw new Error(`[config] ${key} must contain at least one directory, got "${raw}"`)
   }
   return dirs
+}
+
+/**
+ * The Claude configuration roots CLAUDE_CONFIG_DIRS names, as written (a leading ~ unexpanded), or null when it is
+ * unset or blank: the Host then falls back to CLAUDE_CONFIG_DIR, else ~/.claude (HO-09). Same parser and same
+ * fail-fast message as `loadConfig`'s `providers.claude.configDirs`.
+ */
+export function readClaudeConfigDirs(env: ConfigEnv): string[] | null {
+  const dirs = readDirList(env, CLAUDE_CONFIG_DIRS_KEY, [])
+  return dirs.length === 0 ? null : dirs
 }
 
 /** A TCP port number; anything outside 1-65535 is a startup error, not a silent clamp. */
@@ -419,7 +432,7 @@ function readProviderConfig(
 function readClaudeConfig(env: ConfigEnv, fallback: ClaudeConfig): ClaudeConfig {
   return {
     ...readProviderConfig(env, { cliPath: 'CLAUDE_CLI_PATH' }, fallback),
-    configDirs: readDirList(env, 'CLAUDE_CONFIG_DIRS', fallback.configDirs)
+    configDirs: readDirList(env, CLAUDE_CONFIG_DIRS_KEY, fallback.configDirs)
   }
 }
 

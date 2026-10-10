@@ -207,8 +207,10 @@ import {
   type WiredMines
 } from './wiring/routes/mines'
 import {
+  CLAUDE_CONFIG_DIRS_INVALID_EVENT,
   observationAdapters,
   observedProviderFolders,
+  readHostSettings,
   wireObservation,
   type WiredObservation
 } from './wiring/routes/observation'
@@ -480,6 +482,13 @@ async function bootHost(base: HostBase): Promise<void> {
     void log.flush().finally(() => process.exit(code))
   }
 
+  // The Host's settings as the shipped layering reads them (environment, then the userData config
+  // file): where CLAUDE_CONFIG_DIRS comes from for observation and the coal backfill (HO-09).
+  const hostSettings = await readHostSettings(
+    process.env,
+    fs,
+    paths.ok ? featureFlagConfigFilePath(paths.value.userDataDir) : null
+  )
   const booted = await runBoot(
     (dataDir) => {
       // Opened by boot step 2; the epoch it keeps is this boot's (mintBootEpoch, one owner).
@@ -656,7 +665,18 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // The providers' own folders: the environment overrides they honour, else the person's
           // home folder (15 §5; HO-09). Read only, by observation and by the coal backfill.
-          const folders = observedProviderFolders(process.env, homedir())
+          const folders = observedProviderFolders(process.env, homedir(), {
+            settings: hostSettings,
+            onInvalid: (key) =>
+              log.record({
+                level: 'warn',
+                event: CLAUDE_CONFIG_DIRS_INVALID_EVENT,
+                subsystem: 'observation',
+                outcome: 'degraded',
+                causeClass: key,
+                msg: 'invalid Claude configuration roots; the default root applies'
+              })
+          })
           // The ledger first: observation's batch sink holds its half and the mines' section and
           // frames read its totals.
           const ledger = wireLedger({
@@ -674,7 +694,7 @@ async function bootHost(base: HostBase): Promise<void> {
                 fs,
                 clock,
                 openSnapshot: openReadOnlySnapshot,
-                claudeRoots: [folders.claudeConfigDir],
+                claudeRoots: folders.claudeConfigDirs,
                 codexHome: folders.codexHome,
                 opencodeStoreRoot: folders.openCodeStoreRoot,
                 resolveMine

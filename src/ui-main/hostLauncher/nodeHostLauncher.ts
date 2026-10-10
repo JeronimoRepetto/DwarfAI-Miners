@@ -22,11 +22,13 @@
 // `<hostDataDir>/run/host.identity`, matches it by the ADR-014 item 2 rule with this machine's boot id (bootId.ts) and
 // the pid's start time (processStart.ts), and ends that one process with `process.kill`.
 import { execFile, spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { constants } from 'node:os'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { parse as parseDotenv } from 'dotenv'
 import {
   HOST_IDENTITY_FILE,
   hostIdentityRecordSchema,
@@ -47,6 +49,7 @@ import type { HostSpawner, ProcessStart } from './ports'
 import { createPosixSpawner } from './posix'
 import { createIdentityProbe, createProcessStartReader, type QueryRunner } from './processStart'
 import { SpawnGate } from './spawnGate'
+import { withDotenvEntries } from './spawnHost'
 import {
   copySourceOf,
   ensureVersionedCopy,
@@ -165,7 +168,8 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
           execPath: options.execPath,
           hostEntry: options.hostEntry,
           hostDataDir: options.hostDataDir,
-          uiEnv
+          // The repo `.env` of a development checkout, read at each spawn (HO-09; spawnHost.ts).
+          uiEnv: options.uiEnv === undefined ? withDotenvEntries(uiEnv, readCwdDotenv()) : uiEnv
         },
         clock: { now: Date.now },
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -173,6 +177,19 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
       })
       return launcher.ensureHostRunning()
     }
+  }
+}
+
+/**
+ * The `.env` of the working folder, parsed by `dotenv` as UI main's legacy composition reads it
+ * (`dotenv.config()` resolves `.env` against the working folder), or no entries when there is none:
+ * an installed app never runs from a checkout (#38).
+ */
+function readCwdDotenv(): Record<string, string> {
+  try {
+    return parseDotenv(readFileSync(join(process.cwd(), '.env')))
+  } catch {
+    return {}
   }
 }
 

@@ -37,6 +37,14 @@
 //   cut-1 route (routes/cut1Routes.ts, ISSUE-120); the ledger takes usage through the bridge, not through `UsageObserved` (05 §4).
 // - No simulated observation adapter: the simulated provider's sessions are the suppliers'
 //   `SimulatedDriver` (15 §4.12), and 15 §5 lists four observed providers.
+import {
+  CLAUDE_CONFIG_DIRS_KEY,
+  parseConfigFileEntries,
+  readClaudeConfigDirs,
+  withConfigFileFallback,
+  type ConfigEnv,
+  type ConfigFileEntries
+} from '@dwarfai/contracts'
 import type { HostEpoch, Instant, ProviderId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
@@ -57,6 +65,7 @@ import {
   SharedProcessListing,
   antigravityGeminiDirOf,
   claudeConfigDirOf,
+  claudeConfigDirsOf,
   codexHomeOf,
   createObservation,
   openCodeStoreRootOf,
@@ -103,8 +112,17 @@ export function observesWith(sink: ObservedBatchSink): boolean {
 
 /** Where each observed provider keeps its data (15 §5 "Sources"), resolved once at Host start. */
 export interface ObservedProviderFolders {
-  /** `CLAUDE_CONFIG_DIR`, else `~/.claude`. */
+  /**
+   * `CLAUDE_CONFIG_DIR`, else `~/.claude`: the root whose `settings.json` the Claude hooks entry is
+   * written to and reverted from (16 §7.1 names one file).
+   */
   claudeConfigDir: string
+  /**
+   * Every Claude root observation and the coal backfill read: the roots CLAUDE_CONFIG_DIRS lists
+   * (environment, then the userData config file, as the shipped config layers it), else
+   * `[claudeConfigDir]` (HO-09; `claudeConfigDirsOf`).
+   */
+  claudeConfigDirs: readonly string[]
   /** `CODEX_HOME`, else `~/.codex`. */
   codexHome: string
   /** `~/.gemini`, the folder of the three Antigravity trees. */
@@ -113,17 +131,61 @@ export interface ObservedProviderFolders {
   openCodeStoreRoot: string
 }
 
-/** The providers' folders for the Host's environment and the person's home folder (HO-09). */
+/** The record logged when CLAUDE_CONFIG_DIRS names no usable root (ADR-026: the key, never the value). */
+export const CLAUDE_CONFIG_DIRS_INVALID_EVENT = 'observation.config.invalid'
+
+/**
+ * The providers' folders for the Host's environment and the person's home folder (HO-09).
+ * `settings` is where the Host's configuration settings are read: the environment layered over the
+ * userData config file (`readHostSettings`); default `env`. Only CLAUDE_CONFIG_DIRS is read from it,
+ * the one folder setting the shipped configuration (`contracts/config`) owns; the provider's own
+ * variables (CLAUDE_CONFIG_DIR, CODEX_HOME) are the environment's alone, as the providers read them.
+ * An invalid CLAUDE_CONFIG_DIRS becomes its default (the one root) with `onInvalid` called, as the
+ * Host does with every bad setting (16 §4.12): a Host that refused to start would stop every session.
+ */
 export function observedProviderFolders(
   env: Readonly<Record<string, string | undefined>>,
-  home: string
+  home: string,
+  options: { settings?: ConfigEnv; onInvalid?: (key: string) => void } = {}
 ): ObservedProviderFolders {
+  const settings = options.settings ?? env
+  let listed: string[] | null
+  try {
+    listed = readClaudeConfigDirs(settings)
+  } catch {
+    options.onInvalid?.(CLAUDE_CONFIG_DIRS_KEY)
+    listed = null
+  }
   return {
     claudeConfigDir: claudeConfigDirOf(env, home),
+    claudeConfigDirs: claudeConfigDirsOf(listed, env, home),
     codexHome: codexHomeOf(env, home),
     geminiDir: antigravityGeminiDirOf(home),
     openCodeStoreRoot: openCodeStoreRootOf(home)
   }
+}
+
+/**
+ * The Host's configuration settings as the shipped layering resolves them (`contracts/config`; #38):
+ * the environment, then the userData config file `configFilePath` (`config-v1.json`, the file UI
+ * main and the FeatureFlagReader read) under it. A missing or unreadable file is no entries, and a
+ * malformed one degrades to no entries (the shared parser's shape rule). The repo `.env` of a
+ * development checkout reaches the Host through its environment (the launcher's `hostEnvironment`).
+ */
+export async function readHostSettings(
+  env: ConfigEnv,
+  fs: Pick<FileSystem, 'readFile'>,
+  configFilePath: string | null
+): Promise<ConfigEnv> {
+  if (configFilePath === null) return env
+  let entries: ConfigFileEntries = {}
+  try {
+    const bytes = await fs.readFile(configFilePath)
+    if (bytes.ok) entries = parseConfigFileEntries(new TextDecoder().decode(bytes.value)).entries
+  } catch {
+    entries = {}
+  }
+  return withConfigFileFallback(env, entries)
 }
 
 export interface ObservationAdapterDeps {
@@ -141,7 +203,9 @@ export interface ObservationAdapterDeps {
 }
 
 /** The catalog ids of the four observed providers (`contracts/catalog/ids.mjs`). */
-const OBSERVED: Readonly<Record<keyof ObservedProviderFolders, ProviderId>> = {
+const OBSERVED: Readonly<
+  Record<Exclude<keyof ObservedProviderFolders, 'claudeConfigDirs'>, ProviderId>
+> = {
   claudeConfigDir: 'claude',
   codexHome: 'codex',
   geminiDir: 'antigravity',
@@ -159,13 +223,20 @@ export function observationAdapters(deps: ObservationAdapterDeps): {
   presence: ObservedPresence[]
 } {
   const { folders, fs, clock, processes, openSnapshot } = deps
-  const others = (own: keyof ObservedProviderFolders): string[] =>
-    (Object.keys(folders) as Array<keyof ObservedProviderFolders>)
+  const rootsOf: Readonly<Record<keyof typeof OBSERVED, readonly string[]>> = {
+    claudeConfigDir: folders.claudeConfigDirs,
+    codexHome: [folders.codexHome],
+    geminiDir: [folders.geminiDir],
+    openCodeStoreRoot: [folders.openCodeStoreRoot]
+  }
+  const others = (own: keyof typeof OBSERVED): string[] =>
+    (Object.keys(rootsOf) as Array<keyof typeof OBSERVED>)
       .filter((key) => key !== own)
-      .map((key) => folders[key])
+      .flatMap((key) => rootsOf[key])
   const claude = new ClaudeObservationAdapter({
     providerId: OBSERVED.claudeConfigDir,
     configDir: folders.claudeConfigDir,
+    configDirs: folders.claudeConfigDirs,
     claimedRoots: others('claudeConfigDir'),
     fs,
     clock,

@@ -49,6 +49,7 @@ export {
   CLAUDE_OBSERVED_CAPABILITIES,
   ClaudeObservationAdapter,
   claudeConfigDirOf,
+  claudeConfigDirsOf,
   type ClaudeObservationAdapterOptions
 } from './adapters/claude/ClaudeObservationAdapter'
 export {

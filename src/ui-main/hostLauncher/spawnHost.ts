@@ -48,6 +48,25 @@ export function hostEnvironment(
   return env
 }
 
+/**
+ * The UI environment with a development checkout's `.env` entries under it, as `dotenv` layers them
+ * (no override: a name the environment already has keeps its value, looked up as the environment
+ * looks it up, so case-insensitively on Windows). UI main's legacy composition loads the same file
+ * into its own environment, but only after the Host was started: the attach starts before Electron is
+ * ready. The Host's other settings layer, the userData config file, is the Host's own read
+ * (`host/wiring/routes/observation.ts` `readHostSettings`).
+ */
+export function withDotenvEntries(
+  uiEnv: Readonly<Record<string, string | undefined>>,
+  dotenv: Readonly<Record<string, string>>
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...uiEnv }
+  for (const [name, value] of Object.entries(dotenv)) {
+    if (uiEnv[name] === undefined) env[name] = value
+  }
+  return env
+}
+
 export function buildHostSpawn(input: HostSpawnInput): HostSpawnRequest {
   return {
     file: input.execPath,

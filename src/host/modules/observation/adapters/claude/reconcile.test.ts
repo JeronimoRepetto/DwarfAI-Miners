@@ -19,7 +19,7 @@
 // INV-36), the nested parent from the sidecar (#391), and the #45 pid-recycle guard on the kernel's
 // one tolerance.
 import { realpathSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -70,7 +70,10 @@ const claude = (providerSessionId: string, providerAgentId?: string): ProviderId
 })
 
 const temps: string[] = []
+const links: string[] = []
 afterEach(async () => {
+  // A junction is unlinked before its tree is removed, so nothing ever follows it out.
+  await Promise.all(links.splice(0).map((link) => unlink(link).catch(() => undefined)))
   await Promise.all(temps.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
@@ -126,7 +129,7 @@ async function placeSubagent(
   return path
 }
 
-function world(configDir: string, processes?: FakeProcessControl) {
+function world(configDir: string, processes?: FakeProcessControl, configDirs?: string[]) {
   const transactions = new InMemoryTransactions()
   const dwarfs = new InMemoryBoundDwarfs()
   const cursors = new InMemoryCursorStore(transactions)
@@ -141,6 +144,7 @@ function world(configDir: string, processes?: FakeProcessControl) {
   const adapter = new ClaudeObservationAdapter({
     providerId: 'claude',
     configDir,
+    ...(configDirs === undefined ? {} : { configDirs }),
     claimedRoots: [],
     fs,
     clock,
@@ -582,8 +586,8 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
   const running: ProcessIdentity = { pid: 32896, processStartTimeMs: RECORDED, bootId: 'boot-a' }
 
   /** The loop over the adapter as its presence source, as `createObservation` composes it. */
-  function admitting(configDir: string, processes?: FakeProcessControl) {
-    const w = world(configDir, processes)
+  function admitting(configDir: string, processes?: FakeProcessControl, configDirs?: string[]) {
+    const w = world(configDir, processes, configDirs)
     const loop = new ObservationLoop({ ...w.deps, presence: [w.adapter] })
     const poll = async () => {
       w.clock.advance(OBSERVATION_POLL_MS)
@@ -689,5 +693,66 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
       expect(w.observedIdentities()).toEqual([claude(PLAIN_SESSION)])
       w.loop.stop()
     }
+  })
+  // Several Claude accounts (HO-09; CLAUDE_CONFIG_DIRS): each root keeps its own `sessions/` registry.
+  it('[US-OBS-005.AC01, FM-091] a session of the second configuration root is live by the registry entry of its own root, and closes when that process is gone', async () => {
+    const first = await tempDir()
+    const second = await tempDir()
+    await registry(first)
+    await placeSession(second, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
+    await registry(second, await fixture('session-registry.json'))
+    const processes = new FakeProcessControl({ bootId: 'boot-a' })
+    processes.script(32896, running)
+    const w = admitting(first, processes, [first, second])
+    w.loop.start()
+    await w.loop.whenIdle()
+
+    expect(w.observedIdentities()).toEqual([claude(PLAIN_SESSION)])
+    expect(w.adapter.presenceOf(claude(PLAIN_SESSION))).toBe('live')
+    expect(w.adapter.processIdentityOf(claude(PLAIN_SESSION))).toEqual(running)
+
+    processes.script(32896, 'absent')
+    await w.poll()
+    expect(w.adapter.presenceOf(claude(PLAIN_SESSION))).toBe('not-live')
+    w.loop.stop()
+  })
+
+  it('[FM-091] a session of a root with no readable registry is unknown although another root was read, and arrives (presence fails open per root)', async () => {
+    const first = await tempDir()
+    const second = await tempDir()
+    await registry(first)
+    // The second root has transcripts but no `sessions/` folder.
+    await placeSession(second, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
+    const w = admitting(first, new FakeProcessControl({ bootId: 'boot-a' }), [first, second])
+    w.loop.start()
+    await w.loop.whenIdle()
+
+    expect(w.adapter.presenceOf(claude(PLAIN_SESSION))).toBe('unknown')
+    expect(w.observedIdentities()).toEqual([claude(PLAIN_SESSION)])
+    const closings = w.bus.published.filter((e) => e.type === 'SessionClosedObserved')
+    expect(closings).toEqual([])
+    w.loop.stop()
+  })
+
+  it('[US-OBS-005.AC01, FM-093] two roots sharing one projects folder through a link: one stream, and the session is live by the registry of either root', async () => {
+    const first = await tempDir()
+    const second = await tempDir()
+    await placeSession(first, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
+    // The second account's `projects` is a reparse point onto the first's (a junction on Windows,
+    // a symlink elsewhere); only the second has a registry, and it names the session.
+    const link = join(second, 'projects')
+    await symlink(join(first, 'projects'), link, 'junction')
+    links.push(link)
+    await registry(second, await fixture('session-registry.json'))
+    const processes = new FakeProcessControl({ bootId: 'boot-a' })
+    processes.script(32896, running)
+    const w = admitting(first, processes, [first, second])
+    w.loop.start()
+    await w.loop.whenIdle()
+
+    expect(await w.adapter.discover(new NodeFs())).toHaveLength(1)
+    expect(w.observedIdentities()).toEqual([claude(PLAIN_SESSION)])
+    expect(w.adapter.presenceOf(claude(PLAIN_SESSION))).toBe('live')
+    w.loop.stop()
   })
 })
