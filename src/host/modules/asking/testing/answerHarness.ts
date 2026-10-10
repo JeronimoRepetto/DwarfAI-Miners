@@ -121,6 +121,8 @@ export function answerHarness() {
       asks,
       records,
       channelFor: (kind) => (kind === 'none' ? null : guarded),
+      // As composed: only the keystroke channel's capability record says false (ADR-012 item 3).
+      staleAnswerSafe: (kind) => kind !== 'hook-keystroke',
       transactions: transactionRunner,
       bus,
       clock,

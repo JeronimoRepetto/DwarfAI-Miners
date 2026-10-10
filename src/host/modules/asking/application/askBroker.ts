@@ -27,9 +27,24 @@
 //
 // ISSUE-131: `resolveExternally` for an ask whose answer is in flight — the S6.21 hold of an
 // `elsewhere` resolution until the channel result, and the S6.22 close of a cancellation, after
-// which the result settles as `ask-closed` with no card back. Its `open` branch (S6.11, S6.13) and
-// its route are later: ISSUE-136. The hold lives in this instance only: an ask still `answering`
-// after a Host restart has no call in flight here and is settled by the boot reconcile (07 S6.20).
+// which the result settles as `ask-closed` with no card back. The hold lives in this instance only:
+// an ask still `answering` after a Host restart has no call in flight here and is settled by the
+// boot reconcile (07 S6.20).
+//
+// ISSUE-134: the `open` branch of `resolveExternally` (S6.11, S6.12, S6.13) with ADR-010 item 10's
+// attribution, and ADR-012 item 3's late-Deny status line (`domain/attribution.ts`):
+// - Handing a decision to a channel whose resolution evidence cannot tell who answered (the
+//   keystroke channel) records `{askId, injectedAt, decision}`, `injectedAt` being the hand-over's
+//   start, so the window never reaches past the keys. An `elsewhere` resolution of the ask while it
+//   is `open` (after a refusal: the relay failed or timed out and the keys may have landed, S6.09)
+//   within 10 s of that injection closes it answered in the app (S6.12); any other closes it
+//   answered elsewhere with no notice (S6.11). The record lives in this instance only, like the
+//   hold: after a Host restart a resolution is answered elsewhere, the side that never claims an
+//   answer the app cannot prove.
+// - A Deny closed in the app through a channel that is not stale-answer safe (the composed channel's
+//   capability record, `staleAnswerSafe`) carries the late-Deny status line on its `AskClosed`.
+// Package gap (resolved here): ISSUE-136 owns the other channels' resolution signals and the
+// generic route; the branch itself is channel-blind, so S6.11 and S6.13 apply to every channel.
 //
 // - A repeated `requestId` returns the first result and does nothing again (INV-79): while it is in
 //   flight, the same promise; once settled, `ask_answers.outcome` (`AskRepository.answerOf`), which
@@ -92,8 +107,15 @@ import {
   submit as submitAsk
 } from '../domain/askMachine'
 import { permissionRecordText, questionRecordText } from '../domain/answersRecordText'
+import {
+  answeredInAppBy,
+  attributesByInjection,
+  lateDenyStatusLine,
+  type Injection
+} from '../domain/attribution'
 import { AUTO_DENIED_LINE_TEXT, resolveEmission, type Emission } from '../domain/emission'
-import type { AskingEvent } from '../domain/events'
+import type { AskClosed, AskingEvent } from '../domain/events'
+import type { PermissionDecision } from '../domain/permissionOptions'
 import type { AskAnswerChannel } from '../ports/askAnswerChannel'
 import type { AskRepository } from '../ports/askRepository'
 import type { SessionCapabilities } from '../ports/sessionCapabilities'
@@ -120,6 +142,11 @@ export interface AnswerPathsDeps {
   records: AnswerRecords
   /** The answer channel of an ask's `channel` kind, or null when none is composed. */
   channelFor(channel: AskChannel): AskAnswerChannel | null
+  /**
+   * The composed channel's ADR-009 D2 `staleAnswerSafe`: false only for the keystroke channel
+   * (ADR-012 item 3), whose late Deny can interrupt a turn.
+   */
+  staleAnswerSafe(channel: AskChannel): boolean
   transactions: TransactionRunner
   /** Publishes after each commit (16 §2.3). */
   bus: DomainEventBus<AskingEvent | AnswerRecordEvent>
@@ -152,6 +179,8 @@ export class AskAnswerPaths implements Pick<
   private readonly inFlight = new Map<string, Promise<AnswerOutcome>>()
   /** The asks resolved elsewhere while their answer is in flight, held for its result (S6.21). */
   private readonly held = new Set<AskId>()
+  /** The decisions handed to an attributed channel, by ask (ADR-010 item 10). */
+  private readonly injections = new Map<AskId, Injection>()
 
   constructor(private readonly deps: AnswerPathsDeps) {}
 
@@ -172,10 +201,11 @@ export class AskAnswerPaths implements Pick<
   }
 
   /**
-   * An external resolution of an ask whose answer is in flight (07 §6). `elsewhere` is held until
-   * the channel call returns and settled with its result (S6.21); `cancelled` closes the ask now
-   * (S6.22) and the result then settles as `ask-closed`. Resolving an `open` ask (S6.11, S6.13) is
-   * later: ISSUE-136; until then a resolution of an ask that is not `answering` changes nothing.
+   * An external resolution (07 §6). An `open` ask closes now: `elsewhere` answered elsewhere with no
+   * notice (S6.11), or answered in the app when the attribution window gives it to DwarfAI's
+   * injection (S6.12); `cancelled` cancelled (S6.13). An ask whose answer is in flight: `elsewhere`
+   * is held until the channel call returns and settled with its result (S6.21); `cancelled` closes
+   * it now (S6.22) and the result then settles as `ask-closed`. A closed ask changes nothing.
    */
   resolveExternally(
     dwarfId: string,
@@ -185,8 +215,11 @@ export class AskAnswerPaths implements Pick<
     const { asks, transactions, clock, bus } = this.deps
     const closed = transactions.inTransaction((): Ask | null => {
       const ask = asks.byProviderRequest({ dwarfId: dwarfId as DwarfId }, providerRequestId)
-      if (ask === null || ask.state !== 'answering') return null
-      const step = resolveAsk(ask, by, clock.now())
+      if (ask === null || (ask.state !== 'open' && ask.state !== 'answering')) return null
+      const now = clock.now()
+      // Only an attributed channel's hand-over is ever recorded (`answer`).
+      const injectedInApp = answeredInAppBy(this.injections.get(ask.id as AskId), now)
+      const step = resolveAsk(ask, by, now, injectedInApp)
       if (step.held !== null) {
         this.held.add(ask.id as AskId)
         return null
@@ -195,13 +228,9 @@ export class AskAnswerPaths implements Pick<
       return step.ask
     })
     if (closed === null) return
-    bus.publish(
-      this.event('AskClosed', {
-        askId: closed.id as AskId,
-        dwarfId: closed.dwarfId as DwarfId,
-        reason: closed.state
-      })
-    )
+    const injection = this.injections.get(closed.id as AskId)
+    this.injections.delete(closed.id as AskId)
+    bus.publish(this.closedEvent(closed, injection?.decision ?? null))
   }
 
   private answer(askId: AskId, requestId: string, submit: Submit): Promise<AnswerOutcome> {
@@ -216,8 +245,14 @@ export class AskAnswerPaths implements Pick<
     }
     if ('kind' in decided) return Promise.resolve(decided)
     const won = decided
+    if (submit.kind === 'permission' && attributesByInjection(won.ask.channel)) {
+      this.injections.set(won.ask.id as AskId, {
+        injectedAt: this.deps.clock.now(),
+        decision: submit.decision
+      })
+    }
     const settled = this.handOver(won.ask, submit)
-      .then((result) => this.settle(won, requestId, result))
+      .then((result) => this.settle(won, requestId, submit, result))
       .finally(() => this.inFlight.delete(requestId))
     // In flight before any subscriber runs: a re-submit of this requestId from a `MessageSent`
     // handler gets this same answer (INV-79).
@@ -291,7 +326,12 @@ export class AskAnswerPaths implements Pick<
    * An `elsewhere` resolution held while the call was in flight (S6.21) is passed to
    * `channelResult` and released once this transaction commits, so it is applied exactly once.
    */
-  private settle(won: Won, requestId: string, result: AnswerOutcome): AnswerOutcome {
+  private settle(
+    won: Won,
+    requestId: string,
+    submit: Submit,
+    result: AnswerOutcome
+  ): AnswerOutcome {
     const { asks, records, transactions, clock, bus } = this.deps
     const askId = won.ask.id as AskId
     const dwarfId = won.ask.dwarfId as DwarfId
@@ -315,7 +355,13 @@ export class AskAnswerPaths implements Pick<
     })
     this.held.delete(askId)
     if (step.transition === 'S6.08' || step.transition === 'S6.10') {
-      bus.publish(this.event('AskClosed', { askId, dwarfId, reason: step.ask.state }))
+      this.injections.delete(askId)
+      bus.publish(
+        this.closedEvent(
+          step.ask,
+          step.transition === 'S6.08' && submit.kind === 'permission' ? submit.decision : null
+        )
+      )
     }
     if (outcome.kind === 'refused' && step.transition === 'S6.09') {
       bus.publish(this.event('AskReopened', { askId, dwarfId, refusal: outcome.reason }))
@@ -334,6 +380,23 @@ export class AskAnswerPaths implements Pick<
           })
     )
     return outcome
+  }
+
+  /**
+   * `AskClosed` for a closed ask; a Deny it was closed in the app by (S6.08, S6.12) carries the
+   * late-Deny status line when its channel is not stale-answer safe (ADR-012 item 3).
+   */
+  private closedEvent(ask: Ask, decision: PermissionDecision | null): AskClosed {
+    const statusLine =
+      decision !== null && ask.state === 'answered-in-app'
+        ? lateDenyStatusLine(decision, this.deps.staleAnswerSafe(ask.channel))
+        : null
+    return this.event('AskClosed', {
+      askId: ask.id as AskId,
+      dwarfId: ask.dwarfId as DwarfId,
+      reason: ask.state,
+      ...(statusLine === null ? {} : { statusLine })
+    })
   }
 
   private event<T extends (AskingEvent | AnswerRecordEvent)['type']>(
