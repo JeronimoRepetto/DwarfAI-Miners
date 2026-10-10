@@ -80,6 +80,27 @@ function listingCases(): void {
   }, 60_000)
 }
 
+/**
+ * A process every machine of the OS runs under a system account, never as the person: Windows'
+ * `wininit` (a session-0 service process) and macOS's `launchd` (pid 1, root). Linux has no such
+ * name that a person's own `systemd --user` cannot share, so its rule is proven at L3 only.
+ */
+function systemProcessCase(stem: string): () => void {
+  return () => {
+    it(`[INV-51, FM-059] listProcesses lists no process of another OS account: the system's ${stem} carries the stem and is not listed`, async () => {
+      expect(await new NodeProcessControl().listProcesses({ stems: [stem] })).toEqual([])
+    }, 60_000)
+  }
+}
+
 describe.runIf(process.platform === 'win32')('listProcesses on Windows', listingCases)
+describe.runIf(process.platform === 'win32')(
+  'listProcesses on Windows: system processes',
+  systemProcessCase('wininit')
+)
 describe.runIf(process.platform === 'darwin')('listProcesses on macOS', listingCases)
+describe.runIf(process.platform === 'darwin')(
+  'listProcesses on macOS: system processes',
+  systemProcessCase('launchd')
+)
 describe.runIf(process.platform === 'linux')('listProcesses on Linux', listingCases)
