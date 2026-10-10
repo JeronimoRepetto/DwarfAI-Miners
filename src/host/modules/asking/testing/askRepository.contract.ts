@@ -318,5 +318,70 @@ export function runAskRepositoryContract(
       expect(s.repository.recordOf(othersAsk.id as AskId)).toBeNull()
       expect(() => s.inTransaction(() => s.repository.linkRecord('r-unknown', record))).toThrow()
     })
+
+    // ---------- owner amendment L (2026-10-09): the live asks of every dwarf ----------
+
+    it('[ADR-010, INV-70] live lists every open or answering ask of every dwarf oldest first by openedAt, queued asks included', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfs
+      // Saved out of order; the ids run against openedAt, so only openedAt can give this order.
+      const queued = questionAsk(21, dwarf, { openedAt: T0 + 300 })
+      const othersAsk = permissionAsk(22, other, { openedAt: T0 + 200 })
+      const front = permissionAsk(23, dwarf, { openedAt: T0 + 100 })
+      s.inTransaction(() => {
+        s.repository.save(queued)
+        s.repository.save(othersAsk)
+        s.repository.save(front)
+      })
+      s.inTransaction(() => s.repository.settle(front.id as AskId, { requestId: 'r-front' }))
+
+      expect(s.repository.live()).toStrictEqual([
+        { ...front, state: 'answering' },
+        othersAsk,
+        queued
+      ])
+    })
+
+    it('[ADR-010] live never lists a closed ask', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfs
+      const open = permissionAsk(31, other)
+      const closingStates = [
+        'answered-in-app',
+        'answered-elsewhere',
+        'cancelled',
+        'closed-by-death',
+        'auto-denied'
+      ] as const
+      s.inTransaction(() => {
+        closingStates.forEach((state, i) =>
+          s.repository.save(permissionAsk(32 + i, dwarf, { state, closedAt: T0 + 90 }))
+        )
+        s.repository.save(open)
+      })
+
+      expect(s.repository.live()).toStrictEqual([open])
+      s.inTransaction(() => s.repository.save({ ...open, state: 'cancelled', closedAt: T0 + 91 }))
+      expect(s.repository.live()).toStrictEqual([])
+    })
+
+    it('[ADR-010, US-RES-003.AC09] live reads the stored asks back after the repository is reopened, a reopened ask among them', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfs
+      const ask = questionAsk(41, dwarf, { currentStep: 2 })
+      const othersAsk = permissionAsk(42, other)
+      s.inTransaction(() => {
+        s.repository.save(ask)
+        s.repository.save(othersAsk)
+      })
+      // A refused answer puts the ask back to open (ADR-010 item 13; US-ASK-007).
+      s.inTransaction(() => s.repository.settle(ask.id as AskId, { requestId: 'r-1' }))
+      s.inTransaction(() => {
+        s.repository.settleAnswer('r-1', { kind: 'refused', reason: 'channel-rejected' })
+        s.repository.save({ ...ask, state: 'open' })
+      })
+
+      expect(s.reopen().live()).toStrictEqual([ask, othersAsk])
+    })
   })
 }

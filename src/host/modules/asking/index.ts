@@ -9,10 +9,19 @@
 // the `SessionCapabilities` port; the Host binds that port to suppliers' capability data and
 // composes it (later: ISSUE-140).
 // ISSUE-139: `createAskingResetStep`, the module's step of the Reset-metrics saga (ADR-023).
+// ISSUE-130: the `AskQueries` port and the `AskOpened` / `AskStepChanged` events, for the asks
+// frame projections (transport/frames/askFrames.ts); `createAskQueries`, the read model behind the
+// snapshot's `asks` section (transport/snapshot/asksSection.ts) over `AskRepository.live` (owner
+// amendment L).
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { AskingResetStep } from './adapters/sqlite/AskingResetStep'
+import {
+  AskReadModel,
+  type AskReadModelDeps,
+  type AskSnapshotQueries
+} from './application/askQueries'
 import {
   AskAnswerPaths,
   AskOpenPath,
@@ -22,7 +31,21 @@ import {
 } from './application/askBroker'
 
 export type { AnswerPathsDeps, AskBroker } from './application/askBroker'
-export type { AskClosed, AskingEvent, AskReopened } from './domain/events'
+export type {
+  AskQueries,
+  AskReadModelDeps,
+  AsksSnapshot,
+  AskSnapshotQueries,
+  AskView,
+  NeedsYouEntry
+} from './application/askQueries'
+export type {
+  AskClosed,
+  AskingEvent,
+  AskOpened,
+  AskReopened,
+  AskStepChanged
+} from './domain/events'
 export type { AskAnswerChannel } from './ports/askAnswerChannel'
 export type { OpenPathDeps } from './application/askBroker'
 export type { AskCapabilities, AskSession, SessionCapabilities } from './ports/sessionCapabilities'
@@ -70,4 +93,9 @@ export function createAskingResetStep(deps: {
 /** The broker's `open` (16 §4.7 row `open`; ADR-011 item 5), composed by the Host (ISSUE-140). */
 export function createAskOpening(deps: OpenPathDeps): Pick<AskBroker, 'open'> {
   return new AskOpenPath(deps)
+}
+
+/** The `AskQueries` read model with the `asks` section's snapshot read (ISSUE-130). */
+export function createAskQueries(deps: AskReadModelDeps): AskSnapshotQueries {
+  return new AskReadModel(deps)
 }

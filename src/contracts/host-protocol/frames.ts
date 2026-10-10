@@ -8,6 +8,9 @@
 import { z } from 'zod'
 import {
   activityWireSchema,
+  askIdSchema,
+  askRecordSchema,
+  askStateSchema,
   consentOriginSchema,
   dwarfIdSchema,
   dwarfWireSchema,
@@ -23,6 +26,9 @@ import {
   preferencesViewSchema,
   resetIdSchema,
   type ActivityWire,
+  type AskId,
+  type AskRecord,
+  type AskState,
   type ConsentOrigin,
   type DwarfId,
   type DwarfWire,
@@ -45,7 +51,7 @@ import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F07, B-F08, B-F09, B-F10, B-F11, B-F13, B-F14, B-F20, B-F22, B-F23, B-F24, B-F25, B-F26, B-F27 and B-F28 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F07, B-F08, B-F09, B-F10, B-F11, B-F13, B-F14, B-F15, B-F16, B-F17, B-F20, B-F22, B-F23, B-F24, B-F25, B-F26, B-F27 and B-F28 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
@@ -59,7 +65,10 @@ export interface HostFrames {
   'conversation.appended': { dwarfId: DwarfId; messages: MessageView[] }
   'activity.changed':     ActivityWire
   'turn.ended':           { dwarfId: DwarfId; turnKey: string; kind: TurnEndKind; reliability: 'reliable' | 'inferred'; cancelledFromApp: boolean }
-  'ledger.changed':       { mineId: MineId; totals: Record<Material, MaterialAmount> }
+  'ask.opened':           { ask: AskRecord }
+  'ask.closed':           { askId: AskId; dwarfId: DwarfId; reason: AskState }
+  'ask.step':             { askId: AskId; currentStep: number }
+  'ledger.changed':      { mineId: MineId; totals: Record<Material, MaterialAmount> }
   'attention.notify':     OsNotification
   'attention.withdraw':   { keys: string[] }
   'preferences.changed':  PreferencesView
@@ -114,6 +123,13 @@ export const HOST_FRAME_SCHEMAS = {
       reliability: z.enum(['reliable', 'inferred']),
       cancelledFromApp: z.boolean()
     })
+    .strict(),
+  'ask.opened': z.object({ ask: askRecordSchema }).strict(),
+  'ask.closed': z
+    .object({ askId: askIdSchema, dwarfId: dwarfIdSchema, reason: askStateSchema })
+    .strict(),
+  'ask.step': z
+    .object({ askId: askIdSchema, currentStep: z.number().int().nonnegative() })
     .strict(),
   'ledger.changed': z.object({ mineId: mineIdSchema, totals: materialTotalsSchema }).strict(),
   'attention.notify': osNotificationSchema,
