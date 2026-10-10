@@ -37,6 +37,7 @@ import type { ObservedSessionStore } from './ports/observedSessionStore'
 
 export type {
   ObservationEvent,
+  ObservedAskClosed,
   ObservedTurnEnded,
   SessionActivityObserved,
   SessionClosedObserved,
