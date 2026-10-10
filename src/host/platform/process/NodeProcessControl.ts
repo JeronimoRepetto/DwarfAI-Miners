@@ -588,8 +588,11 @@ function listingFor(
   env: Readonly<Record<string, string | undefined>>
 ): RawListing {
   if (platform === 'win32') return createWin32Listing({ runQuery, env })
-  if (platform === 'darwin') return createDarwinListing({ runQuery })
+  // The current OS user's id: only that user's processes are listed (`list/listing.ts`).
+  const currentUid = process.getuid?.() ?? null
+  if (platform === 'darwin') return createDarwinListing({ runQuery, currentUid })
   return createLinuxListing({
+    currentUid,
     readText: (path) => readFile(path, 'utf8'),
     listDir: (path) => readdir(path),
     readLink: (path) => readlink(path)

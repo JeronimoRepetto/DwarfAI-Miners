@@ -12,6 +12,13 @@
 // Fail-safe direction (owner amendment I): a listing that cannot be read is a failed read, never an
 // empty one, and a match whose working folder cannot be read keeps `cwd: null`, so its caller can
 // refuse to conclude anything from it.
+//
+// Only the current OS user's processes are listed. The Host is one per OS user (ADR-002 D1) and
+// observes that user's provider sessions only, so another account's process (a system service such
+// as Codex's Windows sandbox service, or another person's CLI) is never one of them; and its
+// working folder is unreadable to this user, so listing it would leave every session of the
+// provider unknown, never closed by process. An owner the OS does not give keeps the process listed
+// wherever it could still be the user's (procfs; on Windows, the Host's own interactive session).
 import { splitWindowsCommandLine } from './windowsCommandLine'
 import {
   DARWIN_PS,
@@ -81,6 +88,8 @@ export function matchedStem(
 // Linux: procfs, no process spawned.
 
 export interface LinuxListingDeps {
+  /** The current OS user's id (`process.getuid()`); null when unknown, and then nothing is dropped. */
+  currentUid: number | null
   readText: (path: string) => Promise<string>
   listDir: (path: string) => Promise<readonly string[]>
   readLink: (path: string) => Promise<string>
@@ -109,6 +118,12 @@ export function createLinuxListing(deps: LinuxListingDeps): RawListing {
         }
         const executable = await deps.readLink(`/proc/${pid}/exe`).catch(() => null)
         if (matchedStem({ executable, argv }, stems) === null) return null
+        if (deps.currentUid !== null) {
+          const status = await deps.readText(`/proc/${pid}/status`).catch(() => '')
+          // The real user id; an owner procfs does not give never drops a match.
+          const uid = /^Uid:\s+(\d+)/m.exec(status)?.[1]
+          if (uid !== undefined && Number(uid) !== deps.currentUid) return null
+        }
         const cwd = await deps.readLink(`/proc/${pid}/cwd`).catch(() => null)
         return { executable, argv, cwd }
       })
@@ -118,8 +133,8 @@ export function createLinuxListing(deps: LinuxListingDeps): RawListing {
 }
 
 // ---------------------------------------------------------------------------------------------
-// macOS: `ps` for every executable path, `ps` again for the interpreters' arguments, `lsof` for the
-// working folders of the matches.
+// macOS: `ps` for every executable path and real user id, `ps` again for the current user's
+// interpreters' arguments, `lsof` for the working folders of the matches.
 
 const PS_ROW = /^\s*(\d+)\s+(.+?)\s*$/
 
@@ -135,6 +150,22 @@ function pidRows(text: string): Map<number, string> | null {
   return rows.size === 0 ? null : rows
 }
 
+/**
+ * `<pid> <real uid> <executable>` rows, the executables of `currentUid`'s processes (of every one
+ * when it is null), or null when a line is not one or there are none.
+ */
+function ownedPidRows(text: string, currentUid: number | null): Map<number, string> | null {
+  const rows = pidRows(text)
+  if (rows === null) return null
+  const owned = new Map<number, string>()
+  for (const [pid, rest] of rows) {
+    const match = /^(\d+)\s+(.+)$/.exec(rest)
+    if (match === null) return null
+    if (currentUid === null || Number(match[1]) === currentUid) owned.set(pid, match[2] as string)
+  }
+  return owned
+}
+
 /** `lsof -Fn` output: `p<pid>` opens a process, `n<path>` is its working folder. */
 export function parseLsofCwd(text: string): Map<number, string> {
   const cwd = new Map<number, string>()
@@ -148,13 +179,17 @@ export function parseLsofCwd(text: string): Map<number, string> {
 
 const C_LOCALE = { LC_ALL: 'C' }
 
-export function createDarwinListing(deps: { runQuery: QueryRunner }): RawListing {
+export function createDarwinListing(deps: {
+  runQuery: QueryRunner
+  /** The current OS user's id (`process.getuid()`); null when unknown, and then nothing is dropped. */
+  currentUid: number | null
+}): RawListing {
   const query = (file: string, args: readonly string[]): Promise<QueryOutcome> =>
     deps.runQuery(file, args, { timeoutMs: LISTING_QUERY_TIMEOUT_MS, env: C_LOCALE })
   return async (stems) => {
-    const listed = await query(DARWIN_PS, ['-A', '-o', 'pid=,comm='])
+    const listed = await query(DARWIN_PS, ['-A', '-o', 'pid=,ruid=,comm='])
     if (!listed.ok) return listed
-    const executables = pidRows(listed.stdout)
+    const executables = ownedPidRows(listed.stdout, deps.currentUid)
     if (executables === null) return { ok: false, cause: 'gave an unparseable answer' }
 
     const interpreters = [...executables]
@@ -203,10 +238,14 @@ export function createDarwinListing(deps: { runQuery: QueryRunner }): RawListing
 // `ReadProcessMemory`, compiled in memory by `Add-Type`. Every text leaves base64-encoded UTF-16, so
 // no console code page can change a path.
 
-/** The in-memory reader of another process's working folder (x64 targets only; anything else: null). */
+/**
+ * The in-memory reader of another process's owner (`self`, `other`, or `-` when its token cannot be
+ * read) and working folder (x64 targets only; anything else: null).
+ */
 const WIN32_CWD_READER = String.raw`
 using System;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 public static class DwarfAiProcessCwd {
   [StructLayout(LayoutKind.Sequential)]
@@ -216,6 +255,20 @@ public static class DwarfAiProcessCwd {
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
   [DllImport("kernel32.dll")] static extern bool IsWow64Process(IntPtr h, out bool wow);
   [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr h, IntPtr a, byte[] b, IntPtr n, out IntPtr r);
+  [DllImport("advapi32.dll")] static extern bool OpenProcessToken(IntPtr h, int access, out IntPtr t);
+  public static string Owner(int pid) {
+    IntPtr h = OpenProcess(0x1000, false, pid);
+    if (h == IntPtr.Zero) return "-";
+    try {
+      IntPtr t;
+      if (!OpenProcessToken(h, 0x0008, out t)) return "-";
+      try {
+        using (var owner = new WindowsIdentity(t))
+        using (var me = WindowsIdentity.GetCurrent())
+          return owner.User == null ? "-" : owner.User.Equals(me.User) ? "self" : "other";
+      } catch { return "-"; } finally { CloseHandle(t); }
+    } finally { CloseHandle(h); }
+  }
   static byte[] Read(IntPtr h, IntPtr a, int n) {
     var b = new byte[n]; IntPtr r;
     return ReadProcessMemory(h, a, b, (IntPtr)n, out r) && (long)r == n ? b : null;
@@ -239,9 +292,11 @@ public static class DwarfAiProcessCwd {
 }`
 
 /**
- * The PowerShell script: every process whose name, executable path or command line mentions a
- * stem (a superset of the matches, so the stem rule itself runs here in TypeScript), one `R` line
- * each, then `END`. A stem keeps only `[A-Za-z0-9_-]`, so none can inject into the script.
+ * The PowerShell script: an `H` line with the Host's Windows session (this PowerShell's, a child of
+ * the Host), then every process whose name, executable path or command line mentions a stem (a
+ * superset of the matches, so the stem and owner rules themselves run here in TypeScript), one `R`
+ * line each with its owner and session, then `END`. A stem keeps only `[A-Za-z0-9_-]`, so none can
+ * inject into the script.
  */
 export function win32ListingScript(stems: readonly string[]): string {
   const pattern = stems
@@ -251,10 +306,12 @@ export function win32ListingScript(stems: readonly string[]): string {
   return [
     `Add-Type -TypeDefinition @'\n${WIN32_CWD_READER}\n'@`,
     "function B64($t) { if ($null -eq $t) { '-' } else { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes([string]$t)) } }",
+    '"H`t$([Diagnostics.Process]::GetCurrentProcess().SessionId)"',
     'Get-CimInstance Win32_Process -Property ProcessId,Name,ExecutablePath,CommandLine | ForEach-Object {',
     `  if ("$($_.Name) $($_.ExecutablePath) $($_.CommandLine)" -match '(?i)(${pattern})') {`,
     '    $exe = if ($_.ExecutablePath) { $_.ExecutablePath } else { $_.Name }',
-    '    "R`t$(B64 $exe)`t$(B64 $_.CommandLine)`t$(B64 ([DwarfAiProcessCwd]::Get([int]$_.ProcessId)))"',
+    "    $session = if ($null -eq $_.SessionId) { '-' } else { $_.SessionId }",
+    '    "R`t$([DwarfAiProcessCwd]::Owner([int]$_.ProcessId))`t$session`t$(B64 $exe)`t$(B64 $_.CommandLine)`t$(B64 ([DwarfAiProcessCwd]::Get([int]$_.ProcessId)))"',
     '  }',
     '}',
     "'END'"
@@ -272,22 +329,54 @@ function withoutTrailingSeparator(folder: string): string {
   return /^[A-Za-z]:\\$/.test(folder) ? folder : folder.replace(/[\\/]+$/, '')
 }
 
-/** The `R` lines of the script's answer, or null when it is cut short or a line is not one. */
+/**
+ * Whether a listed Windows process is the current user's: by its owner when its token could be
+ * read; otherwise only when it runs in the Host's own interactive session (an elevated run of the
+ * user's), never in session 0, which since Windows Vista holds services and no person's programs.
+ */
+export function isCurrentUsersWin32Process(
+  owner: 'self' | 'other' | null,
+  session: number | null,
+  hostSession: number
+): boolean {
+  if (owner !== null) return owner === 'self'
+  return hostSession !== 0 && session === hostSession
+}
+
+/**
+ * The current user's processes among the `R` lines of the script's answer, or null when it is cut
+ * short, does not open with its `H` line, or a line is not one.
+ */
 export function parseWin32Listing(text: string): RawProcess[] | null {
   const rows: RawProcess[] = []
+  let hostSession: number | null = null
   let ended = false
   for (const line of text.split(/\r?\n/)) {
     if (line.trim() === '') continue
     if (ended) return null
+    if (hostSession === null) {
+      const header = /^H\t(\d+)$/.exec(line.trim())
+      if (header === null) return null
+      hostSession = Number(header[1])
+      continue
+    }
     if (line.trim() === 'END') {
       ended = true
       continue
     }
-    const [tag, exe, cmd, cwd, ...rest] = line.split('\t')
+    const [tag, owner, session, exe, cmd, cwd, ...rest] = line.split('\t')
     if (tag !== 'R' || cwd === undefined || rest.length > 0) return null
+    if (owner !== 'self' && owner !== 'other' && owner !== '-') return null
+    if (session !== '-' && !/^\d+$/.test(session as string)) return null
     const fields = [exe, cmd, cwd].map((field) => fromBase64(field as string))
     if (fields.some((field) => field === undefined)) return null
     const [executable, commandLine, folder] = fields as Array<string | null>
+    const mine = isCurrentUsersWin32Process(
+      owner === '-' ? null : owner,
+      session === '-' ? null : Number(session),
+      hostSession
+    )
+    if (!mine) continue
     rows.push({
       executable: executable ?? null,
       argv:
