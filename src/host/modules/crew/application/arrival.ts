@@ -1,8 +1,14 @@
 // The arrival and departure members of `CrewCommands` (05 §3.2; 16 §4.2): `arrive`, `rebind`,
 // `sessionClosed` and `markUnrecovered`, and `recordActivity` (ISSUE-095, for the observed route
 // `SessionActivityObserved`; ISSUE-120, its `'turn-finished'` for the `TurnEnded` route, owner
-// amendment C). The others (`startAsking`, `stop`, `rename`, the ends…) join with
-// their issues (later: ISSUE-080, ISSUE-172, EPIC-10).
+// amendment C), and `startAsking` / `stopAsking` (ISSUE-140, for the asking routes of
+// host/wiring/routes/askingRoutes.ts). The others (`stop`, `rename`, the ends…) join with their
+// issues (later: ISSUE-080, ISSUE-172, EPIC-10).
+//
+// The open ask is Host memory (09 §4.2 has no column for it; `DwarfRepository` drops
+// `facts.openAsk`): `OpenAskMemory` keeps each dwarf's front ask beside the stored row, so every
+// command and every read of the one decorated repository sees it (INV-24). The asking module's
+// stored asks are the durable record; the wiring replays the open ones at boot.
 //
 // Each command runs in one synchronous transaction (16 §2.2): it reads the dwarf, writes the next
 // aggregate through `DwarfRepository` and its lifecycle fact through the kernel
@@ -29,7 +35,8 @@ import type { CrewEvent } from '../domain/events'
 import { isGone, type DepartureCause } from '../domain/presence'
 import type { DwarfRank } from '../domain/rank'
 import { classifyDwarfStatus } from '../domain/status'
-import { otherActivity, turnEnded, turnStarted } from '../domain/statusFacts'
+import type { StatusFacts } from '../domain/status'
+import { askClosed, askOpened, otherActivity, turnEnded, turnStarted } from '../domain/statusFacts'
 import type { DwarfRepository } from '../ports/dwarfRepository'
 import type { StatusTimer } from './statusTimer'
 
@@ -64,6 +71,13 @@ export interface CrewCommands {
     kind: 'turn-started' | 'turn-finished' | 'message',
     end?: TurnFinished
   ): void
+  /**
+   * 16 §4.2: the broker opened a trusted ask for the dwarf (S1.10–S1.12): `asking` while any is
+   * `open`/`answering` (INV-24). An `auto-denied` ask never reaches here (S1.16).
+   */
+  startAsking(dwarfId: DwarfId, kind: 'question' | 'permission'): void
+  /** 16 §4.2: the dwarf's front ask closed (S1.13–S1.15); the status follows its turn again. */
+  stopAsking(dwarfId: DwarfId): void
   /** The single departure path (06 §5.1); publishes `DwarfDeparted`. */
   sessionClosed(dwarfId: DwarfId, cause: DepartureCause): void
   /** Host recovery pass: `processState` `unrecovered`, the dwarf stays present (INV-26). */
@@ -179,6 +193,17 @@ export class CrewArrivals implements CrewCommands {
     if (moved !== null) this.deps.statusTimer.factsChanged(dwarfId, moved)
   }
 
+  startAsking(dwarfId: DwarfId, kind: 'question' | 'permission'): void {
+    // S1.10–S1.12: the broker reports only trusted, opened asks here (an auto-denied one never, S1.16);
+    // while one is open the front ask stays (S1.15).
+    this.moveFacts(dwarfId, (facts, at) => askOpened(facts, { kind, askedAt: at, state: 'open' }))
+  }
+
+  stopAsking(dwarfId: DwarfId): void {
+    // S1.13, S1.14: the status follows the turn again; a dwarf with no open ask is unchanged.
+    this.moveFacts(dwarfId, (facts) => (facts.openAsk === undefined ? facts : askClosed(facts)))
+  }
+
   sessionClosed(dwarfId: DwarfId, cause: DepartureCause): void {
     const { repository, facts, transactions, clock } = this.deps
     const at = clock.now()
@@ -211,6 +236,21 @@ export class CrewArrivals implements CrewCommands {
     if (moved !== null) this.publish('DwarfPresenceChanged', { dwarfId, presence: moved.presence })
   }
 
+  /** One transaction moving a present dwarf's facts; the timer hears of a change after the commit. */
+  private moveFacts(dwarfId: DwarfId, move: (facts: StatusFacts, at: number) => StatusFacts): void {
+    const { repository, transactions, clock } = this.deps
+    const at = clock.now()
+    const moved = transactions.inTransaction(() => {
+      const dwarf = this.existing(dwarfId)
+      if (isGone(dwarf)) return null
+      const facts = move(dwarf.facts, at)
+      if (facts === dwarf.facts) return null
+      repository.save({ ...dwarf, facts })
+      return facts
+    })
+    if (moved !== null) this.deps.statusTimer.factsChanged(dwarfId, moved)
+  }
+
   private existing(dwarfId: DwarfId): Dwarf {
     const dwarf = this.deps.repository.byId(dwarfId)
     if (dwarf === null) throw new HostInvariantError(`no dwarf ${dwarfId} was ever stored`)
@@ -230,5 +270,40 @@ export class CrewArrivals implements CrewCommands {
       hostEpoch,
       payload
     } as Extract<CrewEvent, { type: K }>)
+  }
+}
+
+/**
+ * The `DwarfRepository` crew's commands and read model share (16 §4.2): the stored rows, with each
+ * dwarf's front ask kept in Host memory beside them (09 §4.2: no column), set and cleared by the
+ * `facts.openAsk` of every saved dwarf and laid back on every read.
+ */
+export class OpenAskMemory implements DwarfRepository {
+  private readonly openAsks = new Map<DwarfId, NonNullable<StatusFacts['openAsk']>>()
+
+  constructor(private readonly stored: DwarfRepository) {}
+
+  byId(id: DwarfId): Dwarf | null {
+    return this.withOpenAsk(this.stored.byId(id))
+  }
+
+  byProviderIdentity(i: ProviderIdentity): Dwarf | null {
+    return this.withOpenAsk(this.stored.byProviderIdentity(i))
+  }
+
+  inMine(id: MineId): Dwarf[] {
+    return this.stored.inMine(id).map((d) => this.withOpenAsk(d) ?? d)
+  }
+
+  save(d: Dwarf): void {
+    this.stored.save(d)
+    if (d.facts.openAsk === undefined) this.openAsks.delete(d.id)
+    else this.openAsks.set(d.id, { ...d.facts.openAsk })
+  }
+
+  private withOpenAsk(d: Dwarf | null): Dwarf | null {
+    const openAsk = d === null ? undefined : this.openAsks.get(d.id)
+    if (d === null || openAsk === undefined) return d
+    return { ...d, facts: { ...d.facts, openAsk: { ...openAsk } } }
   }
 }
