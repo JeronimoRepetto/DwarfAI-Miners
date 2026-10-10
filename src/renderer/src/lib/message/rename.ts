@@ -78,3 +78,20 @@ export function renameAnnouncement(result: DwarfNameResult, baseName: string): s
     ? 'Name reset to ' + baseName
     : 'Renamed to ' + result.customName
 }
+
+/** What main's answer to a rename or a reset says, and whether it is a warning everyone sees. */
+export interface RenameNotice {
+  text: string
+  /** True when nothing was saved: a warning toast, never the panel's screen-reader-only status. */
+  warning: boolean
+}
+
+/**
+ * Where main's answer is said (BR-19): a save or a reset is announced in the panel's polite status
+ * (accessibility.md, names); a rename or a reset that saved nothing is main's own reason as a warning
+ * toast, which everyone sees and the toast host announces politely. A failure is never said to
+ * screen readers alone.
+ */
+export function renameNotice(result: DwarfNameResult, baseName: string): RenameNotice {
+  return { text: renameAnnouncement(result, baseName), warning: !result.saved }
+}

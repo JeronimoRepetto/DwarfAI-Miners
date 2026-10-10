@@ -39,6 +39,9 @@ import {
   type DwarfSendState,
   type FeedMessage
 } from '../../types'
+import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
+import { useMines } from '../../composables/useMines'
+import { useToasts } from '../../composables/useToasts'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
 import MenuButton from '../overlay/MenuButton.vue'
 import DialogCard from '../overlay/DialogCard.vue'
@@ -3643,15 +3646,40 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     expect(wrapper.find('.dm-msg__field').exists()).toBe(true)
   })
 
-  it('says main’s reason when it saved nothing, and keeps the name the board has', async () => {
+  /*
+   * AMENDED (was: main's reason in the polite status only, which no sighted person ever saw): a rename that saved
+   * nothing is said where everyone sees it, a warning toast in main's own words, and the toast host's polite region
+   * announces it, so the panel's own status says nothing more.
+   */
+  it('says main’s reason in a warning toast when it saved nothing, and keeps the name the board has', async () => {
     fakeNames({ saved: false, reason: 'The name could not be saved.' })
     const wrapper = attached()
     await open(wrapper)
     await type(wrapper, 'Watcher')
     await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(said(wrapper)).toBe('The name could not be saved.')
+    expect(said(wrapper)).toBe('')
+    expect(useToasts().toasts.value.at(-1)).toMatchObject({
+      text: 'The name could not be saved.',
+      icon: 'warning'
+    })
     expect(wrapper.get('.dm-msg__rename').text()).toBe(BASE)
+  })
+
+  it('says main’s reason in a warning toast when a reset saved nothing', async () => {
+    const api = fakeNames()
+    api.resetDwarfName.mockResolvedValue({
+      saved: false,
+      reason: 'This dwarf is no longer here, so its name cannot change.'
+    } satisfies DwarfNameResult)
+    const wrapper = attached({ dwarf: named('Watcher') })
+    wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
+    await flushPromises()
+    expect(said(wrapper)).toBe('')
+    expect(useToasts().toasts.value.at(-1)).toMatchObject({
+      text: 'This dwarf is no longer here, so its name cannot change.',
+      icon: 'warning'
+    })
   })
 
   it('offers Reset name in the ⋯ menu only while a custom name is set', () => {
@@ -3684,6 +3712,134 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     )
     expect(field(open).value).toBe('Scout')
     expect(open.get('.dm-msg__hint').text()).toBe('Emoji and control characters are not allowed.')
+  })
+})
+
+/*
+ * RENAME HIDDEN UNTIL BUILT (BR-19; 21 §1 item 8; 14 §8 I-21; docs/strangler/parity-cut-1.md).
+ *
+ * The rename rows stay `legacy` until the step-3a switch (ISSUE-001) routes A-N08 / A-N09 (ISSUE-172), and today's
+ * runtime renames only the dwarfs on its own board. A dwarf the Host's board carries therefore has no Rename and no
+ * Reset name anywhere in the panel: its name is plain text, no key opens a field, and the ⋯ menu has no Reset name.
+ */
+describe('DwarfMessagePanel offers no rename the Host cannot serve yet (BR-19)', () => {
+  type Api = Window['api']
+  const BORIN = '01920000-0000-7000-8000-00000000d001'
+  const ALPHA = '01920000-0000-7000-8000-00000000a001'
+
+  async function hostCarriesBorin(customName: string | null = null): Promise<void> {
+    const tokens = { tokens: 0 }
+    const page = {
+      ok: true,
+      value: {
+        snapshotId: 'snap-1',
+        seq: 1,
+        epoch: 'epoch-1',
+        chunks: [
+          {
+            section: 'mines',
+            data: [
+              {
+                id: ALPHA,
+                path: '/work/alpha',
+                name: 'alpha',
+                state: 'active',
+                tier: 'bronze',
+                hasBeenMeasured: true,
+                lastUsedAt: 1,
+                totals: {
+                  coal: tokens,
+                  bronze: tokens,
+                  copper: tokens,
+                  silver: tokens,
+                  gold: tokens,
+                  uranium: tokens
+                }
+              }
+            ]
+          },
+          {
+            section: 'dwarfs',
+            data: [
+              {
+                id: BORIN,
+                mineId: ALPHA,
+                providerId: 'claude',
+                baseName: 'Borin',
+                customName,
+                rank: 'foreman',
+                parentDwarfId: null,
+                delegated: false,
+                sessionProfile: { providerId: 'claude' },
+                presence: 'present',
+                processState: 'running',
+                status: 'idle',
+                needsYou: false,
+                canReceiveMessages: true,
+                stopInFlight: false,
+                stopUnavailableReason: null,
+                owned: false,
+                arrivedAt: 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+    const api = createFakeWindowApi({
+      getHostSnapshot: vi.fn().mockResolvedValue(page) as unknown as Api['getHostSnapshot'],
+      onHostEvent: vi.fn(() => () => undefined) as unknown as Api['onHostEvent'],
+      setDwarfName: vi.fn() as unknown as Api['setDwarfName'],
+      resetDwarfName: vi.fn() as unknown as Api['resetDwarfName']
+    })
+    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    await expect(useMines().start()).resolves.toBe(true)
+  }
+
+  const borin = (customName?: string) =>
+    defaultDwarf({
+      id: BORIN,
+      name: 'Borin',
+      textDelivery: 'terminal',
+      ...(customName === undefined ? {} : { customName })
+    })
+
+  afterEach(() => {
+    useMines().stop()
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('[BR-19] draws the name as plain text, with no Rename, for a dwarf the Host’s board carries', async () => {
+    await hostCarriesBorin('Watcher')
+    const wrapper = panel({ dwarf: borin('Watcher') })
+    expect(wrapper.find('.dm-msg__rename').exists()).toBe(false)
+    expect(wrapper.find('h2.dm-msg__name button').exists()).toBe(false)
+    expect(wrapper.find('[title="Rename"]').exists()).toBe(false)
+    expect(wrapper.get('h2.dm-msg__name').text()).toBe('Watcher')
+    // The base name still stands under a custom name: it is shown, not edited.
+    expect(wrapper.get('p.dm-msg__base').text()).toBe('Borin')
+  })
+
+  it('[BR-19] opens no rename field for a dwarf the Host’s board carries, even one asked for open', async () => {
+    await hostCarriesBorin()
+    const wrapper = panel({ dwarf: borin(), renaming: { value: 'Scout' } })
+    expect(wrapper.find('.dm-msg__field').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg__hint').exists()).toBe(false)
+    expect(wrapper.get('h2.dm-msg__name').text()).toBe('Borin')
+  })
+
+  it('[BR-19] offers no Reset name in the ⋯ menu for a dwarf the Host’s board carries, custom name or not', async () => {
+    await hostCarriesBorin('Watcher')
+    const wrapper = panel({ dwarf: borin('Watcher') })
+    const labels = (wrapper.findComponent(MenuButton).props('items') as MenuItem[]).map(
+      (item) => item.label
+    )
+    expect(labels).not.toContain('Reset name')
+    // The menu keeps its shape without the row: Stop dwarf… stands where it stands for any unnamed dwarf.
+    wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_STOP)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findComponent(ModalDialog).props('title')).toBe('Stop Watcher?')
+    expect(window.api.resetDwarfName).not.toHaveBeenCalled()
   })
 })
 
