@@ -4220,3 +4220,118 @@ describe('App Stop everything and quit (ISSUE-317)', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 })
+
+/*
+ * APPENDED (ISSUE-224): the first-run consent step over the Panel (07 machine 41; 14 §6.3). App owns useWelcomeStep
+ * and mounts the step while it is shown: the `preferences` snapshot says it is due, and the `preferences.changed`
+ * frame with `due: false` closes it. Every other test answers the `preferences` section with a refusal, so the step
+ * stays hidden there.
+ */
+describe('App first-run consent step (ISSUE-224)', () => {
+  const EPOCH = 'epoch-224'
+
+  function preferencesWith(due: boolean) {
+    return {
+      preferences: {
+        subagentDelegationOn: false,
+        routingProfile: 'balanced',
+        systemNotificationsOn: true,
+        openCodePermissionsOn: false
+      },
+      secrets: [],
+      secretBackend: 'unavailable',
+      integrations: [
+        { id: 'claude-hooks', state: 'off', changedAt: 1 },
+        { id: 'opencode-permissions', state: 'off', changedAt: 1 }
+      ],
+      welcome: {
+        due,
+        ...(due ? { reason: 'first-run' } : {}),
+        legacyFound: [],
+        offered: ['claude-hooks', 'opencode-permissions']
+      }
+    }
+  }
+
+  function hostWithStepDue() {
+    // Every read model of the window subscribes to A-N02 on its own; a pushed batch reaches each of them.
+    const follows: Array<(frames: unknown[]) => void> = []
+    const answerWelcome = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        integrations: {
+          'claude-hooks': { state: 'on-verified' },
+          'opencode-permissions': { state: 'on-verified' }
+        },
+        welcome: preferencesWith(false).welcome
+      }
+    })
+    return {
+      push: (frames: unknown[]) => {
+        for (const follow of follows) follow(frames)
+      },
+      answerWelcome,
+      overrides: {
+        onHostEvent: vi.fn((listener: (frames: unknown[]) => void) => {
+          follows.push(listener)
+          return () => undefined
+        }),
+        getHostSnapshot: vi.fn((params: { sections?: string[] } | undefined) =>
+          Promise.resolve(
+            params?.sections?.includes('preferences') === true
+              ? {
+                  ok: true,
+                  value: {
+                    snapshotId: 'snap-welcome',
+                    seq: 4,
+                    epoch: EPOCH,
+                    chunks: [{ section: 'preferences', data: preferencesWith(true) }]
+                  }
+                }
+              : params?.sections?.includes('tails') === true
+                ? EMPTY_HOST_TAILS
+                : HOST_CONNECTION_UNROUTED
+          )
+        ),
+        answerWelcome
+      }
+    }
+  }
+
+  it('[US-SET-012.AC07, US-SET-012.AC03, S41.05] the step shows over the Panel while due, Activate answers, and the frame closes it', async () => {
+    const host = hostWithStepDue()
+    await mountOpenApp(host.overrides)
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    const toggles = [...document.body.querySelectorAll('[role="dialog"] [role="switch"]')]
+    expect(toggles.map((toggle) => toggle.getAttribute('aria-checked'))).toEqual(['true', 'true'])
+    expect(host.answerWelcome).not.toHaveBeenCalled()
+
+    document.body
+      .querySelector<HTMLButtonElement>('[role="dialog"] .dm-dialog__actions button')!
+      .click()
+    await flushPromises()
+    expect(host.answerWelcome).toHaveBeenCalledWith(
+      expect.objectContaining({ claudeHooks: true, openCodePermissions: true })
+    )
+
+    host.push([
+      {
+        type: 'evt',
+        seq: 5,
+        epoch: EPOCH,
+        name: 'preferences.changed',
+        data: preferencesWith(false)
+      }
+    ])
+    await flushPromises()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('[S41.08] while the Host has not reported the step due, nothing is shown', async () => {
+    await mountOpenApp()
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+})

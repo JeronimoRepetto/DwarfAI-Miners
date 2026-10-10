@@ -93,5 +93,18 @@ export const en = {
   // Idle time (NFR-TIM-15): minutes, hours, days, each rounded down, no larger unit ("41m", "2h", "7d").
   'outcomeLine.idle.minutes': '{count}m',
   'outcomeLine.idle.hours': '{count}h',
-  'outcomeLine.idle.days': '{count}d'
+  'outcomeLine.idle.days': '{count}d',
+
+  // The first-run consent step (AMENDMENT-7, OQ-68; 07 machine 41; SCR-31; ADR-016 item 5). Only the two option
+  // labels are approved copy; every other string of the step is design's and not written yet.
+  'welcome.step.title': '⟦COPY NEEDED: first-run consent step title (07 machine 41; SCR-31)⟧',
+  'welcome.step.body':
+    '⟦COPY NEEDED: first-run consent step, what connecting Claude Code and OpenCode does and that an unticked one can be turned on later in Settings → Integrations (07 machine 41; SCR-31)⟧',
+  'welcome.option.claudeHooks': 'Claude Code · instant updates',
+  'welcome.option.openCodePermissions': 'OpenCode · permission requests',
+  'welcome.step.activate': '⟦COPY NEEDED: first-run consent step, Activate button (07 S41.04)⟧',
+  'welcome.result.failure':
+    '⟦COPY NEEDED: first-run consent step, {names} could not be turned on or reverted and can be retried from Settings (07 S41.05; 13 FM-148, FM-149)⟧',
+  'welcome.result.dismiss':
+    '⟦COPY NEEDED: first-run consent step, dismiss button of the failure line (07 S41.05)⟧'
 } as const satisfies CopyCatalog
