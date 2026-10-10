@@ -78,7 +78,12 @@
 // connection registry feeding the presence union and the tray notifier supervisor; then the
 // conversation's routes (its mine history, tails and frames over crew's and mines' queries) and the
 // per-mine coal backfill (`MineCreated` / `MineReattached` → `runMineCoalBackfill`, O-11-10) and the
-// end of a Reset metrics (`MetricsResetFinished` → held units credited, then the backfill, ISSUE-121); last,
+// end of a Reset metrics (`MetricsResetFinished` → held units credited, then the backfill, ISSUE-121); then
+// asking (ISSUE-140: wiring/routes/askingRoutes.ts) over the SqliteAskRepository, conversation's
+// AnswerRecords, the observed-Claude keystroke channel (no relay into a terminal yet, later: ISSUE-167),
+// with B-M30…B-M32 and the `asks` section served before the bind, its frames, the Claude hook ingress
+// route bound to the active channel-token lookup (listening is step 6's, later: ISSUE-209) and its
+// `ask.*` and departure routes, stopped at the clean exit; last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
 // withdrawing attention keys and closing activity runs. The others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
@@ -96,7 +101,8 @@
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PROTOCOL_VERSION } from '@dwarfai/contracts'
+import { PROTOCOL_VERSION, redactSecrets } from '@dwarfai/contracts'
+import { FsTranscriptTail } from './modules/asking/adapters/observedClaude/transcriptTail'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
@@ -195,6 +201,14 @@ import {
   type WiredPreferences
 } from './wiring/preferencesWiring'
 import {
+  ASKING_FRAMES,
+  NO_KEYSTROKE_RELAY,
+  serveAsking,
+  type AskingRouteEvent,
+  type AskingWiringDeps,
+  type WiredAsking
+} from './wiring/routes/askingRoutes'
+import {
   ATTENTION_FRAMES,
   onNotifierAttach,
   serveAttention,
@@ -233,6 +247,7 @@ import {
 } from './wiring/routes/observation'
 import { isPublicBuild, wireSuppliers, type WiredSuppliers } from './wiring/suppliersWiring'
 import { HostInvariantError, InProcessEventBus } from './kernel'
+import type { ProviderId } from './kernel/domain/values'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
 
 /** Every event the Host's one bus carries so far. */
@@ -244,6 +259,7 @@ type HostEvent =
   | LedgerRouteEvent
   | ConversationRouteEvent
   | AttentionRouteEvent
+  | AskingRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -433,6 +449,7 @@ async function bootHost(base: HostBase): Promise<void> {
     crew?: WiredCrew
     mines?: WiredMines
     attention?: WiredAttention
+    asking?: WiredAsking
   } = {}
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
   // install-moment writer, then the module's) and the cut-1 module steps, whose walk route step 4
@@ -496,6 +513,8 @@ async function bootHost(base: HostBase): Promise<void> {
   const servedCrew = serveCrew({ dispatcher, sections })
   // After the board's sections: `tails` follows the board chunks (14 §4.2).
   const servedConversation = serveConversation({ dispatcher, sections })
+  // B-M30…B-M32 and the `asks` section (ISSUE-140).
+  const servedAsking = serveAsking({ dispatcher, sections })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -575,7 +594,8 @@ async function bootHost(base: HostBase): Promise<void> {
           ...BOARD_FRAMES,
           ...LEDGER_FRAMES,
           ...CONVERSATION_READ_FRAMES,
-          ...ATTENTION_FRAMES
+          ...ATTENTION_FRAMES,
+          ...ASKING_FRAMES
         ],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
@@ -592,6 +612,8 @@ async function bootHost(base: HostBase): Promise<void> {
         scheduler,
         log,
         sessionEnd: nodeOsSessionSignals(log),
+        // No event is routed into the asking module once the Host is closing (ISSUE-140).
+        stopRoutes: () => modules.asking?.stop(),
         exit
       })
       return createBootSteps({
@@ -890,6 +912,49 @@ async function bootHost(base: HostBase): Promise<void> {
             hostEpoch: epoch,
             log
           })
+          // Asking (ISSUE-140: wiring/routes/askingRoutes.ts), once suppliers, conversation,
+          // observation, crew, mines and attention exist, and ahead of the cut-1 routes, so a
+          // departure closes the dwarf's asks before conversation records its session end. The
+          // hook ingress route is built here; listening on it and persisting its port is boot
+          // step 6's (later: ISSUE-209).
+          if (modules.suppliers === undefined) {
+            throw new HostInvariantError('asking is wired after suppliers')
+          }
+          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const askingDeps: AskingWiringDeps = {
+            db,
+            transactions,
+            bus,
+            sources: { departures: bus, resolutions: bus },
+            clock,
+            scheduler,
+            ids,
+            hostEpoch: epoch,
+            log,
+            frames: connections,
+            claudeProviderId: 'claude' as ProviderId,
+            suppliers: modules.suppliers,
+            observed: observed.adapters,
+            conversation: conversation.conversation,
+            crew: modules.crew.crew,
+            mines: modules.mines.mines.queries,
+            attention: modules.attention.attention,
+            observation: {
+              sessions: modules.observation.crew.sessions,
+              control: { nudge: (hint) => modules.observation?.nudge(hint) }
+            },
+            preferences: {
+              queries: modules.preferences.preferences.queries,
+              channelTokens: modules.preferences.channelTokens
+            },
+            keystrokes: {
+              // No relay into an observed terminal yet (later: ISSUE-167): nothing is pressed.
+              relay: NO_KEYSTROKE_RELAY,
+              transcripts: new FsTranscriptTail(fs),
+              redact: redactSecrets
+            }
+          }
+          modules.asking = servedAsking.wire(askingDeps)
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.

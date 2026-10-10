@@ -17,7 +17,7 @@
 // Claude path reports its resolutions through the hook route (observedClaudeAsks.ts, ISSUE-134);
 // OpenCode's answered-elsewhere signal waits on SP-09 (ISSUE-229), and until it passes OpenCode
 // reports `answeredElsewhere: false` (21 §9). Driver `ask.resolved` joins in EPIC-10. Composed into
-// the Host's main by ISSUE-140 (later), with closing by death (`closeForDwarf`).
+// the Host's main by ISSUE-140 (routes/askingRoutes.ts), with closing by death (`closeForDwarf`).
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { AskBroker } from '../../modules/asking'

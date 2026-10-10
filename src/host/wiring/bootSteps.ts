@@ -193,7 +193,8 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
         },
     // 4. Construct the modules, wire bridges and event routes (05 §4), over the database step 2
     //    opened; each module joins in its own wiring issue (suppliers: ISSUE-159, mines: ISSUE-093,
-    //    crew: ISSUE-094, observation: ISSUE-095, attention: ISSUE-119). Every route that reads an
+    //    crew: ISSUE-094, observation: ISSUE-095, attention: ISSUE-119, asking: ISSUE-140, after
+    //    attention and before the cut-1 routes, with the hook ingress's route). Every route that reads an
     //    observation event is subscribed here, before step 7's catch-up publishes the first one.
     //    Attention's tray notifier supervisor starts here too, after step 1's endpoint is
     //    listening, fed with the clients already attached and every later attach and detach.
@@ -208,7 +209,8 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
         },
     // 5. launching.recoverAfterHostStart(): reconcile, verify, classify, report, cleanup.
     placeholder('recover-sessions', 'ISSUE-173'),
-    // 6. The MCP endpoint (DelegationServer.listen) and the hook ingress.
+    // 6. The MCP endpoint (DelegationServer.listen) and the hook ingress: its listener and port
+    //    (ADR-016 item 3); the route it serves is built at step 4 (ISSUE-140).
     placeholder('start-endpoints', 'ISSUE-209'),
     // 7. observation.catchUp(), then start() (ISSUE-095). The catch-up pass of what providers
     //    wrote while no Host ran may go on after `ready` (16 §4.3 `catchUp`).

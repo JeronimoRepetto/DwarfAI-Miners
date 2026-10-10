@@ -4,17 +4,17 @@
 // composed by the Host (R6).
 // ISSUE-128: `createAsking`, the broker's two answer paths (`answerPermission`, `answerQuestion`)
 // over the AskRepository, conversation's `AnswerRecords` and the answer channels; the Host composes
-// it (later: ISSUE-140).
+// it (ISSUE-140: wiring/routes/askingRoutes.ts).
 // ISSUE-132: `createAskOpening`, the broker's `open` with ADR-011's capability-based emission over
 // the `SessionCapabilities` port; the Host binds that port to suppliers' capability data and
-// composes it (later: ISSUE-140).
+// composes it (ISSUE-140: wiring/routes/askingRoutes.ts).
 // ISSUE-139: `createAskingResetStep`, the module's step of the Reset-metrics saga (ADR-023).
 // ISSUE-130: the `AskQueries` port and the `AskOpened` / `AskStepChanged` events, for the asks
 // frame projections (transport/frames/askFrames.ts); `createAskQueries`, the read model behind the
 // snapshot's `asks` section (transport/snapshot/asksSection.ts) over `AskRepository.live` (owner
 // amendment L).
 // ISSUE-129: `createAskStep`, the broker's `setStep` (S6.04, INV-75), which B-M32 serves
-// (transport/methods/askingSetStep.ts); the Host composes it (later: ISSUE-140).
+// (transport/methods/askingSetStep.ts); the Host composes it (ISSUE-140).
 // ISSUE-134: the broker's external resolutions (`Asking.resolutions`, with ADR-010 item 10's
 // keystroke attribution) and the observed-Claude keystroke channel's adapters
 // (`adapters/observedClaude/`: the channel, the prompt registry, the key map, the transcript tail),
