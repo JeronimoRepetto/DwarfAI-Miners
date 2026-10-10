@@ -109,7 +109,7 @@ describe('WelcomeStep', () => {
     ])
   })
 
-  it('[US-SET-012.AC03, NFR-A11Y] the step is keyboard reachable: Tab walks the toggles and Activate, and stays inside', async () => {
+  it('[US-SET-012.AC03, NFR-A11Y-03] the step is keyboard reachable: Tab walks the toggles and Activate, and stays inside', async () => {
     const wrapper = await step()
     const [claude, openCode] = switches()
     const [activate] = actions()

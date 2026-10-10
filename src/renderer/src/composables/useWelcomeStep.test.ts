@@ -283,7 +283,7 @@ describe('useWelcomeStep (14 §6.4; A-N32, B-F24; 07 machine 41)', () => {
     expect(step.shown.value).toBe(false)
   })
 
-  it('[S41.05, 14 §3.10] an answer that failed or timed out keeps the step shown with nothing to report', async () => {
+  it('[S41.05] an answer that failed or timed out (14 §3.10) keeps the step shown with nothing to report', async () => {
     const host = installHost(page(5, due()), () =>
       Promise.resolve({
         ok: false,
