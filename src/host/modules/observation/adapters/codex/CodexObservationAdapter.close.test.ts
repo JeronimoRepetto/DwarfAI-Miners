@@ -150,6 +150,18 @@ function watchOver(listing: SharedProcessListing, clock: FakeClock): ProcessGone
 }
 
 describe('CodexObservationAdapter closing (owner amendment I)', () => {
+  it('[FM-059, US-OBS-005] a rollout first read long after its last record is quiet since that record: it closes within one confirmation of first sight', async () => {
+    const HOURS_AGO = T0 - 2 * 3_600 * S
+    const { home } = await codexHome(
+      meta(HOURS_AGO) + person(HOURS_AGO + S, 1) + dwarf(HOURS_AGO + 2 * S, 1)
+    )
+    const { cycle, runFor } = codexWorld(home)
+    expect((await cycle()).filter((e) => e.kind === 'closed')).toEqual([])
+
+    const closed = await runFor(PROCESS_GONE_CONFIRM_MS + 30 * S)
+    expect(closed.map((e) => e.sourceEventId)).toContain('process-gone')
+  })
+
   it('[FM-059, S4.33, INV-26] a quiet Codex session closes once two listings 30 s apart show no Codex process in its folder, never before 300 s of quiet', async () => {
     const { home } = await codexHome(meta(T0) + person(T0 + S, 1) + dwarf(T0 + 2 * S, 1))
     const { cycle, runFor } = codexWorld(home)

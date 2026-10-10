@@ -39,6 +39,7 @@
 //   not constructed by the Host yet (later: EPIC-10); without a handler every end runs.
 // - The cut-1 cross-epic routes (`TurnEnded`, `DwarfDeparted` clean-ups): routes/cut1Routes.ts
 //   (ISSUE-120); `ask.*` → `startAsking` / `stopAsking` join with asking (later: ISSUE-140).
+import { providerIdentityKey } from '../../kernel/domain/providerIdentity'
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { Clock } from '../../kernel/ports/clock'
@@ -227,8 +228,34 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
   const logFailure = (error: unknown): void =>
     log.record({ level: 'error', event: 'uncaught', subsystem: 'host', errCode: errorCode(error) })
 
+  /** An observed session's dwarf leaves for the cause its pending end gives (08 §2.3). */
+  const depart = (dwarf: {
+    id: DwarfId
+    pendingEnd: Parameters<typeof departureCause>[0]
+    owned: boolean
+  }): void => {
+    const cause = departureCause(dwarf.pendingEnd, dwarf.owned)
+    if (cause !== null) crew.commands.sessionClosed(dwarf.id, cause)
+  }
+
   /** The arrivals the `SessionObserved` route started that have not answered yet. */
   const routed = new Set<Promise<unknown>>()
+  /** How many arrivals are in flight per identity (`providerIdentityKey`). */
+  const arriving = new Map<string, number>()
+  /**
+   * The identities whose ending was observed while their arrival was in flight (owner decision B,
+   * 2026-10-10: a session never seen live arrives already departed). Their dwarf departs inside
+   * its own `DwarfArrived` publish, before the board frames read it (subscribed here, at step 4,
+   * ahead of the mines wiring's `publishBoardFrames`), so it never sends `dwarf.arrived` and is
+   * never shown present; it is in its mine's history and its ore is credited.
+   */
+  const endedBeforeArrival = new Set<string>()
+  bus.subscribe('DwarfArrived', ({ payload }) => {
+    const key = providerIdentityKey(payload.identity)
+    if (!endedBeforeArrival.delete(key)) return
+    const dwarf = crew.queries.get(payload.dwarfId)
+    if (dwarf !== null && !dwarf.departed) depart(dwarf)
+  })
 
   return {
     crew,
@@ -240,6 +267,8 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
     },
     route: (mines) => {
       bus.subscribe('SessionObserved', ({ payload }) => {
+        const key = providerIdentityKey(payload.identity)
+        arriving.set(key, (arriving.get(key) ?? 0) + 1)
         const firstMessage = payload.firstMessage ?? false
         const arrival = mines.commands
           .resolveForSession(payload.cwd, firstMessage)
@@ -253,15 +282,41 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
             })
           })
           .catch(logFailure)
-          .finally(() => routed.delete(arrival))
+          .finally(() => {
+            routed.delete(arrival)
+            const left = (arriving.get(key) ?? 1) - 1
+            if (left > 0) arriving.set(key, left)
+            else {
+              arriving.delete(key)
+              endedBeforeArrival.delete(key)
+            }
+          })
         routed.add(arrival)
       })
       bus.subscribe('SessionClosedObserved', ({ payload }) => {
         const dwarfId = dwarfOf(payload.identity)
         const dwarf = dwarfId === null ? null : crew.queries.get(dwarfId)
-        if (dwarf === null || dwarf.departed) return
-        const cause = departureCause(dwarf.pendingEnd, dwarf.owned)
-        if (cause !== null) crew.commands.sessionClosed(dwarf.id, cause)
+        if (dwarf !== null && !dwarf.departed) depart(dwarf)
+        // Ended while its arrival is in flight: it departs as it arrives (owner decision B).
+        const ending = providerIdentityKey(payload.identity)
+        if (dwarf === null && arriving.has(ending)) endedBeforeArrival.add(ending)
+        // INV-36: a subagent ran inside its session's process, so the session's ending ends every
+        // present subagent of it too, in whichever mine its own folder put it (owner task
+        // 2026-10-10). Its own stream may never be read again to say so.
+        const { identity } = payload
+        if (identity.providerAgentId !== undefined) return
+        for (const mine of mines.queries.list({ sortBy: 'name', direction: 'asc' })) {
+          for (const present of crew.queries.crewOf(mine.mineId)) {
+            const own = present.identity
+            if (
+              own.providerAgentId !== undefined &&
+              own.providerId === identity.providerId &&
+              own.providerSessionId === identity.providerSessionId
+            ) {
+              depart(present)
+            }
+          }
+        }
       })
       bus.subscribe('SessionActivityObserved', ({ payload }) => {
         const dwarfId = dwarfOf(payload.identity)

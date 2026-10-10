@@ -25,7 +25,9 @@
 // (`task_complete` ends a turn, 15 §5), so a thread is closed once its rollout is quiet for 300 s
 // and two process listings 30 s apart show no Codex process in its folder (`../base/processGone.ts`;
 // rollout growth is its activity: `logs_2.sqlite`, the heartbeat, is not read, and `codex exec`
-// writes none), or once the person archives it (`threads.archived = 1`). A closed thread resumed
+// writes none; quiet since its newest record's own time, so a rollout first read long after it was
+// written is not quiet from first sight, owner decision 2026-10-10), or once the person archives it
+// (`threads.archived = 1`). A closed thread resumed
 // under its own id (`codex resume`) is a new session, `<thread id>~resumed-<marker>`, derived from
 // the rollout's record times and the ended-agents ledger alone (`../base/generations.ts`), so a Host
 // restart derives the same identity and records read again add no rows.
@@ -339,10 +341,14 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
     const threadId = head.threadId
     this.streamOfThread.set(threadId, source.streamId)
     const times = await this.timelineOf(source, start, threadId)
+    let newest: Instant | undefined
     for (const [offset, text] of lines) {
       const record = parseRolloutLine(text)
       if (record === null) continue
-      if (record.at !== null) times.timeline.add(record.at)
+      if (record.at !== null) {
+        times.timeline.add(record.at)
+        newest = newest === undefined ? record.at : Math.max(newest, record.at)
+      }
       const step = stepRollout(state, record, { text, offset }, context)
       state = step.state
       const sessionId = this.generationOf(threadId, times.timeline, record.at)
@@ -351,8 +357,9 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
     }
     if (batch.next.value > start) {
       this.checkpoints.set(source.streamId, { offset: batch.next.value, state })
-      // Rollout growth is the session's activity (owner amendment I).
-      this.options.processWatch?.active(source.streamId)
+      // Rollout growth is the session's activity (owner amendment I), as of its newest record:
+      // a backlog read at first sight is quiet since then (owner decision 2026-10-10).
+      this.options.processWatch?.active(source.streamId, newest)
       this.settled.delete(source.streamId)
     }
     const closing = await this.closing(source, head, times.timeline)

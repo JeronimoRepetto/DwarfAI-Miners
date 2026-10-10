@@ -106,8 +106,11 @@ function watchOver(listing: SharedProcessListing, clock: FakeClock): ProcessGone
   })
 }
 
-function openCodeWorld(root: string, options: { ended?: Pick<EndedAgentLedger, 'has'> } = {}) {
-  const clock = new FakeClock(T0 + 10 * S)
+function openCodeWorld(
+  root: string,
+  options: { ended?: Pick<EndedAgentLedger, 'has'>; startAt?: number } = {}
+) {
+  const clock = new FakeClock(options.startAt ?? T0 + 10 * S)
   const processes = new FakeProcessControl()
   const listing = new SharedProcessListing({ processes, stems: OPENCODE_PROCESS_STEMS, clock })
   const adapter = new OpenCodeObservationAdapter({
@@ -143,6 +146,14 @@ function openCodeWorld(root: string, options: { ended?: Pick<EndedAgentLedger, '
 const base = { providerId: 'opencode', providerSessionId: SESSION }
 
 describe('OpenCodeObservationAdapter closing (owner amendment I)', () => {
+  it('[FM-059, US-OBS-005] a session first read long after its last change is quiet since that change: it closes within one confirmation of first sight', async () => {
+    const { cycle, runFor } = openCodeWorld(await storeRoot(), { startAt: T0 + 7_200 * S })
+    expect((await cycle()).filter((e) => e.kind === 'closed')).toEqual([])
+
+    const closed = await runFor(PROCESS_GONE_CONFIRM_MS + 30 * S)
+    expect(closed.map((e) => e.sourceEventId)).toContain('process-gone')
+  })
+
   it('[FM-059, S4.33, INV-26] a quiet OpenCode session closes once two listings 30 s apart show no OpenCode process in its folder, never before 300 s of quiet', async () => {
     const { cycle, runFor } = openCodeWorld(await storeRoot())
     expect((await cycle()).filter((e) => e.kind === 'closed')).toEqual([])

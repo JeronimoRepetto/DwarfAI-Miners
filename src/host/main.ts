@@ -719,6 +719,8 @@ async function bootHost(base: HostBase): Promise<void> {
             // One set of the module's stores: crew's `ProviderIdentity → DwarfId` reads share it.
             stores: createSqliteObservationStores({ db, scope: transactions, clock }),
             ...observed,
+            // Owner decision 2026-10-10: no session arrives for history before the install moment.
+            installMoment: () => ledgerRepository?.installMoment() ?? null,
             sink: modules.batchSink,
             transactions: batches.transactions,
             bus,
