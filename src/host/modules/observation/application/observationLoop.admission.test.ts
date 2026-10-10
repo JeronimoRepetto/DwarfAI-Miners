@@ -166,16 +166,20 @@ function world(options: { installMoment?: Instant | null } = {}) {
 }
 
 describe('ObservationLoop admits only live sessions written after the install moment', () => {
-  it('[US-OBS-005, ADR-006] a stream whose newest record predates the install moment moves its cursor to its end with no arrival, no write and no ledger row', async () => {
+  it('[US-OBS-005, ADR-006] a stream whose newest record predates the install moment, of a process not known to run, moves its cursor to its end with no arrival, no write and no ledger row', async () => {
+    // Whose process runs arrives present instead (the #1260 regression, case below); not live or
+    // unknown, history stays the coal backfill's.
     const w = world()
-    w.presence.says.set('session-1', 'live')
+    w.presence.says.set('session-1', 'not-live')
     w.place('s1', transcript(identity(1), BEFORE, 'a'))
+    w.place('s2', transcript(identity(2), BEFORE, 'b'))
     w.loop.start()
     await w.loop.whenIdle()
     await w.poll()
 
     expect(w.announced()).toEqual([])
     expect(w.cursors.get('s1')?.value).toBe(1_000)
+    expect(w.cursors.get('s2')?.value).toBe(1_000)
     expect(w.sink.applied).toEqual([])
     expect(w.ended.has(identity(1))).toBe(false)
     w.loop.stop()
@@ -354,6 +358,90 @@ describe('ObservationLoop admits only live sessions written after the install mo
     w.loop.start()
     await w.loop.whenIdle()
     expect(w.announced()).toEqual([identity(1)])
+    w.loop.stop()
+  })
+})
+
+describe('ObservationLoop keeps live observed sessions present (regression of #1260)', () => {
+  /** `streamId` answers `first` from no cursor, then `later` once `later` is set, from 1 000 on. */
+  function growing(w: ReturnType<typeof world>, streamId: string, first: ObservedEvent[]) {
+    const state: { later: ObservedEvent[] | null } = { later: null }
+    w.adapter.sources.push(source(streamId))
+    w.adapter.onRead(streamId, (from) => {
+      if (from === null || from.value === 0) {
+        return { events: first, next: cursorOf(streamId, 1_000), warnings: [] }
+      }
+      if (from.value === 1_000 && state.later !== null) {
+        return { events: state.later, next: cursorOf(streamId, 2_000), warnings: [] }
+      }
+      return { events: [], next: from, warnings: [] }
+    })
+    return state
+  }
+
+  it('[US-OBS-005.AC01, FM-059] a session whose process runs arrives present even when its newest record predates the install moment', async () => {
+    // The E2E legacy-launched shape: a live process, its transcript written just before the
+    // Host's fresh install.
+    const w = world()
+    w.presence.says.set('session-1', 'live')
+    w.place('s1', transcript(identity(1), BEFORE, 'a'))
+    w.loop.start()
+    await w.loop.whenIdle()
+
+    expect(w.announced()).toEqual([identity(1)])
+    expect(w.closings()).toEqual([])
+    w.loop.stop()
+  })
+
+  it('[US-OBS-005, S4.41] a session that arrived departed as not live and later writes while its process runs comes back present as its resumed generation', async () => {
+    const w = world()
+    w.presence.says.set('session-1', 'not-live')
+    const stream = growing(w, 's1', transcript(identity(1), AFTER, 'a'))
+    w.loop.start()
+    await w.loop.whenIdle()
+    // Crew's route makes it and departs it as it arrives; the next cycle writes its batch.
+    const first = w.dwarfs.bind(identity(1), MINE, AFTER)
+    w.dwarfs.depart(first, AFTER + 10_000)
+    await w.poll()
+    expect(w.sink.applied.map((b) => b.dwarfId)).toEqual([first])
+
+    // The verdict was wrong, or the person resumed it: its process runs and it writes again.
+    w.presence.says.set('session-1', 'live')
+    stream.later = transcript(identity(1), AFTER + 60_000, 'b')
+    await w.poll()
+
+    const resumed: ProviderIdentity = {
+      providerId: 'simulated',
+      providerSessionId: `session-1~resumed-${Math.floor((AFTER + 10_000) / 1_000)}`
+    }
+    expect(w.announced()).toEqual([identity(1), resumed])
+    expect(w.closings()).toEqual([identity(1)])
+    const second = w.dwarfs.bind(resumed, MINE, AFTER + 60_000)
+    await w.poll()
+    expect(w.sink.applied.map((b) => b.dwarfId)).toEqual([first, second])
+    expect(w.sink.applied[1]!.usage.map((u) => u.unitKey)).toEqual(['b-unit'])
+    expect(w.cursors.get('s1')?.value).toBe(2_000)
+    w.loop.stop()
+  })
+
+  it('[S4.40] a departed session whose process is not known to run takes nothing from a late write', async () => {
+    const w = world()
+    w.presence.says.set('session-1', 'not-live')
+    const stream = growing(w, 's1', transcript(identity(1), AFTER, 'a'))
+    w.loop.start()
+    await w.loop.whenIdle()
+    const first = w.dwarfs.bind(identity(1), MINE, AFTER)
+    w.dwarfs.depart(first, AFTER + 10_000)
+    await w.poll()
+
+    for (const says of ['not-live', 'unknown'] as const) {
+      w.presence.says.set('session-1', says)
+      stream.later = transcript(identity(1), AFTER + 60_000, `late-${says}`)
+      await w.poll()
+      stream.later = null
+    }
+    expect(w.announced()).toEqual([identity(1)])
+    expect(w.sink.applied.map((b) => b.dwarfId)).toEqual([first])
     w.loop.stop()
   })
 })
