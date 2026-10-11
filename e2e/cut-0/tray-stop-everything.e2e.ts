@@ -24,7 +24,7 @@ import { exitsWithin } from './stopAllWorld.ts'
 test.describe.configure({ timeout: 180_000 })
 
 /** The confirm button of the window's confirmation (ISSUE-317; the design's copy marker). */
-const CONFIRM = /confirm button naming the count/
+const CONFIRM = /^Stop \d+ dwarfs? and quit$|^Stop everything and quit$/
 
 test.describe('cut 0: Quit and Stop everything and quit from the tray (ISSUE-053)', () => {
   let launched: LaunchedApp | undefined

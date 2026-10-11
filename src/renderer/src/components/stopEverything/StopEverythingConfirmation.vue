@@ -11,9 +11,8 @@
  *
  * Presentational: useStopEverything, owned by App, holds the state and the IPC (ADR-033 item 2).
  *
- * The words are design's (ADR-018 D5 copy items 4–7 and 9; ADR-002 O-3), looked up in the copy dictionary, and none
- * is written yet: each is a `⟦COPY NEEDED⟧` marker naming its copy item, the values it will carry filled into its
- * `{slot}`. Cancel is the design's own dialog label (copy.md, Dialog).
+ * The words are design's (ADR-018 D5 copy items 4–7 and 9; ADR-002 O-3), looked up in the copy dictionary, the values
+ * it carries filled into their `{slot}`. Cancel is the design's own dialog label (copy.md, Dialog).
  */
 import { computed } from 'vue'
 import { formatList, t } from '@dwarfai/contracts'

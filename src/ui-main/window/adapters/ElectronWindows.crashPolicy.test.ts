@@ -178,7 +178,7 @@ describe('renderer crash and hang policy (ADR-019 item 11; 13 FM-043, FM-044)', 
     expect(loads()).toBe(1)
   })
 
-  it('[FM-043] the crash message is a native box parented to its window, with marked placeholder copy', async () => {
+  it('[FM-043] the crash message is a native box parented to its window, with the approved copy', async () => {
     const asked: { parent: unknown; options: { message: string; buttons: string[] } }[] = []
     const dialog = {
       showMessageBox: (parent: unknown, options: { message: string; buttons: string[] }) => {
@@ -195,13 +195,11 @@ describe('renderer crash and hang policy (ADR-019 item 11; 13 FM-043, FM-044)', 
       RENDERER_CRASHED_MESSAGE.reload,
       RENDERER_CRASHED_MESSAGE.dismiss
     ])
-    // Never invented copy (AGENTS.md §8.1): every string is the marked placeholder of the design request.
-    for (const text of [
-      RENDERER_CRASHED_MESSAGE.message,
-      RENDERER_CRASHED_MESSAGE.reload,
-      RENDERER_CRASHED_MESSAGE.dismiss
-    ]) {
-      expect(text).toMatch(/^⟦COPY NEEDED: DG "renderer crashed".*⟧$/)
-    }
+    // The owner-approved copy (2026-10-11).
+    expect(RENDERER_CRASHED_MESSAGE).toMatchObject({
+      message: 'This window stopped working twice in a row. Your dwarfs are not affected.',
+      reload: 'Reload window',
+      dismiss: 'Close window'
+    })
   })
 })

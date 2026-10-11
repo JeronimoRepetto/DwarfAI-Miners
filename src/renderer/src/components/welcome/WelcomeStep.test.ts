@@ -4,15 +4,15 @@
  * (`molecules/dialog`, through ModalDialog: Tab trapped, focus held inside) with one toggle per offered option, each
  * on, and one Activate. There is no close, skip or "Not now" control, and Esc closes nothing (US-SET-012.AC06): the
  * only way out is Activate, with the ticks as the person left them. A per-integration failure of the answer is one
- * line, shown once with one dismiss (ADR-016; S41.05). Every string without approved copy is a marked placeholder
- * (TC-224-04); the option labels are the approved ones.
+ * line, shown once with one dismiss (ADR-016; S41.05). Every string is the owner-approved copy
+ * (TC-224-04), and none is a COPY NEEDED placeholder.
  */
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import WelcomeStep from './WelcomeStep.vue'
 import type { WelcomeFailure, WelcomeOption } from '../../composables/useWelcomeStep'
 
-const COPY_NEEDED = /^⟦COPY NEEDED: .+⟧$/
+const COPY_NEEDED = /⟦COPY NEEDED/
 
 const BOTH: WelcomeOption[] = [
   { id: 'claude-hooks', ticked: true },
@@ -81,7 +81,7 @@ describe('WelcomeStep', () => {
     ])
     expect(switches().map((toggle) => toggle.getAttribute('aria-checked'))).toEqual(['true'])
     expect(actions()).toHaveLength(1)
-    expect(actions()[0]!.textContent?.trim()).toMatch(COPY_NEEDED)
+    expect(actions()[0]!.textContent?.trim()).toBe('Activate')
   })
 
   it('[US-SET-012.AC06] there is no close or skip control; Activate with both unticked is the only way out', async () => {
@@ -148,12 +148,14 @@ describe('WelcomeStep', () => {
 
     const lines = [...document.body.querySelectorAll('[role="dialog"] [role="alert"]')]
     expect(lines).toHaveLength(1)
-    expect(lines[0]!.textContent).toMatch(COPY_NEEDED)
+    expect(lines[0]!.textContent).toBe(
+      'Could not change OpenCode · permission requests. You can try again in Settings › Integrations.'
+    )
     expect(lines[0]!.textContent).toContain('OpenCode · permission requests')
     // The consent is answered: no toggle and no Activate, only the one dismiss.
     expect(switches()).toEqual([])
     expect(actions()).toHaveLength(1)
-    expect(actions()[0]!.textContent?.trim()).toMatch(COPY_NEEDED)
+    expect(actions()[0]!.textContent?.trim()).toBe('Close')
 
     actions()[0]!.click()
     expect(wrapper.emitted('acknowledge')).toHaveLength(1)
@@ -165,16 +167,18 @@ describe('WelcomeStep', () => {
     expect(dialog()).toBeNull()
   })
 
-  it('[ADR-016] the step strings without approved copy are marked placeholders', async () => {
+  it('[ADR-016] the step title and body are the approved copy, with no placeholder', async () => {
     await step()
 
-    expect(dialog()?.getAttribute('aria-label')).toMatch(COPY_NEEDED)
-    expect(document.body.querySelector('[role="dialog"] .dm-dialog__title')?.textContent).toMatch(
-      COPY_NEEDED
+    expect(dialog()?.getAttribute('aria-label')).toBe('Connect your tools')
+    expect(document.body.querySelector('[role="dialog"] .dm-dialog__title')?.textContent).toBe(
+      'Connect your tools'
     )
-    expect(
-      document.body.querySelector('[role="dialog"] .welcome-step__body')?.textContent?.trim()
-    ).toMatch(COPY_NEEDED)
+    const body = document.body.querySelector('[role="dialog"] .welcome-step__body')?.textContent
+    expect(body?.trim()).toBe(
+      "DwarfAI-Miners can connect with the tools below, so your dwarfs update instantly and their permission requests can be answered from the panel. Each one adds a small entry to that tool's own settings. Anything you leave off stays off; you can turn it on later in Settings › Integrations."
+    )
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).not.toMatch(COPY_NEEDED)
   })
 
   it('[S41.08] nothing is drawn while the step is not shown', async () => {

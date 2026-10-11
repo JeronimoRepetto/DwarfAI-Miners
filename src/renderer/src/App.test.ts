@@ -4212,7 +4212,7 @@ describe('App Stop everything and quit (ISSUE-317)', () => {
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog).not.toBeNull()
     // The legacy board has running dwarfs; none of them is in the Host-owned count.
-    expect(dialog?.textContent).toContain('0 sessions DwarfAI started will end')
+    expect(dialog?.textContent).toContain('No dwarf started by DwarfAI-Miners is running.')
 
     document.body.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click()
     await flushPromises()

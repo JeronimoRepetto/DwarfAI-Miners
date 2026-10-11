@@ -3,7 +3,7 @@
 // the message out; `useHostConnection` holds the view and `HostStateMessage.vue` draws the message.
 //
 // The words are design's (ADR-002 O-4, O-5; 13 FM-007 "O-15 crash-loop variant"): each is a key of the copy dictionary,
-// whose value is a marked `⟦COPY NEEDED⟧` placeholder until design gives it (25-AGENTS §8.1), never shipped text.
+// whose value is the approved copy (25-AGENTS §8.1).
 import { t, type PlainCopyKey, type HostConnectionView } from '@dwarfai/contracts'
 
 export type HostStateVariant =
