@@ -1773,69 +1773,35 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     ])
   })
 
-  it('[ADR-001] in cut 1 no legacy publish, crediting or notifier is composed and LegacyAgentRegistryFeed is composed', async () => {
-    // TC-123-01, TC-123-06: the table routes the cut-1 board and read rows to the Host, so today's composition gets
-    // none of its observer sinks (21 §2 cut 1 "Switched off in legacy"); the feed's cycles are the only ticks.
+  // AMENDED for ISSUE-124 (was: "[ADR-001] in cut 1 no legacy publish, crediting or notifier is composed and
+  // LegacyAgentRegistryFeed is composed"): the publish, crediting and feed halves moved to "cut-1 retirement" below; the
+  // notifier stays gated until ISSUE-125.
+  it('[ADR-001] in cut 1 no legacy notifier is composed', () => {
+    // TC-123-01: the table routes the cut-1 board and read rows to the Host, so today's composition gets no notifier
+    // (21 §2 cut 1 "Switched off in legacy"); the Host's level-3 notifications are the only ones (ADR-018).
     expect(legacyObserverOwner(ROUTES)).toBe('host')
-    expect(legacyObserverComposition(legacyObserverOwner(ROUTES))).toEqual({
-      pollTimer: false,
-      boardPublish: false,
-      ledgerCrediting: false,
-      projectsObserverWrites: false,
-      notifier: false
-    })
-    const reached: string[] = []
-    const surface: LegacyRuntimeSurface = {
-      pollIntervalMs: 2_000,
-      discovery: [
-        {
-          kind: 'claude',
-          scan: async () => {
-            reached.push('discovery')
-            return []
-          }
-        }
-      ],
-      registry: { replace: () => void reached.push('registry') },
-      board: { publish: () => void reached.push('board publish') },
-      ledger: { credit: () => void reached.push('crediting') },
-      projects: { record: () => void reached.push('projects-store write') },
-      notifier: { update: () => void reached.push('notifier') }
-    }
-    const feed = composeLegacyAgentRegistryFeed({
-      release: ROUTES_RELEASE,
-      legacy: surface,
-      timers: { every: () => () => {} }
-    })
-    expect(feed).toBeDefined()
-    feed?.start()
-    await feed?.whenIdle()
-    expect(reached).toEqual(['discovery', 'registry'])
-    feed?.stop()
+    expect(legacyObserverComposition(legacyObserverOwner(ROUTES))).toEqual({ notifier: false })
   })
 
-  it("[ADR-001] with the cut-1 rows flipped back to legacy the legacy observer, crediting and notifier are composed again, and never together with the Host observer's writes", async () => {
+  // AMENDED for ISSUE-124 (was: "… the legacy observer, crediting and notifier are composed again, and never together
+  // with the Host observer's writes"): after the cut-1 retirement a rollback table composes no observer, publish or
+  // crediting ("cut-1 retirement" below); only the notifier is still gated until ISSUE-125.
+  it("[ADR-001] with the cut-1 rows flipped back to legacy the legacy notifier is composed again, never together with the Host observer's writes, and the retired rows are served by today's runtime", async () => {
     const rolledBack = rollbackOf(cut1, 'cut-1')
     expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
-    // Today's composition gets every observer sink back, and the build's Host rollback setting must be on with it.
+    // Today's notifier comes back, and the build's Host rollback setting must be on with it.
     expect(legacyObserverOwner(rolledBack.routes)).toBe('legacy')
     expect(legacyObserverComposition(legacyObserverOwner(rolledBack.routes))).toEqual({
-      pollTimer: true,
-      boardPublish: true,
-      ledgerCrediting: true,
-      projectsObserverWrites: true,
       notifier: true
     })
     expect(cut1RowsRouteLegacy(rolledBack)).toBe(true)
-    // In the release table the reverse: the Host observer writes and today's sinks are off. The two never meet.
+    // In the release table the reverse: the Host observer writes and today's notifier is off. The two never meet.
     for (const table of [cut1, rolledBack]) {
       const legacyWrites = legacyObserverComposition(legacyObserverOwner(table.routes))
       const hostWrites = !cut1RowsRouteLegacy(table)
-      for (const sink of ['ledgerCrediting', 'notifier', 'boardPublish'] as const) {
-        expect(legacyWrites[sink], `${table === cut1 ? 'release' : 'rollback'} ${sink}`).toBe(
-          !hostWrites
-        )
-      }
+      expect(legacyWrites.notifier, `${table === cut1 ? 'release' : 'rollback'} notifier`).toBe(
+        !hostWrites
+      )
     }
     // Lead resolution H1: the rows cut 1 retired route `legacy` with today's shape again, and the router serves them
     // through today's runtime; the rows of earlier cuts keep their routes.
@@ -2018,5 +1984,84 @@ describe('cut-0 retirement', () => {
     }
     expect(existsSync(resolve(SRC, 'main/shell/window.ts'))).toBe(false)
     expect(existsSync(resolve(SRC, 'main/shell/tray.ts'))).toBe(false)
+  })
+})
+
+describe('cut-1 retirement (21 §2 cut 1)', () => {
+  // ISSUE-124 (21 §2 cut 1 "Retired at the end"; 21 §1 items 3, 6, 7; 21 §2.1 item 4): after the cut-1 soak (OQ-71)
+  // today's observer composition leaves LegacyRuntimeRoute whatever the route table, so a table that routes the cut-1
+  // rows `legacy` again composes none of it either: from here cut 1 rolls forward only. Only the registry-only
+  // discovery of LegacyAgentRegistryFeed stays (21 §3, until the end of cut 4).
+  const cut1: RouteTable = {
+    release: ROUTES_RELEASE,
+    routes: ROUTES,
+    unrouted: UNROUTED,
+    retired: RETIRED,
+    adapters: LEGACY_BRIDGE_ADAPTERS
+  }
+  const SRC = resolve(import.meta.dirname, '../..')
+  const legacyRoute = (): string =>
+    readFileSync(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'), 'utf8')
+
+  it('[ADR-001] after the cut-1 retirement LegacyRuntimeRoute composes no poller, scan wiring, publish gate, ledger crediting or projects-store board path, whatever the route table', () => {
+    for (const table of [cut1, rollbackOf(cut1, 'cut-1')]) {
+      expect(checkRouteTable(table, KEYS)).toEqual([])
+      const composition = legacyObserverComposition(legacyObserverOwner(table.routes))
+      for (const sink of [
+        'pollTimer',
+        'boardPublish',
+        'ledgerCrediting',
+        'projectsObserverWrites'
+      ]) {
+        expect(
+          composition,
+          `${table === cut1 ? 'release' : 'rollback'} ${sink}`
+        ).not.toHaveProperty(sink)
+      }
+    }
+    const source = legacyRoute()
+    // No poll timer: today's runtime ticks only through LegacyAgentRegistryFeed's cycles (the scan wiring it keeps).
+    expect(source).not.toMatch(/\bruntime\??\.start\(/)
+    // No publish gate → board path: A-P2 is BoardFacadeAdapter's push from the Host board.
+    expect(source).not.toMatch(/IPC_CHANNELS\.minesUpdated\b/)
+    // No ledger crediting: no vault store and no coal backfill; today's ledger is a vault that remembers nothing.
+    expect(source).not.toMatch(/openLedgerStore|runCoalBackfill/)
+    expect(source).toMatch(/store: nullLedgerStore\(\)/)
+    // No projects-store board path: what a tick observes is written nowhere, every read and person's act stays.
+    expect(source).toMatch(/withoutObserverWrites\(openedProjects\.store/)
+    expect(source).not.toMatch(
+      /observer\.(pollTimer|boardPublish|ledgerCrediting|projectsObserverWrites)\b/
+    )
+  })
+
+  it('[ADR-001] after the cut-1 retirement LegacyAgentRegistryFeed is still composed and writes only the legacy in-memory registry', async () => {
+    const reached: string[] = []
+    const surface: LegacyRuntimeSurface = {
+      pollIntervalMs: 2_000,
+      discovery: [
+        {
+          kind: 'claude',
+          scan: async () => {
+            reached.push('discovery')
+            return []
+          }
+        }
+      ],
+      registry: { replace: () => void reached.push('registry') },
+      board: { publish: () => void reached.push('board publish') },
+      ledger: { credit: () => void reached.push('crediting') },
+      projects: { record: () => void reached.push('projects-store write') },
+      notifier: { update: () => void reached.push('notifier') }
+    }
+    const feed = composeLegacyAgentRegistryFeed({
+      release: ROUTES_RELEASE,
+      legacy: surface,
+      timers: { every: () => () => {} }
+    })
+    expect(feed).toBeDefined()
+    feed?.start()
+    await feed?.whenIdle()
+    expect(reached).toEqual(['discovery', 'registry'])
+    feed?.stop()
   })
 })
