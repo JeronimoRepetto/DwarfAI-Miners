@@ -153,3 +153,13 @@ criteria on the three OSes and then ran for 7 days of normal use with no blockin
   `ipc-routing.contract.test.ts` `describe('cut-1 retirement (21 §2 cut 1)')` and
   `src/legacy-bridge/retiredComposition.test.ts`. The legacy files stay until cut 5; the dependency-cruiser legacy
   exclude (`^src/(main|shared)/`) is unchanged, because no legacy file left the tree. Soak record filled above.
+- **2026-10-11, ISSUE-125 (retirement).** Today's notifier (`notifyDecision` → Electron `Notification`) and its
+  composition are removed from `LegacyRuntimeRoute.ts` whatever the route table: its toast identity
+  (`APP_USER_MODEL_ID` set for the legacy notifier), its focus input (the `setOpenMine` handler, never served since A-44
+  routes `ui-local`), and the Panel's `visible` and `show` members it alone read. The Host's attention policy, drawn
+  by the UI's `ElectronNotificationDisplay` through the tray `notifier` connection, is the only way to an OS
+  notification (ADR-018 items 1, 7). With it `legacyObserverComposition` and `legacyObserverOwner` are gone: nothing
+  of today's observer is derived from a route table any more, so the Router bullet's "the rollback table composing
+  them again" no longer holds for any part. The A-42/A-43 preference store stays (both rows still route `legacy`), and
+  the `notifications/*` files stay until cut 5. Pinned by `ipc-routing.contract.test.ts`
+  `describe('cut-1 notifier retirement (21 §2 cut 1)')` and `src/legacy-bridge/retiredNotifier.test.ts`.
