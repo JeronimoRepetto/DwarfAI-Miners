@@ -304,8 +304,10 @@ describe('useHostConnection', () => {
     // AMENDED for the owner's ruling of 2026-10-02 (was: no toast at all): the reconnecting notice is now its one
     // toast; the crash-loop is the dialog and raises none, and no toast is about the board.
     const texts = useToasts().toasts.value.map((toast) => toast.text)
-    expect(texts).toContain('⟦COPY NEEDED: O-5 reconnecting message⟧')
-    expect(texts).not.toContain('⟦COPY NEEDED: O-15 crash-loop variant⟧')
+    expect(texts).toContain('Reconnecting… The panel is read-only until it is back.')
+    expect(texts).not.toContain(
+      'The part of DwarfAI-Miners that runs your dwarfs stopped several times in a few minutes, so it is no longer restarted on its own. The panel is read-only until it runs again.'
+    )
   })
 
   // Owner's ruling (2026-10-02): a notice without an action is a toast, raised once per entry into its state.
@@ -315,8 +317,9 @@ describe('useHostConnection', () => {
     await host.start()
     const raised = (text: string): number =>
       useToasts().toasts.value.filter((toast) => toast.text === text).length
-    const inJobText = '⟦COPY NEEDED: O-4 in-job message⟧'
-    const reconnectingText = '⟦COPY NEEDED: O-5 reconnecting message⟧'
+    const inJobText =
+      'Your dwarfs will stop when the program that opened DwarfAI-Miners closes. To keep them running, open DwarfAI-Miners from the Start menu.'
+    const reconnectingText = 'Reconnecting… The panel is read-only until it is back.'
     const inJobBefore = raised(inJobText)
     const reconnectingBefore = raised(reconnectingText)
 
@@ -334,7 +337,9 @@ describe('useHostConnection', () => {
 
     push(crashLoop)
     expect(
-      raised('⟦COPY NEEDED: O-15 crash-loop variant⟧'),
+      raised(
+        'The part of DwarfAI-Miners that runs your dwarfs stopped several times in a few minutes, so it is no longer restarted on its own. The panel is read-only until it runs again.'
+      ),
       'a notice with an action is no toast'
     ).toBe(0)
   })

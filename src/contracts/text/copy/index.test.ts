@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { COPY_LOCALES, DEFAULT_LOCALE, copyFor, en, formatList, t } from './index'
 
-const MARKER = /^⟦COPY NEEDED: [^⟦⟧]+⟧$/
-
 const valuesOf = (entry: (typeof en)[keyof typeof en]): string[] =>
   typeof entry === 'string' ? [entry] : Object.values(entry)
 
@@ -13,20 +11,29 @@ describe('the app copy dictionary', () => {
     expect(copyFor(['es-AR', 'de']).locale).toBe('en')
   })
 
-  it('serves approved copy exactly, and a missing copy item as its whole marker', () => {
+  it('serves approved copy exactly', () => {
     expect(t('dialog.cancel')).toBe('Cancel')
-    expect(t('hostState.crashLoop.text')).toBe('⟦COPY NEEDED: O-15 crash-loop variant⟧')
+    expect(t('hostState.crashLoop.text')).toBe(
+      'The part of DwarfAI-Miners that runs your dwarfs stopped several times in a few minutes, so it is no longer restarted on its own. The panel is read-only until it runs again.'
+    )
     expect(t('stopEverything.confirmation.count', { count: 2 })).toBe(
-      '⟦COPY NEEDED: Stop everything and quit, 2 sessions DwarfAI started will end, singular, plural and zero forms (ADR-018 D5 copy item 5)⟧'
+      '2 dwarfs started by DwarfAI-Miners will stop.'
     )
     expect(formatList(['Ori', 'Nori'])).toBe('Ori, Nori')
   })
 
-  it('never mixes a marker into other words: a value is a whole marker or holds none', () => {
+  it('serves the Stop everything and quit button in its zero, singular and plural forms', () => {
+    expect(t('stopEverything.confirmation.confirm', { count: 0 })).toBe('Stop everything and quit')
+    expect(t('stopEverything.confirmation.confirm', { count: 1 })).toBe('Stop 1 dwarf and quit')
+    expect(t('stopEverything.confirmation.confirm', { count: 3 })).toBe('Stop 3 dwarfs and quit')
+  })
+
+  it('ships no placeholder: no value of the catalog holds a COPY NEEDED marker', () => {
     const values = Object.values(en).flatMap(valuesOf)
     expect(values.length).toBeGreaterThan(0)
     for (const value of values) {
-      if (value.includes('⟦') || value.includes('⟧')) expect(value).toMatch(MARKER)
+      expect(value).not.toContain('⟦')
+      expect(value).not.toContain('⟧')
     }
   })
 

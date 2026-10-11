@@ -5,7 +5,7 @@
 //
 // - The status word is the kind's; a line with no reliable end (`reliability: 'inferred'`, kind
 //   `working`, see the Host's `deriveOutcomeLine`) never reads "Turn finished" (ADR-021 item 3): its
-//   word is the open design item of US-MSG-011, a `⟦COPY NEEDED⟧` marker until design writes it.
+//   word is the owner-approved "Gone quiet" (US-MSG-011).
 // - Parts follow in order, joined by " · "; counts take their singular and plural forms.
 // - The idle part shows from the first whole minute: a dwarf falls asleep one minute after it
 //   finishes (PO #7), and the line appends its idle time when it falls asleep (US-MSG-011

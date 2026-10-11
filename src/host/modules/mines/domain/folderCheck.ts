@@ -12,7 +12,7 @@
  * `MineBecameUnenterable` and `MineWire.unenterableReason`: a typed code, the same codes the
  * scoring walk gives a root it cannot list (S3.11). The person reads a sentence the renderer
  * picks by this code (later: ISSUE-253): `not-found` → FM-095's "Folder not found. It was moved
- * or deleted."; `access-denied` → ⟦COPY NEEDED: unreadable-folder reason sentence⟧ (FM-096).
+ * or deleted."; `access-denied` → the approved FM-096 sentence "Folder cannot be read. Check its permissions.", recorded for ISSUE-253, which ships it.
  */
 export type FolderUnenterableReason = 'not-found' | 'access-denied'
 

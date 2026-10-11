@@ -699,8 +699,8 @@ function endHost(pid: number | null): void {
   }
 }
 
-/** The confirm button of the window's Stop everything and quit confirmation (ISSUE-317; the design's copy marker). */
-const CONFIRM_BUTTON = /confirm button naming the count/
+/** The confirm button of the window's Stop everything and quit confirmation (ISSUE-317; the approved copy: "Stop N dwarfs and quit"). */
+const CONFIRM_BUTTON = /^Stop \d+ dwarfs? and quit$|^Stop everything and quit$/
 
 /**
  * Stop everything and quit as a person runs it from the window: the window asks for the tray item's flow (A-N34),
@@ -740,11 +740,11 @@ export async function chooseTrayItem(app: ElectronApplication, labelPart: string
   }, labelPart)
 }
 
-/** The tray menu's labels, as design's copy markers name them (`window/application/trayMenu.ts`). */
+/** The tray menu's labels, as the approved copy names them (`window/application/trayMenu.ts`). */
 export const TRAY_ITEMS = {
-  open: 'open item label',
-  quit: 'quit item label',
-  stopEverything: 'stops every session the app launched and quits'
+  open: 'Open DwarfAI-Miners',
+  quit: 'Quit (dwarfs keep running)',
+  stopEverything: 'Stop everything and quit'
 } as const
 
 /**
