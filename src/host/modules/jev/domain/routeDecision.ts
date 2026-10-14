@@ -5,6 +5,7 @@
 // (05 §2.2, R1).
 import type { JevFallbackReason } from '../../../kernel/domain/sharedContracts'
 import type { ProviderId } from '../../../kernel/domain/values'
+import { capEffort, type CappedEffort } from './capEffort'
 import { PROVIDER_EFFORT_LEVELS } from './capabilities/effortLadders'
 import type { ModelCapabilityEntry, ModelTier } from './capabilities/modelCapability'
 import {
@@ -186,14 +187,17 @@ export type JevDecideResult =
        * candidate genuinely occupies, not the one nothing at is live.
        * `options` is empty, at the originally resolved `tier`, when nothing
        * lives at any step — the same case that already leaves `model`
-       * undefined above.
+       * undefined above. Only candidates that can honour the effort ceiling
+       * are listed (ADR-028 item 2).
        */
       modelCandidates: {
         tier: ModelTier
         options: readonly { id: string; entry: ModelCapabilityEntry }[]
       }
     }
-  | { kind: 'fallback'; reason: 'invalid-response' }
+  // 'effort-ceiling': live candidates existed at the tier, and none can honour the ceiling
+  // (ADR-028 item 2); the caller maps it per path (16 §6.4).
+  | { kind: 'fallback'; reason: 'invalid-response' | 'effort-ceiling' }
 
 /** Whether `value` is one of `TIER_CHOICE_TO_MODEL_TIER`'s own answerable keys (never `'no_preference'`). */
 function isAnswerableTierChoice(value: string): value is keyof typeof TIER_CHOICE_TO_MODEL_TIER {
@@ -292,36 +296,38 @@ export function cheapestOrPriciestCandidate(
 }
 
 /**
- * Narrows a mapped effort level to the nearest one the CHOSEN MODEL's own
- * `effortLevels` actually accepts. `mapEffortScore` only knows the
- * provider's FULL ladder, and a model narrower than that (Codex's
- * `gpt-5.6-luna`, no `ultra`) would otherwise be asked for a level it
- * silently ignores (`applyFlagSettings` resolves cleanly and does nothing —
- * the same trap `ModelOption.effortLevels`'s own comment names). `'all'`
- * keeps the mapped level unchanged; `[]` accepts none. "Nearest" is by INDEX
- * on the provider's own full ladder — the same scale `mapEffortScore`
- * positions the rubric score on — with ties broken toward the lower index.
+ * The effort Jev worked out for one candidate, capped to the candidate's own accepted levels
+ * (ADR-028 item 1; replaces the found tree's `narrowEffort`, which took the NEAREST level and so
+ * could pick one above the mapped level). `mapEffortScore` only knows the provider's FULL ladder,
+ * and a model narrower than that would otherwise be asked for a level it silently ignores.
+ * `omit` when the provider has no ladder or the model takes no effort level.
  */
-function narrowEffort(
-  fullLadder: readonly string[],
-  allowed: readonly string[] | 'all',
-  mapped: string
-): string | undefined {
-  if (allowed === 'all') return mapped
-  if (allowed.length === 0) return undefined
-  if (allowed.includes(mapped)) return mapped
-  const mappedIndex = fullLadder.indexOf(mapped)
-  if (mappedIndex === -1) return allowed[0]
-  let nearest = allowed[0]!
-  let nearestDistance = Math.abs(fullLadder.indexOf(nearest) - mappedIndex)
-  for (const level of allowed) {
-    const distance = Math.abs(fullLadder.indexOf(level) - mappedIndex)
-    if (distance < nearestDistance) {
-      nearest = level
-      nearestDistance = distance
-    }
-  }
-  return nearest
+export function cappedEffortFor(
+  provider: ProviderId,
+  entry: ModelCapabilityEntry,
+  effortScore: number,
+  effortLadders: EffortLadders = PROVIDER_EFFORT_LEVELS
+): CappedEffort {
+  const mapped = mapEffortScore(provider, effortScore, effortLadders)
+  if (mapped === undefined) return { kind: 'omit' }
+  return capEffort(effortLadders[provider] ?? [], entry.effortLevels, mapped)
+}
+
+/**
+ * ADR-028 item 2: the candidates that can honour the effort ceiling. A candidate whose capped
+ * effort is `none` (every level it accepts sits above the mapped one) is removed before any winner
+ * is selected, in both requests.
+ */
+export function eligibleCandidates<C extends { entry: ModelCapabilityEntry }>(
+  provider: ProviderId,
+  candidates: readonly C[],
+  effortScore: number,
+  effortLadders: EffortLadders = PROVIDER_EFFORT_LEVELS
+): C[] {
+  return candidates.filter(
+    (candidate) =>
+      cappedEffortFor(provider, candidate.entry, effortScore, effortLadders).kind !== 'none'
+  )
 }
 
 /** `finalizeModel`'s own result — `model` is always the picked candidate's own id once `parseLaunchTuning` accepts the pairing. */
@@ -332,17 +338,17 @@ export interface FinalizedModel {
 
 /**
  * The shared tail end of "pick a model" (#608): maps the effort rubric
- * score onto `provider`'s own ladder, narrows it to the picked ENTRY's own
- * accepted levels, then validates the whole (model, effort) pairing through
+ * score onto `provider`'s own ladder, caps it to the picked ENTRY's own
+ * accepted levels (`capEffort`, ADR-028), then validates the whole (model, effort) pairing through
  * the same launch gate every launch goes through (`parseLaunchTuning`) —
  * belt and braces, the same discipline `decideLaunch` has always held for
  * its OWN local model choice. Written once so `decideLaunch`'s local pick
  * and #608's request-2 winner can never silently disagree about what a
  * valid pairing is. `undefined` when `parseLaunchTuning` refuses the
- * pairing — not reachable through either caller's own derivation today
- * (`id` is always a trimmed catalogue id, `effort` always a member of
- * `PROVIDER_EFFORT_LEVELS[provider]` or absent), kept for the day a
- * capability entry's own id or a future ladder change makes it so.
+ * pairing, or when the entry cannot honour the effort ceiling (`capEffort` is
+ * `none`): both callers remove such a candidate first (`eligibleCandidates`),
+ * so neither is reachable through their own derivation today; kept for the
+ * day a capability entry's own id or a future ladder change makes it so.
  */
 export function finalizeModel(
   provider: ProviderId,
@@ -351,13 +357,13 @@ export function finalizeModel(
   effortScore: number,
   effortLadders: EffortLadders = PROVIDER_EFFORT_LEVELS
 ): FinalizedModel | undefined {
-  const ladder = effortLadders[provider] ?? []
-  const providerEffort = mapEffortScore(provider, effortScore, effortLadders)
-  const effort =
-    providerEffort === undefined
-      ? undefined
-      : narrowEffort(ladder, entry.effortLevels, providerEffort)
-  return checkTuning(ladder, id, effort)
+  const capped = cappedEffortFor(provider, entry, effortScore, effortLadders)
+  if (capped.kind === 'none') return undefined
+  return checkTuning(
+    effortLadders[provider] ?? [],
+    id,
+    capped.kind === 'level' ? capped.effort : undefined
+  )
 }
 
 /**
@@ -563,8 +569,21 @@ export function decideLaunch(input: DecideLaunchInput): JevDecideResult {
     needsLargeContext: largeContextValue,
     liveModelIds
   })
+  // --- the effort ceiling (ADR-028 item 2): a candidate that cannot honour
+  // it is removed before the pick and from #608's own candidates; live
+  // candidates with none eligible fall back with 'effort-ceiling'.
+  const eligible =
+    found === undefined
+      ? undefined
+      : {
+          tier: found.tier,
+          options: eligibleCandidates(provider, found.options, answers.effort.score, effortLadders)
+        }
+  if (eligible !== undefined && eligible.options.length === 0) {
+    return { kind: 'fallback', reason: 'effort-ceiling' }
+  }
   const picked =
-    found === undefined ? undefined : cheapestOrPriciestCandidate(found.options, profile)
+    eligible === undefined ? undefined : cheapestOrPriciestCandidate(eligible.options, profile)
 
   // --- effort + the belt-and-braces launch-gate check: `finalizeModel`
   // (this module, below) is the shared tail end #608 also gives the
@@ -623,6 +642,6 @@ export function decideLaunch(input: DecideLaunchInput): JevDecideResult {
       trivial: { value: trivialValue, probability: answers.trivial.probability },
       largeContext: { value: largeContextValue, probability: answers.largeContext.probability }
     },
-    modelCandidates: found === undefined ? { tier, options: [] } : found
+    modelCandidates: eligible === undefined ? { tier, options: [] } : eligible
   }
 }

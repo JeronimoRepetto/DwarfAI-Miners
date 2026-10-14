@@ -754,3 +754,67 @@ describe('selectModelWinner', () => {
     expect(result).toBeUndefined()
   })
 })
+
+/*
+ * ADR-028 items 1-2: Jev never picks an effort above the one it worked out. A candidate whose
+ * allowed levels all sit above the mapped level is removed before the pick; with none left the
+ * decision falls back with 'effort-ceiling'.
+ */
+describe('decideLaunch — the effort ceiling (ADR-028)', () => {
+  const HIGH_ONLY_CHEAPEST: JevCapabilityTable = {
+    claude: {
+      'c-high-only': entry({
+        tier: 'balanced',
+        relativeCost: 'low',
+        effortLevels: ['xhigh', 'max']
+      }),
+      'c-any': entry({ tier: 'balanced', relativeCost: 'medium', effortLevels: ['low', 'medium'] })
+    },
+    codex: {},
+    antigravity: {},
+    opencode: {}
+  }
+  const LIVE: readonly AgentModelCatalog[] = [
+    {
+      provider: 'claude',
+      models: [{ value: 'c-high-only' }, { value: 'c-any' }],
+      efforts: [],
+      source: 'provider'
+    }
+  ]
+
+  it('[US-LAUNCH-003.AC12, INV-86] decideLaunch drops a candidate whose allowed levels are all above the ceiling and picks the next eligible model', () => {
+    const result = decideLaunch({
+      // Score 0 maps to claude's 'low'; the cheapest candidate starts at 'xhigh'.
+      answers: answers({ provider: { choice: 'claude', confidence: 0.95 }, effort: { score: 0 } }),
+      profile: 'balanced',
+      providers: providers('claude'),
+      catalogs: LIVE,
+      capabilities: HIGH_ONLY_CHEAPEST,
+      userDefault: {}
+    })
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.model).toBe('c-any')
+    expect(result.effort).toBe('low')
+    expect(result.modelCandidates.options.map((c) => c.id)).toEqual(['c-any'])
+  })
+
+  it('[ADR-028] with every candidate high-only the decision falls back with reason effort-ceiling', () => {
+    const allHighOnly: JevCapabilityTable = {
+      ...HIGH_ONLY_CHEAPEST,
+      claude: {
+        'c-high-only': entry({ tier: 'balanced', effortLevels: ['xhigh', 'max'] }),
+        'c-any': entry({ tier: 'balanced', effortLevels: ['high', 'max'] })
+      }
+    }
+    const result = decideLaunch({
+      answers: answers({ provider: { choice: 'claude', confidence: 0.95 }, effort: { score: 0 } }),
+      profile: 'balanced',
+      providers: providers('claude'),
+      catalogs: LIVE,
+      capabilities: allHighOnly,
+      userDefault: {}
+    })
+    expect(result).toEqual({ kind: 'fallback', reason: 'effort-ceiling' })
+  })
+})
