@@ -455,7 +455,7 @@ describe('useMessageDock answers the card the panel draws (ISSUE-141)', () => {
       ) as unknown as Api['getUiSession'],
       ...overrides
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     await useMines().start()
     await useDwarfQuestion().startAsks()
     let dock: Dock | null = null
