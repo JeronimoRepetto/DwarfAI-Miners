@@ -172,6 +172,21 @@ function stubApi(overrides: Record<string, unknown> = {}) {
         params?.sections?.includes('tails') === true ? EMPTY_HOST_TAILS : HOST_CONNECTION_UNROUTED
       )
     ),
+    /*
+     * AMENDED for ISSUE-138 (was: absent). The question read model follows the UI main session store's picks from
+     * mount (A-N17…A-N19): an empty store, a patch spy and a subscription that releases. Its `asks` snapshot is refused
+     * above, so the cards stay the board's in these tests. No existing assertion changed.
+     */
+    getUiSession: vi.fn().mockResolvedValue({
+      drafts: {},
+      chatViews: {},
+      askPicks: {},
+      openChat: {},
+      currentMine: {},
+      valle: {}
+    }),
+    patchUiSession: vi.fn(),
+    onUiSessionChanged: vi.fn().mockReturnValue(() => undefined),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
