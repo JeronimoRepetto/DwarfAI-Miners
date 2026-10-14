@@ -53,6 +53,14 @@ build left. No older UI ever meets a newer Host on this path.
 level-3 notifications, so that the legacy observer is never composed together with the Host observer's writes. That
 setting is EPIC-07's; it is referenced here, not specified (later: ISSUE-122).
 
+**Cut 2 note (ISSUE-141).** `rollbackOf` folds A-40's and A-41's qualified routes back into one `legacy` row each,
+with today's shape, so today's Claude hook half is composed again (`legacyClaudeHooksComposed`). It also withdraws the
+cut's NEW rows that turn the Host's Claude hook entry on, A-N31 and A-N32 (`WRITES_A_FOREIGN_ENTRY`, recorded in the
+table's `withdrawn`): they have no route in the rollback build, so the entry keeps one writer (`21` §1 item 4, §4).
+Before that build starts, run the newer build's `--revert-integrations` so the entry the Host wrote is removed (`21` §2
+cut 2 "Rollback"). Open: the Host still reports the first-run step due in that build; a Host-side rollback setting that
+reports it not due is needed before a cut-2 rollback build ships (`docs/strangler/parity-cut-2.md`, "Open items").
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
