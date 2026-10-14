@@ -18,6 +18,7 @@ import {
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '..', '..')
 const productionPackage = JSON.parse(readFileSync(path.join(REPO, 'package.json'), 'utf8'))
+const SOURCE_SCAN_MS = 60_000
 
 describe('S-018-1 packaged kit: the arming gate of the packaged entry', () => {
   it('[S-018-1] a packaged spike app started without the arming flag does nothing', () => {
@@ -62,22 +63,27 @@ describe('S-018-1 packaged kit: the arming gate of the packaged entry', () => {
     expect(() => gate.spikeEnvFromArgv(['x', gate.ARM_FLAG, '--s0181-extra=1'])).toThrow(/unknown/)
   })
 
-  it('[S-018-1] no production source names the spike entry or its arming flag', () => {
-    const offenders = []
-    const walk = (dir) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name)
-        if (entry.isDirectory()) walk(full)
-        else if (
-          /(dwarfai-spike-s0181|spikes\/S-018-1|packagedMain)/.test(readFileSync(full, 'utf8'))
-        )
-          offenders.push(path.relative(REPO, full))
+  // Reads every file under src/ synchronously: past the 5 s default on a loaded macOS runner.
+  it(
+    '[S-018-1] no production source names the spike entry or its arming flag',
+    { timeout: SOURCE_SCAN_MS },
+    () => {
+      const offenders = []
+      const walk = (dir) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name)
+          if (entry.isDirectory()) walk(full)
+          else if (
+            /(dwarfai-spike-s0181|spikes\/S-018-1|packagedMain)/.test(readFileSync(full, 'utf8'))
+          )
+            offenders.push(path.relative(REPO, full))
+        }
       }
+      walk(path.join(REPO, 'src'))
+      expect(offenders).toEqual([])
+      expect(JSON.stringify(productionPackage.build)).not.toMatch(/spikes/)
     }
-    walk(path.join(REPO, 'src'))
-    expect(offenders).toEqual([])
-    expect(JSON.stringify(productionPackage.build)).not.toMatch(/spikes/)
-  })
+  )
 })
 
 describe('S-018-1 packaged kit: the spike build is the product build with its own identity', () => {
