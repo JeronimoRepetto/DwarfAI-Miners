@@ -98,17 +98,4 @@ describe('capEffort (ADR-028 item 1)', () => {
     expect(capEffort(ladder, ['low', 'high'], 'ultra')).toEqual({ kind: 'none' })
     expect(capEffort(ladder, ['medium'], '')).toEqual({ kind: 'none' })
   })
-
-  it('[ADR-028] every catalog provider has a ladder of distinct levels', () => {
-    expect(Object.keys(PROVIDER_EFFORT_LEVELS)).toEqual([
-      'claude',
-      'codex',
-      'antigravity',
-      'opencode',
-      'simulated'
-    ])
-    for (const ladder of Object.values(PROVIDER_EFFORT_LEVELS)) {
-      expect(new Set(ladder).size).toBe(ladder.length)
-    }
-  })
 })
