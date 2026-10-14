@@ -40,9 +40,8 @@
 //   which serves `hookRoutes` from boot step 6 (ISSUE-140).
 // - The hook decision channel (`hook-decision`): SP-11 has no passed record, so it is not composed
 //   and its asks would answer `channel-unavailable` (fail closed). Driver channels: EPIC-10.
-// - The real keystroke relay into an observed terminal: ISSUE-167. The Host binds
-//   `NO_KEYSTROKE_RELAY` until then, so an in-app answer to an observed Claude permission refuses
-//   `channel-unavailable` and the card keeps "Jump to terminal".
+// - The keystroke relay into an observed terminal: wiring/bridges/keystrokeRelay.ts over
+//   conversation's observed-session key delivery (#1285), bound by the composition root.
 // - The closed-asks sweep (`askSweep.ts`) and the drain gate's asking blockers: not this issue's.
 import type { AskId, DwarfId, HostEpoch, ProviderId } from '../../kernel/domain/values'
 import { HostInvariantError } from '../../kernel/domain/errors'
@@ -120,9 +119,6 @@ export interface AskingRouteSources {
   /** Observation's trusted resolutions (08 §0 `ObservedAskClosed`). */
   resolutions: Pick<DomainEventBus<ObservedAskClosed>, 'subscribe'>
 }
-
-/** Until ISSUE-167 binds the observed-session relay: no key is ever pressed (fail closed). */
-export const NO_KEYSTROKE_RELAY: KeystrokeRelay = { press: () => Promise.resolve('refused') }
 
 export interface AskingServeDeps {
   /** The Host dispatcher (hostDispatcher.ts), where B-M30…B-M32 join. */
