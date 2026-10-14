@@ -756,3 +756,145 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
     w.loop.stop()
   })
 })
+
+describe('A Claude session present in an earlier Host run departs once its process ended (FM-059)', () => {
+  const RECORDED = 1_788_001_972_136
+  const running: ProcessIdentity = { pid: 32896, processStartTimeMs: RECORDED, bootId: 'boot-a' }
+  const ENTRY = () => join('sessions', '32896.json')
+
+  /**
+   * One Host run over `configDir` with the adapter as its presence source, as `createObservation`
+   * composes it, over the stores of `w` (the database that outlives a Host run).
+   */
+  function hostRun(w: ReturnType<typeof world>, configDir: string, processes?: FakeProcessControl) {
+    const adapter = new ClaudeObservationAdapter({
+      providerId: 'claude',
+      configDir,
+      claimedRoots: [],
+      fs: w.deps.fs,
+      clock: w.clock,
+      ...(processes === undefined ? {} : { processes })
+    })
+    const loop = new ObservationLoop({ ...w.deps, adapters: [adapter], presence: [adapter] })
+    const poll = async () => {
+      w.clock.advance(OBSERVATION_POLL_MS)
+      await loop.whenIdle()
+    }
+    return { adapter, loop, poll }
+  }
+
+  /** A live registered session observed until its dwarf is present; then that Host stops. */
+  async function presentThenHostStops() {
+    const configDir = await tempDir()
+    const path = await placeSession(
+      configDir,
+      CWD,
+      PLAIN_SESSION,
+      await fixture('plain-session.jsonl')
+    )
+    await mkdir(join(configDir, 'sessions'), { recursive: true })
+    await writeFile(join(configDir, ENTRY()), await fixture('session-registry.json'))
+    const processes = new FakeProcessControl({ bootId: 'boot-a' })
+    processes.script(32896, running)
+    const w = world(configDir, processes)
+    const first = hostRun(w, configDir, processes)
+    first.loop.start()
+    await first.loop.whenIdle()
+    w.dwarfs.bind(claude(PLAIN_SESSION), CWD as FolderPath, T0)
+    await first.poll()
+    expect(w.sessions.byIdentity(claude(PLAIN_SESSION))?.closedAt).toBeNull()
+    first.loop.stop()
+    const closings = () =>
+      w.bus.published.flatMap((e) =>
+        e.type === 'SessionClosedObserved' ? [e.payload.identity] : []
+      )
+    expect(closings()).toEqual([])
+    return { configDir, path, processes, w, closings }
+  }
+
+  /** The next Host boots: catch-up first, then the live loop. */
+  async function boot(run: ReturnType<typeof hostRun>) {
+    await run.loop.catchUp()
+    run.loop.start()
+    await run.loop.whenIdle()
+  }
+
+  it('[FM-059, S4.33, US-OBS-005] regression: a session present in an earlier Host run whose process exited while no Host ran (its registry entry gone) departs when the Host restarts, once, with no ledger row', async () => {
+    const { configDir, processes, w, closings } = await presentThenHostStops()
+    // The person closed it in their terminal while no Host ran: Claude Code removed its entry.
+    await rm(join(configDir, ENTRY()))
+    processes.script(32896, 'absent')
+
+    const next = hostRun(w, configDir, processes)
+    await boot(next)
+    await next.poll()
+    await next.poll()
+
+    expect(next.adapter.presenceOf(claude(PLAIN_SESSION))).toBe('not-live')
+    expect(closings()).toEqual([claude(PLAIN_SESSION)])
+    expect(w.sessions.byIdentity(claude(PLAIN_SESSION))?.closedAt).not.toBeNull()
+    expect(w.ended.has(claude(PLAIN_SESSION))).toBe(false)
+    next.loop.stop()
+  })
+
+  it('[US-OBS-005.AC01, FM-059] with no readable registry after the restart (missing folder, or no process control) nothing is departed: presence fails open', async () => {
+    const { configDir, processes, w, closings } = await presentThenHostStops()
+    await rm(join(configDir, 'sessions'), { recursive: true, force: true })
+    processes.script(32896, 'absent')
+
+    for (const control of [processes, undefined]) {
+      const next = hostRun(w, configDir, control)
+      await boot(next)
+      for (let n = 0; n < 3; n++) await next.poll()
+      expect(next.adapter.presenceOf(claude(PLAIN_SESSION))).toBe('unknown')
+      next.loop.stop()
+    }
+    expect(closings()).toEqual([])
+    expect(w.sessions.byIdentity(claude(PLAIN_SESSION))?.closedAt).toBeNull()
+  })
+
+  it('[US-OBS-005.AC01, ADR-014] a session whose recorded process still runs after the restart stays present', async () => {
+    const { configDir, processes, w, closings } = await presentThenHostStops()
+    const next = hostRun(w, configDir, processes)
+    await boot(next)
+    for (let n = 0; n < 3; n++) await next.poll()
+
+    expect(closings()).toEqual([])
+    expect(w.sessions.byIdentity(claude(PLAIN_SESSION))?.closedAt).toBeNull()
+    next.loop.stop()
+  })
+
+  it('[US-OBS-005, S4.41] a session departed after the restart that the person resumes comes back present as its resumed generation', async () => {
+    const { configDir, path, processes, w, closings } = await presentThenHostStops()
+    await rm(join(configDir, ENTRY()))
+    processes.script(32896, 'absent')
+    const next = hostRun(w, configDir, processes)
+    await boot(next)
+    await next.poll()
+    const departedAt = w.sessions.byIdentity(claude(PLAIN_SESSION))?.closedAt
+    expect(departedAt).toEqual(expect.any(Number))
+
+    // Resumed in the person's terminal: a live process registers it again and it writes.
+    await writeFile(join(configDir, ENTRY()), await fixture('session-registry.json'))
+    processes.script(32896, running)
+    const line = {
+      parentUuid: '00000000-0000-4000-8000-000000071106',
+      isSidechain: false,
+      userType: 'external',
+      cwd: CWD,
+      sessionId: PLAIN_SESSION,
+      version: '2.1.263',
+      type: 'user',
+      message: { role: 'user', content: 'Dig deeper' },
+      uuid: '00000000-0000-4000-8000-000000071107',
+      timestamp: '2026-09-30T11:00:00.000Z'
+    }
+    await writeFile(path, `${JSON.stringify(line)}\n`, { flag: 'a' })
+    await next.poll()
+
+    const resumed = claude(`${PLAIN_SESSION}~resumed-${Math.floor(departedAt! / 1_000)}`)
+    expect(w.observedIdentities()).toEqual([claude(PLAIN_SESSION), resumed])
+    expect(closings()).toEqual([claude(PLAIN_SESSION)])
+    next.loop.stop()
+  })
+})
