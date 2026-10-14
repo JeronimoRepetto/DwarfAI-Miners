@@ -22,6 +22,6 @@ export interface JevRouter {                                   // driven: TypeSa
   routeModel(req: JevModelRequest, key: SecretValue, opts?: { signal?: AbortSignal }): Promise<JevModelResponse>        // second request: the model among the tier's candidates, keyed by index (never model identity)
 }
 // prettier-ignore
-export interface RoutingCatalogSource { launchable(): Promise<SupplierEntry[]> } // bridge → suppliers
+export interface RoutingCatalogSource { launchable(): Promise<SupplierEntry[]> }                         // bridge → suppliers
 // The Jev key is read through the kernel SecretReader (§3 kernel ports); a 'timeout' read is 'jev-unreachable'.
 // end verbatim: 16 §4.9
