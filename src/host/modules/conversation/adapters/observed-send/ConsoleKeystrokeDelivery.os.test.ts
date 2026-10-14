@@ -11,6 +11,7 @@
 //
 // ISSUE-134's L8 case is here (its relay is this delivery behind wiring/bridges/keystrokeRelay.ts).
 // Every process is the test's own and is ended by closing its stdin, then awaited.
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -25,9 +26,15 @@ import { NodeScheduler } from '../../../../platform/clock/NodeScheduler'
 import { NodeProcessControl } from '../../../../platform/process/NodeProcessControl'
 import {
   ConsoleKeystrokeDelivery,
+  TOOL_ENV_NAMES,
   type ConsoleKeystrokeDeliveryDeps
 } from './ConsoleKeystrokeDelivery'
-import type { ConsoleKey } from './consoleKeys'
+import {
+  POWERSHELL_ARGS,
+  powerShellStdinLine,
+  windowsKeyWriteScript,
+  type ConsoleKey
+} from './consoleKeys'
 
 const STUB = fileURLToPath(
   new URL('../../../../../../fixtures/bin/console-keys/console-keys.mjs', import.meta.url)
@@ -136,9 +143,36 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
     return [...lines]
   }
 
+  /**
+   * When a press was refused, why: the relay's own PowerShell step run again by hand on the same target, its exit code
+   * (2 attach, 3 CONIN$, 4 write; 1 a script error such as Add-Type's) and the start of its errors. Diagnostic only:
+   * the expectation it explains stays as it is.
+   */
+  function whyRefused(pid: number, key: ConsoleKey): string {
+    const script = windowsKeyWriteScript(pid, key)
+    if (script === null) return 'no script for this key'
+    const env: Record<string, string> = {}
+    for (const name of TOOL_ENV_NAMES) {
+      const value = process.env[name]
+      if (value !== undefined) env[name] = value
+    }
+    const run = spawnSync('powershell.exe', [...POWERSHELL_ARGS], {
+      input: powerShellStdinLine(script),
+      env,
+      cwd: tmpdir(),
+      windowsHide: true,
+      timeout: 20_000,
+      encoding: 'utf8'
+    })
+    return `PowerShell exit ${String(run.status)}, error ${String(run.error?.message)}, stderr ${(run.stderr ?? '').slice(0, 600)}`
+  }
+
   it('[ADR-012] the relay delivers exactly the keys 1 or Esc to the stub and nothing else', async () => {
     const allow = await session()
-    expect(await delivery({}).press(allow.identity, ONE)).toBe('pressed')
+    const pressed = await delivery({}).press(allow.identity, ONE)
+    expect(pressed, pressed === 'pressed' ? '' : whyRefused(allow.identity.pid, ONE)).toBe(
+      'pressed'
+    )
     expect(await keysAfter(allow.lines)).toEqual(['key 31'])
 
     const deny = await session()

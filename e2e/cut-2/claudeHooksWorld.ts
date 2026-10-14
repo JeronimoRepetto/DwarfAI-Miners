@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import type { Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import type { IsolatedProfile } from '../_harness/launchApp.ts'
 import { openHostDatabaseReadOnly } from '../_harness/readOnlyHost.ts'
 
@@ -96,5 +96,29 @@ export function persistedIngressPort(profile: IsolatedProfile): number | null {
     return row?.ingress_port ?? null
   } finally {
     db.close()
+  }
+}
+
+/**
+ * Waits for the first-run step's options, as a case does before it answers the step. When they never show, the failure
+ * names what the Host reported for the step through the window's own A-N01 read (the snapshot's `preferences` section:
+ * `welcome.due`, `offered`, `reason`), so a run on another machine says whether the Host found the step not due or the
+ * window did not draw it.
+ */
+export async function expectStepShown(window: Page, timeout = 60_000): Promise<void> {
+  try {
+    await expect(welcomeStep(window).options, 'the first-run step is shown').toBeVisible({
+      timeout
+    })
+  } catch (error) {
+    const reported = await window
+      .evaluate(async () => {
+        const api = (
+          window as unknown as { api: { getHostSnapshot(r: unknown): Promise<unknown> } }
+        ).api
+        return JSON.stringify(await api.getHostSnapshot({ sections: ['preferences'] }))
+      })
+      .catch((cause: unknown) => `the snapshot could not be read: ${String(cause)}`)
+    throw new Error(`${(error as Error).message}\nThe Host's preferences snapshot: ${reported}`)
   }
 }

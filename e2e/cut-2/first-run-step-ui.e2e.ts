@@ -16,7 +16,8 @@ import {
   hookCommands,
   isHostEntry,
   seedForeignEntry,
-  welcomeStep
+  welcomeStep,
+  expectStepShown
 } from './claudeHooksWorld.ts'
 
 /**
@@ -56,7 +57,7 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
 
     // The step shows with the one offered option, Claude Code, on (07 S41.01; AMENDMENT-9: `offered` is
     // `['claude-hooks']` in cut 2), and nothing was written before the click (ADR-016 item 5).
-    await expect(step.options, 'the first-run step is shown').toBeVisible({ timeout: 60_000 })
+    await expectStepShown(launched.window)
     await expect(step.toggles).toHaveCount(1)
     await expect(step.toggles.first()).toHaveAttribute('aria-checked', 'true')
     expect(claudeSettings(owned)).toBe(before)
@@ -87,7 +88,7 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
     })
     await waitForHostAttached(owned)
     const step = welcomeStep(launched.window)
-    await expect(step.options).toBeVisible({ timeout: 60_000 })
+    await expectStepShown(launched.window)
 
     await step.toggles.first().click()
     await expect(step.toggles.first()).toHaveAttribute('aria-checked', 'false')
@@ -117,7 +118,7 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
     const child = app.process()
     const hostPid = await waitForHostAttached(owned)
     const step = welcomeStep(window)
-    await expect(step.options, 'the first-run step is shown').toBeVisible({ timeout: 60_000 })
+    await expectStepShown(window)
 
     await window.evaluate(() => {
       ;(window as unknown as { api: { requestStopEverything(): void } }).api.requestStopEverything()

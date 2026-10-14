@@ -16,7 +16,8 @@ import {
   hookCommands,
   isHostEntry,
   seedForeignEntry,
-  welcomeStep
+  welcomeStep,
+  expectStepShown
 } from './claudeHooksWorld.ts'
 
 /**
@@ -73,7 +74,7 @@ test.describe('cut 2: the Claude Code hooks switch (ISSUE-141)', () => {
     // The first-run step is due on this clean profile (Claude stub installed): it is answered first, with the option
     // off, so nothing is written by it and the switch alone turns the entry on (07 S41.06).
     const step = welcomeStep(window)
-    await expect(step.options).toBeVisible({ timeout: 60_000 })
+    await expectStepShown(window)
     await step.toggles.first().click()
     await step.activate.click()
     await expect(step.dialog).toBeHidden({ timeout: 30_000 })

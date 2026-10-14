@@ -12,7 +12,13 @@ import {
 } from '../_harness/launchApp.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
 import { createProcessProbe } from '../../src/main/platform/processProbe.ts'
-import { claudeSettings, hookCommands, isHostEntry, welcomeStep } from './claudeHooksWorld.ts'
+import {
+  claudeSettings,
+  hookCommands,
+  isHostEntry,
+  welcomeStep,
+  expectStepShown
+} from './claudeHooksWorld.ts'
 
 /**
  * L9, cut 2 (ISSUE-141; 21 §2 cut 2 exit "L9 E2E: ask answered in the app, ask answered in the terminal closes the
@@ -244,7 +250,7 @@ test.describe('cut 2: an observed Claude permission through the Host broker (ISS
     })
     await waitForHostAttached(owned)
     const step = welcomeStep(launched.window)
-    await expect(step.options).toBeVisible({ timeout: 60_000 })
+    await expectStepShown(launched.window)
     await step.activate.click()
     await expect(step.dialog).toBeHidden({ timeout: 30_000 })
     await expect
