@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"questions":[{"question":"Which colour do you prefer?","header":"Colour","options":[{"label":"Red","description":"You prefer red."},{"label":"Blue","description":"You prefer blue."}],"multiSelect":false}],"answers":{"Which colour do you prefer?":"Red"}}}}

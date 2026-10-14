@@ -140,6 +140,44 @@ function checkSpikeRecord(text, fileName) {
   return problems
 }
 
+/**
+ * ADR-012 item 1 (ISSUE-320): an SP-11 record whose Decision says "the hook route is adopted" must show criteria
+ * (a), (b) and (c) passed for one route, read from its `## Results` table. Returns the problems found.
+ */
+function hookRouteAdoptionProblems(text) {
+  const parsed = parseFrontMatter(text)
+  const decision = parsed ? decisionText(parsed.body) : null
+  if (!decision || !/\bthe hook route is adopted\b/i.test(decision)) return []
+  const results = /^## Results[^\S\r\n]*\r?\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(parsed.body)
+  if (!results) return ['the hook route is adopted but the record has no ## Results table']
+  const cells = (line) =>
+    line
+      .trim()
+      .replace(/^\||\|$/g, '')
+      .split('|')
+      .map((cell) => cell.trim())
+  const rows = new Map()
+  for (const line of results[1].split(/\r?\n/)) {
+    const match = /^\|\s*\(([a-d])\)/.exec(line)
+    if (match) rows.set(match[1], cells(line))
+  }
+  const criteria = ['a', 'b', 'c']
+  const routes = Math.max(0, ...criteria.map((criterion) => (rows.get(criterion)?.length ?? 1) - 1))
+  const passedOnOneRoute = Array.from({ length: routes }, (_, index) => index + 1).some((column) =>
+    criteria.every((criterion) => /^passed\b/.test(rows.get(criterion)?.[column] ?? ''))
+  )
+  if (passedOnOneRoute) return []
+  return criteria
+    .filter(
+      (criterion) =>
+        !Array.from({ length: routes }, (_, index) => index + 1).some((column) =>
+          /^passed\b/.test(rows.get(criterion)?.[column] ?? '')
+        )
+    )
+    .map((criterion) => `the hook route is adopted but criterion (${criterion}) is not passed`)
+    .concat(['the hook route is adopted but no single route passes all three adoption criteria'])
+}
+
 const VALID = `---
 id: SP-02
 date: 2026-09-30
@@ -356,6 +394,59 @@ Not run yet.
     const raise = decisionOf('S-018-2', { rawOutputs: true })
     expect(raise, 'S-018-2 keeps its default').toMatch(/FM-049/)
     expect(raise, 'S-018-2 names its gated issue').toMatch(/ISSUE-114/)
+  })
+
+  // ADDED for ISSUE-320 (TC-320-01): ADR-012 item 1 adopts the hook route only if (a), (b) and (c) all hold.
+  it('[SP-11, ADR-012] an SP-11 record that marks the hook route adopted has criteria a, b and c passed', () => {
+    const record = (b, c, decision) => `---
+id: SP-11
+date: 2026-10-14
+os: [macos-26.6.2-25G83-arm64]
+versions:
+  claude-code: 2.1.299
+verdict: passed
+exitCriterion: ADR-012 item 1
+---
+
+# SP-11
+
+## Results
+
+| Criterion | \`PermissionRequest\` | \`PreToolUse\` |
+| --------- | ------------------- | ------------ |
+| (a)       | passed (A1, A2)     | passed (T1)  |
+| (b)       | ${b} (B1, B2)       | failed (T2)  |
+| (c)       | ${c} (C1, C2, C3)   | not measured |
+| (d)       | informational       | informational |
+
+## Decision
+
+${decision}
+`
+    const adopted = 'The hook route is adopted through `PermissionRequest`.'
+    const kept = 'The hook route is not adopted yet; the keystroke exception stays.'
+    expect(
+      hookRouteAdoptionProblems(record('passed', 'passed', adopted)),
+      'a, b, c passed'
+    ).toEqual([])
+    expect(
+      hookRouteAdoptionProblems(record('failed', 'passed', adopted)).join('\n'),
+      'adopted with (b) failed'
+    ).toMatch(/\(b\)/)
+    expect(
+      hookRouteAdoptionProblems(record('passed', 'failed', adopted)).join('\n'),
+      'adopted with (c) failed'
+    ).toMatch(/\(c\)/)
+    expect(hookRouteAdoptionProblems(record('failed', 'failed', kept)), 'not adopted').toEqual([])
+
+    const file = path.join(repoRoot, 'spike-results', 'SP-11.md')
+    const text = readFileSync(file, 'utf8')
+    expect(checkSpikeRecord(text, 'SP-11.md'), 'spike-results/SP-11.md').toEqual([])
+    expect(hookRouteAdoptionProblems(text), 'spike-results/SP-11.md follows the rule').toEqual([])
+    expect(
+      existsSync(path.join(repoRoot, 'spike-results', 'SP-11')),
+      'spike-results/SP-11/ holds the raw outputs'
+    ).toBe(true)
   })
 
   it('[SP-02, SP-04, SP-05] every committed spike record passes the record check', () => {

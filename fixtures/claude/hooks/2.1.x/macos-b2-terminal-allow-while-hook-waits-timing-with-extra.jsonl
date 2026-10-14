@@ -1,0 +1,8 @@
+{"at":1735689600524,"event":"received","mode":"log","pid":36369,"hook_event_name":"PreToolUse","tool_name":"Bash","dwarfaiUnknownField":"extra"}
+{"at":1735689600524,"event":"exit-no-decision","mode":"log","pid":36369,"dwarfaiUnknownField":"extra"}
+{"at":1735689600580,"event":"received","mode":"decide","pid":36370,"hook_event_name":"PermissionRequest","tool_name":"Bash","dwarfaiUnknownField":"extra"}
+{"at":1735689601793,"event":"received","mode":"log","pid":36374,"hook_event_name":"PostToolUse","tool_name":"Bash","dwarfaiUnknownField":"extra"}
+{"at":1735689601793,"event":"exit-no-decision","mode":"log","pid":36374,"dwarfaiUnknownField":"extra"}
+{"at":1735689602976,"event":"received","mode":"log","pid":36379,"hook_event_name":"Stop","tool_name":null,"dwarfaiUnknownField":"extra"}
+{"at":1735689602976,"event":"exit-no-decision","mode":"log","pid":36379,"dwarfaiUnknownField":"extra"}
+{"at":1735689640584,"event":"replied","mode":"decide","pid":36370,"decision":"deny","dwarfaiUnknownField":"extra"}
