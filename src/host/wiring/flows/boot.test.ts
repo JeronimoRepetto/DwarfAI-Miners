@@ -46,6 +46,7 @@ function harness(
     privilege?: PrivilegeReport
     paths?: BootDeps['paths']
     endpoint?: Awaited<ReturnType<UiEndpoint['bind']>>
+    startHookIngress?: () => Promise<void>
   } = {}
 ): Harness {
   const log = new RecordingDiagnosticsLog()
@@ -77,7 +78,10 @@ function harness(
         close: () => Promise.resolve()
       },
       // The database as step 2 sees it; the step over a real file is bootDatabase.test.ts's.
-      database: { open: () => Promise.resolve() }
+      database: { open: () => Promise.resolve() },
+      ...(overrides.startHookIngress === undefined
+        ? {}
+        : { startHookIngress: overrides.startHookIngress })
     })
   return { deps, log, clock, scheduler, states, exits, realSteps }
 }
@@ -152,6 +156,36 @@ describe('Host boot sequence (16 §8.2, ADR-015 item 3)', () => {
     expect(seen).toEqual([['starting']])
     expect(h.log.byEvent('host.boot.step')[1]).toEqual(
       expect.objectContaining({ outcome: 'ok', msg: 'step open-db-and-migrate done' })
+    )
+  })
+
+  it('[ADR-015, ADR-016] step 6 starts the hook ingress after recovery and before observation, and names only the MCP endpoint as not built', async () => {
+    const stepsLoggedAtStart: string[][] = []
+    const h = harness({
+      startHookIngress: () => {
+        stepsLoggedAtStart.push(loggedSteps(h.log))
+        return Promise.resolve()
+      }
+    })
+
+    expect(await runBoot(h.realSteps, h.deps)).toEqual({ kind: 'ready' })
+
+    expect(stepsLoggedAtStart).toEqual([
+      [
+        'bind-endpoint',
+        'open-db-and-migrate',
+        'resume-reset-saga',
+        'construct-modules',
+        'recover-sessions'
+      ]
+    ])
+    expect(
+      h.log.byEvent('host.boot.step').find((entry) => entry.causeClass === 'start-endpoints')
+    ).toEqual(
+      expect.objectContaining({
+        outcome: 'ok',
+        msg: 'step start-endpoints done; mcp-endpoint skipped until ISSUE-209'
+      })
     )
   })
 

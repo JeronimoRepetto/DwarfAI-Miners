@@ -36,9 +36,8 @@
 //   is Host memory in crew (09 §4.2), the stored asks are the durable record (S1.18).
 //
 // Not here, and why:
-// - Listening on the ingress and persisting its port (16 §8.2 step 6): ISSUE-209. `hookRoutes` is
-//   the route that listener serves; until it listens, `app_meta.ingress_port` stays unset, so the
-//   first-run step offers no Claude hooks before A-N32 is routed (ISSUE-141; PR #1269).
+// - Listening on the ingress and persisting its port (16 §8.2 step 6): wiring/hookIngress.ts,
+//   which serves `hookRoutes` from boot step 6 (ISSUE-140).
 // - The hook decision channel (`hook-decision`): SP-11 has no passed record, so it is not composed
 //   and its asks would answer `channel-unavailable` (fail closed). Driver channels: EPIC-10.
 // - The real keystroke relay into an observed terminal: ISSUE-167. The Host binds
@@ -189,7 +188,7 @@ export interface WiredAsking {
   /** The one broker (16 §4.7), every member but `snapshot`, which is `queries`. */
   broker: Omit<AskBroker, 'snapshot'>
   queries: AskSnapshotQueries
-  /** The `/hooks/claude/*` route the ingress listener serves (later: ISSUE-209). */
+  /** The `/hooks/claude/*` route the ingress listener serves (wiring/hookIngress.ts). */
   hookRoutes: readonly IngressRoute[]
   /** The hook evidence sink, and the promise of its work (tests; drain). */
   evidence: ObservedClaudeAsks

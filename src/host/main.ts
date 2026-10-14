@@ -82,7 +82,8 @@
 // asking (ISSUE-140: wiring/routes/askingRoutes.ts) over the SqliteAskRepository, conversation's
 // AnswerRecords, the observed-Claude keystroke channel (no relay into a terminal yet, later: ISSUE-167),
 // with B-M30…B-M32 and the `asks` section served before the bind, its frames, the Claude hook ingress
-// route bound to the active channel-token lookup (listening is step 6's, later: ISSUE-209) and its
+// route bound to the active channel-token lookup (its listener, wiring/hookIngress.ts, built here and
+// started by step 6 on the persisted ingress port, closed at the clean exit) and its
 // `ask.*` and departure routes, stopped at the clean exit; last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
@@ -155,6 +156,7 @@ import { ConnectionRegistry } from './transport/connectionRegistry'
 import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
 import { BOARD_FRAMES } from './transport/frames/board'
 import { LEDGER_FRAMES } from './transport/frames/ledger'
+import type { HttpIngress } from './transport/ingress/httpIngress'
 import { createUpgradeDrain } from './transport/lifecycle/drain'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
@@ -185,6 +187,7 @@ import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
+import { createHostHookIngress, startHookIngressAtBoot } from './wiring/hookIngress'
 import { installUncaughtHandlers } from './wiring/uncaught'
 import { EXIT_CODES } from './wiring/exitCodes'
 import {
@@ -458,6 +461,8 @@ async function bootHost(base: HostBase): Promise<void> {
   // Built by boot step 3: the one config writer engine, whose boot re-verification step 3 runs
   // right after the saga resume (16 §7.3).
   let configWriter: ConfigWriterEngine | undefined
+  // Built by boot step 4 over asking's hook route, started by step 6, closed by the clean exit.
+  let hookIngress: HttpIngress | undefined
   let resetSteps: WiredModuleResetSteps | undefined
   // No spawn-site table reaches the Host yet: no site is stored, and the map places each marker
   // itself (chooseMapSite's documented fallback). The mines module and its Reset step share it.
@@ -612,8 +617,10 @@ async function bootHost(base: HostBase): Promise<void> {
         scheduler,
         log,
         sessionEnd: nodeOsSessionSignals(log),
-        // No event is routed into the asking module once the Host is closing (ISSUE-140).
+        // No event is routed into the asking module, and no hook request reaches the Host, once
+        // it is closing (ISSUE-140).
         stopRoutes: () => modules.asking?.stop(),
+        closeIngress: () => hookIngress?.close() ?? Promise.resolve(),
         exit
       })
       return createBootSteps({
@@ -915,8 +922,7 @@ async function bootHost(base: HostBase): Promise<void> {
           // Asking (ISSUE-140: wiring/routes/askingRoutes.ts), once suppliers, conversation,
           // observation, crew, mines and attention exist, and ahead of the cut-1 routes, so a
           // departure closes the dwarf's asks before conversation records its session end. The
-          // hook ingress route is built here; listening on it and persisting its port is boot
-          // step 6's (later: ISSUE-209).
+          // hook ingress route and its listener are built here; boot step 6 starts the listener.
           if (modules.suppliers === undefined) {
             throw new HostInvariantError('asking is wired after suppliers')
           }
@@ -955,6 +961,14 @@ async function bootHost(base: HostBase): Promise<void> {
             }
           }
           modules.asking = servedAsking.wire(askingDeps)
+          // The hook ingress over asking's `/hooks/claude/*` route and `app_meta.ingress_port`;
+          // boot step 6 starts it, the clean exit closes it (wiring/hookIngress.ts).
+          hookIngress = createHostHookIngress({
+            routes: modules.asking.hookRoutes,
+            portRecord: appMetaIngressPort(db),
+            clock,
+            log
+          })
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.
@@ -967,6 +981,13 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             attention: modules.attention.attention
           })
+        },
+        // Step 6: the hook ingress listens (ISSUE-140); the MCP endpoint is later (ISSUE-209).
+        startHookIngress: () => {
+          if (hookIngress === undefined) {
+            throw new HostInvariantError('boot step 6 runs after step 4 built the hook ingress')
+          }
+          return startHookIngressAtBoot(hookIngress, log)
         },
         // Step 7: the catch-up, then the live loop, through the wiring's own `start`, which is null
         // in a cut-1 rollback build (and over any sink that stores nothing, INV-98).

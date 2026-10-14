@@ -19,8 +19,8 @@
 // The hook ingress accepts or rejects a request by the active channel token (05 §4): it reads the
 // hashes through `WiredPreferences.channelTokens` (bridges/channelTokens.ts, ISSUE-323), the active
 // row of its channel only, so a rotated-out token is refused. The Claude hook route is bound to that
-// lookup where asking is wired (routes/askingRoutes.ts, ISSUE-140, review R7V-02); its listener and
-// port are boot step 6's (later: ISSUE-209). Later routes of preferences events join this file with
+// lookup where asking is wired (routes/askingRoutes.ts, ISSUE-140, review R7V-02); boot step 6
+// starts its listener on the persisted port (wiring/hookIngress.ts, ISSUE-140). Later routes of preferences events join this file with
 // their issues (later: ISSUE-324).
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
