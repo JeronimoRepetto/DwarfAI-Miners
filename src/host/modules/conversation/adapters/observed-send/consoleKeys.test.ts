@@ -46,7 +46,9 @@ describe('consoleKeys: Windows, a write into the console input buffer by pid', (
   it('[ADR-012] the script attaches to that pid, writes one key down and up in one call, and detaches', () => {
     const script = windowsKeyWriteScript(4242, ESC)
     expect(script).not.toBeNull()
-    expect(script).toContain('[Win32.ConsoleInput]::AttachConsole(4242)')
+    // AMENDED for ISSUE-141 (was: `[Win32.ConsoleInput]::AttachConsole(4242)`): the calls are declared in memory and
+    // reached through the type built there, `$kernel32`.
+    expect(script).toContain('$kernel32::AttachConsole(4242)')
     expect(script).toContain("CreateFileW('CONIN$'")
     expect(script!.match(/WriteConsoleInputW\(\$conin/g)).toHaveLength(1)
     expect(script).toContain('[uint16]27).CopyTo($buffer, $offset + 10)')
@@ -57,6 +59,23 @@ describe('consoleKeys: Windows, a write into the console input buffer by pid', (
     expect(digit).toContain('[uint16]0).CopyTo($buffer, $offset + 10)')
     expect(digit).toContain('[uint16]49).CopyTo($buffer, $offset + 14)')
     expect(digit).not.toContain('[uint16]13)')
+  })
+
+  // ADDED for ISSUE-141 (CI run 38629855902): as the CI leg's non-elevated test user the relay's PowerShell never got
+  // past `Add-Type`, which compiles its declarations with the C# compiler, a separate program with temporary files.
+  // The declarations are defined in memory instead, so nothing is compiled and no other program runs.
+  it('[ADR-012] the script compiles nothing: its kernel32 calls are declared in memory, never through Add-Type', () => {
+    const script = windowsKeyWriteScript(4242, ONE)!
+    expect(script).not.toContain('Add-Type')
+    for (const name of [
+      'FreeConsole',
+      'AttachConsole',
+      'CreateFileW',
+      'WriteConsoleInputW',
+      'CloseHandle'
+    ]) {
+      expect(script, name).toContain(`DefinePInvokeMethod('${name}', 'kernel32.dll'`)
+    }
   })
 
   it('[ADR-014, INV-51] no script is built for a pid that cannot name a process or a key that is not addressable', () => {

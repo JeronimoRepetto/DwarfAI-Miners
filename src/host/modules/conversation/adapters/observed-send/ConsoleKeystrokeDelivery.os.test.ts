@@ -144,7 +144,7 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
 
   /**
    * When a press was refused, why: the relay's own PowerShell step run again by hand on the same target, its exit code
-   * (2 attach, 3 CONIN$, 4 write; 1 a script error such as Add-Type's) and the start of its errors. Diagnostic only:
+   * (2 attach, 3 CONIN$, 4 write; 1 a script error) and the start of its errors. Diagnostic only:
    * the expectation it explains stays as it is.
    */
   async function whyRefused(pid: number, key: ConsoleKey): Promise<string> {
@@ -155,12 +155,10 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
     const script = written
       .split('\n')
       .flatMap((line) => {
-        if (line.startsWith('Add-Type')) return [mark('add-type'), line]
+        if (line.startsWith('$assembly')) return [mark('declare'), line]
         if (line.startsWith('$buffer')) return [mark('buffer'), line]
-        if (line.startsWith('[void][Win32.ConsoleInput]::FreeConsole()'))
-          return [mark('free'), line]
-        if (line.startsWith('if (-not [Win32.ConsoleInput]::AttachConsole'))
-          return [mark('attach'), line]
+        if (line.startsWith('[void]$kernel32::FreeConsole()')) return [mark('free'), line]
+        if (line.startsWith('if (-not $kernel32::AttachConsole')) return [mark('attach'), line]
         if (line.startsWith('$conin')) return [mark('conin'), line]
         if (line.startsWith('$ok')) return [mark('write'), line]
         if (line === 'exit 0') return [mark('exit'), line]
