@@ -1,0 +1,6 @@
+{"at":1735689600623,"event":"received","mode":"decide","pid":38800,"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","dwarfaiUnknownField":"extra"}
+{"at":1735689600626,"event":"replied","mode":"decide","pid":38800,"decision":"answer","dwarfaiUnknownField":"extra"}
+{"at":1735689600674,"event":"received","mode":"log","pid":38801,"hook_event_name":"PostToolUse","tool_name":"AskUserQuestion","dwarfaiUnknownField":"extra"}
+{"at":1735689600675,"event":"exit-no-decision","mode":"log","pid":38801,"dwarfaiUnknownField":"extra"}
+{"at":1735689601525,"event":"received","mode":"log","pid":38804,"hook_event_name":"Stop","tool_name":null,"dwarfaiUnknownField":"extra"}
+{"at":1735689601526,"event":"exit-no-decision","mode":"log","pid":38804,"dwarfaiUnknownField":"extra"}

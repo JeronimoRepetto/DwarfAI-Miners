@@ -22,12 +22,12 @@ You have **2 minutes** to click the notification. If you miss it, run the same c
 
 1. Open a terminal **inside the desktop session** (not over SSH): Windows PowerShell, macOS Terminal, or the Linux
    desktop's terminal.
-2. Go to your DwarfAI-Miners checkout and get the spike branch. Ask the person who sent you this guide which branch
-   name to use if it is not `feat/issue-318-cut1-entry-spikes`:
+2. Go to your DwarfAI-Miners checkout and stay on `main`, brought up to date. The spike is merged there, so do not
+   switch to its old feature branch:
 
    ```sh
-   git fetch origin
-   git switch feat/issue-318-cut1-entry-spikes
+   git switch main
+   git pull --ff-only
    pnpm install --frozen-lockfile
    ```
 
