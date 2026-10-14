@@ -147,6 +147,17 @@ const answerWatches = new Map<
  */
 const markerOwner = reactive(new Map<string, string>())
 
+/**
+ * What an "Answers:" record still in sending replaced, keyed by its echo id (ISSUE-141; US-ASK-006.AC09): the refused
+ * record it took the place of, if any, and the dwarf's marker as it stood. A not-open outcome withdraws the record, and
+ * these are put back, so a stale submit leaves the conversation and the marker as they were. Dropped once the record
+ * settles.
+ */
+const pendingRecords = new Map<
+  string,
+  { replaced?: MessageEcho; marker?: { owner: string; state: DwarfSendState } }
+>()
+
 /** Monotonic within the session, which is all an echo id has to be. */
 let mintedEchoes = 0
 
@@ -671,12 +682,54 @@ export function useDwarfMessaging() {
     }
     const list = echoes[dwarfId] ?? []
     const index = list.findIndex((echo) => echo.id === echoId)
+    const owner = markerOwner.get(dwarfId)
+    const marked = state.byDwarfId[dwarfId]
+    pendingRecords.set(echoId, {
+      ...(index === -1 ? {} : { replaced: list[index]! }),
+      ...(owner === undefined || marked === undefined ? {} : { marker: { owner, state: marked } })
+    })
     if (index === -1) echoes[dwarfId] = boundEchoes([...list, record])
     else list[index] = record
     pruneAttachments(dwarfId)
     stopAnswerWatch(dwarfId)
     takeMarker(dwarfId, echoId, { phase: 'sending' })
     return echoId
+  }
+
+  /**
+   * Withdraw an "Answers:" record whose answer found the ask no longer open (US-ASK-006.AC09: a stale submit is dropped
+   * with nothing shown): the record goes — or the refused record it replaced comes back as it was — and the dwarf's
+   * marker, while the record still holds it, goes back to what it showed before Submit. Nothing for a record that
+   * already settled.
+   */
+  function withdrawAnswer(dwarfId: string, echoId: string): void {
+    const pending = pendingRecords.get(echoId)
+    if (pending === undefined) return
+    pendingRecords.delete(echoId)
+    stopAnswerWatch(dwarfId)
+    const list = echoes[dwarfId] ?? []
+    const index = list.findIndex((echo) => echo.id === echoId)
+    if (index !== -1) {
+      if (pending.replaced !== undefined) list[index] = pending.replaced
+      else if (list.length === 1) delete echoes[dwarfId]
+      else echoes[dwarfId] = list.filter((echo) => echo.id !== echoId)
+      pruneAttachments(dwarfId)
+    }
+    if (!ownsMarker(dwarfId, echoId)) return
+    if (pending.marker === undefined) {
+      delete state.byDwarfId[dwarfId]
+      markerOwner.delete(dwarfId)
+      return
+    }
+    markerOwner.set(dwarfId, pending.marker.owner)
+    state.byDwarfId[dwarfId] = pending.marker.state
+    // Submit's `takeMarker` stopped the clearing a settled verdict had: it is scheduled again.
+    const restored = pending.marker.state
+    const settled =
+      restored.phase === 'reacted' ||
+      restored.phase === 'failed' ||
+      (restored.phase === 'delivered' && restored.awaitingReaction !== true)
+    if (settled) scheduleClear(dwarfId)
   }
 
   /**
@@ -705,6 +758,7 @@ export function useDwarfMessaging() {
     echoId: string,
     verdict: { answered: boolean; error?: string }
   ): void {
+    pendingRecords.delete(echoId)
     stopAnswerWatch(dwarfId)
     if (!verdict.answered) {
       const failed: DwarfSendState = {
@@ -886,6 +940,7 @@ export function useDwarfMessaging() {
     for (const dwarfId of Object.keys(echoAttachments)) delete echoAttachments[dwarfId]
     lastSeen.clear()
     heldMessages.clear()
+    pendingRecords.clear()
     markerOwner.clear()
     routed.value = new Set()
   }
@@ -903,6 +958,7 @@ export function useDwarfMessaging() {
     send,
     recordAnswer,
     settleAnswer,
+    withdrawAnswer,
     settle,
     listenHeld,
     retry,

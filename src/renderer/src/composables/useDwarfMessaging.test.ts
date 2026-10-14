@@ -1532,3 +1532,67 @@ describe('useDwarfMessaging chat from the Host read model', () => {
     expect(chatFeedOf(DAIN)).toBeUndefined()
   })
 })
+
+// ADDED for ISSUE-141 (lead decision 2026-10-14): an answer that found its ask no longer open is a stale submit, dropped
+// with nothing shown (US-ASK-006.AC09), so its "Answers:" record is withdrawn rather than settled at ✕.
+describe('useDwarfMessaging: withdrawing an "Answers:" record', () => {
+  const RECORD = 'Answers:\n\n- Which store: **Redis**'
+  const AGAIN = 'Answers:\n\n- Which store: **SQLite**'
+  const sendDwarfText = vi.fn(() => Promise.resolve({ delivered: true, via: 'terminal' } as const))
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useDwarfMessaging().clearAll()
+    stubApi(sendDwarfText)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('[US-ASK-006.AC09] takes the record away, and the marker it took', () => {
+    const { recordAnswer, withdrawAnswer, echoesFor, stateFor } = useDwarfMessaging()
+    const id = recordAnswer('claude:s1', RECORD, 'toolu_01')
+    withdrawAnswer('claude:s1', id)
+    expect(echoesFor('claude:s1')).toEqual([])
+    expect(stateFor('claude:s1')).toBeUndefined()
+  })
+
+  it('[US-ASK-006.AC09] puts back the refused record it replaced, as it was', () => {
+    const { recordAnswer, settleAnswer, withdrawAnswer, echoesFor } = useDwarfMessaging()
+    vi.setSystemTime(1_000)
+    const first = recordAnswer('claude:s1', RECORD, 'toolu_01')
+    settleAnswer('claude:s1', first, { answered: false, error: 'nope' })
+    vi.setSystemTime(9_000)
+    const again = recordAnswer('claude:s1', AGAIN, 'toolu_01')
+    withdrawAnswer('claude:s1', again)
+    expect(echoesFor('claude:s1')).toEqual([
+      {
+        id: first,
+        text: RECORD,
+        sentAt: 1_000,
+        state: { phase: 'failed', error: 'nope' },
+        answers: true,
+        ask: 'toolu_01'
+      }
+    ])
+  })
+
+  it('[US-ASK-006.AC09] gives the marker back to the message that held it before Submit', async () => {
+    const { send, recordAnswer, withdrawAnswer, echoesFor, stateFor } = useDwarfMessaging()
+    await send('claude:s1', 'hello', true)
+    const before = stateFor('claude:s1')
+    const id = recordAnswer('claude:s1', RECORD, 'toolu_01')
+    withdrawAnswer('claude:s1', id)
+    expect(stateFor('claude:s1')).toEqual(before)
+    expect(echoesFor('claude:s1').map((echo) => echo.text)).toEqual(['hello'])
+  })
+
+  it('leaves a record that already settled as it is', () => {
+    const { recordAnswer, settleAnswer, withdrawAnswer, echoesFor } = useDwarfMessaging()
+    const id = recordAnswer('claude:s1', RECORD, 'toolu_01')
+    settleAnswer('claude:s1', id, { answered: true })
+    withdrawAnswer('claude:s1', id)
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({ phase: 'delivered', awaitingReaction: true })
+  })
+})

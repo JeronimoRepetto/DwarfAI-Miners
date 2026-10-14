@@ -1037,5 +1037,29 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
     expect(store.frontAsk(DWARF_A)).toMatchObject({ source: 'host', id: ASK_A })
     expect(useToasts().toasts.value).toEqual([])
   })
+
+  // ADDED for ISSUE-141 (lead decision 2026-10-14): the "Answers:" record drawn at Submit is withdrawn on a not-open
+  // outcome, so the conversation shows no ✕ and the dwarf's marker no verdict for an answer that was never handed over.
+  it('[US-ASK-006.AC09] a not-open outcome withdraws the "Answers:" record and the marker it took', async () => {
+    install(() =>
+      page(10, [
+        hostAsk(ASK_A, DWARF_A, {
+          kind: 'permission',
+          payload: { toolName: 'Bash', requestText: 'npm test' }
+        })
+      ])
+    )
+    Object.assign(window.api, {
+      answerDwarfPermission: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'not-open' } }))
+    })
+    useDwarfMessaging().clearAll()
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    await store.decide(DWARF_A, permission({ toolUseId: ASK_A }), 'allow')
+
+    expect(useDwarfMessaging().echoesFor(DWARF_A)).toEqual([])
+    expect(useDwarfMessaging().stateFor(DWARF_A)).toBeUndefined()
+  })
 })
 /* --- end of the dual-source ask read model block --------------------------------------------- */

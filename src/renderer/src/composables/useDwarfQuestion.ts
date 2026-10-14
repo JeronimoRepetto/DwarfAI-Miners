@@ -408,8 +408,8 @@ export function useDwarfQuestion() {
 
   /**
    * Writes one answer's verdict. A `not-open` renders nothing (US-ASK-006.AC09): the card keeps no verdict and stays as
-   * the Host reports it (its `ask.closed` frame closes it). Its "Answers:" record is settled as not handed over, the one
-   * settle `useDwarfMessaging` offers: withdrawing it is a messaging change outside this switch (ISSUE-141 hand-off).
+   * the Host reports it (its `ask.closed` frame closes it), and its "Answers:" record is withdrawn, the marker it took
+   * given back (ISSUE-141, lead decision 2026-10-14).
    */
   function settle(
     dwarfId: string,
@@ -421,7 +421,7 @@ export function useDwarfQuestion() {
     const decided = decision === undefined ? {} : { decision }
     if (verdict.kind === 'not-open') {
       delete state.byDwarfId[dwarfId]
-      messaging.settleAnswer(dwarfId, recordId, { answered: false })
+      messaging.withdrawAnswer(dwarfId, recordId)
       return
     }
     state.byDwarfId[dwarfId] =
