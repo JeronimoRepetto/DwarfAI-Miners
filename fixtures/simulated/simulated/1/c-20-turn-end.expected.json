@@ -1,0 +1,150 @@
+{
+  "case": "C-20",
+  "description": "The simulated vocabulary has two turn ends: a turn that runs to its reply concludes, a turn interrupted from the app ends interrupted with cancelledFromApp; both reliable, as the session turnEnd is reliable (ADR-021 items 1, 5).",
+  "script": [
+    {
+      "do": "launch",
+      "readyAfterMs": 50
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-1",
+      "text": "dig the north seam"
+    },
+    {
+      "do": "advance",
+      "ms": 100
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-2",
+      "text": "shore up the east tunnel"
+    },
+    {
+      "do": "advance",
+      "ms": 10
+    },
+    {
+      "do": "interrupt"
+    },
+    {
+      "do": "advance",
+      "ms": 1000
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-1:echo",
+        "role": "person",
+        "text": "dig the north seam",
+        "providerTime": 50,
+        "echoOf": "simulated:{session}:m-1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-1:step-1",
+        "turnKey": "{session}:turn-1",
+        "kind": "tool",
+        "toolName": "survey",
+        "summary": "Surveying the seam",
+        "state": "started",
+        "at": 60
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-1:step-1",
+        "turnKey": "{session}:turn-1",
+        "kind": "tool",
+        "toolName": "survey",
+        "summary": "Surveying the seam",
+        "state": "finished",
+        "at": 70
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-1:reply",
+        "role": "dwarf",
+        "text": "Marked the face for tomorrow morning.",
+        "providerTime": 80
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "{session}:turn-1",
+        "kind": "concluded",
+        "at": 90,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-2:echo",
+        "role": "person",
+        "text": "shore up the east tunnel",
+        "providerTime": 150,
+        "echoOf": "simulated:{session}:m-2"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-2:step-1",
+        "turnKey": "{session}:turn-2",
+        "kind": "tool",
+        "toolName": "survey",
+        "summary": "Surveying the seam",
+        "state": "started",
+        "at": 160
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "{session}:turn-2",
+        "kind": "interrupted",
+        "at": 160,
+        "reliability": "reliable",
+        "cancelledFromApp": true
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": []
+}

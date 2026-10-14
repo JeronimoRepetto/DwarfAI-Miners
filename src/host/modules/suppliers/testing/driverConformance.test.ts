@@ -2,7 +2,15 @@
 // case it violates, while its conformant twin passes the same case.
 import { describe, expect, it } from 'vitest'
 import type { DriverEvent, DriverSession, ProviderDriver } from '../ports/providerDriver'
-import { runCase, type ConformanceOptions, type DriverFactory } from './driverConformance'
+import { SIMULATED_RECORD } from '../adapters/catalog/profiles'
+import { SimulatedDriver } from '../adapters/drivers/simulated/SimulatedDriver'
+import {
+  CASE_IDS,
+  caseTitle,
+  runCase,
+  type ConformanceOptions,
+  type DriverFactory
+} from './driverConformance'
 import {
   LINE_CEILING,
   LineTestDriver,
@@ -173,6 +181,54 @@ describe('driverConformance harness', () => {
       expect(broken.failures.join('\n')).toMatch(
         /onSpawned was called 0 times before launch resolved/
       )
+    })
+  })
+
+  it('[ADR-009] the harness defines every 15 §6 case, C-01 to C-29, each titled with its id', () => {
+    const ids = Array.from({ length: 29 }, (_, n) => `C-${String(n + 1).padStart(2, '0')}`)
+
+    expect(CASE_IDS).toEqual(ids)
+    for (const id of CASE_IDS) expect(caseTitle(id)).toMatch(new RegExp(`^\\[${id}\\] \\S`))
+  })
+
+  describe('inapplicable cases', () => {
+    it('[C-25] a case the driver capabilities make inapplicable is asserted at its fail-closed value, never skipped', async () => {
+      const declared = {
+        ...SIMULATED_OPTIONS,
+        cases: { 'C-16': { inapplicable: 'resume is none' } }
+      }
+      const resumable = { ...SIMULATED_OPTIONS.ceiling, resume: 'load' as const }
+      const loadFactory: DriverFactory = (rig) =>
+        new SimulatedDriver({
+          profile: SIMULATED_RECORD.profile,
+          transport: 'acp',
+          capabilities: resumable,
+          seed: 'conformance',
+          clock: rig.clock,
+          scheduler: rig.scheduler
+        })
+      const spawning = { ...LINE_OPTIONS, cases: { 'C-23': { inapplicable: 'spawns nothing' } } }
+
+      const honest = await runCase('C-16', simulatedFactory, fixtures, declared)
+      const dishonest = await runCase('C-16', loadFactory, fixtures, {
+        ...declared,
+        ceiling: resumable
+      })
+      const undeclared = await runCase('C-16', simulatedFactory, fixtures, {
+        ...SIMULATED_OPTIONS,
+        cases: {}
+      })
+      const spawned = await runCase('C-23', lineFactory(), lineFixtures, spawning)
+      const always = await runCase('C-28', simulatedFactory, fixtures, {
+        ...SIMULATED_OPTIONS,
+        cases: { 'C-28': { inapplicable: 'never closes' } }
+      })
+
+      expect(honest).toEqual(OK)
+      expect(dishonest.failures.join('\n')).toMatch(/declared inapplicable.*resume is "load"/)
+      expect(undeclared.failures.join('\n')).toMatch(/C-16 has no fixture/)
+      expect(spawned.failures.join('\n')).toMatch(/declared inapplicable.*spawned/)
+      expect(always.failures.join('\n')).toMatch(/C-28 applies to every driver/)
     })
   })
 

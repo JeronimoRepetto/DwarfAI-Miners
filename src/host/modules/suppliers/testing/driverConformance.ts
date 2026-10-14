@@ -14,7 +14,13 @@ import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import type { SpawnSpec } from '../../../kernel/ports/processControl'
 import type { ProviderCapabilities } from '../domain/capabilities'
-import { combineLowest, merge, type NegotiatedCapabilities } from '../domain/mergeCapabilities'
+import type { IntegrationState } from '../../../kernel/domain/values'
+import {
+  combineLowest,
+  merge,
+  negotiatedFor,
+  type NegotiatedCapabilities
+} from '../domain/mergeCapabilities'
 import type { PermissionModeSpec } from '../domain/profile'
 import type {
   DelegationInjection,
@@ -136,6 +142,8 @@ export interface RunPlan {
   readonly hangBeforeAnswers?: boolean
   /** Every launch of the run is a gated delegation launch (C-23). */
   readonly delegation?: boolean
+  /** C-26: each spawn is a CLI that prints the fixture (its help output) and exits 0. */
+  readonly helpOutput?: boolean
 }
 
 /** What one scripted run of a fixture variant produced. */
@@ -147,6 +155,8 @@ export interface Run {
   readonly eventsAtStep: number[]
   readonly clockAtStep: number[]
   readonly pendingAtStep: number[][]
+  /** How many frames the driver had sent when each step started. */
+  readonly sentAtStep: number[]
   /** Every frame the driver sent through a fixture transport. */
   readonly sent: Json[]
   readonly failures: string[]
@@ -237,7 +247,13 @@ export async function runScript(
   const spawn = new RecordingSpawn({
     clock,
     scheduler,
-    decide: (spec) => (plan.spawn === undefined ? fixture() : plan.spawn(spec, fixture))
+    decide: (spec) => {
+      if (plan.spawn !== undefined) return plan.spawn(spec, fixture)
+      if (plan.helpOutput === true) {
+        return { kind: 'exit', afterMs: 0, code: 0, stdout: plan.variant?.received ?? '' }
+      }
+      return fixture()
+    }
   })
   const driver = factory({ clock, scheduler, processControl: spawn, loginEnv: LOGIN_ENV })
   const run: Run = {
@@ -246,6 +262,7 @@ export async function runScript(
     eventsAtStep: [],
     clockAtStep: [],
     pendingAtStep: [],
+    sentAtStep: [],
     sent: [],
     failures: [],
     spawn,
@@ -270,6 +287,7 @@ export async function runScript(
     run.eventsAtStep.push(run.events.length)
     run.clockAtStep.push(clock.now())
     run.pendingAtStep.push(tracked.flatMap((entry, at) => (entry?.state === 'pending' ? [at] : [])))
+    run.sentAtStep.push(transports.reduce((count, transport) => count + transport.sent.length, 0))
     const session = run.session
     switch (step.do) {
       case 'launch': {
@@ -313,6 +331,23 @@ export async function runScript(
         tracked.push(track(driver.probe(options.install)))
         await settle()
         break
+      case 'resume':
+      case 'adopt': {
+        // ADR-015: the live session is gone (a survivor is ended first); the driver re-opens its ref.
+        const reopen = step.do === 'resume' ? driver.resume : driver.adopt
+        if (session === null || reopen === undefined) {
+          run.failures.push(`step #${index} (${step.do}): no session or no ${step.do}() to call`)
+          tracked.push(null)
+          break
+        }
+        const reopened = track(reopen.call(driver, session.ref))
+        tracked.push(reopened)
+        await settle()
+        if (reopened.state === 'resolved' && reopened.value !== null) {
+          bindSession(reopened.value as DriverSession)
+        }
+        break
+      }
       default: {
         if (session === null) {
           run.failures.push(`step #${index} (${step.do}) needs a launched session`)
@@ -472,6 +507,81 @@ interface CaseDefinition {
   readonly plan?: Omit<RunPlan, 'variant'>
   /** A harness-driven case: no fixture of its own; it drives the C-01 launch fixture itself. */
   readonly harness?: (context: CaseContext) => Promise<string[]>
+  /**
+   * When the driver declares the case inapplicable: the fail-closed value its capabilities must
+   * then show (TC-144-04). A case without it applies to every driver and cannot be declared.
+   */
+  readonly failClosed?: (context: CaseContext) => Promise<string[]>
+}
+
+// ---------- fail-closed assertions for declared inapplicable cases ----------
+
+/** The effective capabilities of the driver's C-01 launch, or why there are none. */
+async function launchedCapabilities(
+  context: CaseContext
+): Promise<{ capabilities: ProviderCapabilities | null; spawned: string[]; failures: string[] }> {
+  const launch = context.fixtures.cases.find((fixture) => fixture.expected.case === 'C-01')
+  const variant = launch?.variants[0]
+  if (launch === undefined || variant === undefined) {
+    return { capabilities: null, spawned: [], failures: ['no C-01 launch fixture to launch with'] }
+  }
+  const run = await runScript(context.factory, launch.expected.script, { variant }, context.options)
+  return {
+    capabilities: run.session?.capabilities ?? null,
+    spawned: run.spawn.spawns.map((spawn) => spawn.executable),
+    failures: run.failures
+  }
+}
+
+/** Declared inapplicable when the driver spawns nothing: it must then spawn nothing at all. */
+async function spawnsNothing(context: CaseContext): Promise<string[]> {
+  const { spawned, failures } = await launchedCapabilities(context)
+  return [...failures, ...spawned.map((executable) => `the driver spawned ${executable}`)]
+}
+
+/** Declared inapplicable by a capability: the effective value must be the fail-closed one. */
+function capabilityIs(
+  field: keyof ProviderCapabilities,
+  closed: (value: ProviderCapabilities[keyof ProviderCapabilities]) => boolean
+): (context: CaseContext) => Promise<string[]> {
+  return async (context) => {
+    const { capabilities, failures } = await launchedCapabilities(context)
+    if (capabilities === null)
+      return [...failures, 'no launched session to read the capabilities from']
+    const value = capabilities[field]
+    return closed(value) ? failures : [...failures, `${field} is ${JSON.stringify(value)}`]
+  }
+}
+
+/** No ask channel: the capability is closed and an answer for any id is refused ask-closed. */
+function askChannelClosed(
+  kinds: readonly ('permission' | 'question')[]
+): (context: CaseContext) => Promise<string[]> {
+  return async (context) => {
+    const out: string[] = []
+    for (const kind of kinds) {
+      out.push(
+        ...(await capabilityIs(
+          kind,
+          (value) => value !== 'interactive' && value !== 'form' && value !== 'options'
+        )(context))
+      )
+    }
+    const answers: ScriptStep[] = [
+      { do: 'answerPermission', providerRequestId: 'conformance-unknown', decision: 'allow' },
+      { do: 'answerQuestion', providerRequestId: 'conformance-unknown', decline: true }
+    ]
+    out.push(
+      ...(await overLaunch(context, answers, {}, (run, first) =>
+        [first, first + 1].flatMap((index) =>
+          differences(run.outcomes[index], { kind: 'refused', reason: 'ask-closed' }).length === 0
+            ? []
+            : [`an answer for a request never opened gave ${JSON.stringify(run.outcomes[index])}`]
+        )
+      ))
+    )
+    return out
+  }
 }
 
 /**
@@ -888,6 +998,235 @@ function checkMerge(run: Run, fixture: FixtureCase, context: CaseContext): strin
   )
 }
 
+/** The answer steps of a script, with their index. */
+function answerSteps(fixture: FixtureCase): number[] {
+  return fixture.expected.script.flatMap((step, index) =>
+    step.do === 'answerPermission' || step.do === 'answerQuestion' ? [index] : []
+  )
+}
+
+/** C-01 (15 §1.3 launch, ADR-009 D3): the launch resolves after readiness and binds the ref. */
+function checkLaunch(run: Run, fixture: FixtureCase): string[] {
+  const out: string[] = []
+  fixture.expected.script.forEach((step, index) => {
+    if (step.do !== 'launch') return
+    const outcome = run.outcomes[index]
+    if (differences(outcome, { resolved: true }).length > 0) {
+      out.push(`launch #${index} gave ${JSON.stringify(outcome)}, not a session`)
+    }
+  })
+  const ref = run.session?.ref
+  if (ref === undefined) return [...out, 'no SessionRef was bound']
+  if (ref.providerId !== run.driver.profile.id) {
+    out.push(`the ref names provider ${ref.providerId}, not ${run.driver.profile.id}`)
+  }
+  if (ref.providerSessionId === '') out.push('the ref has no providerSessionId')
+  return out
+}
+
+/** C-06 / C-07 (15 §2.7): an Allow or a Deny the provider took is `accepted`; a Deny keeps the turn. */
+function checkDecision(decision: 'allow' | 'deny'): (run: Run, fixture: FixtureCase) => string[] {
+  return (run, fixture) =>
+    fixture.expected.script.flatMap((step, index) => {
+      if (step.do !== 'answerPermission' || step.decision !== decision) return []
+      const out: string[] = []
+      if (differences(run.outcomes[index], { kind: 'accepted' }).length > 0) {
+        out.push(`${decision} #${index} gave ${JSON.stringify(run.outcomes[index])}, not accepted`)
+      }
+      const after = run.events.slice(run.eventsAtStep[index])
+      if (
+        decision === 'deny' &&
+        after.some((e) => e.t === 'turn.ended' && e.end.kind === 'interrupted')
+      ) {
+        out.push(`deny #${index} interrupted the turn; a Deny continues it (15 §2.7)`)
+      }
+      return out
+    })
+}
+
+/** C-10 (OQ-42 B, ADR-010 item 3): an option set without `allow_once` reports `hasAllowOnce: false`. */
+function checkNoAllowOnce(run: Run): string[] {
+  return run.events.some(
+    (e) => e.t === 'ask.opened' && e.ask.kind === 'permission' && !e.ask.options.hasAllowOnce
+  )
+    ? []
+    : ['no ask.opened reports hasAllowOnce false']
+}
+
+/** C-12 (15 §1.4 ask.resolved): resolved elsewhere, and a later answer for it is ask-closed. */
+function checkElsewhere(run: Run, fixture: FixtureCase): string[] {
+  const elsewhere = run.events.flatMap((e) =>
+    e.t === 'ask.resolved' && e.by === 'elsewhere' ? [e.providerRequestId] : []
+  )
+  if (elsewhere.length === 0) return ['no ask.resolved elsewhere']
+  return answerSteps(fixture).flatMap((index) => {
+    const step = fixture.expected.script[index] as { providerRequestId: string }
+    const resolvedBefore = run.events
+      .slice(0, run.eventsAtStep[index])
+      .some((e) => e.t === 'ask.resolved' && e.providerRequestId === step.providerRequestId)
+    if (!resolvedBefore) return []
+    return differences(run.outcomes[index], { kind: 'refused', reason: 'ask-closed' }).length === 0
+      ? []
+      : [`an answer after ask.resolved elsewhere gave ${JSON.stringify(run.outcomes[index])}`]
+  })
+}
+
+/** C-13 (ADR-010 item 5): a stale answer is ask-closed and sends nothing to the provider. */
+function checkStale(run: Run, fixture: FixtureCase): string[] {
+  const script = fixture.expected.script
+  return answerSteps(fixture).flatMap((index) => {
+    const out: string[] = []
+    if (differences(run.outcomes[index], { kind: 'refused', reason: 'ask-closed' }).length > 0) {
+      out.push(
+        `stale answer #${index} gave ${JSON.stringify(run.outcomes[index])}, not refused ask-closed`
+      )
+    }
+    const before = run.sentAtStep[index] as number
+    const after =
+      index + 1 < script.length ? (run.sentAtStep[index + 1] as number) : run.sent.length
+    if (after !== before)
+      out.push(`stale answer #${index} sent ${after - before} frames to the provider`)
+    return out
+  })
+}
+
+/** C-16 (15 §1.3 resume, ADR-015 item 7, ADR-006 item 1): same or new id; replay adds no key. */
+function checkResume(run: Run, fixture: FixtureCase): string[] {
+  const at = fixture.expected.script.findIndex((step) => step.do === 'resume')
+  if (at === -1) return ['the C-16 fixture has no resume step']
+  const before = run.launches.length > 0 ? run.bindings : {}
+  const previous = (before as Record<string, string>).session
+  const ref = run.session?.ref
+  const out: string[] = []
+  if (ref === undefined) return ['resume bound no session']
+  if (ref.providerSessionId !== previous && ref.previousProviderSessionId !== previous) {
+    out.push(
+      `resume minted ${ref.providerSessionId} without previousProviderSessionId ${String(previous)}`
+    )
+  }
+  const known = new Set(sourceKeysOf(run.events.slice(0, run.eventsAtStep[at])))
+  const replayed = run.events.slice(run.eventsAtStep[at]).filter((e) => e.t === 'message')
+  for (const key of sourceKeysOf(replayed)) {
+    if (!known.has(key)) out.push(`the resume replay adds a new key ${key}`)
+  }
+  return out
+}
+
+/** C-17 (15 §1.3 adopt, ADR-010 item 11): pending asks are re-listed with the same id. */
+function checkAdopt(run: Run, fixture: FixtureCase): string[] {
+  const at = fixture.expected.script.findIndex((step) => step.do === 'adopt')
+  if (at === -1) return ['the C-17 fixture has no adopt step']
+  const opened = (events: readonly DriverEvent[]): string[] =>
+    events.flatMap((e) => (e.t === 'ask.opened' ? [e.ask.providerRequestId] : []))
+  const before = new Set(opened(run.events.slice(0, run.eventsAtStep[at])))
+  return opened(run.events.slice(run.eventsAtStep[at]))
+    .filter((id) => !before.has(id))
+    .map((id) => `adopt re-listed ${id}, which was never pending before`)
+}
+
+const TURN_END_KINDS = new Set(['concluded', 'capped', 'errored', 'interrupted'])
+
+/** C-20 (ADR-021 items 1, 5): every end maps to a kind; reliable needs `turnEnd`; errored has detail. */
+function checkTurnEnds(run: Run, _fixture: FixtureCase, context: CaseContext): string[] {
+  const reliable = run.session?.capabilities.turnEnd === 'reliable'
+  void context
+  return run.events.flatMap((e) => {
+    if (e.t !== 'turn.ended') return []
+    const out: string[] = []
+    if (!TURN_END_KINDS.has(e.end.kind))
+      out.push(`turn.ended kind ${e.end.kind} is not an ADR-021 kind`)
+    if (e.end.reliability === 'reliable' && !reliable)
+      out.push('turn.ended is reliable while turnEnd is none')
+    if (e.end.kind === 'errored' && (e.end.detail ?? '') === '')
+      out.push('turn.ended errored carries no detail')
+    return out
+  })
+}
+
+/** C-21 (ADR-006 items 4, 6): one sealed observation per unitKey, at the session's fidelity. */
+function checkUsage(run: Run): string[] {
+  const sealed = new Map<string, number>()
+  const fidelity = run.session?.capabilities.usage.fidelity ?? 0
+  const out: string[] = []
+  for (const e of run.events) {
+    if (e.t !== 'usage') continue
+    if (e.observation.sealed)
+      sealed.set(e.observation.unitKey, (sealed.get(e.observation.unitKey) ?? 0) + 1)
+    if (e.observation.fidelity > fidelity)
+      out.push(`usage ${e.observation.unitKey} claims fidelity above ${fidelity}`)
+  }
+  for (const [unit, count] of sealed)
+    if (count > 1) out.push(`usage unit ${unit} is sealed ${count} times`)
+  if (!run.events.some((e) => e.t === 'usage')) out.push('the usage fixture yields no usage')
+  return out
+}
+
+/** C-22 (ADR-011 item 2, Verification): a policy-only launch carries the deny policy's argv. */
+function checkPolicyOnly(run: Run, _fixture: FixtureCase, context: CaseContext): string[] {
+  const mode = context.options.policyOnlyMode
+  if (mode === undefined) return ['no policyOnlyMode in the options to launch with']
+  const args = run.spawn.spawns.flatMap((spawn) => spawn.args)
+  return (mode.providerArgs.argv ?? [])
+    .filter((arg) => !args.includes(arg))
+    .map((arg) => `the policy-only launch lacks ${arg}`)
+}
+
+/** C-26 (ADR-009 D4, SP-08): help output without the prompt-tool flag gives `launch: false`. */
+function checkProbeGate(run: Run, fixture: FixtureCase): string[] {
+  return fixture.expected.script.flatMap((step, index) => {
+    if (step.do !== 'probe') return []
+    const probed = run.outcomes[index] as { launch?: boolean } | null
+    return probed?.launch === false
+      ? []
+      : [`probe #${index} gave launch ${String(probed?.launch)}, not false`]
+  })
+}
+
+/** C-27 (ADR-011 item 7, 15 §2.1): the gate off / on-unverified / on-verified → none / none / merge. */
+async function integrationGate(context: CaseContext): Promise<string[]> {
+  const run = await runScript(
+    context.factory,
+    [{ do: 'probe' }],
+    { variant: null },
+    context.options
+  )
+  const probe = run.outcomes[0] as NegotiatedCapabilities
+  const ceiling = context.options.ceiling
+  const open = merge(ceiling, combineLowest(probe)).permission
+  const want: Record<IntegrationState, ProviderCapabilities['permission']> = {
+    off: 'none',
+    'on-unverified': 'none',
+    'on-verified': open
+  }
+  return (Object.keys(want) as IntegrationState[]).flatMap((state) => {
+    const got = merge(ceiling, negotiatedFor([probe], state)).permission
+    return got === want[state] ? [] : [`gate ${state} gives permission ${got}, not ${want[state]}`]
+  })
+}
+
+/** C-28 (15 §1.3 close, ADR-014): a CloseOutcome per mode; a second close is closed; no signal. */
+function checkClose(run: Run, fixture: FixtureCase): string[] {
+  const out: string[] = []
+  let ended = false
+  fixture.expected.script.forEach((step, index) => {
+    if (step.do !== 'close') return
+    const outcome = run.outcomes[index] as { kind?: string; reason?: string } | null
+    const valid =
+      outcome?.kind === 'closed' ||
+      (outcome?.kind === 'failed' &&
+        ['protocol-error', 'unsupported', 'timeout'].includes(outcome.reason ?? ''))
+    if (!valid) out.push(`close #${index} gave ${JSON.stringify(outcome)}, not a CloseOutcome`)
+    if (step.mode === 'end-thread' && ended && outcome?.kind !== 'closed') {
+      out.push(`a second close #${index} gave ${JSON.stringify(outcome)}, not closed`)
+    }
+    if (step.mode === 'end-thread' && outcome?.kind === 'closed') ended = true
+  })
+  if (run.spawn.killTreeCalls > 0 || run.spawn.fake.signals.length > 0) {
+    out.push("the driver signalled a process; the kill is ADR-014's, never the driver's")
+  }
+  return out
+}
+
 /** C-15 (ADR-010 item 8, CH-05): an unacknowledged answer is `channel-unavailable` at 30 s. */
 function checkHandover(run: Run, fixture: FixtureCase): string[] {
   const out: string[] = []
@@ -949,66 +1288,178 @@ function checkSendTurn(run: Run, fixture: FixtureCase): string[] {
   return out
 }
 
-const CASES: Partial<Record<CaseId, CaseDefinition>> = {
+const noPermissionAsk = askChannelClosed(['permission'])
+const noQuestionAsk = askChannelClosed(['question'])
+const noAsk = askChannelClosed(['permission', 'question'])
+
+/** The 29 cases of 15 §6 (C-25b runs under C-25); each title is its Expected column in plain words. */
+const CASES: Record<CaseId, CaseDefinition> = {
+  'C-01': {
+    title: 'launch resolves only after readiness and binds the ref',
+    check: checkLaunch,
+    failClosed: capabilityIs('launch', (value) => value === false)
+  },
+  'C-02': {
+    title: "a spawn ENOENT is not-installed and no process starts but the person's install",
+    harness: notInstalled,
+    failClosed: spawnsNothing
+  },
+  'C-03': {
+    title:
+      'a spawn refusal, a refused shim or a handshake timeout is could-not-start with an output tail of at most 400 characters',
+    harness: couldNotStart,
+    failClosed: spawnsNothing
+  },
+  'C-04': {
+    title: 'an exit 2 999 ms after spawn is exited-at-once and an exit at 3 000 ms is not',
+    harness: exitsAtOnce,
+    failClosed: spawnsNothing
+  },
   'C-05': {
     title:
       'one prompt yields its echo with echoOf, activity, turn.ended once and status working then idle',
-    check: checkSendTurn
+    check: checkSendTurn,
+    failClosed: capabilityIs('sendTurn', (value) => value === false)
+  },
+  'C-06': {
+    title: 'Allow answers allow_once, never allow_always, and is accepted',
+    check: checkDecision('allow'),
+    failClosed: noPermissionAsk
+  },
+  'C-07': {
+    title: 'Deny answers reject_once or decline, is accepted, and the turn continues',
+    check: checkDecision('deny'),
+    failClosed: noPermissionAsk
+  },
+  'C-08': {
+    title:
+      'interrupt ends the open turn interrupted with cancelledFromApp and resolves the open asks cancelled',
+    check: checkInterrupt,
+    failClosed: capabilityIs('interrupt', (value) => value === false)
+  },
+  'C-09': {
+    title:
+      'question answers map per 15 §2.7, a decline sends the provider decline and an empty answers array is not a decline',
+    failClosed: noQuestionAsk
+  },
+  'C-10': {
+    title: 'an option set without allow_once opens the ask with hasAllowOnce false',
+    check: checkNoAllowOnce,
+    failClosed: noPermissionAsk
+  },
+  'C-11': {
+    title:
+      'an unknown or malformed request is answered with a protocol error or Deny and opens no ask',
+    failClosed: noAsk
+  },
+  'C-12': {
+    title: 'an ask answered elsewhere resolves elsewhere and a later answer is refused ask-closed',
+    check: checkElsewhere,
+    failClosed: capabilityIs('answeredElsewhere', (value) => value === false)
+  },
+  'C-13': {
+    title: 'a stale answer is refused ask-closed and nothing is sent to the provider',
+    check: checkStale,
+    failClosed: noAsk
+  },
+  'C-14': {
+    title: 'a protocol error reply to an answer is refused channel-rejected',
+    check: checkRejected,
+    failClosed: noAsk
   },
   'C-15': {
     title: 'an answer the provider never acknowledges is channel-unavailable at 30 s',
     check: checkHandover,
-    plan: { hangBeforeAnswers: true }
+    plan: { hangBeforeAnswers: true },
+    failClosed: noAsk
+  },
+  'C-16': {
+    title:
+      'resume keeps the id or names previousProviderSessionId, and replayed messages add no new key',
+    check: checkResume,
+    failClosed: capabilityIs('resume', (value) => value === 'none')
+  },
+  'C-17': {
+    title:
+      'adopt re-lists pending asks with the same providerRequestId, or is null when the session is gone',
+    check: checkAdopt,
+    failClosed: capabilityIs('adopt', (value) => value === false)
   },
   'C-18': {
     title: 'a transport EOF yields error transport-lost then exited once',
     harness: transportLoss
   },
-  'C-02': {
-    title: "a spawn ENOENT is not-installed and no process starts but the person's install",
-    harness: notInstalled
+  'C-19': {
+    title: 'every fixture replayed twice, in every variant, yields identical sourceKeys',
+    harness: idempotentParse
   },
-  'C-03': {
+  'C-20': {
     title:
-      'a spawn refusal, a refused shim or a handshake timeout is could-not-start with an output tail of at most 400 characters',
-    harness: couldNotStart
+      'every provider turn-end value maps to an ADR-021 kind, and an unknown one is errored with detail',
+    check: checkTurnEnds,
+    failClosed: capabilityIs('turnEnd', (value) => value === 'none')
   },
-  'C-04': {
-    title: 'an exit 2 999 ms after spawn is exited-at-once and an exit at 3 000 ms is not',
-    harness: exitsAtOnce
+  'C-21': {
+    title: 'usage yields one sealed observation per unitKey',
+    check: checkUsage,
+    failClosed: capabilityIs('usage', (value) => (value as { fidelity: number }).fidelity === 0)
+  },
+  'C-22': {
+    title: 'a policy-only launch carries the deny policy and the question-tool removal',
+    check: checkPolicyOnly,
+    failClosed: async (context) =>
+      context.options.policyOnlyMode === undefined
+        ? []
+        : ['a policy-only mode is offered (options.policyOnlyMode)']
   },
   'C-23': {
     title:
       'no credential value or delegation token is in any captured argv, env or frame, and DWARFAI_SPAWN is in the provider child env',
-    harness: negativeSecrets
+    harness: negativeSecrets,
+    failClosed: spawnsNothing
   },
   'C-24': {
     title: 'no forbidden auto-approve flag or option appears in any launch',
-    harness: forbiddenFlags
-  },
-  'C-29': {
-    title: 'onSpawned is called exactly once after spawn and before launch resolves',
-    harness: identityReport
-  },
-  'C-08': {
-    title:
-      'interrupt ends the open turn interrupted with cancelledFromApp and resolves the open asks cancelled',
-    check: checkInterrupt
-  },
-  'C-14': {
-    title: 'a protocol error reply to an answer is refused channel-rejected',
-    check: checkRejected
-  },
-  'C-19': {
-    title: 'every fixture replayed twice, in every variant, yields identical sourceKeys',
-    harness: idempotentParse
+    harness: forbiddenFlags,
+    failClosed: spawnsNothing
   },
   'C-25': {
     title:
       'capabilities are the ADR-009 D2 merge of the ceiling with the protocol and probe sources, never above the lower one (C-25b)',
     check: checkMerge
+  },
+  'C-26': {
+    title: 'help output without --permission-prompt-tool makes stream-json launch false',
+    check: checkProbeGate,
+    plan: { helpOutput: true },
+    failClosed: async (context) => {
+      const run = await runScript(context.factory, [], { variant: null }, context.options)
+      return run.driver.transport === 'stream-json' ? ['the driver is a stream-json driver'] : []
+    }
+  },
+  'C-27': {
+    title:
+      'the integration gate off, on-unverified and on-verified gives permission none, none and the merged value',
+    harness: integrationGate,
+    failClosed: async (context) => {
+      const run = await runScript(context.factory, [], { variant: null }, context.options)
+      const gate = run.driver.profile.answerChannelGate
+      return gate === undefined ? [] : [`the profile is gated by ${gate}`]
+    }
+  },
+  'C-28': {
+    title:
+      'close resolves its CloseOutcome, a second close is closed, and the driver signals no process',
+    check: checkClose
+  },
+  'C-29': {
+    title: 'onSpawned is called exactly once after spawn and before launch resolves',
+    harness: identityReport
   }
 }
+
+/** Every case id, C-01 … C-29, in order. */
+export const CASE_IDS: readonly CaseId[] = Object.keys(CASES).sort() as CaseId[]
 
 /** Runs one case against a driver and returns its verdict. */
 export async function runCase(
@@ -1018,16 +1469,30 @@ export async function runCase(
   options: ConformanceOptions
 ): Promise<CaseVerdict> {
   const definition = CASES[id]
-  if (definition === undefined) return { ok: false, failures: [`${id} is not defined`] }
   const context: CaseContext = { factory, fixtures, options }
-  if (definition.harness !== undefined) {
-    const failures = await definition.harness(context)
-    return { ok: failures.length === 0, failures }
+  const verdict = (failures: readonly string[]): CaseVerdict => ({
+    ok: failures.length === 0,
+    failures
+  })
+  const declared = options.cases?.[id]
+  if (declared !== undefined) {
+    // TC-144-04: a declared case is asserted at its fail-closed value, never skipped.
+    if (definition.failClosed === undefined) {
+      return verdict([`${id} applies to every driver; it cannot be declared inapplicable`])
+    }
+    const why = await definition.failClosed(context)
+    return verdict(
+      why.map((line) => `${id} is declared inapplicable (${declared.inapplicable}) but ${line}`)
+    )
   }
+  if (definition.harness !== undefined) return verdict(await definition.harness(context))
   const own = fixtures.cases.filter((fixture) => fixture.expected.case === id)
   const failures: string[] = []
-  if (own.length === 0)
-    failures.push(`${id} has no fixture in ${fixtures.provider}/${fixtures.driver}`)
+  if (own.length === 0) {
+    failures.push(
+      `${id} has no fixture in ${fixtures.provider}/${fixtures.driver} and is not declared inapplicable`
+    )
+  }
   for (const fixture of own) {
     for (const { variant, chunking, label } of replays(fixture)) {
       const plan: RunPlan = { ...definition.plan, variant, chunking }
@@ -1039,15 +1504,15 @@ export async function runCase(
       failures.push(...why.map((line) => `${fixture.name} (${label}): ${line}`))
     }
   }
-  return { ok: failures.length === 0, failures }
+  return verdict(failures)
 }
 
 /** The case's test title, `[C-nn] <15 §6 Expected column in plain words>`. */
 export function caseTitle(id: CaseId): string {
-  return `[${id}] ${CASES[id]?.title ?? 'undefined case'}`
+  return `[${id}] ${CASES[id].title}`
 }
 
-/** Registers one test per case; each fails with the verdict's reasons. */
+/** Registers one test per case, C-01 … C-29; each fails with the verdict's reasons. */
 export function driverConformance(
   name: string,
   factory: DriverFactory,
@@ -1055,7 +1520,7 @@ export function driverConformance(
   options: ConformanceOptions
 ): void {
   describe(name, () => {
-    for (const id of Object.keys(CASES) as CaseId[]) {
+    for (const id of CASE_IDS) {
       it(caseTitle(id), async () => {
         const verdict = await runCase(id, factory, fixtures, options)
         expect(verdict.failures).toEqual([])
