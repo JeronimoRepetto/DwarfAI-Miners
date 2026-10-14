@@ -40,7 +40,7 @@ function world(options: { platform?: NodeJS.Platform; links?: Record<string, str
 }
 
 describe('ProcessGoneWatch', () => {
-  it('[FM-059, US-OBS-005] a session first seen with its last record long past is quiet from that record, so it closes about 30 s after it is first seen', async () => {
+  it('[FM-059, US-OBS-005.AC02] a session first seen with its last record long past is quiet from that record, so it closes about 30 s after it is first seen', async () => {
     const { watch, at } = world()
     // The backlog read at first sight: its newest record was written 2 h before the Host saw it.
     watch.active('s1', T0 - 7_200 * S)

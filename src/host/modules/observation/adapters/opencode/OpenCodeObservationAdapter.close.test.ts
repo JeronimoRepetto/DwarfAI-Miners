@@ -146,7 +146,7 @@ function openCodeWorld(
 const base = { providerId: 'opencode', providerSessionId: SESSION }
 
 describe('OpenCodeObservationAdapter closing (owner amendment I)', () => {
-  it('[FM-059, US-OBS-005] a session first read long after its last change is quiet since that change: it closes within one confirmation of first sight', async () => {
+  it('[FM-059, US-OBS-005.AC02] a session first read long after its last change is quiet since that change: it closes within one confirmation of first sight', async () => {
     const { cycle, runFor } = openCodeWorld(await storeRoot(), { startAt: T0 + 7_200 * S })
     expect((await cycle()).filter((e) => e.kind === 'closed')).toEqual([])
 

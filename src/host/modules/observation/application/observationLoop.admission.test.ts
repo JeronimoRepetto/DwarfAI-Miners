@@ -171,7 +171,7 @@ function world(options: { installMoment?: Instant | null } = {}) {
 }
 
 describe('ObservationLoop admits only live sessions written after the install moment', () => {
-  it('[US-OBS-005, ADR-006] a stream whose newest record predates the install moment, of a process not known to run, moves its cursor to its end with no arrival, no write and no ledger row', async () => {
+  it('[ADR-006] a stream whose newest record predates the install moment, of a process not known to run, moves its cursor to its end with no arrival, no write and no ledger row', async () => {
     // Whose process runs arrives present instead (the #1260 regression, case below); not live or
     // unknown, history stays the coal backfill's.
     const w = world()
@@ -190,7 +190,7 @@ describe('ObservationLoop admits only live sessions written after the install mo
     w.loop.stop()
   })
 
-  it('[US-OBS-005, ADR-006] a stream written after the install moment by a live session arrives', async () => {
+  it('[ADR-006] a stream written after the install moment by a live session arrives', async () => {
     const w = world()
     w.presence.says.set('session-1', 'live')
     w.place('s1', transcript(identity(1), AFTER, 'a'))
@@ -207,7 +207,7 @@ describe('ObservationLoop admits only live sessions written after the install mo
     w.loop.stop()
   })
 
-  it('[US-OBS-005, ADR-006] a post-install session its adapter reports not live at first sight arrives already departed: closed with its arrival, its batch written once with no cue, not taken for ended', async () => {
+  it('[US-OBS-005.AC02, ADR-006] a post-install session its adapter reports not live at first sight arrives already departed: closed with its arrival, its batch written once with no cue, not taken for ended', async () => {
     // Owner decision B (2026-10-10): it earns its ore and joins its mine's history, never present.
     const w = world()
     w.presence.says.set('session-1', 'not-live')
@@ -256,7 +256,7 @@ describe('ObservationLoop admits only live sessions written after the install mo
     expect(w.cursors.get('s1')?.value).toBe(1_000)
   })
 
-  it('[US-OBS-005] a session whose presence cannot be told arrives (presence fails open)', async () => {
+  it('[US-OBS-005.AC01] a session whose presence cannot be told arrives (presence fails open)', async () => {
     const w = world()
     w.place('s1', transcript(identity(1), AFTER, 'a'))
     w.loop.start()
@@ -310,7 +310,7 @@ describe('ObservationLoop admits only live sessions written after the install mo
     w.loop.stop()
   })
 
-  it('[US-OBS-005, ADR-029] regression: over a fresh database, pre-install history makes nothing, post-install sessions not running arrive departed, and the running one arrives present', async () => {
+  it('[US-OBS-005.AC02, ADR-029] regression: over a fresh database, pre-install history makes nothing, post-install sessions not running arrive departed, and the running one arrives present', async () => {
     const w = world()
     // 40 sessions of history, before the install moment, none running; a subagent among them.
     for (let n = 1; n <= 40; n++) {
@@ -398,7 +398,7 @@ describe('ObservationLoop keeps live observed sessions present (regression of #1
     w.loop.stop()
   })
 
-  it('[US-OBS-005, S4.41] a session that arrived departed as not live and later writes while its process runs comes back present as its resumed generation', async () => {
+  it('[S4.41] a session that arrived departed as not live and later writes while its process runs comes back present as its resumed generation', async () => {
     const w = world()
     w.presence.says.set('session-1', 'not-live')
     const stream = growing(w, 's1', transcript(identity(1), AFTER, 'a'))
@@ -496,7 +496,7 @@ describe('ObservationLoop departs a present session whose process is no longer l
     return { w, dwarfId, stream, restart }
   }
 
-  it('[FM-059, S4.33, US-OBS-005] regression: a session present in an earlier Host run whose process is not live when the Host restarts departs, once, and is not taken for ended', async () => {
+  it('[FM-059, S4.33, US-OBS-005.AC02] regression: a session present in an earlier Host run whose process is not live when the Host restarts departs, once, and is not taken for ended', async () => {
     const { w, restart } = await presentInAnEarlierRun()
     // Its process exited while no Host ran: its adapter now tells it is not live.
     w.presence.says.set('session-1', 'not-live')
@@ -533,7 +533,7 @@ describe('ObservationLoop departs a present session whose process is no longer l
     next.stop()
   })
 
-  it('[US-OBS-005, S4.41] a session departed as not live after a restart that runs and writes again comes back present as its resumed generation', async () => {
+  it('[S4.41] a session departed as not live after a restart that runs and writes again comes back present as its resumed generation', async () => {
     const { w, stream, restart } = await presentInAnEarlierRun()
     w.presence.says.set('session-1', 'not-live')
     const { next, poll } = await restart()

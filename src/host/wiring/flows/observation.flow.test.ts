@@ -520,7 +520,7 @@ function dwarfRows(db: SqliteDatabase) {
 }
 
 describe('observation wired into the Host (ISSUE-095)', () => {
-  it('[US-OBS-005, ADR-006] a fresh install over provider history writes no dwarf and no mine, whatever the providers', async () => {
+  it('[ADR-006] a fresh install over provider history writes no dwarf and no mine, whatever the providers', async () => {
     // Owner decision 2026-10-10: every fixture session predates the install moment, so its
     // history reaches the product only through the coal backfill (ADR-029 row 6). None runs: a
     // registered process that runs would arrive present (the next case).
@@ -555,7 +555,7 @@ describe('observation wired into the Host (ISSUE-095)', () => {
     ).toEqual([false])
   })
 
-  it('[US-OBS-005, ADR-006] a Claude session the registry no longer names (it exited) arrives already departed: its dwarf in its mine history, its mine made by its first message, never present', async () => {
+  it('[US-OBS-005.AC02, ADR-006] a Claude session the registry no longer names (it exited) arrives already departed: its dwarf in its mine history, its mine made by its first message, never present', async () => {
     const w = world()
     rmSync(join(w.folders.claudeConfigDir, 'sessions', `${CLAUDE_PROCESS.pid}.json`))
     const host = await bootHost({ ...w, startAt: T0 })
