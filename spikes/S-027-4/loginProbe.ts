@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { homedir, release, tmpdir, uptime, userInfo } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loginEntryFor, type EntryCommand } from './loginEntry.ts'
+import { loginEntryFor, type EntryCommand, type MacBtmMode } from './loginEntry.ts'
 
 /**
  * Spike S-027-4, the real-login half (guide `clean-vm.md`): installs the candidate per-user login entry under the
@@ -15,11 +15,17 @@ import { loginEntryFor, type EntryCommand } from './loginEntry.ts'
  *   node spikes/S-027-4/loginProbe.ts install           write the entry (no elevation)
  *   node spikes/S-027-4/loginProbe.ts read              print what the entry reads back (also after the person
  *                                                       switched it off in the OS's startup list)
+ *   node spikes/S-027-4/loginProbe.ts read --btm-run    macOS: also run `sfltool dumpbtm` (never with sudo) to read
+ *                                                       the person's Login Items switch
+ *   node spikes/S-027-4/loginProbe.ts read --btm-file <f>
+ *                                                       macOS: read that switch from a dump the owner saved
  *   node spikes/S-027-4/loginProbe.ts check --out <f>   after signing in again: did the OS start the app, with
  *                                                       --background and no window? Writes the scrubbed result
  *   node spikes/S-027-4/loginProbe.ts remove            remove the entry and the probe folder
  *
- * It never reads or changes an entry whose name it did not build itself.
+ * It never reads or changes an entry whose name it did not build itself (a BTM dump is filtered to this entry's
+ * records before anything is printed). `S0274_PROBE_SUFFIX` replaces the name's `login-probe` suffix, so a new run
+ * does not meet the BTM record an earlier run left behind.
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -28,7 +34,13 @@ const PROBE_DIR = path.resolve('coverage', 's0274-login-probe')
 const APP_DIR = path.join(PROBE_DIR, 'app')
 const MARKER = path.join(PROBE_DIR, 'marker.jsonl')
 const INSTALLED = path.join(PROBE_DIR, 'installed.json')
-const entry = loginEntryFor(process.platform, 'login-probe')
+const [command, flag, value] = process.argv.slice(2)
+const SUFFIX = /^[a-z0-9-]{1,32}$/.test(process.env['S0274_PROBE_SUFFIX'] ?? '')
+  ? (process.env['S0274_PROBE_SUFFIX'] ?? 'login-probe')
+  : 'login-probe'
+const macBtm: MacBtmMode =
+  flag === '--btm-run' ? 'run' : flag === '--btm-file' && value ? { file: value } : 'skip'
+const entry = loginEntryFor(process.platform, SUFFIX, { macBtm })
 
 function scrub(text: string): string {
   let out = text
@@ -133,14 +145,13 @@ function remove(): void {
   print({ removed: !back.present, location: entry.location })
 }
 
-const [command, flag, value] = process.argv.slice(2)
 if (command === 'install') install()
 else if (command === 'read') print(entry.read())
 else if (command === 'check') check(flag === '--out' ? value : undefined)
 else if (command === 'remove') remove()
 else {
   console.error(
-    'usage: node spikes/S-027-4/loginProbe.ts install | read | check --out <file> | remove'
+    'usage: node spikes/S-027-4/loginProbe.ts install | read [--btm-run | --btm-file <file>] | check --out <file> | remove'
   )
   process.exit(2)
 }

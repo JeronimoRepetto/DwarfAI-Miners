@@ -11,7 +11,7 @@ import {
 /*
  * What the Panel says about the Host connection (ADR-002 D9; 07 §12B; 14 §3.8 `HostConnectionView`): one row per view
  * the Host connection can push. The message's words are design's (ADR-002 O-4, O-5; 13 FM-007 "O-15 crash-loop
- * variant"): every string is a marked placeholder, never shipped text (25-AGENTS §8.1).
+ * variant"): every string is approved copy, never a placeholder (25-AGENTS §8.1).
  */
 const unavailable = (reason: NonNullable<HostConnectionView['reason']>): HostConnectionView => ({
   state: 'unavailable',
@@ -49,7 +49,7 @@ describe('hostStateMessage', () => {
     const message = hostStateMessage(unavailable('incompatible'))
     expect(message.variant).toBe('incompatible')
     expect(message.action).toBe('stop-everything')
-    expect(message.actionLabel).toMatch(placeholder)
+    expect(message.actionLabel).toBe('Stop everything and quit…')
   })
 
   it('[ADR-002] in v1 no message offers confirmHostRestart and no view sends upgrade-drain', () => {
@@ -124,7 +124,7 @@ describe('hostStateMessage', () => {
     expect(hostReadOnly(inJob)).toBe(false)
   })
 
-  it('[ADR-002] every message string without approved copy is a marked placeholder key', () => {
+  it('[ADR-002] no message string is a COPY NEEDED placeholder', () => {
     const views: HostConnectionView[] = [
       { state: 'reconnecting', since: 1 },
       unavailable('spawn-failed'),
@@ -136,9 +136,9 @@ describe('hostStateMessage', () => {
     ]
     for (const view of views) {
       const message = hostStateMessage(view)
-      expect(message.text).toMatch(placeholder)
+      expect(message.text).not.toMatch(placeholder)
       if (message.action === 'none') expect(message.actionLabel).toBeNull()
-      else expect(message.actionLabel).toMatch(placeholder)
+      else expect(message.actionLabel).not.toMatch(placeholder)
     }
   })
 })
@@ -190,17 +190,25 @@ describe('hostStateToast', () => {
     [
       'reconnecting',
       hostStateMessage({ state: 'reconnecting', since: 1 }),
-      'O-5 reconnecting message'
+      'Reconnecting… The panel is read-only until it is back.'
     ],
     [
       'elevated-refused',
       hostStateMessage(unavailable('elevated-refused')),
-      'O-4 elevated-refused message'
+      'DwarfAI-Miners does not run with administrator rights. Close it and open it again normally.'
     ],
-    ['unavailable in-job', hostStateMessage(unavailable('in-job')), 'O-4 in-job message'],
-    ['connected in-job', inJob, 'O-4 in-job message']
+    [
+      'unavailable in-job',
+      hostStateMessage(unavailable('in-job')),
+      'Your dwarfs will stop when the program that opened DwarfAI-Miners closes. To keep them running, open DwarfAI-Miners from the Start menu.'
+    ],
+    [
+      'connected in-job',
+      inJob,
+      'Your dwarfs will stop when the program that opened DwarfAI-Miners closes. To keep them running, open DwarfAI-Miners from the Start menu.'
+    ]
   ] as const)('[ADR-002, FM-012] entering %s toasts its notice once', (_name, entered, copy) => {
-    expect(hostStateToast(none, entered)).toBe(`⟦COPY NEEDED: ${copy}⟧`)
+    expect(hostStateToast(none, entered)).toBe(copy)
     // The same state again (a re-render, a repeated push) toasts nothing.
     expect(hostStateToast(entered, entered)).toBeNull()
   })

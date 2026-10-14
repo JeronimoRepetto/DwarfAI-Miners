@@ -80,7 +80,7 @@ function enter(event: KeyboardEvent): void {
 <style scoped>
 /*
  * The design's dialog.css, rule for rule, plus the owner's rule (2026-10-02): a popup never scrolls sideways, its text
- * wraps to the card whatever its words (a long COPY NEEDED marker, real copy, a translation). The card keeps the
+ * wraps to the card whatever its words (long copy, a translation). The card keeps the
  * design's width bounds; its one column is never wider than the card (`minmax(0, 1fr)`, where the implicit `auto`
  * column grew to the widest unbreakable line); the title, the body and the action labels wrap, a long word included,
  * where a button keeps one line by default (ActionButton `nowrap`); and nothing scrolls sideways. The scrim is

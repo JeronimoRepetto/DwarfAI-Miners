@@ -219,6 +219,44 @@ describe('HostClient against FakeHost (16 §4.14.1)', () => {
     expect(client.capabilities()).not.toContain('host.upgrade.request')
   })
 
+  it('[ADR-002, S12.B01] a snapshot asked before the first hello.ok answers HOST_UNAVAILABLE as retryable, not NOT_SUPPORTED, and is never sent', async () => {
+    const { host, client, handler } = world()
+    client.subscribe(handler)
+
+    const error = await client.snapshot({ sections: ['meta'] }).catch((e: unknown) => e)
+    await settle()
+
+    expect(error).toBeInstanceOf(HostCallError)
+    expect((error as HostCallError).error).toMatchObject({
+      code: 'HOST_UNAVAILABLE',
+      retryable: true
+    })
+    expect(host.received).toHaveLength(0)
+  })
+
+  it('[ADR-003, S12.B01] a snapshot asked once connected, while the ui connection is still opening, waits for it and is answered on it', async () => {
+    const { host, client, handler } = world()
+    host.board = [meta, dwarfs('d1')]
+    client.subscribe(handler)
+    const answered: Array<Promise<unknown>> = []
+    // What a window does on A-N04 `connected`: it reads the snapshot, which reaches the client after the push.
+    client.onStateChange((state) => {
+      if (state.state !== 'connected' || answered.length > 0) return
+      queueMicrotask(() => {
+        answered.push(client.snapshot({ sections: ['meta'] }).catch((e: unknown) => e))
+      })
+    })
+    await client.ensureHost()
+    await settle()
+
+    expect(answered).toHaveLength(1)
+    const page = (await answered[0]) as { chunks?: SnapshotChunk[] }
+    expect(page.chunks).toEqual([meta])
+    expect(
+      host.methods('ui').filter((m) => m === 'session.snapshot').length
+    ).toBeGreaterThanOrEqual(2)
+  })
+
   it('[ADR-003] SNAPSHOT_EXPIRED on a later page restarts the snapshot from the first page', async () => {
     const { host, client, events, handler } = world()
     host.board = [meta, mineNames, dwarfs('d1')]

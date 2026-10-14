@@ -6,7 +6,8 @@ import {
   renameAnnouncement,
   renameChanges,
   renameHint,
-  renameLabel
+  renameLabel,
+  renameNotice
 } from './rename'
 
 /*
@@ -101,5 +102,29 @@ describe('renameAnnouncement', () => {
     expect(renameAnnouncement({ saved: false, reason: 'The name could not be saved.' }, 'x')).toBe(
       'The name could not be saved.'
     )
+  })
+})
+
+/*
+ * Where what main answered is said (BR-19): a save or a reset is announced politely to screen readers, as the design
+ * has it; a rename that saved nothing is a warning everyone sees, never a sentence only a screen reader reads.
+ */
+describe('renameNotice', () => {
+  it('keeps a saved name or a reset for the panel’s polite status', () => {
+    expect(renameNotice({ saved: true, customName: 'Watcher' }, 'dwarfai-55')).toEqual({
+      text: 'Renamed to Watcher',
+      warning: false
+    })
+    expect(renameNotice({ saved: true }, 'dwarfai-55')).toEqual({
+      text: 'Name reset to dwarfai-55',
+      warning: false
+    })
+  })
+
+  it('[BR-19] makes main’s reason a visible warning when nothing was saved', () => {
+    expect(renameNotice({ saved: false, reason: 'The name could not be saved.' }, 'x')).toEqual({
+      text: 'The name could not be saved.',
+      warning: true
+    })
   })
 })

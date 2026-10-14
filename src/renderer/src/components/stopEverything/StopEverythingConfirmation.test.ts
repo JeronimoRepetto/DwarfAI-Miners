@@ -2,14 +2,14 @@
 /*
  * The Stop everything and quit confirmation as drawn (ISSUE-317): the design's dialog (`molecules/dialog`: Cancel
  * first and holding focus, Tab trapped, Esc cancels; components.md, Dialog, Accessibility), the Host-owned count,
- * and the one danger message naming the dwarfs that could not be ended (S10.21). Its words are design's: every
- * string without approved copy is a marked placeholder (ADR-018 D5 copy items 4–7 and 9).
+ * and the one danger message naming the dwarfs that could not be ended (S10.21). Its words are the owner-approved
+ * copy (ADR-018 D5 copy items 4–7 and 9).
  */
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import StopEverythingConfirmation from './StopEverythingConfirmation.vue'
 
-const COPY_NEEDED = /^⟦COPY NEEDED: .+⟧$/
+const COPY_NEEDED = /⟦COPY NEEDED/
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -101,18 +101,14 @@ describe('StopEverythingConfirmation', () => {
     const dialogs = document.body.querySelectorAll('[role="dialog"]')
     expect(dialogs).toHaveLength(1)
     expect(dialogs[0]!.classList.contains('dm-dialog--danger')).toBe(true)
-    // Its words are design's: a marked placeholder, the closest copy item named, and no slot for names.
-    expect(dialogs[0]!.getAttribute('aria-label')).toMatch(COPY_NEEDED)
+    // Its words are the approved copy, with no slot for names.
+    expect(dialogs[0]!.getAttribute('aria-label')).toBe('Stop everything did not finish')
     const lines = [...dialogs[0]!.querySelectorAll('.dm-dialog__title, .dm-dialog__body p')]
-    expect(lines.length).toBeGreaterThan(0)
-    for (const line of lines) {
-      expect(line.textContent?.trim()).toMatch(COPY_NEEDED)
-      expect(line.textContent).toContain('Stop everything incomplete, no names')
-      expect(line.textContent).not.toContain('{names}')
-    }
-    expect(buttons().map((b) => b.textContent?.trim())).toEqual([
-      expect.stringMatching(COPY_NEEDED)
+    expect(lines.map((line) => line.textContent?.trim())).toEqual([
+      'Stop everything did not finish',
+      'Something went wrong while stopping. DwarfAI-Miners is still running, and you can try again.'
     ])
+    expect(buttons().map((b) => b.textContent?.trim())).toEqual(['Close'])
 
     press('Escape')
     expect(wrapper.emitted('dismiss')).toHaveLength(1)
@@ -120,31 +116,40 @@ describe('StopEverythingConfirmation', () => {
     wrapper.unmount()
   })
 
-  it('[ADR-002] every string of the view without approved copy is a marked placeholder', async () => {
+  it('[ADR-002] every string of the view is the approved copy, with no placeholder', async () => {
     const confirming = await shown({ kind: 'confirming', count: 4, sending: false })
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
     const dialog = document.body.querySelector('[role="dialog"]')!
-    expect(dialog.getAttribute('aria-label')).toMatch(COPY_NEEDED)
-    for (const line of dialog.querySelectorAll('.dm-dialog__title, .dm-dialog__body p')) {
-      expect(line.textContent?.trim()).toMatch(COPY_NEEDED)
-    }
-    // Cancel is the design's own dialog label (copy.md, Dialog); Confirm is design's to write.
+    expect(dialog.getAttribute('aria-label')).toBe('Stop everything and quit?')
+    expect(
+      [...dialog.querySelectorAll('.dm-dialog__title, .dm-dialog__body p')].map((line) =>
+        line.textContent?.trim()
+      )
+    ).toEqual([
+      'Stop everything and quit?',
+      '4 dwarfs started by DwarfAI-Miners will stop.',
+      'Dwarfs you started in your own terminal keep running, but DwarfAI-Miners stops watching them.'
+    ])
     expect(buttons().map((b) => b.textContent?.trim())).toEqual([
       'Cancel',
-      expect.stringMatching(COPY_NEEDED)
+      'Stop 4 dwarfs and quit'
     ])
     confirming.unmount()
     document.body.innerHTML = ''
 
     const incomplete = await shown({ kind: 'incomplete', failed: ['Brick'] })
     const message = document.body.querySelector('[role="dialog"]')!
-    expect(message.getAttribute('aria-label')).toMatch(COPY_NEEDED)
-    for (const line of message.querySelectorAll('.dm-dialog__title, .dm-dialog__body p')) {
-      expect(line.textContent?.trim()).toMatch(COPY_NEEDED)
-    }
-    expect(buttons().map((b) => b.textContent?.trim())).toEqual([
-      expect.stringMatching(COPY_NEEDED)
+    expect(message.getAttribute('aria-label')).toBe('Some dwarfs could not be stopped')
+    expect(
+      [...message.querySelectorAll('.dm-dialog__title, .dm-dialog__body p')].map((line) =>
+        line.textContent?.trim()
+      )
+    ).toEqual([
+      'Some dwarfs could not be stopped',
+      'Could not stop Brick. DwarfAI-Miners is still running and keeps watching them.'
     ])
+    expect(buttons().map((b) => b.textContent?.trim())).toEqual(['Close'])
+    expect(document.body.textContent).not.toMatch(COPY_NEEDED)
     incomplete.unmount()
   })
 })

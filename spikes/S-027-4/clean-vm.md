@@ -104,6 +104,11 @@ valid result too: keep the file and continue.
    Copy the whole output. The value to look at is `"disabledByPerson"`: `true`, `false` or `null`. (On Linux, if the
    desktop removed the file instead, the output says `"present": false`.)
 
+   On macOS run `node spikes/S-027-4/loginProbe.ts read --btm-run` instead: macOS 26 keeps this switch in its
+   Background Task Management database, which `sfltool dumpbtm` prints. Never add `sudo`; if the command is refused,
+   the output says so under `"macSwitch"` and `"disabledByPerson"` is `null`. Ask the person who sent you this guide
+   before going further.
+
 ## Step 6 — remove the entry
 
 ```sh

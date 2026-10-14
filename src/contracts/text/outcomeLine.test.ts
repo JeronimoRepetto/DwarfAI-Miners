@@ -100,9 +100,9 @@ describe('renderOutcomeLine', () => {
     expect(renderOutcomeLine(line('interrupted'), NOW)).toBe('Turn interrupted')
   })
 
-  it('[ADR-021, INV-67] a line with no reliable end never reads "Turn finished": its word is the open design item', () => {
+  it('[ADR-021, INV-67] a line with no reliable end never reads "Turn finished": its word is the approved "Gone quiet"', () => {
     const text = renderOutcomeLine(line('working', [{ kind: 'steps', n: 3 }], 'inferred'), NOW)
-    expect(text).toMatch(/^⟦COPY NEEDED: [^⟦⟧]+⟧ · 3 steps$/)
+    expect(text).toBe('Gone quiet · 3 steps')
     expect(text).not.toContain('Turn finished')
   })
 

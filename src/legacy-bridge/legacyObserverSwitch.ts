@@ -1,16 +1,17 @@
-// The cut-1 switch inside today's runtime composition (ISSUE-123; 21 §2 cut 1 "Switched off in legacy"; 21 §1 item 4;
-// AGENTS §5 "switched off at the switch"): from cut 1 the Host observer is the single observer and the single writer
-// of mines, dwarfs, messages, usage and ore (ADR-001 item 4.1), so today's observer stops being a writer. What 21 §2
-// lists as switched off is turned off here as a composition, gated by the route table (`legacyObserverOwner` in
-// `src/ui-main/index.ts`), so a rollback build whose cut-1 rows route `legacy` again gets every part back (21 §2.1).
+// Today's projects store without the observer's writes (ISSUE-123 introduced it as part of the cut-1 switch; 21 §2 cut 1
+// "Switched off in legacy"; 21 §1 item 4): from cut 1 the Host observer is the single observer and the single writer of
+// mines, dwarfs, messages, usage and ore (ADR-001 item 4.1), so today's observer stops being a writer.
 //
-// The switch turns off the sinks, not the ticks: today's poll tick still runs, driven by `LegacyAgentRegistryFeed`'s
-// cycles (./LegacyRuntimeSurface.ts), because it is what keeps today's board, and with it the rows still `legacy`
-// (send, console, stop, asks), current. Its own timer is not started: the feed is the one tick driver.
+// The cut-1 retirement (21 §2 cut 1 "Retired at the end"; OQ-71): ISSUE-124 removed today's poll timer, board publish,
+// ledger crediting and projects-store board path from the composition, and ISSUE-125 today's notifier, whatever the
+// route table, so nothing of today's observer is gated by a route table any more and cut 1 rolls forward only (21 §2.1
+// item 4). What stays is this wrapper, which today's composition always applies (`LegacyRuntimeRoute.ts`).
 //
-// Candidate decision (21 §6): today's composition (`LegacyRuntimeRoute.ts`) is KEPT; this switch is new code that only
-// selects which of today's parts it composes. Deleted with the composition code after the cut-1 soak (ISSUE-124,
-// ISSUE-125).
+// Today's poll tick still runs, driven by `LegacyAgentRegistryFeed`'s cycles (./LegacyRuntimeSurface.ts), because it is
+// what keeps today's board, and with it the rows still `legacy` (send, console, stop, asks), current.
+//
+// Candidate decision (21 §6): today's composition (`LegacyRuntimeRoute.ts`) is KEPT; this wrapper is new code. Deleted
+// with today's composition (cut 5).
 import { mineIdForPath } from '../main/domain/aggregate'
 import type { Platform } from '../main/platform/platform'
 import { normalizeProjectName, projectNameForPath } from '../main/projects/projectName'
@@ -21,37 +22,8 @@ import type {
   ProjectsStore
 } from '../main/projects/projectsStore'
 
-/** Who observes the providers and writes what is observed: today's runtime, or the Host (from cut 1). */
-export type LegacyObserverOwner = 'legacy' | 'host'
-
-/** The parts of today's observer that write, each composed or switched off (21 §2 cut 1 "Switched off in legacy"). */
-export interface LegacyObserverComposition {
-  /** Today's poll timer (`runtime.start()`): off from cut 1, where the registry feed's cycles are the ticks. */
-  pollTimer: boolean
-  /** Today's poller → `publishGate` → board path: the A-P2 `minesUpdated` push of today's board. */
-  boardPublish: boolean
-  /** Today's ledger crediting: the vault store (`openLedgerStore`) and the historical coal backfill. */
-  ledgerCrediting: boolean
-  /** Today's projects store as the board's source: what the poll observes is written into it. */
-  projectsObserverWrites: boolean
-  /** Today's notifier (`notifyDecision` → Electron `Notification`). */
-  notifier: boolean
-}
-
-/** What today's composition composes of its observer for `owner` (the Host from cut 1, today's runtime before). */
-export function legacyObserverComposition(owner: LegacyObserverOwner): LegacyObserverComposition {
-  const composed = owner === 'legacy'
-  return {
-    pollTimer: composed,
-    boardPublish: composed,
-    ledgerCrediting: composed,
-    projectsObserverWrites: composed,
-    notifier: composed
-  }
-}
-
 /**
- * Today's projects store with the observer's writes switched off (`projectsObserverWrites: false`): every read and every
+ * Today's projects store with the observer's writes switched off (from the cut-1 retirement, always): every read and every
  * person's own act stay as they are, while a sighting (`upsertObserved`) and a walk's measurement (`recordMeasuredTier`)
  * write nothing. Each answers what the store holds for that path, read, never written: the row when there is one; for
  * a measurement, `null` for a path the store has never been shown (its own contract); for a sighting of a path it
