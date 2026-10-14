@@ -57,7 +57,7 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
 
     // The step shows with the one offered option, Claude Code, on (07 S41.01; AMENDMENT-9: `offered` is
     // `['claude-hooks']` in cut 2), and nothing was written before the click (ADR-016 item 5).
-    await expectStepShown(launched.window)
+    await expectStepShown(launched.window, { launched, profile: owned })
     await expect(step.toggles).toHaveCount(1)
     await expect(step.toggles.first()).toHaveAttribute('aria-checked', 'true')
     expect(claudeSettings(owned)).toBe(before)

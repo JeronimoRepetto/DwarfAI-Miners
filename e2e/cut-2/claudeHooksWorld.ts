@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { expect, type Page } from '@playwright/test'
-import type { IsolatedProfile } from '../_harness/launchApp.ts'
+import type { IsolatedProfile, LaunchedApp } from '../_harness/launchApp.ts'
 import { openHostDatabaseReadOnly } from '../_harness/readOnlyHost.ts'
 
 /**
@@ -105,7 +105,11 @@ export function persistedIngressPort(profile: IsolatedProfile): number | null {
  * `welcome.due`, `offered`, `reason`), so a run on another machine says whether the Host found the step not due or the
  * window did not draw it.
  */
-export async function expectStepShown(window: Page, timeout = 60_000): Promise<void> {
+export async function expectStepShown(
+  window: Page,
+  after?: { launched: LaunchedApp; profile: IsolatedProfile }
+): Promise<void> {
+  const timeout = 60_000
   try {
     await expect(welcomeStep(window).options, 'the first-run step is shown').toBeVisible({
       timeout
@@ -119,6 +123,29 @@ export async function expectStepShown(window: Page, timeout = 60_000): Promise<v
         return JSON.stringify(await api.getHostSnapshot({ sections: ['preferences'] }))
       })
       .catch((cause: unknown) => `the snapshot could not be read: ${String(cause)}`)
-    throw new Error(`${(error as Error).message}\nThe Host's preferences snapshot: ${reported}`)
+    let stored = ''
+    if (after !== undefined) {
+      // The Host's own record, read only after it exited (the single writer, ADR-002 D1): whether the start-up
+      // detection measured Claude Code (a capability record is written for every installed CLI it probed) and whether
+      // the hook ingress persisted its port, the two things the step's options depend on.
+      await after.launched.teardown({ stopEverything: true }).catch(() => undefined)
+      try {
+        const db = openHostDatabaseReadOnly(after.profile)
+        try {
+          const records = db
+            .prepare('SELECT provider_id, provider_version FROM capability_records')
+            .all()
+          const meta = db.prepare('SELECT ingress_port, welcome_answered_at FROM app_meta').all()
+          stored = `\nThe Host's records: capability_records ${JSON.stringify(records)}, app_meta ${JSON.stringify(meta)}`
+        } finally {
+          db.close()
+        }
+      } catch (cause) {
+        stored = `\nThe Host's records could not be read: ${String(cause)}`
+      }
+    }
+    throw new Error(
+      `${(error as Error).message}\nThe Host's preferences snapshot: ${reported}${stored}`
+    )
   }
 }
