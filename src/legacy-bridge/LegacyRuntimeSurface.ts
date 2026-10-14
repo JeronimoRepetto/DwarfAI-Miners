@@ -21,8 +21,9 @@
 //
 // A tick runs today's whole poll callback, so what it publishes, credits, records and notifies is whatever today's
 // runtime composition gives it. In the cut-0 table nothing is composed over this surface (`LEGACY_BRIDGE_ADAPTERS`), so
-// nothing changes; the cut-1 switch (stage b) gates those sinks in `LegacyRuntimeRoute.ts` on the route table in the
-// same change that routes the cut-1 rows, so no cut-1 build ticks them.
+// nothing changes; the cut-1 retirement (ISSUE-124) removed the board publish, the crediting and the projects-store
+// write from `LegacyRuntimeRoute.ts` whatever the route table, and the notifier is gated on the route table, so no
+// cut-1 build ticks them.
 //
 // One tick serves every provider of one feed cycle (the feed scans its providers together); a tick that fails rejects
 // every provider's scan of that cycle, and the feed keeps what each listed last.

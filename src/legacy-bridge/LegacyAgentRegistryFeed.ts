@@ -16,7 +16,8 @@
 // hook registry are private to today's runtime, and today's legacy handlers read the board only its poll tick writes, so
 // each discovery cycle is one tick of today's composed runtime and lists the board that tick stamped. The feed still
 // composes none of today's board publish, crediting, projects-store write or notifier: whether that tick runs them is
-// decided by today's runtime composition (`LegacyRuntimeRoute.ts`), which the cut-1 switch gates on the route table.
+// decided by today's runtime composition (`LegacyRuntimeRoute.ts`), which since the cut-1 retirement composes none of
+// them but a rollback table's notifier (until ISSUE-125).
 //
 // The per-provider switch shrinks the feed step by step (21 §3): a provider whose rows moved to the Host is `off`;
 // Codex keeps `pending-questions` (its pending questions only) for `LegacyAskRelay` until the end of cut 4, when the

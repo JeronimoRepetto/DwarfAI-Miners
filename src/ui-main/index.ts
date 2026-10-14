@@ -198,10 +198,6 @@ import { ElectronAutostart } from './window/adapters/autostart/ElectronAutostart
 import { loginEntryOffered } from './window/domain/loginEntryGate'
 import { LOGIN_ENTRY_ARGS, uiStartPlanOf, type UiStartPlan } from './window/domain/uiStart'
 import {
-  legacyObserverComposition,
-  type LegacyObserverOwner
-} from '../legacy-bridge/legacyObserverSwitch'
-import {
   createPresenceTracker,
   type PresenceTimers,
   type PresenceTracker
@@ -484,35 +480,6 @@ export function composeBoardFacade(deps: {
     refresh: () => facade.refresh(),
     dispose: () => facade.dispose()
   }
-}
-
-export { legacyObserverComposition }
-
-/**
- * The cut-1 board and read rows (A-12, A-P2, A-15, A-19), as 21 §2 cut 1 moves them together: `legacy` (before cut 1,
- * or a rollback build whose cut-1 rows route `legacy` again, 21 §2.1) or no longer (from the cut-1 switch, ISSUE-123).
- */
-const OBSERVER_ROWS: readonly ChannelKey[] = [
-  'mines:get',
-  'mines:update',
-  'dwarf:feed:page',
-  'mine:history'
-]
-
-/**
- * Who observes in a route table (21 §2 cut 1 "Switched off in legacy"; ISSUE-123): today's runtime while the table routes
- * the cut-1 board and read rows `legacy`, the Host once it routes them elsewhere (`BoardFacadeAdapter` and the Host
- * message log). Today's composition composes its observer sinks only for `legacy` (`legacyObserverComposition`), so
- * there is one observer and one notifier per build (21 §1 item 4): the Host's in the release build, today's in a
- * rollback build, whose `CUT_1_ROLLBACK` stops the Host observer's writes (ISSUE-122). A table that splits the rows is a
- * composition defect and stops the start.
- */
-export function legacyObserverOwner(routes: readonly ChannelRoute[]): LegacyObserverOwner {
-  const owners = new Set(
-    routes.filter((route) => OBSERVER_ROWS.includes(route.channel)).map((route) => route.owner)
-  )
-  if (owners.size === 1) return owners.has('legacy') ? 'legacy' : 'host'
-  throw new Error(`the route table splits the cut-1 board and read rows: ${[...owners].join(', ')}`)
 }
 
 /** Whether the table routes `channel` to `owner`. */
@@ -1742,7 +1709,7 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
   const rebuiltPanel = electronPanelWindow(uiPreferenceStore)
   // Today's runtime, without its window, tray and shortcut once the table serves the window family `ui-local`: its
-  // pushes, pickers and notification click reach the rebuilt Panel (21 §2 cut 0; LegacyRuntimeRoute). Its pushes pass
+  // pushes and pickers reach the rebuilt Panel (21 §2 cut 0; LegacyRuntimeRoute). Its pushes pass
   // through the tap where `LegacyDwarfIdBridge` maps A-P4 in the releases it is listed for (21 §3, cuts 1–4).
   const legacyPushes = createLegacyPushTap()
   const legacyPanel: LegacyPanelSurface = {
@@ -1751,8 +1718,6 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
         for (const window of appWindows()) window.send(push, mapped)
       })
     },
-    visible: () => rebuiltPanel.composed()?.visible() ?? false,
-    show: () => rebuiltPanel.composed()?.show(),
     showOpenDialog: (options) => {
       const parent = panelBrowserWindow()
       return parent === undefined
@@ -1769,10 +1734,7 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
         { app, dialog, nativeImage, shell, clipboard, globalShortcut },
         {
           ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
-          log: uiLog,
-          // Today's observer sinks, composed only while the table routes the cut-1 board and read rows `legacy`
-          // (21 §2 cut 1 "Switched off in legacy"; a rollback build gets them back, 21 §2.1).
-          observer: legacyObserverComposition(legacyObserverOwner(ROUTES))
+          log: uiLog
         }
       )
     ),
