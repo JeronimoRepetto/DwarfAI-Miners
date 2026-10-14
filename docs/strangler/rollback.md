@@ -58,8 +58,11 @@ with today's shape, so today's Claude hook half is composed again (`legacyClaude
 cut's NEW rows that turn the Host's Claude hook entry on, A-N31 and A-N32 (`WRITES_A_FOREIGN_ENTRY`, recorded in the
 table's `withdrawn`): they have no route in the rollback build, so the entry keeps one writer (`21` §1 item 4, §4).
 Before that build starts, run the newer build's `--revert-integrations` so the entry the Host wrote is removed (`21` §2
-cut 2 "Rollback"). Open: the Host still reports the first-run step due in that build; a Host-side rollback setting that
-reports it not due is needed before a cut-2 rollback build ships (`docs/strangler/parity-cut-2.md`, "Open items").
+cut 2 "Rollback"). The build also sets the cut-2 rollback setting, `CUT_2_ROLLBACK` in
+`src/contracts/strangler/rollback.ts` (read in the Host only by `src/host/wiring/cut2Rollback.ts`; the router contract
+test pins it on exactly when the table withdrew A-N31 and A-N32): on, the Host offers no first-run option, so the step
+is not due (`07` S41.09; its one answer has no route there), and its config writer refuses every install, so the Host
+writes no Claude hook entry while today's installer is composed again.
 
 ## 2. Older artifact (maintainers only, last resort)
 

@@ -27,6 +27,8 @@ describe('the cut-1 rollback setting in the Host (ISSUE-122)', () => {
     const readers = productionFiles(HOST)
       .filter((path) => /CUT_1_ROLLBACK\b|contracts\/strangler/.test(readFileSync(path, 'utf8')))
       .map((path) => relative(HOST, path).split('\\').join('/'))
-    expect(readers).toEqual(['wiring/cut1Rollback.ts'])
+    // AMENDED for ISSUE-141 (was: `['wiring/cut1Rollback.ts']`): the cut-2 rollback setting has its own one reader,
+    // host/wiring/cut2Rollback.ts, which reads `contracts/strangler` too (cut2Rollback.test.ts).
+    expect(readers).toEqual(['wiring/cut1Rollback.ts', 'wiring/cut2Rollback.ts'])
   })
 })

@@ -186,6 +186,7 @@ import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { createKeystrokeRelay } from './wiring/bridges/keystrokeRelay'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
+import { CUT_2_ROLLBACK_CHOICES } from './wiring/cut2Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
@@ -699,16 +700,23 @@ async function bootHost(base: HostBase): Promise<void> {
             moduleSteps: resetSteps.steps,
             // No OS secret store yet (later: ISSUE-324).
             secrets: unavailableSecretStore,
-            externalConfig: hostConfigWriter({ claudeHooks: configWriter, ingressPort, log }),
+            // A cut-2 rollback build refuses every install: today's installer is the entry's one writer there.
+            externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(
+              hostConfigWriter({ claudeHooks: configWriter, ingressPort, log }),
+              log
+            ),
             // The hashes the hook ingress's lookup reads (WiredPreferences.channelTokens).
             channelTokens: new SqliteChannelTokenStore({ db, ids }),
             // The first-run step's installed tools: suppliers' detection cache, once step 4 wired
             // suppliers (nothing installed before; the step is evaluated in step 8, ISSUE-222).
             // Only the tools whose integration can be turned on now are offered (hidden until
             // built): Claude Code once the hook ingress persisted its port (ISSUE-323).
-            installedTools: enablableInstalledTools(
-              suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
-              ingressPort
+            // None in a cut-2 rollback build, whose router has no route for the answer (ISSUE-141).
+            installedTools: CUT_2_ROLLBACK_CHOICES.installedTools(
+              enablableInstalledTools(
+                suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
+                ingressPort
+              )
             ),
             // The token issuance of the transport (lead decision 2026-09-30, ISSUE-198): the
             // Claude hook token is minted here, never in the module (R3).

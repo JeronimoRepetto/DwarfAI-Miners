@@ -37,7 +37,7 @@ import type { HostEvent } from '../window/ports/hostClient'
 import { createStopEverything } from '../window/application/stopEverything'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { CUT_1_ROLLBACK } from '../../contracts/strangler'
+import { CUT_1_ROLLBACK, CUT_2_ROLLBACK } from '../../contracts/strangler'
 import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
@@ -2501,6 +2501,22 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       await router.dispatch('claude:hooks:set', FROM_PANEL, { on: true, requestId: REQUEST })
     ).toMatchObject({ ok: false, error: { code: 'METHOD_NOT_FOUND' } })
     expect(reached).toEqual([])
+  })
+
+  // ADDED for ISSUE-141 (lead decision 2026-10-14): the Host side of the same rollback. With A-N32 withdrawn the
+  // first-run step could not be answered, so the Host must not offer it, and the Host must write no Claude hook entry;
+  // its setting (`CUT_2_ROLLBACK`, read by host/wiring/cut2Rollback.ts) is pinned to the build's table here, as
+  // `CUT_1_ROLLBACK` is, so the route rows and the Host setting cannot disagree in one build.
+  it('[ADR-016, US-SET-012.AC08] the cut-2 rollback setting is on if and only if the build withdrew the rows that write the Claude hook entry', () => {
+    /** Whether a cut-2 table is a rollback build's: A-N31 and A-N32 withdrawn, A-40 and A-41 legacy again. */
+    const cut2RolledBack = (table: RouteTable): boolean =>
+      table.release === 'cut-2' &&
+      table.withdrawn?.['claude:hooks:set'] === 'cut-2' &&
+      table.withdrawn?.['welcome:answer'] === 'cut-2'
+    // This build's setting against this build's table (false in every normal build).
+    expect(CUT_2_ROLLBACK).toBe(cut2RolledBack(cut2))
+    expect(cut2RolledBack(cut2)).toBe(false)
+    expect(cut2RolledBack(rollbackOf(cut2, 'cut-2'))).toBe(true)
   })
 })
 

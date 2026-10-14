@@ -71,7 +71,7 @@ criterion or its named evidence run (TC-141-05):
 | Ask parity: an observed Claude question (`pending-question`)                  | today's hook-only registry held a permission dialog open and pressed the key                                                            | the keystroke channel answers no question (fixture meta `observedQuestion: "none"`): no permission card and no key for it                                                                                                       | ADR-012 item 3; ADR-011 item 4; OQ-05                                   |
 | First answer wins                                                             | each answer path decided on its own                                                                                                     | one broker per ask: the first answer to reach it wins, a second is `not-open`                                                                                                                                                   | ADR-010 items 4, 5; INV-72                                              |
 | Answered elsewhere                                                            | a card stayed until the next board poll dropped it                                                                                      | the Host closes the ask (`ask.closed`), and the card gives way to the composer with no notice                                                                                                                                   | ADR-010 item 6; US-OBS-004.AC09; US-ASK-006.AC06                        |
-| A stale submit                                                                | today's runtime answered "no longer open" and the panel showed it                                                                       | a `not-open` outcome renders no verdict on the card, and the card stays as the Host reports it (see "Open items" for its "Answers:" record)                                                                                     | ADR-010 item 5; US-ASK-006.AC09 (PO decision 2026-09-28 #28)            |
+| A stale submit                                                                | today's runtime answered "no longer open" and the panel showed it                                                                       | a `not-open` outcome renders no verdict on the card, the card stays as the Host reports it, and the "Answers:" record drawn at Submit is withdrawn (`useDwarfMessaging.withdrawAnswer`)                                         | ADR-010 item 5; US-ASK-006.AC09 (PO decision 2026-09-28 #28)            |
 | A refused answer's words                                                      | the panel printed today's runtime's own sentence                                                                                        | `AnswerOutcome` carries a reason code, never a sentence, so the panel prints today's own "That answer could not be delivered."                                                                                                  | ADR-010 item 5; `14` §3.4                                               |
 | Allow and Deny only                                                           | —                                                                                                                                       | a permission is answered only Allow or Deny, checked at the seam A gate                                                                                                                                                         | ADR-010 item 2; INV-73                                                  |
 | No card for a provider with no answer channel                                 | —                                                                                                                                       | an ask with `channel: 'none'` draws no card                                                                                                                                                                                     | ADR-010 item 3; ADR-011 item 4; OQ-05, OQ-42                            |
@@ -113,7 +113,25 @@ Rollback (`21` §2 cut 2 "Rollback", §2.1 item 1; `src/ui-main/ipc/rollbackTabl
 A-40/A-41 route back into one `legacy` row with today's shape, so today's Claude hook half is composed again, and it
 withdraws A-N31 and A-N32 (no route in that build, `RouteTable.withdrawn`), so the Host never turns its Claude hook
 entry on while today's installer is composed (one writer, `21` §1 item 4, §4). Lead decision, 2026-10-14. Before that
-build starts, the newer build's `--revert-integrations` removes the entry the Host wrote (`21` §2.1 item 2b).
+build starts, the newer build's `--revert-integrations` removes the entry the Host wrote (`21` §2.1 item 2b). The build
+also sets `CUT_2_ROLLBACK` (`src/contracts/strangler/rollback.ts`, as `CUT_1_ROLLBACK` for cut 1), which the Host reads
+in `src/host/wiring/cut2Rollback.ts` only: the first-run step offers no option there, so it is not due (`07` S41.09,
+hidden until built, `21` §1 item 8), and the Host's config writer refuses every install, so the Claude hook entry keeps
+one writer. Proven in `src/host/wiring/cut2Rollback.test.ts` (broken on purpose: a rollback build that still offers the
+option fails "a rollback build offers no first-run option") and pinned to the table in
+`src/ui-main/ipc/ipc-routing.contract.test.ts` ("the cut-2 rollback setting is on if and only if…"; broken on purpose:
+the setting on in a normal build fails it).
+
+Dialog precedence (lead decision, 2026-10-14; ADR-002 D7, OQ-63): Stop everything and quit's confirmation opens above
+every other dialog, whichever opened first, the first-run step included, which has no close and no skip
+(US-SET-012.AC06). Dialogs open at once stack (`src/renderer/src/lib/overlay/dialogStack.ts`): only the top one is
+drawn above, hears the keys and holds the focus; the ones beneath stay open, `inert` and `aria-hidden`, until it
+closes. Quitting before an answer leaves the step due for the next window (`07` S41.08). Proven in
+`src/renderer/src/components/stopEverything/StopEverythingOverWelcome.test.ts` and
+`e2e/cut-2/first-run-step-ui.e2e.ts` "Stop everything and quit is reachable while the first-run step is open". From
+cut 2 a case that installs the Claude stub on a fresh profile and then uses the Panel answers the due step first, with
+nothing ticked, as a person does (`e2e/_harness/firstRunStep.ts`); the step is due wherever Claude Code is installed,
+the runner's own included when a case passes no stubs.
 
 ## Spikes and variant recorded
 
@@ -154,16 +172,8 @@ answer from the old app's Claude route, as a non-blocking hook failure. Run by t
 - **In-app Allow on an observed Claude dialog** (`e2e/cut-2/asks.e2e.ts` "[US-ASK-003.AC07] a permission answered in the
   app reaches the stub", marked `fixme`): this build composes no keystroke relay that reaches a session's own console;
   the case is unmarked on the rebase onto the keystroke relay (#1285, PR #1288).
-- **A stale submit's "Answers:" record**: the card draws no verdict, but the record already drawn for the submit is
-  settled as not handed over (✕ with no reason), the one settle `useDwarfMessaging` offers; withdrawing it needs a
-  messaging change outside this switch.
 - **The Settings → Integrations row for A-N31** is not composed in this tree (`useClaudeHooksSettings` has no
   component); `e2e/cut-2/claude-hooks-toggle.e2e.ts` calls A-N31 through the renderer's `window.api`.
-- **A cut-2 rollback build** withdraws A-N31 and A-N32 but the Host still reports the first-run step due on a profile
-  with Claude Code installed, so that build's step would have no way out: it also needs a Host-side rollback setting
-  that reports the step not due (as `CUT_1_ROLLBACK` does for cut 1).
-- **An unanswered first-run step covers the Stop everything and quit confirmation** in the Panel: the confirmation's
-  button cannot be pressed until the step is answered (seen in the E2E teardown).
 
 ## Soak record for the deletion
 
