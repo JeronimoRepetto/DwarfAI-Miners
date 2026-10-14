@@ -1,0 +1,6 @@
+{"at":1735689600134,"event":"received","mode":"log","pid":35630,"hook_event_name":"PreToolUse","tool_name":"Bash"}
+{"at":1735689600134,"event":"exit-no-decision","mode":"log","pid":35630}
+{"at":1735689600191,"event":"received","mode":"decide","pid":35631,"hook_event_name":"PermissionRequest","tool_name":"Bash"}
+{"at":1735689600193,"event":"replied","mode":"decide","pid":35631,"decision":"deny"}
+{"at":1735689601970,"event":"received","mode":"log","pid":35638,"hook_event_name":"Stop","tool_name":null}
+{"at":1735689601970,"event":"exit-no-decision","mode":"log","pid":35638}
