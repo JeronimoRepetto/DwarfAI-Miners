@@ -38,7 +38,9 @@ criterion or its named evidence run (TC-141-05):
   through the host route", "[US-ASK-006.AC09] a not-open outcome renders nothing…") and
   `src/renderer/src/composables/useMessageDock.test.ts`.
 - **L9 ask cases** (`e2e/cut-2/asks.e2e.ts`): answered in the terminal closes the card with no notice; reopen shows the
-  card again on its step. Answered in the app waits on the keystroke relay (#1285, row "Open items").
+  card again on its step; answered in the app, the keystroke relay (#1285) presses the measured Allow key (`1`, no
+  Enter) in the session's own console, a hidden stub console on Windows (macOS and Linux need a tmux pane or a
+  Terminal.app tab: the maintainer's lane, `ConsoleKeystrokeDelivery.os.test.ts`).
 - **First-run step cases with the cut-2 `offered`** (`07` S41.01, S41.02, S41.09): `e2e/cut-2/first-run-step-ui.e2e.ts`
   (clean profile with the Claude stub: the step shows with `offered: ['claude-hooks']`, the option pre-selected;
   Activate writes the Host's entry; with the option off Activate closes the step and writes nothing),
@@ -169,9 +171,6 @@ answer from the old app's Claude route, as a non-blocking hook failure. Run by t
 
 ## Open items
 
-- **In-app Allow on an observed Claude dialog** (`e2e/cut-2/asks.e2e.ts` "[US-ASK-003.AC07] a permission answered in the
-  app reaches the stub", marked `fixme`): this build composes no keystroke relay that reaches a session's own console;
-  the case is unmarked on the rebase onto the keystroke relay (#1285, PR #1288).
 - **The Settings → Integrations row for A-N31** is not composed in this tree (`useClaudeHooksSettings` has no
   component); `e2e/cut-2/claude-hooks-toggle.e2e.ts` calls A-N31 through the renderer's `window.api`.
 

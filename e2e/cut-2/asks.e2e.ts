@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from 'node:child_process'
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
@@ -10,6 +11,7 @@ import {
   type LaunchedApp
 } from '../_harness/launchApp.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
+import { createProcessProbe } from '../../src/main/platform/processProbe.ts'
 import { claudeSettings, hookCommands, isHostEntry, welcomeStep } from './claudeHooksWorld.ts'
 
 /**
@@ -99,6 +101,72 @@ function seedWaitingSession(profile: IsolatedProfile): { transcript: string; cwd
   return { transcript, cwd }
 }
 
+/** 100 ns ticks between 1601-01-01 and 1970-01-01 (Claude Code's registry writes `procStart` as a Windows FILETIME). */
+const FILETIME_EPOCH_OFFSET = 116_444_736_000_000_000n
+
+/** The session's own terminal: a stub console that reports every key its input buffer receives. */
+interface StubConsole {
+  /** Every key the console received, as the stub reports it (`key <hex>`). */
+  keys(): string[]
+  dispose(): void
+}
+
+/**
+ * The waiting session's process, as the keystroke relay reaches it (ADR-012 item 3; #1285): a stub "terminal session"
+ * (`fixtures/bin/console-keys`, `reader` mode, never a provider CLI, 17 §1.8) reading its OWN console's input buffer,
+ * the hidden console a `windowsHide` child gets (no window is shown), named by Claude Code's own session registry
+ * (`sessions/<pid>.json`, with the process's creation time as a Windows FILETIME), so observation records its process
+ * identity (ADR-014 item 1) and the relay attaches to that console by pid. Windows only: on macOS and Linux the relay
+ * needs a tmux pane or a Terminal.app tab, which are the maintainer's lane.
+ */
+async function startStubConsole(profile: IsolatedProfile, cwd: string): Promise<StubConsole> {
+  const reader = path.join(STUB_BIN, 'console-keys', 'console-keys.mjs')
+  const child: ChildProcess = spawn(process.execPath, [reader, 'reader', '200000'], {
+    stdio: ['pipe', 'pipe', 'ignore'],
+    windowsHide: true
+  })
+  const lines: string[] = []
+  let buffered = ''
+  const ready = new Promise<void>((resolve, reject) => {
+    child.once('exit', () => reject(new Error('the stub console exited before it listened')))
+    child.stdout!.on('data', (chunk: Buffer) => {
+      buffered += chunk.toString('utf8')
+      const parts = buffered.split(/\r?\n/)
+      buffered = parts.pop() ?? ''
+      for (const line of parts) {
+        if (line === 'ready') resolve()
+        else if (line.startsWith('key ')) lines.push(line)
+      }
+    })
+  })
+  const dispose = (): void => {
+    child.stdin?.end()
+    if (child.exitCode === null) child.kill()
+  }
+  try {
+    await ready
+    const pid = child.pid
+    const started = pid === undefined ? null : await createProcessProbe().processStartTimeMs(pid)
+    if (pid === undefined || started === null) throw new Error('the stub console has no identity')
+    const sessions = path.join(profile.claudeConfigDir, 'sessions')
+    mkdirSync(sessions, { recursive: true })
+    writeFileSync(
+      path.join(sessions, `${pid}.json`),
+      JSON.stringify({
+        pid,
+        sessionId: SESSION,
+        cwd,
+        status: 'busy',
+        procStart: String(BigInt(Math.round(started)) * 10_000n + FILETIME_EPOCH_OFFSET)
+      })
+    )
+  } catch (error) {
+    dispose()
+    throw error
+  }
+  return { keys: () => [...lines], dispose }
+}
+
 /** The person answered the dialog at the session's own terminal: the call's result is in the transcript. */
 function answerAtTheTerminal(transcript: string, cwd: string): void {
   appendFileSync(
@@ -155,7 +223,14 @@ test.describe('cut 2: an observed Claude permission through the Host broker (ISS
   })
 
   /** The app on a profile whose Claude hook entry is DwarfAI's (Activate), with the session's dialog open as a card. */
-  async function cardShown(): Promise<{
+  let stubConsole: StubConsole | undefined
+
+  test.afterEach(() => {
+    stubConsole?.dispose()
+    stubConsole = undefined
+  })
+
+  async function cardShown(withConsole = false): Promise<{
     owned: IsolatedProfile
     session: { transcript: string; cwd: string }
     entry: { port: number; token: string }
@@ -179,6 +254,7 @@ test.describe('cut 2: an observed Claude permission through the Host broker (ISS
       .toBeGreaterThan(0)
     const entry = hostEntry(owned)
     const session = seedWaitingSession(owned)
+    if (withConsole) stubConsole = await startStubConsole(owned, session.cwd)
     // The dialog's hooks, as Claude Code raises them: the permission request, then its notification. A hook can
     // reach the Host before its observer has drawn the session's dwarf, so it is raised again until the card shows.
     await expect
@@ -206,11 +282,15 @@ test.describe('cut 2: an observed Claude permission through the Host broker (ISS
     return { owned, session, entry }
   }
 
-  // Waits on #1285 (the keystroke relay, PR #1288): this build's Host composes no relay that reaches a session's own
-  // console, so an in-app Allow on an observed Claude dialog has no key path to the stub yet. Written in full and
-  // marked here, never skipped silently: the rebase onto #1288 removes the mark (ISSUE-141 hand-off).
-  test.fixme('[US-ASK-003.AC07] a permission answered in the app reaches the stub', async () => {
-    const { owned } = await cardShown()
+  // The keystroke relay (#1285, PR #1288) presses the measured Allow key in the session's own console. The console is a
+  // hidden stub on Windows (startStubConsole); elsewhere the relay needs a tmux pane or a Terminal.app tab, which are the
+  // maintainer's lane (`ConsoleKeystrokeDelivery.os.test.ts`), so the case runs on Windows only.
+  test('[US-ASK-003.AC07] a permission answered in the app reaches the stub', async () => {
+    test.skip(
+      process.platform !== 'win32',
+      'the stub console is a Windows console (macOS and Linux: maintainer lane)'
+    )
+    await cardShown(true)
     const window = launched!.window
     const [ask] = await openAsks(window)
     const outcome = await window.evaluate(
@@ -223,8 +303,13 @@ test.describe('cut 2: an observed Claude permission through the Host broker (ISS
       ask!.id
     )
     expect(outcome).toEqual({ ok: true, value: { kind: 'accepted' } })
-    // The stub's console received the measured Allow key ('1', no Enter); the relay's stub record is #1288's.
-    expect(owned).toBeDefined()
+    // The session's console received the measured Allow key, '1' with no Enter, and nothing else.
+    await expect
+      .poll(() => stubConsole!.keys(), {
+        timeout: 30_000,
+        message: 'the Allow key reaches the console'
+      })
+      .toEqual(['key 31'])
   })
 
   test('[US-OBS-004.AC09] a permission answered in the stub terminal closes the card with no notice', async () => {
