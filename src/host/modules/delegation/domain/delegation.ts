@@ -2,10 +2,12 @@
 // transitions over plain values. Time is passed in and only stamps `createdAt`, `settledAt` and
 // `handoff.phaseAt` (05 §2.2, R1).
 //
-// - `admitDelegation` is a `delegate_subtask` call reaching the domain: a delegated caller is
-//   `depth-exceeded` and the per-parent and global caps are `concurrency-limit`, both with no
-//   delegation (16 §5.4); otherwise the gate is re-read (INV-80): closed → a delegation created
-//   `failed` with `gate-closed` (S8.02, no Jev call), open → `attempted` (S8.01).
+// - `admitDelegation` is a `delegate_subtask` call reaching the domain, checked in this order:
+//   a delegated caller is `depth-exceeded` (INV-81), with no delegation; the gate is re-read
+//   (INV-80): closed → a delegation created `failed` with `gate-closed` (S8.02, no Jev call); the
+//   per-parent and global caps → `concurrency-limit`, with no delegation (16 §5.4); otherwise
+//   `attempted` (S8.01). Depth comes first so a worker never gets a `gate-closed` row and a parent
+//   line; the gate comes before the caps as `DelegationEndpoint.delegate` re-checks it first.
 // - `applyEvent` moves an existing delegation along 07 §8 and refuses every pair 07 does not list,
 //   changing nothing. The Settings toggle and a closed window are **no transition** (S8.10): a
 //   delegation in flight, `attempted` or `running`, keeps going (PO #51, INV-80).
@@ -19,6 +21,12 @@
 // 'delivered'`; the task and context dropped once settled; a worker never the parent itself.
 import type { DwarfId, Instant, Result } from '../../../kernel/domain/values'
 import { allows, type DelegationGateLaunch, type DelegationGatePreferences } from './delegationGate'
+import {
+  checkConcurrency,
+  checkDepth,
+  type DelegationLimitRefusal,
+  type InFlightCounts
+} from './limits'
 import type { Subtask, SubtaskText } from './subtaskText'
 
 /** The DwarfAI id of a delegation (06 §11.1; 09 `delegations.id`). */
@@ -109,12 +117,6 @@ export type DelegationEvent =
 /** Why an event was refused; the delegation is unchanged. */
 export type DelegationEventRefusal = 'not-in-machine-8' | 'worker-is-parent' | 'handoff-not-sending'
 
-/** In-flight (`attempted` or `running`) delegations: the parent's own and all of them. */
-export interface InFlightCounts {
-  readonly parent: number
-  readonly global: number
-}
-
 /** A `delegate_subtask` call as the domain sees it (16 §5.4; `DelegationEndpoint.delegate`). */
 export interface DelegationAdmission {
   readonly id: DelegationId
@@ -131,10 +133,9 @@ export interface DelegationAdmission {
 export function admitDelegation(
   input: DelegationAdmission,
   at: Instant
-): Result<
-  { delegation: Delegation; transition: 'S8.01' | 'S8.02' },
-  'concurrency-limit' | 'depth-exceeded'
-> {
+): Result<{ delegation: Delegation; transition: 'S8.01' | 'S8.02' }, DelegationLimitRefusal> {
+  const depth = checkDepth(input.launch)
+  if (!depth.ok) return depth
   const base = { id: input.id, parentDwarfId: input.parentDwarfId, ticket: input.ticket }
   if (!allows(input.preferences, input.launch)) {
     return {
@@ -151,6 +152,8 @@ export function admitDelegation(
       }
     }
   }
+  const concurrency = checkConcurrency(input.inFlight)
+  if (!concurrency.ok) return concurrency
   const delegation: Delegation = {
     ...base,
     task: input.subtask.task,
