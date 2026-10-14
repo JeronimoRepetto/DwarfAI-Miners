@@ -56,7 +56,10 @@
 //   `closed` fact in its first batch, and arrives already departed too.
 //   With no `ProcessControl` or no readable `sessions/` folder, presence is unknown and every session
 //   is admitted as before (fails open). The registry lists live interactive sessions
-//   (docs/provider-formats.md), so a headless run arrives departed; presence never closes a dwarf.
+//   (docs/provider-formats.md), so a headless run arrives departed. Presence states no ending: a
+//   present session it tells `not-live` (one admitted in an earlier Host run whose process exited
+//   while no Host ran, its entry gone) is departed by the loop with no ledger row, through
+//   `sessionOf` (FM-059), and comes back as its resumed generation if it runs and writes again.
 // - Known limits: an entry with no readable `procStart` (only the Windows FILETIME form is known)
 //   closes when its pid has no process, but a recycled pid there is no evidence and keeps the
 //   session present.
@@ -408,6 +411,17 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
       roots === undefined ? this.registryRead : roots.some((root) => this.readRoots.has(root))
     if (!read) return 'unknown'
     return this.named.has(sessionId) || this.running.has(sessionId) ? 'live' : 'not-live'
+  }
+
+  /**
+   * The session whose own transcript `source` is, by its path (`projects/<cwd>/<sessionId>.jsonl`),
+   * so the loop can depart a present session whose stream has nothing new once `presenceOf` tells
+   * it is not live (FM-059). A subagent transcript names none: a subagent follows its own rules.
+   */
+  sessionOf(source: SourceFile): ProviderIdentity | null {
+    const location = transcriptFileOf(source.path)
+    if (location?.kind !== 'session') return null
+    return { providerId: this.providerId, providerSessionId: location.sessionId }
   }
 
   /**
