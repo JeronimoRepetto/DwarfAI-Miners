@@ -512,7 +512,7 @@ describe('the crew module wired into the Host (ISSUE-094)', () => {
     expect(departed.every((d) => d.cause === 'closed-elsewhere')).toBe(true)
   })
 
-  it('[US-OBS-005, ADR-006] a session observed already ended arrives departed: in its mine history, never present, with no dwarf.arrived frame', async () => {
+  it('[US-OBS-005.AC02, ADR-006] a session observed already ended arrives departed: in its mine history, never present, with no dwarf.arrived frame', async () => {
     const h = await bootHost()
     const mineId = await h.declare(h.folder('old-gallery'))
 
@@ -529,7 +529,7 @@ describe('the crew module wired into the Host (ISSUE-094)', () => {
     expect(h.evts('dwarf.arrived')).toEqual([])
   })
 
-  it('[US-OBS-005, ADR-006] a session observed already ended in a folder that is no mine yet makes its mine by the first-message rule and departs', async () => {
+  it('[US-OBS-005.AC02, ADR-006] a session observed already ended in a folder that is no mine yet makes its mine by the first-message rule and departs', async () => {
     const h = await bootHost()
 
     await h.observedEnded(session('s-new'), h.folder('fresh-adit'), { firstMessage: true })

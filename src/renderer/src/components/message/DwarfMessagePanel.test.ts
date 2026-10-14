@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 /*
  * AMENDED for #635: motion-v's AnimatePresence and motion, and lib/message/panelHeight, are no
  * longer imported — the bubbles enter with the design's own pop-in and the panel has no height of
@@ -3916,14 +3916,22 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
       patchUiSession: vi.fn() as never,
       onUiSessionChanged: vi.fn(() => () => undefined) as never
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    // Writable, and put back after each case: the other cases of this file assign `window.api` plainly, in any order.
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     expect(await useDwarfQuestion().startAsks()).toBe(true)
   }
+
+  let apiBefore: PropertyDescriptor | undefined
+  beforeEach(() => {
+    apiBefore = Object.getOwnPropertyDescriptor(window, 'api')
+  })
 
   afterEach(() => {
     useDwarfQuestion().stopAsks()
     useMines().stop()
     useMines().clear()
+    if (apiBefore === undefined) delete (window as unknown as { api?: unknown }).api
+    else Object.defineProperty(window, 'api', apiBefore)
   })
 
   it('[ADR-033] a Host ask from frontAsk replaces the composer with its card, on the step the Host reports', async () => {

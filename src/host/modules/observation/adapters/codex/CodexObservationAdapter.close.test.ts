@@ -150,7 +150,7 @@ function watchOver(listing: SharedProcessListing, clock: FakeClock): ProcessGone
 }
 
 describe('CodexObservationAdapter closing (owner amendment I)', () => {
-  it('[FM-059, US-OBS-005] a rollout first read long after its last record is quiet since that record: it closes within one confirmation of first sight', async () => {
+  it('[FM-059, US-OBS-005.AC02] a rollout first read long after its last record is quiet since that record: it closes within one confirmation of first sight', async () => {
     const HOURS_AGO = T0 - 2 * 3_600 * S
     const { home } = await codexHome(
       meta(HOURS_AGO) + person(HOURS_AGO + S, 1) + dwarf(HOURS_AGO + 2 * S, 1)

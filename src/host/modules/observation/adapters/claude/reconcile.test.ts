@@ -601,7 +601,7 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
     if (entry !== undefined) await writeFile(join(configDir, 'sessions', '32896.json'), entry)
   }
 
-  it('[US-OBS-005, FM-059] a session no registry entry names (it exited cleanly) arrives already departed, and so do its subagents; their batches are written once', async () => {
+  it('[US-OBS-005.AC02, FM-059] a session no registry entry names (it exited cleanly) arrives already departed, and so do its subagents; their batches are written once', async () => {
     const configDir = await tempDir()
     const path = await placeSession(
       configDir,
@@ -681,7 +681,7 @@ describe('Claude sessions arrive only while their process runs (owner decision 2
     w.loop.stop()
   })
 
-  it('[US-OBS-005] without a readable registry the presence of a session is unknown and it arrives (presence fails open)', async () => {
+  it('[US-OBS-005.AC01] without a readable registry the presence of a session is unknown and it arrives (presence fails open)', async () => {
     const configDir = await tempDir()
     await placeSession(configDir, CWD, PLAIN_SESSION, await fixture('plain-session.jsonl'))
     // No `sessions/` folder at all, and a composition with no process control.
@@ -819,7 +819,7 @@ describe('A Claude session present in an earlier Host run departs once its proce
     await run.loop.whenIdle()
   }
 
-  it('[FM-059, S4.33, US-OBS-005] regression: a session present in an earlier Host run whose process exited while no Host ran (its registry entry gone) departs when the Host restarts, once, with no ledger row', async () => {
+  it('[FM-059, S4.33, US-OBS-005.AC02] regression: a session present in an earlier Host run whose process exited while no Host ran (its registry entry gone) departs when the Host restarts, once, with no ledger row', async () => {
     const { configDir, processes, w, closings } = await presentThenHostStops()
     // The person closed it in their terminal while no Host ran: Claude Code removed its entry.
     await rm(join(configDir, ENTRY()))
@@ -864,7 +864,7 @@ describe('A Claude session present in an earlier Host run departs once its proce
     next.loop.stop()
   })
 
-  it('[US-OBS-005, S4.41] a session departed after the restart that the person resumes comes back present as its resumed generation', async () => {
+  it('[S4.41] a session departed after the restart that the person resumes comes back present as its resumed generation', async () => {
     const { configDir, path, processes, w, closings } = await presentThenHostStops()
     await rm(join(configDir, ENTRY()))
     processes.script(32896, 'absent')
