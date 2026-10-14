@@ -126,16 +126,16 @@ console, stop and ask row stays `legacy` through the bridges listed above.
 The step's retirement work units (ISSUE-124, ISSUE-125) merge only after this internal build met the step's exit
 criteria on the three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71).
 
-| Field                        | Value                    |
-| ---------------------------- | ------------------------ |
-| Exit criteria met on Windows | pending (the runs above) |
-| Exit criteria met on macOS   | pending (CI)             |
-| Exit criteria met on Linux   | pending (CI)             |
-| Soak build                   | pending                  |
-| Soak start                   | pending                  |
-| Soak end                     | pending                  |
-| Blocking problems            | pending                  |
-| Retirement or deletion issue | ISSUE-124, ISSUE-125     |
+| Field                        | Value                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Exit criteria met on Windows | met: the owner's daily dev use since 2026-10-07 plus the CI `windows-latest` lanes                                |
+| Exit criteria met on macOS   | CI `macos-latest` lanes green; manual run waived until the pre-v1 pass in ISSUE-328 (owner decisions 2026-10-10)  |
+| Exit criteria met on Linux   | CI `ubuntu-latest` lanes green; manual run waived until the pre-v1 pass in ISSUE-328 (owner decisions 2026-10-10) |
+| Soak build                   | dev builds from `main` since the cut-1 route switch (#1239)                                                       |
+| Soak start                   | 2026-10-07                                                                                                        |
+| Soak end                     | 2026-10-14                                                                                                        |
+| Blocking problems            | none open; found and fixed during the soak, not blocking (owner): #1260, #1261, #1264, #1265, #1271, #1273, #1274 |
+| Retirement or deletion issue | ISSUE-124, ISSUE-125                                                                                              |
 
 ## Updates
 
@@ -143,3 +143,13 @@ criteria on the three OSes and then ran for 7 days of normal use with no blockin
   the Host closes an observed Claude session once its recorded process is gone (#1240). Remove mine on a
   legacy-launched session ends it through today's identity-checked kill first, then removes the mine; the dwarf departs
   as `closed-elsewhere`. This settles the case listed as waiting under "Deferred cases" above.
+- **2026-10-11, ISSUE-124 (retirement).** Today's poll timer, board publish (A-P2 `minesUpdated` from today's runtime),
+  ledger crediting (the vault store `openLedgerStore` and the coal backfill `runCoalBackfill`) and the projects-store
+  board path are removed from `LegacyRuntimeRoute.ts` whatever the route table: today's runtime runs over a ledger
+  that remembers nothing (`nullLedgerStore()`) and a projects store without the observer's writes
+  (`withoutObserverWrites`), and ticks only through `LegacyAgentRegistryFeed`'s cycles. A table that routes the cut-1
+  rows `legacy` again no longer composes them, so cut 1 rolls forward only (`21` §2.1 item 4); the Router bullet's
+  "the rollback table composing them again" now holds for the notifier only, until ISSUE-125. Pinned by
+  `ipc-routing.contract.test.ts` `describe('cut-1 retirement (21 §2 cut 1)')` and
+  `src/legacy-bridge/retiredComposition.test.ts`. The legacy files stay until cut 5; the dependency-cruiser legacy
+  exclude (`^src/(main|shared)/`) is unchanged, because no legacy file left the tree. Soak record filled above.

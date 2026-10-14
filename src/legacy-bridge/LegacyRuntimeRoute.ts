@@ -1,5 +1,5 @@
 import { config as loadDotenv } from 'dotenv'
-import { readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PanelWindowController } from '../ui-main/window/ports/panelWindowController'
@@ -110,7 +110,6 @@ import { createOpenCodeServerPasswordStore } from '../main/opencodePermissions/o
 import { createOpenCodePermissionAnswerPort } from '../main/opencodePermissions/answerOpenCodePermission'
 import type { OpenCodePermissionPush } from '../main/opencodePermissions/permissionPushPayload'
 import { NodeFs } from '../main/adapters/fsLike'
-import { NodeSqlite } from '../main/adapters/sqliteLike'
 import { createPlatformAdapters } from '../main/platform/platformAdapters'
 import {
   MINE_PATH_OUTSIDE_REASON,
@@ -126,10 +125,8 @@ import { copyTextToClipboard, type ClipboardPort } from '../main/shell/copyText'
 import { parseDwarfFeedPageRequest } from '../main/providers/feedWindow'
 import { currentPlatform } from '../main/platform/platform'
 import { APP_DB_FILENAME, createAppDatabase } from '../main/appDatabase/appDatabase'
-import { runCoalBackfill } from '../main/ledger/coalBackfill'
-import { LEDGER_JSON_FILENAME, nullLedgerStore } from '../main/ledger/ledgerStore'
+import { nullLedgerStore } from '../main/ledger/ledgerStore'
 import { MaterialLedger } from '../main/ledger/materialLedger'
-import { openLedgerStore } from '../main/ledger/openLedgerStore'
 import { openProjectsStore } from '../main/projects/openProjectsStore'
 import { createSqliteLaunchedSessionStore } from '../main/sessionLaunch/launchedSessionStore'
 import { createSqliteDwarfNameStore } from '../main/dwarfNames/dwarfNameStore'
@@ -346,9 +343,9 @@ export interface LegacyCompositionOptions {
    */
   log: LegacyLog
   /**
-   * Which parts of today's observer are composed (21 §2 cut 1 "Switched off in legacy"; ./legacyObserverSwitch.ts):
-   * every one while the route table routes the cut-1 board and read rows `legacy` (before cut 1, or a rollback build),
-   * none from the cut-1 switch, where the Host observes and `LegacyAgentRegistryFeed`'s cycles are the only ticks.
+   * Which part of today's observer is still composed (21 §2 cut 1 "Switched off in legacy"; ./legacyObserverSwitch.ts):
+   * the notifier while the route table routes the cut-1 board and read rows `legacy` (a rollback build), none from the
+   * cut-1 switch. The poll timer, board publish, ledger crediting and projects-store board path are retired (ISSUE-124).
    */
   observer: LegacyObserverComposition
 }
@@ -680,21 +677,10 @@ export function composeLegacyRuntime(
       filePath: join(app.getPath('userData'), APP_DB_FILENAME)
     })
 
-    // The material vault (#22), loaded before the runtime exists, and only while today's runtime credits (21 §2 cut 1
-    // "Switched off in legacy"): from the cut-1 switch today's ledger is a vault over a store that remembers nothing,
-    // so today's tick credits nothing anywhere and the Host ledger is the only writer of ore.
+    // Today's material vault over a store that remembers nothing (21 §2 cut 1 "Retired at the end", ISSUE-124): today's
+    // runtime needs a ledger, but its tick credits nothing anywhere and the Host ledger is the only writer of ore.
     const ledger = new MaterialLedger({
-      store: observer.ledgerCrediting
-        ? (
-            await openLedgerStore({
-              database: appDatabase,
-              jsonPath: join(app.getPath('userData'), LEDGER_JSON_FILENAME),
-              now: Date.now,
-              warn: warnFrom('ledger'),
-              log: unrouted
-            })
-          ).store
-        : nullLedgerStore(),
+      store: nullLedgerStore(),
       onError: warnFrom('ledger')
     })
     await ledger.load()
@@ -704,11 +690,11 @@ export function composeLegacyRuntime(
       database: appDatabase,
       warn: warnFrom('projects')
     })
-    // From the cut-1 switch today's projects store is no longer the board's source (21 §2 cut 1 "Switched off in
-    // legacy"): what a tick observes is written nowhere, while every read and every person's own act stay.
+    // Today's projects store is no longer the board's source (21 §2 cut 1 "Retired at the end", ISSUE-124): what a tick
+    // observes is written nowhere, while every read and every person's own act stay.
     projects =
-      openedProjects.store === null || observer.projectsObserverWrites
-        ? openedProjects.store
+      openedProjects.store === null
+        ? null
         : withoutObserverWrites(openedProjects.store, currentPlatform())
     const projectsRefusal = openedProjects.failure
 
@@ -800,13 +786,9 @@ export function composeLegacyRuntime(
       answerOpenCodePermission: createOpenCodePermissionAnswerPort(globalThis.fetch, {
         readPassword: openCodePasswordStore.readPassword
       }),
-      onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
-        // Today's board push, only while today's runtime observes: from the cut-1 switch `BoardFacadeAdapter` pushes
-        // A-P2 from the Host board, and a second writer of it would be a second observer (21 §1 item 4).
-        if (observer.boardPublish) {
-          panel.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines, materials, watchedFeed))
-        }
-        // After the renderers (#316): the panel's own paint comes first.
+      // Today's board push is retired (ISSUE-124): `BoardFacadeAdapter` pushes A-P2 from the Host board, and a second
+      // writer of it would be a second observer (21 §1 item 4).
+      onMinesUpdated: (mines: Mine[]) => {
         notifier?.update(mines)
       },
       onLaunchFailed: (push: LaunchFailedPush) => {
@@ -818,9 +800,8 @@ export function composeLegacyRuntime(
     })
     await runtime.loadDeclared()
     await runtime.restoreLaunchedSessions()
-    // Today's poll timer, only while today's runtime observes: from the cut-1 switch `LegacyAgentRegistryFeed`'s
-    // cycles are the ticks that keep today's board, and so the rows still `legacy`, current (./LegacyRuntimeSurface.ts).
-    if (observer.pollTimer) runtime.start()
+    // Today's poll timer is retired (ISSUE-124): `LegacyAgentRegistryFeed`'s cycles are the ticks that keep today's
+    // board, and so the rows still `legacy`, current (./LegacyRuntimeSurface.ts).
 
     // MCP subtask delegation: the loopback service (#511 T3, #601), always started.
     delegationService = new DelegationService({
@@ -838,23 +819,6 @@ export function composeLegacyRuntime(
       deliverToHeldParent: (token, text) => runtime?.pushToHeldParent(token, text) ?? false
     })
     await delegationService.start()
-
-    // The historical coal pile (#22), deliberately not awaited; only while today's runtime credits (from the cut-1
-    // switch the Host's coal backfill is the only one, ADR-029).
-    if (observer.ledgerCrediting) {
-      void runCoalBackfill({
-        fs: new NodeFs(),
-        sqlite: new NodeSqlite(),
-        markerFs: { readFile, writeFile, rename },
-        markerPath: join(app.getPath('userData'), 'coal-backfill-v1.json'),
-        claudeRoots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
-        codexSessionsRoot: expandHomePath(config.providers.codex.sessionsRoot),
-        opencodeStoreRoot: expandHomePath(config.providers.opencode.storeRoot),
-        credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
-        now: Date.now,
-        warn: warnFrom('coal-backfill')
-      }).catch((error: unknown) => diagnostics.warning('coal-backfill', error))
-    }
 
     // Optional push channels (#94, #203, #588 T6 F5): one shared listener, opt-in routes.
     const hookFs = new NodeHookFs()
