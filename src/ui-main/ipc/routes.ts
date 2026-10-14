@@ -1,13 +1,13 @@
 // The router table (ADR-001 item 3; 21 §1 items 1, 2, 2a): exactly one `ChannelRoute` per (channel, qualifier) for
 // the release `ROUTES_RELEASE`, reviewed per cut and checked by `ipc-routing.contract.test.ts`. A hot spot (22 §5):
-// after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1), with the two
-// exceptions 22 §5 names. A NEW row whose route is born in a later step is not here: it is listed in
-// `src/contracts/ipc/unrouted.ts` with that step.
+// after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1,
+// ISSUE-141 for cut 2), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
+// it is listed in `src/contracts/ipc/unrouted.ts` with that step.
 import { STEP_ORDER, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, IpcChannelName, LegacyBridgeAdapter } from './channelRoute'
 
 /** The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. */
-export const ROUTES_RELEASE: StepId = 'cut-1'
+export const ROUTES_RELEASE: StepId = 'cut-2'
 
 /** The steps from `from` to `to`, both included, in `STEP_ORDER`. */
 function span(from: StepId, to: StepId): StepId[] {
@@ -99,6 +99,38 @@ const uiLocalCut1New = (channel: IpcChannelName): ChannelRoute => ({
 })
 
 /**
+ * A row the cut-2 switch serves from the Host (21 §2 cut 2 "New core serves" H) with its target shape: `passed`
+ * because its evidence is recorded in `docs/strangler/parity-cut-2.md` (the ask parity suite, the L1/L2 broker suites,
+ * its L6 contract suite and the cut-2 E2E cases; 21 §1 item 3).
+ */
+const hostCut2 = (channel: IpcChannelName): ChannelRoute => ({
+  channel,
+  owner: 'host',
+  since: 'cut-2',
+  parity: 'passed',
+  shape: 'target'
+})
+
+/**
+ * A-40 or A-41 in cut 2 (21 §2 cut 2 "Qualified routes"; §1 items 2, 2a; 14 §8 I-11): the Host answers its own AskIds
+ * (the unqualified route), and each origin of `LegacyAskRelay`'s `legacy:` namespace stays today's runtime's, reached
+ * through the shape adapter `LegacyAnswerShapeAdapter` (21 §3.1). One owner per (channel, qualifier); the qualifier
+ * is the relay's, read from the answer's AskId by the root (never a guess).
+ */
+const askAnswerCut2 = (channel: IpcChannelName): ChannelRoute[] => [
+  hostCut2(channel),
+  ...(['legacy-launch', 'legacy-ask-channel'] as const).map((origin): ChannelRoute => ({
+    channel,
+    owner: 'legacy',
+    since: 'cut-2',
+    parity: 'n/a',
+    qualifier: { origin },
+    shape: 'target',
+    shapeAdapter: 'LegacyAnswerShapeAdapter'
+  }))
+]
+
+/**
  * Cut 0 (21 §2 cut 0; ISSUE-056): the window family A-01…A-11, A-21, A-22, A-24, A-28, A-29, A-45, A-46, A-56, A-57,
  * A-P1, A-P6, A-X1 is served `ui-local` by the rebuilt window module; the NEW rows A-N03…A-N05 (Host connection), A-N30
  * (renderer diagnostics), A-N25, A-N27 (the tray's confirmation) and A-N34 (owner-approved amendment 2026-10-01,
@@ -112,10 +144,14 @@ const uiLocalCut1New = (channel: IpcChannelName): ChannelRoute => ({
  * A-N16 (replacing A-P5), A-N17…A-N21 and A-N12 are `ui-local`; A-33 stays `legacy` through its shape adapter
  * `ResetFanout`. A-14, A-16, A-17, A-18 and A-P5 are retired with no route (`RETIRED` in `unrouted.ts`).
  *
+ * Cut 2 (21 §2 cut 2; ISSUE-141): A-40 and A-41 are `host` with their target shape for Host AskIds and `legacy`
+ * through `LegacyAnswerShapeAdapter` for the relay's `legacy:` AskIds, one route per origin (`askAnswerCut2`); the NEW
+ * rows A-N07 (`setAskStep`), A-N31 (`setClaudeHooksEnabled`) and A-N32 (`answerWelcome`) are born `host`.
+ *
  * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape; A-13,
- * A-23, A-26, A-27, A-P3, A-P4 reach today's runtime through `LegacyDwarfIdBridge` and A-40, A-41 through
- * `LegacyAskRelay` (21 §3). A-N33 stays unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other
- * (its owner sends it); the router registers no listener for a push or for the A-X1 preload helper.
+ * A-23, A-26, A-27, A-P3, A-P4 reach today's runtime through `LegacyDwarfIdBridge` (21 §3). A-N33 stays unrouted
+ * (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router registers no
+ * listener for a push or for the A-X1 preload helper.
  */
 export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('panel:hide'), // A-01
@@ -160,8 +196,8 @@ export const ROUTES: readonly ChannelRoute[] = [
   legacyToday('agent:models'), // A-37
   legacyToday('agent:launchHeld'), // A-38
   legacyToday('agent:launchHosted'), // A-39
-  legacyToday('agent:answerQuestion'), // A-40
-  legacyToday('agent:answerPermission'), // A-41
+  ...askAnswerCut2('agent:answerQuestion'), // A-40
+  ...askAnswerCut2('agent:answerPermission'), // A-41
   legacyToday('notifications:enabled:get'), // A-42
   legacyToday('notifications:enabled:set'), // A-43
   uiLocalCut1Kept('presence:visibleMines'), // A-44
@@ -208,7 +244,10 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalCut1New('ui:session:changed'), // A-N19
   uiLocalCut1New('ui:preferences:get'), // A-N20
   uiLocalCut1New('ui:preferences:set'), // A-N21
-  uiLocalCut1New('ui:preferences:reset') // A-N12
+  uiLocalCut1New('ui:preferences:reset'), // A-N12
+  hostCut2('ask:step:set'), // A-N07
+  hostCut2('claude:hooks:set'), // A-N31 (AMENDMENT-7)
+  hostCut2('welcome:answer') // A-N32 (AMENDMENT-7)
 ]
 
 /**
@@ -229,12 +268,18 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
   'mine:declare': ['mines.declare'], // A-30 → B-M16
   'mine:declare-main': ['mines.adoptMainProject'], // A-31 → B-M17
   'mine:undeclare': ['mines.remove'], // A-32 → B-M18
-  'projects:query': ['mines.list'] // A-34 → B-M19
+  'projects:query': ['mines.list'], // A-34 → B-M19
+  'agent:answerQuestion': ['asking.answerQuestion'], // A-40 → B-M30, Host AskIds
+  'agent:answerPermission': ['asking.answerPermission'], // A-41 → B-M31, Host AskIds
+  'ask:step:set': ['asking.setStep'], // A-N07 → B-M32
+  'claude:hooks:set': ['preferences.setClaudeHooks'], // A-N31 → B-M39
+  'welcome:answer': ['preferences.answerWelcome'] // A-N32 → B-M40
 }
 
 /**
  * The release in which each seam B method is born in the Host (21 §2 "Seam B members", B-M02…B-M06 at cut 0; B-M07,
- * B-M08, B-M09, B-M12, B-M13, B-M15, B-M16…B-M20, B-M26, B-M27 and B-M41 at cut 1).
+ * B-M08, B-M09, B-M12, B-M13, B-M15, B-M16…B-M20, B-M26, B-M27 and B-M41 at cut 1; B-M30…B-M32, B-M39 and B-M40 at
+ * cut 2).
  */
 export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> = {
   ping: 'cut-0',
@@ -255,5 +300,10 @@ export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> 
   'mines.resolveFile': 'cut-1',
   'conversation.feed': 'cut-1',
   'conversation.mineHistory': 'cut-1',
-  'strangler.dwarfIdentities': 'cut-1'
+  'strangler.dwarfIdentities': 'cut-1',
+  'asking.answerQuestion': 'cut-2',
+  'asking.answerPermission': 'cut-2',
+  'asking.setStep': 'cut-2',
+  'preferences.setClaudeHooks': 'cut-2',
+  'preferences.answerWelcome': 'cut-2'
 }

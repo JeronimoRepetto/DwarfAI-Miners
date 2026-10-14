@@ -26,7 +26,10 @@ import type { UiLogEntry } from './diagnostics/uiLogger'
 // cut-1 switch, so these cases compose the cut-0 table as it shipped, with its release.
 import { CUT_0_ROUTES as ROUTES } from './ipc/testing/cut0Routes'
 import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
-import { ROUTES as RELEASE_ROUTES, ROUTES_RELEASE } from './ipc/routes'
+// AMENDED for ISSUE-141 (was: the release table `ROUTES` / `ROUTES_RELEASE` of './ipc/routes'): the release table is
+// cut 2's from the cut-2 switch, so the cut-1 cases compose the cut-1 table as it shipped, with its release.
+import { CUT_1_ROUTES as RELEASE_ROUTES } from './ipc/testing/cut1Routes'
+const ROUTES_RELEASE = 'cut-1'
 import type { IpcSenderEvent } from './ipc/senderCheck'
 import { createPanelWindow, type PanelWindowUseCases } from './window/application/panelWindow'
 import { createToggleShortcut } from './window/application/toggleShortcut'

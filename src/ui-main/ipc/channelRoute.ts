@@ -36,6 +36,12 @@ export interface RouteTable {
   unrouted: Partial<Record<ChannelKey, StepId>>
   /** The RETIRE rows retired with no route, with the step that retired each (`RETIRED`, lead resolution H1). */
   retired?: Partial<Record<ChannelKey, StepId>>
+  /**
+   * The NEW rows a rollback build of its release withdraws, with that release (ISSUE-141 lead decision; 21 §1 items 4,
+   * 8): rows that would make the Host write a foreign entry while the rolled-back legacy writer is composed again have
+   * no route in that build (hidden until built). Only `rollbackOf` sets it.
+   */
+  withdrawn?: Partial<Record<ChannelKey, StepId>>
   adapters: readonly LegacyBridgeAdapter[]
 }
 
@@ -48,6 +54,8 @@ export type RouteTableProblemReason =
   | 'routed-and-unrouted'
   | 'retired-not-reached'
   | 'routed-and-retired'
+  | 'withdrawn-not-this-release'
+  | 'routed-and-withdrawn'
   | 'target-without-shape-adapter'
   | 'host-with-today-shape'
   | 'host-pending-in-release'
@@ -84,13 +92,15 @@ export function checkRouteTable(
 ): RouteTableProblem[] {
   const { release, routes, unrouted, adapters } = table
   const retired: Partial<Record<string, StepId>> = table.retired ?? {}
+  const withdrawn: Partial<Record<string, StepId>> = table.withdrawn ?? {}
   const problems: RouteTableProblem[] = []
   const known = new Set(channels)
   const unroutedSteps: Partial<Record<string, StepId>> = unrouted
   const listed = [
     ...routes.map((r) => r.channel),
     ...Object.keys(unrouted),
-    ...Object.keys(retired)
+    ...Object.keys(retired),
+    ...Object.keys(withdrawn)
   ]
 
   for (const channel of new Set(listed)) {
@@ -101,6 +111,20 @@ export function checkRouteTable(
   // entry naming this release or an earlier step (a RETIRE row with no route from that step, lead resolution H1).
   for (const channel of channels) {
     const own = routes.filter((r) => r.channel === channel)
+    // A row a rollback build withdrew (`rollbackOf`, ISSUE-141): no route in exactly that release.
+    const withdrawnAt = withdrawn[channel]
+    if (withdrawnAt !== undefined) {
+      if (
+        own.length > 0 ||
+        unroutedSteps[channel] !== undefined ||
+        retired[channel] !== undefined
+      ) {
+        problems.push({ reason: 'routed-and-withdrawn', channel })
+      } else if (withdrawnAt !== release) {
+        problems.push({ reason: 'withdrawn-not-this-release', channel })
+      }
+      continue
+    }
     const retiredAt = retired[channel]
     if (retiredAt !== undefined) {
       if (own.length > 0 || unroutedSteps[channel] !== undefined) {

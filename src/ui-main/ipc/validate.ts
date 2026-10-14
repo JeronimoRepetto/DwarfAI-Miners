@@ -128,16 +128,23 @@ export const LEGACY_REFUSALS: Partial<Record<ChannelKey, LegacyRefusal>> = {
   }
 }
 
+/** A strict request schema, as the gate parses a payload with it. */
+export interface RequestSchema {
+  safeParse(value: unknown): { success: boolean }
+}
+
 /**
- * `validateCall(channel, event, payload, shape)`: the gate of one renderer call, where `shape` is the shape of the
- * route that serves it. A call with no route (`shape` undefined) is only sender-checked: its payload reaches nothing,
- * and the router refuses it as unrouted.
+ * `validateCall(channel, event, payload, shape, adapterSchema)`: the gate of one renderer call, where `shape` is the
+ * shape of the route that serves it and `adapterSchema` the request schema of the 21 §3.1 shape adapter that route
+ * names, when that adapter declares its own (`RouteTarget.requestSchema`). A call with no route (`shape` undefined) is
+ * only sender-checked: its payload reaches nothing, and the router refuses it as unrouted.
  */
 export type ValidateCall = (
   channel: ChannelKey,
   event: IpcSenderEvent,
   payload: unknown,
-  shape: RouteShape | undefined
+  shape: RouteShape | undefined,
+  adapterSchema?: RequestSchema
 ) => CallVerdict
 
 /** A call error of this gate; the message is diagnostics only and never carries the payload (14 §1.5, §1.10). */
@@ -173,7 +180,7 @@ function refusalOf(channel: ChannelKey, code: GateErrorCode, shape: RouteShape):
 
 /** The gate, bound to the sender policy of this Electron main. Never throws. */
 export function createValidateCall(senders: SenderPolicy): ValidateCall {
-  return (channel, event, payload, shape) => {
+  return (channel, event, payload, shape, adapterSchema) => {
     const refuse = (code: GateErrorCode): CallVerdict => ({
       ok: false,
       code,
@@ -182,7 +189,7 @@ export function createValidateCall(senders: SenderPolicy): ValidateCall {
     // The sender first: nothing an unknown sender sent is even parsed.
     if (!isAllowedSender(event, senders)) return refuse('SENDER_REJECTED')
     if (shape === undefined) return { ok: true, payload }
-    const schema = requestSchemaOf(channel, shape)
+    const schema = adapterSchema ?? requestSchemaOf(channel, shape)
     if (schema === undefined || !schema.safeParse(payload).success) return refuse('INVALID_PARAMS')
     // The checked value itself goes on, so a valid call is served exactly as today.
     return { ok: true, payload }

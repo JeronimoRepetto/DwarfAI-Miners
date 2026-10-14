@@ -46,20 +46,12 @@ export const STEP_ORDER: readonly StepId[] = [
 
 /** Each registry-declared but unrouted NEW row, with the step that will route it. */
 export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
-  // The cut-0 entries (A-N03…A-N05, A-N25…A-N27, A-N30, A-N34) were routed by the cut-0 switch (ISSUE-056), and the
-  // cut-1 entries (A-N01, A-N02, A-N12, A-N16…A-N21) by the cut-1 switch (ISSUE-123).
+  // The cut-0 entries (A-N03…A-N05, A-N25…A-N27, A-N30, A-N34) were routed by the cut-0 switch (ISSUE-056), the
+  // cut-1 entries (A-N01, A-N02, A-N12, A-N16…A-N21) by the cut-1 switch (ISSUE-123), and the cut-2 entries (A-N07,
+  // A-N31, A-N32) by the cut-2 switch (ISSUE-141).
   // A-N33, born with the first release that bumps `endpointGeneration` (AMENDMENT-11; 21 "Different-generation
   // restart"); no handler in v1 (review R8B-06)
-  'host:connection:confirm-restart': 'generation-2',
-  // A-N31, born `host` in cut 2 (21 §2 cut 2); routed by the cut-2 switch (ISSUE-141), never by its handler issue
-  // (ISSUE-221)
-  'claude:hooks:set': 'cut-2',
-  // A-N07, born `host` in cut 2 (21 §2 cut 2; 14 §5 "Asks"); routed by the cut-2 switch (ISSUE-141), never by its
-  // handler issue (ISSUE-129)
-  'ask:step:set': 'cut-2',
-  // A-N32, born `host` in cut 2 (21 §2 cut 2); routed by the cut-2 switch (ISSUE-141), never by its handler issue
-  // (ISSUE-223)
-  'welcome:answer': 'cut-2'
+  'host:connection:confirm-restart': 'generation-2'
 }
 
 /**

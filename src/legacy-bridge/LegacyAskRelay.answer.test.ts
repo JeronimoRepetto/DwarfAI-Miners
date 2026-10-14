@@ -11,7 +11,9 @@ import {
   type ProviderSnapshot
 } from '../main/domain/types'
 import { createAnswerDwarfRows } from '../ui-main/ipc/handlers/answerDwarf.host'
-import { createAnswerDwarfDispatch } from '../ui-main/ipc/handlers/answerDwarf.dispatch'
+import { createAnswerQualifier } from '../ui-main/ipc/handlers/answerDwarf.dispatch'
+import { createRouter } from '../ui-main/ipc/router'
+import { ROUTES } from '../ui-main/ipc/routes'
 import { createLegacyAnswerShapeAdapter } from './asks/LegacyAnswerShapeAdapter'
 import { createLegacyAskRelay, legacyOpenAsksOf } from './LegacyAskRelay'
 import type { LegacyDwarfIdBridge } from './LegacyDwarfIdBridge'
@@ -468,15 +470,39 @@ describe('LegacyAskRelay answers and LegacyAnswerShapeAdapter (21 §3, §3.1; 14
     })
     await relay.update()
     const hostCalls: unknown[] = []
-    const dispatch = createAnswerDwarfDispatch({
+    // AMENDED for ISSUE-141 (was: `createAnswerDwarfDispatch` over the host rows and the adapter): from the cut-2
+    // switch the router dispatches the release table's qualified A-40/A-41 routes, with the relay's origin as the
+    // qualifier, as the root composes it.
+    const qualifier = createAnswerQualifier({
+      originOf: (askId) => relay.asks().find((ask) => ask.askId === askId)?.origin
+    })
+    const appEntry = 'file:///opt/DwarfAI/out/renderer/index.html'
+    const fromPanel = { sender: { id: 7 }, senderFrame: { url: appEntry } }
+    const handlers = new Map<string, (event: typeof fromPanel, payload: unknown) => unknown>()
+    createRouter({
+      routes: ROUTES.filter((route) => route.channel === QUESTION_ROW),
+      legacy: { serve: () => Promise.reject(new Error('never today’s runtime directly')) },
       host: createAnswerDwarfRows({
         call: (method) => {
           hostCalls.push(method)
           return Promise.reject(new Error('never the Host'))
         }
       }),
-      legacy: createLegacyAnswerShapeAdapter({ relay, log: new RecordingLegacyLog() })
+      shapeAdapters: {
+        LegacyAnswerShapeAdapter: createLegacyAnswerShapeAdapter({
+          relay,
+          log: new RecordingLegacyLog()
+        })
+      },
+      qualifiers: { [QUESTION_ROW]: qualifier },
+      senders: { appEntry, isModeWindow: (id) => id === 7 }
+    }).register({
+      handle: (wire, listener) => void handlers.set(wire, listener),
+      on: () => {}
     })
+    const dispatch = {
+      serve: (channel: string, payload: unknown) => handlers.get(channel)?.(fromPanel, payload)
+    }
 
     // The pre-cut build: today's payload through the cut-1 relay.
     expect(await relay.serve(fixture.preCut.channel, fixture.preCut.payload)).toEqual({
