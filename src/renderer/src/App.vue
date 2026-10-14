@@ -36,6 +36,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
 import { useAttentionCues } from './composables/useAttentionCues'
+import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { browseRows } from './lib/browse/boardRows'
 import { createBrowseRefresh } from './lib/browse/browseRefresh'
 import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/columnMine'
@@ -1162,6 +1163,9 @@ const {
   stopEverything: stopEverythingFromHostMessage
 } = useHostConnection()
 /* --- end of the ISSUE-316 block --------------------------------------------- */
+/* --- Host asks (ISSUE-138) — one block, appended ---------------------------- */
+const { startAsks, stopAsks } = useDwarfQuestion()
+/* --- end of the ISSUE-138 block --------------------------------------------- */
 
 onMounted(() => {
   // The footprint the first opening unfolds from: whatever rectangle main
@@ -1237,6 +1241,11 @@ onMounted(() => {
   /* --- First-run consent step (ISSUE-224) — one block, appended --------------- */
   void followWelcomeStep()
   /* --- end of the ISSUE-224 block --------------------------------------------- */
+  /* --- Host asks (ISSUE-138) — one block, appended ---------------------------- */
+  // The dual-source ask read model: the Host's asks (A-N01/A-N02) beside the board's legacy ones, and their partial
+  // picks in the UI main session store (A-N17…A-N19). The message panel draws its dwarf's front card from it.
+  void startAsks()
+  /* --- end of the ISSUE-138 block --------------------------------------------- */
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
@@ -1260,6 +1269,9 @@ onBeforeUnmount(() => {
   /* --- First-run consent step (ISSUE-224) — one block, appended --------------- */
   stopFollowingWelcomeStep()
   /* --- end of the ISSUE-224 block --------------------------------------------- */
+  /* --- Host asks (ISSUE-138) — one block, appended ---------------------------- */
+  stopAsks()
+  /* --- end of the ISSUE-138 block --------------------------------------------- */
 })
 
 /* --- Stop everything and quit (ISSUE-317) — one block, appended ----------- */

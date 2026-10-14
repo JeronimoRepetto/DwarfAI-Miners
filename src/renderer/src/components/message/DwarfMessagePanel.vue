@@ -62,6 +62,8 @@ import {
   type DwarfNameRefusal
 } from '../../../../shared/dwarfName'
 import type { AskAnswer } from '../../lib/question/questionAnswer'
+import { shownAskOf } from '../../lib/message/askCard'
+import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
 import { sceneDwarfLabel, sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
 import {
   STICK_TO_BOTTOM_TOLERANCE_PX,
@@ -322,12 +324,19 @@ const isKicking = computed(() => props.kickState?.phase === 'kicking')
 const composerRef = ref<HTMLElement | null>(null)
 
 /*
+ * AMENDED for ISSUE-138 (was: the board's own `pendingPermission`, then `pendingQuestion`): the card this dwarf shows
+ * is its front card of the dual-source ask read model — a Host ask, else its legacy card — and, with neither, the
+ * board's own asks as before (lib/message/askCard.ts). The answers still leave in today's shape until the cut-2
+ * switch (later: ISSUE-141).
+ */
+const { frontAsk } = useDwarfQuestion()
+const shownAsk = computed(() => shownAskOf(frontAsk(props.dwarf.id), props.dwarf))
+
+/*
  * Whether THIS render draws the ordinary composer rather than one of the two cards that take its
  * slot instead (#203).
  */
-const showsComposer = computed(
-  () => props.dwarf.pendingPermission === undefined && props.dwarf.pendingQuestion === undefined
-)
+const showsComposer = computed(() => shownAsk.value === null)
 
 /** Hand the composer the keyboard, once Vue has actually drawn it (#409). */
 async function focusComposer(): Promise<void> {
@@ -1135,9 +1144,9 @@ async function resetName(): Promise<void> {
         (W4·7). Neither is ever behind a toggle, because each is the reason the dwarf was clicked.
       -->
       <DwarfPermissionCard
-        v-if="dwarf.pendingPermission"
+        v-if="shownAsk?.kind === 'permission'"
         class="dm-msg__ask"
-        :permission="dwarf.pendingPermission"
+        :permission="shownAsk.permission"
         :name="displayName"
         :answer-state="answerState"
         @decide="emit('decide', $event)"
@@ -1145,9 +1154,10 @@ async function resetName(): Promise<void> {
         @open-console="emit('open-console')"
       />
       <DwarfQuestionCard
-        v-else-if="dwarf.pendingQuestion"
+        v-else-if="shownAsk?.kind === 'question'"
         class="dm-msg__ask"
-        :question="dwarf.pendingQuestion"
+        :question="shownAsk.question"
+        :at="shownAsk.at"
         :name="displayName"
         :answer-state="answerState"
         @answer="emit('answer', $event)"
