@@ -161,6 +161,10 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
             mark('declare'),
             line
           ]
+        if (line.startsWith('$builder =')) return [mark('module'), line]
+        if (line.startsWith('$builder.DefinePInvokeMethod'))
+          return [mark(`pinvoke ${line.slice(29, 50)}`), line]
+        if (line.startsWith('$kernel32 =')) return [mark('create-type'), line]
         if (line.startsWith('$buffer')) return [mark('buffer'), line]
         if (line.startsWith('[void]$kernel32::FreeConsole()')) return [mark('free'), line]
         if (line.startsWith('if (-not $kernel32::AttachConsole')) return [mark('attach'), line]

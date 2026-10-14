@@ -78,6 +78,15 @@ describe('consoleKeys: Windows, a write into the console input buffer by pid', (
     }
   })
 
+  // ADDED for ISSUE-141 (CI runs 38632862520, 38637072000): as the CI leg's fresh test user the relay's PowerShell
+  // stalled on its first cmdlet (`Add-Type`, then `New-Object`), whose module PowerShell loads on first use, building
+  // its per-user module cache. The script calls .NET only, and turns module autoloading off so none can be loaded.
+  it('[ADR-012] the script runs no cmdlet: module autoloading is off and every object is built through .NET', () => {
+    const script = windowsKeyWriteScript(4242, ONE)!
+    expect(script.split('\n')[0]).toBe("$PSModuleAutoLoadingPreference = 'None'")
+    expect(script).not.toMatch(/\b(New-Object|Add-Type|Get-[A-Z]|Write-[A-Z])/)
+  })
+
   it('[ADR-014, INV-51] no script is built for a pid that cannot name a process or a key that is not addressable', () => {
     for (const pid of [0, -1, 1.5, Number.NaN]) {
       expect({ pid, script: windowsKeyWriteScript(pid, ONE) }).toEqual({ pid, script: null })

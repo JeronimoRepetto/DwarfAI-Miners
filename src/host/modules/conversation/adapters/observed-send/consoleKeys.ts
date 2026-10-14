@@ -70,10 +70,14 @@ export function windowsKeyWriteScript(pid: number, key: ConsoleKey): string | nu
   const record = keyRecordOf(key)
   if (record === null) return null
   return [
+    // No cmdlet runs and no module is loaded: a cmdlet's module is loaded on its first use, which for a user whose
+    // PowerShell never ran builds a per-user module cache first (the CI leg's fresh test user stalled there on Add-Type,
+    // then on New-Object; ISSUE-141). Only the language and .NET are used below.
+    "$PSModuleAutoLoadingPreference = 'None'",
     "$ErrorActionPreference = 'Stop'",
     // The kernel32 calls, declared in memory (reflection emit): nothing is compiled and no other program runs, where
-    // Add-Type ran the C# compiler with its temporary files (it never finished as the CI leg's test user, ISSUE-141).
-    "$assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'DwarfAIConsoleInput'), [Reflection.Emit.AssemblyBuilderAccess]::Run)",
+    // Add-Type ran the C# compiler with its temporary files.
+    "$assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly([Reflection.AssemblyName]::new('DwarfAIConsoleInput'), [Reflection.Emit.AssemblyBuilderAccess]::Run)",
     "$builder = $assembly.DefineDynamicModule('DwarfAIConsoleInput').DefineType('ConsoleInput', 'Public, Class')",
     "$builder.DefinePInvokeMethod('FreeConsole', 'kernel32.dll', 'Public, Static, PinvokeImpl', 'Standard', [bool], [type[]]@(), 'Winapi', 'Auto').SetImplementationFlags('PreserveSig')",
     "$builder.DefinePInvokeMethod('AttachConsole', 'kernel32.dll', 'Public, Static, PinvokeImpl', 'Standard', [bool], [type[]]@([uint32]), 'Winapi', 'Auto').SetImplementationFlags('PreserveSig')",
@@ -81,7 +85,7 @@ export function windowsKeyWriteScript(pid: number, key: ConsoleKey): string | nu
     "$builder.DefinePInvokeMethod('WriteConsoleInputW', 'kernel32.dll', 'Public, Static, PinvokeImpl', 'Standard', [bool], [type[]]@([IntPtr], [byte[]], [uint32], [uint32].MakeByRefType()), 'Winapi', 'Unicode').SetImplementationFlags('PreserveSig')",
     "$builder.DefinePInvokeMethod('CloseHandle', 'kernel32.dll', 'Public, Static, PinvokeImpl', 'Standard', [bool], [type[]]@([IntPtr]), 'Winapi', 'Auto').SetImplementationFlags('PreserveSig')",
     '$kernel32 = $builder.CreateType()',
-    `$buffer = New-Object byte[] ${INPUT_RECORD_BYTES * 2}`,
+    `$buffer = [byte[]]::new(${INPUT_RECORD_BYTES * 2})`,
     '$offset = 0',
     'foreach ($down in 1, 0) {',
     '  [BitConverter]::GetBytes([uint16]1).CopyTo($buffer, $offset)',
