@@ -1,7 +1,12 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { expect, type Page } from '@playwright/test'
-import type { IsolatedProfile, LaunchedApp } from '../_harness/launchApp.ts'
+import { appEnv, type IsolatedProfile, type LaunchedApp } from '../_harness/launchApp.ts'
+import { STUB_BIN } from '../_harness/stubs.ts'
+import { NodeScheduler } from '../../src/host/platform/clock/NodeScheduler.ts'
+import { NodeFs } from '../../src/host/platform/fs/NodeFs.ts'
+import { NodeProcessControl } from '../../src/host/platform/process/NodeProcessControl.ts'
+import { createHostInstallResolver } from '../../src/host/modules/suppliers/adapters/install/hostInstallResolver.ts'
 import { openHostDatabaseReadOnly } from '../_harness/readOnlyHost.ts'
 
 /**
@@ -125,6 +130,22 @@ export async function expectStepShown(
       .catch((cause: unknown) => `the snapshot could not be read: ${String(cause)}`)
     let stored = ''
     if (after !== undefined) {
+      // The Host's own resolver, run in this test process as the same user over the environment the app was launched
+      // with: whether Claude Code resolves there at all tells a detection problem from a Host-process one.
+      const env = appEnv(after.profile, { stubs: path.join(STUB_BIN, 'claude') })
+      const resolver = createHostInstallResolver({
+        fs: new NodeFs(),
+        processControl: new NodeProcessControl(),
+        scheduler: new NodeScheduler({ onTaskError: () => undefined }),
+        env,
+        home: after.profile.root
+      })
+      const resolved = await resolver.resolve(['claude']).catch((cause: unknown) => String(cause))
+      const pathKey = Object.keys(env).filter((key) => key.toUpperCase() === 'PATH')
+      stored += `
+Resolved here: ${JSON.stringify(resolved)}; PATH keys ${JSON.stringify(pathKey)}, first ${JSON.stringify(
+        (env[pathKey[0] ?? 'PATH'] ?? '').split(';').slice(0, 3)
+      )}; PATHEXT ${JSON.stringify(Object.entries(env).find(([key]) => key.toUpperCase() === 'PATHEXT'))}`
       // The Host's own record, read only after it exited (the single writer, ADR-002 D1): whether the start-up
       // detection measured Claude Code (a capability record is written for every installed CLI it probed) and whether
       // the hook ingress persisted its port, the two things the step's options depend on.
