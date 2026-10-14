@@ -428,7 +428,13 @@ describe('decideLaunch — effort', () => {
     expect(result.effort).toBeUndefined()
   })
 
-  it("narrows a mapped 'ultra' effort to the nearest level the chosen model's own ladder actually accepts", () => {
+  /*
+   * AMENDED for ISSUE-190, ADR-028 item 4 (was: "narrows a mapped 'ultra' effort to the nearest
+   * level the chosen model's own ladder actually accepts"). The rule is now the ceiling: the
+   * highest accepted level at or below the mapped one, never the nearest. The expectation is
+   * unchanged ('max' is both), only the rule the title names.
+   */
+  it("[ADR-028] caps a mapped 'ultra' effort to the highest level at or below it that the chosen model's own ladder accepts", () => {
     // Score 3 maps to codex's own top level, 'ultra' — but x-bal's fixture
     // ladder above stops at 'max'.
     const result = decideLaunch({
@@ -631,7 +637,12 @@ describe('decideLaunch — modelCandidates (#608)', () => {
  * (model, effort) pairing is.
  */
 describe('finalizeModel', () => {
-  it('maps the effort score onto the ladder and narrows it to the model’s own accepted levels', () => {
+  /*
+   * AMENDED for ISSUE-190, ADR-028 item 4 (was: "maps the effort score onto the ladder and narrows
+   * it to the model’s own accepted levels", routeDecision.test.ts:632-640 at 0bfd108). The
+   * expectation is unchanged: 'max' is the highest accepted level at or below the mapped 'ultra'.
+   */
+  it('[ADR-028] maps the effort score onto the ladder and caps it at the highest of the model’s own accepted levels at or below it', () => {
     const result = finalizeModel(
       'codex',
       'x-bal',
