@@ -2,6 +2,7 @@ import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import {
   disposeProfile,
+  isProcessAlive,
   launchApp,
   waitForHostAttached,
   createIsolatedProfile,
@@ -96,6 +97,49 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
       timeout: 30_000
     })
     // Both unticked: nothing written (07 S41.06).
+    expect(claudeSettings(owned)).toBe(before)
+  })
+
+  // ADDED for ISSUE-141 (lead decision 2026-10-14): Stop everything and quit is the one person-facing way to stop the
+  // Host (ADR-002 D7, OQ-63), and the step has no way out of its own (US-SET-012.AC06), so the confirmation opens above
+  // the step, and quitting before an answer leaves the step due for the next window (07 S41.08).
+  test('[US-RES-002.AC08, US-RES-002.AC09] Stop everything and quit is reachable while the first-run step is open: its confirmation is on top and Confirm ends the app and its Host', async () => {
+    profile = createIsolatedProfile()
+    const owned = profile
+    const before = claudeSettings(owned)
+    launched = await launchApp({
+      profile: owned,
+      stubs: path.join(STUB_BIN, 'claude'),
+      tracePath: test.info().outputPath('trace.zip')
+    })
+    const { app, window } = launched
+    // Held now: once the app exited, Playwright no longer hands its process out.
+    const child = app.process()
+    const hostPid = await waitForHostAttached(owned)
+    const step = welcomeStep(window)
+    await expect(step.options, 'the first-run step is shown').toBeVisible({ timeout: 60_000 })
+
+    await window.evaluate(() => {
+      ;(window as unknown as { api: { requestStopEverything(): void } }).api.requestStopEverything()
+    })
+    // The step beneath is inert, so the confirmation is the one dialog a person (and the accessibility tree) reaches.
+    const confirmation = window.getByRole('dialog')
+    await expect(confirmation).toHaveCount(1, { timeout: 30_000 })
+    await expect(confirmation.getByRole('button', { name: /and quit$/ })).toBeVisible()
+    await expect(step.options, 'the step stays open beneath').toBeAttached()
+    await confirmation.getByRole('button', { name: /and quit$/ }).click({ timeout: 10_000 })
+
+    await expect
+      .poll(() => child.exitCode !== null || child.signalCode !== null, {
+        timeout: 60_000,
+        message: 'the app quits'
+      })
+      .toBe(true)
+    await expect
+      .poll(() => isProcessAlive(hostPid), { timeout: 60_000, message: 'the Host stops' })
+      .toBe(false)
+    launched = undefined
+    // Nothing was answered, so nothing was written (07 S41.08).
     expect(claudeSettings(owned)).toBe(before)
   })
 })

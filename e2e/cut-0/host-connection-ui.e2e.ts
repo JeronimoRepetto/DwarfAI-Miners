@@ -11,6 +11,7 @@ import {
   type IsolatedProfile,
   type LaunchedApp
 } from '../_harness/launchApp.ts'
+import { answerFirstRunStep } from '../_harness/firstRunStep.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
 import { seedClaudeStubSession } from '../cut-1/claudeStubWorld.ts'
 
@@ -80,6 +81,9 @@ test.describe('cut 0: the Host connection in the Panel (ISSUE-316)', () => {
     // left to the coal backfill (owner decision 2026-10-10, ADR-006 item 8).
     seedClaudeStubSession(profile)
     await chooseTrayItem(app, TRAY_ITEMS.open)
+    // The Claude stub is installed, so from cut 2 the first-run step is due on this fresh profile: answered first, as a
+    // person does, with nothing ticked (nothing written; ISSUE-141).
+    await answerFirstRunStep(window)
     await window.locator('.dm-marker').first().click()
     const dwarfs = window.locator('.dm-dwarf')
     await expect(dwarfs.first()).toBeVisible({ timeout: 30_000 })
