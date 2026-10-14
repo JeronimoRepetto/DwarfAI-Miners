@@ -44,7 +44,7 @@ const FAULTY_VERSION = (
 ).version
 
 /** The confirm button of the window's Stop everything and quit confirmation (ISSUE-317; the design's copy marker). */
-const CONFIRM = /confirm button naming the count/
+const CONFIRM = /^Stop \d+ dwarfs? and quit$|^Stop everything and quit$/
 
 interface RehearsalBuild {
   appDir: string

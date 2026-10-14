@@ -7,7 +7,7 @@
 // How to add a string:
 // 1. Add a key to `en.ts`, namespaced by feature (`<feature>.<part>.<role>`, e.g. `hostState.crashLoop.title`). Its
 //    value is the approved copy exactly, or the `⟦COPY NEEDED: <design item>⟧` marker when design has not written it
-//    (never invented text).
+//    (never invented text; no value ships a marker today).
 // 2. A value that carries data names a `{slot}`; `t('key', { slot: value })` fills it as plain text, and the type
 //    requires every slot. A count that changes the words is a plural entry (`{ '=0'?, one?, …, other }`): `t` picks
 //    the form with `Intl.PluralRules` and requires `{ count }`.

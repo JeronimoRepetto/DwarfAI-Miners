@@ -33,6 +33,10 @@
 // A session that is closed (a close record, or its dwarf departed) takes no further transition
 // from a late write (S4.40): its records move the cursor and nothing else.
 //
+// A present session whose stream has nothing new and whose process an adapter reports not live
+// departs (FM-059, S4.33; `departNotLive`), whichever Host run admitted it; `unknown` closes
+// nothing, and no ledger row is written, so a session that runs again returns (`resumedOf`).
+//
 // Anti-ghost (INV-36; 16 §4.3 `EndedAgentLedger`; 15 §5 item 2): every identity DwarfAI ended or
 // saw end joins the ledger, whatever path ended it: the terminator's `recordEnded` (ADR-014
 // item 7), or an adapter's `closed` fact, recorded in its batch's transaction (a held batch
@@ -136,10 +140,13 @@ export interface ObservationLoopDeps {
  * What an adapter can tell of a session's process (owner decision 2026-10-10): `live` while it
  * runs, `not-live` when it provably does not, `unknown` when nothing can be told (presence fails
  * open, #45 polarity). Internal to the module, beside `ObservedProcessRegistry`: not a port (16
- * §4.3 is unchanged), and read only when a session first arrives, never to close a present one.
+ * §4.3 is unchanged). Read when a session first arrives (`admission`), and for a present session
+ * whose stream has nothing new (`departNotLive`, FM-059): `sessionOf` names that stream's session.
  */
 export interface ObservedPresence {
   presenceOf(identity: ProviderIdentity): 'live' | 'not-live' | 'unknown'
+  /** The session whose records a source carries, when the source names one; else null. */
+  sessionOf?(source: SourceFile): ProviderIdentity | null
 }
 
 /** The hint a hook ingress passes (05 §3.3); the loop reads every source anyway. */
@@ -194,6 +201,8 @@ export class ObservationLoop {
   private readonly lastEnding = new Map<string, Instant>()
   /** When each resumed subagent generation made this Host run resumed (its `session` fact's time). */
   private readonly resumedAt = new Map<string, Instant>()
+  /** Not-live sessions with no present dwarf their stream feeds, this Host run (`departNotLive`). */
+  private readonly settled = new Set<string>()
   /** Provider errors, folded per cause and cycle, drift counted before it surfaces (ISSUE-084). */
   private readonly errors = new ProviderErrorFold()
 
@@ -336,6 +345,7 @@ export class ObservationLoop {
     }
     for (let n = 0; n < batch.warnings.length; n++) this.drift(adapter, 'record')
     const plan = this.plan(adapter, streamId, batch.events, from === null)
+    this.departNotLive(adapter, source, streamId, batch.events, plan)
     // A session record alone is no readable content: a provider whose format changed still names it.
     const outcome: ReadOutcome = {
       readable: batch.events.some((e) => e.kind !== 'session'),
@@ -371,6 +381,68 @@ export class ObservationLoop {
     }
     this.publishAll(plan.events)
     this.countRead(adapter, streamId, outcome)
+  }
+
+  /**
+   * FM-059, S4.33: a present observed session whose process an adapter reports not live (and none
+   * live) departs, also one admitted present in an earlier Host run whose process ended while no
+   * Host ran. Only for a stream with nothing new of its session (records go through `plan`, and an
+   * adapter's own `closed` fact is an ending for the ledger), only for a dwarf this stream feeds
+   * (one observation never fed, an owned session's, is not its to close), and never on `unknown`
+   * presence (fails open). Not running is not an ending (owner decision B): no ledger row, so a
+   * wrong verdict is not final and a session that runs and writes again comes back as its resumed
+   * generation (`resumedOf`). Written with the stream's batch, published after its commit.
+   */
+  private departNotLive(
+    adapter: ObservationAdapter,
+    source: SourceFile,
+    streamId: string,
+    events: ObservedEvent[],
+    plan: BatchPlan
+  ): void {
+    if (plan.held) return
+    const identity = this.sessionOfSource(adapter, source)
+    if (identity === null) return
+    const key = providerIdentityKey(identity)
+    if (
+      events.some((e) => providerIdentityKey(e.identity) === key) ||
+      this.presenceVerdict(identity) !== 'not-live'
+    ) {
+      this.settled.delete(key)
+      return
+    }
+    if (this.settled.has(key)) return
+    const session = this.deps.sessions.byIdentity(identity)
+    const fed =
+      session !== null &&
+      this.deps.sessions.streams(session.dwarfId).some((s) => s.streamId === streamId)
+    if (session === null || session.closedAt !== null || !fed || this.hasEnded(identity)) {
+      // Nothing present to depart: not looked up again while it stays not live and writes nothing.
+      this.settled.add(key)
+      return
+    }
+    const now = this.deps.clock.now()
+    plan.sessions.push({ ...session, closedAt: now })
+    plan.events.push({ type: 'SessionClosedObserved', payload: { identity, at: now } })
+  }
+
+  /** The session a source's records belong to, as a presence source of its provider names it. */
+  private sessionOfSource(
+    adapter: ObservationAdapter,
+    source: SourceFile
+  ): ProviderIdentity | null {
+    for (const presence of this.deps.presence ?? []) {
+      const identity = presence.sessionOf?.(source) ?? null
+      if (identity !== null && identity.providerId === adapter.providerId) return identity
+    }
+    return null
+  }
+
+  /** What the presence sources tell together: `live` wins, then `not-live`; else `unknown`. */
+  private presenceVerdict(identity: ProviderIdentity): 'live' | 'not-live' | 'unknown' {
+    const says = (this.deps.presence ?? []).map((p) => p.presenceOf(identity))
+    if (says.includes('live')) return 'live'
+    return says.includes('not-live') ? 'not-live' : 'unknown'
   }
 
   /** Records a held batch's endings in their own transaction; false when it rolled back. */

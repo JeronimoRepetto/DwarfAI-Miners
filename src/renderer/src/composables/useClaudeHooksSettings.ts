@@ -22,7 +22,7 @@ import { useHostConnection } from './useHostConnection'
  *   records the consent origin `settings`. The answer never sets the state: every window, this one included, follows
  *   the Host's `integration.changed` (16 §7.4 "the UI reflects the real state"). It only says whether the Host could
  *   do it: `failure` is `config-write-failed` or `config-revert-failed` (a locked settings.json keeps the option on);
- *   the notice's words are design's (13 FM-148, `⟦COPY NEEDED: config-write failure⟧`), not this composable's.
+ *   the notice's words are design's (13 FM-148; the approved text is recorded for the issue that ships the notice), not this composable's.
  * - Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves. One request at a time.
  */
 

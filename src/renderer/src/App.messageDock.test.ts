@@ -2171,7 +2171,9 @@ describe('the Host connection in the shell', () => {
     // expectations are unchanged.
     const message = document.body.querySelector<HTMLElement>('[role="dialog"] .dm-host-state')!
     expect(message.getAttribute('role')).toBe('alert')
-    expect(message.textContent).toContain('⟦COPY NEEDED: O-15 crash-loop variant⟧')
+    expect(message.textContent).toContain(
+      'The part of DwarfAI-Miners that runs your dwarfs stopped several times in a few minutes, so it is no longer restarted on its own. The panel is read-only until it runs again.'
+    )
     document.body.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click()
     await flushPromises()
     expect(api.retryHostConnection).toHaveBeenCalledOnce()
@@ -2192,7 +2194,9 @@ describe('the Host connection in the shell', () => {
       await rows.push(inJob)
       await rows.push(inJob)
     })
-    expect(raised).toEqual(['⟦COPY NEEDED: O-4 in-job message⟧'])
+    expect(raised).toEqual([
+      'Your dwarfs will stop when the program that opened DwarfAI-Miners closes. To keep them running, open DwarfAI-Miners from the Start menu.'
+    ])
     // No Host-state element anywhere, so none sits over the Panel's header or its controls.
     expect(document.body.querySelector('.dm-host-state')).toBeNull()
     expect(wrapper.find('.dm-host-state').exists()).toBe(false)
@@ -2295,7 +2299,7 @@ describe('the Host connection in the shell', () => {
     )
     const buttons = [...dialogs()[0]!.querySelectorAll<HTMLButtonElement>('button')]
     expect(buttons.map((button) => button.textContent?.trim())).toEqual([
-      '⟦COPY NEEDED: O-3 Stop everything and quit action⟧'
+      'Stop everything and quit…'
     ])
     buttons[0]!.click()
     await flushPromises()

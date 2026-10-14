@@ -11,8 +11,8 @@
  * Design draws no welcome step and no checkbox yet (design gaps recorded in the PR): it is built from the Panel's
  * existing dialog, settings row and toggle, whose toggle the same two options use in Settings → Integrations.
  *
- * Presentational: useWelcomeStep, owned by App, holds the state and the IPC (ADR-033 item 2). The option labels are
- * the approved ones; every other string is a `⟦COPY NEEDED⟧` marker from the copy dictionary.
+ * Presentational: useWelcomeStep, owned by App, holds the state and the IPC (ADR-033 item 2). Every string comes
+ * from the copy dictionary.
  */
 import { computed, ref, watch } from 'vue'
 import { formatList, t, type IntegrationId, type PlainCopyKey } from '@dwarfai/contracts'

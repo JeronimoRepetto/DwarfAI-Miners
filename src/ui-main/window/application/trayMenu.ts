@@ -17,8 +17,7 @@
 // - No system tray (13 FM-050): `TrayController.create` fails, the process runs windowless with no icon and Stop
 //   everything and quit is offered from the window instead.
 //
-// The labels are design's copy (ADR-002 O-3; ADR-018 D5), looked up in the copy dictionary, whose values stay
-// `⟦COPY NEEDED⟧` markers until design gives them.
+// The labels are design's copy (ADR-002 O-3; ADR-018 D5), looked up in the copy dictionary.
 import { t, type HostFrames } from '@dwarfai/contracts'
 import type { TrayController, TrayMenuModel } from '../ports/trayController'
 
