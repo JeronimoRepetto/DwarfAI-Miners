@@ -131,7 +131,7 @@ describe('useMessageDock on a departure', () => {
         Promise.resolve({ readable: true, messages: [] })
       ) as unknown as Api['getDwarfFeed']
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     await useMines().start()
     let dock: Dock | null = null
     wrapper = mount(
@@ -292,7 +292,7 @@ describe('useMessageDock when the window opened before the Host attached', () =>
         }
       }) as unknown as Api['onHostConnection']
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   }
 
   beforeEach(() => {

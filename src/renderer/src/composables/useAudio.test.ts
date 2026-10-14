@@ -22,6 +22,7 @@ function stubApi(api: StubApi = {}): void {
   unsubscribed = false
   Object.defineProperty(window, 'api', {
     configurable: true,
+    writable: true,
     value: {
       getAudioPreferences: () => Promise.resolve({ ...DEFAULT_AUDIO_PREFERENCES }),
       setAudioPreferences: (preferences: AudioPreferences) => Promise.resolve(preferences),

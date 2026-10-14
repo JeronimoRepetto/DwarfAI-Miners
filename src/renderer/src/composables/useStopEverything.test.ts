@@ -43,7 +43,7 @@ function fakeApi(overrides: Partial<DwarfAiMinersApi> = {}) {
     cancelStopEverything,
     ...overrides
   })
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   return {
     confirmStopEverything: (overrides.confirmStopEverything ??
       confirmStopEverything) as typeof confirmStopEverything,

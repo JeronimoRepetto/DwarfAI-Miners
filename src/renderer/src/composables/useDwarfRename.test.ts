@@ -91,7 +91,7 @@ describe('useDwarfRename', () => {
         (_follow: (frames: HostFrame[]) => void) => () => undefined
       ) as unknown as Api['onHostEvent']
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     await expect(useMines().start()).resolves.toBe(true)
     expect(useDwarfRename().canRename(BORIN)).toBe(false)
   })

@@ -58,6 +58,7 @@ function stubApi(
 ): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
+    writable: true,
     value: { answerDwarfQuestion: (request: never) => asOutcome(answerDwarfQuestion(request)) }
   })
 }
@@ -68,6 +69,7 @@ function stubPermissionApi(
 ): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
+    writable: true,
     value: {
       answerDwarfQuestion: vi.fn(),
       answerDwarfPermission: (request: never) => asOutcome(answerDwarfPermission(request))
@@ -456,6 +458,7 @@ describe('useDwarfQuestion decide (#203)', () => {
     // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: {
         answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
         answerDwarfPermission: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } })
@@ -493,6 +496,7 @@ describe('useDwarfQuestion decide (#203)', () => {
     // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: {
         answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
         answerDwarfPermission: vi.fn()
@@ -521,6 +525,7 @@ describe('useDwarfQuestion: the "Answers:" record', () => {
     const answerDwarfPermission = vi.fn(() => asOutcome(result()))
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: { answerDwarfQuestion, answerDwarfPermission, sendDwarfText }
     })
     return { answerDwarfQuestion, answerDwarfPermission }
@@ -627,6 +632,7 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
     let answered = false
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: {
         // AMENDED for ISSUE-141 (was: today's result): the scripted verdict in the 14 shape.
         answerDwarfQuestion: vi.fn(() =>
@@ -654,6 +660,7 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
   it('puts the record’s verdict on the dwarf’s marker', async () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
       value: { answerDwarfQuestion: vi.fn(() => asOutcome(Promise.resolve({ answered: true }))) }
     })
@@ -766,7 +773,7 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
         }
       }) as unknown as Api['onUiSessionChanged']
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     return {
       push(frames) {
         if (listener === null) throw new Error('nothing follows onHostEvent')

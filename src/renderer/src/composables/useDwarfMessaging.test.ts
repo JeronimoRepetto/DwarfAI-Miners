@@ -21,6 +21,7 @@ import { RESULT_VISIBLE_MS, feedMessageOf, useDwarfMessaging } from './useDwarfM
 function stubApi(sendDwarfText: (...args: never[]) => Promise<DwarfTextResult>): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
+    writable: true,
     value: { sendDwarfText }
   })
 }
@@ -1395,7 +1396,7 @@ describe('useDwarfMessaging chat from the Host read model', () => {
       setWatchedDwarf: vi.fn() as unknown as Api['setWatchedDwarf'],
       refreshDwarfTelemetry: vi.fn() as unknown as Api['refreshDwarfTelemetry']
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     return {
       push(frames) {
         if (listener === null) throw new Error('nothing follows onHostEvent')

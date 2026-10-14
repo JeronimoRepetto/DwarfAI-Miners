@@ -65,7 +65,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', reason: 'no-key' }),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   return api
 }
 
