@@ -157,12 +157,12 @@ Resolved here: ${JSON.stringify(resolved)}; PATH keys ${JSON.stringify(pathKey)}
             .prepare('SELECT provider_id, provider_version FROM capability_records')
             .all()
           const meta = db.prepare('SELECT ingress_port, welcome_answered_at FROM app_meta').all()
-          stored = `\nThe Host's records: capability_records ${JSON.stringify(records)}, app_meta ${JSON.stringify(meta)}`
+          stored += `\nThe Host's records: capability_records ${JSON.stringify(records)}, app_meta ${JSON.stringify(meta)}`
         } finally {
           db.close()
         }
       } catch (cause) {
-        stored = `\nThe Host's records could not be read: ${String(cause)}`
+        stored += `\nThe Host's records could not be read: ${String(cause)}`
       }
     }
     throw new Error(
