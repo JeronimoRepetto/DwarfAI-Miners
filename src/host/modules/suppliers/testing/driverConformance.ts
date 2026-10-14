@@ -14,7 +14,9 @@ import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import type { SpawnSpec } from '../../../kernel/ports/processControl'
 import type { ProviderCapabilities } from '../domain/capabilities'
+import type { PermissionModeSpec } from '../domain/profile'
 import type {
+  DelegationInjection,
   DriverEvent,
   DriverLaunchRequest,
   DriverSession,
@@ -78,6 +80,10 @@ export interface ConformanceOptions {
   readonly cases?: Partial<Record<CaseId, { readonly inapplicable: string }>>
   /** CH-04 for a driver with no fixture transport: drop its transport before an exit. */
   readonly injectTransportLoss?: (session: DriverSession) => void
+  /** The driver's `HANDSHAKE_TIMEOUT_MS` when it is configured away from 15 §0's 30 000. */
+  readonly handshakeTimeoutMs?: number
+  /** The provider's policy-only permission mode (ADR-011 item 1), for C-22. */
+  readonly policyOnlyMode?: PermissionModeSpec
 }
 
 export interface CaseVerdict {
@@ -120,6 +126,8 @@ export interface RunPlan {
   readonly spawn?: (spec: SpawnSpec, fixture: () => SpawnScript) => SpawnScript
   /** CH-05: the transport hangs before every answer step. */
   readonly hangBeforeAnswers?: boolean
+  /** Every launch of the run is a gated delegation launch (C-23). */
+  readonly delegation?: boolean
 }
 
 /** What one scripted run of a fixture variant produced. */
@@ -149,6 +157,22 @@ async function settle(): Promise<void> {
   for (let round = 0; round < 50; round++) {
     await new Promise<void>((resolve) => process.nextTick(resolve))
   }
+}
+
+/**
+ * Moves the fake clock `ms` forward one due task at a time, letting continuations run at each
+ * task's own instant, so a driver that reads the clock after an awaited event sees that instant.
+ */
+async function advance(clock: FakeClock, scheduler: FakeScheduler, ms: number): Promise<void> {
+  const target = clock.now() + ms
+  // Bounded: a task that keeps rescheduling itself at the same instant cannot hang the run.
+  for (let step = 0; step < 10_000; step++) {
+    const due = scheduler.nextDueAt()
+    if (due === null || due > target) break
+    clock.advance(Math.max(0, due - clock.now()))
+    await settle()
+  }
+  clock.advance(target - clock.now())
 }
 
 function track<T>(promise: Promise<T>): Tracked {
@@ -241,7 +265,7 @@ export async function runScript(
     const session = run.session
     switch (step.do) {
       case 'launch': {
-        const launched = launchRequest(step, options, run.launches.length)
+        const launched = launchRequest(step, plan, options, run.launches.length)
         const trace = { request: launched, spawned: [] as ProcessIdentity[] }
         run.launches.push(trace)
         const pending = driver.launch({
@@ -260,12 +284,12 @@ export async function runScript(
         await settle()
         const ready = step.readyAfterMs ?? 0
         if (ready > 0) {
-          clock.advance(ready - 1)
+          await advance(clock, scheduler, ready - 1)
           await settle()
           if (launch.state !== 'pending') {
             run.failures.push(`launch settled ${ready - 1} ms after spawn, before readiness`)
           }
-          clock.advance(1)
+          await advance(clock, scheduler, 1)
           await settle()
         }
         if (launch.state === 'resolved') bindSession(launch.value as DriverSession)
@@ -273,7 +297,7 @@ export async function runScript(
         break
       }
       case 'advance':
-        clock.advance(step.ms)
+        await advance(clock, scheduler, step.ms)
         tracked.push(null)
         await settle()
         break
@@ -304,17 +328,27 @@ export async function runScript(
 
 function launchRequest(
   step: Extract<ScriptStep, { do: 'launch' }>,
+  plan: RunPlan,
   options: ConformanceOptions,
   index: number
 ): DriverLaunchRequest {
   const launchId = step.launchId ?? `launch-${index + 1}`
+  const mechanism = options.ceiling.mcpInjection
+  const delegation: DelegationInjection | null =
+    (step.delegation === true || plan.delegation === true) && mechanism !== 'none'
+      ? {
+          mechanism,
+          relay: { program: '/opt/dwarfai/host/dwarfai', args: ['dwarfai-mcp-relay'] },
+          credentialFilePath: `/home/j/.dwarfai/run/mcp/${launchId}.cred`
+        }
+      : null
   return {
     launchId: launchId as DriverLaunchRequest['launchId'],
     install: options.install,
     cwd: '/work/mine' as DriverLaunchRequest['cwd'],
     prompt: step.prompt ?? 'first prompt',
-    permissionMode: null,
-    delegation: null,
+    permissionMode: step.permissionMode === 'policy-only' ? (options.policyOnlyMode ?? null) : null,
+    delegation,
     spawnTag: `v1:conformance:${launchId}:1`,
     onSpawned: async () => {}
   }
@@ -501,6 +535,234 @@ async function transportLoss(context: CaseContext): Promise<string[]> {
   })
 }
 
+/** 15 §0: `HANDSHAKE_TIMEOUT_MS` (30 000, configurable) and `EARLY_FAILURE_WINDOW_MS` (3 000). */
+export const HANDSHAKE_TIMEOUT_MS = 30_000
+export const EARLY_FAILURE_WINDOW_MS = 3_000
+/** ADR-020 D1, D6: the output tail a launch failure carries, at most. */
+const TAIL_LIMIT = 400
+
+/** Runs `script` once with `plan` (no recorded bytes unless the plan's spawn gives some). */
+async function overScript(
+  context: CaseContext,
+  script: readonly ScriptStep[],
+  plan: Omit<RunPlan, 'variant'>,
+  check: (run: Run) => string[]
+): Promise<string[]> {
+  const run = await runScript(context.factory, script, { ...plan, variant: null }, context.options)
+  return [...run.failures, ...check(run)]
+}
+
+/** The `cause` and `toolOutputTail` a launch step rejected with, or why it did not reject. */
+function launchFailure(
+  run: Run,
+  index: number
+): { cause?: string; toolOutputTail?: string } | string {
+  const outcome = run.outcomes[index] as {
+    rejected?: { cause?: string; toolOutputTail?: string }
+  } | null
+  if (outcome?.rejected === undefined)
+    return `launch gave ${JSON.stringify(outcome)}, not a rejection`
+  return outcome.rejected
+}
+
+/** A spawn case needs a spawn to inspect; a driver that spawns nothing declares the case. */
+function needsSpawn(run: Run, id: CaseId): string[] {
+  return run.spawn.spawns.length > 0
+    ? []
+    : [`${id} found no spawn to inspect; a driver that spawns nothing declares ${id} inapplicable`]
+}
+
+const LAUNCH: ScriptStep = { do: 'launch' }
+
+/** C-02 (ADR-008 item 1 and Verification): ENOENT is not-installed; only the install is spawned. */
+async function notInstalled(context: CaseContext): Promise<string[]> {
+  const enoent = await overScript(
+    context,
+    [LAUNCH],
+    { spawn: () => ({ kind: 'fail', code: 'ENOENT' }) },
+    (run) => {
+      const failure = launchFailure(run, 0)
+      if (typeof failure === 'string') return [`spawn ENOENT: ${failure}`]
+      return failure.cause === 'not-installed'
+        ? []
+        : [`spawn ENOENT gave ${failure.cause}, not not-installed`]
+    }
+  )
+  const own = await overLaunch(context, [], {}, (run) => {
+    const binary = context.options.install.binaryPath
+    return [
+      ...needsSpawn(run, 'C-02'),
+      ...run.spawn.spawns
+        .filter((spawn) => spawn.executable !== binary)
+        .map((spawn) => `spawned ${spawn.executable}, not the person's install ${binary}`)
+    ]
+  })
+  return [...enoent, ...own]
+}
+
+/** C-03 (ADR-020 D4, D6): spawn refusals and a handshake timeout are could-not-start, tail ≤ 400. */
+async function couldNotStart(context: CaseContext): Promise<string[]> {
+  const timeout = context.options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS
+  const verdict =
+    (label: string) =>
+    (run: Run): string[] => {
+      const failure = launchFailure(run, 0)
+      if (typeof failure === 'string') return [`${label}: ${failure}`]
+      const out: string[] = []
+      if (failure.cause !== 'could-not-start')
+        out.push(`${label} gave ${failure.cause}, not could-not-start`)
+      const tail = failure.toolOutputTail
+      if (tail !== undefined && tail.length > TAIL_LIMIT) {
+        out.push(
+          `${label} carried an output tail of ${tail.length} characters, more than ${TAIL_LIMIT}`
+        )
+      }
+      return out
+    }
+  const out: string[] = []
+  for (const code of ['EACCES', 'EPERM', 'EINVAL'] as const) {
+    const label = code === 'EINVAL' ? 'spawn EINVAL (a refused shim)' : `spawn ${code}`
+    const plan = { spawn: (): SpawnScript => ({ kind: 'fail', code }) }
+    out.push(...(await overScript(context, [LAUNCH], plan, verdict(label))))
+  }
+  const hung = {
+    spawn: (): SpawnScript => ({
+      kind: 'fixture',
+      transport: new FixtureTransport({ received: '', format: 'jsonl', stderr: 'x'.repeat(1000) })
+    })
+  }
+  const script: ScriptStep[] = [LAUNCH, { do: 'advance', ms: timeout }]
+  out.push(...(await overScript(context, script, hung, verdict('a handshake timeout'))))
+  return out
+}
+
+/** C-04 (15 §1.3 launch errors, ADR-020 D4): an exit before readiness inside 3 s is exited-at-once. */
+async function exitsAtOnce(context: CaseContext): Promise<string[]> {
+  const out: string[] = []
+  for (const at of [EARLY_FAILURE_WINDOW_MS - 1, EARLY_FAILURE_WINDOW_MS]) {
+    const plan = {
+      spawn: (): SpawnScript => ({ kind: 'exit', afterMs: at, code: 1, stderr: 'fatal' })
+    }
+    const script: ScriptStep[] = [LAUNCH, { do: 'advance', ms: EARLY_FAILURE_WINDOW_MS + 1 }]
+    out.push(
+      ...(await overScript(context, script, plan, (run) => {
+        const failure = launchFailure(run, 0)
+        if (typeof failure === 'string') return [`exit at ${at} ms: ${failure}`]
+        const want = at < EARLY_FAILURE_WINDOW_MS ? 'exited-at-once' : 'could-not-start'
+        return failure.cause === want ? [] : [`exit at ${at} ms gave ${failure.cause}, not ${want}`]
+      }))
+    )
+  }
+  return out
+}
+
+/** Variables no provider child may receive (15 §4 `childEnv`; ADR-013 item 2, R5B-14; INV-59). */
+const FORBIDDEN_CHILD_ENV = [
+  'DWARFAI_DELEGATION_TOKEN',
+  'DWARFAI_MCP_CREDENTIAL_FILE',
+  'ELECTRON_RUN_AS_NODE',
+  'NODE_OPTIONS'
+]
+
+/** C-23 (INV-59, ADR-013 item 2, ADR-017 item 3): no secret in any argv, env or frame. */
+async function negativeSecrets(context: CaseContext): Promise<string[]> {
+  // A driver that can inject the delegation MCP entry is checked on a gated delegation launch.
+  const delegated = context.options.ceiling.mcpInjection !== 'none'
+  return overLaunch(context, [], { delegation: delegated }, (run) => {
+    const out = [...needsSpawn(run, 'C-23')]
+    const spawnTag = run.launches[0]?.request.spawnTag
+    for (const spawn of run.spawn.spawns) {
+      for (const arg of spawn.args) {
+        if (arg.includes(CANARY_TOKEN))
+          out.push(`the delegation token is in the argv of ${spawn.executable}`)
+      }
+      for (const [name, value] of Object.entries(spawn.env)) {
+        if (value.includes(CANARY_TOKEN))
+          out.push(`the delegation token is in env ${name} of ${spawn.executable}`)
+        const internal =
+          name.startsWith('ELECTRON_') || (name.startsWith('DWARFAI_') && name !== 'DWARFAI_SPAWN')
+        if (FORBIDDEN_CHILD_ENV.includes(name) || internal) {
+          out.push(`env ${name} reached ${spawn.executable} (15 §4 childEnv is an allowlist)`)
+        }
+      }
+      if (spawn.env.DWARFAI_SPAWN !== spawnTag) {
+        out.push(
+          `DWARFAI_SPAWN of ${spawn.executable} is ${String(spawn.env.DWARFAI_SPAWN)}, not ${String(spawnTag)}`
+        )
+      }
+    }
+    for (const frame of run.sent) {
+      if (JSON.stringify(frame).includes(CANARY_TOKEN))
+        out.push('the delegation token is in a sent frame')
+    }
+    return out
+  })
+}
+
+/**
+ * ADR-008 item 3: the flags and options that bypass the person's permission decisions. This
+ * harness is the test that asserts their absence (ADR-008 Verification, static test).
+ */
+const FORBIDDEN_FLAGS = [
+  '--dangerously-skip-permissions',
+  'bypassPermissions',
+  '--dangerously-bypass-approvals-and-sandbox',
+  '--yolo',
+  'yoloMode',
+  'acceptForSession',
+  'allow_always',
+  'reject_always'
+]
+
+/** C-24 (ADR-008 item 3): no forbidden flag or option in any argv, env or frame of a launch. */
+async function forbiddenFlags(context: CaseContext): Promise<string[]> {
+  return overLaunch(context, [], {}, (run) => {
+    const out = [...needsSpawn(run, 'C-24')]
+    const texts = [
+      ...run.spawn.spawns.flatMap((spawn) => [...spawn.args, ...Object.values(spawn.env)]),
+      ...run.sent.map((frame) => JSON.stringify(frame))
+    ]
+    for (const flag of FORBIDDEN_FLAGS) {
+      if (texts.some((text) => text.includes(flag)))
+        out.push(`the forbidden ${flag} appears in a launch`)
+    }
+    return out
+  })
+}
+
+/** C-29 (15 §1.3 launch, §4 End / kill; R5A-24): onSpawned once, after spawn, before resolution. */
+async function identityReport(context: CaseContext): Promise<string[]> {
+  return overLaunch(context, [], {}, (run) => {
+    const out: string[] = []
+    const log = run.spawn.log
+    const resolved = log.indexOf('launch-resolved')
+    if (resolved === -1) return ['launch did not resolve']
+    const before = log.slice(0, resolved).filter((mark) => mark.startsWith('onSpawned '))
+    if (before.length !== 1)
+      out.push(`onSpawned was called ${before.length} times before launch resolved`)
+    const reported = log.filter((mark) => mark.startsWith('onSpawned ')).length
+    if (reported > 1) out.push(`onSpawned was called ${reported} times`)
+    const identity = run.launches[0]?.spawned[0]
+    if (identity === undefined) return out
+    const spawnMark = log.findIndex((mark) => mark.startsWith('spawn '))
+    if (spawnMark !== -1) {
+      if (spawnMark > log.indexOf(`onSpawned ${identity.pid}`))
+        out.push('onSpawned came before the spawn')
+      if (log[spawnMark] !== `spawn ${identity.pid}`)
+        out.push('onSpawned reported another pid than the spawned root')
+      if (run.spawn.isRunning(identity.pid) !== 'running')
+        out.push(`the reported pid ${identity.pid} is not live`)
+    } else if (
+      !(Number.isInteger(identity.pid) && identity.pid > 0) ||
+      !Number.isFinite(identity.processStartTimeMs) ||
+      identity.bootId === ''
+    ) {
+      out.push(`onSpawned reported no live identity: ${JSON.stringify(identity)}`)
+    }
+    return out
+  })
+}
+
 /** C-15 (ADR-010 item 8, CH-05): an unacknowledged answer is `channel-unavailable` at 30 s. */
 function checkHandover(run: Run, fixture: FixtureCase): string[] {
   const out: string[] = []
@@ -576,6 +838,32 @@ const CASES: Partial<Record<CaseId, CaseDefinition>> = {
   'C-18': {
     title: 'a transport EOF yields error transport-lost then exited once',
     harness: transportLoss
+  },
+  'C-02': {
+    title: "a spawn ENOENT is not-installed and no process starts but the person's install",
+    harness: notInstalled
+  },
+  'C-03': {
+    title:
+      'a spawn refusal, a refused shim or a handshake timeout is could-not-start with an output tail of at most 400 characters',
+    harness: couldNotStart
+  },
+  'C-04': {
+    title: 'an exit 2 999 ms after spawn is exited-at-once and an exit at 3 000 ms is not',
+    harness: exitsAtOnce
+  },
+  'C-23': {
+    title:
+      'no credential value or delegation token is in any captured argv, env or frame, and DWARFAI_SPAWN is in the provider child env',
+    harness: negativeSecrets
+  },
+  'C-24': {
+    title: 'no forbidden auto-approve flag or option appears in any launch',
+    harness: forbiddenFlags
+  },
+  'C-29': {
+    title: 'onSpawned is called exactly once after spawn and before launch resolves',
+    harness: identityReport
   }
 }
 

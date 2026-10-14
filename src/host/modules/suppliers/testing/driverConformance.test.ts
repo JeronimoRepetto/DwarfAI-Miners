@@ -61,8 +61,14 @@ const LINE_OPTIONS: ConformanceOptions = {
   }
 }
 
+const OK = { ok: true, failures: [] }
+
 describe('driverConformance harness', () => {
   const fixtures = readReferenceFixtures()
+  const lineFixtures = fixtureSetFromFiles(
+    { provider: 'line-test', driver: 'ndjson', providerVersion: '1.0.0' },
+    lineFixtureFiles()
+  )
 
   it('[C-05] a driver that emits turn.ended twice for one turnKey fails the harness', async () => {
     const twice = brokenSimulated((session) =>
@@ -77,13 +83,100 @@ describe('driverConformance harness', () => {
     expect(twin).toEqual({ ok: true, failures: [] })
   })
 
-  describe('fixture transport faults', () => {
-    const lineFixtures = fixtureSetFromFiles(
-      { provider: 'line-test', driver: 'ndjson', providerVersion: '1.0.0' },
-      lineFixtureFiles()
-    )
-    const OK = { ok: true, failures: [] }
+  describe('recording spawn', () => {
+    /** The verdict of `id` for the conformant line driver and for one with `faults`. */
+    const twins = async (
+      id: Parameters<typeof runCase>[0],
+      faults: LineDriverFaults
+    ): Promise<{ conformant: unknown; broken: { ok: boolean; failures: readonly string[] } }> => ({
+      conformant: await runCase(id, lineFactory(), lineFixtures, LINE_OPTIONS),
+      broken: await runCase(id, lineFactory(faults), lineFixtures, LINE_OPTIONS)
+    })
 
+    it('[C-02] a driver that spawns anything but the person install fails the harness, and spawn ENOENT is not-installed', async () => {
+      const { conformant, broken } = await twins('C-02', { bundledPath: true })
+
+      expect(conformant).toEqual(OK)
+      expect(broken.ok).toBe(false)
+      expect(broken.failures.join('\n')).toMatch(/\/opt\/dwarfai\/bundled\/line-test/)
+    })
+
+    it('[C-03] a driver that reports a spawn EACCES, a refused shim or a handshake timeout as anything but could-not-start with an output tail of at most 400 characters fails the harness', async () => {
+      const { conformant, broken } = await twins('C-03', { eaccesAsNotInstalled: true })
+      const unbounded = await runCase(
+        'C-03',
+        lineFactory({ unboundedTail: true }),
+        lineFixtures,
+        LINE_OPTIONS
+      )
+
+      expect(conformant).toEqual(OK)
+      expect(broken.failures.join('\n')).toMatch(/EACCES.*not-installed/)
+      expect(unbounded.failures.join('\n')).toMatch(/tail of 1000 characters/)
+    })
+
+    it('[C-04] a driver that does not report an exit inside 3 s as exited-at-once fails the harness', async () => {
+      const { conformant, broken } = await twins('C-04', { noEarlyWindow: true })
+
+      expect(conformant).toEqual(OK)
+      expect(broken.failures.join('\n')).toMatch(/2999 ms.*exited-at-once/)
+    })
+
+    it('[C-23] a driver that puts the credential value in any captured argv or env fails the harness', async () => {
+      const { conformant, broken } = await twins('C-23', { leaksLoginEnv: true })
+
+      expect(conformant).toEqual(OK)
+      expect(broken.ok).toBe(false)
+      expect(broken.failures.join('\n')).toMatch(/DWARFAI_DELEGATION_TOKEN/)
+      expect(broken.failures.join('\n')).toMatch(/ELECTRON_RUN_AS_NODE/)
+    })
+
+    it('[C-24] a driver that passes a forbidden auto-approve flag fails the harness', async () => {
+      const { conformant, broken } = await twins('C-24', { autoApproveFlag: true })
+
+      expect(conformant).toEqual(OK)
+      expect(broken.failures.join('\n')).toMatch(/--yolo/)
+    })
+
+    it('[C-29] a driver that resolves launch before calling onSpawned fails the harness', async () => {
+      const deferred: DriverFactory = (rig) => {
+        const inner = simulatedFactory(rig)
+        return {
+          profile: inner.profile,
+          transport: inner.transport,
+          detect: () => inner.detect(),
+          probe: (install) => inner.probe(install),
+          launch: async (req) => {
+            let identity: Parameters<typeof req.onSpawned>[0] | null = null
+            const session = await inner.launch({
+              ...req,
+              onSpawned: async (spawned) => {
+                identity = spawned
+              }
+            })
+            // Reported only once the session is used: after launch resolved.
+            return {
+              ...session,
+              sendTurn: async (input) => {
+                if (identity !== null) await req.onSpawned(identity)
+                return session.sendTurn(input)
+              }
+            }
+          }
+        }
+      }
+
+      const broken = await runCase('C-29', deferred, fixtures, SIMULATED_OPTIONS)
+
+      expect(await runCase('C-29', simulatedFactory, fixtures, SIMULATED_OPTIONS)).toEqual(OK)
+      expect(await runCase('C-29', lineFactory(), lineFixtures, LINE_OPTIONS)).toEqual(OK)
+      expect(broken.failures.join('\n')).toMatch(
+        /onSpawned was called 0 times before launch resolved/
+      )
+    })
+  })
+
+  describe('fixture transport faults', () => {
     it('[C-18, CH-04] an early EOF in the fixture transport must surface as error transport-lost then exited', async () => {
       const conformant = await runCase('C-18', lineFactory(), lineFixtures, LINE_OPTIONS)
       const silent = await runCase(

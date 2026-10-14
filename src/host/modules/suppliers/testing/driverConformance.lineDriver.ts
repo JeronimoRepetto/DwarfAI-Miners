@@ -27,7 +27,7 @@ import type {
 } from '../ports/providerDriver'
 import type { ConformanceRig } from './driverConformance'
 
-export const LINE_HANDSHAKE_TIMEOUT_MS = 5_000
+export const LINE_HANDSHAKE_TIMEOUT_MS = 30_000
 export const LINE_EARLY_FAILURE_MS = 3_000
 export const LINE_HANDOVER_MS = 30_000
 const TAIL_CHARS = 400
@@ -77,6 +77,8 @@ export interface LineDriverFaults {
   readonly eaccesAsNotInstalled?: true
   /** C-03: keeps the whole stderr as the output tail. */
   readonly unboundedTail?: true
+  /** C-04: reports every exit before readiness as could-not-start, even inside the 3 s window. */
+  readonly noEarlyWindow?: true
   /** C-08: does not resolve the open asks when it interrupts. */
   readonly keepsAsksOnInterrupt?: true
   /** C-14: maps the provider's protocol error reply to accepted. */
@@ -197,7 +199,9 @@ class LineSession implements DriverSession {
         if (this.ready !== null) {
           timer.cancel()
           this.ready = null
-          const early = clock.now() - this.spawnedAt < LINE_EARLY_FAILURE_MS
+          const early =
+            !this.options.faults?.noEarlyWindow &&
+            clock.now() - this.spawnedAt < LINE_EARLY_FAILURE_MS
           reject(this.failure(early ? 'exited-at-once' : 'could-not-start', 'exited before ready'))
           return
         }
