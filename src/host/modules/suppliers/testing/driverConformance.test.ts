@@ -176,6 +176,85 @@ describe('driverConformance harness', () => {
     })
   })
 
+  describe('events, answers and capabilities', () => {
+    it('[C-19] a driver whose sourceKeys differ on replay fails the harness', async () => {
+      let launches = 0
+      const drifting = brokenSimulated((session) => {
+        launches += 1
+        const suffix = `:replay-${launches}`
+        return mapEvents(session, (event) =>
+          event.t === 'message'
+            ? [
+                {
+                  ...event,
+                  record: { ...event.record, sourceKey: event.record.sourceKey + suffix }
+                }
+              ]
+            : [event]
+        )
+      })
+
+      const broken = await runCase('C-19', drifting, fixtures, SIMULATED_OPTIONS)
+
+      expect(await runCase('C-19', simulatedFactory, fixtures, SIMULATED_OPTIONS)).toEqual(OK)
+      expect(await runCase('C-19', lineFactory(), lineFixtures, LINE_OPTIONS)).toEqual(OK)
+      expect(broken.failures.join('\n')).toMatch(/sourceKeys differ on replay/)
+    })
+
+    it('[C-08] a driver whose interrupt mid-turn does not end the turn interrupted and cancelledFromApp, or whose interrupt mid-permission does not resolve the ask cancelled, fails the harness', async () => {
+      const notFromApp = brokenSimulated((session) =>
+        mapEvents(session, (event) =>
+          event.t === 'turn.ended'
+            ? [{ ...event, end: { ...event.end, cancelledFromApp: false } }]
+            : [event]
+        )
+      )
+
+      const midTurn = await runCase('C-08', notFromApp, fixtures, SIMULATED_OPTIONS)
+      const midAsk = await runCase(
+        'C-08',
+        lineFactory({ keepsAsksOnInterrupt: true }),
+        lineFixtures,
+        LINE_OPTIONS
+      )
+
+      expect(await runCase('C-08', simulatedFactory, fixtures, SIMULATED_OPTIONS)).toEqual(OK)
+      expect(await runCase('C-08', lineFactory(), lineFixtures, LINE_OPTIONS)).toEqual(OK)
+      expect(midTurn.failures.join('\n')).toMatch(/interrupted with cancelledFromApp/)
+      expect(midAsk.failures.join('\n')).toMatch(/ask r-1 .* not resolved cancelled/)
+    })
+
+    it('[C-14] a driver that maps a protocol-error answer reply to anything but refused channel-rejected fails the harness', async () => {
+      const broken = await runCase(
+        'C-14',
+        lineFactory({ errorReplyAccepted: true }),
+        lineFixtures,
+        LINE_OPTIONS
+      )
+
+      expect(await runCase('C-14', lineFactory(), lineFixtures, LINE_OPTIONS)).toEqual(OK)
+      expect(broken.failures.join('\n')).toMatch(/not refused channel-rejected/)
+    })
+
+    it('[C-25b] a driver whose effective capability is above the lower of the protocol and probe values, or is not the fail-closed value when unordered values differ, fails the harness', async () => {
+      const broken = await runCase(
+        'C-25',
+        lineFactory({ probeOverProtocol: true }),
+        lineFixtures,
+        LINE_OPTIONS
+      )
+
+      expect(await runCase('C-25', lineFactory(), lineFixtures, LINE_OPTIONS)).toEqual(OK)
+      expect(await runCase('C-25', simulatedFactory, fixtures, SIMULATED_OPTIONS)).toEqual(OK)
+      expect(broken.failures.join('\n')).toMatch(
+        /capability interrupt is true, the merge gives false/
+      )
+      expect(broken.failures.join('\n')).toMatch(
+        /capability earlyFailure is "handshake", the merge gives "exit-only"/
+      )
+    })
+  })
+
   describe('fixture transport faults', () => {
     it('[C-18, CH-04] an early EOF in the fixture transport must surface as error transport-lost then exited', async () => {
       const conformant = await runCase('C-18', lineFactory(), lineFixtures, LINE_OPTIONS)

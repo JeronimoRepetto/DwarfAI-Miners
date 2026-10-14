@@ -256,13 +256,16 @@ class LineSession implements DriverSession {
   async interrupt(): Promise<void> {
     if (this.openTurn === null) return
     this.cancelled = true
-    this.write({ type: 'cancel' })
-    if (this.options.faults?.keepsAsksOnInterrupt) return
-    for (const [request, waiter] of this.asks) {
-      this.asks.delete(request)
-      waiter?.({ type: 'cancelled' })
-      this.emit({ t: 'ask.resolved', providerRequestId: request, by: 'cancelled' })
+    // The open asks resolve before the cancel is written: the turn's end may arrive during the
+    // write itself, and an ask of the turn resolves before the turn ends.
+    if (!this.options.faults?.keepsAsksOnInterrupt) {
+      for (const [request, waiter] of this.asks) {
+        this.asks.delete(request)
+        waiter?.({ type: 'cancelled' })
+        this.emit({ t: 'ask.resolved', providerRequestId: request, by: 'cancelled' })
+      }
     }
+    this.write({ type: 'cancel' })
   }
 
   answerPermission(req: {
@@ -583,6 +586,67 @@ export function lineFixtureFiles(): Map<string, string> {
         ],
         events: [{ t: 'status', value: 'working' }, ECHO, ASK_OPENED],
         sent: [PROMPT_SENT, { type: 'reply', request: 'r-1', option: 'allow_once' }]
+      }
+    ),
+    ...lineCase(
+      'c-08-interrupt-mid-permission',
+      [
+        READY,
+        'sent',
+        PERMISSION,
+        'sent',
+        { type: 'turn_end', turn: 'turn-1', reason: 'cancelled' }
+      ],
+      {
+        case: 'C-08',
+        script: [...ASK_SCRIPT, { do: 'interrupt' }],
+        outcomes: [{ resolved: true }, RECEIPT, null],
+        events: [
+          { t: 'status', value: 'working' },
+          ECHO,
+          ASK_OPENED,
+          { t: 'ask.resolved', providerRequestId: 'r-1', by: 'cancelled' },
+          {
+            t: 'turn.ended',
+            end: {
+              turnKey: 'turn-1',
+              kind: 'interrupted',
+              at: 0,
+              reliability: 'reliable',
+              cancelledFromApp: true
+            }
+          },
+          { t: 'status', value: 'idle' }
+        ],
+        sent: [PROMPT_SENT, { type: 'cancel' }]
+      }
+    ),
+    ...lineCase(
+      'c-14-protocol-error-reply',
+      [READY, 'sent', PERMISSION, 'sent', { type: 'error', request: 'r-1' }],
+      {
+        case: 'C-14',
+        script: [
+          ...ASK_SCRIPT,
+          { do: 'answerPermission', providerRequestId: 'r-1', decision: 'allow' }
+        ],
+        outcomes: [{ resolved: true }, RECEIPT, { kind: 'refused', reason: 'channel-rejected' }],
+        events: [{ t: 'status', value: 'working' }, ECHO, ASK_OPENED],
+        sent: [PROMPT_SENT, { type: 'reply', request: 'r-1', option: 'allow_once' }]
+      }
+    ),
+    // C-25b: the handshake reports a lower `interrupt` than the probe (probe higher) and another
+    // unordered `earlyFailure` (unordered values differ → the fail-closed `exit-only`).
+    ...lineCase(
+      'c-25-negotiation',
+      [{ ...READY, capabilities: { interrupt: false, earlyFailure: 'exit-only' } }],
+      {
+        case: 'C-25',
+        script: [{ do: 'launch' }, { do: 'probe' }],
+        outcomes: [{ resolved: true }, null],
+        negotiated: { protocol: { interrupt: false, earlyFailure: 'exit-only' } },
+        events: [],
+        sent: []
       }
     )
   ])

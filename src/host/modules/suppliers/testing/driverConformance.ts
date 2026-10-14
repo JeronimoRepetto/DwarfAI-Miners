@@ -14,6 +14,7 @@ import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import type { SpawnSpec } from '../../../kernel/ports/processControl'
 import type { ProviderCapabilities } from '../domain/capabilities'
+import { combineLowest, merge, type NegotiatedCapabilities } from '../domain/mergeCapabilities'
 import type { PermissionModeSpec } from '../domain/profile'
 import type {
   DelegationInjection,
@@ -23,7 +24,14 @@ import type {
   InstalledProvider,
   ProviderDriver
 } from '../ports/providerDriver'
-import { bind, compareEvents, differences, type Bindings, type Json } from './expected'
+import {
+  bind,
+  compareEvents,
+  differences,
+  sourceKeysOf,
+  type Bindings,
+  type Json
+} from './expected'
 import type { FixtureCase, FixtureSet, FixtureVariant, ScriptStep } from './fixtureSet'
 import { FixtureTransport, type Chunking } from './fixtureTransport'
 import { RecordingSpawn, type SpawnScript } from './recordingSpawn'
@@ -763,6 +771,123 @@ async function identityReport(context: CaseContext): Promise<string[]> {
   })
 }
 
+/**
+ * C-19 (HO-37, ADR-006, 15 §1.5): every fixture replayed twice, and in every variant, yields the
+ * same `sourceKey`s, so a second ingest adds zero rows.
+ */
+async function idempotentParse(context: CaseContext): Promise<string[]> {
+  const out: string[] = []
+  const harnessDriven = new Set(
+    (Object.keys(CASES) as CaseId[]).filter((id) => CASES[id]?.harness !== undefined)
+  )
+  for (const fixture of context.fixtures.cases) {
+    if (harnessDriven.has(fixture.expected.case as CaseId)) continue
+    const plan = CASES[fixture.expected.case as CaseId]?.plan ?? {}
+    const keysOf = async (variant: FixtureVariant): Promise<string[]> => {
+      const run = await runScript(
+        context.factory,
+        fixture.expected.script,
+        { ...plan, variant },
+        context.options
+      )
+      return sourceKeysOf(run.events)
+    }
+    const [recorded, ...others] = fixture.variants
+    if (recorded === undefined) continue
+    const first = await keysOf(recorded)
+    const again = await keysOf(recorded)
+    if (JSON.stringify(first) !== JSON.stringify(again)) {
+      const added = again.filter((key) => !first.includes(key))
+      out.push(
+        `${fixture.name}: sourceKeys differ on replay; the second replay adds ${JSON.stringify(added)}`
+      )
+    }
+    for (const variant of others) {
+      const keys = await keysOf(variant)
+      if (JSON.stringify(keys) !== JSON.stringify(first)) {
+        out.push(`${fixture.name} (${variant.label}): sourceKeys differ from the recorded variant`)
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * C-08 (15 §1.3 interrupt, ADR-021): after an interrupt, the open turn ends `interrupted` with
+ * `cancelledFromApp`, and every ask still open resolves `cancelled`.
+ */
+function checkInterrupt(run: Run, fixture: FixtureCase): string[] {
+  const out: string[] = []
+  fixture.expected.script.forEach((step, index) => {
+    if (step.do !== 'interrupt') return
+    const at = run.eventsAtStep[index] as number
+    const before = run.events.slice(0, at)
+    const after = run.events.slice(at)
+    const ended = new Set(before.flatMap((e) => (e.t === 'turn.ended' ? [e.end.turnKey] : [])))
+    const turnOpen =
+      before.some((e) => e.t === 'status' && e.value === 'working') &&
+      before.filter((e) => e.t === 'status' && e.value === 'working').length > ended.size
+    if (turnOpen) {
+      const interrupted = after.filter(
+        (e) => e.t === 'turn.ended' && e.end.kind === 'interrupted' && e.end.cancelledFromApp
+      )
+      if (interrupted.length !== 1) {
+        out.push(
+          `interrupt #${index}: ${interrupted.length} turn.ended interrupted with cancelledFromApp, not one`
+        )
+      }
+    }
+    const resolved = new Set(
+      before.flatMap((e) => (e.t === 'ask.resolved' ? [e.providerRequestId] : []))
+    )
+    for (const event of before) {
+      if (event.t !== 'ask.opened' || resolved.has(event.ask.providerRequestId)) continue
+      const id = event.ask.providerRequestId
+      if (
+        !after.some(
+          (e) => e.t === 'ask.resolved' && e.providerRequestId === id && e.by === 'cancelled'
+        )
+      ) {
+        out.push(`interrupt #${index}: ask ${id} open at the interrupt is not resolved cancelled`)
+      }
+    }
+  })
+  return out
+}
+
+/** C-14 (ADR-010 item 5): a protocol error reply to an answer is `refused{channel-rejected}`. */
+function checkRejected(run: Run, fixture: FixtureCase): string[] {
+  return fixture.expected.script.flatMap((step, index) => {
+    if (step.do !== 'answerPermission' && step.do !== 'answerQuestion') return []
+    const outcome = run.outcomes[index]
+    return differences(outcome, { kind: 'refused', reason: 'channel-rejected' }).length === 0
+      ? []
+      : [`answer #${index} gave ${JSON.stringify(outcome)}, not refused channel-rejected`]
+  })
+}
+
+/**
+ * C-25 / C-25b (ADR-009 D2, 15 §2.1): the session's effective capabilities equal the merge of the
+ * ceiling with the protocol and probe sources combined field by field, so no field is above the
+ * lower source and differing unordered values give the fail-closed value.
+ */
+function checkMerge(run: Run, fixture: FixtureCase, context: CaseContext): string[] {
+  if (run.session === null) return ['no session to read the effective capabilities from']
+  const probeStep = fixture.expected.script.findIndex((step) => step.do === 'probe')
+  if (probeStep === -1) return ['the C-25 fixture has no probe step']
+  const probe = run.outcomes[probeStep] as NegotiatedCapabilities
+  const protocol = (fixture.expected.negotiated?.protocol ?? {}) as NegotiatedCapabilities
+  const want = merge(context.options.ceiling, combineLowest(protocol, probe))
+  const actual = run.session.capabilities
+  return (Object.keys(want) as (keyof ProviderCapabilities)[]).flatMap((field) =>
+    JSON.stringify(actual[field]) === JSON.stringify(want[field])
+      ? []
+      : [
+          `capability ${field} is ${JSON.stringify(actual[field])}, the merge gives ${JSON.stringify(want[field])}`
+        ]
+  )
+}
+
 /** C-15 (ADR-010 item 8, CH-05): an unacknowledged answer is `channel-unavailable` at 30 s. */
 function checkHandover(run: Run, fixture: FixtureCase): string[] {
   const out: string[] = []
@@ -864,6 +989,24 @@ const CASES: Partial<Record<CaseId, CaseDefinition>> = {
   'C-29': {
     title: 'onSpawned is called exactly once after spawn and before launch resolves',
     harness: identityReport
+  },
+  'C-08': {
+    title:
+      'interrupt ends the open turn interrupted with cancelledFromApp and resolves the open asks cancelled',
+    check: checkInterrupt
+  },
+  'C-14': {
+    title: 'a protocol error reply to an answer is refused channel-rejected',
+    check: checkRejected
+  },
+  'C-19': {
+    title: 'every fixture replayed twice, in every variant, yields identical sourceKeys',
+    harness: idempotentParse
+  },
+  'C-25': {
+    title:
+      'capabilities are the ADR-009 D2 merge of the ceiling with the protocol and probe sources, never above the lower one (C-25b)',
+    check: checkMerge
   }
 }
 
