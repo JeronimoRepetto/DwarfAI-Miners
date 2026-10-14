@@ -30,6 +30,7 @@ import {
   type Mine
 } from '../types'
 import { createReadModel, followHost, type HostFollower } from './readModel'
+import { useAttentionCues } from './useAttentionCues'
 import { useDwarfMessaging } from './useDwarfMessaging'
 import { useHostConnection } from './useHostConnection'
 import { useMines } from './useMines'
@@ -90,6 +91,9 @@ function verdictOf(result: DwarfQuestionAnswerResult): { answered: boolean; erro
  * The front card of a dwarf is its oldest open Host ask, else its legacy card (a permission before a question, as the
  * panel draws them). `ask.closed` drops the card with no notice, so the composer comes back; an `ask.opened` re-sent
  * for the same id brings it back and drops the last verdict of that ask, so no earlier refusal is shown (ADR-010).
+ * Each `ask.opened` frame also reaches the attention cues' `askOpened` intake, which judges it once per ask; a
+ * snapshot's asks are state, never an arrival. `App.vue` starts the model at mount, and the message panel draws its
+ * dwarf's front card from it (lib/message/askCard.ts).
  *
  * Partial picks live in the UI main session store (`ask-picks`, A-N17…A-N19; ADR-033 item 4), mirrored here and never
  * sent to the Host. Only Host AskIds cross: the store's `ask-picks` key is an AskId (14 §3.9), which a `legacy:` id is
@@ -151,6 +155,13 @@ function applyAskFrame(frame: HostFrame): void {
       const ask = parsed.data.ask as AskRecord
       asks.host[ask.id] = ask
       forgetVerdict(ask.dwarfId, ask.id)
+      // An arrival, judged by the attention cues once per ask (ISSUE-117 intake); a snapshot ask never is one.
+      useAttentionCues().askOpened({
+        dwarfId: ask.dwarfId,
+        kind: ask.kind,
+        askId: ask.id,
+        reannounce: ask.reannounce
+      })
       return
     }
     case 'ask.closed': {

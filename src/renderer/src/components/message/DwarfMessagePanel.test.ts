@@ -26,7 +26,7 @@ import { CONVERSATION_START_NOTE, READING_OLDER_NOTE } from '../../lib/message/f
 import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
 import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
 import type { MessageEcho } from '../../lib/message/echo'
-import { defaultDwarf } from '../../testing/factories'
+import { defaultDwarf, defaultMine } from '../../testing/factories'
 import {
   MAX_CODEX_QUEUE_TEXT_CHARS,
   MAX_DWARF_TEXT_CHARS,
@@ -40,6 +40,10 @@ import {
   type FeedMessage
 } from '../../types'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
+/* --- Host asks from the read model (ISSUE-138) — imports, appended --- */
+import type { AskRecord, HostFrame } from '@dwarfai/contracts'
+import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
+/* --- end of the ISSUE-138 imports --- */
 import { useMines } from '../../composables/useMines'
 import { useToasts } from '../../composables/useToasts'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
@@ -3851,6 +3855,169 @@ describe('DwarfMessagePanel offers no rename the Host cannot serve yet (BR-19)',
  * in this file had passed. `enableAutoUnmount` at the top of the file is what keeps it from
  * happening; this is its witness, since a panel left mounted leaves its anchors in <body>.
  */
+/* --- Host asks from the read model (ISSUE-138, the read half) — one block, appended ------------- */
+describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
+  const EPOCH = 'epoch-0138'
+  const DWARF = '01920000-0000-7000-a000-00000000d001'
+  const ASK = '01920000-0000-7000-a000-00000000a001'
+
+  let push: ((frames: HostFrame[]) => void) | null = null
+
+  function hostAsk(overrides: Partial<AskRecord> = {}): AskRecord {
+    return {
+      id: ASK,
+      dwarfId: DWARF,
+      kind: 'question',
+      channel: 'driver',
+      providerRequestId: 'req-a001',
+      payload: {
+        steps: [
+          { text: 'Which database?', options: ['Postgres', 'SQLite'], allowsFreeText: true },
+          { text: 'Run migrations?', options: ['Yes', 'No'], allowsFreeText: true }
+        ]
+      },
+      currentStep: 1,
+      state: 'open',
+      reannounce: true,
+      openedAt: 1_000,
+      ...overrides
+    }
+  }
+
+  /** The fake `window.api` the read model follows: A-N01 answers `asks`, A-N02 is held for the test to push. */
+  async function followHostAsks(asks: AskRecord[]): Promise<void> {
+    const snapshot = {
+      ok: true,
+      value: {
+        snapshotId: 'snap-10',
+        seq: 10,
+        epoch: EPOCH,
+        chunks: [{ section: 'asks', data: { asks, needsYou: [] } }]
+      }
+    }
+    const api = createFakeWindowApi({
+      getHostSnapshot: vi.fn(() => Promise.resolve(snapshot)) as never,
+      onHostEvent: vi.fn((listener: (frames: HostFrame[]) => void) => {
+        push = listener
+        return () => {
+          push = null
+        }
+      }) as never,
+      getUiSession: vi.fn(() =>
+        Promise.resolve({
+          drafts: {},
+          chatViews: {},
+          askPicks: {},
+          openChat: {},
+          currentMine: {},
+          valle: {}
+        })
+      ) as never,
+      patchUiSession: vi.fn() as never,
+      onUiSessionChanged: vi.fn(() => () => undefined) as never
+    })
+    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    expect(await useDwarfQuestion().startAsks()).toBe(true)
+  }
+
+  afterEach(() => {
+    useDwarfQuestion().stopAsks()
+    useMines().stop()
+    useMines().clear()
+  })
+
+  it('[ADR-033] a Host ask from frontAsk replaces the composer with its card, on the step the Host reports', async () => {
+    await followHostAsks([hostAsk()])
+    const wrapper = panel({ dwarf: defaultDwarf({ id: DWARF, textDelivery: 'terminal' }) })
+    await flushPromises()
+
+    expect(wrapper.find('.dm-qcard__q').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard__q').text()).toBe('Run migrations?')
+    expect(wrapper.find('.dm-composer').exists()).toBe(false)
+  })
+
+  it('[ADR-033] a Host permission from frontAsk draws the permission card with its request text', async () => {
+    await followHostAsks([
+      hostAsk({
+        kind: 'permission',
+        channel: 'hook-decision',
+        payload: { toolName: 'Bash', requestText: 'npm test' },
+        currentStep: 0
+      })
+    ])
+    const wrapper = panel({ dwarf: defaultDwarf({ id: DWARF, textDelivery: 'terminal' }) })
+    await flushPromises()
+
+    expect(wrapper.find('.dm-qcard__req').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard__req').text()).toContain('npm test')
+    expect(wrapper.find('.dm-composer').exists()).toBe(false)
+  })
+
+  it('[US-ASK-006.AC06] an ask.closed frame lets the card give way to the composer with no notice', async () => {
+    await followHostAsks([hostAsk()])
+    const wrapper = panel({ dwarf: defaultDwarf({ id: DWARF, textDelivery: 'terminal' }) })
+    await flushPromises()
+    expect(wrapper.find('.dm-qcard').exists()).toBe(true)
+    // Earlier cases of this file leave their own toasts; the close must add none.
+    const toastsBefore = [...useToasts().toasts.value]
+
+    push?.([
+      {
+        type: 'evt',
+        seq: 11,
+        epoch: EPOCH,
+        name: 'ask.closed',
+        data: { askId: ASK, dwarfId: DWARF, reason: 'answered-elsewhere' }
+      } as unknown as HostFrame
+    ])
+    await flushPromises()
+
+    expect(wrapper.find('.dm-qcard').exists()).toBe(false)
+    expect(wrapper.find('.dm-composer').exists()).toBe(true)
+    expect(useToasts().toasts.value).toEqual(toastsBefore)
+  })
+
+  it("[ADR-033] with no Host ask, today's legacy asks draw exactly as before, by their own ids, a permission first", async () => {
+    // Before ISSUE-141 the Host source is empty in practice: the cards stay the board's.
+    await followHostAsks([])
+    const permission: DwarfPermissionRequest = {
+      toolUseId: 'legacy:toolu_09',
+      toolName: 'Bash',
+      input: 'rm -rf /tmp/scratch',
+      channel: 'held',
+      askedAt: '2026-09-05T09:00:00.000Z'
+    }
+    const question = {
+      toolUseId: 'toolu_01',
+      channel: 'held' as const,
+      questions: [
+        { question: 'Which database?', multiSelect: false, options: [{ label: 'Postgres' }] }
+      ]
+    }
+    const dwarf = defaultDwarf({
+      id: DWARF,
+      textDelivery: 'terminal',
+      pendingPermission: permission,
+      pendingQuestion: question
+    })
+    useMines().setMines({ mines: [defaultMine({ dwarfs: [dwarf] })], tokensObserved: 0 })
+    const wrapper = panel({ dwarf })
+    await flushPromises()
+
+    expect(wrapper.find('.dm-qcard__req').text()).toContain('rm -rf /tmp/scratch')
+    expect(wrapper.find('.dm-qcard__q').exists()).toBe(false)
+
+    // A board whose ids are outside the relay's namespace (no front card) draws its own ask too.
+    const raw = defaultDwarf({ id: DWARF, textDelivery: 'terminal', pendingQuestion: question })
+    useMines().setMines({ mines: [defaultMine({ dwarfs: [raw] })], tokensObserved: 0 })
+    await wrapper.setProps({ dwarf: raw })
+
+    expect(wrapper.find('.dm-qcard__q').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard__q').text()).toBe('Which database?')
+  })
+})
+/* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
+
 describe('DwarfMessagePanel test teardown (#635)', () => {
   it('finds nothing an earlier test mounted still in the document', () => {
     expect(document.body.childNodes.length).toBe(0)
