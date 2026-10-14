@@ -282,35 +282,37 @@ test.describe('cut 2: an observed Claude permission through the Host broker (ISS
     return { owned, session, entry }
   }
 
-  // The keystroke relay (#1285, PR #1288) presses the measured Allow key in the session's own console. The console is a
-  // hidden stub on Windows (startStubConsole); elsewhere the relay needs a tmux pane or a Terminal.app tab, which are the
-  // maintainer's lane (`ConsoleKeystrokeDelivery.os.test.ts`), so the case runs on Windows only.
-  test('[US-ASK-003.AC07] a permission answered in the app reaches the stub', async () => {
-    test.skip(
-      process.platform !== 'win32',
-      'the stub console is a Windows console (macOS and Linux: maintainer lane)'
-    )
-    await cardShown(true)
-    const window = launched!.window
-    const [ask] = await openAsks(window)
-    const outcome = await window.evaluate(
-      (askId) =>
-        (globalThis as unknown as RendererApi).api.answerDwarfPermission({
-          askId: askId as never,
-          decision: 'allow',
-          requestId: '01920000-0000-7000-a000-0000000141a7'
-        }),
-      ask!.id
-    )
-    expect(outcome).toEqual({ ok: true, value: { kind: 'accepted' } })
-    // The session's console received the measured Allow key, '1' with no Enter, and nothing else.
-    await expect
-      .poll(() => stubConsole!.keys(), {
-        timeout: 30_000,
-        message: 'the Allow key reaches the console'
-      })
-      .toEqual(['key 31'])
-  })
+  // The keystroke relay (#1285, PR #1288) presses the measured Allow key in the session's own console. On Windows that
+  // console is a hidden stub (startStubConsole), so the case is declared on the Windows leg only: an OS split, as the OS
+  // lane declares one describe per OS (`describe.runIf`, 17 §1.8), never a skip (17 §5.4). On macOS and Linux the relay
+  // needs a real tmux pane (the CI images are not known to ship one, and this lane installs nothing) or a Terminal.app
+  // tab: there the L8 OS lane proves the relay's tmux path against stub `ps`/`tmux` tools and a real live process on
+  // every PR (`ConsoleKeystrokeDelivery.os.test.ts`, its macOS and Linux describe), and a real pane or tab stays the
+  // maintainer's lane.
+  if (process.platform === 'win32') {
+    test('[US-ASK-003.AC07] a permission answered in the app reaches the stub', async () => {
+      await cardShown(true)
+      const window = launched!.window
+      const [ask] = await openAsks(window)
+      const outcome = await window.evaluate(
+        (askId) =>
+          (globalThis as unknown as RendererApi).api.answerDwarfPermission({
+            askId: askId as never,
+            decision: 'allow',
+            requestId: '01920000-0000-7000-a000-0000000141a7'
+          }),
+        ask!.id
+      )
+      expect(outcome).toEqual({ ok: true, value: { kind: 'accepted' } })
+      // The session's console received the measured Allow key, '1' with no Enter, and nothing else.
+      await expect
+        .poll(() => stubConsole!.keys(), {
+          timeout: 30_000,
+          message: 'the Allow key reaches the console'
+        })
+        .toEqual(['key 31'])
+    })
+  }
 
   test('[US-OBS-004.AC09] a permission answered in the stub terminal closes the card with no notice', async () => {
     const { session, entry } = await cardShown()

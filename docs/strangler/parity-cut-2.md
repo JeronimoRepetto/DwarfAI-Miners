@@ -40,7 +40,8 @@ criterion or its named evidence run (TC-141-05):
 - **L9 ask cases** (`e2e/cut-2/asks.e2e.ts`): answered in the terminal closes the card with no notice; reopen shows the
   card again on its step; answered in the app, the keystroke relay (#1285) presses the measured Allow key (`1`, no
   Enter) in the session's own console, a hidden stub console on Windows (macOS and Linux need a tmux pane or a
-  Terminal.app tab: the maintainer's lane, `ConsoleKeystrokeDelivery.os.test.ts`).
+  Terminal.app tab: the maintainer's lane, `ConsoleKeystrokeDelivery.os.test.ts`). The case is declared on the
+  Windows leg only (an OS split, as the OS lane's `describe.runIf`; never a skip, 17 §5.4).
 - **First-run step cases with the cut-2 `offered`** (`07` S41.01, S41.02, S41.09): `e2e/cut-2/first-run-step-ui.e2e.ts`
   (clean profile with the Claude stub: the step shows with `offered: ['claude-hooks']`, the option pre-selected;
   Activate writes the Host's entry; with the option off Activate closes the step and writes nothing),
