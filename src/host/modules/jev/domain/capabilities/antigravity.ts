@@ -1,4 +1,4 @@
-import type { ModelCapabilityEntry } from './modelCapability'
+import type { ModelCapabilityEntry } from './modelCapabilityEntry'
 
 /**
  * Antigravity's model line-up (#509 follow-up, jev-routing-profiles T1) —

@@ -7,7 +7,11 @@ import type { JevFallbackReason } from '../../../kernel/domain/sharedContracts'
 import type { ProviderId } from '../../../kernel/domain/values'
 import { capEffort, type CappedEffort } from './capEffort'
 import { PROVIDER_EFFORT_LEVELS } from './capabilities/effortLadders'
-import type { ModelCapabilityEntry, ModelTier } from './capabilities/modelCapability'
+import type {
+  JevCapabilityTable,
+  ModelCapabilityEntry,
+  ModelTier
+} from './capabilities/modelCapabilityEntry'
 import {
   TIER_CHOICE_TO_MODEL_TIER,
   mapEffortScore,
@@ -117,10 +121,8 @@ export const TRIVIAL_FLOOR = 0.75
 /** At or above this, `needs_large_context` is confident enough to prefer a large-context-capable entry within the chosen tier. */
 export const LARGE_CONTEXT_FLOOR = 0.75
 
-/** The capability table shape `decideLaunch` reads — injected rather than importing `MODEL_CAPABILITIES` directly, so this module stays pure and testable with a small synthetic table. */
-export type JevCapabilityTable = Readonly<
-  Record<ProviderId, Readonly<Record<string, ModelCapabilityEntry>>>
->
+/** The capability table shape `decideLaunch` reads (`capabilities/modelCapabilityEntry.ts`). */
+export type { JevCapabilityTable }
 
 /** Tiers a routing decision may ever land on — `'special-purpose'` is a capability-table concept only; see `ModelTier`'s own comment in contracts.ts. */
 type RoutingTier = 'fast-cheap' | 'balanced' | 'frontier' | 'long-context'

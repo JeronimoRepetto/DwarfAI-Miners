@@ -4,9 +4,12 @@
 // has no criteria for is left out of the request rather than described with invented text. Pure: no
 // I/O, no clock read (05 §2.2, R1).
 import type { ProviderId } from '../../../kernel/domain/values'
-import type { ModelCapabilityEntry, ModelTier } from './capabilities/modelCapability'
+import type {
+  JevCapabilityTable,
+  ModelCapabilityEntry,
+  ModelTier
+} from './capabilities/modelCapabilityEntry'
 import { PROVIDER_TOOLING_MARKERS } from './capabilities/providerTooling'
-import type { JevCapabilityTable } from './routeDecision'
 import type { JevRoutingProfile } from './suggestion'
 
 /**

@@ -1,4 +1,4 @@
-import type { ModelCapabilityEntry, ModelTier } from './modelCapability'
+import type { ModelCapabilityEntry, ModelTier } from './modelCapabilityEntry'
 
 /**
  * One model of OpenCode's live catalogue as this module reads it: the facts one

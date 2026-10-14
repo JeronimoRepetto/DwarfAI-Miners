@@ -4,7 +4,7 @@
 // pure functions around the router call: the call itself, its budget and its abort signal are the
 // application's (ISSUE-192). Pure: no I/O, no clock read (05 §2.2, R1).
 import type { JevFallbackReason } from '../../../kernel/domain/sharedContracts'
-import type { ModelCapabilityEntry, ModelTier } from './capabilities/modelCapability'
+import type { ModelCapabilityEntry, ModelTier } from './capabilities/modelCapabilityEntry'
 import {
   eligibleCandidates,
   finalizeModel,

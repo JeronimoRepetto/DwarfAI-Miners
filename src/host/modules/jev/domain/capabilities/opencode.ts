@@ -1,4 +1,4 @@
-import type { ModelCapabilityEntry } from './modelCapability'
+import type { ModelCapabilityEntry } from './modelCapabilityEntry'
 
 /**
  * OpenCode's curated EXCEPTION list (#547) — most of its table is DERIVED at

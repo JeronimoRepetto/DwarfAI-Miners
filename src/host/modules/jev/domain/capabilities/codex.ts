@@ -1,4 +1,4 @@
-import type { ModelCapabilityEntry } from './modelCapability'
+import type { ModelCapabilityEntry } from './modelCapabilityEntry'
 
 /**
  * Codex CLI's own model ids (#509 follow-up, jev-routing-profiles T1). Codex
