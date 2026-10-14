@@ -14,15 +14,27 @@
 // - The keys are `HostPreferenceKey`s (14 §3.4) only, and the runtime guard refuses anything else, so no secret
 //   (ADR-017 item 3) and no integration gate (ADR-016 item 5; 18 C-21) is ever mirrored.
 //
+// - The halves are registered per release step by `settingsMirrorHalves`, and their legacy saves reported by
+//   `reportSettingsMirrorWrites`: the notifications half from cut 1, the Jev half from 3a.
+//
 // Composed only by `src/ui-main/index.ts` (05 R16). Deleted in 4a, when the direction flips (ISSUE-230, ISSUE-236).
-import type {
-  HostPreferenceKey,
-  HostPreferences,
-  PreferenceSetParams,
-  SnapshotPage
+import {
+  STEP_ORDER,
+  type HostPreferenceKey,
+  type HostPreferences,
+  type PreferenceSetParams,
+  type SnapshotPage,
+  type StepId
 } from '@dwarfai/contracts'
 import type { HostClient, HostConnection } from '../../ui-main/window/ports/hostClient'
+import { JEV_MIRROR_STEPS, createJevMirrorHalf, reportJevWrites } from './jevMirror'
+import type { LegacySettingsWriteHub } from './legacySettingsWrites'
 import type { MirrorHalf } from './mirrorHalf'
+import {
+  createNotificationsMirrorHalf,
+  reportNotificationsWrites,
+  type LegacySettingsRoute
+} from './notificationsHalf'
 
 /** The legacy store's write notifications: `key` was saved by today's settings handler. */
 export interface LegacySettingsWrites {
@@ -168,4 +180,32 @@ export function createSettingsMirrorBridge(deps: SettingsMirrorBridgeDeps): Sett
       stopWrites()
     }
   }
+}
+
+/** Whether the Jev half is registered in `release` (`JEV_MIRROR_STEPS`, in `STEP_ORDER`). */
+function jevHalfIn(release: StepId): boolean {
+  const [first, last] = JEV_MIRROR_STEPS
+  const at = STEP_ORDER.indexOf(release)
+  return at >= STEP_ORDER.indexOf(first) && at <= STEP_ORDER.indexOf(last)
+}
+
+/**
+ * The halves `src/ui-main/index.ts` registers for `release`, each reading through `route`: the notifications half
+ * (ISSUE-116, from cut 1) and the Jev half (ISSUE-194, from 3a until the bridge ends after 3e).
+ */
+export function settingsMirrorHalves(release: StepId, route: LegacySettingsRoute): MirrorHalf[] {
+  return [
+    createNotificationsMirrorHalf(route),
+    ...(jevHalfIn(release) ? [createJevMirrorHalf(route)] : [])
+  ]
+}
+
+/** `route`, reporting to `writes` the legacy saves of the keys `settingsMirrorHalves(release)` mirrors. */
+export function reportSettingsMirrorWrites<R extends LegacySettingsRoute>(
+  release: StepId,
+  route: R,
+  writes: Pick<LegacySettingsWriteHub, 'saved'>
+): R {
+  const notifications = reportNotificationsWrites(route, writes)
+  return jevHalfIn(release) ? reportJevWrites(notifications, writes) : notifications
 }
