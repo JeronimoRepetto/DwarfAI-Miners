@@ -11,7 +11,6 @@
 //
 // ISSUE-134's L8 case is here (its relay is this delivery behind wiring/bridges/keystrokeRelay.ts).
 // Every process is the test's own and is ended by closing its stdin, then awaited.
-import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -114,7 +113,7 @@ const recycled = (identity: ProcessIdentity): ProcessIdentity => ({
 })
 
 describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Windows (L8)', () => {
-  const { start, delivery } = lane()
+  const { control, start, delivery } = lane()
 
   /** Starts the stub session and resolves once it listens on its console's input. */
   async function session() {
@@ -148,7 +147,7 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
    * (2 attach, 3 CONIN$, 4 write; 1 a script error such as Add-Type's) and the start of its errors. Diagnostic only:
    * the expectation it explains stays as it is.
    */
-  function whyRefused(pid: number, key: ConsoleKey): string {
+  async function whyRefused(pid: number, key: ConsoleKey): Promise<string> {
     const script = windowsKeyWriteScript(pid, key)
     if (script === null) return 'no script for this key'
     const env: Record<string, string> = {}
@@ -156,21 +155,26 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
       const value = process.env[name]
       if (value !== undefined) env[name] = value
     }
-    const run = spawnSync('powershell.exe', [...POWERSHELL_ARGS], {
-      input: powerShellStdinLine(script),
+    const child = control.spawn({
+      executable: 'powershell.exe',
+      args: [...POWERSHELL_ARGS],
       env,
       cwd: tmpdir(),
-      windowsHide: true,
-      timeout: 20_000,
-      encoding: 'utf8'
+      processGroup: 'inherit',
+      stdio: 'pipe'
     })
-    return `PowerShell exit ${String(run.status)}, error ${String(run.error?.message)}, stderr ${(run.stderr ?? '').slice(0, 600)}`
+    let errors = ''
+    child.stderr?.on('data', (chunk: Buffer) => (errors += chunk.toString('utf8')))
+    child.stdout?.resume()
+    child.stdin?.end(powerShellStdinLine(script))
+    const exit = await Promise.race([child.exited, sleep(20_000).then(() => null)])
+    return `PowerShell exit ${JSON.stringify(exit)}, stderr ${errors.slice(0, 600)}`
   }
 
   it('[ADR-012] the relay delivers exactly the keys 1 or Esc to the stub and nothing else', async () => {
     const allow = await session()
     const pressed = await delivery({}).press(allow.identity, ONE)
-    expect(pressed, pressed === 'pressed' ? '' : whyRefused(allow.identity.pid, ONE)).toBe(
+    expect(pressed, pressed === 'pressed' ? '' : await whyRefused(allow.identity.pid, ONE)).toBe(
       'pressed'
     )
     expect(await keysAfter(allow.lines)).toEqual(['key 31'])
