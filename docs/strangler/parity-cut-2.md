@@ -119,7 +119,12 @@ build starts, the newer build's `--revert-integrations` removes the entry the Ho
 also sets `CUT_2_ROLLBACK` (`src/contracts/strangler/rollback.ts`, as `CUT_1_ROLLBACK` for cut 1), which the Host reads
 in `src/host/wiring/cut2Rollback.ts` only: the first-run step offers no option there, so it is not due (`07` S41.09,
 hidden until built, `21` §1 item 8), and the Host's config writer refuses every install, so the Claude hook entry keeps
-one writer. Proven in `src/host/wiring/cut2Rollback.test.ts` (broken on purpose: a rollback build that still offers the
+one writer; its Claude hooks target leaves the old app's (today's installer's) entry alone (`keepOldAppEntries`), so
+neither a Reset nor the boot settlement of an unverified row removes it (verifier finding, 2026-10-14;
+`ClaudeHooksConfigWriter.test.ts` "with old-app entries kept…"). A-40 and A-41 fold into one unqualified `legacy` row
+that keeps the target shape through `LegacyAnswerShapeAdapter` (the build keeps this tree's preload and renderer), and
+the root binds that adapter wherever the table names it (`ipc-routing.contract.test.ts` "in a cut-2 rollback build the
+renderer's own A-40/A-41 payloads reach today's runtime…"). Proven in `src/host/wiring/cut2Rollback.test.ts` (broken on purpose: a rollback build that still offers the
 option fails "a rollback build offers no first-run option") and pinned to the table in
 `src/ui-main/ipc/ipc-routing.contract.test.ts` ("the cut-2 rollback setting is on if and only if…"; broken on purpose:
 the setting on in a normal build fails it).

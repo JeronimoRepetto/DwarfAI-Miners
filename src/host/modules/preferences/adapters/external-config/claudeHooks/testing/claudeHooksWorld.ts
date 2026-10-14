@@ -44,7 +44,8 @@ const decoder = new TextDecoder()
 export async function claudeHooksWorld(
   storage: FileSystemSubject,
   db: SqliteDatabase,
-  platform: NodeJS.Platform = 'linux'
+  platform: NodeJS.Platform = 'linux',
+  options: { keepOldAppEntries?: boolean } = {}
 ) {
   const fs = new ScriptedToolFs(storage.fs)
   const dir = storage.pathOf('.claude')
@@ -64,7 +65,9 @@ export async function claudeHooksWorld(
     ids,
     scheduler: immediateScheduler,
     log,
-    targets: [new ClaudeHooksConfigWriter({ path, platform, ingressPort: () => INGRESS_PORT })]
+    targets: [
+      new ClaudeHooksConfigWriter({ path, platform, ingressPort: () => INGRESS_PORT, ...options })
+    ]
   })
   const read = async (at = path): Promise<string | null> => {
     const bytes = await storage.fs.readFile(at)

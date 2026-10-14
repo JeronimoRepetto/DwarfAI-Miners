@@ -64,6 +64,13 @@ describe('the cut-2 rollback choices (ISSUE-141)', () => {
     expect(calls).toEqual(['verify claude-hooks', 'revert claude-hooks', 'findLegacy claude-hooks'])
   })
 
+  // ADDED for ISSUE-141 (verifier finding, 2026-10-14): the old app's entry is today's installer's in a rollback build,
+  // so the Host's revert and boot settlement must not remove it (ClaudeHooksConfigWriter `keepOldAppEntries`).
+  it('[ADR-016] a rollback build keeps the old app entries out of the Host reach, a normal build does not', () => {
+    expect(cut2RollbackChoices(true).keepsOldAppEntries).toBe(true)
+    expect(cut2RollbackChoices(false).keepsOldAppEntries).toBe(false)
+  })
+
   it('[US-SET-012.AC01] a normal build keeps the installed tools and the writer as they are', async () => {
     const { writer, calls } = recordingWriter()
     const choices = cut2RollbackChoices(false)
@@ -102,5 +109,6 @@ describe('the cut-2 rollback setting in the Host (ISSUE-141)', () => {
     const main = readFileSync(join(HOST, 'main.ts'), 'utf8')
     expect(main).toContain('installedTools: CUT_2_ROLLBACK_CHOICES.installedTools(')
     expect(main).toContain('externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(')
+    expect(main).toContain('keepOldAppEntries: CUT_2_ROLLBACK_CHOICES.keepsOldAppEntries')
   })
 })

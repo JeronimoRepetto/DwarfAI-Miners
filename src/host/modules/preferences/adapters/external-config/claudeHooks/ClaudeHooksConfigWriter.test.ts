@@ -226,6 +226,25 @@ function cases(storage: () => FileSystemSubject): void {
     })
   })
 
+  // ADDED for ISSUE-141 (verifier finding, 2026-10-14): a cut-2 rollback build composes today's installer again, the
+  // old app's entry's one writer (21 §1 item 4). Its Host's revert (Reset, the boot settlement of an unverified row)
+  // must not remove that entry: with `keepOldAppEntries` the old entry is neither looked for nor touched.
+  it('[ADR-016] with old-app entries kept, a revert leaves the old entry and every foreign byte as they were', async () => {
+    for (const crlf of ['', '-crlf']) {
+      const w = await claudeHooksWorld(storage(), openTemplateCopy().db, 'linux', {
+        keepOldAppEntries: true
+      })
+      const original = fixture(`foreign-and-old-app${crlf}.settings`)
+      await w.seed(original)
+
+      expect(await w.writer.findLegacy('claude-hooks')).toBe(false)
+      expect(await w.writer.revert('claude-hooks')).toStrictEqual({ ok: true, value: undefined })
+
+      expect(await w.read()).toBe(original)
+      expect(await w.backups()).toStrictEqual([])
+    }
+  })
+
   it('[FM-127] a malformed settings.json is never written', async () => {
     for (const malformed of [
       fixture('malformed.settings'),

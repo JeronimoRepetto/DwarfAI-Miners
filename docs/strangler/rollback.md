@@ -62,7 +62,11 @@ cut 2 "Rollback"). The build also sets the cut-2 rollback setting, `CUT_2_ROLLBA
 `src/contracts/strangler/rollback.ts` (read in the Host only by `src/host/wiring/cut2Rollback.ts`; the router contract
 test pins it on exactly when the table withdrew A-N31 and A-N32): on, the Host offers no first-run option, so the step
 is not due (`07` S41.09; its one answer has no route there), and its config writer refuses every install, so the Host
-writes no Claude hook entry while today's installer is composed again.
+writes no Claude hook entry while today's installer is composed again. Its Claude hooks target also leaves the old
+app's entry alone (`keepOldAppEntries`): a Reset or the boot settlement of a row a crash left unverified removes the
+Host's own entry only, never the one today's installer wrote. A-40 and A-41 fold into one unqualified `legacy` row that
+keeps the target shape through `LegacyAnswerShapeAdapter`, because the rollback build's preload and renderer still
+send the 14 shapes.
 
 ## 2. Older artifact (maintainers only, last resort)
 

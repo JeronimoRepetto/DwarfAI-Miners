@@ -17,7 +17,12 @@
 //   no `config_writes` row, no token hash; the command answers `config-write-failed`, as an unset ingress port does,
 //   bridges/hostConfigWriter.ts), so the entry keeps one writer, today's installer (21 §1 item 4, §4). Verify, revert
 //   and the legacy probe write no entry and pass through: the Reset saga and the boot re-verification still settle
-//   what the Host wrote before (forward-only, 21 §5.1).
+//   what the Host wrote before (forward-only, 21 §5.1);
+// - the old app's entry, which today's installer writes again in that build: the Claude hooks target leaves it alone
+//   (`keepsOldAppEntries`, ClaudeHooksConfigWriter `keepOldAppEntries`), so a revert (Reset metrics) or the boot
+//   settlement of a row a crash left unverified (07 S14.11) removes the Host's own entry only, never today's
+//   (verifier finding, 2026-10-14). `--revert-integrations` of the newer build settles every active row before the
+//   rollback build starts, so the boot settlement normally has nothing to do.
 import { CUT_2_ROLLBACK } from '../../contracts/strangler'
 import type { DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
 import type { ExternalConfigWriter, InstalledToolsReader } from '../modules/preferences'
@@ -25,6 +30,8 @@ import type { ExternalConfigWriter, InstalledToolsReader } from '../modules/pref
 export interface Cut2RollbackChoices {
   /** Whether this build is a cut-2 rollback build. */
   readonly rolledBack: boolean
+  /** Whether the Claude hooks target leaves the old app's (today's installer's) entries alone. */
+  readonly keepsOldAppEntries: boolean
   /** The first-run step's installed tools. */
   installedTools(reader: InstalledToolsReader): InstalledToolsReader
   /** The Host's one config writer. */
@@ -35,6 +42,7 @@ export interface Cut2RollbackChoices {
 export function cut2RollbackChoices(rolledBack: boolean): Cut2RollbackChoices {
   return {
     rolledBack,
+    keepsOldAppEntries: rolledBack,
     installedTools: (reader) => (rolledBack ? NOTHING_OFFERED : reader),
     externalConfig: (writer, log) => (rolledBack ? installRefused(writer, log) : writer)
   }

@@ -673,7 +673,9 @@ async function bootHost(base: HostBase): Promise<void> {
               new ClaudeHooksConfigWriter({
                 path: claudeSettingsPathHere(),
                 platform: hostRuntime().os as NodeJS.Platform,
-                ingressPort: persistedIngressPort(ingressPort)
+                ingressPort: persistedIngressPort(ingressPort),
+                // A cut-2 rollback build: today's installer owns the old app's entry again (ISSUE-141).
+                keepOldAppEntries: CUT_2_ROLLBACK_CHOICES.keepsOldAppEntries
               })
             ]
           })
