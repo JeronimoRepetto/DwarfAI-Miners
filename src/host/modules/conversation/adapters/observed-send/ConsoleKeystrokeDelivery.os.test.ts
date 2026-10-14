@@ -148,8 +148,25 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
    * the expectation it explains stays as it is.
    */
   async function whyRefused(pid: number, key: ConsoleKey): Promise<string> {
-    const script = windowsKeyWriteScript(pid, key)
-    if (script === null) return 'no script for this key'
+    const written = windowsKeyWriteScript(pid, key)
+    if (written === null) return 'no script for this key'
+    // Each step announces itself on stderr before it runs, so a hung run names the step it hung in.
+    const mark = (step: string) => `[Console]::Error.WriteLine('step ${step}')`
+    const script = written
+      .split('\n')
+      .flatMap((line) => {
+        if (line.startsWith('Add-Type')) return [mark('add-type'), line]
+        if (line.startsWith('$buffer')) return [mark('buffer'), line]
+        if (line.startsWith('[void][Win32.ConsoleInput]::FreeConsole()'))
+          return [mark('free'), line]
+        if (line.startsWith('if (-not [Win32.ConsoleInput]::AttachConsole'))
+          return [mark('attach'), line]
+        if (line.startsWith('$conin')) return [mark('conin'), line]
+        if (line.startsWith('$ok')) return [mark('write'), line]
+        if (line === 'exit 0') return [mark('exit'), line]
+        return [line]
+      })
+      .join('\n')
     const env: Record<string, string> = {}
     for (const name of TOOL_ENV_NAMES) {
       const value = process.env[name]
@@ -168,7 +185,10 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
     child.stdout?.resume()
     child.stdin?.end(powerShellStdinLine(script))
     const exit = await Promise.race([child.exited, sleep(20_000).then(() => null)])
-    return `PowerShell exit ${JSON.stringify(exit)}, stderr ${errors.slice(0, 600)}`
+    if (exit === null) {
+      await control.killTree(await child.identity, { graceMs: 0, group: 'foreign' }).catch(() => {})
+    }
+    return `PowerShell exit ${JSON.stringify(exit)}, stderr ${errors.slice(0, 900)}`
   }
 
   it('[ADR-012] the relay delivers exactly the keys 1 or Esc to the stub and nothing else', async () => {
