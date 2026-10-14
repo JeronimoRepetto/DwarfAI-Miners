@@ -8,6 +8,7 @@ function stubApi(api: {
 }): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
+    writable: true,
     value: api
   })
 }

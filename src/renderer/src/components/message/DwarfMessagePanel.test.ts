@@ -3796,7 +3796,7 @@ describe('DwarfMessagePanel offers no rename the Host cannot serve yet (BR-19)',
       setDwarfName: vi.fn() as unknown as Api['setDwarfName'],
       resetDwarfName: vi.fn() as unknown as Api['resetDwarfName']
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     await expect(useMines().start()).resolves.toBe(true)
   }
 
@@ -3808,9 +3808,15 @@ describe('DwarfMessagePanel offers no rename the Host cannot serve yet (BR-19)',
       ...(customName === undefined ? {} : { customName })
     })
 
+  let apiBefore: PropertyDescriptor | undefined
+  beforeEach(() => {
+    apiBefore = Object.getOwnPropertyDescriptor(window, 'api')
+  })
+
   afterEach(() => {
     useMines().stop()
-    delete (window as unknown as { api?: unknown }).api
+    if (apiBefore === undefined) delete (window as unknown as { api?: unknown }).api
+    else Object.defineProperty(window, 'api', apiBefore)
   })
 
   it('[BR-19] draws the name as plain text, with no Rename, for a dwarf the Host’s board carries', async () => {

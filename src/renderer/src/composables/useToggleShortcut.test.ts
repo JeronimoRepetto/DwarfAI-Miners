@@ -17,7 +17,7 @@ function stubApi(api: {
   getToggleShortcut?: () => Promise<ShortcutState>
   setToggleShortcut?: (accelerator: string) => Promise<ShortcutState>
 }): void {
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
 }
 
 /** A keydown as the recorder receives it, so preventDefault can be observed. */

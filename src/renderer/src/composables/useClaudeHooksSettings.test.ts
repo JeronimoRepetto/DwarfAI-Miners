@@ -86,7 +86,7 @@ function installHost(
       return result()
     }) as unknown as Api['setClaudeHooksEnabled']
   })
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   return {
     push(frames) {
       if (listener === null) throw new Error('nothing follows onHostEvent')

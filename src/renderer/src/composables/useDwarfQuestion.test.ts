@@ -35,6 +35,7 @@ function stubApi(
 ): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
+    writable: true,
     value: { answerDwarfQuestion }
   })
 }
@@ -47,6 +48,7 @@ function stubPermissionApi(
 ): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
+    writable: true,
     value: { answerDwarfQuestion: vi.fn(), answerDwarfPermission }
   })
 }
@@ -417,6 +419,7 @@ describe('useDwarfQuestion decide (#203)', () => {
     // own: a verdict is about a toolUseId, whichever kind of prompt named it.
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: {
         answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
         answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true })
@@ -453,6 +456,7 @@ describe('useDwarfQuestion decide (#203)', () => {
   it('leaves an answered question carrying no decision at all', async () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: {
         answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
         answerDwarfPermission: vi.fn()
@@ -480,6 +484,7 @@ describe('useDwarfQuestion: the "Answers:" record', () => {
     const answerDwarfPermission = vi.fn(result)
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: { answerDwarfQuestion, answerDwarfPermission, sendDwarfText }
     })
     return { answerDwarfQuestion, answerDwarfPermission }
@@ -585,6 +590,7 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
     let answered = false
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: {
         answerDwarfQuestion: vi.fn(() =>
           Promise.resolve(answered ? { answered: true } : { answered: false, error: 'nope' })
@@ -609,6 +615,7 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
   it('puts the record’s verdict on the dwarf’s marker', async () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
+      writable: true,
       value: { answerDwarfQuestion: vi.fn(() => Promise.resolve({ answered: true })) }
     })
     await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
@@ -720,7 +727,7 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
         }
       }) as unknown as Api['onUiSessionChanged']
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: api })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     return {
       push(frames) {
         if (listener === null) throw new Error('nothing follows onHostEvent')

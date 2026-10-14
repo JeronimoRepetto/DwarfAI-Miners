@@ -15,7 +15,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     resetMetrics: vi.fn().mockResolvedValue(RESET),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   return api
 }
 
