@@ -89,7 +89,12 @@ export function fixtureSetFromFiles(
   location: { provider: string; driver: string; providerVersion: string },
   files: ReadonlyMap<string, string>
 ): FixtureSet {
-  const meta = JSON.parse(files.get('meta.json') ?? '{}') as Record<string, unknown>
+  const problems = refusals(files)
+  if (problems.length > 0) {
+    const where = `${location.provider}/${location.driver}/${location.providerVersion}`
+    throw new Error(`fixture set ${where} refused: ${problems.join('; ')}`)
+  }
+  const meta = JSON.parse(files.get('meta.json') as string) as Record<string, unknown>
   const cases: FixtureCase[] = []
   for (const [file, text] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
     if (!file.endsWith(EXPECTED_SUFFIX)) continue
@@ -101,6 +106,69 @@ export function fixtureSetFromFiles(
     })
   }
   return { ...location, meta, cases }
+}
+
+const CAPTURED_BY_ROLES = new Set(['maintainer', 'ci-synthetic'])
+const META_STRING_FIELDS = ['providerVersion', 'capturedAt', 'os']
+
+/**
+ * Why the harness refuses a fixture set (15 §6, 17 §1.4; ADR-009 D3 Verification): no
+ * `meta.json`, a `meta.json` without its fields, without `scrubbed: true` or with a person as
+ * `capturedBy`; a protocol file without its `-with-extra` variant (HR T1); an LF JSONL file
+ * without its CRLF variant (HO-37). Empty when the set is accepted.
+ */
+function refusals(files: ReadonlyMap<string, string>): string[] {
+  const out: string[] = []
+  const metaText = files.get('meta.json')
+  if (metaText === undefined) out.push('the folder has no meta.json')
+  else out.push(...metaRefusals(metaText))
+
+  const jsonl = [...files].filter(([file]) => file.endsWith('.jsonl'))
+  const crlfTexts = jsonl.filter(([, text]) => text.includes('\r\n')).map(([, text]) => text)
+  const isCrlfVariant = (text: string): boolean =>
+    text.includes('\r\n') && jsonl.some(([, lf]) => !lf.includes('\r\n') && lf === toLf(text))
+  for (const [file, text] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
+    if (file === 'meta.json' || file.endsWith(EXPECTED_SUFFIX)) continue
+    if (file.endsWith('.jsonl') && isCrlfVariant(text)) continue
+    const ext = path.extname(file)
+    const stem = file.slice(0, -ext.length)
+    if (stem.endsWith(WITH_EXTRA)) continue
+    if (!files.has(`${stem}${WITH_EXTRA}${ext}`)) {
+      out.push(`${file} has no ${stem}${WITH_EXTRA}${ext} variant`)
+    }
+    if (ext === '.jsonl' && !crlfTexts.some((crlf) => toLf(crlf) === text)) {
+      out.push(`${file} has no CRLF variant (the same lines ending in CRLF)`)
+    }
+  }
+  return out
+}
+
+function metaRefusals(text: string): string[] {
+  let meta: unknown
+  try {
+    meta = JSON.parse(text)
+  } catch {
+    return ['meta.json is not valid JSON']
+  }
+  if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) {
+    return ['meta.json is not a JSON object']
+  }
+  const fields = meta as Record<string, unknown>
+  const out: string[] = []
+  for (const field of META_STRING_FIELDS) {
+    if (typeof fields[field] !== 'string' || fields[field] === '') {
+      out.push(`meta.json lacks a non-empty string "${field}"`)
+    }
+  }
+  const capabilities = fields.capabilities
+  if (capabilities === null || typeof capabilities !== 'object' || Array.isArray(capabilities)) {
+    out.push('meta.json lacks a "capabilities" object')
+  }
+  if (fields.scrubbed !== true) out.push('meta.json does not say "scrubbed": true')
+  if (!CAPTURED_BY_ROLES.has(fields.capturedBy as string)) {
+    out.push('meta.json "capturedBy" is not a role (maintainer, ci-synthetic)')
+  }
+  return out
 }
 
 /** The as-recorded, `-with-extra` and CRLF variants of one case and of its companion streams. */
