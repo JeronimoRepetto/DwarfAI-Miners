@@ -2,7 +2,13 @@
 // case it violates, while its conformant twin passes the same case.
 import { describe, expect, it } from 'vitest'
 import type { DriverEvent, DriverSession, ProviderDriver } from '../ports/providerDriver'
-import { runCase, type DriverFactory } from './driverConformance'
+import { runCase, type ConformanceOptions, type DriverFactory } from './driverConformance'
+import {
+  LINE_CEILING,
+  LineTestDriver,
+  lineFixtureFiles,
+  type LineDriverFaults
+} from './driverConformance.lineDriver'
 import {
   SIMULATED_OPTIONS,
   readReferenceFixtures,
@@ -39,6 +45,22 @@ function brokenSimulated(wrap: (session: DriverSession) => DriverSession): Drive
   }
 }
 
+/** The line test driver, conformant or with the given faults; its probe agrees with its ceiling. */
+function lineFactory(faults: LineDriverFaults = {}): DriverFactory {
+  return (rig) => new LineTestDriver({ rig, probe: LINE_CEILING, faults })
+}
+
+const LINE_OPTIONS: ConformanceOptions = {
+  ceiling: LINE_CEILING,
+  install: {
+    providerId: 'line-test',
+    binaryPath: '/usr/local/bin/line-test',
+    version: '1.0.0',
+    resolvedVia: 'path',
+    statMtimeMs: 0
+  }
+}
+
 describe('driverConformance harness', () => {
   const fixtures = readReferenceFixtures()
 
@@ -53,6 +75,42 @@ describe('driverConformance harness', () => {
     expect(broken.ok).toBe(false)
     expect(broken.failures.join('\n')).toMatch(/turn\.ended .* more than once/)
     expect(twin).toEqual({ ok: true, failures: [] })
+  })
+
+  describe('fixture transport faults', () => {
+    const lineFixtures = fixtureSetFromFiles(
+      { provider: 'line-test', driver: 'ndjson', providerVersion: '1.0.0' },
+      lineFixtureFiles()
+    )
+    const OK = { ok: true, failures: [] }
+
+    it('[C-18, CH-04] an early EOF in the fixture transport must surface as error transport-lost then exited', async () => {
+      const conformant = await runCase('C-18', lineFactory(), lineFixtures, LINE_OPTIONS)
+      const silent = await runCase(
+        'C-18',
+        lineFactory({ silentEof: true }),
+        lineFixtures,
+        LINE_OPTIONS
+      )
+
+      expect(conformant).toEqual(OK)
+      expect(silent.ok).toBe(false)
+      expect(silent.failures.join('\n')).toMatch(/error transport-lost/)
+    })
+
+    it('[C-15, CH-05] a provider that never acknowledges an answer is failed at 30 s by a FakeClock, never a real timer', async () => {
+      const conformant = await runCase('C-15', lineFactory(), lineFixtures, LINE_OPTIONS)
+      const eager = await runCase(
+        'C-15',
+        lineFactory({ acceptsWithoutAck: true }),
+        lineFixtures,
+        LINE_OPTIONS
+      )
+
+      expect(conformant).toEqual(OK)
+      expect(eager.ok).toBe(false)
+      expect(eager.failures.join('\n')).toMatch(/channel-unavailable/)
+    })
   })
 
   describe('fixture set refusal', () => {

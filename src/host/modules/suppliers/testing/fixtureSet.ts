@@ -8,6 +8,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import type { Json } from './expected'
+import { gatesFromTiming } from './fixtureTransport'
 
 /** One scripted call of a case (`script` of its expected file). */
 export type ScriptStep =
@@ -63,6 +64,8 @@ export interface FixtureVariant {
   readonly received: string
   /** Companion streams by name (`sent`, `timing`, `stderr`, …), in the same variant. */
   readonly streams: Readonly<Record<string, string>>
+  /** Per JSONL line, the driver frames that must precede it (from the timing stream). */
+  readonly gates?: readonly number[]
 }
 
 export interface FixtureCase {
@@ -182,6 +185,13 @@ function variantsOf(name: string, files: ReadonlyMap<string, string>): FixtureVa
     if (label === 'with-extra') return files.get(`${stem}${WITH_EXTRA}.${ext}`)
     return crlfOf(stem, base, files)
   }
+  // The timing stream counts the bytes of the recording itself, so the gates come from it once.
+  const recorded = pick(name, 'as-recorded')
+  const timing = pick(`${name}-timing`, 'as-recorded')
+  const gates =
+    format === 'jsonl' && recorded !== undefined && timing !== undefined
+      ? gatesFromTiming(recorded, timing)
+      : undefined
   const variant = (label: FixtureVariant['label']): FixtureVariant | undefined => {
     const text = pick(name, label)
     if (text === undefined) return undefined
@@ -190,7 +200,7 @@ function variantsOf(name: string, files: ReadonlyMap<string, string>): FixtureVa
       streams[stream] =
         pick(`${name}-${stream}`, label) ?? pick(`${name}-${stream}`, 'as-recorded') ?? ''
     }
-    return { label, format, received: text, streams }
+    return { label, format, received: text, streams, ...(gates === undefined ? {} : { gates }) }
   }
   const labels: FixtureVariant['label'][] =
     format === 'jsonl' ? ['as-recorded', 'with-extra', 'crlf'] : ['as-recorded', 'with-extra']

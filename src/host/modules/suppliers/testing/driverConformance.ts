@@ -8,8 +8,11 @@
 // `runCase` / `runConformance` return verdicts instead of throwing, so the harness's own tests can
 // show that a broken driver fails exactly the case it violates.
 import { describe, expect, it } from 'vitest'
+import type { ProcessIdentity } from '../../../kernel/domain/processIdentity'
+import type { AnswerOutcome } from '../../../kernel/domain/sharedContracts'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
+import type { SpawnSpec } from '../../../kernel/ports/processControl'
 import type { ProviderCapabilities } from '../domain/capabilities'
 import type {
   DriverEvent,
@@ -20,11 +23,17 @@ import type {
 } from '../ports/providerDriver'
 import { bind, compareEvents, differences, type Bindings, type Json } from './expected'
 import type { FixtureCase, FixtureSet, FixtureVariant, ScriptStep } from './fixtureSet'
+import { FixtureTransport, type Chunking } from './fixtureTransport'
+import { RecordingSpawn, type SpawnScript } from './recordingSpawn'
 
 /** The doubles one run hands the driver factory. */
 export interface ConformanceRig {
   readonly clock: FakeClock
   readonly scheduler: FakeScheduler
+  /** The recording spawn: drivers spawn through it (15 §4, AMENDMENT-10 A10-09). */
+  readonly processControl: RecordingSpawn
+  /** The person's login environment the driver builds `childEnv(spawnTag)` from (15 §4). */
+  readonly loginEnv: Readonly<Record<string, string>>
 }
 
 export type DriverFactory = (rig: ConformanceRig) => ProviderDriver
@@ -78,9 +87,39 @@ export interface CaseVerdict {
 
 // ---------- one scripted run ----------
 
+/** ADR-010 item 8: the hand-over the broker grants an answer before `channel-unavailable`. */
+export const HANDOVER_MS = 30_000
+
+/**
+ * The person's login environment as the rig plants it (15 §4 `childEnv`): the variables a child
+ * may receive, plus canaries no child may ever receive (INV-59, C-23).
+ */
+export const CANARY_TOKEN = 'conformance-canary-delegation-token'
+export const LOGIN_ENV: Readonly<Record<string, string>> = Object.freeze({
+  PATH: '/usr/local/bin:/usr/bin',
+  HOME: '/home/j',
+  LANG: 'en_US.UTF-8',
+  DWARFAI_DELEGATION_TOKEN: CANARY_TOKEN,
+  DWARFAI_MCP_CREDENTIAL_FILE: '/home/j/.dwarfai/run/mcp/launch.cred',
+  ELECTRON_RUN_AS_NODE: '1',
+  NODE_OPTIONS: '--inspect'
+})
+
 type Tracked = {
   state: 'pending' | 'resolved' | 'rejected'
   value?: unknown
+}
+
+/** How the harness drives one run beyond the script itself. */
+export interface RunPlan {
+  /** The fixture variant the transport replays (`null`: no recorded bytes). */
+  readonly variant: FixtureVariant | null
+  /** How the transport cuts the recorded lines into chunks (default: as recorded). */
+  readonly chunking?: Chunking
+  /** What each spawn does; by default it gets a fixture transport over `variant`. */
+  readonly spawn?: (spec: SpawnSpec, fixture: () => SpawnScript) => SpawnScript
+  /** CH-05: the transport hangs before every answer step. */
+  readonly hangBeforeAnswers?: boolean
 }
 
 /** What one scripted run of a fixture variant produced. */
@@ -88,11 +127,20 @@ export interface Run {
   readonly events: DriverEvent[]
   /** Per script step: what its call resolved (`{ pending: true }` when it never settled). */
   readonly outcomes: unknown[]
-  /** `events.length` when each step started. */
+  /** `events.length`, the clock and the steps still pending, when each step started. */
   readonly eventsAtStep: number[]
+  readonly clockAtStep: number[]
+  readonly pendingAtStep: number[][]
+  /** Every frame the driver sent through a fixture transport. */
   readonly sent: Json[]
   readonly failures: string[]
+  readonly spawn: RecordingSpawn
+  /** Every launch request, with the identities its `onSpawned` received. */
+  readonly launches: { request: DriverLaunchRequest; spawned: ProcessIdentity[] }[]
+  readonly transports: FixtureTransport[]
+  readonly options: ConformanceOptions
   session: DriverSession | null
+  driver: ProviderDriver
   bindings: Record<string, string>
 }
 
@@ -124,21 +172,11 @@ function plain(value: unknown): unknown {
   return value === undefined ? null : (JSON.parse(JSON.stringify(value)) as unknown)
 }
 
-function request(
-  step: Extract<ScriptStep, { do: 'launch' }>,
-  options: ConformanceOptions,
-  index: number
-): DriverLaunchRequest {
-  const launchId = step.launchId ?? `launch-${index + 1}`
-  return {
-    launchId: launchId as DriverLaunchRequest['launchId'],
-    install: options.install,
-    cwd: '/work/mine' as DriverLaunchRequest['cwd'],
-    prompt: step.prompt ?? 'first prompt',
-    permissionMode: null,
-    delegation: null,
-    spawnTag: `v1:conformance:${launchId}:1`,
-    onSpawned: async () => {}
+function parsedFrame(frame: string): Json {
+  try {
+    return JSON.parse(frame) as Json
+  } catch {
+    return frame
   }
 }
 
@@ -146,23 +184,47 @@ function request(
 export async function runScript(
   factory: DriverFactory,
   script: readonly ScriptStep[],
-  _variant: FixtureVariant | null,
+  plan: RunPlan,
   options: ConformanceOptions
 ): Promise<Run> {
   const clock = new FakeClock(0)
   const scheduler = new FakeScheduler(clock)
-  const driver = factory({ clock, scheduler })
+  const transports: FixtureTransport[] = []
+  const fixture = (): SpawnScript => {
+    const variant = plan.variant
+    const transport = new FixtureTransport({
+      received: variant?.received ?? '',
+      format: variant?.format ?? 'jsonl',
+      ...(variant?.gates === undefined ? {} : { gates: variant.gates }),
+      ...(plan.chunking === undefined ? {} : { chunking: plan.chunking }),
+      ...(variant?.streams.stderr === undefined ? {} : { stderr: variant.streams.stderr })
+    })
+    transports.push(transport)
+    return { kind: 'fixture', transport }
+  }
+  const spawn = new RecordingSpawn({
+    clock,
+    scheduler,
+    decide: (spec) => (plan.spawn === undefined ? fixture() : plan.spawn(spec, fixture))
+  })
+  const driver = factory({ clock, scheduler, processControl: spawn, loginEnv: LOGIN_ENV })
   const run: Run = {
     events: [],
     outcomes: [],
     eventsAtStep: [],
+    clockAtStep: [],
+    pendingAtStep: [],
     sent: [],
     failures: [],
+    spawn,
+    launches: [],
+    transports,
+    options,
     session: null,
+    driver,
     bindings: {}
   }
   const tracked: (Tracked | null)[] = []
-  let launches = 0
 
   const bindSession = (session: DriverSession): void => {
     run.session = session
@@ -174,10 +236,25 @@ export async function runScript(
 
   for (const [index, step] of script.entries()) {
     run.eventsAtStep.push(run.events.length)
+    run.clockAtStep.push(clock.now())
+    run.pendingAtStep.push(tracked.flatMap((entry, at) => (entry?.state === 'pending' ? [at] : [])))
     const session = run.session
     switch (step.do) {
       case 'launch': {
-        const pending = driver.launch(request(step, options, launches++))
+        const launched = launchRequest(step, options, run.launches.length)
+        const trace = { request: launched, spawned: [] as ProcessIdentity[] }
+        run.launches.push(trace)
+        const pending = driver.launch({
+          ...launched,
+          onSpawned: async (identity) => {
+            spawn.log.push(`onSpawned ${identity.pid}`)
+            trace.spawned.push({ ...identity })
+          }
+        })
+        void pending.then(
+          () => spawn.log.push('launch-resolved'),
+          () => spawn.log.push('launch-rejected')
+        )
         const launch = track(pending)
         tracked.push(launch)
         await settle()
@@ -200,26 +277,79 @@ export async function runScript(
         tracked.push(null)
         await settle()
         break
+      case 'probe':
+        tracked.push(track(driver.probe(options.install)))
+        await settle()
+        break
       default: {
         if (session === null) {
           run.failures.push(`step #${index} (${step.do}) needs a launched session`)
           tracked.push(null)
           break
         }
-        tracked.push(call(step, session, options))
+        const answer = step.do === 'answerPermission' || step.do === 'answerQuestion'
+        if (answer && plan.hangBeforeAnswers === true) {
+          for (const transport of transports) transport.hang()
+        }
+        tracked.push(call(step, session, run, scheduler))
         await settle()
       }
     }
   }
   await settle()
   script.forEach((step, index) => run.outcomes.push(outcomeOf(step, tracked[index] ?? null)))
+  for (const transport of transports) run.sent.push(...transport.sent.map(parsedFrame))
   return run
+}
+
+function launchRequest(
+  step: Extract<ScriptStep, { do: 'launch' }>,
+  options: ConformanceOptions,
+  index: number
+): DriverLaunchRequest {
+  const launchId = step.launchId ?? `launch-${index + 1}`
+  return {
+    launchId: launchId as DriverLaunchRequest['launchId'],
+    install: options.install,
+    cwd: '/work/mine' as DriverLaunchRequest['cwd'],
+    prompt: step.prompt ?? 'first prompt',
+    permissionMode: null,
+    delegation: null,
+    spawnTag: `v1:conformance:${launchId}:1`,
+    onSpawned: async () => {}
+  }
+}
+
+/**
+ * An answer as the broker sees it (ADR-010 item 8): the driver's outcome, or `channel-unavailable`
+ * when the driver has not settled it within the 30 s hand-over on the FakeScheduler.
+ */
+function handedOver(
+  answer: Promise<AnswerOutcome>,
+  scheduler: FakeScheduler
+): Promise<AnswerOutcome> {
+  return new Promise((resolve, reject) => {
+    const timer = scheduler.after(HANDOVER_MS, () =>
+      resolve({ kind: 'refused', reason: 'channel-unavailable' })
+    )
+    answer.then(
+      (outcome) => {
+        timer.cancel()
+        resolve(outcome)
+      },
+      (error: unknown) => {
+        timer.cancel()
+        reject(error)
+      }
+    )
+  })
 }
 
 function call(
   step: ScriptStep,
   session: DriverSession,
-  options: ConformanceOptions
+  run: Run,
+  scheduler: FakeScheduler
 ): Tracked | null {
   switch (step.do) {
     case 'sendTurn':
@@ -235,23 +365,35 @@ function call(
       return track(session.interrupt())
     case 'answerPermission':
       return track(
-        session.answerPermission({
-          providerRequestId: step.providerRequestId,
-          decision: step.decision
-        })
+        handedOver(
+          session.answerPermission({
+            providerRequestId: step.providerRequestId,
+            decision: step.decision
+          }),
+          scheduler
+        )
       )
     case 'answerQuestion':
       return track(
-        session.answerQuestion(
-          step.decline === true
-            ? { providerRequestId: step.providerRequestId, decline: true }
-            : { providerRequestId: step.providerRequestId, answers: [...(step.answers ?? [])] }
+        handedOver(
+          session.answerQuestion(
+            step.decline === true
+              ? { providerRequestId: step.providerRequestId, decline: true }
+              : { providerRequestId: step.providerRequestId, answers: [...(step.answers ?? [])] }
+          ),
+          scheduler
         )
       )
     case 'close':
       return track(session.close(step.mode))
     case 'transportLost':
-      options.injectTransportLoss?.(session)
+      if (run.transports.length > 0) {
+        for (const transport of run.transports) transport.eof()
+      } else if (run.options.injectTransportLoss !== undefined) {
+        run.options.injectTransportLoss(session)
+      } else {
+        run.failures.push('no fixture transport and no injectTransportLoss to drop the transport')
+      }
       return null
     default:
       return null
@@ -284,6 +426,112 @@ interface CaseDefinition {
   readonly title: string
   /** Contract checks on one run of one of the case's fixtures, beyond the expected file. */
   readonly check?: (run: Run, fixture: FixtureCase, context: CaseContext) => string[]
+  /** How the harness drives each run of the case's fixtures. */
+  readonly plan?: Omit<RunPlan, 'variant'>
+  /** A harness-driven case: no fixture of its own; it drives the C-01 launch fixture itself. */
+  readonly harness?: (context: CaseContext) => Promise<string[]>
+}
+
+/**
+ * Every replay of a fixture: each variant as recorded, and the recorded JSONL also split in the
+ * middle of every line and coalesced into the fewest chunks (a driver must reassemble lines).
+ */
+function replays(
+  fixture: FixtureCase
+): { variant: FixtureVariant; chunking: Chunking; label: string }[] {
+  return fixture.variants.flatMap((variant) => {
+    const chunkings: Chunking[] =
+      variant.format === 'jsonl' && variant.label === 'as-recorded'
+        ? ['as-recorded', 'split', 'coalesced']
+        : ['as-recorded']
+    return chunkings.map((chunking) => ({
+      variant,
+      chunking,
+      label: chunking === 'as-recorded' ? variant.label : `${variant.label}, ${chunking}`
+    }))
+  })
+}
+
+/**
+ * Runs every variant of the C-01 launch fixture with `extra` steps after its script, and checks
+ * each run with `check` (which gets the index of the first extra step).
+ */
+async function overLaunch(
+  context: CaseContext,
+  extra: readonly ScriptStep[],
+  plan: Omit<RunPlan, 'variant'>,
+  check: (run: Run, first: number) => string[]
+): Promise<string[]> {
+  const launches = context.fixtures.cases.filter((fixture) => fixture.expected.case === 'C-01')
+  if (launches.length === 0) return ['the fixture set has no C-01 launch fixture to drive']
+  const out: string[] = []
+  for (const fixture of launches) {
+    for (const { variant, chunking, label } of replays(fixture)) {
+      const script = [...fixture.expected.script, ...extra]
+      const full: RunPlan = { ...plan, variant, chunking }
+      const run = await runScript(context.factory, script, full, context.options)
+      const why = [...run.failures, ...check(run, fixture.expected.script.length)]
+      out.push(...why.map((line) => `${fixture.name} (${label}): ${line}`))
+    }
+  }
+  return out
+}
+
+/** C-18 (15 §1.3 `events()`, CH-04): a transport EOF is `error{transport-lost}` then `exited` once. */
+async function transportLoss(context: CaseContext): Promise<string[]> {
+  const extra: ScriptStep[] = [
+    { do: 'transportLost' },
+    { do: 'sendTurn', messageId: 'after-loss', text: 'are you there' }
+  ]
+  return overLaunch(context, extra, {}, (run, first) => {
+    const out: string[] = []
+    const events = run.events.slice(run.eventsAtStep[first])
+    const exited = events.filter((event) => event.t === 'exited').length
+    if (exited !== 1) out.push(`exited ${exited} times after the transport loss, not once`)
+    if (events.at(-1)?.t !== 'exited') out.push('exited is not the last event')
+    const before = events.at(-2)
+    if (before?.t !== 'error' || before.cause.kind !== 'transport-lost') {
+      out.push('no error transport-lost right before exited')
+    }
+    const send = run.outcomes[first + 1] as { rejected?: { kind?: string } } | null
+    if (send?.rejected?.kind !== 'session-closed') {
+      out.push(`sendTurn after the loss gave ${JSON.stringify(send)}, not rejected session-closed`)
+    }
+    return out
+  })
+}
+
+/** C-15 (ADR-010 item 8, CH-05): an unacknowledged answer is `channel-unavailable` at 30 s. */
+function checkHandover(run: Run, fixture: FixtureCase): string[] {
+  const out: string[] = []
+  const script = fixture.expected.script
+  script.forEach((step, index) => {
+    if (step.do !== 'answerPermission' && step.do !== 'answerQuestion') return
+    const start = run.clockAtStep[index] as number
+    let reached = false
+    for (let later = index + 1; later < script.length; later++) {
+      const elapsed = (run.clockAtStep[later] as number) - start
+      if (elapsed >= HANDOVER_MS) reached = true
+      else if (!(run.pendingAtStep[later] ?? []).includes(index)) {
+        out.push(`answer #${index} settled before ${elapsed + 1} ms, inside the 30 s hand-over`)
+        return
+      }
+    }
+    if (!reached && script.at(-1)?.do === 'advance') {
+      const last = script.length - 1
+      reached =
+        (run.clockAtStep[last] as number) + (script[last] as { ms: number }).ms - start >=
+        HANDOVER_MS
+    }
+    if (!reached) out.push(`the script never reaches 30 s after answer #${index}`)
+    const outcome = run.outcomes[index]
+    if (differences(outcome, { kind: 'refused', reason: 'channel-unavailable' }).length > 0) {
+      out.push(
+        `answer #${index} gave ${JSON.stringify(outcome)}, not refused channel-unavailable at 30 s`
+      )
+    }
+  })
+  return out
 }
 
 /** C-05 (15 §1.3 sendTurn, §1.4): the echo, one turn.ended per turn, working then idle. */
@@ -319,6 +567,15 @@ const CASES: Partial<Record<CaseId, CaseDefinition>> = {
     title:
       'one prompt yields its echo with echoOf, activity, turn.ended once and status working then idle',
     check: checkSendTurn
+  },
+  'C-15': {
+    title: 'an answer the provider never acknowledges is channel-unavailable at 30 s',
+    check: checkHandover,
+    plan: { hangBeforeAnswers: true }
+  },
+  'C-18': {
+    title: 'a transport EOF yields error transport-lost then exited once',
+    harness: transportLoss
   }
 }
 
@@ -332,18 +589,23 @@ export async function runCase(
   const definition = CASES[id]
   if (definition === undefined) return { ok: false, failures: [`${id} is not defined`] }
   const context: CaseContext = { factory, fixtures, options }
+  if (definition.harness !== undefined) {
+    const failures = await definition.harness(context)
+    return { ok: failures.length === 0, failures }
+  }
   const own = fixtures.cases.filter((fixture) => fixture.expected.case === id)
   const failures: string[] = []
   if (own.length === 0)
     failures.push(`${id} has no fixture in ${fixtures.provider}/${fixtures.driver}`)
   for (const fixture of own) {
-    for (const variant of fixture.variants) {
-      const run = await runScript(factory, fixture.expected.script, variant, options)
+    for (const { variant, chunking, label } of replays(fixture)) {
+      const plan: RunPlan = { ...definition.plan, variant, chunking }
+      const run = await runScript(factory, fixture.expected.script, plan, options)
       const why = [
         ...againstExpected(run, fixture),
         ...(definition.check?.(run, fixture, context) ?? [])
       ]
-      failures.push(...why.map((line) => `${fixture.name} (${variant.label}): ${line}`))
+      failures.push(...why.map((line) => `${fixture.name} (${label}): ${line}`))
     }
   }
   return { ok: failures.length === 0, failures }
