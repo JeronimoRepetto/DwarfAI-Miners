@@ -22,6 +22,9 @@ import type {
 } from '@dwarfai/contracts'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { defaultDwarf, defaultMine } from '../testing/factories'
+import { ref } from 'vue'
+import { DEFAULT_AUDIO_PREFERENCES } from '../types'
+import { useAttentionCues } from './useAttentionCues'
 import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
 import { useMines } from './useMines'
@@ -867,6 +870,36 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
     fake.push([frame(11, 'ask.step', { askId: ASK_A as AskId, currentStep: 2 })])
 
     expect(store.stepOf(ASK_A)).toBe(1)
+  })
+
+  it('[US-MINE-003.AC03, US-ASK-006.AC02, INV-103] an ask.opened frame reaches the attention cues through askOpened once, a snapshot ask is no arrival, and reannounce false plays nothing', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const played: string[] = []
+    // The cues subscribe first, so the fake's one A-N02 listener is the read model's once it starts.
+    const stopCues = useAttentionCues().start({
+      settings: ref({ ...DEFAULT_AUDIO_PREFERENCES, notificationSounds: true }),
+      windowShown: ref(true),
+      playSfx: (kind) => played.push(kind)
+    })
+    try {
+      await useDwarfQuestion().startAsks()
+      expect(played).toEqual([])
+
+      const permissionAsk = hostAsk(ASK_B, DWARF_B, {
+        kind: 'permission',
+        payload: { toolName: 'Bash', requestText: 'npm test' }
+      })
+      fake.push([frame(11, 'ask.opened', { ask: permissionAsk })])
+      fake.push([
+        frame(12, 'ask.opened', { ask: hostAsk(ASK_STALE, DWARF_A, { reannounce: false }) })
+      ])
+      // Re-sent for the same askId: the same need, never a second cue.
+      fake.push([frame(13, 'ask.opened', { ask: permissionAsk })])
+
+      expect(played).toEqual(['permission'])
+    } finally {
+      stopCues()
+    }
   })
 })
 /* --- end of the dual-source ask read model block --------------------------------------------- */

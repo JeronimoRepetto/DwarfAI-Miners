@@ -388,6 +388,21 @@ function stubApi(overrides: Record<string, unknown> = {}) {
         params?.sections?.includes('tails') === true ? EMPTY_HOST_TAILS : HOST_CONNECTION_UNROUTED
       )
     ),
+    /*
+     * AMENDED for ISSUE-138 (was: absent). The question read model follows the UI main session store's picks from
+     * mount (A-N17…A-N19): an empty store, a patch spy and a subscription that releases. Its `asks` snapshot is refused
+     * above, so the cards stay the board's in these tests. No existing assertion changed.
+     */
+    getUiSession: vi.fn().mockResolvedValue({
+      drafts: {},
+      chatViews: {},
+      askPicks: {},
+      openChat: {},
+      currentMine: {},
+      valle: {}
+    }),
+    patchUiSession: vi.fn(),
+    onUiSessionChanged: vi.fn().mockReturnValue(() => undefined),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -4335,3 +4350,25 @@ describe('App first-run consent step (ISSUE-224)', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 })
+
+/* --- Host asks from the read model (ISSUE-138, the read half) — one block, appended ------------- */
+describe('App Host asks (ISSUE-138)', () => {
+  it('[ADR-033] the shell follows the Host asks and their picks from mount and lets go of them on unmount', async () => {
+    let released = 0
+    const { wrapper, api } = await mountApp({
+      onUiSessionChanged: vi.fn(() => () => {
+        released += 1
+      })
+    })
+
+    expect(api.getHostSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ sections: ['asks'] })
+    )
+    expect(api.onUiSessionChanged).toHaveBeenCalledTimes(1)
+
+    mounted.splice(mounted.indexOf(wrapper), 1)
+    wrapper.unmount()
+    expect(released).toBe(1)
+  })
+})
+/* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
