@@ -1,5 +1,5 @@
 import { config as loadDotenv } from 'dotenv'
-import { readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PanelWindowController } from '../ui-main/window/ports/panelWindowController'
@@ -9,7 +9,7 @@ import {
   type LegacyLaunchesByDwarf
 } from './LegacyEndFirstAdapter'
 import { createLegacyDiagnostics, type LegacyArea, type LegacyLog } from './legacyDiagnostics'
-import { withoutObserverWrites, type LegacyObserverComposition } from './legacyObserverSwitch'
+import { withoutObserverWrites } from './legacyObserverSwitch'
 import type { LegacyRuntimeSurface } from './LegacyAgentRegistryFeed'
 import {
   createLegacyRuntimeSurface,
@@ -41,8 +41,6 @@ import type {
   HeldSessionLaunchResult,
   HostedLaunchRequest,
   HostedLaunchResult,
-  DwarfSendSettledPush,
-  LaunchFailedPush,
   MaterialTotals,
   MetricsResetResult,
   Mine,
@@ -110,7 +108,6 @@ import { createOpenCodeServerPasswordStore } from '../main/opencodePermissions/o
 import { createOpenCodePermissionAnswerPort } from '../main/opencodePermissions/answerOpenCodePermission'
 import type { OpenCodePermissionPush } from '../main/opencodePermissions/permissionPushPayload'
 import { NodeFs } from '../main/adapters/fsLike'
-import { NodeSqlite } from '../main/adapters/sqliteLike'
 import { createPlatformAdapters } from '../main/platform/platformAdapters'
 import {
   MINE_PATH_OUTSIDE_REASON,
@@ -126,10 +123,8 @@ import { copyTextToClipboard, type ClipboardPort } from '../main/shell/copyText'
 import { parseDwarfFeedPageRequest } from '../main/providers/feedWindow'
 import { currentPlatform } from '../main/platform/platform'
 import { APP_DB_FILENAME, createAppDatabase } from '../main/appDatabase/appDatabase'
-import { runCoalBackfill } from '../main/ledger/coalBackfill'
-import { LEDGER_JSON_FILENAME, nullLedgerStore } from '../main/ledger/ledgerStore'
+import { nullLedgerStore } from '../main/ledger/ledgerStore'
 import { MaterialLedger } from '../main/ledger/materialLedger'
-import { openLedgerStore } from '../main/ledger/openLedgerStore'
 import { openProjectsStore } from '../main/projects/openProjectsStore'
 import { createSqliteLaunchedSessionStore } from '../main/sessionLaunch/launchedSessionStore'
 import { createSqliteDwarfNameStore } from '../main/dwarfNames/dwarfNameStore'
@@ -145,14 +140,11 @@ import {
 } from '../main/shell/jevPreferences'
 import { createJevLaunchRouter } from '../main/jev/routeLaunch'
 import { createTypesafeJevRouter } from '../main/jev/typesafeJevRouter'
-import { AgentRuntime, expandHomePath } from '../main/runtime/runtime'
+import { AgentRuntime, expandHomePath, type RuntimeOptions } from '../main/runtime/runtime'
 import type { GlobalShortcutLike } from '../main/shell/shortcuts'
 import { createTypographyPreferenceStore } from '../main/shell/typographyPreference'
 import { parseAnswerRequest } from '../main/shell/answerRequest'
-import { APP_USER_MODEL_ID, needsAppUserModelId } from '../main/notifications/appUserModelId'
-import { createElectronNotifications } from '../main/notifications/electronNotifications'
 import { createNotificationPreferenceStore } from '../main/notifications/notificationPreference'
-import { createNotifier, type Notifier } from '../main/notifications/notifier'
 
 /** Today's handler of one seam A row: the body `src/main/index.ts` registers for that wire name. */
 export type LegacyHandler = (payload: unknown) => unknown
@@ -324,12 +316,8 @@ export interface LegacyOpenDialogOptions {
  * screen and shows it, as it did with its own window.
  */
 export interface LegacyPanelSurface {
-  /** Sends a push of a row still served `legacy` (A-P2, A-P3, A-P4, A-P5) to every open window of the app. */
+  /** Sends a push of a row still served `legacy` (A-P3, A-P4) to every open window of the app. */
   send(channel: string, payload: unknown): void
-  /** Whether the Panel is on screen: shown and not minimized (the notifier's focus rule, #316). */
-  visible(): boolean
-  /** Shows the Panel (a notification click, #316). */
-  show(): void
   /** Today's open dialog, attached to the Panel window when it is open (A-30, A-31 folder picker, #85). */
   showOpenDialog(
     options: LegacyOpenDialogOptions
@@ -345,12 +333,6 @@ export interface LegacyCompositionOptions {
    * console, which no file of the new trees writes to (eslint.config.mjs deviation 8).
    */
   log: LegacyLog
-  /**
-   * Which parts of today's observer are composed (21 §2 cut 1 "Switched off in legacy"; ./legacyObserverSwitch.ts):
-   * every one while the route table routes the cut-1 board and read rows `legacy` (before cut 1, or a rollback build),
-   * none from the cut-1 switch, where the Host observes and `LegacyAgentRegistryFeed`'s cycles are the only ticks.
-   */
-  observer: LegacyObserverComposition
 }
 
 /** Twice the design's 40px chip, so the preview is sharp on a 2× display (#408). */
@@ -520,6 +502,22 @@ function toMinesSnapshot(
 }
 
 /**
+ * The pushes of today's runtime as the route composes them. After the cut-1 retirement (21 §2 cut 1 "Retired at the
+ * end"; ISSUE-124, ISSUE-125) a board change reaches nothing: A-P2 is `BoardFacadeAdapter`'s push from the Host board,
+ * and the Host's attention policy is the only way to an OS notification (ADR-018 items 1, 7). A failed launch and a
+ * settled send still reach the Panel (A-P3, A-P4).
+ */
+export function legacyRuntimePushes(
+  panel: LegacyPanelSurface
+): Pick<RuntimeOptions, 'onMinesUpdated' | 'onLaunchFailed' | 'onSendSettled'> {
+  return {
+    onMinesUpdated: () => {},
+    onLaunchFailed: (push) => panel.send(IPC_CHANNELS.launchFailed, push),
+    onSendSettled: (push) => panel.send(IPC_CHANNELS.dwarfSendSettled, push)
+  }
+}
+
+/**
  * Today's composition of the legacy runtime (the body of `init()` in `src/main/index.ts`) and its
  * quit teardown (that file's `before-quit` and `will-quit` handlers).
  */
@@ -529,7 +527,6 @@ export function composeLegacyRuntime(
 ): LegacyRuntimeComposer {
   const { app, nativeImage, shell, clipboard } = electron
   const rebuiltPanel = options.panel
-  const { observer } = options
   // Today's warnings, as allowlisted UI log records: the area and the error's code, never the text (ADR-026 item 4).
   const diagnostics = createLegacyDiagnostics(options.log)
   /** The `warn` a port of `area` is handed: its message is dropped, its error's code kept. */
@@ -585,9 +582,6 @@ export function composeLegacyRuntime(
     app.setAppUserModelId('com.jeronimorepetto.dwarfaiminers')
     // A tray app with a hidden floating panel owns no Dock tile (macOS only).
     app.dock?.hide()
-
-    // System notifications (#316): the toast identity, before anything can raise one.
-    if (needsAppUserModelId(currentPlatform())) app.setAppUserModelId(APP_USER_MODEL_ID)
 
     // Typed config, fails fast before any window exists (#38): env beats file beats defaults.
     loadDotenv({ quiet: true })
@@ -659,42 +653,15 @@ export function composeLegacyRuntime(
       filePath: join(app.getPath('userData'), 'notification-preference-v1.json')
     })
     let notificationsEnabled = await notificationStore.load()
-    /** Which mine interior the shell has open, as the renderer last reported it. */
-    let openMineId: string | null = null
-    // Today's notifier, only while today's runtime observes (21 §2 cut 1 "Switched off in legacy": from the cut-1
-    // switch the Host's level-3 notifications through the tray `notifier` connection are the only ones, ADR-018).
-    const notifier: Notifier | null = observer.notifier
-      ? createNotifier({
-          port: createElectronNotifications(),
-          enabled: () => notificationsEnabled,
-          focus: () => ({ panelVisible: panel.visible(), openMineId }),
-          openMine: (mineId: string) => {
-            panel.show()
-            panel.send(IPC_CHANNELS.showMine, mineId)
-          }
-        })
-      : null
-
     // The app's own database (#93), one handle for its tenants, deliberately never closed on quit.
     const appDatabase = createAppDatabase({
       filePath: join(app.getPath('userData'), APP_DB_FILENAME)
     })
 
-    // The material vault (#22), loaded before the runtime exists, and only while today's runtime credits (21 §2 cut 1
-    // "Switched off in legacy"): from the cut-1 switch today's ledger is a vault over a store that remembers nothing,
-    // so today's tick credits nothing anywhere and the Host ledger is the only writer of ore.
+    // Today's material vault over a store that remembers nothing (21 §2 cut 1 "Retired at the end", ISSUE-124): today's
+    // runtime needs a ledger, but its tick credits nothing anywhere and the Host ledger is the only writer of ore.
     const ledger = new MaterialLedger({
-      store: observer.ledgerCrediting
-        ? (
-            await openLedgerStore({
-              database: appDatabase,
-              jsonPath: join(app.getPath('userData'), LEDGER_JSON_FILENAME),
-              now: Date.now,
-              warn: warnFrom('ledger'),
-              log: unrouted
-            })
-          ).store
-        : nullLedgerStore(),
+      store: nullLedgerStore(),
       onError: warnFrom('ledger')
     })
     await ledger.load()
@@ -704,11 +671,11 @@ export function composeLegacyRuntime(
       database: appDatabase,
       warn: warnFrom('projects')
     })
-    // From the cut-1 switch today's projects store is no longer the board's source (21 §2 cut 1 "Switched off in
-    // legacy"): what a tick observes is written nowhere, while every read and every person's own act stay.
+    // Today's projects store is no longer the board's source (21 §2 cut 1 "Retired at the end", ISSUE-124): what a tick
+    // observes is written nowhere, while every read and every person's own act stay.
     projects =
-      openedProjects.store === null || observer.projectsObserverWrites
-        ? openedProjects.store
+      openedProjects.store === null
+        ? null
         : withoutObserverWrites(openedProjects.store, currentPlatform())
     const projectsRefusal = openedProjects.failure
 
@@ -800,27 +767,12 @@ export function composeLegacyRuntime(
       answerOpenCodePermission: createOpenCodePermissionAnswerPort(globalThis.fetch, {
         readPassword: openCodePasswordStore.readPassword
       }),
-      onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
-        // Today's board push, only while today's runtime observes: from the cut-1 switch `BoardFacadeAdapter` pushes
-        // A-P2 from the Host board, and a second writer of it would be a second observer (21 §1 item 4).
-        if (observer.boardPublish) {
-          panel.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines, materials, watchedFeed))
-        }
-        // After the renderers (#316): the panel's own paint comes first.
-        notifier?.update(mines)
-      },
-      onLaunchFailed: (push: LaunchFailedPush) => {
-        panel.send(IPC_CHANNELS.launchFailed, push)
-      },
-      onSendSettled: (push: DwarfSendSettledPush) => {
-        panel.send(IPC_CHANNELS.dwarfSendSettled, push)
-      }
+      ...legacyRuntimePushes(panel)
     })
     await runtime.loadDeclared()
     await runtime.restoreLaunchedSessions()
-    // Today's poll timer, only while today's runtime observes: from the cut-1 switch `LegacyAgentRegistryFeed`'s
-    // cycles are the ticks that keep today's board, and so the rows still `legacy`, current (./LegacyRuntimeSurface.ts).
-    if (observer.pollTimer) runtime.start()
+    // Today's poll timer is retired (ISSUE-124): `LegacyAgentRegistryFeed`'s cycles are the ticks that keep today's
+    // board, and so the rows still `legacy`, current (./LegacyRuntimeSurface.ts).
 
     // MCP subtask delegation: the loopback service (#511 T3, #601), always started.
     delegationService = new DelegationService({
@@ -838,23 +790,6 @@ export function composeLegacyRuntime(
       deliverToHeldParent: (token, text) => runtime?.pushToHeldParent(token, text) ?? false
     })
     await delegationService.start()
-
-    // The historical coal pile (#22), deliberately not awaited; only while today's runtime credits (from the cut-1
-    // switch the Host's coal backfill is the only one, ADR-029).
-    if (observer.ledgerCrediting) {
-      void runCoalBackfill({
-        fs: new NodeFs(),
-        sqlite: new NodeSqlite(),
-        markerFs: { readFile, writeFile, rename },
-        markerPath: join(app.getPath('userData'), 'coal-backfill-v1.json'),
-        claudeRoots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
-        codexSessionsRoot: expandHomePath(config.providers.codex.sessionsRoot),
-        opencodeStoreRoot: expandHomePath(config.providers.opencode.storeRoot),
-        credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
-        now: Date.now,
-        warn: warnFrom('coal-backfill')
-      }).catch((error: unknown) => diagnostics.warning('coal-backfill', error))
-    }
 
     // Optional push channels (#94, #203, #588 T6 F5): one shared listener, opt-in routes.
     const hookFs = new NodeHookFs()
@@ -939,9 +874,6 @@ export function composeLegacyRuntime(
         diagnostics.preferenceWriteFailed('notifications', error)
       }
       return notificationsEnabled
-    })
-    handle(IPC_CHANNELS.setOpenMine, (payload) => {
-      openMineId = typeof payload === 'string' && payload !== '' ? payload : null
     })
     handle(IPC_CHANNELS.getLaunchView, () => launchViewStore.load())
     handle(IPC_CHANNELS.setLaunchView, (payload) => {

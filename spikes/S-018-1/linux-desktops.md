@@ -22,12 +22,12 @@ You have **2 minutes** to click the notification. If you miss it, run the same c
 
 1. Open a terminal **inside the desktop session** (not over SSH): Windows PowerShell, macOS Terminal, or the Linux
    desktop's terminal.
-2. Go to your DwarfAI-Miners checkout and get the spike branch. Ask the person who sent you this guide which branch
-   name to use if it is not `feat/issue-318-cut1-entry-spikes`:
+2. Go to your DwarfAI-Miners checkout and stay on `main`, brought up to date. The spike is merged there, so do not
+   switch to its old feature branch:
 
    ```sh
-   git fetch origin
-   git switch feat/issue-318-cut1-entry-spikes
+   git switch main
+   git pull --ff-only
    pnpm install --frozen-lockfile
    ```
 
@@ -63,7 +63,33 @@ Remove-Item Env:S0181_MODE, Env:S0181_IDLE_MS, Env:S0181_REPORT
 
 ## Step 2 — macOS
 
-In **Terminal**:
+**Use the packaged run below, not the npm one.** On macOS the npm run cannot pass: macOS never registers the npm
+`Electron.app` for notifications, never asks, and "Electron" never appears in System Settings → Notifications (the
+record's 2026-10-03 run). The packaged kit (`packagedTrayApp.mjs`) runs the same tray app inside a real packaged
+bundle, built by the product's electron-builder with the product's macOS signing settings, under its own bundle id
+`com.jeronimorepetto.dwarfaiminers.spike.s0181` and name "DwarfAI-S0181-Spike". The bundle does nothing when it is
+opened without the spike's own arguments (a double click, for example).
+
+In **Terminal**, from the checkout, with a work folder outside it:
+
+```sh
+WORK="$HOME/s0181-work"; mkdir -p "$WORK"
+node spikes/S-018-1/packagedTrayApp.mjs build --out "$WORK/out" --sign developer-id
+APP=$(ls -d "$WORK"/out/mac*/DwarfAI-S0181-Spike.app)
+node spikes/S-018-1/packagedTrayApp.mjs run --app "$APP" --mode click --report "$WORK/macos-packaged-click.json"
+```
+
+- `--sign developer-id` signs it like the shipped app and fails when this Mac has no Developer ID Application identity
+  in its keychain. Without one, build with `--sign adhoc` (a sealed ad-hoc signature) and say so: the report's
+  `packaged.signature` records which signature was measured.
+- The first time, macOS may ask whether "DwarfAI-S0181-Spike" may send notifications. Choose **Allow**. The app is
+  started through LaunchServices (`--launch open`, as Finder does); add `--launch direct` to start its executable
+  instead.
+- Expected: the command prints `"assessment":{"passed":true,"reasons":[]}` and exits 0.
+- While it runs, look at the menu bar for the small blue square (also in the menu bar overflow, or on a Mac without a
+  notch).
+
+The npm run, kept for reference only:
 
 ```sh
 S0181_MODE=click S0181_REPORT=spike-results/S-018-1/macos-click.json pnpm vitest run --config vitest.os.config.ts spikes/S-018-1

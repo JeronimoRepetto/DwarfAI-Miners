@@ -13,6 +13,14 @@
 // from outside its module (R15).
 //
 // TC-226-01 … TC-226-03.
+//
+// Since ISSUE-323 the harness composes cut 2 as host/main.ts does: the real config writer engine
+// with the Claude Code hooks target over the FakeFs (bridges/hostConfigWriter.ts, the persisted
+// ingress port of bridges/ingressPort.ts), its boot re-verification in step 3, the channel-token
+// lookup the hook ingress reads (bridges/channelTokens.ts), the real suppliers module at step 4
+// over an inline install resolver, and the first-run evaluation in step 8 over its installed
+// detection (bridges/installedTools.ts). TC-323-01 … TC-323-03.
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,6 +40,7 @@ import { FakeFs } from '../../kernel/fakes/FakeFs'
 import { FakeProcessControl } from '../../kernel/fakes/FakeProcessControl'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
+import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { InProcessEventBus } from '../../kernel/InProcessEventBus'
@@ -39,6 +48,14 @@ import type { FileSystem } from '../../kernel/ports/fileSystem'
 import type { SecretName } from '../../kernel/ports/secretReader'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { ExternalConfigWriter, PreferencesEvent, SecretStore } from '../../modules/preferences'
+import { ClaudeHooksConfigWriter } from '../../modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
+import { ConfigWriterEngine } from '../../modules/preferences/adapters/external-config/configWriterEngine'
+import { SqliteChannelTokenStore } from '../../modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
+import { SqliteConfigWriteLedger } from '../../modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
+import { SqliteIntegrationSettingStore } from '../../modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
+import { fixture } from '../../modules/preferences/adapters/external-config/claudeHooks/testing/claudeHooksWorld'
+import type { InstallResolver, SuppliersEvent } from '../../modules/suppliers'
+import { SqliteCapabilityRecordStore } from '../../modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
 import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedgerRepository'
 import { migrationsFor } from '../../platform/sqlite/migrations'
 import { SqliteResetCleanup } from '../../platform/sqlite/resetCleanup'
@@ -57,17 +74,24 @@ import { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { FrameClient } from '../../transport/testing/frameClient'
 import { inProcessDuplex } from '../../transport/testing/inProcessDuplex'
 import { runBoot, type BootOutcome } from '../boot'
-import { createBootSteps, mintBootEpoch } from '../bootSteps'
+import { createBootSteps, evaluateWelcomeAfterDetection, mintBootEpoch } from '../bootSteps'
+import {
+  enablableInstalledTools,
+  hostConfigWriter,
+  persistedIngressPort
+} from '../bridges/hostConfigWriter'
+import { appMetaIngressPort } from '../bridges/ingressPort'
+import { suppliersInstalledTools } from '../bridges/installedTools'
 import { emptyDrainGate } from '../emptyDrainGate'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from '../featureFlagReader'
 import { createHostDatabase, HOST_DB_FILE } from '../hostDatabase'
 import { createHostDispatcher } from '../hostDispatcher'
 import {
-  noOwnedConfigWriter,
   servePreferences,
   unavailableSecretStore,
   type WiredPreferences
 } from '../preferencesWiring'
+import { wireSuppliers, type WiredSuppliers } from '../suppliersWiring'
 import { createModuleResetSteps } from '../moduleResetSteps'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
@@ -80,6 +104,10 @@ const RID_2 = '01890a5d-ac96-774b-bcce-b302099a8062'
 const MINE = '00000000-0000-7000-8000-0000000226f1'
 const DWARF = '00000000-0000-7000-8000-0000000226d1'
 const RESET_STEPS = ['db', 'secrets', 'external-config', 'ui-prefs', 'install-moment', 'done']
+/** Claude Code's settings file on this machine (`CLAUDE_CONFIG_DIR` unset: `~/.claude`, 16 §7.1). */
+const CLAUDE_SETTINGS = '/home/person/.claude/settings.json'
+/** The port the hook ingress persisted when it first bound (ADR-016 item 3; later: ISSUE-140). */
+const INGRESS_PORT = 41_234
 
 const NO_FILE_PROTECTION = {
   dataDir: () => Promise.resolve(),
@@ -142,21 +170,45 @@ function counted(fs: FileSystem): { fs: FileSystem; calls: () => number } {
   return { fs: proxy, calls: () => calls }
 }
 
+/**
+ * The person's CLIs as the one `InstallResolver` finds them (inline double, R15): each listed binary
+ * resolves to its path at once; any other binary is not installed.
+ */
+function resolverOf(installed: readonly string[]): InstallResolver {
+  return {
+    resolve: (binaries) => {
+      const binary = binaries.find((name) => installed.includes(name))
+      return Promise.resolve(
+        binary === undefined
+          ? null
+          : { path: `/opt/tools/${binary}`, version: '1.0.0', resolvedVia: 'path' as const }
+      )
+    }
+  }
+}
+
 /** One machine: one data directory with its database file, one clock, the run token. */
-function machine() {
+function machine(options: { installed?: readonly string[] } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'dwarfai-226-preferences-'))
   cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }))
   const clock = new FakeClock(T0)
   const processControl = new FakeProcessControl({ bootId: 'boot-one', clock })
   processControl.scriptBootIdentity({ bootTimeMs: T0 - HOUR_MS, logonSessionId: 'logon-one' })
-  const fs = counted(new FakeFs())
+  const disk = new FakeFs()
+  const installed = options.installed ?? []
+  for (const binary of installed) disk.addFile(`/opt/tools/${binary}`, 'cli', 1)
+  // Claude Code's own folder exists once it ran; its settings.json may not (16 §7.1).
+  if (installed.includes('claude')) void disk.makeDir('/home/person/.claude')
+  const fs = counted(disk)
   return {
     dataDir,
     clock,
     scheduler: new FakeScheduler(clock),
     processControl,
+    disk,
     fs,
-    ids: new SequenceIdGenerator()
+    ids: new SequenceIdGenerator(),
+    resolver: resolverOf(installed)
   }
 }
 
@@ -165,6 +217,15 @@ type Machine = ReturnType<typeof machine>
 interface HostOptions {
   /** CH-01: the Host is killed when the saga reaches its `secrets` step. */
   killAtSecrets?: boolean
+  /** CH-01: the Host is killed inside the saga's `db` step, before it commits. */
+  killInDbStep?: boolean
+  /** CH-01: the Host is killed right after the Claude Code settings file landed (before Tx B). */
+  killAfterSettingsWrite?: boolean
+  /**
+   * The hook ingress bound before the first-run evaluation (16 §8.2 step 6, later: ISSUE-140), so
+   * its port is persisted when step 8 evaluates the step.
+   */
+  ingressBoundAtBoot?: boolean
   /** A `ui` client attached before the boot runs (it connects while the Host is `starting`). */
   attachBeforeBoot?: boolean
 }
@@ -285,11 +346,30 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
   const host: {
     wired?: WiredPreferences
     db?: SqliteDatabase & { kill(): void }
+    /** The config writer engine host/main.ts constructs at step 3 (its boot re-verification). */
+    engine?: ConfigWriterEngine
+    /** The suppliers module step 4 wired. */
+    suppliers?: WiredSuppliers
+    /** The integration gate step 4 gave suppliers. */
+    suppliersGate?: WiredPreferences['integrationGate']
     /** The journal row each time the Host reported `ready` (commands are accepted from then). */
     atReady: Array<Record<string, unknown>>
+    /** What preferences held each time the Host reported `ready`. */
+    readyFacts: Array<{ welcome: unknown; claudeHooks: string; unverified: number }>
     /** Every state the boot reported, in order. */
     states: string[]
-  } = { atReady: [], states: [] }
+  } = { atReady: [], readyFacts: [], states: [] }
+  const readyFacts = () => {
+    const wired = host.wired
+    const { db } = database.connection()
+    return {
+      welcome: wired?.preferences.queries.welcome(),
+      claudeHooks: wired?.preferences.queries.integrationState('claude-hooks') ?? 'unwired',
+      unverified: db.all(
+        'SELECT id FROM config_writes WHERE verified_at IS NULL AND reverted_at IS NULL'
+      ).length
+    }
+  }
 
   const boot: Promise<BootOutcome> = runBoot(
     (paths) =>
@@ -312,6 +392,46 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
             transactionScope: connection.transactions,
             onHandlerError: () => undefined
           })
+          // What host/main.ts constructs at step 3 for cut 2 (ISSUE-323): the config writer engine
+          // with the Claude Code hooks target over this machine's disk, behind the Host's per-target
+          // writer, and the channel-token lookup the hook ingress reads.
+          const ingressPort = appMetaIngressPort(db)
+          if (options.ingressBoundAtBoot === true) ingressPort.write(INGRESS_PORT)
+          const engine = new ConfigWriterEngine({
+            fs: options.killAfterSettingsWrite === true ? killedAfterWrite(m.fs.fs, db) : m.fs.fs,
+            transactions: connection.transactions,
+            ledger: new SqliteConfigWriteLedger({ db }),
+            settings: new SqliteIntegrationSettingStore({ db }),
+            tokens: new SqliteChannelTokenStore({ db, ids: m.ids }),
+            clock: m.clock,
+            ids: m.ids,
+            scheduler: m.scheduler,
+            log,
+            targets: [
+              new ClaudeHooksConfigWriter({
+                path: CLAUDE_SETTINGS,
+                platform: 'linux',
+                ingressPort: persistedIngressPort(ingressPort)
+              })
+            ]
+          })
+          host.engine = engine
+          const moduleSteps = createModuleResetSteps({
+            db,
+            scope: connection.transactions,
+            clock: m.clock,
+            mapSites: [],
+            random: () => 0
+          }).steps
+          if (options.killInDbStep === true) {
+            moduleSteps.mines = {
+              name: moduleSteps.mines.name,
+              reset: () => {
+                db.kill()
+                throw new HostKilled()
+              }
+            }
+          }
           const secrets: SecretStore =
             options.killAtSecrets === true
               ? {
@@ -344,19 +464,52 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
               ids: m.ids,
               clock: m.clock
             }),
-            moduleSteps: createModuleResetSteps({
-              db,
-              scope: connection.transactions,
-              clock: m.clock,
-              mapSites: [],
-              random: () => 0
-            }).steps,
+            moduleSteps,
             secrets,
-            externalConfig: noOwnedConfigWriter,
+            externalConfig: hostConfigWriter({ claudeHooks: engine, ingressPort, log }),
+            channelTokens: new SqliteChannelTokenStore({ db, ids: m.ids }),
+            installedTools: enablableInstalledTools(
+              suppliersInstalledTools(() => host.suppliers?.catalogue ?? null),
+              ingressPort
+            ),
             ready: () => state.current().state === 'ready'
           })
           return host.wired.resumeOnBoot()
-        }
+        },
+        // Step 3, after the resume: the boot re-verification of unverified config writes.
+        reverifyConfigWrites: () => (host.engine as ConfigWriterEngine).settleUnverified(),
+        // Step 4: the real suppliers module over this machine's CLIs, gated by preferences.
+        constructModules: () => {
+          const { db, transactions } = database.connection()
+          const integrationGate = wiredOf(host).integrationGate
+          host.suppliersGate = integrationGate
+          host.suppliers = wireSuppliers({
+            publicBuild: false,
+            clock: m.clock,
+            scheduler: m.scheduler,
+            ids: m.ids,
+            fs: m.fs.fs,
+            log,
+            installResolver: m.resolver,
+            capabilityRecords: new SqliteCapabilityRecordStore({
+              db,
+              tx: transactions,
+              ids: m.ids,
+              log
+            }),
+            integrationGate,
+            bus: new RecordingEventBus<SuppliersEvent>(),
+            hostEpoch: epoch as HostEpoch,
+            simulatedSeed: epoch
+          })
+        },
+        // Step 8: the first-run evaluation, right after the start-up installed detection.
+        evaluateWelcome: () =>
+          evaluateWelcomeAfterDetection({
+            detection: (host.suppliers as WiredSuppliers).bootDetection,
+            evaluate: () => wiredOf(host).evaluateWelcomeAtBoot(),
+            log
+          })
       }),
     {
       log,
@@ -364,7 +517,10 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
       state: {
         report: (report) => {
           host.states.push(report.state)
-          if (report.state === 'ready') host.atReady.push(journal())
+          if (report.state === 'ready') {
+            host.atReady.push(journal())
+            host.readyFacts.push(readyFacts())
+          }
           state.report(report)
         }
       },
@@ -390,6 +546,32 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
     bootSteps: () => log.byEvent('host.boot.step').map((entry) => entry.causeClass),
     close: () => database.close()
   }
+}
+
+/**
+ * CH-01 after the file landed: the engine's atomic write of the Claude Code settings file succeeds,
+ * then the Host is killed, so Tx B never commits (16 §7.3).
+ */
+function killedAfterWrite(fs: FileSystem, db: { kill(): void }): FileSystem {
+  return new Proxy(fs, {
+    get(target, property, receiver) {
+      const value: unknown = Reflect.get(target, property, receiver)
+      if (property !== 'writeFileAtomic' || typeof value !== 'function') return value
+      return async (path: string, bytes: Uint8Array | string) => {
+        const written = await (value as FileSystem['writeFileAtomic']).call(target, path, bytes)
+        if (path === CLAUDE_SETTINGS && written.ok) {
+          db.kill()
+          throw new HostKilled()
+        }
+        return written
+      }
+    }
+  })
+}
+
+/** The SHA-256 of a channel token's hex text, as `channel_tokens` keeps it (ADR-016 item 1). */
+function sha256Hex(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex')
 }
 
 /** Lets pending promise chains and in-process stream events run (no timer). */
@@ -798,5 +980,256 @@ describe('first-run consent step wiring (07 machine 41)', () => {
     validateFrame('preferences.changed', sent[0]?.data)
     expect(touched).toStrictEqual([])
     expect(await writer.findLegacy('claude-hooks')).toBe(true)
+  })
+})
+
+// Added for ISSUE-323: cut 2's Claude Code hooks integration and the first-run consent step over the
+// wired Host (05 §4; 16 §7.3, §8.2; 07 S14.11, S41.01; ADR-016 items 1, 5–7), composed as
+// host/main.ts composes them. The hook ingress itself is wired by ISSUE-140 (review R7V-02): these
+// cases read the lookup it will read, and persist the port it will persist when it first binds.
+describe('Claude hooks integration and first-run step wiring (cut 2)', () => {
+  const decoder = new TextDecoder()
+  let nextRid = 0
+  /** A fresh requestId for each mutating request (14 §1.6). */
+  const rid = (): string => {
+    nextRid += 1
+    return `01890a5d-ac96-774b-bcce-b302${String(nextRid).padStart(8, '0')}`
+  }
+
+  /** What the hook ingress does when it first binds: its port is persisted (ADR-016 item 3). */
+  const ingressBound = (host: { database: { connection(): { db: SqliteDatabase } } }): void =>
+    appMetaIngressPort(host.database.connection().db).write(INGRESS_PORT)
+
+  /** The plaintext token inside DwarfAI's hook entry in Claude Code's settings file. */
+  const tokenOnDisk = async (m: Machine): Promise<string> => {
+    const read = await m.disk.readFile(CLAUDE_SETTINGS)
+    expect(read.ok, 'no Claude Code settings file was written').toBe(true)
+    const text = read.ok ? decoder.decode(read.value) : ''
+    const tokens = [...new Set(text.match(/[0-9a-f]{64}/g) ?? [])]
+    expect(tokens).toHaveLength(1)
+    return tokens[0] ?? ''
+  }
+
+  /** B-M39 over `client`, answered. */
+  const setClaudeHooks = async (client: FrameClient, on: boolean): Promise<Res> =>
+    response(client, request(client, 'preferences.setClaudeHooks', { on, requestId: rid() }))
+
+  const integrationFrames = (client: FrameClient): unknown[] =>
+    wire(client)
+      .filter((item) => item.name === 'integration.changed')
+      .map((item) => item.data)
+
+  it("[ADR-016] turning Claude Code instant updates on over the wired Host reaches every ui client as integration.changed and the bridge's active-hash lookup returns the new token's hash", async () => {
+    const m = machine({ installed: ['claude'] })
+    const host = await bootHost(m)
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    ingressBound(host)
+    const a = await host.attach()
+    const b = await host.attach()
+
+    const answered = await setClaudeHooks(a, true)
+
+    expect(answered.ok && answered.result).toStrictEqual({
+      ok: true,
+      value: { state: 'on-verified' }
+    })
+    await until(() => integrationFrames(b).length > 0)
+    for (const client of [a, b]) {
+      expect(integrationFrames(client)).toStrictEqual([
+        { id: 'claude-hooks', state: 'on-verified', consentOrigin: 'settings' }
+      ])
+    }
+    const token = await tokenOnDisk(m)
+    expect(wiredOf(host).channelTokens.active('claude-hooks')).toStrictEqual({
+      hash: sha256Hex(token)
+    })
+    expect(wiredOf(host).channelTokens.active('opencode-plugin')).toBeNull()
+    // NFR-SEC-12, ADR-026: neither the token nor its hash reaches a frame, a log record or the
+    // argv of a process (the Host spawned none for it).
+    for (const secret of [token, sha256Hex(token)]) {
+      expect(JSON.stringify([a.frames, b.frames])).not.toContain(secret)
+      expect(JSON.stringify(host.log.entries)).not.toContain(secret)
+      expect(JSON.stringify(m.processControl.spawns)).not.toContain(secret)
+    }
+  })
+
+  it('[ADR-016] before the hook ingress persisted a port, turning Claude Code instant updates on writes nothing, issues no token and answers config-write-failed', async () => {
+    const m = machine({ installed: ['claude'] })
+    const host = await bootHost(m)
+    const a = await host.attach()
+
+    const answered = await setClaudeHooks(a, true)
+
+    expect(answered.ok && answered.result).toStrictEqual({
+      ok: false,
+      error: 'config-write-failed'
+    })
+    expect(m.disk.headNow(CLAUDE_SETTINGS, 1)).toBeNull()
+    expect(wiredOf(host).channelTokens.active('claude-hooks')).toBeNull()
+    expect(host.database.connection().db.all('SELECT id FROM config_writes')).toStrictEqual([])
+    expect(wiredOf(host).preferences.queries.integrationState('claude-hooks')).toBe('off')
+  })
+
+  it('[S14.11, FM-020, CH-01] a Host rebuilt between Tx A and Tx B re-verifies the write at boot before accepting commands', async () => {
+    const m = machine({ installed: ['claude'] })
+    const killed = await bootHost(m, { killAfterSettingsWrite: true })
+    expect(killed.outcome).toEqual({ kind: 'ready' })
+    ingressBound(killed)
+    const a = await killed.attach()
+    // The Host dies right after DwarfAI's entry landed in settings.json: Tx A is on record, Tx B
+    // never ran, so the write is unverified and the integration still off.
+    request(a, 'preferences.setClaudeHooks', { on: true, requestId: rid() })
+    await until(() => m.disk.headNow(CLAUDE_SETTINGS, 1) !== null)
+    for (let i = 0; i < 20; i += 1) await tick()
+    killed.close()
+
+    const next = await bootHost(m)
+
+    expect(next.outcome).toEqual({ kind: 'ready' })
+    // At the moment the Host answers commands the write is settled: verified, so on-verified.
+    expect(next.readyFacts).toMatchObject([{ claudeHooks: 'on-verified', unverified: 0 }])
+    const token = await tokenOnDisk(m)
+    expect(wiredOf(next).channelTokens.active('claude-hooks')).toStrictEqual({
+      hash: sha256Hex(token)
+    })
+    const ran = next.bootSteps()
+    expect(ran.indexOf('resume-reset-saga')).toBeLessThan(ran.indexOf('construct-modules'))
+    expect(ran.indexOf('resume-reset-saga')).toBeLessThan(ran.indexOf('answer-ready'))
+  })
+
+  it('[S13.08, S41.01] an unfinished saga resumes before the first-run evaluation, which runs before commands', async () => {
+    const m = machine({ installed: ['claude'] })
+    // The old app's hook entry is in Claude Code's settings file, beside the person's own hooks.
+    m.disk.addFile(CLAUDE_SETTINGS, fixture('foreign-and-old-app.settings'))
+    // A Reset killed after its db step: the saga is unfinished, its external-config step (which
+    // reverts the Claude hooks target, old-app entry included, 16 §7.4) not run.
+    const killed = await bootHost(m, { killAtSecrets: true, ingressBoundAtBoot: true })
+    expect(killed.readyFacts).toMatchObject([
+      { welcome: { due: true, reason: 'legacy-entries', legacyFound: ['claude-hooks'] } }
+    ])
+    await killedDuring(wiredOf(killed))
+    killed.close()
+
+    const next = await bootHost(m, { ingressBoundAtBoot: true })
+
+    expect(next.outcome).toEqual({ kind: 'ready' })
+    // The resumed saga removed the old-app entry before the step was evaluated, so the step is due
+    // as a first run, with nothing found; both were done when the Host answered commands.
+    expect(next.atReady).toEqual([{ step: 'done', epoch: 1, last_failure: null }])
+    expect(next.readyFacts).toMatchObject([
+      {
+        welcome: { due: true, reason: 'first-run', legacyFound: [], offered: ['claude-hooks'] }
+      }
+    ])
+    const read = await m.disk.readFile(CLAUDE_SETTINGS)
+    expect(read.ok && decoder.decode(read.value)).toBe(
+      fixture('foreign-and-old-app.reverted.settings')
+    )
+  })
+
+  it('[ADR-016] the first-run step is answered over the wired Host: B-M40 records Not now, settles the step in every ui client and the next boot does not show it', async () => {
+    const m = machine({ installed: ['claude'] })
+    const first = await bootHost(m, { ingressBoundAtBoot: true })
+    expect(first.readyFacts).toMatchObject([{ welcome: { due: true } }])
+    const a = await first.attach()
+    const b = await first.attach()
+
+    const answered = await response(
+      a,
+      request(a, 'preferences.answerWelcome', {
+        claudeHooks: false,
+        openCodePermissions: false,
+        requestId: rid()
+      })
+    )
+
+    expect(answered.ok && answered.result).toMatchObject({
+      integrations: { 'claude-hooks': { state: 'off' } },
+      welcome: { due: false }
+    })
+    await until(() => names(b, (item) => item.name === 'preferences.changed').length > 0)
+    for (const client of [a, b]) {
+      const sent = wire(client).filter((item) => item.name === 'preferences.changed')
+      expect(sent.at(-1)?.data).toMatchObject({ welcome: { due: false } })
+    }
+    first.close()
+
+    const next = await bootHost(m, { ingressBoundAtBoot: true })
+    expect(next.readyFacts).toMatchObject([{ welcome: { due: false, offered: ['claude-hooks'] } }])
+  })
+
+  it('[S41.09, BR-19, ADR-016] before the hook ingress persisted a port, a fresh profile with Claude Code installed boots with the step not due and nothing offered, in the snapshot the renderer reads', async () => {
+    // Claude Code installed, no old-app entry, a fresh database, and no ingress port yet: an
+    // "Activate" could only answer config-write-failed, and the step has no other way out, so it
+    // is hidden until its enable path can succeed (21 §1 item 8).
+    const host = await bootHost(machine({ installed: ['claude'] }))
+    const hidden = { due: false, legacyFound: [], offered: [] }
+
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    expect(host.readyFacts).toMatchObject([{ welcome: hidden }])
+    const a = await host.attach()
+    const snapshot = await response(a, request(a, 'session.snapshot', {}))
+    expect(snapshot.ok).toBe(true)
+    const chunks = (snapshot.ok ? (snapshot.result as { chunks: unknown[] }).chunks : []) as Array<{
+      section: string
+      data: { welcome?: unknown }
+    }>
+    expect(chunks.find((chunk) => chunk.section === 'preferences')?.data.welcome).toStrictEqual(
+      hidden
+    )
+  })
+
+  it('[S41.01] a fresh profile with the Claude stub installed boots with the step due and offered claude-hooks', async () => {
+    const host = await bootHost(machine({ installed: ['claude', 'opencode'] }), {
+      ingressBoundAtBoot: true
+    })
+    const due = { due: true, reason: 'first-run', legacyFound: [], offered: ['claude-hooks'] }
+
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    expect(host.readyFacts).toMatchObject([{ welcome: due }])
+    const a = await host.attach()
+    const got = await response(a, request(a, 'preferences.get', {}))
+    expect(got.ok && got.result).toMatchObject({ welcome: due })
+
+    // S41.09: with no tool installed nothing is offered, and the step is not due.
+    const bare = await bootHost(machine(), { ingressBoundAtBoot: true })
+    expect(bare.readyFacts).toMatchObject([
+      { welcome: { due: false, legacyFound: [], offered: [] } }
+    ])
+  })
+
+  it('[ADR-011] the IntegrationGateReader bridge answers the stored integration state for suppliers', async () => {
+    const m = machine({ installed: ['claude'] })
+    const host = await bootHost(m)
+    ingressBound(host)
+    const gate = host.suppliersGate
+    expect(gate, 'boot step 4 gave suppliers no integration gate').toBeDefined()
+    expect(gate?.state('claude-hooks')).toBe('off')
+    const a = await host.attach()
+
+    await setClaudeHooks(a, true)
+    expect(gate?.state('claude-hooks')).toBe('on-verified')
+
+    await setClaudeHooks(a, false)
+    expect(gate?.state('claude-hooks')).toBe('off')
+  })
+
+  it("[ADR-016] once the token rotated the bridge's active-hash lookup no longer returns the previous token's hash", async () => {
+    const m = machine({ installed: ['claude'] })
+    const host = await bootHost(m)
+    ingressBound(host)
+    const a = await host.attach()
+    const lookup = wiredOf(host).channelTokens
+
+    await setClaudeHooks(a, true)
+    const previous = await tokenOnDisk(m)
+    await setClaudeHooks(a, false)
+    expect(lookup.active('claude-hooks')).toBeNull()
+    await setClaudeHooks(a, true)
+    const current = await tokenOnDisk(m)
+
+    expect(current).not.toBe(previous)
+    expect(lookup.active('claude-hooks')).toStrictEqual({ hash: sha256Hex(current) })
+    expect(lookup.active('claude-hooks')).not.toStrictEqual({ hash: sha256Hex(previous) })
   })
 })

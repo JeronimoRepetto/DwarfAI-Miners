@@ -189,8 +189,10 @@ describe('S-027-4: login autostart entry per OS (ADR-027 item 7)', () => {
         expect(back.command, `the entry holds the command written: ${describeRead(back)}`).toEqual(
           command
         )
+        // macOS keeps the person's switch in BTM, which this lane does not read (`macBtm` skip; the privileges of
+        // `sfltool dumpbtm` are not measured): the reader then says null, never a guessed false (macLoginSwitch.ts).
         expect(back.disabledByPerson, `a fresh entry is not disabled: ${describeRead(back)}`).toBe(
-          false
+          process.platform === 'darwin' ? null : false
         )
 
         const started = await startStored(back.command ?? command)

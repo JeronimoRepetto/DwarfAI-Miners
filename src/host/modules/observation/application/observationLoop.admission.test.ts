@@ -83,8 +83,13 @@ function transcript(who: ProviderIdentity, at: Instant, tag: string): ObservedEv
 /** What the scripted presence source says of each session (by session id); unknown otherwise. */
 class ScriptedPresence implements ObservedPresence {
   readonly says = new Map<string, 'live' | 'not-live' | 'unknown'>()
+  /** The session each stream's records belong to (by stream id); none otherwise. */
+  readonly sessions = new Map<string, ProviderIdentity>()
   presenceOf(i: ProviderIdentity): 'live' | 'not-live' | 'unknown' {
     return this.says.get(i.providerSessionId) ?? 'unknown'
+  }
+  sessionOf(source: SourceFile): ProviderIdentity | null {
+    return this.sessions.get(source.streamId) ?? null
   }
 }
 
@@ -442,6 +447,133 @@ describe('ObservationLoop keeps live observed sessions present (regression of #1
     }
     expect(w.announced()).toEqual([identity(1)])
     expect(w.sink.applied.map((b) => b.dwarfId)).toEqual([first])
+    w.loop.stop()
+  })
+})
+
+describe('ObservationLoop departs a present session whose process is no longer live (FM-059)', () => {
+  /** `streamId` answers `first` from no cursor, then `later` once `later` is set, from 1 000 on. */
+  function growing(w: ReturnType<typeof world>, streamId: string, first: ObservedEvent[]) {
+    const state: { later: ObservedEvent[] | null } = { later: null }
+    w.adapter.sources.push(source(streamId))
+    w.presence.sessions.set(streamId, identity(1))
+    w.adapter.onRead(streamId, (from) => {
+      if (from === null || from.value === 0) {
+        return { events: first, next: cursorOf(streamId, 1_000), warnings: [] }
+      }
+      if (from.value === 1_000 && state.later !== null) {
+        return { events: state.later, next: cursorOf(streamId, 2_000), warnings: [] }
+      }
+      return { events: [], next: from, warnings: [] }
+    })
+    return state
+  }
+
+  /** A session admitted live and fed in one Host run, which then stops: its dwarf is present. */
+  async function presentInAnEarlierRun() {
+    const w = world()
+    w.presence.says.set('session-1', 'live')
+    const stream = growing(w, 's1', transcript(identity(1), AFTER, 'a'))
+    w.loop.start()
+    await w.loop.whenIdle()
+    const dwarfId = w.dwarfs.bind(identity(1), MINE, AFTER)
+    await w.poll()
+    expect(w.sink.applied.map((b) => b.dwarfId)).toEqual([dwarfId])
+    expect(w.sessions.byIdentity(identity(1))?.closedAt).toBeNull()
+    w.loop.stop()
+    /** The next Host run: a new loop over the same stores, booted as `createObservation` boots it. */
+    const restart = async () => {
+      const next = new ObservationLoop(w.deps)
+      await next.catchUp()
+      next.start()
+      await next.whenIdle()
+      const poll = async () => {
+        w.clock.advance(OBSERVATION_POLL_MS)
+        await next.whenIdle()
+      }
+      return { next, poll }
+    }
+    return { w, dwarfId, stream, restart }
+  }
+
+  it('[FM-059, S4.33, US-OBS-005] regression: a session present in an earlier Host run whose process is not live when the Host restarts departs, once, and is not taken for ended', async () => {
+    const { w, restart } = await presentInAnEarlierRun()
+    // Its process exited while no Host ran: its adapter now tells it is not live.
+    w.presence.says.set('session-1', 'not-live')
+    const { next, poll } = await restart()
+    await poll()
+    await poll()
+
+    expect(w.closings()).toEqual([identity(1)])
+    expect(w.sessions.byIdentity(identity(1))?.closedAt).not.toBeNull()
+    // Not running is not an ending (decision B): no ledger row, so a resume is never refused.
+    expect(w.ended.has(identity(1))).toBe(false)
+    expect(w.cues()).toHaveLength(3) // only the earlier run's batch moved the dwarf
+    next.stop()
+  })
+
+  it('[US-OBS-005.AC01, FM-059] a present session whose presence cannot be told (no readable registry) is never departed: presence fails open', async () => {
+    const { w, restart } = await presentInAnEarlierRun()
+    w.presence.says.set('session-1', 'unknown')
+    const { next, poll } = await restart()
+    for (let n = 0; n < 3; n++) await poll()
+
+    expect(w.closings()).toEqual([])
+    expect(w.sessions.byIdentity(identity(1))?.closedAt).toBeNull()
+    next.stop()
+  })
+
+  it('[US-OBS-005.AC01] a present session whose process still runs after the restart stays present', async () => {
+    const { w, restart } = await presentInAnEarlierRun()
+    const { next, poll } = await restart()
+    for (let n = 0; n < 3; n++) await poll()
+
+    expect(w.closings()).toEqual([])
+    expect(w.sessions.byIdentity(identity(1))?.closedAt).toBeNull()
+    next.stop()
+  })
+
+  it('[US-OBS-005, S4.41] a session departed as not live after a restart that runs and writes again comes back present as its resumed generation', async () => {
+    const { w, stream, restart } = await presentInAnEarlierRun()
+    w.presence.says.set('session-1', 'not-live')
+    const { next, poll } = await restart()
+    await poll()
+    const departedAt = w.sessions.byIdentity(identity(1))?.closedAt
+    expect(departedAt).toEqual(expect.any(Number))
+
+    // The verdict was wrong, or the person resumed it: its process runs and it writes again.
+    w.presence.says.set('session-1', 'live')
+    stream.later = transcript(identity(1), AFTER + 60_000, 'b')
+    await poll()
+
+    const resumed: ProviderIdentity = {
+      providerId: 'simulated',
+      providerSessionId: `session-1~resumed-${Math.floor(departedAt! / 1_000)}`
+    }
+    expect(w.announced()).toEqual([identity(1), resumed])
+    expect(w.closings()).toEqual([identity(1)])
+    next.stop()
+  })
+
+  it('[FM-059, S4.33] a dwarf bound to an identity whose stream observation never fed is not departed by its presence', async () => {
+    // A dwarf the observation loop does not feed (an owned session's, bound by crew alone) is
+    // never closed by an observed not-live verdict.
+    const w = world()
+    w.presence.says.set('session-2', 'not-live')
+    w.adapter.sources.push(source('s2'))
+    w.presence.sessions.set('s2', identity(2))
+    w.adapter.onRead('s2', (from) => ({
+      events: [],
+      next: from ?? cursorOf('s2', 1_000),
+      warnings: []
+    }))
+    w.dwarfs.bind(identity(2), MINE, AFTER)
+    w.loop.start()
+    await w.loop.whenIdle()
+    for (let n = 0; n < 3; n++) await w.poll()
+
+    expect(w.closings()).toEqual([])
+    expect(w.sessions.byIdentity(identity(2))?.closedAt).toBeNull()
     w.loop.stop()
   })
 })

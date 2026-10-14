@@ -70,7 +70,9 @@ const SERVED_SINCE_CUT_0 = [
   'section:tails',
   // Claude Code instant updates: B-M39 and B-F25, served from cut 2 (ISSUE-221).
   'preferences.setClaudeHooks',
-  'frame:integration.changed'
+  'frame:integration.changed',
+  // The first-run consent step's answer: B-M40, served from cut 2 (ISSUE-323).
+  'preferences.answerWelcome'
 ]
 const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'tails']
 

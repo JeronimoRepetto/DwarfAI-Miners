@@ -25,12 +25,12 @@ the end you remove it again (step 6).
 
 1. Open a terminal inside the desktop session (not over SSH): Windows PowerShell, macOS Terminal, or the Linux
    desktop's terminal.
-2. Go to your DwarfAI-Miners checkout and get the spike branch (ask the person who sent you this guide if the branch
-   name differs):
+2. Go to your DwarfAI-Miners checkout and stay on `main`, brought up to date. The spike is merged there, so do not
+   switch to its old feature branch:
 
    ```sh
-   git fetch origin
-   git switch feat/issue-318-cut1-entry-spikes
+   git switch main
+   git pull --ff-only
    pnpm install --frozen-lockfile
    ```
 
@@ -103,6 +103,11 @@ valid result too: keep the file and continue.
 
    Copy the whole output. The value to look at is `"disabledByPerson"`: `true`, `false` or `null`. (On Linux, if the
    desktop removed the file instead, the output says `"present": false`.)
+
+   On macOS run `node spikes/S-027-4/loginProbe.ts read --btm-run` instead: macOS 26 keeps this switch in its
+   Background Task Management database, which `sfltool dumpbtm` prints. Never add `sudo`; if the command is refused,
+   the output says so under `"macSwitch"` and `"disabledByPerson"` is `null`. Ask the person who sent you this guide
+   before going further.
 
 ## Step 6 — remove the entry
 

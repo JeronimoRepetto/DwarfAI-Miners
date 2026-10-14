@@ -23,6 +23,11 @@
 // - Endings (#28, #64): a subagent's `<task-notification>` delivered with a terminal status is a
 //   `closed` fact of that subagent's identity (`reconcile.ts`), which the loop records in
 //   `EndedAgentLedger`.
+// - Resumed subagents (owner amendment I): Claude Code's SendMessage to an agent appends to the
+//   same `agent-<id>.jsonl`, opened by a `user` line with `origin.kind` `coordinator` (a meta line,
+//   so a control-plane entry). That line states the agent's `session` fact again, at its own time
+//   and with the same parent: the observation loop brings an ended agent back as its resumed
+//   generation only from such a fact written after its ending, never from the tail of its ending.
 // - Control plane (FM-086, INV-68): a slash command and its output, a meta line, a compaction
 //   summary (#188), a "Warmup", a side-chain record in the session's own file and a synthetic
 //   assistant message are not conversation: each is an entry flagged `controlPlane` with a label
@@ -249,6 +254,17 @@ function userLineKind(record: ClaudeRecord, text: string, context: TranscriptCon
   return 'person'
 }
 
+/**
+ * Whether a subagent's record is a message its coordinator sent it (Claude Code's SendMessage: a
+ * `user` line with `origin.kind` `coordinator`), which runs the agent again, whether it was still
+ * running or had ended.
+ */
+function fromCoordinator(record: ClaudeRecord, context: TranscriptContext): boolean {
+  if (context.file.agentId === null || record.type !== 'user') return false
+  const origin = record.raw.origin
+  return isRecord(origin) && origin.kind === 'coordinator'
+}
+
 /** The prompt of a message typed into a running turn (#180), if the record is one. */
 function typedMidTurn(record: ClaudeRecord): string | undefined {
   const attachment = record.raw.attachment
@@ -364,8 +380,14 @@ export function stepTranscript(
   const previous = state.previous ?? replayed
 
   const identityKey = identityKeyOf(identity)
-  if (!foreign && cwd !== null && record.at !== null && !announced.includes(identityKey)) {
-    announced = [...announced, identityKey]
+  const firstSight = !announced.includes(identityKey)
+  if (
+    !foreign &&
+    cwd !== null &&
+    record.at !== null &&
+    (firstSight || fromCoordinator(record, context))
+  ) {
+    if (firstSight) announced = [...announced, identityKey]
     const parentIdentity: ProviderIdentity | undefined =
       identity.providerAgentId === undefined
         ? undefined

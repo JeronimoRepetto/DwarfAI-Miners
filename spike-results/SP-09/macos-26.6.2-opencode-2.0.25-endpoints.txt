@@ -1,0 +1,6 @@
+/api/permission/request get
+/api/permission/saved get
+/api/permission/saved/{id} delete
+/api/session/{sessionID}/permission post,get
+/api/session/{sessionID}/permission/{requestID} get
+/api/session/{sessionID}/permission/{requestID}/reply post

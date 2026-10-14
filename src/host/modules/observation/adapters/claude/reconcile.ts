@@ -9,9 +9,9 @@
 //   tool result. Every other place the blob appears (a tool result, model output, a hook's stdout)
 //   is a quotation and ends nobody. The ending's `<task-id>` is the subagent's agent id, so the
 //   ended identity is the session plus that agent (ADR-015 item 7); the observation loop records it
-//   in `EndedAgentLedger`, and nothing brings it back (INV-36). A resumed agent (#179, #338) is
-//   therefore not re-surfaced: the trade-off the legacy provider made before #179, now the
-//   invariant.
+//   in `EndedAgentLedger`, and nothing brings that identity back (INV-36). An agent its coordinator
+//   resumes (#179, #338) arrives as its resumed generation, a new identity (owner amendment I;
+//   `parse.ts` states the resume, the observation loop names it).
 // - Depth (#157) and the sidecar sweep (#391) are the parent identity the adapter already reports
 //   from a subagent's sidecar (`subagents.ts`, `parentAgentId`): every `agent-<id>.jsonl` under
 //   `subagents/` is discovered whatever its launch record says, and crew ranks by the parent chain.

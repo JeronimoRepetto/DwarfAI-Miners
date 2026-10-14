@@ -51,11 +51,11 @@ export type Emission =
   | { readonly kind: 'not-an-ask' }
 
 /**
- * The text of the one ordinary chat line an auto-denied request leaves (ADR-011 item 3). Its copy
- * is design's (open item O-12, `13` FM-071/FM-072 K1) and not written yet: until it is, the line
- * carries the marker, never invented text (25-AGENTS §8.1).
+ * The text of the one ordinary chat line an auto-denied request leaves (ADR-011 item 3), as the owner
+ * approved it on 2026-10-11 (`13` FM-071/FM-072 K1).
  */
-export const AUTO_DENIED_LINE_TEXT = '⟦COPY NEEDED: K1 auto-denied request chat line⟧'
+export const AUTO_DENIED_LINE_TEXT =
+  'Declined automatically: this request cannot be answered from the panel.'
 
 /** ADR-011 item 5: the emission of `input` in `session`. */
 export function resolveEmission(input: EmissionInput, session: EmissionSession): Emission {

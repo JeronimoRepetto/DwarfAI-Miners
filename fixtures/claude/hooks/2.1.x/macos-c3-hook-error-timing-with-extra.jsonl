@@ -1,0 +1,4 @@
+{"at":1735689600926,"event":"received","mode":"log","pid":37020,"hook_event_name":"PreToolUse","tool_name":"Bash","dwarfaiUnknownField":"extra"}
+{"at":1735689600926,"event":"exit-no-decision","mode":"log","pid":37020,"dwarfaiUnknownField":"extra"}
+{"at":1735689600987,"event":"received","mode":"decide","pid":37021,"hook_event_name":"PermissionRequest","tool_name":"Bash","dwarfaiUnknownField":"extra"}
+{"at":1735689600988,"event":"exit-error","mode":"decide","pid":37021,"dwarfaiUnknownField":"extra"}

@@ -1,0 +1,8 @@
+{"at":1735689600035,"event":"received","mode":"log","pid":37349,"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}
+{"at":1735689600035,"event":"exit-no-decision","mode":"log","pid":37349}
+{"at":1735689600092,"event":"received","mode":"decide","pid":37350,"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion"}
+{"at":1735689600092,"event":"exit-no-decision","mode":"decide","pid":37350}
+{"at":1735689606478,"event":"received","mode":"log","pid":37353,"hook_event_name":"PostToolUse","tool_name":"AskUserQuestion"}
+{"at":1735689606478,"event":"exit-no-decision","mode":"log","pid":37353}
+{"at":1735689607794,"event":"received","mode":"log","pid":37357,"hook_event_name":"Stop","tool_name":null}
+{"at":1735689607794,"event":"exit-no-decision","mode":"log","pid":37357}

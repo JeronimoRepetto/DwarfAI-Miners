@@ -28,10 +28,12 @@ describe('HostStateMessage', () => {
     await flushPromises()
     const region = document.body.querySelector('[role="alert"]')!
     expect(region.getAttribute('aria-live')).toBe('assertive')
-    expect(region.textContent).toContain('⟦COPY NEEDED: O-15 crash-loop variant⟧')
+    expect(region.textContent).toContain(
+      'The part of DwarfAI-Miners that runs your dwarfs stopped several times in a few minutes, so it is no longer restarted on its own. The panel is read-only until it runs again.'
+    )
     const buttons = [...document.body.querySelectorAll<HTMLButtonElement>('button')]
     expect(buttons).toHaveLength(1)
-    expect(buttons[0]!.textContent?.trim()).toBe('⟦COPY NEEDED: O-5 Host-state Retry action⟧')
+    expect(buttons[0]!.textContent?.trim()).toBe('Try again')
     buttons[0]!.click()
     expect(wrapper.emitted('retry')).toHaveLength(1)
     wrapper.unmount()
@@ -66,9 +68,7 @@ describe('HostStateMessage', () => {
     await flushPromises()
     const buttons = [...document.body.querySelectorAll<HTMLButtonElement>('button')]
     expect(buttons).toHaveLength(1)
-    expect(buttons[0]!.textContent?.trim()).toBe(
-      '⟦COPY NEEDED: O-3 Stop everything and quit action⟧'
-    )
+    expect(buttons[0]!.textContent?.trim()).toBe('Stop everything and quit…')
     buttons[0]!.click()
     expect(stop).toHaveBeenCalledOnce()
     expect(offered.emitted('retry')).toBeUndefined()
@@ -123,19 +123,31 @@ describe('HostStateMessage as the design dialog', () => {
   }
 
   it.each([
-    ['spawn-failed', '⟦COPY NEEDED: O-5 Host did not start message⟧'],
-    ['crash-loop', '⟦COPY NEEDED: O-15 crash-loop variant⟧'],
-    ['unresponsive', '⟦COPY NEEDED: O-5 Host-unresponsive message⟧']
+    [
+      'spawn-failed',
+      'DwarfAI-Miners could not start',
+      'The part of DwarfAI-Miners that runs your dwarfs did not start. The panel is read-only until it does.'
+    ],
+    [
+      'crash-loop',
+      'DwarfAI-Miners keeps stopping',
+      'The part of DwarfAI-Miners that runs your dwarfs stopped several times in a few minutes, so it is no longer restarted on its own. The panel is read-only until it runs again.'
+    ],
+    [
+      'unresponsive',
+      'DwarfAI-Miners is not responding',
+      'The part of DwarfAI-Miners that runs your dwarfs has stopped responding. Trying again restarts it; dwarfs it was running may be interrupted.'
+    ]
   ] as const)(
     '[ADR-002, S12.B06] %s with its Retry is the design dialog: modal, named by its title, the message in its body, Retry holding the focus',
-    async (reason, text) => {
+    async (reason, title, text) => {
       const wrapper = await shown({ message: unavailable(reason) })
       const card = dialog()
       expect(card, 'the message is a dialog').not.toBeNull()
       expect(card!.classList.contains('dm-dialog')).toBe(true)
       expect(card!.classList.contains('dm-dialog--danger')).toBe(true)
       expect(card!.getAttribute('aria-modal')).toBe('true')
-      expect(card!.getAttribute('aria-label')).toMatch(/^⟦COPY NEEDED: .+ dialog title⟧$/)
+      expect(card!.getAttribute('aria-label')).toBe(title)
       expect(card!.querySelector('.dm-dialog__title')?.textContent).toBe(
         card!.getAttribute('aria-label')
       )
@@ -144,9 +156,7 @@ describe('HostStateMessage as the design dialog', () => {
       expect(body?.getAttribute('role')).toBe('alert')
       expect(body?.textContent).toContain(text)
       const actions = [...card!.querySelectorAll<HTMLButtonElement>('.dm-dialog__actions button')]
-      expect(actions.map((button) => button.textContent?.trim())).toEqual([
-        '⟦COPY NEEDED: O-5 Host-state Retry action⟧'
-      ])
+      expect(actions.map((button) => button.textContent?.trim())).toEqual(['Try again'])
       expect(document.activeElement).toBe(actions[0])
       actions[0]!.click()
       expect(wrapper.emitted('retry')).toHaveLength(1)
@@ -174,7 +184,7 @@ describe('HostStateMessage as the design dialog', () => {
     const wrapper = await shown({ message: unavailable('incompatible'), onStopEverything: stop })
     const actions = [...document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
     expect(actions.map((button) => button.textContent?.trim())).toEqual([
-      '⟦COPY NEEDED: O-3 Stop everything and quit action⟧'
+      'Stop everything and quit…'
     ])
     actions[0]!.click()
     expect(stop).toHaveBeenCalledOnce()

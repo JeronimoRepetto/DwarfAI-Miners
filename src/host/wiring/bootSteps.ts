@@ -50,6 +50,16 @@ export interface BootPorts {
    */
   resumeResetSaga?: () => Promise<unknown>
   /**
+   * Step 3, right after the saga resume: the boot re-verification of every config write a crash
+   * left between Tx A and Tx B (`verified_at IS NULL`; 16 §7.3, 07 S14.08, S14.11, 13 FM-020). The
+   * composition root passes the config writer's settlement (ISSUE-323). It runs before the modules
+   * are constructed (step 4), so suppliers' integration gate and the first-run evaluation (step 8)
+   * read the settled state, and before any command is accepted (`ready`). A failure is logged and
+   * never fails the boot (the Host never exits on its own, ADR-002 D1, D7): the rows stay for the
+   * next boot, and their integration stays as stored (`off`, since Tx B never ran).
+   */
+  reverifyConfigWrites?: () => Promise<unknown>
+  /**
    * Step 4: constructs the modules and wires their bridges and event routes (05 §4) over the
    * database step 2 opened. The composition root passes it; the modules join it one wiring issue
    * at a time (suppliers: ISSUE-159). Until it is passed the step is a placeholder.
@@ -108,6 +118,24 @@ export async function evaluateWelcomeAfterDetection(deps: {
   }
 }
 
+/** Step 3's re-verification (BootPorts `reverifyConfigWrites`): a failure is logged, never thrown. */
+async function reverifyConfigWritesLogged(
+  reverify: (() => Promise<unknown>) | undefined,
+  log: DiagnosticsLog
+): Promise<void> {
+  if (reverify === undefined) return
+  try {
+    await reverify()
+  } catch (error) {
+    log.record({
+      level: 'error',
+      event: 'uncaught',
+      subsystem: 'preferences',
+      errCode: errorCode(error)
+    })
+  }
+}
+
 /** The Host's UI endpoint as the boot sees it. */
 export interface UiEndpoint {
   /** Binds it: `already-running` when a running Host holds it (ADR-002 D3); throws on an error. */
@@ -122,8 +150,14 @@ function placeholder(name: BootStepName, owner: string): BootStep {
 }
 
 export function createBootSteps(ports: BootPorts): readonly BootStep[] {
-  const { resumeResetSaga, constructModules, startObservation, startModules, evaluateWelcome } =
-    ports
+  const {
+    resumeResetSaga,
+    reverifyConfigWrites,
+    constructModules,
+    startObservation,
+    startModules,
+    evaluateWelcome
+  } = ports
   return [
     // 1. Bind the UI endpoint; the bind is the single-instance mutex (decideBind, ADR-002 D3).
     {
@@ -144,14 +178,16 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     },
     // 3. Resume an unfinished Reset saga, before commands and observation (ADR-023). A step that
     //    fails again is recorded by the saga and resumes at the next boot; the boot goes on.
-    //    Commands are accepted only from `ready` (step 8). Later: ISSUE-323 inserts the boot
-    //    re-verification of config writes here; the first-run evaluation runs in step 8 (ISSUE-222).
+    //    Commands are accepted only from `ready` (step 8). Then the boot re-verification of the
+    //    config writes a crash left unverified (16 §7.3, 07 S14.11; ISSUE-323); the first-run
+    //    evaluation runs in step 8 (ISSUE-222).
     resumeResetSaga === undefined
       ? placeholder('resume-reset-saga', 'ISSUE-226')
       : {
           name: 'resume-reset-saga',
           run: async () => {
             await resumeResetSaga()
+            await reverifyConfigWritesLogged(reverifyConfigWrites, ports.log)
             return { kind: 'done' }
           }
         },

@@ -188,7 +188,8 @@ export interface WelcomeAnswerDeps {
 
 /**
  * 16 §4.12 `PreferencesCommands.answerWelcome` (AMENDMENT-7, OQ-68; 07 S41.04, S41.05): the
- * first-run step's one answer. host/wiring joins it to the module's commands (later: ISSUE-323).
+ * first-run step's one answer. host/wiring/preferencesWiring.ts joins it to the module's commands
+ * and serves it as B-M40 (ISSUE-323).
  */
 export function createWelcomeAnswer(deps: WelcomeAnswerDeps): WelcomeAnswer {
   return new WelcomeAnswerService({

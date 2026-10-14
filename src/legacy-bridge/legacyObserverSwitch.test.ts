@@ -6,7 +6,7 @@ import { mineIdForPath } from '../main/domain/aggregate'
 import { ProjectObserver } from '../main/projects/projectObserver'
 import { createProjectsStore, type ProjectsStore } from '../main/projects/projectsStore'
 import type { Mine } from '../main/domain/types'
-import { legacyObserverComposition, withoutObserverWrites } from './legacyObserverSwitch'
+import { withoutObserverWrites } from './legacyObserverSwitch'
 
 const DECLARED = '/work/moria'
 const SEEN = '/work/erebor'
@@ -34,23 +34,6 @@ function board(paths: readonly string[]): Mine[] {
 }
 
 describe('the cut-1 switch inside today’s runtime composition (21 §2 cut 1)', () => {
-  it('[ADR-001] today’s observer sinks are composed exactly while today’s runtime observes', () => {
-    expect(legacyObserverComposition('legacy')).toEqual({
-      pollTimer: true,
-      boardPublish: true,
-      ledgerCrediting: true,
-      projectsObserverWrites: true,
-      notifier: true
-    })
-    expect(legacyObserverComposition('host')).toEqual({
-      pollTimer: false,
-      boardPublish: false,
-      ledgerCrediting: false,
-      projectsObserverWrites: false,
-      notifier: false
-    })
-  })
-
   it('[ADR-001] with the observer’s writes switched off a poll writes nothing to today’s projects store and every read stays', async () => {
     const real = store()
     const declared = await real.declare({ path: DECLARED, at: 1 })

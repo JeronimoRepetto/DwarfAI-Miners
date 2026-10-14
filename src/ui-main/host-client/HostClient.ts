@@ -16,7 +16,10 @@
 //   while attached gets a fresh snapshot too, so every handler starts from a whole board. A Host still `starting` or
 //   `migrating` (HOST_NOT_READY, 14 §3.3) is waited for until its `host.state` frame reports it ready (UC-001).
 // - `call` (14 §1.3, §1.6, §3.10): refused locally with NOT_SUPPORTED, and never sent, when `capabilities()` does not
-//   list the method (`protocolVersion` is never a gate); a mutation (a call whose params carry a `requestId`) is
+//   list the method (`protocolVersion` is never a gate). Before the first `hello.ok` no Host has advertised anything,
+//   so a call is HOST_UNAVAILABLE (retryable, 14 §3.3: the connection is not `connected`), never NOT_SUPPORTED. A
+//   call no open connection may carry waits for a `ui` connection under way (a window reads its snapshot on A-N04
+//   `connected`, which is pushed before that connection's hello). A mutation (a call whose params carry a `requestId`) is
 //   refused HOST_UNAVAILABLE while the state is not `connected` (ADR-002 D9) and is sent only on a `ui` connection:
 //   the `notifier` never carries one, nor any method outside its scope (`ping`, `attention.clicked`, the names
 //   sections of `session.snapshot`). Each call has its 14 §3.10 deadline: past it, TIMEOUT (retryable), and the
@@ -207,6 +210,8 @@ class NodeHostClient implements HostClientService {
   private disposed = false
   /** A `ui` hello is under way: a second attach waits for it instead of opening another connection. */
   private uiOpening = false
+  /** Settles once the `ui` attach under way opened its connection (or failed to): the calls waiting for it go on. */
+  private uiAttached: Promise<void> | null = null
   /** The last presence the PresenceTracker reported (B-M07): sent again first on every new `ui` connection. */
   private presence: Presence | null = null
   private readonly calls = new Set<Call>()
@@ -221,8 +226,11 @@ class NodeHostClient implements HostClientService {
   private readonly closingListeners = new Set<(reason: ClosingReason) => void>()
   private readonly attentionListeners = new Set<(frame: AttentionFrame) => void>()
   private readonly channelDeps: ChannelDeps
-  /** `hello.ok.capabilities` of the last connection: replaced on every reconnect, kept while reconnecting. */
-  private advertised: readonly string[] = []
+  /**
+   * `hello.ok.capabilities` of the last connection: replaced on every reconnect, kept while reconnecting; null until
+   * the first `hello.ok`.
+   */
+  private advertised: readonly string[] | null = null
   /** The Host's lifecycle and job status: the notifier's `hello.ok`, then each `host.state` frame. */
   private facts: { hostState: HelloOk['state']; jobStatus: HelloOk['jobStatus'] } | null = null
 
@@ -266,7 +274,7 @@ class NodeHostClient implements HostClientService {
   }
 
   capabilities(): readonly string[] {
-    return this.advertised
+    return this.advertised ?? []
   }
 
   call<M extends HostMethod>(method: M, params: HostParams[M]): Promise<HostResult[M]> {
@@ -578,6 +586,19 @@ class NodeHostClient implements HostClientService {
   /** The `ui` connection: hello, `events.subscribe` first, then replay or the paged snapshot. */
   private async attachUi(): Promise<void> {
     if (this.ui !== null || this.uiOpening || this.disposed) return
+    let attached = (): void => {}
+    this.uiAttached = new Promise((resolve) => {
+      attached = resolve
+    })
+    try {
+      await this.openUi()
+    } finally {
+      this.uiAttached = null
+      attached()
+    }
+  }
+
+  private async openUi(): Promise<void> {
     this.uiOpening = true
     const opened = await openChannel(this.channelDeps, 'ui').finally(() => {
       this.uiOpening = false
@@ -774,7 +795,10 @@ class NodeHostClient implements HostClientService {
   // ---- calls ----
 
   private callOn(fixed: HostChannel | null, method: string, params: unknown): Promise<unknown> {
-    const capabilities = fixed?.helloOk.capabilities ?? this.capabilities()
+    const capabilities = fixed?.helloOk.capabilities ?? this.advertised
+    if (capabilities === null) {
+      return Promise.reject(new HostCallError(unavailable('no Host has attached yet')))
+    }
     if (!isAdvertised(capabilities, method)) {
       return Promise.reject(
         new HostCallError({
@@ -789,6 +813,9 @@ class NodeHostClient implements HostClientService {
       return Promise.reject(new HostCallError(unavailable('mutations wait for the connection')))
     }
     const channel = fixed ?? this.channelFor(method, params, mutation)
+    if (channel === null && this.uiAttached !== null) {
+      return this.uiAttached.then(() => this.callOn(null, method, params))
+    }
     if (channel === null) {
       return Promise.reject(new HostCallError(unavailable('no connection may carry this call')))
     }
