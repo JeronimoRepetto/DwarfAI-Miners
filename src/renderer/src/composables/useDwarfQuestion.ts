@@ -1,9 +1,11 @@
 import { reactive, watch } from 'vue'
 import {
   HOST_FRAME_SCHEMAS,
+  type AnswerOutcome,
   type AskId,
   type AskRecord,
   type HostFrame,
+  type IpcResult,
   type QuestionAnswers,
   type SnapshotChunk,
   type UiSessionChange
@@ -13,22 +15,17 @@ import {
   questionAnswersRecord,
   wordsAnswerRecord
 } from '../lib/question/answersRecord'
-import {
-  answerRequest,
-  permissionRequest,
-  textAnswerRequest,
-  type AskAnswer
-} from '../lib/question/questionAnswer'
+import type { AskAnswer } from '../lib/question/questionAnswer'
 import {
   defaultDwarfQuestionState,
+  splitAnswerLabels,
   type DwarfAnswerState,
   type DwarfPermissionDecision,
   type DwarfPermissionRequest,
   type DwarfQuestion,
-  type DwarfQuestionAnswerRequest,
-  type DwarfQuestionAnswerResult,
   type Mine
 } from '../types'
+import { mintRequestId } from './requestIds'
 import { createReadModel, followHost, type HostFollower } from './readModel'
 import { useAttentionCues } from './useAttentionCues'
 import { useDwarfMessaging } from './useDwarfMessaging'
@@ -69,11 +66,42 @@ const state = reactive(defaultDwarfQuestionState())
 const LOST_BRIDGE = 'The panel lost contact with the app.'
 const NOT_ANSWERED = 'That answer could not be delivered.'
 
-/** The answer's verdict as its record wears it: handed over, or refused with main's reason. */
-function verdictOf(result: DwarfQuestionAnswerResult): { answered: boolean; error?: string } {
-  return result.answered
-    ? { answered: true }
-    : { answered: false, error: result.error ?? NOT_ANSWERED }
+/**
+ * What one answer came to (AMENDED for ISSUE-141, was: today's `DwarfQuestionAnswerResult`): from the cut-2 switch A-40
+ * and A-41 answer in the 14 shape, `IpcResult<AnswerOutcome>` (ADR-010 item 5), for a Host card and a `legacy:` card
+ * alike (main routes each by its AskId, 21 §2 cut 2 "Qualified routes"). `accepted` is handed over; `not-open` is a
+ * stale submit, which renders nothing (US-ASK-006.AC09): the card stays as the Host reports it; a refusal, a call
+ * error or a lost bridge is not handed over, with today's own words (the outcome carries a reason code, never a
+ * sentence to show).
+ */
+type AnswerVerdict =
+  { kind: 'answered' } | { kind: 'not-open' } | { kind: 'refused'; error: string }
+
+/** The verdict of an A-40/A-41 result; anything off the 14 shape is a refusal. */
+function answerVerdictOf(result: IpcResult<AnswerOutcome> | undefined): AnswerVerdict {
+  if (result?.ok !== true) return { kind: 'refused', error: NOT_ANSWERED }
+  if (result.value.kind === 'accepted') return { kind: 'answered' }
+  if (result.value.kind === 'not-open') return { kind: 'not-open' }
+  return { kind: 'refused', error: NOT_ANSWERED }
+}
+
+/**
+ * The 14 answers of one card submit (14 §3.4 `QuestionAnswers`): one entry per chosen option of each step (a toggled
+ * step's labels split back out of their joined value), or the person's own words for that step.
+ */
+function questionAnswersOf(question: DwarfQuestion, answer: AskAnswer): QuestionAnswers {
+  const values = typeof answer === 'string' ? [answer] : answer
+  const answers: Array<QuestionAnswers[number]> = []
+  question.questions.forEach((_asked, step) => {
+    const value = values[step]
+    if (value === undefined) return
+    if (typeof value !== 'string') {
+      answers.push({ step, freeText: value.ownWords })
+      return
+    }
+    for (const option of splitAnswerLabels(value)) answers.push({ step, option })
+  })
+  return answers
 }
 
 /*
@@ -99,9 +127,12 @@ function verdictOf(result: DwarfQuestionAnswerResult): { answered: boolean; erro
  * sent to the Host. Only Host AskIds cross: the store's `ask-picks` key is an AskId (14 §3.9), which a `legacy:` id is
  * not, so a legacy card keeps today's own picks.
  *
- * Not built here (21 §1 item 8, hidden until built): reporting the current step (A-N07, later: ISSUE-129) and the
- * answers in the 14 shapes, which reach `window.api` only when the cut-2 switch (later: ISSUE-141) gives A-40/A-41
- * their target shape; until then answers leave in today's shape below.
+ * Not built here (21 §1 item 8, hidden until built): reporting the current step (A-N07, later: ISSUE-129).
+ *
+ * AMENDED for ISSUE-141 (lead decision 2026-10-14: the answer half of ISSUE-138 is folded into the cut-2 switch, was:
+ * answers leave in today's shape until the switch): A-40/A-41 have their target shape from the cut-2 switch, so every
+ * answer leaves as `{ askId, answers, requestId }` / `{ askId, decision, requestId }` with one UUIDv7 per submit (14
+ * §1.6), its AskId the card's own (a Host AskId or a `legacy:` id); main picks the route by that id.
  */
 
 /** One card of the read model; its source is its id namespace. */
@@ -316,7 +347,7 @@ export function useDwarfQuestion() {
     await release(
       dwarfId,
       question,
-      answerRequest(dwarfId, question, label),
+      questionAnswersOf(question, label),
       questionAnswersRecord(question, label)
     )
   }
@@ -342,7 +373,7 @@ export function useDwarfQuestion() {
     await release(
       dwarfId,
       question,
-      textAnswerRequest(dwarfId, question, text),
+      [{ step: 0, freeText: text }],
       wordsAnswerRecord(question, text)
     )
   }
@@ -350,7 +381,7 @@ export function useDwarfQuestion() {
   async function release(
     dwarfId: string,
     question: DwarfQuestion,
-    request: DwarfQuestionAnswerRequest,
+    answers: QuestionAnswers,
     record: string
   ): Promise<void> {
     // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
@@ -360,17 +391,48 @@ export function useDwarfQuestion() {
     state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId }
     const recordId = messaging.recordAnswer(dwarfId, record, toolUseId)
 
-    let result: DwarfQuestionAnswerResult
+    let verdict: AnswerVerdict
     try {
-      result = await window.api.answerDwarfQuestion(request)
+      verdict = answerVerdictOf(
+        await window.api.answerDwarfQuestion({
+          askId: toolUseId as AskId,
+          answers,
+          requestId: mintRequestId()
+        })
+      )
     } catch {
-      result = { answered: false, error: LOST_BRIDGE }
+      verdict = { kind: 'refused', error: LOST_BRIDGE }
     }
+    settle(dwarfId, toolUseId, recordId, verdict)
+  }
 
-    state.byDwarfId[dwarfId] = result.answered
-      ? { phase: 'answered', toolUseId }
-      : { phase: 'refused', toolUseId, error: result.error ?? NOT_ANSWERED }
-    messaging.settleAnswer(dwarfId, recordId, verdictOf(result))
+  /**
+   * Writes one answer's verdict. A `not-open` renders nothing (US-ASK-006.AC09): the card keeps no verdict and stays as
+   * the Host reports it (its `ask.closed` frame closes it), and its "Answers:" record is withdrawn, the marker it took
+   * given back (ISSUE-141, lead decision 2026-10-14).
+   */
+  function settle(
+    dwarfId: string,
+    toolUseId: string,
+    recordId: string,
+    verdict: AnswerVerdict,
+    decision?: DwarfPermissionDecision
+  ): void {
+    const decided = decision === undefined ? {} : { decision }
+    if (verdict.kind === 'not-open') {
+      delete state.byDwarfId[dwarfId]
+      messaging.withdrawAnswer(dwarfId, recordId)
+      return
+    }
+    state.byDwarfId[dwarfId] =
+      verdict.kind === 'answered'
+        ? { phase: 'answered', toolUseId, ...decided }
+        : { phase: 'refused', toolUseId, ...decided, error: verdict.error }
+    messaging.settleAnswer(
+      dwarfId,
+      recordId,
+      verdict.kind === 'answered' ? { answered: true } : { answered: false, error: verdict.error }
+    )
   }
 
   /**
@@ -402,19 +464,19 @@ export function useDwarfQuestion() {
       toolUseId
     )
 
-    let result: DwarfQuestionAnswerResult
+    let verdict: AnswerVerdict
     try {
-      result = await window.api.answerDwarfPermission(
-        permissionRequest(dwarfId, permission, decision)
+      verdict = answerVerdictOf(
+        await window.api.answerDwarfPermission({
+          askId: toolUseId as AskId,
+          decision,
+          requestId: mintRequestId()
+        })
       )
     } catch {
-      result = { answered: false, error: LOST_BRIDGE }
+      verdict = { kind: 'refused', error: LOST_BRIDGE }
     }
-
-    state.byDwarfId[dwarfId] = result.answered
-      ? { phase: 'answered', toolUseId, decision }
-      : { phase: 'refused', toolUseId, decision, error: result.error ?? NOT_ANSWERED }
-    messaging.settleAnswer(dwarfId, recordId, verdictOf(result))
+    settle(dwarfId, toolUseId, recordId, verdict, decision)
   }
 
   function clear(dwarfId: string): void {

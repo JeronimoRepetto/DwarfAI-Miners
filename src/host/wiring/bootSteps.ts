@@ -66,6 +66,14 @@ export interface BootPorts {
    */
   constructModules?: () => void
   /**
+   * Step 6, the hook ingress half (16 §8.2; ADR-016 items 2–3): listens on 127.0.0.1 on the
+   * persisted `app_meta.ingress_port` (a new one when none is persisted or it is taken), after
+   * recovery (step 5) and before observation and `ready` (steps 7–8). The composition root passes
+   * `startHookIngressAtBoot` over the ingress step 4 built (wiring/hookIngress.ts, ISSUE-140). The
+   * MCP endpoint half is the delegation module's (later: ISSUE-209).
+   */
+  startHookIngress?: () => Promise<void>
+  /**
    * Step 7: `observation.catchUp()` then `start()` (16 §8.2; ADR-015 item 3), after recovery's
    * classification (step 5) and before `ready` (step 8). `ready` does not wait for the catch-up
    * pass, which may go on after it (16 §4.3 `catchUp`). The composition root passes it
@@ -154,6 +162,7 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     resumeResetSaga,
     reverifyConfigWrites,
     constructModules,
+    startHookIngress,
     startObservation,
     startModules,
     evaluateWelcome
@@ -193,7 +202,8 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
         },
     // 4. Construct the modules, wire bridges and event routes (05 §4), over the database step 2
     //    opened; each module joins in its own wiring issue (suppliers: ISSUE-159, mines: ISSUE-093,
-    //    crew: ISSUE-094, observation: ISSUE-095, attention: ISSUE-119). Every route that reads an
+    //    crew: ISSUE-094, observation: ISSUE-095, attention: ISSUE-119, asking: ISSUE-140, after
+    //    attention and before the cut-1 routes, with the hook ingress's route). Every route that reads an
     //    observation event is subscribed here, before step 7's catch-up publishes the first one.
     //    Attention's tray notifier supervisor starts here too, after step 1's endpoint is
     //    listening, fed with the clients already attached and every later attach and detach.
@@ -208,8 +218,19 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
         },
     // 5. launching.recoverAfterHostStart(): reconcile, verify, classify, report, cleanup.
     placeholder('recover-sessions', 'ISSUE-173'),
-    // 6. The MCP endpoint (DelegationServer.listen) and the hook ingress.
-    placeholder('start-endpoints', 'ISSUE-209'),
+    // 6. The hook ingress (ISSUE-140; wiring/hookIngress.ts): its listener on the stable port
+    //    (ADR-016 item 3), serving the route step 4 built, after recovery's classification so no
+    //    stale credential is accepted and before `ready` (16 §8.2). Its other half, the MCP
+    //    endpoint (DelegationServer.listen), is not built: the step names it as pending.
+    startHookIngress === undefined
+      ? placeholder('start-endpoints', 'ISSUE-209')
+      : {
+          name: 'start-endpoints',
+          run: async () => {
+            await startHookIngress()
+            return { kind: 'done', pending: { part: 'mcp-endpoint', owner: 'ISSUE-209' } }
+          }
+        },
     // 7. observation.catchUp(), then start() (ISSUE-095). The catch-up pass of what providers
     //    wrote while no Host ran may go on after `ready` (16 §4.3 `catchUp`).
     startObservation === undefined

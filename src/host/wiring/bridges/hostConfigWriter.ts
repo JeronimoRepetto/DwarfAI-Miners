@@ -5,7 +5,8 @@
 //   adapter, which host/main.ts constructs over the Host database. The hook entry points at the
 //   hook ingress's stable port (ADR-016 item 3: chosen when the first HTTP integration is enabled,
 //   persisted in `app_meta.ingress_port`). That port is chosen and persisted by the ingress itself,
-//   which boot step 6 starts (later: ISSUE-140, ISSUE-209). Until a port is persisted an enable
+//   which boot step 6 starts at every boot (wiring/hookIngress.ts, ISSUE-140). Until a port is
+//   persisted (a first boot whose ingress could not bind, 13 FM-038) an enable
 //   fails closed here, before the engine's Tx A: nothing is written, no `config_writes` row and no
 //   token hash is issued, the integration stays `off`, and the command answers
 //   `config-write-failed` (16 §7.3 Tx B failure, the same outcome). An entry pointing at a port

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import type { DwarfId, MessageId, MineId } from '@dwarfai/contracts'
+import type { AskId, DwarfId, MessageId, MineId } from '@dwarfai/contracts'
 import type { DwarfAiMinersApi } from './index'
 
 /**
@@ -289,171 +289,72 @@ describe('preload project-query contract', () => {
 })
 
 /**
- * Answering what a held session asked (#94, #125). The payload is rebuilt here
- * field by field, and the record entry by entry, because an answer releases a
- * tool call a live agent is blocked inside: what crosses must be string pairs
- * or nothing, so main's own check against the ask can refuse a shape without
- * ever having to reason about a coerced one.
+ * Answering what a session asked (#94, #125).
+ *
+ * AMENDED for ISSUE-141 (was: today's payload rebuilt field by field, the record entry by entry, string pairs or
+ * nothing): from the cut-2 switch A-40 has its 14 shape (`AnswerQuestionParams`, 14 §3.4), and the generated preload
+ * hands a target-shape request across unchanged, as it does every target row: main's seam A gate parses it with the
+ * row's strict schema before anything is served (ADR-019 items 7, 8; validate.ts), so the bridge's own coercion of
+ * today's shape left with today's shape (docs/test-removals.md).
  */
 describe('preload question-answer contract', () => {
   const answer = {
-    dwarfId: 'claude:s1',
-    toolUseId: 'toolu_01',
-    answers: { 'Which database?': 'Postgres' }
+    askId: '01920000-0000-7000-9000-0000000000a5' as AskId,
+    answers: [{ step: 0, option: 'Postgres' }],
+    requestId: '01920000-0000-7000-a000-000000000141'
   }
 
-  it('answers on the agent:answerQuestion channel, naming the dwarf and the ask', async () => {
-    invoke.mockResolvedValueOnce({ answered: true })
-    await api.answerDwarfQuestion(answer)
-    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', answer)
-  })
-
-  it('collapses a non-string dwarf or tool-use id before it crosses the bridge', async () => {
-    // Same discipline as retireDwarf: main's boundary check should only ever
-    // have to reason about a clean string.
-    invoke.mockResolvedValueOnce({ answered: false, error: 'That question is no longer open.' })
-    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
-      dwarfId: 42,
-      toolUseId: null,
-      answers: {}
-    })
-    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
-      dwarfId: '',
-      toolUseId: '',
-      answers: {}
-    })
-  })
-
-  it('drops an answer value that is not a string rather than coercing it', async () => {
-    // A coerced value would name an option nobody chose. Dropped, main sees an
-    // answer that names no option for that question and refuses it — the right
-    // end for a payload the user never gave.
-    invoke.mockResolvedValueOnce({ answered: false, error: 'That question is no longer open.' })
-    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Which database?': 7, 'Which port?': '5432' }
-    })
-    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Which port?': '5432' }
-    })
-  })
-
-  /*
-   * ADDED for #635 (PO decision 2026-09-28, held free-text answers): a held walk's steps answered
-   * in the person's own words ride beside the labels as `ownWords`, rebuilt from string pairs like
-   * `answers`. The bridge once rebuilt `answers` alone, so the words never reached main and the
-   * walk was refused as unanswered — found in the built app, where no test could see it.
-   */
-  it('carries the own-words record beside the labels, string pairs only', async () => {
-    invoke.mockResolvedValueOnce({ answered: true })
-    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Run the tests after?': 'Yes' },
-      ownWords: { 'Which database?': 'MariaDB please', 'Which port?': 5432 }
-    })
-    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Run the tests after?': 'Yes' },
-      ownWords: { 'Which database?': 'MariaDB please' }
-    })
-  })
-
-  it('sends no own-words record when the answer carries none', async () => {
-    invoke.mockResolvedValueOnce({ answered: true })
+  it('answers on the agent:answerQuestion channel, naming the ask', async () => {
+    invoke.mockResolvedValueOnce({ ok: true, value: { kind: 'accepted' } })
     await api.answerDwarfQuestion(answer)
     expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', answer)
   })
 
   it('hands back the refusal and its reason rather than a bare false', async () => {
-    // The panel has to be able to say WHY an answer did not land — an ask that
-    // has since been withdrawn reads nothing like a session nobody holds.
-    const refused = { answered: false, error: 'That session is not one this panel is holding.' }
+    // The panel still learns WHY an answer did not land: the outcome's reason, unchanged (ADR-010 item 5).
+    const refused = { ok: true, value: { kind: 'refused', reason: 'channel-rejected' } }
     invoke.mockResolvedValueOnce(refused)
     await expect(api.answerDwarfQuestion(answer)).resolves.toEqual(refused)
   })
 
   /*
-   * The person's own words, for the picker's "Other" row (#481). The second
-   * form this channel carries, and it crosses as ONE field: the bridge sends
-   * the form it was given and never both, so a payload can only ever say one
-   * thing about what was answered.
+   * The person's own words, for the picker's "Other" row (#481): in the 14 shape the step's `freeText`, beside no
+   * option of that step.
    */
   it('carries a typed answer as its own field, with no record beside it', async () => {
-    invoke.mockResolvedValueOnce({ answered: true })
-    await api.answerDwarfQuestion({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      text: 'neither — put it in Redis'
-    })
-    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      text: 'neither — put it in Redis'
-    })
-  })
-
-  it('drops a typed answer that is not a string rather than coercing it', async () => {
-    // A coerced one would hand the agent a sentence the person never wrote.
-    // Dropped, the payload carries neither form and main refuses its shape.
-    invoke.mockResolvedValueOnce({ answered: false, error: 'That answer could not be delivered.' })
-    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      text: 42
-    })
-    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01'
-    })
+    invoke.mockResolvedValueOnce({ ok: true, value: { kind: 'accepted' } })
+    const typed = { ...answer, answers: [{ step: 0, freeText: 'neither — put it in Redis' }] }
+    await api.answerDwarfQuestion(typed)
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', typed)
   })
 })
 
 /**
- * Deciding a permission prompt a held session raised (#203). Rebuilt field by
- * field, exactly as answerDwarfQuestion's payload is: `decision` is a closed
- * word main re-checks against DwarfPermissionDecision, so nothing this bridge
- * could not validate itself is allowed to ride across uncoerced.
+ * Deciding a permission prompt (#203).
+ *
+ * AMENDED for ISSUE-141 (was: today's payload rebuilt field by field): A-41 has its 14 shape
+ * (`AnswerPermissionParams`) from the cut-2 switch; main's seam A gate checks the closed `decision` word (Allow or Deny
+ * only, INV-73) before anything is served.
  */
 describe('preload permission-decision contract (#203)', () => {
-  const request = { dwarfId: 'claude:s1', toolUseId: 'toolu_p1', decision: 'allow' as const }
+  const request = {
+    askId: 'legacy:toolu_p1' as AskId,
+    decision: 'allow' as const,
+    requestId: '01920000-0000-7000-a000-000000000141'
+  }
 
   it('exposes the function beside answerDwarfQuestion', () => {
     expect(typeof api.answerDwarfPermission).toBe('function')
   })
 
   it('decides on the agent:answerPermission channel, naming the dwarf, the tool call and the decision', async () => {
-    invoke.mockResolvedValueOnce({ answered: true })
+    invoke.mockResolvedValueOnce({ ok: true, value: { kind: 'accepted' } })
     await api.answerDwarfPermission(request)
     expect(invoke).toHaveBeenLastCalledWith('agent:answerPermission', request)
   })
 
-  it('collapses a non-string dwarf id, tool-use id or decision before it crosses the bridge', async () => {
-    // Same discipline as answerDwarfQuestion: main's boundary check should
-    // only ever have to reason about clean strings, and an empty decision is
-    // refused there rather than defaulted to one the user never chose.
-    invoke.mockResolvedValueOnce({
-      answered: false,
-      error: 'That permission request is no longer open.'
-    })
-    await (api.answerDwarfPermission as unknown as (value: unknown) => Promise<unknown>)({
-      dwarfId: 42,
-      toolUseId: null,
-      decision: undefined
-    })
-    expect(invoke).toHaveBeenLastCalledWith('agent:answerPermission', {
-      dwarfId: '',
-      toolUseId: '',
-      decision: ''
-    })
-  })
-
   it('hands back the refusal and its reason rather than a bare false', async () => {
-    const refused = { answered: false, error: 'That session is not one this panel is holding.' }
+    const refused = { ok: true, value: { kind: 'refused', reason: 'channel-rejected' } }
     invoke.mockResolvedValueOnce(refused)
     await expect(api.answerDwarfPermission(request)).resolves.toEqual(refused)
   })

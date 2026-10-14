@@ -11,6 +11,7 @@ import { MESSAGE_COPIED } from '../lib/delivery/deliveryVerdict'
 import { shouldHidePanelAfterActivation } from '../lib/delivery/activation'
 import { feedMessagesOf } from '../lib/message/conversation'
 import { joinFeedPages } from '../lib/message/feedPages'
+import { shownAskOf } from '../lib/message/askCard'
 import type { AskAnswer } from '../lib/question/questionAnswer'
 import type {
   Dwarf,
@@ -84,7 +85,8 @@ export function useMessageDock() {
     state: questionState,
     answer: answerDwarfQuestion,
     answerWithText: answerDwarfQuestionWithText,
-    decide: decideDwarfPermission
+    decide: decideDwarfPermission,
+    frontAsk
   } = useDwarfQuestion()
   const launch = useAgentLaunch()
 
@@ -387,24 +389,37 @@ export function useMessageDock() {
   }
 
   /**
-   * Answer the question that dwarf's agent is blocked on (#125). The question is drawn from the
-   * dwarf's own `pendingQuestion`, and only main's next snapshot may drop it.
+   * The ask card the MessagePanel draws for that dwarf (lib/message/askCard.ts): its front card of the dual-source read
+   * model, a Host ask or a legacy card, else the board's own ask. AMENDED for ISSUE-141 (was: the dwarf's own
+   * `pendingQuestion` / `pendingPermission` only, so a Host card could not be answered): the dock answers exactly the
+   * card on screen, by that card's own id.
+   */
+  function shownAsk(dwarf: Dwarf) {
+    return shownAskOf(frontAsk(dwarf.id), dwarf)
+  }
+
+  /**
+   * Answer the question that dwarf's agent is blocked on (#125). The question is the card the panel draws, and only
+   * the Host's frames (or main's next board, for a legacy card) may drop it.
    */
   function answerQuestion(dwarf: Dwarf, label: AskAnswer): void {
-    if (dwarf.pendingQuestion === undefined) return
-    void answerDwarfQuestion(dwarf.id, dwarf.pendingQuestion, label)
+    const shown = shownAsk(dwarf)
+    if (shown?.kind !== 'question') return
+    void answerDwarfQuestion(dwarf.id, shown.question, label)
   }
 
   /** Answer that dwarf's ask in the person's own words (#481): an answer, never a message. */
   function answerQuestionInWords(dwarf: Dwarf, text: string): void {
-    if (dwarf.pendingQuestion === undefined) return
-    void answerDwarfQuestionWithText(dwarf.id, dwarf.pendingQuestion, text)
+    const shown = shownAsk(dwarf)
+    if (shown?.kind !== 'question') return
+    void answerDwarfQuestionWithText(dwarf.id, shown.question, text)
   }
 
-  /** Release the tool call that dwarf's held session is blocked on (#203). */
+  /** Release the tool call that dwarf's session is blocked on (#203): Allow or Deny only (INV-73). */
   function decidePermission(dwarf: Dwarf, decision: DwarfPermissionDecision): void {
-    if (dwarf.pendingPermission === undefined) return
-    void decideDwarfPermission(dwarf.id, dwarf.pendingPermission, decision)
+    const shown = shownAsk(dwarf)
+    if (shown?.kind !== 'permission') return
+    void decideDwarfPermission(dwarf.id, shown.permission, decision)
   }
 
   /** Bring the session's own console forward, and say so when it could not be (#159). */

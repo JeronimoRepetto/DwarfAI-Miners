@@ -17,6 +17,8 @@ import {
   type StepId
 } from '@dwarfai/contracts'
 import {
+  composeAskAnswers,
+  composeAskStepAndIntegrationRows,
   composeBoardFacade,
   composeLegacyAgentRegistryFeed,
   composeLegacyAskRelay,
@@ -27,19 +29,28 @@ import {
   composePresence,
   composeResetFanout,
   composeStopAllRelay,
+  legacyClaudeHooksComposed,
+  type LegacyAskRelayComposition,
   type LegacyRuntimeSurface
 } from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
 import { createStopEverything } from '../window/application/stopEverything'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { CUT_1_ROLLBACK } from '../../contracts/strangler'
+import { CUT_1_ROLLBACK, CUT_2_ROLLBACK } from '../../contracts/strangler'
 import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
 import { rollbackOf } from './rollbackTable'
 import { createRouter } from './router'
+import { resolveRoute } from './routeResolver'
 import { CUT_0_ROUTES, CUT_0_TABLE, CUT_0_UI_LOCAL_IDS, CUT_0_UNROUTED } from './testing/cut0Routes'
+import {
+  CUT_1_HOST_ROUTE_MEMBERS,
+  CUT_1_ROUTES,
+  CUT_1_TABLE,
+  CUT_1_UNROUTED
+} from './testing/cut1Routes'
 import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import {
   HOST_ROUTE_MEMBERS,
@@ -124,7 +135,14 @@ describe('pre-cut table', () => {
     for (const key of KEYS) {
       const routes = ROUTES.filter((r) => r.channel === key)
       // AMENDED for ISSUE-123 (was: a route or an unrouted entry): or one retired entry (`RETIRED`, lead resolution H1).
-      expect(routes.length + (UNROUTED[key] ? 1 : 0) + (RETIRED[key] ? 1 : 0), key).toBe(1)
+      // AMENDED for ISSUE-141 (was: `routes.length + … toBe(1)`): from cut 2 a qualified channel (A-40, A-41) has one
+      // route per qualifier, so a key has its routes, one per qualifier, or else one unrouted or retired entry.
+      const pairs = new Set(routes.map((r) => JSON.stringify(r.qualifier ?? {})))
+      expect(pairs.size, key).toBe(routes.length)
+      expect(
+        (routes.length > 0 ? 1 : 0) + (UNROUTED[key] ? 1 : 0) + (RETIRED[key] ? 1 : 0),
+        key
+      ).toBe(1)
     }
   })
 
@@ -971,9 +989,11 @@ describe('cut-1 legacy composition', () => {
       shapeAdapter: false
     })
     // A-40 and A-41 stay `legacy` with today's shape in this release (21 §2 cut 1 "Legacy still serves").
+    // AMENDED for ISSUE-141 (was: `ROUTES`, the cut-1 release table): from the cut-2 switch the release table is cut
+    // 2's, so this pins the cut-1 table as it shipped (`testing/cut1Routes.ts`); cut 2 is pinned below.
     for (const key of ['agent:answerQuestion', 'agent:answerPermission'] as ChannelKey[]) {
       expect(
-        ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
+        CUT_1_ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
         key
       ).toEqual([['legacy', 'today']])
     }
@@ -1333,13 +1353,14 @@ describe('cut-1 rollback (21 §2 cut 1)', () => {
   // cut-1 release cases read the same rule.
 
   /** A cut-1 table as its switch would build it from this table: the cut-1 NEW rows born, A-19 moved to the Host. */
+  // AMENDED for ISSUE-141 (was: built from `preCut`, `ROUTES` and `UNROUTED`, the release table): from the cut-2 switch
+  // the release table is cut 2's, so the cut-1 table is built from the cut-1 table as it shipped (`testing/cut1Routes.ts`).
   const cut1: RouteTable = {
-    ...preCut,
-    release: 'cut-1',
+    ...CUT_1_TABLE,
     routes: [
-      ...ROUTES.filter((r) => r.channel !== 'mine:history'),
+      ...CUT_1_ROUTES.filter((r) => r.channel !== 'mine:history'),
       { channel: 'mine:history', owner: 'host', since: 'cut-1', parity: 'passed', shape: 'target' },
-      ...(Object.entries(UNROUTED) as [ChannelKey, StepId][])
+      ...(Object.entries(CUT_1_UNROUTED) as [ChannelKey, StepId][])
         .filter(([, step]) => step === 'cut-1')
         .map(([channel]): ChannelRoute => ({
           channel,
@@ -1350,7 +1371,7 @@ describe('cut-1 rollback (21 §2 cut 1)', () => {
         }))
     ],
     unrouted: Object.fromEntries(
-      Object.entries(UNROUTED).filter(([, step]) => step !== 'cut-1')
+      Object.entries(CUT_1_UNROUTED).filter(([, step]) => step !== 'cut-1')
     ) as RouteTable['unrouted']
   }
 
@@ -1401,11 +1422,14 @@ describe('cut-1 rollback (21 §2 cut 1)', () => {
 })
 
 // AMENDED for ISSUE-123 (appended): the cut-1 route switch (21 §2 cut 1; TC-123-01, TC-123-06).
+// AMENDED for ISSUE-141 (was: the release table `ROUTES` / `ROUTES_RELEASE` / `UNROUTED` / `HOST_ROUTE_MEMBERS`): from
+// the cut-2 switch the release table is cut 2's, so these cases prove the cut-1 table as it shipped
+// (`testing/cut1Routes.ts`), as ISSUE-123 did for cut 0; `describe('release cut 2')` pins the release table.
 describe('release cut 1 (21 §2 cut 1)', () => {
   const cut1: RouteTable = {
-    release: ROUTES_RELEASE,
-    routes: ROUTES,
-    unrouted: UNROUTED,
+    release: 'cut-1',
+    routes: CUT_1_ROUTES,
+    unrouted: CUT_1_UNROUTED,
     retired: RETIRED,
     adapters: LEGACY_BRIDGE_ADAPTERS
   }
@@ -1415,7 +1439,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     expect(keys, id).toHaveLength(1)
     return keys[0] as ChannelKey
   }
-  const routeOf = (key: ChannelKey): ChannelRoute[] => ROUTES.filter((r) => r.channel === key)
+  const routeOf = (key: ChannelKey): ChannelRoute[] => CUT_1_ROUTES.filter((r) => r.channel === key)
   const bornIn1 = (
     channel: ChannelKey,
     owner: ChannelRoute['owner'],
@@ -1468,7 +1492,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
   }
 
   it('[ADR-001] in cut 1 A-N01, A-N02, A-15, A-19, A-31 and A-34 route host with shape target', async () => {
-    expect(ROUTES_RELEASE).toBe('cut-1')
+    expect(cut1.release).toBe('cut-1')
     expect(checkRouteTable(cut1, KEYS)).toEqual([])
     for (const id of ['A-N01', 'A-N02', 'A-15', 'A-19', 'A-31', 'A-34']) {
       const key = keyOf(id)
@@ -1481,7 +1505,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     const pushed: Array<[string, unknown]> = []
     const macrotasks: Array<() => void> = []
     const reads = composeHostReads({
-      routes: ROUTES,
+      routes: CUT_1_ROUTES,
       client: client as unknown as Parameters<typeof composeHostReads>[0]['client'],
       windows: () => [
         {
@@ -1493,7 +1517,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     })
     expect(reads?.part.channels).toEqual(['host:snapshot', 'dwarf:feed:page', 'mine:history'])
     const router = createRouter({
-      routes: ROUTES.filter((r) => (reads?.part.channels ?? []).includes(r.channel)),
+      routes: CUT_1_ROUTES.filter((r) => (reads?.part.channels ?? []).includes(r.channel)),
       legacy: { serve: () => Promise.reject(new Error('never legacy')) },
       ...(reads === undefined ? {} : { host: reads.part.target }),
       senders
@@ -1521,8 +1545,8 @@ describe('release cut 1 (21 §2 cut 1)', () => {
 
     // A-31 and A-34 are mines admin rows of the `host` target (A-20, A-30 and A-32 are pinned below).
     const admin = composeMinesAdmin({
-      routes: ROUTES,
-      release: ROUTES_RELEASE,
+      routes: CUT_1_ROUTES,
+      release: 'cut-1',
       client: client as unknown as Parameters<typeof composeMinesAdmin>[0]['client'],
       native: {
         chooseFolder: async () => '/work/moria',
@@ -1574,8 +1598,8 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     }
     const bridge = { toLegacy: async () => null }
     const admin = composeMinesAdmin({
-      routes: ROUTES,
-      release: ROUTES_RELEASE,
+      routes: CUT_1_ROUTES,
+      release: 'cut-1',
       client: recorded,
       native,
       legacy,
@@ -1583,7 +1607,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       newRequestId: () => '01890a5d-ac96-774b-bcce-b302099a8001'
     })
     const router = createRouter({
-      routes: ROUTES.filter((r) => (admin?.part.channels ?? []).includes(r.channel)),
+      routes: CUT_1_ROUTES.filter((r) => (admin?.part.channels ?? []).includes(r.channel)),
       legacy: { serve: () => Promise.reject(new Error('never legacy')) },
       ...(admin === undefined ? {} : { host: admin.part.target }),
       senders
@@ -1602,12 +1626,12 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     // A-32 is composed only with LegacyEndFirstAdapter in cut 1: without the dwarf id bridge or today's launched
     // register to join, the root composes no removal at all (21 §3; ISSUE-090).
     expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')?.cuts).toContain(
-      ROUTES_RELEASE
+      'cut-1'
     )
     const composedWith = (deps: Partial<Parameters<typeof composeMinesAdmin>[0]>) =>
       composeMinesAdmin({
-        routes: ROUTES,
-        release: ROUTES_RELEASE,
+        routes: CUT_1_ROUTES,
+        release: 'cut-1',
         client: recorded,
         native,
         legacy,
@@ -1636,7 +1660,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     // The root composes the facade as A-12's `host` handler, and it pushes A-P2.
     const { client } = recordingHost()
     const facade = composeBoardFacade({
-      routes: ROUTES,
+      routes: CUT_1_ROUTES,
       client,
       windows: () => [],
       defer: (run) => run()
@@ -1665,8 +1689,8 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     }
     const host = recordingHost()
     const adapters = composeResetFanout({
-      routes: ROUTES,
-      release: ROUTES_RELEASE,
+      routes: CUT_1_ROUTES,
+      release: 'cut-1',
       legacy,
       client: host.client as unknown as Parameters<typeof composeResetFanout>[0]['client'],
       now: () => 0
@@ -1674,10 +1698,10 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     expect(Object.keys(adapters ?? {})).toEqual(['ResetFanout'])
     // Without it the router does not start: a route naming a shape adapter needs it bound.
     expect(() =>
-      createRouter({ routes: ROUTES.filter((r) => r.channel === a33), legacy, senders })
+      createRouter({ routes: CUT_1_ROUTES.filter((r) => r.channel === a33), legacy, senders })
     ).toThrow()
     const router = createRouter({
-      routes: ROUTES.filter((r) => r.channel === a33),
+      routes: CUT_1_ROUTES.filter((r) => r.channel === a33),
       legacy,
       ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
       senders
@@ -1696,7 +1720,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     expect(RETIRED).toEqual(Object.fromEntries(retired.map((key) => [key, 'cut-1'])))
     const reached: string[] = []
     const router = createRouter({
-      routes: ROUTES,
+      routes: CUT_1_ROUTES,
       legacy: { serve: async (channel) => void reached.push(`legacy ${channel}`) },
       uiLocal: { serve: async (channel) => void reached.push(`ui-local ${channel}`) },
       host: { serve: async (channel) => void reached.push(`host ${channel}`) },
@@ -1716,7 +1740,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     const an16 = keyOf('A-N16')
     expect(CHANNELS[an16].kind).toBe('push')
     expect(routeOf(an16)).toEqual([bornIn1(an16, 'ui-local', 'n/a')])
-    expect(UNROUTED[an16]).toBeUndefined()
+    expect(CUT_1_UNROUTED[an16]).toBeUndefined()
   })
 
   it('[ADR-001] in cut 1 A-44, A-N17 to A-N21 and A-N12 route ui-local with shape target, and A-44 feeds presence', async () => {
@@ -1730,7 +1754,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     // AMENDED for ISSUE-221 (was: A-N33 only): A-N31, born `host` in cut 2, waits for the cut-2 switch (ISSUE-141).
     // AMENDED for ISSUE-129: A-N07, born `host` in cut 2, waits for the same switch.
     // AMENDED for ISSUE-223: A-N32, born `host` in cut 2, waits for the same switch.
-    expect(UNROUTED).toEqual({
+    expect(CUT_1_UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
       'claude:hooks:set': 'cut-2',
       'ask:step:set': 'cut-2',
@@ -1740,7 +1764,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     const host = recordingHost()
     const timers: Array<() => void> = []
     const presence = composePresence({
-      routes: ROUTES,
+      routes: CUT_1_ROUTES,
       client: host.client,
       timers: {
         after: (_ms, run) => {
@@ -1808,21 +1832,21 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     }
     expect(served.sort()).toEqual(retired.filter((key) => CHANNELS[key].kind !== 'push').sort())
     expect(rolledBack.routes.filter((r) => r.since === 'cut-0')).toEqual(
-      ROUTES.filter((r) => r.since === 'cut-0')
+      CUT_1_ROUTES.filter((r) => r.since === 'cut-0')
     )
   })
 
   it('[ADR-001] in cut 1 every host route uses only seam-B members born by cut 1 and none has parity pending', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
-    for (const route of ROUTES.filter((r) => r.owner === 'host')) {
+    for (const route of CUT_1_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = CUT_1_HOST_ROUTE_MEMBERS[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
         expect(born, `${member} has a birth release`).toBeDefined()
         expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
-          at(ROUTES_RELEASE)
+          at('cut-1')
         )
       }
     }
@@ -1845,7 +1869,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       'conversation.mineHistory': 'cut-1', // B-M27
       'strangler.dwarfIdentities': 'cut-1' // B-M41
     })
-    expect(HOST_ROUTE_MEMBERS).toEqual({
+    expect(CUT_1_HOST_ROUTE_MEMBERS).toEqual({
       'tray:stopEverything:confirm': ['host.shutdown'],
       'host:snapshot': ['session.snapshot'],
       'host:event': ['events.subscribe'],
@@ -1883,14 +1907,14 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       subscribe: () => () => {}
     } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client']
     const dwarfIds = composeLegacyDwarfIdBridge({
-      release: ROUTES_RELEASE,
+      release: 'cut-1',
       client,
       legacy: { serve: () => Promise.resolve(undefined) },
       registry: surface
     })
-    const relay = composeLegacyAskRelay({ release: ROUTES_RELEASE, dwarfIds })
+    const relay = composeLegacyAskRelay({ release: 'cut-1', dwarfIds })
     const feed = composeLegacyAgentRegistryFeed({
-      release: ROUTES_RELEASE,
+      release: 'cut-1',
       legacy: relay?.registry,
       timers: {
         every: (ms) => {
@@ -1968,13 +1992,8 @@ describe('cut-1 retirement (21 §2 cut 1)', () => {
   // today's observer composition leaves LegacyRuntimeRoute whatever the route table, so a table that routes the cut-1
   // rows `legacy` again composes none of it either: from here cut 1 rolls forward only. Only the registry-only
   // discovery of LegacyAgentRegistryFeed stays (21 §3, until the end of cut 4).
-  const cut1: RouteTable = {
-    release: ROUTES_RELEASE,
-    routes: ROUTES,
-    unrouted: UNROUTED,
-    retired: RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
-  }
+  // AMENDED for ISSUE-141 (was: the release table `ROUTES`, then cut 1's): the cut-1 table as it shipped.
+  const cut1: RouteTable = CUT_1_TABLE
   const SRC = resolve(import.meta.dirname, '../..')
   const legacyRoute = (): string =>
     readFileSync(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'), 'utf8')
@@ -2067,3 +2086,524 @@ describe('cut-1 notifier retirement (21 §2 cut 1)', () => {
     expect(root).toMatch(/new ElectronNotificationDisplay\(\{\s*notification: Notification,/)
   })
 })
+
+// AMENDED for ISSUE-141 (appended): the cut-2 route switch (21 §2 cut 2; TC-141-01, TC-141-06).
+describe('release cut 2 (21 §2 cut 2)', () => {
+  const cut2: RouteTable = {
+    release: ROUTES_RELEASE,
+    routes: ROUTES,
+    unrouted: UNROUTED,
+    retired: RETIRED,
+    adapters: LEGACY_BRIDGE_ADAPTERS
+  }
+  const routeOf = (key: ChannelKey): ChannelRoute[] => ROUTES.filter((r) => r.channel === key)
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const QUESTION = 'agent:answerQuestion' as const // A-40
+  const PERMISSION = 'agent:answerPermission' as const // A-41
+  const HOST_ASK = '01920000-0000-7000-9000-0000000000a5'
+  const REQUEST = '01920000-0000-7000-a000-000000000141'
+  const FOREMAN = '01920000-0000-7000-9000-0000000e0001'
+  const CODEX = '01920000-0000-7000-9000-0000000e0002'
+  const SESSION = 's-1'
+  const THREAD = 't-1'
+
+  /** Today's sessions: a held Claude permission (legacy-launch) and an observed Codex question (legacy-ask-channel). */
+  const LEGACY_SESSIONS = [
+    {
+      provider: 'claude',
+      sessionId: SESSION,
+      cwd: '/work/moria',
+      status: 'busy',
+      dwarfs: [
+        {
+          id: `claude:${SESSION}`,
+          provider: 'claude',
+          role: 'foreman',
+          name: 'Thorin',
+          status: 'waiting',
+          sessionId: SESSION,
+          pendingPermission: {
+            toolUseId: 'toolu_1',
+            toolName: 'Bash',
+            input: 'ls',
+            channel: 'held',
+            askedAt: '2026-10-14T10:00:00.000Z'
+          }
+        }
+      ],
+      updatedAt: 1
+    },
+    {
+      provider: 'codex',
+      sessionId: THREAD,
+      cwd: '/work/moria',
+      status: 'idle',
+      dwarfs: [
+        {
+          id: `codex:${THREAD}`,
+          provider: 'codex',
+          role: 'foreman',
+          name: 'Balin',
+          status: 'waiting',
+          sessionId: THREAD,
+          pendingQuestion: {
+            toolUseId: 'call_1',
+            channel: 'terminal',
+            questions: [
+              {
+                question: 'Which branch should I use?',
+                multiSelect: false,
+                options: [{ label: 'main' }, { label: 'develop' }]
+              }
+            ],
+            askedAt: '2026-10-14T10:00:01.000Z'
+          }
+        }
+      ],
+      updatedAt: 1
+    }
+  ]
+
+  /**
+   * The cut-2 answer path as the root composes it: today's runtime (recording, answering today's success) behind
+   * `LegacyDwarfIdBridge` and `LegacyAskRelay`, the A-40/A-41 `host` handlers over a recording HostClient, and the
+   * router registered over the release table with the answer qualifiers. `invoke` is the renderer's call on a row's
+   * wire.
+   */
+  // AMENDED for ISSUE-141 (verifier, 2026-10-14; was: no parameter, the release table's routes): the routes to compose
+  // and route over, so the rollback build's table can be driven with the renderer's own payloads too.
+  async function answerWorld(table: readonly ChannelRoute[] = ROUTES) {
+    const legacyServed: Array<[string, unknown]> = []
+    const hostCalls: Array<[string, unknown]> = []
+    const client = {
+      call: (method: string, params: unknown) => {
+        if (method === 'strangler.dwarfIdentities') {
+          return Promise.resolve([
+            {
+              dwarfId: FOREMAN,
+              providerId: 'claude',
+              identity: { providerId: 'claude', providerSessionId: SESSION }
+            },
+            {
+              dwarfId: CODEX,
+              providerId: 'codex',
+              identity: { providerId: 'codex', providerSessionId: THREAD }
+            }
+          ])
+        }
+        hostCalls.push([method, params])
+        return Promise.resolve({ kind: 'accepted' })
+      },
+      subscribe: () => () => {}
+    }
+    const legacy = {
+      serve: (channel: string, payload: unknown) => {
+        legacyServed.push([channel, payload])
+        return Promise.resolve({ answered: true })
+      }
+    }
+    const surface: LegacyRuntimeSurface = {
+      pollIntervalMs: 2_000,
+      discovery: [],
+      registry: { replace: () => {} },
+      board: { publish: () => {} },
+      ledger: { credit: () => {} },
+      projects: { record: () => {} },
+      notifier: { update: () => {} }
+    }
+    const dwarfIds = composeLegacyDwarfIdBridge({
+      release: ROUTES_RELEASE,
+      client: client as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client'],
+      legacy,
+      registry: surface
+    })
+    const relay = composeLegacyAskRelay({ release: ROUTES_RELEASE, dwarfIds })
+    relay?.registry.registry.replace(
+      LEGACY_SESSIONS as unknown as Parameters<LegacyRegistryReplace>[0]
+    )
+    await relay?.whenIdle()
+    const answers = composeAskAnswers({
+      routes: table,
+      release: ROUTES_RELEASE,
+      client: client as unknown as Parameters<typeof composeAskAnswers>[0]['client'],
+      relay,
+      log: { record: () => {} }
+    })
+    const handlers = new Map<string, (event: typeof FROM_PANEL, payload: unknown) => unknown>()
+    createRouter({
+      routes: table.filter((r) => r.channel === QUESTION || r.channel === PERMISSION),
+      legacy: relay?.legacy ?? legacy,
+      ...(answers?.part === undefined ? {} : { host: answers.part.target }),
+      ...(answers === undefined ? {} : { shapeAdapters: answers.shapeAdapters }),
+      ...(answers === undefined ? {} : { qualifiers: answers.qualifiers }),
+      senders
+    }).register({
+      handle: (wire, listener) => void handlers.set(wire, listener),
+      on: () => {}
+    })
+    const invoke = (wire: string, payload: unknown) => {
+      const listener = handlers.get(wire)
+      if (listener === undefined) throw new Error(`no listener for ${wire}`)
+      return listener(FROM_PANEL, payload)
+    }
+    const dispose = () => {
+      relay?.dispose()
+      dwarfIds?.dispose()
+    }
+    return { answers, invoke, legacyServed, hostCalls, dispose }
+  }
+
+  it('[ADR-001] in cut 2 A-40 and A-41 route host with shape target for Host AskIds and legacy through LegacyAnswerShapeAdapter for legacy: AskIds, one owner per qualifier', async () => {
+    expect(ROUTES_RELEASE).toBe('cut-2')
+    expect(checkRouteTable(cut2, KEYS)).toEqual([])
+    for (const key of [QUESTION, PERMISSION]) {
+      // One owner per (channel, qualifier) (21 §1 item 2): the Host for its own AskIds, today's runtime through the
+      // shape adapter for each origin of the relay's `legacy:` namespace (21 §2 cut 2 "Qualified routes").
+      expect(routeOf(key), key).toEqual([
+        { channel: key, owner: 'host', since: 'cut-2', parity: 'passed', shape: 'target' },
+        {
+          channel: key,
+          owner: 'legacy',
+          since: 'cut-2',
+          parity: 'n/a',
+          qualifier: { origin: 'legacy-launch' },
+          shape: 'target',
+          shapeAdapter: 'LegacyAnswerShapeAdapter'
+        },
+        {
+          channel: key,
+          owner: 'legacy',
+          since: 'cut-2',
+          parity: 'n/a',
+          qualifier: { origin: 'legacy-ask-channel' },
+          shape: 'target',
+          shapeAdapter: 'LegacyAnswerShapeAdapter'
+        }
+      ])
+      expect(resolveRoute(ROUTES, key)?.owner, key).toBe('host')
+      for (const origin of ['legacy-launch', 'legacy-ask-channel'] as const) {
+        expect(resolveRoute(ROUTES, key, { origin })?.shapeAdapter, `${key} ${origin}`).toBe(
+          'LegacyAnswerShapeAdapter'
+        )
+      }
+    }
+
+    // Through the root's composition: the qualifier is the relay's AskId namespace and origin, never a guess.
+    const world = await answerWorld()
+    expect(world.answers?.part?.channels).toEqual([QUESTION, PERMISSION])
+    expect(Object.keys(world.answers?.shapeAdapters ?? {})).toEqual(['LegacyAnswerShapeAdapter'])
+    const accepted = { ok: true, value: { kind: 'accepted' } }
+    // A legacy-launched session's permission (origin legacy-launch) reaches today's runtime with today's ids.
+    expect(
+      await world.invoke(PERMISSION, {
+        askId: 'legacy:toolu_1',
+        decision: 'allow',
+        requestId: REQUEST
+      })
+    ).toEqual(accepted)
+    // An observed Codex question (origin legacy-ask-channel) reaches today's runtime too.
+    expect(
+      await world.invoke(QUESTION, {
+        askId: 'legacy:call_1',
+        answers: [{ step: 0, option: 'develop' }],
+        requestId: REQUEST
+      })
+    ).toEqual(accepted)
+    expect(world.legacyServed).toEqual([
+      [PERMISSION, { dwarfId: `claude:${SESSION}`, toolUseId: 'toolu_1', decision: 'allow' }],
+      [
+        QUESTION,
+        {
+          dwarfId: `codex:${THREAD}`,
+          toolUseId: 'call_1',
+          answers: { 'Which branch should I use?': 'develop' }
+        }
+      ]
+    ])
+    // A Host AskId goes to the broker with the renderer's payload unchanged, and never to today's runtime.
+    const hostPermission = { askId: HOST_ASK, decision: 'deny', requestId: REQUEST }
+    expect(await world.invoke(PERMISSION, hostPermission)).toEqual(accepted)
+    expect(world.hostCalls).toEqual([['asking.answerPermission', hostPermission]])
+    // A `legacy:` id the relay does not hold now is stale: not-open, and it reaches neither side.
+    expect(
+      await world.invoke(PERMISSION, {
+        askId: 'legacy:toolu_gone',
+        decision: 'allow',
+        requestId: REQUEST
+      })
+    ).toEqual({ ok: true, value: { kind: 'not-open' } })
+    expect(world.legacyServed).toHaveLength(2)
+    expect(world.hostCalls).toHaveLength(1)
+    world.dispose()
+  })
+
+  // ADDED for ISSUE-141 (verifier finding, 2026-10-14): the rollback build keeps this tree's preload and renderer, which
+  // send A-40/A-41 in the 14 target shape; its table must still reach today's runtime with exactly those payloads.
+  it("[ADR-001, US-ASK-003.AC07] in a cut-2 rollback build the renderer's own A-40/A-41 payloads reach today's runtime through LegacyAnswerShapeAdapter", async () => {
+    const rolledBack = rollbackOf(cut2, 'cut-2')
+    const world = await answerWorld(rolledBack.routes)
+    const accepted = { ok: true, value: { kind: 'accepted' } }
+    expect(
+      await world.invoke(PERMISSION, {
+        askId: 'legacy:toolu_1',
+        decision: 'allow',
+        requestId: REQUEST
+      })
+    ).toEqual(accepted)
+    expect(
+      await world.invoke(QUESTION, {
+        askId: 'legacy:call_1',
+        answers: [{ step: 0, option: 'develop' }],
+        requestId: REQUEST
+      })
+    ).toEqual(accepted)
+    expect(world.legacyServed).toEqual([
+      [PERMISSION, { dwarfId: `claude:${SESSION}`, toolUseId: 'toolu_1', decision: 'allow' }],
+      [
+        QUESTION,
+        {
+          dwarfId: `codex:${THREAD}`,
+          toolUseId: 'call_1',
+          answers: { 'Which branch should I use?': 'develop' }
+        }
+      ]
+    ])
+    // Nothing reaches the Host: the rollback build routes no answer there.
+    expect(world.hostCalls).toEqual([])
+    world.dispose()
+  })
+
+  // ADDED for ISSUE-141 (verifier finding, 2026-10-14): wherever the table names `LegacyAnswerShapeAdapter` the root binds
+  // it, even with no `LegacyAskRelay` composed, so the router never refuses to start (`router: no shape adapter`).
+  it('[ADR-001] with no relay composed the router still starts over the cut-2 table and its rollback, and a legacy: answer is not-open', async () => {
+    const client = { call: () => Promise.resolve({ kind: 'accepted' }) }
+    for (const table of [cut2, rollbackOf(cut2, 'cut-2')]) {
+      const answers = composeAskAnswers({
+        routes: table.routes,
+        release: ROUTES_RELEASE,
+        client: client as unknown as Parameters<typeof composeAskAnswers>[0]['client'],
+        relay: undefined,
+        log: { record: () => {} }
+      })
+      const reached: string[] = []
+      const router = createRouter({
+        routes: table.routes.filter((r) => r.channel === QUESTION || r.channel === PERMISSION),
+        legacy: { serve: async (channel) => void reached.push(`legacy ${channel}`) },
+        ...(answers?.part === undefined ? {} : { host: answers.part.target }),
+        shapeAdapters: answers?.shapeAdapters ?? {},
+        qualifiers: answers?.qualifiers ?? {},
+        senders
+      })
+      // As `register` does: the root's qualifier of the payload picks the route.
+      const payload = { askId: 'legacy:toolu_1', decision: 'allow', requestId: REQUEST }
+      const qualifier = answers?.qualifiers[PERMISSION]?.(payload) ?? {}
+      expect(
+        await router.dispatch(PERMISSION, FROM_PANEL, payload, qualifier),
+        table.release
+      ).toEqual({ ok: true, value: { kind: 'not-open' } })
+      expect(reached).toEqual([])
+    }
+  })
+
+  it('[ADR-001] in cut 2 A-N07, A-N31 and A-N32 exist and route host', async () => {
+    const born: ChannelKey[] = ['ask:step:set', 'claude:hooks:set', 'welcome:answer']
+    for (const key of born) {
+      expect(CHANNELS[key].status, key).toBe('new')
+      expect(routeOf(key), key).toEqual([
+        { channel: key, owner: 'host', since: 'cut-2', parity: 'passed', shape: 'target' }
+      ])
+    }
+    // Only A-N33 is still unrouted (AMENDMENT-11): the cut-2 entries are routed by this switch (ISSUE-043 rule).
+    expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
+    // The root composes their `host` handlers, each relaying its one seam-B member.
+    const sent: Array<[string, unknown]> = []
+    const replies: Record<string, unknown> = {
+      'asking.setStep': {},
+      'preferences.setClaudeHooks': { ok: true, value: { state: 'on-verified' } },
+      'preferences.answerWelcome': {
+        integrations: {
+          'claude-hooks': { state: 'on-verified' },
+          'opencode-permissions': { state: 'off' }
+        },
+        welcome: { due: false, legacyFound: [], offered: ['claude-hooks'] }
+      }
+    }
+    const client = {
+      call: (method: string, params: unknown) => {
+        sent.push([method, params])
+        return Promise.resolve(replies[method])
+      }
+    } as unknown as Parameters<typeof composeAskStepAndIntegrationRows>[0]['client']
+    const rows = composeAskStepAndIntegrationRows({ routes: ROUTES, client })
+    expect(rows?.channels).toEqual(born)
+    const router = createRouter({
+      routes: ROUTES.filter((r) => born.includes(r.channel)),
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(rows === undefined ? {} : { host: rows.target }),
+      senders
+    })
+    const payloads: Record<string, unknown> = {
+      'ask:step:set': { askId: HOST_ASK, step: 1 },
+      'claude:hooks:set': { on: true, requestId: REQUEST },
+      'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: REQUEST }
+    }
+    for (const key of born) {
+      const answer = await router.dispatch(key, FROM_PANEL, payloads[key])
+      expect(CHANNELS[key].response.safeParse(answer).success, key).toBe(true)
+      expect((answer as { ok: boolean }).ok, key).toBe(true)
+    }
+    expect(sent.map(([method]) => method)).toEqual([
+      'asking.setStep',
+      'preferences.setClaudeHooks',
+      'preferences.answerWelcome'
+    ])
+    // Before the switch the root composes none of them (the cut-1 table leaves them unrouted).
+    expect(composeAskStepAndIntegrationRows({ routes: CUT_1_ROUTES, client })).toBeUndefined()
+  })
+
+  it('[ADR-001] in cut 2 the legacy hook installer and the Claude half of the legacy hook channel are not composed, and the OpenCode plugin route still is', () => {
+    // TC-141-06: the root derives the legacy Claude hook composition from the route table (21 §1 item 4, §4 row
+    // "Claude hook entry": the Host is that entry's only writer from cut 2).
+    expect(legacyClaudeHooksComposed(ROUTES)).toBe(false)
+    expect(legacyClaudeHooksComposed(CUT_1_ROUTES)).toBe(true)
+    // LegacyRuntimeRoute builds today's Claude HookChannel (installer and restore) only through the switch, and the
+    // shared listener's Claude events reach today's permission registry only through it; the OpenCode plugin channel
+    // and its route of the shared listener are composed whatever the table (until 4a). The switch's behaviour is
+    // proven in src/legacy-bridge/legacyClaudeHooksSwitch.test.ts.
+    const SRC = resolve(import.meta.dirname, '../..')
+    const route = readFileSync(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'), 'utf8')
+    expect(route).toMatch(/legacyClaudeHookComposition\(options\.claudeHooks/)
+    expect(route).not.toMatch(/=\s*new HookChannel\(/)
+    expect(route).toMatch(/onEvent: \(event\) => claude\.onEvent\(event\)/)
+    expect(route).toMatch(/new OpenCodePluginChannel\(\{[^}]*listener: hookListener/s)
+    // The root hands the decision to today's composition.
+    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
+    expect(root).toMatch(/claudeHooks: legacyClaudeHooksComposed\(ROUTES\)/)
+  })
+
+  it('[ADR-001] in cut 2 every host route uses only seam-B members born by cut 2 and none has parity pending', () => {
+    const at = (step: StepId) => STEP_ORDER.indexOf(step)
+    for (const route of ROUTES.filter((r) => r.owner === 'host')) {
+      expect(route.parity, route.channel).toBe('passed')
+      const members = HOST_ROUTE_MEMBERS[route.channel]
+      expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
+      for (const member of members ?? []) {
+        const born = SEAM_B_METHODS_BORN[member]
+        expect(born, `${member} has a birth release`).toBeDefined()
+        expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
+          at(ROUTES_RELEASE)
+        )
+      }
+    }
+    // 21 §2 "Seam B members: the cut in which each is born", row 2: B-M30…B-M32, B-M39, B-M40.
+    expect(
+      Object.fromEntries(Object.entries(SEAM_B_METHODS_BORN).filter(([, step]) => step === 'cut-2'))
+    ).toEqual({
+      'asking.answerQuestion': 'cut-2', // B-M30
+      'asking.answerPermission': 'cut-2', // B-M31
+      'asking.setStep': 'cut-2', // B-M32
+      'preferences.setClaudeHooks': 'cut-2', // B-M39
+      'preferences.answerWelcome': 'cut-2' // B-M40
+    })
+    expect(
+      Object.fromEntries(
+        Object.entries(HOST_ROUTE_MEMBERS).filter(([key]) => !(key in CUT_1_HOST_ROUTE_MEMBERS))
+      )
+    ).toEqual({
+      'agent:answerQuestion': ['asking.answerQuestion'], // A-40 → B-M30
+      'agent:answerPermission': ['asking.answerPermission'], // A-41 → B-M31
+      'ask:step:set': ['asking.setStep'], // A-N07 → B-M32
+      'claude:hooks:set': ['preferences.setClaudeHooks'], // A-N31 → B-M39
+      'welcome:answer': ['preferences.answerWelcome'] // A-N32 → B-M40
+    })
+  })
+
+  it('[ADR-016] with A-40 and A-41 flipped back to their cut-1 routes the legacy hook installer and the Claude hook route are composed again, and never while the Host writes the Claude hook entry', async () => {
+    // AMENDED for ISSUE-141 (verifier finding, 2026-10-14; was: `legacy` with today's shape, `legacyToday(key)`): the
+    // folded row keeps the renderer's target shape through `LegacyAnswerShapeAdapter`, or no answer would be delivered.
+    // TC-141-06 (21 §2 cut 2 row "Rollback"; §2.1 item 1; §1 items 4, 8): the rollback build of cut 2 routes A-40 and
+    // A-41 `legacy` again, one unqualified row each (the qualified rows fold back into it), so today's Claude
+    // hook composition comes back; the cut's NEW rows that turn the Host's Claude hook entry on (A-N31, A-N32) are
+    // withdrawn in that build (hidden until built), so the Host never writes that entry while today's installer does.
+    const rolledBack = rollbackOf(cut2, 'cut-2')
+    expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+    for (const key of [QUESTION, PERMISSION]) {
+      expect(
+        rolledBack.routes.filter((r) => r.channel === key),
+        key
+      ).toEqual([
+        {
+          channel: key,
+          owner: 'legacy',
+          since: 'cut-2',
+          parity: 'n/a',
+          shape: 'target',
+          shapeAdapter: 'LegacyAnswerShapeAdapter'
+        }
+      ])
+    }
+    expect(rolledBack.withdrawn).toEqual({ 'claude:hooks:set': 'cut-2', 'welcome:answer': 'cut-2' })
+    expect(rolledBack.routes.filter((r) => r.channel === 'ask:step:set')).toEqual(
+      routeOf('ask:step:set')
+    )
+    /** Whether a table's `host` routes reach a seam-B member that writes the Claude hook entry (21 §4). */
+    const hostWritesClaudeEntry = (table: RouteTable): boolean =>
+      table.routes.some(
+        (r) =>
+          r.owner === 'host' &&
+          (HOST_ROUTE_MEMBERS[r.channel] ?? []).some((member) =>
+            ['preferences.setClaudeHooks', 'preferences.answerWelcome'].includes(member)
+          )
+      )
+    expect(legacyClaudeHooksComposed(rolledBack.routes)).toBe(true)
+    expect(hostWritesClaudeEntry(rolledBack)).toBe(false)
+    expect(legacyClaudeHooksComposed(cut2.routes)).toBe(false)
+    expect(hostWritesClaudeEntry(cut2)).toBe(true)
+    // One writer per release, in every table this tree can build (21 §1 item 4).
+    for (const table of [CUT_1_TABLE, cut2, rolledBack]) {
+      expect(
+        legacyClaudeHooksComposed(table.routes) && hostWritesClaudeEntry(table),
+        table.release
+      ).toBe(false)
+    }
+    // The rollback build's router refuses the withdrawn rows like a row with no route. (AMENDED for ISSUE-141: its
+    // A-40/A-41 rows name `LegacyAnswerShapeAdapter`, so the router is handed one, as the root binds it.)
+    const reached: string[] = []
+    const router = createRouter({
+      routes: rolledBack.routes,
+      legacy: { serve: async (channel) => void reached.push(`legacy ${channel}`) },
+      uiLocal: { serve: async (channel) => void reached.push(`ui-local ${channel}`) },
+      host: { serve: async (channel) => void reached.push(`host ${channel}`) },
+      shapeAdapters: {
+        ResetFanout: { serve: async () => undefined },
+        LegacyAnswerShapeAdapter: { serve: async () => undefined }
+      },
+      senders
+    })
+    expect(
+      await router.dispatch('claude:hooks:set', FROM_PANEL, { on: true, requestId: REQUEST })
+    ).toMatchObject({ ok: false, error: { code: 'METHOD_NOT_FOUND' } })
+    expect(reached).toEqual([])
+  })
+
+  // ADDED for ISSUE-141 (lead decision 2026-10-14): the Host side of the same rollback. With A-N32 withdrawn the
+  // first-run step could not be answered, so the Host must not offer it, and the Host must write no Claude hook entry;
+  // its setting (`CUT_2_ROLLBACK`, read by host/wiring/cut2Rollback.ts) is pinned to the build's table here, as
+  // `CUT_1_ROLLBACK` is, so the route rows and the Host setting cannot disagree in one build.
+  it('[ADR-016, US-SET-012.AC08] the cut-2 rollback setting is on if and only if the build withdrew the rows that write the Claude hook entry', () => {
+    /** Whether a cut-2 table is a rollback build's: A-N31 and A-N32 withdrawn, A-40 and A-41 legacy again. */
+    const cut2RolledBack = (table: RouteTable): boolean =>
+      table.release === 'cut-2' &&
+      table.withdrawn?.['claude:hooks:set'] === 'cut-2' &&
+      table.withdrawn?.['welcome:answer'] === 'cut-2'
+    // This build's setting against this build's table (false in every normal build).
+    expect(CUT_2_ROLLBACK).toBe(cut2RolledBack(cut2))
+    expect(cut2RolledBack(cut2)).toBe(false)
+    expect(cut2RolledBack(rollbackOf(cut2, 'cut-2'))).toBe(true)
+  })
+})
+
+/** Today's registry write, as `LegacyAskRelay`'s composition is handed it. */
+type LegacyRegistryReplace = LegacyAskRelayComposition['registry']['registry']['replace']

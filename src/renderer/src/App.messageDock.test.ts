@@ -104,8 +104,9 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
     kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
     retireDwarf: vi.fn(),
-    answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
-    answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true }),
+    // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): A-40/A-41 answer the 14 `IpcResult<AnswerOutcome>`.
+    answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
+    answerDwarfPermission: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
     // The launch surface (#86): Claude detected and launchable; a launch answers "started".
     listAgentProviders: vi.fn().mockResolvedValue({
       providers: [{ provider: 'claude', installed: true, launchable: true }]
@@ -863,10 +864,11 @@ describe('answering an agent question', () => {
     await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, answers }` record): the 14 shape.
     expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Which database should the importer write to?': 'SQLite' }
+      askId: 'toolu_01',
+      answers: [{ step: 0, option: 'SQLite' }],
+      requestId: expect.any(String)
     })
     // Free text is a different channel; answering must not have used it.
     expect(api.sendDwarfText).not.toHaveBeenCalled()
@@ -889,9 +891,10 @@ describe('answering an agent question', () => {
 
   it('shows main’s reason when the answer was refused', async () => {
     const { wrapper } = await openAskingDwarf({
+      // AMENDED for ISSUE-141 (was: today's refusal with main's own sentence): a refused 14 outcome.
       answerDwarfQuestion: vi.fn().mockResolvedValue({
-        answered: false,
-        error: 'That session is not one this panel is holding.'
+        ok: true,
+        value: { kind: 'refused', reason: 'channel-rejected' }
       })
     })
     // AMENDED for #635 (was: Enter and `.answer-error`): Submit, and the card's alert row.
@@ -905,7 +908,8 @@ describe('answering an agent question', () => {
     expect(record.find('.dm-bubble__text p').text()).toBe('Answers:')
     const mark = record.find('.dm-bubble__mark')
     const reason = wrapper.element.querySelector('#' + mark.attributes('aria-describedby'))
-    expect(reason?.textContent).toBe('That session is not one this panel is holding.')
+    // AMENDED for ISSUE-141 (was: main's own sentence): the outcome's reason is a code, so the panel's own words.
+    expect(reason?.textContent).toBe('That answer could not be delivered.')
     expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
   })
 
@@ -939,19 +943,21 @@ describe('answering an agent question', () => {
     await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, text }`): the step's free text, in the 14 shape.
     expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      text: 'put it in Redis'
+      askId: 'toolu_01',
+      answers: [{ step: 0, freeText: 'put it in Redis' }],
+      requestId: expect.any(String)
     })
     expect(api.sendDwarfText).not.toHaveBeenCalled()
   })
 
   it('shows main’s reason when the typed answer was refused', async () => {
     const { wrapper } = await openWatchedAsk({
+      // AMENDED for ISSUE-141 (was: today's refusal with main's own sentence): a refused 14 outcome.
       answerDwarfQuestion: vi.fn().mockResolvedValue({
-        answered: false,
-        error: 'There was nothing written to send, so nothing was typed.'
+        ok: true,
+        value: { kind: 'refused', reason: 'invalid-answer' }
       })
     })
     // AMENDED for #635 (was: Enter in the box, and `.answer-error`): the design card's parts.
@@ -965,7 +971,8 @@ describe('answering an agent question', () => {
     const record = wrapper.findAll('.dm-bubble').at(-1)!
     const mark = record.find('.dm-bubble__mark')
     const reason = wrapper.element.querySelector('#' + mark.attributes('aria-describedby'))
-    expect(reason?.textContent).toContain('nothing was typed')
+    // AMENDED for ISSUE-141 (was: main's own sentence): the outcome's reason is a code, so the panel's own words.
+    expect(reason?.textContent).toContain('could not be delivered')
     expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
   })
 
@@ -980,11 +987,11 @@ describe('answering an agent question', () => {
     await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
+    // AMENDED for ISSUE-141 (was: today's `ownWords` record keyed by question text): the step's free text.
     expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: {},
-      ownWords: { 'Which database should the importer write to?': 'keep the file store' }
+      askId: 'toolu_01',
+      answers: [{ step: 0, freeText: 'keep the file store' }],
+      requestId: expect.any(String)
     })
     expect(api.sendDwarfText).not.toHaveBeenCalled()
   })
@@ -1022,10 +1029,11 @@ describe('deciding a permission prompt', () => {
     await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, decision }`): the 14 shape.
     expect(api.answerDwarfPermission).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_09',
-      decision: 'allow'
+      askId: 'toolu_09',
+      decision: 'allow',
+      requestId: expect.any(String)
     })
     // Only main's next snapshot may drop a pendingPermission — the panel's
     // part ends at handing the decision over.

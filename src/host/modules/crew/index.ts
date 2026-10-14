@@ -17,7 +17,7 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { CrewResetStep } from './adapters/sqlite/CrewResetStep'
 import { SqliteDwarfRepository } from './adapters/SqliteDwarfRepository'
-import { CrewArrivals, type CrewCommands } from './application/arrival'
+import { CrewArrivals, OpenAskMemory, type CrewCommands } from './application/arrival'
 import { CrewReadModel, type CrewQueries, type SessionLinks } from './application/crewQueries'
 import { CrewEndAllIn, type CrewEnds } from './application/endAllIn'
 import type { CrewEndEvent } from './application/events'
@@ -94,7 +94,9 @@ export interface Crew {
 
 /** The module over the Host database. */
 export function createCrew(deps: CrewDeps): Crew {
-  const repository = new SqliteDwarfRepository({ db: deps.db, scope: deps.transactions })
+  const stored = new SqliteDwarfRepository({ db: deps.db, scope: deps.transactions })
+  // The front ask is Host memory beside the stored rows (09 §4.2), one instance for every reader.
+  const repository = new OpenAskMemory(stored)
   const statusTimer = new StatusTimer({
     clock: deps.clock,
     scheduler: deps.scheduler,
@@ -116,7 +118,7 @@ export function createCrew(deps: CrewDeps): Crew {
     repository,
     clock: deps.clock,
     links: deps.links,
-    presentDwarfs: repository
+    presentDwarfs: stored
   })
   const ends: Crew['ends'] = ({ terminator, bus }) =>
     new CrewEndAllIn({

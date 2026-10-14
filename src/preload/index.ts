@@ -40,29 +40,6 @@ function providerOf(value: unknown): string {
   return typeof value === 'string' && PROVIDERS.includes(value) ? value : ''
 }
 
-/**
- * An answer rebuilt from string pairs only. The person's own words (`text`) cross alone, never beside a record;
- * a non-string value is dropped, so main refuses an answer that names no option.
- */
-function questionAnswerOf(request: unknown): Record<string, unknown> {
-  const record =
-    typeof request === 'object' && request !== null ? (request as Record<string, unknown>) : {}
-  const address = { dwarfId: textOf(record.dwarfId), toolUseId: textOf(record.toolUseId) }
-  if (record.text !== undefined) {
-    return { ...address, ...(typeof record.text === 'string' ? { text: record.text } : {}) }
-  }
-  const answers = stringPairsOf(record.answers)
-  const ownWords = stringPairsOf(record.ownWords)
-  return { ...address, answers, ...(Object.keys(ownWords).length === 0 ? {} : { ownWords }) }
-}
-function stringPairsOf(value: unknown): Record<string, string> {
-  const pairs: Record<string, string> = {}
-  if (typeof value !== 'object' || value === null) return pairs
-  for (const [key, entry] of Object.entries(value))
-    if (typeof entry === 'string') pairs[key] = entry
-  return pairs
-}
-
 /** A one-way message that cannot cross (structured clone refuses it) is dropped, never thrown (14 §1.4). */
 function sendOrDrop(send: () => void): void {
   try {
@@ -185,14 +162,14 @@ export interface DwarfAiMinersApi {
   launchHostedProcess: (
     request: TodayRequest<'agent:launchHosted'>
   ) => Promise<TodayResult<'agent:launchHosted'>>
-  /** A-40 · `agent:answerQuestion` · invoke · CHANGE · today shape */
+  /** A-40 · `agent:answerQuestion` · invoke · CHANGE · target shape */
   answerDwarfQuestion: (
-    request: TodayRequest<'agent:answerQuestion'>
-  ) => Promise<TodayResult<'agent:answerQuestion'>>
-  /** A-41 · `agent:answerPermission` · invoke · CHANGE · today shape */
+    request: TargetRequest<'agent:answerQuestion'>
+  ) => Promise<TargetResult<'agent:answerQuestion'>>
+  /** A-41 · `agent:answerPermission` · invoke · CHANGE · target shape */
   answerDwarfPermission: (
-    request: TodayRequest<'agent:answerPermission'>
-  ) => Promise<TodayResult<'agent:answerPermission'>>
+    request: TargetRequest<'agent:answerPermission'>
+  ) => Promise<TargetResult<'agent:answerPermission'>>
   /** A-42 · `notifications:enabled:get` · invoke · KEEP · today shape */
   getNotificationsEnabled: () => Promise<TodayResult<'notifications:enabled:get'>>
   /** A-43 · `notifications:enabled:set` · invoke · KEEP · today shape */
@@ -432,15 +409,9 @@ const api: DwarfAiMinersApi = {
       })
     ),
   answerDwarfQuestion: (request) =>
-    invokeOrReject(() => ipcRenderer.invoke('agent:answerQuestion', questionAnswerOf(request))),
+    invokeOrReject(() => ipcRenderer.invoke('agent:answerQuestion', request)),
   answerDwarfPermission: (request) =>
-    invokeOrReject(() =>
-      ipcRenderer.invoke('agent:answerPermission', {
-        dwarfId: textOf(request?.dwarfId),
-        toolUseId: textOf(request?.toolUseId),
-        decision: textOf(request?.decision)
-      })
-    ),
+    invokeOrReject(() => ipcRenderer.invoke('agent:answerPermission', request)),
   getNotificationsEnabled: () =>
     invokeOrReject(() => ipcRenderer.invoke('notifications:enabled:get')),
   setNotificationsEnabled: (request) =>

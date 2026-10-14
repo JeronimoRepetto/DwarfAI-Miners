@@ -10,6 +10,7 @@ import {
   type IsolatedProfile,
   type LaunchedApp
 } from '../_harness/launchApp.ts'
+import { answerFirstRunStep } from '../_harness/firstRunStep.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
 import { seedClaudeStubSession, type StubTurn } from './claudeStubWorld.ts'
 
@@ -68,6 +69,9 @@ test.describe('cut 1: the message panel shows an observed dwarf’s history (ISS
     seedClaudeStubSession(owned, TURNS)
 
     await chooseTrayItem(app, TRAY_ITEMS.open)
+    // The Claude stub is installed, so from cut 2 the first-run step is due on this fresh profile: answered first, as a
+    // person does, with nothing ticked (nothing written; ISSUE-141).
+    await answerFirstRunStep(window)
     await window.locator('.dm-marker').first().click({ timeout: 30_000 })
     const dwarf = window.locator('button.dm-dwarf[data-dwarf]')
     await expect(dwarf, 'the observed dwarf is drawn on its mine').toHaveCount(1, {

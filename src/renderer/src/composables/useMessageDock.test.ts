@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import type {
+  AskRecord,
   DepartureCause,
   DwarfId,
   DwarfWire,
@@ -21,6 +22,7 @@ import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowAp
 import { sessionClosed } from '../lib/delivery/actionBar'
 import { conversationOf, READING_NOTE } from '../lib/message/conversation'
 import { useDwarfMessaging } from './useDwarfMessaging'
+import { useDwarfQuestion } from './useDwarfQuestion'
 import { useHostConnection } from './useHostConnection'
 import { useMessageDock } from './useMessageDock'
 import { useMines } from './useMines'
@@ -341,5 +343,211 @@ describe('useMessageDock when the window opened before the Host attached', () =>
     const drawn = conversationOf(dock!.selectedDwarf.value!, dock!.drawnFeed.value)
     expect(drawn.note).not.toBe(READING_NOTE)
     expect(drawn.messages).toHaveLength(1)
+  })
+})
+
+/*
+ * AMENDED for ISSUE-141 (appended; lead decision 2026-10-14: ISSUE-138's answer half, folded into the cut-2 switch).
+ * The dock answers the card the MessagePanel draws (lib/message/askCard.ts `shownAskOf`): a Host ask from the
+ * dual-source read model, or a legacy card from the board, each by its own id, through `useDwarfQuestion` in the 14
+ * shapes. Mounted in a bare host component against the generated fake `window.api` (ADR-033 item 7).
+ */
+describe('useMessageDock answers the card the panel draws (ISSUE-141)', () => {
+  type Api = Window['api']
+  type Dock = ReturnType<typeof useMessageDock>
+
+  const EPOCH = 'epoch-141'
+  const ALPHA = '01920000-0000-7000-8000-00000000a141' as MineId
+  const BORIN = '01920000-0000-7000-8000-00000000d141' as DwarfId
+  const HOST_ASK = '01920000-0000-7000-8000-0000000a5141'
+  const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+  const mine: MineWire = {
+    id: ALPHA,
+    path: '/work/alpha' as FolderPath,
+    name: 'alpha',
+    state: 'active',
+    tier: 'bronze',
+    hasBeenMeasured: true,
+    lastUsedAt: 1,
+    totals: {
+      coal: { tokens: 0 },
+      bronze: { tokens: 0 },
+      copper: { tokens: 0 },
+      silver: { tokens: 0 },
+      gold: { tokens: 0 },
+      uranium: { tokens: 0 }
+    }
+  }
+
+  const borin = {
+    id: BORIN,
+    mineId: ALPHA,
+    providerId: 'claude',
+    baseName: 'Borin',
+    customName: null,
+    rank: 'foreman',
+    parentDwarfId: null,
+    delegated: false,
+    sessionProfile: { providerId: 'claude' },
+    presence: 'present',
+    processState: 'running',
+    status: 'asking',
+    needsYou: true,
+    canReceiveMessages: true,
+    stopInFlight: false,
+    stopUnavailableReason: null,
+    owned: false,
+    arrivedAt: 1
+  } as DwarfWire
+
+  /** Borin's open Host ask: a permission, or a one-step question. */
+  function hostAsk(kind: 'permission' | 'question'): AskRecord {
+    return {
+      id: HOST_ASK,
+      dwarfId: BORIN,
+      kind,
+      channel: 'hook-keystroke',
+      providerRequestId: 'toolu_141',
+      payload:
+        kind === 'permission'
+          ? { toolName: 'Bash', requestText: 'pnpm test' }
+          : { steps: [{ text: 'Which suite?', options: ['All', 'Unit'], allowsFreeText: true }] },
+      currentStep: 0,
+      state: 'open',
+      reannounce: true,
+      openedAt: 1_000
+    } as AskRecord
+  }
+
+  let wrapper: VueWrapper | null = null
+
+  /** The dock, mounted, with the Host board and Borin's open ask read, and Borin's chat open. */
+  async function openOnBorin(ask: AskRecord, overrides: Partial<Api> = {}): Promise<Dock> {
+    const snapshot: IpcResult<SnapshotPage> = {
+      ok: true,
+      value: {
+        snapshotId: 'snap-141',
+        seq: 3,
+        epoch: EPOCH,
+        chunks: [
+          { section: 'mines', data: [mine] },
+          { section: 'dwarfs', data: [borin] },
+          { section: 'asks', data: { asks: [ask], needsYou: [] } }
+        ]
+      } as SnapshotPage
+    }
+    const api = createFakeWindowApi({
+      getHostSnapshot: vi.fn(() => Promise.resolve(snapshot)) as unknown as Api['getHostSnapshot'],
+      onHostEvent: vi.fn(() => () => {}) as unknown as Api['onHostEvent'],
+      getDwarfFeed: vi.fn(() =>
+        Promise.resolve({ readable: true, messages: [] })
+      ) as unknown as Api['getDwarfFeed'],
+      getUiSession: vi.fn(() =>
+        Promise.resolve({
+          drafts: {},
+          chatViews: {},
+          askPicks: {},
+          openChat: {},
+          currentMine: {},
+          valle: {}
+        })
+      ) as unknown as Api['getUiSession'],
+      ...overrides
+    })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+    await useMines().start()
+    await useDwarfQuestion().startAsks()
+    let dock: Dock | null = null
+    wrapper = mount(
+      dockHost((mounted) => {
+        dock = mounted
+      })
+    )
+    dock!.openMessage(ALPHA, BORIN)
+    await flushPromises()
+    return dock!
+  }
+
+  beforeEach(() => {
+    useMines().stop()
+    useMines().clear()
+    useDwarfQuestion().stopAsks()
+    useDwarfQuestion().clearAll()
+  })
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    useDwarfQuestion().stopAsks()
+    useMines().stop()
+    useMines().clear()
+  })
+
+  it('[ADR-001] the dock answers a Host card through useDwarfQuestion in the 14 shape, by the card’s own AskId', async () => {
+    const accepted = { ok: true, value: { kind: 'accepted' } }
+    const answerDwarfPermission = vi.fn(() => Promise.resolve(accepted))
+    const dock = await openOnBorin(hostAsk('permission'), {
+      answerDwarfPermission: answerDwarfPermission as unknown as Api['answerDwarfPermission']
+    })
+    const dwarf = dock.selectedDwarf.value!
+    // The board's dwarf carries no legacy ask: the card the panel draws is the Host's.
+    expect(dwarf.pendingPermission).toBeUndefined()
+
+    dock.decidePermission(dwarf, 'allow')
+    await flushPromises()
+
+    expect(answerDwarfPermission).toHaveBeenCalledWith({
+      askId: HOST_ASK,
+      decision: 'allow',
+      requestId: expect.stringMatching(UUID_V7)
+    })
+    expect(dock.questionState.byDwarfId[BORIN]).toEqual({
+      phase: 'answered',
+      toolUseId: HOST_ASK,
+      decision: 'allow'
+    })
+
+    // A Host question card answers the same way, its label on its step.
+    wrapper?.unmount()
+    useDwarfQuestion().stopAsks()
+    useDwarfQuestion().clearAll()
+    useMines().stop()
+    const answerDwarfQuestion = vi.fn(() => Promise.resolve(accepted))
+    const asked = await openOnBorin(hostAsk('question'), {
+      answerDwarfQuestion: answerDwarfQuestion as unknown as Api['answerDwarfQuestion']
+    })
+    asked.answerQuestion(asked.selectedDwarf.value!, 'Unit')
+    await flushPromises()
+    expect(answerDwarfQuestion).toHaveBeenCalledWith({
+      askId: HOST_ASK,
+      answers: [{ step: 0, option: 'Unit' }],
+      requestId: expect.stringMatching(UUID_V7)
+    })
+  })
+
+  it('[US-ASK-005.AC04] a message sent through Other thing clears the field and the pick and moves focus to Allow', async () => {
+    // The composable half (US-ASK-005.AC04, AC06): "Other thing…" on a permission card sends an ordinary message
+    // (A-23), never an answer; the field clears and the card stays open on Allow or Deny. Moving focus to Allow is
+    // the card component's (DwarfPermissionCard), not the dock's.
+    const sendDwarfText = vi.fn(() =>
+      Promise.resolve({ delivered: true, via: 'terminal', relayed: true })
+    )
+    const answerDwarfPermission = vi.fn()
+    const dock = await openOnBorin(hostAsk('permission'), {
+      sendDwarfText: sendDwarfText as unknown as Api['sendDwarfText'],
+      answerDwarfPermission: answerDwarfPermission as unknown as Api['answerDwarfPermission']
+    })
+    const dwarf = dock.selectedDwarf.value!
+    dock.setDraft(BORIN, 'Run only the unit suite, please.')
+
+    dock.sendText(dwarf, { text: 'Run only the unit suite, please.', pressEnter: true })
+    await flushPromises()
+
+    expect(dock.drafts.value[BORIN]).toBeUndefined()
+    expect(sendDwarfText).toHaveBeenCalledTimes(1)
+    expect(answerDwarfPermission).not.toHaveBeenCalled()
+    expect(dock.questionState.byDwarfId[BORIN]).toBeUndefined()
+    expect(useDwarfQuestion().frontAsk(BORIN)).toMatchObject({ source: 'host', id: HOST_ASK })
   })
 })

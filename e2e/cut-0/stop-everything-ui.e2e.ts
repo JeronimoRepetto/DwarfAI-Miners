@@ -40,7 +40,9 @@ test.describe('cut 0: the Stop everything confirmation in the window (ISSUE-317)
     expect(await anyWindowVisible(app), 'the app starts in the tray').toBe(false)
 
     await chooseTrayItem(app, TRAY_ITEMS.stopEverything)
-    const confirmation = window.getByRole('dialog')
+    // Named: on a machine with Claude Code installed the first-run step is open in the same window from cut 2, beneath
+    // the confirmation (ISSUE-141), and it stays open once the confirmation is cancelled.
+    const confirmation = window.getByRole('dialog', { name: /^Stop everything/ })
     await expect(confirmation).toBeVisible({ timeout: 30_000 })
     expect(await anyWindowVisible(app), 'the confirmation opened the window').toBe(true)
     // Owner's rule (2026-10-02): a popup never scrolls sideways; its text wraps to the card. The long COPY NEEDED

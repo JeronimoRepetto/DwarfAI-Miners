@@ -30,26 +30,50 @@ import { useDwarfQuestion } from './useDwarfQuestion'
 import { useMines } from './useMines'
 import { useToasts } from './useToasts'
 
+/**
+ * AMENDED for ISSUE-141 (was: the fake answered today's `DwarfQuestionAnswerResult`): from the cut-2 switch A-40 and
+ * A-41 answer `IpcResult<AnswerOutcome>` (14 §3.4; ADR-010 item 5). These cases still script each verdict in today's
+ * words, and the bridge answers it in the 14 shape: handed over is `accepted`, a refusal is `refused` (whose reason is a
+ * code: the panel shows today's "That answer could not be delivered.", never main's own sentence any more), and a
+ * bridge that never answered still rejects.
+ */
+function asOutcome(result: Promise<DwarfQuestionAnswerResult>): Promise<unknown> {
+  return result.then((today) =>
+    today.answered
+      ? { ok: true, value: { kind: 'accepted' } }
+      : { ok: true, value: { kind: 'refused', reason: 'channel-rejected' } }
+  )
+}
+
+/** The panel's own words for an answer not handed over (today's, unchanged). */
+const NOT_ANSWERED = 'That answer could not be delivered.'
+
+/** A UUIDv7, as each submit's `requestId` is minted (14 §1.6). */
+const REQUEST_ID = expect.stringMatching(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+)
+
 function stubApi(
-  answerDwarfQuestion: (request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>
+  answerDwarfQuestion: (request: never) => Promise<DwarfQuestionAnswerResult>
 ): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
     writable: true,
-    value: { answerDwarfQuestion }
+    value: { answerDwarfQuestion: (request: never) => asOutcome(answerDwarfQuestion(request)) }
   })
 }
 
 /** Same shape as stubApi, for the permission channel `decide` sends over. */
 function stubPermissionApi(
-  answerDwarfPermission: (
-    request: DwarfPermissionAnswerRequest
-  ) => Promise<DwarfQuestionAnswerResult>
+  answerDwarfPermission: (request: never) => Promise<DwarfQuestionAnswerResult>
 ): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
     writable: true,
-    value: { answerDwarfQuestion: vi.fn(), answerDwarfPermission }
+    value: {
+      answerDwarfQuestion: vi.fn(),
+      answerDwarfPermission: (request: never) => asOutcome(answerDwarfPermission(request))
+    }
   })
 }
 
@@ -105,10 +129,12 @@ describe('useDwarfQuestion', () => {
     const { answer } = useDwarfQuestion()
 
     await answer('claude:s1', question(), 'SQLite')
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, answers: { [question text]: label } }`): the 14
+    // `AnswerQuestionParams`, the ask's own id, each label on its step, one requestId per submit.
     expect(sent).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Which database should the importer write to?': 'SQLite' }
+      askId: 'toolu_01',
+      answers: [{ step: 0, option: 'SQLite' }],
+      requestId: REQUEST_ID
     })
   })
 
@@ -122,10 +148,12 @@ describe('useDwarfQuestion', () => {
     const { answer, stateFor } = useDwarfQuestion()
 
     await answer('claude:s1', question(), 'SQLite')
+    // AMENDED for ISSUE-141 (was: main's own sentence): a refused `AnswerOutcome` carries a reason code, so the panel
+    // explains itself with today's own words.
     expect(stateFor('claude:s1')).toEqual({
       phase: 'refused',
       toolUseId: 'toolu_01',
-      error: 'That session is not one this panel is holding.'
+      error: NOT_ANSWERED
     })
   })
 
@@ -206,10 +234,11 @@ describe('useDwarfQuestion', () => {
     const { answerWithText } = useDwarfQuestion()
 
     await answerWithText('claude:s1', question({ channel: 'terminal' }), 'put it in Redis')
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, text }`): the 14 shape's free text of the first step.
     expect(sent).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      text: 'put it in Redis'
+      askId: 'toolu_01',
+      answers: [{ step: 0, freeText: 'put it in Redis' }],
+      requestId: REQUEST_ID
     })
   })
 
@@ -228,10 +257,12 @@ describe('useDwarfQuestion', () => {
     const { answerWithText, stateFor } = useDwarfQuestion()
 
     await answerWithText('claude:s1', question({ channel: 'terminal' }), '   ')
+    // AMENDED for ISSUE-141 (was: main's own sentence, printed verbatim): a refused `AnswerOutcome` carries a reason
+    // code, so the card prints today's own words.
     expect(stateFor('claude:s1')).toEqual({
       phase: 'refused',
       toolUseId: 'toolu_01',
-      error: 'There was nothing written to send.'
+      error: NOT_ANSWERED
     })
   })
 
@@ -293,10 +324,14 @@ describe('useDwarfQuestion', () => {
 
     await answer('claude:s1', pair(), ['Postgres', 'West'])
     expect(sent).toHaveBeenCalledTimes(1)
+    // AMENDED for ISSUE-141 (was: today's record keyed by question text): one entry per step, in the call's order.
     expect(sent).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Which database?': 'Postgres', 'Which regions?': 'West' }
+      askId: 'toolu_01',
+      answers: [
+        { step: 0, option: 'Postgres' },
+        { step: 1, option: 'West' }
+      ],
+      requestId: REQUEST_ID
     })
     expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_01' })
   })
@@ -363,10 +398,12 @@ describe('useDwarfQuestion decide (#203)', () => {
     const { decide } = useDwarfQuestion()
 
     await decide('claude:s1', permission(), 'deny')
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, decision }`): the 14 `AnswerPermissionParams`, the
+    // prompt's own id as its AskId, one requestId per submit.
     expect(sent).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_09',
-      decision: 'deny'
+      askId: 'toolu_09',
+      decision: 'deny',
+      requestId: REQUEST_ID
     })
   })
 
@@ -377,11 +414,12 @@ describe('useDwarfQuestion decide (#203)', () => {
     const { decide, stateFor } = useDwarfQuestion()
 
     await decide('claude:s1', permission(), 'allow')
+    // AMENDED for ISSUE-141 (was: main's own sentence): a refused `AnswerOutcome` carries a reason code.
     expect(stateFor('claude:s1')).toEqual({
       phase: 'refused',
       toolUseId: 'toolu_09',
       decision: 'allow',
-      error: 'That prompt is no longer open.'
+      error: NOT_ANSWERED
     })
   })
 
@@ -417,12 +455,13 @@ describe('useDwarfQuestion decide (#203)', () => {
   it('shares one store with answer, keyed by dwarf rather than by kind of prompt', async () => {
     // #203's whole reason to reuse DwarfAnswerState rather than a shape of its
     // own: a verdict is about a toolUseId, whichever kind of prompt named it.
+    // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
       value: {
-        answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
-        answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true })
+        answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
+        answerDwarfPermission: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } })
       }
     })
     const { answer, decide, stateFor } = useDwarfQuestion()
@@ -454,11 +493,12 @@ describe('useDwarfQuestion decide (#203)', () => {
   })
 
   it('leaves an answered question carrying no decision at all', async () => {
+    // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
       value: {
-        answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
+        answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
         answerDwarfPermission: vi.fn()
       }
     })
@@ -479,9 +519,10 @@ describe('useDwarfQuestion decide (#203)', () => {
 describe('useDwarfQuestion: the "Answers:" record', () => {
   const sendDwarfText = vi.fn()
 
+  // AMENDED for ISSUE-141 (was: the fakes answered today's result): each answers the scripted verdict in the 14 shape.
   function stub(result: () => Promise<DwarfQuestionAnswerResult>) {
-    const answerDwarfQuestion = vi.fn(result)
-    const answerDwarfPermission = vi.fn(result)
+    const answerDwarfQuestion = vi.fn(() => asOutcome(result()))
+    const answerDwarfPermission = vi.fn(() => asOutcome(result()))
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
@@ -538,9 +579,10 @@ describe('useDwarfQuestion: the "Answers:" record', () => {
     stub(() => Promise.resolve({ answered: false, error: 'That ask is no longer open.' }))
     await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
 
+    // AMENDED for ISSUE-141 (was: main's own sentence): a refused `AnswerOutcome` carries a reason code.
     expect(useDwarfMessaging().echoesFor('claude:s1')[0]?.state).toEqual({
       phase: 'failed',
-      error: 'That ask is no longer open.'
+      error: NOT_ANSWERED
     })
   })
 
@@ -592,8 +634,11 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
       configurable: true,
       writable: true,
       value: {
+        // AMENDED for ISSUE-141 (was: today's result): the scripted verdict in the 14 shape.
         answerDwarfQuestion: vi.fn(() =>
-          Promise.resolve(answered ? { answered: true } : { answered: false, error: 'nope' })
+          asOutcome(
+            Promise.resolve(answered ? { answered: true } : { answered: false, error: 'nope' })
+          )
         )
       }
     })
@@ -616,7 +661,8 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
-      value: { answerDwarfQuestion: vi.fn(() => Promise.resolve({ answered: true })) }
+      // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
+      value: { answerDwarfQuestion: vi.fn(() => asOutcome(Promise.resolve({ answered: true }))) }
     })
     await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
     expect(useDwarfMessaging().stateFor('claude:s1')).toEqual({
@@ -907,6 +953,120 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
     } finally {
       stopCues()
     }
+  })
+
+  // AMENDED for ISSUE-141 (appended; lead decision 2026-10-14: ISSUE-138's answer half, folded into the cut-2 switch).
+  // From the switch A-40/A-41 have their 14 shape, and main routes each answer by its AskId: a `legacy:` id through
+  // `LegacyAnswerShapeAdapter` to today's runtime, any other to the Host's broker (routes.ts; the route per AskId is
+  // proven by the L6 router case "in cut 2 A-40 and A-41 route host…"). The renderer's half: each card answers with its
+  // own id, in the 14 shape, one UUIDv7 per submit.
+  it('[ADR-001] an answer to a legacy: card goes through the legacy route and an answer to a Host card through the host route', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const sent: Array<[string, unknown]> = []
+    const answered = { ok: true, value: { kind: 'accepted' } }
+    Object.assign(window.api, {
+      answerDwarfQuestion: vi.fn((request: unknown) => {
+        sent.push(['A-40', request])
+        return Promise.resolve(answered)
+      }),
+      answerDwarfPermission: vi.fn((request: unknown) => {
+        sent.push(['A-41', request])
+        return Promise.resolve(answered)
+      })
+    })
+    facadeBoard([{ id: DWARF_B, pendingPermission: permission({ toolUseId: 'legacy:toolu_09' }) }])
+    const store = useDwarfQuestion()
+    await store.startAsks()
+    expect(fake.patches).toEqual([])
+
+    const host = store.frontAsk(DWARF_A)
+    const legacy = store.frontAsk(DWARF_B)
+    expect(host).toMatchObject({ source: 'host', id: ASK_A })
+    expect(legacy).toMatchObject({ source: 'legacy', id: 'legacy:toolu_09', kind: 'permission' })
+    await store.answer(
+      DWARF_A,
+      question({
+        toolUseId: ASK_A,
+        questions: [
+          {
+            question: 'Which database?',
+            multiSelect: false,
+            options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+          }
+        ]
+      }),
+      'SQLite'
+    )
+    await store.decide(DWARF_B, permission({ toolUseId: 'legacy:toolu_09' }), 'allow')
+
+    const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    expect(sent).toEqual([
+      [
+        'A-40',
+        {
+          askId: ASK_A,
+          answers: [{ step: 0, option: 'SQLite' }],
+          requestId: expect.stringMatching(UUID_V7)
+        }
+      ],
+      [
+        'A-41',
+        { askId: 'legacy:toolu_09', decision: 'allow', requestId: expect.stringMatching(UUID_V7) }
+      ]
+    ])
+    expect(store.stateFor(DWARF_A)).toEqual({ phase: 'answered', toolUseId: ASK_A })
+    expect(store.stateFor(DWARF_B)).toEqual({
+      phase: 'answered',
+      toolUseId: 'legacy:toolu_09',
+      decision: 'allow'
+    })
+  })
+
+  it('[US-ASK-006.AC09] a not-open outcome renders nothing and leaves the card state as the Host reports it', async () => {
+    install(() =>
+      page(10, [
+        hostAsk(ASK_A, DWARF_A, {
+          kind: 'permission',
+          payload: { toolName: 'Bash', requestText: 'npm test' }
+        })
+      ])
+    )
+    Object.assign(window.api, {
+      answerDwarfPermission: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'not-open' } }))
+    })
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    await store.decide(DWARF_A, permission({ toolUseId: ASK_A }), 'allow')
+
+    // No verdict, no alert, no toast: the stale submit is dropped silently, and the card is the Host's to close.
+    expect(store.stateFor(DWARF_A)).toBeUndefined()
+    expect(store.frontAsk(DWARF_A)).toMatchObject({ source: 'host', id: ASK_A })
+    expect(useToasts().toasts.value).toEqual([])
+  })
+
+  // ADDED for ISSUE-141 (lead decision 2026-10-14): the "Answers:" record drawn at Submit is withdrawn on a not-open
+  // outcome, so the conversation shows no ✕ and the dwarf's marker no verdict for an answer that was never handed over.
+  it('[US-ASK-006.AC09] a not-open outcome withdraws the "Answers:" record and the marker it took', async () => {
+    install(() =>
+      page(10, [
+        hostAsk(ASK_A, DWARF_A, {
+          kind: 'permission',
+          payload: { toolName: 'Bash', requestText: 'npm test' }
+        })
+      ])
+    )
+    Object.assign(window.api, {
+      answerDwarfPermission: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'not-open' } }))
+    })
+    useDwarfMessaging().clearAll()
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    await store.decide(DWARF_A, permission({ toolUseId: ASK_A }), 'allow')
+
+    expect(useDwarfMessaging().echoesFor(DWARF_A)).toEqual([])
+    expect(useDwarfMessaging().stateFor(DWARF_A)).toBeUndefined()
   })
 })
 /* --- end of the dual-source ask read model block --------------------------------------------- */

@@ -72,9 +72,17 @@ const SERVED_SINCE_CUT_0 = [
   'preferences.setClaudeHooks',
   'frame:integration.changed',
   // The first-run consent step's answer: B-M40, served from cut 2 (ISSUE-323).
-  'preferences.answerWelcome'
+  'preferences.answerWelcome',
+  // The asking module: B-M30…B-M32, the `asks` section and the ask frames, from cut 2 (ISSUE-140).
+  'asking.answerPermission',
+  'asking.answerQuestion',
+  'asking.setStep',
+  'frame:ask.closed',
+  'frame:ask.opened',
+  'frame:ask.step',
+  'section:asks'
 ]
-const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'tails']
+const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'asks', 'tails']
 
 let entry = ''
 let root = ''

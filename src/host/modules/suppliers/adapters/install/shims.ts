@@ -9,7 +9,8 @@ export type ShimTarget = { kind: 'script'; entry: string } | { kind: 'program'; 
 
 /**
  * The target of an npm / pnpm `.cmd` shim or a `.bat` that starts a program. The first quoted
- * `.js` wins (every node shim also quotes `node.exe`, the program it runs the entry with); else
+ * node entry wins: `.js`, `.mjs` or `.cjs`, as a program found directly counts them (ISSUE-141; every
+ * node shim also quotes `node.exe`, the program it runs the entry with); else
  * the first quoted `.exe` / `.com` (a compiled CLI published through npm). `%~dp0` and `%dp0%`, the
  * shim's own directory, are the only variables expanded; anything still holding a `%` would need
  * cmd.exe, so the shim is not read (null), and neither is a shim that names neither.
@@ -21,7 +22,7 @@ export function batchShimTarget(shimPath: string, text: string): ShimTarget | nu
     return expanded.includes('%') ? null : win32.normalize(expanded)
   }
   for (const quoted of quotedTokens(text)) {
-    if (!/\.js$/i.test(quoted)) continue
+    if (!/\.(c|m)?js$/i.test(quoted)) continue
     const entry = expand(quoted)
     return entry === null ? null : { kind: 'script', entry }
   }

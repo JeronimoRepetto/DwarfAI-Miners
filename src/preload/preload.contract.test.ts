@@ -188,16 +188,21 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-123 (was: no CHANGE or RETIRE row is `target`): the cut-1 switch moves the CHANGE rows A-15,
     // A-19, A-33, A-44 and the RETIRE rows A-12, A-P2 to their target shape (21 §3.1), and a RETIRE row it retired has
     // no route, so the preload speaks it with its registry entry, which is today's shape (14 §2.1).
+    // AMENDED for ISSUE-141 (was: those six, one route each): the cut-2 switch moves the CHANGE rows A-40 and A-41 to
+    // their target shape, one route per qualifier (the Host, and each origin of `LegacyAskRelay`), so each row is read
+    // once here.
     expect(
-      ROUTES.filter(
-        (route) =>
-          route.shape !== 'today' &&
-          CHANNELS[route.channel].status !== 'kept' &&
-          CHANNELS[route.channel].status !== 'new'
-      )
-        .map((route) => ROW_IDS[route.channel])
-        .sort()
-    ).toEqual(['A-12', 'A-15', 'A-19', 'A-33', 'A-44', 'A-P2'])
+      [
+        ...new Set(
+          ROUTES.filter(
+            (route) =>
+              route.shape !== 'today' &&
+              CHANNELS[route.channel].status !== 'kept' &&
+              CHANNELS[route.channel].status !== 'new'
+          ).map((route) => ROW_IDS[route.channel])
+        )
+      ].sort()
+    ).toEqual(['A-12', 'A-15', 'A-19', 'A-33', 'A-40', 'A-41', 'A-44', 'A-P2'])
     const expected = KEYS.map(memberOf)
     expect(
       KEYS.filter((key) => memberOf(key) === undefined),

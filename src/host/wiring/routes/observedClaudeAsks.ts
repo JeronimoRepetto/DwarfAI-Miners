@@ -19,7 +19,7 @@
 //   capability record does not detect permissions, 07 S1.17; `asking.hook-evidence.failed`
 //   otherwise) and never reaches the ingress.
 //
-// Composed into the Host's main by ISSUE-140 (later), with the keystroke channel bound as the
+// Composed into the Host's main by ISSUE-140 (routes/askingRoutes.ts), with the keystroke channel bound as the
 // broker's `hook-keystroke` channel and `staleAnswerSafe` read from its capability record.
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, ProviderId } from '../../kernel/domain/values'

@@ -178,4 +178,28 @@ describe('CliInstallResolver', () => {
       resolvedVia: 'path'
     })
   })
+
+  // ADDED for ISSUE-141 (CI run 38640630948): a `.cmd` shim whose node entry is an ES module (`.mjs`) or a CommonJS one
+  // (`.cjs`) was not read at all, so the CLI behind it was "not installed" (the claude stub's shim on the Windows CI
+  // leg). A program found directly already counted every node entry (`.js`, `.mjs`, `.cjs`); a shim now does too.
+  it('[ADR-009, FM-055] a .cmd shim whose node entry is .mjs or .cjs is read for that entry, run with node', async () => {
+    const machine = layMachine({ platform: 'win32', installs: [] })
+    const dir = win32.join('C:', 'Tools', 'bin')
+    machine.env['Path'] = [dir, win32.dirname(FIXTURE_NODE)].join(';')
+    for (const [binary, entry] of [
+      ['esm', 'esm.mjs'],
+      ['cjs', 'cjs.cjs']
+    ] as const) {
+      machine.fs.addFile(
+        win32.join(dir, `${binary}.cmd`),
+        `@echo off\r\nnode "%~dp0${entry}" %*\r\n`,
+        1
+      )
+      machine.fs.addFile(win32.join(dir, entry), 'entry', 1)
+      expect(await machine.resolver.resolve([binary]), binary).toMatchObject({
+        path: win32.join(dir, entry),
+        resolvedVia: 'path'
+      })
+    }
+  })
 })

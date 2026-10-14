@@ -15,7 +15,12 @@ import {
 import type { ChannelRoute, RouteQualifier } from './channelRoute'
 import { resolveRoute } from './routeResolver'
 import type { IpcSenderEvent, SenderPolicy } from './senderCheck'
-import { createValidateCall, type GateErrorCode, type Refusal } from './validate'
+import {
+  createValidateCall,
+  type GateErrorCode,
+  type Refusal,
+  type RequestSchema
+} from './validate'
 
 /** The part of Electron's `ipcMain` the router uses: the event (for the sender check) and the one payload argument. */
 export interface IpcMainRegistrar {
@@ -33,6 +38,12 @@ export interface IpcMainRegistrar {
  */
 export interface RouteTarget {
   serve(channel: string, payload: unknown, sender?: IpcSenderEvent): Promise<unknown>
+  /**
+   * A 21 §3.1 shape adapter's own request schema for `channel`, when the target shape it accepts differs from the
+   * registry's in one named point (`LegacyAnswerShapeAdapter`: a `legacy:` AskId of `LegacyAskRelay`'s namespace, 21
+   * §3, where the 14 request has a UUIDv7). The seam A gate parses a call routed to that adapter with it, as strictly.
+   */
+  requestSchema?(channel: string): RequestSchema | undefined
 }
 
 export interface RouterDeps {
@@ -45,6 +56,12 @@ export interface RouterDeps {
   host?: RouteTarget
   /** The 21 §3.1 shape adapters by name; each is needed once a route names it. */
   shapeAdapters?: Readonly<Record<string, RouteTarget>>
+  /**
+   * The qualifier of a renderer call, per qualified channel (21 §1 item 2): read from the call's payload by the
+   * composition root (A-40/A-41: `LegacyAskRelay`'s AskId namespace and origin, 21 §2 cut 2 "Qualified routes"). A
+   * channel with none is dispatched unqualified.
+   */
+  qualifiers?: Partial<Record<ChannelKey, (payload: unknown) => RouteQualifier>>
   /** Who may call: the app entry and the mode-window registry (ADR-019 item 8). */
   senders: SenderPolicy
 }
@@ -95,7 +112,7 @@ function refusal(channel: ChannelKey): RouteRefusal {
 }
 
 export function createRouter(deps: RouterDeps): Router {
-  const { routes, legacy, uiLocal, host, shapeAdapters = {}, senders } = deps
+  const { routes, legacy, uiLocal, host, shapeAdapters = {}, qualifiers = {}, senders } = deps
   const validateCall = createValidateCall(senders)
   const refusals = new Map<string, number>()
   const refusalKey = (channel: ChannelKey, code: GateErrorCode): string => `${channel} ${code}`
@@ -148,7 +165,9 @@ export function createRouter(deps: RouterDeps): Router {
     qualifier: RouteQualifier = {}
   ): Promise<unknown> {
     const route = resolveRoute(routes, channel, qualifier)
-    const verdict = validateCall(channel, event, payload, route?.shape)
+    const adapterSchema =
+      route?.shapeAdapter === undefined ? undefined : targets.get(route)?.requestSchema?.(channel)
+    const verdict = validateCall(channel, event, payload, route?.shape, adapterSchema)
     if (!verdict.ok) {
       const key = refusalKey(channel, verdict.code)
       refusals.set(key, (refusals.get(key) ?? 0) + 1)
@@ -165,9 +184,18 @@ export function createRouter(deps: RouterDeps): Router {
         const { kind } = CHANNELS[channel]
         if (helpers.includes(channel) || kind === 'push') continue
         const wire = wireOf(routes, channel)
+        // A qualified channel's call carries its qualifier in its payload, read by the root's qualifier (21 §1 item 2).
+        const qualifierOf = qualifiers[channel] ?? (() => ({}))
         if (kind === 'invoke') {
-          ipc.handle(wire, (event, payload) => dispatch(channel, event, payload))
-        } else ipc.on(wire, (event, payload) => void dispatch(channel, event, payload))
+          ipc.handle(wire, (event, payload) =>
+            dispatch(channel, event, payload, qualifierOf(payload))
+          )
+        } else {
+          ipc.on(
+            wire,
+            (event, payload) => void dispatch(channel, event, payload, qualifierOf(payload))
+          )
+        }
       }
     }
   }

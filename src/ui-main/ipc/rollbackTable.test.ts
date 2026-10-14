@@ -1,8 +1,9 @@
 // layer: L1
 import { describe, expect, it } from 'vitest'
-import { CHANNELS, type ChannelKey } from '@dwarfai/contracts'
+import { CHANNELS, RETIRED, UNROUTED, type ChannelKey } from '@dwarfai/contracts'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { rollbackOf } from './rollbackTable'
+import { LEGACY_BRIDGE_ADAPTERS, ROUTES as RELEASE_ROUTES } from './routes'
 import { CUT_0_ROUTES as ROUTES, CUT_0_TABLE } from './testing/cut0Routes'
 
 /**
@@ -108,5 +109,54 @@ describe('rollbackOf', () => {
     expect(checkRouteTable({ ...cut0, retired: { 'agent:launch': 'cut-0' } }, KEYS)).toContainEqual(
       { reason: 'routed-and-retired', channel: 'agent:launch' }
     )
+  })
+
+  // AMENDED for ISSUE-141 (appended): the first cut with qualified rows and with NEW rows that write a foreign entry.
+  // AMENDED for ISSUE-141 (verifier finding, 2026-10-14; was: "…into one legacy row with shape today…", expecting
+  // `legacyToday`): the rollback build keeps this tree's preload and renderer, which send A-40/A-41 in the 14 target
+  // shape, so the folded row keeps that shape through `LegacyAnswerShapeAdapter` (a today-shape row refused every answer).
+  it('[ADR-001, ADR-016] rolling back cut 2 folds each qualified row into one unqualified legacy row through its shape adapter and withdraws the NEW rows that turn the Host’s Claude hook entry on', () => {
+    const cut2: RouteTable = {
+      release: 'cut-2',
+      routes: RELEASE_ROUTES,
+      unrouted: UNROUTED,
+      retired: RETIRED,
+      adapters: LEGACY_BRIDGE_ADAPTERS
+    }
+    expect(checkRouteTable(cut2, KEYS)).toEqual([])
+    const rolledBack = rollbackOf(cut2, 'cut-2')
+    // A-40 and A-41: three routes in cut 2 (the Host, and each origin of the relay through its shape adapter), one
+    // unqualified legacy row through the adapter in the rollback build (21 §2.1 item 1: the rows flipped back to `legacy`).
+    for (const channel of ['agent:answerQuestion', 'agent:answerPermission'] as ChannelKey[]) {
+      expect(RELEASE_ROUTES.filter((r) => r.channel === channel)).toHaveLength(3)
+      expect(rolledBack.routes.filter((r) => r.channel === channel)).toEqual([
+        {
+          channel,
+          owner: 'legacy',
+          since: 'cut-2',
+          parity: 'n/a',
+          shape: 'target',
+          shapeAdapter: 'LegacyAnswerShapeAdapter'
+        }
+      ])
+    }
+    // A-N31 and A-N32 make the Host write the Claude hook entry, while the rollback build composes today's installer
+    // again: they have no route in that build (21 §1 items 4, 8). A-N07 writes no foreign entry and keeps its route.
+    for (const channel of ['claude:hooks:set', 'welcome:answer'] as ChannelKey[]) {
+      expect(rolledBack.routes.filter((r) => r.channel === channel)).toEqual([])
+    }
+    expect(rolledBack.withdrawn).toEqual({ 'claude:hooks:set': 'cut-2', 'welcome:answer': 'cut-2' })
+    expect(rolledBack.routes.filter((r) => r.channel === 'ask:step:set')).toEqual(
+      RELEASE_ROUTES.filter((r) => r.channel === 'ask:step:set')
+    )
+    expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+    // A withdrawn entry is accepted only in the release that withdrew it, and never beside a route.
+    expect(checkRouteTable({ ...rolledBack, release: 'cut-3a' }, KEYS)).toContainEqual({
+      reason: 'withdrawn-not-this-release',
+      channel: 'claude:hooks:set'
+    })
+    expect(
+      checkRouteTable({ ...cut2, withdrawn: { 'ask:step:set': 'cut-2' } }, KEYS)
+    ).toContainEqual({ reason: 'routed-and-withdrawn', channel: 'ask:step:set' })
   })
 })

@@ -1,7 +1,9 @@
 // `LegacyAnswerShapeAdapter` (21 §3.1, A-40 and A-41 for `legacy:` AskIds, cuts 2–4): the 14 shapes of the renderer
 // (§3.4 `AnswerQuestionParams` / `AnswerPermissionParams` → `IpcResult<AnswerOutcome>`, ADR-010 item 5) ↔ today's
-// answer call and result, for the asks whose channel is still today's runtime's (21 §3 `LegacyAskRelay`). The A-40/A-41
-// dispatch (`src/ui-main/ipc/handlers/answerDwarf.dispatch.ts`) sends it every answer whose AskId is `legacy:<id>`.
+// answer call and result, for the asks whose channel is still today's runtime's (21 §3 `LegacyAskRelay`). The router
+// sends it every answer whose AskId is `legacy:<id>`: the root's A-40/A-41 qualifier
+// (`src/ui-main/ipc/handlers/answerDwarf.dispatch.ts`) gives such an answer its relay origin, and both origins' routes
+// name this adapter (ISSUE-141).
 //
 // - The request is checked against the row's 14 request with one difference: its AskId is a `legacy:` id, not a
 //   UUIDv7 (the relay's own namespace, 21 §3). A payload off that shape answers `INVALID_PARAMS`, as the `host`
@@ -21,8 +23,8 @@
 // - The renderer's `requestId` is not minted and not forwarded: today's call has no such field (today's request is
 //   strict). A re-send after an accepted answer finds the ask closed and is `not-open`.
 //
-// Composed only by `src/ui-main/index.ts` (R16) once the cut-2 switch installs the qualified routes (later:
-// ISSUE-141); deleted with `LegacyAskRelay` at the end of cut 4 (later: ISSUE-241).
+// Composed only by `src/ui-main/index.ts` (R16), from the cut-2 switch (ISSUE-141), as the shape adapter of A-40/A-41's
+// qualified `legacy` routes; deleted with `LegacyAskRelay` at the end of cut 4 (later: ISSUE-241).
 //
 // Candidate decision (21 §6): no candidate exists; new code.
 import {
@@ -71,6 +73,11 @@ const GONE: ReadonlySet<string> = new Set([
 
 export interface LegacyAnswerShapeAdapter {
   serve(channel: string, payload: unknown): Promise<IpcResult<AnswerOutcome>>
+  /**
+   * The row's 14 request with a `legacy:` AskId (the one point where this adapter's target shape differs, 21 §3), for
+   * the router's seam A gate to parse a qualified A-40/A-41 call with (ISSUE-141); none for any other row.
+   */
+  requestSchema(channel: string): z.ZodType | undefined
 }
 
 function callError(code: IpcError['code'], message: string): IpcError {
@@ -144,6 +151,10 @@ export function createLegacyAnswerShapeAdapter(deps: {
   }
 
   return {
+    requestSchema(channel) {
+      if (channel === QUESTION) return questionSchema
+      return channel === PERMISSION ? permissionSchema : undefined
+    },
     serve(channel, payload) {
       if (channel === QUESTION) {
         const parsed = questionSchema.safeParse(payload)

@@ -4,8 +4,13 @@
 // edge (05 §1.3).
 //
 // ISSUE-128: `AskAnswerPaths`, the broker's two answer paths (ADR-010 items 2, 4, 5, 8, 13; 16 §4.7
-// rows `answerPermission` / `answerQuestion`; 09 §8.2). `closeForDwarf` and `snapshot` join with
-// their issues (later: ISSUE-130, ISSUE-140).
+// rows `answerPermission` / `answerQuestion`; 09 §8.2). `snapshot` is the `AskQueries` read model
+// (ISSUE-130, `askQueries.ts`).
+//
+// ISSUE-140: `closeForDwarf` (16 §4.7 row `closeForDwarf`; 07 S6.14, S6.15; INV-77), routed from
+// `DwarfDeparted`: one transaction closes every `open` or `answering` ask of the dwarf
+// `closed-by-death`, then `AskClosed` per ask, front first, and nothing else. An answer in flight
+// then settles `ask-closed` with no card back (S6.15), as after a cancellation (S6.22).
 //
 // ISSUE-132: `open` (`AskOpenPath`, 16 §4.7 row `open`), with ADR-011 item 5's emission resolved
 // from the session's capabilities as data (`domain/emission.ts`, `SessionCapabilities`), never a
@@ -100,6 +105,7 @@ import {
 import {
   autoDenyAsk,
   channelResult,
+  closeForDwarf as closeDwarfAsks,
   openAsk,
   resolveExternally as resolveAsk,
   setStep as stepAsk,
@@ -173,7 +179,7 @@ const UNAVAILABLE: AnswerOutcome = { kind: 'refused', reason: 'channel-unavailab
 
 export class AskAnswerPaths implements Pick<
   AskBroker,
-  'answerPermission' | 'answerQuestion' | 'resolveExternally'
+  'answerPermission' | 'answerQuestion' | 'resolveExternally' | 'closeForDwarf'
 > {
   /** The submits whose hand-over is in flight, by `requestId`. */
   private readonly inFlight = new Map<string, Promise<AnswerOutcome>>()
@@ -231,6 +237,23 @@ export class AskAnswerPaths implements Pick<
     const injection = this.injections.get(closed.id as AskId)
     this.injections.delete(closed.id as AskId)
     bus.publish(this.closedEvent(closed, injection?.decision ?? null))
+  }
+
+  /** Closing by death (S6.14, S6.15): every live ask of the dwarf, oldest first; once. */
+  closeForDwarf(dwarfId: string): void {
+    const { asks, transactions, clock, bus } = this.deps
+    const closed = transactions.inTransaction((): Ask[] => {
+      const steps = closeDwarfAsks(asks.live(), dwarfId, clock.now())
+      const moved = steps.filter((step) => step.transition !== null).map((step) => step.ask)
+      for (const ask of moved) asks.save(ask)
+      return moved
+    })
+    for (const ask of closed) {
+      // Nothing more to attribute or hold: the result of an answer in flight settles `ask-closed`.
+      this.injections.delete(ask.id as AskId)
+      this.held.delete(ask.id as AskId)
+      bus.publish(this.closedEvent(ask, null))
+    }
   }
 
   private answer(askId: AskId, requestId: string, submit: Submit): Promise<AnswerOutcome> {

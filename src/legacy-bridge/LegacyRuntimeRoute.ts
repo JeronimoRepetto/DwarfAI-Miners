@@ -101,6 +101,7 @@ import { NodeHookFs } from '../main/hooks/hookFs'
 import { DelegationService } from '../main/mcp/delegationService'
 import { delegationFailure } from '../main/mcp/delegationServerProtocol'
 import { HookListener } from '../main/hooks/hookListener'
+import { legacyClaudeHookComposition } from './legacyClaudeHooksSwitch'
 import type { HookEvent } from '../main/hooks/hookPayload'
 import { OpenCodePluginChannel } from '../main/opencodePermissions/openCodePluginChannel'
 import { openCodeGlobalPluginDir } from '../main/opencodePermissions/openCodePluginInstaller'
@@ -328,6 +329,11 @@ export interface LegacyPanelSurface {
 export interface LegacyCompositionOptions {
   /** The rebuilt Panel; absent while the route table serves the window family `legacy`. */
   panel?: LegacyPanelSurface
+  /**
+   * Whether today's Claude hook half is composed: true only while A-40/A-41 keep their pre-cut-2 routes (the root's
+   * `legacyClaudeHooksComposed(ROUTES)`; ISSUE-141, TC-141-06; ./legacyClaudeHooksSwitch.ts).
+   */
+  claudeHooks: boolean
   /**
    * The UI logger (ADR-026): today's warnings reach it as allowlisted records (legacyDiagnostics.ts) instead of the
    * console, which no file of the new trees writes to (eslint.config.mjs deviation 8).
@@ -801,27 +807,38 @@ export function composeLegacyRuntime(
       runtime?.noteOpenCodePush(push)
       runtime?.nudge()
     }
-    hookListener = new HookListener({
+    const listener = new HookListener({
       fs: hookFs,
       userDataDir: app.getPath('userData'),
       port: config.hooksPort,
-      onEvent: onHookEvent,
+      // Today's Claude half hears the listener only while the route table composes it (TC-141-06, below).
+      onEvent: (event) => claude.onEvent(event),
       onOpenCodePush,
       log: unrouted,
       warn: warnFrom('hooks')
     })
-    hooks = new HookChannel({
-      fs: hookFs,
-      roots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
-      userDataDir: app.getPath('userData'),
-      port: config.hooksPort,
-      platform: process.platform,
-      onEvent: onHookEvent,
-      listener: hookListener,
-      log: unrouted,
-      warn: warnFrom('hooks')
+    hookListener = listener
+    // ISSUE-141 (21 §2 cut 2 "Switched off in legacy"; TC-141-06): today's hook installer, the Claude route of the
+    // listener and the observed-Claude permission registry it feeds are composed only while A-40/A-41 keep their
+    // pre-cut-2 routes (the cut-1 table, or a cut-2 rollback build); from the cut-2 switch the Host is the only writer
+    // of the Claude hook entry (21 §4). The OpenCode plugin route below stays composed until 4a.
+    const claude = legacyClaudeHookComposition(options.claudeHooks, {
+      onHookEvent,
+      hookChannel: () =>
+        new HookChannel({
+          fs: hookFs,
+          roots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
+          userDataDir: app.getPath('userData'),
+          port: config.hooksPort,
+          platform: process.platform,
+          onEvent: onHookEvent,
+          listener,
+          log: unrouted,
+          warn: warnFrom('hooks')
+        })
     })
-    await hooks.restore()
+    hooks = claude.hooks
+    await hooks?.restore()
     openCodePlugin = new OpenCodePluginChannel({
       fs: hookFs,
       pluginDir: openCodeGlobalPluginDir(home, process.env, currentPlatform()),

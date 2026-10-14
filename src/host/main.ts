@@ -78,7 +78,13 @@
 // connection registry feeding the presence union and the tray notifier supervisor; then the
 // conversation's routes (its mine history, tails and frames over crew's and mines' queries) and the
 // per-mine coal backfill (`MineCreated` / `MineReattached` → `runMineCoalBackfill`, O-11-10) and the
-// end of a Reset metrics (`MetricsResetFinished` → held units credited, then the backfill, ISSUE-121); last,
+// end of a Reset metrics (`MetricsResetFinished` → held units credited, then the backfill, ISSUE-121); then
+// asking (ISSUE-140: wiring/routes/askingRoutes.ts) over the SqliteAskRepository, conversation's
+// AnswerRecords, the observed-Claude keystroke channel (no relay into a terminal yet, later: ISSUE-167),
+// with B-M30…B-M32 and the `asks` section served before the bind, its frames, the Claude hook ingress
+// route bound to the active channel-token lookup (its listener, wiring/hookIngress.ts, built here and
+// started by step 6 on the persisted ingress port, closed at the clean exit) and its
+// `ask.*` and departure routes, stopped at the clean exit; last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
 // withdrawing attention keys and closing activity runs. The others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
@@ -96,9 +102,11 @@
 import { homedir } from 'node:os'
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PROTOCOL_VERSION } from '@dwarfai/contracts'
+import { PROTOCOL_VERSION, redactSecrets } from '@dwarfai/contracts'
+import { FsTranscriptTail } from './modules/asking/adapters/observedClaude/transcriptTail'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
+import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
@@ -149,6 +157,7 @@ import { ConnectionRegistry } from './transport/connectionRegistry'
 import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
 import { BOARD_FRAMES } from './transport/frames/board'
 import { LEDGER_FRAMES } from './transport/frames/ledger'
+import type { HttpIngress } from './transport/ingress/httpIngress'
 import { createUpgradeDrain } from './transport/lifecycle/drain'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
@@ -174,11 +183,14 @@ import {
 } from './wiring/bridges/hostConfigWriter'
 import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
+import { createKeystrokeRelay } from './wiring/bridges/keystrokeRelay'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
+import { CUT_2_ROLLBACK_CHOICES } from './wiring/cut2Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
+import { createHostHookIngress, startHookIngressAtBoot } from './wiring/hookIngress'
 import { installUncaughtHandlers } from './wiring/uncaught'
 import { EXIT_CODES } from './wiring/exitCodes'
 import {
@@ -194,6 +206,13 @@ import {
   unavailableSecretStore,
   type WiredPreferences
 } from './wiring/preferencesWiring'
+import {
+  ASKING_FRAMES,
+  serveAsking,
+  type AskingRouteEvent,
+  type AskingWiringDeps,
+  type WiredAsking
+} from './wiring/routes/askingRoutes'
 import {
   ATTENTION_FRAMES,
   onNotifierAttach,
@@ -233,6 +252,7 @@ import {
 } from './wiring/routes/observation'
 import { isPublicBuild, wireSuppliers, type WiredSuppliers } from './wiring/suppliersWiring'
 import { HostInvariantError, InProcessEventBus } from './kernel'
+import type { ProviderId } from './kernel/domain/values'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
 
 /** Every event the Host's one bus carries so far. */
@@ -244,6 +264,7 @@ type HostEvent =
   | LedgerRouteEvent
   | ConversationRouteEvent
   | AttentionRouteEvent
+  | AskingRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -433,6 +454,7 @@ async function bootHost(base: HostBase): Promise<void> {
     crew?: WiredCrew
     mines?: WiredMines
     attention?: WiredAttention
+    asking?: WiredAsking
   } = {}
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
   // install-moment writer, then the module's) and the cut-1 module steps, whose walk route step 4
@@ -441,6 +463,8 @@ async function bootHost(base: HostBase): Promise<void> {
   // Built by boot step 3: the one config writer engine, whose boot re-verification step 3 runs
   // right after the saga resume (16 §7.3).
   let configWriter: ConfigWriterEngine | undefined
+  // Built by boot step 4 over asking's hook route, started by step 6, closed by the clean exit.
+  let hookIngress: HttpIngress | undefined
   let resetSteps: WiredModuleResetSteps | undefined
   // No spawn-site table reaches the Host yet: no site is stored, and the map places each marker
   // itself (chooseMapSite's documented fallback). The mines module and its Reset step share it.
@@ -496,6 +520,8 @@ async function bootHost(base: HostBase): Promise<void> {
   const servedCrew = serveCrew({ dispatcher, sections })
   // After the board's sections: `tails` follows the board chunks (14 §4.2).
   const servedConversation = serveConversation({ dispatcher, sections })
+  // B-M30…B-M32 and the `asks` section (ISSUE-140).
+  const servedAsking = serveAsking({ dispatcher, sections })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -575,7 +601,8 @@ async function bootHost(base: HostBase): Promise<void> {
           ...BOARD_FRAMES,
           ...LEDGER_FRAMES,
           ...CONVERSATION_READ_FRAMES,
-          ...ATTENTION_FRAMES
+          ...ATTENTION_FRAMES,
+          ...ASKING_FRAMES
         ],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
@@ -592,6 +619,10 @@ async function bootHost(base: HostBase): Promise<void> {
         scheduler,
         log,
         sessionEnd: nodeOsSessionSignals(log),
+        // No event is routed into the asking module, and no hook request reaches the Host, once
+        // it is closing (ISSUE-140).
+        stopRoutes: () => modules.asking?.stop(),
+        closeIngress: () => hookIngress?.close() ?? Promise.resolve(),
         exit
       })
       return createBootSteps({
@@ -642,7 +673,9 @@ async function bootHost(base: HostBase): Promise<void> {
               new ClaudeHooksConfigWriter({
                 path: claudeSettingsPathHere(),
                 platform: hostRuntime().os as NodeJS.Platform,
-                ingressPort: persistedIngressPort(ingressPort)
+                ingressPort: persistedIngressPort(ingressPort),
+                // A cut-2 rollback build: today's installer owns the old app's entry again (ISSUE-141).
+                keepOldAppEntries: CUT_2_ROLLBACK_CHOICES.keepsOldAppEntries
               })
             ]
           })
@@ -669,16 +702,23 @@ async function bootHost(base: HostBase): Promise<void> {
             moduleSteps: resetSteps.steps,
             // No OS secret store yet (later: ISSUE-324).
             secrets: unavailableSecretStore,
-            externalConfig: hostConfigWriter({ claudeHooks: configWriter, ingressPort, log }),
+            // A cut-2 rollback build refuses every install: today's installer is the entry's one writer there.
+            externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(
+              hostConfigWriter({ claudeHooks: configWriter, ingressPort, log }),
+              log
+            ),
             // The hashes the hook ingress's lookup reads (WiredPreferences.channelTokens).
             channelTokens: new SqliteChannelTokenStore({ db, ids }),
             // The first-run step's installed tools: suppliers' detection cache, once step 4 wired
             // suppliers (nothing installed before; the step is evaluated in step 8, ISSUE-222).
             // Only the tools whose integration can be turned on now are offered (hidden until
             // built): Claude Code once the hook ingress persisted its port (ISSUE-323).
-            installedTools: enablableInstalledTools(
-              suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
-              ingressPort
+            // None in a cut-2 rollback build, whose router has no route for the answer (ISSUE-141).
+            installedTools: CUT_2_ROLLBACK_CHOICES.installedTools(
+              enablableInstalledTools(
+                suppliersInstalledTools(() => modules.suppliers?.catalogue ?? null),
+                ingressPort
+              )
             ),
             // The token issuance of the transport (lead decision 2026-09-30, ISSUE-198): the
             // Claude hook token is minted here, never in the module (R3).
@@ -890,6 +930,67 @@ async function bootHost(base: HostBase): Promise<void> {
             hostEpoch: epoch,
             log
           })
+          // Asking (ISSUE-140: wiring/routes/askingRoutes.ts), once suppliers, conversation,
+          // observation, crew, mines and attention exist, and ahead of the cut-1 routes, so a
+          // departure closes the dwarf's asks before conversation records its session end. The
+          // hook ingress route and its listener are built here; boot step 6 starts the listener.
+          if (modules.suppliers === undefined) {
+            throw new HostInvariantError('asking is wired after suppliers')
+          }
+          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const askingDeps: AskingWiringDeps = {
+            db,
+            transactions,
+            bus,
+            sources: { departures: bus, resolutions: bus },
+            clock,
+            scheduler,
+            ids,
+            hostEpoch: epoch,
+            log,
+            frames: connections,
+            claudeProviderId: 'claude' as ProviderId,
+            suppliers: modules.suppliers,
+            observed: observed.adapters,
+            conversation: conversation.conversation,
+            crew: modules.crew.crew,
+            mines: modules.mines.mines.queries,
+            attention: modules.attention.attention,
+            observation: {
+              sessions: modules.observation.crew.sessions,
+              control: { nudge: (hint) => modules.observation?.nudge(hint) }
+            },
+            preferences: {
+              queries: modules.preferences.preferences.queries,
+              channelTokens: modules.preferences.channelTokens
+            },
+            keystrokes: {
+              // The observed-session key relay (#1285, the cut-2 slice of ISSUE-167): one key into
+              // the terminal of the process observation recorded, identity re-checked just before.
+              relay: createKeystrokeRelay({
+                crew: modules.crew.crew.queries,
+                observed: modules.observation.crew.processIdentities,
+                delivery: new ConsoleKeystrokeDelivery({
+                  processes: processControl,
+                  platform: hostRuntime().os as NodeJS.Platform,
+                  env: process.env,
+                  cwd: homedir(),
+                  scheduler
+                })
+              }),
+              transcripts: new FsTranscriptTail(fs),
+              redact: redactSecrets
+            }
+          }
+          modules.asking = servedAsking.wire(askingDeps)
+          // The hook ingress over asking's `/hooks/claude/*` route and `app_meta.ingress_port`;
+          // boot step 6 starts it, the clean exit closes it (wiring/hookIngress.ts).
+          hookIngress = createHostHookIngress({
+            routes: modules.asking.hookRoutes,
+            portRecord: appMetaIngressPort(db),
+            clock,
+            log
+          })
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.
@@ -902,6 +1003,13 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             attention: modules.attention.attention
           })
+        },
+        // Step 6: the hook ingress listens (ISSUE-140); the MCP endpoint is later (ISSUE-209).
+        startHookIngress: () => {
+          if (hookIngress === undefined) {
+            throw new HostInvariantError('boot step 6 runs after step 4 built the hook ingress')
+          }
+          return startHookIngressAtBoot(hookIngress, log)
         },
         // Step 7: the catch-up, then the live loop, through the wiring's own `start`, which is null
         // in a cut-1 rollback build (and over any sink that stores nothing, INV-98).

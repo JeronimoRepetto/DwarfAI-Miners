@@ -195,7 +195,7 @@ export interface WiredPreferences {
   integrationGate: IntegrationGateReader
   /** The kernel bridge (16 §3), fail closed until ISSUE-324. */
   secretReader: SecretReader
-  /** The channel-token lookup the hook ingress reads (bridges/channelTokens.ts; later: ISSUE-140). */
+  /** The channel-token lookup the hook ingress reads (bridges/channelTokens.ts; ISSUE-140). */
   channelTokens: Pick<ChannelTokenStore, 'active'>
 }
 

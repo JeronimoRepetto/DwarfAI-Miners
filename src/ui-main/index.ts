@@ -71,7 +71,8 @@ import {
 } from './window/application/stopEverything'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './ipc/router'
 import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE } from './ipc/routes'
-import type { ChannelRoute } from './ipc/channelRoute'
+import type { ChannelRoute, RouteQualifier } from './ipc/channelRoute'
+import type { LegacyLog } from '../legacy-bridge/legacyDiagnostics'
 import type { TrayController } from './window/ports/trayController'
 import type { PanelWindowController } from './window/ports/panelWindowController'
 import type { ToggleShortcut } from './window/application/toggleShortcut'
@@ -228,6 +229,28 @@ import {
   RESET_FANOUT_CUTS,
   RESET_FANOUT_NAME
 } from '../legacy-bridge/reset/resetFanout'
+import { createLegacyAnswerShapeAdapter } from '../legacy-bridge/asks/LegacyAnswerShapeAdapter'
+import type { LegacyAskRelay } from '../legacy-bridge/LegacyAskRelay'
+import { ANSWER_DWARF_ROWS, createAnswerDwarfRows } from './ipc/handlers/answerDwarf.host'
+import { createAnswerQualifier } from './ipc/handlers/answerDwarf.dispatch'
+import {
+  createSetAskStepRow,
+  SET_ASK_STEP,
+  SET_ASK_STEP_ROWS
+} from './ipc/handlers/setAskStep.host'
+import {
+  createSetClaudeHooksRow,
+  SET_CLAUDE_HOOKS,
+  SET_CLAUDE_HOOKS_ROWS
+} from './ipc/handlers/setClaudeHooks.host'
+import {
+  ANSWER_WELCOME,
+  ANSWER_WELCOME_ROWS,
+  createAnswerWelcomeRow
+} from './ipc/handlers/answerWelcome.host'
+
+/** The 21 §3.1 shape adapter of A-40/A-41's qualified `legacy` routes (cuts 2–4). */
+const LEGACY_ANSWER_SHAPE_ADAPTER = 'LegacyAnswerShapeAdapter'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -734,6 +757,8 @@ export interface LegacyAskRelayComposition {
   channels: readonly string[]
   /** Today's ask fields of a Host dwarf, for `BoardFacadeAdapter`. */
   askFields(dwarfId: DwarfId): LegacyAskFields
+  /** The relay's cut-2 answer half, for `LegacyAnswerShapeAdapter` and the A-40/A-41 qualifier (21 §3, §3.1). */
+  answers: Pick<LegacyAskRelay, 'asks' | 'answer'>
   /** Runs `h` when a card opened, changed or closed (the root refreshes the facade's board). */
   onChanged(h: () => void): void
   /** Settles once the read started by the last registry write is applied. */
@@ -774,12 +799,119 @@ export function composeLegacyAskRelay(deps: {
     }),
     channels: relay.requestChannels,
     askFields: (dwarfId) => relay.askFields(dwarfId),
+    answers: { asks: () => relay.asks(), answer: (askId, body) => relay.answer(askId, body) },
     onChanged(h) {
       changed = h
     },
     whenIdle: () => reading,
     dispose: () => relay.dispose()
   }
+}
+
+/** No relay composed: it holds no ask, so every `legacy:` answer is stale and today's runtime is never called. */
+const NO_RELAYED_ASKS: LegacyAskRelayComposition['answers'] = {
+  asks: () => [],
+  answer: () => Promise.reject(new Error('no relayed ask'))
+}
+
+/** The A-40/A-41 answer path as the root composes it from the cut-2 switch (ISSUE-141). */
+export interface AskAnswersComposition {
+  /** The A-40/A-41 `host` handlers, for the Host's own AskIds (ISSUE-128); none where no row routes `host`. */
+  part: RouteTargetPart | undefined
+  /** `LegacyAnswerShapeAdapter` under its name, where the table's qualified `legacy` routes name it (21 §3.1). */
+  shapeAdapters: Readonly<Record<string, RouteTarget>>
+  /** A-40's and A-41's qualifier: the relay's origin for a `legacy:` AskId, none for a Host AskId (21 §1 item 2). */
+  qualifiers: Partial<Record<ChannelKey, (payload: unknown) => RouteQualifier>>
+}
+
+/**
+ * A-40 `answerDwarfQuestion` and A-41 `answerDwarfPermission` from the cut-2 switch (21 §2 cut 2 "New core serves",
+ * "Qualified routes"; ISSUE-141): where the table routes them `host`, their `host` handlers relay a Host AskId's answer to
+ * `asking.answerQuestion` / `asking.answerPermission` (ADR-010); where it also routes the relay's origins `legacy`
+ * through `LegacyAnswerShapeAdapter`, that adapter is bound over `LegacyAskRelay` (21 §3.1, cuts 2–4) and the router
+ * reads each call's qualifier from its AskId (`createAnswerQualifier`). A cut-2 rollback build routes neither row
+ * `host` but routes both, unqualified, through the adapter (`rollbackOf`): the adapter is bound all the same. Wherever
+ * the table names the adapter it is bound, over the relay or, with no relay composed, over none (every `legacy:`
+ * answer is then stale, `not-open`), so the router never starts without it. `undefined` when the table neither routes
+ * a row `host` nor names the adapter (before cut 2): today's runtime answers through the relay's today shape.
+ */
+export function composeAskAnswers(deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+  client: Pick<HostClient, 'call'> | undefined
+  relay: LegacyAskRelayComposition | undefined
+  log: LegacyLog
+}): AskAnswersComposition | undefined {
+  const { routes, client, relay } = deps
+  const rows =
+    client === undefined
+      ? []
+      : ANSWER_DWARF_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
+  const named = routes.some((route) => route.shapeAdapter === LEGACY_ANSWER_SHAPE_ADAPTER)
+  if (rows.length === 0 && !named) return undefined
+  const adapter =
+    named && bridgeLivesIn(LEGACY_ANSWER_SHAPE_ADAPTER, deps.release)
+      ? createLegacyAnswerShapeAdapter({ relay: relay?.answers ?? NO_RELAYED_ASKS, log: deps.log })
+      : undefined
+  const qualifier = createAnswerQualifier({
+    originOf: (askId) => relay?.answers.asks().find((ask) => ask.askId === askId)?.origin
+  })
+  // A-40's and A-41's qualifier only where the table has qualified rows for them (the release table, not a rollback).
+  const qualified = ANSWER_DWARF_ROWS.filter((channel) =>
+    routes.some((route) => route.channel === channel && route.qualifier !== undefined)
+  )
+  return {
+    part:
+      client === undefined || rows.length === 0
+        ? undefined
+        : { channels: rows, target: createAnswerDwarfRows(client) },
+    shapeAdapters: adapter === undefined ? {} : { [LEGACY_ANSWER_SHAPE_ADAPTER]: adapter },
+    qualifiers: Object.fromEntries(qualified.map((channel) => [channel, qualifier]))
+  }
+}
+
+/**
+ * The NEW rows born `host` in cut 2 (21 §2 cut 2 "New core serves"; ISSUE-141): A-N07 `setAskStep` (B-M32, ISSUE-129),
+ * A-N31 `setClaudeHooksEnabled` (B-M39, ISSUE-221) and A-N32 `answerWelcome` (B-M40, ISSUE-223), each a part of the
+ * `host` target only where the table routes it `host`. `undefined` when it routes none of them (before cut 2; in a
+ * cut-2 rollback build A-N31 and A-N32 are withdrawn, `rollbackTable.ts`).
+ */
+export function composeAskStepAndIntegrationRows(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+}): RouteTargetPart | undefined {
+  const { routes, client } = deps
+  const parts: RouteTargetPart[] = []
+  if (routedTo(routes, SET_ASK_STEP, 'host')) {
+    parts.push({ channels: SET_ASK_STEP_ROWS, target: createSetAskStepRow(client) })
+  }
+  if (routedTo(routes, SET_CLAUDE_HOOKS, 'host')) {
+    parts.push({ channels: SET_CLAUDE_HOOKS_ROWS, target: createSetClaudeHooksRow(client) })
+  }
+  if (routedTo(routes, ANSWER_WELCOME, 'host')) {
+    parts.push({ channels: ANSWER_WELCOME_ROWS, target: createAnswerWelcomeRow(client) })
+  }
+  if (parts.length === 0) return undefined
+  return { channels: parts.flatMap((part) => part.channels), target: composeRouteTargets(parts) }
+}
+
+/**
+ * Whether today's runtime composes its Claude hook half (21 §2 cut 2 "Switched off in legacy"; §1 item 4; §4 row
+ * "Claude hook entry"; ISSUE-141, TC-141-06): today's hook installer, the Claude route of its loopback listener, the
+ * observed-Claude permission registry and keystroke path. Only while A-40 and A-41 have no `host` route, each one
+ * unqualified `legacy` row (the cut-1 table with today's shape, or a cut-2 rollback build, whose row keeps the target
+ * shape through `LegacyAnswerShapeAdapter`): from the cut-2 switch the Host is the only writer of the Claude hook
+ * entry. Read from the route table, so a rollback build recomposes it. AMENDED for ISSUE-141 (verifier finding,
+ * 2026-10-14; was: every route `legacy` with today's shape, which a rollback row keeping the renderer's shape fails).
+ */
+export function legacyClaudeHooksComposed(routes: readonly ChannelRoute[]): boolean {
+  return ANSWER_DWARF_ROWS.every((channel) => {
+    const own = routes.filter((route) => route.channel === channel)
+    return (
+      own.length > 0 &&
+      own.every((route) => route.owner === 'legacy' && route.qualifier === undefined)
+    )
+  })
 }
 
 /** An open window of the app, as the pushes reach it. */
@@ -1163,9 +1295,26 @@ export async function startUiMain({
           legacy: legacyRuntime,
           bridge: dwarfIds?.bridge
         })
+  // A-40/A-41 and the NEW rows born `host` in cut 2, once the table routes them there (the cut-2 switch, ISSUE-141): the
+  // Host's AskIds through the broker, the relay's `legacy:` AskIds through `LegacyAnswerShapeAdapter` (21 §3.1).
+  const askAnswers = composeAskAnswers({
+    routes,
+    release,
+    client: host?.client,
+    relay: askRelay,
+    log: uiLog ?? { record: () => {} }
+  })
+  const cut2Rows =
+    host === undefined
+      ? undefined
+      : composeAskStepAndIntegrationRows({ routes, client: host.client })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
-    boardFacade === undefined && minesAdmin === undefined && hostReads === undefined
+    boardFacade === undefined &&
+    minesAdmin === undefined &&
+    hostReads === undefined &&
+    askAnswers?.part === undefined &&
+    cut2Rows === undefined
       ? stopRows
       : composeRouteTargets([
           ...(stopRows === undefined
@@ -1175,8 +1324,11 @@ export async function startUiMain({
               ]),
           ...(boardFacade === undefined ? [] : [boardFacade.part]),
           ...(minesAdmin === undefined ? [] : [minesAdmin.part]),
-          ...(hostReads === undefined ? [] : [hostReads.part])
+          ...(hostReads === undefined ? [] : [hostReads.part]),
+          ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
+          ...(cut2Rows === undefined ? [] : [cut2Rows])
         ])
+  const allShapeAdapters = { ...shapeAdapters, ...askAnswers?.shapeAdapters }
 
   // Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the notifier connection's frames, from the start of the
   // attach, are drawn once Electron is ready (a notification cannot be built before), in arrival order; where S-018-1
@@ -1257,7 +1409,9 @@ export async function startUiMain({
     routes,
     legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
-    ...(shapeAdapters === undefined ? {} : { shapeAdapters }),
+    ...(Object.keys(allShapeAdapters).length === 0 ? {} : { shapeAdapters: allShapeAdapters }),
+    // A-40/A-41's qualifier, from the cut-2 switch: the relay's origin of a `legacy:` AskId (21 §1 item 2).
+    ...(askAnswers === undefined ? {} : { qualifiers: askAnswers.qualifiers }),
     // A-N26, the one `host` row of cut 0: its handler relays `host.shutdown` on the confirmation's `ui` connection.
     ...(hostTarget === undefined ? {} : { host: hostTarget }),
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
@@ -1734,6 +1888,8 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
         { app, dialog, nativeImage, shell, clipboard, globalShortcut },
         {
           ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
+          // Today's Claude hook half only while A-40/A-41 keep their pre-cut-2 routes (TC-141-06).
+          claudeHooks: legacyClaudeHooksComposed(ROUTES),
           log: uiLog
         }
       )

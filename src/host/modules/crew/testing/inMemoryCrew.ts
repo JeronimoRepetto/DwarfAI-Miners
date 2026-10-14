@@ -9,7 +9,7 @@ import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { DwarfId } from '../../../kernel/domain/values'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
-import { CrewArrivals } from '../application/arrival'
+import { CrewArrivals, OpenAskMemory } from '../application/arrival'
 import { CrewReadModel, type SessionLinks } from '../application/crewQueries'
 import { StatusTimer } from '../application/statusTimer'
 import type { CrewEvent } from '../domain/events'
@@ -54,8 +54,10 @@ export function inMemoryCrew() {
     owned: (dwarfId) => owned.has(dwarfId),
     hasDeliveryRoute: (dwarfId) => routed.has(dwarfId)
   }
+  // As createCrew composes it: the front ask is Host memory beside the stored rows (09 §4.2).
+  const remembered = new OpenAskMemory(repository)
   const commands = new CrewArrivals({
-    repository,
+    repository: remembered,
     facts,
     transactions: transactionRunner,
     bus,
@@ -64,7 +66,12 @@ export function inMemoryCrew() {
     hostEpoch: CREW_EPOCH,
     statusTimer
   })
-  const queries = new CrewReadModel({ repository, clock, links, presentDwarfs: repository })
+  const queries = new CrewReadModel({
+    repository: remembered,
+    clock,
+    links,
+    presentDwarfs: repository
+  })
   return {
     commands,
     queries,

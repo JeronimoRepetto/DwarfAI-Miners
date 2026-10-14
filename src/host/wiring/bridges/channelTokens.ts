@@ -4,7 +4,7 @@
 // preferences module's store itself (R4). It answers the one active row of a channel on every call
 // (no cache), so a rotated-out or revoked token's hash is never returned; it holds `active` alone,
 // so the ingress can authenticate a request but never issue, revoke or withdraw a token. The hook
-// ingress is bound to it where it is wired (later: ISSUE-140, review R7V-02).
+// ingress is bound to it in wiring/routes/askingRoutes.ts (ISSUE-140, review R7V-02).
 import type { ChannelTokenStore } from '../../modules/preferences'
 
 export function ingressChannelTokens(

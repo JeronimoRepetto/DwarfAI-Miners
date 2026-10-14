@@ -9,6 +9,10 @@
  * answered an error, Stop everything did not finish and DwarfAI keeps running: the same dialog becomes ONE danger
  * message saying so, naming no dwarf (owner ruling 2026-10-01; ADR-002 D7 step 3). Only one is ever shown.
  *
+ * It opens above every other dialog (`overAll`, ISSUE-141): Stop everything and quit is the one person-facing way to
+ * stop the Host (ADR-002 D7, OQ-63), so a dialog with no way out of its own, the first-run step (US-SET-012.AC06),
+ * never covers it, whichever opened first.
+ *
  * Presentational: useStopEverything, owned by App, holds the state and the IPC (ADR-033 item 2).
  *
  * The words are design's (ADR-018 D5 copy items 4–7 and 9; ADR-002 O-3), looked up in the copy dictionary, the values
@@ -88,6 +92,7 @@ function act(index: number): void {
     :title="dialog?.title ?? ''"
     :actions="dialog?.actions ?? []"
     danger
+    over-all
     @action="act"
     @cancel="back"
   >

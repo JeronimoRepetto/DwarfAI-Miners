@@ -8,23 +8,33 @@
 //
 // TC-137-01. The recorded observed-Codex case (TC-137-03) composes this dispatch with the real relay and adapter, so
 // it lives in src/legacy-bridge/LegacyAskRelay.answer.test.ts (R16 forbids this file from importing the bridge).
+//
+// AMENDED for ISSUE-141 (was: `createAnswerDwarfDispatch`, one target splitting each call): from the cut-2 switch the
+// route table holds the qualified rows (`routes.ts`) and the router dispatches them, reading each call's qualifier with
+// `createAnswerQualifier`; so the dispatch here is the router over the release table's A-40/A-41 routes. The legacy
+// seat's request schema stands for the shape adapter's (the 14 request with a `legacy:` AskId, 21 §3).
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
+  answerPermissionParamsSchema,
+  answerQuestionParamsSchema,
   askIdSchema,
   isUuidV7,
   type AnswerOutcome,
+  type ChannelKey,
   type HostMethod,
   type HostParams,
   type HostResult
 } from '@dwarfai/contracts'
 import type { HostClient } from '../../window/ports/hostClient'
-import type { RouteTarget } from '../router'
+import { createRouter, type RouteTarget } from '../router'
+import { ROUTES } from '../routes'
 import {
   ANSWER_DWARF_PERMISSION,
   ANSWER_DWARF_QUESTION,
   createAnswerDwarfRows
 } from './answerDwarf.host'
-import { createAnswerDwarfDispatch, isLegacyAskId } from './answerDwarf.dispatch'
+import { createAnswerQualifier, isLegacyAskId } from './answerDwarf.dispatch'
 
 const HOST_ASK = '01920000-0000-7000-9000-0000000000a5'
 const REQUEST = '01920000-0000-7000-a000-000000000001'
@@ -50,12 +60,40 @@ class RecordingLegacyTarget implements RouteTarget {
     this.served.push([channel, payload])
     return Promise.resolve({ ok: true, value: { kind: 'accepted' } satisfies AnswerOutcome })
   }
+
+  requestSchema(channel: string) {
+    const askId = z.string().refine(isLegacyAskId)
+    if (channel === ANSWER_DWARF_QUESTION) return answerQuestionParamsSchema.extend({ askId })
+    return answerPermissionParamsSchema.extend({ askId })
+  }
 }
+
+const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
 
 function world() {
   const host = new FakeAnswerHost()
   const legacy = new RecordingLegacyTarget()
-  const dispatch = createAnswerDwarfDispatch({ host: createAnswerDwarfRows(host), legacy })
+  const rows: readonly ChannelKey[] = [ANSWER_DWARF_QUESTION, ANSWER_DWARF_PERMISSION]
+  // The relay's origin of each open legacy ask: the held Claude permission, the observed Codex question.
+  const qualifier = createAnswerQualifier({
+    originOf: (askId) => (askId === LEGACY_CLAUDE ? 'legacy-launch' : 'legacy-ask-channel')
+  })
+  const handlers = new Map<string, (event: typeof FROM_PANEL, payload: unknown) => unknown>()
+  createRouter({
+    routes: ROUTES.filter((route) => rows.includes(route.channel)),
+    legacy: { serve: () => Promise.reject(new Error('never today’s runtime directly')) },
+    host: createAnswerDwarfRows(host),
+    shapeAdapters: { LegacyAnswerShapeAdapter: legacy },
+    qualifiers: { [ANSWER_DWARF_QUESTION]: qualifier, [ANSWER_DWARF_PERMISSION]: qualifier },
+    senders: { appEntry: APP_ENTRY, isModeWindow: (id) => id === 7 }
+  }).register({
+    handle: (wire, listener) => void handlers.set(wire, listener),
+    on: () => {}
+  })
+  const dispatch = {
+    serve: (channel: string, payload: unknown) => handlers.get(channel)?.(FROM_PANEL, payload)
+  }
   return { host, legacy, dispatch }
 }
 

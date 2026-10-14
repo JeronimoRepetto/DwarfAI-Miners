@@ -10,6 +10,7 @@ import {
   type IsolatedProfile,
   type LaunchedApp
 } from '../_harness/launchApp.ts'
+import { answerFirstRunStep } from '../_harness/firstRunStep.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
 import {
   observedDwarfs,
@@ -45,6 +46,9 @@ async function oneObservedDwarf(window: Page): Promise<ObservedDwarf> {
 /** The Panel's board draws the mine and, opened, its one dwarf. */
 async function boardDrawsTheDwarf(launched: LaunchedApp): Promise<void> {
   await chooseTrayItem(launched.app, TRAY_ITEMS.open)
+  // The Claude stub is installed, so from cut 2 the first-run step is due on a fresh profile: answered first, as a
+  // person does, with nothing ticked (nothing written; ISSUE-141). Answered once, it is not due at the reopen.
+  await answerFirstRunStep(launched.window)
   await launched.window.locator('.dm-marker').first().click({ timeout: 30_000 })
   await expect(launched.window.locator('.dm-dwarf')).toHaveCount(1, { timeout: 30_000 })
 }

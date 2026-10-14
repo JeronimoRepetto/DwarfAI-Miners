@@ -62,7 +62,11 @@ export interface BootStepContext {
 }
 
 export type BootStepResult =
-  | { kind: 'done' }
+  | {
+      kind: 'done'
+      /** A part of the step not built yet, named with the issue that builds it (step 6's MCP endpoint). */
+      pending?: { part: string; owner: string }
+    }
   /** A placeholder: the step is built by `owner`, a later issue. */
   | { kind: 'skipped'; owner: string }
   /** The endpoint is held by a running Host that answered `hello` (S12.02). */
@@ -178,7 +182,9 @@ export async function runBoot(
       durationMs: deps.clock.now() - stepStartedAt,
       msg:
         result.kind === 'done'
-          ? `step ${step.name} done`
+          ? result.pending === undefined
+            ? `step ${step.name} done`
+            : `step ${step.name} done; ${result.pending.part} skipped until ${result.pending.owner}`
           : `step ${step.name} skipped until ${result.owner}`
     })
     if (migration.since !== null) {

@@ -46,6 +46,11 @@ export interface ClaudeHooksConfigWriterOptions {
   platform: NodeJS.Platform
   /** The persisted ingress port at the moment of the write (ADR-016 item 3; S14.10 rewrites). */
   ingressPort: () => number
+  /**
+   * Leave the old app's entry alone: it is not looked for and not removed (a cut-2 rollback build, where today's
+   * installer, the old app here, is that entry's one writer again; 21 §1 item 4; ISSUE-141). Default false.
+   */
+  keepOldAppEntries?: boolean
 }
 
 /** The file's text as read; `null` when it does not exist. */
@@ -216,6 +221,7 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
   }
 
   probeLegacy(doc: ClaudeSettingsDocument): boolean {
+    if (this.options.keepOldAppEntries === true) return false
     return doc.text !== null && this.someHandler(doc.text, isLegacyHookCommand)
   }
 
@@ -255,7 +261,8 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
   }
 
   private isEntry(command: string): boolean {
-    return isOwnedHookCommand(command, this.options.platform) || isLegacyHookCommand(command)
+    if (isOwnedHookCommand(command, this.options.platform)) return true
+    return this.options.keepOldAppEntries !== true && isLegacyHookCommand(command)
   }
 
   /** Every handler under `hooks`, whatever the event; `test` sees each one's command. */
