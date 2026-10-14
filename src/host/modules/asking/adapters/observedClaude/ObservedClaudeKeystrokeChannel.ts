@@ -29,9 +29,9 @@
 //
 // Package gap (resolved here, ISSUE-134): the keystroke relay is a dependency of this adapter, bound
 // by the Host's composition; the real per-OS relay into a terminal the Host did not start is the
-// observed-session relay of the conversation module (later: ISSUE-167, `ObservedSessionTurnSender`
-// ← `textDelivery/**`, with the same "target checked just before writing" rule). Owned Claude
-// sessions never use this channel (ADR-012 item 4).
+// observed-session key delivery of the conversation module (#1285, the cut-2 slice of ISSUE-167:
+// `ConsoleKeystrokeDelivery` behind wiring/bridges/keystrokeRelay.ts, with the "target checked
+// just before writing" rule). Owned Claude sessions never use this channel (ADR-012 item 4).
 import type { AnswerOutcome, QuestionAnswers } from '../../../../kernel/domain/sharedContracts'
 import type { DwarfId } from '../../../../kernel/domain/values'
 import type { DiagnosticsLog } from '../../../../kernel/ports/diagnosticsLog'

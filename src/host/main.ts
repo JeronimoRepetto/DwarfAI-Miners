@@ -106,6 +106,7 @@ import { PROTOCOL_VERSION, redactSecrets } from '@dwarfai/contracts'
 import { FsTranscriptTail } from './modules/asking/adapters/observedClaude/transcriptTail'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
+import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
@@ -182,6 +183,7 @@ import {
 } from './wiring/bridges/hostConfigWriter'
 import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
+import { createKeystrokeRelay } from './wiring/bridges/keystrokeRelay'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
@@ -205,7 +207,6 @@ import {
 } from './wiring/preferencesWiring'
 import {
   ASKING_FRAMES,
-  NO_KEYSTROKE_RELAY,
   serveAsking,
   type AskingRouteEvent,
   type AskingWiringDeps,
@@ -954,8 +955,19 @@ async function bootHost(base: HostBase): Promise<void> {
               channelTokens: modules.preferences.channelTokens
             },
             keystrokes: {
-              // No relay into an observed terminal yet (later: ISSUE-167): nothing is pressed.
-              relay: NO_KEYSTROKE_RELAY,
+              // The observed-session key relay (#1285, the cut-2 slice of ISSUE-167): one key into
+              // the terminal of the process observation recorded, identity re-checked just before.
+              relay: createKeystrokeRelay({
+                crew: modules.crew.crew.queries,
+                observed: modules.observation.crew.processIdentities,
+                delivery: new ConsoleKeystrokeDelivery({
+                  processes: processControl,
+                  platform: hostRuntime().os as NodeJS.Platform,
+                  env: process.env,
+                  cwd: homedir(),
+                  scheduler
+                })
+              }),
               transcripts: new FsTranscriptTail(fs),
               redact: redactSecrets
             }
