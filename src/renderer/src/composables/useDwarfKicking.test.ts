@@ -11,6 +11,7 @@ const retireDwarf = vi.fn()
 function stubApi(kickDwarf: (...args: never[]) => Promise<DwarfKickResult>): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
+    writable: true,
     value: { kickDwarf, retireDwarf }
   })
 }

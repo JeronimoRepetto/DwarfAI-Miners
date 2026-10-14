@@ -131,7 +131,7 @@ async function mount(preferences: Partial<AudioPreferences> = {}): Promise<void>
       return Promise.resolve(next)
     }) as unknown as Api['setNotificationsEnabled']
   })
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   const audio = useAudio({ player, random: () => 0.5 })
   await audio.sync()
   stopAudio = audio.listen()

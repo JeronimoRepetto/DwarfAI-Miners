@@ -14,7 +14,11 @@ function page(count: number, from = 0): ProjectQueryResult {
 }
 
 function stubQuery(queryProjects: unknown) {
-  Object.defineProperty(window, 'api', { configurable: true, value: { queryProjects } })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: { queryProjects }
+  })
 }
 
 /**
@@ -31,7 +35,7 @@ function stubApi(api: {
   declareMainProject?: unknown
   undeclareMine?: unknown
 }) {
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
 }
 
 /** Resolves only when `release()` is called, so an in-flight page can be observed. */

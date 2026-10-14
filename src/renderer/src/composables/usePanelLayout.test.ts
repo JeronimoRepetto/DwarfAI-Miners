@@ -24,7 +24,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     setPanelLayout: vi.fn().mockResolvedValue(OPEN),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   return api
 }
 

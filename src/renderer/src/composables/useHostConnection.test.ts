@@ -60,7 +60,7 @@ function install(first: unknown, overrides: Partial<DwarfAiMinersApi> = {}): Scr
     }),
     ...overrides
   })
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   return {
     api,
     push(view) {
