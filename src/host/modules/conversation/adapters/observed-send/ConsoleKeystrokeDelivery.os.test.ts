@@ -155,7 +155,12 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
     const script = written
       .split('\n')
       .flatMap((line) => {
-        if (line.startsWith('$assembly')) return [mark('declare'), line]
+        if (line.startsWith('$assembly'))
+          return [
+            "[Console]::Error.WriteLine('language ' + $ExecutionContext.SessionState.LanguageMode)",
+            mark('declare'),
+            line
+          ]
         if (line.startsWith('$buffer')) return [mark('buffer'), line]
         if (line.startsWith('[void]$kernel32::FreeConsole()')) return [mark('free'), line]
         if (line.startsWith('if (-not $kernel32::AttachConsole')) return [mark('attach'), line]
@@ -180,13 +185,14 @@ describe.runIf(process.platform === 'win32')('ConsoleKeystrokeDelivery on Window
     })
     let errors = ''
     child.stderr?.on('data', (chunk: Buffer) => (errors += chunk.toString('utf8')))
-    child.stdout?.resume()
+    let output = ''
+    child.stdout?.on('data', (chunk: Buffer) => (output += chunk.toString('utf8')))
     child.stdin?.end(powerShellStdinLine(script))
     const exit = await Promise.race([child.exited, sleep(20_000).then(() => null)])
     if (exit === null) {
       await control.killTree(await child.identity, { graceMs: 0, group: 'foreign' }).catch(() => {})
     }
-    return `PowerShell exit ${JSON.stringify(exit)}, stderr ${errors.slice(0, 900)}`
+    return `PowerShell exit ${JSON.stringify(exit)}, stderr ${errors.slice(0, 900)}, stdout ${output.slice(0, 900)}`
   }
 
   it('[ADR-012] the relay delivers exactly the keys 1 or Esc to the stub and nothing else', async () => {
