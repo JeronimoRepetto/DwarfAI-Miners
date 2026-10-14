@@ -6,7 +6,11 @@
 // - A row the cut moved off legacy code (`since` is the cut, registry status not 'new') becomes the pre-cut row:
 //   `legacy`, today's shape, no shape adapter, `since: 'pre-cut-0'` (every legacy row dates from before cut 0). The
 //   cut's qualified routes of one channel fold into that one row (AMENDED for ISSUE-141: the first cut with qualified
-//   rows, A-40/A-41 in cut 2; before cut 2 that channel had one owner, today's runtime).
+//   rows, A-40/A-41 in cut 2; before cut 2 that channel had one owner, today's runtime). Except a channel whose cut
+//   qualified routes reach today's runtime through a 21 §3.1 shape adapter (A-40/A-41 through
+//   `LegacyAnswerShapeAdapter`; the first qualified rows, so no earlier cut's rollback changes): the
+//   rollback build keeps this tree's preload and renderer, which speak the row's target shape, so it folds into ONE
+//   unqualified `legacy` row with `shape: 'target'` and that adapter (ISSUE-141, verifier finding 2026-10-14).
 // - A NEW row the cut created keeps its route: no legacy code serves it, and the cut-0 NEW rows are the ones that keep
 //   the rollback build attached to its Host and able to stop it (21 §2.1 item 2a; ADR-002 D7, D8). Except (ISSUE-141
 //   lead decision, 2026-10-14) a NEW row that makes the Host write a foreign entry whose legacy writer the rollback build
@@ -48,7 +52,7 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
     }
     if (folded.has(route.channel)) continue
     folded.add(route.channel)
-    routes.push(preCutRow(route.channel))
+    routes.push(foldedRow(table, route.channel, cut))
   }
   return {
     ...table,
@@ -62,6 +66,31 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
             ...Object.fromEntries(withdrawn.map((channel) => [channel, cut]))
           }
         })
+  }
+}
+
+/**
+ * The one row a rollback folds a moved channel into: the pre-cut row, or, where the cut's qualified routes reached
+ * today's runtime for it through a shape adapter, that adapter's unqualified `legacy` + `target` row.
+ */
+function foldedRow(table: RouteTable, channel: ChannelKey, cut: StepId): ChannelRoute {
+  const adapter = table.routes.find(
+    (route) =>
+      route.channel === channel &&
+      route.since === cut &&
+      route.owner === 'legacy' &&
+      route.shape === 'target' &&
+      route.qualifier !== undefined &&
+      route.shapeAdapter !== undefined
+  )?.shapeAdapter
+  if (adapter === undefined) return preCutRow(channel)
+  return {
+    channel,
+    owner: 'legacy',
+    since: cut,
+    parity: 'n/a',
+    shape: 'target',
+    shapeAdapter: adapter
   }
 }
 

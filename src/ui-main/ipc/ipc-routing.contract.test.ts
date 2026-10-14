@@ -2172,7 +2172,9 @@ describe('release cut 2 (21 §2 cut 2)', () => {
    * router registered over the release table with the answer qualifiers. `invoke` is the renderer's call on a row's
    * wire.
    */
-  async function answerWorld() {
+  // AMENDED for ISSUE-141 (verifier, 2026-10-14; was: no parameter, the release table's routes): the routes to compose
+  // and route over, so the rollback build's table can be driven with the renderer's own payloads too.
+  async function answerWorld(table: readonly ChannelRoute[] = ROUTES) {
     const legacyServed: Array<[string, unknown]> = []
     const hostCalls: Array<[string, unknown]> = []
     const client = {
@@ -2223,7 +2225,7 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     )
     await relay?.whenIdle()
     const answers = composeAskAnswers({
-      routes: ROUTES,
+      routes: table,
       release: ROUTES_RELEASE,
       client: client as unknown as Parameters<typeof composeAskAnswers>[0]['client'],
       relay,
@@ -2231,9 +2233,9 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     })
     const handlers = new Map<string, (event: typeof FROM_PANEL, payload: unknown) => unknown>()
     createRouter({
-      routes: ROUTES.filter((r) => r.channel === QUESTION || r.channel === PERMISSION),
+      routes: table.filter((r) => r.channel === QUESTION || r.channel === PERMISSION),
       legacy: relay?.legacy ?? legacy,
-      ...(answers === undefined ? {} : { host: answers.part.target }),
+      ...(answers?.part === undefined ? {} : { host: answers.part.target }),
       ...(answers === undefined ? {} : { shapeAdapters: answers.shapeAdapters }),
       ...(answers === undefined ? {} : { qualifiers: answers.qualifiers }),
       senders
@@ -2290,7 +2292,7 @@ describe('release cut 2 (21 §2 cut 2)', () => {
 
     // Through the root's composition: the qualifier is the relay's AskId namespace and origin, never a guess.
     const world = await answerWorld()
-    expect(world.answers?.part.channels).toEqual([QUESTION, PERMISSION])
+    expect(world.answers?.part?.channels).toEqual([QUESTION, PERMISSION])
     expect(Object.keys(world.answers?.shapeAdapters ?? {})).toEqual(['LegacyAnswerShapeAdapter'])
     const accepted = { ok: true, value: { kind: 'accepted' } }
     // A legacy-launched session's permission (origin legacy-launch) reaches today's runtime with today's ids.
@@ -2335,6 +2337,74 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     expect(world.legacyServed).toHaveLength(2)
     expect(world.hostCalls).toHaveLength(1)
     world.dispose()
+  })
+
+  // ADDED for ISSUE-141 (verifier finding, 2026-10-14): the rollback build keeps this tree's preload and renderer, which
+  // send A-40/A-41 in the 14 target shape; its table must still reach today's runtime with exactly those payloads.
+  it("[ADR-001, US-ASK-003.AC07] in a cut-2 rollback build the renderer's own A-40/A-41 payloads reach today's runtime through LegacyAnswerShapeAdapter", async () => {
+    const rolledBack = rollbackOf(cut2, 'cut-2')
+    const world = await answerWorld(rolledBack.routes)
+    const accepted = { ok: true, value: { kind: 'accepted' } }
+    expect(
+      await world.invoke(PERMISSION, {
+        askId: 'legacy:toolu_1',
+        decision: 'allow',
+        requestId: REQUEST
+      })
+    ).toEqual(accepted)
+    expect(
+      await world.invoke(QUESTION, {
+        askId: 'legacy:call_1',
+        answers: [{ step: 0, option: 'develop' }],
+        requestId: REQUEST
+      })
+    ).toEqual(accepted)
+    expect(world.legacyServed).toEqual([
+      [PERMISSION, { dwarfId: `claude:${SESSION}`, toolUseId: 'toolu_1', decision: 'allow' }],
+      [
+        QUESTION,
+        {
+          dwarfId: `codex:${THREAD}`,
+          toolUseId: 'call_1',
+          answers: { 'Which branch should I use?': 'develop' }
+        }
+      ]
+    ])
+    // Nothing reaches the Host: the rollback build routes no answer there.
+    expect(world.hostCalls).toEqual([])
+    world.dispose()
+  })
+
+  // ADDED for ISSUE-141 (verifier finding, 2026-10-14): wherever the table names `LegacyAnswerShapeAdapter` the root binds
+  // it, even with no `LegacyAskRelay` composed, so the router never refuses to start (`router: no shape adapter`).
+  it('[ADR-001] with no relay composed the router still starts over the cut-2 table and its rollback, and a legacy: answer is not-open', async () => {
+    const client = { call: () => Promise.resolve({ kind: 'accepted' }) }
+    for (const table of [cut2, rollbackOf(cut2, 'cut-2')]) {
+      const answers = composeAskAnswers({
+        routes: table.routes,
+        release: ROUTES_RELEASE,
+        client: client as unknown as Parameters<typeof composeAskAnswers>[0]['client'],
+        relay: undefined,
+        log: { record: () => {} }
+      })
+      const reached: string[] = []
+      const router = createRouter({
+        routes: table.routes.filter((r) => r.channel === QUESTION || r.channel === PERMISSION),
+        legacy: { serve: async (channel) => void reached.push(`legacy ${channel}`) },
+        ...(answers?.part === undefined ? {} : { host: answers.part.target }),
+        shapeAdapters: answers?.shapeAdapters ?? {},
+        qualifiers: answers?.qualifiers ?? {},
+        senders
+      })
+      // As `register` does: the root's qualifier of the payload picks the route.
+      const payload = { askId: 'legacy:toolu_1', decision: 'allow', requestId: REQUEST }
+      const qualifier = answers?.qualifiers[PERMISSION]?.(payload) ?? {}
+      expect(
+        await router.dispatch(PERMISSION, FROM_PANEL, payload, qualifier),
+        table.release
+      ).toEqual({ ok: true, value: { kind: 'not-open' } })
+      expect(reached).toEqual([])
+    }
   })
 
   it('[ADR-001] in cut 2 A-N07, A-N31 and A-N32 exist and route host', async () => {
@@ -2451,8 +2521,10 @@ describe('release cut 2 (21 §2 cut 2)', () => {
   })
 
   it('[ADR-016] with A-40 and A-41 flipped back to their cut-1 routes the legacy hook installer and the Claude hook route are composed again, and never while the Host writes the Claude hook entry', async () => {
+    // AMENDED for ISSUE-141 (verifier finding, 2026-10-14; was: `legacy` with today's shape, `legacyToday(key)`): the
+    // folded row keeps the renderer's target shape through `LegacyAnswerShapeAdapter`, or no answer would be delivered.
     // TC-141-06 (21 §2 cut 2 row "Rollback"; §2.1 item 1; §1 items 4, 8): the rollback build of cut 2 routes A-40 and
-    // A-41 `legacy` with today's shape again, one row each (the qualified rows fold back into it), so today's Claude
+    // A-41 `legacy` again, one unqualified row each (the qualified rows fold back into it), so today's Claude
     // hook composition comes back; the cut's NEW rows that turn the Host's Claude hook entry on (A-N31, A-N32) are
     // withdrawn in that build (hidden until built), so the Host never writes that entry while today's installer does.
     const rolledBack = rollbackOf(cut2, 'cut-2')
@@ -2461,7 +2533,16 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       expect(
         rolledBack.routes.filter((r) => r.channel === key),
         key
-      ).toEqual([legacyToday(key)])
+      ).toEqual([
+        {
+          channel: key,
+          owner: 'legacy',
+          since: 'cut-2',
+          parity: 'n/a',
+          shape: 'target',
+          shapeAdapter: 'LegacyAnswerShapeAdapter'
+        }
+      ])
     }
     expect(rolledBack.withdrawn).toEqual({ 'claude:hooks:set': 'cut-2', 'welcome:answer': 'cut-2' })
     expect(rolledBack.routes.filter((r) => r.channel === 'ask:step:set')).toEqual(
@@ -2487,14 +2568,18 @@ describe('release cut 2 (21 §2 cut 2)', () => {
         table.release
       ).toBe(false)
     }
-    // The rollback build's router refuses the withdrawn rows like a row with no route.
+    // The rollback build's router refuses the withdrawn rows like a row with no route. (AMENDED for ISSUE-141: its
+    // A-40/A-41 rows name `LegacyAnswerShapeAdapter`, so the router is handed one, as the root binds it.)
     const reached: string[] = []
     const router = createRouter({
       routes: rolledBack.routes,
       legacy: { serve: async (channel) => void reached.push(`legacy ${channel}`) },
       uiLocal: { serve: async (channel) => void reached.push(`ui-local ${channel}`) },
       host: { serve: async (channel) => void reached.push(`host ${channel}`) },
-      shapeAdapters: { ResetFanout: { serve: async () => undefined } },
+      shapeAdapters: {
+        ResetFanout: { serve: async () => undefined },
+        LegacyAnswerShapeAdapter: { serve: async () => undefined }
+      },
       senders
     })
     expect(

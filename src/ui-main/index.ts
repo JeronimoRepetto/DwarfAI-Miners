@@ -808,10 +808,16 @@ export function composeLegacyAskRelay(deps: {
   }
 }
 
+/** No relay composed: it holds no ask, so every `legacy:` answer is stale and today's runtime is never called. */
+const NO_RELAYED_ASKS: LegacyAskRelayComposition['answers'] = {
+  asks: () => [],
+  answer: () => Promise.reject(new Error('no relayed ask'))
+}
+
 /** The A-40/A-41 answer path as the root composes it from the cut-2 switch (ISSUE-141). */
 export interface AskAnswersComposition {
-  /** The A-40/A-41 `host` handlers, for the Host's own AskIds (ISSUE-128). */
-  part: RouteTargetPart
+  /** The A-40/A-41 `host` handlers, for the Host's own AskIds (ISSUE-128); none where no row routes `host`. */
+  part: RouteTargetPart | undefined
   /** `LegacyAnswerShapeAdapter` under its name, where the table's qualified `legacy` routes name it (21 §3.1). */
   shapeAdapters: Readonly<Record<string, RouteTarget>>
   /** A-40's and A-41's qualifier: the relay's origin for a `legacy:` AskId, none for a Host AskId (21 §1 item 2). */
@@ -823,8 +829,11 @@ export interface AskAnswersComposition {
  * "Qualified routes"; ISSUE-141): where the table routes them `host`, their `host` handlers relay a Host AskId's answer to
  * `asking.answerQuestion` / `asking.answerPermission` (ADR-010); where it also routes the relay's origins `legacy`
  * through `LegacyAnswerShapeAdapter`, that adapter is bound over `LegacyAskRelay` (21 §3.1, cuts 2–4) and the router
- * reads each call's qualifier from its AskId (`createAnswerQualifier`). `undefined` when the table routes neither row
- * `host` (before cut 2, or a rollback build), so today's runtime keeps answering through the relay's today shape.
+ * reads each call's qualifier from its AskId (`createAnswerQualifier`). A cut-2 rollback build routes neither row
+ * `host` but routes both, unqualified, through the adapter (`rollbackOf`): the adapter is bound all the same. Wherever
+ * the table names the adapter it is bound, over the relay or, with no relay composed, over none (every `legacy:`
+ * answer is then stale, `not-open`), so the router never starts without it. `undefined` when the table neither routes
+ * a row `host` nor names the adapter (before cut 2): today's runtime answers through the relay's today shape.
  */
 export function composeAskAnswers(deps: {
   routes: readonly ChannelRoute[]
@@ -834,20 +843,30 @@ export function composeAskAnswers(deps: {
   log: LegacyLog
 }): AskAnswersComposition | undefined {
   const { routes, client, relay } = deps
-  const rows = ANSWER_DWARF_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
-  if (rows.length === 0 || client === undefined) return undefined
+  const rows =
+    client === undefined
+      ? []
+      : ANSWER_DWARF_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
   const named = routes.some((route) => route.shapeAdapter === LEGACY_ANSWER_SHAPE_ADAPTER)
+  if (rows.length === 0 && !named) return undefined
   const adapter =
-    named && relay !== undefined && bridgeLivesIn(LEGACY_ANSWER_SHAPE_ADAPTER, deps.release)
-      ? createLegacyAnswerShapeAdapter({ relay: relay.answers, log: deps.log })
+    named && bridgeLivesIn(LEGACY_ANSWER_SHAPE_ADAPTER, deps.release)
+      ? createLegacyAnswerShapeAdapter({ relay: relay?.answers ?? NO_RELAYED_ASKS, log: deps.log })
       : undefined
   const qualifier = createAnswerQualifier({
     originOf: (askId) => relay?.answers.asks().find((ask) => ask.askId === askId)?.origin
   })
+  // A-40's and A-41's qualifier only where the table has qualified rows for them (the release table, not a rollback).
+  const qualified = ANSWER_DWARF_ROWS.filter((channel) =>
+    routes.some((route) => route.channel === channel && route.qualifier !== undefined)
+  )
   return {
-    part: { channels: rows, target: createAnswerDwarfRows(client) },
+    part:
+      client === undefined || rows.length === 0
+        ? undefined
+        : { channels: rows, target: createAnswerDwarfRows(client) },
     shapeAdapters: adapter === undefined ? {} : { [LEGACY_ANSWER_SHAPE_ADAPTER]: adapter },
-    qualifiers: named ? Object.fromEntries(rows.map((channel) => [channel, qualifier])) : {}
+    qualifiers: Object.fromEntries(qualified.map((channel) => [channel, qualifier]))
   }
 }
 
@@ -879,19 +898,18 @@ export function composeAskStepAndIntegrationRows(deps: {
 /**
  * Whether today's runtime composes its Claude hook half (21 §2 cut 2 "Switched off in legacy"; §1 item 4; §4 row
  * "Claude hook entry"; ISSUE-141, TC-141-06): today's hook installer, the Claude route of its loopback listener, the
- * observed-Claude permission registry and keystroke path. Only while A-40 and A-41 keep their pre-cut-2 routes, every
- * one `legacy` with today's shape (the cut-1 table, or a cut-2 rollback build): from the cut-2 switch the Host is the
- * only writer of the Claude hook entry. Read from the route table, so a rollback build recomposes it.
+ * observed-Claude permission registry and keystroke path. Only while A-40 and A-41 have no `host` route, each one
+ * unqualified `legacy` row (the cut-1 table with today's shape, or a cut-2 rollback build, whose row keeps the target
+ * shape through `LegacyAnswerShapeAdapter`): from the cut-2 switch the Host is the only writer of the Claude hook
+ * entry. Read from the route table, so a rollback build recomposes it. AMENDED for ISSUE-141 (verifier finding,
+ * 2026-10-14; was: every route `legacy` with today's shape, which a rollback row keeping the renderer's shape fails).
  */
 export function legacyClaudeHooksComposed(routes: readonly ChannelRoute[]): boolean {
   return ANSWER_DWARF_ROWS.every((channel) => {
     const own = routes.filter((route) => route.channel === channel)
     return (
       own.length > 0 &&
-      own.every(
-        (route) =>
-          route.owner === 'legacy' && route.shape === 'today' && route.qualifier === undefined
-      )
+      own.every((route) => route.owner === 'legacy' && route.qualifier === undefined)
     )
   })
 }
@@ -1295,7 +1313,7 @@ export async function startUiMain({
     boardFacade === undefined &&
     minesAdmin === undefined &&
     hostReads === undefined &&
-    askAnswers === undefined &&
+    askAnswers?.part === undefined &&
     cut2Rows === undefined
       ? stopRows
       : composeRouteTargets([
@@ -1307,7 +1325,7 @@ export async function startUiMain({
           ...(boardFacade === undefined ? [] : [boardFacade.part]),
           ...(minesAdmin === undefined ? [] : [minesAdmin.part]),
           ...(hostReads === undefined ? [] : [hostReads.part]),
-          ...(askAnswers === undefined ? [] : [askAnswers.part]),
+          ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
           ...(cut2Rows === undefined ? [] : [cut2Rows])
         ])
   const allShapeAdapters = { ...shapeAdapters, ...askAnswers?.shapeAdapters }
