@@ -291,6 +291,8 @@ function settle(
   at: Instant,
   change: Pick<Delegation, 'state'> & Partial<Pick<Delegation, 'failure' | 'handoff'>>
 ): Delegation {
-  const { task: _task, context: _context, ...kept } = delegation
-  return { ...kept, ...change, settledAt: at }
+  const kept: Delegation = { ...delegation, ...change, settledAt: at }
+  delete (kept as { task?: SubtaskText }).task
+  delete (kept as { context?: SubtaskText }).context
+  return kept
 }

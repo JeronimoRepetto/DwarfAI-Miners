@@ -44,7 +44,5 @@ export function parseSubtask(input: {
 
 /** Code points, not UTF-16 code units (09 §4.6 `length()`). */
 function characterCount(text: string): number {
-  let count = 0
-  for (const _ of text) count += 1
-  return count
+  return Array.from(text).length
 }
