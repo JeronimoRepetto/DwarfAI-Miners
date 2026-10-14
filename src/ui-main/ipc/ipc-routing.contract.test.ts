@@ -27,8 +27,6 @@ import {
   composePresence,
   composeResetFanout,
   composeStopAllRelay,
-  legacyObserverComposition,
-  legacyObserverOwner,
   type LegacyRuntimeSurface
 } from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
@@ -1321,8 +1319,8 @@ describe('cut-1 mines admin rows (ISSUE-091)', () => {
  * The table of a cut-1 rollback build (21 §2 cut 1 row "Rollback", §2.1 item 1): a cut-1 release whose rows the cut-1
  * switch moved off legacy code route `legacy` again (`rollbackOf`), so the legacy observer, ledger and notifier are
  * composed again. Only then must the Host's observer writes and level-3 notifications be off (21 §1 item 4). The
- * legacy writers' composition gated by this table is the cut-1 route switch's (ISSUE-123), which derives it from the
- * same table this rule reads (`legacyObserverOwner`).
+ * legacy writers' composition gated by this table was the cut-1 route switch's (ISSUE-123); the cut-1 retirement
+ * (ISSUE-124, ISSUE-125) removed it, so a rollback table composes none of them any more ("cut-1 retirement" below).
  */
 const cut1RowsRouteLegacy = (table: RouteTable): boolean =>
   table.release === 'cut-1' &&
@@ -1773,36 +1771,14 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     ])
   })
 
-  // AMENDED for ISSUE-124 (was: "[ADR-001] in cut 1 no legacy publish, crediting or notifier is composed and
-  // LegacyAgentRegistryFeed is composed"): the publish, crediting and feed halves moved to "cut-1 retirement" below; the
-  // notifier stays gated until ISSUE-125.
-  it('[ADR-001] in cut 1 no legacy notifier is composed', () => {
-    // TC-123-01: the table routes the cut-1 board and read rows to the Host, so today's composition gets no notifier
-    // (21 §2 cut 1 "Switched off in legacy"); the Host's level-3 notifications are the only ones (ADR-018).
-    expect(legacyObserverOwner(ROUTES)).toBe('host')
-    expect(legacyObserverComposition(legacyObserverOwner(ROUTES))).toEqual({ notifier: false })
-  })
-
-  // AMENDED for ISSUE-124 (was: "… the legacy observer, crediting and notifier are composed again, and never together
-  // with the Host observer's writes"): after the cut-1 retirement a rollback table composes no observer, publish or
-  // crediting ("cut-1 retirement" below); only the notifier is still gated until ISSUE-125.
-  it("[ADR-001] with the cut-1 rows flipped back to legacy the legacy notifier is composed again, never together with the Host observer's writes, and the retired rows are served by today's runtime", async () => {
+  // AMENDED for ISSUE-125 (was, after ISSUE-124: "[ADR-001] in cut 1 no legacy notifier is composed", and "… the legacy
+  // notifier is composed again, never together with the Host observer's writes, and the retired rows are served by
+  // today's runtime"): after the cut-1 retirement no route table composes today's notifier ("cut-1 retirement" below),
+  // so what stays of the rollback case is the router half (lead resolution H1).
+  it("[ADR-001] with the cut-1 rows flipped back to legacy the rows cut 1 retired are served by today's runtime again and the earlier cuts' rows keep their routes", async () => {
     const rolledBack = rollbackOf(cut1, 'cut-1')
     expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
-    // Today's notifier comes back, and the build's Host rollback setting must be on with it.
-    expect(legacyObserverOwner(rolledBack.routes)).toBe('legacy')
-    expect(legacyObserverComposition(legacyObserverOwner(rolledBack.routes))).toEqual({
-      notifier: true
-    })
     expect(cut1RowsRouteLegacy(rolledBack)).toBe(true)
-    // In the release table the reverse: the Host observer writes and today's notifier is off. The two never meet.
-    for (const table of [cut1, rolledBack]) {
-      const legacyWrites = legacyObserverComposition(legacyObserverOwner(table.routes))
-      const hostWrites = !cut1RowsRouteLegacy(table)
-      expect(legacyWrites.notifier, `${table === cut1 ? 'release' : 'rollback'} notifier`).toBe(
-        !hostWrites
-      )
-    }
     // Lead resolution H1: the rows cut 1 retired route `legacy` with today's shape again, and the router serves them
     // through today's runtime; the rows of earlier cuts keep their routes.
     expect(rolledBack.retired).toEqual({})
@@ -2004,20 +1980,10 @@ describe('cut-1 retirement (21 §2 cut 1)', () => {
     readFileSync(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'), 'utf8')
 
   it('[ADR-001] after the cut-1 retirement LegacyRuntimeRoute composes no poller, scan wiring, publish gate, ledger crediting or projects-store board path, whatever the route table', () => {
+    // AMENDED for ISSUE-125 (was: each table's `legacyObserverComposition` had none of the four retired sinks): the
+    // composition left with the notifier, so nothing of today's observer is derived from a route table any more.
     for (const table of [cut1, rollbackOf(cut1, 'cut-1')]) {
       expect(checkRouteTable(table, KEYS)).toEqual([])
-      const composition = legacyObserverComposition(legacyObserverOwner(table.routes))
-      for (const sink of [
-        'pollTimer',
-        'boardPublish',
-        'ledgerCrediting',
-        'projectsObserverWrites'
-      ]) {
-        expect(
-          composition,
-          `${table === cut1 ? 'release' : 'rollback'} ${sink}`
-        ).not.toHaveProperty(sink)
-      }
     }
     const source = legacyRoute()
     // No poll timer: today's runtime ticks only through LegacyAgentRegistryFeed's cycles (the scan wiring it keeps).
@@ -2063,5 +2029,41 @@ describe('cut-1 retirement (21 §2 cut 1)', () => {
     await feed?.whenIdle()
     expect(reached).toEqual(['discovery', 'registry'])
     feed?.stop()
+  })
+})
+
+describe('cut-1 notifier retirement (21 §2 cut 1)', () => {
+  // ISSUE-125 (21 §2 cut 1 "Retired at the end"; 21 §1 item 4; ADR-018 items 1, 7): after the cut-1 soak (OQ-71)
+  // today's notifier (`notifyDecision` → Electron `Notification`) leaves LegacyRuntimeRoute whatever the route table, so
+  // the Host's attention policy, drawn by the UI's `ElectronNotificationDisplay`, is the only way to an OS notification.
+  const SRC = resolve(import.meta.dirname, '../..')
+  const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
+  const productionFiles = (folder: string): string[] =>
+    readdirSync(resolve(SRC, folder), { withFileTypes: true }).flatMap((entry) => {
+      const relative = `${folder}/${entry.name}`
+      if (entry.isDirectory()) return productionFiles(relative)
+      return /\.ts$/.test(entry.name) && !/\.(test|contract)\.ts$/.test(entry.name)
+        ? [relative]
+        : []
+    })
+
+  it('[ADR-018] after the cut-1 retirement no legacy notifier is composed, whatever the route table, and only the Host attention policy reaches an OS notification', () => {
+    const route = read('legacy-bridge/LegacyRuntimeRoute.ts')
+    expect(route).not.toMatch(
+      /createNotifier|createElectronNotifications|notifyDecision|main\/notifications\/(notifier|notifyDecision|electronNotifications|appUserModelId)'/
+    )
+    // Whatever the route table: the root derives nothing of today's observer from it any more.
+    const root = read('ui-main/index.ts')
+    expect(root).not.toMatch(/legacyObserver(Owner|Composition)\b/)
+    expect(route).not.toMatch(/observer\.notifier\b/)
+    // The only Electron `Notification` of the UI process is the one handed to the Host policy's display adapter.
+    const notificationImporters = [
+      ...productionFiles('ui-main'),
+      ...productionFiles('legacy-bridge')
+    ].filter((file) =>
+      /import\s*\{[^}]*\bNotification\b[^}]*\}\s*from\s*'electron'/.test(read(file))
+    )
+    expect(notificationImporters).toEqual(['ui-main/index.ts'])
+    expect(root).toMatch(/new ElectronNotificationDisplay\(\{\s*notification: Notification,/)
   })
 })

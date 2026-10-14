@@ -1,18 +1,17 @@
-// The cut-1 switch inside today's runtime composition (ISSUE-123; 21 §2 cut 1 "Switched off in legacy"; 21 §1 item 4;
-// AGENTS §5 "switched off at the switch"): from cut 1 the Host observer is the single observer and the single writer
-// of mines, dwarfs, messages, usage and ore (ADR-001 item 4.1), so today's observer stops being a writer.
+// Today's projects store without the observer's writes (ISSUE-123 introduced it as part of the cut-1 switch; 21 §2 cut 1
+// "Switched off in legacy"; 21 §1 item 4): from cut 1 the Host observer is the single observer and the single writer of
+// mines, dwarfs, messages, usage and ore (ADR-001 item 4.1), so today's observer stops being a writer.
 //
-// The cut-1 retirement (ISSUE-124; 21 §2 cut 1 "Retired at the end"): after the soak (OQ-71) today's poll timer, board
-// publish, ledger crediting and projects-store board path are gone from the composition whatever the route table, so a
-// table that routes the cut-1 rows `legacy` again no longer gets them back: cut 1 rolls forward only (21 §2.1 item 4).
-// Today's projects store is always composed without the observer's writes (`withoutObserverWrites`). Only today's
-// notifier is still gated by the route table (`legacyObserverOwner` in `src/ui-main/index.ts`) until ISSUE-125.
+// The cut-1 retirement (21 §2 cut 1 "Retired at the end"; OQ-71): ISSUE-124 removed today's poll timer, board publish,
+// ledger crediting and projects-store board path from the composition, and ISSUE-125 today's notifier, whatever the
+// route table, so nothing of today's observer is gated by a route table any more and cut 1 rolls forward only (21 §2.1
+// item 4). What stays is this wrapper, which today's composition always applies (`LegacyRuntimeRoute.ts`).
 //
 // Today's poll tick still runs, driven by `LegacyAgentRegistryFeed`'s cycles (./LegacyRuntimeSurface.ts), because it is
 // what keeps today's board, and with it the rows still `legacy` (send, console, stop, asks), current.
 //
-// Candidate decision (21 §6): today's composition (`LegacyRuntimeRoute.ts`) is KEPT; this switch is new code that only
-// selects which of today's parts it composes.
+// Candidate decision (21 §6): today's composition (`LegacyRuntimeRoute.ts`) is KEPT; this wrapper is new code. Deleted
+// with today's composition (cut 5).
 import { mineIdForPath } from '../main/domain/aggregate'
 import type { Platform } from '../main/platform/platform'
 import { normalizeProjectName, projectNameForPath } from '../main/projects/projectName'
@@ -22,20 +21,6 @@ import type {
   ProjectsResult,
   ProjectsStore
 } from '../main/projects/projectsStore'
-
-/** Who observes the providers and writes what is observed: today's runtime, or the Host (from cut 1). */
-export type LegacyObserverOwner = 'legacy' | 'host'
-
-/** The part of today's observer still gated by the route table (21 §2 cut 1 "Switched off in legacy"). */
-export interface LegacyObserverComposition {
-  /** Today's notifier (`notifyDecision` → Electron `Notification`). */
-  notifier: boolean
-}
-
-/** What today's composition composes of its observer for `owner` (the Host from cut 1, today's runtime before). */
-export function legacyObserverComposition(owner: LegacyObserverOwner): LegacyObserverComposition {
-  return { notifier: owner === 'legacy' }
-}
 
 /**
  * Today's projects store with the observer's writes switched off (from the cut-1 retirement, always): every read and every

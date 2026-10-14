@@ -6,7 +6,7 @@ import { mineIdForPath } from '../main/domain/aggregate'
 import { ProjectObserver } from '../main/projects/projectObserver'
 import { createProjectsStore, type ProjectsStore } from '../main/projects/projectsStore'
 import type { Mine } from '../main/domain/types'
-import { legacyObserverComposition, withoutObserverWrites } from './legacyObserverSwitch'
+import { withoutObserverWrites } from './legacyObserverSwitch'
 
 const DECLARED = '/work/moria'
 const SEEN = '/work/erebor'
@@ -34,14 +34,6 @@ function board(paths: readonly string[]): Mine[] {
 }
 
 describe('the cut-1 switch inside today’s runtime composition (21 §2 cut 1)', () => {
-  // AMENDED for ISSUE-124 (was: "today’s observer sinks are composed exactly while today’s runtime observes", over
-  // five sinks): the poll timer, board publish, ledger crediting and projects-store board path are retired whatever the
-  // owner (21 §2 cut 1 "Retired at the end"); only the notifier is still gated until ISSUE-125.
-  it('[ADR-001] today’s notifier is composed exactly while today’s runtime observes', () => {
-    expect(legacyObserverComposition('legacy')).toEqual({ notifier: true })
-    expect(legacyObserverComposition('host')).toEqual({ notifier: false })
-  })
-
   it('[ADR-001] with the observer’s writes switched off a poll writes nothing to today’s projects store and every read stays', async () => {
     const real = store()
     const declared = await real.declare({ path: DECLARED, at: 1 })
