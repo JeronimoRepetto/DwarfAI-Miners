@@ -87,7 +87,7 @@ import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { NO_OUTCOMES, type DwarfOutcomeReader } from '../../transport/mappers/wire'
 import { registerDwarfsSection } from '../../transport/snapshot/sections/dwarfs'
 import { errorCode } from '../boot'
-import { createSessionTerminator } from '../bridges/sessionTerminator'
+import { createSessionTerminator, type OwnedSessionLookup } from '../bridges/sessionTerminator'
 import type { MinesCrewBinding } from './mines'
 
 /** The events the crew wiring routes or publishes: one Host bus carries them all (16 §2.3). */
@@ -157,6 +157,12 @@ export interface WiredCrew {
   mines: MinesCrewBinding
   /** "Stop dwarf…" over the terminator and the Host bus, which B-M21 forwards to. */
   stops: CrewStops
+  /**
+   * Binds the owned sessions the terminator ends (ADR-014 item 1), once launching and suppliers
+   * exist (`ownedSessionsOver`, bridges/sessionTerminator.ts); until then an owned dwarf answers
+   * `failed: 'no-identity'` with nothing signalled.
+   */
+  bindOwnedSessions(owned: OwnedSessionLookup): void
   /** Boot step 4, once mines is wired: the 05 §4 routes and the status recompute (S1.18). */
   route(mines: CrewMinesRoute): void
   /** Resolves once every routed arrival has answered (tests; drain). */
@@ -232,12 +238,15 @@ export function serveCrew(serve: CrewServeDeps): ServedCrew {
 function wireCrew(deps: CrewWiringDeps): WiredCrew {
   const { bus, log, observation } = deps
   const crew = createCrew(deps)
+  let ownedSessions: OwnedSessionLookup | null = null
   const terminator = createSessionTerminator({
     crew: crew.queries,
     observed: observation.processIdentities,
     processes: deps.processes,
     endedLedger: observation.control,
-    clock: deps.clock
+    clock: deps.clock,
+    scheduler: deps.scheduler,
+    owned: () => ownedSessions
   })
 
   /** The dwarf bound to a provider identity, read through observation's index. */
@@ -294,6 +303,10 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
       queries: crew.queries
     },
     stops: crew.stops({ terminator, bus }),
+    bindOwnedSessions: (owned) => {
+      if (ownedSessions !== null) throw new HostInvariantError('the owned sessions are bound once')
+      ownedSessions = owned
+    },
     route: (mines) => {
       bus.subscribe('SessionObserved', ({ payload }) => {
         const key = providerIdentityKey(payload.identity)

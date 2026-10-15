@@ -38,6 +38,7 @@ import {
   type SessionExitResult
 } from './application/sessionExited'
 import type { DwarfId, LaunchId } from '../../kernel/domain/values'
+import type { LaunchRecord } from './ports/launchRecordStore'
 import type { LaunchRequestInput } from './application/launch'
 
 export type { SessionStarter, StartResult } from './ports/sessionStarter'
@@ -78,8 +79,16 @@ export interface LaunchingCommands {
   markStoppedByPerson(dwarfId: DwarfId): void
 }
 
+/** Launching's live owned sessions, as the `SessionTerminator` bridge ends them (ADR-014 item 1). */
+export interface OwnedLaunches {
+  /** The dwarf's live `LaunchRecord` (no `endedAt`), null when launching owns no session for it. */
+  liveRecordOf(dwarfId: DwarfId): LaunchRecord | null
+}
+
 export interface Launching {
   readonly commands: LaunchingCommands
+  /** The live owned sessions (ISSUE-171), for the terminator bridge (wiring/bridges/sessionTerminator.ts). */
+  readonly owned: OwnedLaunches
   readonly queries: LaunchQueries
   readonly snapshots: LaunchSnapshotQueries
 }
@@ -109,6 +118,9 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
       failureSeen: (launchId) => useCase.failureSeen(launchId),
       sessionExited: (exit) => exits.exited(exit),
       markStoppedByPerson: (dwarfId) => stops.mark(dwarfId)
+    },
+    owned: {
+      liveRecordOf: (dwarfId) => deps.records.live().find((r) => r.dwarfId === dwarfId) ?? null
     },
     queries: createLaunchQueries({ memory, records: deps.records }),
     snapshots: memory
