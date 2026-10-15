@@ -64,13 +64,14 @@ describe('fake window.api (ADR-033 item 7; 17 §1.6)', () => {
     const helper = KEYS.find((key) => helpers.includes(key))
     expect(helper && memberOf(helper)).toBe('pathForDroppedFile')
 
-    // `stopDwarf` is 14's NEW A-N29, not a row of this registry: reading or faking it fails.
+    // AMENDED for ISSUE-171 (was: `stopDwarf`, then not a row of this registry): A-N29 is declared now, so the
+    // unknown member is one 14 never lists — no member interrupts only the turn (OQ-49). Reading or faking it fails.
     const unknown = fake as unknown as Record<string, () => unknown>
-    expect(() => unknown.stopDwarf?.()).toThrow(/stopDwarf/)
+    expect(() => unknown.interruptTurn?.()).toThrow(/interruptTurn/)
     expect(() =>
-      createFakeWindowApi({ stopDwarf: async () => undefined } as unknown as Parameters<
+      createFakeWindowApi({ interruptTurn: async () => undefined } as unknown as Parameters<
         typeof createFakeWindowApi
       >[0])
-    ).toThrow(/stopDwarf/)
+    ).toThrow(/interruptTurn/)
   })
 })

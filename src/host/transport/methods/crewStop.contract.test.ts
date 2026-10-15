@@ -13,6 +13,9 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import {
+  CHANNELS,
+  ROW_IDS,
+  type ChannelSpec,
   HOST_FRAME_SCHEMAS,
   PROTOCOL_VERSION,
   resFrameSchema,
@@ -60,7 +63,7 @@ const DWARF = '01890a5d-ac96-774b-bcce-b302099a8171'
 const REQUEST = '01890a5d-ac96-774b-bcce-b302099a8172'
 
 describe('crew.stop params and result (14 §3.4, B-M21)', () => {
-  it('[ADR-019] crew.stop params are strict and its result has exactly the two refusals', () => {
+  it('[ADR-019] crew.stop params are strict and the A-N29 row maps to crew.stop', () => {
     expect(Object.keys(HOST_METHOD_SCHEMAS)).toContain('crew.stop')
     expectTypeOf<StopDwarfParams>().toEqualTypeOf<{ dwarfId: DwarfId; requestId: string }>()
     expectTypeOf<StopDwarfResult>().toEqualTypeOf<
@@ -94,6 +97,38 @@ describe('crew.stop params and result (14 §3.4, B-M21)', () => {
     // AMENDMENT-2 (OQ-54): an open turn is not a refusal.
     expect(stop.result.safeParse({ ok: false, error: 'turn-open' }).success).toBe(false)
     expect(stop.result.safeParse({ ok: true, value: { ended: true } }).success).toBe(false)
+
+    // A-N29 `stopDwarf` / `dwarf:stop` relays B-M21 unchanged (14 §1.2, §2.2): the same params, its
+    // result inside IpcResult.
+    const row = (CHANNELS as Record<string, ChannelSpec<z.ZodTypeAny, z.ZodTypeAny> | undefined>)[
+      'dwarf:stop'
+    ]
+    expect(row).toMatchObject({
+      name: 'dwarf:stop',
+      kind: 'invoke',
+      placement: 'host',
+      status: 'new'
+    })
+    expect(row?.request).toBe(stop.params)
+    expectTypeOf<
+      z.infer<(typeof CHANNELS)['dwarf:stop']['request']>
+    >().toEqualTypeOf<StopDwarfParams>()
+    for (const result of [
+      { ok: true, value: {} },
+      { ok: false, error: 'already-stopping' },
+      { ok: false, error: 'could-not-end' }
+    ]) {
+      expect(row?.response.safeParse({ ok: true, value: result }).success).toBe(true)
+    }
+    expect(row?.response.safeParse({ ok: true, value: {} }).success).toBe(false)
+    expect(row?.response.safeParse({ ok: false, error: 'could-not-end' }).success).toBe(false)
+    expect(
+      row?.response.safeParse({
+        ok: false,
+        error: { code: 'INVALID_PARAMS', message: 'no', retryable: false }
+      }).success
+    ).toBe(true)
+    expect(ROW_IDS['dwarf:stop']).toBe('A-N29')
   })
 })
 
