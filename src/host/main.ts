@@ -205,6 +205,7 @@ import {
 } from './wiring/revertIntegrations'
 import { createModuleResetSteps, type WiredModuleResetSteps } from './wiring/moduleResetSteps'
 import { createHostDrainGate, routeDrainRechecks } from './wiring/hostDrainGate'
+import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
   servePreferences,
@@ -465,6 +466,8 @@ async function bootHost(base: HostBase): Promise<void> {
   const drainGate = createHostDrainGate()
   // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
   let stopDrainRechecks: (() => void) | undefined
+  // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
+  let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
   // install-moment writer, then the module's) and the cut-1 module steps, whose walk route step 4
   // binds once mines exists (ISSUE-121).
@@ -633,6 +636,7 @@ async function bootHost(base: HostBase): Promise<void> {
         // No event is routed into the asking module, and no hook request reaches the Host, once
         // it is closing (ISSUE-140).
         stopRoutes: () => {
+          maintenance?.stop()
           stopDrainRechecks?.()
           modules.asking?.stop()
         },
@@ -1093,6 +1097,21 @@ async function bootHost(base: HostBase): Promise<void> {
   // by the per-mine run routed at step 4 (O-11-10).
   if (booted.kind === 'ready' && modules.ledger !== undefined && modules.batchSink !== undefined) {
     void startBackfillWhenObserving(modules.ledger, modules.batchSink)
+  }
+  // Once the Host answers `ready`: the maintenance tick (09 §7.1, wiring/hostMaintenance.ts), now and
+  // then every 6 hours: the closed-asks sweep (#1290); a read-only (newer) file is never swept.
+  if (booted.kind === 'ready' && database !== undefined) {
+    const { db, transactions } = database.connection()
+    maintenance = startMaintenanceTick({
+      scheduler,
+      log,
+      sweeps: hostMaintenanceSweeps({
+        db,
+        transactions,
+        clock,
+        readOnly: database.capabilities().includes('db-read-only')
+      })
+    })
   }
 }
 
