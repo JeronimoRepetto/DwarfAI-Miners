@@ -15,7 +15,8 @@ const EXEMPT: readonly string[] = [
   'modules/suppliers/adapters/drivers/shared/forbiddenFlags.ts',
   'modules/suppliers/adapters/drivers/shared/forbiddenFlags.test.ts',
   'modules/suppliers/testing/driverConformance.ts',
-  'modules/suppliers/testing/driverConformance.lineDriver.ts'
+  'modules/suppliers/testing/driverConformance.lineDriver.ts',
+  'modules/suppliers/testing/driverConformance.test.ts'
 ]
 
 interface SourceFile {
