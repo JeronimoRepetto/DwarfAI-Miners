@@ -295,6 +295,53 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
     CRUISE_TIMEOUT_MS
   )
 
+  // Deviation from 05 §5.1 R9, owner-approved 2026-10-15 (ISSUE-200): the relay shim may import
+  // contracts/host-protocol (frame codec, McpHello, endpoint rule) besides contracts/logging; the
+  // diagnostics adapters stay logging-only.
+  it(
+    '[R9] the relay shim importing contracts/logging and contracts/host-protocol reports nothing; another contracts folder is R9-relay-only-logging-and-host-protocol',
+    async () => {
+      const relay = 'src/host/modules/delegation/adapters/mcp/relay/relayMain.ts'
+      const frames = 'src/contracts/host-protocol/frameCodec.ts'
+      const logging = 'src/contracts/logging/toLogLine.ts'
+      const config = 'src/contracts/config/flags.ts'
+      const result = await cruise({
+        files: {
+          [relay]:
+            "import { a } from '../../../../../../contracts/host-protocol/frameCodec'\n" +
+            "import { b } from '../../../../../../contracts/logging/toLogLine'\n" +
+            "import { c } from '../../../../../../contracts/config/flags'\n" +
+            'export const relay = [a, b, c]\n',
+          [frames]: 'export const a = 1\n',
+          [logging]: 'export const b = 1\n',
+          [config]: 'export const c = 1\n'
+        }
+      })
+      const fromRelay = result.violations.filter((violation) => violation.from === relay)
+      expect(fromRelay.map((violation) => `${violation.rule} ${violation.to}`)).toEqual([
+        `R9-relay-only-logging-and-host-protocol ${config}`
+      ])
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
+  it(
+    '[R9] a diagnostics adapter importing contracts/host-protocol is still R9-diagnostics-only-logging',
+    async () => {
+      const from = 'src/host/modules/diagnostics/adapters/HostLog.ts'
+      const to = 'src/contracts/host-protocol/frameCodec.ts'
+      const result = await cruise({
+        files: {
+          [from]:
+            "import { a } from '../../../../contracts/host-protocol/frameCodec'\nexport const log = a\n",
+          [to]: 'export const a = 1\n'
+        }
+      })
+      expectViolation(result, 'R9-diagnostics-only-logging', from, to)
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
   it(
     '[R10] src/ui-main importing src/host is reported as R10-ui-not-host',
     async () => {
