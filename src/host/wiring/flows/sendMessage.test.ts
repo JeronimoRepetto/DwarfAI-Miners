@@ -7,9 +7,10 @@
 // TC-166-02 (no ack in 30 s: delivered{unconfirmed}, never reacted without correlated activity);
 // TC-166-03 (a repeated requestId after a Host restart returns the stored messageId, nothing handed
 // over); TC-166-04 (a reattached UI gets the Host's phase of each message).
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DwarfId, MessageId, MineId, ProviderIdentity } from '../../kernel/domain/values'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
@@ -126,6 +127,22 @@ afterEach(() => {
   opened.splice(0)
 })
 
+/** Every unhandled rejection while a case runs: the Host would exit on one (wiring/uncaught.ts). */
+const unhandled: unknown[] = []
+const onUnhandled = (reason: unknown): void => void unhandled.push(reason)
+beforeEach(() => {
+  unhandled.length = 0
+  process.on('unhandledRejection', onUnhandled)
+})
+afterEach(() => {
+  process.off('unhandledRejection', onUnhandled)
+})
+
+/** One macrotask turn (no time passes), after which Node has reported any unhandled rejection. */
+async function rejectionsReported(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
 /** One Host database with the dwarf's row, and conversation booted over it as often as asked. */
 function world() {
   const { db } = openTemplateCopy()
@@ -171,12 +188,22 @@ function world() {
           .feed(DWARF, { limit: 50 })
           .messages.flatMap((m) => (m.delivery === undefined ? [] : [m.delivery]))
       const sender = turns(() => stored()[0])
+      const diagnostics = new RecordingDiagnosticsLog()
       const { send } = conversation.sending({
         turns: sender,
         recipients: { canReceiveMessages: (dwarfId) => dwarfId === DWARF && receives() },
-        bus
+        bus,
+        diagnostics
       })
-      return { conversation, bus, send, stored, sender, rowCount: () => rowCount(db) }
+      return {
+        conversation,
+        bus,
+        send,
+        stored,
+        sender,
+        diagnostics,
+        rowCount: () => rowCount(db)
+      }
     }
   }
 }
@@ -559,5 +586,51 @@ describe('send message flow F4', () => {
     expect(after?.turns).toEqual([])
     expect(restarted.bus.published).toEqual([])
     expect(restarted.rowCount()).toBe(1)
+  })
+
+  it('[ADR-022, INV-63] a message deleted with its delivery while its hand-over is pending ends the tracking quietly, never as an unhandled rejection', async () => {
+    const w = world()
+    let scripted: ScriptedTurnSender | undefined
+    const host = w.boot((peek) => (scripted = new ScriptedTurnSender(peek)))
+    await host.send(DWARF, 'before the reset', [], request(18))
+    await settle()
+
+    // The dwarf's rows go while the hand-over waits (as when a departed dwarf's messages are
+    // deleted); its delivery goes with its message (`deliveries` ON DELETE CASCADE).
+    w.db.run('DELETE FROM messages WHERE dwarf_id = ?', [DWARF])
+    scripted?.answer({ ok: true, value: RECEIPT })
+    await rejectionsReported()
+    host.conversation.commands.recordTurnEnd({
+      dwarfId: DWARF,
+      turnKey: 'turn-9',
+      kind: 'concluded',
+      at: w.clock.now(),
+      reliability: 'reliable',
+      cancelledFromApp: false
+    })
+    await rejectionsReported()
+
+    expect(unhandled).toEqual([])
+    expect(host.diagnostics.entries).toEqual([])
+    expect(host.bus.ofType('MessageHandedOver')).toEqual([])
+  })
+
+  it('[US-OBS-005.AC04, US-MSG-013.AC01, S7.07] a held message fails session-closed when recordSessionEnd routes the session end or departure', async () => {
+    const w = world()
+    let scripted: ScriptedTurnSender | undefined
+    const host = w.boot((peek) => (scripted = new ScriptedTurnSender(peek)))
+    await host.send(DWARF, 'queued then closed', [], request(19))
+    await settle()
+    scripted?.answer({ ok: true, value: { ...RECEIPT, heldUntilTurnEnd: true } })
+    await settle()
+    expect(host.stored()[0]).toMatchObject({ phase: 'sending', heldUntilTurnEnd: true })
+
+    host.conversation.commands.recordSessionEnd(DWARF, w.clock.now())
+
+    expect(host.stored()[0]).toMatchObject({
+      phase: 'failed',
+      failure: { kind: 'session-closed' }
+    })
+    expect(host.bus.ofType('MessageDeliveryFailed')).toHaveLength(1)
   })
 })

@@ -34,6 +34,7 @@ import {
   type FeedPageRequest,
   type Message
 } from '../domain/messages'
+import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
 import { MESSAGES_PER_DWARF, rowsToTrim } from '../domain/retention'
 import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
 
@@ -274,7 +275,10 @@ export class InMemoryMessageLog implements MessageLog {
     }
     // `messages_send_request` (UNIQUE): the stored row of this requestId, while it is stored.
     const stored = this.rows.find((r) => r.requestId === requestId)
-    if (stored !== undefined) return { messageId: stored.message.id, existing: true }
+    if (stored !== undefined) {
+      if (stored.message.dwarfId !== dwarfId) throw new RequestIdOfAnotherDwarfError()
+      return { messageId: stored.message.id, existing: true }
+    }
     const message: Message = {
       id: this.deps.ids.uuidv7() as MessageId,
       dwarfId,

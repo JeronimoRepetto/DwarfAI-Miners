@@ -32,7 +32,8 @@
 // - `writeSent` (AMENDMENT-16, owner, 2026-10-15; ISSUE-166) is the person's sent row (`role
 //   'person'`, origin `dwarfai`, `request_id`) with its delivery `sending`, inside the caller's
 //   transaction; a `request_id` already stored (`messages_send_request` UNIQUE, also after a Host
-//   restart, 14 §1.6) inserts nothing and answers that row's id. `settleDelivery` also records the
+//   restart, 14 §1.6) inserts nothing and answers that row's id; one stored for another dwarf is
+//   refused with `RequestIdOfAnotherDwarfError`. `settleDelivery` also records the
 //   delivery's `confidence` and moves a `delivered` delivery to `reacted`, keeping it.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts'
@@ -53,6 +54,7 @@ import {
   type FeedPageRequest,
   type Message
 } from '../domain/messages'
+import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
 
@@ -131,7 +133,7 @@ const REACT_DELIVERY = `UPDATE deliveries SET phase = 'reacted', phase_at = ?
   WHERE message_id = ? AND phase = 'delivered'`
 
 // AMENDMENT-16: the person's sent row and its delivery (09 §4.4, 14 §1.6).
-const SENT_BY_REQUEST = 'SELECT id FROM messages WHERE request_id = ?'
+const SENT_BY_REQUEST = 'SELECT id, dwarf_id FROM messages WHERE request_id = ?'
 
 const INSERT_SENT = `INSERT INTO messages (id, dwarf_id, role, text, origin, created_at, request_id)
   VALUES (?, ?, 'person', ?, 'dwarfai', ?, ?)`
@@ -295,8 +297,11 @@ export class SqliteMessageLog implements MessageLog {
     const { db, ids } = this.deps
     this.requireTransaction('writeSent')
     const [stored] = db.all(SENT_BY_REQUEST, [requestId])
-    if (stored !== undefined)
+    if (stored !== undefined) {
+      // UNIQUE across the table: another dwarf's request id is refused, never answered with its row.
+      if (String(stored['dwarf_id']) !== dwarfId) throw new RequestIdOfAnotherDwarfError()
       return { messageId: String(stored['id']) as MessageId, existing: true }
+    }
     const messageId = ids.uuidv7() as MessageId
     db.run(INSERT_SENT, [messageId, dwarfId, text, at, requestId])
     db.run(INSERT_SENT_DELIVERY, [messageId, dwarfId, at, at])

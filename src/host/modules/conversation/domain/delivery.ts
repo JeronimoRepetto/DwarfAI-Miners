@@ -4,6 +4,18 @@ import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { Delivery } from './messages'
 
+/**
+ * A `conversation.send` `requestId` already stored for ANOTHER dwarf (`messages.request_id` is
+ * UNIQUE across the table, 09 §4.4): the request is malformed, never that dwarf's message. The
+ * transport answers it INVALID_PARAMS (14 §2.3 B-M24 errors eB). `MessageLog.writeSent` throws it.
+ */
+export class RequestIdOfAnotherDwarfError extends Error {
+  constructor() {
+    super('the requestId belongs to a message of another dwarf')
+    this.name = 'RequestIdOfAnotherDwarfError'
+  }
+}
+
 export type DeliveryTransitionId =
   | 'S7.01'
   | 'S7.02'

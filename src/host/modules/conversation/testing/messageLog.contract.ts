@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
+import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { MessageLog } from '../ports/messageLog'
 
@@ -620,10 +621,21 @@ export function runMessageLogContract(
       const first = s.inTransaction(() => s.log.writeSent(dwarf, 'once', requestId, s.now))
 
       const again = s.inTransaction(() => s.log.writeSent(dwarf, 'once', requestId, s.now + 5))
-      const elsewhere = s.inTransaction(() => s.log.writeSent(other, 'once', requestId, s.now + 6))
 
       expect(again).toEqual({ messageId: first.messageId, existing: true })
-      expect(elsewhere).toEqual({ messageId: first.messageId, existing: true })
+      expect(s.rowCount(dwarf)).toBe(1)
+      expect(s.rowCount(other)).toBe(0)
+    })
+
+    it('[ADR-022] a requestId stored for another dwarf is refused, never answered with that message, and inserts nothing', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      const requestId = '01890a5d-ac96-774b-bcce-b302099a0008'
+      s.inTransaction(() => s.log.writeSent(dwarf, 'mine', requestId, s.now))
+
+      expect(() =>
+        s.inTransaction(() => s.log.writeSent(other, 'not yours', requestId, s.now + 1))
+      ).toThrow(RequestIdOfAnotherDwarfError)
       expect(s.rowCount(dwarf)).toBe(1)
       expect(s.rowCount(other)).toBe(0)
     })

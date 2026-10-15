@@ -8,6 +8,7 @@ import type { DwarfId, MessageId, Result } from '../../kernel/domain/values'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
+import { RequestIdOfAnotherDwarfError } from '../../modules/conversation'
 import { Dispatcher } from '../dispatcher'
 import { registerConversationSend } from './conversationSend'
 
@@ -18,7 +19,7 @@ const UI = { role: 'ui' as const, clientId: 'c-ui' }
 const TEXT = 'dig the north seam'
 const PARAMS = { dwarfId: DWARF, text: TEXT, attachments: [], requestId: REQUEST_ID }
 
-type SendAnswer = Result<MessageId, 'cannot-receive' | 'attachment-refused'>
+type SendAnswer = Result<MessageId, 'cannot-receive' | 'attachment-refused'> | Error
 
 function served(answer: SendAnswer = { ok: true, value: MESSAGE }) {
   const clock = new FakeClock(1_790_000_000_000)
@@ -34,6 +35,7 @@ function served(answer: SendAnswer = { ok: true, value: MESSAGE }) {
     conversation: {
       send: async (...args) => {
         calls.push(args)
+        if (answer instanceof Error) throw answer
         return answer
       }
     }
@@ -89,6 +91,15 @@ describe('conversation.send params and result (14 §3.4, B-M24)', () => {
     expect(first).toMatchObject({ ok: true, result: { ok: true, value: { messageId: MESSAGE } } })
     expect(again).toMatchObject({ ok: true, result: { ok: true, value: { messageId: MESSAGE } } })
     expect(calls).toHaveLength(1)
+  })
+
+  it('[ADR-022, ADR-019] a requestId that belongs to another dwarf is refused INVALID_PARAMS, never answered with that message', async () => {
+    const { dispatcher } = served(new RequestIdOfAnotherDwarfError())
+    const res = await dispatcher.dispatch(
+      { id: '1', method: 'conversation.send', params: PARAMS },
+      UI
+    )
+    expect(res).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS', retryable: false } })
   })
 
   it('[ADR-003] only a ui connection may send, and the text never reaches the log', async () => {

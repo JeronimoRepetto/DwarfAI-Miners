@@ -943,8 +943,9 @@ async function bootHost(base: HostBase): Promise<void> {
           conversation.route({
             crew: modules.crew.crew.queries,
             mines: modules.mines.mines.queries,
-            // The send path's door to a launched session (ISSUE-166).
-            sessions: modules.suppliers.sessions
+            // The send path's door to a launched session, and its failed-write log (ISSUE-166).
+            sessions: modules.suppliers.sessions,
+            diagnostics: log
           })
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
           // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).

@@ -9,14 +9,15 @@
 //   module stores it as `messages.request_id` (UNIQUE) and a repeat answers the stored `messageId`
 //   with nothing handed over.
 // - The params are the contract's strict() schema (ADR-019): an extra key is INVALID_PARAMS before
-//   the handler runs.
+//   the handler runs. A `requestId` already stored for another dwarf is INVALID_PARAMS too (B-M24
+//   errors eB): it never answers that dwarf's `messageId`.
 // - Answered at acceptance (14 §1.7): `{ messageId }` once the row and its `sending` mark are
 //   committed and their frames enqueued; `cannot-receive` / `attachment-refused` are outcomes, not
 //   errors, and leave no row. The settlement arrives only as `message.delivery`.
 // - The params are sensitive (14 §3.5 SENSITIVE_METHODS: the text); nothing here logs.
 import { HOST_METHOD_SCHEMAS, type SendMessageResult } from '@dwarfai/contracts'
-import type { ConversationCommands } from '../../modules/conversation'
-import type { Dispatcher } from '../dispatcher'
+import { RequestIdOfAnotherDwarfError, type ConversationCommands } from '../../modules/conversation'
+import { CallError, type Dispatcher } from '../dispatcher'
 import { METHOD_ROLES } from '../roles'
 
 export interface ConversationSendDeps {
@@ -31,7 +32,14 @@ export function registerConversationSend(dispatcher: Dispatcher, deps: Conversat
     METHOD_ROLES['conversation.send'] ?? [],
     async (params): Promise<SendMessageResult> => {
       const { dwarfId, text, attachments, requestId } = params
-      const sent = await deps.conversation.send(dwarfId, text, attachments, requestId)
+      let sent: Awaited<ReturnType<ConversationCommands['send']>>
+      try {
+        sent = await deps.conversation.send(dwarfId, text, attachments, requestId)
+      } catch (error) {
+        // A requestId already stored for another dwarf is a malformed request (eB INVALID_PARAMS).
+        if (error instanceof RequestIdOfAnotherDwarfError) throw new CallError('INVALID_PARAMS')
+        throw error
+      }
       return sent.ok ? { ok: true, value: { messageId: sent.value } } : sent
     }
   )

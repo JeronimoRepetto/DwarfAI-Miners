@@ -12,21 +12,26 @@
 //   INV-33) gets `cannot-receive`, and its row is rolled back with the transaction that tried it;
 //   attachments are `attachment-refused` until their re-validation is built (later: ISSUE-169), so
 //   nothing is offered that does not exist (21 §1 item 8).
-// - Durable dedupe (14 §1.6): a `requestId` already stored — also after a Host restart — answers
-//   that row's `messageId`, publishes nothing and hands nothing over. It is looked up before the
-//   receive check, so a repeat is never answered `cannot-receive` for a message that was sent.
+// - Durable dedupe (14 §1.6): a `requestId` already stored for this dwarf — also after a Host
+//   restart — answers that row's `messageId`, publishes nothing and hands nothing over. It is looked
+//   up before the receive check, so a repeat is never answered `cannot-receive` for a message that
+//   was sent. One stored for another dwarf is refused (`RequestIdOfAnotherDwarfError`).
 // - The hand-over (`TurnSender`, AMENDMENT-16 extension): accepted → `delivered` with the channel's
 //   own `confidence` (S7.04; `unconfirmed` when the driver had no protocol ack within 30 s, FM-077 —
 //   the Host adds no timeout of its own, 07 I-19); queued behind a running turn → still `sending`,
-//   held (S7.03), and `delivered` when that dwarf's turn ends; `channel-error` → `failed` with
-//   Retry (S7.06, FM-076); `session-closed` → `failed` with Copy alone (S7.07, FM-078). Nothing
-//   retries on its own (BR-17).
+//   held (S7.03), and `delivered` only when the turn it waits behind ends with work done; held when
+//   the session ends → `failed` (S7.07); `channel-error` → `failed` with Retry (S7.06, FM-076);
+//   `session-closed` → `failed` with Copy alone (S7.07, FM-078). Nothing retries on its own (BR-17).
 // - ✓✓ (S7.05, ADR-022 item 3): only for a session whose `reactionEvidence` is `turn-id`, when the
 //   turn the receipt named (`providerTurnId`) is seen ending with work done (`concluded` or
-//   `capped`). `transcript-match` stays at ✓ until spike S-022-1 records its match rule (ISSUE-325),
-//   and `none` never reaches ✓✓ (PO #57). No time ever moves ✓ to ✓✓ (NFR-TIM-05). The turn → message
-//   correlation lives in Host memory: after a Host restart a ✓ stays ✓ (truthful; the boot
-//   reconcile is ISSUE-173's).
+//   `capped`) — also when that turn ended before the receipt came back. `transcript-match` stays at
+//   ✓ until spike S-022-1 records its match rule (ISSUE-325), and `none` never reaches ✓✓ (PO #57).
+//   No time ever moves ✓ to ✓✓ (NFR-TIM-05). The turn → message correlation lives in Host memory:
+//   after a Host restart a ✓ stays ✓ (truthful; the boot reconcile is ISSUE-173's).
+// - Nothing here throws into the Host: the hand-over runs with no caller and the `TurnEnded`
+//   subscriber runs on the bus, where a throw would end the Host (wiring/uncaught.ts). A delivery
+//   whose row went away ends its tracking quietly; any other failed write is logged with
+//   allowlisted fields only (ADR-026), never the text, and its tracking ends.
 // - Closing or reopening a window is no event here (S7.18): the snapshot `marks` section reads the
 //   phase stored at that moment.
 import { HostInvariantError } from '../../../kernel/domain/errors'
@@ -34,6 +39,7 @@ import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, EventId, HostEpoch, MessageId, Result } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
+import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
@@ -74,6 +80,8 @@ export interface ConversationSendDeps {
   clock: Clock
   ids: IdGenerator
   hostEpoch: HostEpoch
+  /** Where a failed delivery write is recorded, allowlisted fields only (ADR-026). */
+  diagnostics: DiagnosticsLog
 }
 
 /** The rows a dwarf can wait on for ✓✓ at once; an older one stays ✓ (bounded Host memory). */
@@ -93,9 +101,35 @@ interface Held {
   receipt: TurnHandOver
 }
 
+/**
+ * A hand-over the sender has not answered yet, with what happened to its dwarf meanwhile, so a turn
+ * end or a session end that comes before the receipt is applied when the receipt comes.
+ */
+interface InFlight {
+  dwarfId: DwarfId
+  endsSeen: TurnEnded[]
+  sessionEnded: boolean
+}
+
+/** A turn end that proves the dwarf did work in it (ADR-021 kinds; ADR-022 item 3). */
+function workDone(end: TurnEnded): boolean {
+  return end.kind === 'concluded' || end.kind === 'capped'
+}
+
+/** The errno-like code of a failure, never its message (ADR-026 allowlist). */
+function codeOf(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string' || typeof code === 'number') return String(code)
+    if (error instanceof Error) return error.name
+  }
+  return 'unknown'
+}
+
 export class ConversationSender implements ConversationSendCommand {
   /** The Host's current delivery of each message still `sending`, held, or watched for ✓✓. */
   private readonly deliveries = new Map<MessageId, Delivery>()
+  private readonly inFlight = new Map<MessageId, InFlight>()
   private readonly held = new Map<MessageId, Held>()
   private readonly watched = new Map<MessageId, Watched>()
 
@@ -131,6 +165,7 @@ export class ConversationSender implements ConversationSendCommand {
 
     const { delivery } = startDelivery({ messageId, dwarfId, kind: 'message', at })
     this.deliveries.set(messageId, delivery)
+    this.inFlight.set(messageId, { dwarfId, endsSeen: [], sessionEnded: false })
     const view: MessageView = {
       id: messageId,
       dwarfId,
@@ -143,9 +178,31 @@ export class ConversationSender implements ConversationSendCommand {
     }
     this.publish('MessagesAppended', { dwarfId, messages: [view] })
     this.publish('MessageSent', { messageId, dwarfId, kind: 'message' })
-    // The hand-over continues after this answer, with no caller (14 §1.7).
-    void Promise.resolve().then(() => this.handOver(dwarfId, messageId, text))
+    // The hand-over continues after this answer, with no caller (14 §1.7). It never rejects: an
+    // unhandled rejection would end the Host (wiring/uncaught.ts).
+    void Promise.resolve()
+      .then(() => this.handOver(dwarfId, messageId, text))
+      .catch((error: unknown) => this.dropAfter(error, messageId, dwarfId))
     return { ok: true, value: messageId }
+  }
+
+  /**
+   * The dwarf's session ended or the dwarf departed (the route of `recordSessionEnd`, AMENDMENT-10):
+   * a held message fails `session-closed` (S7.07, US-OBS-005.AC04), a hand-over still in flight
+   * learns it for its receipt, and a delivered message stays ✓ with nothing left to watch (S7.17).
+   */
+  sessionEnded(dwarfId: DwarfId): void {
+    for (const flight of this.inFlight.values()) {
+      if (flight.dwarfId === dwarfId) flight.sessionEnded = true
+    }
+    for (const [messageId, held] of [...this.held]) {
+      if (held.dwarfId !== dwarfId) continue
+      this.held.delete(messageId)
+      this.move(messageId, { t: 'session-closed' })
+    }
+    for (const [messageId, watched] of [...this.watched]) {
+      if (watched.dwarfId === dwarfId) this.forget(messageId)
+    }
   }
 
   private async handOver(dwarfId: DwarfId, messageId: MessageId, text: string): Promise<void> {
@@ -161,6 +218,9 @@ export class ConversationSender implements ConversationSendCommand {
       // A sender that throws instead of answering is a channel error, never a silent loss.
       result = { ok: false, error: { kind: 'channel-error', reason: 'the hand-over failed' } }
     }
+    const flight = this.inFlight.get(messageId)
+    this.inFlight.delete(messageId)
+    if (flight === undefined) return
     if (!result.ok) {
       const failure = result.error
       this.move(
@@ -172,59 +232,121 @@ export class ConversationSender implements ConversationSendCommand {
       return
     }
     const receipt = result.value
-    if (receipt.heldUntilTurnEnd) {
-      if (this.move(messageId, { t: 'held' })) this.held.set(messageId, { dwarfId, receipt })
+    if (!receipt.heldUntilTurnEnd) {
+      this.accept(dwarfId, messageId, receipt, flight.endsSeen)
       return
     }
-    this.accept(dwarfId, messageId, receipt)
+    // Queued behind a running turn: the session ended meanwhile → S7.07; the turn it waited behind
+    // already ended with work done → handed over now (S7.04); else held until that happens (S7.03).
+    if (flight.sessionEnded) {
+      this.move(messageId, { t: 'session-closed' })
+      return
+    }
+    if (!this.move(messageId, { t: 'held' })) return
+    const blocking = flight.endsSeen.find(
+      (end) => workDone(end) && end.turnKey !== receipt.providerTurnId
+    )
+    if (blocking !== undefined) this.accept(dwarfId, messageId, receipt, flight.endsSeen)
+    else this.held.set(messageId, { dwarfId, receipt })
   }
 
-  /** S7.04, then the ✓✓ watch when the session can correlate by turn id. */
-  private accept(dwarfId: DwarfId, messageId: MessageId, receipt: TurnHandOver): void {
+  /**
+   * S7.04, then ✓✓ when the session correlates by turn id: at once when the turn that consumed the
+   * message already ended with work done (`endsSeen`), else watched for that turn's end.
+   */
+  private accept(
+    dwarfId: DwarfId,
+    messageId: MessageId,
+    receipt: TurnHandOver,
+    endsSeen: readonly TurnEnded[]
+  ): void {
     if (!this.move(messageId, { t: 'accepted', confidence: receipt.confidence })) return
     // S-022-1 gate: only `turn-id` correlates here; `transcript-match` and `none` stay at ✓.
-    if (receipt.reactionEvidence === 'turn-id' && receipt.providerTurnId !== undefined) {
-      this.watch(messageId, { dwarfId, providerTurnId: receipt.providerTurnId })
-    } else {
-      this.deliveries.delete(messageId)
+    const turnId = receipt.reactionEvidence === 'turn-id' ? receipt.providerTurnId : undefined
+    if (turnId === undefined) {
+      this.forget(messageId)
+      return
     }
+    const own = endsSeen.find((end) => end.turnKey === turnId)
+    if (own === undefined) {
+      this.watch(messageId, { dwarfId, providerTurnId: turnId })
+      return
+    }
+    // ADR-022 item 3: a turn that errored or was interrupted proves nothing: the mark stays ✓.
+    if (workDone(own)) {
+      this.move(messageId, { t: 'activity-correlated', reactionEvidence: 'turn-id' })
+    }
+    this.forget(messageId)
   }
 
   private watch(messageId: MessageId, watched: Watched): void {
     const ofDwarf = [...this.watched].filter(([, w]) => w.dwarfId === watched.dwarfId)
     if (ofDwarf.length >= WATCHED_PER_DWARF) {
       const [oldest] = ofDwarf[0] as [MessageId, Watched]
-      this.watched.delete(oldest)
-      this.deliveries.delete(oldest)
+      this.forget(oldest)
     }
     this.watched.set(messageId, watched)
   }
 
-  /** A dwarf's turn ended: its held messages are handed over, and the turn's message reacted to. */
+  /**
+   * A dwarf's turn ended. A hand-over still in flight keeps it for its receipt. With work done the
+   * dwarf's held messages are handed over (S7.04); an errored or interrupted turn leaves them held,
+   * since 07 machine 7 lists no transition out of `sending` for it (S7.03). The message the turn
+   * consumed is reacted to (S7.05). Never throws to the bus: `move` records its own failures.
+   */
   private turnEnded(end: TurnEnded): void {
+    for (const flight of this.inFlight.values()) {
+      if (flight.dwarfId === end.dwarfId) flight.endsSeen.push(end)
+    }
     const released = new Set<MessageId>()
-    for (const [messageId, held] of [...this.held]) {
-      if (held.dwarfId !== end.dwarfId) continue
-      this.held.delete(messageId)
-      released.add(messageId)
-      this.accept(held.dwarfId, messageId, held.receipt)
+    if (workDone(end)) {
+      for (const [messageId, held] of [...this.held]) {
+        if (held.dwarfId !== end.dwarfId) continue
+        this.held.delete(messageId)
+        released.add(messageId)
+        this.accept(held.dwarfId, messageId, held.receipt, [end])
+      }
     }
     for (const [messageId, watched] of [...this.watched]) {
       if (released.has(messageId)) continue
       if (watched.dwarfId !== end.dwarfId || watched.providerTurnId !== end.turnKey) continue
-      this.watched.delete(messageId)
-      // ADR-022 item 3: the turn that consumed this input did work. A turn that errored or was
-      // interrupted proves nothing: the mark stays ✓.
-      if (end.kind === 'concluded' || end.kind === 'capped') {
+      if (workDone(end)) {
         this.move(messageId, { t: 'activity-correlated', reactionEvidence: 'turn-id' })
       }
-      this.deliveries.delete(messageId)
+      this.forget(messageId)
     }
+  }
+
+  /** Ends the Host-memory tracking of a message. */
+  private forget(messageId: MessageId): void {
+    this.deliveries.delete(messageId)
+    this.inFlight.delete(messageId)
+    this.held.delete(messageId)
+    this.watched.delete(messageId)
+  }
+
+  /**
+   * A write or publish of a delivery failed: its tracking ends. A row no longer there (the log's
+   * `HostInvariantError`: trimmed after ✓, or deleted with its departed dwarf by Reset) ends it
+   * quietly; any other failure is logged with allowlisted fields only (ADR-026), never the text.
+   */
+  private dropAfter(error: unknown, messageId: MessageId, dwarfId: DwarfId): void {
+    this.forget(messageId)
+    if (error instanceof HostInvariantError) return
+    this.deps.diagnostics.record({
+      level: 'error',
+      event: 'message.delivery.record-failed',
+      subsystem: 'conversation',
+      outcome: 'failed',
+      errCode: codeOf(error),
+      dwarfId,
+      messageId
+    })
   }
 
   /**
    * One machine-7 step of `messageId`'s current delivery: stored, then published after the commit.
-   * A step the machine refuses changes nothing. Returns whether it moved.
+   * A step the machine refuses changes nothing. Returns whether it moved; never throws.
    */
   private move(messageId: MessageId, fact: DeliveryFact): boolean {
     const current = this.deliveries.get(messageId)
@@ -232,36 +354,28 @@ export class ConversationSender implements ConversationSendCommand {
     const step = advance(current, fact, this.deps.clock.now())
     if (!step.ok) return false
     const next = step.delivery
-    const settlement = settlementOf(next)
+    const { dwarfId } = next
     try {
       this.deps.transactions.inTransaction(() =>
-        this.deps.log.settleDelivery(messageId, settlement, next.phaseAt)
+        this.deps.log.settleDelivery(messageId, settlementOf(next), next.phaseAt)
       )
-    } catch (error) {
-      // A delivered row trimmed while it waited for ✓✓ has no mark left to move (INV-61).
-      if (next.phase === 'reacted' && error instanceof HostInvariantError) {
-        this.deliveries.delete(messageId)
-        return false
+      this.deliveries.set(messageId, next)
+      if (next.phase === 'failed' && next.failure !== undefined) {
+        this.forget(messageId)
+        this.publish('MessageDeliveryFailed', { messageId, dwarfId, failure: next.failure })
+      } else if (fact.t === 'accepted') {
+        // The receipt's own confidence: never one the Host assumed (FM-077).
+        this.publish('MessageHandedOver', { messageId, dwarfId, confidence: fact.confidence })
+      } else if (next.phase === 'reacted') {
+        this.publish('MessageReactedTo', { messageId, dwarfId })
       }
-      throw error
+      // S7.03 (still sending, now held) publishes nothing: 08 has no event for it, the mark stays
+      // "…", and the snapshot `marks` section carries the stored hold.
+      return true
+    } catch (error) {
+      this.dropAfter(error, messageId, dwarfId)
+      return false
     }
-    this.deliveries.set(messageId, next)
-    const { dwarfId } = next
-    if (next.phase === 'failed' && next.failure !== undefined) {
-      this.deliveries.delete(messageId)
-      this.publish('MessageDeliveryFailed', { messageId, dwarfId, failure: next.failure })
-    } else if (next.phase === 'delivered') {
-      this.publish('MessageHandedOver', {
-        messageId,
-        dwarfId,
-        confidence: next.confidence ?? 'confirmed'
-      })
-    } else if (next.phase === 'reacted') {
-      this.publish('MessageReactedTo', { messageId, dwarfId })
-    }
-    // S7.03 (still sending, now held) publishes nothing: 08 has no event for it, the mark stays
-    // "…", and the snapshot `marks` section carries the stored hold.
-    return true
   }
 
   private publish<T extends SendEvent['type']>(

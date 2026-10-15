@@ -35,6 +35,7 @@
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
+import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { LifecycleFactLog } from '../../kernel/ports/lifecycleFactLog'
@@ -97,7 +98,15 @@ export interface ConversationCrewRoute {
   mines: Pick<MinesQueries, 'list'>
   /** Suppliers' live sessions, the send path's only door to a driver (16 §4.4). */
   sessions?: Pick<SessionChannels, 'sessionFor'>
+  /**
+   * Where the send path records a failed delivery write (ADR-026 allowlist). The composition root
+   * passes the Host log; a harness that never sends may leave it out.
+   */
+  diagnostics?: DiagnosticsLog
 }
+
+/** No log: for harnesses that wire the read side only. */
+const NO_DIAGNOSTICS: DiagnosticsLog = { record: () => undefined }
 
 /** No session reachable: every hand-over answers `session-closed` (FM-078). */
 const NO_SESSIONS: Pick<SessionChannels, 'sessionFor'> = { sessionFor: () => null }
@@ -167,7 +176,7 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
       return {
         conversation,
         batchHalf: conversationBatchHalf(conversation),
-        route: ({ crew, mines, sessions }) => {
+        route: ({ crew, mines, sessions, diagnostics }) => {
           if (served !== undefined) throw new HostInvariantError('conversation is routed once')
           publishConversationReadFrames({ events: deps.bus, crew, frames: deps.frames })
           publishDeliveryFrames({ events: deps.bus, conversation, frames: deps.frames })
@@ -185,7 +194,8 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
             recipients: {
               canReceiveMessages: (dwarfId) => crew.get(dwarfId)?.canReceiveMessages ?? false
             },
-            bus: deps.bus
+            bus: deps.bus,
+            diagnostics: diagnostics ?? NO_DIAGNOSTICS
           })
           served = {
             conversation: {

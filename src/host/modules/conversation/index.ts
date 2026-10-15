@@ -32,6 +32,7 @@
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
+import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { LifecycleFactLog } from '../../kernel/ports/lifecycleFactLog'
@@ -105,6 +106,7 @@ export type { TurnHandOver, TurnSender, TurnSendFailure, TurnSendResult } from '
 export type { ReactionEvidence } from './domain/delivery'
 export {
   advance,
+  RequestIdOfAnotherDwarfError,
   reconcileDelivery,
   startDelivery,
   type DeliveryFact,
@@ -162,6 +164,8 @@ export interface ConversationSendingDeps {
   recipients: MessageRecipients
   /** The Host bus, where the delivery events go after their commit (16 §2.3). */
   bus: Pick<DomainEventBus<SendEvent>, 'publish'>
+  /** Where a failed delivery write is recorded, allowlisted fields only (ADR-026). */
+  diagnostics: DiagnosticsLog
 }
 
 export interface Conversation {
@@ -256,7 +260,11 @@ export function createConversation(deps: ConversationDeps): Conversation {
   const commands: IngestCommands = {
     ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
     recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
-    recordSessionEnd: (dwarfId, at) => sessionEnds.recordSessionEnd(dwarfId, at),
+    // ISSUE-166: the same route ends the dwarf's held deliveries (S7.07) once the run is closed.
+    recordSessionEnd: (dwarfId, at) => {
+      sessionEnds.recordSessionEnd(dwarfId, at)
+      sender?.sessionEnded(dwarfId)
+    },
     noteAsk: (dwarfId, change) => asks.noteAsk(dwarfId, change)
   }
   return {
@@ -267,7 +275,7 @@ export function createConversation(deps: ConversationDeps): Conversation {
       outcomeOf: (dwarfId) => activity.storedOutcomeOf(dwarfId)
     },
     history: ({ crew }) => new ConversationMineHistory({ log, crew }),
-    sending: ({ turns, recipients, bus }) => {
+    sending: ({ turns, recipients, bus, diagnostics }) => {
       if (sender !== null) throw new HostInvariantError('conversation sending is built once')
       sender = new ConversationSender({
         log,
@@ -280,7 +288,8 @@ export function createConversation(deps: ConversationDeps): Conversation {
         recipients,
         clock: deps.clock,
         ids: deps.ids,
-        hostEpoch: deps.hostEpoch
+        hostEpoch: deps.hostEpoch,
+        diagnostics
       })
       return { send: (...args) => (sender as ConversationSender).send(...args) }
     },
