@@ -104,6 +104,8 @@ import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION, redactSecrets } from '@dwarfai/contracts'
 import { FsTranscriptTail } from './modules/asking/adapters/observedClaude/transcriptTail'
+import { SqliteAskRepository } from './modules/asking/adapters/SqliteAskRepository'
+import { createAskRestartSettlement } from './modules/asking'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
@@ -983,6 +985,19 @@ async function bootHost(base: HostBase): Promise<void> {
             }
           }
           modules.asking = servedAsking.wire(askingDeps)
+          // A cut-2 rollback build settles the asks the cut-2 build left live: no route answers a Host ask
+          // there, so none may keep a card (#1293; wiring/cut2Rollback.ts). After `wire`, so the routes move
+          // crew and conversation off them.
+          CUT_2_ROLLBACK_CHOICES.settleLeftoverAsks(
+            createAskRestartSettlement({
+              asks: new SqliteAskRepository({ db, scope: transactions, clock }),
+              transactions,
+              bus,
+              clock,
+              ids,
+              hostEpoch: epoch
+            })
+          )
           // The hook ingress over asking's `/hooks/claude/*` route and `app_meta.ingress_port`;
           // boot step 6 starts it, the clean exit closes it (wiring/hookIngress.ts).
           hookIngress = createHostHookIngress({
