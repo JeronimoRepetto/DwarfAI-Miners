@@ -18,7 +18,7 @@
 // synchronously, so its frame follows that commit and its seq is greater than that of any
 // snapshot whose `asks` were read before it (14 §4.2). `ask.opened` is a sensitive frame (14 §3.5
 // SENSITIVE_FRAMES: question steps, tool summaries): the transport logs its name, seq and size
-// only, and nothing here logs. Routed by the asking wiring (later: ISSUE-140).
+// only, and nothing here logs. Routed by the asking wiring (wiring/routes/askingRoutes.ts, ISSUE-140).
 import type { HostFrameData, HostFrameName } from '@dwarfai/contracts'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { AskingEvent, AskQueries, AskRecord } from '../../modules/asking'

@@ -1,9 +1,9 @@
 // B-M32 `asking.setStep` (14 §2.3, §3.4 `SetAskStepParams`, frozen; ADR-010 item 9; ADR-003 items
 // 6, 12; OQ-03, PO #92): the step a person is on while walking a multi-step question, handed to the
 // ask broker's `setStep` (16 §4.7 row `setStep`). UI main's A-N07 `setAskStep` relays it
-// (ui-main/ipc/handlers/setAskStep.host.ts, routed by the cut-2 switch, later: ISSUE-141). Nothing
-// registers it yet: the composition root registers it over the asking module with the wiring
-// (later: ISSUE-140).
+// (ui-main/ipc/handlers/setAskStep.host.ts, routed by the cut-2 switch, later: ISSUE-141). The asking
+// wiring registers it over the asking module (wiring/routes/askingRoutes.ts `serveAsking`,
+// ISSUE-140).
 //
 // - Roles (roles.ts): `ui` only; a `notifier` or `viewer` gets FORBIDDEN before the handler runs.
 // - Not mutating (14 §1.6, dedupe/mutatingMethods.ts): idempotent by its own shape, so no

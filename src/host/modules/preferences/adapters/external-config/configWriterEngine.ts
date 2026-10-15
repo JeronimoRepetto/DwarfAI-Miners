@@ -17,6 +17,9 @@
 //   `reverted_at` and the integration `off` with its consent cleared.
 // - `settleUnverified` (16 §7.3, 07 S14.11, 13 FM-020): at Host boot, a row a crash left between
 //   Tx A and Tx B is re-verified (`on-verified`) or reverted (`off`).
+// - `followIngressPort` (07 S14.10, ADR-016 item 3, 16 §7.4): at Host boot, once the hook ingress is
+//   bound, an `on-verified` integration's own entry that names another port is written again
+//   through the install path, under the consent on record, with an old-app entry left as it is.
 // - One call per target at a time: every call queues behind the previous one of its target
 //   (16 §7.5), so a revert asked during an install runs after the install's Tx B.
 //
@@ -25,6 +28,7 @@
 // `revert` removes it after a backup. Writing the channel token's hash in Tx A and revoking it on
 // revert belong to `ChannelTokenStore` (ISSUE-219); since owner amendment M the hash is issued in Tx A here and
 // withdrawn in Tx B (failure), and the caller revokes it after a revert.
+import { createHash } from 'node:crypto'
 import { HostInvariantError } from '../../../../kernel/domain/errors'
 import type { Instant, IntegrationId, Result } from '../../../../kernel/domain/values'
 import type { Clock } from '../../../../kernel/ports/clock'
@@ -41,13 +45,22 @@ import type {
 } from '../../ports/externalConfigWriter'
 import type { ChannelTokenStore } from '../../ports/channelTokenStore'
 import type { IntegrationSettingStore } from '../../ports/integrationSettingStore'
-import type { ConfigTargetAdapter } from './configTargetAdapter'
+import type { ConfigTargetAdapter, RenderScope } from './configTargetAdapter'
 import type { ConfigWriteLedger, ConfigWriteRow } from './configWriteLedger'
 
 type InstallError = 'foreign-entry-conflict' | 'concurrent-modification' | 'io'
 type InstallResult = Result<{ verified: true; backupPath: string | null }, InstallError>
 type RevertResult = Result<void, 'locked' | 'io'>
 type Adapter = ConfigTargetAdapter<unknown>
+
+/** The fresh channel token a rewrite installs (owner amendment M: its hash is issued in Tx A). */
+export interface FollowCredential {
+  token: ChannelToken
+  tokenSha256: string
+}
+
+/** What `followIngressPort` did. */
+export type FollowOutcome = 'rewritten' | 'current' | 'not-on' | 'failed'
 
 /**
  * Waits before each retry of a write refused by a sharing violation (ADR-016 item 6.4). Package
@@ -66,6 +79,13 @@ const ORIGINS_OF: Readonly<Record<ConfigTarget, readonly ConsentOrigin[]>> = {
   'claude-hooks': ['settings', 'first-run'],
   'opencode-plugin': ['settings', 'add-panel', 'first-run']
 }
+
+/** The `config.write` cause of a rewrite onto a new ingress port (07 S14.10; package gap: 19 §9.5 lists none). */
+const FOLLOWED_PORT = 'ingress-port-changed'
+
+/** The stored form of a channel token: the SHA-256 of its hex text, as lower-case hex (ADR-016 item 1). */
+const sha256Hex = (token: string): string =>
+  createHash('sha256').update(token, 'utf8').digest('hex')
 
 const isLock = (error: FsError): boolean => error === 'busy' || error === 'access-denied'
 
@@ -118,7 +138,22 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
     if (!ORIGINS_OF[target].includes(origin)) {
       throw new HostInvariantError(`consent origin ${origin} cannot enable ${target} (07 S14.01)`)
     }
-    return this.queued(target, () => this.enable(adapter, token, origin, tokenSha256))
+    return this.queued(target, async () => {
+      // 16 §7.5: enabling an `on-verified` target is a no-op returning the current state. Only `on-verified`: an
+      // `on-unverified` integration (07 S14.08) is written again when turned on (S14.09), even when its entry still
+      // verifies, so the file holds the token the caller has just issued (ISSUE-221, review F2).
+      const previous = this.deps.ledger.active(adapter.target, adapter.path)
+      if (
+        this.deps.settings.get(INTEGRATION_OF[adapter.target]).state === 'on-verified' &&
+        previous !== null &&
+        previous.verifiedAt !== null &&
+        (await this.check(adapter)) === 'verified'
+      ) {
+        this.logWrite(adapter.target, origin, 'skipped')
+        return { ok: true, value: { verified: true, backupPath: previous.backupPath } }
+      }
+      return this.enable(adapter, token, origin, tokenSha256, 'with-old-app')
+    })
   }
 
   async verify(target: ConfigTarget): Promise<'verified' | 'absent' | 'mismatch'> {
@@ -166,28 +201,60 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
     }
   }
 
+  /**
+   * 07 S14.10 (ADR-016 item 3; 16 §7.4): the hook ingress could not keep its persisted port, so
+   * DwarfAI's own entry may name a port nothing listens on. Only an `on-verified` integration whose
+   * live write is verified and whose own entry is still in the file is followed (an `on-unverified`
+   * one is written again only when the person turns it on, S14.09; an `off` one has no consent).
+   * An entry that already names the port is left alone. Otherwise the entry is written again
+   * through the enable's own path (Tx A with the fresh token's hash, probe, one backup, atomic
+   * write, read-back, Tx B) under the consent already on record, replacing DwarfAI's own entry
+   * only: an old-app entry is never written here (16 §7.1). A failed rewrite is Tx B (failure):
+   * nothing changes, the previous token stays active, and the integration stays as it was.
+   */
+  async followIngressPort(
+    target: ConfigTarget,
+    credential: () => FollowCredential
+  ): Promise<FollowOutcome> {
+    const adapter = this.adapterOf(target)
+    return this.queued(target, async () => {
+      const { ledger, settings } = this.deps
+      const active = ledger.active(adapter.target, adapter.path)
+      if (
+        settings.get(INTEGRATION_OF[adapter.target]).state !== 'on-verified' ||
+        active === null ||
+        active.verifiedAt === null
+      ) {
+        return 'not-on'
+      }
+      const read = await this.readTarget(adapter)
+      if (!read.ok || read.value === null) return 'not-on'
+      const doc = adapter.read(read.value)
+      if (!doc.ok || adapter.probeOwned(doc.value) !== 'owned') return 'not-on'
+      if (adapter.isCurrent?.(doc.value) ?? true) return 'current'
+      const { token, tokenSha256 } = credential()
+      const written = await this.enable(
+        adapter,
+        token,
+        active.consentOrigin,
+        tokenSha256,
+        'owned-only'
+      )
+      return written.ok ? 'rewritten' : 'failed'
+    })
+  }
+
   // --- install ------------------------------------------------------------------------------
 
   private async enable(
     adapter: Adapter,
     token: ChannelToken,
     origin: ConsentOrigin,
-    tokenSha256: string
+    tokenSha256: string,
+    scope: RenderScope
   ): Promise<InstallResult> {
     const { ledger, tokens, transactions, clock, ids } = this.deps
     const previous = ledger.active(adapter.target, adapter.path)
-    // 16 §7.5: enabling an `on-verified` target is a no-op returning the current state. Only `on-verified`: an
-    // `on-unverified` integration (07 S14.08) is written again when turned on (S14.09), even when its entry still
-    // verifies, so the file holds the token the caller has just issued (ISSUE-221, review F2).
-    if (
-      this.deps.settings.get(INTEGRATION_OF[adapter.target]).state === 'on-verified' &&
-      previous !== null &&
-      previous.verifiedAt !== null &&
-      (await this.check(adapter)) === 'verified'
-    ) {
-      this.logWrite(adapter.target, origin, 'skipped')
-      return { ok: true, value: { verified: true, backupPath: previous.backupPath } }
-    }
     const row: ConfigWriteRow = {
       id: previous?.id ?? ids.uuidv7(),
       kind: adapter.target,
@@ -209,7 +276,7 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
       return active === null ? null : active.hash
     })
 
-    const outcome = await this.writeOwned(adapter, token, row.id)
+    const outcome = await this.writeOwned(adapter, token, row.id, scope)
     if (outcome === 'leave-for-boot') {
       // An in-place write left the file in an unknown state: like a crash between Tx A and Tx B,
       // the row and the snapshot stay for the boot settlement (owner amendment J).
@@ -221,7 +288,13 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
     if (written.ok) {
       // Tx B (success).
       transactions.inTransaction(() => this.markOn(row, written.value.backupPath))
-      this.logWrite(adapter.target, origin, 'ok')
+      // 07 S14.10 "logged": a rewrite onto a new ingress port says so; an enable logs as it always did.
+      this.logWrite(
+        adapter.target,
+        origin,
+        'ok',
+        scope === 'owned-only' ? FOLLOWED_PORT : undefined
+      )
     } else {
       // Tx B (failure): nothing of this enable stays on record; the integration is unchanged, and the previous
       // token is the active one again (owner amendment M).
@@ -239,7 +312,8 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
   private async writeOwned(
     adapter: Adapter,
     token: ChannelToken,
-    rowId: string
+    rowId: string,
+    scope: RenderScope
   ): Promise<InstallResult | 'leave-for-boot'> {
     let backupPath: string | null = null
     let backedUp = false
@@ -253,7 +327,7 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
       if (adapter.probeOwned(doc.value) === 'foreign') {
         return { ok: false, error: 'foreign-entry-conflict' }
       }
-      const next = adapter.render(doc.value, token)
+      const next = adapter.render(doc.value, token, scope)
       // 3. One backup before the first modification of the file in this enable.
       if (!backedUp && before.value !== null) {
         const backup = await this.backUp(adapter.path, before.value)
@@ -416,7 +490,13 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
 
   // --- shared -------------------------------------------------------------------------------
 
-  /** `verify` (16 §4.12): only DwarfAI's own entry counts; an unreadable file is a mismatch. */
+  /**
+   * `verify` (16 §4.12): only DwarfAI's own entry counts; an unreadable file is a mismatch. An entry
+   * is verified only when it carries the channel's ACTIVE token (07 S14.11; issue #1307): Tx A makes
+   * a new token's hash the active one before the file is written, so an entry a crash or a locked
+   * file left with the previous token would be answered `401` by the ingress. Compared by hash: the
+   * plaintext is never logged or stored.
+   */
   private async check(adapter: Adapter): Promise<'verified' | 'absent' | 'mismatch'> {
     const read = await this.readTarget(adapter)
     if (!read.ok) return 'mismatch'
@@ -424,7 +504,21 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
     const doc = adapter.read(read.value)
     if (!doc.ok) return 'mismatch'
     const probe = adapter.probeOwned(doc.value)
-    return probe === 'owned' ? 'verified' : probe === 'absent' ? 'absent' : 'mismatch'
+    if (probe === 'absent') return 'absent'
+    if (probe === 'foreign') return 'mismatch'
+    return this.carriesActiveToken(adapter, doc.value) ? 'verified' : 'mismatch'
+  }
+
+  /** Every token DwarfAI's own entry carries hashes to the channel's active hash. */
+  private carriesActiveToken(adapter: Adapter, doc: unknown): boolean {
+    if (adapter.ownedTokens === undefined) return true
+    const active = this.deps.tokens.active(adapter.target)
+    const carried = adapter.ownedTokens(doc)
+    return (
+      active !== null &&
+      carried.length > 0 &&
+      carried.every((token) => sha256Hex(token) === active.hash)
+    )
   }
 
   /** The target's bytes, `null` when the file does not exist. */
@@ -487,7 +581,7 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
     target: ConfigTarget,
     origin: ConsentOrigin,
     outcome: 'ok' | 'failed' | 'skipped' | 'degraded',
-    cause?: InstallError | 'partial-write-restored'
+    cause?: InstallError | 'partial-write-restored' | typeof FOLLOWED_PORT
   ): void {
     this.deps.log.record({
       level: outcome === 'failed' ? 'warn' : 'info',

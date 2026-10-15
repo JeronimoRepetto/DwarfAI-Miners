@@ -3,7 +3,7 @@
 // `resolveExternally`; 08 §2.3, keyed `(dwarfId, providerRequestId)`) over the asking module as the
 // Host composes it (asking/testing/inMemoryAsking.ts) and a `RecordingEventBus`. The session is
 // resolved to its dwarf through observation's `ProviderIdentity → DwarfId` index (16 §4.3); a session
-// no dwarf carries is ignored and logged. Composing it into the Host's main is later: ISSUE-140.
+// no dwarf carries is ignored and logged. The Host composes it in routes/askingRoutes.ts (ISSUE-140).
 //
 // The events here are built from 08 §0's payload, not recorded from a provider: no observation
 // adapter publishes `ObservedAskClosed` yet (OpenCode's signal waits on SP-09, ISSUE-229).

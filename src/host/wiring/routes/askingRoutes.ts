@@ -42,7 +42,9 @@
 //   and its asks would answer `channel-unavailable` (fail closed). Driver channels: EPIC-10.
 // - The keystroke relay into an observed terminal: wiring/bridges/keystrokeRelay.ts over
 //   conversation's observed-session key delivery (#1285), bound by the composition root.
-// - The closed-asks sweep (`askSweep.ts`) and the drain gate's asking blockers: not this issue's.
+// - The closed-asks sweep (`askSweep.ts`): the maintenance tick (wiring/hostMaintenance.ts, #1290).
+// - The asks that hold the upgrade drain: `createAskDrainGate`, bound by host/main.ts to
+//   wiring/hostDrainGate.ts, with the `AskClosed` re-check route there (#1290).
 import type { AskId, DwarfId, HostEpoch, ProviderId } from '../../kernel/domain/values'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { Clock } from '../../kernel/ports/clock'

@@ -4,7 +4,7 @@
 //
 // Bound in `host/wiring` to suppliers' capability data (ISSUE-147: the merged ceiling and
 // negotiated set, the OpenCode answer-channel gate applied) along the asking → suppliers edge
-// (05 §1.3); that binding is later: ISSUE-140. The binding answers for every dwarf it is asked
+// (05 §1.3), in wiring/routes/askingRoutes.ts (ISSUE-140). The binding answers for every dwarf it is asked
 // about: a dwarf with no capability record reads suppliers' fail-closed capabilities (every answer
 // path `none`), so no request ever gets a card the app cannot honour. `FakeSessionCapabilities`
 // is the double.

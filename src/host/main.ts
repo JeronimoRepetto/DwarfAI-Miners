@@ -21,9 +21,10 @@
 // with the issue that serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every
 // owned session: bound to the empty-owner implementation, since the Host owns no session yet,
 // until the launching module serves it (later: ISSUE-175).
-// The upgrade drain asks the DrainGate what is still open: bound to the empty implementation of
-// cut 0, so it drains at once, until the launching (EPIC-10) and asking (EPIC-08) modules report
-// their blockers; a `host.upgrade.request` target must be a direct child of the ADR-002 D5
+// The upgrade drain asks the DrainGate what is still open: the Host's binding (wiring/hostDrainGate.ts),
+// which reports the blockers of each module bound to it, so it drains at once until one is: the asking
+// module's live asks from boot step 4 (#1290), the launching module's later (EPIC-10); a
+// `host.upgrade.request` target must be a direct child of the ADR-002 D5
 // versioned-copy root, named by the same rule the UI's launcher uses (14 §1.10).
 //
 // Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
@@ -83,7 +84,8 @@
 // AnswerRecords, the observed-Claude keystroke channel (no relay into a terminal yet, later: ISSUE-167),
 // with B-M30…B-M32 and the `asks` section served before the bind, its frames, the Claude hook ingress
 // route bound to the active channel-token lookup (its listener, wiring/hookIngress.ts, built here and
-// started by step 6 on the persisted ingress port, closed at the clean exit) and its
+// started by step 6 on the persisted ingress port, after which the Host's own Claude hook entry
+// follows the bound port, 07 S14.10, never in a cut-2 rollback build; closed at the clean exit) and its
 // `ask.*` and departure routes, stopped at the clean exit; last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
@@ -105,7 +107,7 @@ import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION, redactSecrets } from '@dwarfai/contracts'
 import { FsTranscriptTail } from './modules/asking/adapters/observedClaude/transcriptTail'
 import { SqliteAskRepository } from './modules/asking/adapters/SqliteAskRepository'
-import { createAskRestartSettlement } from './modules/asking'
+import { createAskDrainGate, createAskRestartSettlement } from './modules/asking'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
@@ -179,6 +181,7 @@ import {
   mintBootEpoch
 } from './wiring/bootSteps'
 import {
+  claudeHookEntryFollower,
   enablableInstalledTools,
   hostConfigWriter,
   persistedIngressPort
@@ -201,7 +204,8 @@ import {
   runRevertIntegrations
 } from './wiring/revertIntegrations'
 import { createModuleResetSteps, type WiredModuleResetSteps } from './wiring/moduleResetSteps'
-import { emptyDrainGate } from './wiring/emptyDrainGate'
+import { createHostDrainGate, routeDrainRechecks } from './wiring/hostDrainGate'
+import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
   servePreferences,
@@ -458,6 +462,12 @@ async function bootHost(base: HostBase): Promise<void> {
     attention?: WiredAttention
     asking?: WiredAsking
   } = {}
+  // What holds the upgrade drain: each module's gate is bound once boot step 4 wired it (#1290).
+  const drainGate = createHostDrainGate()
+  // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
+  let stopDrainRechecks: (() => void) | undefined
+  // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
+  let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
   // install-moment writer, then the module's) and the cut-1 module steps, whose walk route step 4
   // binds once mines exists (ISSUE-121).
@@ -490,6 +500,15 @@ async function bootHost(base: HostBase): Promise<void> {
     // Cut 0: the `mines` table has no row yet, so false is the true value (later: ISSUE-082 reads it).
     minesEverKnown: () => false
   }
+  // Nothing is held before boot step 4 binds the asking module's gate (the launching module's later:
+  // EPIC-10), so until then the drain goes at once.
+  const drain = createUpgradeDrain({
+    gate: drainGate,
+    state: hostState,
+    scheduler,
+    lifecycle,
+    log
+  })
   const dispatcher = createHostDispatcher({
     log,
     clock,
@@ -500,14 +519,7 @@ async function bootHost(base: HostBase): Promise<void> {
     lifecycle,
     connections,
     epoch,
-    // Cut 0: nothing is open or in flight, so the drain goes at once (later: EPIC-08, EPIC-10).
-    drain: createUpgradeDrain({
-      gate: emptyDrainGate,
-      state: hostState,
-      scheduler,
-      lifecycle,
-      log
-    }),
+    drain,
     upgradeTarget: createUpgradeTargetRule(
       hostCopyRootFacts({ build: buildKindOf({ isPackaged }) })
     ),
@@ -623,7 +635,11 @@ async function bootHost(base: HostBase): Promise<void> {
         sessionEnd: nodeOsSessionSignals(log),
         // No event is routed into the asking module, and no hook request reaches the Host, once
         // it is closing (ISSUE-140).
-        stopRoutes: () => modules.asking?.stop(),
+        stopRoutes: () => {
+          maintenance?.stop()
+          stopDrainRechecks?.()
+          modules.asking?.stop()
+        },
         closeIngress: () => hookIngress?.close() ?? Promise.resolve(),
         exit
       })
@@ -998,6 +1014,17 @@ async function bootHost(base: HostBase): Promise<void> {
               hostEpoch: epoch
             })
           )
+          // The live asks hold the upgrade drain (ADR-002 D8 item 2; S12.14, S12.15), and each ask
+          // that closes asks it again at once (#1290). After the rollback settlement, which
+          // publishes before any drain can be waiting.
+          drainGate.bind(
+            createAskDrainGate({
+              asks: new SqliteAskRepository({ db, scope: transactions, clock })
+            })
+          )
+          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const recheckDeps: Parameters<typeof routeDrainRechecks>[0] = { events: bus, drain }
+          stopDrainRechecks = routeDrainRechecks(recheckDeps)
           // The hook ingress over asking's `/hooks/claude/*` route and `app_meta.ingress_port`;
           // boot step 6 starts it, the clean exit closes it (wiring/hookIngress.ts).
           hookIngress = createHostHookIngress({
@@ -1019,12 +1046,22 @@ async function bootHost(base: HostBase): Promise<void> {
             attention: modules.attention.attention
           })
         },
-        // Step 6: the hook ingress listens (ISSUE-140); the MCP endpoint is later (ISSUE-209).
+        // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
+        // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
+        // (ISSUE-209).
         startHookIngress: () => {
-          if (hookIngress === undefined) {
-            throw new HostInvariantError('boot step 6 runs after step 4 built the hook ingress')
+          if (hookIngress === undefined || configWriter === undefined) {
+            throw new HostInvariantError('boot step 6 runs after steps 3 and 4 built its parts')
           }
-          return startHookIngressAtBoot(hookIngress, log)
+          return startHookIngressAtBoot(
+            hookIngress,
+            log,
+            claudeHookEntryFollower({
+              engine: configWriter,
+              rolledBack: CUT_2_ROLLBACK_CHOICES.rolledBack,
+              mintCredential
+            })
+          )
         },
         // Step 7: the catch-up, then the live loop, through the wiring's own `start`, which is null
         // in a cut-1 rollback build (and over any sink that stores nothing, INV-98).
@@ -1060,6 +1097,21 @@ async function bootHost(base: HostBase): Promise<void> {
   // by the per-mine run routed at step 4 (O-11-10).
   if (booted.kind === 'ready' && modules.ledger !== undefined && modules.batchSink !== undefined) {
     void startBackfillWhenObserving(modules.ledger, modules.batchSink)
+  }
+  // Once the Host answers `ready`: the maintenance tick (09 §7.1, wiring/hostMaintenance.ts), now and
+  // then every 6 hours: the closed-asks sweep (#1290); a read-only (newer) file is never swept.
+  if (booted.kind === 'ready' && database !== undefined) {
+    const { db, transactions } = database.connection()
+    maintenance = startMaintenanceTick({
+      scheduler,
+      log,
+      sweeps: hostMaintenanceSweeps({
+        db,
+        transactions,
+        clock,
+        readOnly: database.capabilities().includes('db-read-only')
+      })
+    })
   }
 }
 

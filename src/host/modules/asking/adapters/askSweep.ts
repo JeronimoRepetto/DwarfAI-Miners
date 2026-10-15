@@ -6,8 +6,8 @@
 // comes from the kernel `Clock`, read once per sweep. Each statement deletes at most
 // `ASK_SWEEP_BATCH` rows in its own transaction, so the single writer is never held long
 // (09 §8.1); the sweep repeats until a statement deletes fewer. It is SQL over the schema, not a
-// method of the frozen `AskRepository` port (16 §4.7); when it runs is the composition's choice
-// (the maintenance tick, 09 §7.1).
+// method of the frozen `AskRepository` port (16 §4.7). It runs in the Host's maintenance tick (09
+// §7.1: at boot after `ready`, then every 6 hours; host/wiring/hostMaintenance.ts, #1290).
 import type { Clock } from '../../../kernel/ports/clock'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'

@@ -135,6 +135,27 @@ describe('the asking module wired into the Host (ISSUE-140)', () => {
     expect(h.crew.crew.queries.get(dwarfId)?.status).toBe('working')
   })
 
+  it('[ADR-002, S12.14, S12.15] an open ask holds the upgrade drain, and the Host closes for the upgrade as soon as it is answered elsewhere', async () => {
+    const { w, h, ui, notifier, token, dwarfId } = await observedClaude()
+    await h.hook(token, permissionRequest(w))
+    await h.settle(ui, notifier)
+    expect(askOf(h, dwarfId)?.state).toBe('open')
+
+    h.drain.enter('upgrade-1290')
+    h.drain.start()
+    await h.settle(ui, notifier)
+
+    expect(h.closes).toEqual([])
+
+    // The ask closing asks the drain again at once: no drain tick passes (the clock stands still).
+    w.resolveInTerminal()
+    await h.hook(token, { hook_event_name: 'PostToolUse', session_id: SESSION, tool_name: 'Bash' })
+    await h.settle(ui, notifier)
+
+    expect(h.asking.queries.openAskOf(dwarfId)).toBeNull()
+    expect(h.closes).toEqual(['upgrade'])
+  })
+
   it('[S6.14, INV-77] the dwarf departing closes its open asks closed-by-death', async () => {
     const { w, h, ui, notifier, token, dwarfId } = await observedClaude()
     await h.hook(token, permissionRequest(w))
