@@ -37,10 +37,16 @@ import { HelloThrottle } from '../../transport/auth/throttle'
 const T0 = 1_790_000_000_000
 const HOUR_MS = 3_600_000
 
-/** A migration this build does not know: a file a newer build migrated (ADR-005 item 5). */
+/** The shipped migrations' head version. */
+const HEAD = migrationsFor({ clock: new FakeClock(0), ids: new SequenceIdGenerator() }).length
+
+/**
+ * A migration this build does not know: a file a newer build migrated (ADR-005 item 5). AMENDED for
+ * owner amendment N (AMENDMENT-14): migration 0002 ships, so the newer build's is head + 1.
+ */
 const FUTURE: Migration = defineMigration({
-  version: 2,
-  name: '0002-from-a-newer-build',
+  version: HEAD + 1,
+  name: `${String(HEAD + 1).padStart(4, '0')}-from-a-newer-build`,
   sql: 'CREATE TABLE from_a_newer_build (id INTEGER NOT NULL PRIMARY KEY) STRICT;'
 })
 
@@ -171,8 +177,10 @@ describe('boot step 2: open the database and keep the Host epoch (09 ยง8.4, 16 ย
     // The snapshot meta section's reset epoch reads app_meta (lead decision 2026-09-30).
     expect(host.database.resetEpoch()).toBe(0)
     host.database.close()
+    // AMENDED for owner amendment N (AMENDMENT-14): migration 0002 is applied too.
     expect(readFile(m.path, (db) => db.all('SELECT version FROM schema_migrations'))).toEqual([
-      { version: 1 }
+      { version: 1 },
+      { version: 2 }
     ])
     expect(appMeta(m.path)).toMatchObject({
       current_host_epoch: host.epoch,

@@ -1,4 +1,5 @@
-import { describe } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import { HostInvariantError } from '../../../../kernel/domain/errors'
 import type { DwarfId, Instant, LaunchId } from '../../../../kernel/domain/values'
 import { SqliteTransactionRunner } from '../../../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../../../platform/sqlite/testing/templateDb'
@@ -30,7 +31,8 @@ describe('SqliteDelegationTokenStore', () => {
       rows: () =>
         all().map((row): DelegationToken => ({
           launchId: String(row['launch_id']) as LaunchId,
-          parentDwarfId: String(row['parent_dwarf_id']) as DwarfId,
+          parentDwarfId:
+            row['parent_dwarf_id'] === null ? null : (String(row['parent_dwarf_id']) as DwarfId),
           mechanism: row['mechanism'] as DelegationToken['mechanism'],
           ...(row['credential_hash'] === null
             ? {}
@@ -41,5 +43,23 @@ describe('SqliteDelegationTokenStore', () => {
       storedText: () => JSON.stringify(all()),
       dispose: () => undefined
     }
+  })
+})
+
+describe('SqliteDelegationTokenStore bindParent', () => {
+  it('[ADR-013] binding a token to a second, different dwarf is a HostInvariantError', () => {
+    const { db } = openTemplateCopy()
+    seedDelegationRows(db, { dwarfs: [TOKEN_PARENT, TOKEN_OTHER_PARENT], launches: [TOKEN_LAUNCH] })
+    const store = new SqliteDelegationTokenStore(db)
+    store.issue({
+      launchId: TOKEN_LAUNCH,
+      parentDwarfId: null,
+      mechanism: 'in-process',
+      issuedAt: 1
+    })
+    store.bindParent(TOKEN_LAUNCH, TOKEN_PARENT)
+
+    expect(() => store.bindParent(TOKEN_LAUNCH, TOKEN_OTHER_PARENT)).toThrow(HostInvariantError)
+    expect(store.byLaunch(TOKEN_LAUNCH)?.parentDwarfId).toBe(TOKEN_PARENT)
   })
 })

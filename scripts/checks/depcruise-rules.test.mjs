@@ -76,6 +76,8 @@ const MODULE_GRAPH_EDGES = [
   ['jev', 'preferences'],
   ['attention', 'preferences']
 ]
+// Type-only edges (AMENDMENT-14 A14-07): delegation → suppliers, `import type` only; proven by
+// the "[R4] a type-only edge …" case and the lint-canaries/R4-type-only-edge canary.
 
 describe('dependency-cruiser rules (05 §5.2)', () => {
   it(
@@ -422,6 +424,26 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
       }
       const result = await cruise({ files })
       expect(result.violations).toEqual([])
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
+  it(
+    '[R4] a type-only edge allows import type and reports a value import: delegation and suppliers (AMENDMENT-14 A14-07)',
+    async () => {
+      const typeOnly = 'src/host/modules/delegation/application/usesSupplierTypes.ts'
+      const value = 'src/host/modules/delegation/application/usesSupplierValue.ts'
+      const target = 'src/host/modules/suppliers/index.ts'
+      const result = await cruise({
+        files: {
+          [target]: 'export type Injection = { mechanism: string }\nexport const value = 1\n',
+          [typeOnly]:
+            "import type { Injection } from '../../suppliers/index'\nexport const shape = (i: Injection) => i\n",
+          [value]: "import { value } from '../../suppliers/index'\nexport const useCase = value\n"
+        }
+      })
+      expect(result.violations.filter((violation) => violation.from === typeOnly)).toEqual([])
+      expectViolation(result, 'R4-module-edge-delegation-type-only', value, target)
     },
     CRUISE_TIMEOUT_MS
   )

@@ -1,7 +1,7 @@
 // The DelegationTicketStore conformance suite (16 §4.8; 06 §11.1 `Delegation`; 09 §4.6; 17 §1.3):
 // run on the in-memory double and on the SQLite adapter over the template database (schema v1).
 // `put` records a new delegation, `byTicket` returns it field for field, `save` writes its next
-// state along machine 8 (07 §8). The 09 CHECKs are the store's rules on both: `succeeded` only
+// state along machine 8 (07 §8), `inFlight` lists the attempted and running ones. The 09 CHECKs are the store's rules on both: `succeeded` only
 // with `handoff.phase = 'delivered'` (INV-68), the task and context only while in flight, `failure`
 // exactly when `failed`, `settledAt` exactly when settled, the worker never the parent, one
 // delegation per ticket. The store joins the caller's transaction, so a rollback undoes its write.
@@ -224,6 +224,21 @@ export function runDelegationTicketStoreContract(
 
       expect(s.rows()).toStrictEqual([attempted(1)])
       expect(s.store.byTicket('ticket-2')).toBeNull()
+    })
+
+    // Owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15 (A14-03): `revokeFor` and the INV-84
+    // boot reconcile read the delegations still in flight.
+    it('[S8.11, INV-84] inFlight lists the attempted and running delegations by id, never a settled one', async () => {
+      const s = await setUp()
+      const settled = applyEvent(attempted(3), { type: 'parent-session-ended' }, T1)
+      if (!settled.ok) throw new Error('S8.11 settles an attempted delegation')
+
+      expect(s.store.inFlight()).toStrictEqual([])
+      put(s, running(2))
+      put(s, attempted(1))
+      put(s, settled.value.delegation)
+
+      expect(s.store.inFlight()).toStrictEqual([attempted(1), running(2)])
     })
   })
 }

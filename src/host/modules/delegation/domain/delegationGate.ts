@@ -5,8 +5,11 @@
 //   09 §4.8) is on, and
 // - the parent's own launch used "Let Jev choose" (`launchedWithLetJevChoose`);
 // either alone is not enough (PO #50, INV-80). A delegated worker's launch never opens it,
-// whatever the setting (depth 1, INV-81): its launch row has `launched_with_let_jev_choose = 0`
-// (09 D-17), and `delegated` is checked on its own so depth 1 never rests on that one column.
+// whatever the setting (depth 1, INV-81): the `launches` CHECK `(delegated = 0 OR
+// launched_with_let_jev_choose = 0)` (09 D-17) gives every worker launch the flag false. The
+// endpoint (`DelegationEndpoint.delegate`) also passes `delegated`; `issueFor` receives only the
+// flag (owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15, A14-02) and passes `delegated: false`,
+// so there depth 1 rests on that CHECK.
 //
 // The gate is read at injection (`DelegationLifecycle.issueFor`) and again on every call
 // (`DelegationEndpoint.delegate`, S8.02); turning the setting off gates new attempts only, never
