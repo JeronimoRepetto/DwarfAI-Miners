@@ -29,7 +29,8 @@ import {
   isLegacyHookCommand,
   isOwnedHookCommand,
   ownedCommandPrefix,
-  postsToIngressPort
+  postsToIngressPort,
+  tokenOfHookCommand
 } from './hookCommand'
 import {
   hasDuplicateKeys,
@@ -274,6 +275,18 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
       (command) =>
         isOwnedHookCommand(command, this.options.platform) && !postsToIngressPort(command, port)
     )
+  }
+
+  /** 07 S14.11: the token of every handler of DwarfAI's own, for the engine's active-token check. */
+  ownedTokens(doc: ClaudeSettingsDocument): readonly string[] {
+    const found: string[] = []
+    if (doc.text === null) return found
+    this.someHandler(doc.text, (command) => {
+      const token = tokenOfHookCommand(command, this.options.platform)
+      if (token !== null) found.push(token)
+      return false
+    })
+    return found
   }
 
   private isEntry(command: string, ownedOnly: boolean): boolean {
