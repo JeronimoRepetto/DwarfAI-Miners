@@ -1,0 +1,95 @@
+{
+  "case": "C-05",
+  "description": "One prompt: the echo with echoOf the receipt's correlation, the tool activity, the reply, turn.ended once and status working then idle (15 §1.3 sendTurn, §1.4).",
+  "script": [
+    {
+      "do": "launch",
+      "readyAfterMs": 50
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-1",
+      "text": "dig the north seam"
+    },
+    {
+      "do": "advance",
+      "ms": 100
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "confidence": "confirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "simulated:{session}:m-1",
+      "providerTurnId": "{session}:turn-1"
+    },
+    null
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-1:echo",
+        "role": "person",
+        "text": "dig the north seam",
+        "providerTime": 50,
+        "echoOf": "simulated:{session}:m-1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-1:step-1",
+        "turnKey": "{session}:turn-1",
+        "kind": "tool",
+        "toolName": "survey",
+        "summary": "Surveying the seam",
+        "state": "started",
+        "at": 60
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-1:step-1",
+        "turnKey": "{session}:turn-1",
+        "kind": "tool",
+        "toolName": "survey",
+        "summary": "Surveying the seam",
+        "state": "finished",
+        "at": 70
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "simulated:simulated:{session}:{session}:turn-1:reply",
+        "role": "dwarf",
+        "text": "Marked the face for tomorrow morning.",
+        "providerTime": 80
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "{session}:turn-1",
+        "kind": "concluded",
+        "at": 90,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": []
+}

@@ -1,0 +1,8 @@
+{
+  "case": "C-01",
+  "description": "launch() resolves only after the simulated handshake (50 ms after the simulated spawn) and binds a SessionRef of the profile's provider; nothing is emitted before a turn (15 §1.3 launch, ADR-009 D3).",
+  "script": [{ "do": "launch", "readyAfterMs": 50 }],
+  "outcomes": [{ "resolved": true }],
+  "events": [],
+  "sent": []
+}
