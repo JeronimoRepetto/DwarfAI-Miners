@@ -88,7 +88,9 @@ const SERVED_SINCE_CUT_0 = [
   'frame:launch.changed',
   'frame:launch.failed',
   'launching.launch',
-  'section:launches'
+  'section:launches',
+  // The Add panel's supplier list: B-M37, from cut 3 (ISSUE-163).
+  'suppliers.launchable'
 ]
 const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'asks', 'launches', 'tails']
 
