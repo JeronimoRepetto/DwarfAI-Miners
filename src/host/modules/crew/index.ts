@@ -22,7 +22,7 @@ import { SqliteDwarfRepository } from './adapters/SqliteDwarfRepository'
 import { CrewArrivals, OpenAskMemory, type CrewCommands } from './application/arrival'
 import { CrewReadModel, type CrewQueries, type SessionLinks } from './application/crewQueries'
 import { CrewEndAllIn, type CrewEnds } from './application/endAllIn'
-import { CrewStop, type CrewStops } from './application/stop'
+import { CrewStop, PendingEndMemory, type CrewStops } from './application/stop'
 import type { CrewEndEvent } from './application/events'
 import { StatusTimer } from './application/statusTimer'
 import type { CrewEvent } from './domain/events'
@@ -30,7 +30,13 @@ import type { SessionTerminator } from './ports/sessionTerminator'
 
 export type { CrewEndEvent, DwarfStopFailed, DwarfStopRequested } from './application/events'
 export type { CrewEnds } from './application/endAllIn'
-export type { CrewStops, StopOutcome } from './application/stop'
+export {
+  CrewStop,
+  PendingEndMemory,
+  type CrewStopDeps,
+  type CrewStops,
+  type StopOutcome
+} from './application/stop'
 export {
   stopAvailability,
   stopUnavailableReason,
@@ -70,7 +76,7 @@ export { StatusTimer, type StatusTimerDeps } from './application/statusTimer'
 export type { CrewCommands, CrewQueries, SessionLinks }
 // Strangler-only (05 §3.2; AMENDMENT-8): the B-M41 record, deleted with B-M41 at the end of cut 4.
 export type { PresentIdentity } from './application/crewQueries'
-export type { SessionTerminator } from './ports/sessionTerminator'
+export type { EndOutcome, SessionTerminator } from './ports/sessionTerminator'
 
 export interface CrewDeps {
   /** The Host's one writer (09 §8.1). */
@@ -118,8 +124,9 @@ export interface Crew {
 /** The module over the Host database. */
 export function createCrew(deps: CrewDeps): Crew {
   const stored = new SqliteDwarfRepository({ db: deps.db, scope: deps.transactions })
-  // The front ask is Host memory beside the stored rows (09 §4.2), one instance for every reader.
-  const repository = new OpenAskMemory(stored)
+  // The front ask and the pending end are Host memory beside the stored rows (09 §4.2), one
+  // instance for every reader.
+  const repository = new PendingEndMemory(new OpenAskMemory(stored))
   const statusTimer = new StatusTimer({
     clock: deps.clock,
     scheduler: deps.scheduler,

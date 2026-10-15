@@ -5,11 +5,12 @@
 // - Precondition: no stop in flight (06 INV-31 as amended; domain/stopAvailability.ts), else
 //   `'already-stopping'` with nothing changed. An open turn, an open ask or an observed session is
 //   not a refusal (US-MSG-016.AC01, AC04, AC06).
-// - One transaction sets `stopInFlight` (16 §2.2); after it commits, `DwarfStopRequested{why:
-//   'stop-dwarf'}` (16 §2.3). Its required handler, launching's `markStoppedByPerson`, runs inside
-//   that publish and commits `stopped_by_person` before any end, so the exit never raises the PO #62
-//   "stopped unexpectedly" toast (FM-060; S4.05). If it throws, nothing is ended and the stop is a
-//   failed end, `'could-not-end'` (16 §2.3, AR-24).
+// - One transaction sets `stopInFlight` and the pending `why` (Host memory, `PendingEndMemory`;
+//   16 §2.2). After it commits, `DwarfStopRequested{why: 'stop-dwarf'}` (16 §2.3): its required
+//   handler, launching's `markStoppedByPerson`, runs inside that publish and commits
+//   `stopped_by_person` before any end, so the exit never raises the PO #62 "stopped unexpectedly"
+//   toast (FM-060; S4.05). If it throws, nothing is ended and the stop is a failed end,
+//   `'could-not-end'` (16 §2.3, AR-24).
 // - Then `SessionTerminator.end(dwarfId, 'stop-dwarf')` (ADR-014 item 1): identity-checked, owned
 //   or observed alike; mid-turn the owned path is the driver's graceful close or interrupt, then the
 //   tree kill (items 1, 3). An end that rejects is a failed end (item 6 fails closed).
@@ -25,19 +26,25 @@
 //   (16 §4.2 `SessionTerminator`), with nothing published. An id never stored is a programming
 //   error (`HostInvariantError`); the transport refuses it before crew runs.
 import { HostInvariantError } from '../../../kernel/domain/errors'
-import type { DwarfId, EventId, HostEpoch, Result } from '../../../kernel/domain/values'
+import type {
+  DwarfId,
+  EventId,
+  HostEpoch,
+  MineId,
+  ProviderIdentity,
+  Result
+} from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
-import { applyPresence } from '../domain/dwarf'
+import { applyPresence, recordPendingEnd, type Dwarf } from '../domain/dwarf'
 import { isGone, type DepartureCause, type EndReason } from '../domain/presence'
 import { stopAvailability } from '../domain/stopAvailability'
 import type { DwarfRepository } from '../ports/dwarfRepository'
 import type { EndOutcome, SessionTerminator } from '../ports/sessionTerminator'
 import type { CrewCommands } from './arrival'
 import type { CrewEndEvent } from './events'
-
 const WHY: EndReason = 'stop-dwarf'
 /** `departureCause('stop-dwarf', …)` (06 §5.1): owned or observed, the same cause. */
 const CAUSE: DepartureCause = 'stopped'
@@ -92,7 +99,7 @@ export class CrewStop implements CrewStops {
       if (dwarf === null) throw new HostInvariantError(`no dwarf ${dwarfId} was ever stored`)
       if (isGone(dwarf)) return 'gone'
       if (stopAvailability(dwarf) !== 'available') return 'already-stopping'
-      repository.save({ ...dwarf, stopInFlight: true })
+      repository.save({ ...recordPendingEnd(dwarf, WHY), stopInFlight: true })
       return 'begun'
     })
   }
@@ -135,5 +142,48 @@ export class CrewStop implements CrewStops {
       hostEpoch,
       payload
     } as Extract<CrewEndEvent, { type: K }>)
+  }
+}
+
+/**
+ * The `DwarfRepository` crew's commands and read model share, with each dwarf's pending end kept
+ * in Host memory beside the stored rows (09 §4.2 has no column for `pendingEnd`; 05 §3.2, 16 §4.2):
+ * set by the `save` of a dwarf whose end the Host asked for, cleared by one that forgot it (a failed
+ * end, S2.15), and laid back on every read. So the exit routes read the `why` of the end the person
+ * asked for and depart the dwarf for its cause (`departureCause`, 06 §5.1) whichever of the exit and
+ * the terminator's answer comes first. A Host restart forgets it, as it forgets every end in flight;
+ * `stopped_by_person` is what persists (16 §2.3).
+ */
+export class PendingEndMemory implements DwarfRepository {
+  private readonly pending = new Map<DwarfId, EndReason>()
+
+  constructor(private readonly stored: DwarfRepository) {}
+
+  byId(id: DwarfId): Dwarf | null {
+    return this.withPendingEnd(this.stored.byId(id))
+  }
+
+  byProviderIdentity(i: ProviderIdentity): Dwarf | null {
+    return this.withPendingEnd(this.stored.byProviderIdentity(i))
+  }
+
+  inMine(id: MineId): Dwarf[] {
+    return this.stored.inMine(id).map((d) => this.withPendingEnd(d) ?? d)
+  }
+
+  save(d: Dwarf): void {
+    this.stored.save(d)
+    if (d.pendingEnd === null) this.pending.delete(d.id)
+    else this.pending.set(d.id, d.pendingEnd)
+  }
+
+  /** The `why` of the end the Host asked for and that has not failed, or null. */
+  pendingEndOf(dwarfId: DwarfId): EndReason | null {
+    return this.pending.get(dwarfId) ?? null
+  }
+
+  private withPendingEnd(d: Dwarf | null): Dwarf | null {
+    const why = d === null ? undefined : this.pending.get(d.id)
+    return d === null || why === undefined ? d : { ...d, pendingEnd: why }
   }
 }

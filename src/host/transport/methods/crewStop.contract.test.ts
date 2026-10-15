@@ -32,9 +32,13 @@ import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
-import type { CrewEndEvent, EndReason } from '../../modules/crew'
-import { CrewStop } from '../../modules/crew/application/stop'
-import type { EndOutcome, SessionTerminator } from '../../modules/crew/ports/sessionTerminator'
+import {
+  CrewStop,
+  type CrewEndEvent,
+  type EndOutcome,
+  type EndReason,
+  type SessionTerminator
+} from '../../modules/crew'
 import { CREW_EPOCH, inMemoryCrew } from '../../modules/crew/testing/inMemoryCrew'
 import { emptyDrainGate } from '../../wiring/emptyDrainGate'
 import { createHostDispatcher } from '../../wiring/hostDispatcher'
