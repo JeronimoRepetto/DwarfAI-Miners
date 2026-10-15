@@ -5,6 +5,21 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { DelegationResetStep } from './adapters/sqlite/DelegationResetStep'
 
+// ISSUE-199: what host/transport's MCP endpoint and the composition root need of the endpoint.
+export type { DelegationToken, DelegationTokenStore } from './ports/delegationStores'
+export type {
+  DelegationEndpoint,
+  DelegationLaunchFacts,
+  DelegationRelayConnection,
+  DelegationRelayListener,
+  DelegationServer,
+  LoopbackEndpoint,
+  ParentDeliverer,
+  SubtaskOutcome,
+  SubtaskResultView
+} from './ports/delegationServer'
+export { DELEGATION_WAIT_MS } from './ports/delegationServer'
+
 /** Structurally the preferences module's `ResetDbStep` (16 §4.12); delegation never imports it. */
 export interface DelegationResetDbStep {
   readonly name: string
