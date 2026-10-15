@@ -18,7 +18,7 @@ import {
 import type { DomainEvent } from '../../kernel/domain/domainEvent'
 import type { DwarfId, EventId, MineId, ProviderIdentity } from '../../kernel/domain/values'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
-import type { CrewEvent } from '../../modules/crew'
+import type { CrewEndEvent, CrewEvent } from '../../modules/crew'
 import { inMemoryCrew, CREW_EPOCH } from '../../modules/crew/testing/inMemoryCrew'
 import type { MinePath, MineName, MinesEvent } from '../../modules/mines'
 import type { ObservationEvent } from '../../modules/observation'
@@ -525,5 +525,67 @@ describe('the board frames (14 §2.4 B-F06, B-F08, B-F09, B-F10; 08 §2.1, §2.2
       }
     ])
     expect(b.minesBus.handlerErrors).toEqual([])
+  })
+
+  // ADDED for ISSUE-171: the window learns `stopInFlight` from `dwarf.changed` (14 §2.4 B-F09).
+  it('[US-MSG-016.AC02, S15.01, S15.15] DwarfStopRequested and DwarfStopFailed each send dwarf.changed with the dwarf as stored, so Stop dwarf is disabled only while the stop is in flight', () => {
+    const crew = inMemoryCrew()
+    const ends = new RecordingEventBus<CrewEndEvent>()
+    const frames = new RecordingFrames()
+    publishBoardFrames({
+      events: {
+        mines: new RecordingEventBus<MinesEvent>(),
+        crew: crew.bus,
+        observation: new RecordingEventBus<ObservationEvent>(),
+        crewEnds: ends
+      },
+      mines: new FakeMinesQueries(),
+      crew: crew.queries,
+      ledger: NO_LEDGER_TOTALS,
+      frames
+    })
+    const dwarfId = crew.commands.arrive({
+      mineId: MINE_A,
+      identity: identity('s-171'),
+      rank: 'foreman',
+      status: 'working'
+    })
+    const setStopInFlight = (stopInFlight: boolean): void => {
+      const stored = crew.repository.byId(dwarfId)
+      if (stored === null) throw new Error('the dwarf is not stored')
+      crew.transactionRunner.inTransaction(() => crew.repository.save({ ...stored, stopInFlight }))
+    }
+    const changed = (): unknown[] =>
+      frames.sent.filter((frame) => frame.name === 'dwarf.changed').map((frame) => frame.data)
+    const before = changed().length
+
+    setStopInFlight(true)
+    ends.publish(
+      event<CrewEndEvent>('DwarfStopRequested', { dwarfId, requestId: 'r-1', why: 'stop-dwarf' })
+    )
+    expect(changed().slice(before)).toMatchObject([
+      { dwarf: { id: dwarfId, stopInFlight: true, stopUnavailableReason: 'already-stopping' } }
+    ])
+
+    setStopInFlight(false)
+    ends.publish(
+      event<CrewEndEvent>('DwarfStopFailed', {
+        dwarfId,
+        requestId: 'r-1',
+        why: 'stop-dwarf',
+        reason: 'could-not-end'
+      })
+    )
+    expect(changed().slice(before + 1)).toMatchObject([
+      { dwarf: { id: dwarfId, stopInFlight: false, stopUnavailableReason: null } }
+    ])
+
+    // A dwarf that departed sends no dwarf.changed: dwarf.departed was its last frame.
+    crew.commands.sessionClosed(dwarfId, 'stopped')
+    const settled = changed().length
+    ends.publish(
+      event<CrewEndEvent>('DwarfStopRequested', { dwarfId, requestId: 'r-2', why: 'stop-dwarf' })
+    )
+    expect(changed()).toHaveLength(settled)
   })
 })
