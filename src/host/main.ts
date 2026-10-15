@@ -194,6 +194,7 @@ import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { createKeystrokeRelay } from './wiring/bridges/keystrokeRelay'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
+import { ownedSessionsOver } from './wiring/bridges/sessionTerminator'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
 import { CUT_2_ROLLBACK_CHOICES } from './wiring/cut2Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
@@ -1078,6 +1079,14 @@ async function bootHost(base: HostBase): Promise<void> {
           // asks it again at once.
           drainGate.bind(createLaunchDrainGate({ launches: modules.launching.launching.queries }))
           stopLaunchDrainRechecks = routeLaunchDrainRechecks({ events: bus, drain })
+          // Stop dwarf ends an owned session through its driver, then its recorded process tree
+          // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
+          modules.crew.bindOwnedSessions(
+            ownedSessionsOver({
+              launching: modules.launching.launching.owned,
+              channels: modules.suppliers.sessions
+            })
+          )
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.

@@ -44,7 +44,7 @@ import type { Scheduler } from '../../kernel/ports/scheduler'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
-import type { CrewEnds, CrewEvent, CrewQueries } from '../../modules/crew'
+import type { CrewEndEvent, CrewEnds, CrewEvent, CrewQueries } from '../../modules/crew'
 import {
   createMines,
   DEFAULT_TIER_THRESHOLDS,
@@ -82,7 +82,8 @@ export type MinesRouteEvent = MinesEvent | CrewEvent | ObservationEvent
 export type MinesWiringBus = MinesDeps['bus'] &
   Pick<DomainEventBus<MinesEvent>, 'subscribe'> &
   Pick<DomainEventBus<CrewEvent>, 'subscribe'> &
-  Pick<DomainEventBus<ObservationEvent>, 'subscribe'>
+  Pick<DomainEventBus<ObservationEvent>, 'subscribe'> &
+  Pick<DomainEventBus<CrewEndEvent>, 'subscribe'>
 
 /** Crew's half of the mines wiring, through crew's public door (05 §1.3 mines → crew). */
 export interface MinesCrewBinding {
@@ -256,7 +257,7 @@ function wireMines(
     intervalMs: deps.folderCheckMs
   })
   publishBoardFrames({
-    events: { mines: bus, crew: bus, observation: bus },
+    events: { mines: bus, crew: bus, observation: bus, crewEnds: bus },
     mines: mines.queries,
     crew: deps.crew.queries,
     ledger: deps.ledger ?? NO_LEDGER_TOTALS,
