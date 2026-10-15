@@ -15,10 +15,12 @@ import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import { runStopAllContract } from '../../../kernel/testing/stopAll.contract'
 import type { LaunchRecord } from '../ports/launchRecordStore'
 import { inMemoryLaunching } from '../testing/inMemoryLaunching'
-import { StopAll, type LaunchSettlements, type StopAllIncomplete } from './stopAll'
+import type { StopAllIncomplete } from './events'
+import { StopAll, type LaunchSettlements } from './stopAll'
 
 const EPOCH = 'epoch-175' as HostEpoch
 const REQUEST = '01890a5d-ac96-774b-bcce-000000001751'
+const OTHER_REQUEST = '01890a5d-ac96-774b-bcce-000000001753'
 
 const dwarfOf = (n: number): DwarfId => `00000000-0000-7000-8000-0000000175d${n}` as DwarfId
 const launchOf = (n: number): LaunchId => `00000000-0000-7000-8000-0000000175a${n}` as LaunchId
@@ -49,14 +51,28 @@ class RecordingOwnedEnds {
   readonly calls: Array<{ dwarfIds: DwarfId[]; requestId: string; records: LaunchRecord[] }> = []
   failing = new Set<DwarfId>()
 
+  private gate: Promise<void> = Promise.resolve()
+  private open: () => void = () => {}
+
   constructor(private readonly records: () => LaunchRecord[]) {}
 
-  endOwned(dwarfIds: DwarfId[], requestId: string) {
+  async endOwned(dwarfIds: DwarfId[], requestId: string) {
     this.calls.push({ dwarfIds: [...dwarfIds], requestId, records: this.records() })
-    return Promise.resolve({
+    await this.gate
+    return {
       ended: dwarfIds.filter((dwarfId) => !this.failing.has(dwarfId)),
       failed: dwarfIds.filter((dwarfId) => this.failing.has(dwarfId))
-    })
+    }
+  }
+
+  /** Holds every later end in flight until `release()`: a slow kill. */
+  hold(): void {
+    this.gate = new Promise((resolve) => (this.open = resolve))
+  }
+
+  release(): void {
+    this.open()
+    this.gate = Promise.resolve()
   }
 }
 
@@ -192,6 +208,45 @@ describe('LaunchCommands.stopAll (16 §4.5)', () => {
 
     expect(await running).toEqual({ ended: [dwarfOf(1), dwarfOf(2)], failed: [] })
     expect(w.crew.calls.map(({ dwarfIds }) => dwarfIds)).toEqual([[dwarfOf(1), dwarfOf(2)]])
+  })
+
+  it('[US-RES-002.AC09, FM-144] a launch that settles while the ends run is ended too before stopAll answers', async () => {
+    const w = world([record(1)])
+    w.crew.hold()
+
+    const running = w.stopAll.stopAll(REQUEST)
+    await flush()
+    // A launch accepted during the slow kill lands while the first ends still run.
+    w.launches.inFlight = 1
+    w.db.inTransaction(() => w.db.records.put(record(2)))
+    w.launches.settleOne()
+    w.crew.release()
+
+    expect(await running).toEqual({ ended: [dwarfOf(1), dwarfOf(2)], failed: [] })
+    expect(w.crew.calls.map(({ dwarfIds }) => dwarfIds)).toEqual([[dwarfOf(1)], [dwarfOf(2)]])
+    expect(w.db.records.live().find((r) => r.dwarfId === dwarfOf(2))).toMatchObject({
+      stoppedByPerson: true,
+      resumeIntent: false
+    })
+  })
+
+  it('[S12.11, INV-121] a stop-all with another requestId while one runs joins it, so no dwarf is ended twice and both get the same outcome', async () => {
+    const w = world([record(1), record(2)])
+    w.crew.failing.add(dwarfOf(2))
+    w.crew.hold()
+
+    const first = w.stopAll.stopAll(REQUEST)
+    await flush()
+    const second = w.stopAll.stopAll(OTHER_REQUEST)
+    w.crew.release()
+
+    expect(await second).toEqual(await first)
+    expect(w.crew.calls).toHaveLength(1)
+    expect(w.bus.published).toHaveLength(1)
+    expect(w.db.records.live().find((r) => r.dwarfId === dwarfOf(2))).toMatchObject({
+      stoppedByPerson: false,
+      resumeIntent: true
+    })
   })
 
   it('[ADR-002] a repeat of the same requestId while the first is in flight joins it, so crew is asked once', async () => {

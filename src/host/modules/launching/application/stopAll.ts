@@ -19,10 +19,18 @@
 //    one `StopAllIncomplete{requestId, ended, failed}` is published, whose route is the one danger
 //    toast (08 §2.5; wiring/routes/launching.ts). Nothing is published when every end succeeded.
 //
-// `requestId` is the idempotency key (16 §4.5): a repeat while the first is in flight joins it. A
-// repeat after it settled is the transport's de-duplication (ADR-003 item 6); a new request runs
-// again (S12.21: the person may press Stop everything and quit again).
-import type { DomainEvent } from '../../../kernel/domain/domainEvent'
+// A launch accepted while the ends run (the Host is `ending-all`, S12.11) is not left alive: once
+// the ends settled, `stopAll` waits for the launches in flight again and ends every live record it
+// has not handled yet, in rounds, until none is left; only then does it answer, so the transport
+// never exits with an owned session it did not try to end (US-RES-002.AC09; FM-144 (A) extended to
+// a launch accepted during the ends). The wait is bounded only by the launches' own timeouts
+// (handshake, early window, ADR-020): every launch settles as `DwarfLaunched` or `LaunchFailed`.
+//
+// One stop-all at a time (S12.11): a request while one runs, with the same `requestId` (the
+// idempotency key, 16 §4.5) or another, joins it and gets its outcome, so no dwarf is ended twice
+// and a failed record is restored once. A repeat after it settled is the transport's
+// de-duplication (ADR-003 item 6); a new request runs again (S12.21: the person may press Stop
+// everything and quit again).
 import type { DwarfId, EventId, HostEpoch } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
@@ -32,12 +40,7 @@ import type { StopAllOutcome } from '../../../kernel/ports/stopAll'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { CrewOwnedEnds } from '../../crew'
 import type { LaunchRecord, LaunchRecordStore } from '../ports/launchRecordStore'
-
-/** 08 §0 `StopAllIncomplete` (launching): published only with `failed ≠ ∅` (16 §4.5). */
-export type StopAllIncomplete = DomainEvent<
-  'StopAllIncomplete',
-  { requestId: string; ended: DwarfId[]; failed: DwarfId[] }
->
+import type { StopAllIncomplete } from './events'
 
 /** Where `stopAll` hears that a launch settled (`DwarfLaunched`, `LaunchFailed`). */
 export interface LaunchSettlements {
@@ -60,30 +63,43 @@ export interface StopAllDeps {
 }
 
 export class StopAll {
-  /** The stop-alls in flight, by `requestId`. */
-  private readonly running = new Map<string, Promise<StopAllOutcome>>()
+  /** The one stop-all in flight (S12.11: the Host is `ending-all` once), whatever its requestId. */
+  private running: Promise<StopAllOutcome> | null = null
 
   constructor(private readonly deps: StopAllDeps) {}
 
   stopAll(requestId: string): Promise<StopAllOutcome> {
-    const joined = this.running.get(requestId)
-    if (joined !== undefined) return joined
-    const run = this.run(requestId).finally(() => this.running.delete(requestId))
-    this.running.set(requestId, run)
+    if (this.running !== null) return this.running
+    const run = this.run(requestId).finally(() => {
+      this.running = null
+    })
+    this.running = run
     return run
   }
 
   private async run(requestId: string): Promise<StopAllOutcome> {
-    await this.launchesSettled()
-    const before = this.markStopped()
-    const outcome = await this.deps.crew.endOwned(
-      before.map((record) => record.dwarfId),
-      requestId
-    )
-    if (outcome.failed.length === 0) return outcome
-    this.restore(before, outcome.failed)
-    this.publish({ requestId, ended: [...outcome.ended], failed: [...outcome.failed] })
-    return outcome
+    const before: LaunchRecord[] = []
+    const ended: DwarfId[] = []
+    const failed: DwarfId[] = []
+    // Rounds: a launch accepted while the ends run settles and is ended in the next round, so the
+    // Host never answers (and never exits) with an owned session it did not try to end (FM-144).
+    for (;;) {
+      await this.launchesSettled()
+      const handled = new Set(before.map((record) => record.dwarfId))
+      const round = this.markStopped(handled)
+      if (round.length === 0) break
+      before.push(...round)
+      const outcome = await this.deps.crew.endOwned(
+        round.map((record) => record.dwarfId),
+        requestId
+      )
+      ended.push(...outcome.ended)
+      failed.push(...outcome.failed)
+    }
+    if (failed.length === 0) return { ended, failed }
+    this.restore(before, failed)
+    this.publish({ requestId, ended: [...ended], failed: [...failed] })
+    return { ended, failed }
   }
 
   /** Resolves once the drain gate reports no launch in flight (FM-144 (A)). */
@@ -100,11 +116,14 @@ export class StopAll {
     })
   }
 
-  /** Every live record stopped by the person, no resume intent (ADR-015 item 8); the rows before. */
-  private markStopped(): LaunchRecord[] {
+  /**
+   * Every live record not handled yet stopped by the person, no resume intent (ADR-015 item 8);
+   * those rows as they were.
+   */
+  private markStopped(handled: ReadonlySet<DwarfId>): LaunchRecord[] {
     const { records, transactions } = this.deps
     return transactions.inTransaction(() => {
-      const live = records.live()
+      const live = records.live().filter((record) => !handled.has(record.dwarfId))
       for (const record of live) {
         records.put({ ...record, stoppedByPerson: true, resumeIntent: false })
       }

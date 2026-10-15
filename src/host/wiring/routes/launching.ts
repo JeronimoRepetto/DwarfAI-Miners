@@ -50,8 +50,7 @@
 //   requestId, ended, failed}` (14 §2.4 B-F28, §3.6 `HostToast`; 05 §4; 08 §2.5; ADR-014 item 9):
 //   ONE danger message naming every dwarf Stop everything and quit could not end, for `ui`. It is
 //   published only with `failed ≠ ∅` (16 §4.5), and no `DwarfStopFailed{why: 'stop-all'}` raises a
-//   toast of its own (`routeStops`). `routeStopAll`, which host/main.ts subscribes with the
-//   `stopAll` binding.
+//   toast of its own (`routeStops`).
 //
 // The frames are the same for every `ui` connection, whatever its mode (US-LAUNCH-006.AC13). They
 // are sensitive (14 §3.5 SENSITIVE_FRAMES); nothing here logs their data.
@@ -77,8 +76,7 @@ import {
   createLaunching,
   type Launching,
   type LaunchingCommands,
-  type LaunchingEvent,
-  type StopAllIncomplete
+  type LaunchingEvent
 } from '../../modules/launching'
 import { SqliteLaunchRecordStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchRecordStore'
 import { SqliteLaunchStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchStore'
@@ -146,6 +144,15 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
       const { dwarfId, launchId } = event.payload
       frames.publishFrame('toast', { kind: 'session-crashed', dwarfId, launchId })
     }),
+    events.subscribe('StopAllIncomplete', (event) => {
+      const { requestId, ended, failed } = event.payload
+      frames.publishFrame('toast', {
+        kind: 'stop-all-incomplete',
+        requestId,
+        ended: [...ended],
+        failed: [...failed]
+      })
+    }),
     events.subscribe('LaunchFailed', (event) => {
       const { launchId, mineId, failure } = event.payload
       if (!frames.connections().some((connection) => connection.role === 'ui')) return
@@ -156,29 +163,6 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
   return () => {
     for (const stop of stops) stop()
   }
-}
-
-export interface StopAllRouteDeps {
-  /** Launching's `StopAllIncomplete` on the Host bus (08 §0). */
-  events: Pick<DomainEventBus<StopAllIncomplete>, 'subscribe'>
-  frames: Pick<LaunchFramePublisher, 'publishFrame'>
-}
-
-/**
- * The 05 §4 route of `StopAllIncomplete`: the one `toast {stop-all-incomplete}` naming every dwarf
- * Stop everything and quit could not end (08 §2.5; ADR-014 item 9). host/main.ts subscribes it with
- * the `stopAll` binding (ISSUE-175). Returns the unsubscribe.
- */
-export function routeStopAll(deps: StopAllRouteDeps): () => void {
-  return deps.events.subscribe('StopAllIncomplete', ({ payload }) => {
-    const { requestId, ended, failed } = payload
-    deps.frames.publishFrame('toast', {
-      kind: 'stop-all-incomplete',
-      requestId,
-      ended: [...ended],
-      failed: [...failed]
-    })
-  })
 }
 
 export interface SessionExitRouteDeps {

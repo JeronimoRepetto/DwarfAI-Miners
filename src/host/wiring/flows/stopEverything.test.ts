@@ -52,12 +52,7 @@ import {
   type SessionTerminator
 } from '../../modules/crew'
 import { inMemoryCrew } from '../../modules/crew/testing/inMemoryCrew'
-import {
-  createLaunching,
-  type LaunchingEvent,
-  type LaunchRecord,
-  type StopAllIncomplete
-} from '../../modules/launching'
+import { createLaunching, type LaunchingEvent, type LaunchRecord } from '../../modules/launching'
 import { inMemoryLaunching } from '../../modules/launching/testing/inMemoryLaunching'
 import type { MineView } from '../../modules/mines'
 import {
@@ -77,7 +72,7 @@ import { NO_LEDGER_TOTALS } from '../../transport/mappers/wire'
 import { registerHostShutdown } from '../../transport/methods/hostShutdown'
 import { createSessionStarter } from '../bridges/sessionStarter'
 import { emptyDrainGate } from '../emptyDrainGate'
-import { routeLaunching, routeSessionExits, routeStopAll, routeStops } from '../routes/launching'
+import { routeLaunching, routeSessionExits, routeStops } from '../routes/launching'
 
 const T0 = 1_790_000_000_000
 const EPOCH = 'epoch-175' as HostEpoch
@@ -114,7 +109,7 @@ interface Sent {
   data: unknown
 }
 
-type HostBusEvent = LaunchingEvent | CrewEndEvent | StopAllIncomplete
+type HostBusEvent = LaunchingEvent | CrewEndEvent
 
 /** Every session the SimulatedDriver hands out (call-through). */
 let handedOut: MockInstance<SimulatedDriver['launch']>
@@ -139,12 +134,19 @@ interface EndWorld {
  */
 class OwnedEnd implements SessionTerminator {
   readonly calls: Array<{ dwarfId: DwarfId; why: EndReason }> = []
-  private readonly scripted = new Map<DwarfId, EndOutcome | 'hang'>()
+  private readonly scripted = new Map<DwarfId, EndOutcome | 'hang' | 'held'>()
+  private readonly held = new Map<DwarfId, () => void>()
 
   constructor(private readonly world: () => EndWorld) {}
 
-  script(dwarfId: DwarfId, outcome: EndOutcome | 'hang'): void {
+  script(dwarfId: DwarfId, outcome: EndOutcome | 'hang' | 'held'): void {
     this.scripted.set(dwarfId, outcome)
+  }
+
+  /** Lets a `'held'` end go on the owned path: a slow kill that ends after all. */
+  release(dwarfId: DwarfId): void {
+    this.scripted.delete(dwarfId)
+    this.held.get(dwarfId)?.()
   }
 
   async end(dwarfId: DwarfId, why: EndReason): Promise<EndOutcome> {
@@ -154,7 +156,9 @@ class OwnedEnd implements SessionTerminator {
     if (record === undefined) throw new Error('OwnedEnd ends owned sessions only (INV-120)')
     const scripted = this.scripted.get(dwarfId)
     if (scripted === 'hang') return new Promise<EndOutcome>(() => undefined)
-    if (scripted !== undefined) return { ...scripted }
+    if (scripted === 'held') {
+      await new Promise<void>((resolve) => this.held.set(dwarfId, resolve))
+    } else if (scripted !== undefined) return { ...scripted }
     const channel = h.channelFor(record.ref)
     if (channel === null) return { kind: 'ended' }
     await channel.close('end-thread')
@@ -267,9 +271,6 @@ function host() {
     frames: connections
   })
   routeStops({ events: bus, launching, frames: connections })
-  // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
-  const stopAllRoute: Parameters<typeof routeStopAll>[0] = { events: bus, frames: connections }
-  routeStopAll(stopAllRoute)
 
   publishBoardFrames({
     events: {
@@ -298,7 +299,7 @@ function host() {
     exit: (code) => exitCodes.push(code)
   })
   registerHostShutdown(dispatcher, {
-    stopAll: launching.stopAll({ crew: ends, bus }),
+    stopAll: launching.stopAll({ crew: ends }),
     lifecycle,
     log,
     drain: createUpgradeDrain({ gate: emptyDrainGate, state, scheduler, lifecycle, log })
@@ -479,7 +480,34 @@ describe('Stop everything and quit (F13)', () => {
     expect(h.exitCodes).toEqual([0])
   })
 
-  it('[ADR-015] stop-all clears every resume intent, so a crash during it resumes nothing at the next boot', async () => {
+  it('[US-RES-002.AC09, FM-144] a launch accepted during a slow end is ended too, and the Host never closes cleanly with it alive', async () => {
+    const h = host()
+    const first = await launchedDwarf(h)
+    h.terminator.script(first, 'held')
+
+    const answered = h.stopEverything()
+    await h.drain()
+    // While the first end runs, a launch is accepted and lands.
+    const launchId = await launch(h)
+    await h.run(SETTLE_MS)
+    const late = h.bus.ofType('DwarfLaunched').find((e) => e.payload.launchId === launchId)
+    expect(late).toBeDefined()
+    const lateDwarf = late?.payload.dwarfId
+    expect(h.exitCodes).toEqual([])
+    h.terminator.release(first)
+    const res = await answered
+    await h.drain()
+
+    expect(res).toMatchObject({
+      ok: true,
+      result: { mode: 'stop-all', outcome: { ended: [first, lateDwarf], failed: [] } }
+    })
+    expect(h.terminator.calls.map((call) => call.dwarfId)).toEqual([first, lateDwarf])
+    expect(h.db.records.live()).toEqual([])
+    expect(h.exitCodes).toEqual([0])
+  })
+
+  it('[ADR-015] stop-all clears every resume intent before the ends settle, so a crash during it leaves no record with a resume intent', async () => {
     const h = host()
     const first = await launchedDwarf(h)
     const second = await launchedDwarf(h)

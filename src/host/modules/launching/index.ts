@@ -19,9 +19,9 @@
 //   `LaunchedSessionCrashed` (application/sessionExited.ts). `recovery` is the current Host
 //   recovery's coverage; no recovery runs in the Host yet (later: ISSUE-173 makes it launching's
 //   own), so it defaults to `NO_HOST_RECOVERY`.
-// - `stopAll(deps)` (ISSUE-175) builds 16 §4.5 `LaunchCommands.stopAll` over crew's `endOwned` and
-//   the Host bus `host/wiring` passes (crew's `ownedEnds` needs the Host's terminator, which exists
-//   only once both modules are wired): it waits for the launches in flight, read through the
+// - `stopAll(deps)` (ISSUE-175) builds 16 §4.5 `LaunchCommands.stopAll` over crew's `endOwned`
+//   (crew's `ownedEnds` needs the Host's terminator, which exists only once both modules are
+//   wired): it waits for the launches in flight, read through the
 //   launching drain gate and re-read on each settled launch, then ends every owned session
 //   (application/stopAll.ts). host/main.ts binds it as the kernel StopAllPort.
 // - `createLaunchingResetStep` (ISSUE-181) is the module's step of the Reset-metrics saga (ADR-023;
@@ -32,7 +32,7 @@
 import { LaunchUseCase, type LaunchAccepted, type LaunchingDeps } from './application/launch'
 import { MarkStoppedByPerson } from './application/markStoppedByPerson'
 import { createLaunchDrainGate } from './application/launchDrain'
-import { StopAll, type StopAllIncomplete } from './application/stopAll'
+import { StopAll } from './application/stopAll'
 import {
   createLaunchQueries,
   LaunchMemory,
@@ -68,14 +68,14 @@ export type {
   LaunchedSessionCrashed,
   LaunchFailed,
   LaunchingEvent,
-  LaunchRequested
+  LaunchRequested,
+  StopAllIncomplete
 } from './application/events'
 export { NO_HOST_RECOVERY } from './application/sessionExited'
 export type { RecoveryCoverage, SessionExit, SessionExitResult } from './application/sessionExited'
 export type { LaunchAccepted, LaunchRefusal, LaunchRequestInput } from './application/launch'
 export { LaunchRefusedError } from './application/launch'
 export { createLaunchDrainGate } from './application/launchDrain'
-export type { StopAllIncomplete } from './application/stopAll'
 export type { LaunchQueries, LaunchSnapshotQueries, LaunchView } from './application/launchQueries'
 export {
   classifyLaunchOutcome,
@@ -107,8 +107,6 @@ export interface OwnedLaunches {
 export interface LaunchingStopAllDeps {
   /** Crew's `endOwned` over the Host's terminator (`Crew.ownedEnds`), the launching → crew edge. */
   crew: Pick<CrewOwnedEnds, 'endOwned'>
-  /** The Host bus `StopAllIncomplete` is published on (08 §0). */
-  bus: Pick<DomainEventBus<StopAllIncomplete>, 'publish'>
 }
 
 /** 16 §4.5 `LaunchCommands.stopAll`: the StopAllPort `host.shutdown {stop-all}` calls. */
@@ -122,7 +120,7 @@ export interface Launching {
   readonly owned: OwnedLaunches
   readonly queries: LaunchQueries
   readonly snapshots: LaunchSnapshotQueries
-  /** `stopAll` over crew's `endOwned` and the Host bus (ISSUE-175; application/stopAll.ts). */
+  /** `stopAll` over crew's `endOwned` (ISSUE-175; application/stopAll.ts); publishes on the module bus. */
   stopAll(deps: LaunchingStopAllDeps): LaunchingStopAll
 }
 
@@ -178,14 +176,14 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
     },
     queries,
     snapshots: memory,
-    stopAll: ({ crew, bus: hostBus }) =>
+    stopAll: ({ crew }) =>
       new StopAll({
         records: deps.records,
         transactions: deps.transactions,
         inFlight: createLaunchDrainGate({ launches: queries }),
         settlements,
         crew,
-        bus: hostBus,
+        bus,
         clock: deps.clock,
         ids: deps.ids,
         hostEpoch: deps.hostEpoch
