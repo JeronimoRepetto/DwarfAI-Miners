@@ -15,6 +15,9 @@ export type OwnershipProbe =
   /** Something DwarfAI did not write holds the slot (a file DwarfAI did not create): never touched. */
   | 'foreign'
 
+/** What a render replaces: an enable also replaces an old-app entry (AMENDMENT-7), a rewrite does not. */
+export type RenderScope = 'with-old-app' | 'owned-only'
+
 export interface ConfigTargetAdapter<D> {
   readonly target: ConfigTarget
   /** The file DwarfAI writes into (16 §7.1), absolute. */
@@ -33,8 +36,16 @@ export interface ConfigTargetAdapter<D> {
   /**
    * The file's next bytes with DwarfAI's entry carrying `token`, an old-app entry replaced, and
    * every foreign byte identical. Called only after `probeOwned` returned `absent` or `owned`.
+   * `owned-only` (07 S14.10, a rewrite onto a new ingress port): an old-app entry is kept as it is,
+   * since only a consent replaces it (16 §7.1 "Old-app entries"; ADR-016 item 5).
    */
-  render(doc: D, token: ChannelToken): Uint8Array
+  render(doc: D, token: ChannelToken, scope?: RenderScope): Uint8Array
+  /**
+   * Whether DwarfAI's own entry, found by `probeOwned`, is what `render` would write now apart from
+   * its token: for `claude-hooks`, whether it names the persisted ingress port (07 S14.10,
+   * ADR-016 item 3). A target without anything that moves leaves it out, and its entry is current.
+   */
+  isCurrent?(doc: D): boolean
   /**
    * The file's bytes without DwarfAI's entry or an old-app entry, every foreign byte identical;
    * `null` when the file was DwarfAI's alone and is deleted.
