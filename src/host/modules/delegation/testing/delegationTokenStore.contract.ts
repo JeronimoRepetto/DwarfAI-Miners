@@ -1,9 +1,11 @@
 // The DelegationTokenStore conformance suite (16 §4.8; 06 §11.1 `DelegationToken`; ADR-013
 // item 3; 17 §1.3): run on the in-memory double and on the SQLite adapter over the template
 // database (schema v1). One row per launch (`launch_id` PK); only the SHA-256 of the credential is
-// stored, and only for `ticket-file` (09 §4.6 CHECK); `byLaunch` finds a token until it is
-// revoked, and a revoked row is kept with its first `revoked_at`; the store joins the caller's
-// transaction, so a rollback undoes its write. Never imported by production code (R14).
+// stored, and only for `ticket-file` and `protocol` (09 §4.6 CHECK as amended by owner amendment N
+// (AMENDMENT-14, OQ-85), 2026-10-15); `byLaunch` finds a token until it is revoked, and a revoked
+// row is kept with its first `revoked_at`; the parent is bound once after the dwarf arrives;
+// `live` lists the unrevoked rows; the store joins the caller's transaction, so a rollback undoes
+// its write. Never imported by production code (R14).
 //
 // The credentials are drawn at run time, so no credential value is written into the repository.
 import { createHash, randomBytes } from 'node:crypto'
@@ -114,7 +116,10 @@ export function runDelegationTokenStoreContract(
       expect(s.rows()).toStrictEqual([{ ...first, revokedAt: T1 }])
     })
 
-    it('[ADR-013] each mechanism stores with the hash only on ticket-file; a ticket file without a 64-character hash, or a hash on another mechanism, is rejected', async () => {
+    // Owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15 (A14-05, migration 0002): every relay
+    // entry (`ticket-file`, `protocol`) authenticates with the credential file, so both keep its
+    // hash; `in-process` never has one.
+    it('[ADR-013] each mechanism stores with the hash on ticket-file and protocol only; a relay entry without a 64-character hash, or a hash on in-process, is rejected', async () => {
       const s = await setUp()
       const inProcess: DelegationToken = {
         launchId: TOKEN_LAUNCH,
@@ -122,13 +127,14 @@ export function runDelegationTokenStoreContract(
         mechanism: 'in-process',
         issuedAt: T0
       }
+      const hash = hashOf(drawCredential())
       const protocol: DelegationToken = {
         launchId: TOKEN_SPARE_LAUNCH,
         parentDwarfId: TOKEN_OTHER_PARENT,
         mechanism: 'protocol',
+        credentialHash: hash,
         issuedAt: T1
       }
-      const hash = hashOf(drawCredential())
 
       expect(() =>
         issue(s, {
@@ -138,9 +144,17 @@ export function runDelegationTokenStoreContract(
           issuedAt: T0
         })
       ).toThrow()
+      expect(() =>
+        issue(s, {
+          launchId: TOKEN_LAUNCH,
+          parentDwarfId: TOKEN_PARENT,
+          mechanism: 'protocol',
+          issuedAt: T0
+        })
+      ).toThrow()
       expect(() => issue(s, ticketFile(hash.slice(0, 63)))).toThrow()
+      expect(() => issue(s, { ...protocol, credentialHash: hash.slice(0, 63) })).toThrow()
       expect(() => issue(s, { ...inProcess, credentialHash: hash })).toThrow()
-      expect(() => issue(s, { ...protocol, credentialHash: hash })).toThrow()
       expect(s.rows()).toStrictEqual([])
 
       issue(s, inProcess)
@@ -148,6 +162,46 @@ export function runDelegationTokenStoreContract(
 
       expect(s.store.byLaunch(TOKEN_LAUNCH)).toStrictEqual(inProcess)
       expect(s.store.byLaunch(TOKEN_SPARE_LAUNCH)).toStrictEqual(protocol)
+    })
+
+    // A14-06: the row is written before the driver starts, and the launch's dwarf exists only
+    // after the handshake, so the parent is NULL until `bindParent` sets it, once.
+    it('[ADR-013] a token issued before its dwarf arrives has no parent until bindParent sets it once; the same pair again changes nothing and another dwarf is refused', async () => {
+      const s = await setUp()
+      const unbound: DelegationToken = {
+        ...ticketFile(hashOf(drawCredential())),
+        parentDwarfId: null
+      }
+      issue(s, unbound)
+
+      expect(s.store.byLaunch(TOKEN_LAUNCH)).toStrictEqual(unbound)
+      s.inTransaction(() => s.store.bindParent(TOKEN_LAUNCH, TOKEN_PARENT))
+      s.inTransaction(() => s.store.bindParent(TOKEN_LAUNCH, TOKEN_PARENT))
+      s.inTransaction(() => s.store.bindParent(TOKEN_SPARE_LAUNCH, TOKEN_PARENT))
+
+      const bound = { ...unbound, parentDwarfId: TOKEN_PARENT }
+      expect(s.store.byLaunch(TOKEN_LAUNCH)).toStrictEqual(bound)
+      expect(() =>
+        s.inTransaction(() => s.store.bindParent(TOKEN_LAUNCH, TOKEN_OTHER_PARENT))
+      ).toThrow()
+      expect(s.rows()).toStrictEqual([bound])
+    })
+
+    it('[ADR-013] live lists every unrevoked token by launch id, bound or not, and never a revoked one', async () => {
+      const s = await setUp()
+      const first = ticketFile(hashOf(drawCredential()))
+      const second: DelegationToken = {
+        ...ticketFile(hashOf(drawCredential()), TOKEN_SPARE_LAUNCH),
+        parentDwarfId: null
+      }
+
+      expect(s.store.live()).toStrictEqual([])
+      issue(s, second)
+      issue(s, first)
+      expect(s.store.live()).toStrictEqual([first, second])
+
+      s.inTransaction(() => s.store.revoke(TOKEN_LAUNCH, T1))
+      expect(s.store.live()).toStrictEqual([second])
     })
 
     it('[ADR-013] revoke stamps a token once; a second revoke and a revoke of an unknown launch change nothing', async () => {

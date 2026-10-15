@@ -38,6 +38,9 @@ const UPDATE = `
 
 const BY_TICKET = `SELECT * FROM delegations WHERE ticket = ?`
 
+// 09 `delegations_in_flight` (owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15, A14-03).
+const IN_FLIGHT = `SELECT * FROM delegations WHERE state IN ('attempted', 'running') ORDER BY id`
+
 export class SqliteDelegationTicketStore implements DelegationTicketStore {
   constructor(private readonly db: SqliteDatabase) {}
 
@@ -48,6 +51,10 @@ export class SqliteDelegationTicketStore implements DelegationTicketStore {
   byTicket(ticket: string): Delegation | null {
     const row = this.db.all(BY_TICKET, [ticket])[0]
     return row === undefined ? null : toDelegation(row)
+  }
+
+  inFlight(): Delegation[] {
+    return this.db.all(IN_FLIGHT).map(toDelegation)
   }
 
   save(d: Delegation): void {
