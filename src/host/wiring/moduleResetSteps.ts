@@ -22,6 +22,7 @@ import { createAskingResetStep } from '../modules/asking'
 import { createConversationResetStep } from '../modules/conversation'
 import { createCrewResetStep } from '../modules/crew'
 import { createDelegationResetStep } from '../modules/delegation'
+import { createLaunchingResetStep } from '../modules/launching'
 import { createLedgerResetStep } from '../modules/ledger'
 import { createMinesResetStep, type MapSite, type MineWalks } from '../modules/mines'
 import { createObservationResetStep } from '../modules/observation'
@@ -79,7 +80,8 @@ export function createModuleResetSteps(deps: ModuleResetStepsDeps): WiredModuleR
       ledger: createLedgerResetStep({ db, scope }),
       conversation: createConversationResetStep({ db, scope }),
       asking: createAskingResetStep({ db, scope }),
-      delegation: createDelegationResetStep({ db, scope })
+      delegation: createDelegationResetStep({ db, scope }),
+      launching: createLaunchingResetStep({ db, scope })
     },
     route: ({ bus, walks }) => {
       if (bound.walks !== undefined) throw new HostInvariantError('the reset walks are routed once')
