@@ -24,7 +24,12 @@
 // section (edge asking → conversation), over `MessageLog.writeAnswersRecord` / `settleDelivery`
 // (owner amendment K, 2026-10-09); asking publishes their `MessageSent` / `MessageHandedOver` /
 // `MessageDeliveryFailed` after its commit.
+// ISSUE-166: `sending` builds `ConversationCommands.send` over the `TurnSender` and the dwarf's
+// `canReceiveMessages` that host/wiring passes (the bridge to suppliers, crew's read): the person's
+// row and its `sending` mark before any hand-over, the marks moved only on evidence through machine 7
+// (domain/delivery.ts), and the `MessageLog` writes of AMENDMENT-16 (owner, 2026-10-15).
 // Conversation imports only suppliers and crew (05 §1.3, R4).
+import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
@@ -37,7 +42,12 @@ import { SqliteActivityLog } from './adapters/SqliteActivityLog'
 import { SqliteMessageLog } from './adapters/SqliteMessageLog'
 import { ConversationResetStep } from './adapters/sqlite/ConversationResetStep'
 import { createAnswerRecords, type AnswerRecords } from './application/answerRecords'
-import { ConversationIngest, type AskChange, type ConversationCommands } from './application/ingest'
+import {
+  ConversationIngest,
+  type AskChange,
+  type ConversationCommands as IngestCommands,
+  type ConversationSendCommand
+} from './application/ingest'
 import { AskNoter } from './application/noteAsk'
 import {
   ConversationFeedQueries,
@@ -45,10 +55,12 @@ import {
   type MineCrew
 } from './application/queries'
 import { SessionEndRecorder } from './application/recordSessionEnd'
+import { ConversationSender, type MessageRecipients, type SendEvent } from './application/send'
 import { TurnEndRecorder } from './application/recordTurnEnd'
 import type { ConversationEvent } from './domain/events'
 import type { FeedPage, FeedPageRequest, MineHistoryView } from './domain/messages'
 import type { OutcomeLine } from './domain/outcomeLine'
+import type { TurnSender } from './ports/turnSender'
 
 export type {
   ActivityChanged,
@@ -84,7 +96,22 @@ export type {
   MessageHandedOver,
   MessageSent
 } from './application/answerRecords'
-export type { AskChange, ConversationCommands }
+export type { AskChange }
+/** 16 §4.6 `ConversationCommands`: the members built so far, `send` included (ISSUE-166). */
+export type ConversationCommands = IngestCommands & ConversationSendCommand
+export type { AttachmentPath } from './application/ingest'
+export type { MessageReactedTo, MessageRecipients, SendEvent } from './application/send'
+export type { TurnHandOver, TurnSender, TurnSendFailure, TurnSendResult } from './ports/turnSender'
+export type { ReactionEvidence } from './domain/delivery'
+export {
+  advance,
+  reconcileDelivery,
+  startDelivery,
+  type DeliveryFact,
+  type DeliveryStep,
+  type DeliveryTransitionId,
+  type ReconcileEvidence
+} from './domain/delivery'
 /** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
 export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
 
@@ -127,8 +154,24 @@ export interface JoinedEvents {
   discard(): void
 }
 
+/** What `sending` needs from host/wiring (ISSUE-166). */
+export interface ConversationSendingDeps {
+  /** The bridge to suppliers' sessions (host/wiring/bridges/turnSender.ts). */
+  turns: TurnSender
+  /** Crew's derived `canReceiveMessages` (INV-33), through the conversation → crew edge. */
+  recipients: MessageRecipients
+  /** The Host bus, where the delivery events go after their commit (16 §2.3). */
+  bus: Pick<DomainEventBus<SendEvent>, 'publish'>
+}
+
 export interface Conversation {
-  commands: ConversationCommands
+  /** Every command but `send`, which `sending` builds once its routes exist. */
+  commands: IngestCommands
+  /**
+   * `ConversationCommands.send` (ISSUE-166), built once by host/wiring when crew and suppliers are
+   * wired; a second call is a wiring defect.
+   */
+  sending(deps: ConversationSendingDeps): ConversationSendCommand
   /** The feed (ISSUE-103) and the stored outcome line (owner amendment E, ISSUE-108). */
   queries: Pick<ConversationQueries, 'feed' | 'outcomeOf'>
   /**
@@ -209,7 +252,8 @@ export function createConversation(deps: ConversationDeps): Conversation {
     hostEpoch: deps.hostEpoch
   })
   const feed = new ConversationFeedQueries({ log })
-  const commands: ConversationCommands = {
+  let sender: ConversationSender | null = null
+  const commands: IngestCommands = {
     ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
     recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
     recordSessionEnd: (dwarfId, at) => sessionEnds.recordSessionEnd(dwarfId, at),
@@ -223,6 +267,23 @@ export function createConversation(deps: ConversationDeps): Conversation {
       outcomeOf: (dwarfId) => activity.storedOutcomeOf(dwarfId)
     },
     history: ({ crew }) => new ConversationMineHistory({ log, crew }),
+    sending: ({ turns, recipients, bus }) => {
+      if (sender !== null) throw new HostInvariantError('conversation sending is built once')
+      sender = new ConversationSender({
+        log,
+        transactions: deps.transactions,
+        bus,
+        onTurnEnded: (handler) => {
+          deps.bus.subscribe('TurnEnded', ({ payload }) => handler(payload.end))
+        },
+        turns,
+        recipients,
+        clock: deps.clock,
+        ids: deps.ids,
+        hostEpoch: deps.hostEpoch
+      })
+      return { send: (...args) => (sender as ConversationSender).send(...args) }
+    },
     joinedEvents: {
       publish: () => ingest.publishJoined(),
       discard: () => ingest.discardJoined()

@@ -245,6 +245,10 @@ export class InMemoryMessageLog implements MessageLog {
       row.delivery = { ...row.delivery, phase: 'reacted', phaseAt: at }
       return
     }
+    if (result.phase === 'sending') {
+      row.delivery = { ...row.delivery, heldUntilTurnEnd: true }
+      return
+    }
     const { heldUntilTurnEnd, ...rest } = row.delivery
     void heldUntilTurnEnd
     row.delivery = {

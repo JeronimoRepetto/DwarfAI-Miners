@@ -613,7 +613,7 @@ export function runMessageLogContract(
       ])
     })
 
-    it('[ADR-022, TC-166-03] a repeated request_id returns the first messageId and inserts nothing', async () => {
+    it('[ADR-022] a repeated request_id returns the first messageId and inserts nothing', async () => {
       const s = await setUp()
       const [dwarf, other] = s.dwarfIds
       const requestId = '01890a5d-ac96-774b-bcce-b302099a0002'
@@ -693,6 +693,42 @@ export function runMessageLogContract(
       })
 
       expect(s.rowIds(dwarf)).toContain(sent)
+    })
+
+    it('[ADR-022, S7.03] settleDelivery records a sending delivery held until the turn ends, and delivered clears the hold', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const id = s.inTransaction(
+        () =>
+          s.log.writeSent(dwarf, 'queued', '01890a5d-ac96-774b-bcce-b302099a0007', s.now).messageId
+      )
+
+      s.inTransaction(() =>
+        s.log.settleDelivery(id, { phase: 'sending', heldUntilTurnEnd: true }, s.now + 1)
+      )
+      const held = s.log.page(dwarf, {})[0]?.delivery
+      s.inTransaction(() =>
+        s.log.settleDelivery(id, { phase: 'delivered', confidence: 'confirmed' }, s.now + 2)
+      )
+
+      expect(held).toEqual({
+        messageId: id,
+        dwarfId: dwarf,
+        kind: 'message',
+        phase: 'sending',
+        heldUntilTurnEnd: true,
+        attempts: 1,
+        phaseAt: s.now
+      })
+      expect(s.log.page(dwarf, {})[0]?.delivery).toEqual({
+        messageId: id,
+        dwarfId: dwarf,
+        kind: 'message',
+        phase: 'delivered',
+        confidence: 'confirmed',
+        attempts: 1,
+        phaseAt: s.now + 2
+      })
     })
   })
 }

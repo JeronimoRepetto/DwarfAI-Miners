@@ -51,27 +51,27 @@ function step(
 }
 
 describe('message delivery machine 7', () => {
-  it('[TC-166-01, S7.01, US-MSG-001.AC01] a person message starts sending, attempt 1, before any hand-over', () => {
+  it('[S7.01, US-MSG-001.AC01] a person message starts sending, attempt 1, before any hand-over', () => {
     expect(startDelivery({ messageId: MESSAGE, dwarfId: DWARF, kind: 'message', at: T0 })).toEqual({
       transition: 'S7.01',
       delivery: sending()
     })
   })
 
-  it('[TC-166-01, S7.02] an accepted answers-record starts sending', () => {
+  it('[S7.02] an accepted answers-record starts sending', () => {
     expect(
       startDelivery({ messageId: MESSAGE, dwarfId: DWARF, kind: 'answers-record', at: T0 })
     ).toEqual({ transition: 'S7.02', delivery: sending({ kind: 'answers-record' }) })
   })
 
-  it('[TC-166-01, S7.03] a message queued behind a running turn stays sending, held until the turn ends', () => {
+  it('[S7.03] a message queued behind a running turn stays sending, held until the turn ends', () => {
     expect(step(sending(), { t: 'held' })).toEqual({
       transition: 'S7.03',
       delivery: sending({ heldUntilTurnEnd: true })
     })
   })
 
-  it('[TC-166-01, S7.04, US-MSG-001.AC03] a channel acceptance makes it delivered with its confidence, no longer held', () => {
+  it('[S7.04, US-MSG-001.AC03] a channel acceptance makes it delivered with its confidence, no longer held', () => {
     expect(
       step(sending({ heldUntilTurnEnd: true }), { t: 'accepted', confidence: 'unconfirmed' })
     ).toEqual({
@@ -80,28 +80,28 @@ describe('message delivery machine 7', () => {
     })
   })
 
-  it('[TC-166-01, S7.05] correlated activity makes a delivered message reacted, keeping its confidence', () => {
+  it('[S7.05] correlated activity makes a delivered message reacted, keeping its confidence', () => {
     expect(step(delivered(), { t: 'activity-correlated', reactionEvidence: 'turn-id' })).toEqual({
       transition: 'S7.05',
       delivery: delivered({ phase: 'reacted', phaseAt: T1 })
     })
   })
 
-  it('[TC-166-01, S7.06, FM-076] a channel error fails a message channel-error', () => {
+  it('[S7.06, FM-076] a channel error fails a message channel-error', () => {
     expect(step(sending(), { t: 'channel-error', reason: 'pipe closed' })).toEqual({
       transition: 'S7.06',
       delivery: failed({ kind: 'channel-error', reason: 'pipe closed' }, { phaseAt: T1 })
     })
   })
 
-  it('[TC-166-01, S7.07, FM-078] a session that ended fails a sending message session-closed', () => {
+  it('[S7.07, FM-078] a session that ended fails a sending message session-closed', () => {
     expect(step(sending(), { t: 'session-closed' })).toEqual({
       transition: 'S7.07',
       delivery: failed({ kind: 'session-closed' }, { phaseAt: T1 })
     })
   })
 
-  it('[TC-166-01, S7.08] a refused answers-record fails refused with its reason', () => {
+  it('[S7.08] a refused answers-record fails refused with its reason', () => {
     const record = sending({ kind: 'answers-record' })
     expect(step(record, { t: 'refused', reason: 'channel-rejected' })).toEqual({
       transition: 'S7.08',
@@ -112,7 +112,7 @@ describe('message delivery machine 7', () => {
     })
   })
 
-  it('[TC-166-01, S7.09, BR-17] Retry of a channel-error or host-interrupted message sends it again, same id, attempts + 1', () => {
+  it('[S7.09, BR-17] Retry of a channel-error or host-interrupted message sends it again, same id, attempts + 1', () => {
     for (const failure of [
       { kind: 'channel-error', reason: 'x' },
       { kind: 'host-interrupted' }
@@ -124,7 +124,7 @@ describe('message delivery machine 7', () => {
     }
   })
 
-  it('[TC-166-01, S7.10] a re-answer on the reopened card sends the refused record again in place', () => {
+  it('[S7.10] a re-answer on the reopened card sends the refused record again in place', () => {
     const refused = failed(
       { kind: 'refused', reason: 'invalid-answer' },
       { kind: 'answers-record' }
@@ -135,17 +135,17 @@ describe('message delivery machine 7', () => {
     })
   })
 
-  it('[TC-166-01, S7.11] Copy leaves a failed message unchanged', () => {
+  it('[S7.11] Copy leaves a failed message unchanged', () => {
     const row = failed({ kind: 'channel-error', reason: 'x' })
     expect(step(row, { t: 'copied' })).toEqual({ transition: 'S7.11', delivery: row })
   })
 
-  it('[TC-166-01, S7.12, US-MSG-013.AC02] a failed message of a dwarf that can no longer receive keeps its failure', () => {
+  it('[S7.12, US-MSG-013.AC02] a failed message of a dwarf that can no longer receive keeps its failure', () => {
     const row = failed({ kind: 'host-interrupted' })
     expect(step(row, { t: 'cannot-receive' })).toEqual({ transition: 'S7.12', delivery: row })
   })
 
-  it('[TC-166-01, S7.13, S7.14] the boot reconcile of a sending row with evidence makes it delivered', () => {
+  it('[S7.13, S7.14] the boot reconcile of a sending row with evidence makes it delivered', () => {
     expect(reconcileDelivery(sending(), { found: true, actedAfter: false }, T1)).toEqual({
       ok: true,
       transition: 'S7.14',
@@ -153,7 +153,7 @@ describe('message delivery machine 7', () => {
     })
   })
 
-  it('[TC-166-01, S7.13, S7.15] the boot reconcile with evidence that the dwarf acted after it makes it reacted', () => {
+  it('[S7.13, S7.15] the boot reconcile with evidence that the dwarf acted after it makes it reacted', () => {
     expect(reconcileDelivery(sending(), { found: true, actedAfter: true }, T1)).toEqual({
       ok: true,
       transition: 'S7.15',
@@ -161,7 +161,7 @@ describe('message delivery machine 7', () => {
     })
   })
 
-  it('[TC-166-01, S7.13, S7.16] the boot reconcile with no evidence fails it host-interrupted', () => {
+  it('[S7.13, S7.16] the boot reconcile with no evidence fails it host-interrupted', () => {
     expect(reconcileDelivery(sending({ heldUntilTurnEnd: true }), { found: false }, T1)).toEqual({
       ok: true,
       transition: 'S7.16',
@@ -169,7 +169,7 @@ describe('message delivery machine 7', () => {
     })
   })
 
-  it('[TC-166-01, S7.17] a session, window or Host that closes later leaves delivered and reacted as they are', () => {
+  it('[S7.17] a session, window or Host that closes later leaves delivered and reacted as they are', () => {
     for (const row of [delivered(), delivered({ phase: 'reacted' })]) {
       for (const what of ['session', 'window', 'host'] as const) {
         expect(step(row, { t: 'closed-later', what })).toEqual({
@@ -180,17 +180,17 @@ describe('message delivery machine 7', () => {
     }
   })
 
-  it('[TC-166-01, S7.18, US-RES-003.AC03] a detached UI leaves a sending message sending', () => {
+  it('[S7.18, US-RES-003.AC03] a detached UI leaves a sending message sending', () => {
     const row = sending({ heldUntilTurnEnd: true })
     expect(step(row, { t: 'ui-detached' })).toEqual({ transition: 'S7.18', delivery: row })
   })
 
-  it('[TC-166-01, S7.19] Reset metrics keeps an in-flight delivery as it is', () => {
+  it('[S7.19] Reset metrics keeps an in-flight delivery as it is', () => {
     const row = sending()
     expect(step(row, { t: 'metrics-reset' })).toEqual({ transition: 'S7.19', delivery: row })
   })
 
-  it('[TC-166-01] a pair the machine does not list is refused and changes nothing', () => {
+  it('[S7.01, S7.19] a pair the machine does not list is refused and changes nothing', () => {
     const refusals: Array<[Delivery, DeliveryFact]> = [
       [sending(), { t: 'activity-correlated', reactionEvidence: 'turn-id' }],
       [delivered(), { t: 'activity-correlated', reactionEvidence: 'none' }],

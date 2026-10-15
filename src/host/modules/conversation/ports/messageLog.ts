@@ -30,6 +30,8 @@ import type { DeliveryFailure, FeedPageRequest, Message } from '../domain/messag
 
 /** What `settleDelivery` records (owner amendment K; AMENDMENT-16, owner, 2026-10-15). */
 export type DeliverySettlement =
+  // AMENDMENT-16 extension (owner, 2026-10-15): the driver queued it behind a running turn (S7.03).
+  | { phase: 'sending'; heldUntilTurnEnd: true }
   | { phase: 'delivered'; confidence?: 'confirmed' | 'unconfirmed' }
   | { phase: 'reacted' }
   | { phase: 'failed'; failure: DeliveryFailure }
@@ -59,7 +61,8 @@ export interface MessageLog {
   // Amended: 16 §4.6 MessageLog.settleDelivery (owner amendment K, 2026-10-09): the hand-over
   // result of a `sending` delivery — delivered, or failed with its ADR-022 failure — stamped `at`.
   // Amended: AMENDMENT-16 (owner, 2026-10-15): `delivered` carries its confidence when the channel
-  // reported one, and `reacted` moves a `delivered` delivery on, keeping its confidence.
+  // reported one, and `reacted` moves a `delivered` delivery on, keeping its confidence; its
+  // extension records a `sending` delivery held until the running turn ends (S7.03).
   settleDelivery(id: MessageId, result: DeliverySettlement, at: Instant): void
   // Amended: AMENDMENT-16 (owner, 2026-10-15): the person's row (`role 'person'`, origin `dwarfai`,
   // `request_id`) with its delivery `sending`, stamped `at`; a `requestId` already stored inserts

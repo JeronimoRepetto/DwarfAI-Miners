@@ -78,7 +78,7 @@ function world() {
 }
 
 describe('the marks section of session.snapshot (14 §4.1, §4.2)', () => {
-  it('[ADR-022, TC-166-04, US-MSG-001.AC10, S7.18] the snapshot marks section carries the phase, confidence and failure of every message in the tails', () => {
+  it('[ADR-022, US-MSG-001.AC10, S7.18] the snapshot marks section carries the phase, confidence and failure of every message in the tails', () => {
     const w = world()
     // Newest first, as the feed answers. The tail of A holds four marked rows and one provider row.
     w.conversation.seed(DWARF_A, [

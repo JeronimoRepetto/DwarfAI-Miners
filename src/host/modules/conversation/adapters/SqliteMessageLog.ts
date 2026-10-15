@@ -121,6 +121,11 @@ const SETTLE_DELIVERY = `UPDATE deliveries SET phase = ?, confidence = ?, failur
     failure_reason = ?, held_until_turn_end = 0, phase_at = ?
   WHERE message_id = ? AND phase = 'sending'`
 
+// AMENDMENT-16 extension: a `sending` delivery queued behind a running turn (S7.03); the phase
+// and its stamp stay.
+const HOLD_DELIVERY = `UPDATE deliveries SET held_until_turn_end = 1
+  WHERE message_id = ? AND phase = 'sending'`
+
 // AMENDMENT-16: ✓✓ only from ✓; the confidence stays.
 const REACT_DELIVERY = `UPDATE deliveries SET phase = 'reacted', phase_at = ?
   WHERE message_id = ? AND phase = 'delivered'`
@@ -256,6 +261,12 @@ export class SqliteMessageLog implements MessageLog {
 
   settleDelivery(id: MessageId, result: DeliverySettlement, at: Instant): void {
     this.requireTransaction('settleDelivery')
+    if (result.phase === 'sending') {
+      if (this.deps.db.run(HOLD_DELIVERY, [id]).changes !== 1) {
+        throw new HostInvariantError(`no sending delivery of message ${id}`)
+      }
+      return
+    }
     if (result.phase === 'reacted') {
       if (this.deps.db.run(REACT_DELIVERY, [at, id]).changes !== 1) {
         throw new HostInvariantError(`no delivered delivery of message ${id}`)

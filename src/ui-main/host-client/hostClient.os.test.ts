@@ -92,9 +92,21 @@ const SERVED_SINCE_CUT_0 = [
   'launching.launch',
   'section:launches',
   // The Add panel's supplier list: B-M37, from cut 3 (ISSUE-163).
-  'suppliers.launchable'
+  'suppliers.launchable',
+  // Sending a message: B-M24 and the `marks` section, from cut 3 (ISSUE-166).
+  'conversation.send',
+  'section:marks'
 ]
-const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'asks', 'launches', 'tails']
+const SERVED_SECTIONS = [
+  'meta',
+  'preferences',
+  'mines',
+  'dwarfs',
+  'asks',
+  'launches',
+  'tails',
+  'marks'
+]
 
 let entry = ''
 let root = ''
@@ -198,7 +210,7 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
           // A method the Host did not advertise is refused locally (TC-051-02).
           const refused = await client
             .call(
-              'conversation.send' as never,
+              'conversation.retry' as never,
               { requestId: '01890a5d-ac96-774b-bcce-b302099a8001' } as never
             )
             .catch((error: unknown) => error)
