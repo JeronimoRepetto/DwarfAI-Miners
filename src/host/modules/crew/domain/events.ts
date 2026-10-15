@@ -46,6 +46,21 @@ export type DwarfDeparted = DomainEvent<
   { dwarfId: DwarfId; mineId: MineId; cause: DepartureCause }
 >
 
+/**
+ * The dwarf's custom name changed (08 §0): `customName: null` after a reset and after a rename to
+ * the base name (AMENDMENT-2, SC-AR-05). Published only on a change. Display only: never sent to a
+ * provider, never logged (INV-29).
+ */
+export type DwarfRenamed = DomainEvent<
+  'DwarfRenamed',
+  { dwarfId: DwarfId; customName: string | null }
+>
+
 /** Every event crew publishes so far. */
 export type CrewEvent =
-  DwarfStatusChanged | DwarfArrived | DwarfRebound | DwarfPresenceChanged | DwarfDeparted
+  | DwarfStatusChanged
+  | DwarfArrived
+  | DwarfRebound
+  | DwarfPresenceChanged
+  | DwarfDeparted
+  | DwarfRenamed
