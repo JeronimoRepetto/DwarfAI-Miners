@@ -19,6 +19,10 @@
 //    may also import `contracts/host-protocol/**` by relative path (the ADR-003 item 4 frame codec,
 //    `McpHello`, the ADR-002 D2 endpoint rule), never the `@dwarfai/contracts` barrel; the diagnostics
 //    adapters stay logging-only (R9-diagnostics-only-logging, R9-relay-only-logging-and-host-protocol).
+// 6. R6-relay-entry-not-imported (ISSUE-200, security review of #1328): `relayMain.ts` is the relay
+//    process's entry (built as out/host/dwarfai-mcp.js) and holds the credential; nothing imports it
+//    but its own tests (`relay/*.test.ts`), not even the composition root. What the Host needs of
+//    the relay (the entry file name, the variable name, the 15 §4 entry) lives in relayEntry.ts.
 //
 // Each rule's `comment` names the ADR-004 principle it enforces, or "05 local rule" (05 §5.1 column
 // "ADR-004"); scripts/checks/rule-principles.test.mjs reads them (ADR-004 Verification).
@@ -162,6 +166,16 @@ module.exports = {
         pathNot: ['^src/host/modules/', '^src/host/main\\.ts$', '^src/host/wiring/']
       },
       to: { path: '^src/host/modules/[^/]+/adapters/' }
+    },
+    {
+      name: 'R6-relay-entry-not-imported',
+      comment:
+        'the relay entry relayMain.ts is imported only by its own tests (05 R6, deviation 6; ADR-004 P4)',
+      severity: 'error',
+      from: {
+        pathNot: '^src/host/modules/delegation/adapters/mcp/relay/[^/]+\.test\.ts$'
+      },
+      to: { path: '^src/host/modules/delegation/adapters/mcp/relay/relayMain\.ts$' }
     },
     {
       name: 'R7-electron-only-ui-main',

@@ -27,6 +27,9 @@ import type { AppPaths } from '../../../../../kernel/ports/appPaths'
 /** The relay script's file name, beside `out/host/main.js` (the `dwarfai-mcp` relay of ADR-013). */
 export const RELAY_ENTRY_FILE = 'dwarfai-mcp.js'
 
+/** The relay entry's own variable (15 §4): the credential file's path, never the credential. */
+export const CREDENTIAL_FILE_VARIABLE = 'DWARFAI_MCP_CREDENTIAL_FILE'
+
 export interface RelayServerEntry {
   readonly command: string
   readonly args: readonly string[]
@@ -52,6 +55,6 @@ export function relayServerEntry(input: {
   return {
     command: input.appPaths.execPath,
     args: [...input.relayEntryArgs],
-    env: { ELECTRON_RUN_AS_NODE: '1', DWARFAI_MCP_CREDENTIAL_FILE: input.credentialFilePath }
+    env: { ELECTRON_RUN_AS_NODE: '1', [CREDENTIAL_FILE_VARIABLE]: input.credentialFilePath }
   }
 }

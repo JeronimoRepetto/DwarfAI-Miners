@@ -326,6 +326,31 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
   )
 
   it(
+    "[R6] anything but the relay's own tests importing the relay entry relayMain.ts is reported as R6-relay-entry-not-imported",
+    async () => {
+      const relayDir = 'src/host/modules/delegation/adapters/mcp/relay'
+      const entry = `${relayDir}/relayMain.ts`
+      const root = 'src/host/main.ts'
+      const sibling = `${relayDir}/relayEntry.ts`
+      const test = `${relayDir}/relayMain.test.ts`
+      const result = await cruise({
+        files: {
+          [entry]: TEST_FILE,
+          [root]:
+            "import { value } from './modules/delegation/adapters/mcp/relay/relayMain'\nexport const host = value\n",
+          [sibling]: "import { value } from './relayMain'\nexport const entry = value\n",
+          [test]: "import { value } from './relayMain'\nexport const t = value\n"
+        }
+      })
+      expectViolation(result, 'R6-relay-entry-not-imported', root, entry)
+      expectViolation(result, 'R6-relay-entry-not-imported', sibling, entry)
+      const fromTest = result.violations.filter((violation) => violation.from === test)
+      expect(fromTest).toEqual([])
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
+  it(
     '[R9] a diagnostics adapter importing contracts/host-protocol is still R9-diagnostics-only-logging',
     async () => {
       const from = 'src/host/modules/diagnostics/adapters/HostLog.ts'
