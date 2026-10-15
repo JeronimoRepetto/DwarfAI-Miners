@@ -3,7 +3,8 @@
 // machine 2, presence (07 §2): rank by depth, the pending end of each end, the one departure; and
 // (ISSUE-069) the dwarfs stored in the Host database, one per provider identity, the arrival and
 // departure commands with their lifecycle facts, and `CrewQueries`. ISSUE-080: `endAllIn`, Remove
-// mine's ends over the `SessionTerminator` that `host/wiring` binds (`Crew.ends`). Crew imports only
+// mine's ends over the `SessionTerminator` that `host/wiring` binds (`Crew.ends`). ISSUE-172:
+// `rename` and `resetName` over the `DwarfName` value object, publishing `DwarfRenamed`. Crew imports only
 // suppliers (05 §1.3, R4); what it reads of launching and of the delivery routes comes in as
 // `SessionLinks`.
 import type { HostEpoch } from '../../kernel/domain/values'
@@ -33,6 +34,7 @@ export type {
   DwarfDeparted,
   DwarfPresenceChanged,
   DwarfRebound,
+  DwarfRenamed,
   DwarfStatusChanged
 } from './domain/events'
 export type { Dwarf, DwarfArrival, SessionProfile, UsagePath } from './domain/dwarf'
@@ -44,6 +46,11 @@ export {
   type DwarfProcessState,
   type EndReason
 } from './domain/presence'
+export {
+  DWARF_NAME_MAX_GRAPHEMES,
+  normalizeDwarfName,
+  type NormalizedDwarfName
+} from './domain/dwarfName'
 export { rankForDepth, type DwarfRank } from './domain/rank'
 export {
   ASLEEP_AFTER_MS,

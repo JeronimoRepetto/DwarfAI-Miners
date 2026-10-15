@@ -2,8 +2,9 @@
 // `sessionClosed` and `markUnrecovered`, and `recordActivity` (ISSUE-095, for the observed route
 // `SessionActivityObserved`; ISSUE-120, its `'turn-finished'` for the `TurnEnded` route, owner
 // amendment C), and `startAsking` / `stopAsking` (ISSUE-140, for the asking routes of
-// host/wiring/routes/askingRoutes.ts). The others (`stop`, `rename`, the ends…) join with their
-// issues (later: ISSUE-080, ISSUE-172, EPIC-10).
+// host/wiring/routes/askingRoutes.ts). `rename` and `resetName` (ISSUE-172) are rename.ts's, which
+// `CrewArrivals` serves over the same deps. The others (`stop`, the ends…) join with their issues
+// (later: EPIC-10).
 //
 // The open ask is Host memory (09 §4.2 has no column for it; `DwarfRepository` drops
 // `facts.openAsk`): `OpenAskMemory` keeps each dwarf's front ask beside the stored row, so every
@@ -22,7 +23,8 @@ import type {
   EventId,
   HostEpoch,
   MineId,
-  ProviderIdentity
+  ProviderIdentity,
+  Result
 } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
@@ -38,6 +40,7 @@ import { classifyDwarfStatus } from '../domain/status'
 import type { StatusFacts } from '../domain/status'
 import { askClosed, askOpened, otherActivity, turnEnded, turnStarted } from '../domain/statusFacts'
 import type { DwarfRepository } from '../ports/dwarfRepository'
+import { CrewRenames } from './rename'
 import type { StatusTimer } from './statusTimer'
 
 /** A turn's end as `TurnEnded` reports it (ADR-021): the provider's own instant and reliability. */
@@ -82,6 +85,14 @@ export interface CrewCommands {
   sessionClosed(dwarfId: DwarfId, cause: DepartureCause): void
   /** Host recovery pass: `processState` `unrecovered`, the dwarf stays present (INV-26). */
   markUnrecovered(dwarfId: DwarfId): void
+  /**
+   * 16 §4.2: the `DwarfName` (06 §5.1, INV-29) stored as the custom name, `'empty'` when nothing is
+   * left of the text. null: the text equals `baseName` after normalization, same as `resetName`
+   * (US-MSG-005; AMENDMENT-2, SC-AR-05). Publishes `DwarfRenamed` on a change.
+   */
+  rename(dwarfId: DwarfId, text: string): Result<string | null, 'empty'>
+  /** 16 §4.2: clears the custom name; publishes `DwarfRenamed` with `customName: null` on a change. */
+  resetName(dwarfId: DwarfId): void
 }
 
 export interface CrewArrivalsDeps {
@@ -99,7 +110,11 @@ export interface CrewArrivalsDeps {
 }
 
 export class CrewArrivals implements CrewCommands {
-  constructor(private readonly deps: CrewArrivalsDeps) {}
+  private readonly renames: CrewRenames
+
+  constructor(private readonly deps: CrewArrivalsDeps) {
+    this.renames = new CrewRenames(deps)
+  }
 
   arrive(input: Parameters<CrewCommands['arrive']>[0]): DwarfId {
     const { repository, facts, transactions, clock, ids } = this.deps
@@ -234,6 +249,14 @@ export class CrewArrivals implements CrewCommands {
     // 16 §4.2: no event while presence is unchanged; a resuming dwarf listed unrecovered is
     // `present` again, which the window must hear (07 S2.10).
     if (moved !== null) this.publish('DwarfPresenceChanged', { dwarfId, presence: moved.presence })
+  }
+
+  rename(dwarfId: DwarfId, text: string): Result<string | null, 'empty'> {
+    return this.renames.rename(dwarfId, text)
+  }
+
+  resetName(dwarfId: DwarfId): void {
+    this.renames.resetName(dwarfId)
   }
 
   /** One transaction moving a present dwarf's facts; the timer hears of a change after the commit. */
