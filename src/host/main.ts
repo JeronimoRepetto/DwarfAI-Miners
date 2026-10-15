@@ -21,9 +21,10 @@
 // with the issue that serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every
 // owned session: bound to the empty-owner implementation, since the Host owns no session yet,
 // until the launching module serves it (later: ISSUE-175).
-// The upgrade drain asks the DrainGate what is still open: bound to the empty implementation of
-// cut 0, so it drains at once, until the launching (EPIC-10) and asking (EPIC-08) modules report
-// their blockers; a `host.upgrade.request` target must be a direct child of the ADR-002 D5
+// The upgrade drain asks the DrainGate what is still open: the Host's binding (wiring/hostDrainGate.ts),
+// which reports the blockers of each module bound to it, so it drains at once until one is: the asking
+// module's live asks from boot step 4 (#1290), the launching module's later (EPIC-10); a
+// `host.upgrade.request` target must be a direct child of the ADR-002 D5
 // versioned-copy root, named by the same rule the UI's launcher uses (14 §1.10).
 //
 // Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
@@ -106,7 +107,7 @@ import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION, redactSecrets } from '@dwarfai/contracts'
 import { FsTranscriptTail } from './modules/asking/adapters/observedClaude/transcriptTail'
 import { SqliteAskRepository } from './modules/asking/adapters/SqliteAskRepository'
-import { createAskRestartSettlement } from './modules/asking'
+import { createAskDrainGate, createAskRestartSettlement } from './modules/asking'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
@@ -203,7 +204,7 @@ import {
   runRevertIntegrations
 } from './wiring/revertIntegrations'
 import { createModuleResetSteps, type WiredModuleResetSteps } from './wiring/moduleResetSteps'
-import { emptyDrainGate } from './wiring/emptyDrainGate'
+import { createHostDrainGate, routeDrainRechecks } from './wiring/hostDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
   servePreferences,
@@ -460,6 +461,10 @@ async function bootHost(base: HostBase): Promise<void> {
     attention?: WiredAttention
     asking?: WiredAsking
   } = {}
+  // What holds the upgrade drain: each module's gate is bound once boot step 4 wired it (#1290).
+  const drainGate = createHostDrainGate()
+  // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
+  let stopDrainRechecks: (() => void) | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
   // install-moment writer, then the module's) and the cut-1 module steps, whose walk route step 4
   // binds once mines exists (ISSUE-121).
@@ -492,6 +497,15 @@ async function bootHost(base: HostBase): Promise<void> {
     // Cut 0: the `mines` table has no row yet, so false is the true value (later: ISSUE-082 reads it).
     minesEverKnown: () => false
   }
+  // Nothing is held before boot step 4 binds the asking module's gate (the launching module's later:
+  // EPIC-10), so until then the drain goes at once.
+  const drain = createUpgradeDrain({
+    gate: drainGate,
+    state: hostState,
+    scheduler,
+    lifecycle,
+    log
+  })
   const dispatcher = createHostDispatcher({
     log,
     clock,
@@ -502,14 +516,7 @@ async function bootHost(base: HostBase): Promise<void> {
     lifecycle,
     connections,
     epoch,
-    // Cut 0: nothing is open or in flight, so the drain goes at once (later: EPIC-08, EPIC-10).
-    drain: createUpgradeDrain({
-      gate: emptyDrainGate,
-      state: hostState,
-      scheduler,
-      lifecycle,
-      log
-    }),
+    drain,
     upgradeTarget: createUpgradeTargetRule(
       hostCopyRootFacts({ build: buildKindOf({ isPackaged }) })
     ),
@@ -625,7 +632,10 @@ async function bootHost(base: HostBase): Promise<void> {
         sessionEnd: nodeOsSessionSignals(log),
         // No event is routed into the asking module, and no hook request reaches the Host, once
         // it is closing (ISSUE-140).
-        stopRoutes: () => modules.asking?.stop(),
+        stopRoutes: () => {
+          stopDrainRechecks?.()
+          modules.asking?.stop()
+        },
         closeIngress: () => hookIngress?.close() ?? Promise.resolve(),
         exit
       })
@@ -1000,6 +1010,17 @@ async function bootHost(base: HostBase): Promise<void> {
               hostEpoch: epoch
             })
           )
+          // The live asks hold the upgrade drain (ADR-002 D8 item 2; S12.14, S12.15), and each ask
+          // that closes asks it again at once (#1290). After the rollback settlement, which
+          // publishes before any drain can be waiting.
+          drainGate.bind(
+            createAskDrainGate({
+              asks: new SqliteAskRepository({ db, scope: transactions, clock })
+            })
+          )
+          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const recheckDeps: Parameters<typeof routeDrainRechecks>[0] = { events: bus, drain }
+          stopDrainRechecks = routeDrainRechecks(recheckDeps)
           // The hook ingress over asking's `/hooks/claude/*` route and `app_meta.ingress_port`;
           // boot step 6 starts it, the clean exit closes it (wiring/hookIngress.ts).
           hookIngress = createHostHookIngress({

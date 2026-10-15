@@ -37,7 +37,8 @@ import { RecordingStopAll } from '../../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import { InProcessEventBus } from '../../../kernel/InProcessEventBus'
 
-import type { AskingEvent, AskRecord } from '../../../modules/asking'
+import { createAskDrainGate, type AskingEvent, type AskRecord } from '../../../modules/asking'
+import { SqliteAskRepository } from '../../../modules/asking/adapters/SqliteAskRepository'
 import { FsTranscriptTail } from '../../../modules/asking/adapters/observedClaude/transcriptTail'
 import { toolResultLine } from '../../../modules/asking/testing/claudeTranscript'
 import { FakeKeystrokeRelay } from '../../../modules/asking/testing/FakeKeystrokeRelay'
@@ -88,7 +89,7 @@ import { createHostHookIngress, startHookIngressAtBoot } from '../../hookIngress
 import { composeHostLifecycle } from '../../hostLifecycle'
 import { composeObservedBatchSink } from '../../bridges/observedBatchSink'
 import { cut1RollbackChoices } from '../../cut1Rollback'
-import { emptyDrainGate } from '../../emptyDrainGate'
+import { createHostDrainGate, routeDrainRechecks } from '../../hostDrainGate'
 import { createHostDispatcher } from '../../hostDispatcher'
 import { createModuleResetSteps } from '../../moduleResetSteps'
 import {
@@ -281,7 +282,18 @@ export async function bootHost(w: World, options: BootOptions) {
   const connections = new ConnectionRegistry({ validateFrame })
   const state = new HostStateHolder(connections)
   const sections = new SectionRegistry()
-  const lifecycle = { closeCleanly: () => Promise.resolve() }
+  /** The reasons the Host's clean exit was asked for, in order (the upgrade drain's among them). */
+  const closes: string[] = []
+  const lifecycle = {
+    closeCleanly: (reason: string) => {
+      closes.push(reason)
+      return Promise.resolve()
+    }
+  }
+  // What host/main.ts does: the drain's gate reports each module's gate bound at boot step 4 (#1290).
+  const drainGate = createHostDrainGate()
+  let stopDrainRechecks: (() => void) | undefined
+  const drain = createUpgradeDrain({ gate: drainGate, state, scheduler, lifecycle, log })
   const dispatcher = createHostDispatcher({
     log,
     clock,
@@ -300,7 +312,7 @@ export async function bootHost(w: World, options: BootOptions) {
       snapshotTail: () => 20,
       minesEverKnown: () => false
     },
-    drain: createUpgradeDrain({ gate: emptyDrainGate, state, scheduler, lifecycle, log }),
+    drain,
     upgradeTarget: createUpgradeTargetRule({
       platform: 'linux',
       root: null,
@@ -574,6 +586,15 @@ export async function bootHost(w: World, options: BootOptions) {
             keystrokes: { relay, transcripts: new FsTranscriptTail(fs), redact: redactSecrets }
           }
           const asking = servedAsking.wire(askingDeps)
+          // What host/main.ts does: the live asks hold the upgrade drain; an ask closing re-checks it.
+          drainGate.bind(
+            createAskDrainGate({
+              asks: new SqliteAskRepository({ db, scope: transactions, clock })
+            })
+          )
+          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const recheckDeps: Parameters<typeof routeDrainRechecks>[0] = { events: bus, drain }
+          stopDrainRechecks = routeDrainRechecks(recheckDeps)
           // What host/main.ts does: the hook ingress over asking's route; boot step 6 listens.
           if (options.listen === true) {
             ingress = createHostHookIngress({
@@ -639,7 +660,10 @@ export async function bootHost(w: World, options: BootOptions) {
     scheduler,
     log,
     sessionEnd: { onSessionEnd: () => undefined },
-    stopRoutes: () => asking.stop(),
+    stopRoutes: () => {
+      stopDrainRechecks?.()
+      asking.stop()
+    },
     closeIngress: () => listening?.close() ?? Promise.resolve(),
     exit: () => undefined
   })
@@ -736,6 +760,9 @@ export async function bootHost(w: World, options: BootOptions) {
     log,
     published,
     relay,
+    /** The upgrade drain as host/main.ts builds it (B-M06 enters and starts it). */
+    drain,
+    closes,
     conversation,
     crew,
     mines,

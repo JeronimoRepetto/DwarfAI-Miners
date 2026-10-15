@@ -17,6 +17,8 @@
 // (transport/methods/askingSetStep.ts); the Host composes it (ISSUE-140).
 // #1293: `createAskRestartSettlement`, the Host boot settlement of the asks a stopped Host left live
 // (07 S6.11, S6.17, S6.18, S6.20) over machine 6's `reconcileAfterRestart`; the Host composes it.
+// #1290: `createAskDrainGate`, the live asks that hold the upgrade drain (ADR-002 D8 item 2; S12.14,
+// S12.15) as the kernel `DrainGate`; host/wiring/hostDrainGate.ts binds it with the Host's others.
 // ISSUE-134: the broker's external resolutions (`Asking.resolutions`, with ADR-010 item 10's
 // keystroke attribution) and the observed-Claude keystroke channel's adapters
 // (`adapters/observedClaude/`: the channel, the prompt registry, the key map, the transcript tail),
@@ -27,6 +29,8 @@ import type { RestartFacts } from './domain/askMachine'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { AskingResetStep } from './adapters/sqlite/AskingResetStep'
+import type { DrainGate } from '../../kernel/ports/drainGate'
+import { AskDrainGate, type AskDrainGateDeps } from './application/askDrain'
 import { AskRestartSettlement, type RestartSettlementDeps } from './application/askRestart'
 import {
   AskReadModel,
@@ -136,4 +140,9 @@ export interface AskRestartSettlementPath {
 /** The Host boot settlement of the live asks (07 S6.11, S6.17, S6.18, S6.20), composed by the Host (#1293). */
 export function createAskRestartSettlement(deps: RestartSettlementDeps): AskRestartSettlementPath {
   return new AskRestartSettlement(deps)
+}
+
+/** The asks that hold the upgrade drain (ADR-002 D8 item 2; S12.14, S12.15), bound by the Host (#1290). */
+export function createAskDrainGate(deps: AskDrainGateDeps): DrainGate {
+  return new AskDrainGate(deps)
 }
