@@ -10,10 +10,11 @@
 import { SystemClock } from '../../clock/SystemClock'
 import { UuidV7Generator } from '../../ids/UuidV7Generator'
 import { initialMigration, type InitialMigrationPorts } from './0001-initial'
+import { delegationTokensUnboundParentMigration } from './0002-delegation-tokens-unbound-parent'
 import type { Migration } from './types'
 
 export function migrationsFor(ports: InitialMigrationPorts): readonly Migration[] {
-  return [initialMigration(ports)]
+  return [initialMigration(ports), delegationTokensUnboundParentMigration]
 }
 
 const systemClock = new SystemClock()

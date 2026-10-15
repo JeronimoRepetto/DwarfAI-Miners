@@ -35,10 +35,16 @@ import { defineMigration, type Migration } from './migrations/types'
 const T0 = 1_790_000_000_000
 const PREBUILDS = fileURLToPath(new URL('../../../../prebuilds', import.meta.url))
 
-/** A migration this build adds on top of the shipped ones, so a boot backs the file up first. */
+/** The shipped migrations' head version. */
+const HEAD = migrationsFor({ clock: new FakeClock(0), ids: new SequenceIdGenerator() }).length
+
+/**
+ * A migration this build adds on top of the shipped ones, so a boot backs the file up first.
+ * AMENDED for owner amendment N (AMENDMENT-14): migration 0002 ships, so this one is head + 1.
+ */
 const NEXT: Migration = defineMigration({
-  version: 2,
-  name: '0002-next',
+  version: HEAD + 1,
+  name: `${String(HEAD + 1).padStart(4, '0')}-next`,
   sql: 'CREATE TABLE next_step (id INTEGER NOT NULL PRIMARY KEY) STRICT;'
 })
 
