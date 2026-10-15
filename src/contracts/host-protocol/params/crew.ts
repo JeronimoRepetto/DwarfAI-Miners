@@ -1,5 +1,6 @@
-// Seam-B types of the crew rows (14 §3.4, §3.5): the B-F10 `dwarf.departed` cause, and the B-M22
-// `crew.rename` and B-M23 `crew.resetName` params and result.
+// Seam-B types of the crew rows (14 §3.4, §3.5): the B-F10 `dwarf.departed` cause, the B-M21
+// `crew.stop` params and result, and the B-M22 `crew.rename` and B-M23 `crew.resetName` params and
+// result.
 import { z } from 'zod'
 import { dwarfIdSchema, type DwarfId } from '../../wire'
 import { outcomeSchema, type Outcome } from '../errors'
@@ -23,7 +24,13 @@ export const departureCauseSchema = z.enum([
   'recovery-failed'
 ])
 
-// As 14 §3.4 writes them (names, fields and comments; layout by prettier): crew, B-M22, B-M23
+// As 14 §3.4 writes them (names, fields and comments; layout by prettier): crew, B-M21, B-M22, B-M23
+export interface StopDwarfParams {
+  dwarfId: DwarfId
+  requestId: string
+}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty value as {}
+export type StopDwarfResult = Outcome<{}, 'already-stopping' | 'could-not-end'> // AMENDMENT-2 (OQ-54): an open turn is not a refusal
 export interface RenameDwarfParams {
   dwarfId: DwarfId
   name: string
@@ -34,6 +41,17 @@ export interface ResetDwarfNameParams {
   dwarfId: DwarfId
   requestId: string
 }
+
+/** B-M21 params (ADR-019 strict()): no member interrupts only the turn (OQ-49, OQ-54), so no mode. */
+export const stopDwarfParamsSchema = z
+  .object({ dwarfId: dwarfIdSchema, requestId: requestIdSchema })
+  .strict()
+
+/** B-M21 result: `{}` once the session ended, else one of the two refusals (AMENDMENT-2). */
+export const stopDwarfResultSchema = outcomeSchema(
+  z.object({}).strict(),
+  z.enum(['already-stopping', 'could-not-end'])
+)
 
 /**
  * B-M22 params (ADR-019 strict()). The name is any text on the wire: its `DwarfName` normalization

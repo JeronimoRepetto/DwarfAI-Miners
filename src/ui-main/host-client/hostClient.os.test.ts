@@ -56,6 +56,8 @@ const SERVED_SINCE_CUT_0 = [
   // AMENDED for ISSUE-172 (appended): B-M22 and B-M23, served by the crew wiring for the step-3a switch.
   'crew.rename',
   'crew.resetName',
+  // AMENDED for ISSUE-171 (appended): B-M21, served by the crew wiring for the step-3a switch.
+  'crew.stop',
   // The ledger's frame, served from cut 1 (ISSUE-096).
   'frame:ledger.changed',
   // The attention frames, B-M07 and B-M08, served from cut 1 (ISSUE-119).

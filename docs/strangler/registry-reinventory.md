@@ -36,6 +36,8 @@
   preload member, so its row moved to the found table.
 - **Updated for ISSUE-223:** A-N32 `answerWelcome` (`welcome:answer`, NEW, AMENDMENT-7) is declared in the registry and
   has a generated preload member, so its row moved to the found table.
+- **Updated for ISSUE-171:** A-N29 `stopDwarf` (`dwarf:stop`, NEW, AMENDMENT-2) is declared in the registry and has a
+  generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-123:** A-44 is renamed by the cut-1 switch (14 §2.1 CHANGE): the generated preload member
   `reportVisibleMines` sends `presence:visibleMines`, so it has its own row under the same id, and the `panel:openMine`
   row lost its preload location. Today's `setOpenMine` registration and constant stay until cut 5.
@@ -127,6 +129,7 @@ kind `14` gives it.
 | `dwarf:sendText:settled`          | `onDwarfSendSettled`          | push   | src/legacy-bridge/LegacyRuntimeRoute.ts:754<br>src/main/index.ts:1150<br>src/preload/index.ts:695<br>src/shared/contracts.ts:5217 | A-P4    | RETIRE | —                 |                                                                                                                                           |
 | `dwarf:setName`                   | `setDwarfName`                | invoke | src/main/index.ts:1731<br>src/preload/index.ts:663<br>src/shared/contracts.ts:5157                                                | §8 I-21 | RETIRE | —                 | Legacy row of 14 §8 I-21 (AMENDMENT-12, OQ-82), no §2 id; successor A-N08 `renameDwarf` / `dwarf:rename`; RETIRE at cut 5                 |
 | `dwarf:setTuning`                 | `setDwarfTuning`              | invoke | src/main/index.ts:1722<br>src/preload/index.ts:654<br>src/shared/contracts.ts:5147                                                | A-18    | RETIRE | —                 |                                                                                                                                           |
+| `dwarf:stop`                      | `stopDwarf`                   | invoke | src/preload/index.ts:564                                                                                                          | A-N29   | NEW    | —                 | Declared by ISSUE-171 (AMENDMENT-2, OQ-54); its preload member is generated (ISSUE-045); unrouted until cut 3a                            |
 | `host:connection:changed`         | `onHostConnection`            | push   | src/preload/index.ts:534                                                                                                          | A-N04   | NEW    | —                 | Declared by ISSUE-052; its preload member is generated (ISSUE-045); unrouted until cut 0                                                  |
 | `host:connection:confirm-restart` | `confirmHostRestart`          | invoke | src/preload/index.ts:542                                                                                                          | A-N33   | NEW    | —                 | Declared by ISSUE-052 (AMENDMENT-11); its preload member is generated (ISSUE-045); unrouted until generation-2, no handler in v1          |
 | `host:connection:get`             | `getHostConnection`           | invoke | src/preload/index.ts:533                                                                                                          | A-N03   | NEW    | —                 | Declared by ISSUE-052; its preload member is generated (ISSUE-045); unrouted until cut 0                                                  |
@@ -204,6 +207,5 @@ kind `14` gives it.
 | `veta:layout`           | `layoutVeta`          | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `window:limits`         | `getWindowingLimits`  | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `veta:dock:changed`     | `onVetaDockChanged`   | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `dwarf:stop`            | `stopDwarf`           | invoke | not found | A-N29 | NEW    | —                 |                                                                                               |
 
 <!-- reinventory-table:end -->

@@ -576,7 +576,9 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       // AMENDED for ISSUE-129: A-N07 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
       'ask:step:set': 'cut-2',
       // AMENDED for ISSUE-223: A-N32 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
-      'welcome:answer': 'cut-2'
+      'welcome:answer': 'cut-2',
+      // AMENDED for ISSUE-171: A-N29 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
+      'dwarf:stop': 'cut-3a'
     })
   })
 
@@ -1754,11 +1756,13 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     // AMENDED for ISSUE-221 (was: A-N33 only): A-N31, born `host` in cut 2, waits for the cut-2 switch (ISSUE-141).
     // AMENDED for ISSUE-129: A-N07, born `host` in cut 2, waits for the same switch.
     // AMENDED for ISSUE-223: A-N32, born `host` in cut 2, waits for the same switch.
+    // AMENDED for ISSUE-171: A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
     expect(CUT_1_UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
       'claude:hooks:set': 'cut-2',
       'ask:step:set': 'cut-2',
-      'welcome:answer': 'cut-2'
+      'welcome:answer': 'cut-2',
+      'dwarf:stop': 'cut-3a'
     })
     // A-44 on its 14 wire feeds UI main's PresenceTracker, which tells the Host (B-M07) once the report settled.
     const host = recordingHost()
@@ -2416,7 +2420,11 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       ])
     }
     // Only A-N33 is still unrouted (AMENDMENT-11): the cut-2 entries are routed by this switch (ISSUE-043 rule).
-    expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
+    // AMENDED for ISSUE-171 (was: A-N33 only): A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
+    expect(UNROUTED).toEqual({
+      'host:connection:confirm-restart': 'generation-2',
+      'dwarf:stop': 'cut-3a'
+    })
     // The root composes their `host` handlers, each relaying its one seam-B member.
     const sent: Array<[string, unknown]> = []
     const replies: Record<string, unknown> = {

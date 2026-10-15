@@ -22,8 +22,10 @@
 //   is how the observer's one route lands a session in a folder that was not a mine (US-OBS-001;
 //   US-OBS-002.AC08; 11 §2 steps 4–7). Package gap: 08 §2.2 does not define "known"; this is the
 //   owner-consistent reading, recorded in the ISSUE-082 hand-off.
-// - `dwarf.changed {dwarf}` (B-F09) ← `DwarfStatusChanged`, `DwarfPresenceChanged`; `DwarfRenamed`
-//   and `DwarfStopRequested` join with their commands and owners (later: ISSUE-079, EPIC-10);
+// - `dwarf.changed {dwarf}` (B-F09) ← `DwarfStatusChanged`, `DwarfPresenceChanged`, and crew's end
+//   events `DwarfStopRequested` and `DwarfStopFailed` (ISSUE-171), which set and clear `stopInFlight`
+//   and so `stopUnavailableReason` (US-MSG-016.AC02; 07 S15.01, S15.15); `DwarfRenamed` joins with
+//   its owner;
 //   `OutcomeLineChanged` is conversation's route (host/wiring/routes/conversationFrames.ts,
 //   ISSUE-108). Every `dwarf.changed` and `dwarf.arrived` here carries the dwarf's stored outcome
 //   line (`ConversationQueries.outcomeOf`, owner amendment E, 2026-10-06). The outbound queue folds a waiting `dwarf.changed` into the newer
@@ -54,7 +56,7 @@
 import type { HostFrameData, HostFrameName } from '@dwarfai/contracts'
 import type { DwarfId, MineId } from '../../kernel/domain/values'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
-import type { CrewEvent, CrewQueries } from '../../modules/crew'
+import type { CrewEndEvent, CrewEvent, CrewQueries } from '../../modules/crew'
 import type { MinesEvent, MinesQueries } from '../../modules/mines'
 import type { ObservationEvent } from '../../modules/observation'
 import type { FrameAudience } from '../events/framePublisher'
@@ -91,6 +93,8 @@ export interface BoardFramesDeps {
     mines: Pick<DomainEventBus<MinesEvent>, 'subscribe'>
     crew: Pick<DomainEventBus<CrewEvent>, 'subscribe'>
     observation: Pick<DomainEventBus<ObservationEvent>, 'subscribe'>
+    /** Crew's end events (`DwarfStopRequested`, `DwarfStopFailed`); a board without stops omits them. */
+    crewEnds?: Pick<DomainEventBus<CrewEndEvent>, 'subscribe'>
   }
   mines: Pick<MinesQueries, 'get'>
   crew: Pick<CrewQueries, 'get'>
@@ -176,6 +180,16 @@ export function publishBoardFrames(deps: BoardFramesDeps): () => void {
       const { dwarfId, mineId, cause } = event.payload
       frames.publishFrame('dwarf.departed', { dwarfId, mineId, cause }, { dwarfId })
     }),
+    ...(deps.events.crewEnds === undefined
+      ? []
+      : [
+          deps.events.crewEnds.subscribe('DwarfStopRequested', (event) =>
+            dwarfChanged(event.payload.dwarfId)
+          ),
+          deps.events.crewEnds.subscribe('DwarfStopFailed', (event) =>
+            dwarfChanged(event.payload.dwarfId)
+          )
+        ]),
     deps.events.observation.subscribe('ProviderErrorObserved', (event) => {
       const { providerId, cause, dwarfId } = event.payload
       frames.publishFrame('toast', {
