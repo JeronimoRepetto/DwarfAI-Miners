@@ -22,6 +22,10 @@
 //   `classifyLaunchOutcome` reads as `exited-at-once` (package gap, resolved in development: the
 //   first-agent-event shortcut of ADR-020 D4 needs the stream, so the window always runs whole).
 // - It settles exactly once.
+// - A timed check (the handshake budget, the window's end) that runs before `clock.now()` reaches
+//   its deadline finds the outcome `pending` and is armed again for the time left (at least 1 ms):
+//   the scheduler's timers and the clock need not agree to the millisecond (a monotonic timer can
+//   fire before the wall clock reaches the deadline).
 // - `gate.launchedWithLetJevChoose` is for `DelegationLifecycle.issueFor`, whose call (and its
 //   `revokeLaunch` on a failed start) is EPIC-12's (later: ISSUE-201…ISSUE-203). Until then every
 //   session starts with the `delegation` launching built: `null`.
@@ -102,12 +106,27 @@ export function createSessionStarter(deps: SessionStarterBridgeDeps): SessionSta
         handshakeTimer?.cancel()
         resolve(outcome)
       }
-      /** Settles from what was observed, at `now` (ADR-020 item 4). */
-      const classify = (events: readonly LaunchOutcomeEvent[], session?: DriverSession): void => {
+      /** Settles from what was observed, at `now` (ADR-020 item 4); answers whether it is pending. */
+      const classify = (
+        events: readonly LaunchOutcomeEvent[],
+        session?: DriverSession
+      ): boolean => {
         const outcome = classifyLaunchOutcome(events, t0, clock.now())
-        if (outcome.kind === 'pending') return
+        if (outcome.kind === 'pending') return true
         if (outcome.kind === 'failed') settle(failed(outcome.cause))
         else if (session !== undefined) settle({ ok: true, value: session })
+        return false
+      }
+      /** Runs `check` at `deadline`, again for the time left while it answers pending. */
+      const at = (deadline: Instant, check: () => boolean): { cancel(): void } => {
+        let current: { cancel(): void } | undefined
+        const arm = (): void => {
+          current = scheduler.after(Math.max(1, deadline - clock.now()), () => {
+            if (!settled && check()) arm()
+          })
+        }
+        arm()
+        return { cancel: () => current?.cancel() }
       }
 
       const wrapped: DriverLaunchRequest = {
@@ -115,7 +134,7 @@ export function createSessionStarter(deps: SessionStarterBridgeDeps): SessionSta
         onSpawned: async (identity) => {
           if (t0 === null) {
             t0 = clock.now()
-            handshakeTimer = scheduler.after(HANDSHAKE_TIMEOUT_MS, () => classify([]))
+            handshakeTimer = at(t0 + HANDSHAKE_TIMEOUT_MS, () => classify([]))
           }
           await req.onSpawned(identity)
         }
@@ -133,14 +152,14 @@ export function createSessionStarter(deps: SessionStarterBridgeDeps): SessionSta
           handshakeTimer?.cancel()
           const readyAt = clock.now()
           const windowEnd = t0 + EARLY_FAILURE_WINDOW_MS
-          const atWindowEnd = (): void => {
+          const atWindowEnd = (): boolean => {
             const exited = deps.sessions.sessionFor(session.ref) === null
             const events: LaunchOutcomeEvent[] = [{ kind: 'ready', at: readyAt }]
             if (exited) events.push({ kind: 'ended', at: readyAt, how: 'exit' })
-            classify(events, session)
+            return classify(events, session)
           }
-          if (readyAt >= windowEnd) atWindowEnd()
-          else scheduler.after(windowEnd - readyAt, atWindowEnd)
+          const pending = readyAt >= windowEnd ? atWindowEnd() : true
+          if (pending) at(windowEnd, atWindowEnd)
         },
         (error: unknown) => {
           if (isDriverLaunchError(error)) settle(failed(error.cause, error.toolOutputTail))
