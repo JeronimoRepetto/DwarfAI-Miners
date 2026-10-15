@@ -2,18 +2,25 @@
 // by hand from the ADR so the list in `forbiddenFlags.ts` cannot shrink unseen.
 import { describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../../../kernel/domain/errors'
-import { assertNoForbidden, FORBIDDEN_FLAGS, type DelegationGate } from './forbiddenFlags'
+import {
+  ALWAYS_OPTION_KINDS,
+  assertNoForbidden,
+  FORBIDDEN_FLAGS,
+  type DelegationGate
+} from './forbiddenFlags'
 
-/** ADR-008 item 3, verbatim, plus the "always" options it names by kind. */
+/** ADR-008 item 3, verbatim. */
 const ADR_008_ITEM_3: readonly string[] = [
   '--dangerously-skip-permissions',
   'bypassPermissions',
   '--dangerously-bypass-approvals-and-sandbox',
   '--yolo',
   'yoloMode',
-  'acceptForSession',
-  'allow_always'
+  'acceptForSession'
 ]
+
+/** The "always" option ADR-008 item 3 names by kind (an ACP permission option kind). */
+const ALWAYS_KINDS: readonly string[] = ['allow_always']
 
 const BOTH_ON: DelegationGate = { subagentDelegationOn: true, launchedWithLetJevChoose: true }
 const GATES: readonly DelegationGate[] = [
@@ -74,7 +81,8 @@ const JEV_PRE_APPROVALS: readonly { name: string; argv: readonly string[]; optio
 describe('forbidden flags (ADR-008 item 3)', () => {
   it('[C-24] every forbidden flag and option is refused in argv and in an option set', () => {
     expect(FORBIDDEN_FLAGS).toEqual(expect.arrayContaining([...ADR_008_ITEM_3]))
-    for (const flag of FORBIDDEN_FLAGS) {
+    expect(ALWAYS_OPTION_KINDS).toEqual(expect.arrayContaining([...ALWAYS_KINDS]))
+    for (const flag of [...FORBIDDEN_FLAGS, ...ALWAYS_OPTION_KINDS]) {
       expect(refuses([flag], {}), `argv ${flag}`).toBe(true)
       expect(refuses(['exec', `--permission-mode=${flag}`], {}), `argv value ${flag}`).toBe(true)
       expect(refuses([], { [flag]: true }), `option key ${flag}`).toBe(true)

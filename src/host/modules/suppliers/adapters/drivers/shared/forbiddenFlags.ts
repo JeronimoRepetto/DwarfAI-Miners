@@ -8,8 +8,8 @@
 import { HostInvariantError } from '../../../../../kernel/domain/errors'
 
 /**
- * ADR-008 item 3's list, verbatim, plus the "always" option it names by kind (an ACP permission
- * option of kind `allow_always`). A token, key or value that contains one is refused, in any case.
+ * ADR-008 item 3's list, verbatim. A token, key or value that contains one is refused, in any case.
+ * The static test keeps each one out of src/host outside this guard (ADR-008 Verification).
  */
 export const FORBIDDEN_FLAGS: readonly string[] = [
   '--dangerously-skip-permissions',
@@ -17,9 +17,16 @@ export const FORBIDDEN_FLAGS: readonly string[] = [
   '--dangerously-bypass-approvals-and-sandbox',
   '--yolo',
   'yoloMode',
-  'acceptForSession',
-  'allow_always'
+  'acceptForSession'
 ]
+
+/**
+ * The "always" options ADR-008 item 3 names by kind: an ACP permission option of kind
+ * `allow_always`. Refused like a flag, but kept apart from `FORBIDDEN_FLAGS`: the asking module
+ * and an ACP driver must name this kind to refuse it (ADR-010 item 3, INV-73), so the static
+ * test does not scan for it.
+ */
+export const ALWAYS_OPTION_KINDS: readonly string[] = ['allow_always']
 
 /** The two launch facts of ADR-013 item 4; the exception needs both on. */
 export interface DelegationGate {
@@ -40,7 +47,8 @@ const ALLOWED_TOOLS_KEY = /^allowed_?tools$/i
 const APPROVAL_MODE_KEY = /approval_mode$/i
 const PRE_APPROVE = 'approve'
 
-const FORBIDDEN_LOWER = FORBIDDEN_FLAGS.map((flag) => flag.toLowerCase())
+const REFUSED: readonly string[] = [...FORBIDDEN_FLAGS, ...ALWAYS_OPTION_KINDS]
+const REFUSED_LOWER = REFUSED.map((flag) => flag.toLowerCase())
 
 function refuse(reason: string): never {
   throw new HostInvariantError(
@@ -50,7 +58,7 @@ function refuse(reason: string): never {
 
 function checkText(text: string): void {
   const lower = text.toLowerCase()
-  const hit = FORBIDDEN_FLAGS.find((_, index) => lower.includes(FORBIDDEN_LOWER[index] ?? ''))
+  const hit = REFUSED.find((_, index) => lower.includes(REFUSED_LOWER[index] ?? ''))
   if (hit !== undefined) refuse(hit)
 }
 
