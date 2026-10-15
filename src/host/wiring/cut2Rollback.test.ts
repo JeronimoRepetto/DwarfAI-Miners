@@ -7,6 +7,7 @@ import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { RecordingDiagnosticsLog } from '../kernel/fakes/RecordingDiagnosticsLog'
+import { ANSWER_DWARF, answerHarness } from '../modules/asking/testing/answerHarness'
 import type { ChannelToken, ExternalConfigWriter } from '../modules/preferences'
 import { cut2RollbackChoices } from './cut2Rollback'
 
@@ -71,6 +72,35 @@ describe('the cut-2 rollback choices (ISSUE-141)', () => {
     expect(cut2RollbackChoices(false).keepsOldAppEntries).toBe(false)
   })
 
+  // ADDED for #1293 (follow-up of the ISSUE-141 verification, 2026-10-14): no route answers a Host AskId in a rollback
+  // build (A-asking rows route `legacy`), so an observed ask the cut-2 build left open would show a card nobody can
+  // answer. The rollback build settles it at boot as a request the Host no longer holds (07 S6.11, S6.20).
+  it('[S6.11, S6.20, ADR-010] a rollback build closes every ask the cut-2 build left live, answered elsewhere', () => {
+    const h = answerHarness()
+    const open = h.permission(1)
+    const answering = h.question(2, { state: 'answering' })
+
+    cut2RollbackChoices(true).settleLeftoverAsks(h.restarts)
+
+    expect(h.asks.byId(open.id as never)?.state).toBe('answered-elsewhere')
+    expect(h.asks.byId(answering.id as never)?.state).toBe('answered-elsewhere')
+    expect(h.asks.openFor(ANSWER_DWARF)).toBeNull()
+    expect(h.bus.ofType('AskClosed').map((event) => event.payload.reason)).toEqual([
+      'answered-elsewhere',
+      'answered-elsewhere'
+    ])
+  })
+
+  it('[S6.17, ADR-010] a normal build leaves the asks a stopped Host left as they are', () => {
+    const h = answerHarness()
+    const open = h.permission(1)
+
+    cut2RollbackChoices(false).settleLeftoverAsks(h.restarts)
+
+    expect(h.asks.byId(open.id as never)?.state).toBe('open')
+    expect(h.bus.published).toEqual([])
+  })
+
   it('[US-SET-012.AC01] a normal build keeps the installed tools and the writer as they are', async () => {
     const { writer, calls } = recordingWriter()
     const choices = cut2RollbackChoices(false)
@@ -110,5 +140,6 @@ describe('the cut-2 rollback setting in the Host (ISSUE-141)', () => {
     expect(main).toContain('installedTools: CUT_2_ROLLBACK_CHOICES.installedTools(')
     expect(main).toContain('externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(')
     expect(main).toContain('keepOldAppEntries: CUT_2_ROLLBACK_CHOICES.keepsOldAppEntries')
+    expect(main).toContain('CUT_2_ROLLBACK_CHOICES.settleLeftoverAsks(')
   })
 })
