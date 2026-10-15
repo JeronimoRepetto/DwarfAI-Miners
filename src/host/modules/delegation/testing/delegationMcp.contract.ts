@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { CANARY_CORPUS } from '../../../../contracts/logging/testing/canaryCorpus'
 import type { DwarfId, Instant, LaunchId } from '../../../kernel/domain/values'
+import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../../kernel/fakes/RecordingDiagnosticsLog'
@@ -48,7 +49,8 @@ export interface DelegationToolCaller {
 /** Starts the server under test on `handler`, connected as the relay of `token`'s launch. */
 export type DelegationServerUnderTest = (
   handler: DelegationEndpoint,
-  token: DelegationToken
+  token: DelegationToken,
+  log: DiagnosticsLog
 ) => Promise<{ caller: DelegationToolCaller; dispose(): Promise<void> }>
 
 const T0: Instant = 1_750_000_000_000
@@ -123,14 +125,17 @@ export function runDelegationMcpContract(name: string, serve: DelegationServerUn
       mechanism: 'ticket-file',
       issuedAt: T0
     }
-    const server = await serve(endpoint, handle)
+    const server = await serve(endpoint, handle, log)
     return { clock, log, bus, tokens, tickets, prefs, routed, endpoint, ...server }
   }
 
   type Setup = Awaited<ReturnType<typeof setUp>>
 
   /** `delegate_subtask` run until it answers, the clock driven past the wait. */
-  async function delegateFully(s: Setup, args = { task: TASK, context: CONTEXT }) {
+  async function delegateFully(
+    s: Setup,
+    args: { task: string; context?: string } = { task: TASK, context: CONTEXT }
+  ) {
     const answer = s.caller.delegateSubtask(args)
     await flush()
     s.clock.advance(DELEGATION_WAIT_MS)
@@ -315,6 +320,100 @@ export function runDelegationMcpContract(name: string, serve: DelegationServerUn
         status: 'failed',
         failure: { kind: 'unknown-ticket' }
       })
+      await s.dispose()
+    })
+
+    it('[ADR-013, C-26] a task of 2 001 emoji (4 002 UTF-16 code units) is within the 4 000-character bound and is delegated', async () => {
+      const s = await setUp()
+      const task = '\u{1F9EA}'.repeat(2_001)
+      expect(task.length).toBe(4_002)
+
+      const answer = await delegateFully(s, { task, context: CONTEXT })
+
+      expect(answer.isError).toBe(false)
+      expect(answer.view.status).toBe('pending')
+      expect(s.tickets.snapshot()).toEqual([expect.objectContaining({ task })])
+      await s.dispose()
+    })
+
+    it('[ADR-013, C-26] a task or context outside its bound in characters answers a tool failure ending with the fallback sentence, never isError', async () => {
+      const s = await setUp()
+      const cases: Array<[{ task: string; context?: string }, string]> = [
+        [{ task: '\u{1F9EA}'.repeat(4_001) }, 'task-too-long'],
+        [{ task: TASK, context: 'c'.repeat(16_001) }, 'context-too-long'],
+        [{ task: '' }, 'task-empty']
+      ]
+      for (const [args, kind] of cases) {
+        const answer = await delegateFully(s, args)
+        expect(answer.isError).toBe(false)
+        expect(answer.view).toMatchObject({ status: 'failed', failure: { kind } })
+        expect(failedDetail(answer).endsWith(NATIVE_SUBAGENT_FALLBACK_SENTENCE)).toBe(true)
+      }
+      expect(s.tickets.snapshot()).toEqual([])
+      expect(s.routed).toEqual([])
+      await s.dispose()
+    })
+
+    it('[ADR-013, FM-039] a launch revoked while a call waits for its parent answers a tool failure with no raw message, never isError', async () => {
+      const s = await setUp({ parent: null })
+      const answer = s.caller.delegateSubtask({ task: TASK })
+      await flush()
+
+      s.tokens.revoke(LAUNCH, T0 + 1)
+      s.endpoint.launchClosed(LAUNCH)
+      await flush()
+
+      const answered = await answer
+      expect(answered.isError).toBe(false)
+      expect(answered.view).toMatchObject({ status: 'failed', failure: { kind: 'unavailable' } })
+      expect(failedDetail(answered)).toBe(NATIVE_SUBAGENT_FALLBACK_SENTENCE)
+      expect(s.tickets.snapshot()).toEqual([])
+      await s.dispose()
+    })
+
+    it('[NFR-SEC-12] a store that throws answers a tool failure with no raw message and logs only a cause class', async () => {
+      const s = await setUp()
+      const secret = CANARY_CORPUS.find((c) => c.class === 'home-path')?.value ?? '/home/canary'
+      s.tickets.inFlight = () => {
+        throw new Error(`disk I/O error at ${secret}`)
+      }
+
+      const answer = await delegateFully(s)
+
+      expect(answer.isError).toBe(false)
+      expect(answer.view).toMatchObject({ status: 'failed', failure: { kind: 'unavailable' } })
+      expect(failedDetail(answer)).toBe(NATIVE_SUBAGENT_FALLBACK_SENTENCE)
+      expect(JSON.stringify(answer)).not.toContain(secret)
+      expect(s.log.byEvent('delegation.tool.failed')).toEqual([
+        expect.objectContaining({ subsystem: 'delegation', causeClass: 'unknown' })
+      ])
+      expect(JSON.stringify([s.log.entries, s.log.refused])).not.toContain(secret)
+      await s.dispose()
+    })
+
+    it('[ADR-013] subtask_result waits at most maxMs in total when the delegation changes state without settling', async () => {
+      const s = await setUp()
+      const first = await delegateFully(s)
+      if (first.view.status !== 'pending') throw new Error('expected pending')
+      const { ticket } = first.view
+      let answered: ToolAnswer | undefined
+      void s.caller.subtaskResult({ ticket }).then((a) => (answered = a))
+      await flush()
+
+      // The worker launched (S8.03) part-way through the wait: still in flight.
+      s.clock.advance(DELEGATION_WAIT_MS / 2)
+      const row = s.tickets.byTicket(ticket) as Delegation
+      const running = applyEvent(row, { type: 'worker-launched', workerDwarfId: WORKER }, T0)
+      if (!running.ok) throw new Error('expected a transition')
+      s.tickets.save(running.value.delegation)
+      s.endpoint.delegationSettled(ticket)
+      await flush()
+      expect(answered).toBeUndefined()
+
+      s.clock.advance(DELEGATION_WAIT_MS / 2)
+      await flush()
+      // No `await waiting`: a wait that outlives maxMs fails here, not on the test timeout.
+      expect(answered).toEqual({ view: { status: 'pending', ticket }, isError: false })
       await s.dispose()
     })
 

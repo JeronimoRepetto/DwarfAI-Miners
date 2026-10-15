@@ -5,6 +5,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { CallToolResult, JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { describe, expect, it } from 'vitest'
+import { RecordingDiagnosticsLog } from '../../../../kernel/fakes/RecordingDiagnosticsLog'
+import type { DiagnosticsLog } from '../../../../kernel/ports/diagnosticsLog'
 import type { DelegationToken } from '../../ports/delegationStores'
 import type {
   DelegationEndpoint,
@@ -59,16 +61,23 @@ function relayPair(token: DelegationToken): {
   return { connection, client, frames }
 }
 
-async function connectedClient(handler: DelegationEndpoint, token: DelegationToken) {
+async function connectedClient(
+  handler: DelegationEndpoint,
+  token: DelegationToken,
+  log: DiagnosticsLog = new RecordingDiagnosticsLog()
+) {
   const pair = relayPair(token)
   let close: () => Promise<void> = () => Promise.resolve()
-  const server = new McpDelegationServer({
-    listen: (accept) => {
-      accept(pair.connection)
-      close = () => Promise.resolve()
-      return Promise.resolve({ endpoint: { path: 'in-process' }, close: () => close() })
-    }
-  })
+  const server = new McpDelegationServer(
+    {
+      listen: (accept) => {
+        accept(pair.connection)
+        close = () => Promise.resolve()
+        return Promise.resolve({ endpoint: { path: 'in-process' }, close: () => close() })
+      }
+    },
+    log
+  )
   await server.listen(handler)
   const client = new Client({ name: 'relay-under-test', version: '1.0.0' })
   await client.connect(pair.client)
@@ -83,8 +92,8 @@ function answerOf(result: CallToolResult): ToolAnswer {
   return { view, isError: result.isError === true }
 }
 
-runDelegationMcpContract('McpDelegationServer', async (handler, token) => {
-  const { client, server } = await connectedClient(handler, token)
+runDelegationMcpContract('McpDelegationServer', async (handler, token, log) => {
+  const { client, server } = await connectedClient(handler, token, log)
   return {
     caller: {
       delegateSubtask: async (args) =>
@@ -122,14 +131,16 @@ describe('McpDelegationServer (16 §5.4)', () => {
 
     expect(tools.map((t) => t.name)).toEqual(['delegate_subtask', 'subtask_result'])
     const [delegate, result] = tools
-    expect(delegate?.inputSchema.properties).toMatchObject({
-      task: { type: 'string', minLength: 1, maxLength: 4_000 },
-      context: { type: 'string', maxLength: 16_000 }
-    })
+    // AMENDED for the ISSUE-199 security correction (was: `minLength`/`maxLength` in the schema):
+    // a JSON-schema length counts UTF-16 units and its refusal is the SDK's `isError`, so the
+    // bounds are stated in the descriptions and enforced in code points by `SubtaskText`.
+    const properties = delegate?.inputSchema.properties as Record<string, Record<string, unknown>>
+    expect(properties).toMatchObject({ task: { type: 'string' }, context: { type: 'string' } })
+    expect(properties['task']?.['description']).toContain('At most 4000 characters')
+    expect(properties['context']?.['description']).toContain('At most 16000 characters')
+    expect(JSON.stringify(delegate?.inputSchema)).not.toMatch(/minLength|maxLength/)
     expect(delegate?.inputSchema.required).toEqual(['task'])
-    expect(result?.inputSchema.properties).toMatchObject({
-      ticket: { type: 'string', minLength: 1 }
-    })
+    expect(result?.inputSchema.properties).toMatchObject({ ticket: { type: 'string' } })
     for (const description of [DELEGATE_SUBTASK_DESCRIPTION, SUBTASK_RESULT_DESCRIPTION]) {
       expect(description.endsWith(NATIVE_SUBAGENT_FALLBACK_SENTENCE)).toBe(true)
     }

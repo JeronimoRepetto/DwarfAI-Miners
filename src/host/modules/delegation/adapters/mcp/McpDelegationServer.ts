@@ -6,7 +6,10 @@
 //   one MCP JSON-RPC message per frame, unchanged (ADR-013 item 3). The connection's bound token is
 //   the first argument of every `DelegationEndpoint` call; the server never sees a credential.
 // - Exactly two tools, `delegate_subtask` (`task` 1..4 000 characters, `context` ≤ 16 000, 06
-//   `SubtaskText`) and `subtask_result` (`ticket` non-empty). `delegate_subtask` calls `delegate`,
+//   `SubtaskText`) and `subtask_result` (`ticket`). The schemas type the arguments only: the
+//   bounds are counted in code points by `SubtaskText` (09 §4.6), and an out-of-bound input is a
+//   tool failure with the fallback sentence. A zod `.min`/`.max` would count UTF-16 units and
+//   turn a refusal into the SDK's `isError` answer, which carries no fallback sentence. `delegate_subtask` calls `delegate`,
 //   which answers a ticket at once, then `result(…, { maxMs: DELEGATION_WAIT_MS })`, which waits
 //   in the Host (16 §5.5): no polling loop here.
 // - One tool-result shape (16 §5.4) as structured content and as one JSON text block, for a client
@@ -22,6 +25,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { CallToolResult, JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
+import type { DiagnosticsLog } from '../../../../kernel/ports/diagnosticsLog'
 import { answerDelegateSubtask, answerSubtaskResult } from '../../application/delegationEndpoint'
 import { MAX_DELEGATION_CONTEXT_CHARS, MAX_DELEGATION_TASK_CHARS } from '../../domain/subtaskText'
 import { NATIVE_SUBAGENT_FALLBACK_SENTENCE } from '../../domain/toolFailure'
@@ -65,13 +69,16 @@ export class McpDelegationServer implements DelegationServer {
   private stop: (() => Promise<void>) | null = null
   private readonly relays = new Set<DelegationRelayConnection>()
 
-  constructor(private readonly listener: DelegationRelayListener) {}
+  constructor(
+    private readonly listener: DelegationRelayListener,
+    private readonly log: DiagnosticsLog
+  ) {}
 
   async listen(handler: DelegationEndpoint): Promise<{ endpoint: LoopbackEndpoint }> {
     const bound = await this.listener.listen((connection) => {
       this.relays.add(connection)
       connection.onClose(() => this.relays.delete(connection))
-      void serveRelay(connection, handler)
+      void serveRelay(connection, handler, this.log)
     })
     this.stop = bound.close
     return { endpoint: bound.endpoint }
@@ -89,15 +96,17 @@ export class McpDelegationServer implements DelegationServer {
 /** One MCP server for one authenticated relay connection. */
 export async function serveRelay(
   connection: DelegationRelayConnection,
-  handler: DelegationEndpoint
+  handler: DelegationEndpoint,
+  log: DiagnosticsLog
 ): Promise<void> {
-  const server = createDelegationMcpServer(connection, handler)
+  const server = createDelegationMcpServer(connection, handler, log)
   await server.connect(new FrameTransport(connection))
 }
 
 function createDelegationMcpServer(
   connection: DelegationRelayConnection,
-  handler: DelegationEndpoint
+  handler: DelegationEndpoint,
+  log: DiagnosticsLog
 ): McpServer {
   const server = new McpServer(SERVER_INFO)
   server.registerTool(
@@ -108,20 +117,11 @@ function createDelegationMcpServer(
       inputSchema: {
         task: z
           .string()
-          .min(1, 'task must not be empty')
-          .max(
-            MAX_DELEGATION_TASK_CHARS,
-            `task must be at most ${MAX_DELEGATION_TASK_CHARS} characters`
-          )
           .describe(
             `What the child session should do, written to stand alone: the child never sees this conversation. At most ${MAX_DELEGATION_TASK_CHARS} characters.`
           ),
         context: z
           .string()
-          .max(
-            MAX_DELEGATION_CONTEXT_CHARS,
-            `context must be at most ${MAX_DELEGATION_CONTEXT_CHARS} characters`
-          )
           .optional()
           .describe(
             `Background the child needs (file paths, decisions, constraints), placed before task in its prompt. At most ${MAX_DELEGATION_CONTEXT_CHARS} characters.`
@@ -136,7 +136,8 @@ function createDelegationMcpServer(
           args.context === undefined
             ? { task: args.task }
             : { task: args.task, context: args.context },
-          DELEGATION_WAIT_MS
+          DELEGATION_WAIT_MS,
+          log
         )
       )
   )
@@ -148,13 +149,12 @@ function createDelegationMcpServer(
       inputSchema: {
         ticket: z
           .string()
-          .min(1, 'ticket must not be empty')
           .describe(`The ticket a pending ${DELEGATE_SUBTASK_TOOL_NAME} answer returned.`)
       }
     },
     async (args) =>
       toCallToolResult(
-        await answerSubtaskResult(handler, connection.token, args.ticket, DELEGATION_WAIT_MS)
+        await answerSubtaskResult(handler, connection.token, args.ticket, DELEGATION_WAIT_MS, log)
       )
   )
   return server

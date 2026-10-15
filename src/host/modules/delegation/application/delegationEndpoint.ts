@@ -33,6 +33,7 @@
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { DwarfId, EventId, HostEpoch, LaunchId, Result } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
+import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { Scheduler } from '../../../kernel/ports/scheduler'
@@ -41,8 +42,8 @@ import type { PreferencesQueries } from '../../preferences'
 import { admitDelegation, type Delegation, type DelegationId } from '../domain/delegation'
 import type { DelegationFailed } from '../domain/events'
 import type { DelegationLimitRefusal } from '../domain/limits'
-import { parseSubtask } from '../domain/subtaskText'
-import { toolFailure } from '../domain/toolFailure'
+import { parseSubtask, type SubtaskTextRefusal } from '../domain/subtaskText'
+import { NATIVE_SUBAGENT_FALLBACK_SENTENCE, toolFailure } from '../domain/toolFailure'
 import type {
   DelegationTicketStore,
   DelegationToken,
@@ -51,7 +52,8 @@ import type {
 import type {
   DelegationEndpoint,
   DelegationLaunchFacts,
-  SubtaskResultView
+  SubtaskResultView,
+  SubtaskToolFailure
 } from '../ports/delegationServer'
 
 /** 08 §0 `SubtaskDelegated` (S8.01; ADR-013). */
@@ -161,9 +163,13 @@ export class DelegationEndpointService implements DelegationEndpoint {
     wait: { maxMs: number }
   ): Promise<SubtaskResultView> {
     const parent = await this.parentOf(token.launchId)
+    // One deadline for the whole wait: a change that does not settle (attempted → running) wakes
+    // the read but never restarts the wait (16 §5.5).
+    const deadline = this.deps.clock.now() + Math.max(0, wait.maxMs)
     let current = this.read(ticket, parent)
-    let timedOut = false
-    while (current !== null && isInFlight(current) && !timedOut) {
+    while (current !== null && isInFlight(current)) {
+      const remaining = deadline - this.deps.clock.now()
+      if (remaining <= 0) break
       await new Promise<void>((resolve) => {
         const waiters = this.waitersOf(ticket)
         const wake = (): void => {
@@ -172,10 +178,7 @@ export class DelegationEndpointService implements DelegationEndpoint {
           if (waiters.size === 0) this.settleWaiters.delete(ticket)
           resolve()
         }
-        const task = this.deps.scheduler.after(Math.max(0, wait.maxMs), () => {
-          timedOut = true
-          wake()
-        })
+        const task = this.deps.scheduler.after(remaining, wake)
         waiters.add(wake)
       })
       current = this.read(ticket, parent)
@@ -254,26 +257,67 @@ export class DelegationEndpointService implements DelegationEndpoint {
   }
 }
 
-/** `delegate_subtask` (16 §5.4, §5.5): `delegate`, then `result` with the blocking wait. */
+/**
+ * `delegate_subtask` (16 §5.4, §5.5): the input is checked against 06 `SubtaskText` (characters
+ * are code points, as 09 §4.6 counts them), then `delegate`, then `result` with the blocking
+ * wait. Every outcome is a tool result: a refused input names its refusal, and anything the Host
+ * could not complete is `unavailable` with the fallback sentence alone; no error message reaches
+ * the result, and the log gets only its class (NFR-SEC-12).
+ */
 export async function answerDelegateSubtask(
   endpoint: DelegationEndpoint,
   token: DelegationToken,
   subtask: { task: string; context?: string },
-  maxMs: number
+  maxMs: number,
+  log: DiagnosticsLog
 ): Promise<SubtaskResultView> {
-  const delegated = await endpoint.delegate(token, subtask)
-  if (!delegated.ok) return failedView(delegated.error)
-  return endpoint.result(token, delegated.value.ticket, { maxMs })
+  const parsed = parseSubtask(subtask)
+  if (!parsed.ok) return { status: 'failed', failure: fallback(parsed.error) }
+  try {
+    const delegated = await endpoint.delegate(token, subtask)
+    if (!delegated.ok) return failedView(delegated.error)
+    return await endpoint.result(token, delegated.value.ticket, { maxMs })
+  } catch (error) {
+    return unavailable(error, log)
+  }
 }
 
 /** `subtask_result` (16 §5.4): the ticket's state, waiting up to `maxMs` while it is in flight. */
-export function answerSubtaskResult(
+export async function answerSubtaskResult(
   endpoint: DelegationEndpoint,
   token: DelegationToken,
   ticket: string,
-  maxMs: number
+  maxMs: number,
+  log: DiagnosticsLog
 ): Promise<SubtaskResultView> {
-  return endpoint.result(token, ticket, { maxMs })
+  try {
+    return await endpoint.result(token, ticket, { maxMs })
+  } catch (error) {
+    return unavailable(error, log)
+  }
+}
+
+/** A failure with no reason text of its own: the detail is the fallback sentence alone. */
+function fallback(kind: SubtaskTextRefusal | 'unavailable'): SubtaskToolFailure {
+  return { kind, detail: NATIVE_SUBAGENT_FALLBACK_SENTENCE }
+}
+
+/** Logs the error's class only, never its message (ADR-026, NFR-SEC-12). */
+function unavailable(error: unknown, log: DiagnosticsLog): SubtaskResultView {
+  const code = (error as { code?: unknown } | null)?.code
+  log.record({
+    level: 'warn',
+    event: 'delegation.tool.failed',
+    subsystem: 'delegation',
+    outcome: 'failed',
+    causeClass:
+      error instanceof DelegationLaunchClosedError
+        ? 'launch-closed'
+        : typeof code === 'string' && /^E[A-Z]+$/.test(code)
+          ? code
+          : 'unknown'
+  })
+  return { status: 'failed', failure: fallback('unavailable') }
 }
 
 function isInFlight(delegation: Delegation): boolean {

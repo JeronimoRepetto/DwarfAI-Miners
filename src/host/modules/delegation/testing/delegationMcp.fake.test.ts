@@ -6,7 +6,7 @@ import { DELEGATION_WAIT_MS, type DelegationEndpoint } from '../ports/delegation
 import { FakeDelegationServer } from '../ports/fakes/FakeDelegationServer'
 import { runDelegationMcpContract } from './delegationMcp.contract'
 
-runDelegationMcpContract('FakeDelegationServer', async (endpoint, token) => {
+runDelegationMcpContract('FakeDelegationServer', async (endpoint, token, log) => {
   const server = new FakeDelegationServer()
   await server.listen(endpoint)
   const handler = (): DelegationEndpoint => {
@@ -16,11 +16,11 @@ runDelegationMcpContract('FakeDelegationServer', async (endpoint, token) => {
   return {
     caller: {
       delegateSubtask: async (args) => ({
-        view: await answerDelegateSubtask(handler(), token, args, DELEGATION_WAIT_MS),
+        view: await answerDelegateSubtask(handler(), token, args, DELEGATION_WAIT_MS, log),
         isError: false
       }),
       subtaskResult: async (args) => ({
-        view: await answerSubtaskResult(handler(), token, args.ticket, DELEGATION_WAIT_MS),
+        view: await answerSubtaskResult(handler(), token, args.ticket, DELEGATION_WAIT_MS, log),
         isError: false
       })
     },

@@ -26,6 +26,7 @@
 //   message per frame (ADR-013 item 3) and never sees the credential.
 import type { TurnEndKind } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, LaunchId, Result } from '../../../kernel/domain/values'
+import type { SubtaskTextRefusal } from '../domain/subtaskText'
 import type { DelegationToolFailure } from '../domain/toolFailure'
 import type { DelegationToken } from './delegationStores'
 
@@ -39,11 +40,22 @@ export interface SubtaskOutcome {
   readonly truncated?: boolean
 }
 
+/**
+ * A failed tool result's `failure` (16 §5.4): the 16 §5.4 kinds, plus two this adapter needs and
+ * the 16 §5.4 table does not list (package gap, resolved in dev): a refused input is named by its
+ * 06 `SubtaskText` refusal (`task-empty`, `task-too-long`, `context-too-long`), and a call the Host
+ * could not complete (its launch revoked mid-call, a store failure) is `unavailable`. The detail
+ * always ends with the fallback sentence and never carries an error message.
+ */
+export type SubtaskToolFailure =
+  | DelegationToolFailure
+  | { readonly kind: SubtaskTextRefusal | 'unavailable'; readonly detail: string }
+
 /** The one tool-result shape of both tools (16 §5.4). */
 export type SubtaskResultView =
   | { readonly status: 'done'; readonly outcome: SubtaskOutcome }
   | { readonly status: 'pending'; readonly ticket: string }
-  | { readonly status: 'failed'; readonly failure: DelegationToolFailure }
+  | { readonly status: 'failed'; readonly failure: SubtaskToolFailure }
 
 /** Where the MCP endpoint listens: a pipe name or a socket path, never a TCP port (ADR-013 item 3). */
 export interface LoopbackEndpoint {
