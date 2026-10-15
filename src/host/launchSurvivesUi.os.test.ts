@@ -96,8 +96,12 @@ function validateFrame(name: string, data: unknown): void {
   schemas[name]?.parse(data)
 }
 
-/** Waits until `check` holds, polling every 25 ms, for at most `ms`. */
-async function until(check: () => boolean, ms = 15_000): Promise<void> {
+/**
+ * Waits until `check` holds, polling every 25 ms, for at most `ms`. The budget is a loaded runner's (as
+ * hostClient.os.test.ts waits for its snapshots): a launch over the real endpoint took longer than 15 s on a busy
+ * Linux CI leg and locally under a parallel lane (PR #1319). It only bounds the wait; every assertion stays.
+ */
+async function until(check: () => boolean, ms = 30_000): Promise<void> {
   const deadline = Date.now() + ms
   while (!check()) {
     if (Date.now() > deadline) throw new Error('timed out waiting')
