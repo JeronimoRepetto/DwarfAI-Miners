@@ -1,0 +1,9 @@
+{
+  "case": "C-25",
+  "description": "The effective capabilities are the ADR-009 D2 merge of the catalog ceiling with the negotiation sources combined field by field (15 §2.1): the simulated driver has no protocol handshake, so its only source is its probe.",
+  "script": [{ "do": "launch", "readyAfterMs": 50 }, { "do": "probe" }],
+  "outcomes": [{ "resolved": true }, null],
+  "negotiated": { "protocol": {} },
+  "events": [],
+  "sent": []
+}
