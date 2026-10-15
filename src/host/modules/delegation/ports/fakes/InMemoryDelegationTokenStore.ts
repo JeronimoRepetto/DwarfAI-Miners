@@ -3,20 +3,23 @@
 //
 // It keeps the SQLite adapter's rules, held equal by the shared runDelegationTokenStoreContract:
 // one row per launch, revoked ones included (`launch_id` PK); a 64-character credential hash on
-// `ticket-file` and on no other mechanism (09 §4.6 CHECKs); `byLaunch` never returns a revoked
-// token; `revoke` stamps a live row once. It has no transaction of its own: a test's transaction
+// `ticket-file` and `protocol` and on no other mechanism (09 §4.6 CHECKs, migration 0002);
+// `byLaunch` never returns a revoked token; `bindParent` sets a NULL parent once; `live` lists the
+// unrevoked rows by launch id; `revoke` stamps a live row once. It has no transaction of its own: a test's transaction
 // rolls it back with `snapshot` / `restore`.
-import type { Instant, LaunchId } from '../../../../kernel/domain/values'
+import type { DwarfId, Instant, LaunchId } from '../../../../kernel/domain/values'
 import type { DelegationToken, DelegationTokenStore } from '../delegationStores'
 
 const HASH_LENGTH = 64
+/** The relay entries, which authenticate with the credential file (AMENDMENT-14 A14-05). */
+const RELAY_MECHANISMS: readonly DelegationToken['mechanism'][] = ['ticket-file', 'protocol']
 
 export class InMemoryDelegationTokenStore implements DelegationTokenStore {
   private rows: DelegationToken[] = []
 
   issue(t: DelegationToken): void {
-    if ((t.mechanism === 'ticket-file') !== (t.credentialHash !== undefined)) {
-      throw new Error('a credential hash is stored exactly for ticket-file (09 §4.6)')
+    if (RELAY_MECHANISMS.includes(t.mechanism) !== (t.credentialHash !== undefined)) {
+      throw new Error('a credential hash is stored exactly for ticket-file and protocol (09 §4.6)')
     }
     if (t.credentialHash !== undefined && t.credentialHash.length !== HASH_LENGTH) {
       throw new Error('a credential hash is 64 characters (09 §4.6)')
@@ -30,6 +33,19 @@ export class InMemoryDelegationTokenStore implements DelegationTokenStore {
   byLaunch(id: LaunchId): DelegationToken | null {
     const row = this.rows.find((r) => r.launchId === id && r.revokedAt === undefined)
     return row === undefined ? null : { ...row }
+  }
+
+  bindParent(id: LaunchId, parent: DwarfId): void {
+    const row = this.rows.find((r) => r.launchId === id)
+    if (row === undefined || row.parentDwarfId === parent) return
+    if (row.parentDwarfId !== null) {
+      throw new Error('a delegation token is bound to its parent once')
+    }
+    this.rows = this.rows.map((r) => (r === row ? { ...r, parentDwarfId: parent } : r))
+  }
+
+  live(): DelegationToken[] {
+    return this.snapshot().filter((row) => row.revokedAt === undefined)
   }
 
   revoke(id: LaunchId, at: Instant): void {

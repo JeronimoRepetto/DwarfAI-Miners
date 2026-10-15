@@ -40,8 +40,10 @@ describe('the template database (09 §6.5 "Template DB")', () => {
     const copy = openTemplateCopy()
 
     expect(renderSchemaSnapshot(copy.db.all(SCHEMA_QUERY))).toBe(SNAPSHOT)
+    // AMENDED for owner amendment N (AMENDMENT-14): migration 0002 is applied too.
     expect(copy.db.all('SELECT version, name FROM schema_migrations')).toEqual([
-      { version: 1, name: '0001-initial' }
+      { version: 1, name: '0001-initial' },
+      { version: 2, name: '0002-delegation-tokens-unbound-parent' }
     ])
   })
 })

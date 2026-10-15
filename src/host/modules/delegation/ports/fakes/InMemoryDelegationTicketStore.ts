@@ -5,7 +5,7 @@
 // the 09 §4.6 `delegations` CHECKs (`failure` exactly when `failed`; `settledAt` exactly when
 // settled; `succeeded` only with `handoff.phase = 'delivered'`; no task or context once settled;
 // the worker never the parent) and its UNIQUEs (id, ticket, worker). `save` writes the next state
-// of a delegation that exists, keeping its id, parent, ticket and `createdAt`. It has no
+// of a delegation that exists, `inFlight` lists the attempted and running ones by id, keeping its id, parent, ticket and `createdAt`. It has no
 // transaction of its own: a test's transaction rolls it back with `snapshot` / `restore`.
 import type { Delegation } from '../../domain/delegation'
 import type { DelegationTicketStore } from '../delegationStores'
@@ -25,6 +25,10 @@ export class InMemoryDelegationTicketStore implements DelegationTicketStore {
   byTicket(ticket: string): Delegation | null {
     const row = this.rows.find((r) => r.ticket === ticket)
     return row === undefined ? null : { ...row }
+  }
+
+  inFlight(): Delegation[] {
+    return this.snapshot().filter((row) => row.state === 'attempted' || row.state === 'running')
   }
 
   save(d: Delegation): void {

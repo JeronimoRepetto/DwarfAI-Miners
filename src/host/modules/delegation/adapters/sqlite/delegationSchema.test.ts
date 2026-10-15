@@ -4,8 +4,8 @@ import { openTemplateCopy } from '../../../../platform/sqlite/testing/templateDb
 import { seedDelegationRows } from '../../testing/seedDelegationRows'
 
 // L5 (17 §1.5; 09 §4.6, §6.5): the CHECKs of `delegations` and `delegation_tokens` that the two
-// delegation stores rely on, probed on a copy of the run's template database (schema v1, migration
-// 1 applied): for each CHECK one row that stores and one that is rejected. Lead decision (ISSUE-198):
+// delegation stores rely on, probed on a copy of the run's template database (every migration
+// applied, 0002 included): for each CHECK one row that stores and one that is rejected. Lead decision (ISSUE-198):
 // the probes live in the delegation module rather than in `platform/sqlite/schema.contract.test.ts`,
 // which another issue holds; they restate no DDL.
 type Row = Record<string, SqliteParam>
@@ -13,7 +13,7 @@ type Row = Record<string, SqliteParam>
 const PARENT = '00000000-0000-7000-8000-0000000d3d01'
 const WORKER = '00000000-0000-7000-8000-0000000d3d02'
 const LAUNCHES = Array.from(
-  { length: 8 },
+  { length: 12 },
   (_, n) => `00000000-0000-7000-8000-0000000d3a${n.toString(16).padStart(2, '0')}`
 )
 const HASH = 'a'.repeat(64)
@@ -106,10 +106,17 @@ const TOKEN_CHECKS: readonly (readonly [string, Row, Row])[] = [
     { mechanism: 'ticket-file', credential_hash: HASH },
     { mechanism: 'ticket-file', credential_hash: 'abc' }
   ],
+  // AMENDED for owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15 (migration 0002, A14-05): every relay
+  // entry (`ticket-file`, `protocol`) stores its credential hash; `in-process` never has one.
   [
-    'credential_hash exactly for ticket-file',
-    { mechanism: 'protocol' },
-    { mechanism: 'protocol', credential_hash: HASH }
+    'credential_hash exactly for ticket-file and protocol',
+    { mechanism: 'protocol', credential_hash: HASH },
+    { mechanism: 'protocol' }
+  ],
+  [
+    'no credential_hash on in-process',
+    { mechanism: 'in-process' },
+    { mechanism: 'in-process', credential_hash: HASH }
   ]
 ]
 
@@ -138,5 +145,9 @@ describe('09 §4.6 delegation CHECKs', () => {
         /CHECK constraint failed/
       )
     }
+    // A14-06: the row is written before the launch's dwarf exists; its parent is bound later.
+    expect(() =>
+      insert(db, 'delegation_tokens', token({ mechanism: 'in-process', parent_dwarf_id: null }))
+    ).not.toThrow()
   })
 })
