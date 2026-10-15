@@ -33,7 +33,7 @@ import { RecordingDiagnosticsLog } from './kernel/fakes/RecordingDiagnosticsLog'
 import { FakeFs } from './kernel/fakes/FakeFs'
 import { SequenceIdGenerator } from './kernel/fakes/SequenceIdGenerator'
 import { InProcessEventBus } from './kernel/InProcessEventBus'
-import { createCrew, type CrewEvent } from './modules/crew'
+import { createCrew, type CrewEndEvent, type CrewEvent } from './modules/crew'
 import type { LaunchingEvent } from './modules/launching'
 import { MINE, MINE_FOLDER, seedMine } from './modules/launching/testing/sqliteLaunchingDb'
 import type { MineView } from './modules/mines'
@@ -118,7 +118,8 @@ const ACTIVE_MINE: MineView = {
   presentDwarfs: 0
 }
 
-type OsHostEvent = CrewEvent | LaunchingEvent
+// AMENDED for ISSUE-171: the launching wiring also routes crew's end events (routeStops).
+type OsHostEvent = CrewEvent | CrewEndEvent | LaunchingEvent
 
 /** The Host side over a real database file and the real endpoint, with launching served. */
 async function realEndpointHost() {
