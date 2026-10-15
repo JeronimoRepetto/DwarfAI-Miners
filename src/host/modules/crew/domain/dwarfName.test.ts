@@ -12,6 +12,8 @@ function normalized(text: string): { name: string; dropped: boolean } | 'too-lon
 
 /** An accented letter with no precomposed form: two code points, one grapheme even after NFC. */
 const X_ACUTE = 'x́'
+/** DESERET CAPITAL LONG I: one grapheme, one code point, two UTF-16 code units. */
+const DESERET = '\u{10400}'
 
 describe('DwarfName (INV-29)', () => {
   it('[US-MSG-005.AC07, INV-29] leading and trailing spaces are trimmed and every inner white-space run becomes one space', () => {
@@ -54,8 +56,16 @@ describe('DwarfName (INV-29)', () => {
       name: 'é'.repeat(24),
       dropped: false
     })
-    expect(normalized(X_ACUTE.repeat(24))).toStrictEqual({
-      name: X_ACUTE.repeat(24),
+    // A letter outside the BMP: one grapheme and one code point, two UTF-16 units.
+    expect(normalized(DESERET.repeat(24))).toStrictEqual({
+      name: DESERET.repeat(24),
+      dropped: false
+    })
+    expect(normalized(DESERET.repeat(25))).toBe('too-long')
+    // AMENDED (lead decision 2026-10-15, was: 24 × x́ accepted): 24 graphemes of 48 code points are
+    // refused, so the 09 CHECK can never be violated (see the code-point case below).
+    expect(normalized(X_ACUTE.repeat(12))).toStrictEqual({
+      name: X_ACUTE.repeat(12),
       dropped: false
     })
     expect(normalized(X_ACUTE.repeat(25))).toBe('too-long')
@@ -63,6 +73,16 @@ describe('DwarfName (INV-29)', () => {
     expect(normalized(`  ${'a'.repeat(24)}  🪓`)).toStrictEqual({
       name: 'a'.repeat(24),
       dropped: true
+    })
+  })
+
+  it('[INV-29] a name the 09 dwarfs.custom_name CHECK would refuse, above 24 code points, is too long even within 24 graphemes', () => {
+    // 24 graphemes of combining sequences with no precomposed form: 48 code points.
+    expect(normalized(X_ACUTE.repeat(24))).toBe('too-long')
+    expect(normalized(`${X_ACUTE.repeat(12)}a`)).toBe('too-long')
+    expect(normalized(`${X_ACUTE.repeat(11)}ab`)).toStrictEqual({
+      name: `${X_ACUTE.repeat(11)}ab`,
+      dropped: false
     })
   })
 
