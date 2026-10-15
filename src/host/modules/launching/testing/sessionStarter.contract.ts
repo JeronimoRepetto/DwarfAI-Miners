@@ -97,7 +97,7 @@ function startOne(subject: SessionStarterSubject, launchId = CONTRACT_LAUNCH): S
 
 export function runSessionStarterContract(name: string, make: () => SessionStarterSubject): void {
   describe(`SessionStarter contract: ${name}`, () => {
-    it('[16 §4.5, S5.18, S5.21, S4.01] a ready session resolves ok only once the 3-second early window after the spawn has passed, and onSpawned ran once before', async () => {
+    it('[S5.18, S5.21, S4.01] a ready session resolves ok only once the 3-second early window after the spawn has passed, and onSpawned ran once before', async () => {
       const subject = make()
       subject.arrange({ kind: 'ready' })
       const started = startOne(subject)
@@ -141,7 +141,7 @@ export function runSessionStarterContract(name: string, make: () => SessionStart
       expect(started.result()).toMatchObject({ ok: false, error: { cause: 'exited-at-once' } })
     })
 
-    it('[05 §3.5, INV-52] a start settles with ADR-020 LaunchFailure only', () => {
+    it('[INV-52, ADR-020] a start settles with an ADR-020 LaunchFailure only', () => {
       expectTypeOf<Awaited<ReturnType<SessionStarter['start']>>>().toEqualTypeOf<
         { ok: true; value: DriverSession } | { ok: false; error: LaunchFailure }
       >()
