@@ -51,6 +51,31 @@ export type LaunchFailureCause =
   | 'jev-unreachable' // 4: Jev fell back, retry can change it, nothing went out
   | 'jev-could-not-choose' // 5: Jev fell back, retry cannot change it, nothing went out
 
+/** Owner: ADR-020 item 1 (D1): what a failed launch carries; the notice renders it. */
+export interface LaunchFailure {
+  cause: LaunchFailureCause
+  supplierLabel: string // US-LAUNCH-006 substitution rules
+  jevReason?: JevFallbackReason // causes 4 and 5
+  reasonSentence?: string // cause 5: the app's own sentence (fixed copy per reason)
+  actions: ReadonlyArray<'retry' | 'pick-manually'>
+  toolOutputTail?: string // ≤ 400 chars, causes 2 and 3 only; never persisted, never logged
+}
+
+// ---------- 06 §12 ----------
+
+/** Owner: 06 §12: the ADR-020 D2 list plus `'effort-ceiling'` (ADR-028 D2), a reason, never a cause. */
+export type JevFallbackReason =
+  | 'unreachable'
+  | 'timeout'
+  | 'rate-limited'
+  | 'invalid-response'
+  | 'no-key'
+  | 'unauthorized'
+  | 'low-confidence'
+  | 'budget-exceeded'
+  | 'no-launchable-provider'
+  | 'effort-ceiling'
+
 // ---------- ADR-006 item 4 ----------
 
 /** Owner: ADR-006 item 4. */
