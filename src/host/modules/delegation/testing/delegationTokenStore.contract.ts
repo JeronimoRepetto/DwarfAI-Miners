@@ -116,7 +116,7 @@ export function runDelegationTokenStoreContract(
       expect(s.rows()).toStrictEqual([{ ...first, revokedAt: T1 }])
     })
 
-    // Owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15 (A14-05, migration 0002): every relay
+    // AMENDED for owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15 (A14-05, migration 0002): every relay
     // entry (`ticket-file`, `protocol`) authenticates with the credential file, so both keep its
     // hash; `in-process` never has one.
     it('[ADR-013] each mechanism stores with the hash on ticket-file and protocol only; a relay entry without a 64-character hash, or a hash on in-process, is rejected', async () => {

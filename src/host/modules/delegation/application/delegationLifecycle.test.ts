@@ -14,9 +14,9 @@ import { InMemoryDelegationTokenStore } from '../ports/fakes/InMemoryDelegationT
 import { drawCredential, hashOf } from '../testing/drawCredential'
 import { DelegationLifecycleService } from './delegationLifecycle'
 
-// L2 (17 §1.2): the revocation half of `DelegationLifecycle` (owner amendment N (AMENDMENT-14,
-// OQ-85), 2026-10-15; 16 §4.8, §5.3; ADR-013 item 3) over the in-memory stores, a fake clock and
-// a recording bus. `issueFor` is not here: see the hand-off of ISSUE-198.
+// L2 (17 §1.2): `DelegationLifecycle` (owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15, and
+// its addendum A14-07; 16 §4.8, §5.3; ADR-013 items 3-4) over the in-memory stores, a fake clock,
+// a recording bus and a recording minter.
 
 const T0: Instant = 1_750_000_000_000
 const PARENT = '00000000-0000-7000-8000-0000000d6d01' as DwarfId
@@ -28,7 +28,11 @@ const UNBOUND_LAUNCH = '00000000-0000-7000-8000-0000000d6a03' as LaunchId
 const ORPHAN_FILE = '00000000-0000-7000-8000-0000000d6a04' as LaunchId
 const TASK = 'Summarise the failing test' as SubtaskText
 
-function setUp() {
+const RELAY_ARGS = ['--dwarfai-relay-entry'] as const
+const EXEC_PATH = '/opt/dwarfai/versions/1.2.3/DwarfAI-Miners'
+
+function setUp(options: { delegationOn?: boolean } = {}) {
+  const minted: string[] = []
   const tokens = new InMemoryDelegationTokenStore()
   const tickets = new InMemoryDelegationTicketStore()
   const files = new InMemoryCredentialFileStore()
@@ -44,9 +48,24 @@ function setUp() {
     clock,
     ids: new SequenceIdGenerator(),
     hostEpoch: 'epoch-1',
-    log
+    log,
+    preferences: {
+      get: () => ({
+        subagentDelegationOn: options.delegationOn ?? true,
+        routingProfile: 'balanced',
+        systemNotificationsOn: true,
+        openCodePermissionsOn: false
+      })
+    },
+    mintCredential: () => {
+      const value = drawCredential()
+      minted.push(value)
+      return { value, sha256: hashOf(value) }
+    },
+    appPaths: { execPath: EXEC_PATH },
+    relayEntryArgs: RELAY_ARGS
   })
-  return { tokens, tickets, files, clock, bus, log, lifecycle }
+  return { tokens, tickets, files, clock, bus, log, lifecycle, minted }
 }
 
 /** A gated launch as `issueFor` leaves it: the row (hash only), then the file. */
@@ -203,5 +222,184 @@ describe('DelegationLifecycle revocation (16 §4.8, §5.3)', () => {
       })
     ])
     expect(JSON.stringify([s.log.entries, s.log.refused])).not.toContain(credential)
+  })
+})
+
+describe('DelegationLifecycle.issueFor (16 §5.3; ADR-013 items 3-4)', () => {
+  it("[INV-80, INV-81] issueFor returns null unless both gates are open and never for a delegated worker's launch", async () => {
+    const off = setUp({ delegationOn: false })
+    const on = setUp()
+
+    // The setting off: closed, whatever the launch.
+    expect(
+      await off.lifecycle.issueFor({
+        launchId: LAUNCH,
+        mechanism: 'ticket-file',
+        launchedWithLetJevChoose: true
+      })
+    ).toBeNull()
+    // The launch did not use "Let Jev choose": closed. A delegated worker's launch always has
+    // launchedWithLetJevChoose = false (09 D-17), so a worker gets null: depth one (INV-81).
+    expect(
+      await on.lifecycle.issueFor({
+        launchId: LAUNCH,
+        mechanism: 'ticket-file',
+        launchedWithLetJevChoose: false
+      })
+    ).toBeNull()
+    // No delegation for this driver.
+    expect(
+      await on.lifecycle.issueFor({
+        launchId: OTHER_LAUNCH,
+        mechanism: 'none',
+        launchedWithLetJevChoose: true
+      })
+    ).toBeNull()
+
+    for (const s of [off, on]) {
+      expect(s.tokens.snapshot()).toStrictEqual([])
+      expect(await s.files.list()).toStrictEqual([])
+      expect(s.minted).toStrictEqual([])
+    }
+  })
+
+  it('[C-13, C-15, INV-83] issueFor commits the hash-only token row, then writes the credential file, and returns a DelegationInjection that carries only the file path', async () => {
+    const s = setUp()
+    const write = s.files.write.bind(s.files)
+    let rowAtWrite: DelegationToken | null = null
+    s.files.write = (launchId, credential) => {
+      rowAtWrite = s.tokens.byLaunch(launchId)
+      return write(launchId, credential)
+    }
+
+    const injection = await s.lifecycle.issueFor({
+      launchId: LAUNCH,
+      mechanism: 'ticket-file',
+      launchedWithLetJevChoose: true
+    })
+
+    expect(s.minted).toHaveLength(1)
+    const credential = s.minted[0] ?? ''
+    const path = `/host-data/run/mcp/${LAUNCH}.cred`
+    expect(injection).toStrictEqual({
+      mechanism: 'ticket-file',
+      relay: { program: EXEC_PATH, args: [...RELAY_ARGS] },
+      credentialFilePath: path
+    })
+    const token: DelegationToken = {
+      launchId: LAUNCH,
+      parentDwarfId: null,
+      mechanism: 'ticket-file',
+      credentialHash: hashOf(credential),
+      issuedAt: T0
+    }
+    expect(rowAtWrite).toStrictEqual(token)
+    expect(s.tokens.snapshot()).toStrictEqual([token])
+    expect(s.files.read(path)).toBe(credential)
+    // Never in the entry (no argv, no env), the row or the log (ADR-013 item 2, C-16).
+    expect(JSON.stringify(injection)).not.toContain(credential)
+    expect(JSON.stringify(s.tokens.snapshot())).not.toContain(credential)
+    expect(JSON.stringify([s.log.entries, s.log.refused])).not.toContain(credential)
+  })
+
+  it('[ADR-013, INV-83] a protocol relay entry is issued like ticket-file, with its hash', async () => {
+    const s = setUp()
+
+    const injection = await s.lifecycle.issueFor({
+      launchId: LAUNCH,
+      mechanism: 'protocol',
+      launchedWithLetJevChoose: true
+    })
+
+    expect(injection).toMatchObject({
+      mechanism: 'protocol',
+      credentialFilePath: `/host-data/run/mcp/${LAUNCH}.cred`
+    })
+    expect(s.tokens.byLaunch(LAUNCH)).toMatchObject({
+      mechanism: 'protocol',
+      credentialHash: hashOf(s.minted[0] ?? '')
+    })
+  })
+
+  it('[ADR-013] in-process has no v1 driver: issueFor returns null and writes nothing', async () => {
+    const s = setUp()
+
+    expect(
+      await s.lifecycle.issueFor({
+        launchId: LAUNCH,
+        mechanism: 'in-process',
+        launchedWithLetJevChoose: true
+      })
+    ).toBeNull()
+    expect(s.tokens.snapshot()).toStrictEqual([])
+    expect(s.minted).toStrictEqual([])
+  })
+
+  it('[ADR-013, C-16] a credential file that cannot be written revokes the row and returns null, logged without the value', async () => {
+    const s = setUp()
+    s.files.failNextWrite('no-space')
+
+    const injection = await s.lifecycle.issueFor({
+      launchId: LAUNCH,
+      mechanism: 'ticket-file',
+      launchedWithLetJevChoose: true
+    })
+
+    expect(injection).toBeNull()
+    expect(s.tokens.byLaunch(LAUNCH)).toBeNull()
+    expect(s.tokens.snapshot()).toStrictEqual([
+      expect.objectContaining({ launchId: LAUNCH, revokedAt: T0 })
+    ])
+    expect(s.log.entries).toStrictEqual([
+      expect.objectContaining({
+        level: 'warn',
+        event: 'delegation.credential.write',
+        subsystem: 'delegation',
+        outcome: 'failed',
+        causeClass: 'no-space',
+        launchId: LAUNCH
+      })
+    ])
+    expect(JSON.stringify([s.log.entries, s.log.refused])).not.toContain(s.minted[0] ?? '-')
+  })
+
+  it('[ADR-013] a credential file already at the path is never overwritten: the row is revoked and issueFor returns null', async () => {
+    const s = setUp()
+    await s.files.write(LAUNCH, 'planted')
+
+    expect(
+      await s.lifecycle.issueFor({
+        launchId: LAUNCH,
+        mechanism: 'ticket-file',
+        launchedWithLetJevChoose: true
+      })
+    ).toBeNull()
+    expect(s.files.read(`/host-data/run/mcp/${LAUNCH}.cred`)).toBe('planted')
+    expect(s.tokens.live()).toStrictEqual([])
+  })
+
+  it('[ADR-013, INV-83] a credential store that throws after the row was committed fails closed: the row is revoked and issueFor returns null', async () => {
+    const s = setUp()
+    s.files.write = () => Promise.reject(new Error('a credential file is named by a launch id'))
+
+    const injection = await s.lifecycle.issueFor({
+      launchId: LAUNCH,
+      mechanism: 'ticket-file',
+      launchedWithLetJevChoose: true
+    })
+
+    expect(injection).toBeNull()
+    expect(s.tokens.live()).toStrictEqual([])
+    expect(s.tokens.snapshot()).toStrictEqual([
+      expect.objectContaining({ launchId: LAUNCH, revokedAt: T0 })
+    ])
+    expect(s.log.entries).toStrictEqual([
+      expect.objectContaining({
+        event: 'delegation.credential.write',
+        outcome: 'failed',
+        causeClass: 'unknown',
+        launchId: LAUNCH
+      })
+    ])
   })
 })
