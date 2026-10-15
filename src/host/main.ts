@@ -244,6 +244,7 @@ import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/
 import { createLaunchDrainGate, type LaunchingEvent } from './modules/launching'
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
+import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
 import { routeCut1Events } from './wiring/routes/cut1Routes'
 import {
   routeMineBackfillWhenObserving,
@@ -552,6 +553,8 @@ async function bootHost(base: HostBase): Promise<void> {
   const servedAsking = serveAsking({ dispatcher, sections })
   // B-M33 and the `launches` section (ISSUE-162), after `asks` in the chunk order (14 §4.2).
   const servedLaunching = serveLaunching({ dispatcher, sections })
+  // B-M37 `suppliers.launchable` (ISSUE-163), bound when boot step 4 wired suppliers.
+  const servedSuppliers = serveSuppliers({ dispatcher })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -802,6 +805,7 @@ async function bootHost(base: HostBase): Promise<void> {
             // A new demo world each Host start (15 §4.12); development builds only.
             simulatedSeed: epoch
           })
+          servedSuppliers.bind(launchableSource(modules.suppliers))
           // The providers' own folders: the environment overrides they honour, else the person's
           // home folder (15 §5; HO-09). Read only, by observation and by the coal backfill.
           const folders = observedProviderFolders(process.env, homedir(), {
