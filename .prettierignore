@@ -9,3 +9,5 @@ src/ui-main/window/ports/hostConnection.ts
 src/ui-main/window/ports/trayController.ts
 # The legacy seam-A replay's recordings: canonical bytes written by scripts/strangler/record-seam-a.mjs (ISSUE-056).
 fixtures/ipc/seam-a-replay/*/recording.*.json
+# A byte-for-byte copy of the 16 §4.9 RoutingCatalogSource line, whose trailing comment no prettier-ignore reaches (ISSUE-190).
+src/host/modules/jev/ports/jevRouter.ts
