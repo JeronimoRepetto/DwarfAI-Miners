@@ -10,7 +10,7 @@
 //   reads the stored preferences before and after, and reports each Jev key the save changed to the write hub. It
 //   never calls A-51 itself, so nothing is written to the legacy store.
 //
-// Composed only by `src/ui-main/index.ts` (05 R16), through `settingsMirrorHalves` / `reportSettingsMirrorWrites`.
+// Composed only by `src/ui-main/index.ts` (05 R16), through `settingsMirrorHalves` / `reportSettingsMirrorWrites` (settingsMirrorHalves.ts).
 // Deleted with the bridge in 4a, when the direction flips (ISSUE-230, ISSUE-236).
 import type { HostPreferences, StepId } from '@dwarfai/contracts'
 import { IPC_CHANNELS, parseJevPreferences, type JevPreferences } from '../../shared/contracts'

@@ -23,12 +23,8 @@ import {
 import { JEV_MIRROR_KEYS, createJevMirrorHalf, reportJevWrites } from './jevMirror'
 import { createLegacySettingsWriteHub } from './legacySettingsWrites'
 import type { LegacySettingsRoute } from './notificationsHalf'
-import {
-  createSettingsMirrorBridge,
-  reportSettingsMirrorWrites,
-  settingsMirrorHalves,
-  type MirrorHostClient
-} from './settingsMirrorBridge'
+import { createSettingsMirrorBridge, type MirrorHostClient } from './settingsMirrorBridge'
+import { reportSettingsMirrorWrites, settingsMirrorHalves } from './settingsMirrorHalves'
 
 // L2 (17 §1.2): the Jev half of `SettingsMirrorBridge` (21 §3, from 3a; 21 §2 seam-B row 3a: B-M13 extended to the Jev
 // preferences). Settings still writes the Jev preferences through today's A-51 handler; the half reads them back
