@@ -9,8 +9,10 @@
 //   their cascades take the departed dwarfs' rows (messages, keys, usage), so the steps of (3)
 //   delete only what the present dwarfs and the kept mines leave. The delegation step (ISSUE-208)
 //   closes (3): it deletes the settled delegations, which nulls their worker launches' FK, so it
-//   precedes the launching step of (4) that deletes the settled launches. The others join with
-//   their issues, each in its place (later: ISSUE-181).
+//   precedes the launching step of (4) that deletes the settled launches. The launching step
+//   (ISSUE-181; AMENDMENT-10) is (4) and runs last: after the cascades of (2) took the departed
+//   dwarfs' launch records, a settled launch a live owned session's record still references stays,
+//   so `launch_records.launch_id ... ON DELETE RESTRICT` never fires and the transaction commits.
 // - `installMoment`: the ledger's `install_moment(now, 'reset')` (07 S13.05), written through
 //   `LedgerRepository.setInstallMoment` (16 §4.10; `SqliteLedgerRepository`) in its own
 //   transaction at that step (lead decision 2026-09-30: the `ResetDbStep` shape, no new port
@@ -38,12 +40,14 @@ export interface ModuleResetSteps {
   asking: ResetDbStep
   /** `createDelegationResetStep`: 09 §7.2 (3), settled delegations deleted (ISSUE-208). */
   delegation: ResetDbStep
+  /** `createLaunchingResetStep`: 09 §7.2 (4), unreferenced settled launches deleted (ISSUE-181). */
+  launching: ResetDbStep
 }
 
 export interface ResetParticipantsDeps {
   /** The preferences module's step (`createPreferencesResetStep`). */
   preferences: ResetDbStep
-  /** The mines, crew, observation, ledger, conversation, asking and delegation steps. */
+  /** The mines, crew, observation, ledger, conversation, asking, delegation and launching steps. */
   modules: ModuleResetSteps
   /** The attention module's step (`createAttentionResetStep`). */
   attention: ResetDbStep
@@ -73,7 +77,9 @@ export function resetParticipants(deps: ResetParticipantsDeps): ResetParticipant
       modules.asking,
       deps.attention,
       // Settled delegations go before (4) deletes the settled launches (ISSUE-208).
-      modules.delegation
+      modules.delegation,
+      // (4): the settled launches no remaining launch record references (ISSUE-181).
+      modules.launching
     ],
     installMoment: {
       name: 'ledger-install-moment',

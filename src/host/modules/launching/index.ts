@@ -19,6 +19,8 @@
 //   `LaunchedSessionCrashed` (application/sessionExited.ts). `recovery` is the current Host
 //   recovery's coverage; no recovery runs in the Host yet (later: ISSUE-173 makes it launching's
 //   own), so it defaults to `NO_HOST_RECOVERY`.
+// - `createLaunchingResetStep` (ISSUE-181) is the module's step of the Reset-metrics saga (ADR-023;
+//   09 §7.2 step (4)), registered by host/wiring/resetParticipants.ts.
 //
 // The other members join with their issues: `launchCustom` (later: ISSUE-165), the Jev path
 // (later: ISSUE-164), recovery (later: ISSUE-173), `stopAll` (later: ISSUE-175).
@@ -37,7 +39,11 @@ import {
   type SessionExit,
   type SessionExitResult
 } from './application/sessionExited'
+import { LaunchingResetStep } from './adapters/sqlite/LaunchingResetStep'
 import type { DwarfId, LaunchId } from '../../kernel/domain/values'
+import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
+import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
+import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import type { LaunchRecord } from './ports/launchRecordStore'
 import type { LaunchRequestInput } from './application/launch'
 
@@ -125,4 +131,21 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
     queries: createLaunchQueries({ memory, records: deps.records }),
     snapshots: memory
   }
+}
+
+/** Structurally the preferences module's `ResetDbStep` (16 §4.12); launching never imports it. */
+export interface LaunchingResetDbStep {
+  readonly name: string
+  reset(tx: TransactionRunner): void
+}
+
+/**
+ * `name: 'launching'`, 09 §7.2 step (4); registered with the saga after the mines and crew steps
+ * by host/wiring/resetParticipants.ts (ISSUE-181).
+ */
+export function createLaunchingResetStep(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+}): LaunchingResetDbStep {
+  return new LaunchingResetStep(deps)
 }
