@@ -3,12 +3,22 @@
 // #1290): the upgrade drain is built before boot step 4 wires the modules that hold it, so the gate reports what
 // every module bound so far reports, and nothing before any is bound; an ask that closes asks the drain again at once.
 import { describe, expect, it } from 'vitest'
-import type { AskId, DwarfId, EventId, HostEpoch, Instant } from '../kernel/domain/values'
+import type {
+  AskId,
+  DwarfId,
+  EventId,
+  HostEpoch,
+  Instant,
+  LaunchId,
+  MineId,
+  ProviderId
+} from '../kernel/domain/values'
 import { FakeDrainGate } from '../kernel/fakes/FakeDrainGate'
 import { RecordingEventBus } from '../kernel/fakes/RecordingEventBus'
 import { runDrainGateContract } from '../kernel/testing/drainGate.contract'
 import type { AskingEvent } from '../modules/asking'
-import { createHostDrainGate, routeDrainRechecks } from './hostDrainGate'
+import type { LaunchingEvent } from '../modules/launching'
+import { createHostDrainGate, routeDrainRechecks, routeLaunchDrainRechecks } from './hostDrainGate'
 
 const DWARF = '00000000-0000-7000-8000-000000129001' as DwarfId
 
@@ -67,5 +77,46 @@ describe('the Host DrainGate binding (#1290)', () => {
     bus.publish(askClosed())
 
     expect(rechecks).toHaveLength(1)
+  })
+
+  it('[ADR-002, S12.14] a launch that settles, launched or failed, asks the drain again at once', () => {
+    const bus = new RecordingEventBus<LaunchingEvent>()
+    const rechecks: string[] = []
+    // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+    const deps: Parameters<typeof routeLaunchDrainRechecks>[0] = {
+      events: bus,
+      drain: { recheck: () => rechecks.push('x') }
+    }
+    const stop = routeLaunchDrainRechecks(deps)
+    const base = { v: 1 as const, at: 1 as Instant, hostEpoch: 'epoch-162' as HostEpoch }
+    const launchId = '00000000-0000-7000-8000-000000162001' as LaunchId
+    const mineId = '00000000-0000-7000-8000-000000162002' as MineId
+
+    bus.publish({
+      ...base,
+      type: 'DwarfLaunched',
+      id: 'event-2' as EventId,
+      payload: {
+        launchId,
+        dwarfId: DWARF,
+        mineId,
+        ref: { providerId: 'simulated' as ProviderId, providerSessionId: 's-1' },
+        delegated: false,
+        prompt: 'p'
+      }
+    })
+    bus.publish({
+      ...base,
+      type: 'LaunchFailed',
+      id: 'event-3' as EventId,
+      payload: {
+        launchId,
+        mineId,
+        failure: { cause: 'could-not-start', supplierLabel: 'Simulated', actions: ['retry'] }
+      }
+    })
+
+    expect(rechecks).toHaveLength(2)
+    stop()
   })
 })

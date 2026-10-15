@@ -36,6 +36,7 @@
 import type { ProcessIdentity } from '../../../kernel/domain/processIdentity'
 import type { LaunchFailure } from '../../../kernel/domain/sharedContracts'
 import type {
+  DwarfId,
   EventId,
   FolderPath,
   HostEpoch,
@@ -92,6 +93,7 @@ export type LaunchRefusal =
   | 'mine-not-enterable' // INV-50: a mine that is missing, removed or unenterable
   | 'unknown-supplier' // the provider is not in this build's catalogue
   | 'mode-not-offered' // ADR-011 item 1: the mode is not among the entry's offered modes now
+  | 'mode-not-forwardable' // offered, but its PermissionModeSpec cannot reach the driver yet (package gap)
   | 'not-retryable' // INV-54: `retryOf` names no failed launch whose cause allows Retry
   | 'jev-not-built' // the Jev path is ISSUE-164's: hidden until built (21 §1 item 8)
 
@@ -123,8 +125,11 @@ export interface LaunchingDeps {
   }
   /** Calls along the launching → mines edge: the target mine and its folder, the session's cwd. */
   mines: Pick<MinesQueries, 'get' | 'folderOf'>
-  /** Calls along the launching → crew edge: the launched dwarf's arrival. */
-  crew: Pick<CrewCommands, 'arrive'>
+  /**
+   * Calls along the launching → crew edge: the launched dwarf's arrival, and its departure when the
+   * launch fails after it arrived.
+   */
+  crew: Pick<CrewCommands, 'arrive' | 'sessionClosed'>
   bus: Pick<DomainEventBus<LaunchingEvent>, 'publish'>
   clock: Clock
   /** Starts each settlement after the answer was written. */
@@ -165,11 +170,15 @@ export class LaunchUseCase {
     }
     const entry = this.deps.suppliers.catalogue.entry(providerId)
     if (entry === null) throw new LaunchRefusedError('unknown-supplier')
-    if (
-      input.permissionMode !== undefined &&
-      !entry.permissionModes.includes(input.permissionMode)
-    ) {
-      throw new LaunchRefusedError('mode-not-offered')
+    if (input.permissionMode !== undefined) {
+      // Offered or not, a mode cannot reach the driver yet: suppliers exposes the offered mode ids,
+      // never their `PermissionModeSpec`, which `DriverLaunchRequest.permissionMode` needs (15 §1.2;
+      // package gap). Refused rather than accepted and dropped.
+      throw new LaunchRefusedError(
+        entry.permissionModes.includes(input.permissionMode)
+          ? 'mode-not-forwardable'
+          : 'mode-not-offered'
+      )
     }
     if (input.retryOf !== undefined) {
       const failed = launches.byId(input.retryOf)
@@ -324,10 +333,48 @@ export class LaunchUseCase {
       rank: rankForDepth(0),
       status: 'working'
     })
-    this.deps.suppliers.bindings.bind(ref, dwarfId)
     const step = applyLaunchEvent(launch, { t: 'succeeded', dwarfId })
     if (!step.ok) return
     const next = step.value.launch
+    try {
+      this.deps.suppliers.bindings.bind(ref, dwarfId)
+      this.ownSession(launch, next, ref, dwarfId, transport, process, facts)
+    } catch (error) {
+      // The arrival committed and published on its own (crew's `arrive` publishes after its own
+      // commit, so it cannot join this transaction, 16 §2.3): undo it. The session is ended through
+      // its protocol close (ADR-014: a driver falls through to its identity-checked tree kill) and
+      // the dwarf walks out; the caller then settles the launch `could-not-start` (INV-52).
+      void session.close('end-thread')
+      this.deps.crew.sessionClosed(dwarfId, 'crashed')
+      throw error
+    }
+    this.deps.memory.put(viewOf(next, facts.requestedAt))
+    this.publish({
+      type: 'DwarfLaunched',
+      payload: {
+        launchId: launch.id,
+        dwarfId,
+        mineId: request.mineId,
+        ref,
+        delegated: false,
+        prompt: request.prompt
+      }
+    })
+    // A succeeded launch leaves the board: its dwarf is on it now.
+    this.deps.memory.forget(launch.id)
+  }
+
+  /** One transaction: the owned session's `launch_records` row and `launches` `succeeded`. */
+  private ownSession(
+    launch: OwnLaunch,
+    next: OwnLaunch,
+    ref: DriverSession['ref'],
+    dwarfId: DwarfId,
+    transport: DriverTransport,
+    process: ProcessIdentity,
+    facts: Accepted
+  ): void {
+    const { request } = launch
     this.deps.transactions.inTransaction(() => {
       this.deps.records.put({
         dwarfId,
@@ -351,20 +398,6 @@ export class LaunchUseCase {
       })
       this.deps.launches.put(next)
     })
-    this.deps.memory.put(viewOf(next, facts.requestedAt))
-    this.publish({
-      type: 'DwarfLaunched',
-      payload: {
-        launchId: launch.id,
-        dwarfId,
-        mineId: request.mineId,
-        ref,
-        delegated: false,
-        prompt: request.prompt
-      }
-    })
-    // A succeeded launch leaves the board: its dwarf is on it now.
-    this.deps.memory.forget(launch.id)
   }
 
   /** S5.16, S5.17, S5.19, S5.20: `failed` with exactly one cause; the tail stays in memory. */

@@ -23,7 +23,7 @@
 // until the launching module serves it (later: ISSUE-175).
 // The upgrade drain asks the DrainGate what is still open: the Host's binding (wiring/hostDrainGate.ts),
 // which reports the blockers of each module bound to it, so it drains at once until one is: the asking
-// module's live asks from boot step 4 (#1290), the launching module's later (EPIC-10); a
+// module's live asks from boot step 4 (#1290), the launching module's in-flight launches (ISSUE-162); a
 // `host.upgrade.request` target must be a direct child of the ADR-002 D5
 // versioned-copy root, named by the same rule the UI's launcher uses (14 §1.10).
 //
@@ -208,7 +208,11 @@ import {
   runRevertIntegrations
 } from './wiring/revertIntegrations'
 import { createModuleResetSteps, type WiredModuleResetSteps } from './wiring/moduleResetSteps'
-import { createHostDrainGate, routeDrainRechecks } from './wiring/hostDrainGate'
+import {
+  createHostDrainGate,
+  routeDrainRechecks,
+  routeLaunchDrainRechecks
+} from './wiring/hostDrainGate'
 import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
@@ -237,7 +241,7 @@ import {
 } from './wiring/routes/conversation'
 import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
 import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/routes/launching'
-import type { LaunchingEvent } from './modules/launching'
+import { createLaunchDrainGate, type LaunchingEvent } from './modules/launching'
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { routeCut1Events } from './wiring/routes/cut1Routes'
@@ -475,6 +479,7 @@ async function bootHost(base: HostBase): Promise<void> {
   const drainGate = createHostDrainGate()
   // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
   let stopDrainRechecks: (() => void) | undefined
+  let stopLaunchDrainRechecks: (() => void) | undefined
   // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
   let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
@@ -509,8 +514,8 @@ async function bootHost(base: HostBase): Promise<void> {
     // Cut 0: the `mines` table has no row yet, so false is the true value (later: ISSUE-082 reads it).
     minesEverKnown: () => false
   }
-  // Nothing is held before boot step 4 binds the asking module's gate (the launching module's later:
-  // EPIC-10), so until then the drain goes at once.
+  // Nothing is held before boot step 4 binds the asking and launching modules' gates, so until then
+  // the drain goes at once.
   const drain = createUpgradeDrain({
     gate: drainGate,
     state: hostState,
@@ -650,6 +655,7 @@ async function bootHost(base: HostBase): Promise<void> {
         stopRoutes: () => {
           maintenance?.stop()
           stopDrainRechecks?.()
+          stopLaunchDrainRechecks?.()
           modules.asking?.stop()
           modules.launching?.stop()
         },
@@ -1064,6 +1070,10 @@ async function bootHost(base: HostBase): Promise<void> {
             crew: modules.crew.crew.commands,
             conversation: conversation.conversation.commands
           })
+          // Its in-flight launches hold the upgrade drain too (ADR-002 D8 item 2); a settled launch
+          // asks it again at once.
+          drainGate.bind(createLaunchDrainGate({ launches: modules.launching.launching.queries }))
+          stopLaunchDrainRechecks = routeLaunchDrainRechecks({ events: bus, drain })
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.

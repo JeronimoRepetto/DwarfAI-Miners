@@ -39,6 +39,7 @@ import {
   type LaunchRequestInput,
   type SessionStarter
 } from '../../modules/launching'
+import { createLaunchDrainGate } from '../../modules/launching'
 import { FakeSessionStarter } from '../../modules/launching/testing/FakeSessionStarter'
 import { inMemoryLaunching } from '../../modules/launching/testing/inMemoryLaunching'
 import type { MineView } from '../../modules/mines'
@@ -121,7 +122,15 @@ function connection(role: AttachedConnection['role'], clientId: string) {
 }
 
 /** One Host: launching, the bridge over suppliers (or the double), crew, conversation, frames. */
-function host(options: { starter?: 'bridge' | 'fake' } = {}) {
+function host(
+  options: {
+    starter?: 'bridge' | 'fake'
+    /** The mode ids the supplier's entry offers now (ADR-011 item 1); none by default. */
+    offeredModes?: readonly string[]
+    /** Makes the `launch_records` write throw: a failure after the dwarf arrived. */
+    failRecordsWrite?: boolean
+  } = {}
+) {
   const db = inMemoryLaunching(T0)
   const clock = db.clock
   const scheduler = new FakeScheduler(clock)
@@ -164,12 +173,30 @@ function host(options: { starter?: 'bridge' | 'fake' } = {}) {
   const launching = createLaunching({
     launches: db.launches,
     processes: db.processes,
-    records: db.records,
+    records: options.failRecordsWrite
+      ? {
+          ...db.records,
+          all: () => db.records.all(),
+          live: () => db.records.live(),
+          remove: (id) => db.records.remove(id),
+          markStoppedByPerson: (id) => db.records.markStoppedByPerson(id),
+          put: () => {
+            throw new Error('the launch_records write failed')
+          }
+        }
+      : db.records,
     transactions: { inTransaction: (work) => db.inTransaction(work) },
     starter,
     suppliers: {
       registry: suppliers.registry,
-      catalogue: suppliers.catalogue,
+      catalogue: {
+        entry: (id) => {
+          const entry = suppliers.catalogue.entry(id)
+          return entry === null || options.offeredModes === undefined
+            ? entry
+            : { ...entry, permissionModes: [...options.offeredModes] }
+        }
+      },
       // The double hands out sessions suppliers never saw: only the bridge's can be bound.
       bindings: options.starter === 'fake' ? { bind: () => undefined } : suppliers.bindings
     },
@@ -201,6 +228,7 @@ function host(options: { starter?: 'bridge' | 'fake' } = {}) {
   return {
     db,
     clock,
+    suppliers,
     bus,
     log,
     crew,
@@ -351,6 +379,50 @@ describe('launch flow F3 (SimulatedDriver)', () => {
     const [dwarf] = h.crew.queries.crewOf(MINE)
     expect(dwarf?.status).toBe('working')
     expect(h.launchesSection()).toEqual([])
+  })
+
+  it('[ADR-002, S12.14] an in-flight launch holds the upgrade drain until it settles', async () => {
+    const h = host()
+    const gate = createLaunchDrainGate({ launches: h.launching.queries })
+    expect(gate.blockers()).toEqual([])
+    await launched(h)
+    expect(gate.blockers()).toEqual([{ kind: 'in-flight' }])
+    await h.run(SETTLE_MS)
+    expect(gate.blockers()).toEqual([])
+  })
+
+  it('[ADR-011, INV-42] a permission mode the Host cannot hand to the driver is refused, never accepted and dropped', async () => {
+    const h = host({ offeredModes: ['ask-first'] })
+    await expect(
+      h.launching.commands.launch({ ...REQUEST, permissionMode: 'ask-first' })
+    ).rejects.toBeInstanceOf(LaunchRefusedError)
+    expect(h.db.launches.snapshot().size).toBe(0)
+    expect(h.bus.published).toEqual([])
+  })
+
+  it('[INV-52, S5.21] a launch whose owned-session write fails settles could-not-start, its dwarf walks out and its session is ended', async () => {
+    const h = host({ failRecordsWrite: true })
+    const ui = h.attach()
+    const launchId = await launched(h)
+    await h.run(SETTLE_MS)
+    expect(h.db.launches.byId(launchId)).toMatchObject({
+      state: 'failed',
+      failure: { cause: 'could-not-start' }
+    })
+    expect(frames(ui.sent, 'launch.failed')).toHaveLength(1)
+    expect(h.bus.ofType('DwarfLaunched')).toEqual([])
+    // The dwarf that arrived for it is gone again, and its session is no longer live.
+    expect(h.crew.queries.crewOf(MINE)).toEqual([])
+    const [arrived] = h.crew.bus.ofType('DwarfArrived')
+    expect(h.crew.bus.ofType('DwarfDeparted').map((e) => e.payload.dwarfId)).toEqual([
+      arrived?.payload.dwarfId
+    ])
+    const ref = {
+      providerId: SIMULATED,
+      providerSessionId: arrived?.payload.identity.providerSessionId ?? ''
+    }
+    expect(h.suppliers.sessions.sessionFor(ref)).toBeNull()
+    expect(h.db.records.live()).toEqual([])
   })
 
   it('[INV-50] a launch with no supplier, custom command or Jev, an empty prompt, or a mine that is missing or not enterable is refused before any launches row is written and publishes no LaunchRequested', async () => {

@@ -141,7 +141,7 @@ export interface LaunchingWiringDeps {
   frames: LaunchFramePublisher
   suppliers: Pick<Suppliers, 'registry' | 'sessions' | 'catalogue' | 'bindings'>
   mines: Pick<MinesQueries, 'get' | 'folderOf'>
-  crew: Pick<CrewCommands, 'arrive'>
+  crew: Pick<CrewCommands, 'arrive' | 'sessionClosed'>
   conversation: Pick<ConversationCommands, 'ingest'>
 }
 

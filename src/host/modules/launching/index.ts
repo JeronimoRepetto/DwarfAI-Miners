@@ -37,6 +37,7 @@ export type {
 } from './application/events'
 export type { LaunchAccepted, LaunchRefusal, LaunchRequestInput } from './application/launch'
 export { LaunchRefusedError } from './application/launch'
+export { createLaunchDrainGate } from './application/launchDrain'
 export type { LaunchQueries, LaunchSnapshotQueries, LaunchView } from './application/launchQueries'
 export {
   classifyLaunchOutcome,
