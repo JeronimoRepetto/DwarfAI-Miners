@@ -25,6 +25,19 @@
 //   now, then launching's `failureSeen` (`launches.seen_at`, 14 §8 I-03). A failure no UI saw is
 //   never sent later and never listed (PO #65; INV-53; FM-135): it is not put in the replay ring
 //   either, so a window that resumes its subscription gets no frame for it.
+// - `LaunchedSessionCrashed` → `toast {kind: 'session-crashed', dwarfId, launchId}` (14 §2.4
+//   B-F28, §3.6 `HostToast`; PO #62), for `ui`, enqueued before the dwarf's `dwarf.departed` (07
+//   S2.07). Launching never publishes it for a dwarf the current Host recovery covers (05 §4
+//   "suppressed"; ADR-015 item 5; application/sessionExited.ts), so the route needs no filter of
+//   its own. `toast` is advertised with the board frames (frames/board.ts `BOARD_FRAMES`).
+// - `DriverSessionExited` (08 §2.4; 15 §1.4 row `exited`): `routeSessionExits` is the suppliers
+//   event sink's exit route — launching's PO #62 check with crew's pending end for the dwarf
+//   (`CrewQueries.get`), then crew `sessionClosed` with `departureCause(pendingEnd, owned)` from
+//   launching's ownership (INV-30); a dwarf already gone, or covered by the current recovery, does
+//   not depart here. The composition root hands it to suppliers' sink with the launching wiring
+//   (later: ISSUE-182); until then `suppliersWiring.ts` delivers driver events nowhere. Its
+//   `DriverSessionExited` → conversation `recordSessionEnd` row is the departure's own route
+//   (`DwarfDeparted`, routes/cut1Routes.ts), idempotent per dwarf.
 //
 // The frames are the same for every `ui` connection, whatever its mode (US-LAUNCH-006.AC13). They
 // are sensitive (14 §3.5 SENSITIVE_FRAMES); nothing here logs their data.
@@ -40,13 +53,13 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { ConversationCommands } from '../../modules/conversation'
-import type { CrewCommands } from '../../modules/crew'
+import { departureCause, type CrewCommands, type CrewQueries } from '../../modules/crew'
 import { createLaunching, type Launching, type LaunchingEvent } from '../../modules/launching'
 import { SqliteLaunchRecordStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchRecordStore'
 import { SqliteLaunchStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchStore'
 import { SqliteProcessRecordStore } from '../../modules/launching/adapters/sqlite/SqliteProcessRecordStore'
 import type { MinesQueries } from '../../modules/mines'
-import type { Suppliers } from '../../modules/suppliers'
+import type { SuppliedEventSink, Suppliers } from '../../modules/suppliers'
 import type { Dispatcher } from '../../transport/dispatcher'
 import type { AttachedConnection } from '../../transport/connectionRegistry'
 import type { FrameAudience } from '../../transport/events/framePublisher'
@@ -104,6 +117,10 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
       )
       changed(launchId)
     }),
+    events.subscribe('LaunchedSessionCrashed', (event) => {
+      const { dwarfId, launchId } = event.payload
+      frames.publishFrame('toast', { kind: 'session-crashed', dwarfId, launchId })
+    }),
     events.subscribe('LaunchFailed', (event) => {
       const { launchId, mineId, failure } = event.payload
       if (!frames.connections().some((connection) => connection.role === 'ui')) return
@@ -113,6 +130,36 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
   ]
   return () => {
     for (const stop of stops) stop()
+  }
+}
+
+export interface SessionExitRouteDeps {
+  launching: { commands: Pick<Launching['commands'], 'sessionExited'> }
+  crew: {
+    queries: Pick<CrewQueries, 'get'>
+    commands: Pick<CrewCommands, 'sessionClosed'>
+  }
+}
+
+/**
+ * The 05 §4 route of a driver's `exited` (`DriverSessionExited`, 08 §2.4), as suppliers' event
+ * sink: launching's PO #62 check with the dwarf's pending end, then crew's departure with the cause
+ * `departureCause` gives from the ownership launching answered (INV-30). Every other driver event
+ * is left to its own consumer's route.
+ */
+export function routeSessionExits(deps: SessionExitRouteDeps): SuppliedEventSink {
+  const { launching, crew } = deps
+  return {
+    deliver: ({ dwarfId, event }) => {
+      if (event.t !== 'exited') return
+      const dwarf = crew.queries.get(dwarfId)
+      const pendingEnd = dwarf?.pendingEnd ?? null
+      const present = dwarf !== null && !dwarf.departed
+      const { owned, covered } = launching.commands.sessionExited({ dwarfId, pendingEnd, present })
+      if (!present || covered) return
+      const cause = departureCause(pendingEnd, owned)
+      if (cause !== null) crew.commands.sessionClosed(dwarfId, cause)
+    }
   }
 }
 
