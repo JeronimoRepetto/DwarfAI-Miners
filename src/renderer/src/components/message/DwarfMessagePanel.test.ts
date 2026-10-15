@@ -3972,8 +3972,9 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ id: DWARF, textDelivery: 'terminal' }) })
     await flushPromises()
     expect(wrapper.find('.dm-qcard').exists()).toBe(true)
-    // Earlier cases of this file leave their own toasts; the close must add none.
-    const toastsBefore = [...useToasts().toasts.value]
+    // Earlier cases of this file leave their own toasts, and each leaves by its own clock (2.6s), so the
+    // list may shrink while this case runs: the close must only never ADD one.
+    const idsBefore = new Set(useToasts().toasts.value.map((t) => t.id))
 
     push?.([
       {
@@ -3988,7 +3989,7 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
 
     expect(wrapper.find('.dm-qcard').exists()).toBe(false)
     expect(wrapper.find('.dm-composer').exists()).toBe(true)
-    expect(useToasts().toasts.value).toEqual(toastsBefore)
+    expect(useToasts().toasts.value.filter((t) => !idsBefore.has(t.id))).toEqual([])
   })
 
   it("[ADR-033] with no Host ask, today's legacy asks draw exactly as before, by their own ids, a permission first", async () => {

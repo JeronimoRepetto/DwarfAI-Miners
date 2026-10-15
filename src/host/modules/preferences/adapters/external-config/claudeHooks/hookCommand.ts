@@ -98,6 +98,11 @@ export function isOwnedHookCommand(command: unknown, platform: NodeJS.Platform):
   return typeof command === 'string' && command.startsWith(ownedCommandPrefix(platform))
 }
 
+/** Whether a command of DwarfAI's own posts to the ingress on `port` (07 S14.10, ADR-016 item 3). */
+export function postsToIngressPort(command: string, port: number): boolean {
+  return command.endsWith(` http://127.0.0.1:${port}${ROUTE}`)
+}
+
 /**
  * The old app's exact command (16 §7.1 legacy probe), as the legacy `buildHookCommand` in
  * `src/main/hooks/hookCommand.ts` (found tree) joins it: `curl` or `curl.exe`, its hex token, any

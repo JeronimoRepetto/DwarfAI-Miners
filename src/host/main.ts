@@ -83,7 +83,8 @@
 // AnswerRecords, the observed-Claude keystroke channel (no relay into a terminal yet, later: ISSUE-167),
 // with B-M30…B-M32 and the `asks` section served before the bind, its frames, the Claude hook ingress
 // route bound to the active channel-token lookup (its listener, wiring/hookIngress.ts, built here and
-// started by step 6 on the persisted ingress port, closed at the clean exit) and its
+// started by step 6 on the persisted ingress port, after which the Host's own Claude hook entry
+// follows the bound port, 07 S14.10, never in a cut-2 rollback build; closed at the clean exit) and its
 // `ask.*` and departure routes, stopped at the clean exit; last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
@@ -104,6 +105,8 @@ import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION, redactSecrets } from '@dwarfai/contracts'
 import { FsTranscriptTail } from './modules/asking/adapters/observedClaude/transcriptTail'
+import { SqliteAskRepository } from './modules/asking/adapters/SqliteAskRepository'
+import { createAskRestartSettlement } from './modules/asking'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
@@ -177,6 +180,7 @@ import {
   mintBootEpoch
 } from './wiring/bootSteps'
 import {
+  claudeHookEntryFollower,
   enablableInstalledTools,
   hostConfigWriter,
   persistedIngressPort
@@ -983,6 +987,19 @@ async function bootHost(base: HostBase): Promise<void> {
             }
           }
           modules.asking = servedAsking.wire(askingDeps)
+          // A cut-2 rollback build settles the asks the cut-2 build left live: no route answers a Host ask
+          // there, so none may keep a card (#1293; wiring/cut2Rollback.ts). After `wire`, so the routes move
+          // crew and conversation off them.
+          CUT_2_ROLLBACK_CHOICES.settleLeftoverAsks(
+            createAskRestartSettlement({
+              asks: new SqliteAskRepository({ db, scope: transactions, clock }),
+              transactions,
+              bus,
+              clock,
+              ids,
+              hostEpoch: epoch
+            })
+          )
           // The hook ingress over asking's `/hooks/claude/*` route and `app_meta.ingress_port`;
           // boot step 6 starts it, the clean exit closes it (wiring/hookIngress.ts).
           hookIngress = createHostHookIngress({
@@ -1004,12 +1021,22 @@ async function bootHost(base: HostBase): Promise<void> {
             attention: modules.attention.attention
           })
         },
-        // Step 6: the hook ingress listens (ISSUE-140); the MCP endpoint is later (ISSUE-209).
+        // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
+        // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
+        // (ISSUE-209).
         startHookIngress: () => {
-          if (hookIngress === undefined) {
-            throw new HostInvariantError('boot step 6 runs after step 4 built the hook ingress')
+          if (hookIngress === undefined || configWriter === undefined) {
+            throw new HostInvariantError('boot step 6 runs after steps 3 and 4 built its parts')
           }
-          return startHookIngressAtBoot(hookIngress, log)
+          return startHookIngressAtBoot(
+            hookIngress,
+            log,
+            claudeHookEntryFollower({
+              engine: configWriter,
+              rolledBack: CUT_2_ROLLBACK_CHOICES.rolledBack,
+              mintCredential
+            })
+          )
         },
         // Step 7: the catch-up, then the live loop, through the wiring's own `start`, which is null
         // in a cut-1 rollback build (and over any sink that stores nothing, INV-98).

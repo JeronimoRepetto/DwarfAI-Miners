@@ -1,0 +1,18 @@
+{
+  "case": "C-28",
+  "description": "detach is unsupported (nothing keeps running without DwarfAI); end-thread resolves closed and the stream ends with exited once; a second close resolves closed; the driver signals no process (15 §1.3 close, ADR-014).",
+  "script": [
+    { "do": "launch", "readyAfterMs": 50 },
+    { "do": "close", "mode": "detach" },
+    { "do": "close", "mode": "end-thread" },
+    { "do": "close", "mode": "end-thread" }
+  ],
+  "outcomes": [
+    { "resolved": true },
+    { "kind": "failed", "reason": "unsupported" },
+    { "kind": "closed" },
+    { "kind": "closed" }
+  ],
+  "events": [{ "t": "exited", "code": 0 }],
+  "sent": []
+}

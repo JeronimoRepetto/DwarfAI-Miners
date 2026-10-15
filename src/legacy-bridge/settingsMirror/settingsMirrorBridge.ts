@@ -14,12 +14,14 @@
 // - The keys are `HostPreferenceKey`s (14 §3.4) only, and the runtime guard refuses anything else, so no secret
 //   (ADR-017 item 3) and no integration gate (ADR-016 item 5; 18 C-21) is ever mirrored.
 //
+// - The halves are registered per release step by `settingsMirrorHalves` (settingsMirrorHalves.ts), outside this core.
+//
 // Composed only by `src/ui-main/index.ts` (05 R16). Deleted in 4a, when the direction flips (ISSUE-230, ISSUE-236).
-import type {
-  HostPreferenceKey,
-  HostPreferences,
-  PreferenceSetParams,
-  SnapshotPage
+import {
+  type HostPreferenceKey,
+  type HostPreferences,
+  type PreferenceSetParams,
+  type SnapshotPage
 } from '@dwarfai/contracts'
 import type { HostClient, HostConnection } from '../../ui-main/window/ports/hostClient'
 import type { MirrorHalf } from './mirrorHalf'

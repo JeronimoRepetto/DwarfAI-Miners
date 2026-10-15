@@ -30,3 +30,52 @@ describe('startHookIngressAtBoot', () => {
     expect(log.byEvent('ingress.port')).toEqual([])
   })
 })
+
+describe("boot step 6 and the Host's own Claude hook entry (07 S14.10)", () => {
+  it("[S14.10, ADR-016] once the ingress is bound, the Host's own hook entry follows the bound port before the step ends", async () => {
+    const order: string[] = []
+    const ingress = {
+      start: () => {
+        order.push('bound')
+        return Promise.resolve(41_235)
+      }
+    }
+
+    await startHookIngressAtBoot(ingress, new RecordingDiagnosticsLog(), () => {
+      order.push('followed')
+      return Promise.resolve()
+    })
+
+    expect(order).toStrictEqual(['bound', 'followed'])
+  })
+
+  it('[S14.10, FM-038] an ingress that cannot bind has no port for the entry to follow: nothing is rewritten', async () => {
+    const followed: string[] = []
+
+    await startHookIngressAtBoot(
+      { start: () => Promise.reject(new Error('no port')) },
+      new RecordingDiagnosticsLog(),
+      () => {
+        followed.push('followed')
+        return Promise.resolve()
+      }
+    )
+
+    expect(followed).toStrictEqual([])
+  })
+
+  it('[S14.10, ADR-002] a rewrite that throws is logged as config.write failed, never with its text, and the step goes on', async () => {
+    const log = new RecordingDiagnosticsLog()
+
+    await expect(
+      startHookIngressAtBoot({ start: () => Promise.resolve(41_235) }, log, () =>
+        Promise.reject(new Error('settings.json at /home/j could not be read'))
+      )
+    ).resolves.toBeUndefined()
+
+    expect(log.byEvent('config.write')).toEqual([
+      expect.objectContaining({ level: 'warn', subsystem: 'claude-hooks', outcome: 'failed' })
+    ])
+    expect(JSON.stringify(log.entries)).not.toContain('/home/j')
+  })
+})

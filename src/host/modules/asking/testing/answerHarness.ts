@@ -11,6 +11,7 @@
 // `FakeSessionCapabilities` and the `FakeConversationLines` double of conversation's `ingest`, whose
 // rows the transaction rolls back with the asks.
 // `steps` is the broker's `setStep` (ISSUE-129) over the same rows and bus.
+// `restarts` is the boot settlement of the asks a stopped Host left live (#1293) over the same rows and bus.
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
@@ -19,6 +20,7 @@ import type { AskId, DwarfId, MessageId } from '../../../kernel/domain/values'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { AnswerRecordEvent } from '../../conversation'
 import { AskAnswerPaths, AskOpenPath, AskStepPath } from '../application/askBroker'
+import { AskRestartSettlement } from '../application/askRestart'
 import type { Ask } from '../domain/ask'
 import type { AskingEvent } from '../domain/events'
 import type { AskAnswerChannel } from '../ports/askAnswerChannel'
@@ -155,6 +157,16 @@ export function answerHarness() {
     hostEpoch: ANSWER_EPOCH
   })
 
+  /** The boot settlement of the live asks a stopped Host left (#1293) over the same rows and bus. */
+  const restarts = new AskRestartSettlement({
+    asks,
+    transactions: transactionRunner,
+    bus,
+    clock,
+    ids,
+    hostEpoch: ANSWER_EPOCH
+  })
+
   /** Saves `ask` directly, as the broker's `open` would have (ISSUE-127's repository). */
   const seed = (ask: Ask): Ask => {
     transactionRunner.inTransaction(() => asks.save(ask))
@@ -165,6 +177,7 @@ export function answerHarness() {
     paths: boot(),
     opens,
     steps,
+    restarts,
     sessions,
     lines,
     reboot: boot,
