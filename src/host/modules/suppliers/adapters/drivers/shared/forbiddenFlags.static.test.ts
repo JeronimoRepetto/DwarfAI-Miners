@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { FORBIDDEN_FLAGS } from './modules/suppliers/adapters/drivers/shared/forbiddenFlags'
+import { FORBIDDEN_FLAGS } from './forbiddenFlags'
 
 /**
  * ADR-008 Verification and 17 §1.7 "Forbidden flags / paths / credential reads": no flag or option
@@ -9,7 +9,7 @@ import { FORBIDDEN_FLAGS } from './modules/suppliers/adapters/drivers/shared/for
  * conformance harness that asserts their absence. Read as text, comments included, in any case.
  * The exemptions are exact paths, never a folder.
  */
-const HOST_ROOT = import.meta.dirname
+const HOST_ROOT = resolve(import.meta.dirname, '../../../../..') // src/host
 
 const EXEMPT: readonly string[] = [
   'modules/suppliers/adapters/drivers/shared/forbiddenFlags.ts',
