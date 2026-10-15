@@ -7,8 +7,10 @@
 //   and (3) the preferences, observation, ledger, conversation, asking and attention steps
 //   (ISSUE-121, ISSUE-118, ISSUE-139; the module steps are built by moduleResetSteps.ts). The deletions of (2) go first:
 //   their cascades take the departed dwarfs' rows (messages, keys, usage), so the steps of (3)
-//   delete only what the present dwarfs and the kept mines leave. The others join with their
-//   issues, each in its place (later: ISSUE-181, ISSUE-208).
+//   delete only what the present dwarfs and the kept mines leave. The delegation step (ISSUE-208)
+//   closes (3): it deletes the settled delegations, which nulls their worker launches' FK, so it
+//   precedes the launching step of (4) that deletes the settled launches. The others join with
+//   their issues, each in its place (later: ISSUE-181).
 // - `installMoment`: the ledger's `install_moment(now, 'reset')` (07 S13.05), written through
 //   `LedgerRepository.setInstallMoment` (16 §4.10; `SqliteLedgerRepository`) in its own
 //   transaction at that step (lead decision 2026-09-30: the `ResetDbStep` shape, no new port
@@ -34,12 +36,14 @@ export interface ModuleResetSteps {
   conversation: ResetDbStep
   /** `createAskingResetStep`: 09 §7.2 (3), closed asks deleted (cascades) before attention's. */
   asking: ResetDbStep
+  /** `createDelegationResetStep`: 09 §7.2 (3), settled delegations deleted (ISSUE-208). */
+  delegation: ResetDbStep
 }
 
 export interface ResetParticipantsDeps {
   /** The preferences module's step (`createPreferencesResetStep`). */
   preferences: ResetDbStep
-  /** The mines, crew, observation, ledger, conversation and asking steps. */
+  /** The mines, crew, observation, ledger, conversation, asking and delegation steps. */
   modules: ModuleResetSteps
   /** The attention module's step (`createAttentionResetStep`). */
   attention: ResetDbStep
@@ -67,7 +71,9 @@ export function resetParticipants(deps: ResetParticipantsDeps): ResetParticipant
       // The closed asks go first (their keys cascade), so attention finds only the keys that
       // remain (ISSUE-139).
       modules.asking,
-      deps.attention
+      deps.attention,
+      // Settled delegations go before (4) deletes the settled launches (ISSUE-208).
+      modules.delegation
     ],
     installMoment: {
       name: 'ledger-install-moment',
