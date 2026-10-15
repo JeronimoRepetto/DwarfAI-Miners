@@ -24,7 +24,7 @@ import type { SectionRegistry } from '../transport/snapshot/sectionRegistry'
 import { SnapshotService } from '../transport/snapshot/snapshotService'
 
 export interface HostDispatcherDeps extends DispatcherDeps {
-  /** What `host.shutdown {stop-all}` asks to end every owned session (empty-owner until ISSUE-175). */
+  /** What `host.shutdown {stop-all}` asks to end every owned session (launching's `stopAll`, ISSUE-175). */
   stopAll: StopAllPort
   /** The Host's clean exit (composeHostLifecycle). */
   lifecycle: CleanExit
