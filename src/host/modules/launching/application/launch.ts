@@ -33,8 +33,22 @@
 //   failure kept in Host memory with its `toolOutputTail` (ADR-020 item 6; INV-55), one
 //   `launch.failed` diagnostics record with the cause only, then `LaunchFailed`. An unexpected
 //   error is `could-not-start`, never a sixth cause (INV-52).
+//
+// A delegated worker (ISSUE-180; ADR-013 items 1, 4; 09 D-17; UC-017), a request with `delegation`
+// set, which only the `WorkerLauncher` bridge sends (wiring/bridges/workerLauncher.ts):
+// - its row is committed in `routing` (S5.10) with `delegated = 1`, its `delegation_id` and
+//   `launched_with_let_jev_choose = 0` (`requestLaunch`; 09 D-17);
+// - Jev already picked for the subtask, so the pick is taken as given, never a second Jev call: the
+//   settlement moves it to `resolving` (S5.12) and runs the supplier path above; a pick that fell
+//   back fails in `routing` with its Jev cause and reason (S5.14, S5.15: a delegated
+//   `effort-ceiling` is `jev-could-not-choose`, never `handed-back`, ADR-028 D2);
+// - `SessionStarter.start` gets `launchedWithLetJevChoose: false`, so the worker never gets a
+//   delegation entry of its own (depth one, INV-81);
+// - its dwarf arrives as a `worker` (`rankForDepth(1)`: a delegating dwarf is always a root launch)
+//   of the delegating dwarf, `delegated` (INV-27, INV-28; AMENDMENT-15 (owner, 2026-10-15)), and
+//   `DwarfLaunched` carries `parentDwarfId` and `delegated: true` (07 S5.21 → S8.03).
 import type { ProcessIdentity } from '../../../kernel/domain/processIdentity'
-import type { LaunchFailure } from '../../../kernel/domain/sharedContracts'
+import type { JevFallbackReason, LaunchFailure } from '../../../kernel/domain/sharedContracts'
 import type {
   DwarfId,
   EventId,
@@ -63,6 +77,7 @@ import type {
 } from '../../suppliers'
 import { applyLaunchEvent, requestLaunch, type Launch, type LaunchRequest } from '../domain/launch'
 import { buildLaunchFailure } from '../domain/launchFailure'
+import { NO_SUPPLIER_LABEL } from '../domain/supplierLabel'
 import type { LaunchRecordStore } from '../ports/launchRecordStore'
 import type { LaunchStore } from '../ports/launchStore'
 import type { ProcessRecordStore } from '../ports/processRecordStore'
@@ -81,7 +96,27 @@ export interface LaunchRequestInput {
   jevOn: boolean
   jevAutoAccept: boolean
   retryOf?: LaunchId
+  /**
+   * Set only by the `WorkerLauncher` bridge (09 D-17 `LaunchRequest.delegation`): the delegation
+   * the worker serves, its delegating dwarf, and Jev's fallback when the subtask's pick fell back
+   * (then `way` is `{ kind: 'jev' }`: nothing was picked).
+   */
+  delegation?: { delegationId: string; parentDwarfId: DwarfId; fallback?: JevFallbackReason }
 }
+
+/** 09 D-17: what a delegated worker's `LaunchRequest.delegation` carries. */
+interface WorkerDelegation {
+  delegationId: string
+  parentDwarfId: DwarfId
+}
+
+/** ADR-020 D2: the fallbacks where Jev could not be reached (S5.14); the others could not choose (S5.15). */
+const JEV_UNREACHABLE: ReadonlySet<JevFallbackReason> = new Set([
+  'unreachable',
+  'timeout',
+  'rate-limited',
+  'invalid-response'
+])
 
 /**
  * Why a launch is refused before any `launches` row is written (INV-50; ADR-011 item 1): there is
@@ -151,6 +186,10 @@ interface Accepted {
   cwd: FolderPath
   supplierLabel: string
   requestedAt: Instant
+  /** A delegated worker's delegation (09 D-17). */
+  delegation?: WorkerDelegation
+  /** A delegated worker whose pick fell back: it fails in `routing` (S5.14, S5.15). */
+  fallback?: JevFallbackReason
 }
 
 /** A mine a launch can target: present and enterable (INV-50); a launch never creates one. */
@@ -161,21 +200,26 @@ export class LaunchUseCase {
 
   async launch(input: LaunchRequestInput): Promise<LaunchAccepted> {
     const { clock, ids, hostEpoch, transactions, launches, memory } = this.deps
-    if (input.jevOn || input.way.kind === 'jev') throw new LaunchRefusedError('jev-not-built')
-    const providerId = input.way.providerId
+    const { delegation } = input
+    if (input.jevOn) throw new LaunchRefusedError('jev-not-built')
+    // A `jev` way is a delegated worker whose pick fell back; any other is the Jev path (ISSUE-164).
+    if (input.way.kind === 'jev' && delegation?.fallback === undefined) {
+      throw new LaunchRefusedError('jev-not-built')
+    }
     const mine = this.deps.mines.get(input.mineId)
     const cwd = this.deps.mines.folderOf(input.mineId)
     if (mine === null || cwd === null || !ENTERABLE.has(mine.state)) {
       throw new LaunchRefusedError('mine-not-enterable')
     }
-    const entry = this.deps.suppliers.catalogue.entry(providerId)
-    if (entry === null) throw new LaunchRefusedError('unknown-supplier')
+    const providerId = input.way.kind === 'supplier' ? input.way.providerId : null
+    const entry = providerId === null ? null : this.deps.suppliers.catalogue.entry(providerId)
+    if (providerId !== null && entry === null) throw new LaunchRefusedError('unknown-supplier')
     if (input.permissionMode !== undefined) {
       // Offered or not, a mode cannot reach the driver yet: suppliers exposes the offered mode ids,
       // never their `PermissionModeSpec`, which `DriverLaunchRequest.permissionMode` needs (15 §1.2;
       // package gap). Refused rather than accepted and dropped.
       throw new LaunchRefusedError(
-        entry.permissionModes.includes(input.permissionMode)
+        entry?.permissionModes.includes(input.permissionMode) === true
           ? 'mode-not-forwardable'
           : 'mode-not-offered'
       )
@@ -186,15 +230,20 @@ export class LaunchUseCase {
         throw new LaunchRefusedError('not-retryable')
       }
     }
-    const request: LaunchRequest<string> = {
+    const worker: WorkerDelegation | undefined =
+      delegation === undefined
+        ? undefined
+        : { delegationId: delegation.delegationId, parentDwarfId: delegation.parentDwarfId }
+    const request: LaunchRequest<string, WorkerDelegation> = {
       mineId: input.mineId,
-      way: { kind: 'supplier', providerId },
+      way: providerId === null ? { kind: 'jev' } : { kind: 'supplier', providerId },
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.effort === undefined ? {} : { effort: input.effort }),
       ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
       prompt: input.prompt,
       jevOn: input.jevOn,
-      jevAutoAccept: input.jevAutoAccept
+      jevAutoAccept: input.jevAutoAccept,
+      ...(worker === undefined ? {} : { delegation: worker })
     }
     const step = requestLaunch({
       id: ids.uuidv7() as LaunchId,
@@ -210,7 +259,15 @@ export class LaunchUseCase {
     memory.put(viewOf(launch, requestedAt))
     if (input.retryOf !== undefined) memory.forget(input.retryOf)
     this.publish({ type: 'LaunchRequested', payload: { launchId: launch.id, request } })
-    const facts: Accepted = { providerId, cwd, supplierLabel: entry.label, requestedAt }
+    const facts: Accepted = {
+      // A fallen-back pick names no provider and never reaches a driver (S5.14, S5.15).
+      providerId: providerId ?? ('' as ProviderId),
+      cwd,
+      supplierLabel: entry?.label ?? NO_SUPPLIER_LABEL,
+      requestedAt,
+      ...(worker === undefined ? {} : { delegation: worker }),
+      ...(delegation?.fallback === undefined ? {} : { fallback: delegation.fallback })
+    }
     // The settlement runs with no caller, after the answer was written (14 §1.7).
     this.deps.scheduler.after(0, () => void this.settle(launch, facts))
     return { launchId: launch.id }
@@ -235,6 +292,14 @@ export class LaunchUseCase {
       this.fail(launch, failure, facts)
     }
     try {
+      if (launch.state === 'routing') {
+        // A delegated worker: Jev already answered for the subtask (S5.12, S5.14, S5.15).
+        if (facts.fallback !== undefined) {
+          failWith(this.jevFailure(facts.fallback, facts))
+          return
+        }
+        launch = this.picked(launch, facts)
+      }
       const driver = this.deps.suppliers.registry.drivers(facts.providerId)[0]
       const detected = driver === undefined ? null : await driver.detect()
       if (driver === undefined || detected === null || detected.kind !== 'installed') {
@@ -295,6 +360,16 @@ export class LaunchUseCase {
     })
   }
 
+  /** S5.12: the delegated worker's pick, taken as given, moves it to `resolving`. */
+  private picked(launch: OwnLaunch, facts: Accepted): OwnLaunch {
+    const step = applyLaunchEvent(launch, { t: 'jev-picked' })
+    if (!step.ok) return launch
+    const next = step.value.launch
+    this.deps.transactions.inTransaction(() => this.deps.launches.put(next))
+    this.deps.memory.put(viewOf(next, facts.requestedAt))
+    return next
+  }
+
   /** S5.18, S4.01: the `processes` row and `spawned`, in one transaction, before the handshake. */
   private spawned(launch: OwnLaunch, identity: ProcessIdentity, facts: Accepted): OwnLaunch {
     const step = applyLaunchEvent(launch, { t: 'spawned', at: this.deps.clock.now() })
@@ -330,7 +405,10 @@ export class LaunchUseCase {
         providerSessionId: ref.providerSessionId,
         ...(ref.providerAgentId === undefined ? {} : { providerAgentId: ref.providerAgentId })
       },
-      rank: rankForDepth(0),
+      // A delegated worker is one level below its delegating root (INV-27, INV-28; AMENDMENT-15).
+      ...(facts.delegation === undefined
+        ? { rank: rankForDepth(0) }
+        : { parent: facts.delegation.parentDwarfId, rank: rankForDepth(1), delegated: true }),
       status: 'working'
     })
     const step = applyLaunchEvent(launch, { t: 'succeeded', dwarfId })
@@ -356,7 +434,9 @@ export class LaunchUseCase {
         dwarfId,
         mineId: request.mineId,
         ref,
-        delegated: false,
+        ...(facts.delegation === undefined
+          ? { delegated: false }
+          : { parentDwarfId: facts.delegation.parentDwarfId, delegated: true }),
         prompt: request.prompt
       }
     })
@@ -440,6 +520,15 @@ export class LaunchUseCase {
   /** A launching-side failure, labelled with the supplier's chip label (US-LAUNCH-006.AC10). */
   private failure(cause: 'not-installed' | 'could-not-start', facts: Accepted): LaunchFailure {
     return buildLaunchFailure({ cause, supplierLabel: facts.supplierLabel })
+  }
+
+  /** S5.14, S5.15: a delegated worker's fallen-back pick, with its reason (ADR-020 D2; ADR-028 D2). */
+  private jevFailure(reason: JevFallbackReason, facts: Accepted): LaunchFailure {
+    return buildLaunchFailure({
+      cause: JEV_UNREACHABLE.has(reason) ? 'jev-unreachable' : 'jev-could-not-choose',
+      supplierLabel: facts.supplierLabel,
+      jevReason: reason
+    })
   }
 
   private publish(event: Pick<LaunchingEvent, 'type' | 'payload'>): void {

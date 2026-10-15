@@ -65,6 +65,30 @@ describe('CrewCommands arrival', () => {
     expect(crew.bus.ofType('DwarfArrived')).toHaveLength(2)
   })
 
+  // AMENDMENT-15 (owner, 2026-10-15): `arrive` carries `delegated`; only launching sets it.
+  it('[INV-28, INV-27] a delegation worker arrives delegated as a worker of its parent, a subagent never does', () => {
+    const crew = inMemoryCrew()
+    const parent = crew.commands.arrive(arrival())
+
+    const worker = crew.commands.arrive({
+      ...arrival({ providerId: 'codex', providerSessionId: 'worker-1' }, parent),
+      delegated: true
+    })
+    const subagent = crew.commands.arrive(arrival({ ...ROOT, providerAgentId: 'agent-8' }, parent))
+
+    expect(crew.repository.byId(worker)).toMatchObject({
+      delegated: true,
+      parentDwarfId: parent,
+      rank: 'worker'
+    })
+    expect(crew.repository.byId(subagent)).toMatchObject({ delegated: false })
+    expect(crew.bus.ofType('DwarfArrived').map((e) => e.payload.delegated)).toEqual([
+      false,
+      true,
+      false
+    ])
+  })
+
   it('[ADR-032] an arrival schedules the status timer: an idle dwarf turns asleep after 60 s', () => {
     const crew = inMemoryCrew()
     const dwarfId = crew.commands.arrive(arrival())
