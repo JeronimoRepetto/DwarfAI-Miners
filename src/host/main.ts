@@ -86,7 +86,11 @@
 // route bound to the active channel-token lookup (its listener, wiring/hookIngress.ts, built here and
 // started by step 6 on the persisted ingress port, after which the Host's own Claude hook entry
 // follows the bound port, 07 S14.10, never in a cut-2 rollback build; closed at the clean exit) and its
-// `ask.*` and departure routes, stopped at the clean exit; last,
+// `ask.*` and departure routes, stopped at the clean exit; then launching (ISSUE-162:
+// wiring/routes/launching.ts) over the SQLite launch stores and the SessionStarter bridge to the
+// suppliers registry, with B-M33 `launching.launch` and the `launches` section served before the
+// bind, its `launch.changed` / `launch.failed` frames and routes, the spawn tag carrying
+// `app_meta.install_id`; last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
 // withdrawing attention keys and closing activity runs. The others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
@@ -232,6 +236,9 @@ import {
   type WiredConversation
 } from './wiring/routes/conversation'
 import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
+import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/routes/launching'
+import type { LaunchingEvent } from './modules/launching'
+import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { routeCut1Events } from './wiring/routes/cut1Routes'
 import {
@@ -271,6 +278,7 @@ type HostEvent =
   | ConversationRouteEvent
   | AttentionRouteEvent
   | AskingRouteEvent
+  | LaunchingEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -461,6 +469,7 @@ async function bootHost(base: HostBase): Promise<void> {
     mines?: WiredMines
     attention?: WiredAttention
     asking?: WiredAsking
+    launching?: WiredLaunching
   } = {}
   // What holds the upgrade drain: each module's gate is bound once boot step 4 wired it (#1290).
   const drainGate = createHostDrainGate()
@@ -536,6 +545,8 @@ async function bootHost(base: HostBase): Promise<void> {
   const servedConversation = serveConversation({ dispatcher, sections })
   // B-M30…B-M32 and the `asks` section (ISSUE-140).
   const servedAsking = serveAsking({ dispatcher, sections })
+  // B-M33 and the `launches` section (ISSUE-162), after `asks` in the chunk order (14 §4.2).
+  const servedLaunching = serveLaunching({ dispatcher, sections })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -616,7 +627,8 @@ async function bootHost(base: HostBase): Promise<void> {
           ...LEDGER_FRAMES,
           ...CONVERSATION_READ_FRAMES,
           ...ATTENTION_FRAMES,
-          ...ASKING_FRAMES
+          ...ASKING_FRAMES,
+          ...LAUNCHING_FRAMES
         ],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
@@ -639,6 +651,7 @@ async function bootHost(base: HostBase): Promise<void> {
           maintenance?.stop()
           stopDrainRechecks?.()
           modules.asking?.stop()
+          modules.launching?.stop()
         },
         closeIngress: () => hookIngress?.close() ?? Promise.resolve(),
         exit
@@ -1033,6 +1046,24 @@ async function bootHost(base: HostBase): Promise<void> {
             clock,
             log
           })
+          // Launching (ISSUE-162: wiring/routes/launching.ts), once suppliers, conversation, crew and
+          // mines exist: a launched dwarf arrives through crew and its prompt is its first message.
+          modules.launching = servedLaunching.wire({
+            db,
+            transactions,
+            bus,
+            clock,
+            scheduler,
+            ids,
+            hostEpoch: epoch,
+            installId: installIdOf(db),
+            log,
+            frames: connections,
+            suppliers: modules.suppliers,
+            mines: modules.mines.mines.queries,
+            crew: modules.crew.crew.commands,
+            conversation: conversation.conversation.commands
+          })
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.
@@ -1113,6 +1144,14 @@ async function bootHost(base: HostBase): Promise<void> {
       })
     })
   }
+}
+
+/** `app_meta.install_id` (09 §4.9), the first field of every spawn tag (ADR-015 item 2). */
+function installIdOf(db: SqliteDatabase): string {
+  const [row] = db.all('SELECT install_id FROM app_meta WHERE id = 1')
+  const installId = row?.['install_id']
+  if (typeof installId !== 'string') throw new HostInvariantError('app_meta has no install id')
+  return installId
 }
 
 function isInside(folder: string, file: string): boolean {

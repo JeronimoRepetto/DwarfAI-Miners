@@ -80,9 +80,14 @@ const SERVED_SINCE_CUT_0 = [
   'frame:ask.closed',
   'frame:ask.opened',
   'frame:ask.step',
-  'section:asks'
+  'section:asks',
+  // Launching: B-M33, the `launches` section and the launch frames, from cut 3 (ISSUE-162).
+  'frame:launch.changed',
+  'frame:launch.failed',
+  'launching.launch',
+  'section:launches'
 ]
-const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'asks', 'tails']
+const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'asks', 'launches', 'tails']
 
 let entry = ''
 let root = ''
