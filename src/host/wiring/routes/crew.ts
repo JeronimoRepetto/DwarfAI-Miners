@@ -1,8 +1,9 @@
 // The crew module's wiring (05 §3.2, §4; 16 §8.2, §8.3), in two parts, as routes/mines.ts:
 //
 // - `serveCrew`, run by the composition root before the boot binds the endpoint: the `dwarfs`
-//   snapshot section (14 §4.1) and B-M41 `strangler.dwarfIdentities` (14 §2.3; AMENDMENT-8), so
-//   every `hello.ok` lists them (14 §1.3). They forward to the one instance boot step 4 constructs;
+//   snapshot section (14 §4.1), B-M22 `crew.rename` and B-M23 `crew.resetName` (14 §2.3; ISSUE-172)
+//   and B-M41 `strangler.dwarfIdentities` (14 §2.3; AMENDMENT-8), so every `hello.ok` lists them
+//   (14 §1.3). They forward to the one instance boot step 4 constructs;
 //   until then the dispatcher answers HOST_NOT_READY before any handler runs (14 §3.3), and the
 //   section is never read before `ready`. The `dwarf.*` board frames are the mines wiring's
 //   (`publishBoardFrames`, frames/board.ts), over this instance's queries (`WiredCrew.mines`).
@@ -58,6 +59,7 @@ import {
   rankForDepth,
   type Crew,
   type CrewEndEvent,
+  type CrewCommands,
   type CrewEvent,
   type CrewQueries,
   type DwarfRank,
@@ -73,6 +75,8 @@ import type {
   SessionActivityObserved
 } from '../../modules/observation'
 import type { Dispatcher } from '../../transport/dispatcher'
+import { registerCrewRename } from '../../transport/methods/crewRename'
+import { registerCrewResetName } from '../../transport/methods/crewResetName'
 import { registerStranglerDwarfIdentities } from '../../transport/methods/strangler'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { NO_OUTCOMES, type DwarfOutcomeReader } from '../../transport/mappers/wire'
@@ -100,7 +104,7 @@ export interface CrewObservationBinding {
 }
 
 export interface CrewServeDeps {
-  /** The Host dispatcher (hostDispatcher.ts), where B-M41 joins. */
+  /** The Host dispatcher (hostDispatcher.ts), where B-M22, B-M23 and B-M41 join. */
   dispatcher: Dispatcher
   /** The snapshot sections, where the `dwarfs` section joins. */
   sections: SectionRegistry
@@ -159,7 +163,8 @@ export interface ServedCrew {
 
 /** The members the served section and method forward to. */
 type ServedMembers = {
-  crew: Pick<CrewQueries, 'crewOf' | 'presentIdentities'>
+  crew: Pick<CrewQueries, 'crewOf' | 'get' | 'presentIdentities'>
+  commands: Pick<CrewCommands, 'rename' | 'resetName'>
   mines: Pick<MinesQueries, 'list'>
   outcomes: DwarfOutcomeReader
 }
@@ -175,6 +180,15 @@ export function serveCrew(serve: CrewServeDeps): ServedCrew {
     mines: { list: (query) => current().mines.list(query) },
     crew: { crewOf: (mineId, opts) => current().crew.crewOf(mineId, opts) },
     outcomes: { outcomeOf: (dwarfId) => current().outcomes.outcomeOf(dwarfId) }
+  })
+  const get: CrewQueries['get'] = (dwarfId) => current().crew.get(dwarfId)
+  registerCrewRename(serve.dispatcher, {
+    commands: { rename: (dwarfId, text) => current().commands.rename(dwarfId, text) },
+    queries: { get }
+  })
+  registerCrewResetName(serve.dispatcher, {
+    commands: { resetName: (dwarfId) => current().commands.resetName(dwarfId) },
+    queries: { get }
   })
   registerStranglerDwarfIdentities(serve.dispatcher, {
     crew: { presentIdentities: () => current().crew.presentIdentities() }
@@ -192,6 +206,7 @@ export function serveCrew(serve: CrewServeDeps): ServedCrew {
           result.route(mines)
           served = {
             crew: result.crew.queries,
+            commands: result.crew.commands,
             mines: mines.queries,
             outcomes: deps.outcomes ?? NO_OUTCOMES
           }
