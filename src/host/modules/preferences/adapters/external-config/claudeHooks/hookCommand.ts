@@ -98,6 +98,15 @@ export function isOwnedHookCommand(command: unknown, platform: NodeJS.Platform):
   return typeof command === 'string' && command.startsWith(ownedCommandPrefix(platform))
 }
 
+/**
+ * The token a command of DwarfAI's own carries: the word right after the owned prefix (07 S14.11,
+ * issue #1307). `null` when the command is not DwarfAI's own.
+ */
+export function tokenOfHookCommand(command: string, platform: NodeJS.Platform): string | null {
+  if (!isOwnedHookCommand(command, platform)) return null
+  return command.slice(ownedCommandPrefix(platform).length).split(' ', 1)[0] ?? ''
+}
+
 /** Whether a command of DwarfAI's own posts to the ingress on `port` (07 S14.10, ADR-016 item 3). */
 export function postsToIngressPort(command: string, port: number): boolean {
   return command.endsWith(` http://127.0.0.1:${port}${ROUTE}`)

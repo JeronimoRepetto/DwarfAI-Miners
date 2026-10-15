@@ -28,6 +28,7 @@
 // `revert` removes it after a backup. Writing the channel token's hash in Tx A and revoking it on
 // revert belong to `ChannelTokenStore` (ISSUE-219); since owner amendment M the hash is issued in Tx A here and
 // withdrawn in Tx B (failure), and the caller revokes it after a revert.
+import { createHash } from 'node:crypto'
 import { HostInvariantError } from '../../../../kernel/domain/errors'
 import type { Instant, IntegrationId, Result } from '../../../../kernel/domain/values'
 import type { Clock } from '../../../../kernel/ports/clock'
@@ -81,6 +82,10 @@ const ORIGINS_OF: Readonly<Record<ConfigTarget, readonly ConsentOrigin[]>> = {
 
 /** The `config.write` cause of a rewrite onto a new ingress port (07 S14.10; package gap: 19 §9.5 lists none). */
 const FOLLOWED_PORT = 'ingress-port-changed'
+
+/** The stored form of a channel token: the SHA-256 of its hex text, as lower-case hex (ADR-016 item 1). */
+const sha256Hex = (token: string): string =>
+  createHash('sha256').update(token, 'utf8').digest('hex')
 
 const isLock = (error: FsError): boolean => error === 'busy' || error === 'access-denied'
 
@@ -485,7 +490,13 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
 
   // --- shared -------------------------------------------------------------------------------
 
-  /** `verify` (16 §4.12): only DwarfAI's own entry counts; an unreadable file is a mismatch. */
+  /**
+   * `verify` (16 §4.12): only DwarfAI's own entry counts; an unreadable file is a mismatch. An entry
+   * is verified only when it carries the channel's ACTIVE token (07 S14.11; issue #1307): Tx A makes
+   * a new token's hash the active one before the file is written, so an entry a crash or a locked
+   * file left with the previous token would be answered `401` by the ingress. Compared by hash: the
+   * plaintext is never logged or stored.
+   */
   private async check(adapter: Adapter): Promise<'verified' | 'absent' | 'mismatch'> {
     const read = await this.readTarget(adapter)
     if (!read.ok) return 'mismatch'
@@ -493,7 +504,21 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
     const doc = adapter.read(read.value)
     if (!doc.ok) return 'mismatch'
     const probe = adapter.probeOwned(doc.value)
-    return probe === 'owned' ? 'verified' : probe === 'absent' ? 'absent' : 'mismatch'
+    if (probe === 'absent') return 'absent'
+    if (probe === 'foreign') return 'mismatch'
+    return this.carriesActiveToken(adapter, doc.value) ? 'verified' : 'mismatch'
+  }
+
+  /** Every token DwarfAI's own entry carries hashes to the channel's active hash. */
+  private carriesActiveToken(adapter: Adapter, doc: unknown): boolean {
+    if (adapter.ownedTokens === undefined) return true
+    const active = this.deps.tokens.active(adapter.target)
+    const carried = adapter.ownedTokens(doc)
+    return (
+      active !== null &&
+      carried.length > 0 &&
+      carried.every((token) => sha256Hex(token) === active.hash)
+    )
   }
 
   /** The target's bytes, `null` when the file does not exist. */
