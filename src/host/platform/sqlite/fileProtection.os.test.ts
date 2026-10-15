@@ -35,10 +35,42 @@ import { defineMigration, type Migration } from './migrations/types'
 const T0 = 1_790_000_000_000
 const PREBUILDS = fileURLToPath(new URL('../../../../prebuilds', import.meta.url))
 
-/** A migration this build adds on top of the shipped ones, so a boot backs the file up first. */
+/** The shipped migrations' head version. */
+const HEAD = migrationsFor({ clock: new FakeClock(0), ids: new SequenceIdGenerator() }).length
+
+/**
+ * A migration this build adds on top of the shipped ones, so a boot backs the file up first.
+ * AMENDED for owner amendment N (AMENDMENT-14): migration 0002 ships, so this one is head + 1.
+ */
 const NEXT: Migration = defineMigration({
+  version: HEAD + 1,
+  name: `${String(HEAD + 1).padStart(4, '0')}-next`,
+  sql: 'CREATE TABLE next_step (id INTEGER NOT NULL PRIMARY KEY) STRICT;'
+})
+
+/**
+ * The backup case's own two-step chain: a bare schema v1 (`T1`) and the step after it (`T2`).
+ * AMENDED for owner amendment N (AMENDMENT-14): `NEXT` follows the SHIPPED list (head + 1), so
+ * this chain has its own version-2 step instead of reusing `NEXT`, keeping versions 1…n.
+ */
+const T1: Migration = defineMigration({
+  version: 1,
+  name: '0001-t1',
+  sql: [
+    'CREATE TABLE schema_migrations (',
+    '  version INTEGER NOT NULL PRIMARY KEY CHECK (version >= 1),',
+    '  name TEXT NOT NULL UNIQUE,',
+    '  checksum TEXT NOT NULL CHECK (length(checksum) = 64),',
+    '  applied_at INTEGER NOT NULL,',
+    '  app_version TEXT NOT NULL',
+    ') STRICT;',
+    'CREATE TABLE t1 (id INTEGER NOT NULL PRIMARY KEY, label TEXT NOT NULL) STRICT;',
+    'PRAGMA application_id = 1146569033;'
+  ].join('\n')
+})
+const T2: Migration = defineMigration({
   version: 2,
-  name: '0002-next',
+  name: '0002-t2',
   sql: 'CREATE TABLE next_step (id INTEGER NOT NULL PRIMARY KEY) STRICT;'
 })
 
@@ -84,6 +116,25 @@ function machine(parent: string) {
   }
   return { root, dataDir, db: join(dataDir, HOST_DB_FILE), clock, boot }
 }
+
+// Every host (no platform guard): the POSIX and Windows cases below open these lists, and the
+// runner refuses any list whose versions are not 1…n (ADR-005 item 4). Checked here so a host that
+// skips a platform's cases still proves the lists that platform opens. AMENDED for owner amendment
+// N (AMENDMENT-14): migration 0002 ships, so a planted step follows the whole shipped list.
+describe('the migration lists the file-protection cases open (ADR-005 item 4)', () => {
+  it('[ADR-005] the shipped list plus NEXT, and the backup chain, are versions 1…n in order', () => {
+    const shipped = migrationsFor({ clock: new FakeClock(0), ids: new SequenceIdGenerator() })
+    const versions = (list: readonly Migration[]): number[] => list.map((m) => m.version)
+    const oneToN = (list: readonly Migration[]): number[] => list.map((_m, index) => index + 1)
+
+    for (const list of [
+      [...shipped, NEXT],
+      [T1, T2]
+    ]) {
+      expect(versions(list)).toEqual(oneToN(list))
+    }
+  })
+})
 
 describe.runIf(process.platform !== 'win32')(
   'POSIX file modes of the Host data (09 §1, §9)',
@@ -133,21 +184,6 @@ describe.runIf(process.platform !== 'win32')(
       const path = join(dir, HOST_DB_FILE)
       const clock = new FakeClock(T0)
       const log = new RecordingDiagnosticsLog()
-      const T1 = defineMigration({
-        version: 1,
-        name: '0001-t1',
-        sql: [
-          'CREATE TABLE schema_migrations (',
-          '  version INTEGER NOT NULL PRIMARY KEY CHECK (version >= 1),',
-          '  name TEXT NOT NULL UNIQUE,',
-          '  checksum TEXT NOT NULL CHECK (length(checksum) = 64),',
-          '  applied_at INTEGER NOT NULL,',
-          '  app_version TEXT NOT NULL',
-          ') STRICT;',
-          'CREATE TABLE t1 (id INTEGER NOT NULL PRIMARY KEY, label TEXT NOT NULL) STRICT;',
-          'PRAGMA application_id = 1146569033;'
-        ].join('\n')
-      })
       const options = {
         buildKind: 'release' as const,
         releaseDataDir: join(dir, 'release'),
@@ -168,7 +204,7 @@ describe.runIf(process.platform !== 'win32')(
           real.beforeMigrating({ ...input, db: observingVacuumInto(input.db, seen) })
       }
 
-      const second = openHostDb(path, { ...options, migrations: [T1, NEXT], backup })
+      const second = openHostDb(path, { ...options, migrations: [T1, T2], backup })
       if (!second.ok) throw new Error(second.error)
       second.value.db.close()
 

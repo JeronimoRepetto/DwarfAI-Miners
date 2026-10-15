@@ -236,14 +236,16 @@ CREATE TABLE config_writes (
   CHECK (kind = 'opencode-plugin' OR consent_origin IN ('settings', 'first-run'))
 ) STRICT;
 
-CREATE TABLE delegation_tokens (
+CREATE TABLE "delegation_tokens" (
   launch_id          TEXT    NOT NULL PRIMARY KEY REFERENCES launches (id) ON DELETE CASCADE,
-  parent_dwarf_id    TEXT    NOT NULL REFERENCES dwarfs (id) ON DELETE CASCADE,
+  -- the launch's dwarf, NULL until DwarfLaunched (the dwarf row needs a provider session id, which exists only after the handshake)
+  parent_dwarf_id    TEXT    REFERENCES dwarfs (id) ON DELETE CASCADE,
   mechanism          TEXT    NOT NULL CHECK (mechanism IN ('in-process', 'protocol', 'ticket-file')),
   credential_hash    TEXT    CHECK (credential_hash IS NULL OR length(credential_hash) = 64),
   issued_at          INTEGER NOT NULL,
   revoked_at         INTEGER,
-  CHECK ((mechanism = 'ticket-file') = (credential_hash IS NOT NULL))
+  -- every relay entry (ticket-file, protocol) authenticates with the credential file (ADR-013 item 3; 16 §5.2)
+  CHECK ((mechanism IN ('ticket-file', 'protocol')) = (credential_hash IS NOT NULL))
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE delegations (

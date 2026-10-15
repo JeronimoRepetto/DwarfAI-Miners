@@ -37,6 +37,13 @@ const EDGES = {
   preferences: [],
   diagnostics: []
 }
+// Type-only module→module edges: the importer may name the target's types (`import type`) and
+// nothing else, so a value import is still an R4 violation. Owner amendment N (AMENDMENT-14,
+// OQ-85), addendum A14-07, 2026-10-15: delegation's `issueFor` returns suppliers'
+// `DelegationInjection` (15 §1.2) and reads `ProviderCapabilities['mcpInjection']`.
+const TYPE_ONLY_EDGES = {
+  delegation: ['suppliers']
+}
 const edgeRules = Object.entries(EDGES).map(([from, allowed]) => ({
   name: `R4-module-edge-${from}`,
   severity: 'error',
@@ -44,7 +51,19 @@ const edgeRules = Object.entries(EDGES).map(([from, allowed]) => ({
   from: { path: `^src/host/modules/${from}/` },
   to: {
     path: '^src/host/modules/[^/]+/index\\.ts$',
-    pathNot: [`^src/host/modules/(${[from, ...allowed].join('|')})/index\\.ts$`]
+    pathNot: [
+      `^src/host/modules/(${[from, ...allowed, ...(TYPE_ONLY_EDGES[from] ?? [])].join('|')})/index\\.ts$`
+    ]
+  }
+}))
+const typeOnlyEdgeRules = Object.entries(TYPE_ONLY_EDGES).map(([from, typesOf]) => ({
+  name: `R4-module-edge-${from}-type-only`,
+  severity: 'error',
+  comment: `${from} may import only the types of ${typesOf.join(', ')} (05 §1.3, AMENDMENT-14 A14-07; ADR-004 P3)`,
+  from: { path: `^src/host/modules/${from}/` },
+  to: {
+    path: `^src/host/modules/(${typesOf.join('|')})/index\\.ts$`,
+    dependencyTypesNot: ['type-only']
   }
 }))
 
@@ -119,6 +138,7 @@ module.exports = {
       }
     },
     ...edgeRules,
+    ...typeOnlyEdgeRules,
     {
       name: 'R5-no-cycles',
       comment: 'the module graph is acyclic (05 R5; ADR-004 P10)',
