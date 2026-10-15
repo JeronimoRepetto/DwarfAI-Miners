@@ -2,6 +2,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   stopAllOutcomeSchema,
+  stopDwarfResultSchema,
+  type StopDwarfParams,
+  type StopDwarfResult,
   type DwarfId,
   type DwarfWire,
   type HostParams,
@@ -563,6 +566,124 @@ describe('A-32', () => {
       outcome: 'removed'
     })
     expect(world.events).toEqual(['mines.remove req-4'])
+    expect(world.timers.pending()).toBe(0)
+  })
+})
+
+// L2 (17 §1): the A-N29 half (21 §3 row `LegacyEndFirstAdapter`, from 3a; 14 §2.2 A-N29, §2.4 B-F10; 15 §5). The same
+// world as A-32: the scripted legacy register, FakeHost behind the real HostClient and the real `LegacyDwarfIdBridge`.
+// The Host sees a legacy launch as an observed dwarf with no process identity, so it would answer `no-identity`: the
+// legacy kill ends the session first and the Host's `dwarf.departed` proves it gone before `crew.stop` is relayed.
+// TC-178-01, TC-178-02.
+
+/** The `crew.stop` relay the A-N29 handler hands the adapter (B-M21), recorded. */
+function crewStopRelay(world: { events: string[] }) {
+  const stops: StopDwarfParams[] = []
+  const stop = async (params: StopDwarfParams): Promise<StopDwarfResult> => {
+    stops.push(params)
+    world.events.push(`crew.stop ${params.requestId}`)
+    return { ok: true, value: {} }
+  }
+  return { stops, stop }
+}
+
+const COULD_NOT_END: StopDwarfResult = { ok: false, error: 'could-not-end' }
+
+describe('LegacyEndFirstAdapter for A-N29', () => {
+  it('[ADR-014] a legacy-launched dwarf is ended by the legacy kill, and crew.stop is relayed only after its dwarf.departed arrives', async () => {
+    // TC-178-01
+    const world = await removalWorld({ 101: 'held', 102: 'ends' }, [
+      { dwarfId: H1, mineId: ALPHA, providerId: 'codex', sessionId: 's-a' },
+      { dwarfId: H2, mineId: ALPHA, providerId: 'codex', sessionId: 's-b' }
+    ])
+    world.launch(101)
+    world.launch(102)
+    world.observeLegacy()
+    const { stops, stop } = crewStopRelay(world)
+
+    const answer = world.adapter.beforeStopDwarf(
+      { dwarfId: H1 as DwarfId, requestId: 'req-1' },
+      stop
+    )
+    await settle(20)
+    // Only this dwarf's launch is ended; the other dwarf of the mine is untouched.
+    expect(world.events).toEqual(['kill 101'])
+
+    world.release(101)
+    await settle(20)
+    // The kill reported success, but the Host has not seen the dwarf go: nothing is relayed yet.
+    expect(stops).toEqual([])
+
+    world.depart(H1)
+    expect(await answer).toEqual({ ok: true, value: {} })
+    expect(world.events).toEqual(['kill 101', 'ended 101', `departed ${H1}`, 'crew.stop req-1'])
+    expect(stops).toEqual([{ dwarfId: H1, requestId: 'req-1' }])
+    expect(world.timers.pending()).toBe(0)
+  })
+
+  it('[ADR-014] a failed legacy kill answers could-not-end and relays nothing', async () => {
+    // TC-178-02
+    const world = await removalWorld({ 101: 'refused' }, [
+      { dwarfId: H1, mineId: ALPHA, providerId: 'codex', sessionId: 's-a' }
+    ])
+    world.launch(101)
+    world.observeLegacy()
+    const { stops, stop } = crewStopRelay(world)
+
+    const answer = await world.adapter.beforeStopDwarf(
+      { dwarfId: H1 as DwarfId, requestId: 'req-2' },
+      stop
+    )
+
+    expect(answer).toEqual(COULD_NOT_END)
+    expect(stopDwarfResultSchema.safeParse(answer).success).toBe(true)
+    expect(world.events).toEqual(['kill 101', 'refused 101'])
+    expect(stops).toEqual([])
+    expect(world.timers.pending()).toBe(0)
+  })
+
+  it("[ADR-014] a departure that does not arrive within the legacy kill's bound answers could-not-end", async () => {
+    // TC-178-02
+    const world = await removalWorld({ 101: 'ends' }, [
+      { dwarfId: H1, mineId: ALPHA, providerId: 'codex', sessionId: 's-a' }
+    ])
+    world.launch(101)
+    world.observeLegacy()
+    const { stops, stop } = crewStopRelay(world)
+
+    let settled: StopDwarfResult | undefined
+    void world.adapter
+      .beforeStopDwarf({ dwarfId: H1 as DwarfId, requestId: 'req-3' }, stop)
+      .then((r) => (settled = r))
+    await settle(20)
+    expect(world.events).toEqual(['kill 101', 'ended 101'])
+    world.timers.advance(LEGACY_KILL_BOUND_MS - 1)
+    await settle(20)
+    expect(settled).toBeUndefined()
+
+    world.timers.advance(1)
+    await settle(20)
+    expect(settled).toEqual(COULD_NOT_END)
+    expect(stops).toEqual([])
+    expect(world.timers.pending()).toBe(0)
+  })
+
+  it('[ADR-001] a Host-owned dwarf is relayed straight to crew.stop without the legacy kill', async () => {
+    // A session today's runtime did not launch (the person's own, INV-120, or one the Host launched) joins no legacy
+    // launch: the Host ends it itself (B-M21), and no legacy launch of another dwarf is touched.
+    const world = await removalWorld({ 101: 'ends' }, [
+      { dwarfId: H4, mineId: ALPHA, providerId: 'claude', sessionId: 'own' },
+      { dwarfId: H1, mineId: ALPHA, providerId: 'codex', sessionId: 's-a' }
+    ])
+    world.launch(101)
+    world.observeLegacy()
+    const { stops, stop } = crewStopRelay(world)
+
+    expect(
+      await world.adapter.beforeStopDwarf({ dwarfId: H4 as DwarfId, requestId: 'req-4' }, stop)
+    ).toEqual({ ok: true, value: {} })
+    expect(world.events).toEqual(['crew.stop req-4'])
+    expect(stops).toEqual([{ dwarfId: H4, requestId: 'req-4' }])
     expect(world.timers.pending()).toBe(0)
   })
 })
