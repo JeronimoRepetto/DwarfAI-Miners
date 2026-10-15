@@ -106,7 +106,7 @@ const DWARF = '00000000-0000-7000-8000-0000000226d1'
 const RESET_STEPS = ['db', 'secrets', 'external-config', 'ui-prefs', 'install-moment', 'done']
 /** Claude Code's settings file on this machine (`CLAUDE_CONFIG_DIR` unset: `~/.claude`, 16 §7.1). */
 const CLAUDE_SETTINGS = '/home/person/.claude/settings.json'
-/** The port the hook ingress persisted when it first bound (ADR-016 item 3; later: ISSUE-140). */
+/** The port the hook ingress persisted when it first bound (ADR-016 item 3; wiring/hookIngress.ts, ISSUE-140). */
 const INGRESS_PORT = 41_234
 
 const NO_FILE_PROTECTION = {
@@ -222,7 +222,7 @@ interface HostOptions {
   /** CH-01: the Host is killed right after the Claude Code settings file landed (before Tx B). */
   killAfterSettingsWrite?: boolean
   /**
-   * The hook ingress bound before the first-run evaluation (16 §8.2 step 6, later: ISSUE-140), so
+   * The hook ingress bound before the first-run evaluation (16 §8.2 step 6; wiring/hookIngress.ts, ISSUE-140), so
    * its port is persisted when step 8 evaluates the step.
    */
   ingressBoundAtBoot?: boolean

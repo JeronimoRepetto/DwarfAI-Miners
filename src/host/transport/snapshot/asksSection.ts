@@ -5,7 +5,7 @@
 // `AskRepository.live`), never from the frames this Host sent, so the open asks survive the window
 // closing and the Host restarting. `ui` only: a notifier or a viewer never reads it. Live updates:
 // `ask.opened`, `ask.closed`, `ask.step` (frames/askFrames.ts). Registered by the asking wiring
-// (later: ISSUE-140), it is advertised as `section:asks` (14 §4.4).
+// (wiring/routes/askingRoutes.ts, ISSUE-140), it is advertised as `section:asks` (14 §4.4).
 //
 // - A closed ask is never listed: the read keeps the two live states only.
 // - Synchronous like every provider (sectionRegistry.ts): the read runs within the one event-loop
