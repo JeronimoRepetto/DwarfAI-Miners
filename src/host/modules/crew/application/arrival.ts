@@ -58,6 +58,11 @@ export interface CrewCommands {
     parent?: DwarfId
     rank: DwarfRank
     status: 'working' | 'idle'
+    /**
+     * INV-28: set only by launching, for a launch whose request has `delegation`; absent = false
+     * (AMENDMENT-15 (owner, 2026-10-15)).
+     */
+    delegated?: boolean
   }): DwarfId
   /** Host-driven resume only (INV-22). */
   rebind(dwarfId: DwarfId, next: ProviderIdentity): void
@@ -127,9 +132,8 @@ export class CrewArrivals implements CrewCommands {
         mineId: input.mineId,
         identity: input.identity,
         baseName: baseNameFor(input.identity),
-        // INV-28: `arrive` carries no delegation flag (05 §3.2); the delegation worker's arrival
-        // sets it with the delegation issues.
-        delegated: false,
+        // INV-28: true only for a delegation worker, as launching says (AMENDMENT-15 (owner, 2026-10-15)).
+        delegated: input.delegated ?? false,
         parentDwarfId: input.parent ?? null,
         rank: input.rank,
         status: input.status,
