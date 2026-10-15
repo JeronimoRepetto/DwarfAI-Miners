@@ -10,18 +10,21 @@
 //   reached a `ui` connection (14 §8 I-03).
 // - `queries` is 16 §4.5 `LaunchQueries`; `snapshots` is the snapshot `launches` section's read
 //   (application/launchQueries.ts).
+// - `commands.markStoppedByPerson` (ISSUE-171) is the required route target of crew's
+//   `DwarfStopRequested`: the person's stop is committed on the dwarf's live record before the end
+//   runs (16 §2.3; application/markStoppedByPerson.ts).
 //
 // The other members join with their issues: `launchCustom` (later: ISSUE-165), the Jev path
-// (later: ISSUE-164), recovery (later: ISSUE-173), `stopAll` and `markStoppedByPerson` (later:
-// ISSUE-175).
+// (later: ISSUE-164), recovery (later: ISSUE-173), `stopAll` (later: ISSUE-175).
 import { LaunchUseCase, type LaunchAccepted, type LaunchingDeps } from './application/launch'
+import { MarkStoppedByPerson } from './application/markStoppedByPerson'
 import {
   createLaunchQueries,
   LaunchMemory,
   type LaunchQueries,
   type LaunchSnapshotQueries
 } from './application/launchQueries'
-import type { LaunchId } from '../../kernel/domain/values'
+import type { DwarfId, LaunchId } from '../../kernel/domain/values'
 import type { LaunchRequestInput } from './application/launch'
 
 export type { SessionStarter, StartResult } from './ports/sessionStarter'
@@ -53,6 +56,8 @@ export interface LaunchingCommands {
   launch(req: LaunchRequestInput): Promise<LaunchAccepted>
   /** A failure's `launch.failed` frame was written to a `ui` connection (14 §8 I-03). */
   failureSeen(launchId: LaunchId): void
+  /** Route of `DwarfStopRequested` (why ≠ 'host-recovery'): `stopped_by_person` BEFORE the end (PO #62). */
+  markStoppedByPerson(dwarfId: DwarfId): void
 }
 
 export interface Launching {
@@ -66,10 +71,12 @@ export type LaunchingModuleDeps = Omit<LaunchingDeps, 'memory'>
 export function createLaunching(deps: LaunchingModuleDeps): Launching {
   const memory = new LaunchMemory()
   const useCase = new LaunchUseCase({ ...deps, memory })
+  const stops = new MarkStoppedByPerson({ records: deps.records, transactions: deps.transactions })
   return {
     commands: {
       launch: (req) => useCase.launch(req),
-      failureSeen: (launchId) => useCase.failureSeen(launchId)
+      failureSeen: (launchId) => useCase.failureSeen(launchId),
+      markStoppedByPerson: (dwarfId) => stops.mark(dwarfId)
     },
     queries: createLaunchQueries({ memory, records: deps.records }),
     snapshots: memory

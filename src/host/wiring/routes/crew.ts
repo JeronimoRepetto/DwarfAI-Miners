@@ -1,7 +1,8 @@
 // The crew module's wiring (05 §3.2, §4; 16 §8.2, §8.3), in two parts, as routes/mines.ts:
 //
 // - `serveCrew`, run by the composition root before the boot binds the endpoint: the `dwarfs`
-//   snapshot section (14 §4.1), B-M22 `crew.rename` and B-M23 `crew.resetName` (14 §2.3; ISSUE-172)
+//   snapshot section (14 §4.1), B-M21 `crew.stop` (14 §2.3; ISSUE-171), B-M22 `crew.rename` and
+//   B-M23 `crew.resetName` (14 §2.3; ISSUE-172)
 //   and B-M41 `strangler.dwarfIdentities` (14 §2.3; AMENDMENT-8), so every `hello.ok` lists them
 //   (14 §1.3). They forward to the one instance boot step 4 constructs;
 //   until then the dispatcher answers HOST_NOT_READY before any handler runs (14 §3.3), and the
@@ -11,8 +12,9 @@
 //   database, the one kernel `LifecycleFactLog` (16 §3, shared with conversation, 05 §4 item 1) and
 //   the kernel clock and scheduler, the `SessionTerminator` bridge (bridges/sessionTerminator.ts,
 //   ADR-014) over the kernel's process control and observation's process-identity read and
-//   `recordEnded` (`WiredObservation.crew`, routes/observation.ts), and crew's half of the mines
-//   wiring (`MinesCrewBinding`: `mineOf`, `ends`, `queries`).
+//   `recordEnded` (`WiredObservation.crew`, routes/observation.ts), crew's half of the mines
+//   wiring (`MinesCrewBinding`: `mineOf`, `ends`, `queries`), and `stop` over the same terminator
+//   and Host bus (`WiredCrew.stops`), which B-M21 forwards to.
 // - `route`, run by boot step 4 once mines exists, the 05 §4 routes of this module and the boot
 //   recompute of machine 1 (S1.18):
 //   - `SessionObserved` (observation) → `mines.resolveForSession(cwd, firstMessage)` →
@@ -36,8 +38,9 @@
 //   the cut-1 cross-epic routes (routes/cut1Routes.ts, ISSUE-120).
 // - `SubagentObserved` (08 §0): observation publishes no such event yet; a subagent arrives through
 //   `SessionObserved` with its `parentIdentity`, which this route ranks by depth.
-// - `DwarfStopRequested` → launching `markStoppedByPerson` (required handler, 16 §2.3): launching is
-//   not constructed by the Host yet (later: EPIC-10); without a handler every end runs.
+// - `DwarfStopRequested` → launching `markStoppedByPerson` (required handler, 16 §2.3) and
+//   `DwarfStopFailed{why: 'stop-dwarf'}` → its toast: launching's wiring (routes/launching.ts
+//   `routeStops`, ISSUE-171), once launching exists.
 // - The cut-1 cross-epic routes (`TurnEnded`, `DwarfDeparted` clean-ups): routes/cut1Routes.ts
 //   (ISSUE-120); `ask.*` → `startAsking` / `stopAsking`: routes/askingRoutes.ts (ISSUE-140).
 import { providerIdentityKey } from '../../kernel/domain/providerIdentity'
@@ -62,6 +65,7 @@ import {
   type CrewCommands,
   type CrewEvent,
   type CrewQueries,
+  type CrewStops,
   type DwarfRank,
   type SessionLinks,
   type SessionTerminator
@@ -77,6 +81,7 @@ import type {
 import type { Dispatcher } from '../../transport/dispatcher'
 import { registerCrewRename } from '../../transport/methods/crewRename'
 import { registerCrewResetName } from '../../transport/methods/crewResetName'
+import { registerCrewStop } from '../../transport/methods/crewStop'
 import { registerStranglerDwarfIdentities } from '../../transport/methods/strangler'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { NO_OUTCOMES, type DwarfOutcomeReader } from '../../transport/mappers/wire'
@@ -104,7 +109,7 @@ export interface CrewObservationBinding {
 }
 
 export interface CrewServeDeps {
-  /** The Host dispatcher (hostDispatcher.ts), where B-M22, B-M23 and B-M41 join. */
+  /** The Host dispatcher (hostDispatcher.ts), where B-M21, B-M22, B-M23 and B-M41 join. */
   dispatcher: Dispatcher
   /** The snapshot sections, where the `dwarfs` section joins. */
   sections: SectionRegistry
@@ -150,6 +155,8 @@ export interface WiredCrew {
   terminator: SessionTerminator
   /** Crew's half of the mines wiring (routes/mines.ts). */
   mines: MinesCrewBinding
+  /** "Stop dwarf…" over the terminator and the Host bus, which B-M21 forwards to. */
+  stops: CrewStops
   /** Boot step 4, once mines is wired: the 05 §4 routes and the status recompute (S1.18). */
   route(mines: CrewMinesRoute): void
   /** Resolves once every routed arrival has answered (tests; drain). */
@@ -165,6 +172,7 @@ export interface ServedCrew {
 type ServedMembers = {
   crew: Pick<CrewQueries, 'crewOf' | 'get' | 'presentIdentities'>
   commands: Pick<CrewCommands, 'rename' | 'resetName'>
+  stops: CrewStops
   mines: Pick<MinesQueries, 'list'>
   outcomes: DwarfOutcomeReader
 }
@@ -182,6 +190,10 @@ export function serveCrew(serve: CrewServeDeps): ServedCrew {
     outcomes: { outcomeOf: (dwarfId) => current().outcomes.outcomeOf(dwarfId) }
   })
   const get: CrewQueries['get'] = (dwarfId) => current().crew.get(dwarfId)
+  registerCrewStop(serve.dispatcher, {
+    stops: { stop: (dwarfId, requestId) => current().stops.stop(dwarfId, requestId) },
+    queries: { get }
+  })
   registerCrewRename(serve.dispatcher, {
     commands: { rename: (dwarfId, text) => current().commands.rename(dwarfId, text) },
     queries: { get }
@@ -207,6 +219,7 @@ export function serveCrew(serve: CrewServeDeps): ServedCrew {
           served = {
             crew: result.crew.queries,
             commands: result.crew.commands,
+            stops: result.stops,
             mines: mines.queries,
             outcomes: deps.outcomes ?? NO_OUTCOMES
           }
@@ -280,6 +293,7 @@ function wireCrew(deps: CrewWiringDeps): WiredCrew {
       ends: crew.ends({ terminator, bus }),
       queries: crew.queries
     },
+    stops: crew.stops({ terminator, bus }),
     route: (mines) => {
       bus.subscribe('SessionObserved', ({ payload }) => {
         const key = providerIdentityKey(payload.identity)

@@ -25,6 +25,14 @@
 //   now, then launching's `failureSeen` (`launches.seen_at`, 14 §8 I-03). A failure no UI saw is
 //   never sent later and never listed (PO #65; INV-53; FM-135): it is not put in the replay ring
 //   either, so a window that resumes its subscription gets no frame for it.
+// - `DwarfStopRequested` (crew; why ≠ `host-recovery`) → launching `markStoppedByPerson`, the bus's
+//   one required handler (16 §2.3, AR-24; ISSUE-171): `stopped_by_person` is committed before
+//   `SessionTerminator.end` runs, so the exit raises no PO #62 toast (FM-060). If it throws, the
+//   crew command ends nothing and answers `could-not-end`. `routeStops`.
+// - `DwarfStopFailed{why: 'stop-dwarf'}` (crew) → the one `toast {kind: 'dwarf-stop-failed',
+//   requestId, dwarfId}` (14 §2.4 B-F28; ADR-014 item 6), for `ui`; a failed Remove mine, stop-all or
+//   delegation end sends none per dwarf (their one grouped message is their owner's). `toast` is
+//   advertised with the board frames (frames/board.ts `BOARD_FRAMES`). `routeStops`.
 //
 // The frames are the same for every `ui` connection, whatever its mode (US-LAUNCH-006.AC13). They
 // are sensitive (14 §3.5 SENSITIVE_FRAMES); nothing here logs their data.
@@ -40,8 +48,13 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { ConversationCommands } from '../../modules/conversation'
-import type { CrewCommands } from '../../modules/crew'
-import { createLaunching, type Launching, type LaunchingEvent } from '../../modules/launching'
+import type { CrewCommands, CrewEndEvent } from '../../modules/crew'
+import {
+  createLaunching,
+  type Launching,
+  type LaunchingCommands,
+  type LaunchingEvent
+} from '../../modules/launching'
 import { SqliteLaunchRecordStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchRecordStore'
 import { SqliteLaunchStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchStore'
 import { SqliteProcessRecordStore } from '../../modules/launching/adapters/sqlite/SqliteProcessRecordStore'
@@ -116,6 +129,39 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
   }
 }
 
+export interface StopRouteDeps {
+  /** Crew's end events on the Host bus (16 §2.3). */
+  events: Pick<DomainEventBus<CrewEndEvent>, 'subscribe'>
+  launching: { commands: Pick<LaunchingCommands, 'markStoppedByPerson'> }
+  frames: Pick<LaunchFramePublisher, 'publishFrame'>
+}
+
+/**
+ * The 05 §4 routes of crew's end events: `DwarfStopRequested` → launching `markStoppedByPerson`,
+ * the one required handler (16 §2.3, AR-24), and `DwarfStopFailed{why: 'stop-dwarf'}` → the one
+ * `toast {dwarf-stop-failed}` (ADR-014 item 6). Returns the unsubscribe.
+ */
+export function routeStops(deps: StopRouteDeps): () => void {
+  const { events, launching, frames } = deps
+  const stops = [
+    events.subscribe(
+      'DwarfStopRequested',
+      ({ payload }) => {
+        if (payload.why !== 'host-recovery') launching.commands.markStoppedByPerson(payload.dwarfId)
+      },
+      { required: true }
+    ),
+    events.subscribe('DwarfStopFailed', ({ payload }) => {
+      if (payload.why !== 'stop-dwarf') return
+      const { requestId, dwarfId } = payload
+      frames.publishFrame('toast', { kind: 'dwarf-stop-failed', requestId, dwarfId })
+    })
+  ]
+  return () => {
+    for (const stop of stops) stop()
+  }
+}
+
 export interface LaunchingServeDeps {
   /** The Host dispatcher (hostDispatcher.ts), where B-M33 joins. */
   dispatcher: Dispatcher
@@ -128,8 +174,8 @@ export interface LaunchingWiringDeps {
   db: SqliteDatabase
   /** Its transaction runner, also the bus's transaction scope (16 §2.2). */
   transactions: TransactionRunner & TransactionScope
-  /** The Host's one event bus (16 §2.3). */
-  bus: DomainEventBus<LaunchingEvent>
+  /** The Host's one event bus (16 §2.3): launching publishes; crew's end events are read. */
+  bus: DomainEventBus<LaunchingEvent> & Pick<DomainEventBus<CrewEndEvent>, 'subscribe'>
   clock: Clock
   /** Runs the continuation after the answer, the handshake budget and the early window. */
   scheduler: Scheduler
@@ -210,11 +256,19 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
     installId: deps.installId,
     log: deps.log
   })
-  const stop = routeLaunching({
-    events: deps.bus,
+  const unrouted = [
+    routeLaunching({
+      events: deps.bus,
+      launching,
+      conversation: deps.conversation,
+      frames: deps.frames
+    }),
+    routeStops({ events: deps.bus, launching, frames: deps.frames })
+  ]
+  return {
     launching,
-    conversation: deps.conversation,
-    frames: deps.frames
-  })
-  return { launching, stop }
+    stop: () => {
+      for (const unroute of unrouted) unroute()
+    }
+  }
 }
