@@ -43,7 +43,7 @@ import { HostStateHolder } from '../transport/lifecycle/hostState'
 import type { UpgradeDrain } from '../transport/lifecycle/drain'
 import { registerHostShutdown } from '../transport/methods/hostShutdown'
 import { HOST_DB_FILE } from './hostDatabase'
-import { emptyOwnerStopAll } from './emptyOwnerStopAll'
+import { RecordingStopAll } from '../kernel/fakes/RecordingStopAll'
 import { createNodeRevertIntegrations, runRevertIntegrations } from './revertIntegrations'
 import { decideBind } from './singleInstance'
 import { hashOf } from '../modules/preferences/testing/inMemoryChannelTokens'
@@ -168,7 +168,9 @@ async function runningHost(
   let close: () => Promise<void> = async () => {}
   const held = new Set<Socket>()
   registerHostShutdown(dispatcher, {
-    stopAll: emptyOwnerStopAll,
+    // AMENDED for ISSUE-175 (was: the cut-0 `emptyOwnerStopAll`, which launching's `stopAll`
+    // replaced): the StopAllPort double that owns no session answers the same `{ ended: [], failed: [] }`.
+    stopAll: new RecordingStopAll(),
     // The clean exit (ADR-002 D7) as far as the command can see it: the endpoint closes.
     lifecycle: {
       closeCleanly: async () => {

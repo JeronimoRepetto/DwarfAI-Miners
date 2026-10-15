@@ -19,8 +19,8 @@
 // ConnectionRegistry. The seam-B Dispatcher comes from wiring/hostDispatcher.ts, which registers
 // the transport's own `ping`, `events.subscribe` and `host.shutdown` and where each method joins
 // with the issue that serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every
-// owned session: bound to the empty-owner implementation, since the Host owns no session yet,
-// until the launching module serves it (later: ISSUE-175).
+// owned session: bound to the launching module's `stopAll` from boot step 4 on, which ends them
+// through crew's `endOwned` (ISSUE-175).
 // The upgrade drain asks the DrainGate what is still open: the Host's binding (wiring/hostDrainGate.ts),
 // which reports the blockers of each module bound to it, so it drains at once until one is: the asking
 // module's live asks from boot step 4 (#1290), the launching module's in-flight launches (ISSUE-162); a
@@ -215,7 +215,6 @@ import {
   routeLaunchDrainRechecks
 } from './wiring/hostDrainGate'
 import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
-import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
   servePreferences,
   unavailableSecretStore,
@@ -241,8 +240,19 @@ import {
   type WiredConversation
 } from './wiring/routes/conversation'
 import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
-import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/routes/launching'
-import { createLaunchDrainGate, type LaunchingEvent } from './modules/launching'
+import {
+  LAUNCHING_FRAMES,
+  routeStopAll,
+  serveLaunching,
+  type WiredLaunching
+} from './wiring/routes/launching'
+import {
+  createLaunchDrainGate,
+  type LaunchingEvent,
+  type LaunchingStopAll,
+  type LaunchingStopAllDeps,
+  type StopAllIncomplete
+} from './modules/launching'
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
@@ -285,6 +295,7 @@ type HostEvent =
   | AttentionRouteEvent
   | AskingRouteEvent
   | LaunchingEvent
+  | StopAllIncomplete
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -482,6 +493,11 @@ async function bootHost(base: HostBase): Promise<void> {
   // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
   let stopDrainRechecks: (() => void) | undefined
   let stopLaunchDrainRechecks: (() => void) | undefined
+  // Launching's `stopAll` (ISSUE-175), bound at boot step 4 once crew and launching exist; the
+  // dispatcher answers HOST_NOT_READY for `host.shutdown` before `ready`, so it is always bound when
+  // asked. Unbound, it fails closed: the Host never exits on a stop-all that ended nothing it owns.
+  let launchingStopAll: LaunchingStopAll | undefined
+  let stopStopAllRoute: (() => void) | undefined
   // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
   let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
@@ -530,8 +546,15 @@ async function bootHost(base: HostBase): Promise<void> {
     clock,
     scheduler,
     state: () => hostState.current().state,
-    // Cut 0: no owned session exists yet (later: ISSUE-175 binds launching.stopAll).
-    stopAll: emptyOwnerStopAll,
+    // Launching's `stopAll`: every owned session ends through crew's `endOwned` (ISSUE-175).
+    stopAll: {
+      stopAll: (requestId) => {
+        if (launchingStopAll === undefined) {
+          return Promise.reject(new HostInvariantError('stop-all is served from boot step 4 on'))
+        }
+        return launchingStopAll.stopAll(requestId)
+      }
+    },
     lifecycle,
     connections,
     epoch,
@@ -660,6 +683,7 @@ async function bootHost(base: HostBase): Promise<void> {
           maintenance?.stop()
           stopDrainRechecks?.()
           stopLaunchDrainRechecks?.()
+          stopStopAllRoute?.()
           modules.asking?.stop()
           modules.launching?.stop()
         },
@@ -1079,6 +1103,24 @@ async function bootHost(base: HostBase): Promise<void> {
           // asks it again at once.
           drainGate.bind(createLaunchDrainGate({ launches: modules.launching.launching.queries }))
           stopLaunchDrainRechecks = routeLaunchDrainRechecks({ events: bus, drain })
+          // Stop everything and quit (ISSUE-175; ADR-002 D7 step 3): launching's `stopAll` waits for
+          // the launches in flight and ends every owned session through crew's `endOwned`, over
+          // the same terminator as Stop dwarf; `StopAllIncomplete` goes on the Host bus.
+          const ownedEndsDeps: Parameters<WiredCrew['crew']['ownedEnds']>[0] = {
+            terminator: modules.crew.terminator,
+            bus
+          }
+          const stopAllDeps: LaunchingStopAllDeps = {
+            crew: modules.crew.crew.ownedEnds(ownedEndsDeps),
+            bus
+          }
+          launchingStopAll = modules.launching.launching.stopAll(stopAllDeps)
+          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const stopAllRouteDeps: Parameters<typeof routeStopAll>[0] = {
+            events: bus,
+            frames: connections
+          }
+          stopStopAllRoute = routeStopAll(stopAllRouteDeps)
           // Stop dwarf ends an owned session through its driver, then its recorded process tree
           // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(

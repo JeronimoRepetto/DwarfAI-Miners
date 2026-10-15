@@ -22,7 +22,7 @@ import { FakeAppPaths } from '../kernel/fakes/FakeAppPaths'
 import { FakeFs } from '../kernel/fakes/FakeFs'
 import { FakeProcessControl } from '../kernel/fakes/FakeProcessControl'
 import { createHostDispatcher } from './hostDispatcher'
-import { emptyOwnerStopAll } from './emptyOwnerStopAll'
+import { RecordingStopAll } from '../kernel/fakes/RecordingStopAll'
 import { emptyDrainGate } from './emptyDrainGate'
 import { createUpgradeDrain } from '../transport/lifecycle/drain'
 import { createUpgradeTargetRule } from '../transport/methods/hostUpgradeRequest'
@@ -366,7 +366,9 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
       clock: deps.clock,
       scheduler: dispatcherScheduler,
       state: () => deps.state().state,
-      stopAll: emptyOwnerStopAll,
+      // AMENDED for ISSUE-175 (was: the cut-0 `emptyOwnerStopAll`, which launching's `stopAll`
+      // replaced): the StopAllPort double that owns no session answers the same `{ ended: [], failed: [] }`.
+      stopAll: new RecordingStopAll(),
       lifecycle,
       connections: deps.connections,
       epoch: deps.epoch,

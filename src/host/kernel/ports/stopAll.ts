@@ -4,8 +4,8 @@
 // session (INV-120). The transport decides from `failed` whether the Host exits (S12.12) or keeps
 // running (S12.21).
 //
-// host/main.ts binds an empty-owner implementation until the launching module serves it through
-// `crew.endOwned` (later: ISSUE-175).
+// host/main.ts binds the launching module's `stopAll` (ISSUE-175), which ends every owned session
+// through `crew.endOwned` and publishes `StopAllIncomplete` when `failed` is not empty.
 //
 // `StopAllOutcome` is 06 §0.2's, owned by `contracts/wire` (ISSUE-009 / ISSUE-029), imported as a
 // type only and never restated.
