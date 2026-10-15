@@ -3,7 +3,9 @@
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
+import { McpDelegationServer } from './adapters/mcp/McpDelegationServer'
 import { DelegationResetStep } from './adapters/sqlite/DelegationResetStep'
+import type { DelegationRelayListener, DelegationServer } from './ports/delegationServer'
 
 // ISSUE-199: what host/transport's MCP endpoint and the composition root need of the endpoint.
 export type { DelegationToken, DelegationTokenStore } from './ports/delegationStores'
@@ -32,4 +34,17 @@ export function createDelegationResetStep(deps: {
   scope: TransactionScope
 }): DelegationResetDbStep {
   return new DelegationResetStep(deps)
+}
+
+export {
+  DelegationEndpointService,
+  DelegationLaunchClosedError,
+  type DelegationEndpointDeps,
+  type DelegationEndpointEvent,
+  type SubtaskDelegated
+} from './application/delegationEndpoint'
+
+/** The Jev delegation MCP server over the MCP endpoint (16 §4.8; composed by ISSUE-209). */
+export function createMcpDelegationServer(listener: DelegationRelayListener): DelegationServer {
+  return new McpDelegationServer(listener)
 }
