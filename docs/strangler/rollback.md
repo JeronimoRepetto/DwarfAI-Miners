@@ -68,6 +68,10 @@ Host's own entry only, never the one today's installer wrote. A-40 and A-41 fold
 keeps the target shape through `LegacyAnswerShapeAdapter`, because the rollback build's preload and renderer still
 send the 14 shapes.
 
+`--revert-integrations` builds its own `ClaudeHooksConfigWriter` without `keepOldAppEntries`
+(`src/host/wiring/revertIntegrations.ts`), so it also removes today's installer's (the old app's) Claude hook entry.
+That fits its purpose: it removes everything before an uninstall or a rollback.
+
 An observed session outlives the Host (`07` S6.17), so an ask the cut-2 build opened can still be `open` when the
 rollback build's Host boots, but no route answers a Host `AskId` in that build (the asking rows route `legacy`,
 `INVALID_PARAMS`). On, the cut-2 rollback setting settles each ask the cut-2 build left `open` or `answering` at boot
