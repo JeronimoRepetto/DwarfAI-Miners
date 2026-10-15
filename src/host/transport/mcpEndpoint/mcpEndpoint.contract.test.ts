@@ -308,7 +308,7 @@ describe('the MCP endpoint (ADR-013 item 3, 16 §5.2)', () => {
     expect(received).toEqual([])
   })
 
-  it('[ADR-003, 16 §5.2] five failed hellos within 60 s refuse new connections for 10 s with RATE_LIMITED', async () => {
+  it('[ADR-003, ADR-013] five failed hellos within 60 s refuse new connections for 10 s with RATE_LIMITED', async () => {
     const s = setUp()
     for (let i = 0; i < THROTTLE_FAILURES; i += 1) {
       const client = s.connect()

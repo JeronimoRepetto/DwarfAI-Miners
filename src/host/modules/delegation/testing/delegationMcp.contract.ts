@@ -273,7 +273,7 @@ export function runDelegationMcpContract(name: string, serve: DelegationServerUn
       await s.dispose()
     })
 
-    it('[16 §5.2, AMENDMENT-14] a delegate call before the parent is bound waits until bindParent releases it', async () => {
+    it('[ADR-013] a delegate call before the parent is bound waits until bindParent releases it (16 §5.2 item 5 as amended)', async () => {
       const s = await setUp({ parent: null })
       let answered = false
       const answer = s.caller.delegateSubtask({ task: TASK }).then((a) => {
