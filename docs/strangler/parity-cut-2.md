@@ -168,8 +168,13 @@ Package gaps decided for this step:
   without this switch: with A-N32 unrouted, the step that the first boot makes due had no way out
   (`e2e/cut-2/first-run-step-ui.e2e.ts` "the step is never a trap"; proven by breaking A-N32's composition, which left
   the step on screen). Decided by: lead, 2026-10-14.
-- **S14.10, rewriting the entry when the port changes,** is not built in this step: a taken port at a later boot gives a
-  new port, and the entry written earlier is not rewritten. Decided by: lead, 2026-10-14 (follow-up).
+- **S14.10, rewriting the entry when the port changes,** was not built when the step was switched: a taken port at a later
+  boot gave a new port, and the entry written earlier was not rewritten. Decided by: lead, 2026-10-14 (follow-up). Built
+  since (#1289): after boot step 6 binds the ingress, the Host's own entry of an `on-verified` integration that names
+  another port is written again through the config writer engine (backup, fresh token, read-back, the consent on
+  record), replacing DwarfAI's own entry only; an old-app entry is never written, an integration that is off or
+  `on-unverified` is left alone, and a cut-2 rollback build never rewrites. The check runs at every bind, so a rewrite a
+  full disk refused is made at the next boot.
 
 Real-CLI evidence (`21` §4 row "Claude hook entry", TC-141-03): the Claude CLI treats a `401` from the Host ingress, or no
 answer from the old app's Claude route, as a non-blocking hook failure. Run by the owner in the opt-in real-CLI lane

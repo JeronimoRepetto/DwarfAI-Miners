@@ -21,14 +21,15 @@
 // exact command form, and it is never reported as DwarfAI's own (16 §7.1 "Old-app entries"): it is
 // removed by `render` (replaced in the same write) and by `removeOwned`.
 import type { ChannelToken } from '../../../ports/externalConfigWriter'
-import type { ConfigTargetAdapter, OwnershipProbe } from '../configTargetAdapter'
+import type { ConfigTargetAdapter, OwnershipProbe, RenderScope } from '../configTargetAdapter'
 import {
   buildHookCommand,
   HOOK_TIMEOUT_S,
   INSTALLED_CLAUDE_HOOK_EVENTS,
   isLegacyHookCommand,
   isOwnedHookCommand,
-  ownedCommandPrefix
+  ownedCommandPrefix,
+  postsToIngressPort
 } from './hookCommand'
 import {
   hasDuplicateKeys,
@@ -225,7 +226,11 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
     return doc.text !== null && this.someHandler(doc.text, isLegacyHookCommand)
   }
 
-  render(doc: ClaudeSettingsDocument, token: ChannelToken): Uint8Array {
+  render(
+    doc: ClaudeSettingsDocument,
+    token: ChannelToken,
+    scope: RenderScope = 'with-old-app'
+  ): Uint8Array {
     // The hex check runs before anything is rendered (ADR-016 item 1).
     const command = buildHookCommand({
       port: this.options.ingressPort(),
@@ -233,7 +238,7 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
       platform: this.options.platform
     })
     const group = { matcher: '', hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }
-    let text = this.withoutEntries(doc.text ?? NEW_FILE)
+    let text = this.withoutEntries(doc.text ?? NEW_FILE, scope === 'owned-only')
     const layout = layoutOf(text)
     for (const event of INSTALLED_CLAUDE_HOOK_EVENTS) {
       const root = rootOf(text)
@@ -257,12 +262,23 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
    * person's is never deleted.
    */
   removeOwned(doc: ClaudeSettingsDocument): Uint8Array | null {
-    return doc.text === null ? null : encoder.encode(this.withoutEntries(doc.text))
+    return doc.text === null ? null : encoder.encode(this.withoutEntries(doc.text, false))
   }
 
-  private isEntry(command: string): boolean {
+  /** 07 S14.10: every handler of DwarfAI's own posts to the persisted ingress port. */
+  isCurrent(doc: ClaudeSettingsDocument): boolean {
+    if (doc.text === null) return true
+    const port = this.options.ingressPort()
+    return !this.someHandler(
+      doc.text,
+      (command) =>
+        isOwnedHookCommand(command, this.options.platform) && !postsToIngressPort(command, port)
+    )
+  }
+
+  private isEntry(command: string, ownedOnly: boolean): boolean {
     if (isOwnedHookCommand(command, this.options.platform)) return true
-    return this.options.keepOldAppEntries !== true && isLegacyHookCommand(command)
+    return !ownedOnly && this.options.keepOldAppEntries !== true && isLegacyHookCommand(command)
   }
 
   /** Every handler under `hooks`, whatever the event; `test` sees each one's command. */
@@ -285,12 +301,15 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
     )
   }
 
-  /** Removes DwarfAI's and the old app's handlers one at a time, then what they leave empty. */
-  private withoutEntries(original: string): string {
+  /**
+   * Removes DwarfAI's and (unless `ownedOnly`) the old app's handlers one at a time, then what they
+   * leave empty.
+   */
+  private withoutEntries(original: string, ownedOnly: boolean): string {
     const layout = layoutOf(original)
     let text = original
     for (;;) {
-      const next = this.removeOneEntry(text, layout)
+      const next = this.removeOneEntry(text, layout, ownedOnly)
       if (next === null) return text
       text = next
     }
@@ -301,7 +320,7 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
    * only of such handlers goes with them, and so do the event array and the `hooks` object they
    * were the last item of; a group shared with a foreign handler keeps the foreign one.
    */
-  private removeOneEntry(text: string, layout: Layout): string | null {
+  private removeOneEntry(text: string, layout: Layout, ownedOnly: boolean): string | null {
     const root = rootOf(text)
     const hooksMember = memberOf(root ?? undefined, 'hooks')
     if (root === null || hooksMember === undefined || hooksMember.value.kind !== 'object') {
@@ -315,7 +334,7 @@ export class ClaudeHooksConfigWriter implements ConfigTargetAdapter<ClaudeSettin
         if (handlers?.kind !== 'array') continue
         const isEntry = (handler: JsonNode): boolean => {
           const command = commandOf(handler)
-          return command !== null && this.isEntry(command)
+          return command !== null && this.isEntry(command, ownedOnly)
         }
         const at = handlers.elements.findIndex(isEntry)
         if (at === -1) continue

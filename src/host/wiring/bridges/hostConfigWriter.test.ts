@@ -8,7 +8,12 @@ import { describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import type { ChannelToken, ExternalConfigWriter } from '../../modules/preferences'
-import { enablableInstalledTools, hostConfigWriter, persistedIngressPort } from './hostConfigWriter'
+import {
+  claudeHookEntryFollower,
+  enablableInstalledTools,
+  hostConfigWriter,
+  persistedIngressPort
+} from './hostConfigWriter'
 
 const TOKEN = 'a'.repeat(64) as ChannelToken
 const HASH = 'b'.repeat(64)
@@ -131,5 +136,41 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
     expect(
       enablableInstalledTools({ installed: () => [] }, { read: () => 41_234 }).installed()
     ).toStrictEqual([])
+  })
+})
+
+describe("the Host's own Claude hook entry following the ingress port (07 S14.10)", () => {
+  /** The engine's rewrite as the bridge sees it: every call recorded with the credential it was handed. */
+  function followingEngine() {
+    const calls: Array<{ target: string; token: string; tokenSha256: string }> = []
+    return {
+      calls,
+      followIngressPort: (
+        target: 'claude-hooks',
+        credential: () => { token: ChannelToken; tokenSha256: string }
+      ) => {
+        calls.push({ target, ...credential() })
+        return Promise.resolve('rewritten')
+      }
+    }
+  }
+  const mint = () => ({ value: TOKEN, sha256: HASH })
+
+  it("[S14.10, ADR-016] the Host's Claude hook entry follows the ingress port with a freshly minted token", async () => {
+    const engine = followingEngine()
+
+    await claudeHookEntryFollower({ engine, rolledBack: false, mintCredential: mint })()
+
+    expect(engine.calls).toStrictEqual([
+      { target: 'claude-hooks', token: TOKEN, tokenSha256: HASH }
+    ])
+  })
+
+  it("[S14.10, ADR-016] a cut-2 rollback build never rewrites the hook entry: today's installer is its one writer there", async () => {
+    const engine = followingEngine()
+
+    await claudeHookEntryFollower({ engine, rolledBack: true, mintCredential: mint })()
+
+    expect(engine.calls).toStrictEqual([])
   })
 })
