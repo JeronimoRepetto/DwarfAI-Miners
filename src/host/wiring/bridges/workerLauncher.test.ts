@@ -15,9 +15,11 @@ import type {
   ProviderId
 } from '../../kernel/domain/values'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
+import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { DwarfView } from '../../modules/crew'
 import {
   buildLaunchFailure,
+  LaunchRefusedError,
   type LaunchingEvent,
   type LaunchRequestInput
 } from '../../modules/launching'
@@ -42,19 +44,46 @@ const PICK: JevSuggestionView = {
   parts: { providerId: 'answered', model: 'answered', effort: 'answered' }
 }
 
-function harness() {
+interface HarnessOptions {
+  /** The parent as crew sees it: present (default), departed, or unknown. */
+  parent?: 'present' | 'departed' | 'gone'
+  /** Runs inside `launch` before it answers, e.g. to refuse it or to publish an early settlement. */
+  duringLaunch?: () => void
+}
+
+function harness(options: HarnessOptions = {}) {
   const bus = new RecordingEventBus<LaunchingEvent>()
   const requests: LaunchRequestInput[] = []
+  // Counts the live subscriptions the bridge holds on the bus.
+  let subscriptions = 0
+  const events: Pick<DomainEventBus<LaunchingEvent>, 'subscribe'> = {
+    subscribe: (type, handler, opts) => {
+      const stop = bus.subscribe(type, handler, opts)
+      subscriptions += 1
+      let stopped = false
+      return () => {
+        if (stopped) return
+        stopped = true
+        subscriptions -= 1
+        stop()
+      }
+    }
+  }
+  const parent = options.parent ?? 'present'
   const launcher = createWorkerLauncher({
     launching: {
       launch: async (req) => {
         requests.push(req)
+        options.duringLaunch?.()
         return { launchId: LAUNCH }
       }
     },
-    events: bus,
+    events,
     crew: {
-      get: (dwarfId) => (dwarfId === PARENT ? ({ id: PARENT, mineId: MINE } as DwarfView) : null)
+      get: (dwarfId) =>
+        dwarfId === PARENT && parent !== 'gone'
+          ? ({ id: PARENT, mineId: MINE, departed: parent === 'departed' } as DwarfView)
+          : null
     }
   })
   let n = 0
@@ -63,6 +92,7 @@ function harness() {
     bus,
     requests,
     launcher,
+    subscriptions: () => subscriptions,
     launched(launchId: LaunchId, dwarfId: DwarfId): void {
       bus.publish({
         type: 'DwarfLaunched',
@@ -161,5 +191,59 @@ describe('WorkerLauncher bridge', () => {
         delegation: { delegationId: DELEGATION, parentDwarfId: PARENT, fallback: 'effort-ceiling' }
       }
     ])
+  })
+
+  it('[INV-52] a parent crew no longer knows, or one that departed, answers could-not-start and launches nothing', async () => {
+    for (const parent of ['gone', 'departed'] as const) {
+      const h = harness({ parent })
+
+      expect(await h.launcher.launchWorker(DELEGATION, PARENT, PICK, TASK)).toEqual({
+        ok: false,
+        error: 'could-not-start'
+      })
+      expect(h.requests).toEqual([])
+      expect(h.subscriptions()).toBe(0)
+    }
+  })
+
+  it('[INV-52] a launch refused at acceptance answers could-not-start, never a sixth cause', async () => {
+    const h = harness({
+      duringLaunch: () => {
+        throw new LaunchRefusedError('mine-not-enterable')
+      }
+    })
+
+    expect(await h.launcher.launchWorker(DELEGATION, PARENT, PICK, TASK)).toEqual({
+      ok: false,
+      error: 'could-not-start'
+    })
+    expect(h.requests).toHaveLength(1)
+    expect(h.subscriptions()).toBe(0)
+  })
+
+  it('[ADR-013] a settlement published before launch answered is not missed', async () => {
+    const h = harness({ duringLaunch: () => h.launched(LAUNCH, WORKER) })
+
+    expect(await h.launcher.launchWorker(DELEGATION, PARENT, PICK, TASK)).toEqual({
+      ok: true,
+      value: WORKER
+    })
+  })
+
+  it('[ADR-013] the bridge holds no bus subscription once the launch settled, on success and on failure', async () => {
+    const h = harness()
+    const succeeded = h.launcher.launchWorker(DELEGATION, PARENT, PICK, TASK)
+    await flush()
+    expect(h.subscriptions()).toBe(2)
+    h.launched(LAUNCH, WORKER)
+    await succeeded
+    expect(h.subscriptions()).toBe(0)
+
+    const failed = h.launcher.launchWorker(DELEGATION, PARENT, PICK, TASK)
+    await flush()
+    expect(h.subscriptions()).toBe(2)
+    h.failed(LAUNCH, buildLaunchFailure({ cause: 'not-installed', supplierLabel: 'Simulated' }))
+    await failed
+    expect(h.subscriptions()).toBe(0)
   })
 })
