@@ -635,6 +635,8 @@ async function bootHost(base: HostBase): Promise<void> {
           ...BOARD_FRAMES,
           ...LEDGER_FRAMES,
           ...CONVERSATION_READ_FRAMES,
+          // B-F12 `message.delivery`, the send path's marks (ISSUE-166).
+          'message.delivery',
           ...ATTENTION_FRAMES,
           ...ASKING_FRAMES,
           ...LAUNCHING_FRAMES
@@ -940,7 +942,9 @@ async function bootHost(base: HostBase): Promise<void> {
           ledger.route({ mines: modules.mines.mines.queries })
           conversation.route({
             crew: modules.crew.crew.queries,
-            mines: modules.mines.mines.queries
+            mines: modules.mines.mines.queries,
+            // The send path's door to a launched session (ISSUE-166).
+            sessions: modules.suppliers.sessions
           })
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
           // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).

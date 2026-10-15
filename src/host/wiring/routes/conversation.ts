@@ -20,8 +20,8 @@
 //   `message.delivery` frames (B-F12, `ui` only): each of `MessageSent`, `MessageHandedOver`,
 //   `MessageReactedTo` and `MessageDeliveryFailed` — the person's messages and asking's
 //   answers-records alike — sends the `Delivery` the Host stored, read after the commit, never one
-//   computed for the frame (ADR-022 item 6). Without `sessions` (until the composition root passes
-//   suppliers' channels) every hand-over answers `session-closed`; crew answers
+//   computed for the frame (ADR-022 item 6). The composition root passes suppliers' channels as
+//   `sessions`; without them every hand-over answers `session-closed`. Crew answers
 //   `canReceiveMessages` false until a delivery route is wired (main.ts `links`, later: EPIC-10),
 //   so a send is refused `cannot-receive` before any row: nothing is offered that is not built.
 //

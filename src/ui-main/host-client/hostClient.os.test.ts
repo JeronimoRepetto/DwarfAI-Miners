@@ -93,8 +93,9 @@ const SERVED_SINCE_CUT_0 = [
   'section:launches',
   // The Add panel's supplier list: B-M37, from cut 3 (ISSUE-163).
   'suppliers.launchable',
-  // Sending a message: B-M24 and the `marks` section, from cut 3 (ISSUE-166).
+  // Sending a message: B-M24, B-F12 and the `marks` section, from cut 3 (ISSUE-166).
   'conversation.send',
+  'frame:message.delivery',
   'section:marks'
 ]
 const SERVED_SECTIONS = [
