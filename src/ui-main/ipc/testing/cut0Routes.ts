@@ -35,7 +35,9 @@ export const CUT_0_UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // A-N07 was declared after cut 0 shipped (ISSUE-129), born `host` in cut 2: the cut-0 table never routed it.
   'ask:step:set': 'cut-2',
   // A-N32 was declared after cut 0 shipped (ISSUE-223), born `host` in cut 2: the cut-0 table never routed it.
-  'welcome:answer': 'cut-2'
+  'welcome:answer': 'cut-2',
+  // A-N29 was declared after cut 0 shipped (ISSUE-171), born `host` in 3a: the cut-0 table never routed it.
+  'dwarf:stop': 'cut-3a'
 }
 
 function cut0Route(channel: ChannelKey): ChannelRoute {

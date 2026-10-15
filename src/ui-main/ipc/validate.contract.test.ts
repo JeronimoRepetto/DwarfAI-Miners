@@ -131,7 +131,9 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   // A-N07 (ISSUE-129): B-M32's params, no requestId (idempotent) and no picks
   'ask:step:set': { askId: U1, step: 1 },
   // A-N32 (ISSUE-223): B-M40's params, the two ticks and no origin (the Host records `first-run`)
-  'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 }
+  'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 },
+  // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
+  'dwarf:stop': { dwarfId: U1, requestId: U1 }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */

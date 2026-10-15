@@ -1,7 +1,7 @@
 // The launching module's public events this issue publishes (08 §0; 05 §3.5 "Public events"):
-// `LaunchRequested`, then exactly one of `DwarfLaunched` / `LaunchFailed` (INV-52). The other
-// public events (`LaunchHandedBack`, `LaunchedSessionCrashed`, `HostRecovered`, …) join with their
-// issues (later: ISSUE-164, ISSUE-173, ISSUE-175).
+// `LaunchRequested`, then exactly one of `DwarfLaunched` / `LaunchFailed` (INV-52), and
+// `LaunchedSessionCrashed` (ISSUE-176). The other public events (`LaunchHandedBack`,
+// `HostRecovered`, …) join with their issues (later: ISSUE-164, ISSUE-173, ISSUE-175).
 //
 // - `LaunchRequested` carries the request the person sent, prompt included, in Host memory only
 //   (08 §0); the `launches` row never stores the prompt (09 D-16).
@@ -9,6 +9,10 @@
 //   the prompt is the dwarf's first message (route of `DwarfLaunched` → conversation `ingest`).
 // - `LaunchFailed` (08 §0 `{ launchId; mineId; failure }`): `failure.toolOutputTail` is Host memory
 //   only (ADR-020 item 6; INV-55), never persisted or logged.
+// - `LaunchedSessionCrashed` (08 §0 `{ dwarfId; launchId }`; 08 §2.5): an owned session nobody
+//   stopped exited on its own (PO #62; 07 S4.08). Its route is the `toast {session-crashed}` frame
+//   (14 §2.4 B-F28). Published only when `stoppedByPerson = false` and the dwarf is not covered by
+//   the current Host recovery (application/sessionExited.ts).
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { LaunchFailure } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, LaunchId, MineId } from '../../../kernel/domain/values'
@@ -38,4 +42,9 @@ export type LaunchFailed = DomainEvent<
   { launchId: LaunchId; mineId: MineId; failure: LaunchFailure }
 >
 
-export type LaunchingEvent = LaunchRequested | DwarfLaunched | LaunchFailed
+export type LaunchedSessionCrashed = DomainEvent<
+  'LaunchedSessionCrashed',
+  { dwarfId: DwarfId; launchId: LaunchId }
+>
+
+export type LaunchingEvent = LaunchRequested | DwarfLaunched | LaunchFailed | LaunchedSessionCrashed

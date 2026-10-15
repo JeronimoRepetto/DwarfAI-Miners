@@ -38,6 +38,8 @@ import {
   setAskStepParamsSchema,
   setOpenCodePermissionsParamsSchema,
   setOpenCodePermissionsResultSchema,
+  stopDwarfParamsSchema,
+  stopDwarfResultSchema,
   suppliersLaunchableParamsSchema
 } from '../host-protocol/params'
 import type { ChannelSpec } from './channelSpec'
@@ -829,6 +831,17 @@ export const CHANNELS = {
     status: 'new',
     request: answerWelcomeParamsSchema,
     response: ipcResultSchema(answerWelcomeResultSchema)
+  },
+  // A-N29 `stopDwarf` (AMENDMENT-2, OQ-54; ADR-014; PO #62, #79): "Stop dwarf…" ends the dwarf's whole session, also
+  // while a turn is open, never only the turn; relays B-M21 `crew.stop` unchanged (14 §1.2). Not the successor of
+  // A-26's interrupt (14 §8 I-12). A dwarf id and a requestId, so not `sensitive`
+  'dwarf:stop': {
+    name: 'dwarf:stop',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: stopDwarfParamsSchema,
+    response: ipcResultSchema(stopDwarfResultSchema)
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

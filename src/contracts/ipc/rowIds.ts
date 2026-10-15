@@ -92,5 +92,6 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'mode:revealDwarfChat': 'A-N16',
   'claude:hooks:set': 'A-N31',
   'ask:step:set': 'A-N07',
-  'welcome:answer': 'A-N32'
+  'welcome:answer': 'A-N32',
+  'dwarf:stop': 'A-N29'
 }
