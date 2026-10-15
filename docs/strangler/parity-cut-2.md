@@ -130,6 +130,15 @@ option fails "a rollback build offers no first-run option") and pinned to the ta
 `src/ui-main/ipc/ipc-routing.contract.test.ts` ("the cut-2 rollback setting is on if and only if…"; broken on purpose:
 the setting on in a normal build fails it).
 
+Asks left by the cut-2 build (#1293, follow-up of the ISSUE-141 verification): an observed session outlives the Host
+(`07` S6.17), so an ask the cut-2 build opened can still be `open` when the rollback build's Host boots, while no route
+answers a Host `AskId` there (`INVALID_PARAMS`). With `CUT_2_ROLLBACK` on, the Host settles every ask left `open` or
+`answering` at boot as a request it no longer holds (`07` S6.11, S6.20, machine 6's `reconcileAfterRestart`): it closes
+answered elsewhere with no notice, so no unanswerable card is shown (hidden until built, `21` §1 item 8). No new state,
+reason or event. Proven in `src/host/wiring/cut2Rollback.test.ts` (broken on purpose: a rollback build that leaves the
+ask open fails "a rollback build closes every ask the cut-2 build left live") and
+`src/host/modules/asking/application/askRestart.test.ts`.
+
 Dialog precedence (lead decision, 2026-10-14; ADR-002 D7, OQ-63): Stop everything and quit's confirmation opens above
 every other dialog, whichever opened first, the first-run step included, which has no close and no skip
 (US-SET-012.AC06). Dialogs open at once stack (`src/renderer/src/lib/overlay/dialogStack.ts`): only the top one is

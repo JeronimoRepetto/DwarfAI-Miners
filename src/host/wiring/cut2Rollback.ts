@@ -22,9 +22,14 @@
 //   (`keepsOldAppEntries`, ClaudeHooksConfigWriter `keepOldAppEntries`), so a revert (Reset metrics) or the boot
 //   settlement of a row a crash left unverified (07 S14.11) removes the Host's own entry only, never today's
 //   (verifier finding, 2026-10-14). `--revert-integrations` of the newer build settles every active row before the
-//   rollback build starts, so the boot settlement normally has nothing to do.
+//   rollback build starts, so the boot settlement normally has nothing to do;
+// - the asks the cut-2 build left live (#1293): an observed session outlives the Host (07 S6.17), so its ask can still
+//   be `open` when the rollback build's Host boots, but no route answers a Host `AskId` there (A-asking rows route
+//   `legacy`, `INVALID_PARAMS`). Hidden until built (21 §1 item 8): the Host settles each one at boot as a request it
+//   no longer holds (`NO_REQUEST_HELD`), so its card disappears with no notice and no unanswerable card is shown.
 import { CUT_2_ROLLBACK } from '../../contracts/strangler'
 import type { DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
+import type { AskRestartSettlementPath, RestartFacts } from '../modules/asking'
 import type { ExternalConfigWriter, InstalledToolsReader } from '../modules/preferences'
 
 export interface Cut2RollbackChoices {
@@ -36,6 +41,8 @@ export interface Cut2RollbackChoices {
   installedTools(reader: InstalledToolsReader): InstalledToolsReader
   /** The Host's one config writer. */
   externalConfig(writer: ExternalConfigWriter, log: DiagnosticsLog): ExternalConfigWriter
+  /** The asks a stopped Host left live, settled once at boot. */
+  settleLeftoverAsks(asks: AskRestartSettlementPath): void
 }
 
 /** The composition choices of a build whose cut-2 rollback setting is `rolledBack`. */
@@ -44,8 +51,24 @@ export function cut2RollbackChoices(rolledBack: boolean): Cut2RollbackChoices {
     rolledBack,
     keepsOldAppEntries: rolledBack,
     installedTools: (reader) => (rolledBack ? NOTHING_OFFERED : reader),
-    externalConfig: (writer, log) => (rolledBack ? installRefused(writer, log) : writer)
+    externalConfig: (writer, log) => (rolledBack ? installRefused(writer, log) : writer),
+    settleLeftoverAsks: (asks) => {
+      if (rolledBack) asks.settleAfterRestart(() => NO_REQUEST_HELD)
+    }
   }
+}
+
+/**
+ * What a rollback build knows of every ask a stopped Host left live: no request is the Host's to hold any more. No
+ * route answers a Host `AskId` in that build (the asking rows route `legacy`), so a request still waiting is answered
+ * in the provider's own terminal, outside DwarfAI: the open ask closes answered elsewhere (07 S6.11) and an answer
+ * that was in flight settles answered elsewhere, the side that never claims an answer the app cannot prove (S6.20).
+ * Whether the session survived does not change what the person sees: the card disappears with no notice either way.
+ */
+const NO_REQUEST_HELD: RestartFacts = {
+  sessionSurvived: true,
+  stillPending: false,
+  deliveryEvidence: false
 }
 
 const NOTHING_OFFERED: InstalledToolsReader = { installed: () => [] }
