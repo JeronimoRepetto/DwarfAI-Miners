@@ -403,6 +403,32 @@ export function runConfigWriterEngineContract(
       expect(await lost.read()).toBe('x=1\n')
     })
 
+    it('[S14.11, S14.09, ADR-016] the boot settlement never marks verified an entry that still carries the previous token: the row is reverted and the integration is off', async () => {
+      const w = await world()
+      await w.seed('x=1\n')
+      await w.writer.install('opencode-plugin', TOKEN, 'settings', hashOf(TOKEN))
+      // S14.08 then S14.09: the person turns it on again, and the Host dies before the write lands.
+      new SqliteIntegrationSettingStore({ db: w.db }).save({
+        id: 'opencode-permissions',
+        state: 'on-unverified',
+        consentOrigin: 'settings',
+        changedAt: START
+      })
+      w.fs.crashAt(w.path, 'before-write')
+      await expect(
+        w.writer.install('opencode-plugin', TOKEN_2, 'settings', hashOf(TOKEN_2))
+      ).rejects.toThrow(SimulatedCrash)
+      expect(await w.read()).toBe(`x=1\n${syntheticEntry(TOKEN)}\n`)
+      expect(await w.writer.verify('opencode-plugin')).toBe('mismatch')
+
+      w.clock.advance(60_000)
+      await w.boot().settleUnverified()
+
+      expect(w.rows()).toMatchObject([{ verified_at: null, reverted_at: START + 60_000 }])
+      expect(w.setting().state).toBe('off')
+      expect(await w.read()).toBe('x=1\n')
+    })
+
     it('[FM-127] a malformed target file is left untouched and install fails', async () => {
       const w = await world()
       const malformed = 'x=1\nthis is not a setting\n'

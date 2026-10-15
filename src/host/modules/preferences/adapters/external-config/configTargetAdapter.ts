@@ -47,6 +47,13 @@ export interface ConfigTargetAdapter<D> {
    */
   isCurrent?(doc: D): boolean
   /**
+   * The channel tokens DwarfAI's own entries, found by `probeOwned`, carry, plaintext as written
+   * (ADR-016 item 1). The engine hashes them and compares with the channel's active hash, so an entry
+   * still holding a revoked token is a `mismatch`, never verified (07 S14.11; issue #1307). Held only
+   * for that comparison: never logged or stored. A target that leaves it out is not token-checked.
+   */
+  ownedTokens?(doc: D): readonly string[]
+  /**
    * The file's bytes without DwarfAI's entry or an old-app entry, every foreign byte identical;
    * `null` when the file was DwarfAI's alone and is deleted.
    */

@@ -109,6 +109,9 @@ export function syntheticConfigTarget(
       }
       return encoder.encode(joined(lines))
     },
+    ownedTokens(doc) {
+      return doc.lines.filter(isOwned).map((line) => body(line).slice(OWNED.length))
+    },
     removeOwned(doc) {
       let lines = doc.lines
       for (let at = lines.length - 1; at >= 0; at -= 1) {
