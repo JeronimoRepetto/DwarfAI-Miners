@@ -82,6 +82,13 @@ export interface CatalogRecord {
    * offered (fail closed).
    */
   readonly modes?: PermissionModeCatalog
+  /**
+   * The provider's own documented configuration variables that `childEnv` copies from the
+   * person's login environment when set (`15` §4: "recorded with its `ProviderProfile`").
+   * `ProviderProfile` is frozen, so the list travels beside it, like the ceiling. Absent: none.
+   * A name of the Host or of DwarfAI (`DWARFAI_*`, `ELECTRON_*`, `NODE_OPTIONS`) is refused.
+   */
+  readonly providerEnvVars?: readonly string[]
 }
 
 /** The records a build carries: a public build drops every development-only record. */
