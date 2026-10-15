@@ -1,0 +1,28 @@
+{
+  "case": "C-25",
+  "description": "ADR-009 D2, 15 §2.1–§2.3: stream-json negotiates nothing on its protocol (S-020-1 not recorded) and its probe lowers only the probed fields; a probe that does not answer within PROBE_TIMEOUT_MS gives their fail-closed values, so the session's capabilities are the catalog ceiling merged with the in-force C2 row.",
+  "script": [{ "do": "launch" }, { "do": "probe" }, { "do": "advance", "ms": 5000 }],
+  "outcomes": [{ "resolved": true }, null, null],
+  "negotiated": { "protocol": {} },
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "first prompt" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}

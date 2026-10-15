@@ -1,0 +1,20 @@
+Usage: claude [options] [command] [prompt]
+
+Arguments:
+  prompt                                            Your prompt
+
+Options:
+  --verbose                                         Override verbose mode setting from config
+  -p, --print                                       Print response and exit (useful for pipes)
+  --output-format <format>                          Output format (only works with --print): "text", "json", or "stream-json"
+  --input-format <format>                           Input format (only works with --print): "text" or "stream-json"
+  --allowedTools, --allowed-tools <tools...>        Comma or space-separated list of tool names to allow
+  --disallowedTools, --disallowed-tools <tools...>  Comma or space-separated list of tool names to deny
+  --mcp-config <configs...>                         Load MCP servers from JSON files or strings
+  --model <model>                                   Model for the current session
+  --effort <level>                                  Effort level for the current session
+  -r, --resume [sessionId]                          Resume a conversation
+  --session-id <uuid>                               Use a specific session ID for the conversation
+  -v, --version                                     Output the version number
+  --dwarfai-unknown-option                          An option this driver does not read
+  -h, --help                                        Display help for command
