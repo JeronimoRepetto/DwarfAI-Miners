@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { DEFAULT_OPENCODE_SETTINGS } from '../types'
 import { useOpenCodeSettings } from './useOpenCodeSettings'
 
@@ -24,7 +25,7 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     clearOpenCodeServerPassword: vi.fn(async () => ({ ...DEFAULT_OPENCODE_SETTINGS })),
     ...overrides
   }
-  ;(globalThis as { window?: unknown }).window = { api }
+  ;(globalThis as { window?: unknown }).window = { api: createFakeWindowApi(api) }
   return api
 }
 
