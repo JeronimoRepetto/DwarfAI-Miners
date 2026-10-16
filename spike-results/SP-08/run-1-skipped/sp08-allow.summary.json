@@ -1,0 +1,16 @@
+{
+  "case": "sp08-allow",
+  "spike": "SP-08",
+  "claudeVersion": "2.1.301",
+  "osRelease": "10.0.26200",
+  "arch": "x64",
+  "date": "2026-10-16",
+  "skipped": "--permission-prompt-tool is not listed by claude --help",
+  "marker": {
+    "name": "sp08-allow-marker.txt",
+    "existsAfter": null
+  },
+  "stubMethods": [],
+  "stubCalls": [],
+  "steps": []
+}

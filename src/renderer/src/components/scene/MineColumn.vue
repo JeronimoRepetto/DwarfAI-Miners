@@ -41,6 +41,7 @@ import {
 import type { CrewSoundSignal } from '../../lib/sprite/crewSound'
 import { INTERIOR_ROUTE, routeBetween } from '../../lib/scene/interiorRoute'
 import { nearestSpawn, sceneLayout, type ScenePoint } from '../../lib/scene/sceneLayout'
+import { untrustedText } from '../../lib/text/untrustedText'
 import {
   createWalkBoard,
   prefersReducedMotion,
@@ -177,7 +178,9 @@ function crewSound(dwarf: Dwarf, signal: CrewSoundSignal): void {
   >
     <header class="dm-minecol__bar m-mat">
       <TierChip :tier="mine.tier" />
-      <h2 class="dm-minecol__name" :title="mine.name">{{ mine.name }}</h2>
+      <h2 class="dm-minecol__name" :title="untrustedText(mine.name)">
+        <bdi>{{ untrustedText(mine.name) }}</bdi>
+      </h2>
       <ActionButton
         :icon="ambienceMuted ? 'ambience-off' : 'ambience-on'"
         size="sm"

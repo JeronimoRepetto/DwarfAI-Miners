@@ -4062,3 +4062,46 @@ describe('DwarfMessagePanel test teardown (#635)', () => {
     expect(document.body.childNodes.length).toBe(0)
   })
 })
+
+/*
+ * C-08 (18 §5.1, ISSUE-251): a custom name and an attachment's file name are text somebody else
+ * chose. Each is drawn without its controls and escapes, inside a bidi-isolated text node.
+ */
+describe('DwarfMessagePanel untrusted strings (C-08)', () => {
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('[NFR-SEC-07] draws a hostile custom name stripped and inside a bidi-isolated text node', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'terminal',
+        customName: `\u001b[31mGrimli\u202Eexe.txt\u0000\u001b[0m`
+      })
+    })
+    const isolate = wrapper.find('.dm-msg__title > bdi, .dm-msg__rename > bdi')
+    expect(isolate.exists(), 'no <bdi> around the custom name').toBe(true)
+    expect(isolate.element.textContent).toBe('Grimliexe.txt')
+  })
+
+  it('[NFR-SEC-07] draws a sent attachment with a hostile file name stripped and inside a bidi-isolated text node', () => {
+    fakeApi()
+    const echo: MessageEcho = {
+      id: 'echo-1',
+      text: 'look at this',
+      sentAt: 1,
+      state: { phase: 'delivered' }
+    }
+    const wrapper = attachPanel({
+      echoes: [echo],
+      echoAttachments: {
+        'echo-1': [{ ...SHOT, name: `\u001b[31mred\u202Eexe.txt\u0000\u001b[0m` }]
+      }
+    })
+    const chip = wrapper.find('.dm-msg__files .dm-composer__file')
+    const isolate = chip.find('span > bdi')
+    expect(isolate.exists(), 'no <bdi> around the file name').toBe(true)
+    expect(isolate.element.textContent).toBe('redexe.txt')
+    expect(chip.attributes('title')).toBe('redexe.txt')
+  })
+})
