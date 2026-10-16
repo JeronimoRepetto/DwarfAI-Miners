@@ -35,6 +35,7 @@ import type {
   SessionRef
 } from '../../../ports/providerDriver'
 import { startAcpSession, type AcpStart, type HandshakeFailure } from '../acp/client/AcpClient'
+import { adapterLaunch, type LaunchTarget } from '../acp/client/adapterLaunch'
 import {
   ACP_SDK_RECORD,
   acpProbeSource,
@@ -46,6 +47,8 @@ import { relayEntry } from '../shared/relayEntry'
 
 /** The adapter's binary name: always the person's own install (15 §2.4 row Claude `acp`). */
 export const ADAPTER_BINARY = 'claude-agent-acp'
+/** What a Windows npm adapter entry runs with: the person's own `node`, never a bundled one. */
+const NODE_BINARY = 'node'
 /** The variable that pins the adapter to the person's `claude` (15 §2.4, §4.3). */
 export const EXECUTABLE_PIN = 'CLAUDE_CODE_EXECUTABLE'
 /** The Jev entry's name in `session/new` `mcpServers` (ADR-013 item 3). */
@@ -147,8 +150,7 @@ export class ClaudeAcpDriver implements ProviderDriver {
     if (!this.library.s0081) {
       throw launchError('could-not-start', 'the ACP TS SDK has no S-008-1 record')
     }
-    const adapter = await this.adapterPath()
-    if (adapter === null) throw launchError('not-installed', `${ADAPTER_BINARY} is not installed`)
+    const adapter = await this.adapterTarget()
     let session: DriverSession
     try {
       session = await startAcpSession(this.deps, {
@@ -176,8 +178,7 @@ export class ClaudeAcpDriver implements ProviderDriver {
     }
     const detected = await this.detect()
     if (detected.kind !== 'installed') throw launchError('not-installed', 'claude is not installed')
-    const adapter = await this.adapterPath()
-    if (adapter === null) throw launchError('not-installed', `${ADAPTER_BINARY} is not installed`)
+    const adapter = await this.adapterTarget()
     let session: DriverSession
     try {
       session = await startAcpSession(this.deps, {
@@ -194,18 +195,34 @@ export class ClaudeAcpDriver implements ProviderDriver {
     return session
   }
 
-  /** The person's `claude-agent-acp`, resolved like a binary (ADR-009 D5); null when it is not. */
-  private async adapterPath(): Promise<string | null> {
-    const found = await this.deps.detection.detect({
-      providerId: this.profile.id,
-      binaries: [ADAPTER_BINARY]
-    })
-    return found.kind === 'installed' ? found.install.binaryPath : null
+  /**
+   * How to start the person's `claude-agent-acp`, resolved like a binary (ADR-009 D5). On Windows
+   * an npm install resolves to its `.js` entry, started by the person's `node` through the same
+   * resolver (`adapterLaunch`, #1360). Not installed when either does not resolve: no spawn.
+   */
+  private async adapterTarget(): Promise<LaunchTarget> {
+    const resolve = async (binary: string): Promise<string | null> => {
+      const found = await this.deps.detection.detect({
+        providerId: this.profile.id,
+        binaries: [binary]
+      })
+      return found.kind === 'installed' ? found.install.binaryPath : null
+    }
+    const adapter = await resolve(ADAPTER_BINARY)
+    if (adapter === null) throw launchError('not-installed', `${ADAPTER_BINARY} is not installed`)
+    const target = await adapterLaunch(adapter, this.deps.platform, () => resolve(NODE_BINARY))
+    if (target === null) {
+      throw launchError(
+        'not-installed',
+        `${NODE_BINARY}, which runs ${ADAPTER_BINARY}, is not installed`
+      )
+    }
+    return target
   }
 
   private startOf(
     install: InstalledProvider,
-    adapter: string,
+    adapter: LaunchTarget,
     cwd: string,
     spawnTag: string
   ): Omit<AcpStart, 'mcpServers' | 'mode'> {
@@ -222,8 +239,8 @@ export class ClaudeAcpDriver implements ProviderDriver {
       merge(this.deps.record.ceiling, acpProbeSource(C3_ROW, this.library))
     return {
       providerId: this.profile.id,
-      executable: adapter,
-      args: [],
+      executable: adapter.program,
+      args: [...adapter.leadingArgs],
       cwd,
       env,
       capabilitiesFor: (init) =>

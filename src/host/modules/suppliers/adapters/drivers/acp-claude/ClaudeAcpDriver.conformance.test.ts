@@ -212,6 +212,67 @@ describe('ClaudeAcpDriver', () => {
     })
   })
 
+  it('[C-02, ADR-029] on Windows an npm-installed adapter that resolves to a .js entry is started by the person node with the entry as its first argument, never through a shell', async () => {
+    const entry =
+      'C:\\Users\\j\\AppData\\Roaming\\npm\\node_modules\\claude-agent-acp\\dist\\index.js'
+    const node = 'C:\\Program Files\\nodejs\\node.exe'
+    const windowsFactory =
+      (withNode: boolean): DriverFactory =>
+      (rig) => {
+        const resolver = new FakeInstallResolver()
+        resolver.install('claude', { path: 'C:\\Users\\j\\.local\\bin\\claude.exe' })
+        resolver.install(ADAPTER_BINARY, { path: entry })
+        if (withNode) resolver.install('node', { path: node })
+        return new ClaudeAcpDriver({
+          record: CLAUDE,
+          detection: createInstallDetection({
+            resolver,
+            fs: { stat: async () => ({ mtimeMs: 0, size: 1, isDirectory: false }) },
+            scheduler: rig.scheduler
+          }),
+          processControl: rig.processControl,
+          clock: rig.clock,
+          scheduler: rig.scheduler,
+          loginEnv: rig.loginEnv,
+          platform: 'win32',
+          redact: (text) => text
+        })
+      }
+    const install = { ...INSTALL, binaryPath: 'C:\\Users\\j\\.local\\bin\\claude.exe' }
+    const options = { ...OPTIONS, install, userAdapters: [node] }
+    const run = await runScript(
+      windowsFactory(true),
+      [{ do: 'launch' }],
+      { variant: variantOf('c-01-launch') },
+      options
+    )
+    expect(run.outcomes[0]).toEqual({ resolved: true })
+    expect(run.spawn.spawns.map((s) => [s.executable, ...s.args])).toEqual([[node, entry]])
+    expect(run.spawn.spawns[0]?.env[EXECUTABLE_PIN]).toBe(install.binaryPath)
+    // No node the resolver can find: not installed, and nothing is spawned (no shell fallback).
+    const noNode = await runScript(
+      windowsFactory(false),
+      [{ do: 'launch' }],
+      { variant: variantOf('c-01-launch') },
+      options
+    )
+    expect(noNode.outcomes[0]).toEqual({
+      rejected: {
+        cause: 'not-installed',
+        detail: `node, which runs ${ADAPTER_BINARY}, is not installed`
+      }
+    })
+    expect(noNode.spawn.spawns).toEqual([])
+    // Elsewhere a script adapter is its own program (a shebang entry): unchanged.
+    const linux = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf('c-01-launch') },
+      OPTIONS
+    )
+    expect(linux.spawn.spawns.map((s) => [s.executable, ...s.args])).toEqual([[ADAPTER_PATH]])
+  })
+
   it('[C-16, SP-15] session/load after a Host restart replays history whose sourceKeys dedupe to zero new rows', async () => {
     const own = fixture('c-16-resume')
     for (const variant of own.variants) {
