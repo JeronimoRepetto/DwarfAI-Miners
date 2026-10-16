@@ -19,9 +19,16 @@ import { configDefaults, defineConfig } from 'vitest/config'
 // and tests that are slow by design keep their own timeout. GitHub Actions sets CI=true. The OS
 // lane (vitest.os.config.ts) runs on the same runner and spreads the same policy.
 const WINDOWS_CI_TEST_TIMEOUT_MS = 30_000
-const onWindowsCi = process.platform === 'win32' && process.env['CI'] === 'true'
+
 /** The `test` options of the policy above: the raised timeout on the Windows CI runner only. */
-export const windowsCiTestTimeout = onWindowsCi ? { testTimeout: WINDOWS_CI_TEST_TIMEOUT_MS } : {}
+export function windowsCiTestTimeout(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env
+): { testTimeout?: number } {
+  return platform === 'win32' && env['CI'] === 'true'
+    ? { testTimeout: WINDOWS_CI_TEST_TIMEOUT_MS }
+    : {}
+}
 
 /**
  * electron-vite's `?modulePath` import (a worker thread's entry, bundled as its own chunk by the
@@ -79,7 +86,7 @@ export default defineConfig({
     // Node by default (main-process tests); component tests opt into jsdom
     // with a `@vitest-environment jsdom` docblock.
     environment: 'node',
-    ...windowsCiTestTimeout,
+    ...windowsCiTestTimeout(),
     // The Host database template (17 §1.5 "Speed"; 09 §6.5 "Template DB"): migrated once per run,
     // copied by each database test through `copyTemplateDb()` / `openTemplateCopy()`.
     globalSetup: ['src/host/platform/sqlite/testing/templateDb.globalSetup.ts']

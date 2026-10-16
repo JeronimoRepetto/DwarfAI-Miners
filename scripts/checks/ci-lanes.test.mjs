@@ -2,7 +2,9 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import ordinaryConfig, { windowsCiTestTimeout } from '../../vitest.config.ts'
+import osLaneConfig from '../../vitest.os.config.ts'
 
 /**
  * L7 check of the release lanes in CI (testing strategy `17` §1.9, §1.11, §1.13, §5.2; `20` §2.1).
@@ -550,43 +552,21 @@ describe('pnpm version in CI (AGENTS §0.2; 20 §1)', () => {
 })
 
 describe('OS lane per-test timeout on the Windows CI runner (17 §1.8, §1.13)', () => {
-  const realPlatform = process.platform
-
-  /** Both test configs, evaluated afresh as if on `platform` with `CI` set to `ci`. */
-  async function configsOn(platform, ci) {
-    Object.defineProperty(process, 'platform', { value: platform })
-    vi.stubEnv('CI', ci)
-    vi.resetModules()
-    const [{ default: ordinary }, { default: osLane }] = await Promise.all([
-      import('../../vitest.config.ts'),
-      import('../../vitest.os.config.ts')
-    ])
-    return { ordinary: ordinary.test.testTimeout, osLane: osLane.test.testTimeout }
-  }
-
-  afterEach(() => {
-    Object.defineProperty(process, 'platform', { value: realPlatform })
-    vi.unstubAllEnvs()
-    vi.resetModules()
+  it('[ADR-001] the OS lane applies the ordinary lane timeout policy of this run', () => {
+    const policy = windowsCiTestTimeout().testTimeout
+    expect(ordinaryConfig.test.testTimeout, 'the ordinary lane follows the policy').toBe(policy)
+    expect(osLaneConfig.test.testTimeout, 'the OS lane follows the same policy').toBe(policy)
   })
 
-  it('[ADR-001] the OS lane gets the ordinary lane timeout on the Windows CI runner', async () => {
-    const { ordinary, osLane } = await configsOn('win32', 'true')
-    expect(ordinary, 'the ordinary lane raises the timeout on that runner').toBe(30_000)
-    expect(osLane, 'the OS lane applies the same runner policy').toBe(ordinary)
-  })
-
-  it('[ADR-001] every other run keeps the vitest default in both lanes', async () => {
-    for (const [platform, ci] of [
-      ['win32', ''],
-      ['linux', 'true'],
-      ['darwin', 'true']
+  it('[ADR-001] the policy raises the timeout on the Windows CI runner only', () => {
+    expect(windowsCiTestTimeout('win32', { CI: 'true' })).toEqual({ testTimeout: 30_000 })
+    for (const [platform, env] of [
+      ['win32', {}],
+      ['win32', { CI: 'false' }],
+      ['linux', { CI: 'true' }],
+      ['darwin', { CI: 'true' }]
     ]) {
-      const { ordinary, osLane } = await configsOn(platform, ci)
-      expect([ordinary, osLane], `${platform} with CI=${ci || 'unset'}`).toEqual([
-        undefined,
-        undefined
-      ])
+      expect(windowsCiTestTimeout(platform, env), `${platform} ${JSON.stringify(env)}`).toEqual({})
     }
   })
 })
