@@ -1,0 +1,8 @@
+{
+  "name": "@napi-rs/keyring-win32-x64-msvc",
+  "version": "2.1.0",
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "dist.integrity": "sha512-3zYwO7dhJiUNyv2te81ujXm2vGxHwgx+z2eBm0dTYe3aWpvKQVzpfxCp/7cViJs8duVYE04wVOgXiRhRCMEq2w=="
+}
