@@ -1,0 +1,82 @@
+{
+  "case": "C-22",
+  "description": "SP-10 question (Claude Code 2.1.301, Claude part): with --disallowedTools AskUserQuestion the question tool is not offered, so the model replied unavailable and used no tool. C-22 is inapplicable to this driver (no policy-only stream-json launch in v1, 15 §2.8, O-15-07); the driver's own test replays this stream through an ordinary launch: one message.id written as a thinking row then a text row is one usage unit, the system thinking_tokens lines add nothing, and no tool step appears.",
+  "script": [
+    {
+      "do": "launch",
+      "prompt": "Use the AskUserQuestion tool to ask me one question, \"Pick a colour\", with exactly two options, \"Red\" and \"Blue\". After I answer, reply with the chosen option and nothing else. If you cannot use that tool, reply with the single word unavailable."
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "Use the AskUserQuestion tool to ask me one question, \"Pick a colour\", with exactly two options, \"Red\" and \"Blue\". After I answer, reply with the chosen option and nothing else. If you cannot use that tool, reply with the single word unavailable.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000e",
+        "role": "dwarf",
+        "text": "unavailable",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000b",
+        "unitKey": "00000000-0000-4000-8000-00000000000b",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 2,
+          "output": 8,
+          "cacheRead": 12878,
+          "cacheWrite": 33999,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000011",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Use the AskUserQuestion tool to ask me one question, \"Pick a colour\", with exactly two options, \"Red\" and \"Blue\". After I answer, reply with the chosen option and nothing else. If you cannot use that tool, reply with the single word unavailable."
+      },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}

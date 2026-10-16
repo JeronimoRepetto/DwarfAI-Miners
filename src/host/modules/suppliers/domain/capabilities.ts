@@ -1,6 +1,7 @@
 // ADR-009 D2 `ProviderCapabilities`, copied field for field (ADR-009 is the owner and wins on any
-// difference), and the fail-closed value of every field. The merge of a ceiling with a negotiated
-// set comes later (ISSUE-147). Pure: no I/O, no clock read (05 §2.2, R1).
+// difference), the fail-closed value of every field and the catalog ceiling type (AMENDMENT-18).
+// The merge of a ceiling with a negotiated set is `mergeCapabilities.ts` (ISSUE-147). Pure: no
+// I/O, no clock read (05 §2.2, R1).
 
 export interface ProviderCapabilities {
   launch: boolean
@@ -60,3 +61,43 @@ export const FAIL_CLOSED_CAPABILITIES: Readonly<ProviderCapabilities> = Object.f
   observedPermission: 'none',
   observedQuestion: 'none'
 })
+
+// ---------- the catalog ceiling (AMENDMENT-18, owner, 2026-10-16) ----------
+
+/** The unordered-enum fields of `ProviderCapabilities` (ADR-009 D2 merge table). */
+export const UNORDERED_FIELDS = [
+  'resume',
+  'mcpInjection',
+  'console',
+  'earlyFailure',
+  'installDetection'
+] as const
+
+export type UnorderedField = (typeof UNORDERED_FIELDS)[number]
+
+/** A non-empty set of allowed values; the first is the preferred driver's (documentation only). */
+export type AllowedValues<T> = readonly [T, ...T[]]
+
+/**
+ * A provider's capability ceiling (ADR-009 D2 "each profile declares a ceiling"; 15 §0, §3).
+ * AMENDMENT-18 (owner, 2026-10-16): every unordered enum holds the non-empty set of values its
+ * `15` §3 rows allow, so each driver of one provider keeps its own row's value; booleans and
+ * ordered enums keep one value, their upper bound. The effective `ProviderCapabilities` a session
+ * carries stays single-valued: the merge picks one value per field.
+ */
+export type CapabilityCeiling = Omit<ProviderCapabilities, UnorderedField> & {
+  readonly [K in UnorderedField]: AllowedValues<ProviderCapabilities[K]>
+}
+
+/** One row lifted to a ceiling: each unordered enum allows exactly the row's own value. */
+export function ceilingOf(row: ProviderCapabilities): CapabilityCeiling {
+  return {
+    ...row,
+    usage: { ...row.usage },
+    resume: [row.resume],
+    mcpInjection: [row.mcpInjection],
+    console: [row.console],
+    earlyFailure: [row.earlyFailure],
+    installDetection: [row.installDetection]
+  }
+}

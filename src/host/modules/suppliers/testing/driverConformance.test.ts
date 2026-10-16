@@ -3,7 +3,7 @@
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { DriverEvent, DriverSession, ProviderDriver } from '../ports/providerDriver'
-import { SIMULATED_RECORD } from '../adapters/catalog/profiles'
+import { SIMULATED_CAPABILITIES, SIMULATED_RECORD } from '../adapters/catalog/profiles'
 import { HostedCommandDriver } from '../adapters/drivers/hosted-command/HostedCommandDriver'
 import {
   HOSTED_COMMAND_CEILING,
@@ -203,7 +203,7 @@ describe('driverConformance harness', () => {
         ...SIMULATED_OPTIONS,
         cases: { 'C-16': { inapplicable: 'resume is none' } }
       }
-      const resumable = { ...SIMULATED_OPTIONS.ceiling, resume: 'load' as const }
+      const resumable = { ...SIMULATED_CAPABILITIES, resume: 'load' as const }
       const loadFactory: DriverFactory = (rig) =>
         new SimulatedDriver({
           profile: SIMULATED_RECORD.profile,
