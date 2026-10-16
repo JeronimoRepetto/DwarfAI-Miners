@@ -55,7 +55,7 @@ function disk(): FileSystemSubject {
 const crlf = (text: string): string => text.replace(/\n/g, '\r\n')
 
 function cases(storage: () => FileSystemSubject): void {
-  const world = (options?: { ingressPort?: () => number }) =>
+  const world = (options?: { ingressPort?: () => number; folder?: boolean }) =>
     openCodePluginWorld(storage(), openTemplateCopy().db, options)
 
   runExternalConfigWriterContract(async () => {
@@ -129,6 +129,24 @@ function cases(storage: () => FileSystemSubject): void {
       await empty.writer.install('opencode-plugin', PLUGIN_TOKEN, 'settings', hashOf(PLUGIN_TOKEN))
     ).toStrictEqual({ ok: false, error: 'foreign-entry-conflict' })
     expect(await empty.read()).toBe('')
+  })
+
+  it("[ADR-016, FM-124] install writes DwarfAI's file when OpenCode's plugin folder does not exist yet", async () => {
+    const w = await world({ folder: false })
+
+    const installed = await w.writer.install(
+      'opencode-plugin',
+      PLUGIN_TOKEN,
+      'settings',
+      hashOf(PLUGIN_TOKEN)
+    )
+
+    expect(installed).toStrictEqual({ ok: true, value: { verified: true, backupPath: null } })
+    expect(await w.folder()).toStrictEqual({
+      [OPENCODE_PLUGIN_FILE_NAME]: fixture('dwarfai-owned.plugin')
+    })
+    expect(await w.writer.revert('opencode-plugin')).toStrictEqual({ ok: true, value: undefined })
+    expect(await w.read()).toBeNull()
   })
 
   it("[ADR-016] revert removes only DwarfAI's own file", async () => {

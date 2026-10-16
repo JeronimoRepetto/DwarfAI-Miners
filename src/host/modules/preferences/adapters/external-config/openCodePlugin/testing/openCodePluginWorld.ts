@@ -53,14 +53,20 @@ const decoder = new TextDecoder()
 export async function openCodePluginWorld(
   storage: FileSystemSubject,
   db: SqliteDatabase,
-  options: { ingressPort?: () => number } = {}
+  options: {
+    ingressPort?: () => number
+    /** OpenCode's plugin folder exists (OpenCode made it); false: not yet. Default true. */
+    folder?: boolean
+  } = {}
 ) {
   const fs = new ScriptedToolFs(storage.fs)
-  // OpenCode's global plugin folder exists (OpenCode is installed); DwarfAI's file may not.
+  // OpenCode's global plugin folder exists unless the case says otherwise; DwarfAI's file may not.
   const at = (name: string): string => storage.pathOf('.config', 'opencode', 'plugin', name)
   const dir = storage.pathOf('.config', 'opencode', 'plugin')
-  const made = await storage.fs.makeDir(dir)
-  if (!made.ok) throw new Error(`the plugin folder could not be made: ${made.error}`)
+  if (options.folder !== false) {
+    const made = await storage.fs.makeDir(dir)
+    if (!made.ok) throw new Error(`the plugin folder could not be made: ${made.error}`)
+  }
   const path = at(OPENCODE_PLUGIN_FILE_NAME)
   const log = new RecordingDiagnosticsLog()
   const settings = new SqliteIntegrationSettingStore({ db })
