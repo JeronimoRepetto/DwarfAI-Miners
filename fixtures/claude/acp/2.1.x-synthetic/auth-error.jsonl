@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"embeddedContext":true},"mcpCapabilities":{"http":true,"sse":true},"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"claude-agent-acp","version":"0.0.0-synthetic"},"authMethods":[]}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"00000000-0000-4000-8000-00000000ac01"}}
+{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Authentication required"}}

@@ -1,0 +1,14 @@
+{
+  "providerVersion": "2.1.x",
+  "capturedAt": "2026-10-16",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §2.7, §4.3, §4.10 and §6 and the ACP schema of @agentclientprotocol/sdk 1.6.0 (the pinned client); no adapter or CLI was run. The JSON-RPC error frames of c-11 are the pinned SDK's own replies. Recordings against a user-installed claude-agent-acp (and the clacp test fixtures, Apache-2.0) are an owner item of the real-CLI lane; replace each case with a scrubbed maintainer recording when one exists.",
+  "capabilities": {
+    "driver": "acp",
+    "adapter": "claude-agent-acp (user-installed, never shipped)",
+    "note": "the 15 §3 row C3 design values as ClaudeAcpDriver reports them, with usage.rateLimits false until a recording shows _meta[\"_claude/rateLimit\"]"
+  }
+}

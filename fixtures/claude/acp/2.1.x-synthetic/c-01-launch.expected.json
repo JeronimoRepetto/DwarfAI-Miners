@@ -1,0 +1,90 @@
+{
+  "case": "C-01",
+  "description": "15 §4.3, §4.10: initialize declares only elicitation.form, session/new {cwd, mcpServers}, then the first prompt through session/prompt; the launch resolves at the session/new answer and binds the ACP sessionId; two agent chunks are one dwarf message (eventId <turnId>:<seq>); end_turn is one reliable concluded turn.",
+  "script": [
+    {
+      "do": "launch"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:1",
+        "role": "dwarf",
+        "text": "Ready when you are.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    }
+  ]
+}
