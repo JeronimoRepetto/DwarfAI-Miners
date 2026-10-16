@@ -167,11 +167,16 @@ export const CATALOG_RECORDS: readonly CatalogRecord[] = [
       models: [],
       efforts: [],
       permissionModes: [],
-      // ADR-009 D4 (AMENDMENT-2, OQ-52): a user-installed claude-agent-acp, then `claude -p`.
+      // ADR-009 D4 (AMENDMENT-2, OQ-52): a user-installed claude-agent-acp, then `claude -p`
+      // (ClaudeStreamJsonDriver, ISSUE-150: offered only once SP-08 passes).
       drivers: ['acp', 'stream-json'],
       publicLaunch: 'enabled'
     },
-    ceiling: CLAUDE_CEILING
+    ceiling: CLAUDE_CEILING,
+    // 15 §4 `childEnv`: the Claude Code variable a launched `claude` must share with the person's
+    // own (15 §5 Claude row: honour CLAUDE_CONFIG_DIR, HO-09), so its config, login and transcripts
+    // are the ones the observer reads. A path, never a credential (ADR-008 item 2).
+    providerEnvVars: ['CLAUDE_CONFIG_DIR']
   },
   {
     profile: {
