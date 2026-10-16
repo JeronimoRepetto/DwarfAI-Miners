@@ -9,16 +9,19 @@
  * A script (`_kit/scripts/<name>.json`, or the file `DWARFAI_STUB_<NAME>_SCRIPT` names):
  *
  * ```json
- * { "version": "…", "replay": [{ "file": "…", "records": […] } | { "exit": 7 }], "exitCode": 0, "ignoreStdin": false }
+ * { "version": "…", "help": "…", "replay": [{ "file": "…", "records": […] } | { "stdout": "…" } | { "exit": 7 }], "exitCode": 0, "ignoreStdin": false }
  * ```
  *
  * - `version`: printed verbatim, with a newline, for `--version`; nothing else happens then.
+ * - `help`: a protocol fixture under `fixtures/` (a posix path relative to it), printed byte for
+ *   byte for `--help`; nothing else happens then. A script without it runs its replay as before.
  * - `replay`: the steps, in order. A `{ file, records }` step writes its records into `file`, a
  *   relative posix path under the provider directory, by extension: `.jsonl` appends one JSON line
  *   per record; `.json` writes its single record; `.db` runs each record, an SQL statement, on that
  *   SQLite file in one transaction, so a failing statement leaves none of the step's rows
- *   (provider stores are SQL text, `17` §1.4). An `{ exit }` step stops the stub there
- *   with that code (CH-04).
+ *   (provider stores are SQL text, `17` §1.4). A `{ stdout }` step writes a protocol fixture under
+ *   `fixtures/` to stdout byte for byte (ISSUE-150's stream-json replay). An `{ exit }` step stops
+ *   the stub there with that code (CH-04).
  * - `exitCode`: the code once every step ran.
  * - `ignoreStdin`: after the replay the stub reads nothing and stays alive until it is killed
  *   (CH-05), instead of exiting.
@@ -35,6 +38,9 @@ import { fileURLToPath } from 'node:url'
 export const USAGE_EXIT = 64
 
 const SCRIPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'scripts')
+/** The repository's `fixtures/` folder: the only place a `help` or `stdout` fixture is read from. */
+const FIXTURES_DIR = path.resolve(SCRIPTS_DIR, '..', '..', '..')
+const PROTOCOL_FIXTURE = /\.(?:jsonl|json)$/
 
 /** The environment variable that names a script replacing `name`'s default one. */
 export function scriptEnvVar(name) {
@@ -48,7 +54,7 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 /**
  * The script in `text`, checked. Throws a `ScriptError` naming the first problem.
  *
- * @returns {{ version: string, replay: Array<{ file: string, records: unknown[] } | { exit: number }>, exitCode: number, ignoreStdin: boolean }}
+ * @returns {{ version: string, help?: string, replay: Array<{ file: string, records: unknown[] } | { stdout: string } | { exit: number }>, exitCode: number, ignoreStdin: boolean }}
  */
 export function parseScript(text) {
   let script
@@ -58,9 +64,12 @@ export function parseScript(text) {
     throw new ScriptError(`the script is not valid JSON (${error.message})`)
   }
   if (!isObject(script)) throw new ScriptError('the script is not a JSON object')
-  const { version, replay = [], exitCode = 0, ignoreStdin = false } = script
+  const { version, help, replay = [], exitCode = 0, ignoreStdin = false } = script
   if (typeof version !== 'string' || version === '') {
     throw new ScriptError('the script has no "version" string')
+  }
+  if (help !== undefined && (typeof help !== 'string' || !PROTOCOL_FIXTURE.test(help))) {
+    throw new ScriptError('"help" is not a .jsonl or .json fixture path')
   }
   if (!Array.isArray(replay)) throw new ScriptError('"replay" is not an array')
   if (!Number.isInteger(exitCode)) throw new ScriptError('"exitCode" is not an integer')
@@ -71,8 +80,14 @@ export function parseScript(text) {
       if (!Number.isInteger(step.exit)) throw new ScriptError(`${where}: "exit" is not an integer`)
       return
     }
+    if (isObject(step) && 'stdout' in step) {
+      if (typeof step.stdout !== 'string' || !PROTOCOL_FIXTURE.test(step.stdout)) {
+        throw new ScriptError(`${where}: "stdout" is not a .jsonl or .json fixture path`)
+      }
+      return
+    }
     if (!isObject(step) || typeof step.file !== 'string' || !Array.isArray(step.records)) {
-      throw new ScriptError(`${where} is neither { file, records } nor { exit }`)
+      throw new ScriptError(`${where} is neither { file, records }, { stdout } nor { exit }`)
     }
     if (!/\.(?:jsonl|json|db)$/.test(step.file)) {
       throw new ScriptError(`${where}: ${step.file} is not a .jsonl, .json or .db file`)
@@ -84,7 +99,25 @@ export function parseScript(text) {
       throw new ScriptError(`${where}: every record of a .db file is an SQL statement`)
     }
   })
-  return { version, replay, exitCode, ignoreStdin }
+  return { version, ...(help === undefined ? {} : { help }), replay, exitCode, ignoreStdin }
+}
+
+/** The bytes of a protocol fixture under `fixtures/`, as text; throws when the path leaves it. */
+function fixtureText(file) {
+  const segments = file.split('/')
+  const target = path.resolve(FIXTURES_DIR, ...segments)
+  const relative = path.relative(FIXTURES_DIR, target)
+  if (
+    path.posix.isAbsolute(file) ||
+    path.win32.isAbsolute(file) ||
+    segments.includes('..') ||
+    relative === '' ||
+    relative.startsWith('..') ||
+    path.isAbsolute(relative)
+  ) {
+    throw new ScriptError(`the fixture ${file} is outside fixtures/`)
+  }
+  return readFileSync(target, 'utf8')
 }
 
 /** The absolute path of `file` under `home`; throws when it would leave `home`. */
@@ -158,8 +191,16 @@ export function playStub({ name, homeEnv, defaultScript, argv, env }) {
   }
 
   if (argv[0] === '--version') return done(0, { stdout: `${script.version}\n` })
+  if (script.help !== undefined && argv.includes('--help')) {
+    try {
+      return done(0, { stdout: fixtureText(script.help) })
+    } catch (error) {
+      return fail(error.message)
+    }
+  }
 
-  // Resolve every target before the first write, so a refused script writes nothing.
+  // Resolve every target (and read every stdout fixture) before the first write, so a refused
+  // script writes and prints nothing.
   const writes = script.replay.some((step) => 'file' in step)
   const home = env[homeEnv]
   if (writes && !home) {
@@ -167,18 +208,25 @@ export function playStub({ name, homeEnv, defaultScript, argv, env }) {
   }
   let steps
   try {
-    steps = script.replay.map((step) =>
-      'exit' in step ? step : { ...step, target: targetOf(path.resolve(home), step.file) }
-    )
+    steps = script.replay.map((step) => {
+      if ('exit' in step) return step
+      if ('stdout' in step) return { text: fixtureText(step.stdout) }
+      return { ...step, target: targetOf(path.resolve(home), step.file) }
+    })
   } catch (error) {
     return fail(error.message)
   }
 
+  let stdout = ''
   for (const step of steps) {
-    if ('exit' in step) return done(step.exit)
+    if ('exit' in step) return done(step.exit, { stdout })
+    if ('text' in step) {
+      stdout += step.text
+      continue
+    }
     writeStep(step.target, step.file, step.records)
   }
-  return done(script.exitCode, { stayAlive: script.ignoreStdin })
+  return done(script.exitCode, { stdout, stayAlive: script.ignoreStdin })
 }
 
 /**
