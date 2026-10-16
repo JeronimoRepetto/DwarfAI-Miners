@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, type InjectionKey } from 'vue'
 import {
   HOST_FRAME_SCHEMAS,
   type DepartureCause,
@@ -20,6 +20,8 @@ import {
   type Mine,
   type MinesSnapshot
 } from '../types'
+import { LEAVING_EXIT_MS } from '../lib/presentation'
+import { MAX_WALK_MS, prefersReducedMotion } from '../lib/scene/sceneMotion'
 import { createReadModel, followHost } from './readModel'
 import { useToasts } from './useToasts'
 
@@ -84,8 +86,18 @@ export type BoardWalk =
       panel: 'read-only' | 'closed'
     }
 
-/** How long a departed dwarf stays on the board while it walks out (NFR-TIM-09: 720 ms, binding until DI-06). */
+/**
+ * How long a departed dwarf stays on the board when no sprite says it is walking out (its mine is not open, or the
+ * column never walked it): the 720 ms of US-MINE-009 (NFR-TIM-09).
+ *
+ * A sprite that IS walking out holds it instead (ISSUE-255): the walk keeps today's corridor route and speed, the
+ * pinned design's ruling over the 720 ms, so it lasts as long as that route and its fade, from a fraction of a second
+ * to a long climb. The sprite says when it has gone (`walkedOut`); a flat 720 ms would cut a long walk-out short and
+ * hold a short one.
+ */
 const WALK_OUT_MS = 720
+/** The longest a walking-out sprite may hold its dwarf on the board: the longest walk and its fade. */
+const WALK_OUT_HOLD_MS = MAX_WALK_MS + LEAVING_EXIT_MS
 
 const MATERIALS: readonly Material[] = ['coal', 'bronze', 'copper', 'silver', 'gold', 'uranium']
 
@@ -146,6 +158,15 @@ const walkers = new Set<(walk: BoardWalk) => void>()
 
 function emit(walk: BoardWalk): void {
   for (const walker of walkers) walker(walk)
+}
+
+/** Drops a departed dwarf from the board, once its walk-out is over. */
+function dropLeaver(dwarfId: string): void {
+  const entry = leaving.get(dwarfId as DwarfId)
+  if (entry === undefined) return
+  clearTimeout(entry.timer)
+  leaving.delete(dwarfId as DwarfId)
+  publish()
 }
 
 function forgetLeaving(): void {
@@ -246,11 +267,10 @@ function depart(dwarfId: DwarfId, mineId: MineId, cause: DepartureCause): void {
   const dwarf = board.dwarfs.get(dwarfId)
   if (dwarf === undefined) return
   board.dwarfs.delete(dwarfId)
-  const timer = setTimeout(() => {
-    leaving.delete(dwarfId)
-    publish()
-  }, WALK_OUT_MS)
-  leaving.set(dwarfId, { dwarf, timer })
+  // Under reduced motion there is no walk-out to wait for: the dwarf is gone at once (US-MINE-009.AC05).
+  if (!prefersReducedMotion()) {
+    leaving.set(dwarfId, { dwarf, timer: setTimeout(() => dropLeaver(dwarfId), WALK_OUT_MS) })
+  }
   emit({
     kind: 'walk-out',
     dwarfId,
@@ -339,6 +359,16 @@ function stop(): void {
   legacyAsks = new Map()
 }
 
+/**
+ * What a sprite tells the board about a departed dwarf's walk-out (ISSUE-255): `useMines`'s own `walkingOut` and
+ * `walkedOut` by default; a test, or a page with no board, provides its own under this key.
+ */
+export interface WalkOutReporter {
+  walkingOut: (dwarfId: string) => void
+  walkedOut: (dwarfId: string) => void
+}
+export const WALK_OUT_KEY: InjectionKey<WalkOutReporter> = Symbol('walk-out')
+
 export function useMines() {
   function setMines(snapshot: MinesSnapshot): void {
     // One writer at a time (21 §1 item 4): once the Host feeds the board, today's feed no longer writes it. From the
@@ -386,6 +416,20 @@ export function useMines() {
       return () => {
         walkers.delete(listener)
       }
+    },
+    /**
+     * A sprite has set off on this departed dwarf's walk-out (SceneDwarf): the board keeps the dwarf until that sprite
+     * says it has gone, for at most the longest walk and its fade. A dwarf that is not departing is left alone.
+     */
+    walkingOut(dwarfId: string): void {
+      const entry = leaving.get(dwarfId as DwarfId)
+      if (entry === undefined) return
+      clearTimeout(entry.timer)
+      entry.timer = setTimeout(() => dropLeaver(dwarfId), WALK_OUT_HOLD_MS)
+    },
+    /** The sprite walking this departed dwarf out has gone: the board drops it now. */
+    walkedOut(dwarfId: string): void {
+      dropLeaver(dwarfId)
     },
     /** The Host read model's dwarfs (snapshot `dwarfs` with live frames), e.g. for Stop everything's count. */
     hostDwarfs: (): readonly DwarfWire[] => [...board.dwarfs.values()]
