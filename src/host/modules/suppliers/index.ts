@@ -12,7 +12,11 @@ import type { FileSystem } from '../../kernel/ports/fileSystem'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { ProcessControl } from '../../kernel/ports/processControl'
 import type { Scheduler } from '../../kernel/ports/scheduler'
-import { CATALOG_RECORDS, SIMULATED_RECORD } from './adapters/catalog/profiles'
+import {
+  CATALOG_RECORDS,
+  SIMULATED_CAPABILITIES,
+  SIMULATED_RECORD
+} from './adapters/catalog/profiles'
 import { HostedCommandDriver } from './adapters/drivers/hosted-command/HostedCommandDriver'
 import { HOSTED_COMMAND_PROFILE } from './adapters/drivers/hosted-command/profile'
 import type { LoginEnvironment } from './adapters/drivers/shared/childEnv'
@@ -48,7 +52,11 @@ export type {
   ProviderProfile,
   SessionOwnership
 } from './domain/profile'
-export type { ObservedCapabilities, ProviderCapabilities } from './domain/capabilities'
+export type {
+  CapabilityCeiling,
+  ObservedCapabilities,
+  ProviderCapabilities
+} from './domain/capabilities'
 export type {
   ActivityStep,
   AskInput,
@@ -163,7 +171,7 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
         new SimulatedDriver({
           profile: SIMULATED_RECORD.profile,
           transport: 'acp',
-          capabilities: SIMULATED_RECORD.ceiling,
+          capabilities: SIMULATED_CAPABILITIES,
           seed: deps.simulatedSeed,
           clock: deps.clock,
           scheduler: deps.scheduler

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import { SimulatedDriver } from '../adapters/drivers/simulated/SimulatedDriver'
-import { FAIL_CLOSED_CAPABILITIES } from '../domain/capabilities'
+import { ceilingOf, FAIL_CLOSED_CAPABILITIES } from '../domain/capabilities'
 import type { CatalogRecord, DriverTransport } from '../domain/profile'
 import type { DriverRegistry } from '../ports/driverRegistry'
 import type { ProviderDriver } from '../ports/providerDriver'
@@ -27,7 +27,7 @@ function record(id: string, drivers: DriverTransport[]): CatalogRecord {
       drivers,
       publicLaunch: 'enabled'
     },
-    ceiling: FAIL_CLOSED_CAPABILITIES
+    ceiling: ceilingOf(FAIL_CLOSED_CAPABILITIES)
   }
 }
 
@@ -39,7 +39,7 @@ export function runDriverRegistryContract(name: string, make: MakeDriverRegistry
       new SimulatedDriver({
         profile: source.profile,
         transport,
-        capabilities: source.ceiling,
+        capabilities: FAIL_CLOSED_CAPABILITIES,
         seed: transport,
         clock,
         scheduler
