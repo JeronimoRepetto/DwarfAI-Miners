@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createFrameClock, stoppedFrameClock, type FrameClockEnv } from './frameClock'
+import { settledClips } from './dwarfSequence'
 import { loopOf, onceOf, type SequencePosition, type SpriteSheet } from './spriteSheet'
 
 /** A three-frame swing with the shape of the pick: 120ms, a hurried 60ms, the impact held 200ms. */
@@ -414,5 +415,31 @@ describe('the phase over a shift', () => {
     const frames: SequencePosition[] = []
     clock.player((p) => frames.push(p)).play(shift, { phase: true, phaseClips: 1 })
     expect(frames).toEqual([{ clip: 0, frame: 2 }])
+  })
+})
+
+/*
+ * APPENDED for ISSUE-255. Under reduced motion only the walk collapses: a dwarf's status loops keep
+ * animating, every frame a flat 200 ms (US-MINE-009.AC08; motion.md, Reduced motion). Written
+ * against the frames a person sees on the real sheets, never against the timer that drives them.
+ */
+describe('the status loops under reduced motion (ISSUE-255)', () => {
+  it('[US-MINE-009.AC08, NFR-TIM-10] under reduced motion the idle, working and asleep loops keep 200 ms per frame', () => {
+    const loops = {
+      idle: settledClips('worker', false, false),
+      working: settledClips('worker', false, true),
+      asleep: settledClips('worker', true, false)
+    }
+    for (const [name, clips] of Object.entries(loops)) {
+      const env = fakeEnv()
+      env.reduced = true
+      const clock = createFrameClock(env)
+      const shownAt: number[] = []
+      clock.player(() => shownAt.push(env.t)).play(clips)
+      env.advance(2_000)
+      // It keeps animating: a change every 200 ms, ten of them in two seconds.
+      expect(shownAt, name).toEqual(Array.from({ length: 11 }, (_, n) => n * 200))
+      clock.dispose()
+    }
   })
 })
