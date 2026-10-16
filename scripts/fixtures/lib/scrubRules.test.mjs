@@ -256,6 +256,38 @@ describe('scrub rules (17 §1.4)', () => {
     ])
   })
 
+  it('[ADR-008] the environment lists of a Claude system/init line become numbered placeholders of the same shape', () => {
+    const raw = jsonl('simple-turn.jsonl', [
+      {
+        type: 'system',
+        subtype: 'init',
+        tools: ['Read', 'Write'],
+        slash_commands: ['canary-review', 'canary-deploy'],
+        terminal_slash_commands: ['canary-color'],
+        agents: ['canary-agent'],
+        skills: ['canary-skill-a', 'canary-skill-b', 'canary-skill-c'],
+        plugins: [{ name: 'canary-plugin', path: 'builtin', source: 'canary-plugin@builtin' }]
+      },
+      { type: 'system', subtype: 'status', skills: ['canary-skill-a'] }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [init, other] = records(scrubbed)
+
+    expect(init).toEqual({
+      type: 'system',
+      subtype: 'init',
+      tools: ['Read', 'Write'],
+      slash_commands: ['<slash-command-1>', '<slash-command-2>'],
+      terminal_slash_commands: ['<terminal-slash-command-1>'],
+      agents: ['<agent-1>'],
+      skills: ['<skill-1>', '<skill-2>', '<skill-3>'],
+      plugins: [{ name: '<plugin-1>', path: '<plugin-1>', source: '<plugin-1>' }]
+    })
+    expect(other.skills).toEqual(['canary-skill-a'])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
   it('[ADR-008, ADR-026] the survivor check names each personal value or secret left in a text, and nothing in a scrubbed one', () => {
     const leaky = [
       '{"cwd":"C:\\\\Users\\\\canary.user\\\\work"}',

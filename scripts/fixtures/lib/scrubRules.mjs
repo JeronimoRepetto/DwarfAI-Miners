@@ -103,6 +103,34 @@ export const ACCOUNT_ID_KEYS = new Set([
  */
 export const OPAQUE_BLOB_KEYS = new Set(['signature'])
 
+/**
+ * The list fields of a Claude `system/init` line that describe the recording person's own setup
+ * (commands, agents, skills, plugins), with the placeholder stem of each item. Each item becomes
+ * `<stem-n>`, every string inside an object item too, so lengths and types stay. The list is open:
+ * a driver issue adds the fields of its provider's protocol.
+ */
+export const INIT_ENVIRONMENT_LISTS = Object.freeze({
+  slash_commands: 'slash-command',
+  terminal_slash_commands: 'terminal-slash-command',
+  agents: 'agent',
+  skills: 'skill',
+  plugins: 'plugin'
+})
+
+const isInitLine = (value) => value.type === 'system' && value.subtype === 'init'
+
+/** Every string of one list item replaced by its numbered placeholder; other leaves stay. */
+function placeholderItem(item, placeholder) {
+  if (typeof item === 'string') return placeholder
+  if (Array.isArray(item)) return item.map((inner) => placeholderItem(inner, placeholder))
+  if (item !== null && typeof item === 'object') {
+    return Object.fromEntries(
+      Object.entries(item).map(([key, inner]) => [key, placeholderItem(inner, placeholder)])
+    )
+  }
+  return item
+}
+
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g
 
 /**
@@ -360,8 +388,14 @@ function scrubValue(value, scrub, shiftMs, key = null) {
   if (Array.isArray(value)) return value.map((item) => scrubValue(item, scrub, shiftMs, key))
   if (value !== null && typeof value === 'object') {
     const out = {}
+    const init = isInitLine(value)
     for (const [field, item] of Object.entries(value)) {
-      out[scrub(field)] = scrubValue(item, scrub, shiftMs, field)
+      const stem =
+        init && Object.hasOwn(INIT_ENVIRONMENT_LISTS, field) ? INIT_ENVIRONMENT_LISTS[field] : null
+      out[scrub(field)] =
+        stem !== null && Array.isArray(item)
+          ? item.map((entry, index) => placeholderItem(entry, `<${stem}-${index + 1}>`))
+          : scrubValue(item, scrub, shiftMs, field)
     }
     return out
   }
