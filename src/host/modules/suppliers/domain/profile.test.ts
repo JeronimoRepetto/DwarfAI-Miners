@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FAIL_CLOSED_CAPABILITIES } from './capabilities'
+import { ceilingOf, FAIL_CLOSED_CAPABILITIES } from './capabilities'
 import { recordsForBuild, type CatalogRecord } from './profile'
 
 function record(id: string, developmentOnly?: boolean): CatalogRecord {
@@ -14,7 +14,7 @@ function record(id: string, developmentOnly?: boolean): CatalogRecord {
       drivers: [],
       publicLaunch: 'enabled'
     },
-    ceiling: FAIL_CLOSED_CAPABILITIES,
+    ceiling: ceilingOf(FAIL_CLOSED_CAPABILITIES),
     ...(developmentOnly === undefined ? {} : { developmentOnly })
   }
 }

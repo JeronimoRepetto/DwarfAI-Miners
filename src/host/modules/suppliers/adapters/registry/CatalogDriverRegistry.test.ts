@@ -6,7 +6,7 @@ import { FakeScheduler } from '../../../../kernel/fakes/FakeScheduler'
 import { createSupplierCatalogue } from '../../application/catalogue'
 import { createInstallDetection } from '../../application/detection'
 import { createCapabilityProbing } from '../../application/probe'
-import { FAIL_CLOSED_CAPABILITIES } from '../../domain/capabilities'
+import { ceilingOf, FAIL_CLOSED_CAPABILITIES } from '../../domain/capabilities'
 import type { CatalogRecord, DriverTransport, ProviderProfile } from '../../domain/profile'
 import { FakeInstallResolver } from '../../ports/fakes/FakeInstallResolver'
 import { FakeIntegrationGateReader } from '../../ports/fakes/FakeIntegrationGateReader'
@@ -18,6 +18,7 @@ import { SimulatedDriver } from '../drivers/simulated/SimulatedDriver'
 import { FakeProcessControl } from '../../../../kernel/fakes/FakeProcessControl'
 import { HostedCommandDriver } from '../drivers/hosted-command/HostedCommandDriver'
 import { HOSTED_COMMAND_PROFILE } from '../drivers/hosted-command/profile'
+import { preferredRow } from '../../testing/ceilingRow'
 import { CatalogDriverRegistry } from './CatalogDriverRegistry'
 
 const clock = new FakeClock()
@@ -36,7 +37,7 @@ function record(id: string, overrides: Partial<ProviderProfile> = {}): CatalogRe
       publicLaunch: 'enabled',
       ...overrides
     },
-    ceiling: { ...FAIL_CLOSED_CAPABILITIES, observe: true }
+    ceiling: ceilingOf({ ...FAIL_CLOSED_CAPABILITIES, observe: true })
   }
 }
 
@@ -44,7 +45,7 @@ function driverFor(source: CatalogRecord, transport: DriverTransport): Simulated
   return new SimulatedDriver({
     profile: source.profile,
     transport,
-    capabilities: source.ceiling,
+    capabilities: preferredRow(source.ceiling),
     seed: `${source.profile.id}:${transport}`,
     clock,
     scheduler
@@ -204,7 +205,7 @@ describe('DriverRegistry and the "Other…" driver (ISSUE-165)', () => {
     const wrongTransport = new SimulatedDriver({
       profile: HOSTED_COMMAND_PROFILE,
       transport: 'acp',
-      capabilities: alpha.ceiling,
+      capabilities: preferredRow(alpha.ceiling),
       seed: 'other:acp',
       clock,
       scheduler
