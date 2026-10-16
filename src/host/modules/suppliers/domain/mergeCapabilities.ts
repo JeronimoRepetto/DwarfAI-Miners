@@ -3,15 +3,19 @@
 //
 // - boolean: ceiling AND negotiated;
 // - ordered enum (lowest first): the lower of the two;
-// - unordered enum: the ceiling lists the allowed values (the type holds one, so the allowed value
-//   is the ceiling's own); the negotiated value when allowed, else the field's fail-closed value;
+// - unordered enum: the ceiling lists the allowed values (a non-empty set, AMENDMENT-18, owner,
+//   2026-10-16); the negotiated value when the set holds it, else the field's fail-closed value;
 // - an omitted negotiated field yields the lowest or fail-closed value (ADR-009 D2).
 //
 // `combineLowest` combines several negotiation sources (protocol handshake, runtime probe, the
 // answer-channel gate) with the same rule before the merge, so a probe or a gate only lowers a
 // value (15 §2.1, review R5B-08). Pure: no I/O, no clock read (05 §2.2, R1).
 import type { IntegrationState } from '../../../kernel/domain/values'
-import { FAIL_CLOSED_CAPABILITIES, type ProviderCapabilities } from './capabilities'
+import {
+  FAIL_CLOSED_CAPABILITIES,
+  type CapabilityCeiling,
+  type ProviderCapabilities
+} from './capabilities'
 
 /** What one negotiation source reports; an omitted field is not reported. */
 export type NegotiatedCapabilities = Partial<ProviderCapabilities>
@@ -41,12 +45,15 @@ function orderedOf<T>(order: readonly T[], ceiling: T, negotiated: T | undefined
   return negotiated === undefined ? (order[0] as T) : lower(order, ceiling, negotiated)
 }
 
-function allowedOr<T>(ceiling: T, negotiated: T | undefined, failClosed: T): T {
-  return negotiated !== undefined && negotiated === ceiling ? negotiated : failClosed
+function allowedOr<T>(allowed: readonly T[], negotiated: T | undefined, failClosed: T): T {
+  return negotiated !== undefined && allowed.includes(negotiated) ? negotiated : failClosed
 }
 
-/** The effective capabilities: ADR-009 D2's table applied to every field. */
-export function merge(ceiling: Caps, negotiated: NegotiatedCapabilities): Caps {
+/**
+ * The effective capabilities: ADR-009 D2's table applied to every field. The ceiling's unordered
+ * enums are sets (AMENDMENT-18); the result holds one value per field, like every session's.
+ */
+export function merge(ceiling: CapabilityCeiling, negotiated: NegotiatedCapabilities): Caps {
   const n = negotiated
   const closed = FAIL_CLOSED_CAPABILITIES
   return {
