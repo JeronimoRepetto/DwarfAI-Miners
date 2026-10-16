@@ -2,7 +2,7 @@
 // field; ADR-009 is the owner and wins on any difference), the 15 §1.2 catalog types and ADR-011
 // item 1's permission-mode types. Pure: no I/O, no clock read (05 §2.2, R1).
 import type { IntegrationId, ProviderId } from '../../../kernel/domain/values'
-import type { ProviderCapabilities } from './capabilities'
+import type { CapabilityCeiling } from './capabilities'
 
 export type { ProviderId }
 
@@ -69,12 +69,13 @@ export interface PermissionModeCatalog {
  * One catalog entry as the catalog adapter declares it: the ADR-009 D1 profile plus the
  * provider's capability ceiling (ADR-009 D2 "each profile declares a ceiling"; 15 §0 "ceiling =
  * catalog data per provider"). `ProviderProfile` is frozen and has no ceiling field, so the
- * ceiling travels beside it. `developmentOnly` keeps an entry out of public builds as data,
- * never as a provider-id branch (15 §4.12, R12).
+ * ceiling travels beside it. Its unordered enums are sets of allowed values (AMENDMENT-18,
+ * owner, 2026-10-16). `developmentOnly` keeps an entry out of public builds as data, never as a
+ * provider-id branch (15 §4.12, R12).
  */
 export interface CatalogRecord {
   readonly profile: ProviderProfile
-  readonly ceiling: ProviderCapabilities
+  readonly ceiling: CapabilityCeiling
   readonly developmentOnly?: boolean
   /**
    * The specs behind `profile.permissionModes` (ADR-011 item 1). `ProviderProfile` is frozen and

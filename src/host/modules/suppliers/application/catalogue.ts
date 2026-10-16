@@ -63,9 +63,15 @@ export function createSupplierCatalogue(deps: SupplierCatalogueDeps): SupplierCa
   const byId = new Map<ProviderId, CatalogRecord>()
   for (const record of deps.records) byId.set(record.profile.id, record)
 
-  /** `installDetection: 'none'` (the simulated provider) resolves no CLI: present by itself. */
+  /**
+   * A ceiling that allows no `user-binary` (the simulated provider, `installDetection: 'none'`)
+   * resolves no CLI: present by itself.
+   */
+  const resolvesNoCli = (record: CatalogRecord): boolean =>
+    !record.ceiling.installDetection.includes('user-binary')
+
   const isInstalled = async (record: CatalogRecord): Promise<boolean> =>
-    record.ceiling.installDetection === 'none' ||
+    resolvesNoCli(record) ||
     (record.profile.binaries.length > 0 &&
       (
         await deps.detection.detect({
@@ -76,7 +82,7 @@ export function createSupplierCatalogue(deps: SupplierCatalogueDeps): SupplierCa
 
   /** What the last detection said, without checking again (`entry` is synchronous). */
   const installedNow = (record: CatalogRecord): boolean =>
-    record.ceiling.installDetection === 'none' ||
+    resolvesNoCli(record) ||
     deps.detection.last({ providerId: record.profile.id, binaries: record.profile.binaries })
       ?.kind === 'installed'
 
