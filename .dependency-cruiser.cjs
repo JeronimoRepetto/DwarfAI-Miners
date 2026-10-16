@@ -14,6 +14,15 @@
 //    drops those dependencies, dependency-cruiser src/extract/extract-dependencies.mjs:180-181); the
 //    ISSUE-005 canary suite proves R16 through ESLint's arch/legacy-only-through-bridge rule
 //    (eslint.config.mjs, which replaces 05 §5.3's IMP.legacy group).
+// 5. R9 split, owner-approved 2026-10-15, ISSUE-200 (deviation from 05 §5.1 R9, which lets the relay
+//    shim import contracts/logging only): the relay `host/modules/delegation/adapters/mcp/relay/**`
+//    may also import `contracts/host-protocol/**` by relative path (the ADR-003 item 4 frame codec,
+//    `McpHello`, the ADR-002 D2 endpoint rule), never the `@dwarfai/contracts` barrel; the diagnostics
+//    adapters stay logging-only (R9-diagnostics-only-logging, R9-relay-only-logging-and-host-protocol).
+// 6. R6-relay-entry-not-imported (ISSUE-200, security review of #1328): `relayMain.ts` is the relay
+//    process's entry (built as out/host/dwarfai-mcp.js) and holds the credential; nothing imports it
+//    but its own tests (`relay/*.test.ts`), not even the composition root. What the Host needs of
+//    the relay (the entry file name, the variable name, the 15 §4 entry) lives in relayEntry.ts.
 //
 // Each rule's `comment` names the ADR-004 principle it enforces, or "05 local rule" (05 §5.1 column
 // "ADR-004"); scripts/checks/rule-principles.test.mjs reads them (ADR-004 Verification).
@@ -159,6 +168,16 @@ module.exports = {
       to: { path: '^src/host/modules/[^/]+/adapters/' }
     },
     {
+      name: 'R6-relay-entry-not-imported',
+      comment:
+        'the relay entry relayMain.ts is imported only by its own tests (05 R6, deviation 6; ADR-004 P4)',
+      severity: 'error',
+      from: {
+        pathNot: '^src/host/modules/delegation/adapters/mcp/relay/[^/]+\.test\.ts$'
+      },
+      to: { path: '^src/host/modules/delegation/adapters/mcp/relay/relayMain\.ts$' }
+    },
+    {
       name: 'R7-electron-only-ui-main',
       comment: 'electron only in src/ui-main and src/preload (05 R7; ADR-004 P2)',
       severity: 'error',
@@ -213,11 +232,18 @@ module.exports = {
     },
     {
       name: 'R9-diagnostics-only-logging',
-      comment:
-        'diagnostics adapters and the relay shim import only contracts/logging (05 R9; ADR-004 P5, P13)',
+      comment: 'diagnostics adapters import only contracts/logging (05 R9; ADR-004 P5, P13)',
       severity: 'error',
-      from: { path: '^src/host/modules/(diagnostics/adapters|delegation/adapters/mcp/relay)/' },
+      from: { path: '^src/host/modules/diagnostics/adapters/' },
       to: { path: '^src/contracts/', pathNot: '^src/contracts/logging/' }
+    },
+    {
+      name: 'R9-relay-only-logging-and-host-protocol',
+      comment:
+        'the relay shim imports only contracts/logging and contracts/host-protocol (05 R9, deviation 5; ADR-004 P5, P13)',
+      severity: 'error',
+      from: { path: '^src/host/modules/delegation/adapters/mcp/relay/' },
+      to: { path: '^src/contracts/', pathNot: '^src/contracts/(logging|host-protocol)/' }
     },
     {
       name: 'R10-host-not-ui',

@@ -27,6 +27,13 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  * short (20 §3.1 `buildId`), which the Host sends in `hello.ok` (ADR-003 item
  * 5). A build made outside a git checkout has no commit to name and says
  * `unknown`.
+ *
+ * ADDED for ISSUE-200: the delegation MCP relay `dwarfai-mcp` (ADR-013 item 3) is a second input of
+ * this build, emitted beside the Host entry as `out/host/dwarfai-mcp.js` (relayEntry.ts
+ * RELAY_ENTRY_FILE): the relay entry runs it on the same versioned-copy executable with
+ * ELECTRON_RUN_AS_NODE=1, from the same app directory, so it ships wherever `main.js` ships and needs
+ * no packaging change. Its name is the relay's name in ADR-013. Shared code may land in `out/host`
+ * chunks, which this build already emits (the source-weight worker).
  */
 const { version } = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')) as {
   version: string
@@ -58,7 +65,13 @@ export default defineConfig({
       outDir: 'out/host',
       emptyOutDir: false,
       rollupOptions: {
-        input: { main: resolve(__dirname, 'src/host/main.ts') }
+        input: {
+          main: resolve(__dirname, 'src/host/main.ts'),
+          'dwarfai-mcp': resolve(
+            __dirname,
+            'src/host/modules/delegation/adapters/mcp/relay/relayMain.ts'
+          )
+        }
       }
     }
   }
