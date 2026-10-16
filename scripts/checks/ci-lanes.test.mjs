@@ -386,3 +386,47 @@ describe('package job in CI (20 §2.1, §3.2; 18 C-33, C-34)', () => {
     expect(job).toContain('if-no-files-found: error\n')
   })
 })
+
+// ADDED for ISSUE-273: P-03's lockfile half (`20` §2.3; TC-273-02). Every job that packages scans the lockfile's
+// production dependencies and the production sources for provider binaries, the Agent SDK and credential stores in
+// the step right before it packages, so a listed package stops the job before electron-builder starts.
+describe('provider scan before packaging (20 P-03; ISSUE-273)', () => {
+  const SCAN_STEP =
+    'name: Scan the lockfile and sources for provider binaries and the Agent SDK\n' +
+    '        run: node scripts/release/lockfile-provider-scan.mjs\n'
+
+  /** The steps of a job's text, comment lines dropped, each from its `- ` to the next step. */
+  const stepsOf = (text) => {
+    const code = text
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n')
+    return code
+      .slice(code.indexOf('\n    steps:\n'))
+      .split(/\n {6}- /)
+      .slice(1)
+      .map((step) => `${step}\n`)
+  }
+
+  it('[ADR-008] every packaging job runs the lockfile provider scan in the step right before it packages', () => {
+    const jobs = [
+      { id: 'ci.yml package', steps: stepsOf(jobText('package')) },
+      ...internalJobs()
+        .filter(({ steps }) => steps.some((step) => step.includes('run: pnpm package')))
+        .map(({ id, steps }) => ({
+          id: `internal-build.yml ${id}`,
+          steps: steps.map((s) => `${s}\n`)
+        }))
+    ]
+    expect(jobs.map(({ id }) => id)).toEqual([
+      'ci.yml package',
+      'internal-build.yml package',
+      'internal-build.yml package-mac'
+    ])
+    for (const { id, steps } of jobs) {
+      const packageAt = steps.findIndex((step) => step.includes('run: pnpm package'))
+      expect(packageAt, `${id} packages`).toBeGreaterThan(0)
+      expect(steps[packageAt - 1], `${id} scans right before it packages`).toContain(SCAN_STEP)
+    }
+  })
+})

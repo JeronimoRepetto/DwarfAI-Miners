@@ -411,5 +411,7 @@ describe('provider binary scan (20 P-03)', () => {
     expect(output).toMatch(
       /^provider scan ok: \d+ production packages, \d+ source files, no provider binary/m
     )
-  })
+    // Slow by design: a real child process reading the whole lockfile and every production source, which took
+    // 10.8 s on this machine under a full parallel `pnpm test` (2026-10-16); a hang detector, never a speed check.
+  }, 60_000)
 })
