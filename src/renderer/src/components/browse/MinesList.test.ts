@@ -880,3 +880,24 @@ describe('MinesList acceptance (ISSUE-253)', () => {
     list.unmount()
   })
 })
+
+// C-08 (18 §5.1, NFR-SEC-07): the mine the worktree dialog's body names is a folder's name, drawn
+// stripped inside a bidi-isolated text node, as MineCard draws it (#1341).
+describe('MinesList worktree dialog, an untrusted mine name (C-08)', () => {
+  it('[NFR-SEC-07] draws the mine named in the worktree dialog s body stripped and inside a bidi-isolated text node', async () => {
+    const list = mount(MinesList, {
+      props: {
+        ...base,
+        worktreeQuestion: { worktree: 'C:\\dev\\fix', root: 'C:\\dev\\an\u202Evil\u001b[0m' }
+      },
+      attachTo: document.body
+    })
+    await flushPromises()
+    const body = document.body.querySelector('.dm-scrim .dm-dialog__body')!
+    const isolate = body.querySelector('bdi')
+    expect(isolate, 'no <bdi> around the mine name').not.toBeNull()
+    expect(isolate!.textContent).toBe('anvil')
+    expect(body.textContent).toBe('Its dwarfs will work in anvil.')
+    list.unmount()
+  })
+})

@@ -37,8 +37,10 @@ import {
 import { createBoundedMotion, type MotionAnimate } from '../../lib/shell/boundedMotion'
 import { designTierLabel } from '../../lib/presentation'
 import {
+  WORKTREE_BODY_LEAD,
+  WORKTREE_BODY_TAIL,
+  worktreeMineName,
   worktreeQuestionAccept,
-  worktreeQuestionBody,
   worktreeQuestionTitle
 } from '../../lib/worktree'
 import { MINE_TIERS } from '../../types'
@@ -358,7 +360,11 @@ function cardLeave(element: Element, done: () => void): void {
       @action="worktreeAction"
       @cancel="emit('dismiss-worktree')"
     >
-      <p v-if="worktreeQuestion">{{ worktreeQuestionBody(worktreeQuestion) }}</p>
+      <!-- The mine is a folder's name: stripped, and bidi-isolated (C-08). -->
+      <p v-if="worktreeQuestion">
+        {{ WORKTREE_BODY_LEAD }}<bdi>{{ worktreeMineName(worktreeQuestion) }}</bdi
+        >{{ WORKTREE_BODY_TAIL }}
+      </p>
     </ModalDialog>
     <ModalDialog
       :open="tierInfoOpen"

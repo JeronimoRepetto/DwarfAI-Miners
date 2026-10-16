@@ -89,3 +89,21 @@ describe('dwarfWorkplaceLabel', () => {
     expect(dwarfWorkplaceLabel(undefined)).toBe('')
   })
 })
+
+/*
+ * C-08 (18 §5.1, NFR-SEC-07): the worktree dialog names two folders, and a repository chose both.
+ * Each name is drawn without its escape sequences, control characters and bidi controls, as the
+ * mine card draws the same names (#1341).
+ */
+describe('the worktree dialog, untrusted folder names (C-08)', () => {
+  it('[NFR-SEC-07] strips a hostile folder and mine name in the title, the body and the action', () => {
+    const question = {
+      worktree: 'C:\\dev\\\u001b[31mfix\u202Eexe\u0000',
+      root: 'C:\\dev\\an\u2066vil\u001b]0;title\u0007'
+    }
+    expect(worktreeMineName(question)).toBe('anvil')
+    expect(worktreeQuestionTitle(question)).toBe('fixexe is a worktree of anvil')
+    expect(worktreeQuestionBody(question)).toBe('Its dwarfs will work in anvil.')
+    expect(worktreeQuestionAccept(question)).toBe('Add anvil')
+  })
+})
