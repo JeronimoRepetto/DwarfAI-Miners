@@ -126,6 +126,9 @@ const NO_ASK =
 const OPTIONS: ConformanceOptions = {
   ceiling: CLAUDE.ceiling,
   install: INSTALL,
+  // AMENDMENT-18 (owner, 2026-10-16): the Claude ceiling allows C2's resume cli-flag, so C-16
+  // applies. Its SP-15 recording kept the session id the Host assigned (RECORDED_SESSION).
+  caseFactories: { 'C-16': factoryWith(undefined, () => new RecordedIds(RECORDED_SESSION)) },
   cases: {
     'C-06': { inapplicable: NO_ASK },
     'C-07': { inapplicable: NO_ASK },
@@ -139,10 +142,6 @@ const OPTIONS: ConformanceOptions = {
     'C-13': { inapplicable: NO_ASK },
     'C-14': { inapplicable: NO_ASK },
     'C-15': { inapplicable: NO_ASK },
-    'C-16': {
-      inapplicable:
-        "the driver reports resume cli-flag (SP-15), but the Claude ceiling holds C3's resume load and the unordered-enum merge gives none (15 §2.1); resume() itself is proven by the SP-15 case below"
-    },
     'C-17': { inapplicable: 'adopt is false: a stdio driver re-attaches nothing (15 §3 row C2)' },
     'C-22': { inapplicable: 'no policy-only stream-json launch in v1 (15 §2.8, O-15-07)' },
     'C-27': { inapplicable: 'the Claude profile has no answer-channel gate' }
@@ -553,6 +552,18 @@ describe('ClaudeStreamJsonDriver', () => {
     expect(live.outcomes[1]).toEqual({
       rejected: { reason: 'resume-error', detail: expect.any(String) }
     })
+  })
+
+  it('[C-16, SP-15] a launched session keeps resume cli-flag through the Claude ceiling (AMENDMENT-18)', async () => {
+    // AMENDMENT-18 (owner, 2026-10-16): the ceiling's resume set holds C2's cli-flag, so the merge
+    // keeps what the driver negotiates instead of failing it closed to none.
+    const run = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf('s0201-readiness') },
+      OPTIONS
+    )
+    expect(run.session?.capabilities.resume).toBe('cli-flag')
   })
 
   it('[S-020-1, C-16] a resume that gets an error result before system/init is a resume-error at once', async () => {

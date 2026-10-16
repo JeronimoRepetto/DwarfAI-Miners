@@ -8,7 +8,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import type { Json } from './expected'
-import { gatesFromTiming } from './fixtureTransport'
+import { gatesFromTiming, splitLines } from './fixtureTransport'
 
 /** One scripted call of a case (`script` of its expected file). */
 export type ScriptStep =
@@ -66,6 +66,18 @@ export interface FixtureVariant {
   readonly streams: Readonly<Record<string, string>>
   /** Per JSONL line, the driver frames that must precede it (from the timing stream). */
   readonly gates?: readonly number[]
+  /**
+   * A recording of several processes one after another (a launch, then a resume: C-16, SP-15):
+   * each one's stdout and gates, in spawn order, split by the timing stream's `spawned` marks.
+   * Absent for a recording of one process.
+   */
+  readonly processes?: readonly FixtureProcess[]
+}
+
+/** One recorded process of a multi-process recording: its stdout and its own gates. */
+export interface FixtureProcess {
+  readonly received: string
+  readonly gates: readonly number[]
 }
 
 export interface FixtureCase {
@@ -192,19 +204,81 @@ function variantsOf(name: string, files: ReadonlyMap<string, string>): FixtureVa
     format === 'jsonl' && recorded !== undefined && timing !== undefined
       ? gatesFromTiming(recorded, timing)
       : undefined
+  const spans =
+    format === 'jsonl' && recorded !== undefined && timing !== undefined
+      ? processSpans(recorded, timing)
+      : []
   const variant = (label: FixtureVariant['label']): FixtureVariant | undefined => {
     const text = pick(name, label)
     if (text === undefined) return undefined
+    const processes = spans.length > 1 ? processesOf(text, spans, gates ?? []) : undefined
     const streams: Record<string, string> = {}
     for (const stream of streamNames) {
       streams[stream] =
         pick(`${name}-${stream}`, label) ?? pick(`${name}-${stream}`, 'as-recorded') ?? ''
     }
-    return { label, format, received: text, streams, ...(gates === undefined ? {} : { gates }) }
+    return {
+      label,
+      format,
+      received: text,
+      streams,
+      ...(gates === undefined ? {} : { gates }),
+      ...(processes === undefined ? {} : { processes })
+    }
   }
   const labels: FixtureVariant['label'][] =
     format === 'jsonl' ? ['as-recorded', 'with-extra', 'crlf'] : ['as-recorded', 'with-extra']
   return labels.map(variant).filter((v): v is FixtureVariant => v !== undefined)
+}
+
+/** One process of a recording: its first line, its line count and the frames sent before it. */
+interface ProcessSpan {
+  readonly first: number
+  readonly count: number
+  readonly sentBefore: number
+}
+
+/**
+ * The processes of a recording, by the timing stream's `spawned` marks: the received bytes after
+ * each mark belong to that process. Lines are counted on the as-recorded LF text, so the same line
+ * ranges cut every variant (each variant has the same lines).
+ */
+function processSpans(recorded: string, timing: string): ProcessSpan[] {
+  const steps: { bytes: number; sentBefore: number }[] = []
+  let sent = 0
+  for (const entry of splitLines(toLf(timing))) {
+    const mark = JSON.parse(entry) as { event?: string; stream?: string; bytes?: number }
+    if (mark.event === 'spawned') steps.push({ bytes: 0, sentBefore: sent })
+    if (mark.stream === 'sent') sent += 1
+    const step = steps.at(-1)
+    if (mark.stream === 'received' && step !== undefined) step.bytes += mark.bytes ?? 0
+  }
+  const lines = splitLines(toLf(recorded))
+  const spans: ProcessSpan[] = []
+  let next = 0
+  for (const step of steps) {
+    const first = next
+    let bytes = 0
+    while (next < lines.length && bytes < step.bytes) {
+      bytes += Buffer.byteLength(lines[next] as string)
+      next += 1
+    }
+    spans.push({ first, count: next - first, sentBefore: step.sentBefore })
+  }
+  return spans
+}
+
+/** One variant's text cut into its processes; each gate counts only that process's own frames. */
+function processesOf(
+  text: string,
+  spans: readonly ProcessSpan[],
+  gates: readonly number[]
+): FixtureProcess[] {
+  const lines = splitLines(text)
+  return spans.map(({ first, count, sentBefore }) => ({
+    received: lines.slice(first, first + count).join(''),
+    gates: gates.slice(first, first + count).map((gate) => Math.max(0, gate - sentBefore))
+  }))
 }
 
 /** The CRLF variant of an LF JSONL file: any file with the same lines ending in CRLF (HO-37). */

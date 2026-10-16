@@ -100,6 +100,12 @@ export interface ConformanceOptions {
   readonly install: InstalledProvider
   /** Cases the driver's capabilities make inapplicable, each with its reason. */
   readonly cases?: Partial<Record<CaseId, { readonly inapplicable: string }>>
+  /**
+   * A case whose recordings were made with other doubles than the run's (the recording Host's
+   * minted ids, so a resume over a recorded process keeps the recorded session id) runs over its
+   * own factory; every other case uses the run's.
+   */
+  readonly caseFactories?: Partial<Record<CaseId, DriverFactory>>
   /** CH-04 for a driver with no fixture transport: drop its transport before an exit. */
   readonly injectTransportLoss?: (session: DriverSession) => void
   /** The driver's `HANDSHAKE_TIMEOUT_MS` when it is configured away from 15 §0's 30 000. */
@@ -165,6 +171,8 @@ export interface RunPlan {
 /** What one scripted run of a fixture variant produced. */
 export interface Run {
   readonly events: DriverEvent[]
+  /** The same events per session, in binding order (a launch, then each resumed or adopted one). */
+  readonly sessionEvents: DriverEvent[][]
   /** Per script step: what its call resolved (`{ pending: true }` when it never settled). */
   readonly outcomes: unknown[]
   /** `events.length`, the clock and the steps still pending, when each step started. */
@@ -250,10 +258,14 @@ export async function runScript(
   const transports: FixtureTransport[] = []
   const fixture = (): SpawnScript => {
     const variant = plan.variant
+    // A multi-process recording serves its N-th process to the N-th spawn (C-16: launch, resume).
+    const part = variant?.processes?.[transports.length]
+    const received = part?.received ?? (variant?.processes === undefined ? variant?.received : '')
+    const gates = part?.gates ?? (variant?.processes === undefined ? variant?.gates : undefined)
     const transport = new FixtureTransport({
-      received: variant?.received ?? '',
+      received: received ?? '',
       format: variant?.format ?? 'jsonl',
-      ...(variant?.gates === undefined ? {} : { gates: variant.gates }),
+      ...(gates === undefined ? {} : { gates }),
       ...(plan.chunking === undefined ? {} : { chunking: plan.chunking }),
       ...(variant?.streams.stderr === undefined ? {} : { stderr: variant.streams.stderr })
     })
@@ -274,6 +286,7 @@ export async function runScript(
   const driver = factory({ clock, scheduler, processControl: spawn, loginEnv: LOGIN_ENV })
   const run: Run = {
     events: [],
+    sessionEvents: [],
     outcomes: [],
     eventsAtStep: [],
     clockAtStep: [],
@@ -293,9 +306,16 @@ export async function runScript(
 
   const bindSession = (session: DriverSession): void => {
     run.session = session
-    run.bindings.session = session.ref.providerSessionId
+    // `{session}` names the first session's id: a resume that keeps it matches it, and C-16
+    // reads it as the id a new one must name in `previousProviderSessionId`.
+    run.bindings.session ??= session.ref.providerSessionId
+    const own: DriverEvent[] = []
+    run.sessionEvents.push(own)
     void (async () => {
-      for await (const event of session.events()) run.events.push(event)
+      for await (const event of session.events()) {
+        run.events.push(event)
+        own.push(event)
+      }
     })()
   }
 
@@ -356,12 +376,17 @@ export async function runScript(
           tracked.push(null)
           break
         }
-        const reopened = track(reopen.call(driver, session.ref))
-        tracked.push(reopened)
+        const pending = reopen.call(driver, session.ref)
+        tracked.push(track(pending))
+        // Bound whenever it resolves: an exit-only driver's resume waits out the 3 s early-failure
+        // window (ADR-020 D4), so it resolves during a later `advance` step.
+        void pending.then(
+          (reopened) => {
+            if (reopened !== null) bindSession(reopened)
+          },
+          () => undefined
+        )
         await settle()
-        if (reopened.state === 'resolved' && reopened.value !== null) {
-          bindSession(reopened.value as DriverSession)
-        }
         break
       }
       default: {
@@ -494,11 +519,28 @@ function call(
   }
 }
 
+/**
+ * A run of one session is compared as one stream. A run of several (a launch, then a resume:
+ * C-16) is compared session by session, since each session's stream ends with its own `exited`
+ * (15 §1.4): the expected events are cut after each `exited`, in order.
+ */
+function eventsAgainst(run: Run, expected: readonly Json[], bindings: Bindings): string[] {
+  if (run.sessionEvents.length < 2) return compareEvents(run.events, expected, bindings)
+  const parts: Json[][] = [[]]
+  for (const event of expected) {
+    ;(parts.at(-1) as Json[]).push(event)
+    if ((event as { t?: unknown }).t === 'exited') parts.push([])
+  }
+  return run.sessionEvents.flatMap((events, index) =>
+    compareEvents(events, parts[index] ?? [], bindings).map((line) => `session #${index}: ${line}`)
+  )
+}
+
 /** The differences between a run and its fixture's expected events, outcomes and frames. */
 function againstExpected(run: Run, fixture: FixtureCase): string[] {
   const expected = fixture.expected
   const bindings: Bindings = run.bindings
-  const out = [...run.failures, ...compareEvents(run.events, expected.events ?? [], bindings)]
+  const out = [...run.failures, ...eventsAgainst(run, expected.events ?? [], bindings)]
   ;(expected.outcomes ?? []).forEach((want, index) => {
     if (want === null) return
     const why = differences(run.outcomes[index], bind(want, bindings), `outcome #${index}`)
@@ -1153,8 +1195,14 @@ function checkResume(run: Run, fixture: FixtureCase): string[] {
       `resume minted ${ref.providerSessionId} without previousProviderSessionId ${String(previous)}`
     )
   }
+  // The replay is what the resumed session reports before the script acts on it again: up to the
+  // first step after the resume that is not a clock advance (a later turn's keys are new).
+  const steps = fixture.expected.script
+  const next = steps.findIndex((step, index) => index > at && step.do !== 'advance')
   const known = new Set(sourceKeysOf(run.events.slice(0, run.eventsAtStep[at])))
-  const replayed = run.events.slice(run.eventsAtStep[at]).filter((e) => e.t === 'message')
+  const replayed = run.events
+    .slice(run.eventsAtStep[at], next === -1 ? undefined : run.eventsAtStep[next])
+    .filter((e) => e.t === 'message')
   for (const key of sourceKeysOf(replayed)) {
     if (!known.has(key)) out.push(`the resume replay adds a new key ${key}`)
   }
@@ -1518,7 +1566,8 @@ export async function runCase(
   options: ConformanceOptions
 ): Promise<CaseVerdict> {
   const definition = CASES[id]
-  const context: CaseContext = { factory, fixtures, options }
+  const caseFactory = options.caseFactories?.[id] ?? factory
+  const context: CaseContext = { factory: caseFactory, fixtures, options }
   const verdict = (failures: readonly string[]): CaseVerdict => ({
     ok: failures.length === 0,
     failures
@@ -1545,7 +1594,7 @@ export async function runCase(
   for (const fixture of own) {
     for (const { variant, chunking, label } of replays(fixture)) {
       const plan: RunPlan = { ...definition.plan, variant, chunking }
-      const run = await runScript(factory, fixture.expected.script, plan, options)
+      const run = await runScript(caseFactory, fixture.expected.script, plan, options)
       const why = [
         ...againstExpected(run, fixture),
         ...(definition.check?.(run, fixture, context) ?? [])
