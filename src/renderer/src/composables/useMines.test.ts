@@ -14,7 +14,15 @@ import type {
   SnapshotParams
 } from '@dwarfai/contracts'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
-import { sessionClosed } from '../lib/delivery/actionBar'
+import {
+  buildActionBar,
+  CHANNEL_HINT,
+  KICK_HINT,
+  kickBlocked,
+  NO_CHANNEL_REASON,
+  refusalLine,
+  sessionClosed
+} from '../lib/delivery/actionBar'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../testing/factories'
 import { useMines, type BoardWalk } from './useMines'
 import { useToasts } from './useToasts'
@@ -480,5 +488,48 @@ describe('useMines from the Host read model', () => {
     useMines().setMines(facade({}))
     expect(borin()?.pendingPermission).toBeUndefined()
     expect(borin()?.waitingReason).toBeUndefined()
+  })
+
+  // A-23 `dwarf:sendText` and A-26 `dwarf:kick` stay `legacy` through `LegacyDwarfIdBridge` in cuts 1–2, so the route a
+  // message or a kick takes is today's runtime's: it reaches the Host board only on A-P2, beside the asks.
+  it('[ADR-001] in cut 1 the Host board carries the text delivery route and capabilities today’s runtime resolved, which only A-P2 brings', async () => {
+    installHost([page(3, [mineWire()], [dwarfWire(BORIN), dwarfWire(DAIN, { status: 'working' })])])
+    await useMines().start()
+    const delivery = {
+      textDelivery: 'terminal' as const,
+      capabilities: {
+        sendText: 'terminal' as const,
+        cancel: 'terminal' as const,
+        adjustEffort: null,
+        attach: 'terminal' as const
+      }
+    }
+    const facade = (borin: Partial<ReturnType<typeof defaultDwarf>>) => ({
+      mines: [
+        defaultMine({
+          id: ALPHA,
+          dwarfs: [defaultDwarf({ id: BORIN, ...borin }), defaultDwarf({ id: DAIN })]
+        })
+      ],
+      tokensObserved: 0
+    })
+    const shown = (id: DwarfId) => boardDwarfs().find((dwarf) => dwarf.id === id)!
+    const entry = (id: DwarfId, action: 'chat' | 'kick') =>
+      buildActionBar(shown(id), { kicking: false }).find((it) => it.id === action)!
+
+    useMines().setMines(facade(delivery))
+    expect(shown(BORIN)).toMatchObject(delivery)
+    expect(entry(BORIN, 'chat')).toMatchObject({ enabled: true, hint: CHANNEL_HINT.terminal })
+    expect(refusalLine(shown(BORIN))).toBeNull()
+    expect(entry(BORIN, 'kick')).toMatchObject({ enabled: true, hint: KICK_HINT.terminal })
+    // Fail closed: a dwarf today's runtime reports no route for gets none, and keeps today's refusal.
+    expect(shown(DAIN).textDelivery).toBeUndefined()
+    expect(shown(DAIN).capabilities).toBeUndefined()
+    expect(entry(DAIN, 'chat')).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
+    expect(kickBlocked(shown(DAIN), { kicking: false })).toBe('open-turn')
+    // The route closes when A-P2 no longer carries it.
+    useMines().setMines(facade({}))
+    expect(shown(BORIN).textDelivery).toBeUndefined()
+    expect(entry(BORIN, 'chat')).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
   })
 })
