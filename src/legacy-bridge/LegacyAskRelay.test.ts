@@ -12,6 +12,7 @@ import { isUuidV7 } from '@dwarfai/contracts'
 import {
   defaultDwarf,
   type Dwarf,
+  type DwarfCapabilities,
   type DwarfPermissionRequest,
   type DwarfQuestion,
   type MinesSnapshot,
@@ -78,12 +79,25 @@ const question: DwarfQuestion = {
   askedAt: '2026-10-05T10:00:01.000Z'
 }
 
+/** What today's runtime resolves for an observed Claude session in a Windows console: it writes into the console. */
+const consoleDelivery: Pick<Dwarf, 'textDelivery' | 'capabilities'> = {
+  textDelivery: 'terminal',
+  capabilities: {
+    sendText: 'terminal',
+    cancel: 'terminal',
+    adjustEffort: null,
+    attach: 'terminal'
+  } satisfies DwarfCapabilities
+}
+
+type LegacyWorld = { permission?: boolean; question?: boolean; delivery?: boolean }
+
 const legacyDwarf = (over: Partial<Dwarf> & Pick<Dwarf, 'id' | 'sessionId'>): Dwarf => ({
   ...defaultDwarf(),
   ...over
 })
 /** Today's sessions as `LegacyAgentRegistryFeed` wrote them, the asks given. */
-function legacySessions(asks: { permission?: boolean; question?: boolean }): ProviderSnapshot[] {
+function legacySessions(asks: LegacyWorld): ProviderSnapshot[] {
   return [
     {
       provider: 'claude',
@@ -98,7 +112,8 @@ function legacySessions(asks: { permission?: boolean; question?: boolean }): Pro
           status: 'waiting',
           ...(asks.permission === true
             ? { pendingPermission: permission, waitingReason: 'approval' as const }
-            : {})
+            : {}),
+          ...(asks.delivery === true ? consoleDelivery : {})
         })
       ],
       updatedAt: 1
@@ -207,7 +222,7 @@ function recording(client: HostClient, calls: string[]): HostClient {
   })
 }
 
-async function world(asks: { permission?: boolean; question?: boolean }) {
+async function world(asks: LegacyWorld) {
   const host = new FakeHost({ capabilities: CAPABILITIES })
   host.board = [
     {
@@ -276,7 +291,7 @@ async function world(asks: { permission?: boolean; question?: boolean }) {
   await settle()
 
   /** One feed cycle: today's registry holds `next`, the relay re-reads it, the facade pushes. */
-  const cycle = async (next?: { permission?: boolean; question?: boolean }): Promise<void> => {
+  const cycle = async (next?: LegacyWorld): Promise<void> => {
     if (next !== undefined) sessions = legacySessions(next)
     await relay.update()
     await settle()
@@ -481,5 +496,59 @@ describe('LegacyAskRelay through BoardFacadeAdapter (21 §3; 14 §5, §8 I-11)',
     )
     await relay.serve('mine:history', 'mine-1')
     expect(served).toEqual([['mine:history', 'mine-1']])
+  })
+
+  // The legacy board fields beyond the asks (cuts 1–4): A-23 `dwarf:sendText` and A-26 `dwarf:kick` stay `legacy`
+  // through `LegacyDwarfIdBridge`, so the composer and the kick read today's resolved delivery route, joined exactly.
+  it('[ADR-001] a legacy dwarf’s text delivery and capabilities appear on the Host dwarf of the exact join, with no ask open', async () => {
+    const { facade, pushes, dwarfOn } = await world({ delivery: true })
+
+    expect(dwarfOn(facade.getMines(), FOREMAN)).toMatchObject(consoleDelivery)
+    expect(dwarfOn(pushes.at(-1), FOREMAN)).toMatchObject(consoleDelivery)
+    // Fail closed: a legacy dwarf with no delivery route gives its Host dwarf none.
+    expect(dwarfOn(facade.getMines(), CODEX)?.textDelivery).toBeUndefined()
+    expect(dwarfOn(facade.getMines(), CODEX)?.capabilities).toBeUndefined()
+  })
+
+  it('[ADR-001] a delivery route that today’s runtime no longer reports leaves the Host dwarf at the next facade push', async () => {
+    const { pushes, cycle, dwarfOn } = await world({ delivery: true })
+
+    await cycle({})
+
+    expect(dwarfOn(pushes.at(-1), FOREMAN)?.textDelivery).toBeUndefined()
+    expect(dwarfOn(pushes.at(-1), FOREMAN)?.capabilities).toBeUndefined()
+  })
+})
+
+describe('LegacyAskRelay join (21 §3: exact, never a guess)', () => {
+  const one = (id: string): ProviderSnapshot => ({
+    provider: 'claude',
+    sessionId: SESSION,
+    cwd: '/work/moria',
+    status: 'idle',
+    dwarfs: [legacyDwarf({ id, sessionId: SESSION, ...consoleDelivery })],
+    updatedAt: 1
+  })
+
+  it('[ADR-001] two legacy dwarfs on one Host dwarf give it no delivery route', async () => {
+    let sessions: ProviderSnapshot[] = [one(LEGACY_FOREMAN)]
+    // A bridge that joins both legacy ids to the foreman: the relay must refuse to pick one.
+    const relay = createLegacyAskRelay({
+      bridge: {
+        toHost: (legacyId) => Promise.resolve(legacyId.startsWith(LEGACY_FOREMAN) ? FOREMAN : null),
+        toLegacy: () => Promise.resolve(null)
+      },
+      asks: { openAsks: () => legacyOpenAsksOf(sessions) },
+      legacy: { serve: () => Promise.resolve(null) },
+      changed: () => {}
+    })
+    disposables.push(relay)
+
+    await relay.update()
+    expect(relay.askFields(FOREMAN)).toEqual(consoleDelivery)
+
+    sessions = [one(LEGACY_FOREMAN), one(`${LEGACY_FOREMAN}:agent-2`)]
+    await relay.update()
+    expect(relay.askFields(FOREMAN)).toEqual({})
   })
 })

@@ -55,8 +55,9 @@ function dwarfIdsIn(snapshot: MinesSnapshot): Set<string> {
  * way `BoardFacadeAdapter` (ISSUE-086) folds the same facts for A-12/A-P2, so both sources show one board.
  *
  * - One writer at a time (21 §1 item 4). Until the first Host snapshot is read, `setMines` (today's A-12/A-P2 feed)
- *   writes the board; from then on the Host does, and `setMines` brings only today's open asks onto it (from cut 1
- *   A-P2 is `BoardFacadeAdapter`'s, which folds `LegacyAskRelay`'s asks onto the Host dwarfs until cut 2). The shell
+ *   writes the board; from then on the Host does, and `setMines` brings only today's board fields onto it: open asks,
+ *   text delivery and capabilities (from cut 1 A-P2 is `BoardFacadeAdapter`'s, which folds `LegacyAskRelay`'s fields
+ *   onto the Host dwarfs). The shell
  *   `start`s the Host half at mount from the cut-1 switch (ISSUE-123); a table that refuses A-N01 leaves the board on
  *   today's feed.
  * - Arrivals: a snapshot is never an arrival (S2.03); a `dwarf.arrived` frame emits one walk-in and puts the dwarf in
@@ -111,13 +112,22 @@ let arrivals = new Set<string>()
 /** Whether the Host feeds the board: set by the first Host snapshot, cleared by `stop`. */
 let hostFed = false
 
-/** Today's ask fields of a dwarf, the only part of A-P2 a Host-fed board takes (see `setMines`). */
-type LegacyAsks = Partial<Pick<Dwarf, 'pendingQuestion' | 'pendingPermission' | 'waitingReason'>>
+/** Today's board fields of a dwarf, the only part of A-P2 a Host-fed board takes (see `setMines`). */
+type LegacyAsks = Partial<
+  Pick<
+    Dwarf,
+    'pendingQuestion' | 'pendingPermission' | 'waitingReason' | 'textDelivery' | 'capabilities'
+  >
+>
 
 /**
- * The open asks today's runtime holds, per Host dwarf id, as A-P2 last carried them (21 §3 `LegacyAskRelay`, cuts 1–4:
- * until cut 2 the ask cards of the rows still `legacy` reach the renderer only through `BoardFacadeAdapter`'s board,
- * which folds them onto the Host dwarf). Cut 2 moves the asks to the Host broker and its `asks` section.
+ * Today's board fields per Host dwarf id, as A-P2 last carried them (21 §3 `LegacyAskRelay`, cuts 1–4, which folds them
+ * onto the Host dwarf of the exact `LegacyDwarfIdBridge` join in `BoardFacadeAdapter`'s board):
+ * - the open asks: until cut 2 the ask cards of the rows still `legacy` reach the renderer only this way; cut 2 moves
+ *   them to the Host broker and its `asks` section;
+ * - the text delivery route and capabilities today's runtime resolved: A-23 `dwarf:sendText` and A-26 `dwarf:kick` are
+ *   served by today's runtime until their Host routes land, so the composer and the kick read its route. A dwarf A-P2
+ *   carries no route for has none (fail closed), and keeps today's refusal.
  */
 let legacyAsks = new Map<string, LegacyAsks>()
 
@@ -127,7 +137,9 @@ function asksOf(dwarf: Dwarf): LegacyAsks {
     ...(dwarf.pendingPermission === undefined
       ? {}
       : { pendingPermission: dwarf.pendingPermission }),
-    ...(dwarf.waitingReason === undefined ? {} : { waitingReason: dwarf.waitingReason })
+    ...(dwarf.waitingReason === undefined ? {} : { waitingReason: dwarf.waitingReason }),
+    ...(dwarf.textDelivery === undefined ? {} : { textDelivery: dwarf.textDelivery }),
+    ...(dwarf.capabilities === undefined ? {} : { capabilities: dwarf.capabilities })
   }
 }
 const walkers = new Set<(walk: BoardWalk) => void>()
@@ -330,8 +342,8 @@ function stop(): void {
 export function useMines() {
   function setMines(snapshot: MinesSnapshot): void {
     // One writer at a time (21 §1 item 4): once the Host feeds the board, today's feed no longer writes it. From the
-    // cut-1 switch that feed is `BoardFacadeAdapter`'s, and the one thing it still brings is today's open asks
-    // (`legacyAsks`), which only it carries until cut 2.
+    // cut-1 switch that feed is `BoardFacadeAdapter`'s, and what it still brings is today's board fields (`legacyAsks`):
+    // the open asks, which only it carries until cut 2, and the delivery route of the rows still `legacy`.
     if (hostFed) {
       legacyAsks = new Map(
         snapshot.mines.flatMap((mine) => mine.dwarfs).map((dwarf) => [dwarf.id, asksOf(dwarf)])

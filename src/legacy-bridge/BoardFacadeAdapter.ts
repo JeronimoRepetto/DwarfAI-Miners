@@ -21,8 +21,8 @@
 //   identity for, or of a mine not on the board, is left out (today's board could never show it).
 // - A-P2 pushes the whole board after each change, at most once per macrotask (14 §1.8): the changes of one macrotask
 //   are pushed together when the next one runs.
-// - The ask fields of today's dwarf come from `askFields`, which `LegacyAskRelay` fills (later: ISSUE-089); `refresh`
-//   pushes the board again when they change.
+// - Today's board fields of a dwarf (its open asks, its text delivery route and capabilities) come from `askFields`,
+//   which `LegacyAskRelay` fills (ISSUE-089); `refresh` pushes the board again when they change.
 //
 // Read-only: it never sends a Host command (21 §3; 14 §5). Composed only by `src/ui-main/index.ts` (R16); deleted at
 // cut 5 after a test proves no consumer (ISSUE-242).
@@ -47,9 +47,16 @@ import {
 } from '../shared/contracts'
 import type { HostClient } from '../ui-main/window/ports/hostClient'
 
-/** Today's ask fields of a dwarf, which `LegacyAskRelay` supplies (later: ISSUE-089). */
+/**
+ * Today's board fields of a dwarf, which `LegacyAskRelay` supplies: its open asks (ISSUE-089), and the text delivery
+ * route and capabilities today's runtime resolved for it, which A-23 `dwarf:sendText` and A-26 `dwarf:kick` (`legacy`
+ * through `LegacyDwarfIdBridge` until their Host routes land) act on. None of them is a Host fact (21 §1 item 4).
+ */
 export type LegacyAskFields = Partial<
-  Pick<Dwarf, 'pendingQuestion' | 'pendingPermission' | 'waitingReason'>
+  Pick<
+    Dwarf,
+    'pendingQuestion' | 'pendingPermission' | 'waitingReason' | 'textDelivery' | 'capabilities'
+  >
 >
 
 export interface BoardFacadeDeps {
@@ -59,14 +66,14 @@ export interface BoardFacadeDeps {
   push(board: MinesSnapshot): void
   /** Runs `run` in the next macrotask; production uses `setImmediate`. */
   defer?: (run: () => void) => void
-  /** Today's ask fields of a dwarf (later: ISSUE-089); none when absent. */
+  /** Today's board fields of a dwarf (asks, text delivery, capabilities); none when absent. */
   askFields?: (dwarfId: DwarfId) => LegacyAskFields
 }
 
 export interface BoardFacade {
   /** A-12: the board now. */
   getMines(): MinesSnapshot
-  /** Pushes the board again in the next macrotask (the ask fields changed). */
+  /** Pushes the board again in the next macrotask (today's board fields changed). */
   refresh(): void
   /** Unsubscribes; nothing is pushed after. */
   dispose(): void
