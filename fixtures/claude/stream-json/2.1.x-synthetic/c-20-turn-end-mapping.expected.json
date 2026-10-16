@@ -1,0 +1,138 @@
+{
+  "case": "C-20",
+  "description": "ADR-021 item 5: Claude result subtypes success → concluded, error_max_turns → capped, other error_* → errored, and an unknown subtype → errored; every non-success end carries the provider's own word as detail.",
+  "script": [
+    { "do": "launch" },
+    { "do": "sendTurn", "messageId": "m-1", "text": "one" },
+    { "do": "sendTurn", "messageId": "m-2", "text": "two" },
+    { "do": "sendTurn", "messageId": "m-3", "text": "three" }
+  ],
+  "outcomes": [
+    { "resolved": true },
+    { "confidence": "unconfirmed", "heldUntilTurnEnd": false, "correlation": "m-1" },
+    { "confidence": "unconfirmed", "heldUntilTurnEnd": false, "correlation": "m-2" },
+    { "confidence": "unconfirmed", "heldUntilTurnEnd": false, "correlation": "m-3" }
+  ],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-0000000c0001",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" },
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:m-1",
+        "role": "person",
+        "text": "one",
+        "providerTime": null,
+        "echoOf": "m-1"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-0000000c0002",
+        "kind": "capped",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false,
+        "detail": "error_max_turns"
+      }
+    },
+    { "t": "status", "value": "idle" },
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:m-2",
+        "role": "person",
+        "text": "two",
+        "providerTime": null,
+        "echoOf": "m-2"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-0000000c0003",
+        "kind": "errored",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false,
+        "detail": "error_during_execution"
+      }
+    },
+    { "t": "status", "value": "idle" },
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:m-3",
+        "role": "person",
+        "text": "three",
+        "providerTime": null,
+        "echoOf": "m-3"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-0000000c0004",
+        "kind": "errored",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false,
+        "detail": "error_dwarfai_unknown_ending"
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "first prompt" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    },
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "one" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "m-1"
+    },
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "two" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "m-2"
+    },
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "three" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "m-3"
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "case": "C-22",
+  "description": "SP-10 deny (Claude Code 2.1.301, Claude part): the recorded run had no prompt tool, so claude -p denied the Write itself (a system permission_denied line, a failing tool_result, permission_denials on the result) and the turn ended normally. C-22 is inapplicable to this driver (no policy-only stream-json launch in v1, 15 §2.8, O-15-07); the driver's own test replays this stream through an ordinary launch to prove that the system subtypes permission_denied and thinking_tokens add nothing and that the turn reads as a failed tool step and a concluded turn.",
+  "script": [
+    {
+      "do": "launch",
+      "prompt": "Use the Write tool to create a file named sp10-deny-marker.txt in the current folder, containing the single word marker. Do not use any other tool. Then reply with the single word done."
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "Use the Write tool to create a file named sp10-deny-marker.txt in the current folder, containing the single word marker. Do not use any other tool. Then reply with the single word done.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000a",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "Write",
+        "summary": "<REPO>\\sp10-deny-marker.txt",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000a",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "Write",
+        "summary": "<REPO>\\sp10-deny-marker.txt",
+        "state": "failed",
+        "at": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000009",
+        "unitKey": "00000000-0000-4000-8000-000000000009",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 2,
+          "output": 16,
+          "cacheRead": 12878,
+          "cacheWrite": 33969,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000015",
+        "role": "dwarf",
+        "text": "The file wasn't created, so I can't reply \"done\": the write to `sp10-deny-marker.txt` was blocked because permission wasn't granted. You told me to use only the Write tool, so I haven't tried any other way.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000012",
+        "unitKey": "00000000-0000-4000-8000-000000000012",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 2,
+          "output": 3,
+          "cacheRead": 46847,
+          "cacheWrite": 251,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000017",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Use the Write tool to create a file named sp10-deny-marker.txt in the current folder, containing the single word marker. Do not use any other tool. Then reply with the single word done."
+      },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}

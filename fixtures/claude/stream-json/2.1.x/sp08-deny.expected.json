@@ -1,0 +1,113 @@
+{
+  "case": "C-21",
+  "description": "SP-08 deny (Claude Code 2.1.301), ADR-006 items 4 and 6, 15 §4.1 keys: one usage unit per assistant message.id. The second message.id is written as two rows (a thinking block, then the text), each carrying the same usage: they are one unit, sealed once by the result line, never counted twice. The denied Write is a tool step that failed (its tool_result is_error); the turn continues and concludes (15 §2.7: a Deny keeps the turn). Fidelity 2, no reasoning tokens reported.",
+  "script": [
+    {
+      "do": "launch",
+      "prompt": "Use the Write tool to create a file named sp08-deny-marker.txt in the current folder, containing the single word marker. Do not use any other tool. Then reply with the single word done."
+    }
+  ],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "Use the Write tool to create a file named sp08-deny-marker.txt in the current folder, containing the single word marker. Do not use any other tool. Then reply with the single word done.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000001",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "Write",
+        "summary": "<REPO>\\sp08-deny-marker.txt",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000001",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "Write",
+        "summary": "<REPO>\\sp08-deny-marker.txt",
+        "state": "failed",
+        "at": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000a",
+        "unitKey": "00000000-0000-4000-8000-00000000000a",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 2,
+          "output": 16,
+          "cacheRead": 12878,
+          "cacheWrite": 33989,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000012",
+        "role": "dwarf",
+        "text": "I didn't create the file. The Write call was denied with the error \"Denied by the SP-08 probe.\", so `sp08-deny-marker.txt` doesn't exist. You told me to use only the Write tool, so I didn't try another way.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000f",
+        "unitKey": "00000000-0000-4000-8000-00000000000f",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 2,
+          "output": 3,
+          "cacheRead": 46867,
+          "cacheWrite": 194,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000014",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Use the Write tool to create a file named sp08-deny-marker.txt in the current folder, containing the single word marker. Do not use any other tool. Then reply with the single word done."
+      },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}
