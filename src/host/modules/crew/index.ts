@@ -5,7 +5,9 @@
 // departure commands with their lifecycle facts, and `CrewQueries`. ISSUE-080: `endAllIn`, Remove
 // mine's ends over the `SessionTerminator` that `host/wiring` binds (`Crew.ends`). ISSUE-171: `stop`,
 // "Stop dwarf…" over the same terminator (`Crew.stops`), with its availability rule. ISSUE-172:
-// `rename` and `resetName` over the `DwarfName` value object, publishing `DwarfRenamed`. Crew imports only
+// `rename` and `resetName` over the `DwarfName` value object, publishing `DwarfRenamed`. ISSUE-175:
+// `endOwned`, Stop everything and quit's ends over the same terminator (`Crew.ownedEnds`), which
+// launching's `stopAll` calls. Crew imports only
 // suppliers (05 §1.3, R4); what it reads of launching and of the delivery routes comes in as
 // `SessionLinks`.
 import type { HostEpoch } from '../../kernel/domain/values'
@@ -22,6 +24,7 @@ import { SqliteDwarfRepository } from './adapters/SqliteDwarfRepository'
 import { CrewArrivals, OpenAskMemory, type CrewCommands } from './application/arrival'
 import { CrewReadModel, type CrewQueries, type SessionLinks } from './application/crewQueries'
 import { CrewEndAllIn, type CrewEnds } from './application/endAllIn'
+import { CrewEndOwned, type CrewOwnedEnds } from './application/endOwned'
 import { CrewStop, PendingEndMemory, type CrewStops } from './application/stop'
 import type { CrewEndEvent } from './application/events'
 import { StatusTimer } from './application/statusTimer'
@@ -30,6 +33,7 @@ import type { SessionTerminator } from './ports/sessionTerminator'
 
 export type { CrewEndEvent, DwarfStopFailed, DwarfStopRequested } from './application/events'
 export type { CrewEnds } from './application/endAllIn'
+export { CrewEndOwned, type CrewEndOwnedDeps, type CrewOwnedEnds } from './application/endOwned'
 export {
   CrewStop,
   PendingEndMemory,
@@ -119,6 +123,14 @@ export interface Crew {
     terminator: SessionTerminator
     bus: Pick<DomainEventBus<CrewEndEvent>, 'publish'>
   }): CrewStops
+  /**
+   * `endOwned` (Stop everything and quit, 16 §4.2) over the same terminator and Host bus
+   * (host/main.ts, ISSUE-175). Launching's `stopAll` calls it along the launching → crew edge.
+   */
+  ownedEnds(deps: {
+    terminator: SessionTerminator
+    bus: Pick<DomainEventBus<CrewEndEvent>, 'publish'>
+  }): CrewOwnedEnds
 }
 
 /** The module over the Host database. */
@@ -172,7 +184,18 @@ export function createCrew(deps: CrewDeps): Crew {
       terminator,
       departures: commands
     })
-  return { commands, queries, statusTimer, ends, stops }
+  const ownedEnds: Crew['ownedEnds'] = ({ terminator, bus }) =>
+    new CrewEndOwned({
+      repository,
+      transactions: deps.transactions,
+      bus,
+      clock: deps.clock,
+      ids: deps.ids,
+      hostEpoch: deps.hostEpoch,
+      terminator,
+      departures: commands
+    })
+  return { commands, queries, statusTimer, ends, stops, ownedEnds }
 }
 
 /**

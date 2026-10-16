@@ -19,13 +19,20 @@
 //   `LaunchedSessionCrashed` (application/sessionExited.ts). `recovery` is the current Host
 //   recovery's coverage; no recovery runs in the Host yet (later: ISSUE-173 makes it launching's
 //   own), so it defaults to `NO_HOST_RECOVERY`.
+// - `stopAll(deps)` (ISSUE-175) builds 16 §4.5 `LaunchCommands.stopAll` over crew's `endOwned`
+//   (crew's `ownedEnds` needs the Host's terminator, which exists only once both modules are
+//   wired): it waits for the launches in flight, read through the
+//   launching drain gate and re-read on each settled launch, then ends every owned session
+//   (application/stopAll.ts). host/main.ts binds it as the kernel StopAllPort.
 // - `createLaunchingResetStep` (ISSUE-181) is the module's step of the Reset-metrics saga (ADR-023;
 //   09 §7.2 step (4)), registered by host/wiring/resetParticipants.ts.
 //
 // The other members join with their issues: `launchCustom` (later: ISSUE-165), the Jev path
-// (later: ISSUE-164), recovery (later: ISSUE-173), `stopAll` (later: ISSUE-175).
+// (later: ISSUE-164), recovery (later: ISSUE-173).
 import { LaunchUseCase, type LaunchAccepted, type LaunchingDeps } from './application/launch'
 import { MarkStoppedByPerson } from './application/markStoppedByPerson'
+import { createLaunchDrainGate } from './application/launchDrain'
+import { StopAll } from './application/stopAll'
 import {
   createLaunchQueries,
   LaunchMemory,
@@ -41,11 +48,15 @@ import {
 } from './application/sessionExited'
 import { LaunchingResetStep } from './adapters/sqlite/LaunchingResetStep'
 import type { DwarfId, LaunchId } from '../../kernel/domain/values'
+import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
+import type { StopAllOutcome } from '../../kernel/ports/stopAll'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import type { LaunchRecord } from './ports/launchRecordStore'
 import type { LaunchRequestInput } from './application/launch'
+import type { LaunchingEvent } from './application/events'
+import type { CrewOwnedEnds } from '../crew'
 
 export type { SessionStarter, StartResult } from './ports/sessionStarter'
 export type { LaunchStore } from './ports/launchStore'
@@ -57,7 +68,8 @@ export type {
   LaunchedSessionCrashed,
   LaunchFailed,
   LaunchingEvent,
-  LaunchRequested
+  LaunchRequested,
+  StopAllIncomplete
 } from './application/events'
 export { NO_HOST_RECOVERY } from './application/sessionExited'
 export type { RecoveryCoverage, SessionExit, SessionExitResult } from './application/sessionExited'
@@ -91,12 +103,25 @@ export interface OwnedLaunches {
   liveRecordOf(dwarfId: DwarfId): LaunchRecord | null
 }
 
+/** What `Launching.stopAll` runs over, bound by `host/wiring` once crew and launching exist. */
+export interface LaunchingStopAllDeps {
+  /** Crew's `endOwned` over the Host's terminator (`Crew.ownedEnds`), the launching → crew edge. */
+  crew: Pick<CrewOwnedEnds, 'endOwned'>
+}
+
+/** 16 §4.5 `LaunchCommands.stopAll`: the StopAllPort `host.shutdown {stop-all}` calls. */
+export interface LaunchingStopAll {
+  stopAll(requestId: string): Promise<StopAllOutcome>
+}
+
 export interface Launching {
   readonly commands: LaunchingCommands
   /** The live owned sessions (ISSUE-171), for the terminator bridge (wiring/bridges/sessionTerminator.ts). */
   readonly owned: OwnedLaunches
   readonly queries: LaunchQueries
   readonly snapshots: LaunchSnapshotQueries
+  /** `stopAll` over crew's `endOwned` (ISSUE-175; application/stopAll.ts); publishes on the module bus. */
+  stopAll(deps: LaunchingStopAllDeps): LaunchingStopAll
 }
 
 export type LaunchingModuleDeps = Omit<LaunchingDeps, 'memory'> & {
@@ -106,7 +131,27 @@ export type LaunchingModuleDeps = Omit<LaunchingDeps, 'memory'> & {
 
 export function createLaunching(deps: LaunchingModuleDeps): Launching {
   const memory = new LaunchMemory()
-  const useCase = new LaunchUseCase({ ...deps, memory })
+  // Each settled launch is told to the stop-alls waiting on it (FM-144 (A)), after its event's
+  // routes ran: launching's own publish is where a launch settles, so no other module is read.
+  const settledListeners = new Set<() => void>()
+  const settlements = {
+    onSettled: (listener: () => void): (() => void) => {
+      settledListeners.add(listener)
+      return () => settledListeners.delete(listener)
+    }
+  }
+  const bus: Pick<DomainEventBus<LaunchingEvent>, 'publish'> = {
+    publish: (event) => {
+      try {
+        deps.bus.publish(event)
+      } finally {
+        if (event.type === 'DwarfLaunched' || event.type === 'LaunchFailed') {
+          for (const listener of [...settledListeners]) listener()
+        }
+      }
+    }
+  }
+  const useCase = new LaunchUseCase({ ...deps, bus, memory })
   const stops = new MarkStoppedByPerson({ records: deps.records, transactions: deps.transactions })
   const exits = new SessionExitedCheck({
     records: deps.records,
@@ -118,6 +163,7 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
     hostEpoch: deps.hostEpoch,
     log: deps.log
   })
+  const queries = createLaunchQueries({ memory, records: deps.records })
   return {
     commands: {
       launch: (req) => useCase.launch(req),
@@ -128,8 +174,20 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
     owned: {
       liveRecordOf: (dwarfId) => deps.records.live().find((r) => r.dwarfId === dwarfId) ?? null
     },
-    queries: createLaunchQueries({ memory, records: deps.records }),
-    snapshots: memory
+    queries,
+    snapshots: memory,
+    stopAll: ({ crew }) =>
+      new StopAll({
+        records: deps.records,
+        transactions: deps.transactions,
+        inFlight: createLaunchDrainGate({ launches: queries }),
+        settlements,
+        crew,
+        bus,
+        clock: deps.clock,
+        ids: deps.ids,
+        hostEpoch: deps.hostEpoch
+      })
   }
 }
 
