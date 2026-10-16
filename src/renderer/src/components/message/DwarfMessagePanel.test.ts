@@ -4617,3 +4617,40 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
     expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
   })
 })
+
+/*
+ * APPENDED (ISSUE-265): Boost is absent from the MessagePanel, not disabled. Its own block at the
+ * end of the file, after the teardown check, so other appenders merge beside it untouched.
+ */
+describe('DwarfMessagePanel and Boost (ISSUE-265)', () => {
+  it('[US-GUILD-003.AC01, US-GUILD-003.AC02, BR-19] the composer and the ⋯ menu hold no Boost control and no on state exists in the renderer', async () => {
+    const { readdirSync } = await import('node:fs')
+    const wrapper = panel()
+    const boost = /boost/i
+    // The composer: no control, no name, no title, no class that says Boost.
+    const composer = wrapper.get('.dm-composer')
+    expect(composer.html()).not.toMatch(boost)
+    // The header's tools, the ⋯ menu among them.
+    const tools = wrapper.findAll('.dm-msg__tools button').map((tool) => tool.attributes('title'))
+    expect(tools).toEqual(['Mine history', 'Open console', 'More', 'Close chat'])
+    // The ⋯ menu's rows.
+    const items = wrapper.findComponent(MenuButton).props('items') as MenuItem[]
+    expect(items.length).toBeGreaterThan(0)
+    for (const item of items) expect(JSON.stringify(item)).not.toMatch(boost)
+    // Nowhere else in the panel either.
+    expect(wrapper.html()).not.toMatch(boost)
+    // No on state: no renderer source reads a Boost flag; BOOST_ENABLED stays Host-side (14 §8 I-07).
+    const rendererRoot = join(import.meta.dirname, '..', '..')
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = join(dir, entry.name)
+        if (entry.isDirectory()) walk(file)
+        else if (/\.(ts|vue)$/.test(entry.name) && !/\.test\.ts$/.test(entry.name))
+          if (/boostEnabled|BOOST_ENABLED/.test(readFileSync(file, 'utf8'))) offenders.push(file)
+      }
+    }
+    walk(rendererRoot)
+    expect(offenders).toEqual([])
+  })
+})
