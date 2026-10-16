@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf } from '../../testing/factories'
+import type { BoardDwarf } from './boardDwarf'
 import { sceneDwarfLabel, sceneDwarfMark, sceneDwarfResting, sceneDwarfStatus } from './sceneDwarf'
 
 const QUESTION = {
@@ -111,5 +112,29 @@ describe('sceneDwarfMark', () => {
   it('draws the kick verdict when no message is on its way, and the message when both are', () => {
     expect(sceneDwarfMark(undefined, { phase: 'kicking' })).toMatchObject({ mark: 'pending' })
     expect(sceneDwarfMark({ phase: 'reacted' }, { phase: 'failed' })?.mark).toBe('reacted')
+  })
+})
+
+/*
+ * APPENDED for ISSUE-254 (ADR-033 item 3): a dwarf the Host fed carries the Host's status, and the
+ * scene draws that rather than today's three-state mapping. A proven ask today's runtime relays and
+ * a departure still come first; without a Host status, today's mapping stands.
+ */
+describe('sceneDwarfStatus with the Host status (ISSUE-254)', () => {
+  const host = (overrides: Partial<BoardDwarf>): BoardDwarf => ({ ...defaultDwarf(), ...overrides })
+
+  it('[US-OBS-002.AC05, ADR-033] draws the status the Host said, telling idle from asleep', () => {
+    for (const status of ['working', 'asking', 'idle', 'asleep'] as const) {
+      const legacy = status === 'working' ? 'working' : 'waiting'
+      expect(sceneDwarfStatus(host({ status: legacy, hostStatus: status }))).toBe(status)
+    }
+  })
+
+  it('[ADR-033] a relayed proven ask and a departure come before the Host status; none means today’s mapping', () => {
+    expect(
+      sceneDwarfStatus(host({ status: 'waiting', hostStatus: 'idle', pendingQuestion: QUESTION }))
+    ).toBe('asking')
+    expect(sceneDwarfStatus(host({ status: 'leaving', hostStatus: 'working' }))).toBe('idle')
+    expect(sceneDwarfStatus(host({ status: 'waiting' }))).toBe('asleep')
   })
 })

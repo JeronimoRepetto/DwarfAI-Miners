@@ -21,6 +21,7 @@ import {
   type MinesSnapshot
 } from '../types'
 import { LEAVING_EXIT_MS } from '../lib/presentation'
+import type { BoardDwarf } from '../lib/scene/boardDwarf'
 import { MAX_WALK_MS, prefersReducedMotion } from '../lib/scene/sceneMotion'
 import { createReadModel, followHost } from './readModel'
 import { useToasts } from './useToasts'
@@ -189,7 +190,12 @@ function statusOf(dwarf: DwarfWire): Dwarf['status'] {
   return dwarf.status === 'working' ? 'working' : 'waiting'
 }
 
-function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): Dwarf {
+/*
+ * AMENDED for ISSUE-254 (ADR-032 D2; ADR-033 item 3): the Host's own status rides on the board dwarf
+ * (`hostStatus`, lib/scene/boardDwarf), since today's `status` folds asking, idle and asleep into one
+ * `waiting`; the scene reads it first, so a Host-idle dwarf reads "Waiting", never asleep.
+ */
+function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): BoardDwarf {
   const { model, effort } = dwarf.sessionProfile
   return {
     id: dwarf.id,
@@ -200,6 +206,7 @@ function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): Dwarf {
     ...(model === undefined ? {} : { model }),
     ...(effort === undefined ? {} : { effort }),
     status,
+    hostStatus: dwarf.status,
     ...(dwarf.parentDwarfId === null ? {} : { parentId: dwarf.parentDwarfId }),
     // Today's board names a dwarf's session; the Host's id stands in for it (ADR-015: provider ids stay apart).
     sessionId: dwarf.id,
