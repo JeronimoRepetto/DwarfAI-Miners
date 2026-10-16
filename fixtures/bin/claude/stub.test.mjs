@@ -9,8 +9,8 @@ import { claudeScriptFor } from './claude.mjs'
 
 /**
  * `StubClaudeCli` for the stream-json driver (ISSUE-150; testing strategy `17` §1.9): a `claude -p`
- * stream-json run replays the driver's protocol fixture on stdout byte for byte, and `--help`
- * prints the probe fixture, so an L9 flow drives `ClaudeStreamJsonDriver` against the same bytes
+ * stream-json run replays the recorded S-020-1 readiness turn (Claude Code 2.1.301) on stdout byte
+ * for byte, and `--help` prints the recorded 2.1.301 help (SP-08), so an L9 flow drives `ClaudeStreamJsonDriver` against the same bytes
  * its conformance run reads. Every other run of the stub is unchanged (the transcript scripts of the
  * observed path).
  */
@@ -53,7 +53,7 @@ const play = (argv, env = {}) =>
 describe('StubClaudeCli stream-json replay (ISSUE-150)', () => {
   it('[C-05] the Claude stub replays the simple-turn fixture byte for byte', () => {
     const run = play([...STREAM, '--session-id', '00000000-0000-7000-8000-000000000001'])
-    const fixture = path.join(FIXTURES, 'claude', 'stream-json', '2.1.x', 'c-05-send-turn.jsonl')
+    const fixture = path.join(FIXTURES, 'claude', 'stream-json', '2.1.x', 's0201-readiness.jsonl')
     expect(run.exitCode).toBe(0)
     expect(Buffer.from(run.stdout, 'utf8').equals(readFileSync(fixture))).toBe(true)
   })
@@ -65,11 +65,12 @@ describe('StubClaudeCli stream-json replay (ISSUE-150)', () => {
       'claude',
       'stream-json',
       '2.1.x',
-      'probe-help-with-prompt-tool.jsonl'
+      'probe-help-without-prompt-tool.jsonl'
     )
     expect(run.exitCode).toBe(0)
     expect(run.stdout).toBe(readFileSync(fixture, 'utf8'))
-    expect(run.stdout).toContain('--permission-prompt-tool')
+    // SP-08: 2.1.301 names the flag only inside the --permission-prompts description.
+    expect(run.stdout).toMatch(/--permission-prompts <target>[\s\S]*?--permission-prompt-tool\)/)
   })
 
   it('[ADR-008] a run without -p keeps the transcript script of the observed path', () => {

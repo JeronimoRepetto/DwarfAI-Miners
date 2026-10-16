@@ -1,7 +1,7 @@
 {
-  "version": "2.1.x (Claude Code)",
-  "help": "claude/stream-json/2.1.x/probe-help-with-prompt-tool.jsonl",
-  "replay": [{ "stdout": "claude/stream-json/2.1.x/c-05-send-turn.jsonl" }],
+  "version": "2.1.301 (Claude Code)",
+  "help": "claude/stream-json/2.1.x/probe-help-without-prompt-tool.jsonl",
+  "replay": [{ "stdout": "claude/stream-json/2.1.x/s0201-readiness.jsonl" }],
   "exitCode": 0,
   "ignoreStdin": false
 }
