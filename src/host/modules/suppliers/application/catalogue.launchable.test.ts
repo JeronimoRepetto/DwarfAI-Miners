@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FAIL_CLOSED_CAPABILITIES } from '../domain/capabilities'
+import { ceilingOf, FAIL_CLOSED_CAPABILITIES } from '../domain/capabilities'
 import type { CatalogRecord, ProviderProfile } from '../domain/profile'
 import { catalogueMachine, settle } from '../testing/catalogueMachine'
 
@@ -16,7 +16,11 @@ function record(id: string, overrides: Partial<ProviderProfile> = {}): CatalogRe
       publicLaunch: 'enabled',
       ...overrides
     },
-    ceiling: { ...FAIL_CLOSED_CAPABILITIES, launch: true, installDetection: 'user-binary' }
+    ceiling: ceilingOf({
+      ...FAIL_CLOSED_CAPABILITIES,
+      launch: true,
+      installDetection: 'user-binary'
+    })
   }
 }
 
@@ -148,7 +152,7 @@ describe('launchable (INV-41)', () => {
   it('[INV-41] entry reports installed from the last detection, and a provider without a CLI to resolve is installed by itself', async () => {
     const noCli: CatalogRecord = {
       ...record('no-cli', { binaries: [] }),
-      ceiling: { ...FAIL_CLOSED_CAPABILITIES, launch: true, installDetection: 'none' }
+      ceiling: ceilingOf({ ...FAIL_CLOSED_CAPABILITIES, launch: true, installDetection: 'none' })
     }
     const m = machine([ALPHA, BRAVO, noCli], { publicBuild: true })
     m.install('alpha-cli')

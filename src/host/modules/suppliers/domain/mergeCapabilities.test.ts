@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IntegrationState } from '../../../kernel/domain/values'
-import { FAIL_CLOSED_CAPABILITIES, type ProviderCapabilities } from './capabilities'
+import { ceilingOf, FAIL_CLOSED_CAPABILITIES, type ProviderCapabilities } from './capabilities'
 import { combineLowest, merge, negotiatedFor } from './mergeCapabilities'
 
 // The ADR-009 D2 merge table, restated here as test data (lowest first), so the code is checked
@@ -65,17 +65,20 @@ describe('ADR-009 D2 merge', () => {
     for (const field of BOOLEANS) {
       for (const c of [true, false]) {
         for (const n of [true, false]) {
-          const effective = merge(withField(HIGHEST, field, c), withField(HIGHEST, field, n))
+          const effective = merge(
+            ceilingOf(withField(HIGHEST, field, c)),
+            withField(HIGHEST, field, n)
+          )
           expect(effective[field], `${field}: ${c} AND ${n}`).toBe(c && n)
         }
       }
     }
     for (const c of [true, false]) {
       for (const n of [true, false]) {
-        const effective = merge(
-          { ...HIGHEST, usage: { fidelity: 2, rateLimits: c } },
-          { ...HIGHEST, usage: { fidelity: 2, rateLimits: n } }
-        )
+        const effective = merge(ceilingOf({ ...HIGHEST, usage: { fidelity: 2, rateLimits: c } }), {
+          ...HIGHEST,
+          usage: { fidelity: 2, rateLimits: n }
+        })
         expect(effective.usage.rateLimits, `usage.rateLimits: ${c} AND ${n}`).toBe(c && n)
       }
     }
@@ -85,7 +88,10 @@ describe('ADR-009 D2 merge', () => {
     for (const [field, order] of Object.entries(ORDERED)) {
       for (const [ci, c] of order.entries()) {
         for (const [ni, n] of order.entries()) {
-          const effective = merge(withField(HIGHEST, field, c), withField(HIGHEST, field, n))
+          const effective = merge(
+            ceilingOf(withField(HIGHEST, field, c)),
+            withField(HIGHEST, field, n)
+          )
           expect(effective[field as keyof Caps], `${field}: lower of ${c}, ${n}`).toBe(
             order[Math.min(ci, ni)]
           )
@@ -95,7 +101,7 @@ describe('ADR-009 D2 merge', () => {
     for (const c of FIDELITY) {
       for (const n of FIDELITY) {
         const effective = merge(
-          { ...HIGHEST, usage: { fidelity: c, rateLimits: true } },
+          ceilingOf({ ...HIGHEST, usage: { fidelity: c, rateLimits: true } }),
           { ...HIGHEST, usage: { fidelity: n, rateLimits: true } }
         )
         expect(effective.usage.fidelity, `usage.fidelity: lower of ${c}, ${n}`).toBe(Math.min(c, n))
@@ -107,7 +113,10 @@ describe('ADR-009 D2 merge', () => {
     for (const [field, { values, failClosed }] of Object.entries(UNORDERED)) {
       for (const c of values) {
         for (const n of values) {
-          const effective = merge(withField(HIGHEST, field, c), withField(HIGHEST, field, n))
+          const effective = merge(
+            ceilingOf(withField(HIGHEST, field, c)),
+            withField(HIGHEST, field, n)
+          )
           expect(effective[field as keyof Caps], `${field}: ceiling ${c}, negotiated ${n}`).toBe(
             n === c ? n : failClosed
           )
@@ -116,12 +125,29 @@ describe('ADR-009 D2 merge', () => {
     }
   })
 
+  it('[C-25] an unordered enum of a ceiling is a set: any negotiated value it holds is kept, any other fails closed (AMENDMENT-18)', () => {
+    for (const [field, { values, failClosed }] of Object.entries(UNORDERED)) {
+      for (const [ai, a] of values.entries()) {
+        for (const b of values.slice(ai + 1)) {
+          const ceiling = { ...ceilingOf(HIGHEST), [field]: [a, b] }
+          for (const n of values) {
+            const effective = merge(ceiling, withField(HIGHEST, field, n))
+            expect(
+              effective[field as keyof Caps],
+              `${field}: ceiling {${a}, ${b}}, negotiated ${n}`
+            ).toBe(n === a || n === b ? n : failClosed)
+          }
+        }
+      }
+    }
+  })
+
   it('[C-25] an omitted negotiated field yields the lowest or fail-closed value', () => {
-    expect(merge(HIGHEST, {})).toEqual(FAIL_CLOSED_CAPABILITIES)
+    expect(merge(ceilingOf(HIGHEST), {})).toEqual(FAIL_CLOSED_CAPABILITIES)
     for (const field of Object.keys(HIGHEST) as (keyof Caps)[]) {
       const negotiated: Partial<Caps> = structuredClone(HIGHEST)
       delete negotiated[field]
-      const effective = merge(HIGHEST, negotiated)
+      const effective = merge(ceilingOf(HIGHEST), negotiated)
       expect(effective[field], `${field} omitted`).toEqual(FAIL_CLOSED_CAPABILITIES[field])
       for (const other of Object.keys(HIGHEST) as (keyof Caps)[]) {
         if (other !== field) expect(effective[other], `${other} kept`).toEqual(HIGHEST[other])
@@ -151,7 +177,7 @@ describe('ADR-009 D2 merge', () => {
       [protocol, probe],
       [probe, protocol]
     ]) {
-      const effective = merge(HIGHEST, combineLowest(...sources))
+      const effective = merge(ceilingOf(HIGHEST), combineLowest(...sources))
       expect(effective.launch).toBe(false)
       expect(effective.sendTurn).toBe(false)
       expect(effective.permission).toBe('policy-only')
@@ -168,7 +194,7 @@ describe('ADR-009 D2 merge', () => {
       permission: 'policy-only',
       resume: 'none'
     }
-    const raised = merge(lowCeiling, combineLowest(probe, { ...probe, launch: true }))
+    const raised = merge(ceilingOf(lowCeiling), combineLowest(probe, { ...probe, launch: true }))
     expect(raised.launch).toBe(false)
     expect(raised.permission).toBe('policy-only')
     expect(raised.resume).toBe('none')
@@ -188,7 +214,7 @@ describe('ADR-009 D2 merge', () => {
       [null, 'interactive', 'form'] // not gated
     ]
     for (const [gate, permission, question] of cases) {
-      const effective = merge(HIGHEST, negotiatedFor([HIGHEST], gate))
+      const effective = merge(ceilingOf(HIGHEST), negotiatedFor([HIGHEST], gate))
       expect(effective.permission, `gate ${String(gate)}`).toBe(permission)
       expect(effective.question, `gate ${String(gate)}`).toBe(question)
       expect(effective.launch).toBe(true) // the gate lowers only the answer channel

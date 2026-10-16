@@ -9,6 +9,7 @@ import type { KickBlocked } from '../delivery/actionBar'
 import type { DeliveryMarker } from '../delivery/deliveryVerdict'
 import type { MenuEntry, MenuItem } from '../overlay/menu'
 import { sceneDwarfStatus } from '../scene/sceneDwarf'
+import { trimGraphemes } from '../text/graphemes'
 import { dwarfWorkplaceLabel } from '../worktree'
 import { finishedTurnWord } from './turnOutcome'
 import type { Dwarf } from '../../types'
@@ -29,8 +30,11 @@ export function messagePanelChips(
   return worktree === '' ? [tuning] : [tuning, 'worktree: ' + worktree]
 }
 
-/** The status square the outcome line draws: green working, brass asking, steel asleep. */
-export type OutcomeStatus = 'working' | 'asking' | 'asleep'
+/**
+ * The status square the outcome line draws: green working, brass asking, steel asleep, and green
+ * idle, since idle has no colour of its own (US-MSG-011.AC08).
+ */
+export type OutcomeStatus = 'working' | 'asking' | 'idle' | 'asleep'
 
 export interface MessagePanelOutcome {
   status: OutcomeStatus
@@ -58,7 +62,8 @@ const ENDED_SENTENCE = {
 
 /*
  * The tooltip's words for a finished turn. A concluded turn's closing words, trimmed to 200
- * characters with an ellipsis, cut on a whole character. A turn that ended badly gives its status
+ * characters with an ellipsis, a character being a grapheme cluster as in a custom dwarf name
+ * (US-MSG-012.AC07), so the cut never splits one. A turn that ended badly gives its status
  * sentence, a colon and the provider's word, verbatim ("Stopped at a limit: error_max_turns",
  * "Failed: <detail>", "Interrupted: <detail>"). With no provider word there is none: the line
  * already says "Turn failed" or "Turn interrupted", and the tooltip would only repeat it.
@@ -71,10 +76,8 @@ function outcomeTip(lastTurn: Dwarf['lastTurn']): string | undefined {
       ? undefined
       : ENDED_SENTENCE[lastTurn.kind] + ': ' + detail
   }
-  const words = Array.from(lastTurn.text?.trim() ?? '')
-  if (words.length === 0) return undefined
-  if (words.length <= OUTCOME_TIP_MAX_CHARS) return words.join('')
-  return words.slice(0, OUTCOME_TIP_MAX_CHARS).join('') + '…'
+  const words = lastTurn.text?.trim() ?? ''
+  return words === '' ? undefined : trimGraphemes(words, OUTCOME_TIP_MAX_CHARS)
 }
 
 /*
@@ -120,7 +123,8 @@ export function messagePanelOutcome(
     ended === undefined ? undefined : 'idle for ' + compactSilence(now - ended, { days: true })
   const text = joinParts([finishedTurnWord(dwarf.lastTurn), counted, idle])
   const tip = outcomeTip(dwarf.lastTurn)
-  return tip === undefined ? { status: 'asleep', text } : { status: 'asleep', text, tip }
+  const status = scene === 'idle' ? 'idle' : 'asleep'
+  return tip === undefined ? { status, text } : { status, text, tip }
 }
 
 const joinParts = (parts: readonly (string | undefined)[]): string =>

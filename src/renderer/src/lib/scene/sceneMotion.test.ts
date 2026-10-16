@@ -463,3 +463,54 @@ describe('watchReducedMotion', () => {
     expect(seen).toEqual([])
   })
 })
+
+/*
+ * APPENDED for ISSUE-255. The issue binds the walk-in and walk-out to 720 ms (US-MINE-009, NFR-TIM-09
+ * until DI-06); the pinned design (d12d3fc) rules otherwise and wins: "the prototype's straight 32px
+ * walk illustrates the rules; the app keeps today's corridor route and speed" (motion.md, Mine column
+ * or Valle zone, a dwarf arrives or leaves; components.md, Dwarf in the scene, the walk). So a walk
+ * takes as long as its corridor route at WALK_SPEED_PX_PER_SEC, and 720 ms only when that route
+ * happens to be that long. Written against what the person sees: walking or standing, and where.
+ */
+describe('the walk-in and walk-out timing (ISSUE-255)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  const SPAWN = { x: 44, y: 22 }
+  const CORNER = { x: 44, y: 60 }
+  const STATION = { x: 80, y: 60 }
+  const SLACK_MS = 5
+  /** A corridor with a corner in it, as the painted routes have. */
+  const corridor = (from: ScenePoint, to: ScenePoint): readonly ScenePoint[] => [from, CORNER, to]
+
+  it("[NFR-TIM-09] a walk-in and a walk-out keep today's corridor route and speed on the fake timers, the pinned design's ruling over the 720 ms of US-MINE-009", () => {
+    let state: ReadonlyMap<string, { point: ScenePoint; walking: boolean }> = new Map()
+    const board = createWalkBoard((next) => {
+      state = next
+    })
+    const journeyMs = pathDurationMs([SPAWN, CORNER, STATION])
+    // The route is long enough that a 720 ms walk would be visibly a different speed.
+    expect(journeyMs).toBeGreaterThan(720 * 2)
+
+    // Walk-in: the mine was open and empty, so the dwarf comes in at the spawn point.
+    board.sync(new Map(), corridor, () => SPAWN)
+    board.sync(new Map([['d', STATION]]), corridor, () => SPAWN)
+    expect(state.get('d')?.walking).toBe(true)
+    vi.advanceTimersByTime(720)
+    expect(state.get('d')?.walking).toBe(true)
+    // Each leg's timer runs to the whole millisecond, so the journey lands within a few of it.
+    vi.advanceTimersByTime(journeyMs - 720 - SLACK_MS)
+    expect(state.get('d')?.walking).toBe(true)
+    vi.advanceTimersByTime(2 * SLACK_MS)
+    expect(state.get('d')).toMatchObject({ walking: false, point: STATION })
+
+    // Walk-out: back along the same corridor to the spawn point, at the same pace.
+    board.sync(new Map([['d', SPAWN]]), corridor, () => SPAWN)
+    expect(state.get('d')?.walking).toBe(true)
+    vi.advanceTimersByTime(journeyMs - SLACK_MS)
+    expect(state.get('d')?.walking).toBe(true)
+    vi.advanceTimersByTime(2 * SLACK_MS)
+    expect(state.get('d')).toMatchObject({ walking: false, point: SPAWN })
+    board.dispose()
+  })
+})

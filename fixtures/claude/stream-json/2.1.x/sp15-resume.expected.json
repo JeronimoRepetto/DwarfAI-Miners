@@ -1,0 +1,180 @@
+{
+  "case": "C-16",
+  "description": "SP-15 (Claude Code 2.1.301), 15 §4.2 Resume / identity, ADR-015 item 7: the recording holds three processes one after another (launch, resume, fork), split by the spawned marks of its timing stream; each process replays its own part. The launch with --session-id <id> ends (its output ends: transport-lost, then exited). resume() spawns claude with --resume <id>, no --session-id and nothing on stdin; claude writes nothing before its first stdin line (S-020-1), so the resume is ready once the 3 s early-failure window passed without an error result or an exit. The next turn goes on stdin; its system/init names the same session id, so the ref keeps it and has no previousProviderSessionId; that turn ends at 3 000 ms on the fake clock, after the window. The fork part (--fork-session, which this driver never passes) is the recorded shape of a resume that minted a new id: replayed as a resume, its system/init names another id, which becomes providerSessionId with previousProviderSessionId the old one (the driver test asserts it). Claude does not replay earlier messages on stream-json, so the resumed process adds only the new turn.",
+  "script": [
+    {
+      "do": "launch",
+      "prompt": "Reply with the single word one and nothing else. Do not use any tool."
+    },
+    {
+      "do": "transportLost"
+    },
+    {
+      "do": "resume"
+    },
+    {
+      "do": "advance",
+      "ms": 3000
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-2",
+      "text": "Reply with the single word two and nothing else. Do not use any tool."
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    null,
+    null,
+    null,
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-2"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000001",
+        "role": "person",
+        "text": "Reply with the single word one and nothing else. Do not use any tool.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000a",
+        "role": "dwarf",
+        "text": "one",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000009",
+        "unitKey": "00000000-0000-4000-8000-000000000009",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 2,
+          "output": 1,
+          "cacheRead": 12878,
+          "cacheWrite": 33954,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000e",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "error",
+      "cause": {
+        "kind": "transport-lost",
+        "detail": "$string"
+      }
+    },
+    {
+      "t": "exited",
+      "code": null
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:m-2",
+        "role": "person",
+        "text": "Reply with the single word two and nothing else. Do not use any tool.",
+        "providerTime": null,
+        "echoOf": "m-2"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000017",
+        "role": "dwarf",
+        "text": "two",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000016",
+        "unitKey": "00000000-0000-4000-8000-000000000016",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 2,
+          "output": 3,
+          "cacheRead": 35040,
+          "cacheWrite": 11871,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000001b",
+        "kind": "concluded",
+        "at": 3000,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Reply with the single word one and nothing else. Do not use any tool."
+      },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000001"
+    },
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Reply with the single word two and nothing else. Do not use any tool."
+      },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "m-2"
+    }
+  ]
+}

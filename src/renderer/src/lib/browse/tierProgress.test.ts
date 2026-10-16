@@ -48,3 +48,25 @@ describe('tierProgress', () => {
     })
   })
 })
+
+// ISSUE-253 (US-MINES-008): the progress row a mine card draws, over the card the Host's read
+// model builds (mineCardView): the next tier and its fraction, Max tier at the top, Measuring…
+// while a mine measured before is measured again.
+describe('ISSUE-253 tier progress', () => {
+  it('[US-MINES-008.AC01, US-MINES-008.AC02, US-MINES-008.AC03] the progress row names the next tier with its fraction, reads Max tier at Uranium and Measuring… while re-measured', () => {
+    expect(toward({ value: 300, max: 500, nextTier: 'silver' })).toMatchObject({
+      lead: 'Next: ',
+      tierLabel: 'Silver',
+      numbers: '300 / 500',
+      fill: '0.600'
+    })
+    expect(tierProgress({ value: 9412, maxTier: true })).toMatchObject({
+      kind: 'max',
+      title: 'Max tier'
+    })
+    expect(tierProgress({ measuring: true })).toMatchObject({
+      kind: 'measuring',
+      title: 'Measuring…'
+    })
+  })
+})

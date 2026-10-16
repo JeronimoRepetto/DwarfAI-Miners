@@ -1,0 +1,32 @@
+{
+  "case": "C-04",
+  "description": "S-020-1 early exit (Claude Code 2.1.301), ADR-020 D4, 15 §1.3 launch errors: the CLI wrote a result line with is_error true (error_during_execution, num_turns 0) about 0.4 s after the spawn and no system/init, and exited only at about 3.1 s. The measured rule: an error result before system/init is the launch failing, so the launch rejects at once, inside the 3 s window, as exited-at-once with the stderr tail, without waiting for the exit; the driver then closes stdin. The recording resumed an id that never existed; the bytes the driver reads are the same for a launch. No event reaches a consumer: the launch never resolved.",
+  "script": [
+    {
+      "do": "launch",
+      "prompt": "Reply with the single word hello and nothing else. Do not use any tool."
+    }
+  ],
+  "outcomes": [
+    {
+      "rejected": {
+        "cause": "exited-at-once",
+        "detail": "$string",
+        "toolOutputTail": "$string"
+      }
+    }
+  ],
+  "events": [],
+  "sent": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Reply with the single word hello and nothing else. Do not use any tool."
+      },
+      "parent_tool_use_id": null,
+      "session_id": "00000000-0000-7000-8000-000000000001",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}

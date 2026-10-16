@@ -1,0 +1,39 @@
+{
+  "case": "claude:auth-error",
+  "description": "15 §4.2 Login detection, ADR-008 item 2: the CLI's own report that it is not logged in (an assistant line with error authentication_failed) is error auth-required; its synthetic message is not conversation. The result line still ends the turn by its subtype (ADR-021 item 5).",
+  "script": [{ "do": "launch" }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    { "t": "error", "cause": { "kind": "auth-required" } },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-0000000c0051",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "first prompt" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}
