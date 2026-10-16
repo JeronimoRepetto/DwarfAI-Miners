@@ -1,0 +1,5 @@
+// dwarfai-managed 01890000-0000-7000-8000-000000000000
+// Written by another DwarfAI installation (another OS profile): not this install's to replace.
+const PUSH_URL = 'http://127.0.0.1:40000/opencode/event'
+const PUSH_TOKEN = 'abababababababababababababababababababababababababababababababab'
+export const DwarfAiOpenCodePermissionPlugin = async () => ({})

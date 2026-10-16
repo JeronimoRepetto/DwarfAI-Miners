@@ -1,0 +1,27 @@
+// dwarfai-managed 0192f3a4-5b6c-7d8e-9f01-23456789abcd
+// Written by DwarfAI-Miners, which removes it when its OpenCode permission requests integration is
+// turned off. It reports OpenCode's permission requests to DwarfAI on this computer; the token below
+// only lets OpenCode report them. It loads nothing: OpenCode runs it as it is.
+const PUSH_URL = 'http://127.0.0.1:45123/opencode/event'
+const PUSH_TOKEN = 'f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d'
+const PUSHED_EVENT_TYPES = new Set(['permission.asked', 'permission.replied'])
+
+function pushEvent(serverUrl, event) {
+  if (event === null || typeof event !== 'object' || !PUSHED_EVENT_TYPES.has(event.type)) return
+  try {
+    fetch(PUSH_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dwarfai-token': PUSH_TOKEN },
+      body: JSON.stringify({ event, serverUrl: serverUrl === undefined ? null : String(serverUrl) }),
+      signal: AbortSignal.timeout(2000)
+    }).catch(() => undefined)
+  } catch {
+    // Never thrown into OpenCode: a report that cannot be sent is a report DwarfAI did not get.
+  }
+}
+
+export const DwarfAiOpenCodePermissionPlugin = async (ctx) => ({
+  event: async ({ event }) => {
+    pushEvent(ctx === undefined ? undefined : ctx.serverUrl, event)
+  }
+})
