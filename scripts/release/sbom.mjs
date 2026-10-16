@@ -4,12 +4,18 @@
 //   pnpm sbom --sbom-format cyclonedx --prod --sbom-type application > <file>
 //   node scripts/release/sbom.mjs --input <file> [--root <dir>] [--out <dir>]
 //
-// The generator is the pinned pnpm's own `pnpm sbom` (pnpm 11.1.1, CycloneDX 1.7; OI-20-3): it reads the lockfile and
-// the installed packages, adds no dependency and fetches nothing. Its document covers every production package of the
-// lockfile, for every platform the workspace installs (pnpm-workspace.yaml `supportedArchitectures`). This script
-// checks that it lists exactly the lockfile's production packages, then writes <out>/sbom-<os>.json (default
-// release/licenses/) for each artifact OS with only the components that OS's artifact installs, by the `os`, `cpu` and
-// `libc` fields the lockfile records for each package. Exits 1 on a mismatch.
+// The generator is pnpm's own `pnpm sbom` (CycloneDX 1.7; OI-20-3): it reads the lockfile and the installed packages,
+// adds no dependency and fetches nothing. CI's `pnpm/setup` asks for `version: 11`, so the minor version floats (11.28.6
+// on the main line on 2026-10-16, 11.1.1 on the maintainer's machine), and the two differ on optional peers.
+//
+// This script checks the document against the lockfile's production packages, then writes <out>/sbom-<os>.json
+// (default release/licenses/) for each artifact OS with only the components that OS's artifact installs, by the `os`,
+// `cpu` and `libc` fields the lockfile records. Two differences are legitimate and are printed, never hidden:
+// - a production package missing from the document that no artifact ships: an optional platform binary pnpm did not
+//   install on this runner (a musl binary on a glibc runner), the same rule the licence report applies;
+// - a package in the document that is only an optional peer of a production package (vue's `typescript`, resolved only
+//   because the root has it as a dev dependency): no artifact ships it, so no OS SBOM keeps it.
+// Any other difference fails, and so does a missing package an artifact ships. Exits 1 on a failure.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,7 +26,8 @@ import {
   installsOn,
   parseArgs,
   parseLockfile,
-  productionPackages
+  productionPackages,
+  shippedByAnArtifact
 } from './licenses.mjs'
 
 // The artifact platforms live with the licence report, which needs them too; they are re-exported here.
@@ -33,9 +40,11 @@ const fullName = (component) =>
 export function sbomForArtifact(bom, lock, os) {
   const platform = ARTIFACT_PLATFORMS[os]
   if (!platform) throw new Error(`unknown artifact OS "${os}"`)
-  const components = bom.components.filter((c) =>
-    installsOn(lock.packages[`${fullName(c)}@${c.version}`], platform)
-  )
+  const production = new Set(productionPackages(lock).map((p) => `${p.name}@${p.version}`))
+  const components = bom.components.filter((c) => {
+    const key = `${fullName(c)}@${c.version}`
+    return production.has(key) && installsOn(lock.packages[key], platform)
+  })
   const kept = new Set([
     bom.metadata?.component?.['bom-ref'],
     ...components.map((c) => c['bom-ref'])
@@ -53,21 +62,47 @@ export function sbomForArtifact(bom, lock, os) {
   }
 }
 
-/** The problems that make an SBOM unusable: not CycloneDX, or not exactly the lockfile's production packages. */
-export function checkSbomMatchesLockfile(bom, lock) {
+/** The document compared with the lockfile: `problems` fail the job, `differences` are legitimate and printed. */
+function compare(bom, lock) {
   if (bom?.bomFormat !== 'CycloneDX' || !Array.isArray(bom.components)) {
-    return ['the SBOM is not a CycloneDX document with components']
+    return { problems: ['the SBOM is not a CycloneDX document with components'], differences: [] }
   }
   const listed = new Set(bom.components.map((c) => `${fullName(c)}@${c.version}`))
   const expected = new Set(productionPackages(lock).map((p) => `${p.name}@${p.version}`))
-  return [
-    ...[...expected]
-      .filter((key) => !listed.has(key))
-      .map((key) => `the SBOM is missing ${key}, a production package of the lockfile`),
-    ...[...listed]
-      .filter((key) => !expected.has(key))
-      .map((key) => `the SBOM lists ${key}, which is not a production package of the lockfile`)
-  ]
+  const withPeers = new Set(
+    productionPackages(lock, { optionalPeers: true }).map((p) => `${p.name}@${p.version}`)
+  )
+  const problems = []
+  const differences = []
+  for (const key of [...expected].filter((k) => !listed.has(k))) {
+    if (shippedByAnArtifact(lock.packages[key])) {
+      problems.push(`the SBOM is missing ${key}, a production package of the lockfile`)
+    } else {
+      differences.push(
+        `${key}: not in the SBOM and not shipped by any artifact (not installed on this runner)`
+      )
+    }
+  }
+  for (const key of [...listed].filter((k) => !expected.has(k))) {
+    if (withPeers.has(key)) {
+      differences.push(
+        `${key}: in the SBOM, but only an optional peer of a production package, so no artifact ships it`
+      )
+    } else {
+      problems.push(`the SBOM lists ${key}, which is not a production package of the lockfile`)
+    }
+  }
+  return { problems, differences }
+}
+
+/** The problems that make an SBOM unusable: not CycloneDX, or not the lockfile's production packages. */
+export function checkSbomMatchesLockfile(bom, lock) {
+  return compare(bom, lock).problems
+}
+
+/** The legitimate differences between the document and the lockfile's production packages, one line each. */
+export function sbomDifferences(bom, lock) {
+  return compare(bom, lock).differences
 }
 
 function main() {
@@ -78,7 +113,8 @@ function main() {
   const out = path.resolve(rootDir, args.out ?? DEFAULT_OUT)
   const bom = JSON.parse(readFileSync(path.resolve(args.input), 'utf8'))
   const lock = parseLockfile(readFileSync(path.join(rootDir, 'pnpm-lock.yaml'), 'utf8'))
-  const problems = checkSbomMatchesLockfile(bom, lock)
+  const { problems, differences } = compare(bom, lock)
+  for (const difference of differences) console.log(`listed: ${difference}`)
   for (const problem of problems) console.error(`FAIL ${problem}`)
   if (problems.length > 0) {
     process.exitCode = 1

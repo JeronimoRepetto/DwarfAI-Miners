@@ -409,6 +409,62 @@ describe('the lockfile and SPDX reading behind the report (20 §2.4)', () => {
     ])
   })
 
+  it('[ADR-008] does not follow an optional peer edge: the peer is provided by whoever installs the package, not shipped by it', () => {
+    // vue@3.5.42 declares `typescript` an optional peer; the lockfile resolves it under vue's optionalDependencies
+    // only because the root has typescript as a dev dependency (main-line run 38939771861).
+    const lock = parseLockfile(
+      [
+        "lockfileVersion: '9.0'",
+        'importers:',
+        '  .:',
+        '    dependencies:',
+        '      vue:',
+        '        specifier: 3.5.42',
+        '        version: 3.5.42(typescript@6.0.3)',
+        '      needs-peer:',
+        '        specifier: 1.0.0',
+        '        version: 1.0.0(zod@3.0.0)',
+        '    devDependencies:',
+        '      typescript:',
+        '        specifier: 6.0.3',
+        '        version: 6.0.3',
+        'packages:',
+        '  vue@3.5.42:',
+        '    resolution: {integrity: sha512-a}',
+        '    peerDependencies:',
+        "      typescript: '*'",
+        '    peerDependenciesMeta:',
+        '      typescript:',
+        '        optional: true',
+        '  needs-peer@1.0.0:',
+        '    resolution: {integrity: sha512-b}',
+        '    peerDependencies:',
+        "      zod: '^3.0.0'",
+        'snapshots:',
+        '  vue@3.5.42(typescript@6.0.3):',
+        '    optionalDependencies:',
+        '      typescript: 6.0.3',
+        '  needs-peer@1.0.0(zod@3.0.0):',
+        '    dependencies:',
+        '      zod: 3.0.0',
+        '  zod@3.0.0: {}',
+        '  typescript@6.0.3: {}',
+        ''
+      ].join('\n')
+    )
+    expect(productionPackages(lock)).toEqual([
+      { name: 'needs-peer', version: '1.0.0' },
+      { name: 'vue', version: '3.5.42' },
+      { name: 'zod', version: '3.0.0' }
+    ])
+    expect(productionPackages(lock, { optionalPeers: true }).map((p) => p.name)).toEqual([
+      'needs-peer',
+      'typescript',
+      'vue',
+      'zod'
+    ])
+  })
+
   it('[ADR-008] judges an SPDX expression: OR needs one allowed alternative, AND needs every term allowed', () => {
     expect(judgeLicence('MIT', denied).verdict).toBe('allowed')
     expect(judgeLicence('Apache-2.0 WITH LLVM-exception', denied).verdict).toBe('allowed')
