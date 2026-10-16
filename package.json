@@ -34,6 +34,14 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "release/licenses/THIRD-PARTY-NOTICES.md",
+        "to": "THIRD-PARTY-NOTICES.md"
       }
     ],
     "win": {
