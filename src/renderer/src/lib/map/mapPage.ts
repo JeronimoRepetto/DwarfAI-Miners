@@ -124,7 +124,7 @@ export function mineTip(
   const needs = mine.dwarfs.filter(dwarfNeedsYou).length
   const working = mine.dwarfs.filter((d) => d.status === 'working' && !dwarfNeedsYou(d)).length
   const rows: TipRow[] = [{ label: 'Dwarfs working', value: String(working) }]
-  if (needs > 0) rows.push({ label: 'Needs you', value: String(needs) })
+  if (needs > 0) rows.push({ label: 'Needs you', value: String(needs), tone: 'brass' })
   // A mine being measured (screens/map.md: 'A measuring mine adds "Measuring…"'), beside the rows
   // above and never instead of them.
   if (facts.measuring) rows.push({ label: 'Measuring…', value: '' })

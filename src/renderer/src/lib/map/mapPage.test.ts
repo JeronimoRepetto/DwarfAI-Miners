@@ -114,9 +114,10 @@ describe('mineTip', () => {
    */
   it('counts only the working dwarfs as working, and the ones that need you in their own row', () => {
     const tip = mineTip(defaultMine({ dwarfs: [working, asking, asleep, working] }))
+    // AMENDED for ISSUE-256 (screens/map.md, the row in --brass; was: no tone): counts unchanged.
     expect(tip.rows).toEqual([
       { label: 'Dwarfs working', value: '2' },
-      { label: 'Needs you', value: '1' }
+      { label: 'Needs you', value: '1', tone: 'brass' }
     ])
   })
 
@@ -132,9 +133,10 @@ describe('mineTip', () => {
     expect(mineTip(defaultMine({ dwarfs: [asleep, leaving] })).rows).toEqual([
       { label: 'Dwarfs working', value: '0' }
     ])
+    // AMENDED for ISSUE-256 (screens/map.md, the row in --brass; was: no tone): counts unchanged.
     expect(mineTip(defaultMine({ dwarfs: [workingAsker, permission] })).rows).toEqual([
       { label: 'Dwarfs working', value: '0' },
-      { label: 'Needs you', value: '2' }
+      { label: 'Needs you', value: '2', tone: 'brass' }
     ])
   })
 
@@ -212,13 +214,16 @@ describe('mineTip, ISSUE-256', () => {
    * counter, accessible names) and the map tooltip is not among them. Either way the count is text.
    */
   it('[US-MAP-001.AC02, US-MAP-001.AC06, NFR-A11Y-08] the needs-you row reads 1 needs you or n need you as label text', () => {
+    // In --brass, as the design draws it; the count is still the row's text.
     expect(mineTip(defaultMine({ dwarfs: [asking] })).rows[1]).toEqual({
       label: 'Needs you',
-      value: '1'
+      value: '1',
+      tone: 'brass'
     })
     expect(mineTip(defaultMine({ dwarfs: [asking, permission] })).rows[1]).toEqual({
       label: 'Needs you',
-      value: '2'
+      value: '2',
+      tone: 'brass'
     })
     expect(mineTip(defaultMine({ dwarfs: [working] })).rows.map((r) => r.label)).toEqual([
       'Dwarfs working'
@@ -229,12 +234,12 @@ describe('mineTip, ISSUE-256', () => {
     const mine = defaultMine({ dwarfs: [working, asking] })
     expect(mineTip(mine, { measuring: true }).rows).toEqual([
       { label: 'Dwarfs working', value: '1' },
-      { label: 'Needs you', value: '1' },
+      { label: 'Needs you', value: '1', tone: 'brass' },
       { label: 'Measuring…', value: '' }
     ])
     expect(mineTip(mine, { measuring: true, notEnterable: true }).rows).toEqual([
       { label: 'Dwarfs working', value: '1' },
-      { label: 'Needs you', value: '1' },
+      { label: 'Needs you', value: '1', tone: 'brass' },
       { label: 'Measuring…', value: '' },
       { label: 'Not enterable', value: '', tone: 'warn' }
     ])
