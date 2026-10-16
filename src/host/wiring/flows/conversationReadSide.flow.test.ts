@@ -843,11 +843,13 @@ describe('the conversation read side wired into the Host (ISSUE-108)', () => {
 describe('observation turned on by the conversation half (ISSUE-108)', () => {
   it('[ADR-007, ADR-006] the Host observes: an observed transcript reaches the message log and its usage is credited once', async () => {
     const w = world()
-    w.writeTranscript()
     const h = await bootHost({ world: w })
     expect(h.backfill).not.toBeNull()
     expect(h.perMineBackfill).toBe(true)
     const ui = await h.attach('ui')
+    // Written only after the client is attached: observation reads real NodeFs I/O, so a transcript
+    // present at boot can commit before the client is registered and never produce a frame.
+    w.writeTranscript()
 
     for (let i = 0; i < 3; i += 1) await h.poll(ui)
     h.clock.advance(DEFAULT_MINES_SETTINGS.automaticWalkDelayMs)
