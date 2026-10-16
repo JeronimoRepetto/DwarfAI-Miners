@@ -64,7 +64,10 @@ function project({ license = PRODUCT_LICENSE, deps, transitive = [] }) {
       `    devDependencies:\n${entry(devDep)}`,
       '\npackages:\n\n',
       all
-        .map((d) => `  '${d.name}@${d.version}':\n    resolution: {integrity: sha512-x}\n\n`)
+        .map(
+          (d) =>
+            `  '${d.name}@${d.version}':\n    resolution: {integrity: sha512-x}\n${d.platform ?? ''}\n`
+        )
         .join(''),
       'snapshots:\n\n',
       all
@@ -72,7 +75,7 @@ function project({ license = PRODUCT_LICENSE, deps, transitive = [] }) {
         .join('')
     ].join('')
   )
-  for (const d of all) {
+  for (const d of all.filter((p) => p.installed !== false)) {
     const store = `node_modules/.pnpm/${d.name.replace('/', '+')}@${d.version}/node_modules/${d.name}`
     write(
       `${store}/package.json`,
@@ -124,6 +127,36 @@ describe('licence report and notices (20 §2.4)', () => {
     project({ deps: [{ name: 'bare', version: '1.0.0' }] })
     expect(buildLicenceReport({ rootDir: dir, denied }).failures).toEqual([
       'bare@1.0.0: package.json declares no licence'
+    ])
+  })
+
+  it('[ADR-008] a platform package no artifact installs may be absent on this runner; one an artifact installs may not', () => {
+    project({
+      deps: [
+        {
+          name: 'core-linux-x64-musl',
+          version: '1.0.0',
+          license: 'MIT',
+          installed: false,
+          platform: '    cpu: [x64]\n    os: [linux]\n    libc: [musl]\n'
+        },
+        {
+          name: 'core-win32-x64',
+          version: '1.0.0',
+          license: 'MIT',
+          installed: false,
+          platform: '    cpu: [x64]\n    os: [win32]\n'
+        }
+      ]
+    })
+    const report = buildLicenceReport({ rootDir: dir, denied })
+    expect(report.notShipped).toEqual(['core-linux-x64-musl@1.0.0'])
+    expect(report.packages.map((p) => [p.name, p.verdict])).toEqual([
+      ['core-linux-x64-musl', 'not-shipped'],
+      ['core-win32-x64', 'unknown']
+    ])
+    expect(report.failures).toEqual([
+      'core-win32-x64@1.0.0: not installed, so its licence cannot be read'
     ])
   })
 

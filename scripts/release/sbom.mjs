@@ -13,32 +13,18 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEFAULT_OUT, parseArgs, parseLockfile, productionPackages } from './licenses.mjs'
+import {
+  ARTIFACT_OSES,
+  ARTIFACT_PLATFORMS,
+  DEFAULT_OUT,
+  installsOn,
+  parseArgs,
+  parseLockfile,
+  productionPackages
+} from './licenses.mjs'
 
-/** The artifact OSes (`20` §3.2) and what each one's packages install on: Windows x64, macOS arm64 and x64, Linux x64. */
-export const ARTIFACT_PLATFORMS = {
-  windows: { os: 'win32', cpu: ['x64'], libc: null },
-  macos: { os: 'darwin', cpu: ['arm64', 'x64'], libc: null },
-  linux: { os: 'linux', cpu: ['x64'], libc: 'glibc' }
-}
-export const ARTIFACT_OSES = Object.keys(ARTIFACT_PLATFORMS)
-
-/** Whether a lockfile constraint list (`[x64]`, `['!win32']`) admits a value; no list admits everything. */
-function admits(list, value) {
-  if (!Array.isArray(list) || list.length === 0 || value === null) return true
-  const negated = list.filter((v) => v.startsWith('!')).map((v) => v.slice(1))
-  const positive = list.filter((v) => !v.startsWith('!'))
-  return !negated.includes(value) && (positive.length === 0 || positive.includes(value))
-}
-
-/** Whether a package's lockfile entry installs on one artifact platform. */
-export function installsOn(entry, platform) {
-  return (
-    admits(entry?.os, platform.os) &&
-    platform.cpu.some((cpu) => admits(entry?.cpu, cpu)) &&
-    admits(entry?.libc, platform.libc)
-  )
-}
+// The artifact platforms live with the licence report, which needs them too; they are re-exported here.
+export { ARTIFACT_OSES, ARTIFACT_PLATFORMS, installsOn }
 
 const fullName = (component) =>
   component.group ? `${component.group}/${component.name}` : component.name

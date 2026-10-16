@@ -246,6 +246,39 @@ export function judgeLicence(expression, denied) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Artifact platforms.
+
+/** The artifact OSes (`20` §3.2) and what each one's packages install on: Windows x64, macOS arm64 and x64, Linux x64. */
+export const ARTIFACT_PLATFORMS = {
+  windows: { os: 'win32', cpu: ['x64'], libc: null },
+  macos: { os: 'darwin', cpu: ['arm64', 'x64'], libc: null },
+  linux: { os: 'linux', cpu: ['x64'], libc: 'glibc' }
+}
+export const ARTIFACT_OSES = Object.keys(ARTIFACT_PLATFORMS)
+
+/** Whether a lockfile constraint list (`[x64]`, `['!win32']`) admits a value; no list admits everything. */
+function admits(list, value) {
+  if (!Array.isArray(list) || list.length === 0 || value === null) return true
+  const negated = list.filter((v) => v.startsWith('!')).map((v) => v.slice(1))
+  const positive = list.filter((v) => !v.startsWith('!'))
+  return !negated.includes(value) && (positive.length === 0 || positive.includes(value))
+}
+
+/** Whether a package's lockfile entry installs on one artifact platform. */
+export function installsOn(entry, platform) {
+  return (
+    admits(entry?.os, platform.os) &&
+    platform.cpu.some((cpu) => admits(entry?.cpu, cpu)) &&
+    admits(entry?.libc, platform.libc)
+  )
+}
+
+/** Whether any artifact OS installs a package, by its lockfile entry. */
+export function shippedByAnArtifact(entry) {
+  return Object.values(ARTIFACT_PLATFORMS).some((platform) => installsOn(entry, platform))
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The report.
 
 /**
@@ -271,6 +304,7 @@ export function buildLicenceReport({
     failures.push(`package.json license is "${pkg.license}", but the product is ${PRODUCT_LICENSE}`)
   }
   const allowed = []
+  const notShipped = []
   let entries = []
   if (allowance) {
     const checked = checkAllowance(allowance, { rootDir })
@@ -280,6 +314,12 @@ export function buildLicenceReport({
   const packages = productionPackages(lock).map(({ name, version }) => {
     const key = `${name}@${version}`
     const found = installed.get(key)
+    if (!found && !shippedByAnArtifact(lock.packages[key])) {
+      // An optional platform package no artifact installs (a musl binary on a glibc runner): pnpm skips it here,
+      // and no build ships it, so it is listed, not failed.
+      notShipped.push(key)
+      return { name, version, license: null, verdict: 'not-shipped', dir: null }
+    }
     if (!found) {
       failures.push(`${key}: not installed, so its licence cannot be read`)
       return { name, version, license: null, verdict: 'unknown', dir: null }
@@ -306,6 +346,7 @@ export function buildLicenceReport({
     product: { name: pkg.name, version: pkg.version, license: pkg.license },
     packages,
     allowed,
+    notShipped,
     failures
   }
 }
@@ -321,6 +362,7 @@ export function reportDocument(report) {
       verdict
     })),
     allowed: report.allowed,
+    notShipped: report.notShipped,
     failures: report.failures
   }
 }
@@ -354,6 +396,7 @@ function main() {
   console.log(`${report.packages.length} production packages: ${JSON.stringify(counts)}`)
   console.log(`wrote ${path.join(out, REPORT_FILE)}`)
   for (const line of report.allowed) console.log(`allowed: ${line}`)
+  for (const key of report.notShipped) console.log(`not shipped by any artifact, not read: ${key}`)
   for (const failure of report.failures) console.error(`FAIL ${failure}`)
   process.exitCode = report.failures.length > 0 ? 1 : 0
 }
