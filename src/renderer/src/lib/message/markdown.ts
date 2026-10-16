@@ -179,6 +179,17 @@ const LANGUAGE_NAME = /^[a-zA-Z0-9_+.-]+$/
  */
 const parser = new MarkdownIt({ html: false, linkify: false, typographer: false })
 
+/*
+ * Every destination becomes a token (ISSUE-251, ADR-019 item 4). markdown-it's
+ * own `validateLink` refuses `javascript:`, `vbscript:`, `file:` and most
+ * `data:` addresses by leaving the whole construct as raw characters, so
+ * `![a chart](file:///…)` drew its brackets and its address instead of its alt
+ * text. Admission is not dropped here, it is kept in ONE place: every `link_open`
+ * and `image` token below still passes `externalLinkOf`, the stricter http/https
+ * allowlist main runs again, and a refused address keeps only its own words.
+ */
+parser.validateLink = (): boolean => true
+
 /** What one bubble draws, in order. Empty for a message with nothing in it. */
 export function markdownBlocks(text: string): readonly MarkdownBlock[] {
   return blocksIn(parser.parse(text, {}), 0, undefined)

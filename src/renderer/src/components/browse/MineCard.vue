@@ -15,6 +15,7 @@ import TierProgress from './TierProgress.vue'
 import MenuButton from '../overlay/MenuButton.vue'
 import { MOUND_SRC } from '../../lib/art'
 import { mineCardLabel, mineCardMenu, type MineCardView } from '../../lib/browse/mineCard'
+import { untrustedText } from '../../lib/text/untrustedText'
 
 const props = withDefaults(
   defineProps<{
@@ -66,7 +67,9 @@ function pick(): void {
     <div class="dm-card__body">
       <div class="dm-card__title">
         <TierChip :tier="card.tier" />
-        <h3 class="dm-card__name" :title="card.name">{{ card.name }}</h3>
+        <h3 class="dm-card__name" :title="untrustedText(card.name)">
+          <bdi>{{ untrustedText(card.name) }}</bdi>
+        </h3>
         <MenuButton
           class="dm-card__menu"
           :items="menu"
