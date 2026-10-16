@@ -15,18 +15,25 @@ import type { DwarfRole } from '../../types'
 import type { CrewCue, CrewSoundSignal } from '../sprite/crewSound'
 
 /**
- * How many crew clips may sound at once.
+ * How many clips of each crew cue may sound at once (ISSUE-255; sound.md,
+ * Mapping onto the engine; decision log, Crew sound caps, PO ruling
+ * 2026-09-26): 3 pick strikes, 2 worker2 grinds and 2 walks.
  *
- * A FOURTH CUE IS DROPPED, NEVER QUEUED. A queue would pay back a strike a
- * second after the pick that threw it had already lifted again, which is the
+ * ONE COUNT PER CUE, in place of the single cap of three crew clips it
+ * replaced: unlimited stacking was too noisy in a 10 s test with 5 grinders and
+ * 7 picks, and one shared cap let three strikes silence every grind. A cue's
+ * cap is its own, so a busy rock never takes a walking dwarf's footsteps.
+ *
+ * A CLIP OVER ITS CAP IS DROPPED, NEVER QUEUED. A queue would pay back a strike
+ * a second after the pick that threw it had already lifted again, which is the
  * one thing worse than not hearing it: nine workers would drift into a drum
  * machine playing a mine that had moved on. A missing strike in a busy mine is
- * inaudible; a rattle is not.
+ * inaudible; a rattle is not. It is dropped before anything is decoded.
  *
- * Three is also what keeps the element player honest — see the note on the
- * player in `engine.ts`.
+ * Seven elements at most is also what keeps the element player honest — see
+ * the note on the player in `engine.ts`.
  */
-export const CREW_POLYPHONY = 3
+export const CREW_CAPS: Readonly<Record<CrewCue, number>> = { strike: 3, shift: 2, walk: 2 }
 
 /**
  * How long a sustained clip takes to fade out when its movement stops.
