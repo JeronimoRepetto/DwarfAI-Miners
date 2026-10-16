@@ -1,6 +1,6 @@
 // layer: L7
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,6 +38,19 @@ function run(args) {
   } catch (error) {
     return { code: error.status, output: `${error.stdout}${error.stderr}` }
   }
+}
+
+/**
+ * A checks folder holding only the real P-08 check, so its cases prove P-08 alone; every other real check (P-03
+ * needs a packed app) has its own cases.
+ */
+function p08Only() {
+  const checks = tempDir('packaged-checks-')
+  copyFileSync(
+    path.join(here, 'p08-names.packaged.mjs'),
+    path.join(checks, 'p08-names.packaged.mjs')
+  )
+  return checks
 }
 
 /** A fake check module: its P id, and whether it passes, with the detail it reports. */
@@ -92,12 +105,13 @@ describe('packaged-artifact check runner (20 §2.3)', () => {
     writeFileSync(path.join(artifacts, 'DwarfAI-Miners-Setup-0.20.0-x64.exe'), '')
     writeFileSync(path.join(artifacts, 'DwarfAI-Miners-0.20.0-win-x64.zip'), '')
 
-    const green = run([artifacts])
+    const checks = p08Only()
+    const green = run([artifacts, '--checks', checks])
     expect(green.code).toBe(0)
     expect(green.output).toMatch(/^P-08 ok: /m)
 
     writeFileSync(path.join(artifacts, 'DwarfAI Miners-Setup-0.20.0-x64.exe'), '')
-    const red = run([artifacts])
+    const red = run([artifacts, '--checks', checks])
     expect(red.code).toBe(1)
     expect(red.output).toMatch(/^P-08 FAIL: .*"DwarfAI Miners-Setup-0\.20\.0-x64\.exe"/m)
   })
@@ -106,8 +120,19 @@ describe('packaged-artifact check runner (20 §2.3)', () => {
     const artifacts = tempDir('packaged-artifacts-')
     writeFileSync(path.join(artifacts, 'builder-debug.yml'), '')
 
-    const result = run([artifacts])
+    const result = run([artifacts, '--checks', p08Only()])
     expect(result.code).toBe(1)
     expect(result.output).toMatch(/^P-08 FAIL: no artifact/m)
+  })
+
+  it('[ADR-008] the runner runs P-03 beside P-08, and P-03 fails a folder that holds no packed app', () => {
+    const artifacts = tempDir('packaged-artifacts-')
+    writeFileSync(path.join(artifacts, 'DwarfAI-Miners-Setup-0.20.0-x64.exe'), '')
+
+    const result = run([artifacts])
+
+    expect(result.code).toBe(1)
+    expect(result.output).toMatch(/^P-03 FAIL: no packed app \(app\.asar\) in /m)
+    expect(result.output).toMatch(/^P-08 ok: /m)
   })
 })
