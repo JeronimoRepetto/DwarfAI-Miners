@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
@@ -588,5 +590,111 @@ describe('DwarfPermissionCard and an Enter that belongs to an IME composition', 
         )
     }
     expect(wrapper.emitted('send-text')).toBeUndefined()
+  })
+})
+
+/* --- ISSUE-260: the permission card against US-ASK-003 to US-ASK-005 — one block, appended --- */
+
+/*
+ * The permission card as the stories read it (ISSUE-260): one step, Allow or Deny the only
+ * decisions (INV-73), "Other thing…" a message and never one (07 S6.05), and the request in a block
+ * capped at six lines. jsdom lays nothing out, so the cap is proven from the stylesheet that sets
+ * it; the golden lane draws it.
+ */
+describe('DwarfPermissionCard against US-ASK-003 to US-ASK-005 (ISSUE-260)', () => {
+  /** The declarations of the first rule of `css` whose selector is exactly `selector`. */
+  const declarations = (css: string, selector: string): string[] => {
+    const at = css.indexOf('\n' + selector + ' {')
+    expect(at, 'no rule ' + selector).toBeGreaterThan(-1)
+    return css
+      .slice(css.indexOf('{', at) + 1, css.indexOf('}', at))
+      .split(';')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter((line) => line !== '')
+  }
+
+  it('[US-ASK-003.AC01, US-ASK-003.AC03] a permission card reads its asks mark with the request in the code block, 1 of 1, Back disabled and Next hidden', () => {
+    const wrapper = card()
+    const pill = wrapper.find('.dm-qcard__head .dm-pill')
+    expect(pill.find('.dm-pill__q').text()).toBe('!')
+    expect(pill.text()).toBe('!asks')
+    expect(wrapper.find('.dm-qcard__head pre.dm-qcard__req').text()).toContain(
+      'Bash · rm -rf /tmp/scratch'
+    )
+    expect(wrapper.find('.dm-qcard__q').exists()).toBe(false)
+    expect(wrapper.find('.dm-qcard__step').text()).toBe('1 / 1')
+    expect(wrapper.find('.dm-qcard__back').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.dm-qcard__next').exists()).toBe(false)
+  })
+
+  it('[US-ASK-003.AC04, US-ASK-003.AC05, US-ASK-003.AC06, INV-73] only Allow or Deny wakes Submit, a later pick replaces an earlier one, and text under Other thing… never does', async () => {
+    const wrapper = card()
+    // The only decisions are Allow and Deny; "Other thing…" is the row after them.
+    expect(options(wrapper).map((o) => o.find('.dm-qopt__label').text())).toEqual(['Allow', 'Deny'])
+    expect(submitButton(wrapper).text()).toBe(SUBMIT_ANSWERS_NAME)
+    expect(submitButton(wrapper).attributes('disabled')).toBeDefined()
+    await options(wrapper)[0]!.trigger('click')
+    expect(checked(wrapper)).toEqual(['true', 'false'])
+    expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
+    await options(wrapper)[1]!.trigger('click')
+    expect(checked(wrapper)).toEqual(['false', 'true'])
+    await submit(wrapper)
+    expect(wrapper.emitted('decide')).toEqual([['deny']])
+
+    // Words under "Other thing…" are a message: no decision is picked, Submit is not what wakes.
+    const typed = card()
+    await writeOther(typed, 'Why do you need to delete it?')
+    expect(checked(typed)).toEqual(['false', 'false'])
+    expect(submitButton(typed).text()).toBe(SEND_OTHER_NAME)
+    await submit(typed)
+    expect(typed.emitted('decide')).toBeUndefined()
+    expect(typed.emitted('send-text')).toEqual([
+      [{ text: 'Why do you need to delete it?', pressEnter: true }]
+    ])
+    // The card stays, still waiting on a decision.
+    expect(submitButton(typed).text()).toBe(SUBMIT_ANSWERS_NAME)
+    expect(submitButton(typed).attributes('disabled')).toBeDefined()
+  })
+
+  it('[US-ASK-004.AC01, US-ASK-004.AC02, US-ASK-004.AC03] a request longer than six lines scrolls inside its capped block while options and walk controls stay put, and a shorter one shows whole', () => {
+    const rule = declarations(
+      readFileSync(join(import.meta.dirname, '../message/QuestionCard.vue'), 'utf8'),
+      '.dm-qcard__req'
+    )
+    // Six lines of its own line height plus its 6px padding above and below, then its own scroll.
+    expect(rule).toContain('padding: 6px 8px')
+    expect(rule).toContain('max-height: calc(6lh + 12px)')
+    expect(rule).toContain('overflow-y: auto')
+    // A cap, never a fixed height: a request that fits shows whole, with nothing to scroll.
+    expect(rule.filter((line) => /^(height|min-height):/.test(line))).toEqual([])
+
+    const long = Array.from({ length: 10 }, (_, k) => `line ${k + 1}`).join('\n')
+    const wrapper = card({ permission: permission({ input: long }) })
+    const request = wrapper.find('pre.dm-qcard__req')
+    expect(request.text()).toContain('line 10')
+    // The block is its own keyboard-reachable scroll region, apart from the options and the walk.
+    expect(request.attributes('tabindex')).toBe('0')
+    expect(request.find('.dm-qopt').exists()).toBe(false)
+    expect(request.find('.dm-qcard__walk').exists()).toBe(false)
+    expect(wrapper.find('.dm-qcard__body .dm-qcard__opts').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard > .dm-qcard__walk').exists()).toBe(true)
+
+    const short = card({ permission: permission({ title: undefined, description: undefined }) })
+    expect(short.find('pre.dm-qcard__req').text()).toBe('Bash · rm -rf /tmp/scratch')
+  })
+
+  it('[US-ASK-005.AC01, US-ASK-005.AC02, US-ASK-005.AC03] Other thing… is always offered, turns Submit into Send once text is typed, and Allow or Deny keeps Submit', async () => {
+    const wrapper = card()
+    expect(otherRow(wrapper).exists()).toBe(true)
+    expect(otherRow(wrapper).attributes('disabled')).toBeUndefined()
+    expect(otherRow(wrapper).find('.dm-qopt__label').text()).toBe(OTHER_THING_LABEL)
+    await writeOther(wrapper, 'Only the scratch folder, please.')
+    expect(submitButton(wrapper).text()).toBe(SEND_OTHER_NAME)
+    expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
+    await options(wrapper)[0]!.trigger('click')
+    expect(submitButton(wrapper).text()).toBe(SUBMIT_ANSWERS_NAME)
+    expect(otherRow(wrapper).attributes('disabled')).toBeUndefined()
+    await options(wrapper)[1]!.trigger('click')
+    expect(submitButton(wrapper).text()).toBe(SUBMIT_ANSWERS_NAME)
   })
 })

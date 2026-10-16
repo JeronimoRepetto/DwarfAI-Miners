@@ -24,6 +24,10 @@
  * - Next wakes once the step is answered, as designed, except on an ask nothing here may answer,
  *   which walks freely so every question can be read before the person goes to the terminal
  *   (#443).
+ *
+ * Every string the ask or the asker brought — the step's text, its options, the dwarf's name — is
+ * drawn, and named to a screen reader, through untrustedText, and drawn inside a `<bdi>` (C-08,
+ * 18 §5.1; ISSUE-251, ISSUE-260).
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import ActionButton from '../controls/ActionButton.vue'
@@ -273,7 +277,12 @@ function dotClass(dot: string): string | undefined {
 </script>
 
 <template>
-  <section ref="root" class="dm-qcard" :aria-label="askingName(name)" @keydown="onKeydown">
+  <section
+    ref="root"
+    class="dm-qcard"
+    :aria-label="askingName(untrustedText(name))"
+    @keydown="onKeydown"
+  >
     <!-- The agent's own short title for the step, when it wrote one (#125); the design has none. -->
     <p v-if="step.header" class="dm-qcard__header">
       <bdi>{{ untrustedText(step.header) }}</bdi>
@@ -297,7 +306,7 @@ function dotClass(dot: string): string | undefined {
       <div
         class="dm-qcard__opts"
         :role="toggling ? 'group' : 'radiogroup'"
-        :aria-label="step.question"
+        :aria-label="untrustedText(step.question)"
       >
         <QuestionOption
           v-for="(option, k) in step.options"
