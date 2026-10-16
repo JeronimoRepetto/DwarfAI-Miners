@@ -321,7 +321,7 @@ async function resumedRun(
     scheduler,
     processControl: spawn,
     loginEnv: LOGIN_ENV
-  })
+  }) as ClaudeStreamJsonDriver
   const launchedEvents: DriverEvent[] = []
   const resumedEvents: DriverEvent[] = []
   const drain = (session: DriverSession, into: DriverEvent[]): void => {
@@ -349,8 +349,10 @@ async function resumedRun(
     resumed = value
   })
   await settle()
-  const pendingAtSpawn = resumed === null
-  clock.advance(3_000)
+  clock.advance(2_999)
+  await settle()
+  const pendingAt2999 = resumed === null
+  clock.advance(1)
   await settle()
   if (resumed === null) {
     return { events: [launchedEvents, []], outcomes: [], sent: [], spawn, session, resumed: null }
@@ -368,7 +370,7 @@ async function resumedRun(
   const sent = transports.flatMap((transport) => transport.sent.map((f) => JSON.parse(f) as Json))
   return {
     events: [launchedEvents, resumedEvents],
-    outcomes: [{ resolved: true }, null, { pendingAtSpawn }, null, receipt],
+    outcomes: [{ resolved: true }, null, { pendingAt2999 }, null, receipt],
     sent,
     spawn,
     session,
@@ -409,6 +411,9 @@ describe('ClaudeStreamJsonDriver', () => {
     // A help that lists the flag as an option of its own still probes open.
     const listed = `${HELP_WITHOUT_FLAG}\n  --permission-prompt-tool <tool>  MCP tool that answers permission prompts\n  --disallowedTools <tools...>\n`
     expect(capabilitiesFromHelp(listed, SPIKE_RECORDS).launch).toBe(true)
+    // A mention in another option's prose is not the flag being advertised.
+    const prose = `${HELP_WITHOUT_FLAG}\n  --legacy-prompts <x>  Removed; it was replaced by --permission-prompt-tool\n`
+    expect(capabilitiesFromHelp(prose, SPIKE_RECORDS).launch).toBe(false)
   })
 
   it('[C-23] the mcp-config file and the argv hold the credential file path and never the credential value', async () => {
@@ -516,8 +521,9 @@ describe('ClaudeStreamJsonDriver', () => {
         ...differences(run.sent, bind(own.expected.sent ?? [], bindings), 'sent')
       ]
       expect(why.map((line) => `${variant.label}: ${line}`)).toEqual([])
-      // Resume waits out the early-failure window: claude writes nothing before a stdin line.
-      expect(run.outcomes[2]).toEqual({ pendingAtSpawn: true })
+      // Resume waits out the early-failure window: claude writes nothing before a stdin line, so
+      // the resume is still pending at 2 999 ms and ready at 3 000 ms.
+      expect(run.outcomes[2]).toEqual({ pendingAt2999: true })
       const args = run.spawn.spawns[1]?.args ?? []
       expect(args).toContain('--resume')
       expect(args[args.indexOf('--resume') + 1]).toBe(RECORDED_SESSION)
