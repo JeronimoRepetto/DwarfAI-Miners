@@ -131,10 +131,6 @@ button.dm-portrait:active,
   padding: 0;
   background: var(--ok);
 }
-.dm-portrait[data-status='done'] .dm-portrait__mark {
-  background: var(--ok-lo);
-  color: var(--ok);
-}
 .dm-portrait[data-status='idle'] .dm-portrait__mark {
   display: none;
 }

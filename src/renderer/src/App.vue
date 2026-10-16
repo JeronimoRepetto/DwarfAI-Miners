@@ -905,6 +905,12 @@ const mineHistory = computed<MineHistoryResult | undefined>(() => historyAsToday
  * window slot, which holds one thing at a time, so the chat or the Add panel is put away.
  */
 function openHistory(): void {
+  /*
+   * Esc or Close history hands the keyboard back to what opened it (ISSUE-254; NFR-A11Y-02):
+   * the mine's History button, remembered at the press. Opened from the chat in the slot, the
+   * chat's own button goes with the chat, so the control that opened the chat stays the one.
+   */
+  if (dockItem.value === null) rememberDockOpener()
   closeMessagePanel()
   historyOpen.value = true
 }
@@ -954,6 +960,7 @@ watch([() => viewState.mineId !== null, () => dockItem.value !== null], ([mineOp
 
 function closeHistory(): void {
   historyOpen.value = false
+  closeDockToOpener()
 }
 
 /*
