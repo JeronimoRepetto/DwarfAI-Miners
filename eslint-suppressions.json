@@ -7,9 +7,6 @@
   "src/renderer/src/components/message/DwarfMessagePanel.vue": {
     "arch/legacy-only-through-bridge": {
       "count": 1
-    },
-    "no-restricted-syntax": {
-      "count": 5
     }
   },
   "src/renderer/src/components/panel/SettingsPanel.test.ts": {

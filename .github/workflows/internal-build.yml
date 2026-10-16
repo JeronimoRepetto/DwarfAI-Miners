@@ -13,11 +13,11 @@ name: Internal build
 # The second command downloads every artifact, verifies each file against that artifact's SHA256SUMS and only then
 # deletes the artifacts of the run (it keeps them when a checksum fails).
 #
-# The packaging legs are a careful copy of ci.yml's `release` (Windows, Linux) and `release-mac` (macOS) jobs, minus
-# their `needs: checks` (the dispatched commit is one main already checked) and their publish step. ci.yml stays
-# unchanged until the package job of the architecture (20 §2.1 `package`, ISSUE-268) replaces both. The fuses flip
-# and the packaged-artifact tests P-01..P-09 of 20 §2.1, §2.3 do not exist in the repository yet (ISSUE-269, ISSUE-271
-# and their siblings), so there is nothing of theirs to run here.
+# The packaging legs package the way ci.yml's `package` job does (20 §2.1 `package`, ISSUE-268): `pnpm build`, then
+# `pnpm package`, which builds exactly the 20 §3.2 targets of package.json `build` for the runner's OS, then the
+# packaged-artifact checks (`pnpm test:packaged`), minus that job's `needs: checks` (the dispatched commit is one main
+# already checked). The checks that exist today are P-08; the fuses flip and the other P checks of 20 §2.1, §2.3
+# plug into the same runner from their own issues (ISSUE-269, ISSUE-271 and their siblings).
 #
 # Every installer is unsigned (owner, 2026-10-02): the workflow reads no secret and no Environment. On first launch
 # macOS needs "Open Anyway" in System Settings > Privacy & Security, and Windows shows the SmartScreen warning.
@@ -39,7 +39,7 @@ env:
   ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
 
 jobs:
-  # Copy of ci.yml `release`: electron-builder cannot cross-build, so each OS packages on its own runner.
+  # As ci.yml `package`: electron-builder cannot cross-build, so each OS packages on its own runner.
   package:
     name: Package internal build (${{ matrix.artifact }})
     strategy:
@@ -48,11 +48,9 @@ jobs:
         include:
           - os: windows-latest
             artifact: windows
-            package_script: package
-            installer_suffixes: .exe
+            installer_suffixes: .exe .zip
           - os: ubuntu-latest
             artifact: linux
-            package_script: package:linux
             installer_suffixes: .AppImage .deb
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -102,14 +100,28 @@ jobs:
         if: runner.os == 'Windows'
         run: pnpm build:native --arch x64
 
-      # The package scripts pass `--publish never`, and no token is in this job's environment.
+      - name: Build
+        run: pnpm build
+
+      # P-03's lockfile half (20 §2.3; ISSUE-273): a provider binary, the Agent SDK or a provider CLI package among
+      # the production dependencies, or a production source reading a provider credential store, stops the job
+      # here, before electron-builder starts. Reads files only.
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK
+        run: node scripts/release/lockfile-provider-scan.mjs
+
+      # `pnpm package` passes `--publish never`, package.json `build` names no publish provider, and no token is
+      # in this job's environment. It builds the targets of the runner's OS: the Windows zip and nsis installer,
+      # or the Linux AppImage and deb.
       - name: Package installers
-        run: pnpm ${{ matrix.package_script }}
+        run: pnpm package
 
       # The installed app starts its Host from a versioned copy checked against host-manifest.json in its
       # resources folder (ADR-002 D5); without a matching one the Host never starts. Reads files only.
       - name: Check the Host build manifest of each packed app
         run: node scripts/build/verify-packaged-host-manifest.mjs release
+
+      - name: Run the packaged-artifact checks
+        run: pnpm test:packaged release
 
       - name: Write SHA256SUMS
         run: node scripts/ci/sha256sums.mjs release ${{ matrix.installer_suffixes }}
@@ -120,16 +132,17 @@ jobs:
           name: dwarfai-internal-${{ inputs.label }}-${{ matrix.artifact }}
           path: |
             release/*.exe
+            release/*.zip
             release/*.AppImage
             release/*.deb
             release/SHA256SUMS
           retention-days: 1
           if-no-files-found: error
 
-  # Copy of ci.yml `release-mac`, but UNSIGNED (owner, 2026-10-02): the internal macOS build is neither signed nor
-  # notarized, so this job uses no Environment and reads no secret. On first launch macOS refuses the app; the owner
-  # opens it once through System Settings > Privacy & Security > "Open Anyway".
-  # Kept on macos-15 like release-mac, the image that job is known to package on.
+  # The macOS leg, UNSIGNED (owner, 2026-10-02): the internal macOS build is neither signed nor notarized, so this
+  # job uses no Environment and reads no secret. On first launch macOS refuses the app; the owner opens it once
+  # through System Settings > Privacy & Security > "Open Anyway".
+  # Kept on macos-15 like ci.yml `package`, the image electron-builder 26.15.3 is known to package on.
   package-mac:
     name: Package internal build (macos)
     runs-on: macos-15
@@ -172,19 +185,31 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build
+        run: pnpm build
+
+      # P-03's lockfile half (20 §2.3; ISSUE-273): a provider binary, the Agent SDK or a provider CLI package among
+      # the production dependencies, or a production source reading a provider credential store, stops the job
+      # here, before electron-builder starts. Reads files only.
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK
+        run: node scripts/release/lockfile-provider-scan.mjs
+
       # Signing off, explicitly. `-c.mac.identity=null` is electron-builder's own switch to skip macOS code signing
       # (pnpm appends it to the script's electron-builder command); CSC_IDENTITY_AUTO_DISCOVERY=false stops it from
       # picking any identity out of the runner's keychain. Notarization runs only after a successful signature
       # (electron-builder 26 MacPackager.sign), so it is skipped with it, although package.json keeps `notarize: true`
-      # for the release jobs.
+      # for the signed release build (ISSUE-280).
       - name: Package installers (unsigned)
-        run: pnpm package:mac -c.mac.identity=null
+        run: pnpm package -c.mac.identity=null
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       # As in `package`: each packed .app (mac, mac-arm64) must carry a host-manifest.json that matches it.
       - name: Check the Host build manifest of each packed app
         run: node scripts/build/verify-packaged-host-manifest.mjs release
+
+      - name: Run the packaged-artifact checks
+        run: pnpm test:packaged release
 
       - name: Write SHA256SUMS
         run: node scripts/ci/sha256sums.mjs release .dmg .zip

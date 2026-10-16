@@ -579,3 +579,18 @@ describe('MineColumn closing mid-walk', () => {
     }
   })
 })
+
+/*
+ * C-08 (18 §5.1, ISSUE-251): a mine is named after its folder, which a repository chose. The name
+ * is drawn without its controls and escapes, inside a bidi-isolated text node.
+ */
+describe('MineColumn, an untrusted mine name (C-08)', () => {
+  it('[NFR-SEC-07] draws a hostile folder name stripped and inside a bidi-isolated text node', () => {
+    const hostile = `\u001b[31manvil\u202Eexe.txt\u0000\u001b[0m`
+    const wrapper = mountColumn({ mine: defaultMine({ name: hostile }) })
+    const isolate = wrapper.find('.dm-minecol__name > bdi')
+    expect(isolate.exists(), 'no <bdi> around the mine name').toBe(true)
+    expect(isolate.element.textContent).toBe('anvilexe.txt')
+    expect(wrapper.find('.dm-minecol__name').attributes('title')).toBe('anvilexe.txt')
+  })
+})

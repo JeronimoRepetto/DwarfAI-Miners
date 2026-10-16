@@ -76,7 +76,53 @@ const cut0: FixtureSeed = {
   ]
 }
 
+const T3 = 1_760_000_000_000
+const MINE_3A = '00000000-0000-7000-8000-00000000c3f1'
+const PARENT_3A = '00000000-0000-7000-8000-00000000c3d1'
+const BOUND_LAUNCH = '00000000-0000-7000-8000-00000000c3a1'
+const UNBOUND_LAUNCH = '00000000-0000-7000-8000-00000000c3a2'
+const REVOKED_LAUNCH = '00000000-0000-7000-8000-00000000c3a3'
+
+/**
+ * Cut 3a (schema v2: migration 0002, owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15): one
+ * mine, one foreman dwarf launched with "Let Jev choose", and three delegation tokens: a
+ * `ticket-file` token bound to its dwarf, a `protocol` token still unbound (NULL parent) with its
+ * hash, and a revoked `in-process` token. The hashes are synthetic, never of a real credential.
+ */
+const cut3a: FixtureSeed = {
+  release: 'cut-3a',
+  version: 2,
+  statements: [
+    `INSERT INTO mines (id, canonical_path, name, name_norm, state, created_at, last_used_at)
+     VALUES ('${MINE_3A}', '/work/mine-three', 'mine-three', 'mine-three', 'active', ${T3},
+       ${T3})`,
+    `INSERT INTO dwarfs (id, mine_id, provider_id, provider_session_id, base_name, rank,
+       process_state, turn_state, arrived_at, last_activity_at)
+     VALUES ('${PARENT_3A}', '${MINE_3A}', 'claude', 'session-c3-1', 'Durin', 'foreman',
+       'running', 'none-yet', ${T3 + 2_000}, ${T3 + 2_000})`,
+    ...[BOUND_LAUNCH, UNBOUND_LAUNCH, REVOKED_LAUNCH].map(
+      (launch) =>
+        `INSERT INTO launches (id, mine_id, cwd, way_kind, provider_id,
+           launched_with_let_jev_choose, state, delegated, host_epoch, requested_at)
+         VALUES ('${launch}', '${MINE_3A}', '/work/mine-three', 'supplier', 'claude', 1,
+           'routing', 0, 'epoch-c3', ${T3})`
+    ),
+    `INSERT INTO delegation_tokens (launch_id, parent_dwarf_id, mechanism, credential_hash,
+       issued_at, revoked_at)
+     VALUES ('${BOUND_LAUNCH}', '${PARENT_3A}', 'ticket-file', '${'a'.repeat(64)}', ${T3 + 1_000},
+       NULL)`,
+    `INSERT INTO delegation_tokens (launch_id, parent_dwarf_id, mechanism, credential_hash,
+       issued_at, revoked_at)
+     VALUES ('${UNBOUND_LAUNCH}', NULL, 'protocol', '${'b'.repeat(64)}', ${T3 + 1_500}, NULL)`,
+    `INSERT INTO delegation_tokens (launch_id, parent_dwarf_id, mechanism, credential_hash,
+       issued_at, revoked_at)
+     VALUES ('${REVOKED_LAUNCH}', '${PARENT_3A}', 'in-process', NULL, ${T3 + 1_800},
+       ${T3 + 9_000})`
+  ]
+}
+
 /** Every release's seed, by release name. */
 export const fixtureSeeds: Readonly<Record<string, FixtureSeed>> = {
-  'cut-0': cut0
+  'cut-0': cut0,
+  'cut-3a': cut3a
 }

@@ -34,7 +34,9 @@ function moduleSteps(): ModuleResetSteps {
     observation: step('observation'),
     ledger: step('ledger'),
     conversation: step('conversation'),
-    asking: step('asking')
+    asking: step('asking'),
+    delegation: step('delegation'),
+    launching: step('launching')
   }
 }
 
@@ -54,6 +56,8 @@ describe('resetParticipants', () => {
       clock
     })
 
+    // ISSUE-181 registers the launching step of (4) last, after the mines and crew steps.
+    // ISSUE-208 closes (3) with the delegation step, before any launching step of (4).
     // ISSUE-118 registers the attention step after the preferences step, both of 09 §7.2 (3);
     // ISSUE-121 the module steps around them, in the 09 §7.2 order (amended with ISSUE-121: the
     // list was the two steps cut 1 had before the module steps were registered).
@@ -65,7 +69,9 @@ describe('resetParticipants', () => {
       modules.ledger,
       modules.conversation,
       modules.asking,
-      attention
+      attention,
+      modules.delegation,
+      modules.launching
     ])
     expect(participants.installMoment.name).toBe('ledger-install-moment')
     clock.advance(42)

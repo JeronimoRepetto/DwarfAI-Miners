@@ -473,7 +473,8 @@ export interface BoardFacadeComposition {
  * composables not yet switched to A-N01/A-N02. Composed once the table routes A-12 to the Host (the cut-1 switch,
  * ISSUE-123), as a part of the `host` target; A-P2 reaches the mode windows only while the table routes it to the Host
  * too, so today's runtime and the facade never push the board together (21 §1 item 4). `undefined` in a table that
- * serves A-12 `legacy`. In cuts 1–4 its dwarfs carry today's ask fields from `LegacyAskRelay` (`askFields`, 21 §3).
+ * serves A-12 `legacy`. In cuts 1–4 its dwarfs carry today's board fields from `LegacyAskRelay` (`askFields`, 21 §3):
+ * the open asks, and the text delivery route and capabilities of the rows still `legacy` (A-23, A-26).
  * Deleted at cut 5 after a test proves no consumer (ISSUE-242).
  */
 export function composeBoardFacade(deps: {
@@ -755,7 +756,7 @@ export interface LegacyAskRelayComposition {
   registry: LegacyRuntimeSurface & { registry: LegacyRegistry }
   /** The today wires of the rows the relay is composed on (A-40, A-41). */
   channels: readonly string[]
-  /** Today's ask fields of a Host dwarf, for `BoardFacadeAdapter`. */
+  /** Today's board fields of a Host dwarf (asks, text delivery, capabilities), for `BoardFacadeAdapter`. */
   askFields(dwarfId: DwarfId): LegacyAskFields
   /** The relay's cut-2 answer half, for `LegacyAnswerShapeAdapter` and the A-40/A-41 qualifier (21 §3, §3.1). */
   answers: Pick<LegacyAskRelay, 'asks' | 'answer'>
@@ -769,7 +770,8 @@ export interface LegacyAskRelayComposition {
 /**
  * `LegacyAskRelay` (21 §3, cuts 1–4; 14 §8 I-11), cut-1 half: today's runtime's open asks, read from the registry the
  * feed writes, are shown as ask cards in `legacy:<legacyAskId>` ids on the Host dwarf through `BoardFacadeAdapter`, and
- * an A-40 / A-41 answer to one reaches today's runtime with the legacy ids. A-40 and A-41 keep their `legacy` route
+ * an A-40 / A-41 answer to one reaches today's runtime with the legacy ids. The text delivery route and capabilities
+ * today's runtime resolved travel the same way, so the composer and the kick read the route A-23 / A-26 take. A-40 and A-41 keep their `legacy` route
  * (21 §2 cut 1); the relay is composed in front of the bridged legacy target, in the releases it is listed for (cut 1,
  * its rollback build included, to the end of 4b), never in the cut-0 table, and only over a composed
  * `LegacyDwarfIdBridge` (whose join it uses). No Host command path. Deleted at the end of cut 4 (ISSUE-241).

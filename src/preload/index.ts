@@ -304,6 +304,8 @@ export interface DwarfAiMinersApi {
   answerWelcome: (
     request: TargetRequest<'welcome:answer'>
   ) => Promise<TargetResult<'welcome:answer'>>
+  /** A-N29 · `dwarf:stop` · invoke · NEW · target shape */
+  stopDwarf: (request: TargetRequest<'dwarf:stop'>) => Promise<TargetResult<'dwarf:stop'>>
 }
 
 const api: DwarfAiMinersApi = {
@@ -558,7 +560,8 @@ const api: DwarfAiMinersApi = {
   setClaudeHooksEnabled: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('claude:hooks:set', request)),
   setAskStep: (request) => invokeOrReject(() => ipcRenderer.invoke('ask:step:set', request)),
-  answerWelcome: (request) => invokeOrReject(() => ipcRenderer.invoke('welcome:answer', request))
+  answerWelcome: (request) => invokeOrReject(() => ipcRenderer.invoke('welcome:answer', request)),
+  stopDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:stop', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

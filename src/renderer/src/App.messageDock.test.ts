@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../contracts/ipc/testing/fakeWindowApi'
 import App from './App.vue'
 import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
@@ -190,7 +191,13 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     onUiSessionChanged: vi.fn().mockReturnValue(() => undefined),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api as unknown as Partial<Window['api']>)
+  })
   return api
 }
 

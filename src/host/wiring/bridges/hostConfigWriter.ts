@@ -22,7 +22,12 @@
 // Neither the token nor its hash reaches a log record (NFR-SEC-12, ADR-026).
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
-import type { ExternalConfigWriter, InstalledToolsReader } from '../../modules/preferences'
+import type {
+  ChannelToken,
+  CredentialMinter,
+  ExternalConfigWriter,
+  InstalledToolsReader
+} from '../../modules/preferences'
 import type { IngressPortRecord } from '../../transport/ingress/ingressPort'
 
 export interface HostConfigWriterDeps {
@@ -95,5 +100,40 @@ export function enablableInstalledTools(
   return {
     installed: () =>
       installed.installed().filter((id) => id === 'claude-hooks' && ingressPort.read() !== null)
+  }
+}
+
+/** The engine's 07 S14.10 rewrite as this bridge sees it (ConfigWriterEngine.followIngressPort). */
+export interface IngressPortFollowing {
+  followIngressPort(
+    target: 'claude-hooks',
+    credential: () => { token: ChannelToken; tokenSha256: string }
+  ): Promise<unknown>
+}
+
+export interface ClaudeHookEntryFollowerDeps {
+  engine: IngressPortFollowing
+  /** A cut-2 rollback build (wiring/cut2Rollback.ts `rolledBack`). */
+  rolledBack: boolean
+  /** The transport's token issuance (transport/auth/mintCredential.ts). */
+  mintCredential: CredentialMinter
+}
+
+/**
+ * Boot step 6's 07 S14.10 half (ADR-016 item 3; 16 §7.4): once the hook ingress is bound, the Host's
+ * own Claude hook entry follows the port it is bound on. The engine writes only an `on-verified`
+ * integration's own entry, only when it names another port, under the consent on record, with a
+ * token minted here (lead decision 2026-09-30, ISSUE-198: the transport mints, never the module).
+ * A cut-2 rollback build writes nothing: today's installer is the entry's one writer there (21 §1
+ * item 4; wiring/cut2Rollback.ts), and the entry this Host wrote was removed before that build
+ * started (`--revert-integrations`, docs/strangler/rollback.md).
+ */
+export function claudeHookEntryFollower(deps: ClaudeHookEntryFollowerDeps): () => Promise<void> {
+  if (deps.rolledBack) return () => Promise.resolve()
+  return async () => {
+    await deps.engine.followIngressPort('claude-hooks', () => {
+      const credential = deps.mintCredential()
+      return { token: credential.value as ChannelToken, tokenSha256: credential.sha256 }
+    })
   }
 }

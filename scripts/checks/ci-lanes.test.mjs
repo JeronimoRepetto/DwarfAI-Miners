@@ -235,10 +235,24 @@ describe('internal cut build workflow (20 §2.1, §3.2; OQ-66)', () => {
       .map((job) => job.steps.join('\n'))
       .join('\n')
     expect(code).toMatch(/if: runner\.os == 'Windows'\n\s+run: pnpm build:native --arch x64\n/)
-    expect(internalCode).toContain('package_script: package\n')
-    expect(internalCode).toContain('package_script: package:linux\n')
+    // AMENDED for ISSUE-268: one `pnpm package` builds the 20 §3.2 targets of the runner's OS from package.json
+    // `build`, after its own `pnpm build`, and the packaged-artifact checks run on what it wrote, as in ci.yml
+    // `package`; the per-OS scripts `package:linux` and `package:mac` are gone.
+    for (const { id, steps } of internalJobs()) {
+      const step = (command) => steps.findIndex((s) => s.includes(`run: ${command}`))
+      expect(step('pnpm build\n'), `the ${id} job builds`).toBeGreaterThanOrEqual(0)
+      expect(step('pnpm build\n'), `the ${id} job builds before it packages`).toBeLessThan(
+        step('pnpm package')
+      )
+      expect(
+        step('pnpm test:packaged release\n'),
+        `the ${id} job runs the P checks`
+      ).toBeGreaterThan(step('pnpm package'))
+    }
+    expect(internalCode).not.toContain('package_script:')
+    expect(code).toMatch(/\n {8}run: pnpm package\n/)
     // AMENDED (owner, 2026-10-02): the internal macOS build is unsigned, so the script runs with signing off.
-    expect(code).toContain('run: pnpm package:mac -c.mac.identity=null\n')
+    expect(code).toContain('run: pnpm package -c.mac.identity=null\n')
     expect(code).toContain('run: pnpm install --frozen-lockfile\n')
     const uses = [...internalCode.matchAll(/uses: (\S+)/g)].map((m) => m[1])
     expect(uses.length).toBeGreaterThan(0)
@@ -265,6 +279,10 @@ describe('internal cut build workflow (20 §2.1, §3.2; OQ-66)', () => {
     ])
     expect(internalCode).toContain('artifact: windows\n')
     expect(internalCode).toContain('artifact: linux\n')
+    // AMENDED for ISSUE-268: Windows builds the zip and the nsis installer of 20 §3.2 (no portable any more), so the
+    // Windows leg checksums and uploads both.
+    expect(internalCode).toContain('installer_suffixes: .exe .zip\n')
+    expect(internalCode).toMatch(/ {12}release\/\*\.exe\n {12}release\/\*\.zip\n/)
     expect([...internalCode.matchAll(/retention-days: (\S+)/g)].map((m) => m[1])).toEqual([
       '1',
       '1'
@@ -281,12 +299,134 @@ describe('internal cut build workflow (20 §2.1, §3.2; OQ-66)', () => {
   it('[ADR-027] packages the macOS dmg and zip unsigned, so nothing is signed or notarized', () => {
     const mac = internalJobs().find((job) => job.id === 'package-mac')
     expect(mac, 'the workflow has a package-mac job').toBeDefined()
-    const step = mac.steps.find((s) => s.includes('run: pnpm package:mac'))
+    // AMENDED for ISSUE-268: the one `pnpm package` script replaced `package:mac`.
+    const step = mac.steps.find((s) => s.includes('run: pnpm package'))
     expect(step, 'the package-mac job packages macOS').toBeDefined()
     // identity null skips code signing (electron-builder's own CLI switch), and notarization runs only after a signature.
-    expect(step).toContain('run: pnpm package:mac -c.mac.identity=null\n')
+    expect(step).toContain('run: pnpm package -c.mac.identity=null\n')
     expect(step).toMatch(/\n {8}env:\n(?: {10}.*\n)* {10}CSC_IDENTITY_AUTO_DISCOVERY: 'false'\n/)
     const upload = mac.steps.find((s) => s.includes('uses: actions/upload-artifact@'))
     expect(upload).toMatch(/ {12}release\/\*\.dmg\n {12}release\/\*\.zip\n/)
+  })
+})
+
+// ADDED for ISSUE-268: the `package` job of `20` §2.1 replaces the `release` and `release-mac` jobs. It runs on `v*`
+// tags and on a manual dispatch, one runner per OS (no cross-building), builds, packages the `20` §3.2 targets, runs
+// the packaged-artifact checks and uploads the artifacts with their SHA256SUMS as workflow artifacts. It publishes
+// nothing: the release job with its GitHub Release is ISSUE-278's, and macOS signing is ISSUE-280's, so until then a
+// `v*` tag publishes nothing and no step reads a signing secret.
+describe('package job in CI (20 §2.1, §3.2; 18 C-33, C-34)', () => {
+  /** The job's text without comment lines, so prose never satisfies or trips an assertion. */
+  const packageCode = () =>
+    jobText('package')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n')
+
+  it('[ADR-027] runs on v* tags and a manual dispatch, one runner per OS, and never on a pull request', () => {
+    expect(triggers).toMatch(/\n {2}workflow_dispatch:\n/)
+    const job = packageCode()
+    const condition = jobCondition(job)
+    expect(condition).toContain(RELEASE_TAG)
+    expect(condition).toContain("github.event_name == 'workflow_dispatch'")
+    expect(condition, 'never on a pull request').not.toContain('pull_request')
+    expect(job).toContain('fail-fast: false')
+    expect([...job.matchAll(/\n {10}- os: (\S+)\n/g)].map((m) => m[1])).toEqual([
+      'windows-latest',
+      'macos-15',
+      'ubuntu-latest'
+    ])
+    expect(job).toContain('runs-on: ${{ matrix.os }}')
+    expect(job).not.toContain(REQUIRED_CHECK)
+  })
+
+  it('[ADR-027] builds, packages, checks the packed Host manifest, runs the P checks, then writes SHA256SUMS', () => {
+    const job = packageCode()
+    const order = [
+      'run: pnpm install --frozen-lockfile\n',
+      'run: pnpm build\n',
+      'run: pnpm package ${{ matrix.package_args }}\n',
+      'run: node scripts/build/verify-packaged-host-manifest.mjs release\n',
+      'run: pnpm test:packaged release\n',
+      'run: node scripts/ci/sha256sums.mjs release ${{ matrix.installer_suffixes }}\n',
+      'uses: actions/upload-artifact@'
+    ].map((step) => job.indexOf(step))
+    for (const at of order) expect(at).toBeGreaterThanOrEqual(0)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(job).toMatch(/if: runner\.os == 'Windows'\n\s+run: pnpm build:native --arch x64\n/)
+    // macOS packages unsigned until ISSUE-280: signing off, and no identity picked out of the keychain.
+    expect(job).toContain("package_args: '-c.mac.identity=null'\n")
+    expect(job).toMatch(/\n {10}CSC_IDENTITY_AUTO_DISCOVERY: 'false'\n/)
+  })
+
+  it('[ADR-027] has contents: read, pins every action by commit SHA, installs frozen and reads no secret', () => {
+    const job = packageCode()
+    expect(job).toMatch(/\n {4}permissions:\n {6}contents: read\n/)
+    expect(job).not.toMatch(/: write\b/)
+    const uses = [...job.matchAll(/uses: (\S+)/g)].map((m) => m[1])
+    expect(uses.length).toBeGreaterThan(0)
+    for (const action of uses) expect(action, 'pinned by commit SHA').toMatch(/@[0-9a-f]{40}$/)
+    expect(job).toContain('run: pnpm install --frozen-lockfile\n')
+    expect(job).not.toMatch(/\bsecrets\./)
+    expect(job).not.toMatch(/\n {4}environment:/)
+    for (const name of SIGNING_SECRETS) expect(job).not.toContain(name)
+  })
+
+  it('[ADR-027] publishes nothing: no release job, no release action and workflow artifacts kept one day', () => {
+    for (const id of ['release', 'release-mac']) {
+      expect(workflow, `ci.yml has no "${id}" job`).not.toContain(`\n  ${id}:\n`)
+    }
+    expect(workflow).not.toMatch(/softprops|action-gh-release|gh release/i)
+    const job = packageCode()
+    expect(job).not.toMatch(/GH_TOKEN|GITHUB_TOKEN/)
+    expect(job).toMatch(
+      / {12}release\/\*\.exe\n {12}release\/\*\.zip\n {12}release\/\*\.dmg\n {12}release\/\*\.AppImage\n {12}release\/\*\.deb\n {12}release\/SHA256SUMS\n/
+    )
+    expect(job).toContain('retention-days: 1\n')
+    expect(job).toContain('if-no-files-found: error\n')
+  })
+})
+
+// ADDED for ISSUE-273: P-03's lockfile half (`20` §2.3; TC-273-02). Every job that packages scans the lockfile's
+// production dependencies and the production sources for provider binaries, the Agent SDK and credential stores in
+// the step right before it packages, so a listed package stops the job before electron-builder starts.
+describe('provider scan before packaging (20 P-03; ISSUE-273)', () => {
+  const SCAN_STEP =
+    'name: Scan the lockfile and sources for provider binaries and the Agent SDK\n' +
+    '        run: node scripts/release/lockfile-provider-scan.mjs\n'
+
+  /** The steps of a job's text, comment lines dropped, each from its `- ` to the next step. */
+  const stepsOf = (text) => {
+    const code = text
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n')
+    return code
+      .slice(code.indexOf('\n    steps:\n'))
+      .split(/\n {6}- /)
+      .slice(1)
+      .map((step) => `${step}\n`)
+  }
+
+  it('[ADR-008] every packaging job runs the lockfile provider scan in the step right before it packages', () => {
+    const jobs = [
+      { id: 'ci.yml package', steps: stepsOf(jobText('package')) },
+      ...internalJobs()
+        .filter(({ steps }) => steps.some((step) => step.includes('run: pnpm package')))
+        .map(({ id, steps }) => ({
+          id: `internal-build.yml ${id}`,
+          steps: steps.map((s) => `${s}\n`)
+        }))
+    ]
+    expect(jobs.map(({ id }) => id)).toEqual([
+      'ci.yml package',
+      'internal-build.yml package',
+      'internal-build.yml package-mac'
+    ])
+    for (const { id, steps } of jobs) {
+      const packageAt = steps.findIndex((step) => step.includes('run: pnpm package'))
+      expect(packageAt, `${id} packages`).toBeGreaterThan(0)
+      expect(steps[packageAt - 1], `${id} scans right before it packages`).toContain(SCAN_STEP)
+    }
   })
 })

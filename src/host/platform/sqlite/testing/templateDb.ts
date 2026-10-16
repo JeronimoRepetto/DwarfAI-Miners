@@ -43,6 +43,26 @@ export function copyTemplateDb(): string {
   return copyInto(dir)
 }
 
+/**
+ * Close a copy's writer and remove its directory. The copy is deleted next, so its checkpoint at
+ * close needs no disk flush: `synchronous = OFF` spares the FlushFileBuffers that stalled this
+ * synchronous hook past vitest's 10 s hook timeout on loaded Windows runners. A copy the test
+ * already closed makes the pragma throw (node:sqlite has no public open check through the port),
+ * so it is not closed a second time.
+ */
+export function disposeTemplateCopy(db: SqliteDatabase | null, dir: string): void {
+  if (db !== null) {
+    let open = true
+    try {
+      db.exec('PRAGMA synchronous = OFF')
+    } catch {
+      open = false
+    }
+    if (open) db.close()
+  }
+  rmSync(dir, { recursive: true, force: true })
+}
+
 /** Copy the template and open the Host's writer on it; both are cleaned up when the test ends. */
 export function openTemplateCopy(options: NodeSqliteOptions = {}): TemplateCopy {
   const dir = mkdtempSync(join(tmpdir(), 'dwarfai-db-'))
@@ -50,8 +70,7 @@ export function openTemplateCopy(options: NodeSqliteOptions = {}): TemplateCopy 
   // One hook, so the connection is closed before its directory is removed (Windows keeps an open
   // file from being deleted).
   onTestFinished(() => {
-    db?.close()
-    rmSync(dir, { recursive: true, force: true })
+    disposeTemplateCopy(db, dir)
   })
   const path = copyInto(dir)
   db = NodeSqliteDatabase.open(path, options)

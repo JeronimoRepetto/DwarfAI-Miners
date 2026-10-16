@@ -576,7 +576,9 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       // AMENDED for ISSUE-129: A-N07 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
       'ask:step:set': 'cut-2',
       // AMENDED for ISSUE-223: A-N32 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
-      'welcome:answer': 'cut-2'
+      'welcome:answer': 'cut-2',
+      // AMENDED for ISSUE-171: A-N29 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
+      'dwarf:stop': 'cut-3a'
     })
   })
 
@@ -1754,11 +1756,13 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     // AMENDED for ISSUE-221 (was: A-N33 only): A-N31, born `host` in cut 2, waits for the cut-2 switch (ISSUE-141).
     // AMENDED for ISSUE-129: A-N07, born `host` in cut 2, waits for the same switch.
     // AMENDED for ISSUE-223: A-N32, born `host` in cut 2, waits for the same switch.
+    // AMENDED for ISSUE-171: A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
     expect(CUT_1_UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
       'claude:hooks:set': 'cut-2',
       'ask:step:set': 'cut-2',
-      'welcome:answer': 'cut-2'
+      'welcome:answer': 'cut-2',
+      'dwarf:stop': 'cut-3a'
     })
     // A-44 on its 14 wire feeds UI main's PresenceTracker, which tells the Host (B-M07) once the report settled.
     const host = recordingHost()
@@ -2416,7 +2420,11 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       ])
     }
     // Only A-N33 is still unrouted (AMENDMENT-11): the cut-2 entries are routed by this switch (ISSUE-043 rule).
-    expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
+    // AMENDED for ISSUE-171 (was: A-N33 only): A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
+    expect(UNROUTED).toEqual({
+      'host:connection:confirm-restart': 'generation-2',
+      'dwarf:stop': 'cut-3a'
+    })
     // The root composes their `host` handlers, each relaying its one seam-B member.
     const sent: Array<[string, unknown]> = []
     const replies: Record<string, unknown> = {
@@ -2607,3 +2615,34 @@ describe('release cut 2 (21 §2 cut 2)', () => {
 
 /** Today's registry write, as `LegacyAskRelay`'s composition is handed it. */
 type LegacyRegistryReplace = LegacyAskRelayComposition['registry']['registry']['replace']
+
+// TC-178-03 (21 §2 step 3a, §3 row `LegacyEndFirstAdapter`; 14 §5): A-N29 is a `host` row born in 3a, and in every 3a
+// release the relay that ends a legacy-launched session first (the adapter's `beforeStopDwarf`, ISSUE-178) lives
+// beside it. The route row and the root's composition of the adapter on it are the step-3a switch's (later: ISSUE-001),
+// which shares this case.
+describe('step 3a A-N29 (21 §2 step 3a)', () => {
+  it('[ADR-001] in 3a A-N29 composes LegacyEndFirstAdapter for legacy-launched sessions', () => {
+    const STOP_DWARF: ChannelKey = 'dwarf:stop'
+    expect(CHANNELS[STOP_DWARF].status).toBe('new')
+    expect(CHANNELS[STOP_DWARF].placement).toBe('host')
+    // Unrouted until the step-3a switch routes it.
+    expect(UNROUTED[STOP_DWARF]).toBe('cut-3a')
+
+    // A 3a table routing A-N29 `host` passes the router test, and lists LegacyEndFirstAdapter as living in it.
+    const cut3a: RouteTable = { ...routedBase, release: 'cut-3a' }
+    expect(cut3a.routes.filter((r) => r.channel === STOP_DWARF)).toEqual([
+      { channel: STOP_DWARF, owner: 'host', since: 'cut-3a', parity: 'passed', shape: 'target' }
+    ])
+    expect(reasons(cut3a).filter((reason) => reason.endsWith(STOP_DWARF))).toEqual([])
+    const endFirst = cut3a.adapters.find((a) => a.name === 'LegacyEndFirstAdapter')
+    expect(endFirst?.cuts).toContain('cut-3a')
+    expect(endFirst?.shapeAdapter).toBe(false)
+    // It lives with A-N29 through every step of cut 3 and of cut 4, and is gone in cut 5 with LegacyDwarfIdBridge.
+    for (const step of ['cut-3a', 'cut-3b', 'cut-3d', 'cut-3e', 'cut-4a', 'cut-4b'] as const)
+      expect(endFirst?.cuts, step).toContain(step)
+    expect(endFirst?.cuts).not.toContain('cut-5')
+    expect(endFirst?.cuts.at(-1)).toBe(
+      LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyDwarfIdBridge')?.cuts.at(-1)
+    )
+  })
+})

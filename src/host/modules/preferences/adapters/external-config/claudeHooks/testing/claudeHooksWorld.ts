@@ -45,7 +45,7 @@ export async function claudeHooksWorld(
   storage: FileSystemSubject,
   db: SqliteDatabase,
   platform: NodeJS.Platform = 'linux',
-  options: { keepOldAppEntries?: boolean } = {}
+  options: { keepOldAppEntries?: boolean; ingressPort?: () => number } = {}
 ) {
   const fs = new ScriptedToolFs(storage.fs)
   const dir = storage.pathOf('.claude')

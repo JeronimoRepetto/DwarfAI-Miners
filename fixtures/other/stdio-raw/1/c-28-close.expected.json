@@ -1,0 +1,29 @@
+{
+  "case": "C-28",
+  "description": "A stdio-raw program has no protocol close: every close mode answers failed unsupported (kill only), the driver writes nothing and signals no process; ADR-014's tree kill ends it.",
+  "script": [
+    { "do": "launch", "readyAfterMs": 3000 },
+    { "do": "close", "mode": "end-thread" },
+    { "do": "close", "mode": "detach" },
+    { "do": "close", "mode": "end-thread" }
+  ],
+  "outcomes": [
+    { "resolved": true },
+    { "kind": "failed", "reason": "unsupported" },
+    { "kind": "failed", "reason": "unsupported" },
+    { "kind": "failed", "reason": "unsupported" }
+  ],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "other:other:{session}:stdout@0",
+        "role": "dwarf",
+        "text": "Agent ready. Reading the prompt.",
+        "providerTime": null
+      }
+    }
+  ],
+  "sent": ["first prompt"]
+}

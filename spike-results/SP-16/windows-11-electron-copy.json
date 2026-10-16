@@ -1,0 +1,52 @@
+{
+  "tool": "sp16",
+  "date": "2026-10-16",
+  "runtime": "electron",
+  "electronRunAsNode": true,
+  "versions": {
+    "node": "24.18.1",
+    "electron": "44.0.0",
+    "napi": "10",
+    "modules": "149"
+  },
+  "platform": "win32",
+  "arch": "x64",
+  "osRelease": "10.0.26200",
+  "loadedFrom": "dwarfai-sp16-copy",
+  "packages": {
+    "library": {
+      "name": "@napi-rs/keyring",
+      "version": "2.1.0",
+      "license": "MIT",
+      "licenseFileFirstLine": "MIT License",
+      "nodeFiles": []
+    },
+    "binding": {
+      "name": "@napi-rs/keyring-win32-x64-msvc",
+      "version": "2.1.0",
+      "license": "MIT",
+      "licenseFileFirstLine": null,
+      "nodeFiles": ["keyring.win32-x64-msvc.node"]
+    }
+  },
+  "checks": {
+    "load": "ok",
+    "set": "ok",
+    "readBackEqual": true,
+    "findCredentialsListsIt": true,
+    "credentialManagerListsTarget": true,
+    "unicodeRoundTrip": true,
+    "length256": true,
+    "length1000": true,
+    "length1280": true,
+    "length1300": "error: GenericFailure: Value of 'password encoded as UTF-16' is longer than the platform limit of 2560 chars",
+    "length2560": "error: GenericFailure: Value of 'password encoded as UTF-16' is longer than the platform limit of 2560 chars",
+    "asyncRoundTrip": true,
+    "deleteReturnsTrue": true,
+    "readAfterDeleteIsNull": true,
+    "secondDeleteReturnsFalse": true,
+    "findCredentialsAfterDelete": false,
+    "credentialManagerListsTargetAfterDelete": false,
+    "leftoverEntries": 0
+  }
+}

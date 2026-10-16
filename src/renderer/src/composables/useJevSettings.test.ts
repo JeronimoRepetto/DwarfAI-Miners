@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { reactive } from 'vue'
 import { DEFAULT_JEV_SETTINGS, type JevPreferences, type JevSettings } from '../types'
 import { useJevSettings } from './useJevSettings'
@@ -26,7 +27,11 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     setJevPreferences: vi.fn(async () => ({ configured: true })),
     ...overrides
   }
-  ;(globalThis as { window?: unknown }).window = { api }
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  ;(globalThis as { window?: unknown }).window = {
+    api: createFakeWindowApi(api as unknown as Partial<Window['api']>)
+  }
   return api
 }
 

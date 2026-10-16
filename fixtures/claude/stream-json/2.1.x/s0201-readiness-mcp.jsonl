@@ -1,0 +1,4 @@
+{"at":1735689600727,"event":"rpc","method":"server/discover"}
+{"at":1735689600731,"event":"rpc","method":"initialize"}
+{"at":1735689600732,"event":"rpc","method":"notifications/initialized"}
+{"at":1735689600735,"event":"rpc","method":"tools/list"}

@@ -4,12 +4,15 @@ import { COPY_DIR, DESIGN_ENV, REQUIRED_FILES } from './design.mjs'
 import {
   COPY_INCLUDE,
   SCOPE_MANIFEST,
+  STAMP_FILE,
   checkTarget,
   findCopySource,
   isExcluded,
   mainWorktree,
-  planCopy
+  planCopy,
+  stampText
 } from './design-copy.mjs'
+import { designCommit } from './run.mjs'
 
 /*
  * `pnpm golden:design` gives a worktree its own real copy of the design repository. Only the pure
@@ -203,5 +206,38 @@ describe('checkTarget', () => {
 
   it('refuses a target inside the source', () => {
     expect(checkTarget({ source: WORKTREE, target, targetKind: 'missing' })).toMatch(/inside/)
+  })
+})
+
+// APPENDED for ISSUE-250: a copy has no .git, so the runner stamps it with the source's commit,
+// which `pnpm test:golden` checks against design-pin.json (ADR-034).
+describe('the commit stamp', () => {
+  const COMMIT = 'd12d3fc700e995fae6c2d81b99b981cb15432225'
+
+  it('[ADR-034] stamps the copy with the commit the golden run reads back', () => {
+    const copy = path.join(WORKTREE, COPY_DIR)
+    const files = { [path.join(copy, STAMP_FILE)]: stampText(COMMIT + '\n') }
+    const readFile = (p) => {
+      if (p in files) return files[p]
+      throw new Error('ENOENT ' + p)
+    }
+    const git = () => {
+      throw new Error('a copy is never asked through git')
+    }
+    expect(designCommit({ kind: 'found', root: copy, source: 'copy' }, { git, readFile })).toBe(
+      COMMIT
+    )
+  })
+
+  it('[ADR-034] refuses to stamp anything but a full commit id', () => {
+    expect(() => stampText('')).toThrow(/commit/)
+    expect(() => stampText('d12d3fc')).toThrow(/commit/)
+  })
+
+  it('[ADR-034] keeps the stamp apart from the copied files and the scope manifest', () => {
+    expect(STAMP_FILE).not.toBe('package.json')
+    expect(COPY_INCLUDE.some((inc) => STAMP_FILE === inc || STAMP_FILE.startsWith(inc + '/'))).toBe(
+      false
+    )
   })
 })

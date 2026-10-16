@@ -1,0 +1,14 @@
+{"at":1735689600276,"event":"spawned","step":0,"kind":"launch"}
+{"at":1735689600660,"stream":"received","bytes":253}
+{"at":1735689600661,"stream":"received","bytes":506}
+{"at":1735689600736,"stream":"received","bytes":448}
+{"at":1735689600818,"stream":"received","bytes":324}
+{"at":1735689602723,"stream":"received","bytes":323}
+{"at":1735689608316,"stream":"sent","bytes":204}
+{"at":1735689610447,"stream":"received","bytes":4434}
+{"at":1735689613521,"stream":"received","bytes":792}
+{"at":1735689613536,"stream":"received","bytes":439}
+{"at":1735689615599,"stream":"received","bytes":239}
+{"at":1735689615601,"stream":"received","bytes":1796}
+{"at":1735689617218,"event":"stdin-closed","step":0}
+{"at":1735689619763,"event":"exit","step":0,"code":0,"signal":null}

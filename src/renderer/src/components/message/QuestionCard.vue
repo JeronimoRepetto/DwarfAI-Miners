@@ -68,6 +68,7 @@ import {
   writeOtherAt,
   type OtherTexts
 } from '../../lib/question/questionCard'
+import { untrustedText } from '../../lib/text/untrustedText'
 import { MAX_DWARF_TEXT_CHARS } from '../../types'
 
 const props = withDefaults(
@@ -274,13 +275,22 @@ function dotClass(dot: string): string | undefined {
 <template>
   <section ref="root" class="dm-qcard" :aria-label="askingName(name)" @keydown="onKeydown">
     <!-- The agent's own short title for the step, when it wrote one (#125); the design has none. -->
-    <p v-if="step.header" class="dm-qcard__header">{{ step.header }}</p>
+    <p v-if="step.header" class="dm-qcard__header">
+      <bdi>{{ untrustedText(step.header) }}</bdi>
+    </p>
     <div class="dm-qcard__head">
       <StatePill text="asks" tone="needs" ask :mark="askMark(permission)" />
-      <pre v-if="permission" class="dm-qcard__req" tabindex="0" :aria-label="REQUEST_REGION_NAME">{{
-        step.question
-      }}</pre>
-      <p v-else class="dm-qcard__q">{{ step.question }}</p>
+      <pre
+        v-if="permission"
+        class="dm-qcard__req"
+        tabindex="0"
+        :aria-label="REQUEST_REGION_NAME"
+      ><bdi>{{
+        untrustedText(step.question)
+      }}</bdi></pre>
+      <p v-else class="dm-qcard__q">
+        <bdi>{{ untrustedText(step.question) }}</bdi>
+      </p>
       <StatePill class="dm-qcard__step" :text="questionStepLine(index, count)" />
     </div>
     <div :key="`${id}:${index}`" class="dm-qcard__body">

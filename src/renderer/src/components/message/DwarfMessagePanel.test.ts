@@ -47,6 +47,10 @@ import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
 import { useMines } from '../../composables/useMines'
 import { useToasts } from '../../composables/useToasts'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
+/* --- ISSUE-252 imports, appended --- */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+/* --- end of the ISSUE-252 imports --- */
 import MenuButton from '../overlay/MenuButton.vue'
 import DialogCard from '../overlay/DialogCard.vue'
 import ModalDialog from '../overlay/ModalDialog.vue'
@@ -2408,7 +2412,11 @@ function fakeApi(picks: DwarfAttachmentPick[][] = [], chosen: string[] = []) {
     chooseDwarfAttachments: vi.fn().mockResolvedValue(chosen),
     describeDwarfAttachments
   }
-  ;(window as unknown as { api: unknown }).api = api
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
+    api as unknown as Partial<Window['api']>
+  )
   return api
 }
 
@@ -3428,7 +3436,11 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
       setDwarfName: vi.fn().mockResolvedValue(answer),
       resetDwarfName: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
     }
-    ;(window as unknown as { api: unknown }).api = api
+    // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+    // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+    ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
+      api as unknown as Partial<Window['api']>
+    )
     return api
   }
 
@@ -3972,8 +3984,9 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ id: DWARF, textDelivery: 'terminal' }) })
     await flushPromises()
     expect(wrapper.find('.dm-qcard').exists()).toBe(true)
-    // Earlier cases of this file leave their own toasts; the close must add none.
-    const toastsBefore = [...useToasts().toasts.value]
+    // Earlier cases of this file leave their own toasts, and each leaves by its own clock (2.6s), so the
+    // list may shrink while this case runs: the close must only never ADD one.
+    const idsBefore = new Set(useToasts().toasts.value.map((t) => t.id))
 
     push?.([
       {
@@ -3988,7 +4001,7 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
 
     expect(wrapper.find('.dm-qcard').exists()).toBe(false)
     expect(wrapper.find('.dm-composer').exists()).toBe(true)
-    expect(useToasts().toasts.value).toEqual(toastsBefore)
+    expect(useToasts().toasts.value.filter((t) => !idsBefore.has(t.id))).toEqual([])
   })
 
   it("[ADR-033] with no Host ask, today's legacy asks draw exactly as before, by their own ids, a permission first", async () => {
@@ -4032,8 +4045,63 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
 })
 /* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
 
+/* --- The panel's IPC through composables (ISSUE-252) — one block, appended ---------------------------------- */
+describe('DwarfMessagePanel IPC through composables (ISSUE-252)', () => {
+  // ADR-033 item 2; 05 §5.1 R13: the picker, the drop helper and the description go through useAttachments, and the
+  // rename calls through useDwarfRename. The attach cases above prove the chips and refusals did not move (TC-252-02).
+  it('[R13, ADR-033] the MessagePanel attaches, drops and describes files through useAttachments and references no window.api', () => {
+    const source = readFileSync(join(import.meta.dirname, 'DwarfMessagePanel.vue'), 'utf8')
+    expect(source).toContain("from '../../composables/useAttachments'")
+    expect(source.match(/window\.api/g) ?? []).toEqual([])
+  })
+})
+/* --- end of the ISSUE-252 block ------------------------------------------------------------------------------- */
+
 describe('DwarfMessagePanel test teardown (#635)', () => {
   it('finds nothing an earlier test mounted still in the document', () => {
     expect(document.body.childNodes.length).toBe(0)
+  })
+})
+
+/*
+ * C-08 (18 §5.1, ISSUE-251): a custom name and an attachment's file name are text somebody else
+ * chose. Each is drawn without its controls and escapes, inside a bidi-isolated text node.
+ */
+describe('DwarfMessagePanel untrusted strings (C-08)', () => {
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('[NFR-SEC-07] draws a hostile custom name stripped and inside a bidi-isolated text node', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'terminal',
+        customName: `\u001b[31mGrimli\u202Eexe.txt\u0000\u001b[0m`
+      })
+    })
+    const isolate = wrapper.find('.dm-msg__title > bdi, .dm-msg__rename > bdi')
+    expect(isolate.exists(), 'no <bdi> around the custom name').toBe(true)
+    expect(isolate.element.textContent).toBe('Grimliexe.txt')
+  })
+
+  it('[NFR-SEC-07] draws a sent attachment with a hostile file name stripped and inside a bidi-isolated text node', () => {
+    fakeApi()
+    const echo: MessageEcho = {
+      id: 'echo-1',
+      text: 'look at this',
+      sentAt: 1,
+      state: { phase: 'delivered' }
+    }
+    const wrapper = attachPanel({
+      echoes: [echo],
+      echoAttachments: {
+        'echo-1': [{ ...SHOT, name: `\u001b[31mred\u202Eexe.txt\u0000\u001b[0m` }]
+      }
+    })
+    const chip = wrapper.find('.dm-msg__files .dm-composer__file')
+    const isolate = chip.find('span > bdi')
+    expect(isolate.exists(), 'no <bdi> around the file name').toBe(true)
+    expect(isolate.element.textContent).toBe('redexe.txt')
+    expect(chip.attributes('title')).toBe('redexe.txt')
   })
 })

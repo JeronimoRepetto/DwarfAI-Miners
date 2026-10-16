@@ -213,6 +213,81 @@ describe('scrub rules (17 §1.4)', () => {
     expect(twice).toEqual(once)
   })
 
+  it('[ADR-008] a thinking block signature is replaced whole, so a base64 run after a + is neither a path nor a survivor', () => {
+    // Synthetic, real-shaped: standard base64 of 660 made-up bytes, every 25th 4-character group
+    // swapped for one holding `+/` (any 4 characters of the alphabet are a valid group).
+    const signature = Buffer.from(Array.from({ length: 660 }, (_, i) => (i * 167 + 29) & 255))
+      .toString('base64')
+      .match(/.{4}/g)
+      .map((group, i) => (i % 25 === 3 ? 'Kx+/' : group))
+      .join('')
+    expect(signature).toMatch(/\+\/[A-Za-z0-9+/]/)
+    const raw = jsonl('thinking-turn.jsonl', [
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'thinking', thinking: 'Plan: write /opt/canary/marker.txt', signature }]
+        }
+      }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [record] = records(scrubbed)
+
+    expect(record.message.content[0]).toEqual({
+      type: 'thinking',
+      thinking: 'Plan: write <PATH>',
+      signature: '<SIGNATURE>'
+    })
+    expect(findSurvivors(scrubbed.text, IDENTITY)).toEqual([])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] an absolute path right after a + outside a signature is still replaced and still a survivor', () => {
+    const raw = jsonl('simple-turn.jsonl', [
+      { type: 'system', args: 'node +/opt/canary/bin/tool and +C:\\canary\\tool.exe' }
+    ])
+
+    const [record] = records(scrubFixtureSet([raw], IDENTITY)[0])
+
+    expect(record.args).toBe('node +<PATH> and +<PATH>')
+    expect(findSurvivors('flags +/opt/canary/bin/tool', IDENTITY)).toEqual([
+      { rule: 'path', line: 1 }
+    ])
+  })
+
+  it('[ADR-008] the environment lists of a Claude system/init line become numbered placeholders of the same shape', () => {
+    const raw = jsonl('simple-turn.jsonl', [
+      {
+        type: 'system',
+        subtype: 'init',
+        tools: ['Read', 'Write'],
+        slash_commands: ['canary-review', 'canary-deploy'],
+        terminal_slash_commands: ['canary-color'],
+        agents: ['canary-agent'],
+        skills: ['canary-skill-a', 'canary-skill-b', 'canary-skill-c'],
+        plugins: [{ name: 'canary-plugin', path: 'builtin', source: 'canary-plugin@builtin' }]
+      },
+      { type: 'system', subtype: 'status', skills: ['canary-skill-a'] }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [init, other] = records(scrubbed)
+
+    expect(init).toEqual({
+      type: 'system',
+      subtype: 'init',
+      tools: ['Read', 'Write'],
+      slash_commands: ['<slash-command-1>', '<slash-command-2>'],
+      terminal_slash_commands: ['<terminal-slash-command-1>'],
+      agents: ['<agent-1>'],
+      skills: ['<skill-1>', '<skill-2>', '<skill-3>'],
+      plugins: [{ name: '<plugin-1>', path: '<plugin-1>', source: '<plugin-1>' }]
+    })
+    expect(other.skills).toEqual(['canary-skill-a'])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
   it('[ADR-008, ADR-026] the survivor check names each personal value or secret left in a text, and nothing in a scrubbed one', () => {
     const leaky = [
       '{"cwd":"C:\\\\Users\\\\canary.user\\\\work"}',

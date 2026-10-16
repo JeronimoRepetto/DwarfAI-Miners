@@ -1,3 +1,4 @@
+import type { DwarfNameRequest, DwarfNameResult } from '../types'
 import { useMines } from './useMines'
 
 /*
@@ -11,6 +12,9 @@ import { useMines } from './useMines'
  *
  * The Host board is the renderer's own read model (useMines, A-N01 / A-N02); its published `state.mines` is read so a
  * caller's computed follows every board change. ISSUE-001 deletes this gate with the rows it switches.
+ *
+ * The panel's two rename calls live here too (ADR-033 item 2; 05 §5.1 R13: `window.api` only in composables), passing
+ * the today shapes of `dwarf:setName` / `dwarf:resetName` through unchanged.
  */
 export function useDwarfRename() {
   const mines = useMines()
@@ -18,6 +22,14 @@ export function useDwarfRename() {
     canRename(dwarfId: string): boolean {
       void mines.state.mines
       return !mines.hostDwarfs().some((dwarf) => dwarf.id === dwarfId)
+    },
+    /** Save a custom name (I-21 `dwarf:setName`); main answers whether it was kept, and why not. */
+    setName(request: DwarfNameRequest): Promise<DwarfNameResult> {
+      return window.api.setDwarfName(request)
+    },
+    /** Back to the base name (I-21 `dwarf:resetName`), with the same verdict. */
+    resetName(dwarfId: string): Promise<DwarfNameResult> {
+      return window.api.resetDwarfName(dwarfId)
     }
   }
 }

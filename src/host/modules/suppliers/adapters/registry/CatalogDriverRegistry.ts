@@ -6,6 +6,11 @@
 // and is offered on no launch surface (ADR-009 D5–D6: "a provider left with no driver is
 // observe-only"). The gate is the one build flag, read here, never a provider-id branch.
 //
+// One driver is served outside the catalog (ISSUE-165; 15 §4.11, §3 row H1): the "Other…"
+// `HostedCommandDriver`, recognised by its own profile object, never by an id. "Other…" is a launch
+// way, not a supplier (INV-43): no catalog record names it, so it is in no catalogue, never
+// launchable and never a Default provider. Any other driver outside the catalog is still refused.
+//
 // Candidate decision (21 §6): `src/main/providers/registry.ts` is replaced, not kept — it is a
 // table of observation-side `Provider` factories keyed by the closed `DwarfProvider` union, with
 // no driver, no transport and no preference order, so it cannot answer `drivers(id)`.
@@ -14,6 +19,7 @@ import type { ProviderId } from '../../../../kernel/domain/values'
 import type { CatalogRecord } from '../../domain/profile'
 import type { DriverRegistry } from '../../ports/driverRegistry'
 import type { ProviderDriver } from '../../ports/providerDriver'
+import { HOSTED_COMMAND_PROFILE } from '../drivers/hosted-command/profile'
 
 export interface CatalogDriverRegistryDeps {
   /** The one catalog id list (`CATALOG_PROVIDER_IDS`), passed in by `host/main.ts` (R9). */
@@ -41,7 +47,12 @@ export class CatalogDriverRegistry implements DriverRegistry {
       }
       profiles.set(profile.id, profile)
     }
+    const outside: ProviderDriver[] = []
     for (const driver of deps.drivers) {
+      if (isOtherDriver(driver)) {
+        outside.push(driver)
+        continue
+      }
       const profile = profiles.get(driver.profile.id)
       if (profile === undefined || !profile.drivers.includes(driver.transport)) {
         throw new HostInvariantError(
@@ -58,9 +69,27 @@ export class CatalogDriverRegistry implements DriverRegistry {
         : []
       this.byId.set(profile.id, Object.freeze(ordered))
     }
+    // ISSUE-165 (INV-43): served by its own profile, never through a catalog record, so it is in no
+    // catalogue, launchable() or Default provider; a public build keeps it ("Other…" is `enabled`).
+    if (outside.length > 1) throw new HostInvariantError('the "Other…" driver is attached twice')
+    const other = outside[0]
+    if (other !== undefined) {
+      if (this.byId.has(other.profile.id)) {
+        throw new HostInvariantError(`"${other.profile.id}" is both a catalog profile and "Other…"`)
+      }
+      this.byId.set(other.profile.id, Object.freeze([other]))
+    }
   }
 
   drivers(id: ProviderId): readonly ProviderDriver[] {
     return this.byId.get(id) ?? []
   }
+}
+
+/** The one driver served outside the catalog: "Other…" by its own profile object and transport. */
+function isOtherDriver(driver: ProviderDriver): boolean {
+  return (
+    driver.profile === HOSTED_COMMAND_PROFILE &&
+    HOSTED_COMMAND_PROFILE.drivers.includes(driver.transport)
+  )
 }

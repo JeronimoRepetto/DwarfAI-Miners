@@ -14,6 +14,9 @@ on:
   # job runs too, so a nightly run also shows main's merge checks.
   schedule:
     - cron: '0 3 * * *'
+  # The package job runs on a manual dispatch too (20 §2.1 `package`, ISSUE-268). A dispatch also runs
+  # checks and native-arm64, which run on every event; e2e and perf keep their own triggers.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -41,7 +44,7 @@ jobs:
     # on a Mac, 28 tests failed, every one a path built with the host's
     # `join` against a Windows-shaped fixture. A leg per OS is what keeps that
     # class from coming back; fail-fast is off so one red leg still shows the
-    # other two. The `release` job below covers the same three for packaging.
+    # other two. The `package` job below covers the same three for packaging.
     #
     # The steps are the required merge checks of the testing strategy
     # (architecture package 17 §5.2), in the stage order of its §5.1:
@@ -525,31 +528,39 @@ jobs:
           path: perf-results/**
           if-no-files-found: warn
 
-  # electron-builder cannot cross-build a dmg or a deb, so macOS/Linux
-  # artifacts each need their own runner — hence the matrix below. Each leg
-  # packages its own installers and attaches them to the same GitHub Release
-  # for the pushed tag. macOS is deliberately NOT one of this matrix's
-  # entries — see the `release-mac` job below for why.
-  release:
-    name: Package installers and publish release
+  # The package job of the architecture (20 §2.1 `package`, ISSUE-268): on a `v*` tag and on a manual dispatch,
+  # each OS packages on its own runner, because electron-builder cannot cross-build a dmg or a deb. `pnpm package`
+  # builds exactly the 20 §3.2 targets of package.json `build` for the runner's OS (Windows zip and per-user nsis
+  # installer, macOS dmg and zip for arm64 and x64, Linux AppImage and deb), then the packaged-artifact checks run on
+  # what it wrote (`pnpm test:packaged`; P-08 today, the other P checks plug in from their own issues).
+  #
+  # It publishes nothing. The artifacts are workflow artifacts, kept one day because the repository is public; the
+  # release job that uploads to a draft GitHub Release is ISSUE-278's, and the signed, notarized macOS build is
+  # ISSUE-280's. Until then a `v*` tag packages and checks, and publishes nothing (no public build before cut 5,
+  # OQ-66). So the job holds `contents: read`, uses no Environment and reads no secret, and the macOS leg packages
+  # unsigned. Fuses (ISSUE-269), the licence report and SBOM (ISSUE-272) join it from their own issues.
+  package:
+    name: Package (${{ matrix.os }})
     needs: checks
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            package_script: package
-            asset_files: |
-              release/DwarfAI-Miners-Setup-*.exe
-              release/DwarfAI-Miners-Portable-*.exe
+            package_args: ''
+            installer_suffixes: .exe .zip
+          # Pinned, not `macos-latest`: macos-15 is the image electron-builder 26.15.3 is known to package on
+          # (on the macOS 26 image its temporary keychain failed, 2026-09-10). Move the pin only after a dispatch
+          # proves the newer image.
+          - os: macos-15
+            package_args: '-c.mac.identity=null'
+            installer_suffixes: .dmg .zip
           - os: ubuntu-latest
-            package_script: package:linux
-            asset_files: |
-              release/*.AppImage
-              release/*.deb
+            package_args: ''
+            installer_suffixes: .AppImage .deb
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -580,131 +591,52 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The Windows installers ship the Host's prebuilt owner-only pipe helper
-      # (prebuilds/, asar-unpacked by package.json `build`); `pnpm package`
-      # builds x64 only.
+      # The Windows app ships the Host's prebuilt owner-only pipe helper (prebuilds/, asar-unpacked by
+      # package.json `build`); the Windows targets are x64 only.
       - name: Build the owner-only pipe helper (Windows x64)
         if: runner.os == 'Windows'
         run: pnpm build:native --arch x64
 
-      - name: Package installers
-        run: pnpm ${{ matrix.package_script }}
+      - name: Build
+        run: pnpm build
 
-      # softprops/action-gh-release's release() already retries and
-      # reconciles concurrent creates against the same tag (it picks the
-      # canonical non-draft/oldest-id release), so no separate "create the
-      # release first" job is needed for the legs racing to create it.
-      #
-      # `generate_release_notes` is scoped to a single leg (ubuntu-latest) on
-      # purpose: GitHub's API re-generates notes from commits on every
-      # updateRelease call, and — because the other legs pass no body, the
-      # action falls back to re-sending the existing body — flipping this on
-      # for every leg would prepend a fresh copy of the same notes on every
-      # leg that runs after the first, duplicating them. `append_body` stays
-      # on for all legs as a safety net: it only appends when a leg's own
-      # body is non-empty, which is never the case here, so it never clobbers
-      # whatever the notes-leg has already written. `release-mac` below keeps
-      # this the same single leg by passing `generate_release_notes: false`.
-      - name: Publish release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          draft: false
-          generate_release_notes: ${{ matrix.os == 'ubuntu-latest' }}
-          append_body: true
-          fail_on_unmatched_files: true
-          files: ${{ matrix.asset_files }}
+      # P-03's lockfile half (20 §2.3; ISSUE-273): a provider binary, the Agent SDK or a provider CLI package among
+      # the production dependencies, or a production source reading a provider credential store, stops the job
+      # here, before electron-builder starts. Reads files only.
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK
+        run: node scripts/release/lockfile-provider-scan.mjs
 
-  # macOS packaging needs the Developer ID certificate and Apple notarization
-  # credentials, which live only in the GitHub `release` Environment (never
-  # as repository secrets) — see docs/signing.md. `environment:` takes one
-  # value per job, evaluated once for that job; there is no clean way to
-  # apply it to a single entry of the matrix above without giving the
-  # Windows/Linux entries an empty/conditional environment name, which is
-  # not a real "no environment" and risks those legs failing or waiting on
-  # an environment that was never meant to gate them. Splitting macOS into
-  # its own job keeps the blast radius of those five secrets to exactly the
-  # one job that needs them, and the `release` environment's own `v*`
-  # deployment policy means this job additionally refuses to run for any ref
-  # that isn't a `v*` tag, on top of the `if:` below. That policy has to be
-  # of type TAG: the first tag build after the repository went public
-  # (v0.9.0, 2026-09-10) was refused in two seconds because the only policy
-  # was `v*` of type BRANCH, which no tag ever matches — environment
-  # protection is enforced only on public repositories, so it had never run.
-  release-mac:
-    name: Package macOS installers and publish release
-    needs: checks
-    if: startsWith(github.ref, 'refs/tags/v')
-    environment: release
-    permissions:
-      contents: write
-    # Pinned, not `macos-latest`. On the macOS 26 image (Darwin 25.6.0, what
-    # `macos-latest` resolved to on 2026-09-10) electron-builder 26.15.3's
-    # own temporary keychain fails at `security set-key-partition-list` with
-    # "SecKeychainUnlock: The user name or passphrase you entered is not
-    # correct" — after the certificate import succeeded, so the secrets are
-    # not the cause; the same secrets signed and notarized v0.8.0 by hand the
-    # day before. macOS 15 is the image that flow is known to work on. Move
-    # the pin only after a tag build proves the newer image.
-    runs-on: macos-15
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup pnpm and Node.js
-        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
-        with:
-          version: 11
-          runtime: node@24
-          cache: true
-          install: false
-
-      - name: Read Electron version
-        id: electron-version
-        shell: bash
-        run: |
-          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Electron download
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.ELECTRON_CACHE }}
-          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # Only this step sees the release environment's secrets — nothing
-      # earlier in the job needs them, and scoping them to the step keeps
-      # them out of the job's ambient env for every other step. CSC_LINK is
-      # the Developer ID Application .p12 as base64; electron-builder
-      # decodes it into a temporary keychain and auto-discovers the identity
-      # from there, which is why build.mac in package.json names no
-      # `identity` string. `notarize: true` in package.json stays
-      # unconditional rather than gated here — see docs/signing.md for why.
-      - name: Package installers
-        run: pnpm package:mac
+      # `pnpm package` passes `--publish never`, package.json `build` names no publish provider, and no token is
+      # in this job's environment. On macOS, `-c.mac.identity=null` (pnpm appends it to the script's
+      # electron-builder command) skips code signing, CSC_IDENTITY_AUTO_DISCOVERY=false keeps electron-builder from
+      # picking an identity out of the runner's keychain, and notarization runs only after a signature, so it is
+      # skipped with it. Signing and notarization are ISSUE-280's.
+      - name: Package
+        run: pnpm package ${{ matrix.package_args }}
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      # Mac artifact names come from the `build.mac.artifactName` template in
-      # package.json (`${productName}-${version}-${arch}.${ext}`), so the
-      # dmg/zip files carry no `-mac` suffix — e.g.
-      # `DwarfAI-Miners-0.1.0-arm64.dmg` / `DwarfAI-Miners-0.1.0-x64.zip`.
-      # `generate_release_notes: false` keeps note generation on the single
-      # ubuntu-latest leg above, per the comment on that step.
-      - name: Publish release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+      # The installed app starts its Host from a versioned copy checked against host-manifest.json in its
+      # resources folder (ADR-002 D5); without a matching one the Host never starts. Reads files only.
+      - name: Check the Host build manifest of each packed app
+        run: node scripts/build/verify-packaged-host-manifest.mjs release
+
+      - name: Run the packaged-artifact checks
+        run: pnpm test:packaged release
+
+      - name: Write SHA256SUMS
+        run: node scripts/ci/sha256sums.mjs release ${{ matrix.installer_suffixes }}
+
+      - name: Upload artifacts (kept one day)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          draft: false
-          generate_release_notes: false
-          append_body: true
-          fail_on_unmatched_files: true
-          files: |
-            release/*.dmg
+          name: dwarfai-package-${{ matrix.os }}
+          path: |
+            release/*.exe
             release/*.zip
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+            release/SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error

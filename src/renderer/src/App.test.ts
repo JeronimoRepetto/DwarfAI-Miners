@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../contracts/ipc/testing/fakeWindowApi'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import { MotionConfig } from 'motion-v'
 import App from './App.vue'
@@ -405,7 +406,13 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     onUiSessionChanged: vi.fn().mockReturnValue(() => undefined),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api as unknown as Partial<Window['api']>)
+  })
   return api
 }
 
@@ -4189,11 +4196,15 @@ describe('App message dock (#635)', () => {
   })
 
   it('asks main for no second window: the panel is never a surface of its own', async () => {
-    const setMessagePanel = vi.fn().mockImplementation((state: unknown) => Promise.resolve(state))
-    const { wrapper } = await openMine({ setMessagePanel })
+    // AMENDED for ISSUE-250 (was: a hand stub's `setMessagePanel`, asserted never called): that member is no row of
+    // the channel registry (14 §2), so the generated fake `window.api` (ADR-033 item 7) refuses it outright, and App
+    // reading it would throw. The case keeps its subject: the bridge has no second-window request, and the click
+    // opens the panel in this window, which App draws itself.
+    const { wrapper } = await openMine()
+    expect('setMessagePanel' in window.api).toBe(false)
     await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
-    expect(setMessagePanel).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
   })
 })
 

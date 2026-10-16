@@ -32,8 +32,8 @@
 //
 // Not routed here: `TurnEnded` (`onFact` only when `reliability === 'reliable' && !cancelledFromApp`,
 // with the names resolved at emit time), the next turn start and `DwarfDeparted` → attention are
-// the cut-1 routes (routes/cut1Routes.ts, ISSUE-120); `ask.opened` / `ask.closed` join with asking
-// (later: ISSUE-140); the carry-over drop of a person-initiated turn with the Host's own sends
+// the cut-1 routes (routes/cut1Routes.ts, ISSUE-120); `ask.opened` / `ask.closed` are the asking
+// routes (routes/askingRoutes.ts, ISSUE-140); the carry-over drop of a person-initiated turn with the Host's own sends
 // (later: EPIC-10). The 24-hour sweep of withdrawn keys (09 §7.1, `Attention.sweep`) is not
 // scheduled yet.
 import { t, type HostFrameName } from '@dwarfai/contracts'

@@ -1,0 +1,4 @@
+{"at":1735689600979,"event":"spawned","step":0,"kind":"resume-unknown"}
+{"at":1735689601406,"stream":"stderr","bytes":76}
+{"at":1735689601407,"stream":"received","bytes":801}
+{"at":1735689604063,"event":"exit","step":0,"code":1,"signal":null}

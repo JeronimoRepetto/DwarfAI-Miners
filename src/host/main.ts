@@ -19,11 +19,12 @@
 // ConnectionRegistry. The seam-B Dispatcher comes from wiring/hostDispatcher.ts, which registers
 // the transport's own `ping`, `events.subscribe` and `host.shutdown` and where each method joins
 // with the issue that serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every
-// owned session: bound to the empty-owner implementation, since the Host owns no session yet,
-// until the launching module serves it (later: ISSUE-175).
-// The upgrade drain asks the DrainGate what is still open: bound to the empty implementation of
-// cut 0, so it drains at once, until the launching (EPIC-10) and asking (EPIC-08) modules report
-// their blockers; a `host.upgrade.request` target must be a direct child of the ADR-002 D5
+// owned session: bound to the launching module's `stopAll` from boot step 4 on, which ends them
+// through crew's `endOwned` (ISSUE-175).
+// The upgrade drain asks the DrainGate what is still open: the Host's binding (wiring/hostDrainGate.ts),
+// which reports the blockers of each module bound to it, so it drains at once until one is: the asking
+// module's live asks from boot step 4 (#1290), the launching module's in-flight launches (ISSUE-162); a
+// `host.upgrade.request` target must be a direct child of the ADR-002 D5
 // versioned-copy root, named by the same rule the UI's launcher uses (14 §1.10).
 //
 // Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
@@ -83,8 +84,13 @@
 // AnswerRecords, the observed-Claude keystroke channel (no relay into a terminal yet, later: ISSUE-167),
 // with B-M30…B-M32 and the `asks` section served before the bind, its frames, the Claude hook ingress
 // route bound to the active channel-token lookup (its listener, wiring/hookIngress.ts, built here and
-// started by step 6 on the persisted ingress port, closed at the clean exit) and its
-// `ask.*` and departure routes, stopped at the clean exit; last,
+// started by step 6 on the persisted ingress port, after which the Host's own Claude hook entry
+// follows the bound port, 07 S14.10, never in a cut-2 rollback build; closed at the clean exit) and its
+// `ask.*` and departure routes, stopped at the clean exit; then launching (ISSUE-162:
+// wiring/routes/launching.ts) over the SQLite launch stores and the SessionStarter bridge to the
+// suppliers registry, with B-M33 `launching.launch` and the `launches` section served before the
+// bind, its `launch.changed` / `launch.failed` frames and routes, the spawn tag carrying
+// `app_meta.install_id`; last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
 // withdrawing attention keys and closing activity runs. The others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
@@ -105,7 +111,7 @@ import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION, redactSecrets } from '@dwarfai/contracts'
 import { FsTranscriptTail } from './modules/asking/adapters/observedClaude/transcriptTail'
 import { SqliteAskRepository } from './modules/asking/adapters/SqliteAskRepository'
-import { createAskRestartSettlement } from './modules/asking'
+import { createAskDrainGate, createAskRestartSettlement } from './modules/asking'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
@@ -179,6 +185,7 @@ import {
   mintBootEpoch
 } from './wiring/bootSteps'
 import {
+  claudeHookEntryFollower,
   enablableInstalledTools,
   hostConfigWriter,
   persistedIngressPort
@@ -187,6 +194,7 @@ import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { createKeystrokeRelay } from './wiring/bridges/keystrokeRelay'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
+import { ownedSessionsOver } from './wiring/bridges/sessionTerminator'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
 import { CUT_2_ROLLBACK_CHOICES } from './wiring/cut2Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
@@ -201,8 +209,12 @@ import {
   runRevertIntegrations
 } from './wiring/revertIntegrations'
 import { createModuleResetSteps, type WiredModuleResetSteps } from './wiring/moduleResetSteps'
-import { emptyDrainGate } from './wiring/emptyDrainGate'
-import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
+import {
+  createHostDrainGate,
+  routeDrainRechecks,
+  routeLaunchDrainRechecks
+} from './wiring/hostDrainGate'
+import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
 import {
   servePreferences,
   unavailableSecretStore,
@@ -228,7 +240,16 @@ import {
   type WiredConversation
 } from './wiring/routes/conversation'
 import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
+import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/routes/launching'
+import {
+  createLaunchDrainGate,
+  type LaunchingEvent,
+  type LaunchingStopAll,
+  type LaunchingStopAllDeps
+} from './modules/launching'
+import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
+import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
 import { routeCut1Events } from './wiring/routes/cut1Routes'
 import {
   routeMineBackfillWhenObserving,
@@ -267,6 +288,7 @@ type HostEvent =
   | ConversationRouteEvent
   | AttentionRouteEvent
   | AskingRouteEvent
+  | LaunchingEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -457,7 +479,19 @@ async function bootHost(base: HostBase): Promise<void> {
     mines?: WiredMines
     attention?: WiredAttention
     asking?: WiredAsking
+    launching?: WiredLaunching
   } = {}
+  // What holds the upgrade drain: each module's gate is bound once boot step 4 wired it (#1290).
+  const drainGate = createHostDrainGate()
+  // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
+  let stopDrainRechecks: (() => void) | undefined
+  let stopLaunchDrainRechecks: (() => void) | undefined
+  // Launching's `stopAll` (ISSUE-175), bound at boot step 4 once crew and launching exist; the
+  // dispatcher answers HOST_NOT_READY for `host.shutdown` before `ready`, so it is always bound when
+  // asked. Unbound, it fails closed: the Host never exits on a stop-all that ended nothing it owns.
+  let launchingStopAll: LaunchingStopAll | undefined
+  // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
+  let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
   // install-moment writer, then the module's) and the cut-1 module steps, whose walk route step 4
   // binds once mines exists (ISSUE-121).
@@ -490,24 +524,33 @@ async function bootHost(base: HostBase): Promise<void> {
     // Cut 0: the `mines` table has no row yet, so false is the true value (later: ISSUE-082 reads it).
     minesEverKnown: () => false
   }
+  // Nothing is held before boot step 4 binds the asking and launching modules' gates, so until then
+  // the drain goes at once.
+  const drain = createUpgradeDrain({
+    gate: drainGate,
+    state: hostState,
+    scheduler,
+    lifecycle,
+    log
+  })
   const dispatcher = createHostDispatcher({
     log,
     clock,
     scheduler,
     state: () => hostState.current().state,
-    // Cut 0: no owned session exists yet (later: ISSUE-175 binds launching.stopAll).
-    stopAll: emptyOwnerStopAll,
+    // Launching's `stopAll`: every owned session ends through crew's `endOwned` (ISSUE-175).
+    stopAll: {
+      stopAll: (requestId) => {
+        if (launchingStopAll === undefined) {
+          return Promise.reject(new HostInvariantError('stop-all is served from boot step 4 on'))
+        }
+        return launchingStopAll.stopAll(requestId)
+      }
+    },
     lifecycle,
     connections,
     epoch,
-    // Cut 0: nothing is open or in flight, so the drain goes at once (later: EPIC-08, EPIC-10).
-    drain: createUpgradeDrain({
-      gate: emptyDrainGate,
-      state: hostState,
-      scheduler,
-      lifecycle,
-      log
-    }),
+    drain,
     upgradeTarget: createUpgradeTargetRule(
       hostCopyRootFacts({ build: buildKindOf({ isPackaged }) })
     ),
@@ -524,6 +567,10 @@ async function bootHost(base: HostBase): Promise<void> {
   const servedConversation = serveConversation({ dispatcher, sections })
   // B-M30…B-M32 and the `asks` section (ISSUE-140).
   const servedAsking = serveAsking({ dispatcher, sections })
+  // B-M33 and the `launches` section (ISSUE-162), after `asks` in the chunk order (14 §4.2).
+  const servedLaunching = serveLaunching({ dispatcher, sections })
+  // B-M37 `suppliers.launchable` (ISSUE-163), bound when boot step 4 wired suppliers.
+  const servedSuppliers = serveSuppliers({ dispatcher })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -604,7 +651,8 @@ async function bootHost(base: HostBase): Promise<void> {
           ...LEDGER_FRAMES,
           ...CONVERSATION_READ_FRAMES,
           ...ATTENTION_FRAMES,
-          ...ASKING_FRAMES
+          ...ASKING_FRAMES,
+          ...LAUNCHING_FRAMES
         ],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
@@ -623,7 +671,13 @@ async function bootHost(base: HostBase): Promise<void> {
         sessionEnd: nodeOsSessionSignals(log),
         // No event is routed into the asking module, and no hook request reaches the Host, once
         // it is closing (ISSUE-140).
-        stopRoutes: () => modules.asking?.stop(),
+        stopRoutes: () => {
+          maintenance?.stop()
+          stopDrainRechecks?.()
+          stopLaunchDrainRechecks?.()
+          modules.asking?.stop()
+          modules.launching?.stop()
+        },
         closeIngress: () => hookIngress?.close() ?? Promise.resolve(),
         exit
       })
@@ -765,8 +819,17 @@ async function bootHost(base: HostBase): Promise<void> {
             bus,
             hostEpoch: epoch,
             // A new demo world each Host start (15 §4.12); development builds only.
-            simulatedSeed: epoch
+            simulatedSeed: epoch,
+            // "Other…" (ISSUE-165; 15 §4.11): the person's command spawned with no shell, its
+            // environment the childEnv allowlist copied from the Host's own (15 §4, INV-59).
+            hostedCommand: {
+              processControl,
+              loginEnv: process.env,
+              platform: hostRuntime().os as NodeJS.Platform,
+              redact: redactSecrets
+            }
           })
+          servedSuppliers.bind(launchableSource(modules.suppliers))
           // The providers' own folders: the environment overrides they honour, else the person's
           // home folder (15 §5; HO-09). Read only, by observation and by the coal backfill.
           const folders = observedProviderFolders(process.env, homedir(), {
@@ -998,6 +1061,17 @@ async function bootHost(base: HostBase): Promise<void> {
               hostEpoch: epoch
             })
           )
+          // The live asks hold the upgrade drain (ADR-002 D8 item 2; S12.14, S12.15), and each ask
+          // that closes asks it again at once (#1290). After the rollback settlement, which
+          // publishes before any drain can be waiting.
+          drainGate.bind(
+            createAskDrainGate({
+              asks: new SqliteAskRepository({ db, scope: transactions, clock })
+            })
+          )
+          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const recheckDeps: Parameters<typeof routeDrainRechecks>[0] = { events: bus, drain }
+          stopDrainRechecks = routeDrainRechecks(recheckDeps)
           // The hook ingress over asking's `/hooks/claude/*` route and `app_meta.ingress_port`;
           // boot step 6 starts it, the clean exit closes it (wiring/hookIngress.ts).
           hookIngress = createHostHookIngress({
@@ -1006,6 +1080,47 @@ async function bootHost(base: HostBase): Promise<void> {
             clock,
             log
           })
+          // Launching (ISSUE-162: wiring/routes/launching.ts), once suppliers, conversation, crew and
+          // mines exist: a launched dwarf arrives through crew and its prompt is its first message.
+          modules.launching = servedLaunching.wire({
+            db,
+            transactions,
+            bus,
+            clock,
+            scheduler,
+            ids,
+            hostEpoch: epoch,
+            installId: installIdOf(db),
+            log,
+            frames: connections,
+            suppliers: modules.suppliers,
+            mines: modules.mines.mines.queries,
+            crew: modules.crew.crew.commands,
+            conversation: conversation.conversation.commands
+          })
+          // Its in-flight launches hold the upgrade drain too (ADR-002 D8 item 2); a settled launch
+          // asks it again at once.
+          drainGate.bind(createLaunchDrainGate({ launches: modules.launching.launching.queries }))
+          stopLaunchDrainRechecks = routeLaunchDrainRechecks({ events: bus, drain })
+          // Stop everything and quit (ISSUE-175; ADR-002 D7 step 3): launching's `stopAll` waits for
+          // the launches in flight and ends every owned session through crew's `endOwned`, over
+          // the same terminator as Stop dwarf; its `StopAllIncomplete` toast is a launching route.
+          const ownedEndsDeps: Parameters<WiredCrew['crew']['ownedEnds']>[0] = {
+            terminator: modules.crew.terminator,
+            bus
+          }
+          const stopAllDeps: LaunchingStopAllDeps = {
+            crew: modules.crew.crew.ownedEnds(ownedEndsDeps)
+          }
+          launchingStopAll = modules.launching.launching.stopAll(stopAllDeps)
+          // Stop dwarf ends an owned session through its driver, then its recorded process tree
+          // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
+          modules.crew.bindOwnedSessions(
+            ownedSessionsOver({
+              launching: modules.launching.launching.owned,
+              channels: modules.suppliers.sessions
+            })
+          )
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.
@@ -1019,12 +1134,22 @@ async function bootHost(base: HostBase): Promise<void> {
             attention: modules.attention.attention
           })
         },
-        // Step 6: the hook ingress listens (ISSUE-140); the MCP endpoint is later (ISSUE-209).
+        // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
+        // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
+        // (ISSUE-209).
         startHookIngress: () => {
-          if (hookIngress === undefined) {
-            throw new HostInvariantError('boot step 6 runs after step 4 built the hook ingress')
+          if (hookIngress === undefined || configWriter === undefined) {
+            throw new HostInvariantError('boot step 6 runs after steps 3 and 4 built its parts')
           }
-          return startHookIngressAtBoot(hookIngress, log)
+          return startHookIngressAtBoot(
+            hookIngress,
+            log,
+            claudeHookEntryFollower({
+              engine: configWriter,
+              rolledBack: CUT_2_ROLLBACK_CHOICES.rolledBack,
+              mintCredential
+            })
+          )
         },
         // Step 7: the catch-up, then the live loop, through the wiring's own `start`, which is null
         // in a cut-1 rollback build (and over any sink that stores nothing, INV-98).
@@ -1061,6 +1186,29 @@ async function bootHost(base: HostBase): Promise<void> {
   if (booted.kind === 'ready' && modules.ledger !== undefined && modules.batchSink !== undefined) {
     void startBackfillWhenObserving(modules.ledger, modules.batchSink)
   }
+  // Once the Host answers `ready`: the maintenance tick (09 §7.1, wiring/hostMaintenance.ts), now and
+  // then every 6 hours: the closed-asks sweep (#1290); a read-only (newer) file is never swept.
+  if (booted.kind === 'ready' && database !== undefined) {
+    const { db, transactions } = database.connection()
+    maintenance = startMaintenanceTick({
+      scheduler,
+      log,
+      sweeps: hostMaintenanceSweeps({
+        db,
+        transactions,
+        clock,
+        readOnly: database.capabilities().includes('db-read-only')
+      })
+    })
+  }
+}
+
+/** `app_meta.install_id` (09 §4.9), the first field of every spawn tag (ADR-015 item 2). */
+function installIdOf(db: SqliteDatabase): string {
+  const [row] = db.all('SELECT install_id FROM app_meta WHERE id = 1')
+  const installId = row?.['install_id']
+  if (typeof installId !== 'string') throw new HostInvariantError('app_meta has no install id')
+  return installId
 }
 
 function isInside(folder: string, file: string): boolean {

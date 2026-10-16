@@ -51,7 +51,10 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // A-N31, A-N32) by the cut-2 switch (ISSUE-141).
   // A-N33, born with the first release that bumps `endpointGeneration` (AMENDMENT-11; 21 "Different-generation
   // restart"); no handler in v1 (review R8B-06)
-  'host:connection:confirm-restart': 'generation-2'
+  'host:connection:confirm-restart': 'generation-2',
+  // A-N29, born `host` in 3a (21 §2 step 3a, through `LegacyEndFirstAdapter` for a legacy-launched session); routed
+  // by the step-3a switch (ISSUE-001), never by its handler issue (ISSUE-171)
+  'dwarf:stop': 'cut-3a'
 }
 
 /**
