@@ -1,0 +1,153 @@
+{
+  "$comment": "C-04 hostile Markdown corpus (18 §6, ISSUE-251). Each case is provider-authored text. 'shows' is the exact run of characters that must reach the screen as TEXT: raw HTML stays visible as the characters it is, and is never dropped or parsed into an element. Written by hand from ADR-019 item 4, never generated.",
+  "markup": [
+    {
+      "id": "script-block",
+      "markdown": "<script>alert(1)</script>",
+      "shows": "<script>alert(1)</script>"
+    },
+    {
+      "id": "script-inline",
+      "markdown": "before <script>alert(1)</script> after",
+      "shows": "before <script>alert(1)</script> after"
+    },
+    {
+      "id": "img-onerror",
+      "markdown": "<img src=x onerror=alert(1)>",
+      "shows": "<img src=x onerror=alert(1)>"
+    },
+    {
+      "id": "svg-onload",
+      "markdown": "<svg onload=alert(1)></svg>",
+      "shows": "<svg onload=alert(1)></svg>"
+    },
+    {
+      "id": "iframe",
+      "markdown": "<iframe src=\"https://example.test/\"></iframe>",
+      "shows": "<iframe src=\"https://example.test/\"></iframe>"
+    },
+    {
+      "id": "anchor-javascript",
+      "markdown": "<a href=\"javascript:alert(1)\">press</a>",
+      "shows": "<a href=\"javascript:alert(1)\">press</a>"
+    },
+    {
+      "id": "raw-html-block",
+      "markdown": "<div onclick=\"alert(1)\">\n<p style=\"position:fixed\">cover</p>\n</div>",
+      "shows": "<p style=\"position:fixed\">cover</p>"
+    },
+    {
+      "id": "broken-unclosed-markup",
+      "markdown": "<div><p onmouseover=\"alert(1)\">unclosed <b>bold",
+      "shows": "<div><p onmouseover=\"alert(1)\">unclosed <b>bold"
+    },
+    {
+      "id": "html-comment",
+      "markdown": "visible <!-- <script>alert(1)</script> --> tail",
+      "shows": "<!-- <script>alert(1)</script> -->"
+    },
+    {
+      "id": "html-in-emphasis",
+      "markdown": "**<img src=x onerror=alert(1)>**",
+      "shows": "<img src=x onerror=alert(1)>"
+    },
+    {
+      "id": "html-in-inline-code",
+      "markdown": "`<b onclick=alert(1)>x</b>`",
+      "shows": "<b onclick=alert(1)>x</b>"
+    },
+    {
+      "id": "html-in-fenced-code",
+      "markdown": "```html\n<script>alert(1)</script>\n```",
+      "shows": "<script>alert(1)</script>"
+    },
+    {
+      "id": "hostile-fence-language",
+      "markdown": "```\" onmouseover=\"alert(1)\nbody\n```",
+      "shows": "body"
+    },
+    {
+      "id": "html-in-table-cell",
+      "markdown": "| a |\n| - |\n| <img src=x onerror=alert(1)> |",
+      "shows": "<img src=x onerror=alert(1)>"
+    },
+    {
+      "id": "html-in-quote-and-list",
+      "markdown": "> - <style>*{display:none}</style>",
+      "shows": "<style>*{display:none}</style>"
+    }
+  ],
+  "images": [
+    {
+      "id": "remote-image",
+      "markdown": "![a remote chart](https://example.test/chart.png)",
+      "shows": "a remote chart"
+    },
+    {
+      "id": "file-image",
+      "markdown": "![a local file](file:///C:/Users/someone/secret.png)",
+      "shows": "a local file"
+    },
+    {
+      "id": "data-image",
+      "markdown": "![an inline pixel](data:image/png;base64,iVBORw0KGgo=)",
+      "shows": "an inline pixel"
+    }
+  ],
+  "unsafeLinks": [
+    {
+      "id": "javascript-link",
+      "markdown": "[press me](javascript:alert(1))",
+      "shows": "press me"
+    },
+    {
+      "id": "javascript-link-mixed-case",
+      "markdown": "[press me](JaVaScRiPt:alert(1))",
+      "shows": "press me"
+    },
+    {
+      "id": "javascript-link-entity",
+      "markdown": "[press me](javascript&colon;alert(1))",
+      "shows": "press me"
+    },
+    {
+      "id": "file-link",
+      "markdown": "[open it](file:///C:/Windows/System32/calc.exe)",
+      "shows": "open it"
+    },
+    {
+      "id": "data-link",
+      "markdown": "[see this](data:text/html,<script>alert(1)</script>)",
+      "shows": "see this"
+    },
+    {
+      "id": "vbscript-link",
+      "markdown": "[press me](vbscript:msgbox(1))",
+      "shows": "press me"
+    },
+    {
+      "id": "javascript-autolink",
+      "markdown": "<javascript:alert(1)>",
+      "shows": "javascript:alert(1)"
+    },
+    {
+      "id": "reference-javascript-link",
+      "markdown": "[press me][x]\n\n[x]: javascript:alert(1)",
+      "shows": "press me"
+    }
+  ],
+  "safeLinks": [
+    {
+      "id": "https-link",
+      "markdown": "[the docs](https://example.test/docs)",
+      "shows": "the docs",
+      "href": "https://example.test/docs"
+    },
+    {
+      "id": "http-link",
+      "markdown": "[the page](http://example.test/page)",
+      "shows": "the page",
+      "href": "http://example.test/page"
+    }
+  ]
+}

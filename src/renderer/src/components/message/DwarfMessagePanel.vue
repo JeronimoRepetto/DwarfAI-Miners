@@ -56,6 +56,7 @@ import {
 } from '../../lib/message/rename'
 import { belongsToComposition } from '../../lib/controls/input'
 import { dwarfDisplayName } from '../../lib/dwarf/displayName'
+import { untrustedText } from '../../lib/text/untrustedText'
 import {
   cleanDwarfName,
   filterDwarfName,
@@ -989,14 +990,16 @@ async function resetName(): Promise<void> {
             @click="startRename"
             @keydown="onNameKey"
           >
-            {{ displayName }}
+            <bdi>{{ untrustedText(displayName) }}</bdi>
           </button>
           <!-- Hidden until built (BR-19): a name nothing can change yet is shown, not offered. -->
-          <span v-else class="dm-msg__title">{{ displayName }}</span>
+          <span v-else class="dm-msg__title"
+            ><bdi>{{ untrustedText(displayName) }}</bdi></span
+          >
         </h2>
         <!-- The base name, only under a custom name and never while renaming (Dwarf names). -->
         <p v-if="dwarf.customName !== undefined && editing === null" class="dm-msg__base">
-          {{ dwarf.name }}
+          <bdi>{{ untrustedText(dwarf.name) }}</bdi>
         </p>
         <div v-show="editing === null" class="dm-msg__chips">
           <MetaChip v-for="chip in chips" :key="chip" :text="chip" />
@@ -1113,10 +1116,12 @@ async function resetName(): Promise<void> {
               v-for="item in attachmentsOfEcho(entry.message.echo.id)"
               :key="item.path"
               class="dm-composer__file"
-              :title="item.name"
+              :title="untrustedText(item.name)"
             >
               <PixelIcon name="attach" />
-              <span>{{ item.name }}</span>
+              <span
+                ><bdi>{{ untrustedText(item.name) }}</bdi></span
+              >
             </li>
           </ul>
         </ChatBubble>

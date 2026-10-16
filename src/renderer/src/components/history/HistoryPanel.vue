@@ -38,6 +38,7 @@ import { mineCrew } from '../../lib/scene/mineColumn'
 import { sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
 import { dwarfDisplayName } from '../../lib/dwarf/displayName'
 import type { PortraitStatus } from '../../lib/dwarf/portrait'
+import { untrustedText } from '../../lib/text/untrustedText'
 import type { FailedSend, Mine, MineHistoryResult } from '../../types'
 
 const props = defineProps<{
@@ -199,7 +200,9 @@ async function tabKey(event: KeyboardEvent, index: number): Promise<void> {
   >
     <header class="dm-hist__head">
       <PixelIcon name="history" :scale="2" />
-      <h2 class="dm-hist__title">{{ historyTitle(mine.name) }}</h2>
+      <h2 class="dm-hist__title">
+        {{ historyTitle('') }}<bdi>{{ untrustedText(mine.name) }}</bdi>
+      </h2>
       <ActionButton icon="close" size="sm" title="Close history" @click="emit('close')" />
     </header>
     <div ref="tabList" class="dm-hist__tabs" role="tablist" aria-label="Dwarfs">

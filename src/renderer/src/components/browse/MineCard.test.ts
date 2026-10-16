@@ -168,6 +168,21 @@ describe('MineCard not enterable', () => {
   })
 })
 
+/*
+ * C-08 (18 §5.1, ISSUE-251): a mine is named after its folder, which a repository chose. The name
+ * is drawn without its controls and escapes, inside a bidi-isolated text node.
+ */
+describe('MineCard, an untrusted mine name (C-08)', () => {
+  it('[NFR-SEC-07] draws a hostile folder name stripped and inside a bidi-isolated text node', () => {
+    const hostile = `\u001b[31manvil\u202Eexe.txt\u0000\u001b[0m`
+    const card = mount(MineCard, { props: { card: view({ name: hostile }) } })
+    const isolate = card.find('.dm-card__name > bdi')
+    expect(isolate.exists(), 'no <bdi> around the mine name').toBe(true)
+    expect(isolate.element.textContent).toBe('anvilexe.txt')
+    expect(card.find('.dm-card__name').attributes('title')).toBe('anvilexe.txt')
+  })
+})
+
 // ISSUE-253 (US-MINE-010): a capsule's count compacts from ten thousand up, and is printed in full
 // below it; the count is per material and never summed (BR-15).
 describe('MineCard ore counts', () => {
