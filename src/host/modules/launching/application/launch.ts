@@ -47,6 +47,13 @@
 // - its dwarf arrives as a `worker` (`rankForDepth(1)`: a delegating dwarf is always a root launch)
 //   of the delegating dwarf, `delegated` (INV-27, INV-28; AMENDMENT-15 (owner, 2026-10-15)), and
 //   `DwarfLaunched` carries `parentDwarfId` and `delegated: true` (07 S5.21 → S8.03).
+//
+// "Other…" (`launchCustom`, ISSUE-165; 16 §4.5; ADR-020 item 3; UC-010) shares the acceptance and
+// the settlement above whole, so its dwarf is the same as a supplier dwarf (BR-08); its own steps
+// are in launchCustom.ts. The command is parsed at acceptance (no shell); a refusal settles
+// `could-not-start` before any driver is reached, with the parser's sentence as the log record's
+// `msg`; otherwise the "Other…" driver gets the argv as `customArgv` and its program as the install,
+// with no detection. Its failures name "The custom command" (US-LAUNCH-006.AC10).
 import type { ProcessIdentity } from '../../../kernel/domain/processIdentity'
 import type { JevFallbackReason, LaunchFailure } from '../../../kernel/domain/sharedContracts'
 import type {
@@ -67,22 +74,31 @@ import type { Scheduler } from '../../../kernel/ports/scheduler'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import { rankForDepth, type CrewCommands } from '../../crew'
 import type { MinesQueries } from '../../mines'
-import type {
-  DriverLaunchRequest,
-  DriverRegistry,
-  DriverSession,
-  DriverTransport,
-  SessionBindings,
-  SupplierCatalogueQueries
+import {
+  HOSTED_COMMAND_PROVIDER_ID,
+  type DriverLaunchRequest,
+  type DriverRegistry,
+  type DriverSession,
+  type DriverTransport,
+  type InstalledProvider,
+  type ProviderDriver,
+  type SessionBindings,
+  type SupplierCatalogueQueries
 } from '../../suppliers'
 import { applyLaunchEvent, requestLaunch, type Launch, type LaunchRequest } from '../domain/launch'
 import { buildLaunchFailure } from '../domain/launchFailure'
-import { NO_SUPPLIER_LABEL } from '../domain/supplierLabel'
+import { CUSTOM_COMMAND_LABEL, NO_SUPPLIER_LABEL } from '../domain/supplierLabel'
 import type { LaunchRecordStore } from '../ports/launchRecordStore'
 import type { LaunchStore } from '../ports/launchStore'
 import type { ProcessRecordStore } from '../ports/processRecordStore'
 import type { SessionStarter } from '../ports/sessionStarter'
 import type { LaunchingEvent } from './events'
+import {
+  checkCustomCommand,
+  customInstall,
+  type CustomCommandCheck,
+  type LaunchCustomInput
+} from './launchCustom'
 import { viewOf, type LaunchMemory } from './launchQueries'
 
 /** 05 `LaunchRequestInput`: 14 `LaunchParams` without the transport's `requestId`. */
@@ -190,7 +206,14 @@ interface Accepted {
   delegation?: WorkerDelegation
   /** A delegated worker whose pick fell back: it fails in `routing` (S5.14, S5.15). */
   fallback?: JevFallbackReason
+  /** An "Other…" launch: the typed command as parsed at acceptance (launchCustom.ts). */
+  custom?: CustomCommandCheck
 }
+
+/** What a settlement runs: the driver and its install, or the failure it settles with instead. */
+type Resolution =
+  | { ok: true; driver: ProviderDriver; install: InstalledProvider; customArgv?: readonly string[] }
+  | { ok: false; failure: LaunchFailure; detail?: string }
 
 /** A mine a launch can target: present and enterable (INV-50); a launch never creates one. */
 const ENTERABLE: ReadonlySet<string> = new Set(['measuring', 'active'])
@@ -199,18 +222,14 @@ export class LaunchUseCase {
   constructor(private readonly deps: LaunchingDeps) {}
 
   async launch(input: LaunchRequestInput): Promise<LaunchAccepted> {
-    const { clock, ids, hostEpoch, transactions, launches, memory } = this.deps
+    const { ids, hostEpoch } = this.deps
     const { delegation } = input
     if (input.jevOn) throw new LaunchRefusedError('jev-not-built')
     // A `jev` way is a delegated worker whose pick fell back; any other is the Jev path (ISSUE-164).
     if (input.way.kind === 'jev' && delegation?.fallback === undefined) {
       throw new LaunchRefusedError('jev-not-built')
     }
-    const mine = this.deps.mines.get(input.mineId)
-    const cwd = this.deps.mines.folderOf(input.mineId)
-    if (mine === null || cwd === null || !ENTERABLE.has(mine.state)) {
-      throw new LaunchRefusedError('mine-not-enterable')
-    }
+    const cwd = this.enterableFolder(input.mineId)
     const providerId = input.way.kind === 'supplier' ? input.way.providerId : null
     const entry = providerId === null ? null : this.deps.suppliers.catalogue.entry(providerId)
     if (providerId !== null && entry === null) throw new LaunchRefusedError('unknown-supplier')
@@ -224,12 +243,7 @@ export class LaunchUseCase {
           : 'mode-not-offered'
       )
     }
-    if (input.retryOf !== undefined) {
-      const failed = launches.byId(input.retryOf)
-      if (failed?.state !== 'failed' || failed.failure?.actions.includes('retry') !== true) {
-        throw new LaunchRefusedError('not-retryable')
-      }
-    }
+    this.checkRetry(input.retryOf)
     const worker: WorkerDelegation | undefined =
       delegation === undefined
         ? undefined
@@ -252,24 +266,87 @@ export class LaunchUseCase {
       ...(input.retryOf === undefined ? {} : { retryOf: input.retryOf })
     })
     if (!step.ok) throw new LaunchRefusedError('not-sendable')
-    const launch: OwnLaunch = step.value.launch
-
-    transactions.inTransaction(() => launches.put(launch))
-    const requestedAt = clock.now()
-    memory.put(viewOf(launch, requestedAt))
-    if (input.retryOf !== undefined) memory.forget(input.retryOf)
-    this.publish({ type: 'LaunchRequested', payload: { launchId: launch.id, request } })
-    const facts: Accepted = {
+    return this.accept(step.value.launch, input.retryOf, {
       // A fallen-back pick names no provider and never reaches a driver (S5.14, S5.15).
       providerId: providerId ?? ('' as ProviderId),
       cwd,
       supplierLabel: entry?.label ?? NO_SUPPLIER_LABEL,
-      requestedAt,
       ...(worker === undefined ? {} : { delegation: worker }),
       ...(delegation?.fallback === undefined ? {} : { fallback: delegation.fallback })
+    })
+  }
+
+  /**
+   * 16 §4.5 `launchCustom` ("Other…", ISSUE-165; ADR-020 item 3): the same refusals before any row
+   * as `launch` for the mine and a Retry, the command parsed with no shell (launchCustom.ts), then
+   * the same acceptance and settlement over the "Other…" driver. A parser refusal is accepted: it
+   * settles `could-not-start` with nothing spawned. "Other…" is never Jev's (INV-43): Jev is off.
+   */
+  async launchCustom(input: LaunchCustomInput): Promise<LaunchAccepted> {
+    const cwd = this.enterableFolder(input.mineId)
+    this.checkRetry(input.retryOf)
+    const custom = checkCustomCommand(input.command)
+    const step = requestLaunch<string, WorkerDelegation>({
+      id: this.deps.ids.uuidv7() as LaunchId,
+      request: {
+        mineId: input.mineId,
+        way: { kind: 'custom', command: custom.command },
+        prompt: input.prompt,
+        jevOn: false,
+        jevAutoAccept: false
+      },
+      hostEpoch: this.deps.hostEpoch,
+      ...(input.retryOf === undefined ? {} : { retryOf: input.retryOf })
+    })
+    if (!step.ok) throw new LaunchRefusedError('not-sendable')
+    return this.accept(step.value.launch, input.retryOf, {
+      providerId: HOSTED_COMMAND_PROVIDER_ID,
+      cwd,
+      supplierLabel: CUSTOM_COMMAND_LABEL,
+      custom
+    })
+  }
+
+  /** INV-50: the mine's folder, the session's cwd; a missing or unenterable mine is refused. */
+  private enterableFolder(mineId: MineId): FolderPath {
+    const mine = this.deps.mines.get(mineId)
+    const cwd = this.deps.mines.folderOf(mineId)
+    if (mine === null || cwd === null || !ENTERABLE.has(mine.state)) {
+      throw new LaunchRefusedError('mine-not-enterable')
     }
+    return cwd
+  }
+
+  /** INV-54: a `retryOf` must name a failed launch whose cause allows Retry. */
+  private checkRetry(retryOf: LaunchId | undefined): void {
+    if (retryOf === undefined) return
+    const failed = this.deps.launches.byId(retryOf)
+    if (failed?.state !== 'failed' || failed.failure?.actions.includes('retry') !== true) {
+      throw new LaunchRefusedError('not-retryable')
+    }
+  }
+
+  /**
+   * S5.10 / S5.11 and the answer (14 §1.7): the row committed, the launch in Host memory (a Retry's
+   * failure leaves the board), `LaunchRequested` published, then the settlement scheduled.
+   */
+  private accept(
+    launch: OwnLaunch,
+    retryOf: LaunchId | undefined,
+    facts: Omit<Accepted, 'requestedAt'>
+  ): LaunchAccepted {
+    const { clock, transactions, launches, memory } = this.deps
+    transactions.inTransaction(() => launches.put(launch))
+    const requestedAt = clock.now()
+    memory.put(viewOf(launch, requestedAt))
+    if (retryOf !== undefined) memory.forget(retryOf)
+    this.publish({
+      type: 'LaunchRequested',
+      payload: { launchId: launch.id, request: launch.request }
+    })
+    const accepted: Accepted = { ...facts, requestedAt }
     // The settlement runs with no caller, after the answer was written (14 §1.7).
-    this.deps.scheduler.after(0, () => void this.settle(launch, facts))
+    this.deps.scheduler.after(0, () => void this.settle(launch, accepted))
     return { launchId: launch.id }
   }
 
@@ -286,10 +363,10 @@ export class LaunchUseCase {
     let launch = accepted
     let spawned: ProcessIdentity | undefined
     let settled = false
-    const failWith = (failure: LaunchFailure): void => {
+    const failWith = (failure: LaunchFailure, detail?: string): void => {
       if (settled) return
       settled = true
-      this.fail(launch, failure, facts)
+      this.fail(launch, failure, facts, detail)
     }
     try {
       if (launch.state === 'routing') {
@@ -300,16 +377,17 @@ export class LaunchUseCase {
         }
         launch = this.picked(launch, facts)
       }
-      const driver = this.deps.suppliers.registry.drivers(facts.providerId)[0]
-      const detected = driver === undefined ? null : await driver.detect()
-      if (driver === undefined || detected === null || detected.kind !== 'installed') {
-        failWith(this.failure('not-installed', facts))
+      const resolved = await this.resolve(facts)
+      if (!resolved.ok) {
+        failWith(resolved.failure, resolved.detail)
         return
       }
+      const { driver } = resolved
       const { request } = launch
       const req: DriverLaunchRequest = {
         launchId: launch.id,
-        install: detected.install,
+        install: resolved.install,
+        ...(resolved.customArgv === undefined ? {} : { customArgv: resolved.customArgv }),
         cwd: facts.cwd,
         prompt: request.prompt,
         ...(request.model === undefined ? {} : { model: request.model }),
@@ -327,7 +405,12 @@ export class LaunchUseCase {
         launchedWithLetJevChoose: launch.launchedWithLetJevChoose
       })
       if (!started.ok) {
-        failWith(started.error)
+        // An "Other…" failure names "The custom command", not the driver's label (US-LAUNCH-006.AC10).
+        failWith(
+          facts.custom === undefined
+            ? started.error
+            : { ...started.error, supplierLabel: facts.supplierLabel }
+        )
         return
       }
       if (settled) return
@@ -347,6 +430,29 @@ export class LaunchUseCase {
         this.uncaught(launch.id, again)
       }
     }
+  }
+
+  /**
+   * The driver a settlement launches through, the first of the registry's (ADR-009 D4), and its
+   * install. A supplier is detected: none, or not installed, is `not-installed` (S5.16). "Other…" is
+   * never detected (15 §3 H1): a parser refusal is `could-not-start` before any driver is reached,
+   * so nothing spawns (ADR-020 item 3; S5.17); otherwise its own program is the install.
+   */
+  private async resolve(facts: Accepted): Promise<Resolution> {
+    const { custom } = facts
+    if (custom !== undefined && !custom.ok) {
+      return { ok: false, failure: this.failure('could-not-start', facts), detail: custom.detail }
+    }
+    const driver = this.deps.suppliers.registry.drivers(facts.providerId)[0]
+    if (driver !== undefined && custom !== undefined) {
+      const { argv } = custom.command
+      return { ok: true, driver, install: customInstall(facts.providerId, argv), customArgv: argv }
+    }
+    const detected = driver === undefined ? null : await driver.detect()
+    if (driver === undefined || detected === null || detected.kind !== 'installed') {
+      return { ok: false, failure: this.failure('not-installed', facts) }
+    }
+    return { ok: true, driver, install: detected.install }
   }
 
   /** An unexpected error of a settlement: its code only, never its message (ADR-026). */
@@ -481,7 +587,7 @@ export class LaunchUseCase {
   }
 
   /** S5.16, S5.17, S5.19, S5.20: `failed` with exactly one cause; the tail stays in memory. */
-  private fail(launch: OwnLaunch, failure: LaunchFailure, facts: Accepted): void {
+  private fail(launch: OwnLaunch, failure: LaunchFailure, facts: Accepted, detail?: string): void {
     let step = applyLaunchEvent(launch, { t: 'failed', failure })
     if (!step.ok) {
       // A process cause machine 5B does not list from this state (an exit reported for a launch
@@ -509,7 +615,9 @@ export class LaunchUseCase {
       outcome: 'failed',
       causeClass: settled.cause,
       provider: facts.providerId,
-      launchId: launch.id
+      launchId: launch.id,
+      // A parser refusal's fixed sentence (ADR-020 item 3: diagnostic detail, never notice copy).
+      ...(detail === undefined ? {} : { msg: detail })
     })
     this.publish({
       type: 'LaunchFailed',

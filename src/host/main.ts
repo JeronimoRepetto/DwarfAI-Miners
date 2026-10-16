@@ -819,7 +819,15 @@ async function bootHost(base: HostBase): Promise<void> {
             bus,
             hostEpoch: epoch,
             // A new demo world each Host start (15 §4.12); development builds only.
-            simulatedSeed: epoch
+            simulatedSeed: epoch,
+            // "Other…" (ISSUE-165; 15 §4.11): the person's command spawned with no shell, its
+            // environment the childEnv allowlist copied from the Host's own (15 §4, INV-59).
+            hostedCommand: {
+              processControl,
+              loginEnv: process.env,
+              platform: hostRuntime().os as NodeJS.Platform,
+              redact: redactSecrets
+            }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))
           // The providers' own folders: the environment overrides they honour, else the person's
