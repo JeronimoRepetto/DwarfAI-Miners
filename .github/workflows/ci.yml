@@ -528,6 +528,65 @@ jobs:
           path: perf-results/**
           if-no-files-found: warn
 
+  # The licence report, the SBOM of each artifact OS and the S-008-1 record check (20 §2.1 `license-sbom`, §2.4,
+  # §3.2; 18 C-35, C-36; ISSUE-272). It runs on Linux on every push to main and on every event the package job runs
+  # on (a `v*` tag, a manual dispatch), and never on a pull request, so it is not a merge check. It fails on a denied
+  # or unreadable licence (scripts/release/licenses.denied.json), on a bundled provider adapter or library without a
+  # closed GPL-compatible S-008-1 row for its pinned version, and on an SBOM that does not list exactly the lockfile's
+  # production packages. The SBOM generator is the pinned pnpm's own `pnpm sbom` (CycloneDX), so no dependency is
+  # added (OI-20-3). Everything is read from the lockfile and the installed packages. It publishes nothing: the
+  # outputs are workflow artifacts kept one day; attaching them to a release is ISSUE-278's.
+  license-sbom:
+    name: Licence report and SBOM
+    needs: checks
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Licence report (licenses.json)
+        run: node scripts/release/licenses.mjs
+
+      - name: S-008-1 records of the bundled adapters and libraries
+        run: node scripts/release/s008-records.mjs
+
+      - name: SBOM per artifact OS (sbom-<os>.json)
+        run: |
+          pnpm sbom --sbom-format cyclonedx --prod --sbom-type application > "$RUNNER_TEMP/pnpm-sbom.json"
+          node scripts/release/sbom.mjs --input "$RUNNER_TEMP/pnpm-sbom.json"
+
+      - name: Third-party notices
+        run: node scripts/release/third-party-notices.mjs
+
+      - name: Upload the licence report, the SBOMs and the notices (kept one day)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: license-sbom
+          path: |
+            release/licenses/licenses.json
+            release/licenses/sbom-*.json
+            release/licenses/THIRD-PARTY-NOTICES.md
+          retention-days: 1
+          if-no-files-found: error
+
   # The package job of the architecture (20 §2.1 `package`, ISSUE-268): on a `v*` tag and on a manual dispatch,
   # each OS packages on its own runner, because electron-builder cannot cross-build a dmg or a deb. `pnpm package`
   # builds exactly the 20 §3.2 targets of package.json `build` for the runner's OS (Windows zip and per-user nsis

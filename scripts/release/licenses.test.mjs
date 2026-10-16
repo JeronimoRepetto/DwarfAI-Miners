@@ -1,0 +1,340 @@
+// layer: L7
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  buildLicenceReport,
+  judgeLicence,
+  parseLockfile,
+  PRODUCT_LICENSE,
+  productionPackages,
+  readDenied
+} from './licenses.mjs'
+import { checkS008Records, parseS008Rows } from './s008-records.mjs'
+import { buildNotices } from './third-party-notices.mjs'
+
+/**
+ * The licence report, the S-008-1 record check and the third-party notices (`20` §2.4, §2.5; `18` C-34, C-35, C-36;
+ * ISSUE-272). Each case builds a small project in its own temporary folder: a package.json, a hand-written pnpm
+ * lockfile and the pnpm virtual store the report reads the installed licences from, so nothing reaches the network.
+ */
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+const denied = readDenied(path.join(repoRoot, 'scripts', 'release', 'licenses.denied.json'))
+
+let dir
+beforeEach(() => {
+  dir = mkdtempSync(path.join(tmpdir(), 'licences-'))
+})
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true })
+})
+
+function write(relative, text) {
+  const file = path.join(dir, relative)
+  mkdirSync(path.dirname(file), { recursive: true })
+  writeFileSync(file, text)
+}
+
+/**
+ * A project with the given production dependencies (each `{ name, version, license, files?, requires? }`), one
+ * dev dependency that never counts, and every package installed in the pnpm virtual store.
+ */
+function project({ license = PRODUCT_LICENSE, deps, transitive = [] }) {
+  write(
+    'package.json',
+    JSON.stringify({ name: 'fixture-app', version: '1.2.3', license, dependencies: {} })
+  )
+  const devDep = { name: 'dev-only', version: '9.0.0', license: 'UNLICENSED' }
+  const all = [...deps, ...transitive, devDep]
+  const entry = (d) =>
+    `      '${d.name}':\n        specifier: ${d.version}\n        version: ${d.version}\n`
+  const requires = (d) =>
+    d.requires?.length
+      ? `    dependencies:\n${d.requires.map((r) => `      '${r.name}': ${r.version}\n`).join('')}`
+      : ''
+  write(
+    'pnpm-lock.yaml',
+    [
+      "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n\nimporters:\n\n  .:\n",
+      `    dependencies:\n${deps.map(entry).join('')}`,
+      `    devDependencies:\n${entry(devDep)}`,
+      '\npackages:\n\n',
+      all
+        .map((d) => `  '${d.name}@${d.version}':\n    resolution: {integrity: sha512-x}\n\n`)
+        .join(''),
+      'snapshots:\n\n',
+      all
+        .map((d) => `  '${d.name}@${d.version}':${requires(d) ? `\n${requires(d)}` : ' {}\n'}\n`)
+        .join('')
+    ].join('')
+  )
+  for (const d of all) {
+    const store = `node_modules/.pnpm/${d.name.replace('/', '+')}@${d.version}/node_modules/${d.name}`
+    write(
+      `${store}/package.json`,
+      JSON.stringify({ name: d.name, version: d.version, license: d.license })
+    )
+    for (const [name, text] of Object.entries(d.files ?? {})) write(`${store}/${name}`, text)
+  }
+}
+
+describe('licence report and notices (20 §2.4)', () => {
+  it('[ADR-008] a production dependency with a denied licence fails the report', () => {
+    project({
+      deps: [
+        {
+          name: 'left-pad',
+          version: '1.0.0',
+          license: 'MIT',
+          requires: [{ name: 'tiny', version: '2.0.0' }]
+        },
+        { name: 'closed-thing', version: '3.1.0', license: 'UNLICENSED' },
+        { name: 'see-readme', version: '0.1.0', license: 'SEE LICENSE IN README.md' },
+        { name: 'dual', version: '4.0.0', license: '(MIT OR GPL-2.0-only)' },
+        { name: 'both', version: '5.0.0', license: 'MIT AND CC-BY-NC-4.0' }
+      ],
+      transitive: [{ name: 'tiny', version: '2.0.0', license: 'ISC' }]
+    })
+    const report = buildLicenceReport({ rootDir: dir, denied })
+    expect(report.packages.map((p) => [`${p.name}@${p.version}`, p.license, p.verdict])).toEqual([
+      ['both@5.0.0', 'MIT AND CC-BY-NC-4.0', 'denied'],
+      ['closed-thing@3.1.0', 'UNLICENSED', 'denied'],
+      ['dual@4.0.0', '(MIT OR GPL-2.0-only)', 'allowed'],
+      ['left-pad@1.0.0', 'MIT', 'allowed'],
+      ['see-readme@0.1.0', 'SEE LICENSE IN README.md', 'unknown'],
+      ['tiny@2.0.0', 'ISC', 'allowed']
+    ])
+    expect(report.failures).toEqual([
+      'both@5.0.0: licence "MIT AND CC-BY-NC-4.0" is denied (CC-BY-NC-4.0)',
+      'closed-thing@3.1.0: licence "UNLICENSED" is denied (UNLICENSED)',
+      'see-readme@0.1.0: licence "SEE LICENSE IN README.md" is not an SPDX expression'
+    ])
+  })
+
+  it('[ADR-008] a dependency with no licence at all, or not installed, fails rather than passing unread', () => {
+    project({ deps: [{ name: 'bare', version: '1.0.0' }] })
+    rmSync(path.join(dir, 'node_modules/.pnpm/bare@1.0.0/node_modules/bare/package.json'))
+    expect(buildLicenceReport({ rootDir: dir, denied }).failures).toEqual([
+      'bare@1.0.0: not installed, so its licence cannot be read'
+    ])
+    project({ deps: [{ name: 'bare', version: '1.0.0' }] })
+    expect(buildLicenceReport({ rootDir: dir, denied }).failures).toEqual([
+      'bare@1.0.0: package.json declares no licence'
+    ])
+  })
+
+  it('[ADR-008, S-008-1] a bundled adapter without a closed GPL-compatible record fails; one with it passes', () => {
+    const acp = {
+      name: '@agentclientprotocol/sdk',
+      version: '1.6.0',
+      license: 'Apache-2.0'
+    }
+    const header =
+      '| Package and pinned version | License (SPDX) | Redistribution | GPL-3.0-or-later compatible | NOTICE / attribution | Runtime dependencies | Pinning | Owner decision (2026-10-16) |\n' +
+      '| --- | --- | --- | --- | --- | --- | --- | --- |\n'
+    const row = (version, compatible, decision) =>
+      `| \`@agentclientprotocol/sdk\` ${version} | Apache-2.0 | allowed | ${compatible} | none | none | exact ${version} | ${decision} |\n`
+    project({ deps: [acp, { name: 'left-pad', version: '1.0.0', license: 'MIT' }] })
+    const packages = buildLicenceReport({ rootDir: dir, denied }).packages
+
+    expect(checkS008Records({ packages, rows: parseS008Rows(header) }).failures).toEqual([
+      '@agentclientprotocol/sdk@1.6.0: no S-008-1 row for this pinned version'
+    ])
+    expect(
+      checkS008Records({
+        packages,
+        rows: parseS008Rows(header + row('1.5.0', 'yes', '**bundle: yes**'))
+      }).failures
+    ).toEqual(['@agentclientprotocol/sdk@1.6.0: no S-008-1 row for this pinned version'])
+    expect(
+      checkS008Records({
+        packages,
+        rows: parseS008Rows(header + row('1.6.0', 'no', '**bundle: yes**'))
+      }).failures
+    ).toEqual([
+      '@agentclientprotocol/sdk@1.6.0: its S-008-1 row is not GPL-3.0-or-later compatible'
+    ])
+    expect(
+      checkS008Records({
+        packages,
+        rows: parseS008Rows(header + row('1.6.0', 'yes', '**bundle: no**'))
+      }).failures
+    ).toEqual(['@agentclientprotocol/sdk@1.6.0: its S-008-1 row does not decide to bundle it'])
+
+    const closed = checkS008Records({
+      packages,
+      rows: parseS008Rows(header + row('1.6.0', 'yes', '**bundle: yes**'))
+    })
+    expect(closed.failures).toEqual([])
+    expect(closed.checked).toEqual(['@agentclientprotocol/sdk@1.6.0'])
+  })
+
+  it('[ADR-008, S-008-1] the committed S-008-1 record parses into one closed row per package it decided', () => {
+    const rows = parseS008Rows(
+      readFileSync(path.join(repoRoot, 'spike-results', 'S-008-1.md'), 'utf8')
+    )
+    expect(rows.map((r) => [`${r.name}@${r.version}`, r.licence, r.compatible, r.bundle])).toEqual([
+      ['@agentclientprotocol/sdk@1.6.0', 'Apache-2.0', true, true],
+      ['@napi-rs/keyring@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-win32-x64-msvc@2.1.0', 'MIT', true, true]
+    ])
+  })
+
+  it("[NFR-COMP-07] the generated notices list every production dependency, the Electron licence file, each bundled adapter's NOTICE and the font, audio and artwork credits", () => {
+    project({
+      deps: [
+        {
+          name: '@agentclientprotocol/sdk',
+          version: '1.6.0',
+          license: 'Apache-2.0',
+          files: { LICENSE: 'Apache License text', NOTICE: 'ACP NOTICE text' }
+        },
+        {
+          name: 'left-pad',
+          version: '1.0.0',
+          license: 'MIT',
+          files: { 'LICENSE.md': 'MIT text of left-pad' }
+        },
+        {
+          name: '@napi-rs/keyring',
+          version: '2.1.0',
+          license: 'MIT',
+          files: { LICENSE: 'MIT text of keyring' }
+        },
+        { name: '@napi-rs/keyring-win32-x64-msvc', version: '2.1.0', license: 'MIT' }
+      ]
+    })
+    write(
+      'node_modules/electron/package.json',
+      JSON.stringify({ name: 'electron', version: '44.0.0', license: 'MIT' })
+    )
+    write('node_modules/electron/LICENSE', 'Copyright (c) Electron contributors')
+    write('FONT-CREDITS.md', '# Font credits\n\nPixelify Sans, OFL-1.1\n')
+    write('AUDIO-CREDITS.md', '# Audio credits\n\nCC0 picks\n')
+    write('ARTWORK-LICENSE.md', '# Artwork License\n\nAll rights reserved artwork\n')
+
+    const report = buildLicenceReport({ rootDir: dir, denied })
+    const notices = buildNotices({ rootDir: dir, report })
+
+    expect(notices).toContain('fixture-app 1.2.3 is licensed under GPL-3.0-or-later')
+    for (const p of report.packages)
+      expect(notices).toContain(`### ${p.name} ${p.version} (${p.license})`)
+    expect(notices).toContain('MIT text of left-pad')
+    expect(notices).toContain('### Electron 44.0.0 (MIT)')
+    expect(notices).toContain('Copyright (c) Electron contributors')
+    expect(notices).toContain('`LICENSES.chromium.html`')
+    expect(notices).toContain('ACP NOTICE text')
+    expect(notices).toContain('Apache License text')
+    // A platform binary that ships no licence file carries its main package's text (S-008-1 decision).
+    const binary = notices.slice(notices.indexOf('### @napi-rs/keyring-win32-x64-msvc 2.1.0'))
+    expect(binary.slice(0, binary.indexOf('\n### ', 4))).toContain('MIT text of keyring')
+    expect(notices).toContain('Pixelify Sans, OFL-1.1')
+    expect(notices).toContain('CC0 picks')
+    expect(notices).toContain('All rights reserved artwork')
+  })
+
+  it('[NFR-COMP-07] the notices refuse to be written without a credits file or the Electron licence', () => {
+    project({ deps: [{ name: 'left-pad', version: '1.0.0', license: 'MIT' }] })
+    const report = buildLicenceReport({ rootDir: dir, denied })
+    expect(() => buildNotices({ rootDir: dir, report })).toThrow(
+      /node_modules\/electron\/LICENSE is missing/
+    )
+    write(
+      'node_modules/electron/package.json',
+      JSON.stringify({ name: 'electron', version: '44.0.0', license: 'MIT' })
+    )
+    write('node_modules/electron/LICENSE', 'Electron')
+    expect(() => buildNotices({ rootDir: dir, report })).toThrow(/FONT-CREDITS\.md is missing/)
+  })
+
+  it('[ADR-008] the report states GPL-3.0-or-later for the product and it matches package.json license', () => {
+    project({ deps: [{ name: 'left-pad', version: '1.0.0', license: 'MIT' }] })
+    const report = buildLicenceReport({ rootDir: dir, denied })
+    expect(report.product).toEqual({
+      name: 'fixture-app',
+      version: '1.2.3',
+      license: 'GPL-3.0-or-later'
+    })
+    expect(report.failures).toEqual([])
+
+    project({ license: 'MIT', deps: [{ name: 'left-pad', version: '1.0.0', license: 'MIT' }] })
+    expect(buildLicenceReport({ rootDir: dir, denied }).failures).toEqual([
+      'package.json license is "MIT", but the product is GPL-3.0-or-later'
+    ])
+
+    const real = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+    expect(real.license).toBe(PRODUCT_LICENSE)
+  })
+})
+
+describe('the lockfile and SPDX reading behind the report (20 §2.4)', () => {
+  it('[ADR-008] walks dependencies and optionalDependencies of the root importer, never devDependencies', () => {
+    const lock = parseLockfile(
+      [
+        "lockfileVersion: '9.0'",
+        'importers:',
+        '  .:',
+        '    dependencies:',
+        "      '@scope/a':",
+        '        specifier: 1.0.0',
+        '        version: 1.0.0(peer@2.0.0)',
+        '    optionalDependencies:',
+        '      bin-win:',
+        '        specifier: 1.0.0',
+        '        version: 1.0.0',
+        '    devDependencies:',
+        '      vitest:',
+        '        specifier: 4.0.0',
+        '        version: 4.0.0',
+        'packages:',
+        "  '@scope/a@1.0.0':",
+        '    resolution: {integrity: sha512-a}',
+        '  bin-win@1.0.0:',
+        '    resolution: {integrity: sha512-b}',
+        '    cpu: [x64]',
+        '    os: [win32]',
+        'snapshots:',
+        "  '@scope/a@1.0.0(peer@2.0.0)':",
+        '    dependencies:',
+        '      peer: 2.0.0',
+        '    transitivePeerDependencies:',
+        '      - supports-color',
+        '      - bufferutil',
+        '  peer@2.0.0: {}',
+        '  bin-win@1.0.0:',
+        '    optional: true',
+        '  vitest@4.0.0: {}',
+        ''
+      ].join('\r\n')
+    )
+    expect(lock.packages['bin-win@1.0.0']).toMatchObject({ os: ['win32'], cpu: ['x64'] })
+    expect(lock.snapshots['@scope/a@1.0.0(peer@2.0.0)'].transitivePeerDependencies).toEqual([
+      'supports-color',
+      'bufferutil'
+    ])
+    expect(productionPackages(lock)).toEqual([
+      { name: '@scope/a', version: '1.0.0' },
+      { name: 'bin-win', version: '1.0.0' },
+      { name: 'peer', version: '2.0.0' }
+    ])
+  })
+
+  it('[ADR-008] judges an SPDX expression: OR needs one allowed alternative, AND needs every term allowed', () => {
+    expect(judgeLicence('MIT', denied).verdict).toBe('allowed')
+    expect(judgeLicence('Apache-2.0 WITH LLVM-exception', denied).verdict).toBe('allowed')
+    expect(judgeLicence('(GPL-2.0-only OR MIT)', denied).verdict).toBe('allowed')
+    expect(judgeLicence('GPL-2.0-only', denied)).toEqual({
+      verdict: 'denied',
+      denied: ['GPL-2.0-only']
+    })
+    expect(judgeLicence('MIT AND (SSPL-1.0 OR BUSL-1.1)', denied)).toEqual({
+      verdict: 'denied',
+      denied: ['SSPL-1.0', 'BUSL-1.1']
+    })
+    expect(judgeLicence('MIT OR', denied).verdict).toBe('unknown')
+    expect(judgeLicence('', denied).verdict).toBe('unknown')
+  })
+})
