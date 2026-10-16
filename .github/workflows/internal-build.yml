@@ -73,7 +73,7 @@ jobs:
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
@@ -169,7 +169,7 @@ jobs:
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
