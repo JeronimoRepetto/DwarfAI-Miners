@@ -629,20 +629,41 @@ async function overLaunch(
   return out
 }
 
-/** C-18 (15 §1.3 `events()`, CH-04): a transport EOF is `error{transport-lost}` then `exited` once. */
+/**
+ * Whether the driver has no handshake: readiness is the spawn plus the 3 s early-failure window
+ * (`earlyFailure: 'exit-only'`, ADR-020 D4; 15 §3 rows A1, H1 and every `U→exit-only` row).
+ */
+function exitOnly(context: CaseContext): boolean {
+  return context.options.ceiling.earlyFailure === 'exit-only'
+}
+
+/**
+ * C-18 (15 §1.3 `events()`, CH-04): a transport EOF is `error{transport-lost}` then `exited` once.
+ * The fixture transport's EOF is followed at once by the process exit. For a protocol driver that
+ * still loses its transport before any goodbye; for an exit-only driver (a raw stdio program,
+ * `stdio-raw`), its output closing with its exit is its normal end, so it reports only `exited`
+ * (ISSUE-157 foreman decision 3: a normal "Other…" exit never toasts transport-lost). Its
+ * output closing with no exit observed is the driver's own test.
+ */
 async function transportLoss(context: CaseContext): Promise<string[]> {
   const extra: ScriptStep[] = [
     { do: 'transportLost' },
     { do: 'sendTurn', messageId: 'after-loss', text: 'are you there' }
   ]
+  const normalEnd = exitOnly(context)
   return overLaunch(context, extra, {}, (run, first) => {
     const out: string[] = []
     const events = run.events.slice(run.eventsAtStep[first])
     const exited = events.filter((event) => event.t === 'exited').length
     if (exited !== 1) out.push(`exited ${exited} times after the transport loss, not once`)
     if (events.at(-1)?.t !== 'exited') out.push('exited is not the last event')
+    const lost = events.filter((e) => e.t === 'error' && e.cause.kind === 'transport-lost')
     const before = events.at(-2)
-    if (before?.t !== 'error' || before.cause.kind !== 'transport-lost') {
+    if (normalEnd) {
+      if (lost.length > 0) {
+        out.push('an exit-only driver reported transport-lost for an EOF with its exit')
+      }
+    } else if (before?.t !== 'error' || before.cause.kind !== 'transport-lost') {
       out.push('no error transport-lost right before exited')
     }
     const send = run.outcomes[first + 1] as { rejected?: { kind?: string } } | null
@@ -749,12 +770,18 @@ async function couldNotStart(context: CaseContext): Promise<string[]> {
       transport: new FixtureTransport({ received: '', format: 'jsonl', stderr: 'x'.repeat(1000) })
     })
   }
+  // An exit-only driver has no handshake to time out: a silent, live process is ready at 3 s.
+  if (exitOnly(context)) return out
   const script: ScriptStep[] = [LAUNCH, { do: 'advance', ms: timeout }]
   out.push(...(await overScript(context, script, hung, verdict('a handshake timeout'))))
   return out
 }
 
-/** C-04 (15 §1.3 launch errors, ADR-020 D4): an exit before readiness inside 3 s is exited-at-once. */
+/**
+ * C-04 (15 §1.3 launch errors, ADR-020 D4): an exit before readiness inside 3 s is exited-at-once.
+ * At 3 000 ms a handshake driver that never got ready is could-not-start; an exit-only driver is
+ * ready at `t0 + 3 s`, so its launch has succeeded (15 §6 C-04 "exited-at-once / success").
+ */
 async function exitsAtOnce(context: CaseContext): Promise<string[]> {
   const out: string[] = []
   for (const at of [EARLY_FAILURE_WINDOW_MS - 1, EARLY_FAILURE_WINDOW_MS]) {
@@ -764,6 +791,11 @@ async function exitsAtOnce(context: CaseContext): Promise<string[]> {
     const script: ScriptStep[] = [LAUNCH, { do: 'advance', ms: EARLY_FAILURE_WINDOW_MS + 1 }]
     out.push(
       ...(await overScript(context, script, plan, (run) => {
+        if (at === EARLY_FAILURE_WINDOW_MS && exitOnly(context)) {
+          return differences(run.outcomes[0], { resolved: true }).length === 0
+            ? []
+            : [`exit at ${at} ms gave ${JSON.stringify(run.outcomes[0])}, not a launched session`]
+        }
         const failure = launchFailure(run, 0)
         if (typeof failure === 'string') return [`exit at ${at} ms: ${failure}`]
         const want = at < EARLY_FAILURE_WINDOW_MS ? 'exited-at-once' : 'could-not-start'

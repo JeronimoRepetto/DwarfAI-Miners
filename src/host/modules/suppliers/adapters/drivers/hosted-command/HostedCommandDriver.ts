@@ -42,7 +42,6 @@ import type {
   TurnInput
 } from '../../../ports/providerDriver'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
-import { assertNoForbidden } from '../shared/forbiddenFlags'
 import { entryKey, logEntry, OutputTail, type OutputLine } from './outputTail'
 import { HOSTED_COMMAND_CEILING, HOSTED_COMMAND_PROFILE } from './profile'
 
@@ -51,8 +50,10 @@ export const EARLY_FAILURE_WINDOW_MS = 3_000
 /** ADR-032 D5's default: no new output for this long and the turn's end is inferred. */
 export const INFERRED_TURN_END_MS = 30_000
 /**
- * After the exit, how long the driver waits for the program's stdout to drain before it reports
- * `exited` anyway (a grandchild may hold the pipe open). An adapter choice, within ADR-014's 2 s.
+ * How long the driver lets the program's output end and its exit meet (an adapter choice, within
+ * ADR-014's 2 s). Exit first: it waits this long for stdout to drain before it reports `exited`
+ * anyway (a grandchild may hold the pipe open). Output end first: an exit within this long is the
+ * program's normal end and only `exited` is reported; no exit by then is `transport-lost`.
  */
 export const OUTPUT_DRAIN_MS = 2_000
 /** ADR-020 D1, D6: the output tail a launch failure carries, at most. */
@@ -155,15 +156,9 @@ export class HostedCommandDriver implements ProviderDriver {
     if (program === '') throw refused('the command names no program')
     // ADR-008 item 1: the install is the only executable the driver may spawn.
     if (program !== req.install.binaryPath) throw refused('the program is not the launch install')
-    try {
-      // ADR-008 item 3: no auto-approve flag reaches a child, the person's own command included.
-      assertNoForbidden(argv, undefined, {
-        delegationGate: { subagentDelegationOn: false, launchedWithLetJevChoose: false }
-      })
-    } catch (error) {
-      if (error instanceof HostInvariantError) throw refused(error.message)
-      throw error
-    }
+    // The person's argv is passed as typed: no destructive-command or flag filter on "Other…"
+    // (06 row C, INV-59). ADR-008 item 3 governs what DwarfAI adds, and DwarfAI adds no argument
+    // and no option to an "Other…" launch (the prompt and turns go to stdin, the env is childEnv).
     return argv
   }
 }
@@ -193,6 +188,7 @@ class HostedCommandSession implements DriverSession {
   private outputEnded = false
   private exitCode: number | null | undefined = undefined
   private drainTimer: { cancel(): void } | null = null
+  private lostTimer: { cancel(): void } | null = null
   private exited = false
 
   constructor(
@@ -417,17 +413,28 @@ class HostedCommandSession implements DriverSession {
     })
   }
 
-  /** CH-04: stdout reached EOF before the exit was reported: the transport is lost (15 §1.2). */
+  /**
+   * The program's stdout ended. With its exit observed now or within `OUTPUT_DRAIN_MS`, that is
+   * its normal end and only `exited` follows; with no exit by then, the transport is lost
+   * (15 §1.2 `transport-lost`: EOF before an exit was observed; CH-04, C-18).
+   */
   private outputEnd(): void {
     if (this.outputEnded) return
     this.outputEnded = true
     if (this.exited) return
     this.flushOutput()
-    this.emit({
-      t: 'error',
-      cause: { kind: 'transport-lost', detail: 'the command closed its output' }
+    if (this.exitCode !== undefined) {
+      this.exit()
+      return
+    }
+    this.lostTimer = this.options.scheduler.after(OUTPUT_DRAIN_MS, () => {
+      this.lostTimer = null
+      if (this.exited || this.exitCode !== undefined) return
+      this.emit({
+        t: 'error',
+        cause: { kind: 'transport-lost', detail: 'the command closed its output and did not exit' }
+      })
     })
-    this.maybeExit()
   }
 
   private processExit(code: number | null): void {
@@ -450,6 +457,7 @@ class HostedCommandSession implements DriverSession {
     this.flushOutput()
     this.cancelTurn()
     this.drainTimer?.cancel()
+    this.lostTimer?.cancel()
     this.exited = true
     this.channel.push({ t: 'exited', code: this.exitCode ?? null })
     this.channel.close()

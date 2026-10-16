@@ -12,6 +12,7 @@ import type { SpawnSpec } from '../../../../../kernel/ports/processControl'
 import type { PermissionModeSpec } from '../../../domain/profile'
 import { CATALOG_RECORDS } from '../../catalog/profiles'
 import type {
+  DriverEvent,
   DriverLaunchError,
   DriverLaunchRequest,
   InstalledProvider,
@@ -27,9 +28,10 @@ import {
   type Run
 } from '../../../testing/driverConformance'
 import { readFixtureSet, type FixtureVariant, type ScriptStep } from '../../../testing/fixtureSet'
+import { FixtureTransport } from '../../../testing/fixtureTransport'
 import { RecordingSpawn, type SpawnScript } from '../../../testing/recordingSpawn'
 import { FORBIDDEN_FLAGS } from '../shared/forbiddenFlags'
-import { HostedCommandDriver } from './HostedCommandDriver'
+import { HostedCommandDriver, OUTPUT_DRAIN_MS } from './HostedCommandDriver'
 import { HOSTED_COMMAND_CEILING, HOSTED_COMMAND_PROFILE } from './profile'
 
 const FIXTURE_DIR = fileURLToPath(
@@ -275,14 +277,6 @@ describe('HostedCommandDriver', () => {
       })
     }
 
-    it('[C-24] a forbidden auto-approve flag is could-not-start and spawns nothing', async () => {
-      const result = await run([{ do: 'launch' }], {
-        argv: [ARGV[0] as string, FORBIDDEN_FLAGS[0] as string]
-      })
-      expect(rejection(result.outcomes[0])?.cause).toBe('could-not-start')
-      expect(result.spawn.spawns).toEqual([])
-    })
-
     it('[C-03] a second launch with the same launchId is could-not-start and spawns once', async () => {
       const { variant } = fixture('c-01-launch')
       const script: ScriptStep[] = [
@@ -340,5 +334,101 @@ describe('HostedCommandDriver', () => {
     const result = await run([{ do: 'probe' }])
     expect(result.outcomes[0]).toEqual(HOSTED_COMMAND_CEILING)
     expect(result.spawn.spawns).toEqual([])
+  })
+
+  it('[C-24, NFR-SEC-09] a typed flag the person wrote is passed through unchanged (no filter on "Other…")', async () => {
+    const { variant } = fixture('c-01-launch')
+    const argv = [ARGV[0] as string, FORBIDDEN_FLAGS[0] as string, '--rm -rf']
+    const result = await run([{ do: 'launch', readyAfterMs: 3_000 }], { argv, variant })
+    expect(result.outcomes[0]).toEqual({ resolved: true })
+    expect(result.spawn.spawns[0]?.args).toEqual(argv.slice(1))
+  })
+
+  describe('[C-18] the output end and the exit of a raw program', () => {
+    /** A launched session over a live process whose stdout the test ends by hand. */
+    async function live(): Promise<{
+      clock: FakeClock
+      transport: FixtureTransport
+      exit: () => void
+      events: DriverEvent[]
+      settle: () => Promise<void>
+    }> {
+      const clock = new FakeClock(0)
+      const scheduler = new FakeScheduler(clock)
+      const transport = new FixtureTransport({ received: '', format: 'jsonl' })
+      const processControl = new RecordingSpawn({
+        clock,
+        scheduler,
+        decide: () => ({ kind: 'fixture', transport })
+      })
+      const driver = factoryFor(ARGV)({ clock, scheduler, processControl, loginEnv: LOGIN_ENV })
+      const settle = async (): Promise<void> => {
+        for (let round = 0; round < 50; round++) await new Promise((r) => process.nextTick(r))
+      }
+      const launching = driver.launch({
+        launchId: 'l-1' as DriverLaunchRequest['launchId'],
+        install: INSTALL,
+        cwd: '/work/mine' as DriverLaunchRequest['cwd'],
+        prompt: '',
+        permissionMode: null,
+        delegation: null,
+        spawnTag: 'v1:i:l-1:1',
+        onSpawned: async () => {}
+      })
+      await settle()
+      clock.advance(3_000)
+      const session = await launching
+      const events: DriverEvent[] = []
+      void (async () => {
+        for await (const event of session.events()) events.push(event)
+      })()
+      const pid = processControl.spawns.length > 0 ? (session.ref.pid as number) : 0
+      return {
+        clock,
+        transport,
+        exit: () => processControl.fake.exit(pid, { code: 0, signal: null }),
+        events,
+        settle
+      }
+    }
+
+    it('[C-18] stdout ending with the exit within the drain window is a normal end: only exited', async () => {
+      const rig = await live()
+      rig.transport.stdout.end()
+      await rig.settle()
+      rig.clock.advance(OUTPUT_DRAIN_MS - 1)
+      rig.exit()
+      await rig.settle()
+      expect(rig.events).toEqual([{ t: 'exited', code: 0 }])
+    })
+
+    it('[C-18] the exit observed before stdout ends is a normal end: only exited', async () => {
+      const rig = await live()
+      rig.exit()
+      await rig.settle()
+      rig.transport.stdout.end()
+      await rig.settle()
+      expect(rig.events).toEqual([{ t: 'exited', code: 0 }])
+    })
+
+    it('[C-18] stdout closing with no exit within the drain window is transport-lost, then exited once', async () => {
+      const rig = await live()
+      rig.transport.stdout.end()
+      await rig.settle()
+      rig.clock.advance(OUTPUT_DRAIN_MS)
+      await rig.settle()
+      expect(rig.events).toEqual([
+        {
+          t: 'error',
+          cause: {
+            kind: 'transport-lost',
+            detail: 'the command closed its output and did not exit'
+          }
+        }
+      ])
+      rig.exit()
+      await rig.settle()
+      expect(rig.events.map((event) => event.t)).toEqual(['error', 'exited'])
+    })
   })
 })
