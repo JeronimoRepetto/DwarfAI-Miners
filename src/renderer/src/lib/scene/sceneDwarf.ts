@@ -6,18 +6,25 @@
  * The four states are the design's own (working, asking, asleep, idle), read off the wire's
  * status and nothing weaker: asking is a proven ask (`dwarfNeedsYou`), the "?" being attention
  * level 1, and asleep is a waiting session that asked nobody anything.
+ *
+ * AMENDED for ISSUE-254 (ADR-033 item 3): a dwarf the Host fed carries the Host's own status
+ * (`hostStatus`, lib/scene/boardDwarf), and the scene draws that, never deriving one: today's
+ * `waiting` cannot tell idle from asleep. A proven ask today's runtime still relays (cut 1) and a
+ * departure (presence, not status) come first; without a Host status, today's mapping stands.
  */
 import { dwarfNeedsYou } from '../shell/panelNav'
 import { kickMarker, sendMarker, type DeliveryMarker } from '../delivery/deliveryVerdict'
 import { portraitStatusText } from '../dwarf/portrait'
-import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
+import type { BoardDwarf } from './boardDwarf'
+import type { DwarfKickState, DwarfSendState } from '../../types'
 
 export type SceneDwarfStatus = 'working' | 'asking' | 'asleep' | 'idle'
 
-type StatusFacts = Pick<Dwarf, 'status' | 'pendingQuestion' | 'waitingReason'>
+type StatusFacts = Pick<BoardDwarf, 'status' | 'pendingQuestion' | 'waitingReason' | 'hostStatus'>
 
 export function sceneDwarfStatus(dwarf: StatusFacts): SceneDwarfStatus {
   if (dwarfNeedsYou(dwarf)) return 'asking'
+  if (dwarf.status !== 'leaving' && dwarf.hostStatus !== undefined) return dwarf.hostStatus
   if (dwarf.status === 'working') return 'working'
   if (dwarf.status === 'waiting') return 'asleep'
   // Leaving: neither at the rock nor asleep on the way out.

@@ -4,11 +4,14 @@
  * interactive portrait is a button named after the dwarf and its state, with aria-pressed for
  * selection; a static one is an unnamed figure. The component draws; this decides.
  *
- * The status is the portrait's own vocabulary, the five the design draws, not the session status
- * on the wire: a screen that shows a dwarf decides which of these its dwarf is.
+ * The status is the one vocabulary of ADR-032 (working, asking, idle, asleep), the Host's own four
+ * and never "done" (PO #9, ISSUE-254): the design's atom still draws a fifth, done, which the PO
+ * retired. Each is said in its designed word: "needs you" for asking and "Waiting" for idle (PO #39),
+ * in the tooltip and every accessible name alike.
  */
 
-export type PortraitStatus = 'working' | 'asking' | 'asleep' | 'done' | 'idle'
+export const PORTRAIT_STATUSES = ['working', 'asking', 'idle', 'asleep'] as const
+export type PortraitStatus = (typeof PORTRAIT_STATUSES)[number]
 /** sm is 32px (tooltips, chat tabs, history), the default 40px, lg 48px, frame included. */
 export type PortraitSize = 'sm' | 'lg'
 /** A look forced without the pointer or the keyboard, as the UI kit's own states show it. */
@@ -18,7 +21,6 @@ const MARK: Record<PortraitStatus, string> = {
   asking: '?',
   asleep: 'z',
   working: '',
-  done: '✓',
   idle: ''
 }
 
@@ -26,8 +28,7 @@ const STATUS_TEXT: Record<PortraitStatus, string> = {
   asking: 'needs you',
   asleep: 'asleep',
   working: 'working',
-  done: 'done',
-  idle: 'idle'
+  idle: 'Waiting'
 }
 
 export function portraitMark(status: PortraitStatus): string {

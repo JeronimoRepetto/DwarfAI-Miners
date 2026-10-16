@@ -61,10 +61,7 @@ import { NodeFs } from '../../../platform/fs/NodeFs'
 import { openReadOnlySnapshot } from '../../../platform/sqlite/readOnlySnapshot'
 import { SqliteLifecycleFactLog } from '../../../platform/sqlite/SqliteLifecycleFactLog'
 import { SqliteTransactionRunner } from '../../../platform/sqlite/SqliteTransactionRunner'
-import { NodeSqliteDatabase } from '../../../platform/sqlite/NodeSqliteDatabase'
 import { openTemplateCopy } from '../../../platform/sqlite/testing/templateDb'
-import { buildTemplateDb } from '../../../platform/sqlite/testing/templateDb.globalSetup'
-import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import { TransportLevel3Sink } from '../../../transport/attention/TransportLevel3Sink'
 import { HelloThrottle } from '../../../transport/auth/throttle'
 import { UI_TOKEN_FILE, UiToken } from '../../../transport/auth/uiToken'
@@ -186,36 +183,15 @@ export const claudeInstalled: InstallResolver = {
     )
 }
 
-export interface WorldOptions {
-  /**
-   * Where the Host database comes from: a copy of the run's template (the L1–L7 vitest config
-   * migrates it once, `templateDb.globalSetup.ts`), or `migrated-here`, a file migrated to head by
-   * the Host's own runner for this test (the L8 config registers no template).
-   */
-  database?: 'template-copy' | 'migrated-here'
-}
-
-/** The Host database migrated to head in its own temp directory, removed with the test's world. */
-function migratedHere(): SqliteDatabase {
-  const { path, dir } = buildTemplateDb()
-  const db = NodeSqliteDatabase.open(path)
-  // Closed before its directory is removed (Windows keeps an open file from being deleted).
-  cleanups.push(() => {
-    db.close()
-    rmSync(dir, { recursive: true, force: true })
-  })
-  return db
-}
-
 /** A temp root: a home folder with Claude's folders, the mine's folder and the Host database. */
-export function world(options: WorldOptions = {}) {
+export function world() {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dwarfai-140-asking-')))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const folders = observedProviderFolders({}, join(root, 'home'))
   const cwd = join(root, 'mines', 'moria')
   mkdirSync(cwd, { recursive: true })
   writeFileSync(join(cwd, 'main.ts'), 'x'.repeat(2_048))
-  const db = options.database === 'migrated-here' ? migratedHere() : openTemplateCopy().db
+  const db = openTemplateCopy().db
   db.exec(`DELETE FROM install_moment`)
   db.run(`INSERT INTO install_moment (id, at, reason) VALUES (1, ?, 'fresh-install')`, [
     INSTALL_BEFORE_ALL
@@ -881,8 +857,8 @@ export function permissionRequest(w: World): Record<string, unknown> {
  * A booted Host with the fixture session's dwarf present in its mine, Claude Code instant updates
  * on, and the `ui` and `notifier` clients attached.
  */
-export async function observedClaude(options: BootOptions & WorldOptions) {
-  const w = world(options)
+export async function observedClaude(options: BootOptions) {
+  const w = world()
   const h = await bootHost(w, options)
   const mineId = await h.mine()
   const { ui, notifier } = await h.clients()

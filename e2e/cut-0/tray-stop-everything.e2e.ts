@@ -63,6 +63,8 @@ test.describe('cut 0: Quit and Stop everything and quit from the tray (ISSUE-053
     // Stop everything and quit, confirmed in the window it opens: nothing fails, so the app exits with its Host and
     // the icon goes (S10.20; ADR-002 D7 step 4).
     await chooseTrayItem(app, TRAY_ITEMS.stopEverything)
+    // The app ends on its own once confirmed: its trace is saved first, so no screencast frame is lost under the exit.
+    await launched.stopTracing()
     await window.getByRole('button', { name: CONFIRM }).click({ timeout: 30_000 })
     expect(await exitsWithin(app.process(), 30_000), 'the app exits').toBe(true)
     expect(trayEvents(profile), 'the icon is removed').toEqual(['shown', 'removed'])

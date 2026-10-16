@@ -98,12 +98,26 @@ function edges(entry) {
   ].map(([name, value]) => [name, typeof value === 'string' ? value : value.version])
 }
 
+/** Whether a lockfile package entry declares `dependency` an optional peer (`peerDependenciesMeta.<name>.optional`). */
+function isOptionalPeer(entry, dependency) {
+  const optional = entry?.peerDependenciesMeta?.[dependency]?.optional
+  return (
+    entry?.peerDependencies?.[dependency] !== undefined &&
+    (optional === true || optional === 'true')
+  )
+}
+
 /**
  * Every package the root importer's `dependencies` and `optionalDependencies` reach, as `{ name, version }`
  * sorted by name then version; one entry per name and version, whatever peers it resolved with. Linked
  * workspace packages (`link:`) are the project's own code and are skipped.
+ *
+ * An optional peer edge is not followed: pnpm writes a resolved optional peer under the snapshot's
+ * `optionalDependencies` (vue@3.5.42 → typescript@6.0.3, resolved only because the root has typescript as a dev
+ * dependency), but the package does not ship it; whoever installs the package provides it. A required peer is still
+ * followed. `optionalPeers: true` follows them too, to name what a generator may list beside the production set.
  */
-export function productionPackages(lock) {
+export function productionPackages(lock, { optionalPeers = false } = {}) {
   const seen = new Map()
   const queue = edges(lock.importers['.'])
   while (queue.length > 0) {
@@ -111,8 +125,14 @@ export function productionPackages(lock) {
     if (version.startsWith('link:') || version.startsWith('file:')) continue
     const snapshotKey = `${name}@${version}`
     if (seen.has(snapshotKey)) continue
-    seen.set(snapshotKey, { name, version: bareVersion(version) })
-    queue.push(...edges(lock.snapshots[snapshotKey]))
+    const bare = bareVersion(version)
+    seen.set(snapshotKey, { name, version: bare })
+    const entry = lock.packages[`${name}@${bare}`]
+    queue.push(
+      ...edges(lock.snapshots[snapshotKey]).filter(
+        ([dependency]) => optionalPeers || !isOptionalPeer(entry, dependency)
+      )
+    )
   }
   const unique = new Map([...seen.values()].map((p) => [`${p.name}@${p.version}`, p]))
   return [...unique.values()].sort((a, b) =>

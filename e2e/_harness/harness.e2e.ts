@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -160,6 +161,37 @@ test.describe('E2E harness (17 §1.9)', () => {
       readdirSync(path.join(kept, 'logs')).some((name) => name.startsWith('ui-')),
       'the UI log is kept'
     ).toBe(true)
+  })
+
+  test('[ADR-002] stopTracing saves the trace before an app that ends on its own exits, and the teardown after that exit removes the profile and leaves the trace as saved', async () => {
+    const tracePath = test.info().outputPath('trace.zip')
+    launched = await launchApp({ tracePath })
+    const { app, profile } = launched
+    // Held now: once the app exited, Playwright no longer hands its process out.
+    const child = app.process()
+
+    await launched.stopTracing()
+    expect(existsSync(tracePath), 'the trace is saved before the app exits').toBe(true)
+    const saved = statSync(tracePath).mtimeMs
+    // Once only: a second call leaves the saved trace alone.
+    await launched.stopTracing()
+
+    // The app ends on its own, as a confirmed Stop everything and quit ends it, with no teardown asking.
+    await app.evaluate(({ app: electronApp }) => {
+      setTimeout(() => electronApp.quit(), 100)
+    })
+    await expect
+      .poll(() => child.exitCode !== null || child.signalCode !== null, {
+        timeout: 30_000,
+        message: 'the app exits on its own'
+      })
+      .toBe(true)
+
+    await launched.teardown()
+    launched = undefined
+
+    expect(existsSync(profile.root), 'the temp profile is removed').toBe(false)
+    expect(statSync(tracePath).mtimeMs, 'the teardown did not stop the trace again').toBe(saved)
   })
 })
 

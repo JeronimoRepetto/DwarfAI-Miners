@@ -122,6 +122,13 @@ export interface LaunchedApp {
    * fails the teardown.
    */
   teardown(options?: TeardownOptions): Promise<void>
+  /**
+   * Stops the Playwright trace and saves it at `tracePath`, once; a later call and the teardown then leave it alone. A
+   * case calls it right before the action that ends the app on its own (Stop everything and quit confirmed): a trace
+   * still capturing screenshots when the app exits loses a screencast frame under it (an unhandled ENOENT), which can
+   * stop the teardown before it removes the profile. Without `tracePath` it does nothing.
+   */
+  stopTracing(): Promise<void>
 }
 
 export interface TeardownOptions {
@@ -441,6 +448,19 @@ function readMainErrors(file: string): string | undefined {
 }
 
 /**
+ * The teardown's failure once the profile's removal failed too: a profile left behind fails the run's global sweep, so
+ * its removal error is reported beside an earlier failure, never hidden by it.
+ */
+function withRemovalFailure(failure: unknown, removal: unknown): unknown {
+  if (failure === undefined) return removal
+  const message = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error)
+  return new Error(`${message(failure)}; then the profile was not removed: ${message(removal)}`, {
+    cause: failure
+  })
+}
+
+/**
  * Removes a profile, and first ends every process still naming its folders (its app and its Host, which runs from the
  * versioned copy under the profile's data root): on Windows the browser process can outlive the process Playwright
  * spawned and write its profile files after that one exited, and a Host that was starting when the app quit writes its
@@ -521,6 +541,13 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     await app.context().tracing.start({ screenshots: true, snapshots: true })
   }
 
+  let tracingStopped = false
+  const stopTracing = async (): Promise<void> => {
+    if (options.tracePath === undefined || tracingStopped) return
+    tracingStopped = true
+    await app.context().tracing.stop({ path: options.tracePath })
+  }
+
   let tornDown = false
   let firstWindow: Page | undefined
   const teardown = async (teardownOptions: TeardownOptions = {}): Promise<void> => {
@@ -538,9 +565,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     // connection to the main process at once and then waits, unbounded, for the exit. Keeping the
     // connection lets a quit that runs out of budget be asked what state the app is in.
     const quit = (async () => {
-      if (options.tracePath !== undefined) {
-        await app.context().tracing.stop({ path: options.tracePath })
-      }
+      await stopTracing()
       await app.evaluate(({ app: electronApp }) => {
         electronApp.quit()
       })
@@ -588,7 +613,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     try {
       await removeProfile()
     } catch (error) {
-      failure ??= error
+      failure = withRemovalFailure(failure, error)
     }
     if (failure !== undefined) throw failure
   }
@@ -607,6 +632,8 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
         throw new Error('the app has no window to run Stop everything and quit from')
       // Stop everything and quit asks the Host: it is offered once the UI attached to it (S10.18 guard).
       await waitForHostAttached(isolated)
+      // Confirming ends the app on its own: the trace is saved first, so no screencast frame is lost under its exit.
+      await stopTracing()
       await stopEverythingFromWindow(window)
       if (!(await waitForExit(child, budgetMs))) {
         const diagnosis = await diagnoseStuckQuit(launchedApp, child, options.tracePath)
@@ -637,7 +664,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     try {
       await removeProfile()
     } catch (error) {
-      failure ??= error
+      failure = withRemovalFailure(failure, error)
     }
     if (failure !== undefined) throw failure
   }
@@ -650,7 +677,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     // whose page is still loading, which is not a state a person quits from.
     await window.waitForLoadState('load')
     await waitForMainLoaded(app, MAIN_LOADED_TIMEOUT_MS)
-    return { app, window, profile, teardown }
+    return { app, window, profile, teardown, stopTracing }
   } catch (error) {
     await teardown()
     throw error
