@@ -47,6 +47,10 @@ import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
 import { useMines } from '../../composables/useMines'
 import { useToasts } from '../../composables/useToasts'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
+/* --- ISSUE-252 imports, appended --- */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+/* --- end of the ISSUE-252 imports --- */
 import MenuButton from '../overlay/MenuButton.vue'
 import DialogCard from '../overlay/DialogCard.vue'
 import ModalDialog from '../overlay/ModalDialog.vue'
@@ -4040,6 +4044,18 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
   })
 })
 /* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
+
+/* --- The panel's IPC through composables (ISSUE-252) — one block, appended ---------------------------------- */
+describe('DwarfMessagePanel IPC through composables (ISSUE-252)', () => {
+  // ADR-033 item 2; 05 §5.1 R13: the picker, the drop helper and the description go through useAttachments, and the
+  // rename calls through useDwarfRename. The attach cases above prove the chips and refusals did not move (TC-252-02).
+  it('[R13, ADR-033] the MessagePanel attaches, drops and describes files through useAttachments and references no window.api', () => {
+    const source = readFileSync(join(import.meta.dirname, 'DwarfMessagePanel.vue'), 'utf8')
+    expect(source).toContain("from '../../composables/useAttachments'")
+    expect(source.match(/window\.api/g) ?? []).toEqual([])
+  })
+})
+/* --- end of the ISSUE-252 block ------------------------------------------------------------------------------- */
 
 describe('DwarfMessagePanel test teardown (#635)', () => {
   it('finds nothing an earlier test mounted still in the document', () => {
