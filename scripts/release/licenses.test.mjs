@@ -213,7 +213,25 @@ describe('licence report and notices (20 §2.4)', () => {
     expect(rows.map((r) => [`${r.name}@${r.version}`, r.licence, r.compatible, r.bundle])).toEqual([
       ['@agentclientprotocol/sdk@1.6.0', 'Apache-2.0', true, true],
       ['@napi-rs/keyring@2.1.0', 'MIT', true, true],
-      ['@napi-rs/keyring-win32-x64-msvc@2.1.0', 'MIT', true, true]
+      ['@napi-rs/keyring-win32-x64-msvc@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-darwin-x64@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-darwin-arm64@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-freebsd-x64@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-linux-x64-gnu@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-linux-x64-musl@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-linux-arm64-gnu@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-linux-arm64-musl@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-linux-arm-gnueabihf@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-linux-riscv64-gnu@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-win32-ia32-msvc@2.1.0', 'MIT', true, true],
+      ['@napi-rs/keyring-win32-arm64-msvc@2.1.0', 'MIT', true, true],
+      [
+        '@moonshot-ai/kimi-agent-sdk@0.1.8',
+        'MIT in package.json, Apache-2.0 template in LICENSE (inconsistent)',
+        true,
+        true
+      ],
+      ['@zed-industries/codex-acp@0.16.0', 'Apache-2.0', false, false]
     ])
   })
 
