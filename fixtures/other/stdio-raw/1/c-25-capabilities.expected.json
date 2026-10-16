@@ -1,0 +1,19 @@
+{
+  "case": "C-25",
+  "description": "A stdio-raw session negotiates nothing: no handshake reports a capability, and probe() starts no process, so the effective set is the merge of the H1 ceiling with the probe.",
+  "script": [{ "do": "launch", "readyAfterMs": 3000 }, { "do": "probe" }],
+  "outcomes": [{ "resolved": true }, null],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "other:other:{session}:stdout@0",
+        "role": "dwarf",
+        "text": "Agent ready. Reading the prompt.",
+        "providerTime": null
+      }
+    }
+  ],
+  "sent": ["first prompt"]
+}
