@@ -1,0 +1,69 @@
+{
+  "case": "sp10-question",
+  "spike": "SP-10",
+  "claudeVersion": "2.1.301",
+  "osRelease": "10.0.26200",
+  "arch": "x64",
+  "date": "2026-10-16",
+  "skipped": null,
+  "marker": null,
+  "stubMethods": [],
+  "stubCalls": [],
+  "steps": [
+    {
+      "kind": "launch",
+      "argv": [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--session-id",
+        "<session-id>",
+        "--permission-mode",
+        "default",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "AskUserQuestion"
+      ],
+      "spawnError": null,
+      "firstStdoutMs": 945,
+      "firstLines": [
+        "system/hook_started",
+        "system/hook_started",
+        "system/hook_started",
+        "system/hook_response",
+        "system/hook_response",
+        "system/hook_response",
+        "system/init",
+        "system/thinking_tokens"
+      ],
+      "initMs": 5567,
+      "initBeforeFirstInput": false,
+      "initSessionIdEqualsRequested": true,
+      "promptToolServerStatus": "not listed",
+      "askUserQuestionInTools": false,
+      "firstInputMs": 6,
+      "toolUses": [],
+      "results": [
+        {
+          "subtype": "success",
+          "isError": false,
+          "numTurns": 1,
+          "permissionDenials": [],
+          "sessionIdEqualsRequested": true,
+          "reply": "unavailable",
+          "atMs": 11924
+        }
+      ],
+      "idleLinesAfterLastResult": 0,
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "exitSignal": null,
+      "exitMs": 16292,
+      "exitedBeforeReadiness": false,
+      "killedAfterTimeout": false
+    }
+  ]
+}
