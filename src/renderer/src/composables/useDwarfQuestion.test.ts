@@ -56,10 +56,15 @@ const REQUEST_ID = expect.stringMatching(
 function stubApi(
   answerDwarfQuestion: (request: never) => Promise<DwarfQuestionAnswerResult>
 ): void {
+  // AMENDED for ISSUE-250 (was: hand-built objects as `window.api` in this file's stubs): installed through the generated
+  // fake (ADR-033 item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than
+  // the contract.
   Object.defineProperty(window, 'api', {
     configurable: true,
     writable: true,
-    value: { answerDwarfQuestion: (request: never) => asOutcome(answerDwarfQuestion(request)) }
+    value: createFakeWindowApi({
+      answerDwarfQuestion: (request: never) => asOutcome(answerDwarfQuestion(request))
+    } as unknown as Partial<Window['api']>)
   })
 }
 
@@ -70,10 +75,10 @@ function stubPermissionApi(
   Object.defineProperty(window, 'api', {
     configurable: true,
     writable: true,
-    value: {
+    value: createFakeWindowApi({
       answerDwarfQuestion: vi.fn(),
       answerDwarfPermission: (request: never) => asOutcome(answerDwarfPermission(request))
-    }
+    } as unknown as Partial<Window['api']>)
   })
 }
 
@@ -459,10 +464,10 @@ describe('useDwarfQuestion decide (#203)', () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
-      value: {
+      value: createFakeWindowApi({
         answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
         answerDwarfPermission: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } })
-      }
+      } as unknown as Partial<Window['api']>)
     })
     const { answer, decide, stateFor } = useDwarfQuestion()
 
@@ -497,10 +502,10 @@ describe('useDwarfQuestion decide (#203)', () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
-      value: {
+      value: createFakeWindowApi({
         answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
         answerDwarfPermission: vi.fn()
-      }
+      } as unknown as Partial<Window['api']>)
     })
     const { answer, stateFor } = useDwarfQuestion()
 
@@ -526,7 +531,11 @@ describe('useDwarfQuestion: the "Answers:" record', () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
-      value: { answerDwarfQuestion, answerDwarfPermission, sendDwarfText }
+      value: createFakeWindowApi({
+        answerDwarfQuestion,
+        answerDwarfPermission,
+        sendDwarfText
+      } as unknown as Partial<Window['api']>)
     })
     return { answerDwarfQuestion, answerDwarfPermission }
   }
@@ -633,14 +642,14 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
-      value: {
+      value: createFakeWindowApi({
         // AMENDED for ISSUE-141 (was: today's result): the scripted verdict in the 14 shape.
         answerDwarfQuestion: vi.fn(() =>
           asOutcome(
             Promise.resolve(answered ? { answered: true } : { answered: false, error: 'nope' })
           )
         )
-      }
+      } as unknown as Partial<Window['api']>)
     })
     await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
     const [refused] = useDwarfMessaging().echoesFor('claude:s1')
@@ -662,7 +671,9 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
       configurable: true,
       writable: true,
       // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
-      value: { answerDwarfQuestion: vi.fn(() => asOutcome(Promise.resolve({ answered: true }))) }
+      value: createFakeWindowApi({
+        answerDwarfQuestion: vi.fn(() => asOutcome(Promise.resolve({ answered: true })))
+      } as unknown as Partial<Window['api']>)
     })
     await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
     expect(useDwarfMessaging().stateFor('claude:s1')).toEqual({

@@ -2408,7 +2408,11 @@ function fakeApi(picks: DwarfAttachmentPick[][] = [], chosen: string[] = []) {
     chooseDwarfAttachments: vi.fn().mockResolvedValue(chosen),
     describeDwarfAttachments
   }
-  ;(window as unknown as { api: unknown }).api = api
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
+    api as unknown as Partial<Window['api']>
+  )
   return api
 }
 
@@ -3428,7 +3432,11 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
       setDwarfName: vi.fn().mockResolvedValue(answer),
       resetDwarfName: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
     }
-    ;(window as unknown as { api: unknown }).api = api
+    // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+    // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+    ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
+      api as unknown as Partial<Window['api']>
+    )
     return api
   }
 
