@@ -90,6 +90,7 @@ import {
 import { useHoverTip } from '../../composables/useHoverTip'
 import { useHostConnection } from '../../composables/useHostConnection'
 import { useDwarfRename } from '../../composables/useDwarfRename'
+import { useAttachments } from '../../composables/useAttachments'
 import { useToasts } from '../../composables/useToasts'
 import ActionButton from '../controls/ActionButton.vue'
 import FieldHint from '../controls/FieldHint.vue'
@@ -403,6 +404,9 @@ function attachmentsOfEcho(echoId: string): readonly DwarfAttachment[] {
   return props.echoAttachments?.[echoId] ?? []
 }
 
+// The picker, the drop helper and the description (A-24, A-X1, A-25) go through the composable (ADR-033 item 2).
+const attaching = useAttachments()
+
 /**
  * Take what main said about a set of paths, and say what was refused — the one place a file
  * becomes pending, so the drop and the picker cannot grow separate rules.
@@ -417,7 +421,7 @@ function absorb(picks: readonly DwarfAttachmentPick[]): void {
 async function describeAndAbsorb(paths: readonly string[]): Promise<void> {
   if (paths.length === 0) return
   try {
-    absorb(await window.api.describeDwarfAttachments(paths))
+    absorb(await attaching.describe(paths))
   } catch {
     // The bridge is the only thing that can fail here, and a file that vanished
     // without a word is exactly what this line exists to prevent.
@@ -433,18 +437,14 @@ async function onDrop(event: DragEvent): Promise<void> {
     return
   }
   const files = [...(event.dataTransfer?.files ?? [])]
-  // `webUtils` in preload is the only thing that can turn a dropped File into a
-  // path; a File carrying none — a drag out of a web page — answers '' and is
-  // dropped rather than guessed at.
-  const paths = files
-    .map((file) => window.api.pathForDroppedFile(file))
-    .filter((path) => path !== '')
-  await describeAndAbsorb(paths)
+  // A File carrying no path — a drag out of a web page — is dropped rather than
+  // guessed at (useAttachments).
+  await describeAndAbsorb(attaching.droppedPaths(files))
 }
 
 async function onAttachClick(): Promise<void> {
   if (!canAttach.value) return
-  const chosen = await window.api.chooseDwarfAttachments()
+  const chosen = await attaching.choose()
   await describeAndAbsorb(chosen)
   // The OS dialog took the keyboard; the person's next act is typing (#409).
   await focusComposer()
@@ -789,7 +789,7 @@ function bindComposer(instance: unknown): void {
  * not for a dwarf the Host's board carries, until the step-3a switch routes A-N08 / A-N09
  * (useDwarfRename). Where it cannot, the name is plain text and Reset name is not in the menu.
  */
-const { canRename } = useDwarfRename()
+const { canRename, setName, resetName: resetDwarfName } = useDwarfRename()
 const renamable = computed(() => canRename(props.dwarf.id))
 
 /*
@@ -921,7 +921,7 @@ async function saveName(text: string): Promise<void> {
   if (!renameChanges(text, props.dwarf)) return
   const base = props.dwarf.name
   try {
-    const result = await window.api.setDwarfName({
+    const result = await setName({
       dwarfId: props.dwarf.id,
       name: cleanDwarfName(text)
     })
@@ -935,7 +935,7 @@ async function saveName(text: string): Promise<void> {
 async function resetName(): Promise<void> {
   const base = props.dwarf.name
   try {
-    tell(await window.api.resetDwarfName(props.dwarf.id), base)
+    tell(await resetDwarfName(props.dwarf.id), base)
   } catch {
     // As for a save: the board still carries the name, and the panel shows it.
   }
