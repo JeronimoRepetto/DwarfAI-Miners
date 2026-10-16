@@ -439,3 +439,37 @@ describe('license-sbom job in CI (20 §2.1, §2.4; 18 C-35, C-36)', () => {
     expect(job).toContain('retention-days: 1\n')
   })
 })
+
+// ADDED for ISSUE-272 (TC-272-03): every packaging job writes THIRD-PARTY-NOTICES.md before `pnpm package`, so
+// package.json `build.extraResources` ships it beside LICENSE in every archive.
+describe('third-party notices before packaging (20 §2.4; R-06; ISSUE-272)', () => {
+  const NOTICES = 'run: node scripts/release/third-party-notices.mjs\n'
+
+  it('[NFR-COMP-07] the package job writes the notices after the build and before it packages', () => {
+    const job = jobText('package')
+    const at = job.indexOf(NOTICES)
+    expect(at, 'the package job writes the notices').toBeGreaterThanOrEqual(0)
+    expect(at).toBeGreaterThan(job.indexOf('run: pnpm install --frozen-lockfile\n'))
+    expect(at).toBeLessThan(job.indexOf('run: pnpm package ${{ matrix.package_args }}\n'))
+  })
+
+  it('[NFR-COMP-07] each internal build job writes the notices before it packages', () => {
+    for (const { id, steps } of internalJobs()) {
+      const step = (command) => steps.findIndex((s) => s.includes(command))
+      expect(step(NOTICES), `the ${id} job writes the notices`).toBeGreaterThanOrEqual(0)
+      expect(step(NOTICES), `the ${id} job writes them before it packages`).toBeLessThan(
+        step('run: pnpm package')
+      )
+    }
+  })
+
+  it('[NFR-COMP-07] package.json build ships LICENSE and THIRD-PARTY-NOTICES.md as app resources', () => {
+    const { build } = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+    expect(build.extraResources).toEqual(
+      expect.arrayContaining([
+        { from: 'LICENSE', to: 'LICENSE' },
+        { from: 'release/licenses/THIRD-PARTY-NOTICES.md', to: 'THIRD-PARTY-NOTICES.md' }
+      ])
+    )
+  })
+})

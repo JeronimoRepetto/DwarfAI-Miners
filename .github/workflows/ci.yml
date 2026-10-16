@@ -659,6 +659,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # THIRD-PARTY-NOTICES.md ships in the app resources beside LICENSE (package.json build.extraResources; 20 §2.4,
+      # R-06; ISSUE-272). It reads the lockfile and installed packages only.
+      - name: Write the third-party notices
+        run: node scripts/release/third-party-notices.mjs
+
       # `pnpm package` passes `--publish never`, package.json `build` names no publish provider, and no token is
       # in this job's environment. On macOS, `-c.mac.identity=null` (pnpm appends it to the script's
       # electron-builder command) skips code signing, CSC_IDENTITY_AUTO_DISCOVERY=false keeps electron-builder from

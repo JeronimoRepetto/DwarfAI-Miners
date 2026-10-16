@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   ATTENTION_CUES,
   checkAttentionLevels,
+  checkAudioAssets,
   checkCueDurations,
   maxMomentaryLoudness,
   mp3DurationSeconds,
@@ -181,5 +182,44 @@ describe('bundled sound assets (DS sound.md)', () => {
       'src/renderer/src/lib/audio/dynamic.ts:3: an audio file reached by a path, not an explicit import'
     ])
     expect(scanAudioReferences(repoRoot)).toEqual([])
+  })
+
+  it('[NFR-SND-06] a shipped MP3 attention cue is reported unmeasured (mp3) on a warning, neither a failure nor a pass', () => {
+    const shipped = checkAudioAssets(repoRoot)
+    expect(shipped.failures).toEqual([])
+    expect(shipped.warnings).toEqual([
+      'question: unmeasured (mp3): no MP3 decoder in the toolchain, so its loudness is not checked',
+      'permission: unmeasured (mp3): no MP3 decoder in the toolchain, so its loudness is not checked',
+      'finished: unmeasured (mp3): no MP3 decoder in the toolchain, so its loudness is not checked'
+    ])
+  })
+
+  it('[NFR-SND-06, NFR-TIM-14] WAV cues are measured for both duration and level, and a loud attention cue fails', () => {
+    const cue = (lufs, seconds = 0.9) => wav({ seconds, amplitude: amplitudeFor(lufs) })
+    write('src/renderer/src/assets/audio/sfx/click.wav', cue(-30, 0.2))
+    write('src/renderer/src/assets/audio/sfx/question.wav', cue(-26.4))
+    write('src/renderer/src/assets/audio/sfx/permission.wav', cue(-22))
+    write('src/renderer/src/assets/audio/sfx/finished.wav', cue(-29, 0.6))
+    write(
+      'src/renderer/src/lib/audio/audioAssets.ts',
+      [
+        "import sfxClick from '../../assets/audio/sfx/click.wav'",
+        "import sfxQuestion from '../../assets/audio/sfx/question.wav'",
+        "import sfxPermission from '../../assets/audio/sfx/permission.wav'",
+        "import sfxFinished from '../../assets/audio/sfx/finished.wav'",
+        'export const UI_SFX_SRC = {',
+        '  click: sfxClick,',
+        '  question: sfxQuestion,',
+        '  permission: sfxPermission,',
+        '  finished: sfxFinished',
+        '}',
+        ''
+      ].join('\n')
+    )
+    const result = checkAudioAssets(dir)
+    expect(result.warnings).toEqual([])
+    expect(result.failures).toEqual([
+      'permission: momentary maximum -22.0 LUFS, not at the shared -26.4 LUFS level'
+    ])
   })
 })

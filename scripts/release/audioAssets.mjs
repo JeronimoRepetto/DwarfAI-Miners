@@ -4,11 +4,13 @@
 //   node scripts/release/audioAssets.mjs [--root <dir>]
 //
 // - NFR-TIM-14: every interface cue lasts under 0.5 s and every attention cue under 1.5 s. The cues are UI_SFX_SRC
-//   of src/renderer/src/lib/audio/audioAssets.ts; an MP3's duration is counted from its frame headers.
+//   of src/renderer/src/lib/audio/audioAssets.ts; an MP3's duration is counted from its frame headers, a WAV's from
+//   its samples.
 // - NFR-SND-06: the attention cues share one level, a maximum momentary loudness of -26.4 LUFS (ITU-R BS.1770
 //   K-weighting, 400 ms windows every 100 ms), and "finished" is the faintest. The meter reads PCM WAV. The shipped
 //   cues are MP3, and decoding MP3 needs a decoder this toolchain does not have (a new dependency or a system tool,
-//   both the owner's decision), so for an MP3 cue the check reports the level as not measured and fails.
+//   both the owner's decision; foreman ruling 2026-10-16: none for now), so an MP3 cue's level is printed as
+//   `unmeasured (mp3)` on a warning line: neither a failure nor a pass.
 // - NFR-SND-09: every sound the renderer plays is an explicit `import` of a file that exists; a path to an audio file
 //   in any other form (a string, a template, a glob, a `src` attribute) fails.
 // Exits 1 on any failure. Reads files only.
@@ -311,36 +313,61 @@ export function scanAudioReferences(rootDir) {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-function main() {
-  const rootIndex = process.argv.indexOf('--root')
-  const rootDir = path.resolve(rootIndex === -1 ? '.' : process.argv[rootIndex + 1])
+/** A cue's duration in seconds: MP3 from its frame headers, WAV from its sample count; NaN for any other format. */
+function durationOf(file, bytes) {
+  if (file.endsWith('.mp3')) return mp3DurationSeconds(bytes)
+  if (file.endsWith('.wav')) {
+    const { sampleRate, channels } = readWavPcm(bytes)
+    return channels[0].length / sampleRate
+  }
+  return Number.NaN
+}
+
+/**
+ * Every check of the bundled sounds over the tree at `rootDir`: `{ lines, failures, warnings }`. An attention cue
+ * that is not a WAV cannot be decoded by this toolchain; its loudness is reported `unmeasured` on a warning, never as
+ * a failure and never as a pass, and the shared-level comparison runs only when all three are measured.
+ */
+export function checkAudioAssets(rootDir) {
   const cues = readUiSfxInventory(rootDir)
+  const lines = []
   const failures = []
+  const warnings = []
+  const bytesOf = (cue) => readFileSync(path.join(rootDir, cue.file))
   const measured = cues.map((cue) => {
-    const seconds = cue.file.endsWith('.mp3')
-      ? mp3DurationSeconds(readFileSync(path.join(rootDir, cue.file)))
-      : NaN
-    console.log(
-      `${cue.kind}: ${cue.file.replaceAll('\\', '/')} ${Number.isNaN(seconds) ? 'duration not read' : `${seconds.toFixed(3)} s`}`
+    const seconds = durationOf(cue.file, bytesOf(cue))
+    const shown = cue.file.replaceAll('\\', '/')
+    lines.push(
+      `${cue.kind}: ${shown} ${Number.isNaN(seconds) ? 'duration not read' : `${seconds.toFixed(3)} s`}`
     )
-    if (Number.isNaN(seconds)) failures.push(`${cue.file}: only MP3 durations are read`)
+    if (Number.isNaN(seconds)) failures.push(`${shown}: only MP3 and WAV durations are read`)
     return { ...cue, seconds }
   })
   failures.push(...checkCueDurations(measured.filter((cue) => !Number.isNaN(cue.seconds))))
   const levels = {}
   for (const cue of cues.filter((c) => ATTENTION_CUES.includes(c.kind))) {
-    if (cue.file.endsWith('.wav'))
-      levels[cue.kind] = maxMomentaryLoudness(
-        readWavPcm(readFileSync(path.join(rootDir, cue.file)))
+    if (cue.file.endsWith('.wav')) {
+      levels[cue.kind] = maxMomentaryLoudness(readWavPcm(bytesOf(cue)))
+      lines.push(`${cue.kind}: momentary maximum ${levels[cue.kind].toFixed(1)} LUFS`)
+    } else {
+      const format = path.extname(cue.file).slice(1)
+      warnings.push(
+        `${cue.kind}: unmeasured (${format}): no ${format.toUpperCase()} decoder in the toolchain, so its loudness is not checked`
       )
-    else
-      failures.push(
-        `${cue.kind}: ${path.extname(cue.file)} is not decoded by this toolchain, so its loudness is not measured (NFR-SND-06)`
-      )
+    }
   }
   if (Object.keys(levels).length === ATTENTION_CUES.length)
     failures.push(...checkAttentionLevels(levels))
   failures.push(...scanAudioReferences(rootDir))
+  return { lines, failures, warnings }
+}
+
+function main() {
+  const rootIndex = process.argv.indexOf('--root')
+  const rootDir = path.resolve(rootIndex === -1 ? '.' : process.argv[rootIndex + 1])
+  const { lines, failures, warnings } = checkAudioAssets(rootDir)
+  for (const line of lines) console.log(line)
+  for (const warning of warnings) console.warn(`warning: ${warning}`)
   for (const failure of failures) console.error(`FAIL ${failure}`)
   process.exitCode = failures.length > 0 ? 1 : 0
 }
