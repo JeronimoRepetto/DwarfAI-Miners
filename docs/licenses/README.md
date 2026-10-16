@@ -17,6 +17,11 @@ reads only `pnpm-lock.yaml` and the installed packages, never the network, and w
 | `scripts/release/sbom.mjs`                | `sbom-<os>.json`         | the `pnpm sbom` CycloneDX document does not list exactly the lockfile's production packages                                                                                    |
 | `scripts/release/third-party-notices.mjs` | `THIRD-PARTY-NOTICES.md` | Electron's licence or one of `FONT-CREDITS.md`, `AUDIO-CREDITS.md` and `ARTWORK-LICENSE.md` is missing                                                                         |
 
+One exception is shared with the provider scan (ISSUE-273): while the legacy Agent SDK path
+`src/main/sessionLaunch/sdkHeldSession.ts` exists, `scripts/release/provider-scan.allowance.json` lets the
+`@anthropic-ai/claude-agent-sdk*` packages pass the licence report. Each one is printed as `allowed:`, never hidden.
+Once that path is gone, a non-empty allowance fails the report.
+
 You can run each one locally from the repository root, for example `node scripts/release/licenses.mjs`. The SBOM
 script reads a `pnpm sbom` document:
 

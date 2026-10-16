@@ -533,8 +533,9 @@ jobs:
   # on (a `v*` tag, a manual dispatch), and never on a pull request, so it is not a merge check. It fails on a denied
   # or unreadable licence (scripts/release/licenses.denied.json), on a bundled provider adapter or library without a
   # closed GPL-compatible S-008-1 row for its pinned version, and on an SBOM that does not list exactly the lockfile's
-  # production packages. The SBOM generator is the pinned pnpm's own `pnpm sbom` (CycloneDX), so no dependency is
-  # added (OI-20-3). Everything is read from the lockfile and the installed packages. It publishes nothing: the
+  # production packages. The legacy Agent SDK packages pass the licence report only by ISSUE-273's dated
+  # allowance (scripts/release/provider-scan.allowance.json), printed as `allowed:`. The SBOM generator is the
+  # pinned pnpm's own `pnpm sbom` (CycloneDX), so no dependency is added (OI-20-3). Everything is read from the lockfile and the installed packages. It publishes nothing: the
   # outputs are workflow artifacts kept one day; attaching them to a release is ISSUE-278's.
   license-sbom:
     name: Licence report and SBOM

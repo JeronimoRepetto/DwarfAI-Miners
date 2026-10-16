@@ -12,6 +12,7 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { allowanceFor, checkAllowance } from './lockfile-provider-scan.mjs'
 
 /** The product licence (OQ-52, `20` §2.4). */
 export const PRODUCT_LICENSE = 'GPL-3.0-or-later'
@@ -19,6 +20,7 @@ export const PRODUCT_LICENSE = 'GPL-3.0-or-later'
 export const DENIED_FILE = path.join('scripts', 'release', 'licenses.denied.json')
 export const DEFAULT_OUT = path.join('release', 'licenses')
 export const REPORT_FILE = 'licenses.json'
+export const ALLOWANCE_FILE = path.join('scripts', 'release', 'provider-scan.allowance.json')
 
 /** The denied list: `{ denied: [{ id, why }] }`, as a Set of SPDX ids with the file's own fields kept. */
 export function readDenied(file) {
@@ -247,15 +249,33 @@ export function judgeLicence(expression, denied) {
 // The report.
 
 /**
- * The licence report of a project: the product line, one row per production package and the failures.
- * `installed` may be passed in when the caller already indexed the store.
+ * The licence report of a project: the product line, one row per production package, the failures, and the
+ * packages that pass only by the legacy allowance. `installed` may be passed in when the caller already indexed the
+ * store.
+ *
+ * `allowance` is ISSUE-273's provider-scan.allowance.json, checked by its own checkAllowance: while the legacy Agent
+ * SDK path exists, a package it names (only `@anthropic-ai/claude-agent-sdk*`) whose licence would fail is listed in
+ * `allowed` with verdict `allowance` instead, never hidden. Once that path is gone the allowance is stale: that is a
+ * failure, and the packages fail on their licence again.
  */
-export function buildLicenceReport({ rootDir, denied, installed = indexInstalled(rootDir) }) {
+export function buildLicenceReport({
+  rootDir,
+  denied,
+  allowance = null,
+  installed = indexInstalled(rootDir)
+}) {
   const pkg = JSON.parse(readFileSync(path.join(rootDir, 'package.json'), 'utf8'))
   const lock = parseLockfile(readFileSync(path.join(rootDir, 'pnpm-lock.yaml'), 'utf8'))
   const failures = []
   if (pkg.license !== PRODUCT_LICENSE) {
     failures.push(`package.json license is "${pkg.license}", but the product is ${PRODUCT_LICENSE}`)
+  }
+  const allowed = []
+  let entries = []
+  if (allowance) {
+    const checked = checkAllowance(allowance, { rootDir })
+    failures.push(...checked.errors.map((error) => `allowance: ${error}`))
+    entries = checked.entries
   }
   const packages = productionPackages(lock).map(({ name, version }) => {
     const key = `${name}@${version}`
@@ -270,6 +290,11 @@ export function buildLicenceReport({ rootDir, denied, installed = indexInstalled
       return { name, version, license, verdict: 'unknown', dir: found.dir }
     }
     const judged = judgeLicence(license, denied)
+    const entry = judged.verdict === 'allowed' ? null : allowanceFor(name, entries)
+    if (entry) {
+      allowed.push(`${key} by the legacy allowance ${entry.pattern} (removedBy ${entry.removedBy})`)
+      return { name, version, license, verdict: 'allowance', dir: found.dir }
+    }
     if (judged.verdict === 'denied') {
       failures.push(`${key}: licence "${license}" is denied (${judged.denied.join(', ')})`)
     } else if (judged.verdict === 'unknown') {
@@ -280,6 +305,7 @@ export function buildLicenceReport({ rootDir, denied, installed = indexInstalled
   return {
     product: { name: pkg.name, version: pkg.version, license: pkg.license },
     packages,
+    allowed,
     failures
   }
 }
@@ -294,6 +320,7 @@ export function reportDocument(report) {
       license,
       verdict
     })),
+    allowed: report.allowed,
     failures: report.failures
   }
 }
@@ -315,7 +342,8 @@ function main() {
   const out = path.resolve(rootDir, args.out ?? DEFAULT_OUT)
   const report = buildLicenceReport({
     rootDir,
-    denied: readDenied(path.join(rootDir, DENIED_FILE))
+    denied: readDenied(path.join(rootDir, DENIED_FILE)),
+    allowance: JSON.parse(readFileSync(path.join(rootDir, ALLOWANCE_FILE), 'utf8'))
   })
   mkdirSync(out, { recursive: true })
   writeFileSync(path.join(out, REPORT_FILE), `${JSON.stringify(reportDocument(report), null, 2)}\n`)
@@ -325,6 +353,7 @@ function main() {
   console.log(`${report.product.name} ${report.product.version}: ${report.product.license}`)
   console.log(`${report.packages.length} production packages: ${JSON.stringify(counts)}`)
   console.log(`wrote ${path.join(out, REPORT_FILE)}`)
+  for (const line of report.allowed) console.log(`allowed: ${line}`)
   for (const failure of report.failures) console.error(`FAIL ${failure}`)
   process.exitCode = report.failures.length > 0 ? 1 : 0
 }
