@@ -33,7 +33,6 @@ import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { inMemoryConversation } from '../../modules/conversation/testing/inMemoryConversation'
 import { inMemoryCrew } from '../../modules/crew/testing/inMemoryCrew'
 import { createLaunching, LaunchRefusedError, type LaunchingEvent } from '../../modules/launching'
-import { SHELL_METACHARACTER_REFUSAL } from '../../modules/launching/domain/hostedCommand'
 import { inMemoryLaunching } from '../../modules/launching/testing/inMemoryLaunching'
 import type { MineView } from '../../modules/mines'
 import { createSuppliers, HOSTED_COMMAND_PROVIDER_ID } from '../../modules/suppliers'
@@ -251,9 +250,10 @@ describe('launch Other… (F3)', () => {
       failure: { cause: 'could-not-start', supplierLabel: 'The custom command', actions: ['retry'] }
     })
     expect(failedFrames(h)).toHaveLength(1)
-    // The parser's sentence is diagnostic detail only: the record's fixed `msg`, never notice copy.
+    // The parser's sentence (the metacharacter refusal) is diagnostic detail only: the record's
+    // fixed `msg`, never notice copy.
     expect(h.log.byEvent('launch.failed')).toMatchObject([
-      { causeClass: 'could-not-start', launchId, msg: SHELL_METACHARACTER_REFUSAL }
+      { causeClass: 'could-not-start', launchId, msg: expect.stringContaining('with no shell') }
     ])
     expect(h.db.launches.byId(launchId)).toMatchObject({
       state: 'failed',

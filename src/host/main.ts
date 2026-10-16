@@ -825,7 +825,7 @@ async function bootHost(base: HostBase): Promise<void> {
             hostedCommand: {
               processControl,
               loginEnv: process.env,
-              platform: process.platform,
+              platform: hostRuntime().os as NodeJS.Platform,
               redact: redactSecrets
             }
           })
