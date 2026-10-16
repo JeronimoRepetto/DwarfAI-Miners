@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { FAIL_CLOSED_CAPABILITIES, type ProviderCapabilities } from '../domain/capabilities'
+import {
+  ceilingOf,
+  FAIL_CLOSED_CAPABILITIES,
+  type ProviderCapabilities
+} from '../domain/capabilities'
 import { merge, negotiatedFor } from '../domain/mergeCapabilities'
 import { answerChannelOf, offeredModes } from '../domain/offeredModes'
 import type { CatalogRecord, PermissionModeCatalog, ProviderProfile } from '../domain/profile'
 import { catalogueMachine } from '../testing/catalogueMachine'
+import { preferredRow } from '../testing/ceilingRow'
 import type { SupplierEntry } from './catalogue'
 
 /**
@@ -31,7 +36,7 @@ async function probedCatalogue(records: readonly CatalogRecord[]) {
 /** Added for ISSUE-147: a record's effective values with its driver measuring the ceiling, gate off. */
 function effectiveOf(record: CatalogRecord): ProviderCapabilities {
   const gate = record.profile.answerChannelGate === undefined ? null : 'off'
-  return merge(record.ceiling, negotiatedFor([record.ceiling], gate))
+  return merge(record.ceiling, negotiatedFor([preferredRow(record.ceiling)], gate))
 }
 
 const INTERACTIVE: ProviderCapabilities = {
@@ -84,23 +89,28 @@ const MODES: PermissionModeCatalog = {
 
 const SIMULATED: CatalogRecord = {
   profile: profile('simulated'),
-  ceiling: INTERACTIVE,
+  ceiling: ceilingOf(INTERACTIVE),
   developmentOnly: true,
   modes: MODES
 }
 const OBSERVE_ONLY: CatalogRecord = {
   profile: profile('observe-only', { publicLaunch: 'gated', drivers: ['ndjson'] }),
-  ceiling: { ...FAIL_CLOSED_CAPABILITIES, observe: true, sendTurn: true },
+  ceiling: ceilingOf({ ...FAIL_CLOSED_CAPABILITIES, observe: true, sendTurn: true }),
   modes: MODES
 }
 const GATED_CHANNEL: CatalogRecord = {
   profile: profile('gated-channel', { answerChannelGate: 'opencode-permissions' }),
-  ceiling: { ...INTERACTIVE, question: 'none' },
+  ceiling: ceilingOf({ ...INTERACTIVE, question: 'none' }),
   modes: MODES
 }
 const SYNTHETIC: CatalogRecord = {
   profile: profile('synthetic-newcomer', { drivers: ['http-server', 'acp'] }),
-  ceiling: { ...INTERACTIVE, permission: 'policy-only', question: 'none', resume: 'none' },
+  ceiling: ceilingOf({
+    ...INTERACTIVE,
+    permission: 'policy-only',
+    question: 'none',
+    resume: 'none'
+  }),
   modes: MODES
 }
 
