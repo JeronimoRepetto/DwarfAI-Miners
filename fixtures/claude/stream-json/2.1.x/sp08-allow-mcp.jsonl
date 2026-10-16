@@ -1,0 +1,6 @@
+{"at":1735689601301,"event":"rpc","method":"server/discover"}
+{"at":1735689601305,"event":"rpc","method":"initialize"}
+{"at":1735689601305,"event":"rpc","method":"notifications/initialized"}
+{"at":1735689601307,"event":"rpc","method":"tools/list"}
+{"at":1735689607688,"event":"rpc","method":"tools/call"}
+{"at":1735689607688,"event":"call","tool":"permission","arguments":{"tool_name":"Write","input":{"file_path":"<REPO>\\sp08-allow-marker.txt","content":"marker"},"tool_use_id":"00000000-0000-4000-8000-000000000001"},"decision":{"behavior":"allow","updatedInput":{"file_path":"<REPO>\\sp08-allow-marker.txt","content":"marker"}}}

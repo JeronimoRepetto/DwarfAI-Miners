@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { DEFAULT_AUDIO_PREFERENCES } from '../../types'
 import { AMBIENCE_CROSSFADE_MS } from './ambience'
-import { CREW_POLYPHONY, CREW_RELEASE_MS, type CrewSoundEvent } from './crew'
+import { CREW_CAPS, CREW_RELEASE_MS, type CrewSoundEvent } from './crew'
 import { createFakeAudioPlayer, type FakeAudioClip, type FakeAudioPlayer } from './fakeAudioPlayer'
 import { createAudioEngine, type AudioEngine } from './engine'
 import { MUSIC_FADE_MS, MUSIC_GAP_MS } from './musicTimeline'
@@ -550,17 +550,21 @@ describe('createAudioEngine — the crew (#330)', () => {
     // A missing strike in a busy mine is inaudible; a rattle is not, and a
     // queue would pay one back after the pick that threw it had lifted again.
     for (const dwarfId of ['d1', 'd2', 'd3', 'd4']) engine.playCrew(cue({ dwarfId }))
-    expect(crewClips()).toHaveLength(CREW_POLYPHONY)
+    // AMENDED for ISSUE-255 (was: CREW_POLYPHONY): three is the strikes' own cap now.
+    expect(crewClips()).toHaveLength(CREW_CAPS.strike)
   })
 
+  // AMENDED for ISSUE-255 (was: three walks filling the single cap of three, and a strike taking
+  // the freed slot): the caps are one count per crew cue (sound.md, Mapping onto the engine), so a
+  // strike never waited on a walk. The room a released walk makes is for the next walk.
   it('lets a released clip make room again', () => {
     for (const dwarfId of ['d1', 'd2', 'd3']) engine.playCrew(cue({ dwarfId, cue: 'walk' }))
     engine.playCrew(cue({ dwarfId: 'd1', cue: 'walk', ending: true }))
     time.now += CREW_RELEASE_MS
     engine.tick()
-    engine.playCrew(cue({ dwarfId: 'd4' }))
-    expect(crewClips()).toHaveLength(CREW_POLYPHONY)
-    expect(crewClips().some((clip) => clip.src === 'pick.mp3')).toBe(true)
+    engine.playCrew(cue({ dwarfId: 'd4', cue: 'walk' }))
+    expect(crewClips()).toHaveLength(CREW_CAPS.walk)
+    expect(crewClips().every((clip) => clip.loop)).toBe(true)
   })
 
   it('releases the clip when a strike finishes on its own', () => {
@@ -571,7 +575,8 @@ describe('createAudioEngine — the crew (#330)', () => {
     // And the slot it held is free again, or nine workers would fall silent
     // after three strikes for the rest of the run.
     for (const dwarfId of ['d2', 'd3', 'd4']) engine.playCrew(cue({ dwarfId }))
-    expect(crewClips()).toHaveLength(CREW_POLYPHONY)
+    // AMENDED for ISSUE-255 (was: CREW_POLYPHONY): three is the strikes' own cap now.
+    expect(crewClips()).toHaveLength(CREW_CAPS.strike)
   })
 
   it('opens nothing for a cue from a mine that is not the one on screen', () => {
@@ -805,6 +810,117 @@ describe('createAudioEngine — the crew (#330)', () => {
 
     engine.playCrew(cue({ dwarfId: 'd2' }))
     expect(player.live()).toHaveLength(0)
+  })
+})
+
+/*
+ * APPENDED for ISSUE-255: the crew caps are one count per crew cue (sound.md, Mapping onto the
+ * engine; decision log, Crew sound caps): 3 pick strikes, 2 worker2 grinds and 2 walks at once, a clip
+ * over its cue's cap dropped for good before anything is decoded, and only the focused mine heard.
+ * The fake player is the recording double: every `open` it records is a decode.
+ */
+describe('createAudioEngine — the crew caps per cue (ISSUE-255)', () => {
+  let player: FakeAudioPlayer
+  let time: { now: number }
+  let engine: AudioEngine
+
+  const FOCUSED = 'mine-a'
+
+  function strike(dwarfId: string, mineId = FOCUSED): CrewSoundEvent {
+    return { mineId, dwarfId, role: 'worker', cue: 'strike' }
+  }
+  function grind(dwarfId: string, mineId = FOCUSED): CrewSoundEvent {
+    return { mineId, dwarfId, role: 'worker2', cue: 'shift' }
+  }
+  function walk(dwarfId: string, mineId = FOCUSED): CrewSoundEvent {
+    return { mineId, dwarfId, role: 'foreman', cue: 'walk', gain: 0.05 }
+  }
+
+  /** How many clips of each crew cue are sounding now. */
+  function sounding(): { strike: number; shift: number; walk: number } {
+    const live = player.live()
+    return {
+      strike: live.filter((clip) => clip.src === 'pick.mp3').length,
+      shift: live.filter((clip) => clip.src === 'hands.mp3').length,
+      walk: live.filter((clip) => clip.src.startsWith('steps')).length
+    }
+  }
+
+  /** How many crew clips were ever decoded, the room tone aside. */
+  function decoded(): number {
+    return player.clips.filter((clip) => clip.src !== BEDS.silence).length
+  }
+
+  beforeEach(() => {
+    player = createFakeAudioPlayer()
+    time = clock()
+    engine = createAudioEngine({
+      player,
+      tracks: TRACKS,
+      beds: BEDS,
+      voices: VOICES,
+      sfx: SFX,
+      crew: CREW,
+      random: inOrderRandom(),
+      now: () => time.now
+    })
+    engine.setScene({ mineId: FOCUSED })
+  })
+
+  it('[US-MINE-011.AC01, US-MINE-011.AC02, US-MINE-011.AC03, NFR-SND-01] the focused mine sounds at most 3 pick strikes, 2 grinds and 2 walks at once', () => {
+    // Five of each at once: each cue fills its own cap, and no cue takes another's slots.
+    for (let n = 1; n <= 5; n++) {
+      engine.playCrew(strike('w' + n))
+      engine.playCrew(grind('g' + n))
+      engine.playCrew(walk('f' + n))
+    }
+    expect(sounding()).toEqual({ strike: 3, shift: 2, walk: 2 })
+  })
+
+  it('[US-MINE-011.AC04] a clip dropped over its cap never plays later', () => {
+    engine.playCrew(grind('g1'))
+    engine.playCrew(grind('g2'))
+    // Over the cap: dropped, not held for the slot that frees next.
+    engine.playCrew(grind('g3'))
+    expect(decoded()).toBe(2)
+
+    // A slot frees, and time passes well beyond any release.
+    engine.playCrew({ ...grind('g1'), ending: true })
+    for (let step = 0; step < 20; step++) {
+      time.now += CREW_RELEASE_MS
+      engine.tick()
+    }
+    expect(sounding().shift).toBe(1)
+    expect(decoded()).toBe(2)
+
+    // Only a cue that arrives now takes the slot.
+    engine.playCrew(grind('g4'))
+    expect(sounding().shift).toBe(2)
+    expect(decoded()).toBe(3)
+  })
+
+  it('[NFR-PERF-06] a crew clip over its cap is dropped before the SoundEngine decodes it: the recording double sees no decode call', () => {
+    engine.playCrew(walk('f1'))
+    engine.playCrew(walk('f2'))
+    const before = player.clips.length
+    engine.playCrew(walk('f3'))
+    expect(player.clips.length).toBe(before)
+  })
+
+  it('[US-MINE-011.AC05, NFR-SND-02] a mine that is not focused plays no crew sound', () => {
+    for (let n = 1; n <= 5; n++) {
+      engine.playCrew(strike('ow' + n, 'mine-b'))
+      engine.playCrew(grind('og' + n, 'mine-b'))
+      engine.playCrew(walk('of' + n, 'mine-b'))
+    }
+    expect(decoded()).toBe(0)
+    // So nothing from it held a slot: the focused mine still gets its full caps.
+    for (let n = 1; n <= 5; n++) {
+      engine.playCrew(strike('w' + n))
+      engine.playCrew(grind('g' + n))
+      engine.playCrew(walk('f' + n))
+    }
+    expect(sounding()).toEqual({ strike: 3, shift: 2, walk: 2 })
   })
 })
 

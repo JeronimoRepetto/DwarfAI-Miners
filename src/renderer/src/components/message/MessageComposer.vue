@@ -20,6 +20,7 @@ import { belongsToComposition } from '../../lib/controls/input'
 import ActionButton from '../controls/ActionButton.vue'
 import InputField from '../controls/InputField.vue'
 import PixelIcon from '../icon/PixelIcon.vue'
+import { untrustedText } from '../../lib/text/untrustedText'
 
 defineProps<{
   value: string
@@ -74,12 +75,19 @@ function onDrop(event: DragEvent): void {
     @drop.prevent="onDrop"
   >
     <div class="dm-composer__files">
-      <span v-for="item in files" :key="item.path" class="dm-composer__file" :title="item.name">
+      <span
+        v-for="item in files"
+        :key="item.path"
+        class="dm-composer__file"
+        :title="untrustedText(item.name)"
+      >
         <PixelIcon name="attach" />
-        <span>{{ item.name }}</span>
+        <span
+          ><bdi>{{ untrustedText(item.name) }}</bdi></span
+        >
         <button
           type="button"
-          :aria-label="`Remove ${item.name}`"
+          :aria-label="`Remove ${untrustedText(item.name)}`"
           @click="emit('remove', item.path)"
         >
           <PixelIcon name="close" />

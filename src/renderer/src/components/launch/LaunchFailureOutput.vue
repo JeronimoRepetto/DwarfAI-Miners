@@ -4,11 +4,15 @@
  * 23), `.dm-add__fail-out` in the design: its words, not the panel's, so the code face with line
  * breaks kept. What the lines are is lib/launch/launchFailure's.
  */
+import { untrustedText } from '../../lib/text/untrustedText'
+
 defineProps<{ text: string }>()
 </script>
 
 <template>
-  <div class="dm-add__fail-out">{{ text }}</div>
+  <div class="dm-add__fail-out">
+    <bdi>{{ untrustedText(text) }}</bdi>
+  </div>
 </template>
 
 <style scoped>

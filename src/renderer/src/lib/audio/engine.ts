@@ -36,8 +36,8 @@ import {
   type AmbienceStanding
 } from './ambience'
 import {
+  CREW_CAPS,
   CREW_LOOPED_CUES,
-  CREW_POLYPHONY,
   CREW_RELEASE_MS,
   crewVariantIndex,
   type CrewSoundEvent
@@ -174,12 +174,13 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
   /**
    * The crew clips sounding right now (#330), oldest first.
    *
-   * ONE LIST rather than a slot per dwarf or per cue, because the limit that
-   * matters is how many are audible AT ONCE across the whole crew — nine
-   * workers each entitled to a clip is a rattle, whoever they are. It is at
-   * most `CREW_POLYPHONY` long, and that is also what keeps the ELEMENT player
-   * honest here: three `Audio` elements is nothing, so no Web Audio buffer
-   * player is needed in this slice. It is the optimisation to reach for if the
+   * ONE LIST rather than a slot per dwarf, because the limit that matters is
+   * how many of each cue are audible AT ONCE across the whole crew — nine
+   * workers each entitled to a strike is a rattle, whoever they are. Each cue
+   * is counted against its own cap (`CREW_CAPS`, ISSUE-255), so the list is at
+   * most seven long, and that is also what keeps the ELEMENT player honest
+   * here: seven `Audio` elements is nothing, so no Web Audio buffer player is
+   * needed in this slice. It is the optimisation to reach for if the
    * cap ever has to rise — and see the note at the top of player.ts for why
    * that trade is not free.
    */
@@ -526,9 +527,11 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       // worker2 too many — so its own previous clip is RELEASED, which is not
       // a grind being cut by another grind.
       releaseCrew(event.dwarfId, event.cue)
-      // The fourth is dropped rather than queued: a strike paid back a second
-      // late belongs to a pick that has already lifted again.
-      if (crew.length >= CREW_POLYPHONY) return
+      // One over its cue's cap is dropped rather than queued, and before it is
+      // decoded: a strike paid back a second late belongs to a pick that has
+      // already lifted again (ISSUE-255, CREW_CAPS).
+      const ofCue = crew.filter((sounding) => sounding.cue === event.cue).length
+      if (ofCue >= CREW_CAPS[event.cue]) return
 
       const count = crew.length + 1
       const gain = event.gain ?? 1

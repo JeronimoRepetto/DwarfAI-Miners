@@ -103,6 +103,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # THIRD-PARTY-NOTICES.md ships in the app resources beside LICENSE (package.json build.extraResources; 20 §2.4,
+      # R-06; ISSUE-272). It reads the lockfile and installed packages only.
+      - name: Write the third-party notices
+        run: node scripts/release/third-party-notices.mjs
+
       # P-03's lockfile half (20 §2.3; ISSUE-273): a provider binary, the Agent SDK or a provider CLI package among
       # the production dependencies, or a production source reading a provider credential store, stops the job
       # here, before electron-builder starts. Reads files only.
@@ -187,6 +192,11 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # THIRD-PARTY-NOTICES.md ships in the app resources beside LICENSE (package.json build.extraResources; 20 §2.4,
+      # R-06; ISSUE-272). It reads the lockfile and installed packages only.
+      - name: Write the third-party notices
+        run: node scripts/release/third-party-notices.mjs
 
       # P-03's lockfile half (20 §2.3; ISSUE-273): a provider binary, the Agent SDK or a provider CLI package among
       # the production dependencies, or a production source reading a provider credential store, stops the job
