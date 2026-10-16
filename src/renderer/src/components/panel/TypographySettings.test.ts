@@ -209,3 +209,82 @@ describe('TypographySettings — changing a face', () => {
     wrapper.unmount()
   })
 })
+
+/*
+ * ISSUE-264 (EPIC-16) — APPENDED: Appearance against the pinned design (DwarfAI-Miners-Design
+ * d12d3fc): settings.js:52-124 for the list and Custom's rows, foundations/type-lab.js:61-66
+ * (`SHIPPED`) for the faces each role may offer.
+ */
+describe('TypographySettings — the design’s Appearance (ISSUE-264)', () => {
+  const STYLES = ['dwarfai', 'pixel-clean', 'readable', 'custom']
+
+  it('[US-SET-003.AC01, US-SET-003.AC06] the Font style radiogroup shows four options with the current one checked, and the arrow keys cycle and apply at once', async () => {
+    const wrapper = mount(TypographySettings, {
+      props: { preferences: { ...DEFAULT_TYPOGRAPHY_PREFERENCES }, applying: false },
+      attachTo: document.body
+    })
+    const group = wrapper.get('[role="radiogroup"]')
+    expect(group.attributes('aria-label')).toBe('Font style')
+    const options = group.findAll('[role="radio"]')
+    expect(options.map((option) => option.attributes('data-id'))).toEqual(STYLES)
+    expect(options.map((option) => option.get('b').text())).toEqual([
+      'DwarfAI',
+      'Pixel clean',
+      'Readable',
+      'Custom'
+    ])
+    expect(group.findAll('[aria-checked="true"]').map((o) => o.attributes('data-id'))).toEqual([
+      DEFAULT_TYPOGRAPHY_PREFERENCES.style
+    ])
+    // No per-role rows unless Custom is checked.
+    expect(wrapper.find('.role-font').exists()).toBe(false)
+
+    // ← → ↑ ↓ each move one step in the listed order, wrapping, and the step applies at once.
+    const steps = [
+      ['ArrowRight', 'dwarfai', 'pixel-clean'],
+      ['ArrowDown', 'readable', 'custom'],
+      ['ArrowRight', 'custom', 'dwarfai'],
+      ['ArrowLeft', 'dwarfai', 'custom'],
+      ['ArrowUp', 'pixel-clean', 'dwarfai']
+    ] as const
+    for (const [key, from, to] of steps) {
+      await wrapper.setProps({
+        preferences: { ...DEFAULT_TYPOGRAPHY_PREFERENCES, style: from }
+      })
+      await radio(wrapper, from).trigger('keydown', { key })
+      expect(wrapper.emitted('change')!.at(-1)![0], key + ' from ' + from).toMatchObject({
+        style: to
+      })
+      expect(document.activeElement).toBe(radio(wrapper, to).element)
+    }
+    expect(wrapper.emitted('change')).toHaveLength(steps.length)
+    wrapper.unmount()
+  })
+
+  it("[US-SET-003.AC03, US-SET-003.AC05] Custom shows Titles, Labels, Small text and Messages with the faces in use, and each role's select offers only its allowed faces", () => {
+    const wrapper = render({
+      style: 'custom',
+      faces: { display: 'jacquard-12', label: 'tiny5', meta: 'roboto', talk: 'arial' }
+    })
+    const rows = wrapper.findAll('.dm-srow').slice(1)
+    expect(rows.map((row) => row.get('.dm-srow__label').text())).toEqual([
+      'Titles',
+      'Labels',
+      'Small text',
+      'Messages'
+    ])
+    const inUse = rows.map((row) => (row.get('select').element as HTMLSelectElement).value)
+    expect(inUse).toEqual(['jacquard-12', 'tiny5', 'roboto', 'arial'])
+    // type-lab.js:61-66, `SHIPPED`: only Titles offers Jacquard 12 (the blackletter face); Labels
+    // stops at Tiny5, its 16px grid step; Messages offers no pixel display face at all.
+    const offered = (role: string) =>
+      wrapper.findAll(`.role-font-${role} option`).map((o) => o.attributes('value'))
+    expect(offered('display')).toEqual(['jacquard-12', 'tiny5', 'pixelify-sans', 'roboto', 'arial'])
+    expect(offered('label')).toEqual(['tiny5', 'pixelify-sans', 'roboto', 'arial'])
+    expect(offered('meta')).toEqual(['pixelify-sans', 'roboto', 'arial'])
+    expect(offered('talk')).toEqual(['pixelify-sans', 'roboto', 'arial'])
+    expect(
+      ['display', 'label', 'meta', 'talk'].filter((role) => offered(role).includes('jacquard-12'))
+    ).toEqual(['display'])
+  })
+})
