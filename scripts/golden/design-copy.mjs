@@ -10,7 +10,8 @@
  * `docs/dwarfai-miners-design` junction (git lists the main worktree first), whose target is the
  * design repository's `docs/`. Only what a golden run reads is copied: the docs with their
  * references, the tools, the stage CSS and the prototype's sample data; no art sources, no
- * node_modules, no .git.
+ * node_modules, no .git. Instead of .git the copy gets a stamp of the source's commit, which
+ * `pnpm test:golden` checks against design-pin.json (ADR-034).
  *
  * The planning half is pure over an injected port and pinned by design-copy.test.mjs; the bottom
  * of the file is the thin runner.
@@ -32,7 +33,19 @@ export const COPY_INCLUDE = [
 // tools as CommonJS; copied under this checkout they would inherit its "type": "module" and fail
 // on their first `require`. The copy is made its own CommonJS scope instead.
 export const SCOPE_MANIFEST = { name: 'dwarfai-design-copy', private: true, type: 'commonjs' }
+// The source commit, written into the copy by the runner: a copy has no .git, and the golden run
+// checks this stamp against design-pin.json (ADR-034).
+export const STAMP_FILE = 'design-commit.json'
 const EXCLUDED_SEGMENTS = new Set(['node_modules', '.git'])
+
+/** The stamp's text for the source's commit (what `git rev-parse HEAD` printed). */
+export function stampText(commit) {
+  const id = commit.trim().toLowerCase()
+  if (!/^[0-9a-f]{40}$/.test(id)) {
+    throw new Error('the design repository answered no commit id (got "' + commit.trim() + '").')
+  }
+  return JSON.stringify({ commit: id }, null, 2) + '\n'
+}
 
 export function isExcluded(rel) {
   return rel.split('/').some((segment) => EXCLUDED_SEGMENTS.has(segment))
@@ -138,6 +151,20 @@ function run() {
   const refusal = checkTarget({ source: found.root, target, targetKind: realTree.kind(target) })
   if (refusal) throw new Error(refusal)
 
+  let commit = ''
+  try {
+    commit = execFileSync('git', ['-C', found.root, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  } catch {
+    throw new Error(
+      found.root +
+        ' is not a git checkout, so its commit cannot be stamped; the golden run checks it against design-pin.json.'
+    )
+  }
+  const stamp = stampText(commit)
+
   const plan = planCopy(found.root, realTree)
   if (plan.missing.length) {
     throw new Error(found.root + ' lacks ' + plan.missing.join(', ') + '; nothing was copied.')
@@ -152,6 +179,7 @@ function run() {
     path.join(target, 'package.json'),
     JSON.stringify(SCOPE_MANIFEST, null, 2) + '\n'
   )
+  fs.writeFileSync(path.join(target, STAMP_FILE), stamp)
   console.log(
     'golden:design: copied ' +
       plan.files.length +

@@ -209,3 +209,35 @@ describe('ConfigWriterEngine and the channel token (owner amendment M)', () => {
     expect(tokenRows(w.db)).toStrictEqual([{ hash: hashOf(TOKEN), revoked: false }])
   })
 })
+
+// ADDED for ISSUE-227 (foreman decision, 2026-10-16): OpenCode's plugin folder need not exist when the integration is
+// turned on, so the engine makes the target's missing parent folder before the first write, for every target.
+describe('ConfigWriterEngine and a missing target folder', () => {
+  it('[ADR-016, FM-124] install makes the missing parent folder of the target, writes the entry and verifies it', async () => {
+    const w = await engineWorld(memory())
+    const path = '/home/j/.config/opencode/plugin/config.ini'
+    const engine = new ConfigWriterEngine({
+      fs: w.fs,
+      transactions: new SqliteTransactionRunner(w.db),
+      ledger: new SqliteConfigWriteLedger({ db: w.db }),
+      settings: new SqliteIntegrationSettingStore({ db: w.db }),
+      tokens: new SqliteChannelTokenStore({ db: w.db, ids: new SequenceIdGenerator() }),
+      clock: w.clock,
+      ids: new SequenceIdGenerator(),
+      scheduler: { after: (_ms, task) => (queueMicrotask(task), { cancel: () => undefined }) },
+      log: w.log,
+      targets: [syntheticConfigTarget('opencode-plugin', path)]
+    })
+    const TOKEN = 'tok-1' as ChannelToken
+
+    expect(
+      await engine.install('opencode-plugin', TOKEN, 'add-panel', hashOf(TOKEN))
+    ).toStrictEqual({
+      ok: true,
+      value: { verified: true, backupPath: null }
+    })
+    expect(await w.read(path)).toContain(TOKEN)
+    expect(await engine.verify('opencode-plugin')).toBe('verified')
+    expect(await engine.revert('opencode-plugin')).toStrictEqual({ ok: true, value: undefined })
+  })
+})

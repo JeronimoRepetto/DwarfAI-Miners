@@ -20,6 +20,7 @@
 // - `followIngressPort` (07 S14.10, ADR-016 item 3, 16 §7.4): at Host boot, once the hook ingress is
 //   bound, an `on-verified` integration's own entry that names another port is written again
 //   through the install path, under the consent on record, with an old-app entry left as it is.
+// - A new file's missing parent folder is made before its first write (ISSUE-227, foreman decision 2026-10-16).
 // - One call per target at a time: every call queues behind the previous one of its target
 //   (16 §7.5), so a revert asked during an install runs after the install's Tx B.
 //
@@ -86,6 +87,12 @@ const FOLLOWED_PORT = 'ingress-port-changed'
 /** The stored form of a channel token: the SHA-256 of its hex text, as lower-case hex (ADR-016 item 1). */
 const sha256Hex = (token: string): string =>
   createHash('sha256').update(token, 'utf8').digest('hex')
+
+/** The folder a target file sits in, for either separator (targets are absolute paths). */
+function parentOf(path: string): string {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at <= 0 ? path.slice(0, at + 1) : path.slice(0, at)
+}
 
 const isLock = (error: FsError): boolean => error === 'busy' || error === 'access-denied'
 
@@ -339,6 +346,12 @@ export class ConfigWriterEngine implements ExternalConfigWriter {
       const now = await this.readTarget(adapter)
       if (!now.ok) return { ok: false, error: 'io' }
       if (!sameBytes(now.value, before.value)) continue
+      // A new file's folder may not exist yet (OpenCode's plugin folder until a plugin is put there): it is made
+      // first, with any missing parent (owner-only on POSIX, `NodeFs.makeDir`). An existing folder is left as it is.
+      if (before.value === null) {
+        const made = await this.deps.fs.makeDir(parentOf(adapter.path))
+        if (!made.ok) return { ok: false, error: 'io' }
+      }
       // 4. The atomic write, retried on a sharing violation; in place only as the last resort.
       let inPlace = false
       const write = await this.writeWithRetries(adapter.path, next)

@@ -27,8 +27,12 @@
 // - `createLaunchingResetStep` (ISSUE-181) is the module's step of the Reset-metrics saga (ADR-023;
 //   09 §7.2 step (4)), registered by host/wiring/resetParticipants.ts.
 //
-// The other members join with their issues: `launchCustom` (later: ISSUE-165), the Jev path
-// (later: ISSUE-164), recovery (later: ISSUE-173).
+// - `commands.launchCustom` (ISSUE-165) is "Other…": the typed command parsed with no shell, a
+//   refusal settled `could-not-start` with nothing spawned, otherwise the same acceptance and
+//   settlement as `launch` over the "Other…" driver (application/launchCustom.ts).
+//
+// The other members join with their issues: the Jev path (later: ISSUE-164), recovery (later:
+// ISSUE-173).
 import { LaunchUseCase, type LaunchAccepted, type LaunchingDeps } from './application/launch'
 import { MarkStoppedByPerson } from './application/markStoppedByPerson'
 import { createLaunchDrainGate } from './application/launchDrain'
@@ -55,6 +59,7 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import type { LaunchRecord } from './ports/launchRecordStore'
 import type { LaunchRequestInput } from './application/launch'
+import type { LaunchCustomInput } from './application/launchCustom'
 import type { LaunchingEvent } from './application/events'
 import type { CrewOwnedEnds } from '../crew'
 
@@ -74,6 +79,7 @@ export type {
 export { NO_HOST_RECOVERY } from './application/sessionExited'
 export type { RecoveryCoverage, SessionExit, SessionExitResult } from './application/sessionExited'
 export type { LaunchAccepted, LaunchRefusal, LaunchRequestInput } from './application/launch'
+export type { LaunchCustomInput } from './application/launchCustom'
 export { LaunchRefusedError } from './application/launch'
 export { createLaunchDrainGate } from './application/launchDrain'
 export type { LaunchQueries, LaunchSnapshotQueries, LaunchView } from './application/launchQueries'
@@ -89,6 +95,8 @@ export { NO_SUPPLIER_LABEL } from './domain/supplierLabel'
 /** The commands of 16 §4.5 `LaunchCommands` built so far, and the seen record of a failure. */
 export interface LaunchingCommands {
   launch(req: LaunchRequestInput): Promise<LaunchAccepted>
+  /** "Other…" (ISSUE-165): the typed command parsed with no shell; answered at acceptance like `launch`. */
+  launchCustom(req: LaunchCustomInput): Promise<LaunchAccepted>
   /** A failure's `launch.failed` frame was written to a `ui` connection (14 §8 I-03). */
   failureSeen(launchId: LaunchId): void
   /** Launching's half of `DriverSessionExited`: the record ends; PO #62's check (08 §2.4). */
@@ -167,6 +175,7 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
   return {
     commands: {
       launch: (req) => useCase.launch(req),
+      launchCustom: (req) => useCase.launchCustom(req),
       failureSeen: (launchId) => useCase.failureSeen(launchId),
       sessionExited: (exit) => exits.exited(exit),
       markStoppedByPerson: (dwarfId) => stops.mark(dwarfId)

@@ -108,6 +108,12 @@ jobs:
       - name: Write the third-party notices
         run: node scripts/release/third-party-notices.mjs
 
+      # P-03's lockfile half (20 §2.3; ISSUE-273): a provider binary, the Agent SDK or a provider CLI package among
+      # the production dependencies, or a production source reading a provider credential store, stops the job
+      # here, before electron-builder starts. Reads files only.
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK
+        run: node scripts/release/lockfile-provider-scan.mjs
+
       # `pnpm package` passes `--publish never`, package.json `build` names no publish provider, and no token is
       # in this job's environment. It builds the targets of the runner's OS: the Windows zip and nsis installer,
       # or the Linux AppImage and deb.
@@ -191,6 +197,12 @@ jobs:
       # R-06; ISSUE-272). It reads the lockfile and installed packages only.
       - name: Write the third-party notices
         run: node scripts/release/third-party-notices.mjs
+
+      # P-03's lockfile half (20 §2.3; ISSUE-273): a provider binary, the Agent SDK or a provider CLI package among
+      # the production dependencies, or a production source reading a provider credential store, stops the job
+      # here, before electron-builder starts. Reads files only.
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK
+        run: node scripts/release/lockfile-provider-scan.mjs
 
       # Signing off, explicitly. `-c.mac.identity=null` is electron-builder's own switch to skip macOS code signing
       # (pnpm appends it to the script's electron-builder command); CSC_IDENTITY_AUTO_DISCOVERY=false stops it from
