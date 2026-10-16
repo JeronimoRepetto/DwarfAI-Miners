@@ -1,8 +1,12 @@
 // `LegacyAskRelay` (21 §3, cuts 1–4; 14 §5, §8 I-11 "the legacy-held-session ask relay"), the cut-1 half: in cut 1
-// every ask still belongs to today's runtime, while the board comes from the Host. The relay shows today's open asks as
-// ask cards through `BoardFacadeAdapter`'s ask fields and routes the answers back to today's runtime:
+// every ask still belongs to today's runtime, while the board comes from the Host. The relay carries today's board
+// fields of a dwarf onto its Host dwarf through `BoardFacadeAdapter`: the open asks, shown as ask cards whose answers it
+// routes back to today's runtime, and the text delivery route and capabilities today's runtime resolved for it, which
+// the composer and the kick read while A-23 `dwarf:sendText` and A-26 `dwarf:kick` stay `legacy` through
+// `LegacyDwarfIdBridge` (21 §2 cut 1). Only today's runtime knows those routes until the Host serves the rows, so they
+// travel with the asks, joined the same exact way; a Host dwarf with no joined legacy dwarf has none (fail closed):
 //
-// - It reads today's open asks (`LegacyOpenAsks`): what `LegacyAgentRegistryFeed` last wrote into today's in-memory agent
+// - It reads today's board fields (`LegacyOpenAsks`): what `LegacyAgentRegistryFeed` last wrote into today's in-memory agent
 //   registry, Codex pending questions included (`legacyOpenAsksOf`). Each ask keeps today's shape, and its id moves into
 //   the relay's own namespace `legacy:<legacyAskId>`, which is never a UUIDv7, so it cannot collide with a Host `AskId`
 //   (21 §3). Today's asks are identified by their `toolUseId`, so that is the legacy ask id.
@@ -54,30 +58,37 @@ export function legacyAskIdOf(askId: unknown): string | null {
   return legacyAskId.length > 0 ? legacyAskId : null
 }
 
-/** One legacy dwarf's open asks, in today's shape, with today's ids. */
+/** One legacy dwarf's board fields (open asks, text delivery, capabilities), in today's shape, with today's ids. */
 export interface LegacyDwarfAsks {
   legacyDwarfId: string
   asks: LegacyAskFields
 }
 
-/** Today's runtime's open asks. */
+/** Today's runtime's board fields, per legacy dwarf that carries any. */
 export interface LegacyOpenAsks {
   openAsks(): readonly LegacyDwarfAsks[]
 }
 
-/** Today's ask fields of each dwarf in today's sessions that carries one (as the feed wrote them). */
+/**
+ * Today's board fields of each dwarf in today's sessions that carries an open ask or a delivery route (as the feed
+ * wrote them). `waitingReason` travels only beside an open ask, as before.
+ */
 export function legacyOpenAsksOf(sessions: readonly ProviderSnapshot[]): LegacyDwarfAsks[] {
   const found: LegacyDwarfAsks[] = []
   for (const session of sessions) {
     for (const dwarf of session.dwarfs) {
-      const { pendingQuestion, pendingPermission, waitingReason } = dwarf
-      if (pendingQuestion === undefined && pendingPermission === undefined) continue
+      const { pendingQuestion, pendingPermission, waitingReason, textDelivery, capabilities } =
+        dwarf
+      const asking = pendingQuestion !== undefined || pendingPermission !== undefined
+      if (!asking && textDelivery === undefined && capabilities === undefined) continue
       found.push({
         legacyDwarfId: dwarf.id,
         asks: {
           ...(pendingQuestion === undefined ? {} : { pendingQuestion }),
           ...(pendingPermission === undefined ? {} : { pendingPermission }),
-          ...(waitingReason === undefined ? {} : { waitingReason })
+          ...(!asking || waitingReason === undefined ? {} : { waitingReason }),
+          ...(textDelivery === undefined ? {} : { textDelivery }),
+          ...(capabilities === undefined ? {} : { capabilities })
         }
       })
     }
@@ -109,13 +120,13 @@ export type LegacyAnswerBody =
   | { kind: 'permission'; decision: 'allow' | 'deny' }
 
 export interface LegacyAskRelay {
-  /** Today's ask fields of a Host dwarf, ids relayed; none when it has no open legacy ask. */
+  /** Today's board fields of a Host dwarf, ask ids relayed; none when no legacy dwarf joins it exactly. */
   askFields(dwarfId: string): LegacyAskFields
   /** The open legacy asks with a Host dwarf, ids relayed. */
   asks(): readonly RelayedLegacyAsk[]
   /** Hands today's runtime `body` for the open ask `askId` (a `legacy:` id); answers today's result shape. */
   answer(askId: string, body: LegacyAnswerBody): Promise<unknown>
-  /** Re-reads today's open asks; `changed` is called when a card opened, changed or closed. */
+  /** Re-reads today's board fields; `changed` is called when a card or a delivery route opened, changed or closed. */
   update(): Promise<void>
   /** Serves A-40 / A-41 as above; every other row passes to today's runtime unchanged. */
   serve(channel: string, payload: unknown): Promise<unknown>
@@ -129,9 +140,9 @@ const QUESTION = 'agent:answerQuestion' // A-40
 const PERMISSION = 'agent:answerPermission' // A-41
 const ASK_ROWS: readonly NotOpenRow[] = [QUESTION, PERMISSION]
 
-/** The fields with each ask id moved into the relay's namespace. */
+/** The fields with each ask id moved into the relay's namespace; the delivery fields unchanged. */
 function relayed(asks: LegacyAskFields): LegacyAskFields {
-  const { pendingQuestion, pendingPermission, waitingReason } = asks
+  const { pendingQuestion, pendingPermission, waitingReason, textDelivery, capabilities } = asks
   return {
     ...(pendingQuestion === undefined
       ? {}
@@ -149,7 +160,9 @@ function relayed(asks: LegacyAskFields): LegacyAskFields {
             toolUseId: relayedAskId(pendingPermission.toolUseId)
           }
         }),
-    ...(waitingReason === undefined ? {} : { waitingReason })
+    ...(waitingReason === undefined ? {} : { waitingReason }),
+    ...(textDelivery === undefined ? {} : { textDelivery }),
+    ...(capabilities === undefined ? {} : { capabilities })
   }
 }
 
