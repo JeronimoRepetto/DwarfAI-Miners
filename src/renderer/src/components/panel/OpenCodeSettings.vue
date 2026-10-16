@@ -6,18 +6,17 @@ import InputField from '../controls/InputField.vue'
 import ToggleSwitch from '../controls/ToggleSwitch.vue'
 import StatePill from '../dwarf/StatePill.vue'
 import SettingsRow from './SettingsRow.vue'
+import { OPENCODE_PERMISSION_HELP } from '../../lib/settings/copyNeeded'
 
 /**
  * The OpenCode rows of Settings › Integrations (#588 T6, #635): the consent to
  * the permission relay, and the optional OpenCode server password, after the
- * Jev rows, as screens/settings.md orders them.
+ * Jev rows and the Jev privacy notice, as the design orders them.
  *
- * The consent copy is product text and carries two facts on purpose. What
- * turning it on does — one file written into OpenCode's own configuration —
- * and the token coupling T3 found (D4): that file holds, in plain text, the
- * same per-install token the Claude hook route trusts, so reading it is
- * enough to forge Claude Code events to this app. It is said here, where the
- * person decides, not only in a code comment.
+ * The consent's help paragraph is design's DG-22 (ISSUE-264): the one the
+ * design drew said the plugin file holds the token the Claude hook route
+ * trusts, which ADR-016 item 1 (one token per channel) made false, so the row
+ * shows its marker key until design delivers the rewrite (lib/settings/copyNeeded).
  *
  * Presentational: `settings` is main's verdict and every intent leaves as an
  * event. The typed password lives only in `draftPassword` until it is
@@ -95,7 +94,7 @@ const unavailableMessage = computed(() => {
     class="opencode-settings"
     label="OpenCode · permission requests"
     stack
-    help="Turning this on writes one plugin file into OpenCode’s own configuration folder, so a permission an OpenCode session asks for appears on its dwarf and can be answered from the panel. That file holds, in plain text, the same token this app uses to trust Claude Code’s instant updates, so any program on this machine that can read it could also send this app false Claude Code session events."
+    :help="OPENCODE_PERMISSION_HELP"
   >
     <template #notes>
       <p v-if="props.settings.pluginError" class="dm-srow__help plugin-error" role="alert">
