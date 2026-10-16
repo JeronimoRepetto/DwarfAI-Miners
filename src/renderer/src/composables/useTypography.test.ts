@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { DEFAULT_TYPOGRAPHY_PREFERENCES, type TypographyPreferences } from '../types'
 import { useTypography } from './useTypography'
 
@@ -21,7 +22,9 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     onTypographyPreferences: vi.fn(() => () => undefined),
     ...overrides
   }
-  ;(globalThis as { window?: unknown }).window = Object.assign(globalThis.window ?? {}, { api })
+  ;(globalThis as { window?: unknown }).window = Object.assign(globalThis.window ?? {}, {
+    api: createFakeWindowApi(api)
+  })
   return api
 }
 

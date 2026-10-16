@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { BROWSE_PAGE_SIZE } from '../lib/browse/browseQuery'
 import { defaultProject } from '../testing/factories'
 import type { ProjectQueryResult, ProjectSummary } from '../types'
@@ -14,10 +15,12 @@ function page(count: number, from = 0): ProjectQueryResult {
 }
 
 function stubQuery(queryProjects: unknown) {
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
   Object.defineProperty(window, 'api', {
     configurable: true,
     writable: true,
-    value: { queryProjects }
+    value: createFakeWindowApi({ queryProjects } as unknown as Partial<Window['api']>)
   })
 }
 
@@ -35,7 +38,13 @@ function stubApi(api: {
   declareMainProject?: unknown
   undeclareMine?: unknown
 }) {
-  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api as unknown as Partial<Window['api']>)
+  })
 }
 
 /** Resolves only when `release()` is called, so an in-flight page can be observed. */

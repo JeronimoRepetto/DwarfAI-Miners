@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import {
   COMPOSER_ENABLED_PLACEHOLDER,
   DETACHED_TIMEOUT_MESSAGE,
@@ -65,7 +66,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', reason: 'no-key' }),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api)
+  })
   return api
 }
 
