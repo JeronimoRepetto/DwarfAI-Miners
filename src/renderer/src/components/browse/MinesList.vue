@@ -36,7 +36,11 @@ import {
 } from '../../lib/browse/cardMotion'
 import { createBoundedMotion, type MotionAnimate } from '../../lib/shell/boundedMotion'
 import { designTierLabel } from '../../lib/presentation'
-import { worktreeQuestionBody } from '../../lib/worktree'
+import {
+  worktreeQuestionAccept,
+  worktreeQuestionBody,
+  worktreeQuestionTitle
+} from '../../lib/worktree'
 import { MINE_TIERS } from '../../types'
 import type { MineTier, MineWorktreeOf } from '../../types'
 
@@ -140,7 +144,11 @@ function removalAction(index: number): void {
 
 const worktreeActions = computed(() => [
   { label: 'Cancel' },
-  { label: 'Open the main project', variant: 'primary' as const, disabled: props.adding }
+  {
+    label: props.worktreeQuestion ? worktreeQuestionAccept(props.worktreeQuestion) : '',
+    variant: 'primary' as const,
+    disabled: props.adding
+  }
 ])
 
 function worktreeAction(index: number): void {
@@ -345,7 +353,7 @@ function cardLeave(element: Element, done: () => void): void {
     </ModalDialog>
     <ModalDialog
       :open="worktreeQuestion !== null"
-      title="This folder is a worktree"
+      :title="worktreeQuestion ? worktreeQuestionTitle(worktreeQuestion) : ''"
       :actions="worktreeActions"
       @action="worktreeAction"
       @cancel="emit('dismiss-worktree')"
