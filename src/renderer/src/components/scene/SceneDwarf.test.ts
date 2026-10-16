@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { config, enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FRAME_CLOCK_KEY } from '../../composables/useFramePlayer'
@@ -704,5 +706,156 @@ describe('SceneDwarf walk-in and walk-out (ISSUE-255)', () => {
     vi.advanceTimersByTime(LEAVING_EXIT_MS * 2)
     wrapper.unmount()
     expect(told).toEqual([])
+  })
+})
+
+/*
+ * APPENDED for ISSUE-254: the dwarf in the mine column as US-MINE-001, US-MINE-002, US-OBS-004 and
+ * US-OBS-008 read it. The "?", the "z", the halo and the tag are drawn by the stylesheet off the
+ * button's own attributes, so what the scene shows is read from the component's own rules, as the
+ * design's dwarf.css writes them.
+ */
+describe('SceneDwarf, the mine column (ISSUE-254)', () => {
+  const SFC = readFileSync(join(import.meta.dirname, 'SceneDwarf.vue'), 'utf8')
+  const tipLines = (): string[] =>
+    [...document.body.querySelectorAll('.dm-tip .dm-dtip__lines > div')].map((line) =>
+      (line.textContent ?? '').replace(/\s+/g, ' ').trim()
+    )
+
+  it('[US-MINE-001.AC01, US-MINE-001.AC02, NFR-TIM-01, NFR-A11Y-05] a dwarf’s tooltip opens after 300 ms of hover and at once on keyboard focus with name, rank and provider, model and effort, silence and status', async () => {
+    expect(TIP_DELAY_MS).toBe(300)
+    vi.useFakeTimers()
+    try {
+      const { wrapper } = mountDwarf(
+        defaultDwarf({
+          name: 'dwarfai-53',
+          provider: 'claude',
+          model: 'opus',
+          effort: 'high',
+          silentForMs: 120_000,
+          status: 'working'
+        })
+      )
+      const lines = ['dwarfai-53', 'worker · Claude', 'opus · high effort', 'silent 2m · working']
+      const button = wrapper.find('button')
+      await button.trigger('pointerenter')
+      vi.advanceTimersByTime(TIP_DELAY_MS - 1)
+      await wrapper.vm.$nextTick()
+      expect(document.body.querySelector('.dm-tip')).toBeNull()
+      vi.advanceTimersByTime(1)
+      await wrapper.vm.$nextTick()
+      expect(tipLines()).toEqual(lines)
+      await button.trigger('pointerleave')
+      expect(document.body.querySelector('.dm-tip')).toBeNull()
+
+      // Keyboard focus: no delay at all, not a single timer tick.
+      await button.trigger('focus')
+      await wrapper.vm.$nextTick()
+      expect(tipLines()).toEqual(lines)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('[US-OBS-008.AC08, US-OBS-008.AC07] the tooltip reads rank · provider, and a subagent differs from any dwarf only in its portrait and sprite sheet', async () => {
+    const root = defaultDwarf({ id: 'f1', role: 'foreman', name: 'boss', status: 'waiting' })
+    const sub = defaultDwarf({
+      id: 'w2',
+      role: 'worker2',
+      name: 'boss',
+      status: 'waiting',
+      parentId: 'f1'
+    })
+    const shown: Array<{ label?: string; status?: string; sheet: string; rank: string }> = []
+    for (const dwarf of [root, sub]) {
+      const { wrapper } = mountDwarf(dwarf)
+      const button = wrapper.find('button.dm-dwarf')
+      await button.trigger('focus')
+      await wrapper.vm.$nextTick()
+      shown.push({
+        label: button.attributes('aria-label'),
+        status: button.attributes('data-status'),
+        sheet: sheetSrc(wrapper),
+        rank: tipLines()[1] ?? ''
+      })
+      // Pressed, it reports itself as any dwarf does: the column above opens its chat.
+      await button.trigger('click')
+      expect(wrapper.emitted('select')).toHaveLength(1)
+      wrapper.unmount()
+    }
+    expect(shown[0]!.rank).toBe('foreman · Claude')
+    expect(shown[1]!.rank).toBe('worker · Claude')
+    // Same name, same status: the same button, and only the sheet differs.
+    expect(shown[1]!.label).toBe(shown[0]!.label)
+    expect(shown[1]!.status).toBe(shown[0]!.status)
+    expect(shown[0]!.sheet).toBe(DWARF_SHEETS.foreman.sleeping!.src)
+    expect(shown[1]!.sheet).not.toBe(shown[0]!.sheet)
+  })
+
+  it('[US-OBS-004.AC12, US-OBS-004.AC13] an asleep dwarf shows z and an asking dwarf shows the idle sprite with a floating ?', async () => {
+    // The stylesheet shows the "z" and the "?" off the state, and nothing else does.
+    expect(SFC).toMatch(/\.dm-dwarf\[data-status='asleep'\] \.dm-dwarf__z \{\s*display: block;/)
+    expect(SFC).toMatch(/\.dm-dwarf\[data-status='asking'\] \.dm-dwarf__ask \{\s*display: grid;/)
+
+    const asleep = mountDwarf(defaultDwarf({ name: 'z1', status: 'waiting' })).wrapper
+    expect(asleep.find('.dm-dwarf').attributes('data-status')).toBe('asleep')
+    expect(asleep.find('.dm-dwarf__z').text()).toBe('z')
+    await asleep.find('button').trigger('focus')
+    await asleep.vm.$nextTick()
+    expect(tipLines()[3]).toBe('asleep')
+    asleep.unmount()
+
+    const asking = mountDwarf(
+      defaultDwarf({ name: 'q1', status: 'waiting', waitingReason: 'approval' })
+    ).wrapper
+    expect(asking.find('.dm-dwarf').attributes('data-status')).toBe('asking')
+    expect(asking.find('.dm-dwarf__ask').text()).toBe('?')
+    // The dedicated asking sprite is not drawn yet (PO #59): the idle sheet stands in.
+    expect(sheetSrc(asking)).toBe(DWARF_SHEETS.worker.idle.src)
+    await asking.find('button').trigger('focus')
+    await asking.vm.$nextTick()
+    expect(tipLines()[3]).toBe('needs you')
+  })
+
+  it('[US-MINE-002.AC01, US-MINE-002.AC02, US-MINE-002.AC06] a click, Enter or Space on a sprite or its portrait selects it with halo and name tag and opens its chat in the anchored MessagePanel', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ name: 'dwarfai-53' }))
+    const button = wrapper.find('button.dm-dwarf')
+    // A native button: Enter and Space press it exactly as a click does (PO #32).
+    expect(button.element.tagName).toBe('BUTTON')
+    expect(button.attributes('type')).toBe('button')
+    await button.trigger('click')
+    expect(wrapper.emitted('select')).toHaveLength(1)
+    // Selected, it wears the halo and the name tag at full strength.
+    await wrapper.setProps({ selected: true })
+    expect(button.attributes('aria-pressed')).toBe('true')
+    expect(SFC).toMatch(/\.dm-dwarf\[aria-pressed='true'\] \.dm-dwarf__halo \{\s*opacity: 1;/)
+    expect(SFC).toMatch(/\.dm-dwarf\[aria-pressed='true'\] \.dm-dwarf__tag,/)
+    expect(wrapper.find('.dm-dwarf__tag').text()).toBe('dwarfai-53')
+  })
+
+  /*
+   * The story says "only its name tag, with no halo"; the pinned design (dwarf.css, d12d3fc) also
+   * lifts the halo to 0.6 on hover as a hint, keeping the full halo for the selected dwarf. The new
+   * design wins (lead rule); what holds either way is that a hover selects nothing and shows the tag.
+   */
+  it('[US-MINE-002.AC07] hovering a dwarf that is not selected shows only its name tag', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ name: 'dwarfai-53' }))
+    const button = wrapper.find('button.dm-dwarf')
+    await button.trigger('pointerenter')
+    expect(button.attributes('aria-pressed')).toBe('false')
+    expect(wrapper.emitted('select')).toBeUndefined()
+    expect(SFC).toMatch(/\.dm-dwarf:hover \.dm-dwarf__tag,/)
+    expect(wrapper.find('.dm-dwarf__tag').text()).toBe('dwarfai-53')
+  })
+
+  it('[US-MINE-002.AC08, US-MINE-003.AC07, NFR-A11Y-09] a dwarf’s accessible name is its name and state word', () => {
+    const named = (dwarf: Dwarf) =>
+      mountDwarf(dwarf).wrapper.find('button.dm-dwarf').attributes('aria-label')
+    expect(named(defaultDwarf({ name: 'a', status: 'working' }))).toBe('a, working')
+    expect(named(defaultDwarf({ name: 'b', status: 'waiting', waitingReason: 'approval' }))).toBe(
+      'b, needs you'
+    )
+    expect(named(defaultDwarf({ name: 'c', status: 'waiting' }))).toBe('c, asleep')
+    expect(named(defaultDwarf({ name: 'd', status: 'leaving' }))).toBe('d, Waiting')
   })
 })

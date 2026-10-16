@@ -3,6 +3,8 @@ import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { INTERIOR_ART_SIZE, INTERIOR_SRC } from '../../lib/art'
 import type { CrewSoundEvent } from '../../lib/audio/crew'
+import { createAudioEngine } from '../../lib/audio/engine'
+import { createFakeAudioPlayer } from '../../lib/audio/fakeAudioPlayer'
 import { MINE_FOOTER_ORE_MAX } from '../../lib/scene/mineColumn'
 import { MINE_COLUMN_CHROME_HEIGHT, MINE_COLUMN_MIN_WIDTH } from '../../lib/scene/sceneSizing'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../../testing/factories'
@@ -592,5 +594,156 @@ describe('MineColumn, an untrusted mine name (C-08)', () => {
     expect(isolate.exists(), 'no <bdi> around the mine name').toBe(true)
     expect(isolate.element.textContent).toBe('anvilexe.txt')
     expect(wrapper.find('.dm-minecol__name').attributes('title')).toBe('anvilexe.txt')
+  })
+})
+
+/*
+ * APPENDED for ISSUE-254: the column as US-MINE-001, US-MINE-007 and US-MINE-008 read it. The
+ * ambience case joins the column's toolbar to the one audio engine on a fake player, the way App
+ * joins them (useAudio), so what a press mutes is heard, not inferred.
+ */
+describe('MineColumn, the mine column (ISSUE-254)', () => {
+  const tipLines = (): string[] =>
+    [...document.body.querySelectorAll('.dm-tip .dm-dtip__lines > div')].map((line) =>
+      (line.textContent ?? '').replace(/\s+/g, ' ').trim()
+    )
+
+  it('[US-MINE-001.AC04] the roster portrait shows the same tooltip as the sprite', async () => {
+    const dwarf = defaultDwarf({
+      id: 'k1',
+      name: 'dwarfai-53',
+      customName: 'Freya',
+      model: 'opus',
+      effort: 'high',
+      silentForMs: 12_000,
+      status: 'waiting',
+      waitingReason: 'approval'
+    })
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [dwarf] }) })
+    const sprite = wrapper.find('.dm-minecol__art button.dm-dwarf')
+    await sprite.trigger('focus')
+    await wrapper.vm.$nextTick()
+    const fromSprite = tipLines()
+    expect(fromSprite).toEqual([
+      'Freya',
+      'dwarfai-53',
+      'worker · Claude',
+      'opus · high effort',
+      'silent 12s · needs you'
+    ])
+    await sprite.trigger('blur')
+    await wrapper.vm.$nextTick()
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+
+    const portrait = wrapper.find('.dm-roster button.dm-portrait')
+    await portrait.trigger('focus')
+    await wrapper.vm.$nextTick()
+    expect(tipLines()).toEqual(fromSprite)
+  })
+
+  it('[US-MINE-007.AC01] Mine ambience mutes that mine’s room tone, bed and crew sounds together and a second click restores them', async () => {
+    const player = createFakeAudioPlayer()
+    const engine = createAudioEngine({
+      player,
+      tracks: ['t1.ogg'],
+      beds: { silence: 'room-tone.mp3' },
+      voices: { foreman: 'foreman.mp3', worker: 'worker.mp3', worker2: 'worker2.mp3' },
+      sfx: {
+        click: 'click.mp3',
+        panel: 'panel.mp3',
+        question: 'question.mp3',
+        permission: 'permission.mp3',
+        finished: 'finished.mp3'
+      },
+      crew: {
+        worker: { strike: ['pick.mp3'], walk: ['steps.mp3'] },
+        worker2: { walk: ['steps.mp3'] },
+        foreman: { walk: ['steps.mp3'] }
+      },
+      random: () => 0.999999,
+      now: () => 1_000
+    })
+    try {
+      const mine = defaultMine({ id: 'm1', dwarfs: [defaultDwarf({ id: 'd1' })] })
+      let muted = false
+      const wrapper = mountColumn({
+        mine,
+        ambienceMuted: muted,
+        onToggleAmbienceMute: () => {
+          muted = !muted
+          engine.setAmbienceMuted(muted)
+          void wrapper.setProps({ ambienceMuted: muted })
+        },
+        onCrewSound: (event: CrewSoundEvent) => engine.playCrew(event)
+      })
+      engine.setScene({ mineId: mine.id })
+      // The crew's footsteps, as a walking sprite of this column reports them.
+      wrapper.findComponent(SceneDwarf).vm.$emit('crew-sound', { cue: 'walk', gain: 0.05 })
+      const sounding = () => player.live().map((clip) => clip.src)
+      expect(sounding()).toEqual(['room-tone.mp3', 'steps.mp3'])
+
+      const toggle = wrapper.find('button[aria-label="Mine ambience"]')
+      await toggle.trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(sounding()).toEqual([])
+      expect(toggle.attributes('aria-pressed')).toBe('false')
+      // Muted, the crew stays silent too.
+      wrapper.findComponent(SceneDwarf).vm.$emit('crew-sound', { cue: 'strike' })
+      expect(sounding()).toEqual([])
+
+      await toggle.trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(sounding()).toEqual(['room-tone.mp3'])
+      expect(toggle.attributes('aria-pressed')).toBe('true')
+      wrapper.findComponent(SceneDwarf).vm.$emit('crew-sound', { cue: 'strike' })
+      expect(sounding()).toEqual(['room-tone.mp3', 'pick.mp3'])
+      // Only the current mine sounds (NFR-SND-02): a cue addressed to another stays silent.
+      engine.playCrew({ mineId: 'other', dwarfId: 'd9', role: 'worker', cue: 'strike' })
+      expect(sounding()).toEqual(['room-tone.mp3', 'pick.mp3'])
+    } finally {
+      engine.dispose()
+    }
+  })
+
+  it('[US-MINE-007.AC05] nothing but the dwarfs and their bubbles floats on the mine art', () => {
+    const wrapper = mountColumn({
+      mine: defaultMine({
+        dwarfs: [
+          defaultDwarf({ id: 'a', status: 'working' }),
+          defaultDwarf({ id: 'b', status: 'waiting', waitingReason: 'approval' }),
+          defaultDwarf({ id: 'c', status: 'waiting' })
+        ]
+      }),
+      sendStates: { a: { phase: 'delivered' } }
+    })
+    const art = wrapper.find('.dm-minecol__art')
+    const children = art.findAll(':scope > *')
+    expect(children).toHaveLength(3)
+    expect(children.every((child) => child.classes().includes('dm-dwarf'))).toBe(true)
+    // Each dwarf's floats are its own: the "?", the "z", its mark and its tag, over its head.
+    for (const dwarf of children) {
+      expect(dwarf.findAll('.dm-dwarf__over > *').map((part) => part.classes()[0])).toEqual([
+        'dm-dwarf__ask',
+        'dm-dwarf__z',
+        'dm-dwarf__mark',
+        'dm-dwarf__tag'
+      ])
+    }
+    // The controls are the toolbar plate's and the footer's, none of them on the art.
+    expect(art.findAll('.dm-btn')).toHaveLength(0)
+    expect(wrapper.findAll('header.dm-minecol__bar button.dm-btn')).toHaveLength(3)
+  })
+
+  it('[US-MINE-008.AC02] + Dwarf is the column’s only primary button, in its footer', () => {
+    const wrapper = mountColumn({
+      mine: defaultMine({ dwarfs: [defaultDwarf({ id: 'a' }), defaultDwarf({ id: 'b' })] })
+    })
+    const primaries = wrapper.findAll('.dm-btn--primary')
+    expect(primaries).toHaveLength(1)
+    expect(primaries[0]!.text()).toBe('+ Dwarf')
+    expect(primaries[0]!.element.closest('footer.dm-minecol__foot')).not.toBeNull()
+    // No second or floating add control anywhere in the column.
+    const adds = wrapper.findAll('button').filter((button) => /add|\+ ?dwarf/i.test(button.text()))
+    expect(adds).toHaveLength(1)
   })
 })

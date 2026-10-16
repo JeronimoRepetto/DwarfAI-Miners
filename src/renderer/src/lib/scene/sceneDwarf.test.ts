@@ -58,7 +58,8 @@ describe('sceneDwarfLabel', () => {
     expect(sceneDwarfLabel('dwarfai-53', 'working')).toBe('dwarfai-53, working')
     expect(sceneDwarfLabel('dwarfai-54', 'asking')).toBe('dwarfai-54, needs you')
     expect(sceneDwarfLabel('dwarfai-55', 'asleep')).toBe('dwarfai-55, asleep')
-    expect(sceneDwarfLabel('dwarfai-57', 'idle')).toBe('dwarfai-57, idle')
+    // AMENDED for ISSUE-254 (was: "dwarfai-57, idle"): idle reads "Waiting" (PO #39, US-MINE-002.AC08).
+    expect(sceneDwarfLabel('dwarfai-57', 'idle')).toBe('dwarfai-57, Waiting')
   })
 })
 
