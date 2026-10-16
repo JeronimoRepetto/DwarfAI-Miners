@@ -22,7 +22,8 @@ export const PLACEHOLDERS = Object.freeze({
   email: '<EMAIL>',
   path: '<PATH>',
   account: '<ACCOUNT_ID>',
-  sid: '<SID>'
+  sid: '<SID>',
+  signature: '<SIGNATURE>'
 })
 
 /**
@@ -93,6 +94,14 @@ export const ACCOUNT_ID_KEYS = new Set([
   'workspaceId',
   'workspace_id'
 ])
+
+/**
+ * The keys whose string value is an opaque provider blob, replaced whole: Claude's thinking-block
+ * `signature` is base64, so a `+/` run inside it reads as an absolute path and other runs as
+ * secrets. No driver reads it, and the whole value goes, so nothing personal can hide in it. The
+ * list is open: a driver issue adds the keys of its provider's protocol.
+ */
+export const OPAQUE_BLOB_KEYS = new Set(['signature'])
 
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g
 
@@ -335,6 +344,9 @@ function scrubValue(value, scrub, shiftMs, key = null) {
     (typeof value === 'string' || typeof value === 'number')
   ) {
     return PLACEHOLDERS.account
+  }
+  if (key !== null && OPAQUE_BLOB_KEYS.has(key) && typeof value === 'string') {
+    return PLACEHOLDERS.signature
   }
   if (typeof value === 'string') {
     return ISO_INSTANT.test(value)

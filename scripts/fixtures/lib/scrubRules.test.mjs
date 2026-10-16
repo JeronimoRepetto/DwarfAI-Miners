@@ -213,6 +213,49 @@ describe('scrub rules (17 §1.4)', () => {
     expect(twice).toEqual(once)
   })
 
+  it('[ADR-008] a thinking block signature is replaced whole, so a base64 run after a + is neither a path nor a survivor', () => {
+    // Synthetic, real-shaped: standard base64 of 660 made-up bytes, every 25th 4-character group
+    // swapped for one holding `+/` (any 4 characters of the alphabet are a valid group).
+    const signature = Buffer.from(Array.from({ length: 660 }, (_, i) => (i * 167 + 29) & 255))
+      .toString('base64')
+      .match(/.{4}/g)
+      .map((group, i) => (i % 25 === 3 ? 'Kx+/' : group))
+      .join('')
+    expect(signature).toMatch(/\+\/[A-Za-z0-9+/]/)
+    const raw = jsonl('thinking-turn.jsonl', [
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'thinking', thinking: 'Plan: write /opt/canary/marker.txt', signature }]
+        }
+      }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [record] = records(scrubbed)
+
+    expect(record.message.content[0]).toEqual({
+      type: 'thinking',
+      thinking: 'Plan: write <PATH>',
+      signature: '<SIGNATURE>'
+    })
+    expect(findSurvivors(scrubbed.text, IDENTITY)).toEqual([])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] an absolute path right after a + outside a signature is still replaced and still a survivor', () => {
+    const raw = jsonl('simple-turn.jsonl', [
+      { type: 'system', args: 'node +/opt/canary/bin/tool and +C:\\canary\\tool.exe' }
+    ])
+
+    const [record] = records(scrubFixtureSet([raw], IDENTITY)[0])
+
+    expect(record.args).toBe('node +<PATH> and +<PATH>')
+    expect(findSurvivors('flags +/opt/canary/bin/tool', IDENTITY)).toEqual([
+      { rule: 'path', line: 1 }
+    ])
+  })
+
   it('[ADR-008, ADR-026] the survivor check names each personal value or secret left in a text, and nothing in a scrubbed one', () => {
     const leaky = [
       '{"cwd":"C:\\\\Users\\\\canary.user\\\\work"}',
