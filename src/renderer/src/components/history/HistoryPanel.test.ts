@@ -461,3 +461,18 @@ describe('HistoryPanel, dwarf names (#635)', () => {
     expect(names(wrapper).sort()).toEqual(['Map the seam', 'Watcher'])
   })
 })
+
+/*
+ * C-08 (18 §5.1, ISSUE-251): a mine is named after its folder, which a repository chose. The name
+ * is drawn without its controls and escapes, inside a bidi-isolated text node.
+ */
+describe('HistoryPanel, an untrusted mine name (C-08)', () => {
+  it('[NFR-SEC-07] draws a hostile folder name stripped and inside a bidi-isolated text node', () => {
+    const hostile = `\u001b[31manvil\u202Eexe.txt\u0000\u001b[0m`
+    const wrapper = panel({ mine: defaultMine({ name: hostile }) })
+    const isolate = wrapper.find('.dm-hist__title > bdi')
+    expect(isolate.exists(), 'no <bdi> around the mine name').toBe(true)
+    expect(isolate.element.textContent).toBe('anvilexe.txt')
+    expect(wrapper.find('.dm-hist__title').text()).toBe('History · anvilexe.txt')
+  })
+})

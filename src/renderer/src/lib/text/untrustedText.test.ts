@@ -1,4 +1,12 @@
+// @vitest-environment jsdom
+import { mount, type DOMWrapper } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import DwarfTip from '../../components/dwarf/DwarfTip.vue'
+import LaunchFailureOutput from '../../components/launch/LaunchFailureOutput.vue'
+import ActivityDisclosure from '../../components/message/ActivityDisclosure.vue'
+import MessageComposer from '../../components/message/MessageComposer.vue'
+import QuestionCard from '../../components/message/QuestionCard.vue'
+import { defaultDwarf } from '../../testing/factories'
 import { untrustedText } from './untrustedText'
 
 /*
@@ -64,16 +72,16 @@ describe('C-08 untrusted strings (18 §5.1)', () => {
 
   it('[NFR-SEC-07] a permission summary with U+202E cannot visually reorder its command', () => {
     // RIGHT-TO-LEFT OVERRIDE would draw "exe.txt" where "txt.exe" is written.
-    const summary = 'Run rm -rf ~/‮exe.txt'
+    const summary = 'Run rm -rf ~/\u202Eexe.txt'
     const cleaned = untrustedText(summary)
 
     expect(cleaned).toBe('Run rm -rf ~/exe.txt')
     // Every embedding, override and isolate control is gone, so nothing in the string can open a
     // direction run that reaches past it; the bidi isolation around it bounds what is left.
-    for (const control of ['‪', '‫', '‬', '‭', '‮']) {
+    for (const control of ['\u202A', '\u202B', '\u202C', '\u202D', '\u202E']) {
       expect(untrustedText(`git push ${control}--force`)).toBe('git push --force')
     }
-    for (const control of ['⁦', '⁧', '⁨', '⁩']) {
+    for (const control of ['\u2066', '\u2067', '\u2068', '\u2069']) {
       expect(untrustedText(`npm ${control}publish`)).toBe('npm publish')
     }
   })
@@ -84,7 +92,7 @@ describe('C-08 untrusted strings (18 §5.1)', () => {
       'Grimli the Delver',
       'שלום עולם', // right-to-left words are text, never controls
       'مرحبا بالعالم',
-      'family: 👨‍👩‍👧 and flag 🏳️‍🌈', // ZERO WIDTH JOINER holds an emoji sequence together
+      'family: 👨\u200D👩\u200D👧 and flag 🏳️\u200D🌈', // ZERO WIDTH JOINER holds an emoji sequence together
       'नमस्ते', // and joins Devanagari conjuncts
       'two\tcolumns\nand two lines',
       ''
@@ -92,4 +100,78 @@ describe('C-08 untrusted strings (18 §5.1)', () => {
       expect(untrustedText(benign)).toBe(benign)
     }
   })
+
+  it('[NFR-SEC-07] a file name, a custom name, a tool summary and an ask payload each render inside a bidi-isolated text node', () => {
+    // Each carries a right-to-left override, a NUL and a colour escape; what is drawn is the rest.
+    const hostile = (words: string): string => `${ESC}[31m${words}\u202Eexe.txt\u0000${ESC}[0m`
+    const drawn = (words: string): string => `${words}exe.txt`
+
+    const fileName = mount(MessageComposer, {
+      props: {
+        value: '',
+        placeholder: 'Write to dwarfai-53…',
+        hint: 'Enter sends',
+        files: [{ path: 'C:/work/notes', name: hostile('notes') }]
+      }
+    })
+    expectIsolated(fileName.find('.dm-composer__file > span > bdi'), drawn('notes'))
+    expect(fileName.find('.dm-composer__file').attributes('title')).toBe(drawn('notes'))
+
+    const customName = mount(DwarfTip, {
+      props: { dwarf: defaultDwarf({ name: hostile('Grimli') }) }
+    })
+    expectIsolated(customName.find('.dm-dtip__name > bdi'), drawn('Grimli'))
+
+    const toolSummary = mount(ActivityDisclosure, {
+      props: {
+        label: '2 steps',
+        open: true,
+        lines: [
+          { key: 'read', text: hostile('Read src/'), target: 'src/a.ts' },
+          { key: 'ran', text: hostile('Ran ls ') }
+        ]
+      }
+    })
+    const steps = toolSummary.findAll('.dm-activity__list li')
+    expectIsolated(steps[0]!.find('button > bdi'), drawn('Read src/'))
+    expect(steps[0]!.find('button').attributes('title')).toBe(drawn('Read src/'))
+    expectIsolated(steps[1]!.find('li > bdi'), drawn('Ran ls '))
+
+    const askPayload = mount(QuestionCard, {
+      props: {
+        name: 'codex-8',
+        permission: true,
+        answerable: true,
+        route: 'message',
+        ask: {
+          toolUseId: 'toolu_01',
+          questions: [
+            {
+              header: hostile('Bash '),
+              question: hostile('rm -rf ~/'),
+              multiSelect: false,
+              options: [{ label: 'Allow' }, { label: 'Deny' }]
+            }
+          ]
+        }
+      }
+    })
+    expectIsolated(askPayload.find('pre.dm-qcard__req > bdi'), drawn('rm -rf ~/'))
+    expectIsolated(askPayload.find('.dm-qcard__header > bdi'), drawn('Bash '))
+  })
+
+  it('[NFR-SEC-07] a launch failure renders its tool-output tail without ANSI escapes, bidi-isolated', () => {
+    const tail = mount(LaunchFailureOutput, {
+      props: { text: `${ESC}[31merror${ESC}[0m: \u2067not logged in\u2069\nrun the login` }
+    })
+    expectIsolated(tail.find('.dm-add__fail-out > bdi'), 'error: not logged in\nrun the login')
+  })
 })
+
+/** The string sits in a `<bdi>` as one text node, and is exactly what the rule leaves. */
+function expectIsolated(found: DOMWrapper<Element>, drawn: string): void {
+  expect(found.exists(), `no <bdi> around "${drawn}"`).toBe(true)
+  const nodes = Array.from(found.element.childNodes)
+  expect(nodes.map((node) => node.nodeType)).toEqual([Node.TEXT_NODE])
+  expect(found.element.textContent).toBe(drawn)
+}

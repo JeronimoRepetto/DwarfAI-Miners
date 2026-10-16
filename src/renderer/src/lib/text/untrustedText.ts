@@ -33,7 +33,7 @@ const CONTROL_SEQUENCE = /(?:\u001b\[|\u009b)[0-?]*[ -/]*(?:[@-~]|$)/g
 const ESCAPE_SEQUENCE = /\u001b[ -/]*(?:[0-~]|$)/g
 
 /** C0 except tab (U+0009) and line feed (U+000A), DEL, C1, and the bidi controls. */
-const CONTROL_CHARACTER = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/g
+const CONTROL_CHARACTER = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202A-\u202E\u2066-\u2069]/g
 
 /** The string as it may be drawn: controls, escape sequences and bidi controls taken out. */
 export function untrustedText(raw: string): string {

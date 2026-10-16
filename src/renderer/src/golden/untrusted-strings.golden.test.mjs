@@ -33,13 +33,13 @@ if (decision.action === 'fail') throw new Error(decision.message)
 const runnable = decision.action === 'run'
 
 /** The characters C-08 names, none of which may reach the screen. */
-const HOSTILE_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/
+const HOSTILE_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202A-\u202E\u2066-\u2069]/
 
 const CASES = [
-  { id: 'right-to-left override', raw: 'rm -rf ~/‮exe.txt', drawn: 'rm -rf ~/exe.txt' },
+  { id: 'right-to-left override', raw: 'rm -rf ~/\u202Eexe.txt', drawn: 'rm -rf ~/exe.txt' },
   {
     id: 'isolate controls U+2066 to U+2069',
-    raw: 'git ⁦push⁩ ⁧--force⁩ ⁨origin⁩',
+    raw: 'git \u2066push\u2069 \u2067--force\u2069 \u2068origin\u2069',
     drawn: 'git push --force origin'
   },
   { id: 'NUL', raw: 'report\u0000.txt', drawn: 'report.txt' },
