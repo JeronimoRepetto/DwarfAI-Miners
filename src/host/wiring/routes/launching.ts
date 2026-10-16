@@ -2,8 +2,8 @@
 // B-F19, §4.1 `launches`; ISSUE-162), in two parts, as routes/askingRoutes.ts:
 //
 // - `serveLaunching`, run by the composition root before the boot binds the endpoint: B-M33
-//   `launching.launch` and the snapshot's `launches` section, so every `hello.ok` lists them
-//   (14 §1.3); the launch frames (`LAUNCHING_FRAMES`) are advertised with the endpoint's frame list.
+//   `launching.launch`, B-M34 `launching.launchCustom` (ISSUE-165) and the snapshot's `launches`
+//   section, so every `hello.ok` lists them (14 §1.3); the launch frames (`LAUNCHING_FRAMES`) are advertised with the endpoint's frame list.
 //   They forward to the one instance boot step 4 constructs; until then the dispatcher answers
 //   HOST_NOT_READY (14 §3.3).
 // - `wire`, run by boot step 4 once suppliers, conversation, crew and mines exist: the module over
@@ -87,6 +87,7 @@ import type { Dispatcher } from '../../transport/dispatcher'
 import type { AttachedConnection } from '../../transport/connectionRegistry'
 import type { FrameAudience } from '../../transport/events/framePublisher'
 import { registerLaunchingLaunch } from '../../transport/methods/launchingLaunch'
+import { registerLaunchingLaunchCustom } from '../../transport/methods/launchingLaunchCustom'
 import { registerLaunchesSection, toLaunchWire } from '../../transport/snapshot/launchesSection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { createSessionStarter } from '../bridges/sessionStarter'
@@ -276,6 +277,9 @@ export function serveLaunching(serve: LaunchingServeDeps): ServedLaunching {
   }
   registerLaunchingLaunch(serve.dispatcher, {
     launching: { launch: (req) => current().launching.commands.launch(req) }
+  })
+  registerLaunchingLaunchCustom(serve.dispatcher, {
+    launching: { launchCustom: (req) => current().launching.commands.launchCustom(req) }
   })
   registerLaunchesSection(serve.sections, {
     launches: { snapshot: () => current().launching.snapshots.snapshot() }

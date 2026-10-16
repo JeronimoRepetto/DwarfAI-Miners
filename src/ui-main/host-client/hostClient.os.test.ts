@@ -90,6 +90,8 @@ const SERVED_SINCE_CUT_0 = [
   'frame:launch.changed',
   'frame:launch.failed',
   'launching.launch',
+  // "Other…": B-M34 (ISSUE-165).
+  'launching.launchCustom',
   'section:launches',
   // The Add panel's supplier list: B-M37, from cut 3 (ISSUE-163).
   'suppliers.launchable'

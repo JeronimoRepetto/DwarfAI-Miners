@@ -15,6 +15,9 @@ import { RecordingEventBus } from '../../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../../kernel/fakes/SequenceIdGenerator'
 import type { SuppliersEvent } from '../../domain/events'
 import { SimulatedDriver } from '../drivers/simulated/SimulatedDriver'
+import { FakeProcessControl } from '../../../../kernel/fakes/FakeProcessControl'
+import { HostedCommandDriver } from '../drivers/hosted-command/HostedCommandDriver'
+import { HOSTED_COMMAND_PROFILE } from '../drivers/hosted-command/profile'
 import { CatalogDriverRegistry } from './CatalogDriverRegistry'
 
 const clock = new FakeClock()
@@ -159,5 +162,68 @@ describe('DriverRegistry', () => {
     expect(await catalogue.launchable()).toEqual([])
     // Development builds keep it launchable, so its driver stays tested (ADR-009 D6).
     expect(devRegistry.drivers('gated-one').map((d) => d.transport)).toEqual(['ndjson'])
+  })
+})
+
+// ISSUE-165 (INV-43; 15 §4.11, §3 row H1): the "Other…" driver is served outside the catalog. It is a
+// launch way, not a supplier: no catalog record names it, so it is never in the catalogue, never
+// launchable and never a Default provider; the registry serves it by its profile so the
+// SessionStarter bridge and the live-session tracking reach it like any driver.
+describe('DriverRegistry and the "Other…" driver (ISSUE-165)', () => {
+  function hostedDriver(): HostedCommandDriver {
+    return new HostedCommandDriver({
+      processControl: new FakeProcessControl({ clock }),
+      clock,
+      scheduler,
+      loginEnv: {},
+      platform: 'linux',
+      redact: (text) => text
+    })
+  }
+
+  it('[INV-43, US-OBS-007.AC05] the one "Other…" driver is served outside the catalog, and the catalog ids stay as they were', () => {
+    const alpha = record('alpha')
+    const other = hostedDriver()
+    const build = (): CatalogDriverRegistry =>
+      new CatalogDriverRegistry({
+        catalogIds: ['alpha'],
+        records: [alpha],
+        drivers: [driverFor(alpha, 'acp'), other],
+        publicBuild: true
+      })
+
+    expect(build).not.toThrow()
+    const registry = build()
+    expect(registry.drivers(HOSTED_COMMAND_PROFILE.id)).toEqual([other])
+    expect(registry.drivers('alpha').map((d) => d.transport)).toEqual(['acp'])
+  })
+
+  it('[INV-43, ADR-009] any other driver outside the catalog is still refused, a look-alike of the "Other…" profile included', () => {
+    const alpha = record('alpha')
+    const lookAlike = record(HOSTED_COMMAND_PROFILE.id, { drivers: ['stdio-raw'] })
+    const wrongTransport = new SimulatedDriver({
+      profile: HOSTED_COMMAND_PROFILE,
+      transport: 'acp',
+      capabilities: alpha.ceiling,
+      seed: 'other:acp',
+      clock,
+      scheduler
+    })
+    const stranger = record('stranger')
+    for (const driver of [
+      driverFor(lookAlike, 'stdio-raw'),
+      wrongTransport,
+      driverFor(stranger, 'acp')
+    ]) {
+      expect(
+        () =>
+          new CatalogDriverRegistry({
+            catalogIds: ['alpha'],
+            records: [alpha],
+            drivers: [driver],
+            publicBuild: false
+          })
+      ).toThrow(HostInvariantError)
+    }
   })
 })

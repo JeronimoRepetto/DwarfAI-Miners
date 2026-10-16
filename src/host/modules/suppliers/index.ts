@@ -10,8 +10,12 @@ import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { FileSystem } from '../../kernel/ports/fileSystem'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
+import type { ProcessControl } from '../../kernel/ports/processControl'
 import type { Scheduler } from '../../kernel/ports/scheduler'
 import { CATALOG_RECORDS, SIMULATED_RECORD } from './adapters/catalog/profiles'
+import { HostedCommandDriver } from './adapters/drivers/hosted-command/HostedCommandDriver'
+import { HOSTED_COMMAND_PROFILE } from './adapters/drivers/hosted-command/profile'
+import type { LoginEnvironment } from './adapters/drivers/shared/childEnv'
 import { SimulatedDriver } from './adapters/drivers/simulated/SimulatedDriver'
 import { CatalogDriverRegistry } from './adapters/registry/CatalogDriverRegistry'
 import { createSupplierCatalogue, type SupplierCatalogueQueries } from './application/catalogue'
@@ -26,6 +30,7 @@ import type { SuppliersEvent } from './domain/events'
 import { recordsForBuild } from './domain/profile'
 import type { CapabilityRecordStore } from './ports/capabilityRecordStore'
 import type { DriverRegistry } from './ports/driverRegistry'
+import type { ProviderDriver } from './ports/providerDriver'
 import type { InstallResolver } from './ports/installResolver'
 import type { IntegrationGateReader } from './ports/integrationGateReader'
 import type { SuppliedEventSink } from './ports/suppliedEventSink'
@@ -96,6 +101,22 @@ export type {
   SuppliedEventSink
 } from './ports/suppliedEventSink'
 
+/**
+ * The provider id of the "Other…" launch way (15 §4.11): the id its sessions and launch records
+ * carry. Never a catalog id (INV-43): `entry()` and `launchable()` never answer it.
+ */
+export const HOSTED_COMMAND_PROVIDER_ID: ProviderId = HOSTED_COMMAND_PROFILE.id
+
+/** What the "Other…" `HostedCommandDriver` spawns with (15 §4.11), bound by `host/main.ts`. */
+export interface HostedCommandDeps {
+  readonly processControl: ProcessControl
+  /** The person's login environment `childEnv` copies the allowlisted variables from (15 §4). */
+  readonly loginEnv: LoginEnvironment
+  readonly platform: NodeJS.Platform
+  /** The one redaction rule (`contracts/logging` `redactSecrets`), bound by the root (R9). */
+  readonly redact: (text: string) => string
+}
+
 export interface SuppliersDeps {
   /** `CATALOG_PROVIDER_IDS`, handed over by `host/main.ts` (R9): every profile id must be in it. */
   readonly catalogIds: readonly ProviderId[]
@@ -119,6 +140,11 @@ export interface SuppliersDeps {
   readonly bus: Pick<DomainEventBus<SuppliersEvent>, 'publish'>
   readonly ids: IdGenerator
   readonly hostEpoch: HostEpoch
+  /**
+   * The "Other…" driver's process deps (ISSUE-165). Absent, no "Other…" driver is attached and a
+   * custom launch settles `not-installed` (a composition that launches no custom command).
+   */
+  readonly hostedCommand?: HostedCommandDeps
 }
 
 export interface Suppliers {
@@ -132,7 +158,7 @@ export interface Suppliers {
 
 export function createSuppliers(deps: SuppliersDeps): Suppliers {
   const records = recordsForBuild(CATALOG_RECORDS, deps)
-  const drivers = records.includes(SIMULATED_RECORD)
+  const drivers: ProviderDriver[] = records.includes(SIMULATED_RECORD)
     ? [
         new SimulatedDriver({
           profile: SIMULATED_RECORD.profile,
@@ -144,6 +170,16 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
         })
       ]
     : []
+  if (deps.hostedCommand !== undefined) {
+    // "Other…" (ISSUE-165): served outside the catalog (INV-43), tracked like every driver below.
+    drivers.push(
+      new HostedCommandDriver({
+        ...deps.hostedCommand,
+        clock: deps.clock,
+        scheduler: deps.scheduler
+      })
+    )
+  }
   const registry = new CatalogDriverRegistry({
     catalogIds: deps.catalogIds,
     records,
