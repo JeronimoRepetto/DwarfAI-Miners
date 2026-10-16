@@ -532,4 +532,66 @@ describe('useMines from the Host read model', () => {
     expect(shown(BORIN).textDelivery).toBeUndefined()
     expect(entry(BORIN, 'chat')).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
   })
+
+  /*
+   * APPENDED for ISSUE-255. The walk-out keeps today's corridor route and speed (the pinned design's
+   * ruling), so it can take seconds or a fraction of one: the board keeps a departed dwarf for as long
+   * as its own sprite walks out and fades, said by the sprite itself (SceneDwarf), never for a flat
+   * 720 ms. One no sprite walks (its mine is not open) still goes after WALK_OUT_MS. Under reduced
+   * motion there is no walk, so it goes at once.
+   */
+  describe('the walk-out (ISSUE-255)', () => {
+    afterEach(() => {
+      Reflect.deleteProperty(window, 'matchMedia')
+    })
+
+    async function departed(): Promise<void> {
+      const host = installHost([page(3, [mineWire()], [dwarfWire(BORIN), dwarfWire(DAIN)])])
+      await useMines().start()
+      host.push([frame(4, 'dwarf.departed', { dwarfId: BORIN, mineId: ALPHA, cause: 'stopped' })])
+    }
+    const leaving = () =>
+      boardDwarfs()
+        .filter((dwarf) => dwarf.status === 'leaving')
+        .map((dwarf) => dwarf.id)
+
+    it('[NFR-TIM-09] a long walk-out is not cut short: the dwarf stays on the board until its own walk-out ends', async () => {
+      await departed()
+      useMines().walkingOut(BORIN)
+      // A climb from the ceiling gallery: far longer than 720 ms.
+      vi.advanceTimersByTime(9_000)
+      expect(leaving()).toEqual([BORIN])
+      useMines().walkedOut(BORIN)
+      expect(leaving()).toEqual([])
+      expect(boardDwarfs().map((dwarf) => dwarf.id)).toEqual([DAIN])
+    })
+
+    it('[NFR-TIM-09] a short walk-out is not held: the dwarf goes when its walk-out ends', async () => {
+      await departed()
+      useMines().walkingOut(BORIN)
+      vi.advanceTimersByTime(300)
+      useMines().walkedOut(BORIN)
+      expect(leaving()).toEqual([])
+    })
+
+    it('[NFR-TIM-09] a walk-out nobody reports ending still ends, however the sprite went', async () => {
+      await departed()
+      useMines().walkingOut(BORIN)
+      vi.advanceTimersByTime(60_000)
+      expect(leaving()).toEqual([])
+    })
+
+    it('[US-MINE-009.AC05, NFR-A11Y-10] under reduced motion a departed dwarf leaves the board at once, its walk-out still told', async () => {
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        value: () => ({ matches: true })
+      })
+      const walks = recordWalks()
+      await departed()
+      expect(boardDwarfs().map((dwarf) => dwarf.id)).toEqual([DAIN])
+      expect(walks).toEqual([
+        { kind: 'walk-out', dwarfId: BORIN, mineId: ALPHA, cause: 'stopped', panel: 'read-only' }
+      ])
+    })
+  })
 })

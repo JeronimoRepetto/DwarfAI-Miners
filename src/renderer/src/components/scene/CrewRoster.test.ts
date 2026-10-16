@@ -150,3 +150,26 @@ describe('CrewRoster, dwarf names (#635)', () => {
     ])
   })
 })
+
+/*
+ * APPENDED for ISSUE-255 (motion.md, Mine column or Valle zone, a dwarf arrives or leaves: "The
+ * roster portrait — none: added or dropped at once"; organisms/mine-column, removeDwarf): the sprite
+ * walks, the portrait does not. A departing dwarf stays on the board as 'leaving' while its sprite
+ * walks out, and its portrait is already gone.
+ */
+describe('CrewRoster, arrivals and departures (ISSUE-255)', () => {
+  it('[US-MINE-009.AC07] the roster portrait is added or dropped at once, independent of the sprite travel', async () => {
+    const borin = defaultDwarf({ id: 'r0', name: 'dwarfai-53', status: 'working' })
+    const dain = defaultDwarf({ id: 'r1', name: 'dwarfai-54', status: 'working' })
+    const wrapper = mount(CrewRoster, { props: { dwarfs: [borin] } })
+    const ids = () => wrapper.findAll('button.dm-portrait').map((p) => p.attributes('data-dwarf'))
+
+    // An arrival: its portrait is there on the very render that brings it, while its sprite walks.
+    await wrapper.setProps({ dwarfs: [borin, dain] })
+    expect(ids()).toEqual(['r0', 'r1'])
+
+    // A departure: walking out, still on the board, and its portrait already dropped.
+    await wrapper.setProps({ dwarfs: [borin, { ...dain, status: 'leaving' }] })
+    expect(ids()).toEqual(['r0'])
+  })
+})

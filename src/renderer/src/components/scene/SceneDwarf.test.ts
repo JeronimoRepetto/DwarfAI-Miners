@@ -2,6 +2,8 @@
 import { config, enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FRAME_CLOCK_KEY } from '../../composables/useFramePlayer'
+import { WALK_OUT_KEY, type WalkOutReporter } from '../../composables/useMines'
+import { LEAVING_EXIT_MS } from '../../lib/presentation'
 import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
 import type { CrewSoundSignal } from '../../lib/sprite/crewSound'
 import { DWARF_CREW, DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
@@ -508,6 +510,8 @@ describe('SceneDwarf in the scene', () => {
    * ADDED for #635. A dwarf at rest draws at its station as it did before the walk came back: one
    * the column never walked (drawn on its way out when the column opened, or under reduced motion)
    * has reached no way out, so it stays drawn, idle, rather than fading where it stands.
+   * AMENDED for ISSUE-255 (comment only): under reduced motion a leaver is now gone at once
+   * (US-MINE-009.AC05), see "SceneDwarf walk-in and walk-out"; this case runs without it.
    */
   it('draws a leaver it never walked at full strength, idle on its station', () => {
     const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: false })
@@ -613,5 +617,92 @@ describe('SceneDwarf, dwarf names (#635)', () => {
   it('keeps the base name on a dwarf with no custom name', () => {
     const { wrapper } = mountDwarf(defaultDwarf({ name: 'dwarfai-53' }))
     expect(wrapper.find('.dm-dwarf__tag').text()).toBe('dwarfai-53')
+  })
+})
+
+/*
+ * APPENDED for ISSUE-255. Under reduced motion there is no walk: an arrival is on its station at once
+ * and a leaver is gone at once, with no footsteps either way (US-MINE-009.AC05; components.md, Dwarf
+ * in the scene: "Under reduced motion the walk reads 0ms"). And the walk-out lasts as long as the
+ * sprite's own route and fade, so the sprite is what tells the board when its dwarf has gone
+ * (useMines `walkingOut` / `walkedOut`), recorded here through WALK_OUT_KEY.
+ */
+describe('SceneDwarf walk-in and walk-out (ISSUE-255)', () => {
+  let told: string[]
+  beforeEach(() => {
+    vi.useFakeTimers()
+    told = []
+    const reporter: WalkOutReporter = {
+      walkingOut: (id) => told.push('walking-out ' + id),
+      walkedOut: (id) => told.push('walked-out ' + id)
+    }
+    Reflect.set(config.global.provide, WALK_OUT_KEY, reporter)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    Reflect.deleteProperty(config.global.provide, WALK_OUT_KEY as symbol)
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  function stubReducedMotion(): void {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined
+      })
+    })
+  }
+
+  it('[US-MINE-009.AC05, NFR-A11Y-10] under reduced motion an arriving or leaving dwarf appears or disappears at once on its station with no walk and no footsteps', () => {
+    stubReducedMotion()
+    // The column walks nobody under reduced motion, so an arrival comes with `walking` false.
+    const arrival = mountDwarf(defaultDwarf({ id: 'in', status: 'working' }), { entering: true })
+    const shown = arrival.wrapper.find('.dm-dwarf')
+    expect(shown.classes()).not.toContain('is-gone')
+    expect(shown.attributes('style')).toContain('--x: 20%')
+    expect(arrival.cues.filter((cue) => cue.cue === 'walk')).toEqual([])
+
+    const leaver = mountDwarf(defaultDwarf({ id: 'out', status: 'leaving' }))
+    const gone = leaver.wrapper.find('.dm-dwarf')
+    expect(gone.classes()).toContain('is-gone')
+    expect(gone.attributes('aria-hidden')).toBe('true')
+    expect(gone.attributes('inert')).toBeDefined()
+    expect(leaver.cues.filter((cue) => cue.cue === 'walk')).toEqual([])
+    // And the board is told at once, not after a walk that never happens.
+    expect(told).toEqual(['walked-out out'])
+  })
+
+  it('[NFR-TIM-09] a sprite walking a departed dwarf out holds it until it has walked out and faded', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ id: 'out', status: 'leaving' }), {
+      walking: true
+    })
+    expect(told).toEqual(['walking-out out'])
+    // However long the walk: nine seconds of corridor and it is still walking.
+    vi.advanceTimersByTime(9_000)
+    expect(told).toEqual(['walking-out out'])
+    // At the way out it fades, and only once the fade is over is it gone.
+    await wrapper.setProps({ walking: false })
+    vi.advanceTimersByTime(LEAVING_EXIT_MS - 1)
+    expect(told).toEqual(['walking-out out'])
+    vi.advanceTimersByTime(1)
+    expect(told).toEqual(['walking-out out', 'walked-out out'])
+  })
+
+  it('[NFR-TIM-09] a sprite taken away mid walk-out lets its dwarf go at once', () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ id: 'out', status: 'leaving' }), {
+      walking: true
+    })
+    wrapper.unmount()
+    expect(told).toEqual(['walking-out out', 'walked-out out'])
+  })
+
+  it('[NFR-TIM-09] tells the board nothing about a dwarf that is not leaving', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ id: 'w', status: 'working' }), { walking: true })
+    await wrapper.setProps({ walking: false })
+    vi.advanceTimersByTime(LEAVING_EXIT_MS * 2)
+    wrapper.unmount()
+    expect(told).toEqual([])
   })
 })
