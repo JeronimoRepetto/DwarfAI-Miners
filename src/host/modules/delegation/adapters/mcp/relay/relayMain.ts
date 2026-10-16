@@ -1,7 +1,7 @@
 // The `dwarfai-mcp` relay (ADR-013 items 2–3, frozen; 16 §5.2 items 2–4; 15 §4 "Delegation relay
 // form"; UC-017 steps 1–3): the stdio MCP server a delegating provider session starts from the relay
 // entry (relayEntry.ts), `{ command: <versioned-copy executable>, args: [<this script>], env: {
-// ELECTRON_RUN_AS_NODE: '1', DWARFAI_MCP_CREDENTIAL_FILE: <path> } }`. electron.vite.host.config.ts
+// ELECTRON_RUN_AS_NODE: '1', DWARFAI_MCP_CREDENTIAL_FILE: <path> } }`. electron.vite.relay.config.ts
 // emits it as `out/host/dwarfai-mcp.js`, beside the Host entry. This file is that process's entry:
 // it starts itself when it runs as the built script, and nothing but its own tests imports it
 // (.dependency-cruiser.cjs R6-relay-entry-not-imported); what the Host needs lives in relayEntry.ts.

@@ -5,7 +5,7 @@
 // C-15, C-23, INV-83); `childEnv` keeps both out of the provider child (15 §4 "Child environment").
 //
 // - `relayEntryArgs(hostEntryPath)`: the relay entry argument, the relay script `dwarfai-mcp.js`
-//   that electron.vite.host.config.ts emits beside the Host entry `out/host/main.js` (in the app
+//   that electron.vite.relay.config.ts emits beside the Host entry `out/host/main.js` (in the app
 //   directory, `app.asar` when packaged, which the executable reads under ELECTRON_RUN_AS_NODE as it
 //   reads the Host entry). The composition root passes it to `DelegationLifecycle` as
 //   `relayEntryArgs` (issueFor's `relay.args`; wiring: ISSUE-209).

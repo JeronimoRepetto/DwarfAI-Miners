@@ -1,6 +1,6 @@
 // L8 OS lane (17 §1.8): the built `dwarfai-mcp` relay (`out/host/dwarfai-mcp.js`, built here with
-// electron.vite.host.config.ts as `pnpm build` builds it) started as a provider starts it: the
-// command and argv of the relay entry, and an environment that is the provider's plus the entry's own
+// electron.vite.relay.config.ts, beside the Host built with electron.vite.host.config.ts, as
+// `pnpm build` builds them) started as a provider starts it: the command and argv of the relay entry, and an environment that is the provider's plus the entry's own
 // two variables (15 §4). The endpoint is the Host's real MCP endpoint (ISSUE-199) with the real
 // delegation MCP server, bound at the path the relay computes on its own (ADR-013 item 3; the Windows
 // SID natively, nativeUserSid.ts). The command line is read back as the OS lists it (the listing of
@@ -58,11 +58,9 @@ afterEach(async () => {
 
 let hostEntry: string
 beforeAll(async () => {
-  await build({
-    root: REPO,
-    configFile: join(REPO, 'electron.vite.host.config.ts'),
-    logLevel: 'warn'
-  })
+  for (const config of ['electron.vite.host.config.ts', 'electron.vite.relay.config.ts']) {
+    await build({ root: REPO, configFile: join(REPO, config), logLevel: 'warn' })
+  }
   hostEntry = join(REPO, 'out', 'host', 'main.js')
 }, 180_000)
 

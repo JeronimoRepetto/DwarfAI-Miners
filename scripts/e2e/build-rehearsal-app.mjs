@@ -9,7 +9,7 @@
 //   (electron-vite's externalizeDepsPlugin), so Node resolves them from the repository's `node_modules` by walking up.
 //   The folder is emptied first. Everything in it is a copy or a fresh build, never a link.
 // - The folder holds what the launched app reads from its app path: `package.json` (the version raised, by default one
-//   patch above this tree's), `out/` built by the three electron-vite configs with rehearsalBuild.mjs's plugin passed
+//   patch above this tree's), `out/` built by the four electron-vite configs with rehearsalBuild.mjs's plugin passed
 //   inline (so the configs themselves stay untouched), `out/host-manifest.json` written by the same script as
 //   `pnpm build`, and copies of `resources/` and, when built, `prebuilds/` (the Windows native helpers).
 // - It checks that the UI-main and the Host bundles both carry the rehearsal's PROTOCOL_VERSION before it reports.
@@ -60,6 +60,7 @@ const plugin = rehearsalBuildPlugin({ outRoot, protocolVersion, appVersion })
 for (const config of [
   'electron.vite.config.ts',
   'electron.vite.host.config.ts',
+  'electron.vite.relay.config.ts',
   'electron.vite.jevMcpServer.config.ts'
 ]) {
   await build({
