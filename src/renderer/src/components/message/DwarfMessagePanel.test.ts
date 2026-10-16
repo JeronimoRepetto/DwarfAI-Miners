@@ -24,7 +24,7 @@ import {
 } from '../../lib/message/conversation'
 import { CONVERSATION_START_NOTE, READING_OLDER_NOTE } from '../../lib/message/feedPages'
 import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
-import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
+import { TIP_DELAY_MS, TIP_GAP } from '../../lib/overlay/tipCard'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf, defaultMine } from '../../testing/factories'
 import {
@@ -4105,6 +4105,219 @@ describe('DwarfMessagePanel untrusted strings (C-08)', () => {
     expect(chip.attributes('title')).toBe('redexe.txt')
   })
 })
+
+/* --- ISSUE-259: activity disclosures, the outcome line's tooltip and the widths — one block, appended --- */
+
+/*
+ * Three MessagePanel details (ISSUE-259): each folded activity line opens and folds its step list on
+ * its own (US-MSG-004); the turn outcome line's square and tooltip (US-MSG-011.AC08, US-MSG-012);
+ * and the panel's width (US-MSG-015). jsdom lays nothing out, so the widths are proven from the
+ * stylesheets that decide them; the maintainer's golden lane draws them.
+ */
+describe('DwarfMessagePanel disclosures, outcome tooltip and widths (ISSUE-259)', () => {
+  const step = (text: string, t: string) => ({
+    role: 'assistant' as const,
+    text,
+    timestamp: t,
+    activity: { kind: 'run' as const, target: text }
+  })
+  const TWO_RUNS = heldFeed([
+    { role: 'user', text: 'Dig.', timestamp: 't0' },
+    step('Ran one', 't1'),
+    step('Ran two', 't2'),
+    { role: 'assistant', text: 'Halfway.', timestamp: 't3' },
+    step('Ran three', 't4'),
+    { role: 'assistant', text: 'Done.', timestamp: 't5' }
+  ])
+  const source = (file: string): string => readFileSync(join(import.meta.dirname, file), 'utf8')
+  /** The body of the first rule of `css` whose selector is exactly `selector`. */
+  const rule = (css: string, selector: string): string => {
+    const at = css.indexOf('\n' + selector + ' {')
+    expect(at, 'no rule ' + selector).toBeGreaterThan(-1)
+    return css.slice(at, css.indexOf('}', at))
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function ended(lastTurn: NonNullable<ReturnType<typeof defaultDwarf>['lastTurn']>) {
+    return mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: { dwarf: defaultDwarf({ status: 'waiting', lastTurn }), feed: heldFeed(HELD) }
+    })
+  }
+
+  it('[US-MSG-004.AC01, US-MSG-004.AC02] a click on a folded activity line opens its step list fading in and a second click folds it back', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: TWO_RUNS })
+    const toggle = () => wrapper.findAll('.dm-activity__toggle')[0]!
+    const list = () => wrapper.findAll('.dm-activity__list')[0]!
+    expect(list().attributes('hidden')).toBeDefined()
+
+    await toggle().trigger('click')
+    expect(list().attributes('hidden')).toBeUndefined()
+    expect(toggle().attributes('aria-expanded')).toBe('true')
+    expect(
+      list()
+        .findAll('li')
+        .map((line) => line.text())
+    ).toEqual(['Ran one', 'Ran two'])
+    // It fades in on opacity alone (NFR-PERF-01), each time it is shown.
+    const css = source('ActivityDisclosure.vue')
+    expect(rule(css, '.dm-activity__list')).toContain('animation: dm-fade-in')
+    expect(css).toMatch(
+      /@keyframes dm-fade-in \{\s*from \{\s*opacity: 0;\s*\}\s*to \{\s*opacity: 1;/
+    )
+
+    await toggle().trigger('click')
+    expect(list().attributes('hidden')).toBeDefined()
+    expect(toggle().attributes('aria-expanded')).toBe('false')
+  })
+
+  it('[US-MSG-004.AC04] every disclosure starts folded and toggles on its own', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: TWO_RUNS })
+    const expanded = () =>
+      wrapper.findAll('.dm-activity__toggle').map((row) => row.attributes('aria-expanded'))
+    expect(expanded()).toEqual(['false', 'false'])
+
+    await wrapper.findAll('.dm-activity__toggle')[1]!.trigger('click')
+    expect(expanded()).toEqual(['false', 'true'])
+    await wrapper.findAll('.dm-activity__toggle')[0]!.trigger('click')
+    expect(expanded()).toEqual(['true', 'true'])
+    await wrapper.findAll('.dm-activity__toggle')[1]!.trigger('click')
+    expect(expanded()).toEqual(['true', 'false'])
+  })
+
+  it('[US-MSG-011.AC08] an idle dwarf’s status square shows the same green as working', () => {
+    const line = panel({ dwarf: defaultDwarf({ status: 'leaving' }) }).find('.dm-msg__outcome')
+    expect(line.attributes('data-status')).toBe('idle')
+    // The square is the working green unless asking (brass) or asleep (steel) say otherwise.
+    const css = source('DwarfMessagePanel.vue')
+    expect(rule(css, '.dm-msg__outcome i')).toContain('background: var(--ok)')
+    expect(css).not.toContain(".dm-msg__outcome[data-status='idle']")
+    expect(css).not.toContain(".dm-msg__outcome[data-status='working']")
+  })
+
+  it('[US-MSG-012.AC01] a bad ending’s tooltip reads its sentence, a colon and the provider detail verbatim', async () => {
+    const wrapper = ended({ kind: 'errored', detail: '<b>overloaded</b>', endedAt: Date.now() })
+    await wrapper.find('.dm-msg__outcome').trigger('focus')
+    await flushPromises()
+    const tip = document.body.querySelector('.dm-tip')
+    expect(tip?.textContent?.trim()).toBe('Failed: <b>overloaded</b>')
+    // The provider's word is data: drawn as text, never as markup.
+    expect(tip?.querySelector('b')).toBeNull()
+  })
+
+  it('[US-MSG-012.AC02, US-MSG-012.AC07] closing words are trimmed to 200 grapheme clusters with an ellipsis', async () => {
+    const accented = 'é'
+    const wrapper = ended({ kind: 'concluded', text: accented.repeat(250), endedAt: Date.now() })
+    await wrapper.find('.dm-msg__outcome').trigger('focus')
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')?.textContent?.trim()).toBe(
+      accented.repeat(200) + '…'
+    )
+  })
+
+  it('[US-MSG-012.AC03] while working or asking, or with nothing to add, no tooltip appears and the line takes no focus', async () => {
+    vi.useFakeTimers()
+    const lastTurn = { kind: 'errored' as const, detail: 'error_during_execution', endedAt: 1 }
+    for (const dwarf of [
+      defaultDwarf({ status: 'working', lastTurn }),
+      defaultDwarf({ status: 'waiting', waitingReason: 'approval', lastTurn }),
+      defaultDwarf({ status: 'waiting', lastTurn: { kind: 'errored', endedAt: 1 } })
+    ]) {
+      const wrapper = mount(DwarfMessagePanel, {
+        attachTo: document.body,
+        props: { dwarf, feed: heldFeed(HELD) }
+      })
+      const line = wrapper.find('.dm-msg__outcome')
+      expect(line.attributes('tabindex')).toBeUndefined()
+      await line.trigger('focus')
+      await line.trigger('pointerenter')
+      await vi.advanceTimersByTimeAsync(TIP_DELAY_MS * 2)
+      expect(document.body.querySelector('.dm-tip')).toBeNull()
+      wrapper.unmount()
+    }
+  })
+
+  it('[US-MSG-012.AC04, US-MSG-012.AC05, NFR-TIM-01] the tooltip opens after 300 ms of hover or at once on focus', async () => {
+    vi.useFakeTimers()
+    const wrapper = ended({ kind: 'concluded', text: 'Found the seam.', endedAt: Date.now() })
+    const line = wrapper.find('.dm-msg__outcome')
+    expect(TIP_DELAY_MS).toBe(300)
+    await line.trigger('pointerenter')
+    await vi.advanceTimersByTimeAsync(299)
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(document.body.querySelector('.dm-tip')).not.toBeNull()
+    await line.trigger('pointerleave')
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+
+    // Focus shows it with no timer at all: no fake time passes before it is there.
+    await line.trigger('focus')
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')?.textContent?.trim()).toBe('Found the seam.')
+  })
+
+  it('[US-MSG-012.AC06] the tooltip sits below the outcome line, aligned to its start', async () => {
+    const wrapper = ended({ kind: 'concluded', text: 'Found the seam.', endedAt: Date.now() })
+    const line = wrapper.find('.dm-msg__outcome')
+    vi.spyOn(line.element, 'getBoundingClientRect').mockReturnValue({
+      left: 40,
+      top: 100,
+      width: 300,
+      height: 20,
+      right: 340,
+      bottom: 120,
+      x: 40,
+      y: 100,
+      toJSON: () => ({})
+    })
+    await line.trigger('focus')
+    await flushPromises()
+    const tip = document.body.querySelector<HTMLElement>('.dm-tip')!
+    // Its left edge on the line's left edge, its top the tooltip gap below the line's bottom.
+    expect(tip.style.left).toBe('40px')
+    expect(tip.style.top).toBe(120 + TIP_GAP + 'px')
+  })
+
+  it('[US-MSG-015.AC01] docked in the Panel the MessagePanel is 440 px wide and bounded by its host', () => {
+    const panelRule = rule(source('DwarfMessagePanel.vue'), '.dm-msg')
+    expect(panelRule).toContain('width: 440px;')
+    expect(panelRule).toContain('max-width: 100%;')
+  })
+
+  it('[US-MSG-015.AC03, US-MSG-015.AC04, US-MSG-015.AC05] at its narrowest the portrait, header tools, Attach and Send keep their size, only the name, chips and writing well shrink, and Jump to terminal alone wraps', () => {
+    const panelCss = source('DwarfMessagePanel.vue')
+    // Header: the 40px portrait never shrinks; the tools are buttons of a fixed hit size that never
+    // wrap; the name block alone takes what is left and ellipsizes the name and the chips.
+    const portrait = source('../dwarf/DwarfPortrait.vue')
+    expect(portrait).toContain('--size: 40px')
+    expect(portrait).toContain('flex: none')
+    const button = rule(source('../controls/ActionButton.vue'), '.dm-btn')
+    expect(button).toContain('min-width: var(--hit)')
+    expect(button).toContain('white-space: nowrap')
+    const who = rule(panelCss, '.dm-msg__who')
+    expect(who).toContain('flex: 1;')
+    expect(who).toContain('min-width: 0;')
+    for (const selector of ['.dm-msg__rename,\n.dm-msg__title', '.dm-msg__base']) {
+      expect(rule(panelCss, selector)).toContain('text-overflow: ellipsis')
+    }
+    // Composer: Attach and Send never shrink; the writing well alone narrows.
+    const composer = source('MessageComposer.vue')
+    expect(rule(composer, '.dm-composer__row :deep(.dm-btn)')).toContain('flex: none')
+    const well = rule(composer, '.dm-composer__row :deep(.dm-field)')
+    expect(well).toContain('flex: 1;')
+    expect(well).toContain('min-width: 0;')
+    // Question card: Jump to terminal is the one walk control whose label may wrap.
+    const card = source('QuestionCard.vue')
+    expect(rule(card, '.dm-qcard__walk .dm-qcard__jump :deep(.dm-btn__label)')).toContain(
+      'white-space: normal'
+    )
+    expect(card.match(/white-space: normal/g)).toHaveLength(1)
+  })
+})
+/* --- end of the ISSUE-259 block --------------------------------------------------------------------- */
 
 /*
  * ISSUE-258 (EPIC-16): the header, the rename field, the ⋯ menu and the stop dialog against the

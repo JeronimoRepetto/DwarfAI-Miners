@@ -551,9 +551,10 @@ const outcome = computed(() =>
 /*
  * The line's tooltip (MESSAGE-QUESTIONS 9): what the line leaves out, on hover after the tooltip
  * delay and at once on keyboard focus, as every tooltip here shows (useHoverTip). With nothing to
- * add the line has no tooltip and takes no focus.
+ * add the line has no tooltip and takes no focus. It sits below the line, aligned to its start
+ * (US-MSG-012.AC06).
  */
-const outcomeTip = useHoverTip<'outcome'>()
+const outcomeTip = useHoverTip<'outcome'>({ side: 'bottom', align: 'start' })
 const outcomeTipId = 'dm-outcome-tip-' + props.dwarf.id
 
 /** A row as the log draws it: a day divider, a run of steps, or something said. */

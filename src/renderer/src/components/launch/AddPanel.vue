@@ -3,6 +3,11 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { belongsToComposition } from '../../lib/controls/input'
 import { useHoverTip } from '../../composables/useHoverTip'
 import { addPanelSelects, addPanelWhy, supplierLabel } from '../../lib/launch/addPanelCopy'
+import {
+  addPanelFormLocked,
+  addPanelFormStateOf,
+  addPanelSendRule
+} from '../../lib/launch/addPanelForm'
 import { jevCardEyebrow, jevCardTip, jevPickText } from '../../lib/launch/jevCardCopy'
 import {
   jevFallbackReasonWords,
@@ -36,7 +41,8 @@ import LaunchFailureOutput from './LaunchFailureOutput.vue'
  * that dwarf's MessagePanel in the same anchored place.
  *
  * Thin, like every component here. It decides nothing: which chips exist and in which state is
- * lib/launch/providerChips', whether a launch may go is lib/launch/launchState's, and every word
+ * lib/launch/providerChips', whether a launch may go is lib/launch/launchState's, which machine 5A
+ * state the panel is in and what that state locks is lib/launch/addPanelForm's, and every word
  * the panel says about where it stands is lib/launch/addPanelCopy's. This file turns those
  * answers into the design's parts and reports gestures back.
  *
@@ -190,13 +196,30 @@ const selects = computed(() =>
   })
 )
 
-/** Send the dwarf in wakes once a supplier is valid (or Jev is on) and there is a prompt. */
+/*
+ * The panel as machine 5A reads it (07 §5A; lib/launch/addPanelForm): `sending` while a launch is
+ * in flight, `failed-shown` under the failure notice, else `ready` or `invalid` by the Send rule.
+ * `sending` locks every control but Close, which is the only thing `locked` is used for.
+ */
+const sendRule = computed(() =>
+  addPanelSendRule({ wayToRun: supplierReady.value, prompt: props.prompt })
+)
+const form = computed(() =>
+  addPanelFormStateOf({
+    inFlight: launched.value,
+    failureShown: notice.value !== null,
+    sendRule: sendRule.value
+  })
+)
+const locked = computed(() => addPanelFormLocked(form.value))
+
+/**
+ * Send the dwarf in wakes once the Send rule holds — a supplier is valid (or Jev is on) and there
+ * is a prompt — with nothing in flight and Jev not being asked. A shown failure notice does not
+ * hold it back: an edited form can go again, as it always could here.
+ */
 const canLaunch = computed(
-  () =>
-    supplierReady.value &&
-    !launched.value &&
-    props.jev.routing.phase !== 'asking' &&
-    props.prompt.trim() !== ''
+  () => sendRule.value && !locked.value && props.jev.routing.phase !== 'asking'
 )
 
 function launch(): void {
@@ -441,7 +464,7 @@ let cards = 0
             :label="supplierLabel(chip.choice)"
             :pressed="chip.state === 'selected'"
             :data-value="chip.choice"
-            :disabled="launched"
+            :disabled="locked"
             @click="emit('choose', chip.choice)"
           />
         </div>
@@ -451,7 +474,7 @@ let cards = 0
           placeholder="Custom command, e.g. my-agent --yes"
           label="Custom command"
           :value="command"
-          :disabled="launched"
+          :disabled="locked"
           @update:value="emit('command', $event)"
           @keydown="onCommandKeydown"
         />
@@ -471,7 +494,7 @@ let cards = 0
             ref="jevToggle"
             label="Let Jev choose"
             :on="jev.enabled"
-            :disabled="jev.availability !== 'ready' || launched"
+            :disabled="jev.availability !== 'ready' || locked"
             :title="jev.availability === 'ready' ? undefined : jevUnavailableTitle"
             held
             @update:on="emit('toggle-jev')"
@@ -480,7 +503,7 @@ let cards = 0
           <ToggleSwitch
             label="Auto-accept Jev"
             :on="jev.autoAccept"
-            :disabled="jev.availability !== 'ready' || launched"
+            :disabled="jev.availability !== 'ready' || locked"
             :title="jev.availability === 'ready' ? undefined : jevUnavailableTitle"
             held
             @update:on="emit('toggle-jev-auto')"
@@ -513,7 +536,7 @@ let cards = 0
               class="jev-dismiss"
               label="Dismiss"
               size="sm"
-              :disabled="launched"
+              :disabled="locked"
               @click="dismissJev"
             />
           </div>
@@ -544,7 +567,7 @@ let cards = 0
             class="jev-dismiss jev-fallback-dismiss"
             label="Dismiss"
             size="sm"
-            :disabled="launched"
+            :disabled="locked"
             @click="dismissJev"
           />
         </div>
@@ -564,7 +587,7 @@ let cards = 0
             :label="select.label"
             :options="select.options"
             :value="select.value"
-            :disabled="select.disabled || launched"
+            :disabled="select.disabled || locked"
             @update:value="pick(select.label, $event)"
           />
         </div>
@@ -586,7 +609,7 @@ let cards = 0
           placeholder="What should this dwarf work on?"
           label="Prompt"
           :value="prompt"
-          :disabled="launched"
+          :disabled="locked"
           @update:value="emit('prompt', $event)"
           @keydown="onPromptKeydown"
         />
@@ -638,14 +661,14 @@ let cards = 0
               v-if="notice.retry"
               class="dm-add__fail-retry"
               label="Retry"
-              :disabled="launched"
+              :disabled="locked"
               @click="emit('retry')"
             />
             <ActionButton
               v-if="notice.pickManually"
               class="dm-add__fail-manual"
               label="Pick manually"
-              :disabled="launched"
+              :disabled="locked"
               @click="pickManually"
             />
           </div>

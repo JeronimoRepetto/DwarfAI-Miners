@@ -15,6 +15,18 @@ export const SETTINGS_SECTIONS = [
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
+/**
+ * The section Settings opens on (US-SET-001.AC01, NFR-PERS-11): the one last open, General on first
+ * run, and General whenever the panel shortcut failed to register, so its banner is what shows
+ * (US-SHELL-008.AC02).
+ */
+export function openingSection(
+  last: SettingsSection | undefined,
+  shortcutFailed: boolean
+): SettingsSection {
+  return shortcutFailed || last === undefined ? 'General' : last
+}
+
 const STEP: Readonly<Record<string, 1 | -1>> = { ArrowDown: 1, ArrowUp: -1 }
 
 /** Where an arrow key moves the section tabs from `section`; undefined for any other key. */

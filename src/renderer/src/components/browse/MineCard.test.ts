@@ -182,3 +182,28 @@ describe('MineCard, an untrusted mine name (C-08)', () => {
     expect(card.find('.dm-card__name').attributes('title')).toBe('anvilexe.txt')
   })
 })
+
+// ISSUE-253 (US-MINE-010): a capsule's count compacts from ten thousand up, and is printed in full
+// below it; the count is per material and never summed (BR-15).
+describe('MineCard ore counts', () => {
+  it('[US-MINE-010.AC03, US-MINE-010.AC06] a count of ten thousand or more is compacted and a smaller count is printed in full', () => {
+    const card = mount(MineCard, {
+      props: {
+        card: view({
+          ore: [
+            { material: 'coal', units: 881_000 },
+            { material: 'bronze', units: 48 },
+            { material: 'silver', units: 9_999 },
+            { material: 'gold', units: 10_000 }
+          ]
+        })
+      }
+    })
+    expect(card.findAll('.dm-card__ore .dm-ore').map((o) => o.text())).toEqual([
+      '881K',
+      '48',
+      '9,999',
+      '10K'
+    ])
+  })
+})
