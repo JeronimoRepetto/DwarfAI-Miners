@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * L7 check of the release lanes in CI (testing strategy `17` §1.9, §1.11, §1.13, §5.2; `20` §2.1).
@@ -546,5 +546,47 @@ describe('pnpm version in CI (AGENTS §0.2; 20 §1)', () => {
     expect(new Set(setups.map(({ version }) => version)).size, 'every job runs the same pnpm').toBe(
       1
     )
+  })
+})
+
+describe('OS lane per-test timeout on the Windows CI runner (17 §1.8, §1.13)', () => {
+  const realPlatform = process.platform
+
+  /** Both test configs, evaluated afresh as if on `platform` with `CI` set to `ci`. */
+  async function configsOn(platform, ci) {
+    Object.defineProperty(process, 'platform', { value: platform })
+    vi.stubEnv('CI', ci)
+    vi.resetModules()
+    const [{ default: ordinary }, { default: osLane }] = await Promise.all([
+      import('../../vitest.config.ts'),
+      import('../../vitest.os.config.ts')
+    ])
+    return { ordinary: ordinary.test.testTimeout, osLane: osLane.test.testTimeout }
+  }
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform })
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it('[ADR-001] the OS lane gets the ordinary lane timeout on the Windows CI runner', async () => {
+    const { ordinary, osLane } = await configsOn('win32', 'true')
+    expect(ordinary, 'the ordinary lane raises the timeout on that runner').toBe(30_000)
+    expect(osLane, 'the OS lane applies the same runner policy').toBe(ordinary)
+  })
+
+  it('[ADR-001] every other run keeps the vitest default in both lanes', async () => {
+    for (const [platform, ci] of [
+      ['win32', ''],
+      ['linux', 'true'],
+      ['darwin', 'true']
+    ]) {
+      const { ordinary, osLane } = await configsOn(platform, ci)
+      expect([ordinary, osLane], `${platform} with CI=${ci || 'unset'}`).toEqual([
+        undefined,
+        undefined
+      ])
+    }
   })
 })

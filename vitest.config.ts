@@ -16,9 +16,12 @@ import { configDefaults, defineConfig } from 'vitest/config'
 // or per-path timeout would only move to the next file that stalls. On that runner a test gets
 // 30 s, four times the worst stall seen; it stays a hang detector, never a speed check (a speed
 // budget belongs to the perf lane, 17 §1.11). Every other run keeps vitest's 5 000 ms default,
-// and tests that are slow by design keep their own timeout. GitHub Actions sets CI=true.
+// and tests that are slow by design keep their own timeout. GitHub Actions sets CI=true. The OS
+// lane (vitest.os.config.ts) runs on the same runner and spreads the same policy.
 const WINDOWS_CI_TEST_TIMEOUT_MS = 30_000
 const onWindowsCi = process.platform === 'win32' && process.env['CI'] === 'true'
+/** The `test` options of the policy above: the raised timeout on the Windows CI runner only. */
+export const windowsCiTestTimeout = onWindowsCi ? { testTimeout: WINDOWS_CI_TEST_TIMEOUT_MS } : {}
 
 /**
  * electron-vite's `?modulePath` import (a worker thread's entry, bundled as its own chunk by the
@@ -76,7 +79,7 @@ export default defineConfig({
     // Node by default (main-process tests); component tests opt into jsdom
     // with a `@vitest-environment jsdom` docblock.
     environment: 'node',
-    ...(onWindowsCi ? { testTimeout: WINDOWS_CI_TEST_TIMEOUT_MS } : {}),
+    ...windowsCiTestTimeout,
     // The Host database template (17 §1.5 "Speed"; 09 §6.5 "Template DB"): migrated once per run,
     // copied by each database test through `copyTemplateDb()` / `openTemplateCopy()`.
     globalSetup: ['src/host/platform/sqlite/testing/templateDb.globalSetup.ts']
