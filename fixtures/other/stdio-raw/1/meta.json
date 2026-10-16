@@ -1,0 +1,31 @@
+{
+  "providerVersion": "1",
+  "capturedAt": "2026-10-16",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "capabilities": {
+    "launch": true,
+    "observe": false,
+    "sendTurn": true,
+    "interrupt": false,
+    "permission": "none",
+    "question": "none",
+    "answeredElsewhere": false,
+    "staleAnswerSafe": true,
+    "resume": "none",
+    "adopt": false,
+    "turnEnd": "none",
+    "reactionEvidence": "none",
+    "subagents": "none",
+    "usage": { "fidelity": 0, "rateLimits": false },
+    "mcpInjection": "none",
+    "console": "log",
+    "earlyFailure": "exit-only",
+    "installDetection": "none",
+    "observedPermission": "none",
+    "observedQuestion": "none"
+  },
+  "source": "Hand-written for ISSUE-157: the synthetic streams of an \"Other…\" command (15 §4.11, 15 §3 row H1). A stdio-raw program speaks no protocol, so each <case>.jsonl holds the plain text lines it writes on stdout (one per line, not JSON), <case>-stderr.jsonl what it writes on stderr, and <case>-timing.jsonl the order of what DwarfAI wrote on its stdin. Raw text has no fields, so the -with-extra variant of a raw stream is the same bytes; the CRLF variants end every line in CRLF (HO-37). The expected files are written by hand from 15 §1.3, §1.4, §4.11 and §6."
+}

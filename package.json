@@ -14,12 +14,14 @@
     "directories": {
       "output": "release"
     },
+    "publish": null,
     "afterPack": "scripts/build/afterPack.mjs",
     "afterSign": "scripts/build/afterSign.mjs",
     "files": [
       "out/**/*",
       "prebuilds/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.test.*"
     ],
     "asarUnpack": [
       "out/main/jevMcpServer.mjs",
@@ -36,15 +38,27 @@
     ],
     "win": {
       "target": [
-        "nsis",
-        "portable"
-      ]
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
     "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "packElevateHelper": false,
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
-    },
-    "portable": {
-      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     },
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -74,8 +88,18 @@
     "linux": {
       "category": "Development",
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     }
@@ -89,9 +113,8 @@
     "build": "electron-vite build && node scripts/build/write-host-manifest.mjs && electron-vite build --config electron.vite.host.config.ts && electron-vite build --config electron.vite.relay.config.ts && pnpm build:mcp-server",
     "build:mcp-server": "electron-vite build --config electron.vite.jevMcpServer.config.ts",
     "build:native": "node scripts/native/build-win-pipe.mjs",
-    "package": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
-    "package:mac": "pnpm build && electron-builder --mac --publish never",
-    "package:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --publish never",
+    "package": "electron-builder --publish never",
+    "test:packaged": "node scripts/release/packaged/run.mjs",
     "preview": "install-electron && electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
