@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { DEFAULT_NOTIFICATIONS_ENABLED } from '../types'
 import { useNotificationSettings } from './useNotificationSettings'
 
@@ -16,7 +17,7 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     setNotificationsEnabled: vi.fn(async (enabled: boolean) => enabled),
     ...overrides
   }
-  ;(globalThis as { window?: unknown }).window = { api }
+  ;(globalThis as { window?: unknown }).window = { api: createFakeWindowApi(api) }
   return api
 }
 

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { useResetMetrics } from './useResetMetrics'
 
 // AMENDED for ISSUE-123 (was: today's `{outcome}` answers): the cut-1 switch routes A-33 with its target shape through
@@ -15,7 +16,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     resetMetrics: vi.fn().mockResolvedValue(RESET),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api)
+  })
   return api
 }
 
