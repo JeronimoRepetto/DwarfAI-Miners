@@ -44,8 +44,9 @@
 // (ClaudeHooksConfigWriter on `<CLAUDE_CONFIG_DIR or ~/.claude>/settings.json`, the one file the
 // revert mode reverts too), behind wiring/bridges/hostConfigWriter.ts (the hook entry is written
 // only once the hook ingress persisted its port, `app_meta.ingress_port`; the OpenCode plugin
-// target stays the legacy installer's), the SqliteChannelTokenStore the hook ingress's lookup
-// reads, the first-run step's answer (B-M40), and, right after the saga resume, the boot
+// target is only verified and reverted there, ISSUE-233, its enable staying the legacy
+// installer's), the SqliteChannelTokenStore the hook ingress's lookup reads, the first-run step's
+// answer (B-M40), and, right after the saga resume, the boot
 // re-verification of the config writes a crash left unverified (16 §7.3, 07 S14.11). Boot step 4 constructs the other modules,
 // each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
 // SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
@@ -120,6 +121,10 @@ import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistor
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
 import { ClaudeHooksConfigWriter } from './modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
 import { ConfigWriterEngine } from './modules/preferences/adapters/external-config/configWriterEngine'
+import {
+  OPENCODE_PLUGIN_FILE_NAME,
+  OpenCodePluginConfigWriter
+} from './modules/preferences/adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
 import { SqliteChannelTokenStore } from './modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from './modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from './modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
@@ -447,6 +452,20 @@ function claudeSettingsPathHere(): string {
   return join(observedProviderFolders(process.env, homedir()).claudeConfigDir, 'settings.json')
 }
 
+/**
+ * DwarfAI's plugin file in OpenCode's global plugin folder (16 §7.1): `$XDG_CONFIG_HOME/opencode/plugin`
+ * when set, else `~/.config/opencode/plugin`, on every OS (OpenCode's own rule, the one the legacy
+ * installer follows). Blank counts as unset; a relative value names no single folder (OpenCode would
+ * resolve it against each session's working directory), so there is no plugin file to revert: `null`.
+ */
+function openCodePluginPathHere(): string | null {
+  const configured = process.env['XDG_CONFIG_HOME']?.trim()
+  if (configured !== undefined && configured !== '' && !isAbsolute(configured)) return null
+  const configHome =
+    configured === undefined || configured === '' ? join(homedir(), '.config') : configured
+  return join(configHome, 'opencode', 'plugin', OPENCODE_PLUGIN_FILE_NAME)
+}
+
 /** The normal boot (16 §8.2): every step, then the Host serves until its clean exit. */
 async function bootHost(base: HostBase): Promise<void> {
   const { appRoot, isPackaged, paths, privilege, runQuery, clock, fs, log, scheduler, ids } = base
@@ -714,7 +733,10 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // Cut 2 (ISSUE-323): the one writer of DwarfAI's entries in other tools' configs (16 §7),
           // with the Claude Code hooks target; the hook entry carries the ingress's persisted port.
+          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches only to verify and
+          // revert (the Reset saga's `external-config` step; lead decision 2026-10-16).
           const ingressPort = appMetaIngressPort(db)
+          const openCodePluginPath = openCodePluginPathHere()
           configWriter = new ConfigWriterEngine({
             fs,
             transactions,
@@ -732,7 +754,16 @@ async function bootHost(base: HostBase): Promise<void> {
                 ingressPort: persistedIngressPort(ingressPort),
                 // A cut-2 rollback build: today's installer owns the old app's entry again (ISSUE-141).
                 keepOldAppEntries: CUT_2_ROLLBACK_CHOICES.keepsOldAppEntries
-              })
+              }),
+              ...(openCodePluginPath === null
+                ? []
+                : [
+                    new OpenCodePluginConfigWriter({
+                      path: openCodePluginPath,
+                      installId: installIdOf(db),
+                      ingressPort: persistedIngressPort(ingressPort)
+                    })
+                  ])
             ]
           })
           const preferences = servedPreferences.wire({
@@ -760,7 +791,12 @@ async function bootHost(base: HostBase): Promise<void> {
             secrets: unavailableSecretStore,
             // A cut-2 rollback build refuses every install: today's installer is the entry's one writer there.
             externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(
-              hostConfigWriter({ claudeHooks: configWriter, ingressPort, log }),
+              hostConfigWriter({
+                claudeHooks: configWriter,
+                ...(openCodePluginPath === null ? {} : { openCodePlugin: configWriter }),
+                ingressPort,
+                log
+              }),
               log
             ),
             // The hashes the hook ingress's lookup reads (WiredPreferences.channelTokens).
