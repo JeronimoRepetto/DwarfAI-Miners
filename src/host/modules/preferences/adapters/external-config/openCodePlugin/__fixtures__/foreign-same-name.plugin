@@ -1,0 +1,6 @@
+// The person's own plugin, saved under the file name DwarfAI uses. DwarfAI did not create it.
+export const Permissions = async () => ({
+  event: async ({ event }) => {
+    if (event.type === 'permission.asked') console.log('asked', event.properties)
+  }
+})

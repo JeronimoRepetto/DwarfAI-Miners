@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import type { AudioPreferences } from '../types'
 import { DEFAULT_AUDIO_PREFERENCES } from '../types'
 import { createFakeAudioPlayer, type FakeAudioPlayer } from '../lib/audio/fakeAudioPlayer'
@@ -23,7 +24,7 @@ function stubApi(api: StubApi = {}): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
     writable: true,
-    value: {
+    value: createFakeWindowApi({
       getAudioPreferences: () => Promise.resolve({ ...DEFAULT_AUDIO_PREFERENCES }),
       setAudioPreferences: (preferences: AudioPreferences) => Promise.resolve(preferences),
       getPanelVisible: () => Promise.resolve(true),
@@ -34,7 +35,7 @@ function stubApi(api: StubApi = {}): void {
         }
       },
       ...api
-    }
+    })
   })
 }
 
