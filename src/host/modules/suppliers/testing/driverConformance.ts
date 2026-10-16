@@ -13,7 +13,11 @@ import type { AnswerOutcome } from '../../../kernel/domain/sharedContracts'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import type { SpawnSpec } from '../../../kernel/ports/processControl'
-import type { ProviderCapabilities } from '../domain/capabilities'
+import {
+  ceilingOf,
+  type CapabilityCeiling,
+  type ProviderCapabilities
+} from '../domain/capabilities'
 import type { IntegrationState } from '../../../kernel/domain/values'
 import {
   combineLowest,
@@ -86,8 +90,12 @@ export type CaseId =
   | 'C-29'
 
 export interface ConformanceOptions {
-  /** The catalog ceiling of the driver's provider (ADR-009 D1). */
-  readonly ceiling: ProviderCapabilities
+  /**
+   * The catalog ceiling of the driver's provider (ADR-009 D1; its unordered enums are sets,
+   * AMENDMENT-18), or, for a driver with no catalog record ("Other…", INV-43) or a harness test
+   * driver, its own single row, which stands as a ceiling allowing exactly its values.
+   */
+  readonly ceiling: CapabilityCeiling | ProviderCapabilities
   /** The install every launch names (ADR-008 item 1: the only executable it may spawn). */
   readonly install: InstalledProvider
   /** Cases the driver's capabilities make inapplicable, each with its reason. */
@@ -98,6 +106,14 @@ export interface ConformanceOptions {
   readonly handshakeTimeoutMs?: number
   /** The provider's policy-only permission mode (ADR-011 item 1), for C-22. */
   readonly policyOnlyMode?: PermissionModeSpec
+}
+
+/** The options' ceiling as a `CapabilityCeiling`: a single row is lifted with `ceilingOf`. */
+function ceilingFrom(options: ConformanceOptions): CapabilityCeiling {
+  const ceiling = options.ceiling
+  return Array.isArray(ceiling.resume)
+    ? (ceiling as CapabilityCeiling)
+    : ceilingOf(ceiling as ProviderCapabilities)
 }
 
 export interface CaseVerdict {
@@ -376,7 +392,8 @@ function launchRequest(
   index: number
 ): DriverLaunchRequest {
   const launchId = step.launchId ?? `launch-${index + 1}`
-  const mechanism = options.ceiling.mcpInjection
+  // The ceiling's first injecting mechanism (its preferred driver's), if it allows one.
+  const mechanism = ceilingFrom(options).mcpInjection.find((value) => value !== 'none') ?? 'none'
   const delegation: DelegationInjection | null =
     (step.delegation === true || plan.delegation === true) && mechanism !== 'none'
       ? {
@@ -634,7 +651,7 @@ async function overLaunch(
  * (`earlyFailure: 'exit-only'`, ADR-020 D4; 15 §3 rows A1, H1 and every `U→exit-only` row).
  */
 function exitOnly(context: CaseContext): boolean {
-  return context.options.ceiling.earlyFailure === 'exit-only'
+  return !ceilingFrom(context.options).earlyFailure.includes('handshake')
 }
 
 /**
@@ -817,7 +834,7 @@ const FORBIDDEN_CHILD_ENV = [
 /** C-23 (INV-59, ADR-013 item 2, ADR-017 item 3): no secret in any argv, env or frame. */
 async function negativeSecrets(context: CaseContext): Promise<string[]> {
   // A driver that can inject the delegation MCP entry is checked on a gated delegation launch.
-  const delegated = context.options.ceiling.mcpInjection !== 'none'
+  const delegated = ceilingFrom(context.options).mcpInjection.some((value) => value !== 'none')
   return overLaunch(context, [], { delegation: delegated }, (run) => {
     const out = [...needsSpawn(run, 'C-23')]
     const spawnTag = run.launches[0]?.request.spawnTag
@@ -1019,7 +1036,7 @@ function checkMerge(run: Run, fixture: FixtureCase, context: CaseContext): strin
   if (probeStep === -1) return ['the C-25 fixture has no probe step']
   const probe = run.outcomes[probeStep] as NegotiatedCapabilities
   const protocol = (fixture.expected.negotiated?.protocol ?? {}) as NegotiatedCapabilities
-  const want = merge(context.options.ceiling, combineLowest(protocol, probe))
+  const want = merge(ceilingFrom(context.options), combineLowest(protocol, probe))
   const actual = run.session.capabilities
   return (Object.keys(want) as (keyof ProviderCapabilities)[]).flatMap((field) =>
     JSON.stringify(actual[field]) === JSON.stringify(want[field])
@@ -1223,7 +1240,7 @@ async function integrationGate(context: CaseContext): Promise<string[]> {
     context.options
   )
   const probe = run.outcomes[0] as NegotiatedCapabilities
-  const ceiling = context.options.ceiling
+  const ceiling = ceilingFrom(context.options)
   const open = merge(ceiling, combineLowest(probe)).permission
   const want: Record<IntegrationState, ProviderCapabilities['permission']> = {
     off: 'none',
