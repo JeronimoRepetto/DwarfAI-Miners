@@ -20,7 +20,7 @@
 //    `McpHello`, the ADR-002 D2 endpoint rule), never the `@dwarfai/contracts` barrel; the diagnostics
 //    adapters stay logging-only (R9-diagnostics-only-logging, R9-relay-only-logging-and-host-protocol).
 // 6. R6-relay-entry-not-imported (ISSUE-200, security review of #1328): `relayMain.ts` is the relay
-//    process's entry (built as out/host/dwarfai-mcp.js) and holds the credential; nothing imports it
+//    process's entry (built as out/host/dwarfai-mcp.js by electron.vite.relay.config.ts) and holds the credential; nothing imports it
 //    but its own tests (`relay/*.test.ts`), not even the composition root. What the Host needs of
 //    the relay (the entry file name, the variable name, the 15 §4 entry) lives in relayEntry.ts.
 //
