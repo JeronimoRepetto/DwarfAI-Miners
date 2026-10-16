@@ -81,6 +81,8 @@ test.describe('cut 0: Stop everything and quit ends legacy-launched sessions fir
     const hostPid = await waitForHostAttached(profile)
     expect(session?.alive(), 'today’s runtime adopted the running fixture session').toBe(true)
 
+    // The app ends on its own once confirmed: its trace is saved first, so no screencast frame is lost under the exit.
+    await launched.stopTracing()
     await stopEverythingFromWindow(window)
 
     expect(await exitsWithin(app.process(), 30_000), 'the app exits').toBe(true)
