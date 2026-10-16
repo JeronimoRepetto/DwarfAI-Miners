@@ -1,26 +1,29 @@
 # Code signing
 
-macOS is **signed and notarized from the next release** — the one that closes #297. Windows and
-Linux still ship unsigned. This is a factual note on what that means for each platform, what
-Windows/Linux would still take to fix, and — for macOS — the exact config now wired into
-`package.json` and where the credentials that drive it live.
+**No build is signed today.** The macOS config below (`build.mac` in `package.json`) is still wired
+for a Developer ID signature and notarization, but since ISSUE-268 no CI job holds the credentials:
+the `package` job of `.github/workflows/ci.yml` (on a `v*` tag or a manual dispatch) and the
+internal build of `.github/workflows/internal-build.yml` both package macOS unsigned, and neither
+publishes anything. The signed, notarized macOS release returns with ISSUE-280, and the upload to a
+GitHub Release with ISSUE-278; no public build exists before cut 5 (OQ-66). Windows and Linux stay
+unsigned. This is a factual note on what that means for each platform, what each would take to
+sign, and the macOS config that is already in `package.json`.
 
 ## What's signed today
 
-- **macOS** (`pnpm package:mac`, and every macOS release built by CI from a `v*` tag): signed
-  with a Developer ID Application certificate, hardened-runtime, and notarized. `spctl -a -vv` on
-  the `.app` reports `accepted` / `source=Notarized Developer ID`, and the `.dmg` opens from a
-  normal double-click on a fresh Mac — no Gatekeeper prompt. This only happens when the release
-  environment's certificate and Apple credentials are present (see "Where the credentials live"
-  below); a `pnpm package:mac` run without them still succeeds, just unsigned/ad-hoc — see "Local
-  packaging without a certificate".
-- **Windows** (`pnpm package`): unchanged — the NSIS installer and the portable exe are not
-  Authenticode-signed. First run triggers Windows SmartScreen ("Windows protected your PC" /
-  "Unknown publisher"), and the installer's publisher shows as unverified. The binary still
-  runs — the user has to click "More info" → "Run anyway" — but every fresh machine sees the
+- **macOS** (`pnpm build && pnpm package` on a Mac): unsigned. The CI jobs pass
+  `-c.mac.identity=null` and `CSC_IDENTITY_AUTO_DISCOVERY=false`, so electron-builder signs
+  nothing and skips notarization with it. On first launch macOS refuses the app until it is opened
+  once through System Settings > Privacy & Security > "Open Anyway". A local run with a Developer
+  ID certificate in the keychain and the Apple variables set would sign and notarize, through the
+  config below.
+- **Windows** (`pnpm build && pnpm package` on Windows): the Scoop zip and the per-user NSIS
+  installer are not Authenticode-signed. First run triggers Windows SmartScreen ("Windows protected
+  your PC" / "Unknown publisher"), and the installer's publisher shows as unverified. The binary
+  still runs — the user has to click "More info" → "Run anyway" — but every fresh machine sees the
   warning once.
-- **Linux** (`pnpm package:linux`): unchanged — the AppImage and `.deb` are unsigned. Most Linux
-  distros don't gate execution on a signature the way Windows/macOS do, so this is the least
+- **Linux** (`pnpm build && pnpm package` on Linux): the AppImage and `.deb` are unsigned. Most
+  Linux distros don't gate execution on a signature the way Windows/macOS do, so this is the least
   visible gap — but package managers that verify `.deb` signatures (a private apt repo, for
   instance) would still reject it.
 
@@ -169,9 +172,9 @@ See "Local packaging without a certificate" for what this means when those varia
 
 ### Local packaging without a certificate
 
-`pnpm package:mac` must keep working with no Apple credentials at all — for a contributor without
+`pnpm package` on a Mac must keep working with no Apple credentials at all — for a contributor without
 a certificate, and on a Windows/Linux dev machine where the mac target is never actually invoked
-for real. Nothing in `package:mac` itself changed to guarantee that; it relies on two of
+for real. Nothing in `pnpm package` itself changed to guarantee that; it relies on two of
 electron-builder's own documented defaults, both already covered above:
 
 - No `CSC_LINK` and no matching identity in the local keychain → **signing is skipped, not
@@ -188,9 +191,9 @@ electron-builder's own documented defaults, both already covered above:
   carries on. It throws only when SOME of the three are set and the others are missing, which is
   the one misconfiguration worth failing loudly on.
 
-The alternative design was a CI-only flag threaded through `package:mac` (e.g. a `--publish`-style
+The alternative design was a CI-only flag threaded through `pnpm package` (e.g. a `--publish`-style
 switch, or a second script) that only enables `notarize`/signing when the workflow passes it. That
-was rejected: it would duplicate the target list `package:mac` already owns as the single source
+was rejected: it would duplicate the target list `build.mac` already owns as the single source
 of truth for what gets built (the package script and the workflow are
 already coupled through artifact-name globs; a flag adds a second axis of coupling for no
 behavioral gain over what electron-builder already does by itself). The tradeoff is that this
@@ -199,8 +202,8 @@ leans on electron-builder's internal env-gating rather than an explicit switch t
 
 ## Where the credentials live
 
-**macOS.** The `release-mac` job in `.github/workflows/ci.yml` runs under the GitHub **`release`
-environment**, which holds exactly five secrets and nothing else:
+**macOS.** The GitHub **`release` environment** holds the five secrets a signed macOS build needs,
+and nothing else:
 
 - `CSC_LINK` — the Developer ID Application certificate (`.p12`), base64-encoded
 - `CSC_KEY_PASSWORD` — that certificate's export password
@@ -209,39 +212,32 @@ environment**, which holds exactly five secrets and nothing else:
   password)
 - `APPLE_TEAM_ID` — the Developer Team ID
 
-They are exported as `env` on the packaging step of `release-mac` only; the Windows and Linux
-release legs do not have the `release` environment attached and cannot see them. The `release`
-environment also carries a `v*` tag deployment rule, so `release-mac` refuses to run for any
-triggering ref that isn't a `v*` tag, independent of the job's own `if:` condition.
+No job uses that environment since ISSUE-268 replaced the `release-mac` job with the unsigned
+`package` job. The signed macOS release job (ISSUE-280) attaches it again, exporting the secrets
+as `env` on its packaging step only; the environment's `v*` tag deployment rule then keeps that
+job from running for any ref that isn't a `v*` tag, independent of the job's own `if:`.
 
 **Windows/Linux (when wired in).** None of the values in the sections above — `.pfx` files,
 passwords, Azure secrets — belong in `package.json` or the repo either. They would be read from
 the environment (CI secrets, or a local untracked `.env` for a manual signed build), exactly like
 every other credential this project already keeps out of source (see `.env.example`).
 
-## Verification checklist for the first `v*` tag after this change
+## Verification checklist for the signed macOS release (ISSUE-280)
 
-CI is currently blocked on Actions billing, so none of this has been exercised end to end. The
-first real tag push has to prove, and a maintainer with a Mac should separately confirm the local
-case:
+None of this runs today; it is what the signed release job has to prove once it exists, and a
+maintainer with a Mac should separately confirm the local case:
 
-- [ ] `checks` is green, then `release` (Windows + Linux) and `release-mac` all run — `release-mac`
-      does not get skipped by the `release` environment's `v*` tag rule for an actual `v*` tag.
-- [ ] `release-mac`'s "Package installers" step actually signs: its log shows a Developer ID
-      Application identity found (not "identity not found" / ad-hoc), and shows notarization
-      submitted and accepted rather than skipped.
-- [ ] The published `.dmg`/`.zip` file names are unchanged (`${productName}-${version}-${arch}.${ext}`,
-      no `-mac` suffix) so the existing `release/*.dmg` / `release/*.zip` upload globs still match.
-- [ ] Windows and Linux installers still publish to the same release even if `release-mac` fails
-      independently (the point of splitting it into its own job) — worth confirming once, since it
-      was never true of the old single matrix in practice.
+- [ ] Its "Package" step actually signs: the log shows a Developer ID Application identity found
+      (not "identity not found" / ad-hoc), and notarization submitted and accepted rather than
+      skipped.
+- [ ] The `.dmg`/`.zip` file names are unchanged (`${productName}-${version}-${arch}.${ext}`, no
+      `-mac` suffix).
 - [ ] On a fresh Mac that never had the app: download the arm64 `.dmg`, double-click, it opens
       with no Gatekeeper warning; `spctl -a -vv "/Applications/DwarfAI-Miners.app"` reports
       `accepted` / `source=Notarized Developer ID`.
-- [ ] Separately, on any machine with no Apple secrets in the environment (a contributor's laptop,
-      or this project's own Windows dev machine): `pnpm package:mac` still completes and produces
-      an (unsigned or ad-hoc) `.dmg`/`.zip` rather than failing — confirming the "Local packaging
-      without a certificate" behavior above actually holds, not just the docs it's inferred from.
+- [ ] Separately, on a Mac with no Apple secrets in the environment: `pnpm build && pnpm package`
+      still completes and produces an (unsigned or ad-hoc) `.dmg`/`.zip` rather than failing —
+      confirming the "Local packaging without a certificate" behavior above actually holds.
 
 ## Linux
 
