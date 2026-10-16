@@ -67,4 +67,8 @@ withDefaults(defineProps<{ title?: string; tier?: MineTier; rows?: TipRow[] }>()
 .dm-tip__row[data-tone='warn'] {
   color: var(--warn);
 }
+/* screens/map.md: "Needs you", with the needs-you count, in --brass. */
+.dm-tip__row[data-tone='brass'] {
+  color: var(--brass);
+}
 </style>

@@ -23,6 +23,7 @@ import TierInfo from '../browse/TierInfo.vue'
 import VaultStrip from '../vault/VaultStrip.vue'
 import TierMarker from './TierMarker.vue'
 import { MAP_ART_SIZE, MAP_BG_SRC } from '../../lib/art'
+import { isMeasuring } from '../../lib/browse/browseCards'
 import { projectToMapBox } from '../../lib/map/mapProjection'
 import { mapMines } from '../../lib/map/mapPopulation'
 import { MAP_ADD_LABEL, MAP_EMPTY_SAY, mapMarkers, mapTotals, mineTip } from '../../lib/map/mapPage'
@@ -64,6 +65,8 @@ const population = computed(() => mapMines(props.mines, props.projects))
 const unenterable = computed(
   () => new Set(props.projects.filter((p) => p.folderMissing).map((p) => p.id))
 )
+// The mines being measured, as the Mines page's cards read it (lib/browse/browseCards isMeasuring).
+const measuring = computed(() => new Set(props.projects.filter(isMeasuring).map((p) => p.id)))
 const empty = computed(() => !props.loading && population.value.length === 0)
 const totals = computed(() => mapTotals(props.materials))
 const artStyle = computed(() => ({ backgroundImage: `url("${MAP_BG_SRC[props.variant]}")` }))
@@ -107,7 +110,10 @@ const tipMine = computed(() => population.value.find((mine) => mine.id === tipId
 const tip = computed(() =>
   tipMine.value === undefined
     ? undefined
-    : mineTip(tipMine.value, { notEnterable: unenterable.value.has(tipMine.value.id) })
+    : mineTip(tipMine.value, {
+        measuring: measuring.value.has(tipMine.value.id),
+        notEnterable: unenterable.value.has(tipMine.value.id)
+      })
 )
 const tipStyle = computed(() => ({
   left: tipPlace.value.left + 'px',
