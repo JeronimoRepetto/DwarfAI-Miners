@@ -3,10 +3,10 @@
  * worktree of a project (#348).
  *
  * Pure and framework-free, like `addProject.ts` under browse/: the dialog is a
- * shell around one sentence, and the sentence is the part worth holding to a
- * test — it names three things off the wire and has to stay grammatical when
- * one of them is missing.
+ * shell around its words, and the words are the part worth holding to a test —
+ * they name the folder and the mine off the wire.
  */
+import { untrustedText } from './text/untrustedText'
 import type { DwarfWorkplace, MineWorktreeOf } from '../types'
 
 /**
@@ -23,27 +23,40 @@ export function worktreeFolderName(path: string): string {
 }
 
 /**
- * The dialog's body: which folder was picked, which project it belongs to, and
- * where that folder currently stands.
+ * The worktree dialog's three lines (#348), the words of the story (US-MINES-004.AC07, PO decision
+ * 2026-09-28 #41; the design has no component of its own for this dialog, so the story's copy is
+ * the source): the title names the folder picked and the mine it belongs to, the body says where
+ * its dwarfs will work, and the primary action adds that mine.
  *
- * A branch when it has one, and the short commit when its HEAD is detached —
- * a sha is not a name anybody navigates by, but it is the only thing a
- * detached worktree can be told apart by, and saying nothing would leave the
- * person choosing between two folders with no way to tell which is which.
- * Neither, where HEAD said something this app does not recognise: the clause
- * is dropped rather than filled with a guess.
+ * The mine is named the way the Host names a mine it declares: the last segment of its main
+ * working tree's path (mines/application/declare.ts). The wire carries that path and no name, and
+ * the main tree may have no mine yet; both cases read the same name.
+ *
+ * Both names are a folder's, which a repository chose: each is drawn as `untrustedText` leaves it
+ * (C-08, 18 §5.1), as the mine card draws the same names (#1341).
  */
+export function worktreeMineName(worktreeOf: MineWorktreeOf): string {
+  return untrustedText(worktreeFolderName(worktreeOf.root))
+}
+
+/** "<folder> is a worktree of <mine>". */
+export function worktreeQuestionTitle(worktreeOf: MineWorktreeOf): string {
+  const folder = untrustedText(worktreeFolderName(worktreeOf.worktree))
+  return `${folder} is a worktree of ${worktreeMineName(worktreeOf)}`
+}
+
+/** The body's words around the mine's name, for a page that isolates the name in a `<bdi>`. */
+export const WORKTREE_BODY_LEAD = 'Its dwarfs will work in '
+export const WORKTREE_BODY_TAIL = '.'
+
+/** "Its dwarfs will work in <mine>.": the same whatever the worktree's HEAD says. */
 export function worktreeQuestionBody(worktreeOf: MineWorktreeOf): string {
-  const place =
-    worktreeOf.branch !== undefined
-      ? `, on branch ${worktreeOf.branch}`
-      : worktreeOf.commit !== undefined
-        ? `, at commit ${worktreeOf.commit}`
-        : ''
-  return (
-    `${worktreeFolderName(worktreeOf.worktree)} is a worktree of ${worktreeOf.root}${place}. ` +
-    "Its sessions already show up in that project's mine."
-  )
+  return WORKTREE_BODY_LEAD + worktreeMineName(worktreeOf) + WORKTREE_BODY_TAIL
+}
+
+/** The primary action, "Add <mine>". */
+export function worktreeQuestionAccept(worktreeOf: MineWorktreeOf): string {
+  return `Add ${worktreeMineName(worktreeOf)}`
 }
 
 /**
