@@ -1,0 +1,6 @@
+{"at":1735689601074,"event":"rpc","method":"server/discover"}
+{"at":1735689601078,"event":"rpc","method":"initialize"}
+{"at":1735689601079,"event":"rpc","method":"notifications/initialized"}
+{"at":1735689601081,"event":"rpc","method":"tools/list"}
+{"at":1735689612377,"event":"rpc","method":"tools/call"}
+{"at":1735689612378,"event":"call","tool":"permission","arguments":{"tool_name":"AskUserQuestion","input":{"questions":[{"question":"Pick a colour","header":"Colour","options":[{"label":"Red","description":"Red"},{"label":"Blue","description":"Blue"}],"multiSelect":false}]},"tool_use_id":"00000000-0000-4000-8000-000000000001"},"decision":{"behavior":"allow","updatedInput":{"questions":[{"question":"Pick a colour","header":"Colour","options":[{"label":"Red","description":"Red"},{"label":"Blue","description":"Blue"}],"multiSelect":false}],"answers":{"Pick a colour":"Red"}}}}

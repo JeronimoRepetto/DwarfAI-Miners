@@ -387,6 +387,93 @@ describe('package job in CI (20 §2.1, §3.2; 18 C-33, C-34)', () => {
   })
 })
 
+// ADDED for ISSUE-272: the license-sbom job (20 §2.1 `license-sbom`, §2.4, §3.2; 18 C-35, C-36).
+describe('license-sbom job in CI (20 §2.1, §2.4; 18 C-35, C-36)', () => {
+  /** The job's text without comment lines, so prose never satisfies or trips an assertion. */
+  const licenceCode = () =>
+    jobText('license-sbom')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n')
+
+  it('[ADR-008] runs on Linux on every push to main and wherever package runs, never on a pull request, and is not a required merge check', () => {
+    const job = licenceCode()
+    const condition = jobCondition(job)
+    expect(condition).toContain(PUSH_TO_MAIN)
+    expect(condition).toContain(RELEASE_TAG)
+    expect(condition).toContain("github.event_name == 'workflow_dispatch'")
+    expect(condition, 'never on a pull request').not.toContain('pull_request')
+    expect(job).toContain('runs-on: ubuntu-latest\n')
+    expect(job).not.toContain(REQUIRED_CHECK)
+  })
+
+  it('[ADR-008, S-008-1] writes the licence report, checks the S-008-1 records, writes one SBOM per OS and the notices, then uploads them', () => {
+    const job = licenceCode()
+    const order = [
+      'run: pnpm install --frozen-lockfile\n',
+      'run: node scripts/release/licenses.mjs\n',
+      'run: node scripts/release/s008-records.mjs\n',
+      'pnpm sbom --sbom-format cyclonedx --prod --sbom-type application > "$RUNNER_TEMP/pnpm-sbom.json"\n',
+      'node scripts/release/sbom.mjs --input "$RUNNER_TEMP/pnpm-sbom.json"\n',
+      'run: node scripts/release/third-party-notices.mjs\n',
+      'uses: actions/upload-artifact@'
+    ].map((step) => job.indexOf(step))
+    for (const at of order) expect(at).toBeGreaterThanOrEqual(0)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(job).toMatch(
+      / {12}release\/licenses\/licenses\.json\n {12}release\/licenses\/sbom-\*\.json\n {12}release\/licenses\/THIRD-PARTY-NOTICES\.md\n/
+    )
+    expect(job).toContain('if-no-files-found: error\n')
+  })
+
+  it('[ADR-008] has contents: read, pins every action by commit SHA, reads no secret and publishes nothing', () => {
+    const job = licenceCode()
+    expect(job).toMatch(/\n {4}permissions:\n {6}contents: read\n/)
+    expect(job).not.toMatch(/: write\b/)
+    const uses = [...job.matchAll(/uses: (\S+)/g)].map((m) => m[1])
+    expect(uses.length).toBeGreaterThan(0)
+    for (const action of uses) expect(action, 'pinned by commit SHA').toMatch(/@[0-9a-f]{40}$/)
+    expect(job).not.toMatch(/\bsecrets\.|GH_TOKEN|GITHUB_TOKEN/)
+    expect(job).not.toMatch(/\n {4}environment:/)
+    expect(job).not.toMatch(/softprops|action-gh-release|gh release|npm publish|pnpm publish/i)
+    expect(job).toContain('retention-days: 1\n')
+  })
+})
+
+// ADDED for ISSUE-272 (TC-272-03): every packaging job writes THIRD-PARTY-NOTICES.md before `pnpm package`, so
+// package.json `build.extraResources` ships it beside LICENSE in every archive.
+describe('third-party notices before packaging (20 §2.4; R-06; ISSUE-272)', () => {
+  const NOTICES = 'run: node scripts/release/third-party-notices.mjs\n'
+
+  it('[NFR-COMP-07] the package job writes the notices after the build and before it packages', () => {
+    const job = jobText('package')
+    const at = job.indexOf(NOTICES)
+    expect(at, 'the package job writes the notices').toBeGreaterThanOrEqual(0)
+    expect(at).toBeGreaterThan(job.indexOf('run: pnpm install --frozen-lockfile\n'))
+    expect(at).toBeLessThan(job.indexOf('run: pnpm package ${{ matrix.package_args }}\n'))
+  })
+
+  it('[NFR-COMP-07] each internal build job writes the notices before it packages', () => {
+    for (const { id, steps } of internalJobs()) {
+      const step = (command) => steps.findIndex((s) => s.includes(command))
+      expect(step(NOTICES), `the ${id} job writes the notices`).toBeGreaterThanOrEqual(0)
+      expect(step(NOTICES), `the ${id} job writes them before it packages`).toBeLessThan(
+        step('run: pnpm package')
+      )
+    }
+  })
+
+  it('[NFR-COMP-07] package.json build ships LICENSE and THIRD-PARTY-NOTICES.md as app resources', () => {
+    const { build } = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+    expect(build.extraResources).toEqual(
+      expect.arrayContaining([
+        { from: 'LICENSE', to: 'LICENSE' },
+        { from: 'release/licenses/THIRD-PARTY-NOTICES.md', to: 'THIRD-PARTY-NOTICES.md' }
+      ])
+    )
+  })
+})
+
 // ADDED for ISSUE-273: P-03's lockfile half (`20` §2.3; TC-273-02). Every job that packages scans the lockfile's
 // production dependencies and the production sources for provider binaries, the Agent SDK and credential stores in
 // the step right before it packages, so a listed package stops the job before electron-builder starts.

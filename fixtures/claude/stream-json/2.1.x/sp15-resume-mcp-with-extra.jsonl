@@ -1,0 +1,12 @@
+{"at":1735689601622,"event":"rpc","method":"server/discover","dwarfaiUnknownField":"extra"}
+{"at":1735689601639,"event":"rpc","method":"initialize","dwarfaiUnknownField":"extra"}
+{"at":1735689601640,"event":"rpc","method":"notifications/initialized","dwarfaiUnknownField":"extra"}
+{"at":1735689601657,"event":"rpc","method":"tools/list","dwarfaiUnknownField":"extra"}
+{"at":1735689615024,"event":"rpc","method":"server/discover","dwarfaiUnknownField":"extra"}
+{"at":1735689615028,"event":"rpc","method":"initialize","dwarfaiUnknownField":"extra"}
+{"at":1735689615029,"event":"rpc","method":"notifications/initialized","dwarfaiUnknownField":"extra"}
+{"at":1735689615031,"event":"rpc","method":"tools/list","dwarfaiUnknownField":"extra"}
+{"at":1735689745902,"event":"rpc","method":"server/discover","dwarfaiUnknownField":"extra"}
+{"at":1735689745905,"event":"rpc","method":"initialize","dwarfaiUnknownField":"extra"}
+{"at":1735689745906,"event":"rpc","method":"notifications/initialized","dwarfaiUnknownField":"extra"}
+{"at":1735689745908,"event":"rpc","method":"tools/list","dwarfaiUnknownField":"extra"}

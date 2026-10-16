@@ -1,9 +1,11 @@
 // layer: L2
 // The Host's config writer as host/main.ts composes it for cut 2 (16 §7.1; ADR-016 items 3, 6; 21 §1
 // item 4, §2 cut 2): the Claude hooks target goes to the config writer engine, only once the hook
-// ingress has a persisted port to point the entry at; the OpenCode plugin target has no writer in
-// this Host yet (the legacy installer still owns it), so nothing of it is written, verified or
-// reverted here.
+// ingress has a persisted port to point the entry at; the OpenCode plugin target is verified and
+// reverted through its writer when host/main.ts composes one (ISSUE-233, the Reset saga's
+// `external-config` step), and never written here (the legacy installer still enables it).
+//
+// TC-233-02 (the bridge half).
 import { describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../kernel/domain/errors'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
@@ -112,6 +114,33 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
     expect(await writer.revert('opencode-plugin')).toStrictEqual({ ok: true, value: undefined })
     expect(await writer.findLegacy('opencode-plugin')).toBe(false)
     expect(engine.calls).toStrictEqual([])
+  })
+
+  it('[ADR-023, S13.03, INV-112] with the OpenCode plugin writer composed, its verify and revert reach it unchanged while install and the legacy probe stay refused', async () => {
+    const claudeHooks = recordingEngine()
+    const openCodePlugin = recordingEngine()
+    const writer = hostConfigWriter({
+      claudeHooks,
+      openCodePlugin,
+      ingressPort: { read: () => 41_234 },
+      log: new RecordingDiagnosticsLog()
+    })
+
+    // The Reset saga's `external-config` step and the boot re-verification (16 §7.3, §7.4).
+    expect(await writer.revert('opencode-plugin')).toStrictEqual({ ok: false, error: 'locked' })
+    expect(await writer.verify('opencode-plugin')).toBe('verified')
+    // One writer of the plugin file per release (21 §1 item 4): the enable and the first-run
+    // legacy probe join with ISSUE-228 and ISSUE-232.
+    expect(await writer.install('opencode-plugin', TOKEN, 'settings', HASH)).toStrictEqual({
+      ok: false,
+      error: 'io'
+    })
+    expect(await writer.findLegacy('opencode-plugin')).toBe(false)
+    expect(openCodePlugin.calls).toStrictEqual([
+      ['revert', 'opencode-plugin'],
+      ['verify', 'opencode-plugin']
+    ])
+    expect(claudeHooks.calls).toStrictEqual([])
   })
 
   it('[ADR-016] the hook entry is rendered with the persisted ingress port, and never without one', () => {
