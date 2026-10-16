@@ -12,8 +12,9 @@
  * daylight; the design source's table carries the amendment, and the day
  * absorbs the hour so night is untouched.
  *
- * Local, never UTC: `getHours()` is deliberate. The design says the user's own
- * time of day, and a UTC reading would draw a Buenos Aires morning as night.
+ * Local, never UTC: the hour is read with the local offset, by default the
+ * machine's own. The design says the user's own time of day, and a UTC reading
+ * would draw a Buenos Aires morning as night.
  *
  * The four variants are RENDERER-only. Nothing crosses a process boundary here
  * — main has no opinion about the sky — so this type stays out of
@@ -38,14 +39,27 @@ export type MapTimeVariant = (typeof MAP_TIME_VARIANTS)[number]
  */
 export const MAP_TIME_REFRESH_MS = 60_000
 
+/** Minutes in a day, for wrapping a local reading past midnight. */
+const DAY_MINUTES = 24 * 60
+
 /**
  * The variant for one moment. Boundaries are the design's: each range includes
  * its opening hour and runs to the minute before the next one starts, and night
  * is the one that wraps midnight — which is why it is the fallthrough rather
  * than a range with two halves.
+ *
+ * The local hour is the instant plus the local offset east of UTC, in minutes.
+ * The offset defaults to the machine's own, so the panel reads the person's
+ * clock; a caller (a test under `TZ=UTC`, 17 §5.3) may pass it explicitly, so
+ * the zone the code happens to run in never decides the painting (NFR-TIM-08).
  */
-export function mapVariantAt(now: Date): MapTimeVariant {
-  const hour = now.getHours()
+export function mapVariantAt(
+  now: Date,
+  offsetMinutes: number = -now.getTimezoneOffset()
+): MapTimeVariant {
+  const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes()
+  const local = (((utcMinutes + offsetMinutes) % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES
+  const hour = Math.floor(local / 60)
   if (hour >= 7 && hour < 12) return 'morning'
   if (hour >= 12 && hour < 17) return 'day'
   if (hour >= 17 && hour < 20) return 'sunset'

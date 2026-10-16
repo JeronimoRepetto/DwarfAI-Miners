@@ -249,57 +249,78 @@ function stamped(records: ObservedEvent[], dwarfId: DwarfId): ObservedTurnEnded[
   )
 }
 
+// One test per fixture, so no single test replays both providers' folders (17 §5.3: each case its
+// own temp folder and database, no order dependency between cases).
+const CASES: Array<{ provider: Provider; file: string; expected: ExpectedTurnEnd[] }> = []
+for (const provider of ['claude', 'codex'] as const) {
+  for (const turnEndCase of await turnEndCases(provider)) CASES.push({ provider, ...turnEndCase })
+}
+
 describe('observer turn-end fixtures (C-20)', () => {
-  it('[C-20, ADR-021] each observer turn-end fixture produces exactly one TurnEnded per turn with the expected kind and reliability, and a re-parse produces none', async () => {
-    const h = host()
-    const endsOf: Record<Provider, TurnEnded[]> = { claude: [], codex: [] }
-    for (const provider of ['claude', 'codex'] as const) {
-      const cases = await turnEndCases(provider)
-      expect(cases.length, provider).toBeGreaterThan(0)
-      for (const { file, expected } of cases) {
-        const dir = await tempDir(provider)
-        if (provider === 'claude') await placeClaude(dir, file)
-        else await placeCodex(dir, file)
-        const dwarfId = h.dwarf(provider)
-        const route = routeObservedTurnEnded(
-          h.conversation,
-          turnEndCapabilityOf(adapterAt(provider, dir))
-        )
-        const before = h.bus.ofType('TurnEnded').length
+  it.each(CASES)(
+    '[C-20, ADR-021] $provider observer turn-end fixture $file produces exactly one TurnEnded per turn with the expected kind and reliability, and a re-parse produces none',
+    async ({ provider, file, expected }) => {
+      const h = host()
+      const dir = await tempDir(provider)
+      if (provider === 'claude') await placeClaude(dir, file)
+      else await placeCodex(dir, file)
+      const dwarfId = h.dwarf(provider)
+      const route = routeObservedTurnEnded(
+        h.conversation,
+        turnEndCapabilityOf(adapterAt(provider, dir))
+      )
+      const before = h.bus.ofType('TurnEnded').length
 
-        for (const payload of stamped(await turnEndRecordsOf(provider, dir), dwarfId)) {
-          route(payload)
-        }
+      for (const payload of stamped(await turnEndRecordsOf(provider, dir), dwarfId)) {
+        route(payload)
+      }
 
-        const published = h.bus.ofType('TurnEnded').slice(before)
+      const published = h.bus.ofType('TurnEnded').slice(before)
+      expect(
+        published.map((e) => e.payload),
+        `${provider} ${file}`
+      ).toEqual(expected.map((end) => ({ dwarfId, end: { ...end, dwarfId } })))
+      expect(h.turnFacts(dwarfId), `${provider} ${file}`).toEqual(
+        expected.map((end) => `turn:${dwarfId}:${end.turnKey}`)
+      )
+
+      // A re-parse from the start by a fresh adapter (a Host restart) produces no second event.
+      for (const payload of stamped(await turnEndRecordsOf(provider, dir), dwarfId)) {
+        route(payload)
+      }
+      expect(h.bus.ofType('TurnEnded').length, `${provider} ${file}`).toBe(before + expected.length)
+      expect(h.turnFacts(dwarfId), `${provider} ${file}`).toHaveLength(expected.length)
+
+      // Observed Codex ends are reliable (task_complete → concluded); transcript-only Claude ends
+      // are inferred and never play the finished cue (ADR-021 items 3, 4).
+      const ends = published.map((e) => e.payload.end)
+      if (provider === 'codex') {
         expect(
-          published.map((e) => e.payload),
-          `${provider} ${file}`
-        ).toEqual(expected.map((end) => ({ dwarfId, end: { ...end, dwarfId } })))
-        expect(h.turnFacts(dwarfId), `${provider} ${file}`).toEqual(
-          expected.map((end) => `turn:${dwarfId}:${end.turnKey}`)
-        )
-
-        // A re-parse from the start by a fresh adapter (a Host restart) produces no second event.
-        for (const payload of stamped(await turnEndRecordsOf(provider, dir), dwarfId)) {
-          route(payload)
-        }
-        expect(h.bus.ofType('TurnEnded').length, `${provider} ${file}`).toBe(
-          before + expected.length
-        )
-        expect(h.turnFacts(dwarfId), `${provider} ${file}`).toHaveLength(expected.length)
-        endsOf[provider].push(...published.map((e) => e.payload.end))
+          ends.every((end) => end.reliability === 'reliable'),
+          file
+        ).toBe(true)
+      } else {
+        expect(
+          ends.every((end) => end.reliability === 'inferred'),
+          file
+        ).toBe(true)
+        expect(ends.some(announceable), file).toBe(false)
       }
     }
+  )
 
-    // Observed Codex ends are reliable (task_complete → concluded) and may play the finished cue;
-    // transcript-only Claude ends are inferred and never do (ADR-021 items 3, 4).
-    expect(endsOf.codex.length).toBeGreaterThan(0)
-    expect(endsOf.codex.every((end) => end.reliability === 'reliable')).toBe(true)
-    expect(endsOf.codex.some((end) => end.kind === 'concluded' && announceable(end))).toBe(true)
-    expect(endsOf.claude.length).toBeGreaterThan(0)
-    expect(endsOf.claude.every((end) => end.reliability === 'inferred')).toBe(true)
-    expect(endsOf.claude.some(announceable)).toBe(false)
+  it('[C-20, ADR-021] the turn-end fixtures hold ends of both providers, and an observed Codex end may play the finished cue', () => {
+    // Each case above publishes exactly its expected ends, so these are the ends published.
+    const dwarfId = '00000000-0000-7000-8000-000000000000' as DwarfId
+    const endsOf = (provider: Provider): TurnEnded[] =>
+      CASES.filter((c) => c.provider === provider).flatMap((c) =>
+        c.expected.map((end) => ({ ...end, dwarfId }))
+      )
+    expect(CASES.filter((c) => c.provider === 'claude').length).toBeGreaterThan(0)
+    expect(CASES.filter((c) => c.provider === 'codex').length).toBeGreaterThan(0)
+    expect(endsOf('codex').length).toBeGreaterThan(0)
+    expect(endsOf('codex').some((end) => end.kind === 'concluded' && announceable(end))).toBe(true)
+    expect(endsOf('claude').length).toBeGreaterThan(0)
   })
 
   it('[S-021-1] a Claude transcript-only end stays inferred while the capability record says turnEnd none', async () => {

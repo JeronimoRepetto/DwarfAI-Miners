@@ -114,9 +114,10 @@ describe('mineTip', () => {
    */
   it('counts only the working dwarfs as working, and the ones that need you in their own row', () => {
     const tip = mineTip(defaultMine({ dwarfs: [working, asking, asleep, working] }))
+    // AMENDED for ISSUE-256 (screens/map.md, the row in --brass; was: no tone): counts unchanged.
     expect(tip.rows).toEqual([
       { label: 'Dwarfs working', value: '2' },
-      { label: 'Needs you', value: '1' }
+      { label: 'Needs you', value: '1', tone: 'brass' }
     ])
   })
 
@@ -132,9 +133,10 @@ describe('mineTip', () => {
     expect(mineTip(defaultMine({ dwarfs: [asleep, leaving] })).rows).toEqual([
       { label: 'Dwarfs working', value: '0' }
     ])
+    // AMENDED for ISSUE-256 (screens/map.md, the row in --brass; was: no tone): counts unchanged.
     expect(mineTip(defaultMine({ dwarfs: [workingAsker, permission] })).rows).toEqual([
       { label: 'Dwarfs working', value: '0' },
-      { label: 'Needs you', value: '2' }
+      { label: 'Needs you', value: '2', tone: 'brass' }
     ])
   })
 
@@ -189,5 +191,66 @@ describe('mineTip, a mine that cannot be entered', () => {
     expect(
       mineTip(defaultMine({ name: 'old' })).rows.some((r) => r.label === 'Not enterable')
     ).toBe(false)
+  })
+})
+
+/*
+ * ISSUE-256: the marker tooltip and the marker's name against US-MAP-001 and US-MAP-002, read with
+ * the pinned design (d12d3fc, screens/map.md and organisms/map-page).
+ */
+describe('mineTip, ISSUE-256', () => {
+  it('[US-MAP-001.AC03] the working count counts only dwarfs whose status is working', () => {
+    const leaving = defaultDwarf({ id: 'bye', status: 'leaving' })
+    const tip = mineTip(defaultMine({ dwarfs: [working, asking, permission, asleep, leaving] }))
+    expect(tip.rows[0]).toEqual({ label: 'Dwarfs working', value: '1' })
+  })
+
+  /*
+   * Accepted difference (design wins, recorded in the PR): US-MAP-001.AC02 words the row
+   * "1 needs you" / "<n> need you". The pinned design draws the map tooltip's row as the label
+   * "Needs you" with the count as its value (screens/map.md: 'then "Needs you" with the needs-you
+   * count, only when it is not zero'; map-page.js tipFor), ruled for this tooltip in PANEL-QUESTIONS
+   * 11. The decision log's "Needs-you count wording" names its places (the card pill, the Valle
+   * counter, accessible names) and the map tooltip is not among them. Either way the count is text.
+   */
+  it('[US-MAP-001.AC02, US-MAP-001.AC06, NFR-A11Y-08] the needs-you row reads 1 needs you or n need you as label text', () => {
+    // In --brass, as the design draws it; the count is still the row's text.
+    expect(mineTip(defaultMine({ dwarfs: [asking] })).rows[1]).toEqual({
+      label: 'Needs you',
+      value: '1',
+      tone: 'brass'
+    })
+    expect(mineTip(defaultMine({ dwarfs: [asking, permission] })).rows[1]).toEqual({
+      label: 'Needs you',
+      value: '2',
+      tone: 'brass'
+    })
+    expect(mineTip(defaultMine({ dwarfs: [working] })).rows.map((r) => r.label)).toEqual([
+      'Dwarfs working'
+    ])
+  })
+
+  it('[US-MAP-001.AC04, US-MAP-001.AC05, US-MAP-003.AC02] Measuring… and Not enterable rows are added beside the working and needs-you rows, never instead of them, Not enterable in the warn colour', () => {
+    const mine = defaultMine({ dwarfs: [working, asking] })
+    expect(mineTip(mine, { measuring: true }).rows).toEqual([
+      { label: 'Dwarfs working', value: '1' },
+      { label: 'Needs you', value: '1', tone: 'brass' },
+      { label: 'Measuring…', value: '' }
+    ])
+    expect(mineTip(mine, { measuring: true, notEnterable: true }).rows).toEqual([
+      { label: 'Dwarfs working', value: '1' },
+      { label: 'Needs you', value: '1', tone: 'brass' },
+      { label: 'Measuring…', value: '' },
+      { label: 'Not enterable', value: '', tone: 'warn' }
+    ])
+  })
+})
+
+describe('mapMarkerLabel, ISSUE-256', () => {
+  it('[US-MAP-002.AC06, US-MAP-002.AC07] a marker is named by its name and tier with needs you added, or Tier mine when unnamed', () => {
+    expect(mapMarkerLabel('AI-Tools', 'gold', false)).toBe('AI-Tools, Gold')
+    expect(mapMarkerLabel('AI-Tools', 'gold', true)).toBe('AI-Tools, Gold, needs you')
+    expect(mapMarkerLabel('', 'copper', false)).toBe('Copper mine')
+    expect(mapMarkerLabel('  ', 'silver', true)).toBe('Silver mine, needs you')
   })
 })
