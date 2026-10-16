@@ -1,4 +1,5 @@
 import type { AgentProviderOption } from '../../types'
+import { offeredProviders } from '../shell/builtDestinations'
 import { OTHER_CHOICE, type LaunchChoice } from './launchState'
 
 /**
@@ -69,18 +70,22 @@ function chipState(choice: LaunchChoice, chosen: LaunchChoice | null): ChipState
  * known-provider chips. An undetected one is not hidden by accident — main
  * reports it either way, so the panel knows the difference — it is simply not
  * something the design offers to start.
+ *
+ * AMENDED for ISSUE-267 (BR-19, hidden until built): only OFFERED providers — detected AND
+ * launchable — become chips. A detected provider whose launch this build does not offer
+ * (Antigravity in a public build, R-03; a driver not built) used to get a chip that was refused
+ * only once pressed; a control whose destination is not built is absent instead. The rule is
+ * lib/shell/builtDestinations' `offeredProviders`, the one Settings' default provider reads too.
  */
 export function providerChips(
   providers: readonly AgentProviderOption[],
   chosen: LaunchChoice | null
 ): ProviderChip[] {
-  const chips: ProviderChip[] = providers
-    .filter((entry) => entry.installed)
-    .map((entry) => ({
-      choice: entry.provider,
-      label: entry.provider,
-      state: chipState(entry.provider, chosen)
-    }))
+  const chips: ProviderChip[] = offeredProviders(providers).map((entry) => ({
+    choice: entry.provider,
+    label: entry.provider,
+    state: chipState(entry.provider, chosen)
+  }))
   chips.push({
     choice: OTHER_CHOICE,
     label: OTHER_CHIP_LABEL,

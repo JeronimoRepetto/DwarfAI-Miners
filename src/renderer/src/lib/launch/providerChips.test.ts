@@ -33,6 +33,11 @@ const codex: AgentProviderOption = {
   reason: 'Only Claude can be started from the panel today.'
 }
 const absentCodex: AgentProviderOption = { provider: 'codex', installed: false, launchable: false }
+/*
+ * AMENDED for ISSUE-267 (BR-19): `codex` above is detected but not offered, which has no chip any
+ * more, so the row and state cases below take a Codex this build can launch.
+ */
+const offeredCodex: AgentProviderOption = { provider: 'codex', installed: true, launchable: true }
 
 describe('which chips the Add Panel draws', () => {
   it('draws a chip for each DETECTED provider and never for an absent one', () => {
@@ -55,13 +60,16 @@ describe('which chips the Add Panel draws', () => {
    * appear. A hardcoded row would be a screenshot, not a panel.
    */
   it('takes the list from detection rather than from the mockup', () => {
-    expect(providerChips([codex], null).map((chip) => chip.label)).toEqual(['codex', 'Other'])
+    expect(providerChips([offeredCodex], null).map((chip) => chip.label)).toEqual([
+      'codex',
+      'Other'
+    ])
   })
 })
 
 describe('the three chip states the design specifies', () => {
   it('draws every chip in its default state before any choice', () => {
-    expect(providerChips([claude, codex], null).map((chip) => chip.state)).toEqual([
+    expect(providerChips([claude, offeredCodex], null).map((chip) => chip.state)).toEqual([
       'default',
       'default',
       'default'
@@ -69,7 +77,7 @@ describe('the three chip states the design specifies', () => {
   })
 
   it('draws the chosen chip selected and dims the rest once a choice is made', () => {
-    expect(providerChips([claude, codex], 'claude').map((chip) => chip.state)).toEqual([
+    expect(providerChips([claude, offeredCodex], 'claude').map((chip) => chip.state)).toEqual([
       'selected',
       'unselected',
       'unselected'
@@ -127,5 +135,16 @@ describe('what a chip cannot actually start', () => {
 
   it('refuses a provider that is not on the detected list at all', () => {
     expect(launchRefusal([], 'claude')).not.toBeNull()
+  })
+})
+
+describe('a chip only for a launch this build offers (ISSUE-267)', () => {
+  it('[BR-19] draws no chip for a detected provider whose launch is not offered', () => {
+    // Detected is not enough: a chip promises a launch, and main said this build has none for it
+    // (`launchable: false` — Antigravity in a public build, R-03, or a driver not built).
+    expect(providerChips([claude, codex], null).map((chip) => chip.choice)).toEqual([
+      'claude',
+      OTHER_CHOICE
+    ])
   })
 })

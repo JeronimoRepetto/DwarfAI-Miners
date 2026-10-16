@@ -65,6 +65,12 @@ const CODEX: AgentProviderOption = {
   launchable: false,
   reason: 'Only Claude can be started from the panel today.'
 }
+/*
+ * AMENDED for ISSUE-267 (BR-19): a detected provider whose launch is not offered has no chip any
+ * more, so the row's second chip is a Codex this build can launch. CODEX stays for the refusal
+ * case, whose reason the panel repeats.
+ */
+const CODEX_OFFERED: AgentProviderOption = { provider: 'codex', installed: true, launchable: true }
 
 /*
  * AMENDED for #635: the redesigned panel (organisms/add-panel) names its mine, and draws the
@@ -77,7 +83,7 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
   return mount(AddPanel, {
     props: {
       mineName: 'DwarfAI-Miners',
-      chips: providerChips([CLAUDE, CODEX], chosen),
+      chips: providerChips([CLAUDE, CODEX_OFFERED], chosen),
       phase: (overrides.phase ?? 'provider-selection') as LaunchPhase,
       enabled: (overrides.enabled ?? false) as boolean,
       command: (overrides.command ?? '') as string,
