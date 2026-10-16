@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import TooltipCard from './TooltipCard.vue'
+import cardSource from './TooltipCard.vue?raw'
 
 /*
  * The tooltip card the map's and the dwarf's tooltips share (#635), molecules/tooltip. It replaces
@@ -41,5 +42,30 @@ describe('TooltipCard', () => {
     const wrapper = mount(TooltipCard, { slots: { default: '<p class="own">body</p>' } })
     expect(wrapper.find('.dm-tip__title').exists()).toBe(false)
     expect(wrapper.get('.own').text()).toBe('body')
+  })
+})
+
+/*
+ * ISSUE-256 (screens/map.md): the map tooltip's "Needs you" row is said in --brass, the design's
+ * own token, and its count stays text beside the label, never colour alone.
+ */
+describe('TooltipCard, a brass row', () => {
+  it('[US-MAP-001.AC02, US-MAP-001.AC06, NFR-A11Y-08] a needs-you row is drawn in the brass token and keeps its count as text', () => {
+    const wrapper = mount(TooltipCard, {
+      props: {
+        title: 'beta',
+        rows: [
+          { label: 'Dwarfs working', value: '2' },
+          { label: 'Needs you', value: '1', tone: 'brass' as const }
+        ]
+      }
+    })
+    const [plain, brass] = wrapper.findAll('.dm-tip__row')
+    expect(plain!.attributes('data-tone')).toBeUndefined()
+    expect(brass!.attributes('data-tone')).toBe('brass')
+    expect(brass!.text()).toBe('Needs you1')
+    expect(cardSource).toMatch(
+      /\.dm-tip__row\[data-tone='brass'\] \{\s*color: var\(--brass\);\s*\}/
+    )
   })
 })

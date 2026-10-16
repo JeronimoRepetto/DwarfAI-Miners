@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, h } from 'vue'
 import { MAP_ART_SIZE, MAP_BG_SRC } from '../../lib/art'
 import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
@@ -13,6 +14,15 @@ import {
 import { MATERIAL_TOKENS_PER_UNIT, type Dwarf } from '../../types'
 import MapPage from './MapPage.vue'
 import pageSource from './MapPage.vue?raw'
+import markerSource from './TierMarker.vue?raw'
+import MineCard from '../browse/MineCard.vue'
+import TierInfo from '../browse/TierInfo.vue'
+import toastHostSource from '../overlay/ToastHost.vue?raw'
+import { useMapTime } from '../../composables/useMapTime'
+import { useToasts } from '../../composables/useToasts'
+import { MINE_UNENTERABLE_REASON, mineRefusalToast } from '../../lib/browse/mineCard'
+import { MAP_TIME_REFRESH_MS } from '../../lib/map/mapTime'
+import { TOAST_MS } from '../../lib/overlay/toast'
 
 /*
  * The redesigned Map page (#635), organisms/map-page. It replaces MapView.vue (#136, #153, #197,
@@ -454,5 +464,347 @@ describe('MapPage, a mine that cannot be entered', () => {
     await markerFor(wrapper, 'old').trigger('focus')
     await wrapper.vm.$nextTick()
     expect(document.body.querySelector('.dm-tip')?.textContent).toContain('Not enterable')
+  })
+})
+
+/*
+ * ISSUE-256: the Map page against US-MAP-001 to US-MAP-007 and US-RES-007.AC03, with the pinned
+ * design (d12d3fc: screens/map.md, organisms/map-page, atoms/marker, molecules/tooltip). Most of it
+ * was built by the September 2026 redesign; these tests carry the story ids.
+ */
+describe('MapPage, ISSUE-256', () => {
+  const tipEl = () => document.body.querySelector<HTMLElement>('[role="tooltip"]')
+  const crewed = defaultMine({
+    id: 'C:/dev/beta',
+    name: 'beta',
+    tier: 'uranium',
+    dwarfs: [defaultDwarf({ id: 'a' }), asking]
+  })
+
+  it('[US-MAP-001.AC01, US-MAP-001.AC07, NFR-TIM-01] a marker’s tooltip opens after 300 ms of hover or at once on focus and closes when the pointer leaves or on Esc', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(MapPage, {
+      props: { ...base, mines: [crewed] },
+      attachTo: document.body
+    })
+    const marker = wrapper.get('.dm-marker')
+    // Hover: nothing at 299ms, the card at 300ms, the app's one tooltip delay.
+    expect(TIP_DELAY_MS).toBe(300)
+    await marker.trigger('pointerenter')
+    await vi.advanceTimersByTimeAsync(TIP_DELAY_MS - 1)
+    expect(tipEl()).toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    await flushPromises()
+    expect(tipEl()!.querySelector('.dm-tip__title')!.textContent).toBe('Uraniumbeta')
+    expect(tipEl()!.querySelector('.dm-tip__row')!.textContent).toBe('Dwarfs working1')
+    // The pointer leaving closes it.
+    await marker.trigger('pointerleave')
+    await flushPromises()
+    expect(tipEl()).toBeNull()
+    // Keyboard focus shows it at once, and Esc closes it.
+    await marker.trigger('focus')
+    await flushPromises()
+    expect(tipEl()).not.toBeNull()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(tipEl()).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('[US-MAP-001.AC04] the page adds Measuring… to the tooltip of a mine being measured', async () => {
+    const measuring = defaultProject({ id: 'C:/dev/new', name: 'new', declared: true })
+    const wrapper = mount(MapPage, {
+      props: { ...base, mines: [], projects: [measuring] },
+      attachTo: document.body
+    })
+    await markerFor(wrapper, 'new').trigger('focus')
+    await flushPromises()
+    expect([...tipEl()!.querySelectorAll('.dm-tip__row')].map((row) => row.textContent)).toEqual([
+      'Dwarfs working0',
+      'Measuring…'
+    ])
+    wrapper.unmount()
+  })
+
+  it('[US-MAP-002.AC01, US-MAP-002.AC02, US-MAP-002.AC03] activating an enterable marker opens its mine and makes it the only pressed marker, and a mine opened elsewhere moves the pressed state', async () => {
+    const wrapper = mount(MapPage, { props: base })
+    const pressed = () =>
+      wrapper
+        .findAll('.dm-marker')
+        .filter((m) => m.attributes('aria-pressed') === 'true')
+        .map((m) => m.attributes('aria-label'))
+    await markerFor(wrapper, 'alpha').trigger('click')
+    expect(wrapper.emitted('open')).toEqual([['C:/dev/alpha']])
+    // The shell opens it in the mine column and hands the page the open mine.
+    await wrapper.setProps({ openId: 'C:/dev/alpha' })
+    expect(pressed()).toEqual(['alpha, Bronze'])
+    await markerFor(wrapper, 'beta').trigger('click')
+    expect(wrapper.emitted('open')).toEqual([['C:/dev/alpha'], ['C:/dev/beta']])
+    await wrapper.setProps({ openId: 'C:/dev/beta' })
+    expect(pressed()).toEqual(['beta, Gold'])
+    // A mine opened by some other means (the Mines page, Valle): the pressed state follows it.
+    await wrapper.setProps({ openId: 'C:/dev/gamma' })
+    expect(pressed()).toEqual(['gamma, Uranium'])
+  })
+
+  it('[US-MAP-002.AC04] markers are placed by image percent, so after a resize a click lands on the same mine', async () => {
+    let resized: (() => void) | undefined
+    const aspect = MAP_ART_SIZE.width / MAP_ART_SIZE.height
+    let size = { width: 400, height: 400 / aspect }
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          resized = callback
+        }
+        observe(): void {}
+        disconnect(): void {}
+      }
+    )
+    const placed = defaultMine({ id: 'p', name: 'p', mapSite: 42 })
+    const point = MAP_SPAWN_POINTS.find((candidate) => candidate.id === 42)!
+    const wrapper = mount(MapPage, { props: { ...base, mines: [placed] } })
+    const art = wrapper.get('.dm-mappage__art').element as HTMLElement
+    art.getBoundingClientRect = () => ({ ...size, x: 0, y: 0, left: 0, top: 0 }) as DOMRect
+    resized?.()
+    await wrapper.vm.$nextTick()
+    const placedAt = () => {
+      const style = markerFor(wrapper, 'p').attributes('style') ?? ''
+      expect(style).not.toMatch(/px/)
+      return {
+        x: Number(/--x: ([\d.]+)%/.exec(style)![1]),
+        y: Number(/--y: ([\d.]+)%/.exec(style)![1])
+      }
+    }
+    const small = placedAt()
+    size = { width: 900, height: 900 / aspect }
+    resized?.()
+    await wrapper.vm.$nextTick()
+    const large = placedAt()
+    for (const at of [small, large]) {
+      expect(at.x).toBeCloseTo(point.x, 9)
+      expect(at.y).toBeCloseTo(point.y, 9)
+    }
+    await markerFor(wrapper, 'p').trigger('click')
+    expect(wrapper.emitted('open')).toEqual([['p']])
+    vi.unstubAllGlobals()
+  })
+
+  it('[US-MAP-002.AC05] hover and press without a completed click change only the gem’s look', async () => {
+    const wrapper = mount(MapPage, { props: { ...base, openId: 'C:/dev/alpha' } })
+    const beta = markerFor(wrapper, 'beta')
+    await beta.trigger('pointerenter')
+    await beta.trigger('pointerdown')
+    await beta.trigger('mousedown')
+    await beta.trigger('pointerleave')
+    expect(wrapper.emitted('open')).toBeUndefined()
+    expect(wrapper.emitted('refuse')).toBeUndefined()
+    expect(markerFor(wrapper, 'alpha').attributes('aria-pressed')).toBe('true')
+    expect(beta.attributes('aria-pressed')).toBeUndefined()
+    // The look is the marker's own CSS on :hover and :active, on the gem alone.
+    expect(markerSource).toContain('.dm-marker:hover .dm-marker__gem')
+    expect(markerSource).toContain('.dm-marker:active .dm-marker__gem')
+  })
+
+  it('[US-MAP-002.AC08, US-MAP-003.AC04, US-MAP-003.AC05] a marker that cannot be entered opens nothing, and its toast closes on its own without covering the painting, the dwarfs or a composer', async () => {
+    vi.useFakeTimers()
+    const gone = defaultProject({ id: 'C:/dev/old', name: 'old', folderMissing: true })
+    const wrapper = mount(MapPage, { props: { ...base, mines: [], projects: [gone] } })
+    await markerFor(wrapper, 'old').trigger('click')
+    expect(wrapper.emitted('open')).toBeUndefined()
+    expect(wrapper.emitted('refuse')).toEqual([['C:/dev/old']])
+    // What the shell raises for that refusal (App.vue refuseMine): "<name>: <reason>", warned.
+    const { showToast, toasts } = useToasts()
+    showToast(mineRefusalToast('old'), 'warning')
+    expect(toasts.value.map((t) => t.text)).toEqual([
+      'old: Folder not found. It was moved or deleted.'
+    ])
+    vi.advanceTimersByTime(TOAST_MS)
+    expect(toasts.value).toEqual([])
+    // The Map is unchanged: the marker is still there, and still not enterable.
+    await markerFor(wrapper, 'old').trigger('click')
+    expect(wrapper.emitted('refuse')).toHaveLength(2)
+    expect(wrapper.emitted('open')).toBeUndefined()
+    // The toast host stands in the page column, 56px from its bottom, and takes no pointer
+    // (decision log, Toast position); the toast contract itself is ISSUE-263's.
+    expect(toastHostSource).toMatch(
+      /position: absolute;[\s\S]*bottom: 56px;[\s\S]*pointer-events: none;/
+    )
+    wrapper.unmount()
+  })
+
+  /*
+   * Lead decision (ISSUE-256, accepted difference recorded in the PR): US-RES-007.AC03 says the
+   * card of a mine whose folder went missing "renders identically" at rest, but the pinned design
+   * draws the state `molecules/mine-card#not-enterable` with the "Not enterable" pill and its
+   * reason (components.md, Mine card; mine-card.js). The design wins for the card, which keeps its
+   * tier's art and chip; the marker is drawn exactly like any other of its tier, as both sources
+   * agree (US-MAP-003.AC01).
+   */
+  it('[US-MAP-003.AC01, US-RES-007.AC03] at rest a marker that cannot be entered, and a card or marker whose folder went missing, look like any other of their tier', () => {
+    const gone = defaultProject({ id: 'C:/dev/old', name: 'old', folderMissing: true })
+    const fine = defaultProject({ id: 'C:/dev/new', name: 'new' })
+    const wrapper = mount(MapPage, { props: { ...base, mines: [], projects: [gone, fine] } })
+    const look = (name: string) => {
+      const marker = markerFor(wrapper, name)
+      const attributes = { ...marker.attributes() }
+      delete attributes['aria-label']
+      delete attributes.style
+      return { classes: marker.classes(), attributes, inner: marker.element.innerHTML }
+    }
+    expect(look('old')).toEqual(look('new'))
+    // The card follows the design's pinned not-enterable state: its pill and its reason.
+    const card = (state: 'active' | 'unenterable') =>
+      mount(MineCard, {
+        props: {
+          card: {
+            id: 'm1',
+            name: 'old',
+            tier: 'bronze',
+            measured: true,
+            state,
+            ore: [],
+            crew: [{ text: 'No dwarfs' }],
+            needs: false,
+            needsCount: 0,
+            enterable: state === 'active',
+            removable: true,
+            ...(state === 'unenterable' ? { reason: MINE_UNENTERABLE_REASON } : {})
+          }
+        }
+      })
+    const missing = card('unenterable')
+    expect(missing.get('.dm-card__note').text()).toBe(
+      'Not enterable Folder not found. It was moved or deleted.'
+    )
+    expect(missing.get('.dm-tier').attributes('data-tier')).toBe(
+      card('active').get('.dm-tier').attributes('data-tier')
+    )
+  })
+
+  it('[US-MAP-004.AC08] markers appear and disappear at once, with no animation', async () => {
+    const wrapper = mount(MapPage, { props: { ...base, mines: [MINES[0]!] } })
+    expect(wrapper.findAll('.dm-marker')).toHaveLength(1)
+    await wrapper.setProps({ mines: MINES })
+    expect(wrapper.findAll('.dm-marker')).toHaveLength(3)
+    await wrapper.setProps({ mines: [MINES[2]!] })
+    expect(wrapper.findAll('.dm-marker').map((m) => m.attributes('aria-label'))).toEqual([
+      'gamma, Uranium'
+    ])
+    // No transition wraps the markers: the art box holds them bare.
+    const template = pageSource.slice(pageSource.indexOf('<template>'))
+    const art = template.slice(
+      template.indexOf('class="dm-mappage__art"'),
+      template.indexOf('</div>')
+    )
+    expect(art).toContain('<TierMarker')
+    expect(art).not.toMatch(/Transition/)
+  })
+
+  it('[US-MAP-006.AC01, US-MAP-006.AC02, US-MAP-007.AC05] with no mine the painting is veiled, no marker is drawn, the ore totals read No ore yet, the card shows its text with Add a mine, and the legend with its info button stays', () => {
+    const empty = mount(MapPage, { props: { ...base, mines: [] } })
+    expect(empty.get('.dm-mappage__art').classes()).toContain('is-empty')
+    expect(pageSource).toMatch(
+      /\.dm-mappage__art\.is-empty::after \{[^}]*background: var\(--veil\)/
+    )
+    expect(empty.find('.dm-marker').exists()).toBe(false)
+    expect(empty.get('.dm-mappage__totals .dm-vault__empty').text()).toBe('No ore yet')
+    const card = empty.get('.dm-mappage__card')
+    expect(card.get('.dm-mappage__say').text()).toBe('No mines yet. Add a project folder to start.')
+    expect(card.get('button').text()).toBe('Add a mine')
+    // The legend is exactly the populated Map's.
+    const populated = mount(MapPage, { props: base })
+    expect(empty.get('footer').html()).toBe(populated.get('footer').html())
+    expect(empty.get('footer button').attributes('aria-label')).toBe('Tiers and ore')
+  })
+
+  it('[US-MAP-006.AC03, US-MAP-006.AC04, US-MAP-006.AC05, US-MAP-006.AC06] Add a mine opens the OS folder picker; a valid folder lifts the veil and card at once, a cancel changes nothing and the Add panel never opens', async () => {
+    const wrapper = mount(MapPage, { props: { ...base, mines: [] } })
+    const before = wrapper.html()
+    await wrapper.get('.dm-mappage__card button').trigger('click')
+    // The page asks the shell for the Mines page's own add flow (App.vue addMine, the same
+    // handler the Mines page's "Add a mine" uses: main's declareMine shows the OS folder picker),
+    // and asks for nothing else: no mine opened, no Add panel.
+    expect(Object.keys(wrapper.emitted()).filter((name) => name !== 'click')).toEqual(['add'])
+    expect(wrapper.emitted('add')).toEqual([[]])
+    // While the picker is up the action is held; a cancel hands back the same empty map.
+    await wrapper.setProps({ adding: true })
+    await wrapper.setProps({ adding: false })
+    expect(wrapper.html()).toBe(before)
+    // A valid folder: the first mine arrives, and the veil and the card lift at once.
+    await wrapper.setProps({ mines: [MINES[0]!] })
+    expect(wrapper.get('.dm-mappage__art').classes()).not.toContain('is-empty')
+    expect(wrapper.find('.dm-mappage__card').exists()).toBe(false)
+    expect(wrapper.findAll('.dm-marker')).toHaveLength(1)
+  })
+
+  /*
+   * Accepted difference (design wins, recorded in the PR): US-MAP-007.AC01 names the legend
+   * "Tiers and ore". The pinned design names the legend plate "Legend", keeps the "?" needs-you
+   * key after the tiers (map-page.js), and gives the name "Tiers and ore" to its info button.
+   */
+  it('[US-MAP-007.AC01, US-MAP-007.AC03] the legend shows the five tier chips then the info button and is named Tiers and ore', () => {
+    const legend = mount(MapPage, { props: base }).get('footer')
+    const keys = legend.findAll('.dm-mappage__key')
+    expect(keys.slice(0, 5).map((key) => [key.text(), key.attributes('data-tier')])).toEqual([
+      ['Bronze', 'bronze'],
+      ['Copper', 'copper'],
+      ['Silver', 'silver'],
+      ['Gold', 'gold'],
+      ['Uranium', 'uranium']
+    ])
+    // Each chip wears its tier's colour, the one the markers wear, so no modal is needed to read it.
+    expect(keys.slice(0, 5).every((key) => key.find('.dm-hex').exists())).toBe(true)
+    expect(pageSource).toMatch(/\.dm-mappage__key \.dm-hex \{[^}]*background: var\(--tier-c\)/)
+    const last = legend.element.lastElementChild!
+    expect(last.tagName).toBe('BUTTON')
+    expect(last.getAttribute('aria-label')).toBe('Tiers and ore')
+    expect(legend.attributes('aria-label')).toBe('Legend')
+  })
+
+  it('[US-MAP-007.AC02, US-MAP-007.AC04] the info button opens the same Tiers and ore modal and closing it returns focus to the Map’s own button', async () => {
+    const wrapper = mount(MapPage, { props: base, attachTo: document.body })
+    const info = wrapper.get('footer button').element as HTMLButtonElement
+    info.focus()
+    info.click()
+    await flushPromises()
+    const shown = document.body.querySelector('.dm-tinfo')!
+    // The same explainer the Mines page shows: the one TierInfo, with no Map-specific props.
+    expect(shown.innerHTML).toBe(mount(TierInfo).element.innerHTML)
+    expect(document.activeElement).not.toBe(info)
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    )
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tinfo')).toBeNull()
+    expect(document.activeElement).toBe(info)
+    wrapper.unmount()
+  })
+
+  it('[US-MAP-005.AC02, US-MAP-005.AC03] the once-a-minute re-read swaps the painting with no transition only when the range changes', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3, 11, 58, 30))
+    const Host = defineComponent({
+      setup() {
+        const variant = useMapTime()
+        return () => h(MapPage, { ...base, variant: variant.value })
+      }
+    })
+    const wrapper = mount(Host)
+    const art = () => wrapper.get('.dm-mappage__art')
+    expect(art().attributes('data-variant')).toBe('morning')
+    const first = art().attributes('style')
+    // 11:59:30: re-read, same range, nothing visible changes.
+    await vi.advanceTimersByTimeAsync(MAP_TIME_REFRESH_MS)
+    expect(art().attributes('data-variant')).toBe('morning')
+    expect(art().attributes('style')).toBe(first)
+    // 12:00:30: the next re-read crosses into the day, and the painting swaps.
+    await vi.advanceTimersByTimeAsync(MAP_TIME_REFRESH_MS)
+    expect(art().attributes('data-variant')).toBe('day')
+    expect(art().attributes('style')).toContain(MAP_BG_SRC.day)
+    // With no transition between the two images: the art box animates nothing.
+    const artRule = pageSource.slice(pageSource.indexOf('.dm-mappage__art {'))
+    expect(artRule.slice(0, artRule.indexOf('}'))).not.toMatch(/transition|animation/)
+    wrapper.unmount()
   })
 })

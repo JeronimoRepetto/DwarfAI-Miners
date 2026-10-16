@@ -93,3 +93,34 @@ describe('MAP_TIME_REFRESH_MS', () => {
     expect(MAP_TIME_REFRESH_MS).toBeLessThanOrEqual(60_000)
   })
 })
+
+/*
+ * ISSUE-256 (NFR-TIM-08, 17 §5.3): CI runs with TZ=UTC, so the rule takes the local offset
+ * explicitly and the machine's own zone never decides the painting.
+ */
+describe('mapVariantAt with an explicit local offset', () => {
+  // One instant, 10:00 UTC, read from three places on Earth.
+  const instant = new Date(Date.UTC(2026, 8, 3, 10, 0, 0))
+
+  it('[US-MAP-005.AC01, NFR-TIM-08] the painting matches exactly one of the four local-hour ranges and never uses UTC', () => {
+    expect(mapVariantAt(instant, 0)).toBe('morning')
+    expect(mapVariantAt(instant, 10 * 60)).toBe('night')
+    expect(mapVariantAt(instant, -5 * 60)).toBe('night')
+    expect(mapVariantAt(instant, 3 * 60)).toBe('day')
+    expect(mapVariantAt(instant, 8 * 60)).toBe('sunset')
+    expect(mapVariantAt(instant, 5 * 60 + 30)).toBe('day')
+    // Every boundary from both sides, at a non-zero offset.
+    const at = (h: number, m: number) => new Date(Date.UTC(2026, 8, 3, h, m) - 90 * 60_000)
+    const cases: [number, number, string][] = [
+      [6, 59, 'night'],
+      [7, 0, 'morning'],
+      [11, 59, 'morning'],
+      [12, 0, 'day'],
+      [16, 59, 'day'],
+      [17, 0, 'sunset'],
+      [19, 59, 'sunset'],
+      [20, 0, 'night']
+    ]
+    for (const [h, m, variant] of cases) expect(mapVariantAt(at(h, m), 90)).toBe(variant)
+  })
+})

@@ -11,7 +11,7 @@
 import type { ProcessIdentity } from '../../../kernel/domain/processIdentity'
 import type { AnswerOutcome, TurnEndKind } from '../../../kernel/domain/sharedContracts'
 import type { SpawnedProcess } from '../../../kernel/ports/processControl'
-import type { ProviderCapabilities } from '../domain/capabilities'
+import { ceilingOf, type ProviderCapabilities } from '../domain/capabilities'
 import { combineLowest, merge, type NegotiatedCapabilities } from '../domain/mergeCapabilities'
 import type { ProviderProfile } from '../domain/profile'
 import type {
@@ -113,7 +113,7 @@ export class LineTestDriver implements ProviderDriver {
   }
 
   async probe(): Promise<ProviderCapabilities> {
-    return merge(LINE_CEILING, this.options.probe)
+    return merge(ceilingOf(LINE_CEILING), this.options.probe)
   }
 
   async launch(req: DriverLaunchRequest): Promise<DriverSession> {
@@ -216,9 +216,9 @@ class LineSession implements DriverSession {
   private negotiate(protocol: NegotiatedCapabilities | undefined): ProviderCapabilities {
     const probe = this.options.probe
     if (this.options.faults?.probeOverProtocol) {
-      return merge(LINE_CEILING, { ...protocol, ...probe })
+      return merge(ceilingOf(LINE_CEILING), { ...protocol, ...probe })
     }
-    return merge(LINE_CEILING, combineLowest(protocol ?? {}, probe))
+    return merge(ceilingOf(LINE_CEILING), combineLowest(protocol ?? {}, probe))
   }
 
   private failure(cause: DriverLaunchError['cause'], detail: string): DriverLaunchError {
