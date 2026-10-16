@@ -4383,3 +4383,48 @@ describe('App Host asks (ISSUE-138)', () => {
   })
 })
 /* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
+
+/* --- ISSUE-265: the guild flag across the whole shell ---------------------------------------- */
+describe('App and the guild flag (ISSUE-265)', () => {
+  const GUILD_NAMES = /\b(Lab|Market|Laboral Union|Guild)\b/
+
+  it('[US-GUILD-002.AC01, BR-19, INV-110] with the flag off no control anywhere in the app names or opens a guild page, and the flags are read once', async () => {
+    const { wrapper, api } = await mountOpenApp()
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+    expect(wrapper.find('.dm-nav__group[aria-label="Guild"]').exists()).toBe(false)
+    const controls = wrapper.findAll('button, a, [role="button"], [role="menuitem"], [role="tab"]')
+    expect(controls.length).toBeGreaterThan(0)
+    for (const control of controls) {
+      const names = [
+        control.text(),
+        control.attributes('aria-label') ?? '',
+        control.attributes('title') ?? '',
+        control.attributes('data-label') ?? '',
+        control.attributes('data-slot') ?? ''
+      ].join(' ')
+      expect(names).not.toMatch(GUILD_NAMES)
+      expect(control.attributes('data-slot') ?? '').not.toMatch(/^(lab|market|union)$/)
+    }
+    // Pressing every nav control still never shows a guild page.
+    for (const slot of wrapper.findAll(NAV)) {
+      await slot.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.dm-guild').exists()).toBe(false)
+    }
+    // Read once: nothing the person did asked main for the flags again.
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+  })
+
+  it('[US-GUILD-002.AC02, US-GUILD-001.AC03] with the flag on each guild slot opens its own page, replacing the one before', async () => {
+    const { wrapper } = await mountOpenApp(GUILD_ON)
+    for (const name of ['Lab', 'Market', 'Laboral Union', 'Lab']) {
+      await wrapper.find(`${NAV}[data-label="${name}"]`).trigger('click')
+      await flushPromises()
+      const pages = wrapper.findAll('.dm-guild')
+      expect(pages).toHaveLength(1)
+      expect(pages[0]!.attributes('aria-label')).toBe(name)
+      expect(pages[0]!.get('h1').text()).toBe(name)
+    }
+  })
+})
+/* --- end of the ISSUE-265 block -------------------------------------------------------------- */
