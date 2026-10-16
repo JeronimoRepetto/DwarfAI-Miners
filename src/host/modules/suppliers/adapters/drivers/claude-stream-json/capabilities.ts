@@ -1,25 +1,36 @@
 // The Claude `stream-json` driver's capability row (15 §3 row C2) and its probe reading (15 §2.3,
 // ADR-009 D4). Every UNVERIFIED `U→x` value of row C2 is held at its in-force `x` (INV-44) until
-// its spike records a measured value: `launch` (SP-08), `interrupt`, `permission` (SP-08),
-// `resume` (SP-15), `reactionEvidence` (S-022-1), `subagents`, `earlyFailure` (S-020-1).
+// its spike records a measured value. Recorded for Claude Code 2.1.301 on Windows (ISSUE-321,
+// `spike-results/`): `launch` (SP-08), `earlyFailure` (S-020-1), `resume` (SP-15). Still at their
+// in-force values: `interrupt`, `permission` and `question` (SP-08 proved the prompt-tool channel,
+// but the Host serves no ask route for `mcp__dwarfai__permission` yet, so no ask can open: hidden
+// until built, 21 §1 item 8), `reactionEvidence` (S-022-1), `subagents`.
 import type { ProviderCapabilities } from '../../../domain/capabilities'
 
-/**
- * The spike records this driver's probe waits on. SP-08 is pending (`spike-results/SP-08.md`), so
- * a `claude` that advertises `--permission-prompt-tool` still probes `launch: false`: the driver is
- * built and conformance-tested but never offered (ADR-009 D4; ISSUE-150 "Gates"). Only ISSUE-321's
- * committed SP-08 record may change this value.
- */
-export const SPIKE_RECORDS: { readonly sp08: boolean } = Object.freeze({ sp08: false })
+/** The spike records this driver's capability values follow; each is a committed record. */
+export interface SpikeRecords {
+  /** `spike-results/SP-08.md`, passed: `--permission-prompt-tool` present and routing. */
+  readonly sp08: boolean
+  /** `spike-results/S-020-1.md`, passed: readiness is `system/init`, after the first stdin line. */
+  readonly s0201: boolean
+  /** `spike-results/SP-15.md` (Claude stream-json part passed): `--resume <id>` keeps the id. */
+  readonly sp15: boolean
+}
 
-/** 15 §3 row C2, every `U→x` at its in-force `x`; `launch` is what the probe lowers. */
+/**
+ * ISSUE-321's records for Claude Code 2.1.301 (Windows; macOS and Linux not run, not claimed).
+ * Only a committed record may change a value here.
+ */
+export const SPIKE_RECORDS: SpikeRecords = Object.freeze({ sp08: true, s0201: true, sp15: true })
+
+/** 15 §3 row C2, every `U→x` at its in-force `x`; the probe and the records raise what they prove. */
 export const STREAM_JSON_ROW: Readonly<ProviderCapabilities> = Object.freeze({
-  launch: false, // U→no until SP-08
+  launch: false, // U→no: the probe opens it (SP-08)
   observe: true,
   sendTurn: true,
   interrupt: false, // U→no: the stream-json interrupt is UNVERIFIED (15 §4.2 End / kill)
-  permission: 'none', // U→none: interactive only through the prompt tool, once SP-08 passes
-  question: 'none', // ADR-009 D4: --disallowedTools AskUserQuestion until SP-08
+  permission: 'none', // U→none: interactive only once the prompt tool's ask route exists
+  question: 'none', // ADR-009 D4: --disallowedTools AskUserQuestion
   answeredElsewhere: false,
   staleAnswerSafe: true,
   resume: 'none', // U→none: `cli-flag` (--resume <id>) once SP-15 records the id rule
@@ -30,30 +41,51 @@ export const STREAM_JSON_ROW: Readonly<ProviderCapabilities> = Object.freeze({
   usage: Object.freeze({ fidelity: 2, rateLimits: false }),
   mcpInjection: 'ticket-file', // ADR-013 item 3: the --mcp-config file holds a path only
   console: 'log',
-  earlyFailure: 'exit-only', // U→exit-only until S-020-1 records the readiness line
+  earlyFailure: 'exit-only', // U→exit-only: `handshake` once S-020-1 records the readiness line
   installDetection: 'user-binary',
   observedPermission: 'none',
   observedQuestion: 'none'
 }) as Readonly<ProviderCapabilities>
 
-/** `--permission-prompt-tool` as `claude --help` lists it (an option, not a word in prose). */
-const PROMPT_TOOL_OPTION = /(?:^|[\s,])--permission-prompt-tool(?=[\s,=<]|$)/m
+/** `--permission-prompt-tool` listed as an option of its own (an option line, not prose). */
+const PROMPT_TOOL_OPTION = /^ {2}--permission-prompt-tool(?=[\s,=<]|$)/m
+/** The `--permission-prompts` option line and its indented description lines (SP-08, 2.1.301). */
+const PROMPTS_OPTION_BLOCK = /^ {2}--permission-prompts\b.*(?:\r?\n {3,}.*)*/m
+/** The flag named inside that description: `"host" (the SDK host or --permission-prompt-tool)`. */
+const PROMPT_TOOL_NAMED = /--permission-prompt-tool(?![\w-])/
 /** `--disallowedTools` / `--disallowed-tools`: the question tool can be disabled (15 §2.3 row 2). */
 const DISALLOWED_TOOLS_OPTION = /(?:^|[\s,])--disallowed(?:Tools|-tools)(?=[\s,=<]|$)/m
 
 /**
- * The probed capabilities (15 §2.3): `launch` is true only when the help lists both options and
- * SP-08 has passed; a help that could not be read (`null`: no answer within PROBE_TIMEOUT_MS, a
- * failed run) gives the fail-closed value of every probed field (15 §1.3 `probe`).
+ * SP-08 Decision: in Claude Code 2.1.301 `--permission-prompt-tool` is hidden from the option list
+ * but accepted and routing, and `--help` names it inside the `--permission-prompts` description.
+ * The probe therefore accepts either its own option line or that mention; `--permission-prompts`
+ * itself is never passed (its `host` value is not covered by the record).
+ */
+function promptToolAdvertised(help: string): boolean {
+  if (PROMPT_TOOL_OPTION.test(help)) return true
+  const block = PROMPTS_OPTION_BLOCK.exec(help)?.[0]
+  return block !== undefined && PROMPT_TOOL_NAMED.test(block)
+}
+
+/**
+ * The probed capabilities (15 §2.3): `launch` is true only when the help advertises the prompt
+ * tool and `--disallowedTools` and SP-08 has passed; a help that could not be read (`null`: no
+ * answer within PROBE_TIMEOUT_MS, a failed run) gives the fail-closed `launch` (15 §1.3 `probe`).
+ * `earlyFailure` and `resume` are the recorded protocol facts of the version (S-020-1, SP-15), not
+ * probed: the merge with the ceiling decides what is effective (ADR-009 D2).
  */
 export function capabilitiesFromHelp(
   help: string | null,
-  gates: { readonly sp08: boolean }
+  gates: SpikeRecords
 ): ProviderCapabilities {
   const launch =
-    help !== null &&
-    gates.sp08 &&
-    PROMPT_TOOL_OPTION.test(help) &&
-    DISALLOWED_TOOLS_OPTION.test(help)
-  return { ...STREAM_JSON_ROW, usage: { ...STREAM_JSON_ROW.usage }, launch }
+    help !== null && gates.sp08 && promptToolAdvertised(help) && DISALLOWED_TOOLS_OPTION.test(help)
+  return {
+    ...STREAM_JSON_ROW,
+    usage: { ...STREAM_JSON_ROW.usage },
+    launch,
+    resume: gates.sp15 ? 'cli-flag' : STREAM_JSON_ROW.resume,
+    earlyFailure: gates.s0201 ? 'handshake' : STREAM_JSON_ROW.earlyFailure
+  }
 }

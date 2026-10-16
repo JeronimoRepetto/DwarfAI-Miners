@@ -1,6 +1,0 @@
-{
-  "case": "SP-15:resume-same-id",
-  "description": "15 §4.2 Resume / identity, ADR-015 item 7: after the launched session is gone, resume spawns the person's claude with --resume <id> and no prompt; its first system line names the session it continues (SP-15 decides whether Claude keeps the id).",
-  "script": [{ "do": "launch" }, { "do": "transportLost" }, { "do": "resume" }],
-  "outcomes": [{ "resolved": true }, null, null]
-}

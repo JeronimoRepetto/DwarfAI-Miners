@@ -5,12 +5,16 @@
 // `--session-id`, DwarfAI's permission prompt tool and the question tool disallowed. The prompt and
 // every turn go on stdin as stream-json user lines; stdout is read by `streamParser`.
 //
-// Gates (ISSUE-150; spike register): SP-08 pending → `probe()` answers `launch: false` whatever the
-// help says, so the driver is built and conformance-tested but never offered; S-020-1 pending →
-// readiness is the first `system` line and `earlyFailure` stays `exit-only`; SP-15 pending →
-// `resume` stays `none` (resume() exists and is tested, but no caller is offered it). The
-// permission prompt tool is served by the delegation relay (ADR-013 item 3): until that ask route
-// exists and SP-08 passes, `permission` is `none` and no ask is ever opened here.
+// Gates (ISSUE-150; ISSUE-321 records for Claude Code 2.1.301, Windows): SP-08 passed → `probe()`
+// opens `launch` when the help advertises the prompt tool (as its own option or, as in 2.1.301,
+// inside the `--permission-prompts` description). S-020-1 passed → readiness is `system/init`,
+// which the CLI writes only after the first stdin line, so a launch writes its prompt first and a
+// SessionStart hook line is never readiness; an error `result` before `system/init` is the launch
+// failing (`earlyFailure: 'handshake'`). SP-15 passed → `--resume <id>` keeps the id; a resume
+// writes nothing, so it is ready at `system/init` or once the 3 s early-failure window passed
+// without an error `result` or an exit. The permission prompt tool is served by the delegation
+// relay (ADR-013 item 3): until the Host serves its ask route, `permission` is `none` and no ask
+// is ever opened here.
 //
 // No Agent SDK anywhere (OQ-52, R11), no provider credential read (ADR-008 item 2), no auto-approve
 // flag (ADR-008 item 3: `buildArgv` refuses one). The driver never signals a process: ending one is
@@ -371,7 +375,7 @@ interface SessionOptions {
   readonly child: SpawnedProcess
   readonly ref: SessionRef
   readonly capabilities: ProviderCapabilities
-  /** `launch`: the id is the Host's; `resume`: the first system line names the id it continues. */
+  /** `launch`: the id is the Host's; `resume`: `system/init` names the id it continues. */
   readonly mode: 'launch' | 'resume'
   readonly spawnedAt: number
   readonly deps: ClaudeStreamJsonDriverDeps
@@ -388,12 +392,13 @@ interface OpenUnit {
 class StreamJsonSession implements DriverSession {
   ref: SessionRef
   readonly capabilities: ProviderCapabilities
-  /** Resolves at the first `system` line (readiness, UNVERIFIED until S-020-1). */
+  /** Resolves at `system/init` (S-020-1); a resume also at the end of the early-failure window. */
   readonly ready: Promise<DriverSession>
   private readonly channel = new EventChannel<DriverEvent>()
   private readonly framer = new LineFramer()
   private settleReady: ((ok: boolean, detail: string) => void) | null = null
   private readonly handshakeTimer: { cancel(): void }
+  private readonly windowTimer: { cancel(): void } | null
   private stderrTail = ''
   private openTurns = 0
   private results = 0
@@ -405,6 +410,7 @@ class StreamJsonSession implements DriverSession {
   private exitSeen = false
   private exitCode: number | null = null
   private exited = false
+  private initSeen = false
 
   constructor(private readonly options: SessionOptions) {
     this.ref = { ...options.ref }
@@ -414,9 +420,12 @@ class StreamJsonSession implements DriverSession {
       this.settleReady = (ok, detail) => {
         this.settleReady = null
         this.handshakeTimer.cancel()
+        this.windowTimer?.cancel()
         if (ok) resolve(this)
         else {
           const early = deps.clock.now() - options.spawnedAt < EARLY_FAILURE_WINDOW_MS
+          // The CLI is told to end: it may outlive its error result by seconds (S-020-1).
+          this.closeInput()
           reject(options.fail(early && detail !== 'handshake timeout', detail, this.tail()))
         }
       }
@@ -426,6 +435,11 @@ class StreamJsonSession implements DriverSession {
       this.closeInput()
       this.settleReady?.(false, 'handshake timeout')
     })
+    // S-020-1, SP-15: a resumed claude writes nothing before a stdin line, and a resume sends none.
+    this.windowTimer =
+      options.mode === 'resume'
+        ? deps.scheduler.after(EARLY_FAILURE_WINDOW_MS, () => this.settleReady?.(true, 'ready'))
+        : null
     child.stderr?.setEncoding('utf8')
     child.stderr?.on('data', (chunk: string) => {
       this.stderrTail = (this.stderrTail + chunk).slice(-TAIL_CHARS * 4)
@@ -519,7 +533,7 @@ class StreamJsonSession implements DriverSession {
   private handle(record: StreamRecord): void {
     switch (record.kind) {
       case 'system':
-        this.onSystem(record.sessionId)
+        if (record.subtype === 'init') this.onInit(record.sessionId)
         return
       case 'assistant':
         this.onAssistant(record)
@@ -529,6 +543,14 @@ class StreamJsonSession implements DriverSession {
         for (const result of record.toolResults) this.finishTool(result.toolUseId, result.isError)
         return
       case 'result':
+        if (this.settleReady !== null && record.isError) {
+          // S-020-1: an error result before system/init is the launch (or resume) failing.
+          this.settleReady(
+            false,
+            `claude ended with ${record.subtype || 'an error'} before system/init`
+          )
+          return
+        }
         this.onResult(record.uuid, record.subtype)
         return
       case 'rate-limit':
@@ -548,12 +570,13 @@ class StreamJsonSession implements DriverSession {
     }
   }
 
-  private onSystem(sessionId: string | null): void {
-    if (this.settleReady === null) return
-    if (this.options.mode === 'resume' && sessionId !== null) {
+  /** `system/init` (S-020-1): readiness, and on a resume the id the CLI continues. */
+  private onInit(sessionId: string | null): void {
+    if (this.options.mode === 'resume' && !this.initSeen && sessionId !== null) {
       const previous = this.ref.providerSessionId
       if (sessionId !== previous) {
-        // ADR-015 item 7: a resume that minted a new id names the one it continues.
+        // ADR-015 item 7: a resume that minted a new id names the one it continues. SP-15 recorded
+        // that 2.1.301 keeps the id; its fork shows the shape of one that does not.
         this.ref = {
           ...this.ref,
           providerSessionId: sessionId,
@@ -561,7 +584,8 @@ class StreamJsonSession implements DriverSession {
         }
       }
     }
-    this.settleReady(true, 'ready')
+    this.initSeen = true
+    this.settleReady?.(true, 'ready')
   }
 
   private onAssistant(record: Extract<StreamRecord, { kind: 'assistant' }>): void {

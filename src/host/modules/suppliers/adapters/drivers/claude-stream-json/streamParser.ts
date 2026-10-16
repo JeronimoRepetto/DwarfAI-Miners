@@ -4,11 +4,13 @@
 // record of an unknown type become a `drift` value the session reports and skips. Pure: no I/O,
 // no clock read, so the same bytes always give the same records (C-19).
 //
-// Record shapes read (Claude Code stream-json; synthetic fixtures until the ISSUE-321 recordings):
-// `system` (readiness, S-020-1), `assistant` (message.id, content blocks, usage, stop_reason,
-// parent_tool_use_id, error), `user` (tool_result blocks), `result` (subtype), and
-// `rate_limit_event` (rate_limit_info.status, resetsAt). Known records this driver does not use
-// (partial-message stream events, control frames, keep-alives) are `ignored`, not drift.
+// Record shapes read (Claude Code stream-json, recorded on 2.1.301 by ISSUE-321): `system` (its
+// `init` subtype is readiness, S-020-1; `hook_started`, `hook_response`, `notification`,
+// `permission_denied`, `thinking_tokens` and any later subtype carry nothing this driver
+// reports), `assistant` (message.id, content blocks, usage, stop_reason, parent_tool_use_id,
+// error), `user` (tool_result blocks), `result` (subtype, is_error), and `rate_limit_event`
+// (rate_limit_info.status, resetsAt). Known records this driver does not use (partial-message
+// stream events, control frames, keep-alives) are `ignored`, not drift.
 //
 // Candidate decision (21 §6) for the pure parts: `src/main/sessionLaunch/claudeTurnOutcome.ts` is
 // adapted, not kept: its subtype mapping is the same reading of Claude's `result` record, but it
@@ -45,7 +47,12 @@ export type StreamRecord =
       readonly parentToolUseId: string | null
       readonly toolResults: readonly { readonly toolUseId: string; readonly isError: boolean }[]
     }
-  | { readonly kind: 'result'; readonly uuid: string | null; readonly subtype: string }
+  | {
+      readonly kind: 'result'
+      readonly uuid: string | null
+      readonly subtype: string
+      readonly isError: boolean
+    }
   | {
       readonly kind: 'rate-limit'
       readonly status: string | null
@@ -159,7 +166,12 @@ export function parseLine(line: string): StreamRecord {
       return { kind: 'user', parentToolUseId: parent, toolResults: toolResultsOf(message.content) }
     }
     case 'result':
-      return { kind: 'result', uuid: str(value.uuid), subtype: str(value.subtype) ?? '' }
+      return {
+        kind: 'result',
+        uuid: str(value.uuid),
+        subtype: str(value.subtype) ?? '',
+        isError: value.is_error === true
+      }
     case 'rate_limit_event': {
       const info = isRecord(value.rate_limit_info) ? value.rate_limit_info : {}
       const resetsAt = typeof info.resetsAt === 'number' ? info.resetsAt : null
