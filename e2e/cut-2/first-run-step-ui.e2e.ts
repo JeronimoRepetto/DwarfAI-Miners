@@ -128,6 +128,8 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
     await expect(confirmation).toHaveCount(1, { timeout: 30_000 })
     await expect(confirmation.getByRole('button', { name: /and quit$/ })).toBeVisible()
     await expect(step.options, 'the step stays open beneath').toBeAttached()
+    // The app ends on its own once confirmed: its trace is saved first, so no screencast frame is lost under the exit.
+    await launched.stopTracing()
     await confirmation.getByRole('button', { name: /and quit$/ }).click({ timeout: 10_000 })
 
     await expect

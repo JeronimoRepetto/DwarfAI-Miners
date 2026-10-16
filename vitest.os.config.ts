@@ -22,6 +22,10 @@ export default defineConfig({
     // §2.2), never an OS-lane test.
     exclude: [...configDefaults.exclude, '**/__fixtures__/**'],
     environment: 'node',
+    // The run's template database (17 §1.5 "Speed"; 09 §6.5), as in vitest.config.ts: an OS-lane
+    // test that needs the Host database copies it (`templateDb.ts`) instead of migrating a file of
+    // its own, whose migration and checkpoint flush outlasted the per-test timeout on Windows CI.
+    globalSetup: ['src/host/platform/sqlite/testing/templateDb.globalSetup.ts'],
     // `default` keeps the console output; `json` is the executed-test count the guard reads. The
     // path matches OS_LANE_REPORT in scripts/checks/os-lane-guard.mjs (git-ignored `coverage/`).
     reporters: ['default', 'json'],
