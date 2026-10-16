@@ -517,3 +517,34 @@ describe('provider scan before packaging (20 P-03; ISSUE-273)', () => {
     }
   })
 })
+
+describe('pnpm version in CI (AGENTS §0.2; 20 §1)', () => {
+  /** Every `pnpm/setup` step of every workflow, as `{ file, version }`. */
+  const pnpmSetups = () =>
+    ['ci.yml', 'internal-build.yml'].flatMap((file) => {
+      const text = readFileSync(path.join(repoRoot, '.github', 'workflows', file), 'utf8').replace(
+        /\r\n/g,
+        '\n'
+      )
+      return text
+        .split(/\n {6}- /)
+        .filter((step) => /\n\s+uses: pnpm\/(?:setup|action-setup)@/.test(step))
+        .map((step) => ({ file, version: step.match(/\n\s+version: (\S+)\n/)?.[1] }))
+    })
+
+  it('[ADR-001] every workflow job installs one exact pnpm version, never a floating major', () => {
+    const setups = pnpmSetups()
+    expect(setups.length, 'both workflows set up pnpm').toBeGreaterThanOrEqual(2)
+    expect(new Set(setups.map(({ file }) => file))).toEqual(
+      new Set(['ci.yml', 'internal-build.yml'])
+    )
+    for (const { file, version } of setups) {
+      expect(version, `a pnpm/setup step in ${file} pins an exact version`).toMatch(
+        /^\d+\.\d+\.\d+$/
+      )
+    }
+    expect(new Set(setups.map(({ version }) => version)).size, 'every job runs the same pnpm').toBe(
+      1
+    )
+  })
+})
