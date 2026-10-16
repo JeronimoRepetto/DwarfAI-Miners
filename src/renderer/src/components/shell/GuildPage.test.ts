@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { UNAVAILABLE_ART_SRC } from '../../lib/art'
@@ -55,5 +58,103 @@ describe('GuildPage', () => {
   it('offers nothing to press, because the design offers nothing to do', () => {
     const page = mount(GuildPage, { props: { area: 'lab' } })
     expect(page.findAll('button, a, input')).toHaveLength(0)
+  })
+})
+
+/*
+ * APPENDED (ISSUE-265): the guild pages by the ids of US-GUILD-001. The words below are the
+ * stories' own, written here by hand rather than read back from lib/shell/guildPage.
+ */
+const AREAS = ['lab', 'market', 'laboral-union'] as const
+
+const STORY = {
+  lab: {
+    title: 'Lab',
+    line: 'Experiments with new tools and outfits for your dwarfs. This area is being built.'
+  },
+  market: { title: 'Market', line: 'Trade ore for gear and skins. This area is being built.' },
+  'laboral-union': {
+    title: 'Laboral Union',
+    line: 'Rules for how your crews work and rest. This area is being built.'
+  }
+} as const
+
+/*
+ * The SHA-256 of each painting as the PO supplied it: the design repository's
+ * prototype/assets/guild/<area>.png at d12d3fc, which the bundled file must equal byte for byte
+ * (TC-265-02). guild-pages.golden.test.mjs compares against the design checkout itself.
+ */
+const SUPPLIED_ART_SHA256 = {
+  lab: 'eeb5222c40aa82bcc095d33a837723e71b8adf85a00783d746c7569efc8fe813',
+  market: 'daeb8e0808593c27b7cc9fcae0e4bf7a2326148015e291cc91c269b019067c26',
+  'laboral-union': '8fdc4ef286a6278105947acc7aa682638f8a670023c7d746ded2f37d6681897e'
+} as const
+
+const ART_DIR = join(import.meta.dirname, '..', '..', 'assets', 'art')
+
+/** The DOM events test-utils records on the root by itself; none of them is the page's own. */
+const NATIVE = new Set(['click', 'keydown', 'pointerdown'])
+
+describe('GuildPage by the guild stories (ISSUE-265)', () => {
+  it('[US-GUILD-001.AC01, US-GUILD-001.AC04] each guild page shows its own supplied art unchanged, Not open yet and its line, and nothing else', () => {
+    for (const area of AREAS) {
+      const bytes = readFileSync(join(ART_DIR, area, `${area}.png`))
+      expect(createHash('sha256').update(bytes).digest('hex'), area).toBe(SUPPLIED_ART_SHA256[area])
+
+      const page = mount(GuildPage, { props: { area } })
+      expect(page.get('.dm-guild__art').attributes('style')).toContain(UNAVAILABLE_ART_SRC[area])
+      for (const other of AREAS.filter((one) => one !== area))
+        expect(page.html()).not.toContain(UNAVAILABLE_ART_SRC[other])
+      // Nothing else: the page header's title, the plate's icon, its headline and its line.
+      expect(page.findAll('h1, h2, p').map((el) => el.text())).toEqual([
+        STORY[area].title,
+        'Not open yet',
+        STORY[area].line
+      ])
+      expect(page.text()).toBe(STORY[area].title + 'Not open yet' + STORY[area].line)
+      // The one drawing besides the painting is the area's icon on the plate.
+      const drawn = page.findAll('img, svg, canvas, video')
+      expect(drawn).toHaveLength(1)
+      expect(drawn[0]!.element.closest('.dm-guild__plate .dm-icon')).not.toBeNull()
+    }
+  })
+
+  it('[US-GUILD-001.AC05, US-GUILD-001.AC06, US-GUILD-001.AC07] Lab, Market and Laboral Union show their titles and messages', () => {
+    for (const area of AREAS) {
+      const page = mount(GuildPage, { props: { area } })
+      expect(page.get('h1').text()).toBe(STORY[area].title)
+      expect(page.attributes('aria-label')).toBe(STORY[area].title)
+      expect(page.get('.dm-guild__plate h2').text()).toBe('Not open yet')
+      expect(page.get('.dm-guild__plate p').text()).toBe(STORY[area].line)
+    }
+  })
+
+  it('[US-GUILD-001.AC02] nothing on a guild page but the nav reacts to input', async () => {
+    for (const area of AREAS) {
+      const page = mount(GuildPage, { props: { area } })
+      const before = page.html()
+      const controls =
+        'button, a, input, select, textarea, [tabindex], [role="button"], [contenteditable]'
+      expect(page.findAll(controls)).toHaveLength(0)
+      for (const el of [page, ...page.findAll('*')]) {
+        await el.trigger('click')
+        await el.trigger('keydown', { key: 'Enter' })
+        await el.trigger('pointerdown')
+      }
+      expect(Object.keys(page.emitted()).filter((name) => !NATIVE.has(name))).toEqual([])
+      expect(page.html()).toBe(before)
+    }
+  })
+
+  it('[US-GUILD-001.AC03] moving from one guild page to another replaces art and message with nothing carried over', async () => {
+    const page = mount(GuildPage, { props: { area: 'lab' } })
+    for (const area of ['market', 'laboral-union', 'lab'] as const) {
+      await page.setProps({ area })
+      expect(page.html()).toBe(mount(GuildPage, { props: { area } }).html())
+      for (const other of AREAS.filter((one) => one !== area)) {
+        expect(page.html()).not.toContain(UNAVAILABLE_ART_SRC[other])
+        expect(page.text()).not.toContain(STORY[other].line)
+      }
+    }
   })
 })

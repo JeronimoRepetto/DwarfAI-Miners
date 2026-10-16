@@ -4383,3 +4383,280 @@ describe('App Host asks (ISSUE-138)', () => {
   })
 })
 /* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
+
+/* --- The mine column (ISSUE-254) — one block, appended ------------------------------------------- */
+/*
+ * What the shell does with the column's presses (US-MINE-002, US-MINE-006…008, US-OBS-004): the chat
+ * it opens and where the keyboard lands, the current mine, the Add panel in the dock slot, the
+ * history's way back, and one status reaching every place a dwarf is drawn in the same render.
+ */
+describe('App mine column (ISSUE-254)', () => {
+  const ALPHA = 'C:/dev/alpha'
+  const BETA = 'C:/dev/beta'
+  const WORKER = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'worker',
+    name: 'dwarfai-53',
+    status: 'working',
+    sessionId: 's1',
+    textDelivery: 'terminal'
+  }
+  const ASKING = {
+    ...WORKER,
+    id: 'claude:s2',
+    name: 'dwarfai-54',
+    sessionId: 's2',
+    status: 'waiting',
+    waitingReason: 'user-input',
+    pendingQuestion: {
+      toolUseId: 't1',
+      channel: 'terminal',
+      questions: [
+        { question: 'Which one?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }
+      ]
+    }
+  }
+  const mineOf = (id: string, name: string, dwarfs: unknown[]) => ({
+    id,
+    path: id,
+    name,
+    tier: 'bronze',
+    dwarfs,
+    tokensObserved: 0,
+    updatedAt: 0
+  })
+  const project = (id: string, name: string) => ({
+    id,
+    path: id,
+    name,
+    declared: false,
+    addedAt: 1,
+    live: true
+  })
+
+  beforeEach(() => {
+    useView().clear()
+    useDwarfMessaging().clearAll()
+  })
+  afterEach(() => useView().clear())
+
+  /*
+   * Mounted into the page, unlike mountApp: where the keyboard lands is only real in a document, and
+   * the focus is what these cases read.
+   */
+  async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
+    const api = stubApi({
+      getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT),
+      getMines: vi.fn().mockResolvedValue({
+        mines: [mineOf(ALPHA, 'alpha', dwarfs), mineOf(BETA, 'beta', [])],
+        tokensObserved: 0
+      }),
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [project(ALPHA, 'alpha'), project(BETA, 'beta')]
+      }),
+      ...overrides
+    })
+    const wrapper = mount(App, { attachTo: document.body })
+    mounted.push(wrapper)
+    await flushPromises()
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.find(`[data-mine="${ALPHA}"] .dm-card__hit`).trigger('click')
+    await flushPromises()
+    return { wrapper, api }
+  }
+
+  const current = (wrapper: VueWrapper) =>
+    wrapper
+      .findAll('.dm-card__hit[aria-current="true"]')
+      .map((hit) => hit.element.closest('[data-mine]')?.getAttribute('data-mine'))
+
+  it('[US-MINE-002.AC03, NFR-A11Y-04] the opened chat has focus on the next frame: the composer, or the question card’s first option', async () => {
+    const { wrapper } = await openMineWith([WORKER, ASKING])
+    await wrapper.find(`button.dm-dwarf[data-dwarf="${WORKER.id}"]`).trigger('click')
+    await flushPromises()
+    const panel = wrapper.findComponent(DwarfMessagePanel)
+    expect(panel.props('dwarf')).toMatchObject({ id: WORKER.id })
+    expect(document.activeElement?.tagName).toBe('TEXTAREA')
+    expect(panel.element.contains(document.activeElement)).toBe(true)
+
+    await wrapper.find(`.dm-roster button.dm-portrait[data-dwarf="${ASKING.id}"]`).trigger('click')
+    await flushPromises()
+    const asking = wrapper.findComponent(DwarfMessagePanel)
+    expect(asking.props('dwarf')).toMatchObject({ id: ASKING.id })
+    expect(document.activeElement?.classList.contains('dm-qopt')).toBe(true)
+    expect(asking.element.contains(document.activeElement)).toBe(true)
+  })
+
+  it('[US-MINE-002.AC04, US-MINE-002.AC05] a chat gaining focus makes its mine current with the mark and the sound, and a click on the mine painting or header makes it current without moving chat focus', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    // The open mine is the current one: its card wears the mark, and only its card.
+    expect(current(wrapper)).toEqual([ALPHA])
+    expect(wrapper.find('.dm-minecol').attributes('data-mine')).toBe(ALPHA)
+
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([ALPHA])
+    const focused = document.activeElement
+    expect(wrapper.findComponent(DwarfMessagePanel).element.contains(focused)).toBe(true)
+
+    // A click on the mine's painting or its header keeps it current and leaves the chat focused.
+    await wrapper.find('.dm-minecol__art').trigger('click')
+    await wrapper.find('.dm-minecol__bar').trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([ALPHA])
+    expect(wrapper.findComponent(DwarfMessagePanel).props('dwarf')).toMatchObject({
+      id: WORKER.id
+    })
+    expect(document.activeElement).toBe(focused)
+
+    // Opening another mine makes that one current, and the mark follows it.
+    await wrapper.find(`[data-mine="${BETA}"] .dm-card__hit`).trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([BETA])
+    expect(wrapper.find('.dm-minecol').attributes('data-mine')).toBe(BETA)
+  })
+
+  it('[US-OBS-004.AC06, US-OBS-004.AC10] a status change reaches sprite pose, tooltip, roster and outcome line in the same render, and working shows the working pose and Working with its step count', async () => {
+    const { wrapper, api } = await openMineWith([{ ...WORKER, status: 'waiting' }])
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    await wrapper.find('.dm-roster button.dm-portrait').trigger('focus')
+    await flushPromises()
+
+    const shown = () => ({
+      sprite: wrapper.find('button.dm-dwarf').attributes('data-status'),
+      roster: wrapper.find('.dm-roster button.dm-portrait').attributes('data-status'),
+      tooltip: document.body.querySelector('.dm-tip .dm-dtip__status')?.textContent,
+      outcome: wrapper.find('.dm-msg__outcome').text()
+    })
+    expect(shown()).toMatchObject({ sprite: 'asleep', roster: 'asleep', tooltip: 'asleep' })
+    expect(shown().outcome).not.toMatch(/^Working/)
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({
+      mines: [mineOf(ALPHA, 'alpha', [WORKER]), mineOf(BETA, 'beta', [])],
+      tokensObserved: 0
+    })
+    // One render: every place the dwarf is drawn has changed together.
+    await wrapper.vm.$nextTick()
+    const now = shown()
+    expect(now).toMatchObject({ sprite: 'working', roster: 'working', tooltip: 'working' })
+    expect(now.outcome).toMatch(/^Working( · \d+ steps? so far)?$/)
+  })
+
+  it('[US-MINE-007.AC02, US-MINE-007.AC03, US-MINE-007.AC06] the toolbar opens Mine history, closes the mine and is named Mine and the mine name, with its tier chip', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    const column = wrapper.find('section.dm-minecol')
+    expect(column.attributes('aria-label')).toBe('Mine alpha')
+    expect(column.find('header.dm-minecol__bar .dm-tier').attributes('data-tier')).toBe('bronze')
+    expect(column.find('header.dm-minecol__bar h2').text()).toBe('alpha')
+
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(HistoryPanel).props('mine')).toMatchObject({ id: ALPHA })
+    expect(wrapper.find('.dm-hist__title').text()).toBe('History · alpha')
+
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+    expect(wrapper.find('.dm-hist').exists()).toBe(false)
+  })
+
+  /*
+   * The story returns to the MessagePanel when the history was opened from it; the pinned design
+   * rules otherwise (screens/shell.md, Layout: closing the history "closes the window ... it never
+   * returns to the chat it replaced"), and the new design wins. Either way the column is in view.
+   */
+  it('[US-MINE-006.AC06, NFR-A11Y-02] Close history or Esc closes the panel and the mine column is in view', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    for (const close of ['button', 'escape'] as const) {
+      // Reached by the keyboard, as Enter on a focused button presses it.
+      const opener = wrapper.find('button[aria-label="Mine history"]')
+      ;(opener.element as HTMLElement).focus()
+      await opener.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.dm-hist').exists()).toBe(true)
+      // The keyboard moves into the panel, as Tab takes it there, and closes it from inside.
+      const inside = wrapper.find('button[aria-label="Close history"]')
+      ;(inside.element as HTMLElement).focus()
+      expect(document.activeElement).toBe(inside.element)
+      if (close === 'button') await inside.trigger('click')
+      else await inside.trigger('keydown', { key: 'Escape' })
+      await flushPromises()
+      expect(wrapper.find('.dm-hist').exists(), close).toBe(false)
+      expect(wrapper.find('.dm-minecol .dm-minecol__art').exists(), close).toBe(true)
+      expect(document.activeElement, close).toBe(
+        wrapper.find('button[aria-label="Mine history"]').element
+      )
+    }
+  })
+
+  it('[US-MINE-008.AC01, US-MINE-008.AC02, US-MINE-008.AC03] + Dwarf is the footer’s only primary button and opens the Add panel aimed at this mine in the dock slot, replacing a MessagePanel', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dock-window').findComponent(DwarfMessagePanel).exists()).toBe(true)
+
+    const primaries = wrapper.find('.dm-minecol').findAll('.dm-btn--primary')
+    expect(primaries.map((button) => button.text())).toEqual(['+ Dwarf'])
+    await primaries[0]!.trigger('click')
+    await flushPromises()
+
+    // The same dock slot, the chat replaced, the Add panel aimed at this mine.
+    const slot = wrapper.findAll('.dock-window')
+    expect(slot).toHaveLength(1)
+    expect(slot[0]!.findComponent(AddPanel).exists()).toBe(true)
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+    expect(useAgentLaunch().mineId.value).toBe(ALPHA)
+    expect(wrapper.find('.dm-minecol .dm-minecol__art').exists()).toBe(true)
+  })
+})
+/* --- end of the ISSUE-254 block ------------------------------------------------------------------ */
+
+/* --- ISSUE-265: the guild flag across the whole shell ---------------------------------------- */
+describe('App and the guild flag (ISSUE-265)', () => {
+  const GUILD_NAMES = /\b(Lab|Market|Laboral Union|Guild)\b/
+
+  it('[US-GUILD-002.AC01, BR-19, INV-110] with the flag off no control anywhere in the app names or opens a guild page, and the flags are read once', async () => {
+    const { wrapper, api } = await mountOpenApp()
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+    expect(wrapper.find('.dm-nav__group[aria-label="Guild"]').exists()).toBe(false)
+    const controls = wrapper.findAll('button, a, [role="button"], [role="menuitem"], [role="tab"]')
+    expect(controls.length).toBeGreaterThan(0)
+    for (const control of controls) {
+      const names = [
+        control.text(),
+        control.attributes('aria-label') ?? '',
+        control.attributes('title') ?? '',
+        control.attributes('data-label') ?? '',
+        control.attributes('data-slot') ?? ''
+      ].join(' ')
+      expect(names).not.toMatch(GUILD_NAMES)
+      expect(control.attributes('data-slot') ?? '').not.toMatch(/^(lab|market|union)$/)
+    }
+    // Pressing every nav control still never shows a guild page.
+    for (const slot of wrapper.findAll(NAV)) {
+      await slot.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.dm-guild').exists()).toBe(false)
+    }
+    // Read once: nothing the person did asked main for the flags again.
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+  })
+
+  it('[US-GUILD-002.AC02, US-GUILD-001.AC03] with the flag on each guild slot opens its own page, replacing the one before', async () => {
+    const { wrapper } = await mountOpenApp(GUILD_ON)
+    for (const name of ['Lab', 'Market', 'Laboral Union', 'Lab']) {
+      await wrapper.find(`${NAV}[data-label="${name}"]`).trigger('click')
+      await flushPromises()
+      const pages = wrapper.findAll('.dm-guild')
+      expect(pages).toHaveLength(1)
+      expect(pages[0]!.attributes('aria-label')).toBe(name)
+      expect(pages[0]!.get('h1').text()).toBe(name)
+    }
+  })
+})
+/* --- end of the ISSUE-265 block -------------------------------------------------------------- */

@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import ordinaryConfig, { windowsCiTestTimeout } from '../../vitest.config.ts'
+import osLaneConfig from '../../vitest.os.config.ts'
 
 /**
  * L7 check of the release lanes in CI (testing strategy `17` §1.9, §1.11, §1.13, §5.2; `20` §2.1).
@@ -514,6 +516,57 @@ describe('provider scan before packaging (20 P-03; ISSUE-273)', () => {
       const packageAt = steps.findIndex((step) => step.includes('run: pnpm package'))
       expect(packageAt, `${id} packages`).toBeGreaterThan(0)
       expect(steps[packageAt - 1], `${id} scans right before it packages`).toContain(SCAN_STEP)
+    }
+  })
+})
+
+describe('pnpm version in CI (AGENTS §0.2; 20 §1)', () => {
+  /** Every `pnpm/setup` step of every workflow, as `{ file, version }`. */
+  const pnpmSetups = () =>
+    ['ci.yml', 'internal-build.yml'].flatMap((file) => {
+      const text = readFileSync(path.join(repoRoot, '.github', 'workflows', file), 'utf8').replace(
+        /\r\n/g,
+        '\n'
+      )
+      return text
+        .split(/\n {6}- /)
+        .filter((step) => /\n\s+uses: pnpm\/(?:setup|action-setup)@/.test(step))
+        .map((step) => ({ file, version: step.match(/\n\s+version: (\S+)\n/)?.[1] }))
+    })
+
+  it('[ADR-001] every workflow job installs one exact pnpm version, never a floating major', () => {
+    const setups = pnpmSetups()
+    expect(setups.length, 'both workflows set up pnpm').toBeGreaterThanOrEqual(2)
+    expect(new Set(setups.map(({ file }) => file))).toEqual(
+      new Set(['ci.yml', 'internal-build.yml'])
+    )
+    for (const { file, version } of setups) {
+      expect(version, `a pnpm/setup step in ${file} pins an exact version`).toMatch(
+        /^\d+\.\d+\.\d+$/
+      )
+    }
+    expect(new Set(setups.map(({ version }) => version)).size, 'every job runs the same pnpm').toBe(
+      1
+    )
+  })
+})
+
+describe('OS lane per-test timeout on the Windows CI runner (17 §1.8, §1.13)', () => {
+  it('[ADR-001] the OS lane applies the ordinary lane timeout policy of this run', () => {
+    const policy = windowsCiTestTimeout().testTimeout
+    expect(ordinaryConfig.test.testTimeout, 'the ordinary lane follows the policy').toBe(policy)
+    expect(osLaneConfig.test.testTimeout, 'the OS lane follows the same policy').toBe(policy)
+  })
+
+  it('[ADR-001] the policy raises the timeout on the Windows CI runner only', () => {
+    expect(windowsCiTestTimeout('win32', { CI: 'true' })).toEqual({ testTimeout: 30_000 })
+    for (const [platform, env] of [
+      ['win32', {}],
+      ['win32', { CI: 'false' }],
+      ['linux', { CI: 'true' }],
+      ['darwin', { CI: 'true' }]
+    ]) {
+      expect(windowsCiTestTimeout(platform, env), `${platform} ${JSON.stringify(env)}`).toEqual({})
     }
   })
 })
