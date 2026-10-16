@@ -1,0 +1,350 @@
+{
+  "case": "C-20",
+  "description": "ADR-021 item 5: end_turn → concluded; max_tokens and max_turn_requests → capped; refusal → errored; cancelled the app did not ask for → interrupted without cancelledFromApp; an unknown stopReason → errored with the raw word as detail.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-2",
+      "text": "turn 2"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-3",
+      "text": "turn 3"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-4",
+      "text": "turn 4"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-5",
+      "text": "turn 5"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-6",
+      "text": "turn 6"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-2",
+      "providerTurnId": "2"
+    },
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-3",
+      "providerTurnId": "3"
+    },
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-4",
+      "providerTurnId": "4"
+    },
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-5",
+      "providerTurnId": "5"
+    },
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-6",
+      "providerTurnId": "6"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:2:0",
+        "role": "person",
+        "text": "turn 2",
+        "providerTime": null,
+        "echoOf": "m-2"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:2",
+        "kind": "capped",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false,
+        "detail": "max_tokens"
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:3:0",
+        "role": "person",
+        "text": "turn 3",
+        "providerTime": null,
+        "echoOf": "m-3"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:3",
+        "kind": "capped",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false,
+        "detail": "max_turn_requests"
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:4:0",
+        "role": "person",
+        "text": "turn 4",
+        "providerTime": null,
+        "echoOf": "m-4"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:4",
+        "kind": "errored",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false,
+        "detail": "refusal"
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:5:0",
+        "role": "person",
+        "text": "turn 5",
+        "providerTime": null,
+        "echoOf": "m-5"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:5",
+        "kind": "interrupted",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:6:0",
+        "role": "person",
+        "text": "turn 6",
+        "providerTime": null,
+        "echoOf": "m-6"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:6",
+        "kind": "errored",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false,
+        "detail": "dwarfai_unknown_reason"
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "turn 2"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "turn 3"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "turn 4"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "turn 5"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 7,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "turn 6"
+          }
+        ]
+      }
+    }
+  ]
+}
