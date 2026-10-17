@@ -12,7 +12,7 @@
 //   own), in the command's `cwd`, with ELECTRON_RUN_AS_NODE=1 added to the environment. The token is
 //   never read here: only its file's path crosses (ADR-003 item 12). `raised` as soon as one
 //   candidate started; `failed` when none did (FM-054: the person can open it again).
-// - `attach` is not built in v1 (S-031-1 failed; S-031-3 not passed): `failed`, never run.
+// - `attach` is not built in v1 (S-031-1 and S-031-3 failed): `failed`, never run.
 // - A target without what its mode needs is `failed`. Nothing here logs a path or a value.
 import { spawn as nodeSpawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'

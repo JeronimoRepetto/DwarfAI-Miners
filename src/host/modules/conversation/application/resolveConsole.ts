@@ -7,9 +7,9 @@
 //   pid), with `log` second: UI main falls back to the read-only view when no window of that
 //   process can be raised. With no identity it is `log`.
 // - a launched session (`owned`) is `log`: it has no terminal of its own (OQ-01), and `attach` is
-//   offered only once its spike passed. S-031-1 (Codex TUI attach) FAILED (owner run 2026-10-17:
-//   a second attached client becomes another writer) and S-031-3 (OpenCode password delivery) has
-//   not passed, so no launched session gets `attach` in v1 (OQ-39 A).
+//   offered only once its spike passed. Both failed (spike-results/S-031-1.md: a second attached
+//   Codex client becomes another writer; spike-results/S-031-3.md: OpenCode's server password
+//   travels only in argv or env), so no launched session gets `attach` in v1 (OQ-39 A).
 // - a dwarf the Host does not know is `log`: "no console" is never a state (ADR-031 item 3).
 //
 // `createResolveConsole` is the use case over the `ConsoleResolver` port, which issues the `log`
