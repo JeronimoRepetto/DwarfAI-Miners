@@ -47,13 +47,16 @@ import type {
   SessionRef,
   TurnInput
 } from '../../../../ports/providerDriver'
+import { turnEndOf } from '../stopReason'
 import { answerReply, CANCEL, DECLINE, formOf, type ElicitationForm } from './elicitation'
 import { EventChannel } from './eventChannel'
 import {
   optionSet,
+  optionsOf,
   permissionPayload,
-  permissionReply,
-  type AcpPermissionOption
+  replyWith,
+  type AcpPermissionOption,
+  type PermissionReplyHook
 } from './permissionMapping'
 
 /** 15 §0: the readiness bound of a launch or a resume. */
@@ -131,10 +134,35 @@ export interface AcpStart {
    * mode fails the handshake closed. Absent: no pin.
    */
   readonly pinnedMode?: string
+  /**
+   * ADR-008 item 3: whether a reported session mode skips the permission ask. With no pinned mode,
+   * a session that reports such a mode fails the handshake closed. Absent: no mode is refused.
+   */
+  readonly refusedMode?: (modeId: string) => boolean
+  /**
+   * The client's question capability (15 §2.2 row acp, HR D2): `form` declares
+   * `elicitation.form` (the question card); `none`, for a driver whose ceiling has no question
+   * channel, declares no elicitation and refuses every `elicitation/create`. Absent: `form`.
+   */
+  readonly elicitation?: 'form' | 'none'
+  /**
+   * 15 §2.7: the driver's choice of a permission option by its native `_meta` decision; a choice
+   * outside the decision's own kind falls back to the default mapping. Absent: the default.
+   */
+  readonly permissionReply?: PermissionReplyHook
   /** A launch opens a new session and sends its first prompt; a resume reopens `sessionId`. */
   readonly mode:
     | { readonly kind: 'new'; readonly prompt: string }
-    | { readonly kind: 'resume'; readonly sessionId: string }
+    | {
+        readonly kind: 'resume'
+        readonly sessionId: string
+        /**
+         * The turns the resumed session already had. `session/resume` replays nothing, so its next
+         * turn continues this count (`eventId = <turnId>:<seq>` never meets an earlier turn's);
+         * `session/load` rebuilds the count from its replay. Absent: 0.
+         */
+        readonly turnsBefore?: number
+      }
   /** The effective capabilities once `initialize` answered (the driver merges its sources). */
   readonly capabilitiesFor: (init: InitializeResponse) => ProviderCapabilities
   readonly onSpawned?: (identity: ProcessIdentity) => Promise<void>
@@ -263,6 +291,11 @@ export class AcpSession implements DriverSession {
   }
 
   /** A session serializes as what it is to the Host: its ref and effective capabilities. */
+  /** How many turns this session started or replayed so far (a resume continues it). */
+  get turns(): number {
+    return this.turnCount
+  }
+
   toJSON(): { ref: SessionRef; capabilities: ProviderCapabilities } {
     return { ref: this.ref, capabilities: this.capabilities }
   }
@@ -333,7 +366,7 @@ export class AcpSession implements DriverSession {
   private async handshake(connection: ClientSideConnection): Promise<void> {
     const init = await connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: { elicitation: { form: {} } }
+      clientCapabilities: this.start.elicitation === 'none' ? {} : { elicitation: { form: {} } }
     })
     if (this.settleReady === null) return
     if (init.protocolVersion !== PROTOCOL_VERSION) {
@@ -367,6 +400,8 @@ export class AcpSession implements DriverSession {
       this.replaying = false
       if (!(await this.pinMode(connection, loaded?.modes?.currentModeId))) return
     } else if (agent?.sessionCapabilities?.resume != null) {
+      // `session/resume` replays nothing: the next turn continues the resumed session's count.
+      this.turnCount = mode.turnsBefore ?? 0
       const resumed = await connection.resumeSession({
         sessionId: mode.sessionId,
         cwd,
@@ -385,18 +420,24 @@ export class AcpSession implements DriverSession {
    * AMENDMENT-19 (ADR-008 item 3): before the session is ready it must report the pinned mode, so
    * the person's own default mode (one that skips the permission check) never applies. Another
    * mode is changed with `session/set_mode`; the agent answers `{}` and reports a different
-   * effective mode with `current_mode_update` before its answer. False when the handshake failed.
+   * effective mode with `current_mode_update` before its answer. With no pinned mode, a reported
+   * mode the driver refuses (`refusedMode`) fails closed instead. False when the handshake failed.
    */
   private async pinMode(
     connection: ClientSideConnection,
     reported: string | null | undefined
   ): Promise<boolean> {
     const pinned = this.start.pinnedMode
-    if (pinned === undefined) return true
     if (typeof reported === 'string') this.currentMode = reported
     const fail = (detail: string): false => {
       this.settleReady?.({ detail, modePin: true })
       return false
+    }
+    if (pinned === undefined) {
+      const mode = this.currentMode
+      return mode !== null && this.start.refusedMode?.(mode) === true
+        ? fail(`the agent reports permission mode ${mode}, which skips the permission ask`)
+        : true
     }
     if (this.currentMode === null) return fail('the agent reports no permission mode')
     if (this.currentMode === pinned) return true
@@ -713,10 +754,7 @@ export class AcpSession implements DriverSession {
     }
     this.flushSegment()
     const id = this.askId(params.toolCall.toolCallId)
-    const options = params.options.map((option) => ({
-      optionId: option.optionId,
-      kind: option.kind
-    }))
+    const options = optionsOf(params.options)
     return new Promise((resolve, reject) => {
       this.asks.set(id, { kind: 'permission', options, reply: resolve, refuse: reject })
       this.emit({
@@ -734,6 +772,10 @@ export class AcpSession implements DriverSession {
   }
 
   private onElicitation(params: CreateElicitationRequest): Promise<CreateElicitationResponse> {
+    if (this.start.elicitation === 'none') {
+      // No elicitation capability was declared: the request is refused and opens nothing.
+      return Promise.reject(RequestError.methodNotFound('elicitation/create'))
+    }
     const scope = params as { sessionId?: unknown; toolCallId?: unknown }
     const form = formOf(params as Parameters<typeof formOf>[0])
     if (scope.sessionId !== this.ref.providerSessionId || form === null) {
@@ -776,7 +818,7 @@ export class AcpSession implements DriverSession {
       return { kind: 'refused', reason: 'ask-closed' }
     }
     if (this.outputEnded || this.exited) return { kind: 'refused', reason: 'channel-unavailable' }
-    const reply = permissionReply(ask.options, req.decision)
+    const reply = replyWith(ask.options, req.decision, this.start.permissionReply)
     // An Allow the options cannot carry without widening it is never sent (OQ-42 B).
     if (reply.kind === 'refuse') return { kind: 'refused', reason: 'channel-rejected' }
     this.asks.delete(req.providerRequestId)
@@ -902,26 +944,6 @@ export class AcpSession implements DriverSession {
 
   private tail(): string {
     return this.stderrTail.slice(-TAIL_CHARS)
-  }
-}
-
-/** ADR-021 item 5: the ACP `stopReason` vocabulary; an unknown word is errored with its detail. */
-export function turnEndOf(stopReason: string): { kind: TurnEndKind; detail?: string } {
-  switch (stopReason) {
-    case 'end_turn':
-      return { kind: 'concluded' }
-    case 'max_tokens':
-    case 'max_turn_requests':
-      return { kind: 'capped', detail: stopReason }
-    case 'cancelled':
-      return { kind: 'interrupted' }
-    case 'refusal':
-      return { kind: 'errored', detail: stopReason }
-    default:
-      return {
-        kind: 'errored',
-        detail: stopReason === '' ? 'stopReason without a value' : stopReason
-      }
   }
 }
 
