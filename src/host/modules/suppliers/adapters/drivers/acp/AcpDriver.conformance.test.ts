@@ -428,7 +428,7 @@ describe('AcpDriver', () => {
       )
       return { outcome: run.outcomes[0], sent: agent.transport.sent.map((f) => JSON.parse(f)) }
     }
-    // ADR-008 item 3's `--yolo`, spelt as a mode id.
+    // ADR-008 item 3's yolo flag, spelt as a mode id.
     const yolo = await launchIn('yolo')
     expect(yolo.outcome).toEqual({
       rejected: {
