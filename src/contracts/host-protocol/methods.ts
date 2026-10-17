@@ -62,7 +62,14 @@ import {
   type SetClaudeHooksParams,
   type SetClaudeHooksResult
 } from './params/preferences'
-import { feedParamsSchema, type FeedParams } from './params/conversation'
+import {
+  feedParamsSchema,
+  sendMessageParamsSchema,
+  sendMessageResultSchema,
+  type FeedParams,
+  type SendMessageParams,
+  type SendMessageResult
+} from './params/conversation'
 import {
   renameDwarfParamsSchema,
   renameDwarfResultSchema,
@@ -104,7 +111,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M26, B-M27, B-M30, B-M31, B-M32, B-M33, B-M34, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M30, B-M31, B-M32, B-M33, B-M34, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -139,6 +146,7 @@ export interface HostMethods {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
   'crew.resetName':                  { params: ResetDwarfNameParams; result: {} }
   // conversation
+  'conversation.send':               { params: SendMessageParams; result: SendMessageResult }
   'conversation.feed':               { params: FeedParams; result: FeedPage }
   'conversation.mineHistory':        { params: { mineId: MineId }; result: MineHistoryView }
   // asking
@@ -340,6 +348,14 @@ export const HOST_METHOD_SCHEMAS = {
   'crew.resetName': {
     params: resetDwarfNameParamsSchema,
     result: z.object({}).strict()
+  },
+  // B-M24 (14 §2.3, §1.7; ADR-022): `ui` only, mutating (requestId = `messages.request_id`, a
+  // durable key, 14 §1.6); answered at acceptance once the message row and its `sending` mark are
+  // committed (host/transport/methods/conversationSend.ts), the settlement arriving only as
+  // `message.delivery`. Its params are sensitive (14 §3.5 SENSITIVE_METHODS: the text).
+  'conversation.send': {
+    params: sendMessageParamsSchema,
+    result: sendMessageResultSchema
   },
   // B-M26 (14 §2.3, §3.6): `ui` and `viewer` (its own dwarf only, host/transport/methods/conversationFeed.ts);
   // a query, so no requestId (14 §1.6). Its result is sensitive (14 §3.5 SENSITIVE_METHODS).

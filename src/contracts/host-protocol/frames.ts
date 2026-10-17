@@ -12,6 +12,7 @@ import {
   askRecordSchema,
   askStateSchema,
   consentOriginSchema,
+  deliverySchema,
   dwarfIdSchema,
   dwarfWireSchema,
   hostToastSchema,
@@ -33,6 +34,7 @@ import {
   type AskRecord,
   type AskState,
   type ConsentOrigin,
+  type Delivery,
   type DwarfId,
   type DwarfWire,
   type HostToast,
@@ -57,7 +59,7 @@ import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F07, B-F08, B-F09, B-F10, B-F11, B-F13, B-F14, B-F15, B-F16, B-F17, B-F18, B-F19, B-F20, B-F22, B-F23, B-F24, B-F25, B-F26, B-F27 and B-F28 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F07, B-F08, B-F09, B-F10, B-F11, B-F12, B-F13, B-F14, B-F15, B-F16, B-F17, B-F18, B-F19, B-F20, B-F22, B-F23, B-F24, B-F25, B-F26, B-F27 and B-F28 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
@@ -69,6 +71,7 @@ export interface HostFrames {
   'dwarf.changed':        { dwarf: DwarfWire }
   'dwarf.departed':       { dwarfId: DwarfId; mineId: MineId; cause: DepartureCause }
   'conversation.appended': { dwarfId: DwarfId; messages: MessageView[] }
+  'message.delivery':     { delivery: Delivery }
   'activity.changed':     ActivityWire
   'turn.ended':           { dwarfId: DwarfId; turnKey: string; kind: TurnEndKind; reliability: 'reliable' | 'inferred'; cancelledFromApp: boolean }
   'ask.opened':           { ask: AskRecord }
@@ -122,6 +125,8 @@ export const HOST_FRAME_SCHEMAS = {
   'conversation.appended': z
     .object({ dwarfId: dwarfIdSchema, messages: z.array(messageViewSchema) })
     .strict(),
+  // B-F12 (14 §2.4; ADR-022): `ui` only; the Host's phase of one delivery, after its commit.
+  'message.delivery': z.object({ delivery: deliverySchema }).strict(),
   'activity.changed': activityWireSchema,
   'turn.ended': z
     .object({

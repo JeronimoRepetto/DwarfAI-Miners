@@ -14,6 +14,10 @@
  * Dropping files anywhere on it attaches them (#408); `preventDefault` on both dragover and drop is
  * the whole of the navigation guard — a file dropped on a page the browser may navigate REPLACES
  * that page. A drag over it lights the well's edge, and nothing else moves.
+ *
+ * `spellcheck` is off for the whole composer, which the well inherits (ISSUE-257, TC-257-03): the
+ * interim value of ADR-019 item 1 (no network call, NFR-SEC-11) until spike S-019-3 and the
+ * design ruling are recorded.
  */
 import { ref } from 'vue'
 import { belongsToComposition } from '../../lib/controls/input'
@@ -70,6 +74,7 @@ function onDrop(event: DragEvent): void {
   <div
     class="dm-composer"
     :class="{ 'is-dragging': dragging }"
+    spellcheck="false"
     @dragover.prevent="dragging = true"
     @dragleave="dragging = false"
     @drop.prevent="onDrop"

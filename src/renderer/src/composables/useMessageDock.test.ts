@@ -183,6 +183,24 @@ describe('useMessageDock on a departure', () => {
     await flushPromises()
     expect(dock.surface.value).toEqual({ surface: 'none', mineId: '', dwarfId: '' })
   })
+
+  // APPENDED for ISSUE-257 (foreman ruling 2026-10-17): no draft text outlives its dwarf in memory, whether its chat
+  // was closed when it died or its mine was removed with the chat open (which closes the panel, so the panel itself
+  // never gets to empty its well).
+  it('[US-MSG-009.AC05] a departed dwarf’s draft is dropped, with its chat closed or its mine removed', async () => {
+    for (const cause of ['stopped', 'closed-elsewhere', 'mine-removed'] as const) {
+      const dock = await openOnBorin()
+      dock.setDraft(BORIN, 'Half a thought.')
+      if (cause !== 'mine-removed') dock.close()
+      push([departed(cause)])
+      await flushPromises()
+      expect(dock.drafts.value[BORIN], cause).toBeUndefined()
+      wrapper?.unmount()
+      wrapper = null
+      useMines().stop()
+      useMines().clear()
+    }
+  })
 })
 
 /*
