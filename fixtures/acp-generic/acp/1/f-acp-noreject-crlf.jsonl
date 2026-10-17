@@ -1,0 +1,6 @@
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false,"embeddedContext":true},"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"synthetic-acp-agent","version":"0.0.0-synthetic"},"authMethods":[]}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"00000000-0000-4000-8000-00000000ac01"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"00000000-0000-4000-8000-00000000ac01","update":{"sessionUpdate":"tool_call","toolCallId":"tool_000000000000000000000131","name":"edit_file","title":"write notes.md","kind":"edit","status":"pending"}}}
+{"jsonrpc":"2.0","id":131,"method":"session/request_permission","params":{"sessionId":"00000000-0000-4000-8000-00000000ac01","toolCall":{"toolCallId":"tool_000000000000000000000131","name":"edit_file","title":"write notes.md","kind":"edit"},"options":[{"optionId":"always","name":"Always allow","kind":"allow_always"},{"optionId":"never","name":"Always reject","kind":"reject_always"}]}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"00000000-0000-4000-8000-00000000ac01","update":{"sessionUpdate":"tool_call_update","toolCallId":"tool_000000000000000000000131","status":"failed"}}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}
