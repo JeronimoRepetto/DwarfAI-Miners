@@ -23,7 +23,7 @@ const fixedWeight: SourceWeightScanner = { measure: () => Promise.resolve({ byte
 
 /** The observed-Claude Host whose boot step 6 listens on a real 127.0.0.1 port. */
 function observedClaude() {
-  return observedAskingClaude({ scanner: fixedWeight, listen: true, database: 'migrated-here' })
+  return observedAskingClaude({ scanner: fixedWeight, listen: true })
 }
 
 describe('the hook ingress started at boot step 6 (ISSUE-140)', () => {

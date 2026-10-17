@@ -779,6 +779,16 @@ function submit(): void {
 }
 
 /*
+ * A card's submit is a send (US-MSG-009.AC04, US-ASK-006.AC05; ISSUE-260): the "Answers:" record,
+ * or the message sent under "Other thing…", takes the place of whatever the composer held, so the
+ * draft is cleared as an ordinary Send clears it and the composer that comes back is empty. The
+ * `draft` watch reports the empty text to the host that keeps the draft.
+ */
+function sentFromCard(): void {
+  message.value = ''
+}
+
+/*
  * The composer's own element, for the keyboard (composerRef): the composer is a component now, and
  * the focus code reads the element it draws.
  */
@@ -1155,8 +1165,8 @@ async function resetName(): Promise<void> {
         :permission="shownAsk.permission"
         :name="displayName"
         :answer-state="answerState"
-        @decide="emit('decide', $event)"
-        @send-text="emit('send', $event)"
+        @decide="(sentFromCard(), emit('decide', $event))"
+        @send-text="(sentFromCard(), emit('send', $event))"
         @open-console="emit('open-console')"
       />
       <DwarfQuestionCard
@@ -1166,9 +1176,9 @@ async function resetName(): Promise<void> {
         :at="shownAsk.at"
         :name="displayName"
         :answer-state="answerState"
-        @answer="emit('answer', $event)"
-        @answer-text="emit('answer-text', $event)"
-        @send-text="emit('send', $event)"
+        @answer="(sentFromCard(), emit('answer', $event))"
+        @answer-text="(sentFromCard(), emit('answer-text', $event))"
+        @send-text="(sentFromCard(), emit('send', $event))"
         @open-console="emit('open-console')"
       />
       <!--

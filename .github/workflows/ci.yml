@@ -149,11 +149,13 @@ jobs:
       # via `allowBuilds` conventions and the committed lockfile) — its own
       # docs say to use pnpm/setup instead for v11+. pnpm/setup also installs
       # the pinned Node.js runtime in the same step, so a separate
-      # actions/setup-node step is not needed.
+      # actions/setup-node step is not needed. `version` is exact, never a
+      # floating major (AGENTS §0.2): every job runs the pnpm the maintainer
+      # runs locally; ci-lanes.test.mjs checks it.
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
@@ -374,7 +376,7 @@ jobs:
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
@@ -420,7 +422,7 @@ jobs:
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
@@ -510,7 +512,7 @@ jobs:
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
@@ -555,7 +557,7 @@ jobs:
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
@@ -630,7 +632,7 @@ jobs:
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false

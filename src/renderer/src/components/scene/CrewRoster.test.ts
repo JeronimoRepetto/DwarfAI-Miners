@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultDwarf } from '../../testing/factories'
@@ -171,5 +173,91 @@ describe('CrewRoster, arrivals and departures (ISSUE-255)', () => {
     // A departure: walking out, still on the board, and its portrait already dropped.
     await wrapper.setProps({ dwarfs: [borin, { ...dain, status: 'leaving' }] })
     expect(ids()).toEqual(['r0'])
+  })
+})
+
+/*
+ * APPENDED for ISSUE-254: the roster as US-MINE-004 and US-MINE-005 read it. The row's never
+ * scrolling is the stylesheet's (`overflow: hidden`, crew-roster.css rule for rule), read from the
+ * component's own rules.
+ */
+describe('CrewRoster, the mine column (ISSUE-254)', () => {
+  const SFC = readFileSync(join(import.meta.dirname, 'CrewRoster.vue'), 'utf8')
+  const hints = (): string[] =>
+    [...document.body.querySelectorAll('.dm-menu__item .dm-menu__hint')].map(
+      (hint) => hint.textContent ?? ''
+    )
+
+  it('[US-MINE-004.AC01, US-MINE-004.AC02, US-MINE-004.AC06] five dwarfs or fewer get portraits; six or more show four portraits and a +n button named n more dwarfs, and the row never scrolls', () => {
+    for (const count of [1, 2, 3, 4, 5]) {
+      const wrapper = mount(CrewRoster, { props: { dwarfs: crew(count) } })
+      expect(wrapper.findAll('button.dm-portrait'), String(count)).toHaveLength(count)
+      expect(wrapper.find('.dm-roster__more').exists(), String(count)).toBe(false)
+      wrapper.unmount()
+    }
+    for (const count of [6, 9, 30]) {
+      const wrapper = mount(CrewRoster, { props: { dwarfs: crew(count) } })
+      expect(wrapper.findAll('button.dm-portrait'), String(count)).toHaveLength(4)
+      const more = wrapper.findAll('button.dm-roster__more')
+      expect(more).toHaveLength(1)
+      expect(more[0]!.text()).toBe('+' + (count - 4))
+      expect(more[0]!.attributes('aria-label')).toBe(count - 4 + ' more dwarfs')
+      wrapper.unmount()
+    }
+    expect(SFC).toMatch(/\.dm-roster \{[^}]*overflow: hidden;[^}]*\}/)
+    expect(SFC).not.toMatch(/overflow(-x)?: (auto|scroll)/)
+  })
+
+  it('[US-MINE-004.AC03, US-MINE-004.AC04, US-MINE-004.AC05] a +N item opens that dwarf’s chat, Tab closes the menu and the hints use only working, idle or asleep', async () => {
+    const rest = [
+      defaultDwarf({ id: 'z', name: 'sleepy', status: 'waiting' }),
+      defaultDwarf({ id: 'w', name: 'busy', status: 'working' }),
+      defaultDwarf({ id: 'q', name: 'asks', status: 'waiting', waitingReason: 'approval' })
+    ]
+    const dwarfs = [...crew(4), ...rest]
+    const wrapper = mount(CrewRoster, { props: { dwarfs }, attachTo: document.body })
+    const more = wrapper.find('button.dm-roster__more')
+
+    await more.trigger('click')
+    await wrapper.vm.$nextTick()
+    // The raw word for a dwarf that is not asking, "?" for one that is, and never "done".
+    expect(hints()).toEqual(['asleep', 'working', '?'])
+    for (const hint of hints().filter((word) => word !== '?')) {
+      expect(['working', 'idle', 'asleep']).toContain(hint)
+    }
+
+    // Tab closes it.
+    document.body
+      .querySelector('.dm-menu')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(document.body.querySelector('.dm-menu__item')).toBeNull()
+    expect(more.attributes('aria-expanded')).toBe('false')
+
+    // An item does what pressing that dwarf's portrait does: the column selects it and opens it.
+    await more.trigger('click')
+    await wrapper.vm.$nextTick()
+    ;(document.body.querySelectorAll('.dm-menu__item')[1] as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('button.dm-portrait')[0]!.trigger('click')
+    expect(wrapper.emitted('pick')).toEqual([[rest[1]], [dwarfs[0]]])
+  })
+
+  it('[US-MINE-005.AC01, US-MINE-005.AC02, US-MINE-005.AC03] with no present dwarf the roster reads No dwarfs here yet. and an arriving dwarf replaces the empty state', async () => {
+    const wrapper = mount(CrewRoster, { props: { dwarfs: [] } })
+    expect(wrapper.find('.dm-roster').text()).toBe('No dwarfs here yet.')
+    expect(wrapper.find('button').exists()).toBe(false)
+
+    const arrived = defaultDwarf({ id: 'n1', name: 'newcomer', status: 'working' })
+    await wrapper.setProps({ dwarfs: [arrived] })
+    expect(wrapper.find('.dm-roster__empty').exists()).toBe(false)
+    expect(wrapper.findAll('button.dm-portrait').map((p) => p.attributes('data-dwarf'))).toEqual([
+      'n1'
+    ])
+
+    // Everyone has left since: the roster shows who is here, not who was, so it is empty again.
+    await wrapper.setProps({ dwarfs: [{ ...arrived, status: 'leaving' }] })
+    expect(wrapper.find('.dm-roster').text()).toBe('No dwarfs here yet.')
+    expect(wrapper.find('button').exists()).toBe(false)
   })
 })

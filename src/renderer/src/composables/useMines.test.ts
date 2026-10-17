@@ -23,6 +23,8 @@ import {
   refusalLine,
   sessionClosed
 } from '../lib/delivery/actionBar'
+import { dwarfTip } from '../lib/dwarf/dwarfTip'
+import { sceneDwarfStatus } from '../lib/scene/sceneDwarf'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../testing/factories'
 import { useMines, type BoardWalk } from './useMines'
 import { useToasts } from './useToasts'
@@ -593,5 +595,40 @@ describe('useMines from the Host read model', () => {
         { kind: 'walk-out', dwarfId: BORIN, mineId: ALPHA, cause: 'stopped', panel: 'read-only' }
       ])
     })
+  })
+
+  /*
+   * APPENDED for ISSUE-254: the Host's status reaches the scene as the Host said it. Today's board has
+   * one `waiting` for asking, idle and asleep alike, so the Host's own word rides on the board dwarf
+   * and the scene reads it first: a Host-idle dwarf is "Waiting", never drawn asleep.
+   */
+  it('[US-OBS-002.AC05, US-OBS-004.AC11, ADR-033] a Host-idle dwarf reads Waiting, not asleep, and every Host status is drawn as the Host said it', async () => {
+    const CALLED = {
+      idle: '01920000-0000-7000-8000-00000000d011',
+      asleep: '01920000-0000-7000-8000-00000000d012',
+      asking: '01920000-0000-7000-8000-00000000d013',
+      working: '01920000-0000-7000-8000-00000000d014'
+    } as const
+    installHost([
+      page(
+        3,
+        [mineWire()],
+        (Object.keys(CALLED) as Array<keyof typeof CALLED>).map((status) =>
+          dwarfWire(CALLED[status] as DwarfId, { status, needsYou: status === 'asking' })
+        )
+      )
+    ])
+    await useMines().start()
+    await settle()
+    const drawn = boardDwarfs().map((dwarf) => ({
+      scene: sceneDwarfStatus(dwarf),
+      tip: dwarfTip(dwarf).statusText
+    }))
+    expect(drawn).toEqual([
+      { scene: 'idle', tip: 'Waiting' },
+      { scene: 'asleep', tip: 'asleep' },
+      { scene: 'asking', tip: 'needs you' },
+      { scene: 'working', tip: 'working' }
+    ])
   })
 })

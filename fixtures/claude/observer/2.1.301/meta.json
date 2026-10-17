@@ -1,0 +1,13 @@
+{
+  "providerVersion": "2.1.301",
+  "capturedAt": "2026-10-17T00:00:00.000Z",
+  "capturedBy": "maintainer",
+  "os": "win32",
+  "scrubbed": true,
+  "capabilities": {
+    "observe": true,
+    "consoleRelayEcho": "normalizeConsoleText",
+    "transcriptRecordForRelay": "string content, promptSource typed",
+    "stopHookOncePerTurn": true
+  }
+}

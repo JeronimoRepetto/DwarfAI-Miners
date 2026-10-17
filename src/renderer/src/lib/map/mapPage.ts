@@ -46,8 +46,14 @@ export interface MapMarkerView {
   y: number
 }
 
+/**
+ * A marker's accessible name: "<name>, <Tier>", with ", needs you" added when a dwarf there needs
+ * the person, or "<Tier> mine" for a mine with no name of its own (US-MAP-002.AC06, AC07).
+ */
 export function mapMarkerLabel(name: string, tier: MineTier, asking: boolean): string {
-  return name + ', ' + designTierLabel(tier) + (asking ? ', needs you' : '')
+  const named =
+    name.trim() === '' ? designTierLabel(tier) + ' mine' : name + ', ' + designTierLabel(tier)
+  return named + (asking ? ', needs you' : '')
 }
 
 // Spawn points by their own id: the id is what the store persists, the array order only a drawing
@@ -108,12 +114,20 @@ export interface MineTip {
  * there waits on you (PANEL-QUESTIONS 11, design lead ruling 2026-09-27). "Dwarfs working" counts
  * only the dwarfs whose status is working; one that needs you is counted in its own row and never
  * in both, as the mine card's crew line counts it. Asleep and leaving dwarfs are in neither.
+ * A measuring mine adds "Measuring…" and one that cannot be entered "Not enterable", in that order
+ * and after those rows (organisms/map-page, tipFor).
  */
-export function mineTip(mine: Mine, facts: { notEnterable?: boolean } = {}): MineTip {
+export function mineTip(
+  mine: Mine,
+  facts: { notEnterable?: boolean; measuring?: boolean } = {}
+): MineTip {
   const needs = mine.dwarfs.filter(dwarfNeedsYou).length
   const working = mine.dwarfs.filter((d) => d.status === 'working' && !dwarfNeedsYou(d)).length
   const rows: TipRow[] = [{ label: 'Dwarfs working', value: String(working) }]
-  if (needs > 0) rows.push({ label: 'Needs you', value: String(needs) })
+  if (needs > 0) rows.push({ label: 'Needs you', value: String(needs), tone: 'brass' })
+  // A mine being measured (screens/map.md: 'A measuring mine adds "Measuring…"'), beside the rows
+  // above and never instead of them.
+  if (facts.measuring) rows.push({ label: 'Measuring…', value: '' })
   // A mine whose folder no longer exists (PANEL-QUESTIONS 6; screens/map.md).
   if (facts.notEnterable) rows.push({ label: 'Not enterable', value: '', tone: 'warn' })
   return { tier: mine.tier, title: mine.name, rows }

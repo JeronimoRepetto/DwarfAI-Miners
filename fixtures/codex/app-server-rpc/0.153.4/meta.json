@@ -1,0 +1,16 @@
+{
+  "providerVersion": "0.153.4",
+  "capturedAt": "2026-10-17T00:00:00.000Z",
+  "capturedBy": "maintainer",
+  "os": "win32",
+  "scrubbed": true,
+  "capabilities": {
+    "driver": "app-server-rpc",
+    "mcpInjectionArgvClean": true,
+    "mcpChildEnv": "allowlist",
+    "daemonLifecycleOnWindows": false,
+    "adopt": false,
+    "socketListenerReattachObserved": true,
+    "secondClientIsWriter": true
+  }
+}

@@ -517,6 +517,14 @@ const rootStyle = computed(() => ({
     animation: none;
     opacity: 0.55;
   }
+  /*
+   * The "z" stops bobbing and stays drawn, as the "?" does from design-tokens.css (motion.md,
+   * Reduced motion: the bobbing "?" and "z" stop; US-SHELL-011.AC02). The pinned dwarf.css lists
+   * only the "?", so the stop for the "z" is the Panel's own.
+   */
+  .dm-dwarf__z {
+    animation: none;
+  }
 }
 /* The tooltip's entry and exit (motion.md, Overlays): transform and opacity only. */
 .dm-tip-pop-enter-active {

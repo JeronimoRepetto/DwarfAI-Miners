@@ -1,0 +1,23 @@
+{
+  "c1Upgraded": true,
+  "c1Init": "ok",
+  "threadStarted": true,
+  "c3UpgradedWhileC1Connected": true,
+  "c3Init": "ok",
+  "c3ResumeWhileC1Connected": {
+    "code": -32600,
+    "message": "no rollout found for thread id <thread-id>"
+  },
+  "serverAliveAfterC1Gone": true,
+  "c3UpgradedAfterC1Gone": "n/a",
+  "c2Upgraded": true,
+  "c2Init": "ok",
+  "loadedListHasThread": true,
+  "c2Resume": {
+    "code": -32600,
+    "message": "no rollout found for thread id <thread-id>"
+  },
+  "turnCompletedOnAdopter": false,
+  "adopterText": [],
+  "serverSamePidAlive": true
+}

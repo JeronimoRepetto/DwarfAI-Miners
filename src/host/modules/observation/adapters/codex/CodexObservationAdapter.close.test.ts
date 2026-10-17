@@ -4,6 +4,10 @@
 // the person archives it; a closed thread resumed under its own id is a new dwarf (owner decision B,
 // as 07 S4.41). Synthetic rollouts in a per-test temp `CODEX_HOME` (17 §5.3), the kernel's
 // FakeProcessControl for the listing, a FakeClock: no real Codex, no real process.
+//
+// The timing rules run minutes of fake time, one read every 15 s: their rollout lives in the
+// kernel's FakeFs (16 §2.8, the same FileSystem contract as NodeFs), so no case waits on real disk
+// I/O per simulated cycle. The first case and the registry case keep the real NodeFs end to end.
 import { realpathSync } from 'node:fs'
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,11 +15,13 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DwarfId, FolderPath, ProviderIdentity } from '../../../../kernel/domain/values'
 import { FakeClock } from '../../../../kernel/fakes/FakeClock'
+import { FakeFs } from '../../../../kernel/fakes/FakeFs'
 import { FakeProcessControl } from '../../../../kernel/fakes/FakeProcessControl'
 import { FakeScheduler } from '../../../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../../../kernel/fakes/RecordingDiagnosticsLog'
 import { RecordingEventBus } from '../../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../../kernel/fakes/SequenceIdGenerator'
+import type { FileSystem } from '../../../../kernel/ports/fileSystem'
 import { NodeFs } from '../../../../platform/fs/NodeFs'
 import { NodeSqliteDatabase } from '../../../../platform/sqlite/NodeSqliteDatabase'
 import { openReadOnlySnapshot } from '../../../../platform/sqlite/readOnlySnapshot'
@@ -29,6 +35,7 @@ import { RecordingObservedBatchSink } from '../../ports/fakes/RecordingObservedB
 import type { Cursor, ObservedEvent, SourceFile } from '../../ports/observationAdapter'
 import { InMemoryBoundDwarfs } from '../../testing/inMemoryBoundDwarfs'
 import { InMemoryTransactions } from '../../testing/inMemoryTransactions'
+import type { FileIdentifier } from '../base/fileIdentity'
 import { resumedSessionIdOf } from '../base/generations'
 import {
   PROCESS_GONE_CONFIRM_MS,
@@ -71,16 +78,53 @@ const dwarf = (at: number, n: number) =>
     content: [{ type: 'output_text', text: `Answer ${n}.` }]
   })
 
-/** A `CODEX_HOME` with one rollout holding `lines`, and optionally a thread registry. */
+/** A `CODEX_HOME`, its rollout, and the file system that holds the rollout. */
+interface CodexHome {
+  home: string
+  rollout: string
+  fs: FileSystem
+  /** How the adapter identifies a file of `fs`; absent for the real disk (`nodeFileIdentity`). */
+  identify?: FileIdentifier
+  /** Appends `text` to the rollout, as Codex does. */
+  append(text: string): Promise<void>
+}
+
+/**
+ * A `CODEX_HOME` with one rollout holding `lines`, and optionally a thread registry (a real SQLite
+ * file, so only on the real disk). On `disk: 'fake'` the rollout lives in a FakeFs at the same path:
+ * the home's `sessions` root still exists on disk, since the adapter resolves its roots there.
+ */
 async function codexHome(
   lines: string,
-  threads: Array<{ id: string; archived: 0 | 1 }> = []
-): Promise<{ home: string; rollout: string }> {
+  threads: Array<{ id: string; archived: 0 | 1 }> = [],
+  disk: 'node' | 'fake' = 'fake'
+): Promise<CodexHome> {
   const home = realpathSync.native(await mkdtemp(join(tmpdir(), 'dwarfai-codex-close-')))
   temps.push(home)
+  await mkdir(join(home, 'sessions'), { recursive: true })
   const folder = join(home, 'sessions', '2026', '09', '30')
-  await mkdir(folder, { recursive: true })
   const rollout = join(folder, `rollout-2026-09-30T13-00-00-${THREAD}.jsonl`)
+  if (disk === 'fake') {
+    if (threads.length > 0) throw new Error('a thread registry needs the real disk')
+    const fs = new FakeFs()
+    fs.addFile(rollout, lines)
+    const identify: FileIdentifier = async (path) => {
+      const info = await fs.stat(path)
+      if (info === null || info.isDirectory) return null
+      return { canonicalPath: path, fileIdentity: `path:${path}`, size: info.size }
+    }
+    return {
+      home,
+      rollout,
+      fs,
+      identify,
+      append: async (text) => {
+        const appended = await fs.appendFile(rollout, text)
+        if (!appended.ok) throw new Error(`append failed: ${appended.error}`)
+      }
+    }
+  }
+  await mkdir(folder, { recursive: true })
   await writeFile(rollout, lines)
   if (threads.length > 0) {
     const db = NodeSqliteDatabase.open(join(home, 'state_5.sqlite'))
@@ -94,28 +138,29 @@ async function codexHome(
     }
     db.close()
   }
-  return { home, rollout }
+  return { home, rollout, fs: new NodeFs(), append: (text) => appendFile(rollout, text) }
 }
 
-function codexWorld(home: string, options: { ended?: Pick<EndedAgentLedger, 'has'> } = {}) {
+function codexWorld(at: CodexHome, options: { ended?: Pick<EndedAgentLedger, 'has'> } = {}) {
   const clock = new FakeClock(T0 + 10 * S)
   const processes = new FakeProcessControl()
   const listing = new SharedProcessListing({ processes, stems: CODEX_PROCESS_STEMS, clock })
   const adapter = new CodexObservationAdapter({
     providerId: 'codex',
-    codexHome: home,
+    codexHome: at.home,
     claimedRoots: [],
-    fs: new NodeFs(),
+    fs: at.fs,
     clock,
     openSnapshot: openReadOnlySnapshot,
     processWatch: watchOver(listing, clock),
+    ...(at.identify === undefined ? {} : { identify: at.identify }),
     ...(options.ended === undefined ? {} : { ended: options.ended })
   })
   const cursors = new Map<string, Cursor>()
   /** One read of every source from its cursor, the listing it asked for then finished. */
   const cycle = async (): Promise<ObservedEvent[]> => {
     const events: ObservedEvent[] = []
-    for (const source of await adapter.discover(new NodeFs())) {
+    for (const source of await adapter.discover(at.fs)) {
       const read = await adapter.read(source, cursors.get(source.streamId) ?? null)
       cursors.set(source.streamId, read.next)
       events.push(...read.events)
@@ -152,8 +197,11 @@ function watchOver(listing: SharedProcessListing, clock: FakeClock): ProcessGone
 describe('CodexObservationAdapter closing (owner amendment I)', () => {
   it('[FM-059, US-OBS-005.AC02] a rollout first read long after its last record is quiet since that record: it closes within one confirmation of first sight', async () => {
     const HOURS_AGO = T0 - 2 * 3_600 * S
-    const { home } = await codexHome(
-      meta(HOURS_AGO) + person(HOURS_AGO + S, 1) + dwarf(HOURS_AGO + 2 * S, 1)
+    // The real-NodeFs case of the timing rules: few cycles, each one through the real disk.
+    const home = await codexHome(
+      meta(HOURS_AGO) + person(HOURS_AGO + S, 1) + dwarf(HOURS_AGO + 2 * S, 1),
+      [],
+      'node'
     )
     const { cycle, runFor } = codexWorld(home)
     expect((await cycle()).filter((e) => e.kind === 'closed')).toEqual([])
@@ -163,7 +211,7 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
   })
 
   it('[FM-059, S4.33, INV-26] a quiet Codex session closes once two listings 30 s apart show no Codex process in its folder, never before 300 s of quiet', async () => {
-    const { home } = await codexHome(meta(T0) + person(T0 + S, 1) + dwarf(T0 + 2 * S, 1))
+    const home = await codexHome(meta(T0) + person(T0 + S, 1) + dwarf(T0 + 2 * S, 1))
     const { cycle, runFor } = codexWorld(home)
     expect((await cycle()).filter((e) => e.kind === 'closed')).toEqual([])
 
@@ -180,7 +228,7 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
   })
 
   it('[FM-059] a Codex process in the session folder keeps the session; one in another folder does not', async () => {
-    const { home } = await codexHome(meta(T0) + person(T0 + S, 1))
+    const home = await codexHome(meta(T0) + person(T0 + S, 1))
     const kept = codexWorld(home)
     kept.processes.scriptProcess({ stem: 'codex', cwd: CWD.toLowerCase() + '\\' })
     kept.processes.scriptProcess({ stem: 'codex', cwd: 'C:\\Users\\j\\Other' })
@@ -194,7 +242,7 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
   })
 
   it('[FM-059, INV-26] an unreadable process listing never closes a Codex session', async () => {
-    const { home } = await codexHome(meta(T0) + person(T0 + S, 1))
+    const home = await codexHome(meta(T0) + person(T0 + S, 1))
     const { processes, cycle, runFor } = codexWorld(home)
     processes.scriptListing('unreadable')
     await cycle()
@@ -203,21 +251,25 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
   })
 
   it('[FM-059] rollout growth is activity: a session that keeps writing never closes, whatever the listing says', async () => {
-    const { home, rollout } = await codexHome(meta(T0) + person(T0 + S, 1))
+    const home = await codexHome(meta(T0) + person(T0 + S, 1))
     const { cycle, runFor, clock } = codexWorld(home)
     await cycle()
     for (let n = 2; n < 12; n++) {
       expect(await runFor(240 * S)).toEqual([])
-      await appendFile(rollout, dwarf(clock.now(), n))
+      await home.append(dwarf(clock.now(), n))
     }
   })
 
   it('[FM-059] an archived Codex thread closes at once, from its rollout and from the registry alone', async () => {
     const other = '01a0b000-0000-7000-8000-0000000009b2'
-    const { home } = await codexHome(meta(T0) + person(T0 + S, 1), [
-      { id: THREAD, archived: 1 },
-      { id: other, archived: 1 }
-    ])
+    const home = await codexHome(
+      meta(T0) + person(T0 + S, 1),
+      [
+        { id: THREAD, archived: 1 },
+        { id: other, archived: 1 }
+      ],
+      'node'
+    )
     const { cycle } = codexWorld(home)
 
     const closed = (await cycle()).filter((e) => e.kind === 'closed')
@@ -236,9 +288,7 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
 
   it('[S4.41, FM-145, INV-36, ADR-015] a closed Codex thread resumed under its own id arrives as a new dwarf, the closed identity gets nothing, and a Host restart derives the same identity', async () => {
     const first = T0
-    const { home, rollout } = await codexHome(
-      meta(first) + person(first + S, 1) + dwarf(first + 2 * S, 1)
-    )
+    const disk = await codexHome(meta(first) + person(first + S, 1) + dwarf(first + 2 * S, 1))
     const clock = new FakeClock(T0 + 10 * S)
     const scheduler = new FakeScheduler(clock)
     const transactions = new InMemoryTransactions()
@@ -254,19 +304,20 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
       const listing = new SharedProcessListing({ processes, stems: CODEX_PROCESS_STEMS, clock })
       const adapter = new CodexObservationAdapter({
         providerId: 'codex',
-        codexHome: home,
+        codexHome: disk.home,
         claimedRoots: [],
-        fs: new NodeFs(),
+        fs: disk.fs,
         clock,
         openSnapshot: openReadOnlySnapshot,
         processWatch: watchOver(listing, clock),
+        ...(disk.identify === undefined ? {} : { identify: disk.identify }),
         ended
       })
       return {
         adapter,
         loop: new ObservationLoop({
           adapters: [adapter],
-          fs: new NodeFs(),
+          fs: disk.fs,
           cursors,
           sessions,
           sink,
@@ -308,7 +359,7 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
 
     // S4.40 / INV-36: a late write of the closed run (no quiet gap before it) stays the closed
     // thread's, which the ledger keeps from arriving or writing again.
-    await appendFile(rollout, dwarf(first + 62 * S, 9))
+    await disk.append(dwarf(first + 62 * S, 9))
     await poll()
     await poll()
     expect(observed()).toEqual([base])
@@ -320,7 +371,7 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
       providerId: 'codex',
       providerSessionId: resumedSessionIdOf(THREAD, resumedAt)
     }
-    await appendFile(rollout, person(resumedAt, 2) + dwarf(resumedAt + S, 2))
+    await disk.append(person(resumedAt, 2) + dwarf(resumedAt + S, 2))
     await poll()
     expect(observed()).toEqual([base, resumed])
     const secondDwarf = dwarfs.bind(resumed, CWD as FolderPath, T0)
@@ -338,7 +389,7 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
     ;({ loop } = loopOver())
     loop.start()
     await loop.whenIdle()
-    await appendFile(rollout, dwarf(resumedAt + 60 * S, 3))
+    await disk.append(dwarf(resumedAt + 60 * S, 3))
     await poll()
     await poll()
     expect(observed()).toEqual([base, resumed])
@@ -352,7 +403,7 @@ describe('CodexObservationAdapter closing (owner amendment I)', () => {
 
     // Replayed from the start after a restart, every record keeps its key and its generation.
     const fresh = loopOver().adapter
-    const [source] = (await fresh.discover(new NodeFs())) as [SourceFile]
+    const [source] = (await fresh.discover(disk.fs)) as [SourceFile]
     const replay = await fresh.read(source, null)
     const replayed = replay.events.flatMap((e) =>
       e.kind === 'entries' ? e.entries.map(() => e.identity.providerSessionId) : []
