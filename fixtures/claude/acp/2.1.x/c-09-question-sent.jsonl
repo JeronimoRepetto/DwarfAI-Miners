@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":{}}}}}
+{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"<REPO>","mcpServers":[],"_meta":{"claudeCode":{"options":{"settingSources":[],"strictMcpConfig":true,"allowDangerouslySkipPermissions":false}}}}}
+{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"00000000-0000-4000-8000-000000000001","prompt":[{"type":"text","text":"Use the AskUserQuestion tool to ask me one question, \"Pick a colour\", with exactly two options, \"Red\" and \"Blue\". After I answer, reply with the chosen option and nothing else. If you cannot use that tool, reply with the single word unavailable."}]}}
+{"jsonrpc":"2.0","id":0,"result":{"action":"accept","content":{"question_0":"Red"}}}

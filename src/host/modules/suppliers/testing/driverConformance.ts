@@ -98,6 +98,13 @@ export interface ConformanceOptions {
   readonly ceiling: CapabilityCeiling | ProviderCapabilities
   /** The install every launch names (ADR-008 item 1: the only executable it may spawn). */
   readonly install: InstalledProvider
+  /**
+   * The executable adapters the person installed that the driver resolved through the same
+   * resolver as `install` (ADR-009 D5 (a); 15 §2.4: `claude-agent-acp` is always user-installed).
+   * C-02 accepts a spawn of one of these besides the install; any other path, a bundled one
+   * above all, still fails (ADR-008 item 1 and Verification).
+   */
+  readonly userAdapters?: readonly string[]
   /** Cases the driver's capabilities make inapplicable, each with its reason. */
   readonly cases?: Partial<Record<CaseId, { readonly inapplicable: string }>>
   /**
@@ -772,7 +779,7 @@ function needsSpawn(run: Run, id: CaseId): string[] {
 
 const LAUNCH: ScriptStep = { do: 'launch' }
 
-/** C-02 (ADR-008 item 1 and Verification): ENOENT is not-installed; only the install is spawned. */
+/** C-02 (ADR-008 item 1 and Verification): ENOENT is not-installed; only the install (or a declared user-installed adapter) is spawned. */
 async function notInstalled(context: CaseContext): Promise<string[]> {
   const enoent = await overScript(
     context,
@@ -788,10 +795,11 @@ async function notInstalled(context: CaseContext): Promise<string[]> {
   )
   const own = await overLaunch(context, [], {}, (run) => {
     const binary = context.options.install.binaryPath
+    const allowed = new Set([binary, ...(context.options.userAdapters ?? [])])
     return [
       ...needsSpawn(run, 'C-02'),
       ...run.spawn.spawns
-        .filter((spawn) => spawn.executable !== binary)
+        .filter((spawn) => !allowed.has(spawn.executable))
         .map((spawn) => `spawned ${spawn.executable}, not the person's install ${binary}`)
     ]
   })
