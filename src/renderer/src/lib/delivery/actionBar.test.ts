@@ -1267,3 +1267,27 @@ describe('kickBlocked', () => {
     }
   })
 })
+
+/*
+ * APPENDED (ISSUE-265): Boost has no "on" state anywhere in the renderer's action model. The entry
+ * the bar still carries is a fixed refusal: no source specifies what an enabled Boost looks like
+ * or does, and BOOST_ENABLED never reaches the renderer (14 §8 I-07).
+ */
+describe('Boost by the guild stories (ISSUE-265)', () => {
+  it('[US-GUILD-003.AC02, BR-19] the action model has no on state for Boost, for any dwarf in any state', () => {
+    const dwarfs: Dwarf[] = [
+      capableDwarf(),
+      capableDwarf({ provider: 'claude', effort: 'xhigh' }),
+      capableDwarf({ provider: 'codex', effort: 'medium' }),
+      capableDwarf({ status: 'working' }),
+      capableDwarf({ status: 'waiting', waitingReason: 'approval' }),
+      defaultDwarf()
+    ]
+    for (const dwarf of dwarfs)
+      for (const state of [IDLE, { kicking: true }] as ActionTransientState[]) {
+        const boost = entryFor('boost', dwarf, state)
+        expect(boost.enabled).toBe(false)
+        expect(boost.hint).toContain(NO_EFFORT_REASON)
+      }
+  })
+})
