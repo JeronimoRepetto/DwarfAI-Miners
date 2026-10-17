@@ -5,7 +5,7 @@
  * `DwarfWire.stopUnavailableReason` (INV-31), read off the board read model; the dwarf leaves the board only on
  * `dwarf.departed` (14 §4.3 rule 6). `useDwarfStopping` replaces `useDwarfKicking`, whose removal belongs to ISSUE-183.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive } from 'vue'
 import { stopDwarfParamsSchema } from '@dwarfai/contracts'
 import type {

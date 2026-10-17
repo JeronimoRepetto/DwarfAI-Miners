@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import type { StopUnavailableReason } from '@dwarfai/contracts'
+import type { DwarfId, StopUnavailableReason } from '@dwarfai/contracts'
 import { mintRequestId } from './requestIds'
 import { useMines } from './useMines'
 
@@ -65,7 +65,10 @@ export function useDwarfStopping(deps: DwarfStoppingDeps = {}) {
     requests.set(dwarfId, { kind: 'request-sent' })
     let next: DwarfStopView = { kind: 'unanswered' }
     try {
-      const result = await window.api.stopDwarf({ dwarfId, requestId: newRequestId() })
+      const result = await window.api.stopDwarf({
+        dwarfId: dwarfId as DwarfId,
+        requestId: newRequestId()
+      })
       if (result.ok) {
         next = result.value.ok ? IDLE : { kind: 'refused', reason: result.value.error }
       }
