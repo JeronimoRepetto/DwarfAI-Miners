@@ -28,7 +28,8 @@ import { createCapabilityProbing } from './application/probe'
 import {
   trackLiveSessions,
   type SessionBindings,
-  type SessionChannels
+  type SessionChannels,
+  type SessionReleases
 } from './application/sessionChannels'
 import type { SuppliersEvent } from './domain/events'
 import { recordsForBuild } from './domain/profile'
@@ -102,7 +103,11 @@ export type {
   UsageObservation
 } from '../../kernel/domain/sharedContracts'
 export type { SupplierCatalogueQueries, SupplierEntry } from './application/catalogue'
-export type { SessionBindings, SessionChannels } from './application/sessionChannels'
+export type {
+  SessionBindings,
+  SessionChannels,
+  SessionReleases
+} from './application/sessionChannels'
 export type {
   SuppliedEvent,
   SuppliedEventDelivery,
@@ -160,6 +165,8 @@ export interface Suppliers {
   readonly sessions: SessionChannels
   /** Launching binds each session to its dwarf (ADR-015 item 7); events wait for it. */
   readonly bindings: SessionBindings
+  /** A launch that failed after its session was handed out releases it unbound (GitHub #1316). */
+  readonly releases: SessionReleases
   /** The registry launching uses; every session its drivers open is reachable through `sessions`. */
   readonly registry: DriverRegistry
 }
@@ -219,6 +226,7 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
     }),
     sessions: tracked.channels,
     bindings: tracked.bindings,
+    releases: tracked.releases,
     registry: tracked.registry
   }
 }
