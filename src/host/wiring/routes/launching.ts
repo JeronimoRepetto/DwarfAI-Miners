@@ -2,13 +2,18 @@
 // B-F19, §4.1 `launches`; ISSUE-162), in two parts, as routes/askingRoutes.ts:
 //
 // - `serveLaunching`, run by the composition root before the boot binds the endpoint: B-M33
-//   `launching.launch`, B-M34 `launching.launchCustom` (ISSUE-165) and the snapshot's `launches`
-//   section, so every `hello.ok` lists them (14 §1.3); the launch frames (`LAUNCHING_FRAMES`) are advertised with the endpoint's frame list.
+//   `launching.launch`, B-M34 `launching.launchCustom` (ISSUE-165), B-M35
+//   `launching.retryRecovery`, B-M36 `launching.dismissRecovery` (ISSUE-174), and the snapshot's
+//   `launches` and `recovery` sections, so every `hello.ok` lists them (14 §1.3); the launch and
+//   report frames (`LAUNCHING_FRAMES`) are advertised with the endpoint's frame list.
 //   They forward to the one instance boot step 4 constructs; until then the dispatcher answers
 //   HOST_NOT_READY (14 §3.3).
 // - `wire`, run by boot step 4 once suppliers, conversation, crew and mines exist: the module over
 //   the SQLite stores (`launches`, `processes`, `launch_records`), the `SessionStarter` bridge over
-//   the suppliers registry (bridges/sessionStarter.ts), and the routes below.
+//   the suppliers registry (bridges/sessionStarter.ts), and the routes below. Its `recover` builds
+//   the Host recovery once crew, suppliers and conversation exist (host/main.ts, boot step 4) and
+//   routes its report (`routeRecovery`, ISSUE-174); until then B-M35 / B-M36 answer `no-report`
+//   and the `recovery` section is null.
 //
 // Routes (05 §4; 08 §0), each through the target module's public API only (R4, R15):
 // - `LaunchRequested` → `launch.changed` with the launch in flight (14 §2.4 B-F18).
@@ -25,6 +30,8 @@
 //   now, then launching's `failureSeen` (`launches.seen_at`, 14 §8 I-03). A failure no UI saw is
 //   never sent later and never listed (PO #65; INV-53; FM-135): it is not put in the replay ring
 //   either, so a window that resumes its subscription gets no frame for it.
+// - `HostRecovered`, `RecoveryRetried`, `RecoveryRetryFailed`, `RecoveryDismissed` → the
+//   `host.recovered` frame and crew's walk-outs (14 §2.4 B-F21; ADR-015 item 5): `routeRecovery`.
 // - `LaunchedSessionCrashed` → `toast {kind: 'session-crashed', dwarfId, launchId}` (14 §2.4
 //   B-F28, §3.6 `HostToast`; PO #62), for `ui`, enqueued before the dwarf's `dwarf.departed` (07
 //   S2.07). Launching never publishes it for a dwarf the current Host recovery covers (05 §4
@@ -76,7 +83,10 @@ import {
   createLaunching,
   type Launching,
   type LaunchingCommands,
-  type LaunchingEvent
+  type LaunchingEvent,
+  type LaunchingRecovery,
+  type LaunchingRecoveryDeps,
+  type RecoveryReportView
 } from '../../modules/launching'
 import { SqliteLaunchRecordStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchRecordStore'
 import { SqliteLaunchStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchStore'
@@ -88,14 +98,21 @@ import type { AttachedConnection } from '../../transport/connectionRegistry'
 import type { FrameAudience } from '../../transport/events/framePublisher'
 import { registerLaunchingLaunch } from '../../transport/methods/launchingLaunch'
 import { registerLaunchingLaunchCustom } from '../../transport/methods/launchingLaunchCustom'
+import { registerLaunchingDismissRecovery } from '../../transport/methods/launchingDismissRecovery'
+import { registerLaunchingRetryRecovery } from '../../transport/methods/launchingRetryRecovery'
 import { registerLaunchesSection, toLaunchWire } from '../../transport/snapshot/launchesSection'
+import {
+  registerRecoverySection,
+  toHostRecoveryReportView
+} from '../../transport/snapshot/recoverySection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { createSessionStarter } from '../bridges/sessionStarter'
 
 /** The frames the launching wiring publishes, for `hello.ok.capabilities` (14 §1.3). */
 export const LAUNCHING_FRAMES: readonly HostFrameName[] = Object.freeze([
   'launch.changed',
-  'launch.failed'
+  'launch.failed',
+  'host.recovered'
 ])
 
 /** Where the launch frames go: the connection registry (transport/connectionRegistry.ts). */
@@ -163,6 +180,65 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
   ]
   return () => {
     for (const stop of stops) stop()
+  }
+}
+
+export interface RecoveryRouteDeps {
+  /** Launching's report events on the Host bus. */
+  events: Pick<DomainEventBus<LaunchingEvent>, 'subscribe'>
+  recovery: Pick<LaunchingRecovery, 'report' | 'view' | 'shown' | 'retryRecovery'>
+  crew: { commands: Pick<CrewCommands, 'sessionClosed'> }
+  frames: LaunchFramePublisher
+}
+
+export interface RoutedRecovery {
+  /** B-M35's command: Retry, then the settled report's frame before the answer (14 §2.4 B-F21). */
+  retryRecovery: LaunchingRecovery['retryRecovery']
+  /** Unsubscribes the routes. */
+  stop(): void
+}
+
+/**
+ * The 05 §4 routes of the Host recovery report (ADR-015 item 5; 08 §0): `HostRecovered` → the one
+ * `host.recovered` frame, to the first `ui` client, which marks it shown (none attached: the
+ * snapshot `recovery` section carries it); `RecoveryRetried` → the frame (`retrying`);
+ * `RecoveryRetryFailed` → crew `sessionClosed('recovery-failed')`, then the frame; `RecoveryDismissed`
+ * → crew `sessionClosed('recovery-dismissed')` per listed dwarf (crew keeps one whose session runs,
+ * S2.19), then the frame (`settled`). A retry that settled re-sends it once more (`settled`). No
+ * route raises a toast or an OS notification (PO #62; ADR-018 D3).
+ */
+export function routeRecovery(deps: RecoveryRouteDeps): RoutedRecovery {
+  const { events, recovery, crew, frames } = deps
+  const publish = (view: RecoveryReportView | null): void => {
+    if (view !== null)
+      frames.publishFrame('host.recovered', { report: toHostRecoveryReportView(view) })
+  }
+  const stops = [
+    events.subscribe('HostRecovered', () => {
+      if (!frames.connections().some((connection) => connection.role === 'ui')) return
+      publish(recovery.report())
+      recovery.shown()
+    }),
+    events.subscribe('RecoveryRetried', () => publish(recovery.view())),
+    events.subscribe('RecoveryRetryFailed', ({ payload }) => {
+      crew.commands.sessionClosed(payload.dwarfId, 'recovery-failed')
+      publish(recovery.view())
+    }),
+    events.subscribe('RecoveryDismissed', ({ payload }) => {
+      for (const dwarfId of payload.dwarfIds)
+        crew.commands.sessionClosed(dwarfId, 'recovery-dismissed')
+      publish(recovery.view())
+    })
+  ]
+  return {
+    retryRecovery: async (hostEpoch, requestId) => {
+      const result = await recovery.retryRecovery(hostEpoch, requestId)
+      if (result.ok) publish(result.value)
+      return result
+    },
+    stop: () => {
+      for (const stop of stops) stop()
+    }
   }
 }
 
@@ -260,8 +336,21 @@ export interface LaunchingWiringDeps {
 
 export interface WiredLaunching {
   readonly launching: Launching
+  /**
+   * Builds the Host recovery (ISSUE-173; `Launching.recovery`) once, and routes its report
+   * (`routeRecovery`, ISSUE-174): B-M35, B-M36 and the `recovery` section serve it from then on.
+   */
+  recover(deps: LaunchingRecoveryDeps): LaunchingRecovery
+  /** The routed Host recovery, once `recover` ran. */
+  readonly recovery: RoutedLaunchingRecovery | null
   /** Unsubscribes the routes (the clean exit). */
   stop(): void
+}
+
+/** The Host recovery with its routed Retry (the settled report's frame before the answer). */
+export interface RoutedLaunchingRecovery {
+  readonly recovery: LaunchingRecovery
+  readonly routed: RoutedRecovery
 }
 
 export interface ServedLaunching {
@@ -284,6 +373,24 @@ export function serveLaunching(serve: LaunchingServeDeps): ServedLaunching {
   registerLaunchesSection(serve.sections, {
     launches: { snapshot: () => current().launching.snapshots.snapshot() }
   })
+  const recovered = (): RoutedLaunchingRecovery | null => served?.recovery ?? null
+  registerLaunchingRetryRecovery(serve.dispatcher, {
+    recovery: {
+      retryRecovery: (hostEpoch, requestId) =>
+        recovered()?.routed.retryRecovery(hostEpoch, requestId) ??
+        Promise.resolve({ ok: false, error: 'no-report' })
+    }
+  })
+  registerLaunchingDismissRecovery(serve.dispatcher, {
+    recovery: {
+      dismissRecovery: (hostEpoch, requestId) =>
+        recovered()?.recovery.dismissRecovery(hostEpoch, requestId) ?? {
+          ok: false,
+          error: 'no-report'
+        }
+    }
+  })
+  registerRecoverySection(serve.sections, { recovery: () => recovered()?.recovery ?? null })
   return {
     wire: (deps) => {
       if (served !== undefined) throw new HostInvariantError('launching is wired once')
@@ -336,8 +443,25 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
     }),
     routeStops({ events: deps.bus, launching, frames: deps.frames })
   ]
+  let recovery: RoutedLaunchingRecovery | null = null
   return {
     launching,
+    recover: (recoveryDeps) => {
+      if (recovery !== null) throw new HostInvariantError('the Host recovery is built once')
+      const built = launching.recovery(recoveryDeps)
+      const routed = routeRecovery({
+        events: deps.bus,
+        recovery: built,
+        crew: { commands: deps.crew },
+        frames: deps.frames
+      })
+      unrouted.push(routed.stop)
+      recovery = { recovery: built, routed }
+      return built
+    },
+    get recovery() {
+      return recovery
+    },
     stop: () => {
       for (const unroute of unrouted) unroute()
     }
