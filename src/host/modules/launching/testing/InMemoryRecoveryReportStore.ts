@@ -21,6 +21,8 @@ interface ReportRow {
   resumed: string[]
   shownAt: Instant | null
   settled: boolean
+  /** 07 S16.09: the next epoch's save replaced it. */
+  superseded: boolean
   items: ItemRow[]
 }
 
@@ -40,6 +42,9 @@ export class InMemoryRecoveryReportStore implements RecoveryReportStore {
 
   save(r: HostRecoveryReport): void {
     this.requireTransaction('save')
+    for (const other of this.rows) {
+      if (other.hostEpoch !== r.hostEpoch && !other.settled) other.superseded = true
+    }
     let row = this.rows.find((candidate) => candidate.hostEpoch === r.hostEpoch)
     if (row === undefined) {
       row = {
@@ -48,6 +53,7 @@ export class InMemoryRecoveryReportStore implements RecoveryReportStore {
         resumed: [],
         shownAt: null,
         settled: false,
+        superseded: false,
         items: []
       }
       this.rows.push(row)
@@ -71,14 +77,15 @@ export class InMemoryRecoveryReportStore implements RecoveryReportStore {
 
   pending(): HostRecoveryReport | null {
     const row = [...this.rows]
-      .filter((candidate) => !candidate.settled)
+      .filter((candidate) => !candidate.settled && !candidate.superseded)
       .sort((x, y) => y.at - x.at)[0]
     if (row === undefined) return null
     return {
       hostEpoch: row.hostEpoch,
       at: row.at,
       resumed: [...row.resumed],
-      unrecovered: [...row.items]
+      unrecovered: row.items
+        .filter((item) => item.retryOutcome === null)
         .sort((x, y) => (x.dwarfId < y.dwarfId ? -1 : x.dwarfId > y.dwarfId ? 1 : 0))
         .map((item) => ({
           dwarfId: item.dwarfId,
@@ -102,7 +109,8 @@ export class InMemoryRecoveryReportStore implements RecoveryReportStore {
     this.requireTransaction('settleItem')
     const row = this.rows.find((candidate) => candidate.hostEpoch === hostEpoch)
     const item = row?.items.find((candidate) => candidate.dwarfId === dwarfId)
-    if (row === undefined || item === undefined || item.retryOutcome !== null) return
+    if (row === undefined || row.superseded || item === undefined || item.retryOutcome !== null)
+      return
     if (outcome === 'dismissed') row.items = row.items.filter((candidate) => candidate !== item)
     else item.retryOutcome = outcome
     row.settled = row.items.every((candidate) => candidate.retryOutcome !== null)
