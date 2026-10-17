@@ -1,0 +1,104 @@
+{
+  "case": "claude:protocol-drift",
+  "description": "HO-33: a session/update kind the pinned protocol does not have is protocol drift, reported once per kind and skipped; a known kind DwarfAI does not show adds nothing; the session continues.",
+  "script": [
+    {
+      "do": "launch"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "error",
+      "cause": {
+        "kind": "protocol-drift",
+        "detail": "session/update dwarfai_new_update"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:1",
+        "role": "dwarf",
+        "text": "Still here.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": [],
+        "_meta": {
+          "claudeCode": {
+            "options": {
+              "allowDangerouslySkipPermissions": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    }
+  ]
+}
