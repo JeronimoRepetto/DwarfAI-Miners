@@ -1,6 +1,7 @@
 import { reactive, shallowRef } from 'vue'
 import {
   HOST_FRAME_SCHEMAS,
+  type Delivery,
   type DwarfId,
   type HostFrame,
   type MessageId,
@@ -16,6 +17,11 @@ import {
   type ReactionWatch
 } from '../lib/delivery/reaction'
 import { rememberRoutes, routeWentAway } from '../lib/delivery/deliveryRoute'
+import {
+  applyDeliveryFrame,
+  deliveryMarksOf,
+  type DeliveryMarks
+} from '../lib/readModel/deliveryMarks'
 import { createReadModel, followHost, type HostFollower } from './readModel'
 import { useHostConnection } from './useHostConnection'
 import { boundEchoes, reconcileEchoes, type MessageEcho } from '../lib/message/echo'
@@ -584,6 +590,71 @@ function hostOldestMessageId(dwarfId: string): MessageId | null {
   return null
 }
 
+/*
+ * THE DELIVERY MARKS FROM THE HOST (ISSUE-179 read side, ISSUE-001 part C; ADR-022 item 1; ADR-033 item 3; 14 §4.1).
+ *
+ * A read model of the snapshot `marks` section and the `message.delivery` frames, driven by `followHost` beside the
+ * chat's. A mark is the Host's phase of one message and changes only on `message.delivery`: no timer, no send answer and
+ * no reaction watch writes it (ADR-033 "never invent a fact"). A snapshot replaces every mark whole.
+ *
+ * Its own follower, so the chat's read path (`startChat`, sections `tails`) stays as the dock calls it. Until A-23 is the
+ * Host's (the step-3a switch, ISSUE-001) the send is today's and the marker is the panel's own verdict above; the switch
+ * starts this model with the chat and draws the marker from it.
+ */
+
+const marks: DeliveryMarks = new Map()
+/** The marks in a reactive mirror, rewritten whenever a snapshot or a batch of frames settled. */
+const hostMarks = shallowRef<ReadonlyMap<MessageId, Delivery>>(new Map())
+
+const marksModel = createReadModel<DeliveryMarks, HostFrame>({
+  state: marks,
+  replace(data) {
+    marks.clear()
+    for (const [messageId, delivery] of data) marks.set(messageId, delivery)
+  },
+  apply: (frame) => applyDeliveryFrame(marks, frame)
+})
+
+let marksFollower: HostFollower | null = null
+
+/** Follows the Host's marks read path (A-N02 first, then A-N01); answers whether the Host now feeds the marks. */
+async function startMarks(): Promise<boolean> {
+  marksFollower ??= followHost(
+    {
+      subscribe: (listener) => window.api.onHostEvent((frames) => listener(frames as HostFrame[])),
+      snapshot: (params) => window.api.getHostSnapshot(params)
+    },
+    {
+      model: marksModel,
+      sections: ['marks'],
+      dataOf: deliveryMarksOf,
+      settled: () => {
+        hostMarks.value = new Map(marks)
+      }
+    }
+  )
+  return marksFollower.start()
+}
+
+/** Stops following the Host's marks and forgets what it held. */
+function stopMarks(): void {
+  marksFollower?.stop()
+  marksFollower = null
+  marksModel.seq = 0
+  marks.clear()
+  hostMarks.value = new Map()
+}
+
+/** The Host's mark of one message, or undefined when it stated none. Reactive. */
+function hostMarkOf(messageId: string): Delivery | undefined {
+  return hostMarks.value.get(messageId as MessageId)
+}
+
+/** Every mark the Host stated for one dwarf's messages. Reactive. */
+function hostMarksOf(dwarfId: string): Delivery[] {
+  return [...hostMarks.value.values()].filter((delivery) => delivery.dwarfId === dwarfId)
+}
+
 export function useDwarfMessaging() {
   function stateFor(dwarfId: string): DwarfSendState | undefined {
     return state.byDwarfId[dwarfId]
@@ -976,6 +1047,10 @@ export function useDwarfMessaging() {
     stopChat,
     hostFeedOf,
     chatFeedOf,
-    hostOldestMessageId
+    hostOldestMessageId,
+    startMarks,
+    stopMarks,
+    hostMarkOf,
+    hostMarksOf
   }
 }
