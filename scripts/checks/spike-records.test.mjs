@@ -178,6 +178,159 @@ function hookRouteAdoptionProblems(text) {
     .concat(['the hook route is adopted but no single route passes all three adoption criteria'])
 }
 
+/**
+ * The `## Results` table of a record body: its header cells and its rows (each a list of trimmed cells), or null
+ * when the record has no Results table.
+ */
+function resultsTable(body) {
+  const results = /^## Results[^\S\r\n]*\r?\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(body)
+  if (!results) return null
+  const cells = (line) =>
+    line
+      .trim()
+      .replace(/^\||\|$/g, '')
+      .split('|')
+      .map((cell) => cell.trim())
+  const lines = results[1].split(/\r?\n/).filter((line) => line.trim().startsWith('|'))
+  if (lines.length < 2) return null
+  const [header, , ...rows] = lines
+  return { headers: cells(header), rows: rows.map(cells) }
+}
+
+/** The index of the first header matching `pattern`, or -1. */
+const column = (table, pattern) => table.headers.findIndex((header) => pattern.test(header))
+
+/**
+ * ADR-013 item 8 (ISSUE-325, TC-325-02): an SP-12 record whose Decision sets `` `<driver>`: `mcpInjection:
+ * 'protocol'` `` must show, in its `## Results` row for that driver, the entry and the credential absent ("no") from
+ * every recorded descendant argv and env. Returns the problems found.
+ */
+function mcpProtocolProblems(text) {
+  const parsed = parseFrontMatter(text)
+  const decision = parsed ? decisionText(parsed.body) : null
+  if (!decision) return []
+  const drivers = [...decision.matchAll(/`([\w-]+)`:\s*`mcpInjection:\s*'protocol'`/g)].map(
+    (match) => match[1]
+  )
+  if (drivers.length === 0) return []
+  const table = resultsTable(parsed.body)
+  if (!table)
+    return drivers.map(
+      (driver) => `${driver} is set to protocol but the record has no ## Results table`
+    )
+  const argv = column(table, /\bargv\b/i)
+  const env = column(table, /\benv\b/i)
+  const problems = []
+  for (const driver of drivers) {
+    const row = table.rows.find((cells) => cells[0].includes(`\`${driver}\``))
+    if (!row) {
+      problems.push(`${driver} is set to protocol but has no recorded row`)
+      continue
+    }
+    if (argv < 0 || !/^no\b/i.test(row[argv] ?? '')) {
+      problems.push(
+        `${driver} is set to protocol but its recorded argv is not free of the entry and the credential`
+      )
+    }
+    if (env < 0 || !/^no\b/i.test(row[env] ?? '')) {
+      problems.push(
+        `${driver} is set to protocol but its recorded env is not free of the entry and the credential`
+      )
+    }
+  }
+  return problems
+}
+
+/** The four SP-07 fixture kinds (`17` §4) and the header each is read from. */
+const CATALOG_FIXTURE_KINDS = [
+  ['launch', /^launch/i],
+  ['permission', /^permission/i],
+  ['questions', /^question/i],
+  ['resume', /^resume/i]
+]
+
+/**
+ * OQ-22 (ISSUE-326, TC-326-01): an SP-07 record whose Decision says "<provider> is admitted to the catalog" must
+ * list, in that provider's `## Results` row, a shown result with a `fixtures/…` path for launch, permission,
+ * questions and resume. Returns the problems found.
+ */
+function catalogAdmissionProblems(text) {
+  const parsed = parseFrontMatter(text)
+  const decision = parsed ? decisionText(parsed.body) : null
+  if (!decision) return []
+  const admitted = [
+    ...decision.matchAll(/([A-Za-z][\w-]*)[^\n]*? is admitted to the catalog\b/g)
+  ].map((match) => match[1])
+  if (admitted.length === 0) return []
+  const table = resultsTable(parsed.body)
+  const problems = []
+  for (const provider of admitted) {
+    const row = table?.rows.find((cells) => cells[0].startsWith(provider))
+    if (!row) {
+      problems.push(`${provider} is admitted to the catalog but has no recorded row`)
+      continue
+    }
+    for (const [kind, header] of CATALOG_FIXTURE_KINDS) {
+      const cell = row[column(table, header)] ?? ''
+      if (!/^shown\b/i.test(cell) || !/`fixtures\/[^`]+`/.test(cell)) {
+        problems.push(`${provider} is admitted to the catalog but lists no ${kind} fixture`)
+      }
+    }
+  }
+  return problems
+}
+
+/** The two OpenCode server kinds of S-011-1 (spike register; ADR-011 item 7). */
+const SERVER_KINDS = ['Host-launched', 'person-run']
+
+/**
+ * ADR-011 items 2, 7 (ISSUE-327, TC-327-01, TC-327-02): an S-011-1 record states, per OpenCode version and for both
+ * server kinds, the plugin load, the loaded signal and the deny result in its `## Results` table, and its Decision
+ * states what `on-verified` means: "written and read back" unless a loaded signal was identified. Returns the
+ * problems found.
+ */
+function onVerifiedProblems(text) {
+  const parsed = parseFrontMatter(text)
+  if (!parsed) return ['no front matter']
+  const table = resultsTable(parsed.body)
+  if (!table) return ['the record has no ## Results table']
+  const load = column(table, /plugin load/i)
+  const signal = column(table, /loaded signal/i)
+  const deny = column(table, /^deny/i)
+  const problems = []
+  const seen = new Map()
+  for (const cells of table.rows) {
+    const [version, kind] = cells[0].split(',').map((part) => part.trim())
+    if (!seen.has(version)) seen.set(version, new Set())
+    seen.get(version).add(kind?.toLowerCase())
+    for (const [name, index] of [
+      ['plugin load', load],
+      ['loaded signal', signal],
+      ['deny result', deny]
+    ]) {
+      if (index < 0 || (cells[index] ?? '') === '') problems.push(`${cells[0]} states no ${name}`)
+    }
+  }
+  for (const [version, kinds] of seen) {
+    for (const kind of SERVER_KINDS) {
+      if (!kinds.has(kind.toLowerCase())) problems.push(`${version} has no ${kind} server kind`)
+    }
+  }
+  const meaning = /`on-verified` means "([^"]+)"/.exec(decisionText(parsed.body) ?? '')
+  if (!meaning) {
+    problems.push('the Decision does not state what on-verified means')
+  } else {
+    const signalFound =
+      signal >= 0 && table.rows.some((cells) => !/^\W*none\b/i.test(cells[signal] ?? ''))
+    if (!signalFound && meaning[1] !== 'written and read back') {
+      problems.push(
+        'no loaded signal was identified, so on-verified must mean written and read back'
+      )
+    }
+  }
+  return problems
+}
+
 const VALID = `---
 id: SP-02
 date: 2026-09-30
@@ -446,6 +599,187 @@ ${decision}
     expect(
       existsSync(path.join(repoRoot, 'spike-results', 'SP-11')),
       'spike-results/SP-11/ holds the raw outputs'
+    ).toBe(true)
+  })
+
+  // ADDED for ISSUE-325 (TC-325-02): ADR-013 item 8, no delegation entry or credential in a recorded argv or env.
+  it("[SP-12, ADR-013] an SP-12 record that sets mcpInjection protocol for a driver shows that driver's recorded argv and env free of the entry and the credential", () => {
+    const record = (argv, env, decision) => `---
+id: SP-12
+date: 2026-10-17
+os: [windows-11]
+versions:
+  codex-cli: 0.153.4
+verdict: passed
+exitCriterion: Per driver, argv/env of the child shown free of the entry and credential
+---
+
+# SP-12
+
+## Results
+
+| Driver                     | Entry or credential in any descendant argv | Entry or credential in any descendant env |
+| -------------------------- | ------------------------------------------ | ----------------------------------------- |
+| Codex \`app-server-rpc\` 0.153.4 | ${argv}                                | ${env}                                    |
+
+## Decision
+
+${decision}
+`
+    const adopted = "- \`app-server-rpc\`: \`mcpInjection: 'protocol'\` (ISSUE-152)."
+    const kept = '- `mcpInjection` stays `ticket-file` for Codex.'
+    const clean = 'no (14 descendants)'
+    const tokenArgv = 'yes: `--mcp-config {"token":"<delegation-token>"}`'
+    const tokenEnv = 'yes: `DWARFAI_MCP_TOKEN` in the relay env'
+
+    expect(mcpProtocolProblems(record(clean, clean, adopted)), 'argv and env clean').toEqual([])
+    expect(
+      mcpProtocolProblems(record(tokenArgv, clean, adopted)).join('\n'),
+      'protocol with a token-bearing argv'
+    ).toMatch(/app-server-rpc[\s\S]*argv/)
+    expect(
+      mcpProtocolProblems(record(clean, tokenEnv, adopted)).join('\n'),
+      'protocol with the entry in the env'
+    ).toMatch(/app-server-rpc[\s\S]*env/)
+    expect(
+      mcpProtocolProblems(record(clean, clean, adopted.replace('app-server-rpc', 'acp'))).join(
+        '\n'
+      ),
+      'protocol for a driver with no recorded row'
+    ).toMatch(/acp/)
+    expect(mcpProtocolProblems(record(tokenArgv, tokenEnv, kept)), 'not adopted').toEqual([])
+
+    const file = path.join(repoRoot, 'spike-results', 'SP-12.md')
+    const text = readFileSync(file, 'utf8')
+    expect(checkSpikeRecord(text, 'SP-12.md'), 'spike-results/SP-12.md').toEqual([])
+    expect(mcpProtocolProblems(text), 'spike-results/SP-12.md follows the rule').toEqual([])
+    expect(
+      existsSync(path.join(repoRoot, 'spike-results', 'SP-12')),
+      'spike-results/SP-12/ holds the raw outputs'
+    ).toBe(true)
+  })
+
+  // ADDED for ISSUE-326 (TC-326-01): OQ-22, a provider joins the catalog only with all four kinds of fixture.
+  it('[SP-07] an SP-07 record that admits a provider to the catalog lists fixtures for launch, permission, questions and resume', () => {
+    const row = (
+      provider,
+      resume,
+      permission = 'shown: `fixtures/kiro/acp/1.0.0/sp07-permission`'
+    ) =>
+      `| ${provider} | shown: \`fixtures/kiro/acp/1.0.0/sp07-launch\` | ${permission} | shown: \`fixtures/kiro/acp/1.0.0/sp07-question\` | ${resume} |`
+    const record = (rows, decision) => `---
+id: SP-07
+date: 2026-10-17
+os: [windows-11]
+versions:
+  kiro-cli: 1.0.0
+verdict: passed
+exitCriterion: Fixtures recorded and the driver conformance suite passes for each
+---
+
+# SP-07
+
+## Results
+
+| Provider and version | Launch | Permission | Questions | Resume |
+| -------------------- | ------ | ---------- | --------- | ------ |
+${rows.join('\n')}
+
+## Decision
+
+${decision}
+`
+    const resumed = 'shown: `fixtures/kiro/acp/1.0.0/sp07-resume`'
+    const admitted = '- Kiro 1.0.0 is admitted to the catalog.'
+    const kept = '- Neither enters the catalog, and ISSUE-158 closes as not needed.'
+
+    expect(
+      catalogAdmissionProblems(record([row('Kiro 1.0.0', resumed)], admitted)),
+      'all four fixtures'
+    ).toEqual([])
+    expect(
+      catalogAdmissionProblems(record([row('Kiro 1.0.0', 'not observed')], admitted)).join('\n'),
+      'admitted without a resume fixture'
+    ).toMatch(/Kiro[\s\S]*resume/i)
+    expect(
+      catalogAdmissionProblems(
+        record([row('Kiro 1.0.0', resumed, 'not observed: 403')], admitted)
+      ).join('\n'),
+      'admitted without a permission fixture'
+    ).toMatch(/Kiro[\s\S]*permission/i)
+    expect(
+      catalogAdmissionProblems(record([], admitted)).join('\n'),
+      'admitted with no recorded row'
+    ).toMatch(/Kiro/)
+    expect(
+      catalogAdmissionProblems(record([row('Kiro 1.0.0', 'not observed')], kept)),
+      'not admitted'
+    ).toEqual([])
+
+    const file = path.join(repoRoot, 'spike-results', 'SP-07.md')
+    const text = readFileSync(file, 'utf8')
+    expect(checkSpikeRecord(text, 'SP-07.md'), 'spike-results/SP-07.md').toEqual([])
+    expect(catalogAdmissionProblems(text), 'spike-results/SP-07.md follows the rule').toEqual([])
+    expect(decisionText(parseFrontMatter(text).body), 'SP-07 names its gated issue').toMatch(
+      /ISSUE-158 closes as not needed/
+    )
+  })
+
+  // ADDED for ISSUE-327 (TC-327-01, TC-327-02): ADR-011 items 2, 7, the on-verified meaning per server kind.
+  it('[S-011-1, ADR-011] an S-011-1 record states the meaning of on-verified per server kind and version', () => {
+    const hostRow = '| 1.18.32, Host-launched | loaded at the first request | none | honoured |'
+    const personRow = '| 1.18.32, person-run | not loaded without a restart | none | not run |'
+    const record = (rows, decision) => `---
+id: S-011-1
+date: 2026-10-17
+os: [windows-11]
+versions:
+  opencode: 1.18.32
+verdict: partial
+exitCriterion: Load behavior recorded per OpenCode version for both server kinds
+---
+
+# S-011-1
+
+## Results
+
+| Version / server kind | Plugin load | Loaded signal | Deny |
+| --------------------- | ----------- | ------------- | ---- |
+${rows.join('\n')}
+
+## Decision
+
+${decision}
+`
+    const meaning = '- **`on-verified` means "written and read back"** for ISSUE-228 and ISSUE-229.'
+
+    expect(onVerifiedProblems(record([hostRow, personRow], meaning)), 'both kinds').toEqual([])
+    expect(
+      onVerifiedProblems(record([personRow], meaning)).join('\n'),
+      'a record without the Host-launched kind'
+    ).toMatch(/1\.18\.32[\s\S]*Host-launched/)
+    expect(
+      onVerifiedProblems(record([hostRow], meaning)).join('\n'),
+      'a record without the person-run kind'
+    ).toMatch(/1\.18\.32[\s\S]*person-run/)
+    expect(
+      onVerifiedProblems(record([hostRow, personRow], '- Nothing decided.')).join('\n'),
+      'no stated meaning'
+    ).toMatch(/on-verified/)
+    expect(
+      onVerifiedProblems(
+        record([hostRow, personRow], '- **`on-verified` means "loaded"** from the signal.')
+      ).join('\n'),
+      'a meaning other than written and read back with no loaded signal'
+    ).toMatch(/written and read back/)
+
+    const file = path.join(repoRoot, 'spike-results', 'S-011-1.md')
+    const text = readFileSync(file, 'utf8')
+    expect(checkSpikeRecord(text, 'S-011-1.md'), 'spike-results/S-011-1.md').toEqual([])
+    expect(onVerifiedProblems(text), 'spike-results/S-011-1.md follows the rule').toEqual([])
+    expect(
+      existsSync(path.join(repoRoot, 'spike-results', 'S-011-1')),
+      'spike-results/S-011-1/ holds the raw outputs'
     ).toBe(true)
   })
 

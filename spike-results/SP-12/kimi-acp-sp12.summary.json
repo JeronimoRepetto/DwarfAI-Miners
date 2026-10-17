@@ -1,0 +1,98 @@
+{
+  "provider": "kimi",
+  "phase": "sp12",
+  "version": "0.41.0",
+  "initialize": {
+    "protocolVersion": 1,
+    "agentInfo": {
+      "name": "Kimi Code CLI",
+      "version": "0.41.0"
+    },
+    "agentCapabilities": {
+      "loadSession": true,
+      "promptCapabilities": {
+        "image": true,
+        "audio": false,
+        "embeddedContext": true
+      },
+      "sessionCapabilities": {
+        "list": {},
+        "resume": {},
+        "close": {},
+        "delete": {},
+        "fork": {},
+        "additionalDirectories": {}
+      },
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "auth": {
+        "logout": {}
+      }
+    },
+    "authMethods": ["login"]
+  },
+  "sessionNew": {
+    "sessionId": "<id>",
+    "modes": ["default", "plan", "auto", "yolo"],
+    "currentMode": "default"
+  },
+  "probeStarted": true,
+  "tree": [
+    {
+      "depth": 0,
+      "name": "kimi.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 1,
+      "name": "conhost.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 1,
+      "name": "<mcp-server-6>.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 2,
+      "name": "conhost.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 1,
+      "name": "node.exe",
+      "isProbe": true,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 2,
+      "name": "conhost.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    }
+  ],
+  "probeReports": [
+    {
+      "event": "start",
+      "ppidIsAgent": true,
+      "ppidInTree": true,
+      "sentinelPresent": true,
+      "credFilePresent": true,
+      "envKeyCount": 73,
+      "envKeysSpecial": ["AI_AGENT", "DWARFAI_MCP_CREDENTIAL_FILE", "SP12_REPORT", "SP12_SENTINEL"]
+    }
+  ],
+  "repoFilesWithSentinel": []
+}

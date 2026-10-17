@@ -1,0 +1,9 @@
+{
+  "phase": "s0313",
+  "version": "1.18.32",
+  "up": true,
+  "statusNoAuth": 401,
+  "statusWrongPassword": 401,
+  "statusRightPassword": 200,
+  "serverWarnedUnsecured": false
+}

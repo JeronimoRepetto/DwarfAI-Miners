@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"S-022-1 probe:  two  spaces,\ta tab,\r\na CRLF break,\nan LF break, trailing spaces   \n é ✓ 🙂 — reply with the single word ok."}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Read the file README.md with your Read tool and reply with the secret word it names, nothing else."}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Use your Agent tool (also called Task) to start exactly one general-purpose subagent whose only job is to read README.md and report the secret word. Then reply with the word it reported, nothing else."}]}}

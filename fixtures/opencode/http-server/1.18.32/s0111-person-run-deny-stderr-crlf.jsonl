@@ -1,0 +1,73 @@
+timestamp=2026-10-17T09:59:45.395Z level=INFO run=d14c0b10 message=loading path="<HOME>\\AppData\\Local\\Temp\\dwarfai-rec-325-oc-xdgcfg-zWKxEU\\opencode\\config.json"
+timestamp=2026-10-17T09:59:45.397Z level=INFO run=d14c0b10 message=loading path="<HOME>\\AppData\\Local\\Temp\\dwarfai-rec-325-oc-xdgcfg-zWKxEU\\opencode\\opencode.json"
+timestamp=2026-10-17T09:59:45.397Z level=INFO run=d14c0b10 message=loading path="<HOME>\\AppData\\Local\\Temp\\dwarfai-rec-325-oc-xdgcfg-zWKxEU\\opencode\\opencode.jsonc"
+timestamp=2026-10-17T09:59:45.539Z level=INFO run=d14c0b10 message="creating instance" directory="<REPO>"
+timestamp=2026-10-17T09:59:45.540Z level=INFO run=d14c0b10 message=fromDirectory directory="<REPO>"
+timestamp=2026-10-17T09:59:45.651Z level=INFO run=d14c0b10 message=bootstrapping directory="<REPO>"
+timestamp=2026-10-17T09:59:45.654Z level=INFO run=d14c0b10 message=loading path="<HOME>\\AppData\\Local\\Temp\\dwarfai-rec-325-oc-xdgcfg-zWKxEU\\opencode\\config.json"
+timestamp=2026-10-17T09:59:45.655Z level=INFO run=d14c0b10 message=loading path="<HOME>\\AppData\\Local\\Temp\\dwarfai-rec-325-oc-xdgcfg-zWKxEU\\opencode\\opencode.json"
+timestamp=2026-10-17T09:59:45.655Z level=INFO run=d14c0b10 message=loading path="<HOME>\\AppData\\Local\\Temp\\dwarfai-rec-325-oc-xdgcfg-zWKxEU\\opencode\\opencode.jsonc"
+timestamp=2026-10-17T09:59:45.659Z level=INFO run=d14c0b10 message=loading path="<REPO>\\opencode.json"
+timestamp=2026-10-17T09:59:45.771Z level=INFO run=d14c0b10 message=loading path="<REPO>\\.opencode\\opencode.json"
+timestamp=2026-10-17T09:59:45.772Z level=INFO run=d14c0b10 message=loading path="<REPO>\\.opencode\\opencode.jsonc"
+timestamp=2026-10-17T09:59:50.351Z level=INFO run=d14c0b10 message="all LSPs are disabled"
+timestamp=2026-10-17T09:59:50.352Z level=INFO run=d14c0b10 message="all formatters are disabled"
+timestamp=2026-10-17T09:59:50.352Z level=INFO run=d14c0b10 message=init
+timestamp=2026-10-17T09:59:50.353Z level=INFO run=d14c0b10 message="event connected"
+timestamp=2026-10-17T09:59:50.356Z level=INFO run=d14c0b10 message=created id=00000000-0000-4000-8000-000000000003 slug=swift-engine version=1.18.32 projectID=[redacted] directory="<REPO>" path="" workspaceID=undefined parentID=undefined title="New session - 2026-10-17T09:59:50.356Z" agent=undefined model=undefined metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1792231190356 time.updated=1792231190356
+timestamp=2026-10-17T09:59:50.697Z level=INFO run=d14c0b10 message=loop session.id=00000000-0000-4000-8000-000000000003 step=0
+timestamp=2026-10-17T09:59:50.710Z level=INFO run=d14c0b10 message=stream providerID=opencode-go modelID=qwen3.8-flash session.id=00000000-0000-4000-8000-000000000003 small=true agent=title mode=primary
+timestamp=2026-10-17T09:59:50.720Z level=INFO run=d14c0b10 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode-go llm.model=qwen3.8-flash
+timestamp=2026-10-17T09:59:50.928Z level=INFO run=d14c0b10 message=initialized
+timestamp=2026-10-17T09:59:51.061Z level=INFO run=d14c0b10 message=tracking hash=[redacted] cwd="<REPO>" git="<HOME>\\.local\\share\\opencode\\snapshot\\[redacted]\\[redacted]"
+timestamp=2026-10-17T09:59:51.065Z level=INFO run=d14c0b10 message="shell tool using shell" shell="<PATH> Files\\Git\\usr\\bin\\bash.exe"
+timestamp=2026-10-17T09:59:51.073Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-1> existing="<HOME>\\.claude\\skills\\<skill-1>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-1>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-2> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-2>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-2>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-1> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-1>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-1>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-3> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-3>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-3>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-4> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-4>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-4>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-5> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-5>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-5>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-6> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-6>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-6>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-7> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-7>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-7>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-8> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-8>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-8>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-9> existing="<HOME>\\.claude\\skills\\.trash\\1791624578950-80900-AXMOQt\\<skill-9>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\.trash\\1791477014537-21772-NiRsq8\\<skill-9>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-10> existing="<HOME>\\.claude\\skills\\.trash\\1791624578950-80900-s3V2Bu\\<skill-10>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\.trash\\1791477014537-21772-jVj6sn\\<skill-10>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-11> existing="<HOME>\\.claude\\skills\\<skill-11>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-11>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-12> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-12>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-12>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-13> existing="<HOME>\\.claude\\skills\\.trash\\1791624578950-80900-rPgkGZ\\<skill-13>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\.trash\\1791477014537-21772-qDS26o\\<skill-13>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-14> existing="<HOME>\\.claude\\skills\\<skill-14>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-14>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-15> existing="<HOME>\\.claude\\skills\\.trash\\1791624578950-80900-SxBEtd\\<skill-15>\\SKILL.md" duplicate="<HOME>\\.claude\\skills\\.trash\\1791477014537-21772-9zNZ6y\\<skill-15>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-16> existing="<HOME>\\.claude\\skills\\<skill-16>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-16>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-17> existing="<HOME>\\.claude\\skills\\<skill-17>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-17>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-18> existing="<HOME>\\.claude\\skills\\<skill-18>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-18>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.074Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-19> existing="<HOME>\\.claude\\skills\\<skill-19>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-19>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-20> existing="<HOME>\\.claude\\skills\\<skill-20>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-20>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-21> existing="<HOME>\\.claude\\skills\\<skill-21>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-21>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-22> existing="<HOME>\\.claude\\skills\\<skill-22>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-22>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-23> existing="<HOME>\\.claude\\skills\\<skill-23>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-23>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-1> existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\<skill-1>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-1>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-24> existing="<HOME>\\.claude\\skills\\<skill-24>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-24>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-25> existing="<HOME>\\.claude\\skills\\<skill-25>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-25>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-26> existing="<HOME>\\.claude\\skills\\<skill-26>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-26>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-27> existing="<HOME>\\.claude\\skills\\<skill-27>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-27>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-28> existing="<HOME>\\.claude\\skills\\<skill-28>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-28>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-29> existing="<HOME>\\.claude\\skills\\<skill-29>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-29>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-30> existing="<HOME>\\.claude\\skills\\<skill-30>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-30>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-31> existing="<HOME>\\.claude\\skills\\<skill-31>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-31>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-32> existing="<HOME>\\.claude\\skills\\<skill-32>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-32>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-33> existing="<HOME>\\.claude\\skills\\<skill-33>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-33>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-34> existing="<HOME>\\.claude\\skills\\<skill-34>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-34>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-35> existing="<HOME>\\.claude\\skills\\<skill-35>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-35>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-36> existing="<HOME>\\.claude\\skills\\<skill-36>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-36>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=WARN run=d14c0b10 message="duplicate skill name" name=<skill-37> existing="<HOME>\\.claude\\skills\\<skill-37>\\SKILL.md" duplicate="<HOME>\\.agents\\skills\\<skill-37>\\SKILL.md"
+timestamp=2026-10-17T09:59:51.075Z level=INFO run=d14c0b10 message=init count=39
+timestamp=2026-10-17T09:59:51.204Z level=INFO run=d14c0b10 message="watcher backend" directory="<REPO>" platform=win32 backend=windows
+timestamp=2026-10-17T09:59:51.207Z level=INFO run=d14c0b10 message="project copy refresh started" projectID=[redacted]
+timestamp=2026-10-17T09:59:51.460Z level=INFO run=d14c0b10 message="project copy refresh done" projectID=[redacted] updated=[] removed=[]
+timestamp=2026-10-17T09:59:51.500Z level=INFO run=d14c0b10 message="booting location services" directory="<REPO>" workspaceID=undefined
+timestamp=2026-10-17T09:59:51.503Z level=INFO run=d14c0b10 message=process session.id=00000000-0000-4000-8000-000000000003 messageID=00000000-0000-4000-8000-00000000000c
+timestamp=2026-10-17T09:59:51.503Z level=INFO run=d14c0b10 message=stream providerID=opencode-go modelID=qwen3.8-flash session.id=00000000-0000-4000-8000-000000000003 small=false agent=build mode=primary
+timestamp=2026-10-17T09:59:51.505Z level=INFO run=d14c0b10 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode-go llm.model=qwen3.8-flash
+timestamp=2026-10-17T09:59:56.225Z level=INFO run=d14c0b10 message=evaluated permission=edit pattern=deny-probe.txt action.permission=edit action.action=ask action.pattern=*
+timestamp=2026-10-17T09:59:56.225Z level=INFO run=d14c0b10 message=asking id=00000000-0000-4000-8000-000000000062 permission=edit patterns="[\"deny-probe.txt\"]"
+timestamp=2026-10-17T09:59:56.532Z level=INFO run=d14c0b10 message=tracking hash=[redacted] cwd="<REPO>" git="<HOME>\\.local\\share\\opencode\\snapshot\\[redacted]\\[redacted]"

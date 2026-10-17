@@ -1,0 +1,10 @@
+Usage: kimi session [options] [command]
+
+Manage sessions non-interactively.
+
+Options:
+  -h, --help      Show help.
+
+Commands:
+  list [options]  List sessions, most recently updated first.
+  help [command]  display help for command
