@@ -11,7 +11,7 @@
 //   exist (16 §8.2): the broker over `SqliteAskRepository` (one instance for `open`, the answer
 //   paths, the external resolutions and closing by death, so a resolution sees an answer in
 //   flight), conversation's `AnswerRecords` and joined `ingest`, the `SessionCapabilities` binding,
-//   the answer channels, the Claude hook ingress route, and the routes below. The routes are
+//   the answer channels, the Claude hook and OpenCode plugin ingress routes, and the routes below. The routes are
 //   subscribed ahead of the cut-1 routes (routes/cut1Routes.ts), so a departure closes the dwarf's
 //   asks before conversation records its session end.
 //
@@ -19,6 +19,8 @@
 // - Hook ingress evidence (`/hooks/claude/*`) → asking `open` / `resolveExternally`, the session
 //   resolved to its dwarf first (routes/observedClaudeAsks.ts, ISSUE-134). The cut-1 observed-ask
 //   route of ISSUE-120 never existed (routes/cut1Routes.ts): this is the one route.
+// - OpenCode plugin evidence (`/opencode/*`) → asking `open` on the `http` channel, the session
+//   resolved to its dwarf and folder first (`wireOpenCodePluginAsking` below, ISSUE-229).
 // - `ObservedAskClosed` (observation) → `resolveExternally` (routes/askResolutions.ts, ISSUE-136).
 // - `DwarfDeparted` (crew) → `closeForDwarf` (S6.14, S6.15; INV-77).
 // - `AskOpened` → the `ask.opened` frame (transport/frames/askFrames.ts); crew `startAsking` for the
@@ -52,6 +54,7 @@ import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { Scheduler } from '../../kernel/ports/scheduler'
+import type { SecretReader } from '../../kernel/ports/secretReader'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
@@ -59,6 +62,7 @@ import type { Attention } from '../../modules/attention'
 import {
   createAsking,
   createAskOpening,
+  type AskCapabilities,
   createAskQueries,
   createAskStep,
   type AskBroker,
@@ -74,6 +78,11 @@ import {
 } from '../../modules/asking/adapters/observedClaude/ObservedClaudeKeystrokeChannel'
 import { PermissionPromptRegistry } from '../../modules/asking/adapters/observedClaude/permissionPromptRegistry'
 import type { TranscriptTail } from '../../modules/asking/adapters/observedClaude/transcriptTail'
+import {
+  OpenCodePluginAskChannel,
+  type OpenCodeHttpPost
+} from '../../modules/asking/adapters/openCodePlugin/OpenCodePluginAskChannel'
+import { OpenCodePluginAsks } from '../../modules/asking/adapters/openCodePlugin/openCodePluginAsks'
 import { SqliteAskRepository } from '../../modules/asking/adapters/SqliteAskRepository'
 import type { AnswerRecordEvent, Conversation, ConversationEvent } from '../../modules/conversation'
 import type { CrewCommands, CrewEvent, CrewQueries, DwarfDeparted } from '../../modules/crew'
@@ -96,6 +105,10 @@ import {
 } from '../../transport/frames/askFrames'
 import { createClaudeHooksRoute } from '../../transport/ingress/claudeHooksRoute'
 import type { IngressRoute } from '../../transport/ingress/httpIngress'
+import {
+  createOpenCodePluginRoute,
+  type OpenCodePluginEvidenceSink
+} from '../../transport/ingress/openCodeRoutes'
 import { registerAskingAnswer } from '../../transport/methods/askingAnswer'
 import { registerAskingSetStep } from '../../transport/methods/askingSetStep'
 import { registerAsksSection } from '../../transport/snapshot/asksSection'
@@ -173,6 +186,16 @@ export interface AskingWiringDeps {
     queries: Pick<PreferencesQueries, 'integrationState'>
     channelTokens: Pick<ChannelTokenStore, 'active'>
   }
+  /**
+   * The OpenCode plugin's asks (ISSUE-229; ADR-011 item 7; ADR-017 item 3): OpenCode's catalog id,
+   * the kernel `SecretReader` (the OpenCode password, for an answer only) and the one HTTP call of
+   * the `http` answer channel (`globalThis.fetch` in the Host).
+   */
+  openCodePlugin: {
+    providerId: ProviderId
+    secrets: Pick<SecretReader, 'read'>
+    post: OpenCodeHttpPost
+  }
   /** The observed-Claude keystroke channel's world (ADR-012 item 3). */
   keystrokes: {
     relay: KeystrokeRelay
@@ -186,7 +209,7 @@ export interface WiredAsking {
   /** The one broker (16 §4.7), every member but `snapshot`, which is `queries`. */
   broker: Omit<AskBroker, 'snapshot'>
   queries: AskSnapshotQueries
-  /** The `/hooks/claude/*` route the ingress listener serves (wiring/hookIngress.ts). */
+  /** The `/hooks/claude/*` and `/opencode/*` routes the ingress listener serves (wiring/hookIngress.ts). */
   hookRoutes: readonly IngressRoute[]
   /** The hook evidence sink, and the promise of its work (tests; drain). */
   evidence: ObservedClaudeAsks
@@ -242,9 +265,23 @@ function wireAsking(deps: AskingWiringDeps): WiredAsking {
     relay: deps.keystrokes.relay,
     log
   })
-  // The composed answer channels: the observed-Claude keystroke channel only (see the header).
+  // The OpenCode plugin's route, asks and `http` channel; its asks open on the broker below.
+  const openCode = wireOpenCodePluginAsking({
+    providerId: deps.openCodePlugin.providerId,
+    sessions: deps.observation.sessions,
+    asks: { open: (dwarfId, input) => opening.open(dwarfId, input) },
+    preferences: deps.preferences,
+    observation: deps.observation.control,
+    secrets: deps.openCodePlugin.secrets,
+    post: deps.openCodePlugin.post,
+    scheduler: deps.scheduler,
+    redact: deps.keystrokes.redact,
+    log
+  })
+  // The composed answer channels: the observed-Claude keystroke channel and the OpenCode plugin's
+  // `http` channel (see the header).
   const channelFor = (channel: AskRecord['channel']) =>
-    channel === 'hook-keystroke' ? keystrokes : null
+    channel === 'hook-keystroke' ? keystrokes : channel === 'http' ? openCode.channel : null
   const staleAnswerSafe = (channel: AskRecord['channel']): boolean =>
     channelFor(channel)?.capabilities.staleAnswerSafe ?? true
 
@@ -262,7 +299,7 @@ function wireAsking(deps: AskingWiringDeps): WiredAsking {
   })
   const opening = createAskOpening({
     asks,
-    sessions: sessionCapabilities(deps),
+    sessions: sessionCapabilities(deps, openCode),
     lines: conversation.commands,
     joinedLines: conversation.joinedEvents,
     channelFor,
@@ -327,7 +364,7 @@ function wireAsking(deps: AskingWiringDeps): WiredAsking {
   return {
     broker,
     queries,
-    hookRoutes: [hookRoute],
+    hookRoutes: [hookRoute, openCode.route],
     evidence,
     stop: () => {
       for (const stop of stops.splice(0)) stop()
@@ -351,25 +388,29 @@ const CLAUDE_HOOK_CHANNEL: Pick<ProviderCapabilities, 'permission' | 'observedPe
  * provider and origin from crew; a launched session reads suppliers' capability data (the merged
  * ceiling and negotiated set, its answer-channel gate applied), an observed one the declaration of
  * the adapter observing it (ADR-009 D3, as routes/cut1Routes.ts reads `turnEnd`; an omitted field
- * fails closed), raised by the Claude hook channel while it is on. A dwarf crew does not know, or a
+ * fails closed), raised by the Claude hook channel while it is on and, for OpenCode, by the
+ * OpenCode plugin channel while `opencode-permissions` is `on-verified` (ADR-011 item 7). A dwarf crew does not know, or a
  * provider no adapter observes, reads fail-closed values (every answer path `none`). No launched
  * session reaches the Host before EPIC-10, whose driver sessions bring their negotiated set.
  */
-function sessionCapabilities(deps: AskingWiringDeps): SessionCapabilities {
+function sessionCapabilities(
+  deps: AskingWiringDeps,
+  openCode: Pick<OpenCodePluginAsking, 'observedCapabilities'>
+): SessionCapabilities {
   const observedOf = (providerId: ProviderId): AskSession['capabilities'] => {
     const declared = deps.observed.find((adapter) => adapter.providerId === providerId)
     const values = declared?.capabilities() ?? {}
     const hooked =
       providerId === deps.claudeProviderId &&
       deps.preferences.queries.integrationState('claude-hooks') === 'on-verified'
-    return {
+    return openCode.observedCapabilities(providerId, {
       permission: hooked ? CLAUDE_HOOK_CHANNEL.permission : (values.permission ?? 'none'),
       question: values.question ?? 'none',
       observedPermission: hooked
         ? CLAUDE_HOOK_CHANNEL.observedPermission
         : (values.observedPermission ?? 'none'),
       observedQuestion: values.observedQuestion ?? 'none'
-    }
+    })
   }
   return {
     sessionOf: (dwarfId: DwarfId): AskSession => {
@@ -465,4 +506,116 @@ function routeAskStatus(
       if (next !== null) front(next)
     })
   ]
+}
+
+export interface OpenCodePluginAskingDeps {
+  /** OpenCode's catalog id: the identity the plugin's session ids are looked up under. */
+  providerId: ProviderId
+  /** Observation's `ProviderIdentity → DwarfId` index (16 §4.3). */
+  sessions: Pick<ObservedSessionStore, 'byIdentity'>
+  /** The one broker's `open` (16 §4.7). */
+  asks: Pick<AskBroker, 'open'>
+  /** The gate and the plugin channel's token (ADR-011 item 7; ADR-016 item 1). */
+  preferences: {
+    queries: Pick<PreferencesQueries, 'integrationState'>
+    channelTokens: Pick<ChannelTokenStore, 'active'>
+  }
+  observation: Pick<ObservationControl, 'nudge'>
+  /** The kernel `SecretReader`: the OpenCode password, for the answer only (ADR-017 item 3). */
+  secrets: Pick<SecretReader, 'read'>
+  /** The one HTTP call of the answer channel (`globalThis.fetch` in the Host). */
+  post: OpenCodeHttpPost
+  scheduler: Scheduler
+  /** The one redaction rule (`contracts/logging` `redactSecrets`), bound here (05 R9). */
+  redact(text: string): string
+  log: DiagnosticsLog
+}
+
+export interface OpenCodePluginAsking {
+  /** `/opencode/*`, for the ingress listener (wiring/hookIngress.ts). */
+  route: IngressRoute
+  /** The broker's `http` answer channel. */
+  channel: OpenCodePluginAskChannel
+  /** The route's hand-off (also for tests). */
+  evidence: OpenCodePluginEvidenceSink
+  /** ADR-011 item 7's gate on an observed session's declared capabilities. */
+  observedCapabilities(providerId: ProviderId, declared: AskCapabilities): AskCapabilities
+}
+
+/** The gating integration (ADR-011 item 7; catalog `answerChannelGate` of OpenCode). */
+const GATE = 'opencode-permissions'
+
+/**
+ * The OpenCode plugin's asking open route (ISSUE-229; 08 §4: plugin ingress → asking `open` after
+ * resolving the session to its dwarf; ADR-011 item 7; ADR-016 items 1, 4; ADR-017 item 3): the
+ * `/opencode/*` ingress route, the OpenCode plugin asks it feeds and the `http` answer channel,
+ * composed by `wireAsking` above.
+ *
+ * - The route (transport/ingress/openCodeRoutes.ts) admits only the active `opencode-plugin` token
+ *   through its own ChannelTokenCheck, and hands each accepted report here as evidence.
+ * - A `permission.asked` report is resolved through observation's `ProviderIdentity → DwarfId`
+ *   index (16 §4.3 `ObservedSessionStore.byIdentity`) with OpenCode's catalog id and the report's
+ *   session id; the observed session's `cwd` is the folder OpenCode's `directory` names. The
+ *   OpenCode plugin asks (asking/adapters/openCodePlugin) open it on the broker's `http` channel and
+ *   keep the address its answer goes to. A `permission.replied` report opens and resolves nothing
+ *   (SP-09: `answeredElsewhere: false`).
+ * - The gate (ADR-011 item 7): an observed OpenCode session's permission is answerable from a card
+ *   — `permission: 'interactive'`, `observedPermission: 'detected'` — only while
+ *   `opencode-permissions` is `on-verified` (S-011-1: "written and read back"); in every other
+ *   state the observing adapter's declaration stands (no answer path: the broker opens no ask,
+ *   ADR-011 item 4). `observedCapabilities` is that rule, read by the asking wiring's
+ *   `SessionCapabilities` binding. Questions are not raised: the plugin reports permissions only. A
+ *   launched session's capabilities are suppliers' (the catalog's `answerChannelGate` applied
+ *   there, ADR-009 D1), so while the gate is closed its request is `auto-denied` with one chat line
+ *   and answered Deny on this channel (ADR-011 item 3).
+ * - Legacy-launched OpenCode sessions (still `legacy` until 4b) are sessions the Host observes, so
+ *   their plugin asks reach this broker and are answered by the Host (21 §2 4a).
+ *
+ * The provider is compared through the injected catalog id, never a literal (R12).
+ */
+export function wireOpenCodePluginAsking(deps: OpenCodePluginAskingDeps): OpenCodePluginAsking {
+  const asks = new OpenCodePluginAsks({
+    sessionOf: (providerSessionId) => {
+      const session = deps.sessions.byIdentity({ providerId: deps.providerId, providerSessionId })
+      return session === null ? null : { dwarfId: session.dwarfId, directory: session.cwd }
+    },
+    asks: deps.asks,
+    redact: deps.redact,
+    scheduler: deps.scheduler,
+    log: deps.log
+  })
+  const channel = new OpenCodePluginAskChannel({
+    targets: asks,
+    secrets: deps.secrets,
+    post: deps.post,
+    log: deps.log
+  })
+  const evidence: OpenCodePluginEvidenceSink = {
+    accept(report): void {
+      if (report.kind !== 'permission.asked') return
+      asks.report({
+        sessionId: report.sessionId,
+        requestId: report.requestId,
+        permission: report.permission,
+        patterns: report.patterns,
+        serverOrigin: report.serverOrigin
+      })
+    }
+  }
+  const route = createOpenCodePluginRoute({
+    tokens: new ChannelTokenCheck({ tokens: deps.preferences.channelTokens, log: deps.log }),
+    observation: deps.observation,
+    evidence,
+    log: deps.log
+  })
+  return {
+    route,
+    channel,
+    evidence,
+    observedCapabilities(providerId, declared) {
+      if (providerId !== deps.providerId) return declared
+      if (deps.preferences.queries.integrationState(GATE) !== 'on-verified') return declared
+      return { ...declared, permission: 'interactive', observedPermission: 'detected' }
+    }
+  }
 }
