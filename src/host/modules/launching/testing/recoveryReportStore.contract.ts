@@ -128,6 +128,51 @@ export function runRecoveryReportStoreContract(
       })
     })
 
+    it('[S2.11, S16.06] pending lists only the items not settled yet: a resumed, failed or dismissed dwarf leaves the grouped message', async () => {
+      const s = await setUp()
+      const [a, b, c] = s.dwarfs
+      s.inTransaction(() =>
+        s.store.save({
+          ...report(s),
+          resumed: [],
+          unrecovered: [...report(s).unrecovered, { dwarfId: c, reason: 'stale-ref' }]
+        })
+      )
+      s.inTransaction(() => s.store.markShown(EPOCH, AT + 1))
+
+      s.inTransaction(() => s.store.settleItem(EPOCH, a, 'resumed'))
+      s.inTransaction(() => s.store.settleItem(EPOCH, c, 'dismissed'))
+      expect(s.store.pending()?.unrecovered).toEqual([report(s).unrecovered[1]])
+      s.inTransaction(() => s.store.settleItem(EPOCH, b, 'failed'))
+      expect(s.store.pending()).toBeNull()
+    })
+
+    it('[S16.09, INV-58] a save of the next epoch supersedes every earlier unsettled report, so only the newest is pending', async () => {
+      const s = await setUp()
+      const [a, b] = s.dwarfs
+      s.inTransaction(() => s.store.save(report(s)))
+      s.inTransaction(() => s.store.markShown(EPOCH, AT + 1))
+      const next: HostRecoveryReport = {
+        hostEpoch: 'epoch-0174',
+        at: AT + 60_000,
+        resumed: [],
+        unrecovered: []
+      }
+      s.inTransaction(() => s.store.save(next))
+      // The next boot listed nothing: the superseded report is never offered again.
+      expect(s.store.pending()).toBeNull()
+      s.inTransaction(() => s.store.settleItem(EPOCH, a, 'resumed'))
+      expect(s.retryOutcome(EPOCH, a)).toBeNull()
+
+      s.inTransaction(() =>
+        s.store.save({ ...next, unrecovered: [{ dwarfId: b, reason: 'no-resume' }] })
+      )
+      expect(s.store.pending()).toEqual({
+        ...next,
+        unrecovered: [{ dwarfId: b, reason: 'no-resume' }]
+      })
+    })
+
     it('[ADR-015] a write outside a transaction is refused and a rolled-back save leaves nothing', async () => {
       const s = await setUp()
       const [a] = s.dwarfs
