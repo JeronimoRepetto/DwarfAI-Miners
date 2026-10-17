@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import PanelNav from './PanelNav.vue'
+import PixelIcon from '../icon/PixelIcon.vue'
 
 /*
  * This file replaces ShellNav.test.ts, REMOVED for #635 with ShellNav.vue, the
@@ -251,5 +252,46 @@ describe('PanelNav, hidden until built (ISSUE-267)', () => {
     ])
     await lever.get('.dm-slot').trigger('click')
     expect(nav.emitted('mode')).toEqual([['veta']])
+  })
+})
+
+/*
+ * APPENDED (ISSUE-262): the Mines slot's needs-you badge and name, and the Music slot's pressed
+ * state, by the ids of US-SHELL-003 and US-SHELL-005. The count is the Host's (ADR-033 item 3),
+ * handed down as `badge`; the nav only draws it.
+ */
+describe('PanelNav, the needs-you badge and the Music slot (ISSUE-262)', () => {
+  it('[US-SHELL-003.AC02, US-SHELL-003.AC03, US-SHELL-003.AC04, NFR-A11Y-09] the Mines slot has no badge with nobody waiting, and otherwise shows the count with the singular or plural needs-you name', () => {
+    const none = slot(mount(PanelNav, { props: { page: 'map', badge: 0 } }), 'Mines')
+    expect(none.find('.dm-badge').exists()).toBe(false)
+    expect(none.attributes('aria-label')).toBe('Mines')
+
+    const one = slot(mount(PanelNav, { props: { page: 'map', badge: 1 } }), 'Mines')
+    expect(one.get('.dm-badge').text()).toBe('1')
+    expect(one.attributes('aria-label')).toBe('Mines, 1 needs you')
+
+    for (const count of [2, 3, 12]) {
+      const many = slot(mount(PanelNav, { props: { page: 'map', badge: count } }), 'Mines')
+      expect(many.get('.dm-badge').text()).toBe(String(count))
+      expect(many.attributes('aria-label')).toBe(`Mines, ${count} need you`)
+    }
+  })
+
+  it('[US-SHELL-005.AC01, US-SHELL-005.AC02, US-SHELL-005.AC03] the Music slot is pressed with its lit icon while music plays, and unpressed with its dim icon while it does not', async () => {
+    const nav = mount(PanelNav, { props: { page: 'map', music: true } })
+    expect(slot(nav, 'Music').attributes('aria-pressed')).toBe('true')
+    expect(slot(nav, 'Music').findComponent(PixelIcon).props('name')).toBe('music-on')
+    await nav.setProps({ music: false })
+    expect(slot(nav, 'Music').attributes('aria-pressed')).toBe('false')
+    expect(slot(nav, 'Music').findComponent(PixelIcon).props('name')).toBe('music-off')
+  })
+
+  it('[US-SHELL-005.AC04] a pressed Music slot never takes the gold current-page mark, whichever page is shown', () => {
+    for (const page of ['map', 'mines', 'settings'] as const) {
+      const nav = mount(PanelNav, { props: { page, music: true } })
+      expect(slot(nav, 'Music').attributes('aria-current')).toBeUndefined()
+      // The current-page mark stays on the page's own slot alone.
+      expect(nav.findAll('[aria-current="page"]')).toHaveLength(1)
+    }
   })
 })
