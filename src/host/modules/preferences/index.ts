@@ -34,7 +34,6 @@ import {
   type WelcomeQueries,
   type WelcomeSettle
 } from './application/preferencesService'
-import { OFFERED_FILTER } from './domain/offeredFilter'
 import { ResetSaga, type ResetDbMaintenance, type ResetUiFanout } from './application/resetSaga'
 import type { PreferencesEvent } from './domain/events'
 import type { MetricsResetResult, ResetMetricsCommand } from './domain/resetSaga'
@@ -148,8 +147,8 @@ export interface WelcomeStepDeps {
 
 /**
  * The first-run consent step (07 machine 41; AMENDMENT-7, -9, -10): 16 §4.12
- * `PreferencesQueries.welcome` and its boot evaluation, over `app_meta.welcome_answered_at` and the
- * cut's offered filter. host/wiring/preferencesWiring.ts joins `welcome` to the module's queries,
+ * `PreferencesQueries.welcome` and its boot evaluation, over `app_meta.welcome_answered_at`, the
+ * installed tools and the config writer's legacy probe. host/wiring/preferencesWiring.ts joins `welcome` to the module's queries,
  * as it joins `resetMetrics` to its commands.
  */
 export function createWelcomeStep(
@@ -159,7 +158,6 @@ export function createWelcomeStep(
     answers: new SqliteWelcomeAnswerStore({ db: deps.db }),
     installed: deps.installedTools,
     legacy: deps.externalConfig,
-    cutFilter: OFFERED_FILTER.offered,
     bus: deps.bus,
     clock: deps.clock,
     ids: deps.ids,
@@ -179,7 +177,7 @@ export interface WelcomeAnswerDeps {
   step: WelcomeQueries & WelcomeSettle
   /** The module `createPreferences` built: its toggles' enable path and their stored states. */
   preferences: {
-    commands: Pick<PreferencesCommands, 'setClaudeHooks'>
+    commands: Pick<PreferencesCommands, 'setClaudeHooks' | 'setOpenCodePermissions'>
     queries: Pick<PreferencesQueries, 'integrationState'>
   }
   /** The one config writer: its legacy probe and its revert of an old-app entry (16 §7.1, §7.4). */
@@ -198,10 +196,11 @@ export function createWelcomeAnswer(deps: WelcomeAnswerDeps): WelcomeAnswer {
     legacy: deps.externalConfig,
     integrations: {
       setClaudeHooks: (on, origin) => deps.preferences.commands.setClaudeHooks(on, origin),
+      setOpenCodePermissions: (on, origin) =>
+        deps.preferences.commands.setOpenCodePermissions(on, origin),
       integrationState: (id) => deps.preferences.queries.integrationState(id)
     },
     transactions: deps.transactions,
-    cutFilter: OFFERED_FILTER.offered,
     bus: deps.bus,
     clock: deps.clock,
     ids: deps.ids,

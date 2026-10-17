@@ -969,7 +969,8 @@ describe('first-run consent step wiring (07 machine 41)', () => {
       due: true,
       reason: 'legacy-entries',
       legacyFound: ['claude-hooks'],
-      offered: ['claude-hooks']
+      // From step 4a both installed tools are offered (21 §2 4a; ISSUE-232).
+      offered: ['claude-hooks', 'opencode-permissions']
     }
     expect(await wired.evaluateWelcomeAtBoot()).toStrictEqual(due)
     expect(wired.preferences.queries.welcome()).toStrictEqual(due)

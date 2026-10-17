@@ -313,12 +313,6 @@ const OPENCODE_PERMISSIONS_TOGGLE: Toggle = {
   origins: ['settings', 'add-panel', 'first-run']
 }
 
-/**
- * The integrations whose enable path the first-run step can run. `opencode-permissions` joins with
- * its toggle (later: ISSUE-228) when the cut offers it (later: ISSUE-232).
- */
-const ENABLE_PATHS: readonly IntegrationId[] = [CLAUDE_HOOKS]
-
 /** 16 §4.12 `PreferencesQueries.welcome` (AMENDMENT-7); host/wiring joins it to the module's queries. */
 export interface WelcomeQueries {
   welcome(): WelcomeStepState
@@ -339,8 +333,6 @@ export interface WelcomeStepServiceDeps {
   installed: InstalledToolsReader
   /** The one config writer's legacy probe (16 §7.1); evaluation never writes or reverts. */
   legacy: Pick<ExternalConfigWriter, 'findLegacy'>
-  /** The integrations this cut offers (domain/offeredFilter.ts; later: ISSUE-232). */
-  cutFilter: readonly IntegrationId[]
   bus: DomainEventBus<PreferencesEvent>
   clock: Clock
   ids: IdGenerator
@@ -359,9 +351,10 @@ const NOT_EVALUATED: WelcomeStepState = Object.freeze({ due: false, legacyFound:
 
 /**
  * The first-run consent step (07 machine 41; 16 §4.12 `welcome()`). At boot it reads the installed
- * tools, keeps those the cut filter allows (`offered`), asks the legacy probe about the offered
- * targets only (S41.02 never looks at a target the cut does not offer, 21 §2 cut 2), reads the
- * stored answer and evaluates the step (domain/welcomeStep.ts). Nothing is written, reverted or
+ * tools, which are the ones offered (ADR-016 item 5), asks the legacy probe about every offered
+ * target, `claude-hooks` and, from step 4a, `opencode-plugin` (S41.02 never looks at a target that
+ * is not offered; 21 §2 4a), reads the stored answer and evaluates the step
+ * (domain/welcomeStep.ts). Nothing is written, reverted or
  * answered here: an old-app entry is only listed (ADR-016, never adopted silently), and a skip with
  * nothing offered is not an answer (S41.09). `WelcomeStepChanged` is published only when the state
  * differs from the one held (the first is the not-evaluated state, so a skip publishes nothing).
@@ -372,24 +365,14 @@ export class WelcomeStepService implements WelcomeQueries, WelcomeBoot, WelcomeS
   constructor(private readonly deps: WelcomeStepServiceDeps) {}
 
   async evaluateWelcomeAtBoot(): Promise<WelcomeStepState> {
-    const { answers, installed, legacy, cutFilter } = this.deps
+    const { answers, installed, legacy } = this.deps
     const tools = installed.installed()
-    const offered = evaluate({
-      answeredAt: null,
-      installed: tools,
-      legacyFound: [],
-      cutFilter
-    }).offered
+    const offered = evaluate({ answeredAt: null, installed: tools, legacyFound: [] }).offered
     const legacyFound: IntegrationId[] = []
     for (const id of offered) {
       if (await legacy.findLegacy(TARGET_OF[id])) legacyFound.push(id)
     }
-    const next = evaluate({
-      answeredAt: answers.answeredAt(),
-      installed: tools,
-      legacyFound,
-      cutFilter
-    })
+    const next = evaluate({ answeredAt: answers.answeredAt(), installed: tools, legacyFound })
     if (!sameWelcome(this.state, next)) {
       this.state = next
       this.deps.bus.publish({
@@ -417,8 +400,7 @@ export class WelcomeStepService implements WelcomeQueries, WelcomeBoot, WelcomeS
     const next = evaluate({
       answeredAt: this.deps.clock.now(),
       installed: this.state.offered,
-      legacyFound: [],
-      cutFilter: this.deps.cutFilter
+      legacyFound: []
     })
     if (!sameWelcome(this.state, next)) {
       this.state = next
@@ -440,8 +422,11 @@ export interface WelcomeAnswer {
   answerWelcome(choice: WelcomeChoice): Promise<WelcomeResult>
 }
 
-/** What answering reads and runs of the integration toggles: their enable path and stored state. */
-export type WelcomeIntegrations = Pick<PreferencesCommands, 'setClaudeHooks'> &
+/** What answering reads and runs of the integration toggles: their enable paths and stored state. */
+export type WelcomeIntegrations = Pick<
+  PreferencesCommands,
+  'setClaudeHooks' | 'setOpenCodePermissions'
+> &
   Pick<PreferencesQueries, 'integrationState'>
 
 export interface WelcomeAnswerServiceDeps {
@@ -457,8 +442,6 @@ export interface WelcomeAnswerServiceDeps {
   /** The enable path a ticked option runs with origin `first-run`, and the stored states. */
   integrations: WelcomeIntegrations
   transactions: TransactionRunner
-  /** The integrations whose foreign entry the Host writes in this cut (domain/offeredFilter.ts). */
-  cutFilter: readonly IntegrationId[]
   bus: DomainEventBus<PreferencesEvent>
   clock: Clock
   ids: IdGenerator
@@ -478,9 +461,8 @@ export interface WelcomeAnswerServiceDeps {
  *   replaces an old-app entry in the same write; S14.15 the writer's no-op when it is already on).
  *   A `true` for an option not offered is treated as `false` (S41.04). An option left unticked
  *   that is already on stays on (S14.15); otherwise only an old-app entry the legacy probe finds
- *   is reverted (S14.12, S14.13), and nothing at all happens without one (S14.14). A target the
- *   Host does not write in this cut is never probed or reverted: its writer is still the legacy
- *   installer (21 §2 cut 2, no double writer).
+ *   is reverted (S14.12, S14.13), and nothing at all happens without one (S14.14). From step 4a
+ *   the Host writes both targets (21 §2 4a), so both run here (ISSUE-232).
  * - After both settled, one transaction records `welcome_answered_at`; a failed write or revert
  *   does not keep the step open, it is in the result (S41.05; 13 FM-148, FM-149). A Host that dies
  *   before that transaction leaves the step unanswered, so the next boot shows it again (S41.06).
@@ -492,13 +474,7 @@ export class WelcomeAnswerService implements WelcomeAnswer {
   /** The answers, one at a time (16 §4.12 "one answer at a time"). */
   private queue: Promise<unknown> = Promise.resolve()
 
-  constructor(private readonly deps: WelcomeAnswerServiceDeps) {
-    for (const id of deps.cutFilter) {
-      if (!ENABLE_PATHS.includes(id)) {
-        throw new HostInvariantError(`the first-run step cannot offer ${id}: no enable path yet`)
-      }
-    }
-  }
+  constructor(private readonly deps: WelcomeAnswerServiceDeps) {}
 
   answerWelcome(choice: WelcomeChoice): Promise<WelcomeResult> {
     const run = this.queue.then(() => this.answer(choice))
@@ -525,19 +501,20 @@ export class WelcomeAnswerService implements WelcomeAnswer {
     return this.currentStates(failures)
   }
 
-  /** The toggle's enable path with origin `first-run` (only `claude-hooks` has one before cut 4a). */
+  /** The toggle's enable path with origin `first-run` (16 §4.12 `setClaudeHooks`, `setOpenCodePermissions`). */
   private async enable(id: IntegrationId): Promise<ToggleFailure | null> {
-    if (id !== CLAUDE_HOOKS) {
-      throw new HostInvariantError(`the first-run step cannot offer ${id}: no enable path yet`)
-    }
-    const result = await this.deps.integrations.setClaudeHooks(true, 'first-run')
+    const { integrations } = this.deps
+    const result =
+      id === CLAUDE_HOOKS
+        ? await integrations.setClaudeHooks(true, 'first-run')
+        : await integrations.setOpenCodePermissions(true, 'first-run')
     return result.ok ? null : result.error
   }
 
   /** An unticked (or hidden) option: only an old-app entry is reverted, and only when it is off. */
   private async decline(id: IntegrationId): Promise<ToggleFailure | null> {
-    const { cutFilter, integrations, legacy } = this.deps
-    if (!cutFilter.includes(id) || integrations.integrationState(id) !== 'off') return null
+    const { integrations, legacy } = this.deps
+    if (integrations.integrationState(id) !== 'off') return null
     const target = TARGET_OF[id]
     if (!(await legacy.findLegacy(target))) return null
     const reverted = await legacy.revert(target)
