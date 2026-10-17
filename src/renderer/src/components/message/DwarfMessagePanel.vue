@@ -132,8 +132,8 @@ import MessageComposer from './MessageComposer.vue'
  *
  * It never clears the question or permission card on its own, for the reason DwarfQuestionCard
  * states at length: only main's next snapshot may drop a `pendingQuestion` or a
- * `pendingPermission`. And it does not yank a reader to the bottom when a row arrives
- * (lib/message/listScroll): only their own sent message chases them down.
+ * `pendingPermission`. And it moves the log only when the log adds a row: to its end, after every
+ * message it adds (screens/message.md; ISSUE-257), never on a tick changing or a run opened.
  */
 
 const props = defineProps<{
@@ -689,8 +689,8 @@ const canSend = computed(
 )
 
 /*
- * Open on the LATEST message: the design orders a transcript oldest first. Only on mount, never
- * on a new message — the panel must not yank a reader to the bottom mid-sentence.
+ * Open on the LATEST message: the design orders a transcript oldest first. On mount, and again
+ * after every message the log adds (below): screens/message.md, As built, Where the log starts.
  */
 const conversationRef = ref<HTMLElement | null>(null)
 
@@ -714,9 +714,15 @@ onMounted(showLatest)
  * watchers, because the decision needs a metric from BEFORE Vue patches the new rows in and a
  * write AFTER it has; lib/message/listScroll is the rule (#195). A page of older conversation
  * (#364) takes the other write, adding its height back to the scroll.
+ *
+ * AMENDED for ISSUE-257 (was: a row arriving at the end left a reader who had scrolled up where
+ * they were, #195): the log goes to its end "again after every message it adds" (screens/message.md,
+ * As built, Where the log starts; foreman ruling 2026-10-17, new design wins). Anything that adds no
+ * row at the end — a tick changing, a run opened — still moves nothing.
  */
 let pendingStickToBottom = false
 let pendingPrepend = false
+let pendingArrival = false
 let scrollHeightBeforePatch = 0
 
 watch(rows, (next, previous) => {
@@ -729,6 +735,12 @@ watch(rows, (next, previous) => {
     STICK_TO_BOTTOM_TOLERANCE_PX
   )
   pendingPrepend = rowsWerePrepended(previous ?? [], next)
+  pendingArrival =
+    !pendingPrepend &&
+    tailArrivals(
+      (previous ?? []).map((row) => row.key),
+      next.map((row) => row.key)
+    ).size > 0
   scrollHeightBeforePatch = list.scrollHeight
 })
 
@@ -744,6 +756,11 @@ watch(
         scrollHeightBeforePatch,
         list.scrollHeight
       )
+      return
+    }
+    if (pendingArrival) {
+      pendingArrival = false
+      list.scrollTop = list.scrollHeight
       return
     }
     list.scrollTop = nextScrollTop(list.scrollTop, list.scrollHeight, pendingStickToBottom)

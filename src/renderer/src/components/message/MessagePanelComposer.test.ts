@@ -235,6 +235,34 @@ describe('MessagePanel log and bubbles (ISSUE-257)', () => {
     expect(list.scrollTop).toBe(160)
   })
 
+  it('[US-MSG-001.AC09] a message added while the reader had scrolled up still brings the log to its end', async () => {
+    // Design screens/message.md (As built, Where the log starts): the log sets scrollTop to its
+    // end "again after every message it adds" (foreman ruling 2026-10-17, new design wins).
+    const wrapper = panel()
+    const list = wrapper.find('.dm-msg__log').element
+    layOut(list)
+    await wrapper.vm.$nextTick()
+    await nextFrame()
+    list.scrollTop = 5 // 80 - 30 - 5 = 45: scrolled well up.
+
+    await wrapper.setProps({
+      feed: heldFeed([...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }])
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(list.scrollTop).toBe(120)
+
+    // A tick changing on a bubble already there adds nothing, and moves nothing.
+    await wrapper.setProps({ echoes: [echo({ id: 'e9' })] })
+    await wrapper.vm.$nextTick()
+    await nextFrame()
+    list.scrollTop = 5
+    await wrapper.setProps({ echoes: [echo({ id: 'e9', state: { phase: 'reacted' } })] })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(list.scrollTop).toBe(5)
+  })
+
   it('[US-MSG-001.AC14] the first message of a day gets a TODAY divider', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
