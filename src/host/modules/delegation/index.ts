@@ -7,6 +7,7 @@ import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { McpDelegationServer } from './adapters/mcp/McpDelegationServer'
 import { DelegationResetStep } from './adapters/sqlite/DelegationResetStep'
 import type { DelegationRelayListener, DelegationServer } from './ports/delegationServer'
+import type { PermissionPromptEndpoint } from './ports/permissionPrompt'
 
 // ISSUE-199: what host/transport's MCP endpoint and the composition root need of the endpoint.
 export type { DelegationToken, DelegationTokenStore } from './ports/delegationStores'
@@ -23,6 +24,10 @@ export type {
   SubtaskToolFailure
 } from './ports/delegationServer'
 export { DELEGATION_WAIT_MS } from './ports/delegationServer'
+// AMENDMENT-21: the permission prompt tool's port, its call, and the stream-json relay issuer.
+export type { PermissionPromptEndpoint } from './ports/permissionPrompt'
+export type { PermissionPromptCall } from './domain/permissionPrompt'
+export type { PermissionPromptRelayIssuer } from './application/delegationLifecycle'
 
 /** Structurally the preferences module's `ResetDbStep` (16 §4.12); delegation never imports it. */
 export interface DelegationResetDbStep {
@@ -46,10 +51,15 @@ export {
   type SubtaskDelegated
 } from './application/delegationEndpoint'
 
-/** The Jev delegation MCP server over the MCP endpoint (16 §4.8; composed by ISSUE-209). */
+/**
+ * The Jev delegation MCP server over the MCP endpoint (16 §4.8; composed by ISSUE-209). With
+ * `prompts`, it also serves Claude's `permission` tool to an owned stream-json session's relay
+ * (AMENDMENT-21).
+ */
 export function createMcpDelegationServer(
   listener: DelegationRelayListener,
-  log: DiagnosticsLog
+  log: DiagnosticsLog,
+  prompts?: PermissionPromptEndpoint
 ): DelegationServer {
-  return new McpDelegationServer(listener, log)
+  return new McpDelegationServer(listener, log, prompts)
 }
