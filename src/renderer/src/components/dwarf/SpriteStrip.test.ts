@@ -8,6 +8,7 @@ import {
   type FrameClockEnv
 } from '../../lib/sprite/frameClock'
 import type { SpriteSheet } from '../../lib/sprite/spriteSheet'
+import { FakeTickSource, fakeFrameClockEnv } from '../../lib/sprite/testing/FakeTickSource'
 import SpriteStrip from './SpriteStrip.vue'
 
 const SWING: SpriteSheet = { src: '/swing.png', frames: 3, frameMs: 100, durations: [120, 60, 200] }
@@ -182,5 +183,34 @@ describe('SpriteStrip still', () => {
   it('keeps the whole strip behind its one cell', () => {
     const wrapper = mountStrip({ still: true })
     expect(wrapper.find('img').attributes('style')).toContain('width: 108px')
+  })
+})
+
+// ISSUE-282 (TC-282-04): a frame change on the clock is a patch of the strip's offset, in place.
+describe('SpriteStrip on the frame clock', () => {
+  it('[NFR-PERF-03] a frame change patches the frame index; the sprite element is never recreated', async () => {
+    const ticks = new FakeTickSource()
+    const wrapper = mountStrip({ scale: 2 }, createFrameClock(fakeFrameClockEnv(ticks).env))
+    const box = wrapper.find('span.dm-sprite').element
+    const strip = wrapper.find('img').element
+    const offsets = [offsetOf(wrapper)]
+
+    for (let tick = 0; tick < 6; tick++) {
+      ticks.runNext()
+      await wrapper.vm.$nextTick()
+      offsets.push(offsetOf(wrapper))
+      expect(wrapper.find('span.dm-sprite').element).toBe(box)
+      expect(wrapper.find('img').element).toBe(strip)
+    }
+    // The frame did change on every tick: SWING is three frames, so the offsets cycle 0, 1, 2.
+    expect(offsets.map((style) => /translateX\((-?\d+)px\)/.exec(style)?.[1])).toEqual([
+      '0',
+      '-72',
+      '-144',
+      '0',
+      '-72',
+      '-144',
+      '0'
+    ])
   })
 })
