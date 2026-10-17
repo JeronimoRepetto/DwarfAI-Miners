@@ -10,5 +10,11 @@ export type DelegationFailed = DomainEvent<
   { delegationId: DelegationId; parentDwarfId: DwarfId; failure: DelegationFailure }
 >
 
+/** 08 `DelegationWorkerLaunched` (S8.03; no frame: the worker's `DwarfLaunched` drives the UI). */
+export type DelegationWorkerLaunched = DomainEvent<
+  'DelegationWorkerLaunched',
+  { delegationId: DelegationId; workerDwarfId: DwarfId }
+>
+
 /** Every event the delegation lifecycle publishes. */
 export type DelegationLifecycleEvent = DelegationFailed

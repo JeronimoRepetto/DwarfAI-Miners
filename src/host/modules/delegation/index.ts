@@ -87,3 +87,16 @@ export function createDelegationLifecycle(
 ): DelegationLifecycle & PermissionPromptRelayIssuer {
   return new DelegationLifecycleService(deps)
 }
+
+// ISSUE-204: the routing and launch bridges' ports, and the `SubtaskDelegated` route.
+export type { SubtaskRouter, WorkerLauncher } from './ports/subtaskRouting'
+export type {
+  DelegationFailed,
+  DelegationLifecycleEvent,
+  DelegationWorkerLaunched
+} from './domain/events'
+export {
+  SubtaskRunService,
+  type SubtaskRunDeps,
+  type SubtaskRunEvent
+} from './application/subtaskRun'
