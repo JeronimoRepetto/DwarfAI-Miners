@@ -115,6 +115,8 @@ import { SqliteAskRepository } from './modules/asking/adapters/SqliteAskReposito
 import { createAskDrainGate, createAskRestartSettlement } from './modules/asking'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
+import { FsAttachmentReader } from './modules/conversation/adapters/attachments/FsAttachmentReader'
+import { NodeAttachmentProbe } from './modules/conversation/adapters/attachments/NodeAttachmentProbe'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
@@ -1004,7 +1006,13 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             // The send path's door to a launched session, and its failed-write log (ISSUE-166).
             sessions: modules.suppliers.sessions,
-            diagnostics: log
+            diagnostics: log,
+            // The Host's own check of every attachment path, at describe and again at send
+            // (ISSUE-169; ADR-019 item 9; 18 C-17).
+            attachments: new FsAttachmentReader({
+              platform: hostRuntime().os as NodeJS.Platform,
+              probe: new NodeAttachmentProbe()
+            })
           })
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
           // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).
