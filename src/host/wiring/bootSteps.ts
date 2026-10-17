@@ -105,6 +105,22 @@ export interface BootPorts {
 }
 
 /**
+ * Boot step 5's classification (16 §8.2; ADR-015 item 3; ISSUE-182): the Host recovery reads each
+ * provider's effective capabilities (`resume`, `adopt`), which a fresh Host knows once the start-up
+ * installed detection and its probes answered (ADR-009 D5; suppliersWiring.ts `bootDetection`).
+ * So the classification waits for that pass first: the same pass step 8 waits for before `ready`,
+ * so `ready` comes no later. A failed pass still classifies (fail closed: a provider with no known
+ * `resume` is `no-resume`, which the report's Retry resumes later, ISSUE-174).
+ */
+export async function classifyAfterDetection(deps: {
+  detection: Promise<'detected' | 'failed'>
+  classify: () => Promise<void>
+}): Promise<void> {
+  await deps.detection
+  await deps.classify()
+}
+
+/**
  * The first-run step's boot evaluation, right after the start-up installed detection (07 S41.09:
  * "right after the installed detection, before S41.01/S41.02"; suppliersWiring.ts `bootDetection`).
  *

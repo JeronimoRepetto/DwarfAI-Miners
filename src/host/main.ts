@@ -194,6 +194,7 @@ import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
 import { errorCode, runBoot } from './wiring/boot'
 import { createHostDispatcher } from './wiring/hostDispatcher'
 import {
+  classifyAfterDetection,
   createBootSteps,
   createUiEndpoint,
   evaluateWelcomeAfterDetection,
@@ -1339,12 +1340,18 @@ async function bootHost(base: HostBase): Promise<void> {
             attention: modules.attention.attention
           })
         },
-        // Step 5: the Host recovery's classification (ISSUE-173); its resumes go on after `ready`.
+        // Step 5: the Host recovery's classification (ISSUE-173), once the start-up detection and
+        // probes answered (ISSUE-182, `classifyAfterDetection`); its resumes go on after `ready`.
         recoverSessions: () => {
-          if (launchingRecovery === undefined) {
+          const { suppliers } = modules
+          if (launchingRecovery === undefined || suppliers === undefined) {
             throw new HostInvariantError('boot step 5 runs after step 4 wired launching')
           }
-          return launchingRecovery.start().classified
+          const recovery = launchingRecovery
+          return classifyAfterDetection({
+            detection: suppliers.bootDetection,
+            classify: () => recovery.start().classified
+          })
         },
         // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
         // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
