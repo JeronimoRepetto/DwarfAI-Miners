@@ -91,7 +91,11 @@
 // wiring/routes/launching.ts) over the SQLite launch stores and the SessionStarter bridge to the
 // suppliers registry, with B-M33 `launching.launch` and the `launches` section served before the
 // bind, its `launch.changed` / `launch.failed` frames and routes, the spawn tag carrying
-// `app_meta.install_id`; last,
+// `app_meta.install_id`, and the `LaunchAdvisor` bridge to jev (ISSUE-182); then the launched
+// sessions (ISSUE-182: wiring/launchedSessions.ts): every driver event of a bound session routed to
+// conversation, ledger, asking, launching and mines (routes/driverEvents.ts), crew's session links
+// and asking's `driver` answer channel over launching's live records, and the resume lookup of the
+// Codex app-server driver (the person's own CLI, attached to suppliers with its process deps); last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
 // withdrawing attention keys and closing activity runs. The others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
@@ -179,16 +183,10 @@ import { migrationsFor } from './platform/sqlite/migrations'
 import { TransportLevel3Sink } from './transport/attention/TransportLevel3Sink'
 import { mintCredential } from './transport/auth/mintCredential'
 import { ConnectionRegistry } from './transport/connectionRegistry'
-import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
-import { BOARD_FRAMES } from './transport/frames/board'
-import { LEDGER_FRAMES } from './transport/frames/ledger'
 import type { HttpIngress } from './transport/ingress/httpIngress'
 import { createUpgradeDrain } from './transport/lifecycle/drain'
-import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
+import { HostStateHolder } from './transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
-import { PREFERENCES_FRAMES } from './transport/methods/preferences'
-import { RESET_FRAMES } from './transport/methods/resetMetrics'
-import { SET_CLAUDE_HOOKS_FRAMES } from './transport/methods/setClaudeHooks'
 import { HostIdentityFile } from './transport/runFiles/hostIdentityFile'
 import { SNAPSHOT_TAIL, type SnapshotMetaSource } from './transport/snapshot/metaSection'
 import { SectionRegistry } from './transport/snapshot/sectionRegistry'
@@ -216,7 +214,6 @@ import {
   observedSendTargets
 } from './wiring/bridges/turnSender'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
-import { ownedSessionsOver } from './wiring/bridges/sessionTerminator'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
 import { CUT_2_ROLLBACK_CHOICES } from './wiring/cut2Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
@@ -239,14 +236,12 @@ import {
 import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
 import { servePreferences, type WiredPreferences } from './wiring/preferencesWiring'
 import {
-  ASKING_FRAMES,
   serveAsking,
   type AskingRouteEvent,
   type AskingWiringDeps,
   type WiredAsking
 } from './wiring/routes/askingRoutes'
 import {
-  ATTENTION_FRAMES,
   onNotifierAttach,
   serveAttention,
   type AttentionRouteEvent,
@@ -257,8 +252,10 @@ import {
   type ConversationRouteEvent,
   type WiredConversation
 } from './wiring/routes/conversation'
-import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
-import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/routes/launching'
+import { serveLaunching, type WiredLaunching } from './wiring/routes/launching'
+import { HOST_FRAMES } from './wiring/hostFrames'
+import { createLaunchedSessions } from './wiring/launchedSessions'
+import { createLaunchAdvisor } from './wiring/bridges/launchAdvisor'
 import {
   createLaunchDrainGate,
   type LaunchingEvent,
@@ -518,6 +515,10 @@ async function bootHost(base: HostBase): Promise<void> {
     asking?: WiredAsking
     launching?: WiredLaunching
   } = {}
+  // Launching's sessions, for the modules wired before it (ISSUE-182, wiring/launchedSessions.ts):
+  // crew's session links, asking's `driver` answer channel and the CLI drivers' resume lookup answer
+  // "none" until boot step 4 binds them once launching exists.
+  const launched = createLaunchedSessions()
   // What holds the upgrade drain: each module's gate is bound once boot step 4 wired it (#1290).
   const drainGate = createHostDrainGate()
   // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
@@ -702,21 +703,7 @@ async function bootHost(base: HostBase): Promise<void> {
         state: () => hostState.current(),
         dispatcher,
         connections,
-        frames: [
-          ...LIFECYCLE_FRAMES,
-          ...TRANSPORT_FRAMES,
-          ...PREFERENCES_FRAMES,
-          ...SET_CLAUDE_HOOKS_FRAMES,
-          ...RESET_FRAMES,
-          ...BOARD_FRAMES,
-          ...LEDGER_FRAMES,
-          ...CONVERSATION_READ_FRAMES,
-          // B-F12 `message.delivery`, the send path's marks (ISSUE-166).
-          'message.delivery',
-          ...ATTENTION_FRAMES,
-          ...ASKING_FRAMES,
-          ...LAUNCHING_FRAMES
-        ],
+        frames: HOST_FRAMES,
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
         sections: () => sections.names(),
@@ -924,12 +911,25 @@ async function bootHost(base: HostBase): Promise<void> {
               loginEnv: process.env,
               platform: hostRuntime().os as NodeJS.Platform,
               redact: redactSecrets
+            },
+            // The person's own CLIs (ISSUE-182): the Codex app-server driver, with the stored launch
+            // record a restarted Host's resume reads (ISSUE-173). Claude's stream-json driver joins
+            // with its permission prompt tool (AMENDMENT-21), which needs the delegation relay
+            // composed (later: ISSUE-209): until then it is not attached (hidden until built).
+            cliDrivers: {
+              processControl,
+              loginEnv: process.env,
+              home: homedir(),
+              platform: hostRuntime().os as 'win32' | 'darwin' | 'linux',
+              redact: redactSecrets,
+              clientInfo: { name: 'dwarfai', version: __DWARFAI_APP_VERSION__ },
+              resumeContext: launched.resumeContext
             }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))
           // Jev (ISSUE-196): TypeSafe behind `JevRouter`, the Jev key through the kernel
           // SecretReader, its candidates exactly what suppliers can launch now (16 §4.9; 21 §2 cut 3).
-          servedJev.bind({
+          const jev = servedJev.bind({
             router: new TypesafeJevRouter({ scheduler, log }),
             secretReader: modules.preferences.secretReader,
             routingCatalog: routingCatalogSource(modules.suppliers.catalogue),
@@ -1060,12 +1060,12 @@ async function bootHost(base: HostBase): Promise<void> {
             ids,
             hostEpoch: epoch,
             log,
-            // No launch reaches the Host yet (later: EPIC-10); an observed dwarf has a delivery
-            // route when the observed-session relay has a send path to it (ISSUE-167, INV-33).
-            links: {
-              owned: () => false,
-              hasDeliveryRoute: (dwarfId) => observedRoutes.canDeliverTo(dwarfId)
-            },
+            // Launching's ownership (INV-30): an owned dwarf has a delivery route while its driver
+            // session is live, an observed one when the observed-session relay has a send path to
+            // it (ISSUE-167, INV-33). Bound once launching exists (ISSUE-182).
+            links: launched.links({
+              canDeliverTo: (dwarfId) => observedRoutes.canDeliverTo(dwarfId)
+            }),
             processes: processControl,
             observation: modules.observation.crew,
             // The `dwarfs` section's stored outcome lines (owner amendment E).
@@ -1185,6 +1185,8 @@ async function bootHost(base: HostBase): Promise<void> {
               queries: modules.preferences.preferences.queries,
               channelTokens: modules.preferences.channelTokens
             },
+            // A launched session's own driver answers its asks (ISSUE-182).
+            driverAnswers: launched.answers,
             keystrokes: {
               // The observed-session key relay (#1285, the cut-2 slice of ISSUE-167): one key into
               // the terminal of the process observation recorded, identity re-checked just before.
@@ -1238,6 +1240,8 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // Launching (ISSUE-162: wiring/routes/launching.ts), once suppliers, conversation, crew and
           // mines exist: a launched dwarf arrives through crew and its prompt is its first message.
+          // "Let Jev choose" asks the jev module through the LaunchAdvisor bridge (ISSUE-182).
+          const installId = installIdOf(db)
           modules.launching = servedLaunching.wire({
             db,
             transactions,
@@ -1246,13 +1250,14 @@ async function bootHost(base: HostBase): Promise<void> {
             scheduler,
             ids,
             hostEpoch: epoch,
-            installId: installIdOf(db),
+            installId,
             log,
             frames: connections,
             suppliers: modules.suppliers,
             mines: modules.mines.mines.queries,
             crew: modules.crew.crew.commands,
-            conversation: conversation.conversation.commands
+            conversation: conversation.conversation.commands,
+            advisor: createLaunchAdvisor({ advisor: jev.advisor })
           })
           // Its in-flight launches hold the upgrade drain too (ADR-002 D8 item 2); a settled launch
           // asks it again at once.
@@ -1300,12 +1305,25 @@ async function bootHost(base: HostBase): Promise<void> {
           }
           // Its report reaches the window as one grouped message with Retry and Dismiss (ISSUE-174).
           launchingRecovery = modules.launching.recover(recoveryDeps)
-          // Stop dwarf ends an owned session through its driver, then its recorded process tree
-          // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
+          // The launched sessions (ISSUE-182, wiring/launchedSessions.ts): every driver event of a
+          // bound session routed (entries, turn ends, usage, asks, exits, errors; 05 §4), crew's
+          // links and asking's driver channel answered, the resume lookup bound. Stop dwarf ends an
+          // owned session through its driver, then its recorded process tree (ISSUE-171, ADR-014
+          // items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(
-            ownedSessionsOver({
-              launching: modules.launching.launching.owned,
-              channels: modules.suppliers.sessions
+            launched.bind({
+              launching: modules.launching.launching,
+              suppliers: modules.suppliers,
+              installId,
+              hostEpoch: epoch,
+              routes: {
+                conversation: conversation.conversation.commands,
+                asking: modules.asking.broker,
+                ledger: ledger.ledger.commands,
+                mines: modules.mines.mines.commands,
+                log
+              },
+              crew: modules.crew.crew
             })
           )
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
