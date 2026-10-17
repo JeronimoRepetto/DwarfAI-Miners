@@ -1,14 +1,16 @@
 // Seam-B params and results of `launching.*` that host-placed seam A rows relay unchanged (14 §3.4, §1.2).
 import { z } from 'zod'
 import {
+  hostEpochSchema,
   launchIdSchema,
   mineIdSchema,
+  type HostEpoch,
   type LaunchId,
   type MineId,
   type ProviderId
 } from '../../wire'
 import { requestIdSchema } from '../requestId'
-import { messageTextSchema, wirePathSchema, wireTokenSchema } from './bounds'
+import { messageTextSchema, WIRE_TOKEN_MAX_CHARS, wirePathSchema, wireTokenSchema } from './bounds'
 
 // As 14 §3.4 writes them (names, fields and comments; layout by prettier): launching
 export interface LaunchParams {
@@ -34,6 +36,12 @@ export interface LaunchCustomParams {
 export interface LaunchAccepted {
   launchId: LaunchId
 } // answered at acceptance (§1.7): launches row committed; settlement by frames only
+
+// As 14 §3.4 writes it (names, fields and comments; layout by prettier): launching, B-M35, B-M36
+export interface RecoveryActionParams {
+  hostEpoch: HostEpoch
+  requestId: string
+}
 
 /** B-M33 `launching.launch` params; A-35's request is this same object (14 §1.2). The prompt is the first message. */
 export const launchParamsSchema = z
@@ -66,3 +74,12 @@ export const launchCustomParamsSchema = z
   .strict()
 
 export const launchAcceptedSchema = z.object({ launchId: launchIdSchema }).strict()
+
+/**
+ * B-M35 / B-M36 params (A-N10 / A-N11 relay the same object, 14 §1.2): the report's epoch and the
+ * requestId. Package gap (14 is silent on the epoch's length): bounded like a wire token, so the
+ * schema refuses an oversized string (14 §6.5 "Schemas").
+ */
+export const recoveryActionParamsSchema = z
+  .object({ hostEpoch: hostEpochSchema.max(WIRE_TOKEN_MAX_CHARS), requestId: requestIdSchema })
+  .strict()

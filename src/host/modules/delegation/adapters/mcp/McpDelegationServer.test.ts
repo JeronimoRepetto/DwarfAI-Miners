@@ -20,6 +20,12 @@ import {
   SUBTASK_RESULT_DESCRIPTION
 } from './McpDelegationServer'
 import { NATIVE_SUBAGENT_FALLBACK_SENTENCE } from '../../domain/toolFailure'
+import {
+  PERMISSION_DENIED_MESSAGE,
+  PERMISSION_UNAVAILABLE_MESSAGE,
+  type PermissionPromptCall
+} from '../../domain/permissionPrompt'
+import type { PermissionPromptEndpoint } from '../../ports/permissionPrompt'
 
 /** A relay connection and the client end of it, in process; messages cross on the next tick. */
 function relayPair(token: DelegationToken): {
@@ -64,7 +70,8 @@ function relayPair(token: DelegationToken): {
 async function connectedClient(
   handler: DelegationEndpoint,
   token: DelegationToken,
-  log: DiagnosticsLog = new RecordingDiagnosticsLog()
+  log: DiagnosticsLog = new RecordingDiagnosticsLog(),
+  prompts?: PermissionPromptEndpoint
 ) {
   const pair = relayPair(token)
   let close: () => Promise<void> = () => Promise.resolve()
@@ -76,7 +83,8 @@ async function connectedClient(
         return Promise.resolve({ endpoint: { path: 'in-process' }, close: () => close() })
       }
     },
-    log
+    log,
+    prompts
   )
   await server.listen(handler)
   const client = new Client({ name: 'relay-under-test', version: '1.0.0' })
@@ -124,8 +132,11 @@ describe('McpDelegationServer (16 §5.4)', () => {
     result: () => new Promise(() => {})
   }
 
-  it('[ADR-013] exactly the two tools are listed, with their bounds and the fallback sentence in both descriptions', async () => {
-    const { client, server } = await connectedClient(never, token)
+  // AMENDED by AMENDMENT-21 (owner, 2026-10-17; 16 §5.4 now lists three tools): was "exactly the
+  // two tools are listed". A connection whose launch is not an owned Claude stream-json session
+  // still gets exactly the two; the third, `permission`, is the next case's.
+  it('[ADR-013] a connection that is not an owned stream-json session lists exactly the two delegation tools, with their bounds and the fallback sentence in both descriptions', async () => {
+    const { client, server } = await connectedClient(never, token, undefined, promptsFor(null))
 
     const { tools } = await client.listTools()
 
@@ -156,6 +167,194 @@ describe('McpDelegationServer (16 §5.4)', () => {
 
     expect(frames.length - before).toBe(1)
     expect(frames.at(-1)).toMatchObject({ jsonrpc: '2.0', result: { tools: expect.any(Array) } })
+    await client.close()
+    await server.close()
+  })
+})
+
+/**
+ * A PermissionPromptEndpoint that serves `owned` only (null: none) and answers with `decide`;
+ * every call it was asked, with its token's launch and its signal, is recorded.
+ */
+function promptsFor(
+  owned: DelegationToken['launchId'] | null,
+  decide: (call: PermissionPromptCall, signal: AbortSignal) => Promise<'allow' | 'deny'> = () =>
+    Promise.resolve('allow'),
+  /** Whether `owned` was launched with both delegation gates on. */
+  gated = true
+): PermissionPromptEndpoint & {
+  asked: Array<{ launchId: string; call: PermissionPromptCall; signal: AbortSignal }>
+} {
+  const asked: Array<{ launchId: string; call: PermissionPromptCall; signal: AbortSignal }> = []
+  return {
+    asked,
+    serves: (t) => owned !== null && t.launchId === owned,
+    delegationGated: (t) => gated && owned !== null && t.launchId === owned,
+    decide: (t, call, signal) => {
+      asked.push({ launchId: t.launchId, call, signal })
+      return decide(call, signal)
+    }
+  }
+}
+
+/** The SP-08 recording's prompt-tool call (fixtures/claude/stream-json/2.1.x/sp08-allow-mcp.jsonl). */
+const PROMPT = {
+  tool_name: 'Write',
+  input: { file_path: '<REPO>\sp08-allow-marker.txt', content: 'marker' },
+  tool_use_id: '00000000-0000-4000-8000-000000000001'
+}
+
+/** The one text block of a prompt-tool result, parsed: Claude reads the answer from it. */
+function promptReplyOf(result: CallToolResult): unknown {
+  expect(result.isError === true).toBe(false)
+  expect(result.content).toHaveLength(1)
+  const text = result.content[0]
+  return text?.type === 'text' ? JSON.parse(text.text) : null
+}
+
+describe('McpDelegationServer permission tool (AMENDMENT-21, 16 §5.4, 15 §2.7)', () => {
+  const owned: DelegationToken = {
+    launchId: '01890a5d-ac96-774b-bcce-b302099a8a01' as DelegationToken['launchId'],
+    parentDwarfId: null,
+    mechanism: 'ticket-file',
+    issuedAt: 0
+  }
+  const other: DelegationToken = {
+    ...owned,
+    launchId: '01890a5d-ac96-774b-bcce-b302099a8a02' as DelegationToken['launchId']
+  }
+  const never: DelegationEndpoint = {
+    delegate: () => new Promise(() => {}),
+    result: () => new Promise(() => {})
+  }
+
+  it('[ADR-013] a gated owned stream-json session connection lists three tools: the two delegation tools and permission', async () => {
+    const { client, server } = await connectedClient(
+      never,
+      owned,
+      undefined,
+      promptsFor(owned.launchId)
+    )
+
+    const { tools } = await client.listTools()
+
+    expect(tools.map((t) => t.name)).toEqual(['delegate_subtask', 'subtask_result', 'permission'])
+    const permission = tools[2]
+    expect(Object.keys(permission?.inputSchema.properties ?? {})).toEqual([
+      'tool_name',
+      'input',
+      'tool_use_id'
+    ])
+    await client.close()
+    await server.close()
+  })
+
+  it('[ADR-013, INV-80] an ungated owned stream-json session connection lists only permission: no delegation tool it could never use', async () => {
+    const prompts = promptsFor(owned.launchId, undefined, false)
+    const { client, server } = await connectedClient(never, owned, undefined, prompts)
+
+    const { tools } = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(['permission'])
+
+    // A call to an unlisted delegation tool is the SDK's unknown-tool refusal.
+    const delegated = await client
+      .callTool({ name: 'delegate_subtask', arguments: { task: 'anything' } })
+      .then(
+        (result) => (result as CallToolResult).isError === true,
+        () => true
+      )
+    expect(delegated).toBe(true)
+    await client.close()
+    await server.close()
+  })
+
+  it('[ADR-010] the session Allow answers behavior allow with updatedInput, the call reaching its own launch only', async () => {
+    const prompts = promptsFor(owned.launchId)
+    const { client, server } = await connectedClient(never, owned, undefined, prompts)
+
+    const result = (await client.callTool({
+      name: 'permission',
+      arguments: PROMPT
+    })) as CallToolResult
+
+    expect(promptReplyOf(result)).toEqual({ behavior: 'allow', updatedInput: PROMPT.input })
+    expect(prompts.asked.map((a) => [a.launchId, a.call])).toEqual([
+      [owned.launchId, { toolName: 'Write', input: PROMPT.input, toolUseId: PROMPT.tool_use_id }]
+    ])
+    await client.close()
+    await server.close()
+  })
+
+  it('[ADR-010] the session Deny answers behavior deny with a message', async () => {
+    const prompts = promptsFor(owned.launchId, () => Promise.resolve('deny'))
+    const { client, server } = await connectedClient(never, owned, undefined, prompts)
+
+    const result = (await client.callTool({
+      name: 'permission',
+      arguments: PROMPT
+    })) as CallToolResult
+
+    expect(promptReplyOf(result)).toEqual({ behavior: 'deny', message: PERMISSION_DENIED_MESSAGE })
+    await client.close()
+    await server.close()
+  })
+
+  it('[ADR-010] a bridge error and a malformed call both answer deny, never an MCP error', async () => {
+    const prompts = promptsFor(owned.launchId, () => Promise.reject(new Error('bridge down')))
+    const { client, server } = await connectedClient(never, owned, undefined, prompts)
+
+    const failed = (await client.callTool({
+      name: 'permission',
+      arguments: PROMPT
+    })) as CallToolResult
+    const malformed = (await client.callTool({
+      name: 'permission',
+      arguments: { tool_name: 'Write', input: 'not an object' }
+    })) as CallToolResult
+
+    const unavailable = { behavior: 'deny', message: PERMISSION_UNAVAILABLE_MESSAGE }
+    expect(promptReplyOf(failed)).toEqual(unavailable)
+    expect(promptReplyOf(malformed)).toEqual(unavailable)
+    expect(prompts.asked).toHaveLength(1)
+    await client.close()
+    await server.close()
+  })
+
+  it('[ADR-013] another session credential gets no permission tool, and a call to it reaches no session', async () => {
+    const prompts = promptsFor(owned.launchId)
+    const { client, server } = await connectedClient(never, other, undefined, prompts)
+
+    const { tools } = await client.listTools()
+    const refused = await client.callTool({ name: 'permission', arguments: PROMPT }).then(
+      (result) => (result as CallToolResult).isError === true,
+      () => true
+    )
+
+    expect(tools.map((t) => t.name)).not.toContain('permission')
+    expect(refused).toBe(true)
+    expect(prompts.asked).toEqual([])
+    await client.close()
+    await server.close()
+  })
+
+  it('[ADR-010] a cancelled tool call aborts the signal handed to the session', async () => {
+    let resolve: (decision: 'allow' | 'deny') => void = () => {}
+    const prompts = promptsFor(owned.launchId, () => new Promise((settle) => (resolve = settle)))
+    const { client, server } = await connectedClient(never, owned, undefined, prompts)
+    const abort = new AbortController()
+
+    const call = client.callTool({ name: 'permission', arguments: PROMPT }, undefined, {
+      signal: abort.signal
+    })
+    for (let i = 0; i < 20 && prompts.asked.length === 0; i += 1) {
+      await new Promise((tick) => setImmediate(tick))
+    }
+    abort.abort()
+    await call.catch(() => undefined)
+    for (let i = 0; i < 20; i += 1) await new Promise((tick) => setImmediate(tick))
+
+    expect(prompts.asked[0]?.signal.aborted).toBe(true)
+    resolve('allow')
     await client.close()
     await server.close()
   })
