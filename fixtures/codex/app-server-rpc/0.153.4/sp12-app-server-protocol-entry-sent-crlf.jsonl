@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"dwarfai-spike","version":"0.0.1"}}}
+{"jsonrpc":"2.0","method":"initialized","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"thread/start","params":{"cwd":"<REPO>","ephemeral":true,"approvalPolicy":"on-request","sandbox":"read-only","config":{"mcp_servers":{"sp12":{"command":"<PATH> Files/nodejs/node.exe","args":["<HOME>/AppData/Local/Temp/claude/<AGENT_SCRATCHPAD>/probe/probe-mcp.mjs"],"env":{"SP12_SENTINEL":"sp12-sentinel-245bf3a8505d","DWARFAI_MCP_CREDENTIAL_FILE":"<REPO>/sp12-launch.cred","SP12_REPORT":"<REPO>/sp12-probe-report.jsonl"}}}}}}
+{"jsonrpc":"2.0","id":3,"method":"mcpServerStatus/list","params":{}}
