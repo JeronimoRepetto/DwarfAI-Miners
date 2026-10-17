@@ -58,6 +58,7 @@ import {
   type MineCrew
 } from './application/queries'
 import { SessionEndRecorder } from './application/recordSessionEnd'
+import { ConversationRetry } from './application/retry'
 import { ConversationSender, type MessageRecipients, type SendEvent } from './application/send'
 import { TurnEndRecorder } from './application/recordTurnEnd'
 import type { ConversationEvent } from './domain/events'
@@ -301,7 +302,17 @@ export function createConversation(deps: ConversationDeps): Conversation {
         hostEpoch: deps.hostEpoch,
         diagnostics
       })
-      return { send: (...args) => (sender as ConversationSender).send(...args) }
+      const retrier = new ConversationRetry({
+        log,
+        transactions: deps.transactions,
+        recipients,
+        clock: deps.clock,
+        sender
+      })
+      return {
+        send: (...args) => (sender as ConversationSender).send(...args),
+        retry: (messageId, requestId) => retrier.retry(messageId, requestId)
+      }
     },
     joinedEvents: {
       publish: () => {
