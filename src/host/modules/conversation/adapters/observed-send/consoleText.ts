@@ -12,9 +12,9 @@
 //
 // Candidate decisions (21 §6; evidence: consoleText.test.ts, ConsoleTextDelivery.test.ts and
 // ObservedSessionTurnSender.os.test.ts), against the legacy text-delivery family `src/main/textDelivery/**`:
-// - `shared/consoleText.ts` `normalizeConsoleText`, `MAX_CONSOLE_CHUNK_CODE_POINTS`, `boundedChunks`
-//   — KEPT verbatim as `relayTextOf`'s rule, `MAX_CONSOLE_CHUNK_CODE_POINTS`, `boundedChunks` (copied:
-//   R16 lets only src/legacy-bridge import legacy code).
+// - `shared/consoleText.ts` `normalizeConsoleText` — KEPT in the conversation domain
+//   (domain/consoleText.ts, the one rule the echo match also reads); `MAX_CONSOLE_CHUNK_CODE_POINTS`
+//   and `boundedChunks` — KEPT verbatim here (copied: R16 lets only src/legacy-bridge import legacy code).
 // - `consoleInputWrite.ts` `buildConsoleInputWriteCommand` / `buildConsoleInputSequenceCommand` — ADAPTED
 //   to `windowsTextWriteScript`: the same FreeConsole → AttachConsole(pid) → `CONIN$` → one
 //   WriteConsoleInputW call per bounded chunk, the text only as base64 of UTF-16, Enter in a call of
@@ -28,6 +28,8 @@
 // - `attachmentDelivery.ts` (paths as bracketed pastes) — not carried: an observed relay takes no
 //   attachment (ISSUE-169 owns attachments; `send` refuses them before any row today).
 
+import { normalizeConsoleText } from '../../domain/consoleText'
+
 /** The longest relay text, in code points: legacy's tmux and Terminal.app bound, now on every OS. */
 export const MAX_RELAY_TEXT_CODE_POINTS = 32_768
 
@@ -39,7 +41,7 @@ export const MAX_CONSOLE_CHUNK_CODE_POINTS = 500
 
 /** The relay text of a message (S-022-1), or null when nothing would be typed or it is too long. */
 export function relayTextOf(text: string): string | null {
-  const flat = text.replace(/\s+/g, ' ').trim()
+  const flat = normalizeConsoleText(text)
   if (flat === '' || Array.from(flat).length > MAX_RELAY_TEXT_CODE_POINTS) return null
   return flat
 }
