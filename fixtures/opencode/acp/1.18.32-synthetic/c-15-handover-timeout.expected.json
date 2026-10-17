@@ -1,0 +1,116 @@
+{
+  "case": "C-15",
+  "description": "ADR-010 item 8, CH-05: the reply is written but the agent never sends anything after it, so the answer is never acknowledged and the broker gets channel-unavailable at 30 s.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "toolu_000000000000000000000121",
+      "decision": "allow"
+    },
+    {
+      "do": "advance",
+      "ms": 30000
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "kind": "refused",
+      "reason": "channel-unavailable"
+    },
+    null
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "opencode:opencode:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "opencode:opencode:{session}:toolu_000000000000000000000121",
+        "turnKey": "opencode:opencode:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "Write",
+        "summary": "Write b.txt",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "toolu_000000000000000000000121",
+        "channel": "driver",
+        "payload": {
+          "toolName": "Write",
+          "requestText": "Write b.txt"
+        },
+        "options": {
+          "hasAllowOnce": true,
+          "hasRejectOnce": true
+        },
+        "turnKey": "opencode:opencode:{session}:turn:1"
+      }
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 113,
+      "result": {
+        "outcome": {
+          "outcome": "selected",
+          "optionId": "allow"
+        }
+      }
+    }
+  ]
+}
