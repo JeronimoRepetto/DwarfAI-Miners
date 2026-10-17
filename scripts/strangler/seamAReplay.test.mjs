@@ -64,9 +64,10 @@ describe('the seam-A replay of a later release (21 §2 note 1)', () => {
 
   it('[ADR-001] a legacy member renamed after its recording is called by its new name, the recording untouched', () => {
     const reset = { row: '§8 I-21', channel: 'dwarf:resetName', member: 'resetDwarfName' }
+    const recording = { calls: [{ ...reset, answer: { saved: false } }], pushes: {} }
     const part = legacyTodayPart(
       { ...scenario, calls: [{ ...reset, args: ['replay:none'] }], pushes: [] },
-      { calls: [{ ...reset, answer: { saved: false } }], pushes: {} },
+      recording,
       [{ channel: 'dwarf:resetName', owner: 'legacy', shape: 'today' }]
     )
 
@@ -74,6 +75,10 @@ describe('the seam-A replay of a later release (21 §2 note 1)', () => {
     expect(part.scenario.calls).toEqual([
       { ...reset, member: 'resetDwarfNameToday', args: ['replay:none'] }
     ])
-    expect(part.recorded.calls).toEqual([{ ...reset, answer: { saved: false } }])
+    // The recorded answer is compared under the same name; the recording itself is not changed.
+    expect(part.recorded.calls).toEqual([
+      { ...reset, member: 'resetDwarfNameToday', answer: { saved: false } }
+    ])
+    expect(recording.calls[0].member).toBe('resetDwarfName')
   })
 })
