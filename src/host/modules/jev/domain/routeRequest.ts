@@ -22,6 +22,12 @@ export interface RoutingProviderOption {
   installed: boolean
   /** Whether a session can actually be started for it now. */
   launchable: boolean
+  /**
+   * The catalog's own display name of the provider (`SupplierEntry.label`). It describes a catalog
+   * provider this module holds no hand-written criteria for (`providerChoiceCriteria`), so a
+   * provider added to the catalog later is still offered to Jev with no code change (R12).
+   */
+  label?: string
 }
 
 /**
@@ -400,21 +406,49 @@ function describeToolingMarkers(provider: ProviderId): string {
 }
 
 /**
+ * The two examples of a catalog provider this module holds no hand-written criteria for: plain
+ * requests any agent CLI takes, claiming no tooling fact about it (ISSUE-192; R12).
+ */
+const CATALOG_PROVIDER_EXAMPLES: readonly [string, string] = [
+  'Make this change in the project.',
+  'Look into this problem and fix it.'
+]
+
+/**
  * One provider's own `provider` Choice option, built from PRODUCT_NAME, its capability table's own
  * offered tiers, and its sourced tooling markers — never from a model name (see this module's own
- * top comment). `undefined` for a provider this module holds no criteria for (a catalog provider
- * added after these tables): it is left out of the question rather than described with invented
- * text, the same degrade-rather-than-invent rule the tooling markers follow.
+ * top comment). A catalog provider added after these tables (ISSUE-192, US-LAUNCH-003.AC11, R12)
+ * is described by the facts the catalog holds and nothing more: its own label and the tiers its
+ * capability table offers, with plain examples that claim no tooling fact. `undefined` when there
+ * is not even a label: it is left out of the question rather than described with invented text,
+ * the same degrade-rather-than-invent rule the tooling markers follow.
  */
 function providerChoiceCriteria(
   provider: ProviderId,
-  capabilities: JevCapabilityTable
+  capabilities: JevCapabilityTable,
+  label: string | undefined
 ): JevChoiceCriteria | undefined {
   const productName = PRODUCT_NAME[provider]
   const note = HELD_TOOLING_NOTE[provider]
   const examples = PROVIDER_EXAMPLES[provider]
-  if (productName === undefined || note === undefined || examples === undefined) return undefined
-  const offeredTiers = Array.from(
+  const offered = describeTierList(offeredTiersOf(provider, capabilities))
+  if (productName === undefined || note === undefined || examples === undefined) {
+    const name = label?.trim() ?? ''
+    if (name === '') return undefined
+    return {
+      what: `${name} — an agent CLI this app can launch. Offers ${offered}.`,
+      examples: CATALOG_PROVIDER_EXAMPLES
+    }
+  }
+  return {
+    what: `${productName} — ${note} Offers ${offered}.${describeToolingMarkers(provider)}`,
+    examples
+  }
+}
+
+/** The routing tiers `provider`'s capability table offers a launch on, in table order. */
+function offeredTiersOf(provider: ProviderId, capabilities: JevCapabilityTable): ModelTier[] {
+  return Array.from(
     new Set(
       Object.values(capabilities[provider] ?? {})
         .filter(
@@ -423,10 +457,6 @@ function providerChoiceCriteria(
         .map((entry) => entry.tier as ModelTier)
     )
   )
-  return {
-    what: `${productName} — ${note} Offers ${describeTierList(offeredTiers)}.${describeToolingMarkers(provider)}`,
-    examples
-  }
 }
 
 /** The catch-all `provider` option for "no requirement" — see `routeDecision.ts`'s own no-preference handling. */
@@ -620,7 +650,7 @@ export function buildJevRouteRequest(input: BuildJevRouteRequestInput): BuildJev
   for (const option of input.providers) {
     if (!option.launchable || !hasAnyLaunchTarget(input.capabilities[option.provider] ?? {}))
       continue
-    const criteria = providerChoiceCriteria(option.provider, input.capabilities)
+    const criteria = providerChoiceCriteria(option.provider, input.capabilities, option.label)
     if (criteria !== undefined) providerCriteria[option.provider] = criteria
   }
   if (Object.keys(providerCriteria).length === 0) {

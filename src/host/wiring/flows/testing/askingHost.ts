@@ -49,7 +49,7 @@ import { SqliteLedgerRepository } from '../../../modules/ledger/adapters/SqliteL
 import { createHostGitRepoInspector } from '../../../modules/mines/adapters/FsGitRepoInspector'
 import type { SourceWeightScanner } from '../../../modules/mines'
 import { OBSERVATION_POLL_MS, createSqliteObservationStores } from '../../../modules/observation'
-import type { PreferencesEvent } from '../../../modules/preferences'
+import type { PreferencesEvent, SecretStore } from '../../../modules/preferences'
 import { ClaudeHooksConfigWriter } from '../../../modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
 import { ConfigWriterEngine } from '../../../modules/preferences/adapters/external-config/configWriterEngine'
 import { SqliteChannelTokenStore } from '../../../modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
@@ -245,6 +245,8 @@ export interface BootOptions {
    * the L8 flow passes a fixed weight instead (the mine's tier is not what it proves).
    */
   scanner: SourceWeightScanner
+  /** The secret store boot step 3 wires (ISSUE-216); none usable (`unavailableSecretStore`) by default. */
+  secrets?: SecretStore
 }
 
 export async function bootHost(w: World, options: BootOptions) {
@@ -346,7 +348,7 @@ export async function bootHost(w: World, options: BootOptions) {
         database: { open: () => Promise.resolve() },
         // Step 3, as host/main.ts wires cut 2: the config writer with the Claude Code hooks target
         // and the channel-token lookup the hook ingress reads.
-        resumeResetSaga: () => {
+        resumeResetSaga: async () => {
           const ingressPort = appMetaIngressPort(db)
           const engine = new ConfigWriterEngine({
             fs: w.disk,
@@ -388,12 +390,14 @@ export async function bootHost(w: World, options: BootOptions) {
               mapSites: [],
               random: () => 0
             }).steps,
-            secrets: unavailableSecretStore,
+            secrets: options.secrets ?? unavailableSecretStore,
             externalConfig: hostConfigWriter({ claudeHooks: engine, ingressPort, log }),
             channelTokens: new SqliteChannelTokenStore({ db, ids }),
             ready: () => state.current().state === 'ready'
           })
-          return host.preferences.resumeOnBoot()
+          const resumed = await host.preferences.resumeOnBoot()
+          await host.preferences.loadSecretStatuses()
+          return resumed
         },
         constructModules: () => {
           const preferences = host.preferences
