@@ -125,7 +125,8 @@ const emit = defineEmits<{
   flex: none;
   flex-direction: column;
   align-items: center;
-  width: 56px;
+  /* The shell names it (`--nav-width`), so the plate's narrow-screen floor counts the same 56px. */
+  width: var(--nav-width, 56px);
   height: 100%;
   gap: 10px;
   padding: 8px 0 10px;

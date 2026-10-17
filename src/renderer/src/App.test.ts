@@ -3287,7 +3287,13 @@ describe('App shell packing (#488)', () => {
     expect(rule('.shell-secondary')).toMatch(/(^|[;\s])width:\s*var\(--page-width\)/)
     // And on a screen narrower than the dock the page is still the part that gives way.
     expect(rule('.shell-secondary')).toMatch(/min-width:\s*0/)
-    expect(rule('.shell')).toMatch(/min-width:\s*0/)
+    // AMENDED for ISSUE-262 (was: `min-width: 0` on `.shell`): shrunk to nothing, the plate clipped
+    // the mine column and the nav from their free side while the window stayed whole, against the
+    // decision log's Narrow screen rule. The page still gives way; the plate stops at the docked
+    // parts ('App narrow screen (ISSUE-262)' pins the floor).
+    expect(rule('.shell')).toMatch(
+      /min-width:\s*calc\(2 \* var\(--shell-pad\) \+ var\(--nav-width\)/
+    )
   })
 
   it('keeps no separate rule for the frames a fold is held over', () => {
@@ -4846,6 +4852,62 @@ describe('App shell motion and window slot (ISSUE-262)', () => {
     wrapper.findComponent(AddPanel).vm.$emit('close')
     await flushPromises()
     expect(slotHolds()).toEqual([])
+  })
+})
+
+/*
+ * The narrow-screen rule (decision log, Narrow screen; screens/shell.md): the nav, the mine column
+ * and the window stay whole at the docked edge, the page's column gives way and clips, and what
+ * still does not fit runs off the far side. jsdom lays nothing out, so the declarations that make
+ * the rule are pinned here, off the stylesheets; e2e/panel/shell.e2e.ts measures the real layout.
+ */
+describe('App narrow screen (ISSUE-262)', () => {
+  function rulesOf(file: string): (selector: string) => string {
+    const source = readFileSync(join(import.meta.dirname, file), 'utf8')
+    const tag = '<style scoped>'
+    const style = source.slice(source.indexOf(tag) + tag.length).replace(/\/\*[\s\S]*?\*\//g, '')
+    return (selector) =>
+      [...style.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+        .filter((match) => match[1]!.split(',').some((one) => one.trim() === selector))
+        .map((match) => match[2]!)
+        .join(';')
+  }
+  const app = rulesOf('App.vue')
+  const nav = rulesOf('components/shell/PanelNav.vue')
+
+  it('[US-SHELL-007.AC01, US-SHELL-007.AC02, US-SHELL-007.AC03, US-SHELL-007.AC05, NFR-PLAT-12] docked parts keep their width, the page shrinks and clips, then the farthest part runs off-screen, with no minimum width', () => {
+    // The docked parts never shrink.
+    expect(app('.dock-window')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(app('.shell-mine')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(nav('.dm-nav')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(nav('.dm-nav')).toMatch(/(^|[;\s])width:\s*var\(--nav-width, 56px\)/)
+    // The page's column is the one part that gives way, and it clips.
+    expect(app('.shell-secondary')).toMatch(/(^|[;\s])flex:\s*0 1 var\(--page-width\)/)
+    expect(app('.shell-secondary')).toMatch(/min-width:\s*0/)
+    expect(app('.shell-secondary')).toMatch(/overflow:\s*hidden/)
+    // The plate shrinks only by its page: never below the nav, and the mine column while one stands.
+    expect(app('.shell')).toMatch(/(^|[;\s])--nav-width:\s*56px/)
+    expect(app('.shell')).toMatch(
+      /min-width:\s*calc\(2 \* var\(--shell-pad\) \+ var\(--nav-width\) \+ var\(--shell-gap\)\)/
+    )
+    expect(app('.shell:has(> .shell-mine)')).toMatch(
+      /min-width:\s*calc\(\s*2 \* var\(--shell-pad\) \+ var\(--nav-width\) \+ var\(--mine-column-width\) \+\s*2 \* var\(--shell-gap\)\s*\)/
+    )
+    // What still does not fit runs off the far side: packed at the docked edge, clipped by the dock.
+    expect(app('.panel-dock')).toMatch(/justify-content:\s*flex-end/)
+    expect(app('.panel-dock')).toMatch(/overflow:\s*hidden/)
+    // No named minimum anywhere the dock is laid out.
+    for (const selector of ['.panel-dock', '.panel-dock.edge-left', '.dock-window'])
+      expect(app(selector)).not.toMatch(/min-width/)
+  })
+
+  it('[US-SHELL-007.AC06] the page clips on its inward side for either dock', () => {
+    // Docked right the page keeps its 440px against its right (the mine column) and is cut on its
+    // left; docked left the anchor and the cut are mirrored.
+    expect(app('.shell-secondary > .shell-page')).toMatch(/(^|[;\s])right:\s*0/)
+    expect(app('.shell-secondary > .shell-page')).toMatch(/(^|[;\s])width:\s*var\(--page-width\)/)
+    expect(app('.shell.edge-left .shell-secondary > .shell-page')).toMatch(/right:\s*auto/)
+    expect(app('.shell.edge-left .shell-secondary > .shell-page')).toMatch(/left:\s*0/)
   })
 })
 

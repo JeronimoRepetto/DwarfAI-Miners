@@ -1786,6 +1786,7 @@ const {
   --shell-pad: 6px;
   --shell-gap: 6px;
   --page-width: 440px;
+  --nav-width: 56px;
   --mat-fill: var(--rock);
   --mat-hi: var(--rock-hi);
   --mat-lo: var(--rock-lo);
@@ -1793,8 +1794,15 @@ const {
   position: relative;
   display: flex;
   flex: 0 1 auto;
-  /* May shrink below its columns on a screen narrower than the dock, so the page gives way. */
-  min-width: 0;
+  /*
+   * On a screen narrower than the dock the plate shrinks by its page column alone (ISSUE-262,
+   * decision log, Narrow screen): never below the nav and its padding, and never below the mine
+   * column while one stands (the rule below). Shrunk to nothing, as `min-width: 0` let it, the
+   * plate clipped the mine column and then the nav from their free side while the window beside
+   * it stayed whole; held at the docked parts, the row overflows the dock instead, and what does
+   * not fit (the window first) runs off the far side.
+   */
+  min-width: calc(2 * var(--shell-pad) + var(--nav-width) + var(--shell-gap));
   justify-content: flex-end;
   height: calc(100vh - 2 * var(--dock-inset));
   margin: var(--dock-inset) var(--shell-edge);
@@ -1805,6 +1813,12 @@ const {
 .shell.edge-left {
   --panel-motion-x: -12px;
   flex-direction: row-reverse;
+}
+/* The mine column is a docked part too, for as long as it stands (a leaving one included). */
+.shell:has(> .shell-mine) {
+  min-width: calc(
+    2 * var(--shell-pad) + var(--nav-width) + var(--mine-column-width) + 2 * var(--shell-gap)
+  );
 }
 /*
  * Where each column stands, which is no longer where it is in the DOM (PANEL-QUESTIONS 2, design
