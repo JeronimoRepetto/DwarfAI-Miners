@@ -62,7 +62,15 @@ const INSTALL: InstalledProvider = {
   statMtimeMs: 0
 }
 
-function factoryWith(rolloutConfirms?: RolloutCheck): DriverFactory {
+/** What a fresh driver reads of the stored launch record to resume (ISSUE-173). */
+type ResumeContextLookup = NonNullable<
+  ConstructorParameters<typeof CodexAppServerDriver>[0]['resumeContext']
+>
+
+function factoryWith(
+  rolloutConfirms?: RolloutCheck,
+  resumeContext?: ResumeContextLookup
+): DriverFactory {
   return (rig: ConformanceRig) => {
     const resolver = new FakeInstallResolver()
     resolver.install('codex', { path: INSTALL.binaryPath, version: '0.153.4' })
@@ -81,8 +89,28 @@ function factoryWith(rolloutConfirms?: RolloutCheck): DriverFactory {
       platform: 'linux',
       clientInfo: { name: 'dwarfai', version: '0.0.0' },
       redact: (text) => text,
-      ...(rolloutConfirms === undefined ? {} : { rolloutConfirms })
+      ...(rolloutConfirms === undefined ? {} : { rolloutConfirms }),
+      ...(resumeContext === undefined ? {} : { resumeContext })
     })
+  }
+}
+
+/**
+ * A restarted Host (ISSUE-173): the launch runs on one driver instance and the resume on a new one
+ * over the same OS, which knows the session only through `resumeContext`.
+ */
+function restartedWith(resumeContext?: ResumeContextLookup): DriverFactory {
+  return (rig: ConformanceRig) => {
+    const launcher = factoryWith()(rig)
+    const resumer = factoryWith(undefined, resumeContext)(rig)
+    return {
+      profile: launcher.profile,
+      transport: launcher.transport,
+      detect: () => launcher.detect(),
+      probe: (install) => launcher.probe(install),
+      launch: (req) => launcher.launch(req),
+      resume: (ref) => (resumer.resume as NonNullable<typeof resumer.resume>).call(resumer, ref)
+    }
   }
 }
 
@@ -325,6 +353,43 @@ describe('CodexAppServerDriver', () => {
     expect(live.outcomes[1]).toEqual({
       rejected: { reason: 'resume-error', detail: expect.any(String) }
     })
+  })
+
+  it('[C-16, S4.16] a fresh driver instance resumes a stored thread from the launch record lookup, in its folder and with its spawn tag', async () => {
+    const own = fixture('c-16-resume')
+    const asked: string[] = []
+    const resumed = await runScript(
+      restartedWith((ref) => {
+        asked.push(ref.providerSessionId)
+        return ref.providerSessionId === THREAD
+          ? { cwd: '/work/stored-mine', spawnTag: 'v1:install-173:launch-1:epoch-2' }
+          : null
+      }),
+      own.expected.script,
+      { variant: variantOf('c-16-resume') },
+      OPTIONS
+    )
+    expect(asked).toEqual([THREAD])
+    expect(resumed.session?.ref).toMatchObject({ providerId: 'codex', providerSessionId: THREAD })
+    const methods = resumed.transports[1]?.sent.map((frame) => JSON.parse(frame).method as string)
+    expect(methods).toEqual(['initialize', 'initialized', 'thread/resume'])
+    expect(resumed.spawn.spawns[1]?.cwd).toBe('/work/stored-mine')
+    expect(resumed.spawn.spawns[1]?.env.DWARFAI_SPAWN).toBe('v1:install-173:launch-1:epoch-2')
+
+    // No lookup, or a lookup that knows nothing of the thread: a resume-error, nothing spawned.
+    for (const lookup of [undefined, () => null]) {
+      const unknown = await runScript(
+        restartedWith(lookup),
+        own.expected.script,
+        { variant: variantOf('c-16-resume') },
+        OPTIONS
+      )
+      const at = own.expected.script.findIndex((step) => step.do === 'resume')
+      expect(unknown.outcomes[at]).toEqual({
+        rejected: { reason: 'resume-error', detail: expect.any(String) }
+      })
+      expect(unknown.spawn.spawns).toHaveLength(1)
+    }
   })
 
   it('[C-26] a codex without the app-server subcommand makes this driver launch false', async () => {

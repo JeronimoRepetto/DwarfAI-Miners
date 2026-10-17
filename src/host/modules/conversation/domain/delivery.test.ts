@@ -9,6 +9,7 @@ import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import {
   advance,
   reconcileDelivery,
+  sendingEvidence,
   startDelivery,
   type DeliveryFact,
   type DeliveryTransitionId
@@ -277,5 +278,44 @@ describe('message delivery machine 7', () => {
     expect(
       advance(row, { t: 'activity-correlated', reactionEvidence: 'turn-id' }, clock.now())
     ).toMatchObject({ ok: true, transition: 'S7.05', delivery: { phase: 'reacted' } })
+  })
+})
+
+describe('the boot evidence of a delivery left sending (ADR-022 item 2)', () => {
+  const row = { text: 'Shore up the deep seam', sentAt: T0 }
+
+  it('[S7.13, S7.14, S7.15, FM-016] an echo of the text as sent at or after it was sent is found, and a later dwarf entry is acted on', () => {
+    const echo = { role: 'person' as const, text: row.text, providerTime: T1 }
+    expect(sendingEvidence(row, [echo])).toEqual({ found: true, actedAfter: false })
+    expect(sendingEvidence(row, [{ ...echo, providerTime: null }])).toEqual({
+      found: true,
+      actedAfter: false
+    })
+    expect(
+      sendingEvidence(row, [echo, { role: 'dwarf', text: 'On it.', providerTime: T1 }])
+    ).toEqual({ found: true, actedAfter: true })
+    // A subagent's entry is not the dwarf acting on it (ADR-022 item 3: the main conversation).
+    expect(
+      sendingEvidence(row, [
+        echo,
+        { role: 'dwarf', text: 'sub', providerTime: T1, providerAgentId: 'agent-1' }
+      ])
+    ).toEqual({ found: true, actedAfter: false })
+  })
+
+  it('[S7.16, FM-016] another text, an older echo or a dwarf entry before the echo is no evidence of the send', () => {
+    expect(
+      sendingEvidence(row, [{ role: 'person', text: 'Shore up the deep seam!', providerTime: T1 }])
+    ).toEqual({ found: false })
+    expect(
+      sendingEvidence(row, [{ role: 'person', text: row.text, providerTime: (T0 - 1) as Instant }])
+    ).toEqual({ found: false })
+    expect(
+      sendingEvidence(row, [
+        { role: 'dwarf', text: 'Earlier.', providerTime: T1 },
+        { role: 'person', text: row.text, providerTime: T1 }
+      ])
+    ).toEqual({ found: true, actedAfter: false })
+    expect(sendingEvidence(row, [])).toEqual({ found: false })
   })
 })

@@ -1,0 +1,8 @@
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"mcpCapabilities":{"http":true,"sse":true,"dwarfaiUnknownField":"extra"},"promptCapabilities":{"embeddedContext":true,"image":true,"dwarfaiUnknownField":"extra"},"sessionCapabilities":{"close":{"dwarfaiUnknownField":"extra"},"fork":{"dwarfaiUnknownField":"extra"},"list":{"dwarfaiUnknownField":"extra"},"resume":{"dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"},"authMethods":[{"description":"Run `opencode auth login` in the terminal","name":"Login with opencode","id":"opencode-login","dwarfaiUnknownField":"extra"}],"agentInfo":{"name":"OpenCode","version":"1.18.32","dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"00000000-0000-4000-8000-000000000001","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"opencode/big-pickle","options":[{"value":"opencode-go/beam-free","name":"OpenCode Go/Beam Free","dwarfaiUnknownField":"extra"}],"dwarfaiUnknownField":"extra"}],"dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn","dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"max_tokens","dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":4,"result":{"stopReason":"max_turn_requests","dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":5,"result":{"stopReason":"refusal","dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":6,"result":{"stopReason":"cancelled","dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":7,"result":{"stopReason":"dwarfai_unknown_reason","dwarfaiUnknownField":"extra"}}

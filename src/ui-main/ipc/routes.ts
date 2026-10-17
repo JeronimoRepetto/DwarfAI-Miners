@@ -146,7 +146,10 @@ const askAnswerCut2 = (channel: IpcChannelName): ChannelRoute[] => [
  *
  * Cut 2 (21 §2 cut 2; ISSUE-141): A-40 and A-41 are `host` with their target shape for Host AskIds and `legacy`
  * through `LegacyAnswerShapeAdapter` for the relay's `legacy:` AskIds, one route per origin (`askAnswerCut2`); the NEW
- * rows A-N07 (`setAskStep`), A-N31 (`setClaudeHooksEnabled`) and A-N32 (`answerWelcome`) are born `host`.
+ * rows A-N07 (`setAskStep`), A-N31 (`setClaudeHooksEnabled`) and A-N32 (`answerWelcome`) are born `host`. Lead decision
+ * (ISSUE-172, 2026-10-17): the NEW rows A-N08 (`renameDwarf`) and A-N09 (`resetDwarfName`), which have no legacy owner,
+ * are born `host` here too rather than at step 3a, since the renderer's board is the Host's once its first snapshot is
+ * read; the legacy rows of 14 §8 I-21 stay `legacy` for a board still fed by today's feed.
  *
  * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape; A-13,
  * A-23, A-26, A-27, A-P3, A-P4 reach today's runtime through `LegacyDwarfIdBridge` (21 §3). A-N33 stays unrouted
@@ -247,7 +250,9 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalCut1New('ui:preferences:reset'), // A-N12
   hostCut2('ask:step:set'), // A-N07
   hostCut2('claude:hooks:set'), // A-N31 (AMENDMENT-7)
-  hostCut2('welcome:answer') // A-N32 (AMENDMENT-7)
+  hostCut2('welcome:answer'), // A-N32 (AMENDMENT-7)
+  hostCut2('dwarf:rename'), // A-N08 (ISSUE-172 lead decision)
+  hostCut2('dwarf:name:reset') // A-N09 (ISSUE-172 lead decision)
 ]
 
 /**
@@ -273,13 +278,15 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
   'agent:answerPermission': ['asking.answerPermission'], // A-41 → B-M31, Host AskIds
   'ask:step:set': ['asking.setStep'], // A-N07 → B-M32
   'claude:hooks:set': ['preferences.setClaudeHooks'], // A-N31 → B-M39
-  'welcome:answer': ['preferences.answerWelcome'] // A-N32 → B-M40
+  'welcome:answer': ['preferences.answerWelcome'], // A-N32 → B-M40
+  'dwarf:rename': ['crew.rename'], // A-N08 → B-M22
+  'dwarf:name:reset': ['crew.resetName'] // A-N09 → B-M23
 }
 
 /**
  * The release in which each seam B method is born in the Host (21 §2 "Seam B members", B-M02…B-M06 at cut 0; B-M07,
  * B-M08, B-M09, B-M12, B-M13, B-M15, B-M16…B-M20, B-M26, B-M27 and B-M41 at cut 1; B-M30…B-M32, B-M39 and B-M40 at
- * cut 2).
+ * cut 2; B-M22 and B-M23 at cut 2 too, by the ISSUE-172 lead decision, where 21 §2 has them at 3a).
  */
 export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> = {
   ping: 'cut-0',
@@ -305,5 +312,7 @@ export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> 
   'asking.answerPermission': 'cut-2',
   'asking.setStep': 'cut-2',
   'preferences.setClaudeHooks': 'cut-2',
-  'preferences.answerWelcome': 'cut-2'
+  'preferences.answerWelcome': 'cut-2',
+  'crew.rename': 'cut-2',
+  'crew.resetName': 'cut-2'
 }
