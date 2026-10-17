@@ -4,8 +4,14 @@
 // (14 §2.1 KEEP; ADR-033 item 6), taken from the channel registry, never restated. A picker returns paths only: the
 // Host re-validates every path the renderer later sends on (ADR-019 item 9; 14 §1.10).
 import type { z } from 'zod'
-import type { CHANNELS } from '@dwarfai/contracts'
-import type { ClipboardPort, ExternalOpener, FilePicker, WindowRef } from '../ports/nativeActions'
+import type { CHANNELS, ConsoleTarget } from '@dwarfai/contracts'
+import type {
+  ClipboardPort,
+  ConsoleRaiser,
+  ExternalOpener,
+  FilePicker,
+  WindowRef
+} from '../ports/nativeActions'
 import type { FolderPicker } from '../adapters/ElectronFolderPicker'
 
 export type CopyTextResult = z.infer<(typeof CHANNELS)['shell:copyText']['response']>
@@ -29,8 +35,8 @@ export const EXTERNAL_LINK_REFUSED_REASON = 'That link could not be opened.'
 /**
  * The members of 16 §4.14 `NativeActions` that UI main serves, with their frozen signatures. Owner-approved amendment
  * (2026-10-01, ISSUE-050): `copyText` answers a promise (was `CopyTextResult`), so a clipboard write that fails after
- * the call answers `copied: false`. `chooseFolder` and `openPath` serve A-30 and A-20 (ISSUE-091); `raiseConsole` joins
- * with the console raise.
+ * the call answers `copied: false`. `chooseFolder` and `openPath` serve A-30 and A-20 (ISSUE-091); `raiseConsole` serves
+ * A-13's execute half (ISSUE-170).
  */
 export interface ServedNativeActions {
   chooseAttachments(): Promise<string[]>
@@ -38,6 +44,7 @@ export interface ServedNativeActions {
   copyText(t: string): Promise<CopyTextResult>
   openPath(p: string): Promise<OpenPathResult>
   openExternal(url: string): Promise<ExternalLinkResult>
+  raiseConsole(t: ConsoleTarget): Promise<'raised' | 'failed'>
 }
 
 export interface NativeActionsDeps {
@@ -49,10 +56,12 @@ export interface NativeActionsDeps {
   opener: ExternalOpener
   /** The window a picker is attached to: the window the person pressed the control in. */
   parentWindow(): WindowRef
+  /** A-13's execute half (ISSUE-170, `TerminalConsoleRaiser`); absent: every console target answers `failed`. */
+  consoles?: ConsoleRaiser
 }
 
 export function createNativeActions(deps: NativeActionsDeps): ServedNativeActions {
-  const { files, folders, clipboard, opener, parentWindow } = deps
+  const { files, folders, clipboard, opener, parentWindow, consoles } = deps
   return {
     // A cancelled picker answers [] (16 §4.14).
     chooseAttachments: () => files.pickMany(parentWindow()),
@@ -95,6 +104,17 @@ export function createNativeActions(deps: NativeActionsDeps): ServedNativeAction
         return { opened: false, reason: EXTERNAL_LINK_REFUSED_REASON }
       }
       return { opened: true }
+    },
+
+    // A-13's execute half (ADR-031 item 4): right after the click, over the ConsoleRaiser. A raiser that throws is a
+    // console that did not open: `failed`, never a rejection across the bridge (no toast either way, PO #42).
+    async raiseConsole(t) {
+      if (consoles === undefined) return 'failed'
+      try {
+        return await consoles.raise(t)
+      } catch {
+        return 'failed'
+      }
     }
   }
 }

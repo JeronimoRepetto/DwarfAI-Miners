@@ -60,4 +60,15 @@ describe('FakeNativeActions', () => {
 
     expect(actions.openedPaths).toEqual(['C:/work/ore/a.ts'])
   })
+
+  it('[ADR-031] raiseConsole records each console target and answers raised, or failed for a console that will not open', async () => {
+    const actions = new FakeNativeActions()
+    const target = { mode: 'log' as const, credentialFile: '/data/run/viewers/v.token' }
+
+    expect(await actions.raiseConsole(target)).toBe('raised')
+    actions.consoleFails = true
+    expect(await actions.raiseConsole({ mode: 'focus-terminal' })).toBe('failed')
+
+    expect(actions.consoles).toEqual([target, { mode: 'focus-terminal' }])
+  })
 })
