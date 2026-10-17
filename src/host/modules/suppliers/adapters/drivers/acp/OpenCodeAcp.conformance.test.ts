@@ -223,7 +223,9 @@ describe('OpenCode acp', () => {
     expect(syntheticInit.result).toEqual(recordedInit.result)
   })
 
-  it('[C-23] session/new carries no relay entry for OpenCode acp, even on a delegation launch', async () => {
+  // Row O2's `mcpInjection` is `ticket-file` since the SP-12 foreman ruling (2026-10-17), so a
+  // delegation launch now carries the path-only relay entry; it carried none while O2 was U→none.
+  it('[C-23] session/new carries the relay entry for OpenCode acp on a delegation launch, and only then', async () => {
     const run = await runScript(
       factoryWith(),
       [{ do: 'launch' }],
@@ -232,7 +234,9 @@ describe('OpenCode acp', () => {
     )
     expect(run.outcomes[0]).toEqual({ resolved: true })
     const opened = run.sent.find((frame) => (frame as { method?: string }).method === 'session/new')
-    expect(opened).toMatchObject({ params: { cwd: '/work/mine', mcpServers: [] } })
+    expect(opened).toMatchObject({
+      params: { cwd: '/work/mine', mcpServers: [{ name: 'dwarfai', args: ['dwarfai-mcp-relay'] }] }
+    })
   })
 
   it('[FM-084, S-031-3] the probe opens launch only when opencode --help lists acp', async () => {
