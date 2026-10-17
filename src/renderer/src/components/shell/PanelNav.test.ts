@@ -227,3 +227,29 @@ describe('PanelNav and the guild flag (ISSUE-265)', () => {
     expect(off[3]).toContain('dm-nav__lever')
   })
 })
+
+describe('PanelNav, hidden until built (ISSUE-267)', () => {
+  it('[ADR-034, BR-19] draws no mode lever at all when the build ships no mode beyond the Panel', () => {
+    const nav = mount(PanelNav, { props: { page: 'map', modes: [] } })
+    // Absent, not disabled: no group, no slot, nothing that takes a row of the System group.
+    expect(nav.find('.dm-nav__lever').exists()).toBe(false)
+    expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
+    expect(nav.text()).not.toContain('MODE')
+    expect(nav.findAll('.dm-slot').map((found) => found.attributes('data-label'))).toEqual([
+      'Map',
+      'Mines',
+      'Settings',
+      'Music'
+    ])
+  })
+
+  it('[ADR-034] draws only the lever sides the build ships: "▼ Veta" alone between Veta and Valle', async () => {
+    const nav = mount(PanelNav, { props: { page: 'map', modes: ['veta'] } })
+    const lever = nav.get('.dm-nav__lever')
+    expect(lever.findAll('.dm-slot').map((found) => found.attributes('data-label'))).toEqual([
+      '▼ Veta'
+    ])
+    await lever.get('.dm-slot').trigger('click')
+    expect(nav.emitted('mode')).toEqual([['veta']])
+  })
+})

@@ -956,3 +956,34 @@ describe('SettingsPanel — the Reset metrics confirmation (ISSUE-264)', () => {
     expect(wrapper.emitted('reset-confirm')).toBeUndefined()
   })
 })
+
+describe('SettingsPanel — hidden until built (ISSUE-267)', () => {
+  it('[ADR-034, BR-19] General draws no Mode at launch row while the build ships the Panel alone', () => {
+    const general = render({ section: 'General' }).get('.dm-settings__panel')
+    // Absent, not disabled: no row, no select, no label, so no space is held for it.
+    expect(general.text()).not.toContain('Mode at launch')
+    expect(general.find('[aria-label="Mode at launch"]').exists()).toBe(false)
+    expect(general.findAll('select').length).toBe(0)
+  })
+
+  it('[BR-19] the default-provider select offers no provider whose launch is not offered', () => {
+    const wrapper = render({
+      section: 'Integrations',
+      jevSettings: { configured: true, preferences: DEFAULT_JEV_PREFERENCES },
+      jevProviders: [
+        { provider: 'claude', installed: true, launchable: true },
+        {
+          provider: 'antigravity',
+          installed: true,
+          launchable: false,
+          reason: 'That agent cannot be started from the panel yet.'
+        }
+      ]
+    })
+    const options = wrapper
+      .get('[aria-label="Default provider"]')
+      .findAll('option')
+      .map((node) => node.text())
+    expect(options).toEqual(['None', 'Claude'])
+  })
+})

@@ -71,8 +71,10 @@ the Host exited (`e2e/_harness/readOnlyHost.ts`). There is no test backdoor in p
 
 The E2E build profile is build-time data (`17` §1.9): its built-modes list includes Veta and Valle before they ship, so
 their L9 cases can run, while a release build lists a mode only from the issue that ships it. The lane selects it with
-`DWARFAI_BUILD_PROFILE=e2e` at `pnpm build`. Nothing reads it yet: the built-modes list arrives with ISSUE-267, which
-makes the build read this variable. The harness never changes what a build contains.
+`DWARFAI_BUILD_PROFILE=e2e` at `pnpm build`. Nothing reads it yet: today every build ships the Panel only (ISSUE-267,
+`SHIPPED_MODES` in `src/renderer/src/lib/shell/builtDestinations.ts`), and the build starts reading this variable for
+the shipped-modes list together with the first Veta/Valle L9 case (ISSUE-294). The harness never changes what a build
+contains.
 
 ### Which entry a case launches
 
