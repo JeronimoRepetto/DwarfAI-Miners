@@ -16,9 +16,10 @@
 import NavSlot from './NavSlot.vue'
 import PixelIcon from '../icon/PixelIcon.vue'
 import { GUILD_SLOTS, SYSTEM_SLOTS, WORLD_SLOTS } from '../../lib/shell/panelNav'
+import type { LeverMode } from '../../lib/shell/builtDestinations'
 import type { ShellArea } from '../../types'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     /** The page shown, which carries aria-current. */
     page: ShellArea
@@ -33,10 +34,25 @@ withDefaults(
     /** The app mark and the mode lever, left out for a host that carries its own. */
     mark?: boolean
     lever?: boolean
+    /**
+     * The lever's sides this build ships (lib/shell/builtDestinations' `leverModes`, ISSUE-267):
+     * with none the lever is absent, never drawn disabled (ADR-034 item 2, BR-19); between Veta
+     * and Valle "▼ Veta" alone. Both by default, the design's own nav.
+     */
+    modes?: readonly LeverMode[]
     /** The landmark's name. */
     label?: string
   }>(),
-  { guild: false, badge: 0, music: false, warn: false, mark: true, lever: true, label: 'Panel' }
+  {
+    guild: false,
+    badge: 0,
+    music: false,
+    warn: false,
+    mark: true,
+    lever: true,
+    modes: () => ['valle', 'veta'],
+    label: 'Panel'
+  }
 )
 
 const emit = defineEmits<{
@@ -105,10 +121,25 @@ const emit = defineEmits<{
         :pressed="music"
         @click="emit('music')"
       />
-      <div v-if="lever" class="dm-nav__lever" role="group" aria-label="Mode">
-        <NavSlot icon="valle" label="▲ Valle" @click="emit('mode', 'valle')" />
+      <div
+        v-if="lever && props.modes.length > 0"
+        class="dm-nav__lever"
+        role="group"
+        aria-label="Mode"
+      >
+        <NavSlot
+          v-if="props.modes.includes('valle')"
+          icon="valle"
+          label="▲ Valle"
+          @click="emit('mode', 'valle')"
+        />
         <span class="dm-nav__lever-label">MODE</span>
-        <NavSlot icon="veta" label="▼ Veta" @click="emit('mode', 'veta')" />
+        <NavSlot
+          v-if="props.modes.includes('veta')"
+          icon="veta"
+          label="▼ Veta"
+          @click="emit('mode', 'veta')"
+        />
       </div>
     </div>
   </nav>

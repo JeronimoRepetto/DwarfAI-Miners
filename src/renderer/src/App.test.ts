@@ -4667,6 +4667,75 @@ describe('App and the guild flag (ISSUE-265)', () => {
 })
 /* --- end of the ISSUE-265 block -------------------------------------------------------------- */
 
+/* --- ISSUE-267: hidden until built — one block, appended ----------------------------------------- */
+/*
+ * A Panel build shows no control whose destination is not built (ADR-034 item 2; BR-19; 21 §1
+ * item 8): the nav's mode lever and Settings › General "Mode at launch" are absent while the build's
+ * feature list ships the Panel alone, and a provider whose launch main does not offer has no chip.
+ */
+describe('App, hidden until built (ISSUE-267)', () => {
+  const MINE = {
+    id: 'mine:c:\\x\\anvil',
+    path: 'C:\\x\\anvil',
+    name: 'anvil',
+    tier: 'bronze',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  beforeEach(() => useView().clear())
+
+  it('[ADR-034, BR-19] the nav and General render nothing for an unshipped mode, taking no space, and the Add panel renders no chip for a provider whose launch is not offered', async () => {
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      // Detected, and not offered: what main answers for Antigravity in a public build (R-03) or
+      // for any provider whose driver is not built.
+      listAgentProviders: vi.fn().mockResolvedValue({
+        providers: [
+          { provider: 'claude', installed: true, launchable: true },
+          {
+            provider: 'antigravity',
+            installed: true,
+            launchable: false,
+            reason: 'That agent cannot be started from the panel yet.'
+          }
+        ]
+      })
+    })
+
+    // The nav: no lever group, no side of it, no MODE label, so the System group ends at Music.
+    const nav = wrapper.get('.dm-nav')
+    expect(nav.find('.dm-nav__lever').exists()).toBe(false)
+    expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
+    expect(nav.text()).not.toContain('MODE')
+    expect(
+      nav
+        .get('.dm-nav__group[aria-label="System"]')
+        .findAll('.dm-slot')
+        .map((slot) => slot.attributes('data-label'))
+    ).toEqual(['Settings', 'Music'])
+
+    // Settings › General: no Mode at launch row.
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await openSection(wrapper, 'General')
+    expect(wrapper.get('.dm-settings__panel').text()).not.toContain('Mode at launch')
+
+    // The Add panel: Claude and Other, and no chip for the provider main did not offer.
+    await wrapper.find(NAV_MAP).trigger('click')
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('.dm-minecol__foot .dm-btn--primary').trigger('click')
+    await flushPromises()
+    const chips = wrapper
+      .get('.dm-add__chips')
+      .findAll('[data-value]')
+      .map((chip) => chip.attributes('data-value'))
+    expect(chips).toEqual(['claude', 'other'])
+  })
+})
+/* --- end of the ISSUE-267 block ------------------------------------------------------------------ */
+
 /* --- ISSUE-262: the nav, the mine column, the window slot and the Music slot ------------------ */
 describe('App shell motion and window slot (ISSUE-262)', () => {
   const runs: {
