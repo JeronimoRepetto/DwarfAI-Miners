@@ -859,3 +859,122 @@ describe('SceneDwarf, the mine column (ISSUE-254)', () => {
     expect(named(defaultDwarf({ name: 'd', status: 'leaving' }))).toBe('d, Waiting')
   })
 })
+
+/*
+ * APPENDED for ISSUE-263. The Panel's reduced-motion stand-ins for a dwarf (motion.md, Reduced
+ * motion, d12d3fc): its "?" and its "z" stop bobbing and stay drawn, while its sprite keeps
+ * playing, every frame a flat 200 ms, as every duration token reads 0 ms. jsdom applies no media
+ * query, so what the stylesheets hold under `prefers-reduced-motion: reduce` is read from them; the
+ * sprite's frames are read from the strip, the frame shown, under a fake `matchMedia`.
+ */
+describe('SceneDwarf under reduced motion (ISSUE-263)', () => {
+  const REDUCED = '@media (prefers-reduced-motion: reduce)'
+  const OWN = readFileSync(join(import.meta.dirname, 'SceneDwarf.vue'), 'utf8')
+  const TOKENS = readFileSync(join(import.meta.dirname, '../../assets/design-tokens.css'), 'utf8')
+
+  /** Every rule inside a reduced-motion block of `source`: its selectors and its declarations. */
+  function reducedRules(source: string): Array<{ selectors: string[]; body: Map<string, string> }> {
+    const rules: Array<{ selectors: string[]; body: Map<string, string> }> = []
+    for (let at = source.indexOf(REDUCED); at !== -1; at = source.indexOf(REDUCED, at + 1)) {
+      const open = source.indexOf('{', at)
+      let depth = 1
+      let end = open + 1
+      for (; depth > 0; end += 1) depth += source[end] === '{' ? 1 : source[end] === '}' ? -1 : 0
+      const block = source.slice(open + 1, end - 1).replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const [, head, body] of block.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        rules.push({
+          selectors: head!.split(',').map((selector) => selector.trim()),
+          body: new Map(
+            body!
+              .split(';')
+              .map((line) => [
+                line.slice(0, line.indexOf(':')).trim(),
+                line.slice(line.indexOf(':') + 1).trim()
+              ])
+              .filter(([name]) => name)
+              .map(([name, value]) => [name!, value!])
+          )
+        })
+      }
+    }
+    return rules
+  }
+  const reducedFor = (part: string) =>
+    [OWN, TOKENS].flatMap(reducedRules).filter((rule) => rule.selectors.includes(part))
+
+  afterEach(() => {
+    vi.useRealTimers()
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  function stubReducedMotion(): void {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined
+      })
+    })
+  }
+
+  it("[US-SHELL-011.AC02] a dwarf's ? or z stays drawn without bobbing", () => {
+    for (const part of ['.dm-dwarf__ask', '.dm-dwarf__z']) {
+      const rules = reducedFor(part)
+      // The bob stops...
+      expect(
+        rules.map((rule) => rule.body.get('animation')),
+        `${part} under reduced motion`
+      ).toContainEqual(expect.stringMatching(/^none( !important)?$/))
+      // ...and nothing under reduced motion hides the mark it stops.
+      for (const rule of rules) {
+        expect(rule.body.has('display'), part).toBe(false)
+        expect(rule.body.has('visibility'), part).toBe(false)
+        expect(rule.body.has('opacity'), part).toBe(false)
+      }
+    }
+    stubReducedMotion()
+    const asking = mountDwarf(defaultDwarf({ status: 'waiting', waitingReason: 'approval' }))
+    expect(asking.wrapper.find('.dm-dwarf').attributes('data-status')).toBe('asking')
+    expect(asking.wrapper.find('.dm-dwarf__ask').text()).toBe('?')
+    const asleep = mountDwarf(defaultDwarf({ status: 'waiting' }))
+    expect(asleep.wrapper.find('.dm-dwarf').attributes('data-status')).toBe('asleep')
+    expect(asleep.wrapper.find('.dm-dwarf__z').text()).toBe('z')
+  })
+
+  it('[US-SHELL-011.AC07, NFR-TIM-02] dwarf sprites keep every frame at 200 ms while every duration token reads 0 ms', async () => {
+    // Every duration token reads 0 ms, and the sprite frame alone reads 200 ms.
+    const root = reducedRules(TOKENS).find((rule) => rule.selectors.includes(':root'))!
+    const durations = [...root.body].filter(([name]) => name.startsWith('--dur-'))
+    expect(durations.length).toBeGreaterThan(0)
+    for (const [name, value] of durations) expect(value, name).toBe('0ms')
+    expect(root.body.get('--frame-ms')).toBe('200ms')
+
+    // The pick-up's own frames are not 200 ms each, so a flat 200 ms is the reduced-motion rule.
+    const pickUp = DWARF_SHEETS.worker['start-working']!
+    expect(pickUp.durations!.some((hold) => hold !== 200)).toBe(true)
+
+    vi.useFakeTimers()
+    stubReducedMotion()
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'working' }), { entering: true })
+    const strip = wrapper.findComponent(SpriteStrip)
+    const shown = () => strip.emitted('frame')!.map(([at]) => at as { clip: number; frame: number })
+    expect(shown()).toEqual([{ clip: 0, frame: 0 }])
+    // Every frame of the pick-up, then into the swing: each one held exactly 200 ms, none stopped.
+    const steps = pickUp.frames + 3
+    for (let step = 1; step <= steps; step += 1) {
+      vi.advanceTimersByTime(199)
+      await wrapper.vm.$nextTick()
+      expect(shown(), `frame ${step} early`).toHaveLength(step)
+      vi.advanceTimersByTime(1)
+      await wrapper.vm.$nextTick()
+      expect(shown(), `frame ${step}`).toHaveLength(step + 1)
+    }
+    expect(
+      shown()
+        .slice(0, pickUp.frames)
+        .map((at) => at.frame)
+    ).toEqual(Array.from({ length: pickUp.frames }, (_, frame) => frame))
+    expect(shown()[pickUp.frames]).toEqual({ clip: 1, frame: 0 })
+  })
+})

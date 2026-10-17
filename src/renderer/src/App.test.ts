@@ -4615,3 +4615,117 @@ describe('App mine column (ISSUE-254)', () => {
   })
 })
 /* --- end of the ISSUE-254 block ------------------------------------------------------------------ */
+
+/* --- ISSUE-265: the guild flag across the whole shell ---------------------------------------- */
+describe('App and the guild flag (ISSUE-265)', () => {
+  const GUILD_NAMES = /\b(Lab|Market|Laboral Union|Guild)\b/
+
+  it('[US-GUILD-002.AC01, BR-19, INV-110] with the flag off no control anywhere in the app names or opens a guild page, and the flags are read once', async () => {
+    const { wrapper, api } = await mountOpenApp()
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+    expect(wrapper.find('.dm-nav__group[aria-label="Guild"]').exists()).toBe(false)
+    const controls = wrapper.findAll('button, a, [role="button"], [role="menuitem"], [role="tab"]')
+    expect(controls.length).toBeGreaterThan(0)
+    for (const control of controls) {
+      const names = [
+        control.text(),
+        control.attributes('aria-label') ?? '',
+        control.attributes('title') ?? '',
+        control.attributes('data-label') ?? '',
+        control.attributes('data-slot') ?? ''
+      ].join(' ')
+      expect(names).not.toMatch(GUILD_NAMES)
+      expect(control.attributes('data-slot') ?? '').not.toMatch(/^(lab|market|union)$/)
+    }
+    // Pressing every nav control still never shows a guild page.
+    for (const slot of wrapper.findAll(NAV)) {
+      await slot.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.dm-guild').exists()).toBe(false)
+    }
+    // Read once: nothing the person did asked main for the flags again.
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+  })
+
+  it('[US-GUILD-002.AC02, US-GUILD-001.AC03] with the flag on each guild slot opens its own page, replacing the one before', async () => {
+    const { wrapper } = await mountOpenApp(GUILD_ON)
+    for (const name of ['Lab', 'Market', 'Laboral Union', 'Lab']) {
+      await wrapper.find(`${NAV}[data-label="${name}"]`).trigger('click')
+      await flushPromises()
+      const pages = wrapper.findAll('.dm-guild')
+      expect(pages).toHaveLength(1)
+      expect(pages[0]!.attributes('aria-label')).toBe(name)
+      expect(pages[0]!.get('h1').text()).toBe(name)
+    }
+  })
+})
+/* --- end of the ISSUE-265 block -------------------------------------------------------------- */
+
+/* --- ISSUE-267: hidden until built — one block, appended ----------------------------------------- */
+/*
+ * A Panel build shows no control whose destination is not built (ADR-034 item 2; BR-19; 21 §1
+ * item 8): the nav's mode lever and Settings › General "Mode at launch" are absent while the build's
+ * feature list ships the Panel alone, and a provider whose launch main does not offer has no chip.
+ */
+describe('App, hidden until built (ISSUE-267)', () => {
+  const MINE = {
+    id: 'mine:c:\\x\\anvil',
+    path: 'C:\\x\\anvil',
+    name: 'anvil',
+    tier: 'bronze',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  beforeEach(() => useView().clear())
+
+  it('[ADR-034, BR-19] the nav and General render nothing for an unshipped mode, taking no space, and the Add panel renders no chip for a provider whose launch is not offered', async () => {
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      // Detected, and not offered: what main answers for Antigravity in a public build (R-03) or
+      // for any provider whose driver is not built.
+      listAgentProviders: vi.fn().mockResolvedValue({
+        providers: [
+          { provider: 'claude', installed: true, launchable: true },
+          {
+            provider: 'antigravity',
+            installed: true,
+            launchable: false,
+            reason: 'That agent cannot be started from the panel yet.'
+          }
+        ]
+      })
+    })
+
+    // The nav: no lever group, no side of it, no MODE label, so the System group ends at Music.
+    const nav = wrapper.get('.dm-nav')
+    expect(nav.find('.dm-nav__lever').exists()).toBe(false)
+    expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
+    expect(nav.text()).not.toContain('MODE')
+    expect(
+      nav
+        .get('.dm-nav__group[aria-label="System"]')
+        .findAll('.dm-slot')
+        .map((slot) => slot.attributes('data-label'))
+    ).toEqual(['Settings', 'Music'])
+
+    // Settings › General: no Mode at launch row.
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await openSection(wrapper, 'General')
+    expect(wrapper.get('.dm-settings__panel').text()).not.toContain('Mode at launch')
+
+    // The Add panel: Claude and Other, and no chip for the provider main did not offer.
+    await wrapper.find(NAV_MAP).trigger('click')
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('.dm-minecol__foot .dm-btn--primary').trigger('click')
+    await flushPromises()
+    const chips = wrapper
+      .get('.dm-add__chips')
+      .findAll('[data-value]')
+      .map((chip) => chip.attributes('data-value'))
+    expect(chips).toEqual(['claude', 'other'])
+  })
+})
+/* --- end of the ISSUE-267 block ------------------------------------------------------------------ */

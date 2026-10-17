@@ -165,3 +165,91 @@ describe('PanelNav', () => {
     expect(nav.find('.dm-nav__lever').exists()).toBe(false)
   })
 })
+
+/*
+ * APPENDED (ISSUE-265): the guild flag's two values, by the ids of US-GUILD-002. The flag is read
+ * once by the App and handed down as `guild`; the nav draws the group or nothing at all.
+ */
+describe('PanelNav and the guild flag (ISSUE-265)', () => {
+  const GUILD_SLOT_IDS = ['lab', 'market', 'union']
+
+  it('[US-GUILD-002.AC01, BR-19, INV-110] with GUILD_AREAS_ENABLED off the nav has no guild group, takes no space and no control links to the three pages', async () => {
+    const nav = mount(PanelNav, { props: { page: 'map', guild: false } })
+    // Absent, not disabled or hidden: the nav's own children are the mark, the World group, the
+    // spacer and the System group, with nothing in between that could take a line of the column.
+    const children = Array.from((nav.element as HTMLElement).children)
+    expect(children.map((el) => [el.className, el.getAttribute('aria-label')])).toEqual([
+      ['dm-nav__mark', 'Hide the panel'],
+      ['dm-nav__group', 'World'],
+      ['dm-nav__spacer', null],
+      ['dm-nav__group', 'System']
+    ])
+    expect(nav.find('.dm-nav__rule').exists()).toBe(false)
+    expect(nav.find('[disabled], [hidden]').exists()).toBe(false)
+    for (const id of GUILD_SLOT_IDS) expect(nav.find(`[data-slot="${id}"]`).exists()).toBe(false)
+    for (const name of ['Guild', 'Lab', 'Market', 'Laboral Union'])
+      expect(nav.find(`[aria-label="${name}"], [data-label="${name}"]`).exists()).toBe(false)
+    // Pressing every control the nav has never asks for a guild area.
+    for (const button of nav.findAll('button')) await button.trigger('click')
+    const asked = (nav.emitted('nav') ?? []).map(([area]) => area)
+    expect(asked).not.toContain('lab')
+    expect(asked).not.toContain('market')
+    expect(asked).not.toContain('laboral-union')
+  })
+
+  it('[US-GUILD-002.AC02, US-GUILD-002.AC05] with the flag on the group named Guild shows the Lab, Market and Laboral Union slots, each opening its page', async () => {
+    const nav = mount(PanelNav, { props: { page: 'map', guild: true } })
+    const guild = group(nav, 'Guild')
+    expect(guild.exists()).toBe(true)
+    expect(guild.attributes('role')).toBe('group')
+    expect(guild.attributes('aria-label')).toBe('Guild')
+    const slots = guild.findAll('.dm-slot')
+    expect(slots.map((s) => [s.attributes('data-slot'), s.attributes('aria-label')])).toEqual([
+      ['lab', 'Lab'],
+      ['market', 'Market'],
+      ['union', 'Laboral Union']
+    ])
+    for (const one of slots) await one.trigger('click')
+    expect(nav.emitted('nav')).toEqual([['lab'], ['market'], ['laboral-union']])
+  })
+
+  it('[US-GUILD-002.AC04] either flag value leaves the rest of the nav unchanged', () => {
+    const rest = (guild: boolean) => {
+      const nav = mount(PanelNav, { props: { page: 'mines', guild, badge: 1, music: true } })
+      return Array.from((nav.element as HTMLElement).children)
+        .filter((el) => el.getAttribute('aria-label') !== 'Guild')
+        .map((el) => el.outerHTML)
+    }
+    const off = rest(false)
+    expect(off).toEqual(rest(true))
+    // The rest is the mark, the World group, the spacer and the System group with its lever.
+    expect(off).toHaveLength(4)
+    expect(off[3]).toContain('dm-nav__lever')
+  })
+})
+
+describe('PanelNav, hidden until built (ISSUE-267)', () => {
+  it('[ADR-034, BR-19] draws no mode lever at all when the build ships no mode beyond the Panel', () => {
+    const nav = mount(PanelNav, { props: { page: 'map', modes: [] } })
+    // Absent, not disabled: no group, no slot, nothing that takes a row of the System group.
+    expect(nav.find('.dm-nav__lever').exists()).toBe(false)
+    expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
+    expect(nav.text()).not.toContain('MODE')
+    expect(nav.findAll('.dm-slot').map((found) => found.attributes('data-label'))).toEqual([
+      'Map',
+      'Mines',
+      'Settings',
+      'Music'
+    ])
+  })
+
+  it('[ADR-034] draws only the lever sides the build ships: "▼ Veta" alone between Veta and Valle', async () => {
+    const nav = mount(PanelNav, { props: { page: 'map', modes: ['veta'] } })
+    const lever = nav.get('.dm-nav__lever')
+    expect(lever.findAll('.dm-slot').map((found) => found.attributes('data-label'))).toEqual([
+      '▼ Veta'
+    ])
+    await lever.get('.dm-slot').trigger('click')
+    expect(nav.emitted('mode')).toEqual([['veta']])
+  })
+})

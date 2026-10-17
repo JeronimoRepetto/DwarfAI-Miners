@@ -4617,3 +4617,119 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
     expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
   })
 })
+
+/*
+ * APPENDED (ISSUE-265): Boost is absent from the MessagePanel, not disabled. Its own block at the
+ * end of the file, after the teardown check, so other appenders merge beside it untouched.
+ */
+describe('DwarfMessagePanel and Boost (ISSUE-265)', () => {
+  it('[US-GUILD-003.AC01, US-GUILD-003.AC02, BR-19] the composer and the ⋯ menu hold no Boost control and no on state exists in the renderer', async () => {
+    const { readdirSync } = await import('node:fs')
+    const wrapper = panel()
+    const boost = /boost/i
+    // The composer: no control, no name, no title, no class that says Boost.
+    const composer = wrapper.get('.dm-composer')
+    expect(composer.html()).not.toMatch(boost)
+    // The header's tools, the ⋯ menu among them.
+    const tools = wrapper.findAll('.dm-msg__tools button').map((tool) => tool.attributes('title'))
+    expect(tools).toEqual(['Mine history', 'Open console', 'More', 'Close chat'])
+    // The ⋯ menu's rows.
+    const items = wrapper.findComponent(MenuButton).props('items') as MenuItem[]
+    expect(items.length).toBeGreaterThan(0)
+    for (const item of items) expect(JSON.stringify(item)).not.toMatch(boost)
+    // Nowhere else in the panel either.
+    expect(wrapper.html()).not.toMatch(boost)
+    // No on state: no renderer source reads a Boost flag; BOOST_ENABLED stays Host-side (14 §8 I-07).
+    const rendererRoot = join(import.meta.dirname, '..', '..')
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = join(dir, entry.name)
+        if (entry.isDirectory()) walk(file)
+        else if (/\.(ts|vue)$/.test(entry.name) && !/\.test\.ts$/.test(entry.name))
+          if (/boostEnabled|BOOST_ENABLED/.test(readFileSync(file, 'utf8'))) offenders.push(file)
+      }
+    }
+    walk(rendererRoot)
+    expect(offenders).toEqual([])
+  })
+})
+
+/* --- ISSUE-260: the card in the composer's place (US-ASK-001.AC02, US-ASK-006) — one block, appended --- */
+
+/*
+ * The card takes the composer's slot while the dwarf asks, and gives it back once answered
+ * (US-ASK-006): focus moves with it (NFR-A11Y-04), and a draft does not come back, since the
+ * submit just sent a fresh "Answers:" record (US-MSG-009.AC04). Attached to the document, because
+ * `document.activeElement` means nothing against a detached tree.
+ */
+describe('DwarfMessagePanel and the ask card in the composer’s place (ISSUE-260)', () => {
+  const twoSteps = {
+    toolUseId: 'toolu_26',
+    channel: 'held' as const,
+    questions: [
+      {
+        question: 'Which database?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      },
+      { question: 'Run migrations?', multiSelect: false, options: [{ label: 'Yes' }] }
+    ]
+  }
+  const oneStep = { ...twoSteps, questions: [twoSteps.questions[0]!] }
+
+  function attached(props: Record<string, unknown> = {}) {
+    return mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }), focusOnOpen: true, ...props }
+    })
+  }
+
+  async function settle(wrapper: ReturnType<typeof attached>): Promise<void> {
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+  }
+
+  it('[US-ASK-001.AC02] a multi-step question opens with its first option focused and the step count 1 of n', async () => {
+    const wrapper = attached({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: twoSteps })
+    })
+    await settle(wrapper)
+    expect(document.activeElement).toBe(wrapper.find('.dm-qcard .dm-qopt').element)
+    expect(wrapper.find('.dm-qcard .dm-qopt__label').text()).toBe('Postgres')
+    expect(wrapper.find('.dm-qcard__step').text()).toBe('1 / 2')
+  })
+
+  it('[US-ASK-006.AC01, NFR-A11Y-04] when the dwarf starts asking the card replaces the composer and takes focus', async () => {
+    const wrapper = attached()
+    await settle(wrapper)
+    expect(document.activeElement).toBe(wrapper.find('.dm-composer textarea').element)
+    await wrapper.setProps({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: oneStep })
+    })
+    await settle(wrapper)
+    expect(wrapper.find('.dm-composer').exists()).toBe(false)
+    expect(wrapper.find('.dm-qcard').attributes('aria-label')).toContain('is asking')
+    expect(document.activeElement).toBe(wrapper.find('.dm-qcard .dm-qopt').element)
+  })
+
+  it('[US-ASK-006.AC04, US-ASK-006.AC05] a fully submitted card leaves, the composer comes back focused and no draft is restored', async () => {
+    const wrapper = attached({
+      draft: 'half a thought',
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: oneStep })
+    })
+    await settle(wrapper)
+    await wrapper.find('.dm-qcard .dm-qopt').trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
+    expect(wrapper.emitted('answer')).toEqual([['Postgres']])
+    expect(wrapper.emitted('draft')?.at(-1)).toEqual([''])
+
+    // The Host's next frame closes the ask: the card exits and the composer takes its place.
+    await wrapper.setProps({ dwarf: defaultDwarf({ textDelivery: 'terminal' }) })
+    await settle(wrapper)
+    expect(wrapper.find('.dm-qcard').exists()).toBe(false)
+    const composer = wrapper.find('.dm-composer textarea')
+    expect(document.activeElement).toBe(composer.element)
+    expect((composer.element as HTMLTextAreaElement).value).toBe('')
+  })
+})
