@@ -65,6 +65,10 @@ const KEPT = '01890a5d-ac96-774b-bcce-b30220905003'
 const ORPHAN = '01890a5d-ac96-774b-bcce-b30220905004'
 const KEPT_PARENT = '01890a5d-ac96-774b-bcce-b30220905005'
 const ROUTING = '01890a5d-ac96-774b-bcce-b30220905006'
+const LOST = '01890a5d-ac96-774b-bcce-b30220905007'
+const LIVE = '01890a5d-ac96-774b-bcce-b30220905008'
+const LOST_WORKER = '01890a5d-ac96-774b-bcce-b30220905009'
+const LIVE_WORKER = '01890a5d-ac96-774b-bcce-b3022090500a'
 const CONTEXT = 'The north seam floods after rain.'
 
 function picksSimulated(): JevRouteAnswers {
@@ -891,7 +895,7 @@ describe('the delegation module wired into the Host (ISSUE-209)', () => {
   afterEach(cleanUpWired)
 
   /** A wired Host with a gated Claude parent working in its mine and its relay connected. */
-  async function gatedParent() {
+  async function gatedParent(options: { noLaunchableProvider?: () => boolean } = {}) {
     const w = wiredWorld()
     const recorded = claudeRecording()
     const spawns: RecordingSpawn[] = []
@@ -905,7 +909,8 @@ describe('the delegation module wired into the Host (ISSUE-209)', () => {
       installed: ['claude'],
       jevKey: JEV_KEY,
       jevClaudeModels: ['sonnet'],
-      jevCapabilities: DELEGATION_CAPABILITIES
+      jevCapabilities: DELEGATION_CAPABILITIES,
+      ...options
     })
     const mineId = await h.mine()
     const ui = await h.attach()
@@ -1061,6 +1066,102 @@ describe('the delegation module wired into the Host (ISSUE-209)', () => {
         .messages.filter((m) => m.role === 'system-line')
         .map((m) => m.text)
     ).toEqual([delegationFailedLineText('Durin')])
+  })
+
+  it('[S8.09, INV-84, CH-01] after a Host rebuild a running delegation whose worker did not survive fails worker-lost and the parent, if alive, gets the line', async () => {
+    const w = wiredWorld()
+    // The database a stopped Host left: two running delegations of one present parent. The
+    // recovery listed the first worker unrecovered (its session did not survive); the second
+    // worker's session is running.
+    seedDelegationRows(w.db, { dwarfs: [KEPT_PARENT, LOST_WORKER, LIVE_WORKER], launches: [] })
+    w.db.run(`UPDATE dwarfs SET process_state = 'unrecovered' WHERE id = ?`, [LOST_WORKER])
+    const running = (id: string, worker: string, ticket: string) =>
+      w.db.run(
+        `INSERT INTO delegations (id, parent_dwarf_id, worker_dwarf_id, ticket, task_text, state,
+           created_at) VALUES (?, ?, ?, ?, ?, 'running', 1)`,
+        [id, KEPT_PARENT, worker, ticket, TASK]
+      )
+    running(LOST, LOST_WORKER, 'ticket-209-lost')
+    running(LIVE, LIVE_WORKER, 'ticket-209-live')
+
+    const h = await bootWiredHost(w, {
+      epoch: 'epoch-209-b',
+      processes: () => new FakeProcessControl({ bootId: 'boot-a' })
+    })
+
+    expect(
+      h.db.all('SELECT id, state, failure, task_text FROM delegations ORDER BY ticket')
+    ).toEqual([
+      { id: LIVE, state: 'running', failure: null, task_text: TASK },
+      { id: LOST, state: 'failed', failure: 'worker-lost', task_text: null }
+    ])
+    expect(h.events('DelegationFailed')).toEqual([
+      { delegationId: LOST, parentDwarfId: KEPT_PARENT, failure: 'worker-lost' }
+    ])
+    expect(
+      h.conversation.conversation.queries
+        .feed(KEPT_PARENT as DwarfId)
+        .messages.filter((m) => m.role === 'system-line')
+        .map((m) => m.text)
+    ).toEqual([delegationFailedLineText('Durin')])
+  })
+
+  it("[S8.09, US-DLG-005.AC01] a running worker whose session ends before its result fails the delegation worker-lost and the parent's pending call gets the fallback", async () => {
+    const s = await gatedParent()
+    const { answer, worker, delegationId } = await delegatedThroughRelay(s)
+
+    await s.h.call(s.ui, 'crew.stop', { dwarfId: worker, requestId: s.h.rid() })
+    for (let step = 0; step < 200; step += 1) {
+      if (s.h.events('DelegationFailed').length > 0) break
+      await s.h.run(50, s.ui)
+    }
+
+    expect(s.h.events('DelegationFailed')).toEqual([
+      { delegationId, parentDwarfId: s.parent.dwarfId, failure: 'worker-lost' }
+    ])
+    const reply = (await answer) as { structuredContent?: { status?: string } }
+    expect(reply.structuredContent).toMatchObject({ status: 'failed' })
+    expect(
+      s.h.conversation.conversation.queries
+        .feed(s.parent.dwarfId)
+        .messages.filter((m) => m.role === 'system-line')
+    ).toHaveLength(1)
+  })
+
+  it('[US-DLG-005.AC01] a delegation for which the Host can launch no provider at this step fails and the parent gets its one line', async () => {
+    // Jev's candidates are exactly the step's launchable providers (21 §2 cut 3; PO #20): an
+    // answer naming any other is replaced by a launchable one, so a subtask finds no supplier only
+    // when the Host can launch none (S8.06 at routing level; the advisor answers
+    // `jev-could-not-choose` with reason `no-launchable-provider`, 16 §6.4).
+    let none = false
+    const s = await gatedParent({ noLaunchableProvider: () => none })
+    none = true
+    const asked = s.h.router.requests.length
+
+    const answer = s.relay.callTool({
+      name: 'delegate_subtask',
+      arguments: { task: TASK, context: CONTEXT }
+    })
+    for (let step = 0; step < 100; step += 1) {
+      if (s.h.events('DelegationFailed').length > 0) break
+      await s.h.run(50, s.ui)
+    }
+
+    const [failed] = s.h.events<{ delegationId: string; failure: string }>('DelegationFailed')
+    expect(failed).toMatchObject({
+      parentDwarfId: s.parent.dwarfId,
+      failure: 'jev-could-not-choose'
+    })
+    expect(s.h.events('DelegationWorkerLaunched')).toEqual([])
+    expect(s.h.router.requests).toHaveLength(asked) // nothing was sent to Jev
+    expect(
+      s.h.conversation.conversation.queries
+        .feed(s.parent.dwarfId)
+        .messages.filter((m) => m.role === 'system-line')
+        .map((m) => m.text)
+    ).toEqual([delegationFailedLineText(s.h.crew.crew.queries.displayName(s.parent.dwarfId))])
+    const reply = (await answer) as { structuredContent?: { status?: string } }
+    expect(reply.structuredContent).toMatchObject({ status: 'failed' })
   })
 
   it('[ADR-013] the boot pass deletes credential files that have no live, unrevoked token', async () => {

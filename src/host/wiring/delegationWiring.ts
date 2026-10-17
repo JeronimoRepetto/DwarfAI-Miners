@@ -11,7 +11,8 @@
 //   hash-only row and a credential FILE), the `PermissionPromptBridge`, and the routes of a token's
 //   life (16 §4.8): `DwarfLaunched` → `bindParent`, then the endpoint's `parentBound` (a `delegate`
 //   call that waited for the bind goes on, 16 §5.2 item 5); `DwarfDeparted` → `revokeFor` (its
-//   token revoked, its file deleted, its in-flight delegations failed `parent-gone`, S8.11, INV-83).
+//   token revoked, its file deleted, its in-flight delegations failed `parent-gone`, S8.11, INV-83;
+//   a departing worker's running delegation fails `worker-lost`, S8.09).
 //   `starter` is the `SessionStarter` bridge's door: `issueFor` before the driver starts, and
 //   `revokeLaunch` when a start fails, which also ends the `delegate` calls waiting on that launch.
 // - `compose` (boot step 4, once launching, crew and conversation are wired): the endpoint
@@ -24,7 +25,9 @@
 //   parent's one chat line (routes/delegationFailed.ts). A routing, handoff or launch change wakes
 //   the `subtask_result` calls waiting on its ticket (`delegationSettled`).
 // - `recoverOnBoot` (boot step 5, after the Host recovery classified): every delegation still
-//   `attempted` was being routed when the Host stopped → S8.12 `worker-lost` (FM-021); then the
+//   `attempted` was being routed when the Host stopped → S8.12 `worker-lost` (FM-021); every
+//   `running` one whose worker did not survive (crew no longer holds it present and running) →
+//   `worker-lost` (INV-84); then the
 //   ADR-015 item 6 sweep of the tokens and credential files (`sweepOrphans`): a launch that never
 //   reached a dwarf loses its credential, a recovered session keeps it for its resume.
 // - `listen` (boot step 6): the MCP server over the listener the root passes (`mcpEndpointListener`,
@@ -58,6 +61,7 @@ import {
   createDelegationLifecycle,
   createHandoffMcpDelegationServer,
   DelegationEndpointService,
+  DelegationWorkerLoss,
   ParentHandoffService,
   SubtaskRunService,
   type DelegationEndpointEvent,
@@ -239,6 +243,9 @@ interface Composed {
   endpoint: DelegationEndpointService
   handoff: ParentHandoffService
   subtasks: SubtaskRunService
+  workerLoss: DelegationWorkerLoss
+  /** Whether a worker's session survived the Host restart (the recovery classified it running). */
+  survived(worker: DwarfId): boolean
 }
 
 export function wireDelegation(deps: DelegationWiringDeps): WiredDelegation {
@@ -287,7 +294,15 @@ export function wireDelegation(deps: DelegationWiringDeps): WiredDelegation {
       composed?.endpoint.parentBound(launchId)
     }),
     deps.bus.subscribe('DwarfDeparted', ({ payload }) => {
+      // A departing parent: its token revoked, its delegations failed `parent-gone` (S8.11).
       void lifecycle.revokeFor(payload.dwarfId).catch(failed('delegation.revoke'))
+      // A departing worker whose delegation is still running: `worker-lost` (S8.09). A worker
+      // that walks out after its handoff (S8.08) finds its delegation settled: nothing moves.
+      try {
+        composed?.workerLoss.workerLost(payload.dwarfId)
+      } catch (error) {
+        failed('delegation.worker-lost')(error)
+      }
     })
   ]
   let server: DelegationServer | null = null
@@ -327,6 +342,11 @@ export function wireDelegation(deps: DelegationWiringDeps): WiredDelegation {
       }
       try {
         composed.subtasks.failRoutingOnBoot()
+      } catch (error) {
+        failed('delegation.reconcile')(error)
+      }
+      try {
+        composed.workerLoss.reconcileOnBoot(composed.survived)
       } catch (error) {
         failed('delegation.reconcile')(error)
       }
@@ -456,5 +476,20 @@ function composeEndpoint(
       log
     })
   )
-  return { endpoint, handoff, subtasks }
+  const workerLoss = new DelegationWorkerLoss({
+    tickets,
+    transactions,
+    bus: route.bus,
+    clock,
+    ids,
+    hostEpoch,
+    settled
+  })
+  // INV-84: a worker survived when crew still holds it present with a running process; one the
+  // recovery listed unrecovered, or whose session closed, did not (07 S2.10).
+  const survived = (worker: DwarfId): boolean => {
+    const view = route.crew.queries.get(worker)
+    return view !== null && !view.departed && view.processState === 'running'
+  }
+  return { endpoint, handoff, subtasks, workerLoss, survived }
 }

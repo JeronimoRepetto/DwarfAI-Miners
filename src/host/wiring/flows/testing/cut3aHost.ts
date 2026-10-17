@@ -241,6 +241,11 @@ export interface BootOptions {
    * until its permission prompt tool is composed (AMENDMENT-21). Jev's routing catalogue only.
    */
   jevClaudeModels?: readonly string[]
+  /**
+   * While it answers true, Jev's routing catalogue lists no launchable provider: the Host can
+   * launch none at this step (ISSUE-209, the no-provider case). Jev's routing catalogue only.
+   */
+  noLaunchableProvider?: () => boolean
 }
 
 /** The real catalogue, whose `launchable()` also answers a launch-enabled Claude once detected. */
@@ -266,6 +271,18 @@ function withClaudeCandidate(
       }
       return [...launchable, claude]
     }
+  }
+}
+
+/** `source`, listing no launchable provider while `none` answers true. */
+function withNoneLaunchableWhen<S extends { launchable(): Promise<readonly unknown[]> }>(
+  source: S,
+  none: (() => boolean) | undefined
+): S {
+  if (none === undefined) return source
+  return {
+    ...source,
+    launchable: () => (none() ? Promise.resolve([]) : source.launchable())
   }
 }
 
@@ -499,10 +516,13 @@ export async function bootHost(w: World, options: BootOptions) {
           const jev = servedJev.bind({
             router,
             secretReader: preferences.secretReader,
-            routingCatalog: routingCatalogSource(
-              options.jevClaudeModels === undefined
-                ? suppliers.catalogue
-                : withClaudeCandidate(suppliers.catalogue, options.jevClaudeModels)
+            routingCatalog: withNoneLaunchableWhen(
+              routingCatalogSource(
+                options.jevClaudeModels === undefined
+                  ? suppliers.catalogue
+                  : withClaudeCandidate(suppliers.catalogue, options.jevClaudeModels)
+              ),
+              options.noLaunchableProvider
             ),
             preferences: preferences.preferences.queries,
             log,
