@@ -120,9 +120,16 @@ export interface ClaudeStreamJsonDriverDeps {
   readonly promptTool: PromptToolDeps
   /** One-line redaction of activity summaries (`contracts/logging` `redactSecrets`, bound by wiring). */
   readonly redact: (text: string) => string
+  /**
+   * What a resume needs that `SessionRef` does not carry, read from the stored launch record when
+   * this driver instance did not launch the session (a restarted Host, ISSUE-173): its folder and
+   * the spawn tag of the resumed process. Bound by host/wiring (bridges/resumeContext.ts); the
+   * driver never imports launching (R3, R4). Absent, or null: the session is unknown here.
+   */
+  readonly resumeContext?: (ref: SessionRef) => { cwd: string; spawnTag: string } | null
 }
 
-/** What a resume needs that `SessionRef` does not carry (package gap, recorded in the hand-off). */
+/** What a resume needs that `SessionRef` does not carry (package gap): remembered at launch, or read through `resumeContext`. */
 interface Remembered {
   readonly cwd: string
   readonly spawnTag: string
@@ -133,6 +140,19 @@ interface Remembered {
   readonly delegationGated: boolean
   /** Resumes so far: each writes its own `--mcp-config` file. */
   resumes: number
+}
+
+/**
+ * What a restarted Host reads of the stored launch record (ISSUE-173): the folder and spawn tag
+ * only. It carries no relay credential, so such a resume starts without the permission prompt tool.
+ */
+interface StoredResume {
+  readonly cwd: string
+  readonly spawnTag: string
+}
+
+function isRemembered(known: Remembered | StoredResume): known is Remembered {
+  return 'relay' in known
 }
 
 /** The relay entry of a launch: the relay program and the credential FILE PATH (ADR-013 item 3). */
@@ -147,7 +167,7 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
   private readonly launchIds = new Set<string>()
   /** Session ids whose process this Host holds now (ADR-015: never two writers). */
   private readonly live = new Set<string>()
-  private readonly remembered = new Map<string, Remembered>()
+  private readonly remembered = new Map<string, Remembered | StoredResume>()
   /** The last probe per install (binary, version, mtime): the session's probe source (15 §2.1). */
   private readonly probed = new Map<string, ProviderCapabilities>()
 
@@ -273,30 +293,38 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     if (this.live.has(ref.providerSessionId)) {
       throw resumeError('resume-error', 'the session is live in this Host')
     }
-    const known = this.remembered.get(ref.providerSessionId)
+    // This instance's own launch first; else the stored launch record (a restarted Host, ISSUE-173).
+    const known =
+      this.remembered.get(ref.providerSessionId) ?? this.deps.resumeContext?.(ref) ?? undefined
     if (known === undefined) {
       throw resumeError('resume-error', 'the folder and spawn tag of the session are unknown')
     }
     const detected = await this.detect()
     if (detected.kind !== 'installed') throw launchError('not-installed', 'claude is not installed')
     // The launch's relay again (AMENDMENT-21), in a file of its own; no pre-approval on a resume.
-    known.resumes += 1
-    const prompts = this.promptsFor(known.launchId, known.delegationGated)
-    const config = await this.writeMcpConfig(
-      `${known.launchId}.resume-${known.resumes}`,
-      known.relay
-    ).catch((error: unknown) => {
-      prompts.unregister()
-      throw error
-    })
+    // A stored record (a restarted Host) holds no relay credential: that resume has no prompt tool.
+    const relayed = isRemembered(known) ? known : null
+    if (relayed !== null) relayed.resumes += 1
+    const prompts =
+      relayed === null ? null : this.promptsFor(relayed.launchId, relayed.delegationGated)
+    const config =
+      relayed === null
+        ? null
+        : await this.writeMcpConfig(
+            `${relayed.launchId}.resume-${relayed.resumes}`,
+            relayed.relay
+          ).catch((error: unknown) => {
+            prompts?.unregister()
+            throw error
+          })
     const abandon = async (): Promise<void> => {
-      prompts.unregister()
-      await config.remove()
+      prompts?.unregister()
+      await config?.remove()
     }
     const argv = buildArgv({
       kind: 'resume',
       sessionId: ref.providerSessionId,
-      mcpConfigPath: config.path,
+      mcpConfigPath: config?.path ?? null,
       policyArgv: []
     })
     const spawnedAt = this.deps.clock.now()
@@ -325,11 +353,11 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       fail: (_early, detail) => resumeError('resume-error', detail),
       onExit: (exited) => {
         this.live.delete(exited.providerSessionId)
-        prompts.unregister()
-        void config.remove()
+        prompts?.unregister()
+        void config?.remove()
       }
     })
-    prompts.bind(session)
+    prompts?.bind(session)
     let resumed: DriverSession
     try {
       resumed = await session.ready

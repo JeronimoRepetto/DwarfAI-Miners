@@ -54,13 +54,25 @@ export const stopDwarfResultSchema = outcomeSchema(
 )
 
 /**
+ * Package gap (14 is silent): the raw text a rename may carry before the Host normalizes it, so the
+ * schema refuses an oversized string (14 §6.5 "Schemas"; ADR-019 Verification "Fuzz"). 256 UTF-16
+ * units are far above 24 graphemes with their combining marks, white space and the emoji the Host
+ * drops, so every text a person can type or paste into the field still reaches the Host's rule.
+ */
+export const DWARF_NAME_WIRE_MAX_CHARS = 256
+
+/**
  * B-M22 params (ADR-019 strict()). The name is any text on the wire: its `DwarfName` normalization
  * (06 §5.1), the `'empty'` outcome and the rule that the base name is a reset are the Host's
  * (16 §4.2 `CrewCommands.rename`), re-checked there after UI main (NFR-SEC-08). The params are
  * sensitive (14 §3.5 SENSITIVE_METHODS: a custom name is never logged, INV-29).
  */
 export const renameDwarfParamsSchema = z
-  .object({ dwarfId: dwarfIdSchema, name: z.string(), requestId: requestIdSchema })
+  .object({
+    dwarfId: dwarfIdSchema,
+    name: z.string().max(DWARF_NAME_WIRE_MAX_CHARS),
+    requestId: requestIdSchema
+  })
   .strict()
 
 /** B-M22 result: the stored custom name, `null` when the name was the base name (SC-AR-05). */
