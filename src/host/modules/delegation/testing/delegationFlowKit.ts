@@ -18,6 +18,7 @@ export { InMemoryDelegationTicketStore } from '../ports/fakes/InMemoryDelegation
 export { InMemoryDelegationTokenStore } from '../ports/fakes/InMemoryDelegationTokenStore'
 export { FakeSubtaskRouter } from '../ports/fakes/FakeSubtaskRouter'
 export { FakeWorkerLauncher } from '../ports/fakes/FakeWorkerLauncher'
+export { FakeParentDeliverer } from '../ports/fakes/FakeParentDeliverer'
 
 /** A `DelegationLifecycle` over the given stores, in-memory credential files and a test minter. */
 export function inMemoryDelegationLifecycle(deps: {

@@ -6,7 +6,11 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { McpDelegationServer } from './adapters/mcp/McpDelegationServer'
 import { DelegationResetStep } from './adapters/sqlite/DelegationResetStep'
-import type { DelegationRelayListener, DelegationServer } from './ports/delegationServer'
+import type {
+  DelegationHandoffReport,
+  DelegationRelayListener,
+  DelegationServer
+} from './ports/delegationServer'
 
 // ISSUE-199: what host/transport's MCP endpoint and the composition root need of the endpoint.
 export type { DelegationToken, DelegationTokenStore } from './ports/delegationStores'
@@ -66,3 +70,23 @@ export {
   type SubtaskRunDeps,
   type SubtaskRunEvent
 } from './application/subtaskRun'
+
+// ISSUE-205: the invisible result handoff (16 §5.4 "Handoff"; ADR-013 item 6; 07 S8.08), its event,
+// and the MCP server that reports each `done` answer's flush to it (composed by ISSUE-209).
+export type { DelegationSucceeded } from './domain/events'
+export type { DelegationHandoffReport } from './ports/delegationServer'
+export {
+  ParentHandoffService,
+  type HandoffDeps,
+  type HandoffEvent,
+  type ToolResultHandoff
+} from './application/handoff'
+
+/** `createMcpDelegationServer` whose `done` answers are reported to the handoff once flushed. */
+export function createHandoffMcpDelegationServer(
+  listener: DelegationRelayListener,
+  log: DiagnosticsLog,
+  handoffs: DelegationHandoffReport
+): DelegationServer {
+  return new McpDelegationServer(listener, log, handoffs)
+}
