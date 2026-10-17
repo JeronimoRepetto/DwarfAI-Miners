@@ -10,7 +10,8 @@
 //   HOST_NOT_READY (14 §3.3).
 // - `wire`, run by boot step 4 once suppliers, conversation, crew and mines exist: the module over
 //   the SQLite stores (`launches`, `processes`, `launch_records`), the `SessionStarter` bridge over
-//   the suppliers registry (bridges/sessionStarter.ts), and the routes below. Its `recover` builds
+//   the suppliers registry (bridges/sessionStarter.ts), the `LaunchAdvisor` bridge → jev
+//   (bridges/launchAdvisor.ts, ISSUE-182) when the root passes one, and the routes below. Its `recover` builds
 //   the Host recovery once crew, suppliers and conversation exist (host/main.ts, boot step 4) and
 //   routes its report (`routeRecovery`, ISSUE-174); until then B-M35 / B-M36 answer `no-report`
 //   and the `recovery` section is null.
@@ -26,6 +27,9 @@
 //   published (07 S4.02; ADR-015 item 7). Package gap, resolved in development: 05 §4 lists
 //   crew `arrive` as a route of `DwarfLaunched`, which the foreign key and the event's own
 //   `dwarfId` rule out; its `dwarf.arrived` frame is crew's (`DwarfArrived`, frames/board.ts).
+// - `LaunchHandedBack` → `launch.changed` with the launch `handed-back` and the picks it put into the
+//   pickers (14 §2.4 B-F18, §3.6 `LaunchWire.picks`; 07 S5.13; ADR-028 D2, OQ-38 B): no failure, so
+//   no `launch.failed` (ISSUE-182, forward note of #1401).
 // - `LaunchFailed` → `launch.failed` (14 §2.4 B-F19), only when a `ui` connection is attached right
 //   now, then launching's `failureSeen` (`launches.seen_at`, 14 §8 I-03). A failure no UI saw is
 //   never sent later and never listed (PO #65; INV-53; FM-135): it is not put in the replay ring
@@ -41,8 +45,8 @@
 //   event sink's exit route — launching's PO #62 check with crew's pending end for the dwarf
 //   (`CrewQueries.get`), then crew `sessionClosed` with `departureCause(pendingEnd, owned)` from
 //   launching's ownership (INV-30); a dwarf already gone, or covered by the current recovery, does
-//   not depart here. The composition root hands it to suppliers' sink with the launching wiring
-//   (later: ISSUE-182); until then `suppliersWiring.ts` delivers driver events nowhere. Its
+//   not depart here. The composition root hands it to suppliers' sink with the other driver event
+//   routes (wiring/launchedSessions.ts, routes/driverEvents.ts; ISSUE-182). Its
 //   `DriverSessionExited` → conversation `recordSessionEnd` row is the departure's own route
 //   (`DwarfDeparted`, routes/cut1Routes.ts), idempotent per dwarf.
 // - `DwarfStopRequested` (crew; why ≠ `host-recovery`) → launching `markStoppedByPerson`, the bus's
@@ -81,6 +85,7 @@ import {
 } from '../../modules/crew'
 import {
   createLaunching,
+  type AbortableLaunchAdvisor,
   type Launching,
   type LaunchingCommands,
   type LaunchingEvent,
@@ -158,6 +163,7 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
       )
       changed(launchId)
     }),
+    events.subscribe('LaunchHandedBack', (event) => changed(event.payload.launchId)),
     events.subscribe('LaunchedSessionCrashed', (event) => {
       const { dwarfId, launchId } = event.payload
       frames.publishFrame('toast', { kind: 'session-crashed', dwarfId, launchId })
@@ -332,6 +338,11 @@ export interface LaunchingWiringDeps {
   mines: Pick<MinesQueries, 'get' | 'folderOf'>
   crew: Pick<CrewCommands, 'arrive' | 'sessionClosed'>
   conversation: Pick<ConversationCommands, 'ingest'>
+  /**
+   * The `LaunchAdvisor` bridge → jev (bridges/launchAdvisor.ts; ISSUE-182). Without it a "Let Jev
+   * choose" launch is refused `jev-not-built` (hidden until built, 21 §1 item 8).
+   */
+  advisor?: AbortableLaunchAdvisor
 }
 
 export interface WiredLaunching {
@@ -432,7 +443,8 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
     ids: deps.ids,
     hostEpoch: deps.hostEpoch,
     installId: deps.installId,
-    log: deps.log
+    log: deps.log,
+    ...(deps.advisor === undefined ? {} : { advisor: deps.advisor })
   })
   const unrouted = [
     routeLaunching({
