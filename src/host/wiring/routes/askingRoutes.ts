@@ -39,7 +39,11 @@
 // - Listening on the ingress and persisting its port (16 §8.2 step 6): wiring/hookIngress.ts,
 //   which serves `hookRoutes` from boot step 6 (ISSUE-140).
 // - The hook decision channel (`hook-decision`): SP-11 has no passed record, so it is not composed
-//   and its asks would answer `channel-unavailable` (fail closed). Driver channels: EPIC-10.
+//   and its asks would answer `channel-unavailable` (fail closed).
+// - A launched session's asks reach the broker through the driver event routes
+//   (routes/driverEvents.ts, ISSUE-182); their answers go back through the `driver` channel the
+//   composition root passes (`driverAnswers`, bridges/driverAskChannel.ts). Without one, a driver
+//   ask's answer is `channel-unavailable` (fail closed).
 // - The keystroke relay into an observed terminal: wiring/bridges/keystrokeRelay.ts over
 //   conversation's observed-session key delivery (#1285), bound by the composition root.
 // - The closed-asks sweep (`askSweep.ts`): the maintenance tick (wiring/hostMaintenance.ts, #1290).
@@ -100,6 +104,7 @@ import { registerAskingAnswer } from '../../transport/methods/askingAnswer'
 import { registerAskingSetStep } from '../../transport/methods/askingSetStep'
 import { registerAsksSection } from '../../transport/snapshot/asksSection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
+import type { DriverAskChannel } from '../bridges/driverAskChannel'
 import { registerAskResolutions } from './askResolutions'
 import { createObservedClaudeAsks, type ObservedClaudeAsks } from './observedClaudeAsks'
 
@@ -173,6 +178,8 @@ export interface AskingWiringDeps {
     queries: Pick<PreferencesQueries, 'integrationState'>
     channelTokens: Pick<ChannelTokenStore, 'active'>
   }
+  /** The `driver` answer channel (bridges/driverAskChannel.ts; ISSUE-182). */
+  driverAnswers?: DriverAskChannel
   /** The observed-Claude keystroke channel's world (ADR-012 item 3). */
   keystrokes: {
     relay: KeystrokeRelay
@@ -242,9 +249,14 @@ function wireAsking(deps: AskingWiringDeps): WiredAsking {
     relay: deps.keystrokes.relay,
     log
   })
-  // The composed answer channels: the observed-Claude keystroke channel only (see the header).
+  // The composed answer channels: the observed-Claude keystroke channel and a launched session's
+  // own driver (see the header).
   const channelFor = (channel: AskRecord['channel']) =>
-    channel === 'hook-keystroke' ? keystrokes : null
+    channel === 'hook-keystroke'
+      ? keystrokes
+      : channel === 'driver'
+        ? (deps.driverAnswers ?? null)
+        : null
   const staleAnswerSafe = (channel: AskRecord['channel']): boolean =>
     channelFor(channel)?.capabilities.staleAnswerSafe ?? true
 
