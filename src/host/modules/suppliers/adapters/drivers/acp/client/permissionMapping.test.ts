@@ -2,7 +2,14 @@
 // the question card (ISSUE-151 "Tests to write FIRST" item 2).
 import { describe, expect, it } from 'vitest'
 import { answerReply, DECLINE, formOf } from './elicitation'
-import { optionSet, permissionPayload, permissionReply } from './permissionMapping'
+import {
+  optionSet,
+  optionsOf,
+  permissionPayload,
+  permissionReply,
+  replyWith,
+  type PermissionReplyHook
+} from './permissionMapping'
 
 const FULL = [
   { optionId: 'always-yes', kind: 'allow_always' },
@@ -157,5 +164,52 @@ describe('ACP permission and question mapping (15 §2.7)', () => {
         requestedSchema: { properties: { question_0: { type: 'string', enum: [1, 2] } } }
       })
     ).toBeNull()
+  })
+})
+
+describe('ACP permission reply hook (15 §2.7: a native decision in an option _meta)', () => {
+  const NATIVE = [
+    { optionId: 'yes', kind: 'allow_once', _meta: { native: 'accept' } },
+    { optionId: 'stop', kind: 'reject_once', _meta: { native: 'cancel' } },
+    { optionId: 'no', kind: 'reject_once', _meta: { native: 'decline' } },
+    { optionId: 'always', kind: 'allow_always', _meta: { native: 'accept-always' } }
+  ]
+  const byNative =
+    (want: string): PermissionReplyHook =>
+    (options) => {
+      const found = options.find((option) => option.meta?.native === want)
+      return found === undefined ? null : found.optionId
+    }
+
+  it('[C-07] each option keeps its _meta, and without a hook the reply is the default mapping', () => {
+    const options = optionsOf(NATIVE)
+    expect(options[2]).toEqual({ optionId: 'no', kind: 'reject_once', meta: { native: 'decline' } })
+    expect(optionsOf([{ optionId: 'x', kind: 'allow_once' }])).toEqual([
+      { optionId: 'x', kind: 'allow_once' }
+    ])
+    expect(replyWith(options, 'deny')).toEqual({ kind: 'select', optionId: 'stop' })
+    expect(replyWith(options, 'allow')).toEqual(permissionReply(options, 'allow'))
+  })
+
+  it('[C-07, ADR-008] a hook picks the option of its native decision, never one of another kind or an always option', () => {
+    const options = optionsOf(NATIVE)
+    expect(replyWith(options, 'deny', byNative('decline'))).toEqual({
+      kind: 'select',
+      optionId: 'no'
+    })
+    // A choice the decision's kind cannot carry falls back to the default mapping (fail closed).
+    expect(replyWith(options, 'allow', byNative('accept-always'))).toEqual({
+      kind: 'select',
+      optionId: 'yes'
+    })
+    expect(replyWith(options, 'deny', byNative('accept'))).toEqual({
+      kind: 'select',
+      optionId: 'stop'
+    })
+    expect(replyWith(options, 'deny', () => 'not-an-option')).toEqual({
+      kind: 'select',
+      optionId: 'stop'
+    })
+    expect(replyWith(options, 'deny', () => null)).toEqual({ kind: 'select', optionId: 'stop' })
   })
 })

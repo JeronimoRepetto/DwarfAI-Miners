@@ -528,6 +528,34 @@ describe('the board frames (14 §2.4 B-F06, B-F08, B-F09, B-F10; 08 §2.1, §2.2
   })
 
   // ADDED for ISSUE-171: the window learns `stopInFlight` from `dwarf.changed` (14 §2.4 B-F09).
+  it('[US-MSG-005.AC06, US-MSG-006.AC03, BR-14] DwarfRenamed sends dwarf.changed with the dwarf as stored, its custom name or none after a reset', async () => {
+    const b = board()
+    b.mines.put(mineView(MINE_A, 'alpha'))
+    const dwarfId = b.crew.commands.arrive({
+      mineId: MINE_A,
+      identity: identity('s-172'),
+      rank: 'foreman',
+      status: 'idle'
+    })
+    await nextTurn()
+    const changed = (): unknown[] =>
+      b.frames.sent.filter((frame) => frame.name === 'dwarf.changed').map((frame) => frame.data)
+    const before = changed().length
+
+    b.crew.commands.rename(dwarfId, '  Watcher   of seals ')
+    expect(changed().slice(before)).toMatchObject([
+      { dwarf: { id: dwarfId, customName: 'Watcher of seals' } }
+    ])
+    b.crew.commands.resetName(dwarfId)
+    expect(changed().slice(before + 1)).toMatchObject([
+      { dwarf: { id: dwarfId, customName: null } }
+    ])
+    // No change, no event, no frame (08 §0 "on change").
+    b.crew.commands.resetName(dwarfId)
+    expect(changed()).toHaveLength(before + 2)
+    expect(b.crew.bus.handlerErrors).toEqual([])
+  })
+
   it('[US-MSG-016.AC02, S15.01, S15.15] DwarfStopRequested and DwarfStopFailed each send dwarf.changed with the dwarf as stored, so Stop dwarf is disabled only while the stop is in flight', () => {
     const crew = inMemoryCrew()
     const ends = new RecordingEventBus<CrewEndEvent>()

@@ -9,9 +9,13 @@
 //   command answers with the `messageId`. The hand-over starts after that answer, never before the
 //   row exists.
 // - Refused before any row (16 §4.6): a dwarf that cannot receive (`canReceiveMessages` false,
-//   INV-33) gets `cannot-receive`, and its row is rolled back with the transaction that tried it;
-//   attachments are `attachment-refused` until their re-validation is built (later: ISSUE-169), so
-//   nothing is offered that does not exist (21 §1 item 8).
+//   INV-33) gets `cannot-receive`, and its row is rolled back with the transaction that tried it.
+//   Every attachment path is re-validated by the `AttachmentReader` before the transaction
+//   (ISSUE-169; ADR-019 item 9; 11 F4 step 1): one that is refused now — gone, grown past the cap,
+//   never a regular file — makes the send `attachment-refused`, rolled back the same way. Files
+//   that pass meet the same receive check as text: a dwarf that cannot receive text cannot receive
+//   files either (US-MSG-002.AC04). The accepted files travel in `TurnInput.attachments` with their real paths, names and
+//   sizes; the row stores none of them and no byte is read (INV-62).
 // - Durable dedupe (14 §1.6): a `requestId` already stored for this dwarf — also after a Host
 //   restart — answers that row's `messageId`, publishes nothing and hands nothing over. It is looked
 //   up before the receive check, so a repeat is never answered `cannot-receive` for a message that
@@ -65,9 +69,11 @@ import { advance, startDelivery, type DeliveryFact } from '../domain/delivery'
 import type { MessagesAppended } from '../domain/events'
 import type { Delivery, MessageView } from '../domain/messages'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
+import type { AttachmentReader } from '../ports/attachmentReader'
 import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
 import type { TurnHandOver, TurnSender } from '../ports/turnSender'
 import type { MessageDeliveryFailed, MessageHandedOver, MessageSent } from './answerRecords'
+import { revalidateAttachments, type RevalidatedAttachment } from './describeAttachments'
 import type { AttachmentPath, ConversationSendCommand } from './ingest'
 
 /** 08 §0 `MessageReactedTo`: correlated activity after the message (✓✓, S7.05). */
@@ -87,6 +93,8 @@ export interface MessageRecipients {
 
 export interface ConversationSendDeps {
   log: MessageLog
+  /** The Host's check of every attachment path, again at send (16 §4.6; ADR-019 item 9). */
+  attachments: AttachmentReader
   /** One transaction per write (16 §2.2). */
   transactions: TransactionRunner
   /** Where the delivery events go, after the commit. */
@@ -106,6 +114,7 @@ export interface ConversationSendDeps {
 const WATCHED_PER_DWARF = MESSAGES_PER_DWARF
 
 class CannotReceive extends Error {}
+class AttachmentRefused extends Error {}
 
 /**
  * A delivered message waiting for its ✓✓: the turn that consumed it (`turn-id`), or, with no
@@ -186,7 +195,12 @@ export class ConversationSender implements ConversationSendCommand {
     requestId: string
   ): Promise<Result<MessageId, 'cannot-receive' | 'attachment-refused'>> {
     const { log, transactions, recipients, clock } = this.deps
-    if (attachments.length > 0) return { ok: false, error: 'attachment-refused' }
+    // Re-validated before the transaction (the disk is asynchronous); applied inside it, after the
+    // dedupe, so a repeat still answers its stored row.
+    const files: RevalidatedAttachment[] | null =
+      attachments.length === 0
+        ? []
+        : await revalidateAttachments(attachments, this.deps.attachments)
     const at = clock.now()
     let written: { messageId: MessageId; existing: boolean }
     try {
@@ -194,12 +208,14 @@ export class ConversationSender implements ConversationSendCommand {
         const sent = log.writeSent(dwarfId, text, requestId, at)
         if (sent.existing) return sent
         // INV-33: refused before any row — the row just written goes with the rollback.
+        if (files === null) throw new AttachmentRefused()
         if (!recipients.canReceiveMessages(dwarfId)) throw new CannotReceive()
         log.trim(dwarfId, MESSAGES_PER_DWARF)
         return sent
       })
     } catch (error) {
       if (error instanceof CannotReceive) return { ok: false, error: 'cannot-receive' }
+      if (error instanceof AttachmentRefused) return { ok: false, error: 'attachment-refused' }
       throw error
     }
     const { messageId } = written
@@ -233,7 +249,7 @@ export class ConversationSender implements ConversationSendCommand {
     // The hand-over continues after this answer, with no caller (14 §1.7). It never rejects: an
     // unhandled rejection would end the Host (wiring/uncaught.ts).
     void Promise.resolve()
-      .then(() => this.handOver(dwarfId, messageId, text))
+      .then(() => this.handOver(dwarfId, messageId, text, files ?? []))
       .catch((error: unknown) => this.dropAfter(error, messageId, dwarfId))
     return { ok: true, value: messageId }
   }
@@ -284,14 +300,19 @@ export class ConversationSender implements ConversationSendCommand {
     }
   }
 
-  private async handOver(dwarfId: DwarfId, messageId: MessageId, text: string): Promise<void> {
+  private async handOver(
+    dwarfId: DwarfId,
+    messageId: MessageId,
+    text: string,
+    attachments: readonly RevalidatedAttachment[]
+  ): Promise<void> {
     let result: Awaited<ReturnType<TurnSender['send']>>
     try {
       result = await this.deps.turns.send(dwarfId, {
         messageId,
         kind: 'message',
         text,
-        attachments: []
+        attachments
       })
     } catch {
       // A sender that throws instead of answering is a channel error, never a silent loss.

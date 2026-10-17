@@ -140,6 +140,7 @@ import {
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
 import { createNativeActions, type ServedNativeActions } from './window/application/nativeActions'
+import { TerminalConsoleRaiser } from './window/adapters/terminal/TerminalConsoleRaiser'
 import { ElectronFolderPicker } from './window/adapters/ElectronFolderPicker'
 import {
   createMinesAdminRows,
@@ -248,6 +249,16 @@ import {
   SET_ASK_STEP,
   SET_ASK_STEP_ROWS
 } from './ipc/handlers/setAskStep.host'
+import {
+  createRenameDwarfRow,
+  RENAME_DWARF,
+  RENAME_DWARF_ROWS
+} from './ipc/handlers/renameDwarf.host'
+import {
+  createResetDwarfNameRow,
+  RESET_DWARF_NAME,
+  RESET_DWARF_NAME_ROWS
+} from './ipc/handlers/resetDwarfName.host'
 import {
   createSetClaudeHooksRow,
   SET_CLAUDE_HOOKS,
@@ -966,6 +977,27 @@ export function composeAskStepAndIntegrationRows(deps: {
 }
 
 /**
+ * A-N08 `renameDwarf` (B-M22) and A-N09 `resetDwarfName` (B-M23), ISSUE-172: each a part of the `host` target only
+ * where the table routes it `host` (lead decision 2026-10-17: born `host` in cut 2, the renderer's board being the
+ * Host's). `undefined` when it routes neither (the cut-1 table).
+ */
+export function composeDwarfNameRows(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+}): RouteTargetPart | undefined {
+  const { routes, client } = deps
+  const parts: RouteTargetPart[] = []
+  if (routedTo(routes, RENAME_DWARF, 'host')) {
+    parts.push({ channels: RENAME_DWARF_ROWS, target: createRenameDwarfRow(client) })
+  }
+  if (routedTo(routes, RESET_DWARF_NAME, 'host')) {
+    parts.push({ channels: RESET_DWARF_NAME_ROWS, target: createResetDwarfNameRow(client) })
+  }
+  if (parts.length === 0) return undefined
+  return { channels: parts.flatMap((part) => part.channels), target: composeRouteTargets(parts) }
+}
+
+/**
  * Whether today's runtime composes its Claude hook half (21 §2 cut 2 "Switched off in legacy"; §1 item 4; §4 row
  * "Claude hook entry"; ISSUE-141, TC-141-06): today's hook installer, the Claude route of its loopback listener, the
  * observed-Claude permission registry and keystroke path. Only while A-40 and A-41 have no `host` route, each one
@@ -1388,13 +1420,16 @@ export async function startUiMain({
     host === undefined
       ? undefined
       : composeAskStepAndIntegrationRows({ routes, client: host.client })
+  const dwarfNameRows =
+    host === undefined ? undefined : composeDwarfNameRows({ routes, client: host.client })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
     boardFacade === undefined &&
     minesAdmin === undefined &&
     hostReads === undefined &&
     askAnswers?.part === undefined &&
-    cut2Rows === undefined
+    cut2Rows === undefined &&
+    dwarfNameRows === undefined
       ? stopRows
       : composeRouteTargets([
           ...(stopRows === undefined
@@ -1406,7 +1441,8 @@ export async function startUiMain({
           ...(minesAdmin === undefined ? [] : [minesAdmin.part]),
           ...(hostReads === undefined ? [] : [hostReads.part]),
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
-          ...(cut2Rows === undefined ? [] : [cut2Rows])
+          ...(cut2Rows === undefined ? [] : [cut2Rows]),
+          ...(dwarfNameRows === undefined ? [] : [dwarfNameRows])
         ])
   const allShapeAdapters = {
     ...shapeAdapters,
@@ -1771,7 +1807,9 @@ function electronNativeRows(panelWindow: () => BrowserWindow | undefined): {
     clipboard: new ElectronClipboard(clipboard),
     opener: new ElectronExternalOpener(shell),
     // Cut 0 has one mode window, the Panel, where every attach and add control is pressed.
-    parentWindow: () => ({ windowId: panelWindow()?.id ?? -1 })
+    parentWindow: () => ({ windowId: panelWindow()?.id ?? -1 }),
+    // A-13's execute half (ISSUE-170): the console target the Host resolved, raised or opened in the OS terminal.
+    consoles: new TerminalConsoleRaiser()
   })
   return {
     rows: createNativeRows({

@@ -111,6 +111,8 @@ function harness() {
   let turnEnded: (end: TurnEnded) => void = () => undefined
   const sender = new ConversationSender({
     log,
+    // ISSUE-169: no file is described in this file's cases; every path is refused.
+    attachments: { describe: async () => ({ refused: 'unreadable' }) },
     transactions,
     bus,
     onTurnEnded: (handler) => {
