@@ -254,7 +254,11 @@ describe('createSuppliers with the CLI drivers (ISSUE-182)', () => {
                 },
                 promptTool: {
                   sessions: { register: () => () => undefined },
-                  relay: { issue: async () => null, release: async () => undefined }
+                  relay: {
+                    issue: async () => null,
+                    release: async () => undefined,
+                    reissue: async () => null
+                  }
                 }
               }
             }

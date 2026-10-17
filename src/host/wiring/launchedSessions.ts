@@ -17,7 +17,7 @@
 // Before `bind` no driver session can exist (launching is the only opener; the recovery's resumes
 // run at boot step 5), so the "none" answers are the true ones.
 import { HostInvariantError } from '../kernel/domain/errors'
-import type { DwarfId, HostEpoch } from '../kernel/domain/values'
+import type { DwarfId, HostEpoch, LaunchId } from '../kernel/domain/values'
 import type { CrewCommands, CrewQueries, SessionLinks } from '../modules/crew'
 import type { Launching } from '../modules/launching'
 import type { DriverSession, SessionChannels, SessionRef } from '../modules/suppliers'
@@ -48,7 +48,9 @@ export interface LaunchedSessions {
   /** The asking module's `driver` answer channel. */
   readonly answers: DriverAskChannel
   /** Each CLI driver's `resumeContext` (ISSUE-173). */
-  readonly resumeContext: (ref: SessionRef) => { cwd: string; spawnTag: string } | null
+  readonly resumeContext: (
+    ref: SessionRef
+  ) => { cwd: string; spawnTag: string; launchId: LaunchId } | null
   /** Boot step 4, once launching is wired: returns the lookup crew's terminator binds. */
   bind(deps: LaunchedSessionsBindDeps): OwnedSessionLookup
 }
@@ -57,7 +59,9 @@ export function createLaunchedSessions(): LaunchedSessions {
   let owned: OwnedSessionLookup | null = null
   let ownership: Pick<Launching['owned'], 'liveRecordOf'> | null = null
   let sessions: Pick<SessionChannels, 'sessionFor'> | null = null
-  let resume: ((ref: SessionRef) => { cwd: string; spawnTag: string } | null) | null = null
+  let resume:
+    ((ref: SessionRef) => { cwd: string; spawnTag: string; launchId: LaunchId } | null) | null =
+    null
   /** The dwarf's live driver session: its live launch record's session, while suppliers holds it. */
   const driverOf = (dwarfId: DwarfId): DriverSession | null => {
     const record = ownership?.liveRecordOf(dwarfId) ?? null

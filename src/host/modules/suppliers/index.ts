@@ -6,7 +6,7 @@
 // development builds, `SessionChannels` over the sessions the registry's drivers opened. The
 // drivers of the person's own CLIs join with their process deps (`cliDrivers`, ISSUE-182); wiring
 // into `host/main.ts` is ISSUE-159.
-import type { HostEpoch, ProviderId } from '../../kernel/domain/values'
+import type { HostEpoch, LaunchId, ProviderId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { FileSystem } from '../../kernel/ports/fileSystem'
@@ -156,7 +156,9 @@ export interface CliDriverDeps {
    * What a restarted Host's resume reads of the stored launch record (ISSUE-173): the folder and
    * the spawn tag of a session this Host's driver did not launch (wiring/bridges/resumeContext.ts).
    */
-  readonly resumeContext: (ref: SessionRef) => { cwd: string; spawnTag: string } | null
+  readonly resumeContext: (
+    ref: SessionRef
+  ) => { cwd: string; spawnTag: string; launchId?: LaunchId } | null
   /**
    * Claude's permission prompt tool (AMENDMENT-21): its `--mcp-config` files and the relay. Absent,
    * the stream-json driver is not attached: a session without the tool would deny every tool use

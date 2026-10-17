@@ -124,6 +124,20 @@ class RecordingPromptTools implements PromptToolSessions, PromptToolRelay {
     this.released.push(launchId)
   }
 
+  /** Every `reissue` asked (a restarted Host's resume, ISSUE-182). */
+  readonly reissued: string[] = []
+  failReissue = false
+
+  async reissue(launchId: string): Promise<DelegationInjection | null> {
+    this.reissued.push(launchId)
+    if (this.failReissue) return null
+    return {
+      mechanism: 'ticket-file',
+      relay: { program: '/opt/dwarfai/host/dwarfai', args: ['dwarfai-mcp-relay'] },
+      credentialFilePath: `/home/j/.dwarfai/run/mcp/${launchId}.cred`
+    }
+  }
+
   /** The relay's `permission` call for `launchId`'s session. */
   ask(
     launchId: string,
@@ -761,6 +775,45 @@ describe('ClaudeStreamJsonDriver', () => {
       ])
       expect(unknown.spawn.spawns).toHaveLength(1)
     }
+  })
+
+  it('[C-16, SP-15, S4.18] a fresh driver instance re-serves the permission prompt tool on a stored resume: the live relay of its launch, its own --mcp-config, its session registered', async () => {
+    // ISSUE-182 (coordinator ruling on #1413): the stored record names its launch, so a restarted
+    // Host asks the relay of that launch again (`reissue`) instead of resuming without the tool.
+    const variant = fixture('sp15-resume').variants[0] as FixtureVariant
+    const prompts = new RecordingPromptTools()
+    const run = await resumedRun(variant, 1, prompts, {
+      resumeContext: (ref) =>
+        ref.providerSessionId === RECORDED_SESSION
+          ? {
+              cwd: '/work/stored-mine',
+              spawnTag: 'v1:install-182:launch-1:epoch-2',
+              launchId: 'launch-1' as never
+            }
+          : null
+    })
+    expect(run.resumed?.ref).toMatchObject({ providerSessionId: RECORDED_SESSION })
+    expect(prompts.reissued).toEqual(['launch-1'])
+    const argv = run.spawn.spawns[1]?.args ?? []
+    expect(argv).toContain('--mcp-config')
+    expect(argv[argv.indexOf('--mcp-config') + 1]).toContain('launch-1')
+    expect(prompts.scopes).toEqual([
+      ['launch-1', false],
+      ['launch-1', false]
+    ])
+
+    // No live relay for the launch: the resume still runs, without the prompt tool.
+    const none = new RecordingPromptTools()
+    none.failReissue = true
+    const withoutRelay = await resumedRun(variant, 1, none, {
+      resumeContext: () => ({
+        cwd: '/work/stored-mine',
+        spawnTag: 'v1:install-182:launch-1:epoch-2',
+        launchId: 'launch-1' as never
+      })
+    })
+    expect(withoutRelay.resumed?.ref).toMatchObject({ providerSessionId: RECORDED_SESSION })
+    expect(withoutRelay.spawn.spawns[1]?.args).not.toContain('--mcp-config')
   })
 
   it('[C-16, SP-15] a launched session keeps resume cli-flag through the Claude ceiling (AMENDMENT-18)', async () => {

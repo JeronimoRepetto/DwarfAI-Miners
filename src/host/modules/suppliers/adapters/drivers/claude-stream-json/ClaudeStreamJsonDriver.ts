@@ -126,7 +126,9 @@ export interface ClaudeStreamJsonDriverDeps {
    * the spawn tag of the resumed process. Bound by host/wiring (bridges/resumeContext.ts); the
    * driver never imports launching (R3, R4). Absent, or null: the session is unknown here.
    */
-  readonly resumeContext?: (ref: SessionRef) => { cwd: string; spawnTag: string } | null
+  readonly resumeContext?: (
+    ref: SessionRef
+  ) => { cwd: string; spawnTag: string; launchId?: LaunchId } | null
 }
 
 /** What a resume needs that `SessionRef` does not carry (package gap): remembered at launch, or read through `resumeContext`. */
@@ -143,12 +145,14 @@ interface Remembered {
 }
 
 /**
- * What a restarted Host reads of the stored launch record (ISSUE-173): the folder and spawn tag
- * only. It carries no relay credential, so such a resume starts without the permission prompt tool.
+ * What a restarted Host reads of the stored launch record (ISSUE-173): the folder, the spawn tag
+ * and the launch (ISSUE-182). It carries no relay credential: the resume asks the launch's live
+ * relay again (`PromptToolRelay.reissue`), and starts without the prompt tool when there is none.
  */
 interface StoredResume {
   readonly cwd: string
   readonly spawnTag: string
+  readonly launchId?: LaunchId
 }
 
 function isRemembered(known: Remembered | StoredResume): known is Remembered {
@@ -302,8 +306,8 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     const detected = await this.detect()
     if (detected.kind !== 'installed') throw launchError('not-installed', 'claude is not installed')
     // The launch's relay again (AMENDMENT-21), in a file of its own; no pre-approval on a resume.
-    // A stored record (a restarted Host) holds no relay credential: that resume has no prompt tool.
-    const relayed = isRemembered(known) ? known : null
+    // A stored record (a restarted Host) asks its launch's live relay again (ISSUE-182).
+    const relayed = isRemembered(known) ? known : await this.reissuedRelay(known)
     if (relayed !== null) relayed.resumes += 1
     const prompts =
       relayed === null ? null : this.promptsFor(relayed.launchId, relayed.delegationGated)
@@ -366,8 +370,29 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       throw error
     }
     this.live.add(resumed.ref.providerSessionId)
-    this.remembered.set(resumed.ref.providerSessionId, known)
+    this.remembered.set(resumed.ref.providerSessionId, relayed ?? known)
     return resumed
+  }
+
+  /**
+   * A restarted Host's resume (ISSUE-182): the live relay of the stored record's launch, reissued
+   * with the credential FILE PATH it already had. Its delegation listing is not stored, so the
+   * resume lists `permission` only (the two delegation tools stay off, INV-80). `null`: no launch
+   * named, or no live relay; the resume then runs without the prompt tool.
+   */
+  private async reissuedRelay(stored: StoredResume): Promise<Remembered | null> {
+    if (stored.launchId === undefined) return null
+    const issued = await this.deps.promptTool.relay.reissue(stored.launchId).catch(() => null)
+    const relay = issued === null ? null : ticketFileEntry(issued)
+    if (relay === null) return null
+    return {
+      cwd: stored.cwd,
+      spawnTag: stored.spawnTag,
+      launchId: stored.launchId,
+      relay,
+      delegationGated: false,
+      resumes: 0
+    }
   }
 
   /** 15 §2.1: the ceiling merged with the protocol (nothing yet, S-020-1) and the probe source. */
