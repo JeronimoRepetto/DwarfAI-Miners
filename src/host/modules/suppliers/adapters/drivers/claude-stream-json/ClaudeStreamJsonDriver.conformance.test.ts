@@ -547,6 +547,9 @@ describe('ClaudeStreamJsonDriver', () => {
       '--verbose',
       '--session-id',
       SESSION,
+      // AMENDMENT-19: the permission mode is pinned, never the person's settings defaultMode.
+      '--permission-mode',
+      'default',
       '--permission-prompt-tool',
       'mcp__dwarfai__permission',
       '--disallowedTools',
