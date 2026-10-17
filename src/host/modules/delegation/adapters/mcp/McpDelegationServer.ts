@@ -27,6 +27,8 @@
 //   Such a session whose launch the delegation gates left out (`delegationGated` false) is listed
 //   `permission` alone: the two delegation tools would always refuse it (INV-80). A gated one gets
 //   all three; any other connection keeps the two.
+// - A `done` answer is the handoff (16 §5.4, ISSUE-205): once its response frame is written, the
+//   `DelegationHandoffReport` is told whether it left on an open connection.
 // - A closed relay never cancels anything (16 §5.5): the ticket stays readable by a new relay of
 //   the same launch. `close` stops the endpoint and ends every relay connection.
 //
@@ -35,7 +37,7 @@
 // kinds replaced by the `DelegationEndpoint` port (16 §5.1). The SDK is used only here (R11).
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import type { CallToolResult, JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, JSONRPCMessage, RequestId } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import type { DiagnosticsLog } from '../../../../kernel/ports/diagnosticsLog'
 import { answerDelegateSubtask, answerSubtaskResult } from '../../application/delegationEndpoint'
@@ -46,6 +48,7 @@ import { NATIVE_SUBAGENT_FALLBACK_SENTENCE } from '../../domain/toolFailure'
 import {
   DELEGATION_WAIT_MS,
   type DelegationEndpoint,
+  type DelegationHandoffReport,
   type DelegationRelayConnection,
   type DelegationRelayListener,
   type DelegationServer,
@@ -95,14 +98,16 @@ export class McpDelegationServer implements DelegationServer {
     private readonly listener: DelegationRelayListener,
     private readonly log: DiagnosticsLog,
     /** Absent: no connection is served the `permission` tool. */
-    private readonly prompts?: PermissionPromptEndpoint
+    private readonly prompts?: PermissionPromptEndpoint,
+    /** Told each `done` answer's flush (ISSUE-205; 16 §5.4 "Handoff"). */
+    private readonly handoffs?: DelegationHandoffReport
   ) {}
 
   async listen(handler: DelegationEndpoint): Promise<{ endpoint: LoopbackEndpoint }> {
     const bound = await this.listener.listen((connection) => {
       this.relays.add(connection)
       connection.onClose(() => this.relays.delete(connection))
-      void serveRelay(connection, handler, this.log, this.prompts)
+      void serveRelay(connection, handler, this.log, this.prompts, this.handoffs)
     })
     this.stop = bound.close
     return { endpoint: bound.endpoint }
@@ -122,16 +127,28 @@ export async function serveRelay(
   connection: DelegationRelayConnection,
   handler: DelegationEndpoint,
   log: DiagnosticsLog,
-  prompts?: PermissionPromptEndpoint
+  prompts?: PermissionPromptEndpoint,
+  handoffs?: DelegationHandoffReport
 ): Promise<void> {
-  const server = createDelegationMcpServer(connection, handler, log, prompts)
-  await server.connect(new FrameTransport(connection))
+  const transport = new FrameTransport(connection, handoffs)
+  const server = createDelegationMcpServer(
+    connection,
+    handler,
+    log,
+    (requestId, view) => transport.expectResponse(requestId, view),
+    prompts
+  )
+  await server.connect(transport)
 }
+
+/** Called with each tool answer and the JSON-RPC id of the request it answers. */
+type Answered = (requestId: RequestId, view: SubtaskResultView) => void
 
 function createDelegationMcpServer(
   connection: DelegationRelayConnection,
   handler: DelegationEndpoint,
   log: DiagnosticsLog,
+  answered: Answered,
   prompts?: PermissionPromptEndpoint
 ): McpServer {
   const server = new McpServer(SERVER_INFO)
@@ -139,7 +156,7 @@ function createDelegationMcpServer(
   // prompt tool, and the delegation tools only when its launch was gated in (AMENDMENT-21).
   const servedPrompts = prompts !== undefined && prompts.serves(connection.token)
   const listsDelegation = !servedPrompts || prompts.delegationGated(connection.token)
-  if (listsDelegation) registerDelegationTools(server, connection, handler, log)
+  if (listsDelegation) registerDelegationTools(server, connection, handler, log, answered)
   if (servedPrompts) {
     server.registerTool(
       PERMISSION_TOOL_NAME,
@@ -166,7 +183,8 @@ function registerDelegationTools(
   server: McpServer,
   connection: DelegationRelayConnection,
   handler: DelegationEndpoint,
-  log: DiagnosticsLog
+  log: DiagnosticsLog,
+  answered: Answered
 ): void {
   server.registerTool(
     DELEGATE_SUBTASK_TOOL_NAME,
@@ -187,18 +205,19 @@ function registerDelegationTools(
           )
       }
     },
-    async (args) =>
-      toCallToolResult(
-        await answerDelegateSubtask(
-          handler,
-          connection.token,
-          args.context === undefined
-            ? { task: args.task }
-            : { task: args.task, context: args.context },
-          DELEGATION_WAIT_MS,
-          log
-        )
+    async (args, extra) => {
+      const view = await answerDelegateSubtask(
+        handler,
+        connection.token,
+        args.context === undefined
+          ? { task: args.task }
+          : { task: args.task, context: args.context },
+        DELEGATION_WAIT_MS,
+        log
       )
+      answered(extra.requestId, view)
+      return toCallToolResult(view)
+    }
   )
   server.registerTool(
     SUBTASK_RESULT_TOOL_NAME,
@@ -211,10 +230,17 @@ function registerDelegationTools(
           .describe(`The ticket a pending ${DELEGATE_SUBTASK_TOOL_NAME} answer returned.`)
       }
     },
-    async (args) =>
-      toCallToolResult(
-        await answerSubtaskResult(handler, connection.token, args.ticket, DELEGATION_WAIT_MS, log)
+    async (args, extra) => {
+      const view = await answerSubtaskResult(
+        handler,
+        connection.token,
+        args.ticket,
+        DELEGATION_WAIT_MS,
+        log
       )
+      answered(extra.requestId, view)
+      return toCallToolResult(view)
+    }
   )
 }
 
@@ -228,23 +254,62 @@ function toCallToolResult(view: SubtaskResultView): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(view) }], structuredContent: { ...view } }
 }
 
-/** The MCP SDK transport over one relay connection: one JSON-RPC message per frame. */
+/**
+ * The MCP SDK transport over one relay connection: one JSON-RPC message per frame. A `done` answer
+ * is a handoff (16 §5.4): once its response frame is written, the handoff is told whether it left
+ * on an open connection (`delivered`) or not (the delegation stays `sending`). The connection
+ * reports no write error of its own, so a connection that closed is the one failure seen here.
+ */
 class FrameTransport implements Transport {
   onclose?: () => void
   onerror?: (error: Error) => void
   onmessage?: <T extends JSONRPCMessage>(message: T) => void
+  private closed = false
+  /** The `done` answers waiting for their response frame, by JSON-RPC request id. */
+  private readonly handoffs = new Map<RequestId, SubtaskResultView>()
 
-  constructor(private readonly connection: DelegationRelayConnection) {}
+  constructor(
+    private readonly connection: DelegationRelayConnection,
+    private readonly report?: DelegationHandoffReport
+  ) {}
+
+  /** The answer the response to `requestId` carries; only a `done` one is a handoff. */
+  expectResponse(requestId: RequestId, view: SubtaskResultView): void {
+    if (this.report === undefined || view.status !== 'done') return
+    // A closed connection writes no response: nothing reached the parent.
+    if (this.closed) this.report.responseFlushed(view, false)
+    else this.handoffs.set(requestId, view)
+  }
 
   start(): Promise<void> {
     this.connection.onMessage((message) => this.onmessage?.(message as JSONRPCMessage))
-    this.connection.onClose(() => this.onclose?.())
+    this.connection.onClose(() => {
+      this.closed = true
+      const unsent = [...this.handoffs.values()]
+      this.handoffs.clear()
+      for (const view of unsent) this.report?.responseFlushed(view, false)
+      this.onclose?.()
+    })
     return Promise.resolve()
   }
 
   send(message: JSONRPCMessage): Promise<void> {
-    this.connection.send(message)
+    const handoff = this.takeHandoff(message)
+    let flushed = !this.closed
+    try {
+      this.connection.send(message)
+    } catch {
+      flushed = false
+    }
+    if (handoff !== undefined) this.report?.responseFlushed(handoff, flushed && !this.closed)
     return Promise.resolve()
+  }
+
+  private takeHandoff(message: JSONRPCMessage): SubtaskResultView | undefined {
+    if (!('id' in message) || 'method' in message || message.id === undefined) return undefined
+    const view = this.handoffs.get(message.id)
+    this.handoffs.delete(message.id)
+    return view
   }
 
   close(): Promise<void> {

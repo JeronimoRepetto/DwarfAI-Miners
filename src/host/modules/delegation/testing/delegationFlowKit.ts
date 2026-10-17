@@ -5,6 +5,7 @@
 import type { HostEpoch } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
+import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import type { PreferencesQueries } from '../../preferences'
@@ -18,6 +19,7 @@ export { InMemoryDelegationTicketStore } from '../ports/fakes/InMemoryDelegation
 export { InMemoryDelegationTokenStore } from '../ports/fakes/InMemoryDelegationTokenStore'
 export { FakeSubtaskRouter } from '../ports/fakes/FakeSubtaskRouter'
 export { FakeWorkerLauncher } from '../ports/fakes/FakeWorkerLauncher'
+export { FakeParentDeliverer } from '../ports/fakes/FakeParentDeliverer'
 
 /** A `DelegationLifecycle` over the given stores, in-memory credential files and a test minter. */
 export function inMemoryDelegationLifecycle(deps: {
@@ -28,9 +30,11 @@ export function inMemoryDelegationLifecycle(deps: {
   hostEpoch: HostEpoch
   log: DiagnosticsLog
   preferences: Pick<PreferencesQueries, 'get'>
+  /** The flow's own bus, so its routes see `DelegationFailed{parent-gone}`; else a recording one. */
+  bus?: DomainEventBus<DelegationLifecycleEvent>
 }) {
   const files = new InMemoryCredentialFileStore()
-  const bus = new RecordingEventBus<DelegationLifecycleEvent>()
+  const bus = deps.bus ?? new RecordingEventBus<DelegationLifecycleEvent>()
   const lifecycle = new DelegationLifecycleService({
     ...deps,
     files,

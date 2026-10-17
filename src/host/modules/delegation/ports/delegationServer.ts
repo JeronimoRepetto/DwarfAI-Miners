@@ -111,3 +111,13 @@ export interface DelegationLaunchFacts {
   /** `launched_with_let_jev_choose` and `delegated` of the launch, or `null` when it is unknown. */
   gateOf(launchId: LaunchId): { launchedWithLetJevChoose: boolean; delegated: boolean } | null
 }
+
+/**
+ * Package gap (16 §5.4: "`phase:'delivered'` once the response was flushed to the connection
+ * without error"; the frozen `DelegationEndpoint.result` cannot report it): the MCP adapter tells
+ * the handoff, for each `done` answer it wrote, whether its response frame left on an open
+ * connection. The answer is the very object `result` returned, so the adapter needs no ticket.
+ */
+export interface DelegationHandoffReport {
+  responseFlushed(answer: SubtaskResultView, flushed: boolean): void
+}

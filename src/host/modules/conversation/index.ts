@@ -95,6 +95,7 @@ import {
   type ResolveConsole
 } from './application/resolveConsole'
 import { ConversationSender, type MessageRecipients, type SendEvent } from './application/send'
+import { InvisibleHandoffs, type ConversationDeliverCommand } from './application/deliverInvisibly'
 import { TurnEndRecorder } from './application/recordTurnEnd'
 import {
   reconcileDelivery,
@@ -263,7 +264,9 @@ export interface Conversation {
    * `ConversationCommands.send` (ISSUE-166), built once by host/wiring when crew and suppliers are
    * wired; a second call is a wiring defect.
    */
-  sending(deps: ConversationSendingDeps): ConversationSendCommand & ConversationAttachmentCommand
+  sending(
+    deps: ConversationSendingDeps
+  ): ConversationSendCommand & ConversationAttachmentCommand & ConversationDeliverCommand
   /** The feed (ISSUE-103) and the stored outcome line (owner amendment E, ISSUE-108). */
   queries: Pick<ConversationQueries, 'feed' | 'outcomeOf'>
   /**
@@ -372,11 +375,14 @@ export function createConversation(deps: ConversationDeps): Conversation {
     entries.map((entry) =>
       echoes.claim(dwarfId, entry, origin) === null ? entry : { ...entry, controlPlane: true }
     )
+  /** The handoffs pushed as turn input, whose echoes ingest drops (ISSUE-205; ADR-013 item 6). */
+  const handoffs = new InvisibleHandoffs({ ids: deps.ids })
   /** The batches of joined ingests, handed to the sender after their caller's commit. */
   const joinedBatches: Array<Parameters<IngestCommands['ingest']>> = []
   const commands: IngestCommands = {
-    ingest: (dwarfId, entries, origin) => {
+    ingest: (dwarfId, received, origin) => {
       const joined = deps.transactions.isInTransaction()
+      const entries = handoffs.recognise(dwarfId, received)
       ingest.ingest(dwarfId, stored(dwarfId, entries, origin), origin)
       if (joined) joinedBatches.push([dwarfId, entries, origin])
       else {
@@ -428,7 +434,9 @@ export function createConversation(deps: ConversationDeps): Conversation {
       return {
         send: (...args) => (sender as ConversationSender).send(...args),
         retry: (messageId, requestId) => retrier.retry(messageId, requestId),
-        describeAttachments: (paths) => describeAttachments(paths, attachments)
+        describeAttachments: (paths) => describeAttachments(paths, attachments),
+        deliverInvisibly: (parent, text) =>
+          handoffs.deliverInvisibly(parent, text, { turns, recipients })
       }
     },
     joinedEvents: {
@@ -578,3 +586,8 @@ async function reconcileSendingRows(
   for (const [messageId, row] of [...rows]) settle(messageId, row, { found: false })
   return interrupted
 }
+
+// ISSUE-205: the DwarfAI handoff marker a delegation result pushed as turn input carries (ADR-013
+// item 6; 18 T-25: it names the delegation).
+export { handoffMarkOf, markHandoff } from './domain/handoffMarker'
+export type { ConversationDeliverCommand } from './application/deliverInvisibly'

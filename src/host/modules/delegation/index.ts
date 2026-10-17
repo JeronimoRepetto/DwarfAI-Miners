@@ -6,7 +6,11 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { McpDelegationServer } from './adapters/mcp/McpDelegationServer'
 import { DelegationResetStep } from './adapters/sqlite/DelegationResetStep'
-import type { DelegationRelayListener, DelegationServer } from './ports/delegationServer'
+import type {
+  DelegationHandoffReport,
+  DelegationRelayListener,
+  DelegationServer
+} from './ports/delegationServer'
 import type { PermissionPromptEndpoint } from './ports/permissionPrompt'
 
 // ISSUE-199: what host/transport's MCP endpoint and the composition root need of the endpoint.
@@ -62,9 +66,10 @@ export {
 export function createMcpDelegationServer(
   listener: DelegationRelayListener,
   log: DiagnosticsLog,
-  prompts?: PermissionPromptEndpoint
+  prompts?: PermissionPromptEndpoint,
+  handoffs?: DelegationHandoffReport
 ): DelegationServer {
-  return new McpDelegationServer(listener, log, prompts)
+  return new McpDelegationServer(listener, log, prompts, handoffs)
 }
 
 // ISSUE-182 (coordinator ruling on #1413), appended: the lifecycle the composition root builds for
@@ -78,7 +83,6 @@ import type {
 } from './application/delegationLifecycle'
 
 export type { DelegationLifecycleDeps } from './application/delegationLifecycle'
-export type { DelegationLifecycleEvent } from './domain/events'
 export { toolFailure } from './domain/toolFailure'
 
 /** 16 §4.8 `DelegationLifecycle` (AMENDMENT-14) with AMENDMENT-21's prompt-tool relay issuer. */
@@ -100,3 +104,33 @@ export {
   type SubtaskRunDeps,
   type SubtaskRunEvent
 } from './application/subtaskRun'
+
+// ISSUE-205: the invisible result handoff (16 §5.4 "Handoff"; ADR-013 item 6; 07 S8.08), its event,
+// and the MCP server that reports each `done` answer's flush to it (composed by ISSUE-209).
+export type { DelegationSucceeded } from './domain/events'
+export type { DelegationHandoffReport } from './ports/delegationServer'
+export {
+  ParentHandoffService,
+  type HandoffDeps,
+  type HandoffEvent,
+  type ToolResultHandoff
+} from './application/handoff'
+
+/** `createMcpDelegationServer` whose `done` answers are reported to the handoff once flushed. */
+export function createHandoffMcpDelegationServer(
+  listener: DelegationRelayListener,
+  log: DiagnosticsLog,
+  handoffs: DelegationHandoffReport,
+  prompts?: PermissionPromptEndpoint
+): DelegationServer {
+  return new McpDelegationServer(listener, log, prompts, handoffs)
+}
+
+// ISSUE-206: the parent's one chat line for a failed delegation (US-DLG-005; 08 §2.8), written by
+// host/wiring's `DelegationFailed` route.
+export {
+  delegationFailedLineKey,
+  delegationFailedLineText,
+  parentFailureLine,
+  type ParentFailureLine
+} from './application/failureLine'

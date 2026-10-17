@@ -6,10 +6,27 @@
 // sessions start through `FakeSessionStarter` (the SessionStarter bridge's contract, 16 §2.8), and
 // time is a FakeClock with its FakeScheduler.
 //
+// ISSUE-205 adds the handoff (11 F6 steps 7 and 10; UC-017): the real `ParentHandoffService` in
+// front of the endpoint, the real `ParentDeliverer` bridge to the in-memory conversation's
+// `deliverInvisibly` over a recording parent session, the worker's `TurnEnded` route (its last
+// assistant message is the outcome, lead decision 2026-09-30), and the `DelegationSucceeded` route
+// to crew's real `endDelegated` over a terminator double that delivers the worker's exit through
+// the real exit route (`routeSessionExits`), with launching's real stop routes (`routeStops`). The
+// MCP adapter's flush report is called by the test as the adapter calls it. Those routes are
+// composed here until ISSUE-209 composes them in the Host.
+//
+// ISSUE-206 adds the `DelegationFailed` route (08 §2.8): the parent's one PO #45 line through the
+// in-memory conversation's `ingest`, with the parent's display name from the in-memory crew. The
+// handoff reads the parent's liveness from that crew (S8.13 vs S8.11), the lifecycle publishes on
+// the flow's bus, and a test may put a `FakeSubtaskRouter` in front of the subtask run or a
+// `FakeParentDeliverer` in place of the deliverer bridge (scripted failures).
+//
 // The delegating dwarf is a root launch made with "Let Jev choose" while "Subagent delegation" is
 // on (the gate of UC-009), holding its bound delegation token. Passing an earlier host's
 // `database` is the CH-01 injector (17 §4): the earlier composition is dropped and a new one is
-// composed over the same stores, as a Host restarted over the same database file is.
+// composed over the same stores, as a Host restarted over the same database file is. The crew and
+// the conversation live in that same file, so a restart may pass the earlier ones too (`crew`,
+// `conversation`).
 import { CATALOG_PROVIDER_IDS } from '@dwarfai/contracts'
 import type { DwarfId, HostEpoch, LaunchId, ProviderId } from '../../../kernel/domain/values'
 import type { SecretValue } from '../../../kernel/ports/secretReader'
@@ -42,6 +59,29 @@ import type { MineView } from '../../../modules/mines'
 import { createSuppliers } from '../../../modules/suppliers'
 import { createSubtaskRouter } from '../../bridges/subtaskRouter'
 import { createWorkerLauncher } from '../../bridges/workerLauncher'
+import type { HostFrameData, HostFrameName } from '@dwarfai/contracts'
+import {
+  CrewEndDelegated,
+  PendingEndMemory,
+  type CrewEndEvent,
+  type EndOutcome,
+  type EndReason,
+  type SessionTerminator
+} from '../../../modules/crew'
+import type { TurnSender, TurnSendResult } from '../../../modules/conversation'
+import { inMemoryConversation } from '../../../modules/conversation/testing/inMemoryConversation'
+import { ParentHandoffService, type HandoffEvent } from '../../../modules/delegation'
+import type { TurnInput } from '../../../modules/suppliers'
+import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
+import type {
+  DelegationFailed,
+  DelegationLifecycleEvent,
+  ParentDeliverer,
+  SubtaskRouter
+} from '../../../modules/delegation'
+import { createParentDeliverer } from '../../bridges/parentDeliverer'
+import { registerDelegationFailed } from '../../routes/delegationFailed'
+import { routeSessionExits, routeStops } from '../../routes/launching'
 
 export const SIMULATED = 'simulated' as ProviderId
 /** The delegating dwarf's own launch (its delegation token is keyed by it). */
@@ -112,8 +152,48 @@ export interface DelegationDatabase {
   tokens: InMemoryDelegationTokenStore
 }
 
+/** The parent's session as the turn-input push reaches it: every turn, each one accepted. */
+export class RecordingParentSession implements TurnSender {
+  readonly sent: Array<{ dwarfId: DwarfId; turn: TurnInput }> = []
+
+  send(dwarfId: DwarfId, turn: TurnInput): Promise<TurnSendResult> {
+    this.sent.push({ dwarfId, turn })
+    return Promise.resolve({
+      ok: true,
+      value: {
+        confidence: 'confirmed',
+        heldUntilTurnEnd: false,
+        correlation: `handoff-${this.sent.length}`,
+        reactionEvidence: 'none'
+      }
+    })
+  }
+}
+
+/** What the terminator saw when it was asked to end a session. */
+export interface WorkerEndCall {
+  dwarfId: DwarfId
+  why: EndReason
+  /** The dwarf's `launch_records.stopped_by_person` at that moment (null: no record). */
+  stoppedByPerson: boolean | null
+}
+
 export function delegationHost(
-  options: { epoch?: string; database?: DelegationDatabase; delegationOn?: boolean } = {}
+  options: {
+    epoch?: string
+    database?: DelegationDatabase
+    delegationOn?: boolean
+    /** How the parent's driver takes a result (ISSUE-205; default: as a tool result). */
+    via?: 'tool-result' | 'turn-input'
+    /** A scripted router in front of the subtask run (default: the real bridge to Jev). */
+    router?: SubtaskRouter
+    /** A scripted deliverer for the turn-input push (default: the real bridge). */
+    deliverer?: ParentDeliverer
+    /** The earlier Host's crew, restarted over the same database (CH-01). */
+    crew?: ReturnType<typeof inMemoryCrew>
+    /** The earlier Host's conversation, restarted over the same database (CH-01). */
+    conversation?: ReturnType<typeof inMemoryConversation>
+  } = {}
 ) {
   const database: DelegationDatabase = options.database ?? {
     tickets: new InMemoryDelegationTicketStore(),
@@ -126,7 +206,7 @@ export function delegationHost(
   const ids = new SequenceIdGenerator()
   const log = new RecordingDiagnosticsLog()
   const launchingBus = new RecordingEventBus<LaunchingEvent>()
-  const crew = inMemoryCrew()
+  const crew = options.crew ?? inMemoryCrew()
   const suppliers = createSuppliers({
     catalogIds: CATALOG_PROVIDER_IDS as unknown as ProviderId[],
     publicBuild: false,
@@ -193,8 +273,39 @@ export function delegationHost(
     capabilities: SIMULATED_CAPABILITIES
   })
 
-  const delegationBus = new RecordingEventBus<DelegationEndpointEvent | SubtaskRunEvent>()
+  const delegationBus = new RecordingEventBus<
+    DelegationEndpointEvent | SubtaskRunEvent | HandoffEvent
+  >()
+  // ISSUE-205: the handoff, over the in-memory conversation and the parent's recorded session.
+  const conversation = options.conversation ?? inMemoryConversation()
+  const parentSession = new RecordingParentSession()
+  const deliverer =
+    options.deliverer ??
+    createParentDeliverer({
+      conversation: conversation.deliverer({
+        turns: parentSession,
+        recipients: { canReceiveMessages: () => true }
+      })
+    })
+  const settledTickets: string[] = []
+  const handoff = new ParentHandoffService({
+    tickets: database.tickets,
+    deliverer,
+    viaOf: () => options.via ?? 'tool-result',
+    parentAlive: (parent) => {
+      const view = crew.queries.get(parent)
+      return view !== null && !view.departed
+    },
+    transactions: { inTransaction: (work) => work() },
+    bus: delegationBus,
+    clock,
+    ids,
+    hostEpoch,
+    log,
+    settled: (ticket) => settledTickets.push(ticket)
+  })
   const endpoint = new DelegationEndpointService({
+    handoff,
     tokens: database.tokens,
     tickets: database.tickets,
     launches: {
@@ -221,7 +332,7 @@ export function delegationHost(
   })
   const subtasks = new SubtaskRunService({
     tickets: database.tickets,
-    router: createSubtaskRouter({ jev: jev.advisor }),
+    router: options.router ?? createSubtaskRouter({ jev: jev.advisor }),
     launcher: createWorkerLauncher({
       launching: launching.commands,
       events: launchingBus,
@@ -235,6 +346,75 @@ export function delegationHost(
     log,
     settled: (ticket) => endpoint.delegationSettled(ticket)
   })
+  // The handoff wakes the `result` calls waiting on a ticket (as the subtask run does).
+  const wakeSettled = (): void => {
+    for (const ticket of settledTickets.splice(0)) endpoint.delegationSettled(ticket)
+  }
+  // The worker's `TurnEnded` route: its last assistant message is the outcome (lead decision,
+  // 2026-09-30). Later: ISSUE-209 composes it in the Host.
+  const handoffRuns: Promise<void>[] = []
+  conversation.bus.subscribe('TurnEnded', ({ payload }) => {
+    const last = conversation.log
+      .page(payload.end.dwarfId, { limit: 50 })
+      .find((message) => message.role === 'dwarf')
+    handoffRuns.push(handoff.workerTurnEnded(payload.end, last?.text ?? null).then(wakeSettled))
+  })
+  // The worker's end: crew's `endDelegated` over a terminator that delivers the exit through the
+  // real exit route, launching's stop routes marking `stopped_by_person` (05 §4; 16 §2.3).
+  const crewEndBus = new RecordingEventBus<CrewEndEvent>()
+  const frames: Array<{ name: HostFrameName; data: unknown }> = []
+  const framePublisher = {
+    publishFrame<F extends HostFrameName>(name: F, data: HostFrameData[F]): void {
+      frames.push({ name, data })
+    }
+  }
+  routeStops({ events: crewEndBus, launching, frames: framePublisher })
+  const pendingEnds = new PendingEndMemory(crew.repository)
+  const exits = routeSessionExits({
+    launching,
+    crew: {
+      queries: {
+        get: (dwarfId) => {
+          const view = crew.queries.get(dwarfId)
+          return view === null ? null : { ...view, pendingEnd: pendingEnds.pendingEndOf(dwarfId) }
+        }
+      },
+      commands: crew.commands
+    }
+  })
+  const endCalls: WorkerEndCall[] = []
+  const terminator: SessionTerminator = {
+    end: (dwarfId: DwarfId, why: EndReason): Promise<EndOutcome> => {
+      const record = db.records.all().find((r) => r.dwarfId === dwarfId)
+      endCalls.push({ dwarfId, why, stoppedByPerson: record?.stoppedByPerson ?? null })
+      if (record !== undefined) {
+        exits.deliver({ dwarfId, ref: record.ref, event: { t: 'exited', code: 0 } })
+      }
+      return Promise.resolve({ kind: 'ended' })
+    },
+    endAll: () => Promise.reject(new Error('a worker is ended alone, never through endAll'))
+  }
+  const workerEnds = new CrewEndDelegated({
+    repository: pendingEnds,
+    transactions: crew.transactionRunner,
+    bus: crewEndBus,
+    clock,
+    ids,
+    hostEpoch,
+    terminator,
+    departures: crew.commands,
+    log
+  })
+  // The `DelegationSucceeded` route (05 §4). Later: ISSUE-209 registers it in the Host.
+  const ends: Promise<EndOutcome>[] = []
+  delegationBus.subscribe('DelegationSucceeded', ({ payload }) => {
+    ends.push(workerEnds.endDelegated(payload.workerDwarfId, payload.delegationId))
+  })
+
+  // The lifecycle's and the failure route's views of the flow's one bus. Bound through typed
+  // constants: passed inline, TypeScript 6.0.3's checker hits a Debug Failure on these arguments.
+  const lifecycleBus: DomainEventBus<DelegationLifecycleEvent> = delegationBus
+  const failedEvents: Pick<DomainEventBus<DelegationFailed>, 'subscribe'> = delegationBus
   // What the SessionStarter bridge asks at each launch (AMENDMENT-14 A14-02): issue or not.
   const { lifecycle } = inMemoryDelegationLifecycle({
     tokens: database.tokens,
@@ -243,7 +423,15 @@ export function delegationHost(
     ids,
     hostEpoch,
     log,
-    preferences
+    preferences,
+    bus: lifecycleBus
+  })
+  // The `DelegationFailed` route (08 §2.8; ISSUE-206). Later: ISSUE-209 registers it in the Host.
+  registerDelegationFailed({
+    bus: failedEvents,
+    crew: crew.queries,
+    conversation: conversation.commands,
+    log
   })
   // The `SubtaskDelegated` route, off the tool call (later: ISSUE-209 composes it in host/wiring).
   const routes: Promise<void>[] = []
@@ -267,6 +455,14 @@ export function delegationHost(
     subtasks,
     lifecycle,
     routes,
+    conversation,
+    parentSession,
+    handoff,
+    handoffRuns,
+    crewEndBus,
+    frames,
+    endCalls,
+    ends,
     /** The delegating dwarf: a root launch, always a foreman (INV-27), working. */
     arriveParent(): { parent: DwarfId; token: DelegationToken } {
       const parent = crew.commands.arrive({
