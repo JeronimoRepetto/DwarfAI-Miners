@@ -1,8 +1,9 @@
 // The preferences module's event routes to the transport (05 §4 "event routes"; 14 §2.4):
 //
-// - `HostPreferencesChanged` and `WelcomeStepChanged` → B-F24 `preferences.changed` to every `ui`
-//   connection (transport/methods/preferences.ts `publishPreferencesChanged`; ADR-024 D9; 07
-//   S41.05 "→ preferences.changed"; ISSUE-222);
+// - `HostPreferencesChanged`, `WelcomeStepChanged` and `SecretStatusChanged` → B-F24
+//   `preferences.changed` to every `ui` connection (transport/methods/preferences.ts
+//   `publishPreferencesChanged`; ADR-024 D9; 07 S41.05 "→ preferences.changed"; ISSUE-222; 08 §3,
+//   ISSUE-216);
 // - `IntegrationChanged` → B-F25 `integration.changed` to every `ui` connection
 //   (transport/methods/setClaudeHooks.ts `publishIntegrationChanged`; 05 §4; ISSUE-221);
 // - `MetricsResetStarted` → B-F03 `resync-required {metrics-reset}` (transport/methods/resetMetrics.ts
@@ -29,6 +30,7 @@ import type {
   PreferencesEvent,
   PreferencesQueries,
   ResetUiFanout,
+  SecretQueries,
   WelcomeQueries
 } from '../../modules/preferences'
 import type { ConnectionRegistry } from '../../transport/connectionRegistry'
@@ -48,10 +50,13 @@ export interface PreferencesRoutesDeps {
   /** Whether the Host answers commands: its lifecycle state is `ready`. */
   ready: () => boolean
   /**
-   * The module's queries, for the view `WelcomeStepChanged` is sent with and the consent origin
-   * `integration.changed` carries.
+   * The module's queries, for the view `WelcomeStepChanged` and `SecretStatusChanged` are sent
+   * with and the consent origin `integration.changed` carries.
    */
-  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries & IntegrationSettingsQueries
+  queries: Pick<PreferencesQueries, 'get'> &
+    WelcomeQueries &
+    IntegrationSettingsQueries &
+    Pick<SecretQueries, 'secretStatuses' | 'secretBackend'>
 }
 
 /** Routes the module's events; returns the saga's `ResetUiFanout`, with the boot rule above. */

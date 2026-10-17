@@ -328,7 +328,7 @@ export interface LaunchingWiringDeps {
   installId: string
   log: DiagnosticsLog
   frames: LaunchFramePublisher
-  suppliers: Pick<Suppliers, 'registry' | 'sessions' | 'catalogue' | 'bindings'>
+  suppliers: Pick<Suppliers, 'registry' | 'sessions' | 'catalogue' | 'bindings' | 'releases'>
   mines: Pick<MinesQueries, 'get' | 'folderOf'>
   crew: Pick<CrewCommands, 'arrive' | 'sessionClosed'>
   conversation: Pick<ConversationCommands, 'ingest'>
@@ -415,6 +415,7 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
     starter: createSessionStarter({
       registry: suppliers.registry,
       sessions: suppliers.sessions,
+      releases: suppliers.releases,
       clock,
       scheduler: deps.scheduler
     }),
