@@ -227,10 +227,12 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
           expect(first.next).toBeUndefined()
           expect(first.chunks.map((c) => c.section)).toEqual(SERVED_SECTIONS)
 
-          // A method the Host did not advertise is refused locally (TC-051-02).
+          // A method the Host did not advertise is refused locally (TC-051-02). Every seam-B member
+          // of the catalog is served since step 3a (ISSUE-168 serves B-M25, ISSUE-174 B-M35), so
+          // the example is a name no Host advertises.
           const refused = await client
             .call(
-              'launching.retryRecovery' as never,
+              'launching.notServed' as never,
               { requestId: '01890a5d-ac96-774b-bcce-b302099a8001' } as never
             )
             .catch((error: unknown) => error)
