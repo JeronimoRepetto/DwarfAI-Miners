@@ -23,8 +23,8 @@ import { seedClaudeStubSession } from '../cut-1/claudeStubWorld.ts'
  *
  * The built app is the one every L9 case runs: it carries no setting a public build lacks, because the feature list
  * is the same in every build until Veta ships (EPIC-19). The Antigravity launch gate itself is the Host catalog's
- * (EPIC-09, out of this issue's scope); the stub kit has no Antigravity CLI, so this case proves the Panel's half: with
- * Claude installed and launchable, the row is Claude and Other, and nothing else.
+ * (EPIC-09, out of this issue's scope); the stub kit has no Antigravity CLI, so this case proves the Panel's half: the
+ * row is exactly what main offers (detected and launchable) and Other, and nothing else.
  */
 
 test.describe.configure({ timeout: 240_000 })
@@ -45,7 +45,10 @@ test.describe('the Panel build hides what is not built (ISSUE-267)', () => {
     const owned = profile
     launched = await launchApp({
       profile: owned,
-      stubs: path.join(STUB_BIN, 'claude'),
+      // The app's PATH is the Claude stub and the node that runs it, nothing of this machine's: a developer's own
+      // installed CLIs (an Antigravity among them) never decide what this case sees.
+      stubs: [path.join(STUB_BIN, 'claude'), path.dirname(process.execPath)].join(path.delimiter),
+      pathOnly: true,
       trayProbe: true,
       tracePath: test.info().outputPath('trace.zip')
     })
@@ -77,7 +80,31 @@ test.describe('the Panel build hides what is not built (ISSUE-267)', () => {
     await window.locator('.dm-minecol__foot .dm-btn--primary').click({ timeout: 30_000 })
     const chips = window.locator('.dm-add__chips [data-value]')
     await expect(chips.first(), 'the chip row is drawn').toBeVisible({ timeout: 30_000 })
-    await expect(window.locator('.dm-add__chips [data-value="claude"]')).toHaveCount(1)
+    // The row is checked against main's own A-36 answer, never against what this machine is assumed to detect: the
+    // legacy detector reads the Claude stub's Windows shim as unrunnable (it names a `.mjs`), so on a runner with no
+    // real Claude the offered list is empty there and Claude is rightly absent. Exactly the offered providers (detected
+    // and launchable) and Other, in main's order, is the rule; polled, so the row is read once the list arrived.
+    const offered = async (): Promise<string[]> =>
+      (await window.evaluate(async () => {
+        type Option = { provider: string; installed: boolean; launchable: boolean }
+        const api = (
+          window as unknown as { api: { listAgentProviders(): Promise<{ providers: Option[] }> } }
+        ).api
+        const answer = await api.listAgentProviders()
+        return answer.providers
+          .filter((option) => option.installed && option.launchable)
+          .map((option) => option.provider)
+      })) as string[]
+    const expected = [...(await offered()), 'other']
+    await expect
+      .poll(
+        () => chips.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-value'))),
+        {
+          timeout: 30_000,
+          message: 'the chips are the offered providers and Other'
+        }
+      )
+      .toEqual(expected)
     await expect(window.locator('.dm-add__chips [data-value="antigravity"]')).toHaveCount(0)
     await expect(window.locator('.dm-add__chips [data-value="other"]')).toHaveCount(1)
   })
