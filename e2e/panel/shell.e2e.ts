@@ -154,6 +154,46 @@ test.describe('the Panel shell: Tab order and the narrow screen (ISSUE-262)', ()
     await window.locator('.dm-nav .dm-slot[data-label="Map"]').click()
   }
 
+  /**
+   * Gives the Panel's page `width` CSS pixels of room, as a screen that narrow would, at the window's own height, and
+   * answers the room it then has.
+   *
+   * Playwright sizes the viewport in window pixels, while main zooms the Panel's page (`setZoomFactor`,
+   * `src/ui-main/window/adapters/panelSurface.ts`), so one CSS pixel is `zoom` window pixels, and the zoom differs
+   * per screen and OS. A size passed as CSS pixels gave the page a different room on each runner (and a shorter
+   * window, which re-derives the mine column's width from its height). Rounded to whole window pixels, the room read
+   * back may differ from `width` by a pixel, so the cases measure against the room answered.
+   */
+  async function giveRoom(window: Page, width: number): Promise<number> {
+    if (launched === undefined) throw new Error('giveRoom needs a launched app')
+    const owner = await launched.app.browserWindow(window)
+    const { zoom, height } = await owner.evaluate((panel) => ({
+      zoom: panel.webContents.getZoomFactor(),
+      height: panel.getContentBounds().height
+    }))
+    const wanted = Math.round(width * zoom)
+    await window.setViewportSize({ width: wanted, height })
+    await expect
+      .poll(async () => Math.abs(((await window.evaluate('innerWidth')) as number) - width))
+      .toBeLessThanOrEqual(1)
+    return (await window.evaluate('innerWidth')) as number
+  }
+
+  /**
+   * The width the dock's parts take side by side, their margins included: the plate and the window slot, each laid
+   * out at its own width. Read from the layout boxes, so a slot still moving in (a transform) does not change it.
+   */
+  async function dockWidth(window: Page): Promise<number> {
+    return (await window.evaluate(`(() => {
+      let sum = 0
+      for (const part of document.querySelector('.panel-dock').children) {
+        const style = getComputedStyle(part)
+        sum += part.offsetWidth + parseFloat(style.marginLeft) + parseFloat(style.marginRight)
+      }
+      return sum
+    })()`)) as number
+  }
+
   /** Opens the fixture mine from its Map marker. */
   async function openMine(window: Page): Promise<void> {
     if ((await window.locator('.shell-mine').count()) === 1) return
@@ -232,7 +272,6 @@ test.describe('the Panel shell: Tab order and the narrow screen (ISSUE-262)', ()
       await dock(window, edge)
       await openMine(window)
       await openChat(window)
-      const height = (await window.evaluate('innerHeight')) as number
       // At the ordinary width nothing gives way (AC01).
       const nav = await box(window, '.dm-nav')
       const mine = await box(window, '.shell-mine')
@@ -240,13 +279,14 @@ test.describe('the Panel shell: Tab order and the narrow screen (ISSUE-262)', ()
       const page = await box(window, '.shell-secondary')
       expect(page.width, `the page at its full width, docked ${edge}`).toBe(440)
 
-      // What the dock takes, measured to the slot's free-side margin (`--dock-free-room`, 6px).
-      const room = (await window.evaluate('innerWidth')) as number
-      const dockWidth = edge === 'right' ? room - (slot.left - 6) : slot.right + 6
-      // Narrower than the dock: only the page's column gives way, and it is cut on its inward side (AC02, AC06).
-      const narrower = dockWidth - 200
-      await window.setViewportSize({ width: narrower, height })
-      await expect.poll(async () => (await box(window, '.shell-secondary')).width).toBe(240)
+      // What the dock takes, its margins included.
+      const full = await dockWidth(window)
+      // Narrower than the dock: only the page's column gives way, and it is cut on its inward side (AC02, AC06). The
+      // column loses exactly what the room lacks: 200px, give or take the pixel `giveRoom` may round by.
+      const narrower = await giveRoom(window, full - 200)
+      await expect
+        .poll(async () => (await box(window, '.shell-secondary')).width)
+        .toBe(page.width - (full - narrower))
       expect((await box(window, '.dm-nav')).width).toBe(nav.width)
       expect((await box(window, '.shell-mine')).width).toBe(mine.width)
       const window1 = await box(window, '.dock-window')
@@ -261,8 +301,7 @@ test.describe('the Panel shell: Tab order and the narrow screen (ISSUE-262)', ()
 
       // Narrower than the window, the mine column and the nav together: the docked parts stay whole at the docked
       // edge and the window, the part farthest from it, runs off-screen (AC03).
-      const tight = nav.width + mine.width + 120
-      await window.setViewportSize({ width: tight, height })
+      const tight = await giveRoom(window, nav.width + mine.width + 120)
       await expect.poll(async () => (await box(window, '.shell-secondary')).width).toBe(0)
       const nav2 = await box(window, '.dm-nav')
       const mine2 = await box(window, '.shell-mine')
@@ -281,13 +320,10 @@ test.describe('the Panel shell: Tab order and the narrow screen (ISSUE-262)', ()
       }
 
       // However small the screen, the Panel still lays out: no floor, the same rule (AC05).
-      await window.setViewportSize({ width: 120, height })
+      await giveRoom(window, 120)
       await expect.poll(async () => (await box(window, '.dm-nav')).width).toBe(nav.width)
       expect((await box(window, '.shell-mine')).width).toBe(mine.width)
-      await window.setViewportSize({
-        width: slot.width + page.width + mine.width + nav.width + 200,
-        height
-      })
+      await giveRoom(window, full)
     }
   })
 })
