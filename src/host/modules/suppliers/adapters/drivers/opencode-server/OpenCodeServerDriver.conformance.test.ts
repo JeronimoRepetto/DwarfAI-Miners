@@ -323,7 +323,8 @@ describe('OpenCodeServerDriver conformance', () => {
     expect(received[abortAt]).toMatchObject({ status: 200, body: true })
   })
 
-  it('[C-19, HO-33] every recorded event stream, in every variant and twice, maps to its expected events and skips what it does not read', () => {
+  // HO-33: the recorded streams are replayed in every variant and twice.
+  it('[C-19] every recorded event stream, in every variant and twice, maps to its expected events and skips what it does not read', () => {
     for (const name of ['s0111-person-run-deny', 'sp12-sp14-serve']) {
       const own = fixture(name)
       for (const variant of own.variants) {

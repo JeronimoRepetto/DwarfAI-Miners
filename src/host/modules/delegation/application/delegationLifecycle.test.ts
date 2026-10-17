@@ -403,3 +403,43 @@ describe('DelegationLifecycle.issueFor (16 §5.3; ADR-013 items 3-4)', () => {
     ])
   })
 })
+
+describe('DelegationLifecycle.issuePromptRelay (AMENDMENT-21; ADR-013 item 3)', () => {
+  it('[ADR-013, INV-83] a stream-json launch gets its relay credential whatever the delegation gates: hash-only row, then the file, and an injection with the path only', async () => {
+    // Both gates closed: the setting off and a launch that did not use "Let Jev choose". The
+    // permission tool needs the relay anyway; the delegation tools stay gate-checked per call.
+    const s = setUp({ delegationOn: false })
+
+    const injection = await s.lifecycle.issuePromptRelay(LAUNCH)
+
+    expect(s.minted).toHaveLength(1)
+    const credential = s.minted[0] ?? ''
+    const path = `/host-data/run/mcp/${LAUNCH}.cred`
+    expect(injection).toStrictEqual({
+      mechanism: 'ticket-file',
+      relay: { program: EXEC_PATH, args: [...RELAY_ARGS] },
+      credentialFilePath: path
+    })
+    expect(s.tokens.snapshot()).toStrictEqual([
+      {
+        launchId: LAUNCH,
+        parentDwarfId: null,
+        mechanism: 'ticket-file',
+        credentialHash: hashOf(credential),
+        issuedAt: T0
+      }
+    ])
+    expect(s.files.read(path)).toBe(credential)
+    expect(JSON.stringify(injection)).not.toContain(credential)
+    expect(JSON.stringify([s.log.entries, s.log.refused])).not.toContain(credential)
+  })
+
+  it('[ADR-013, INV-83] a prompt relay whose credential file cannot be written revokes the row and returns null', async () => {
+    const s = setUp()
+    s.files.failNextWrite('no-space')
+
+    expect(await s.lifecycle.issuePromptRelay(LAUNCH)).toBeNull()
+    expect(s.tokens.live()).toStrictEqual([])
+    expect(await s.files.list()).toStrictEqual([])
+  })
+})
