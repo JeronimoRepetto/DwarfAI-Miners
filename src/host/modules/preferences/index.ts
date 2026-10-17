@@ -2,8 +2,9 @@
 // (INV-105), the Reset-metrics saga (ADR-023) and the feature flags read once at start (INV-110).
 // Cut 1 serves `get`, `set`, `resetMetrics` and the feature flags; the first-run consent step's
 // state joins in cut 2 (`createWelcomeStep`, ISSUE-222), and so does the Claude Code hooks toggle
-// (`setClaudeHooks`, ISSUE-221); secrets (only ever in `SecretStore`, ADR-017) and the OpenCode
-// toggle join with their issues. It imports no
+// (`setClaudeHooks`, ISSUE-221); the secrets' configured flags (`createSecrets`, ISSUE-216: the
+// values only ever in `SecretStore`, ADR-017) join in 3a, and the OpenCode toggle with its issue.
+// It imports no
 // other module (05 §1.3, R4): the other modules' Reset steps reach the saga as `ResetDbStep`s from
 // host/wiring/resetParticipants.ts.
 import type { HostEpoch } from '../../kernel/domain/values'
@@ -21,6 +22,7 @@ import { SqliteResetJournal } from './adapters/sqlite/SqliteResetJournal'
 import { SqliteWelcomeAnswerStore } from './adapters/SqliteWelcomeAnswerStore'
 import {
   PreferencesService,
+  SecretStatusService,
   WelcomeAnswerService,
   WelcomeStepService,
   type CredentialMinter,
@@ -28,6 +30,9 @@ import {
   type MintedCredential,
   type PreferencesCommands,
   type PreferencesQueries,
+  type SecretBoot,
+  type SecretCommands,
+  type SecretQueries,
   type WelcomeAnswer,
   type WelcomeBoot,
   type WelcomeIntegrations,
@@ -50,6 +55,9 @@ export type {
   MintedCredential,
   PreferencesCommands,
   PreferencesQueries,
+  SecretBoot,
+  SecretCommands,
+  SecretQueries,
   WelcomeAnswer,
   WelcomeBoot,
   WelcomeIntegrations,
@@ -64,14 +72,16 @@ export type {
   MetricsResetFinished,
   MetricsResetStarted,
   PreferencesEvent,
+  SecretStatusChanged,
   WelcomeStepChanged
 } from './domain/events'
+export type { SecretStatus } from './domain/secretStatus'
 export type { WelcomeChoice, WelcomeResult, WelcomeStepState } from './domain/welcomeStep'
 export type { InstalledToolsReader } from './ports/installedToolsReader'
 export type { WelcomeAnswerStore } from './ports/welcomeAnswerStore'
 export type { MetricsResetResult, ResetMetricsCommand, ResetStep } from './domain/resetSaga'
 export type { ResetDbStep } from './ports/resetJournal'
-export type { SecretStore } from './ports/secretStore'
+export type { SecretBackend, SecretName, SecretStore } from './ports/secretStore'
 export type {
   ChannelToken,
   ConfigTarget,
@@ -131,6 +141,24 @@ export function createPreferences(deps: PreferencesDeps): Preferences {
     mintCredential: deps.mintCredential
   })
   return { commands: service, queries: service }
+}
+
+export interface SecretsDeps {
+  /** The OS secret store (ADR-017 item 1; host/main.ts builds `OsKeyringSecretStore`). */
+  secrets: SecretStore
+  bus: DomainEventBus<PreferencesEvent>
+  clock: Clock
+  ids: IdGenerator
+  hostEpoch: HostEpoch
+}
+
+/**
+ * 16 §4.12 `saveSecret`, `clearSecret` and `secretStatus` (ADR-017 items 4, 5; ISSUE-216), over the
+ * OS secret store only: nothing of a secret is ever in the database. host/wiring joins them to the
+ * module's commands and queries and runs `loadSecretStatuses` once at boot, before `ready`.
+ */
+export function createSecrets(deps: SecretsDeps): SecretCommands & SecretQueries & SecretBoot {
+  return new SecretStatusService(deps)
 }
 
 export interface WelcomeStepDeps {
