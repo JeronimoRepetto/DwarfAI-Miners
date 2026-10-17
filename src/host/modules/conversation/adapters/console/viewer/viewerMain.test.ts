@@ -252,7 +252,8 @@ describe('the console viewer', () => {
     expect(h.logs).toEqual([])
   })
 
-  it('[US-MSG-007.AC06, OQ-39] accepts no input: typed keys reach no Host frame, are not echoed, and Ctrl+C closes the view', async () => {
+  // OQ-39: the viewer is read-only (kept out of the title: not a catalog id).
+  it('[US-MSG-007.AC06] accepts no input: typed keys reach no Host frame, are not echoed, and Ctrl+C closes the view', async () => {
     const h = harness({ tty: true })
     const exit = h.start()
     await h.settle()
