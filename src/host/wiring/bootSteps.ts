@@ -66,6 +66,14 @@ export interface BootPorts {
    */
   constructModules?: () => void
   /**
+   * Step 5: `launching.recoverAfterHostStart()` (16 §8.2; ADR-015 items 3–5; ISSUE-173), resolved
+   * once its classification is done: every owned record of the previous epoch is classified and the
+   * report holds the items known then, so the first snapshot already holds every dwarf being
+   * recovered. Its spaced resumes go on after `ready`. A failure is logged and never fails the boot
+   * (the Host never exits on its own, ADR-002 D1, D7). Without it the step is a placeholder.
+   */
+  recoverSessions?: () => Promise<void>
+  /**
    * Step 6, the hook ingress half (16 §8.2; ADR-016 items 2–3): listens on 127.0.0.1 on the
    * persisted `app_meta.ingress_port` (a new one when none is persisted or it is taken), after
    * recovery (step 5) and before observation and `ready` (steps 7–8). The composition root passes
@@ -162,6 +170,7 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     resumeResetSaga,
     reverifyConfigWrites,
     constructModules,
+    recoverSessions,
     startHookIngress,
     startObservation,
     startModules,
@@ -216,8 +225,27 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
             return Promise.resolve({ kind: 'done' })
           }
         },
-    // 5. launching.recoverAfterHostStart(): reconcile, verify, classify, report, cleanup.
-    placeholder('recover-sessions', 'ISSUE-173'),
+    // 5. launching.recoverAfterHostStart(): reconcile, verify, classify, report (ISSUE-173). The
+    //    step waits for the classification only; the resumes are spaced after it. The helper
+    //    cleanup pass of ADR-015 item 6 is the MCP relay issues' (FM-025).
+    recoverSessions === undefined
+      ? placeholder('recover-sessions', 'ISSUE-173')
+      : {
+          name: 'recover-sessions',
+          run: async () => {
+            try {
+              await recoverSessions()
+            } catch (error) {
+              ports.log.record({
+                level: 'error',
+                event: 'uncaught',
+                subsystem: 'launching',
+                errCode: errorCode(error)
+              })
+            }
+            return { kind: 'done' }
+          }
+        },
     // 6. The hook ingress (ISSUE-140; wiring/hookIngress.ts): its listener on the stable port
     //    (ADR-016 item 3), serving the route step 4 built, after recovery's classification so no
     //    stale credential is accepted and before `ready` (16 §8.2). Its other half, the MCP

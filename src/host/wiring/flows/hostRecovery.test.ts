@@ -38,16 +38,20 @@ import { inMemoryCrew } from '../../modules/crew/testing/inMemoryCrew'
 import {
   createLaunching,
   RESUME_SPACING_MS,
+  type Launch,
   type LaunchingEvent,
   type LaunchRecord
 } from '../../modules/launching'
-import { requestLaunch } from '../../modules/launching/domain/launch'
 import { InMemoryRecoveryReportStore } from '../../modules/launching/testing/InMemoryRecoveryReportStore'
 import { inMemoryLaunching } from '../../modules/launching/testing/inMemoryLaunching'
 import { launchRecording } from '../../modules/launching/testing/launchRecording'
 import { ResumableDriver, type ResumeAnswer } from '../../modules/launching/testing/ResumableDriver'
-import type { DriverTransport, ProviderDriver, SessionRef } from '../../modules/suppliers'
-import { FAIL_CLOSED_CAPABILITIES } from '../../modules/suppliers/domain/capabilities'
+import type {
+  DriverTransport,
+  ProviderCapabilities,
+  ProviderDriver,
+  SessionRef
+} from '../../modules/suppliers'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 
@@ -84,7 +88,8 @@ function world(opts: { adopt?: boolean; resumeMs?: number; transport?: DriverTra
     status: 'working' | 'idle' = 'idle',
     purpose: 'session' | 'session-server' = 'session'
   ): Owned => {
-    const step = requestLaunch<string, never>({
+    // The launch as `requestLaunch` writes it (S5.11): a supplier launch, `resolving`.
+    const launch: Launch = {
       id: ids.uuidv7() as LaunchId,
       request: {
         mineId: MINE,
@@ -93,9 +98,10 @@ function world(opts: { adopt?: boolean; resumeMs?: number; transport?: DriverTra
         jevOn: false,
         jevAutoAccept: false
       },
-      hostEpoch: EPOCH_A
-    })
-    if (!step.ok) throw new Error('the seed launch is sendable')
+      state: 'resolving',
+      hostEpoch: EPOCH_A,
+      launchedWithLetJevChoose: false
+    }
     const process: ProcessIdentity = {
       pid: (pid += 1),
       processStartTimeMs: T0 - 5_000,
@@ -108,7 +114,7 @@ function world(opts: { adopt?: boolean; resumeMs?: number; transport?: DriverTra
       rank: rankForDepth(0),
       status
     })
-    const requested = recording.requested(step.value.launch)
+    const requested = recording.requested(launch)
     if (purpose === 'session-server') {
       // A shared server's process is recorded with its own purpose (ADR-015 item 1).
       db.inTransaction(() =>
@@ -212,11 +218,9 @@ function world(opts: { adopt?: boolean; resumeMs?: number; transport?: DriverTra
         return os.killTree(process, { graceMs: 2_000, group: 'owned' })
       },
       catalogue: {
-        capabilities: () => ({
-          ...FAIL_CLOSED_CAPABILITIES,
-          resume: deps.resume ?? 'cli-flag',
-          adopt: true
-        })
+        // Only `resume` and `adopt` are read by the recovery pass (15 §2 effective values).
+        capabilities: () =>
+          ({ resume: deps.resume ?? 'cli-flag', adopt: true }) as unknown as ProviderCapabilities
       },
       deliveries: {
         reconcileSending: (dwarfIds) => deps.deliveries?.(dwarfIds) ?? Promise.resolve(new Map())
