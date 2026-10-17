@@ -407,6 +407,14 @@ describe('CodexAcpDriver', () => {
     })
   })
 
+  it('[C-09, ADR-009] row X2 declares no elicitation, and a form question the adapter sends anyway is refused Method not found and opens no ask', async () => {
+    expect(await againstExpected('question-refused')).toEqual([])
+  })
+
+  it('[C-07] Deny sends the native decline when _meta.codex.decision is offered, never a cancel listed first', async () => {
+    expect(await againstExpected('c-07-deny-prefers-decline')).toEqual([])
+  })
+
   it('[C-19, ADR-009] a session/update kind the pinned protocol does not have is drift, once per kind, and the session continues', async () => {
     expect(await againstExpected('protocol-drift')).toEqual([])
   })

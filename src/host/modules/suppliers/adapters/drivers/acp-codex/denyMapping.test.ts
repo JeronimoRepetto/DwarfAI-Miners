@@ -4,7 +4,21 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { codexPermissionReply, type CodexPermissionOption } from './denyMapping'
+import { optionsOf as acpOptionsOf, replyWith } from '../acp/client/permissionMapping'
+import { codexDecline } from './denyMapping'
+
+/** One option of a codex-acp request as the adapter writes it. */
+interface CodexPermissionOption {
+  readonly optionId: string
+  readonly kind: string
+  readonly _meta?: unknown
+}
+
+/** The reply the shared client sends with the driver's hook (15 §2.7). */
+const codexPermissionReply = (
+  options: readonly CodexPermissionOption[],
+  decision: 'allow' | 'deny'
+) => replyWith(acpOptionsOf(options), decision, codexDecline)
 
 const FIXTURES = new URL(
   '../../../../../../../fixtures/codex/acp/0.157.x-synthetic/',

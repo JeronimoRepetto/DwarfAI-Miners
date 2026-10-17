@@ -22,8 +22,8 @@
 // starts a pinned `codex` through `shell: true` (`src/CodexJsonRpcConnection.ts:19-22`, and
 // `src/CodexCli.ts:26-30` for `cli`), which 18 C-17 forbids, so on Windows the probe reports
 // `launch: false` and a launch is refused before any spawn (Codex keeps its app-server driver).
-// No question card (15 §3 row X2: `question` U→none) and no delegation relay (`mcpInjection` U→none
-// until SP-12 lists codex-acp; ISSUE-202). A Deny prefers the native `decline` (`denyMapping.ts`).
+// No question card (15 §3 row X2: `question` U→none; the client declares no elicitation) and no delegation relay (`mcpInjection` U→none
+// until SP-12 lists codex-acp; ISSUE-202). A Deny prefers the native `decline` (`denyMapping.ts`, the client's permission-reply hook).
 // No auto-approve option anywhere (ADR-008 item 3), no provider credential read (item 2), no `fs`
 // or `terminal` client capability (15 §4.10). The driver never signals a process: ending one is
 // ADR-014's `SessionTerminator`.
@@ -56,6 +56,7 @@ import {
   type AcpLibraryRecord
 } from '../acp/client/capabilities'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
+import { codexDecline } from './denyMapping'
 
 /** The adapter's binary name: the person's own install (15 §2.4 row Codex `acp`). */
 export const ADAPTER_BINARY = 'codex-acp'
@@ -262,6 +263,10 @@ export class CodexAcpDriver implements ProviderDriver {
       cwd,
       env,
       pinnedMode: PINNED_MODE,
+      // Row X2: no question card, so no elicitation is declared and every form is refused.
+      elicitation: 'none',
+      // 15 §2.7: a Deny prefers the native decline (denyMapping.ts).
+      permissionReply: codexDecline,
       capabilitiesFor: (init) =>
         merge(this.deps.record.ceiling, combineLowest(protocolSource(init), probe)),
       onExit: (ref) => this.live.delete(ref.providerSessionId)
