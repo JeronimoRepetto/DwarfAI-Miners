@@ -586,7 +586,9 @@ describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
     expect(list.scrollTop).toBe(5)
   })
 
-  it('does not yank a reader who scrolled up when a collapsed run grows', async () => {
+  // AMENDED for ISSUE-257 (was: 'does not yank a reader who scrolled up when a collapsed run grows', expecting 5):
+  // design screens/message.md:48 rules scroll-to-end on every added message (foreman ruling 2026-10-17).
+  it('takes a reader who scrolled up to the end when a collapsed run grows', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_RUN) })
     const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
@@ -609,7 +611,7 @@ describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    expect(list.scrollTop).toBe(5)
+    expect(list.scrollTop).toBe(80) // the run's toggle and the bubble: the new end.
   })
 })
 
@@ -696,7 +698,9 @@ describe('DwarfMessagePanel scroll (#195)', () => {
     expect(list.scrollTop).toBe(120) // 3 rows * 40, the new bottom.
   })
 
-  it("keeps the reader's own scroll position when a row arrives below where they had scrolled up to", async () => {
+  // AMENDED for ISSUE-257 (was: "keeps the reader's own scroll position when a row arrives below where they had
+  // scrolled up to", expecting 5): design screens/message.md:48 rules scroll-to-end on every added message (foreman ruling 2026-10-17).
+  it('goes to the end when a row arrives below where the reader had scrolled up to', async () => {
     const wrapper = panel({ dwarf: defaultDwarf() })
     const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
@@ -711,9 +715,9 @@ describe('DwarfMessagePanel scroll (#195)', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    // A row landed below the fold; a reader who had scrolled up must not be
-    // yanked back down to read it (#195).
-    expect(list.scrollTop).toBe(5)
+    // A row landed below the fold; the log goes to its end after every message it adds (AMENDED for ISSUE-257;
+    // was: a reader who had scrolled up must not be yanked back down to read it (#195)).
+    expect(list.scrollTop).toBe(120) // 3 rows * 40, the new bottom.
   })
 })
 
@@ -1917,7 +1921,9 @@ describe('DwarfMessagePanel echoes (#309)', () => {
     const wrapper = panel({ echoes: [echo({ state })] })
     const marker = lastMessageRow(wrapper).find('.dm-bubble__mark')
     expect(marker.text()).toBe('✓✓')
-    expect(marker.attributes('title')).toBe(sendMarker(state)!.title)
+    // AMENDED for ISSUE-257 (was: sendMarker(state)!.title, "The session reacted to the message."):
+    // the design titles a ✓✓ bubble "Seen acting on it" (US-MSG-001.AC16; anatomy.md).
+    expect(marker.attributes('title')).toBe('Seen acting on it')
     // AMENDED for #635 (was: the `is-reacted` class): the design's mark name.
     expect(marker.attributes('data-mark')).toBe('reacted')
   })
@@ -2075,8 +2081,8 @@ describe('DwarfMessagePanel echoes (#309)', () => {
 /**
  * Stick-to-bottom, for the one row the reader wrote themselves (#195/#243, #309).
  *
- * The existing rule is deliberately conservative: a row arriving from the
- * session must not yank somebody who scrolled up. A message the person just
+ * AMENDED for ISSUE-257 (was: a row arriving from the session must not yank somebody who scrolled
+ * up): design screens/message.md:48 rules scroll-to-end on every added message. A message the person just
  * sent is the opposite case — it is their own action, and they are owed the
  * sight of it — and a tick changing on a bubble is neither, so it moves
  * nothing.

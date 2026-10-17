@@ -4,7 +4,9 @@
 // waiting DwarfAI row, pages are newest first and per dwarf, and every write runs inside the
 // caller's transaction. ISSUE-105's cap cases: at most `MESSAGES_PER_DWARF` stored rows per
 // dwarf, every role counted, a `sending` row kept, a trimmed key never re-inserted, one dwarf's
-// trim never touching another's rows. The `request_id` case (ISSUE-166) is added by its issue.
+// trim never touching another's rows. AMENDMENT-16 (owner, 2026-10-15; ISSUE-166): the sent
+// person row with its `request_id` (a repeat returns the first `messageId`), delivered with its
+// confidence, then reacted only from delivered.
 // Owner amendment K (2026-10-09, ISSUE-128): the "Answers:" record of an ask — one row per ask with
 // its delivery `sending`, updated in place by a re-answer (ADR-010 item 13), settled delivered or
 // failed with its refusal reason, never trimmed while it is `sending`.
@@ -12,6 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
+import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { MessageLog } from '../ports/messageLog'
 
@@ -577,6 +580,167 @@ export function runMessageLogContract(
         )
       ).toThrow(HostInvariantError)
       expect(s.log.page(dwarf, {})[0]?.delivery?.phase).toBe('sending')
+    })
+
+    it('[ADR-022, INV-63] writeSent inserts the person row with its delivery sending, and page returns it', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+
+      const sent = s.inTransaction(() =>
+        s.log.writeSent(dwarf, 'carry on', '01890a5d-ac96-774b-bcce-b302099a0001', s.now)
+      )
+
+      expect(sent.existing).toBe(false)
+      expect(s.log.page(dwarf, {})).toEqual([
+        {
+          id: sent.messageId,
+          dwarfId: dwarf,
+          sourceKey: null,
+          role: 'person',
+          text: 'carry on',
+          attachments: [],
+          delivery: {
+            messageId: sent.messageId,
+            dwarfId: dwarf,
+            kind: 'message',
+            phase: 'sending',
+            attempts: 1,
+            phaseAt: s.now
+          },
+          origin: 'dwarfai',
+          providerTime: null,
+          createdAt: s.now
+        }
+      ])
+    })
+
+    it('[ADR-022] a repeated request_id returns the first messageId and inserts nothing', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      const requestId = '01890a5d-ac96-774b-bcce-b302099a0002'
+      const first = s.inTransaction(() => s.log.writeSent(dwarf, 'once', requestId, s.now))
+
+      const again = s.inTransaction(() => s.log.writeSent(dwarf, 'once', requestId, s.now + 5))
+
+      expect(again).toEqual({ messageId: first.messageId, existing: true })
+      expect(s.rowCount(dwarf)).toBe(1)
+      expect(s.rowCount(other)).toBe(0)
+    })
+
+    it('[ADR-022] a requestId stored for another dwarf is refused, never answered with that message, and inserts nothing', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      const requestId = '01890a5d-ac96-774b-bcce-b302099a0008'
+      s.inTransaction(() => s.log.writeSent(dwarf, 'mine', requestId, s.now))
+
+      expect(() =>
+        s.inTransaction(() => s.log.writeSent(other, 'not yours', requestId, s.now + 1))
+      ).toThrow(RequestIdOfAnotherDwarfError)
+      expect(s.rowCount(dwarf)).toBe(1)
+      expect(s.rowCount(other)).toBe(0)
+    })
+
+    it('[ADR-022, FM-077, INV-63] settleDelivery records delivered with its confidence, then reacted keeping it, and reacted only from delivered', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const quiet = s.inTransaction(
+        () =>
+          s.log.writeSent(dwarf, 'quiet', '01890a5d-ac96-774b-bcce-b302099a0003', s.now).messageId
+      )
+      const busy = s.inTransaction(
+        () =>
+          s.log.writeSent(dwarf, 'busy', '01890a5d-ac96-774b-bcce-b302099a0004', s.now).messageId
+      )
+
+      expect(() =>
+        s.inTransaction(() => s.log.settleDelivery(busy, { phase: 'reacted' }, s.now + 1))
+      ).toThrow(HostInvariantError)
+      s.inTransaction(() => {
+        s.log.settleDelivery(quiet, { phase: 'delivered', confidence: 'unconfirmed' }, s.now + 10)
+        s.log.settleDelivery(busy, { phase: 'delivered', confidence: 'confirmed' }, s.now + 11)
+      })
+      s.inTransaction(() => s.log.settleDelivery(busy, { phase: 'reacted' }, s.now + 20))
+
+      const byId = new Map(s.log.page(dwarf, {}).map((m) => [m.id, m.delivery]))
+      expect(byId.get(quiet)).toEqual({
+        messageId: quiet,
+        dwarfId: dwarf,
+        kind: 'message',
+        phase: 'delivered',
+        confidence: 'unconfirmed',
+        attempts: 1,
+        phaseAt: s.now + 10
+      })
+      expect(byId.get(busy)).toEqual({
+        messageId: busy,
+        dwarfId: dwarf,
+        kind: 'message',
+        phase: 'reacted',
+        confidence: 'confirmed',
+        attempts: 1,
+        phaseAt: s.now + 20
+      })
+      expect(() =>
+        s.inTransaction(() => s.log.settleDelivery(busy, { phase: 'reacted' }, s.now + 30))
+      ).toThrow(HostInvariantError)
+    })
+
+    it('[ADR-022, INV-61] writeSent runs only inside the caller transaction, and trim keeps its sending row', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      expect(() =>
+        s.log.writeSent(dwarf, 'no tx', '01890a5d-ac96-774b-bcce-b302099a0005', s.now)
+      ).toThrow(HostInvariantError)
+
+      const sent = s.inTransaction(
+        () =>
+          s.log.writeSent(dwarf, 'old', '01890a5d-ac96-774b-bcce-b302099a0006', s.now - 1).messageId
+      )
+      const newer = Array.from({ length: MESSAGES_PER_DWARF }, (_, i) =>
+        entry(i, { providerTime: s.now + i })
+      )
+      s.inTransaction(() => {
+        s.log.append(dwarf, newer, 'live-stream')
+        s.log.trim(dwarf, MESSAGES_PER_DWARF)
+      })
+
+      expect(s.rowIds(dwarf)).toContain(sent)
+    })
+
+    it('[ADR-022, S7.03] settleDelivery records a sending delivery held until the turn ends, and delivered clears the hold', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const id = s.inTransaction(
+        () =>
+          s.log.writeSent(dwarf, 'queued', '01890a5d-ac96-774b-bcce-b302099a0007', s.now).messageId
+      )
+
+      s.inTransaction(() =>
+        s.log.settleDelivery(id, { phase: 'sending', heldUntilTurnEnd: true }, s.now + 1)
+      )
+      const held = s.log.page(dwarf, {})[0]?.delivery
+      s.inTransaction(() =>
+        s.log.settleDelivery(id, { phase: 'delivered', confidence: 'confirmed' }, s.now + 2)
+      )
+
+      expect(held).toEqual({
+        messageId: id,
+        dwarfId: dwarf,
+        kind: 'message',
+        phase: 'sending',
+        heldUntilTurnEnd: true,
+        attempts: 1,
+        phaseAt: s.now
+      })
+      expect(s.log.page(dwarf, {})[0]?.delivery).toEqual({
+        messageId: id,
+        dwarfId: dwarf,
+        kind: 'message',
+        phase: 'delivered',
+        confidence: 'confirmed',
+        attempts: 1,
+        phaseAt: s.now + 2
+      })
     })
   })
 }

@@ -33,7 +33,15 @@
 // batch that folded steps makes the dwarf working, unless it is asking (the trusted ask first,
 // ADR-032 item 2); any other batch keeps the status the previous line carries.
 import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
-import type { AskId, EventId, DwarfId, HostEpoch, Instant } from '../../../kernel/domain/values'
+import type {
+  AskId,
+  DwarfId,
+  EventId,
+  HostEpoch,
+  Instant,
+  MessageId,
+  Result
+} from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
@@ -56,8 +64,26 @@ import { activityChanged } from './activityChanged'
 import { outcomeLineChanged, recomputeOutcome } from './outcomeRecompute'
 
 /**
- * The members of 05 §3.6 `ConversationCommands` built so far. Each later issue adds its member
- * with the types it needs (`send` / `retry` ISSUE-166, …).
+ * 16 §4.6 `ConversationCommands.send` (ISSUE-166), built by application/send.ts once host/wiring
+ * passes its routes; the module's public `ConversationCommands` is this member with the ones below.
+ */
+export interface ConversationSendCommand {
+  // send/retry answer at acceptance (14 §1.7): once the message row and its `sending` delivery are
+  // committed and MessageSent is published; the hand-over continues and settles as
+  // MessageHandedOver / MessageDeliveryFailed. requestId is stored on the message row (UNIQUE), so a
+  // repeat after a Host restart returns the same messageId (14 §1.6).
+  send(
+    dwarfId: DwarfId,
+    text: string,
+    attachments: AttachmentPath[],
+    requestId: string
+  ): Promise<Result<MessageId, 'cannot-receive' | 'attachment-refused'>>
+}
+
+/**
+ * The members of 05 §3.6 `ConversationCommands` the module builds at once; `send` is
+ * `ConversationSendCommand` (ISSUE-166), and each later issue adds its member with the types it
+ * needs (`retry` ISSUE-168, …).
  */
 export interface ConversationCommands {
   // from live streams + transcript readers
@@ -73,6 +99,9 @@ export interface ConversationCommands {
 }
 
 /** 16 §4.6 `noteAsk`'s change, as amended (B2): what the line words of an opened ask. */
+/** 05 `AttachmentPath`: a picker or drop path the Host re-validates (attachments: ISSUE-169). */
+export type AttachmentPath = string
+
 export type AskChange =
   | { askId: AskId; state: 'opened'; kind: 'question' | 'permission'; questionCount: number }
   | { askId: AskId; state: 'closed' }

@@ -7,6 +7,7 @@
 import { compactSilence, providerLabel } from '../dwarf/dwarfTip'
 import type { KickBlocked } from '../delivery/actionBar'
 import type { DeliveryMarker } from '../delivery/deliveryVerdict'
+import { HISTORY_MARK } from '../history/mineHistory'
 import type { MenuEntry, MenuItem } from '../overlay/menu'
 import { sceneDwarfStatus } from '../scene/sceneDwarf'
 import { trimGraphemes } from '../text/graphemes'
@@ -166,12 +167,15 @@ const MARK_OF: Record<string, BubbleMarkName> = {
 
 /**
  * A delivery marker as the bubble wears it (`.dm-bubble__mark`): the same reading the sprite's
- * marker is drawn from (sendMarker, #21), so the two never say different things. A failure is
- * spelled "✕ not delivered" as the design writes it, and its reason stays on the title.
+ * marker is drawn from (sendMarker, #21), so the two never disagree on the mark. A failure is
+ * spelled "✕ not delivered" as the design writes it, and its reason stays on the title. A ✓✓ is
+ * titled "Seen acting on it" (US-MSG-001.AC16; anatomy.md, `molecules/chat-bubble`), the words a
+ * transcript's own ✓✓ wears (HISTORY_MARK), so a bubble never says it two ways.
  */
 export function bubbleMark(marker: DeliveryMarker): BubbleMark {
   const mark = MARK_OF[marker.cls] ?? 'pending'
-  return { mark, glyph: mark === 'failed' ? '✕ not delivered' : marker.glyph, title: marker.title }
+  const title = mark === 'reacted' ? HISTORY_MARK.reacted.title : marker.title
+  return { mark, glyph: mark === 'failed' ? '✕ not delivered' : marker.glyph, title }
 }
 
 /*

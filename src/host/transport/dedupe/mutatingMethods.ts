@@ -34,7 +34,7 @@ export const MUTATING_METHODS: ReadonlySet<string> = new Set([
 /**
  * 14 §1.6: the mutating methods whose `requestId` is also a durable key, so main may re-send them
  * after a Host restart (new epoch). The transport only hands them the `requestId`; the keys live
- * in their modules' tables (later: ISSUE-166 `messages.request_id` UNIQUE, ISSUE-128 the
+ * in their modules' tables (`messages.request_id` UNIQUE, ISSUE-166; ISSUE-128 the
  * `ask_answers` PK).
  */
 export const DURABLE_KEY_METHODS: ReadonlySet<string> = new Set([

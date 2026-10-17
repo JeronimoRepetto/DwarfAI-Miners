@@ -478,9 +478,14 @@ export function useMessageDock() {
    * nothing here changes. A stopped or outside-closed dwarf's panel stays open — the board keeps it as 'leaving'
    * while it walks out, and `lastSelectedDwarf` after — so the conversation stays with the composer disabled. A
    * dwarf whose mine was removed closes its panel outright (S2.05).
+   *
+   * Every walk-out drops the dwarf's draft (US-MSG-009.AC05; ISSUE-257): a draft dies with its dwarf, whatever the
+   * cause and whether or not its chat is open, so no text is kept in memory to restore.
    */
   function followDeparture(walk: BoardWalk): void {
-    if (walk.kind !== 'walk-out' || walk.panel !== 'closed') return
+    if (walk.kind !== 'walk-out') return
+    setDraft(walk.dwarfId, '')
+    if (walk.panel !== 'closed') return
     if (surface.value.surface === 'message' && openDwarfId.value === walk.dwarfId) close()
   }
 

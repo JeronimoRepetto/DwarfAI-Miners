@@ -29,7 +29,12 @@
 //   origin `dwarfai`) with its delivery `sending`, or, given `existing`, that record updated in place
 //   with its delivery `sending` again, attempts + 1 (ADR-010 item 13, 09 §8.2); then the hand-over
 //   result of a `sending` delivery. Updating or settling a row that is not there is refused.
-// - `setDelivery` is not built yet (later: ISSUE-166).
+// - `writeSent` (AMENDMENT-16, owner, 2026-10-15; ISSUE-166) is the person's sent row (`role
+//   'person'`, origin `dwarfai`, `request_id`) with its delivery `sending`, inside the caller's
+//   transaction; a `request_id` already stored (`messages_send_request` UNIQUE, also after a Host
+//   restart, 14 §1.6) inserts nothing and answers that row's id; one stored for another dwarf is
+//   refused with `RequestIdOfAnotherDwarfError`. `settleDelivery` also records the
+//   delivery's `confidence` and moves a `delivered` delivery to `reacted`, keeping it.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts'
 import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
@@ -49,8 +54,9 @@ import {
   type FeedPageRequest,
   type Message
 } from '../domain/messages'
+import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
-import type { MessageLog } from '../ports/messageLog'
+import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
 
 export interface SqliteMessageLogDeps {
   /** The Host's one writer (09 §8.1). */
@@ -112,10 +118,29 @@ const RESEND_RECORD = `UPDATE deliveries SET phase = 'sending', confidence = NUL
     failure_kind = NULL, failure_reason = NULL, attempts = attempts + 1, sent_at = ?, phase_at = ?
   WHERE message_id = ?`
 
-// The hand-over result of a delivery still `sending`.
-const SETTLE_DELIVERY = `UPDATE deliveries SET phase = ?, failure_kind = ?, failure_reason = ?,
-    phase_at = ?
+// The hand-over result of a delivery still `sending` (AMENDMENT-16: with its confidence).
+const SETTLE_DELIVERY = `UPDATE deliveries SET phase = ?, confidence = ?, failure_kind = ?,
+    failure_reason = ?, held_until_turn_end = 0, phase_at = ?
   WHERE message_id = ? AND phase = 'sending'`
+
+// AMENDMENT-16 extension: a `sending` delivery queued behind a running turn (S7.03); the phase
+// and its stamp stay.
+const HOLD_DELIVERY = `UPDATE deliveries SET held_until_turn_end = 1
+  WHERE message_id = ? AND phase = 'sending'`
+
+// AMENDMENT-16: ✓✓ only from ✓; the confidence stays.
+const REACT_DELIVERY = `UPDATE deliveries SET phase = 'reacted', phase_at = ?
+  WHERE message_id = ? AND phase = 'delivered'`
+
+// AMENDMENT-16: the person's sent row and its delivery (09 §4.4, 14 §1.6).
+const SENT_BY_REQUEST = 'SELECT id, dwarf_id FROM messages WHERE request_id = ?'
+
+const INSERT_SENT = `INSERT INTO messages (id, dwarf_id, role, text, origin, created_at, request_id)
+  VALUES (?, ?, 'person', ?, 'dwarfai', ?, ?)`
+
+const INSERT_SENT_DELIVERY = `INSERT INTO deliveries
+  (message_id, dwarf_id, kind, phase, sent_at, phase_at)
+  VALUES (?, ?, 'message', 'sending', ?, ?)`
 
 const PAGE_SELECT = `SELECT m.id, m.dwarf_id, m.source_key, m.role, m.text, m.issuer_dwarf_id,
     m.activity_json, m.attachments_json, m.origin, m.provider_time, m.created_at, m.ask_id,
@@ -203,15 +228,6 @@ export class SqliteMessageLog implements MessageLog {
     return this.deps.db.all(sql, params).map(messageOf)
   }
 
-  setDelivery(
-    id: MessageId,
-    phase: 'sending' | 'delivered' | 'reacted' | 'failed',
-    at: Instant
-  ): void {
-    void [id, phase, at]
-    throw new HostInvariantError('MessageLog.setDelivery is not built (later: ISSUE-166)')
-  }
-
   trim(dwarfId: DwarfId, keep: number): void {
     if (!this.deps.scope.isInTransaction()) {
       throw new HostInvariantError('MessageLog.trim runs inside the caller transaction (16 §2.2)')
@@ -245,21 +261,51 @@ export class SqliteMessageLog implements MessageLog {
     return id
   }
 
-  settleDelivery(
-    id: MessageId,
-    result: { phase: 'delivered' } | { phase: 'failed'; failure: DeliveryFailure },
-    at: Instant
-  ): void {
+  settleDelivery(id: MessageId, result: DeliverySettlement, at: Instant): void {
     this.requireTransaction('settleDelivery')
+    if (result.phase === 'sending') {
+      if (this.deps.db.run(HOLD_DELIVERY, [id]).changes !== 1) {
+        throw new HostInvariantError(`no sending delivery of message ${id}`)
+      }
+      return
+    }
+    if (result.phase === 'reacted') {
+      if (this.deps.db.run(REACT_DELIVERY, [at, id]).changes !== 1) {
+        throw new HostInvariantError(`no delivered delivery of message ${id}`)
+      }
+      return
+    }
     const failure = result.phase === 'failed' ? result.failure : null
+    const confidence = result.phase === 'delivered' ? (result.confidence ?? null) : null
     const changes = this.deps.db.run(SETTLE_DELIVERY, [
       result.phase,
+      confidence,
       failure?.kind ?? null,
       failure !== null && 'reason' in failure ? failure.reason : null,
       at,
       id
     ]).changes
     if (changes !== 1) throw new HostInvariantError(`no sending delivery of message ${id}`)
+  }
+
+  writeSent(
+    dwarfId: DwarfId,
+    text: string,
+    requestId: string,
+    at: Instant
+  ): { messageId: MessageId; existing: boolean } {
+    const { db, ids } = this.deps
+    this.requireTransaction('writeSent')
+    const [stored] = db.all(SENT_BY_REQUEST, [requestId])
+    if (stored !== undefined) {
+      // UNIQUE across the table: another dwarf's request id is refused, never answered with its row.
+      if (String(stored['dwarf_id']) !== dwarfId) throw new RequestIdOfAnotherDwarfError()
+      return { messageId: String(stored['id']) as MessageId, existing: true }
+    }
+    const messageId = ids.uuidv7() as MessageId
+    db.run(INSERT_SENT, [messageId, dwarfId, text, at, requestId])
+    db.run(INSERT_SENT_DELIVERY, [messageId, dwarfId, at, at])
+    return { messageId, existing: false }
   }
 
   private requireTransaction(method: string): void {
