@@ -12,9 +12,19 @@
 // SessionStart hook line is never readiness; an error `result` before `system/init` is the launch
 // failing (`earlyFailure: 'handshake'`). SP-15 passed → `--resume <id>` keeps the id; a resume
 // writes nothing, so it is ready at `system/init` or once the 3 s early-failure window passed
-// without an error `result` or an exit. The permission prompt tool is served by the delegation
-// relay (ADR-013 item 3): until the Host serves its ask route, `permission` is `none` and no ask
-// is ever opened here.
+// without an error `result` or an exit.
+//
+// The permission prompt tool (AMENDMENT-21, owner-approved 2026-10-17): the Host's MCP endpoint
+// serves `mcp__dwarfai__permission` on the relay entry (ADR-013 item 3), so every launch carries
+// the `--mcp-config` file: the gated request's own `DelegationInjection`, else the entry
+// `PromptToolRelay.issue` gives (a launch that cannot get one fails `could-not-start`); a resume
+// writes the same entry again in a file of its own. Before the spawn the launch registers its
+// session under its launch id (`PromptToolSessions`): each prompt-tool call of that relay opens
+// one `ask.opened` (channel `driver`, id = the tool use id, Allow and Deny both offered) and
+// settles with the first `answerPermission` for it (ADR-010: Allow/Deny only, first answer wins,
+// a stale answer is `ask-closed` and reaches nothing). A cancelled call resolves its ask
+// `cancelled`; a session that ends denies every call still open (fail closed, 15 §2.7). Only the
+// two delegation tools are ever pre-approved, and only on a gated launch (ISSUE-201).
 //
 // No Agent SDK anywhere (OQ-52, R11), no provider credential read (ADR-008 item 2), no auto-approve
 // flag (ADR-008 item 3: `buildArgv` refuses one). The driver never signals a process: ending one is
@@ -30,6 +40,7 @@
 // Evidence: this driver's conformance run, and `heldCrew.test.ts:116,126` run unchanged on the
 // legacy code (the PR hand-off records both).
 import type { ProcessIdentity } from '../../../../../kernel/domain/processIdentity'
+import type { LaunchId } from '../../../../../kernel/domain/values'
 import type { AnswerOutcome } from '../../../../../kernel/domain/sharedContracts'
 import type { Clock } from '../../../../../kernel/ports/clock'
 import type { IdGenerator } from '../../../../../kernel/ports/idGenerator'
@@ -42,6 +53,7 @@ import { combineLowest, merge } from '../../../domain/mergeCapabilities'
 import type { CatalogRecord, ProviderProfile } from '../../../domain/profile'
 import type {
   CloseOutcome,
+  DelegationInjection,
   DetectResult,
   DriverEvent,
   DriverLaunchError,
@@ -62,6 +74,7 @@ import { buildArgv } from './argv'
 import { capabilitiesFromHelp, SPIKE_RECORDS } from './capabilities'
 import { EventChannel } from './eventChannel'
 import { mcpConfigPath, mcpConfigText, type McpConfigFiles } from './mcpConfigFile'
+import type { PromptToolCall, PromptToolDeps } from './promptTool'
 import {
   LineFramer,
   parseLine,
@@ -103,6 +116,8 @@ export interface ClaudeStreamJsonDriverDeps {
   readonly platform: Platform
   /** `<hostDataDir>/run/mcp` and its owner-only file store (ADR-013 item 3). */
   readonly mcpConfig: { readonly dir: string; readonly files: McpConfigFiles }
+  /** The permission prompt tool's relay entry and session registry (AMENDMENT-21). */
+  readonly promptTool: PromptToolDeps
   /** One-line redaction of activity summaries (`contracts/logging` `redactSecrets`, bound by wiring). */
   readonly redact: (text: string) => string
 }
@@ -111,6 +126,17 @@ export interface ClaudeStreamJsonDriverDeps {
 interface Remembered {
   readonly cwd: string
   readonly spawnTag: string
+  /** The launch whose relay credential a resume carries again (AMENDMENT-21). */
+  readonly launchId: LaunchId
+  readonly relay: RelayEntryInput
+  /** Resumes so far: each writes its own `--mcp-config` file. */
+  resumes: number
+}
+
+/** The relay entry of a launch: the relay program and the credential FILE PATH (ADR-013 item 3). */
+interface RelayEntryInput {
+  readonly relay: { readonly program: string; readonly args: readonly string[] }
+  readonly credentialFilePath: string
 }
 
 export class ClaudeStreamJsonDriver implements ProviderDriver {
@@ -152,7 +178,20 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     }
     this.launchIds.add(req.launchId)
     const sessionId = this.deps.ids.uuidv7()
-    const config = await this.writeMcpConfig(req)
+    const relay = await this.relayOf(req)
+    if (relay === null) {
+      throw launchError('could-not-start', 'the permission prompt tool relay could not be issued')
+    }
+    // Registered before the spawn: claude connects its MCP servers while it starts.
+    const prompts = this.promptsFor(req.launchId)
+    const config = await this.writeMcpConfig(req.launchId, relay.entry).catch((error: unknown) => {
+      prompts.unregister()
+      throw error
+    })
+    const abandon = async (): Promise<void> => {
+      prompts.unregister()
+      await config.remove()
+    }
     let argv: string[]
     try {
       argv = buildArgv({
@@ -161,10 +200,11 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
         ...(req.model === undefined ? {} : { model: req.model }),
         ...(req.effort === undefined ? {} : { effort: req.effort }),
         mcpConfigPath: config.path,
+        delegationGateOn: relay.gated,
         policyArgv: req.permissionMode?.providerArgs.argv ?? []
       })
     } catch {
-      await config.remove()
+      await abandon()
       throw launchError('could-not-start', 'the argv was refused (ADR-008 item 3)')
     }
     const spawnedAt = this.deps.clock.now()
@@ -173,7 +213,7 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     try {
       identity = await child.identity
     } catch (error) {
-      await config.remove()
+      await abandon()
       throw spawnFailure(error)
     }
     await req.onSpawned(identity)
@@ -193,17 +233,25 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
         launchError(early ? 'exited-at-once' : 'could-not-start', detail, tail),
       onExit: (ref) => {
         this.live.delete(ref.providerSessionId)
+        prompts.unregister()
         void config.remove()
       }
     })
+    prompts.bind(session)
     this.live.add(sessionId)
-    this.remembered.set(sessionId, { cwd: req.cwd, spawnTag: req.spawnTag })
+    this.remembered.set(sessionId, {
+      cwd: req.cwd,
+      spawnTag: req.spawnTag,
+      launchId: req.launchId,
+      relay: relay.entry,
+      resumes: 0
+    })
     session.writePrompt(req.prompt, this.deps.ids.uuidv7())
     try {
       return await session.ready
     } catch (error) {
       this.live.delete(sessionId)
-      await config.remove()
+      await abandon()
       throw error
     }
   }
@@ -218,10 +266,24 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     }
     const detected = await this.detect()
     if (detected.kind !== 'installed') throw launchError('not-installed', 'claude is not installed')
+    // The launch's relay again (AMENDMENT-21), in a file of its own; no pre-approval on a resume.
+    known.resumes += 1
+    const prompts = this.promptsFor(known.launchId)
+    const config = await this.writeMcpConfig(
+      `${known.launchId}.resume-${known.resumes}`,
+      known.relay
+    ).catch((error: unknown) => {
+      prompts.unregister()
+      throw error
+    })
+    const abandon = async (): Promise<void> => {
+      prompts.unregister()
+      await config.remove()
+    }
     const argv = buildArgv({
       kind: 'resume',
       sessionId: ref.providerSessionId,
-      mcpConfigPath: null,
+      mcpConfigPath: config.path,
       policyArgv: []
     })
     const spawnedAt = this.deps.clock.now()
@@ -230,6 +292,7 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     try {
       identity = await child.identity
     } catch (error) {
+      await abandon()
       const failure = spawnFailure(error)
       if (failure.cause === 'not-installed') throw failure
       throw resumeError('resume-error', failure.detail)
@@ -247,9 +310,20 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       spawnedAt,
       deps: this.deps,
       fail: (_early, detail) => resumeError('resume-error', detail),
-      onExit: (exited) => this.live.delete(exited.providerSessionId)
+      onExit: (exited) => {
+        this.live.delete(exited.providerSessionId)
+        prompts.unregister()
+        void config.remove()
+      }
     })
-    const resumed = await session.ready
+    prompts.bind(session)
+    let resumed: DriverSession
+    try {
+      resumed = await session.ready
+    } catch (error) {
+      await abandon()
+      throw error
+    }
     this.live.add(resumed.ref.providerSessionId)
     this.remembered.set(resumed.ref.providerSessionId, known)
     return resumed
@@ -285,26 +359,61 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     })
   }
 
+  /**
+   * The launch's relay entry (AMENDMENT-21): a gated request's own `DelegationInjection` (whose
+   * pre-approval it carries), else the one `PromptToolRelay.issue` gives. Null when there is none
+   * to use: a request entry that is not a `ticket-file` relay, or a relay that was not issued.
+   */
+  private async relayOf(
+    req: DriverLaunchRequest
+  ): Promise<{ entry: RelayEntryInput; gated: boolean } | null> {
+    if (req.delegation !== null) {
+      const entry = ticketFileEntry(req.delegation)
+      return entry === null ? null : { entry, gated: true }
+    }
+    const issued = await this.deps.promptTool.relay.issue(req.launchId).catch(() => null)
+    const entry = issued === null ? null : ticketFileEntry(issued)
+    return entry === null ? null : { entry, gated: false }
+  }
+
+  /**
+   * The launch's prompt-tool registration: made before the spawn, bound to the session once it
+   * exists. A call before that, or after the registration ended, is denied (fail closed).
+   */
+  private promptsFor(launchId: LaunchId): {
+    bind(session: StreamJsonSession): void
+    unregister(): void
+  } {
+    let session: StreamJsonSession | null = null
+    let registered = true
+    const unregister = this.deps.promptTool.sessions.register(launchId, (call, signal) =>
+      session === null ? Promise.resolve('deny') : session.promptPermission(call, signal)
+    )
+    return {
+      bind: (bound) => {
+        session = bound
+      },
+      unregister: () => {
+        if (!registered) return
+        registered = false
+        session = null
+        unregister()
+      }
+    }
+  }
+
   /** ADR-013 item 3 `ticket-file`: the relay entry with the credential-file path, before the spawn. */
   private async writeMcpConfig(
-    req: DriverLaunchRequest
-  ): Promise<{ path: string | null; remove: () => Promise<void> }> {
-    const delegation = req.delegation
-    if (
-      delegation === null ||
-      delegation.mechanism !== 'ticket-file' ||
-      delegation.relay === undefined ||
-      delegation.credentialFilePath === undefined
-    ) {
-      return { path: null, remove: async () => {} }
-    }
+    name: string,
+    entryInput: RelayEntryInput
+  ): Promise<{ path: string; remove: () => Promise<void> }> {
     const { dir, files } = this.deps.mcpConfig
-    const path = mcpConfigPath(dir, req.launchId, this.deps.platform)
+    const path = mcpConfigPath(dir, name, this.deps.platform)
     try {
       const entry = relayEntry({
-        command: delegation.relay.program,
-        args: delegation.relay.args,
-        credentialFilePath: delegation.credentialFilePath,
+        command: entryInput.relay.program,
+        args: entryInput.relay.args,
+        credentialFilePath: entryInput.credentialFilePath,
         platform: this.deps.platform
       })
       await files.write(path, mcpConfigText(entry))
@@ -404,6 +513,9 @@ class StreamJsonSession implements DriverSession {
   private results = 0
   private openUnit: OpenUnit | null = null
   private readonly tools = new Map<string, { toolName: string; summary: string }>()
+  /** Open prompt-tool asks by provider request id: each settles its call once (ADR-010). */
+  private readonly asks = new Map<string, (decision: 'allow' | 'deny') => void>()
+  private asked = 0
   private readonly reported = new Set<string>()
   private closing = false
   private outputEnded = false
@@ -479,9 +591,58 @@ class StreamJsonSession implements DriverSession {
   /** `interrupt` is false on this driver (15 §3 row C2): the caller goes to ADR-014's kill. */
   async interrupt(): Promise<void> {}
 
-  /** No ask is ever opened here (`permission: 'none'` until SP-08): every id is closed. */
-  async answerPermission(): Promise<AnswerOutcome> {
-    return { kind: 'refused', reason: 'ask-closed' }
+  /**
+   * One prompt-tool call of this session's relay (AMENDMENT-21): one `ask.opened`, settled by the
+   * first answer, denied when the call is cancelled (the ask resolved `cancelled`) or the session
+   * ends. A call cancelled before it arrives, or on an ended session, opens nothing.
+   */
+  promptPermission(call: PromptToolCall, signal: AbortSignal): Promise<'allow' | 'deny'> {
+    if (this.exited || signal.aborted) return Promise.resolve('deny')
+    const id = this.askId(call.toolUseId)
+    return new Promise((resolve) => {
+      const onAbort = (): void => {
+        if (!this.asks.delete(id)) return
+        resolve('deny')
+        this.emit({ t: 'ask.resolved', providerRequestId: id, by: 'cancelled' })
+      }
+      this.asks.set(id, (decision) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(decision)
+      })
+      signal.addEventListener('abort', onAbort, { once: true })
+      this.emit({
+        t: 'ask.opened',
+        ask: {
+          kind: 'permission',
+          providerRequestId: id,
+          channel: 'driver',
+          payload: {
+            toolName: call.toolName,
+            requestText: toolSummary(call.toolName, { ...call.input }, this.options.deps.redact)
+          },
+          // The prompt tool answers allow or deny, nothing wider (15 §2.7): both are offered.
+          options: { hasAllowOnce: true, hasRejectOnce: true }
+        }
+      })
+    })
+  }
+
+  /** The first answer settles the call; any later or unknown one is `ask-closed` (ADR-010 item 5). */
+  async answerPermission(req: {
+    providerRequestId: string
+    decision: 'allow' | 'deny'
+  }): Promise<AnswerOutcome> {
+    const settle = this.asks.get(req.providerRequestId)
+    if (settle === undefined) return { kind: 'refused', reason: 'ask-closed' }
+    this.asks.delete(req.providerRequestId)
+    settle(req.decision)
+    return { kind: 'accepted' }
+  }
+
+  /** A request id unique in this session: the tool use's id, else suffixed by the call ordinal. */
+  private askId(toolUseId: string): string {
+    this.asked += 1
+    return this.asks.has(toolUseId) ? `${toolUseId}:${this.asked}` : toolUseId
   }
 
   async answerQuestion(): Promise<AnswerOutcome> {
@@ -716,6 +877,9 @@ class StreamJsonSession implements DriverSession {
     if (!this.outputEnded || !this.exitSeen || this.exited) return
     this.exited = true
     this.tools.clear()
+    // Fail closed (15 §2.7): a call still open when the session ends is denied.
+    for (const settle of this.asks.values()) settle('deny')
+    this.asks.clear()
     this.channel.push({ t: 'exited', code: this.exitCode })
     this.channel.close()
     this.options.onExit(this.ref)
@@ -743,6 +907,18 @@ class StreamJsonSession implements DriverSession {
   private tail(): string {
     return this.stderrTail.slice(-TAIL_CHARS)
   }
+}
+
+/** The `ticket-file` relay entry an injection carries, or null when it carries none. */
+function ticketFileEntry(injection: DelegationInjection): RelayEntryInput | null {
+  if (
+    injection.mechanism !== 'ticket-file' ||
+    injection.relay === undefined ||
+    injection.credentialFilePath === undefined
+  ) {
+    return null
+  }
+  return { relay: injection.relay, credentialFilePath: injection.credentialFilePath }
 }
 
 function installKey(install: InstalledProvider): string {
