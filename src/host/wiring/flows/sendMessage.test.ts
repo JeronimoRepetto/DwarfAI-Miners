@@ -334,7 +334,7 @@ describe('send message flow F4', () => {
     expect(host.bus.ofType('MessageReactedTo')).toHaveLength(1)
   })
 
-  it('[US-MSG-001.AC05, NFR-TIM-05, S-022-1] a session that correlates by transcript match stays delivered after its turn ends until S-022-1 records the rule', async () => {
+  it('[US-MSG-001.AC05, NFR-TIM-05, S-022-1] a session that correlates by transcript match is not moved to reacted by its turn end alone', async () => {
     const w = world()
     const session = await simulatedSession(w, 'transcript-match')
     const host = w.boot(bridgeTo(() => session))
