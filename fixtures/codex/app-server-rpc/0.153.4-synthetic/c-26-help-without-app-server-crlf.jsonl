@@ -62,7 +62,7 @@ Options:
           Accepted forms: `ws://host:port`, `wss://host:port`, `unix://`, or `unix://PATH`.
 
       --remote-auth-token-env <ENV_VAR>
-          Name of the environment variable containing the bearer token to send to a remote app
+          Name of the environment variable containing the bearer [redacted] to send to a remote app
           server websocket
 
       --strict-config

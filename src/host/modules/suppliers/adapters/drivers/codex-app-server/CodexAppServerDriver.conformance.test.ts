@@ -355,7 +355,7 @@ describe('CodexAppServerDriver', () => {
     expect(checks).toEqual([
       {
         threadId: THREAD,
-        rolloutPath: `/home/j/.codex/sessions/2026/10/17/rollout-2026-10-17T00-00-00-${THREAD}.jsonl`,
+        rolloutPath: '/home/j/.codex/sessions/2026/10/17/rollout-sample.jsonl',
         turnId: '0000000a-0000-4000-8000-000000000001'
       }
     ])
