@@ -36,7 +36,10 @@ import {
   type StopDwarfParams,
   type StopDwarfResult,
   type RetryMessageParams,
-  type RetryMessageResult
+  type RetryMessageResult,
+  type RenameDwarfParams,
+  type RenameDwarfResult,
+  type ResetDwarfNameParams
 } from '../host-protocol/params'
 import type { IpcResult } from '../host-protocol'
 import type {
@@ -294,6 +297,25 @@ const NEW_ROWS = [
     kind: 'invoke',
     placement: 'host',
     sensitive: false
+  },
+  // ISSUE-172: a person-set name for a dwarf (SC-AR-05, INV-29), born `host` in 3a; a dwarf id, the typed name and a
+  // requestId
+  {
+    id: 'A-N08',
+    wire: 'dwarf:rename',
+    member: 'renameDwarf',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
+  // ISSUE-172: the ⋯ menu's Reset name (US-MSG-006), born `host` in cut 2; a dwarf id and a requestId
+  {
+    id: 'A-N09',
+    wire: 'dwarf:name:reset',
+    member: 'resetDwarfName',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -480,7 +502,11 @@ const VALID_REQUESTS: Record<string, unknown> = {
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
   'dwarf:stop': { dwarfId: U1, requestId: U1 },
   // A-N06 (ISSUE-168): B-M25's params, a message id and a requestId
-  'dwarf:message:retry': { messageId: U1, requestId: U1 }
+  'dwarf:message:retry': { messageId: U1, requestId: U1 },
+  // A-N08 (ISSUE-172): B-M22's params, a dwarf id, the typed name and a requestId
+  'dwarf:rename': { dwarfId: U1, name: 'Watcher of seals', requestId: U1 },
+  // A-N09 (ISSUE-172): B-M23's params, a dwarf id and a requestId
+  'dwarf:name:reset': { dwarfId: U1, requestId: U1 }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */
@@ -886,6 +912,12 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     // A-N06 (ISSUE-168): relays B-M25 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:message:retry'>>().toEqualTypeOf<RetryMessageParams>()
     expectTypeOf<Res<'dwarf:message:retry'>>().toEqualTypeOf<IpcResult<RetryMessageResult>>()
+    // A-N08 (ISSUE-172): relays B-M22 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
+    expectTypeOf<Req<'dwarf:rename'>>().toEqualTypeOf<RenameDwarfParams>()
+    expectTypeOf<Res<'dwarf:rename'>>().toEqualTypeOf<IpcResult<RenameDwarfResult>>()
+    // A-N09 (ISSUE-172): relays B-M23, as 14 §2.2 and §3.4 write it, `{}` read as `IpcResult<void>` (14 §1.2).
+    expectTypeOf<Req<'dwarf:name:reset'>>().toEqualTypeOf<ResetDwarfNameParams>()
+    expectTypeOf<Res<'dwarf:name:reset'>>().toEqualTypeOf<IpcResult<void>>()
     // A-N16 (ISSUE-114): the reveal push, as 14 §2.2 and §3.8 write it.
     expectTypeOf<Req<'mode:revealDwarfChat'>>().toEqualTypeOf<undefined>()
     expectTypeOf<Res<'mode:revealDwarfChat'>>().toEqualTypeOf<{

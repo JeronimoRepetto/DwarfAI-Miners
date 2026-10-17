@@ -102,7 +102,9 @@ const SERVED_SINCE_CUT_0 = [
   // Retrying a failed message: B-M25, from cut 3 (ISSUE-168).
   'conversation.retry',
   // Describing attachments: B-M28, from cut 3 (ISSUE-169).
-  'conversation.describeAttachments'
+  'conversation.describeAttachments',
+  // AMENDED for ISSUE-170 (appended): B-M29, the console target of A-13, from cut 3.
+  'conversation.resolveConsole'
 ]
 const SERVED_SECTIONS = [
   'meta',

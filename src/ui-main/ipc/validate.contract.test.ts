@@ -135,7 +135,11 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
   'dwarf:stop': { dwarfId: U1, requestId: U1 },
   // A-N06 (ISSUE-168): B-M25's params, a message id and a requestId
-  'dwarf:message:retry': { messageId: U1, requestId: U1 }
+  'dwarf:message:retry': { messageId: U1, requestId: U1 },
+  // A-N08 (ISSUE-172): B-M22's params, a dwarf id, the typed name and a requestId
+  'dwarf:rename': { dwarfId: U1, name: 'Watcher of seals', requestId: U1 },
+  // A-N09 (ISSUE-172): B-M23's params, a dwarf id and a requestId
+  'dwarf:name:reset': { dwarfId: U1, requestId: U1 }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */

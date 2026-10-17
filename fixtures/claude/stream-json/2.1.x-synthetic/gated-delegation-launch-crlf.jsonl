@@ -1,0 +1,1 @@
+{"type":"system","subtype":"init","cwd":"/work/mine","session_id":"00000000-0000-7000-8000-000000000001","tools":["Bash","Read","Task","mcp__dwarfai__delegate_subtask","mcp__dwarfai__subtask_result"],"mcp_servers":[{"name":"dwarfai","status":"connected"}],"model":"sample-model","permissionMode":"default","uuid":"00000000-0000-4000-8000-0000000a0201"}

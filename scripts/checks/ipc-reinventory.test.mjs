@@ -122,12 +122,23 @@ const RENAMED_14 = {
   'A-44': { wire: 'presence:visibleMines', member: 'reportVisibleMines', kind: 'send' }
 }
 
+/**
+ * The `14` §8 I-21 legacy members renamed in the tree, keyed by wire. ISSUE-172: 14 gives `resetDwarfName` to A-N09 and
+ * to the legacy `dwarf:resetName`, both live until cut 5, so the legacy one is `resetDwarfNameToday` (as A-44's rename).
+ */
+const RENAMED_I21 = {
+  'dwarf:resetName': 'resetDwarfNameToday'
+}
+
 /** The fixture entry a row's `14` reference names, or undefined when there is none. */
 const entryOf = (row) => {
   const renamed = RENAMED_14[row.id]
   const entry = catalog14.find(
     (entry) => entry.id === row.id && (row.id !== I21 || entry.wire === row.wire)
   )
+  if (entry && row.id === I21 && RENAMED_I21[row.wire]) {
+    return { ...entry, member: RENAMED_I21[row.wire] }
+  }
   return renamed && entry && row.wire === renamed.wire ? { ...entry, ...renamed } : entry
 }
 
