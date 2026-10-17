@@ -540,9 +540,51 @@ export class LaunchUseCase {
           this.uncaught(launch.id, error)
           return { ok: false, error: 'jev-unreachable' }
         })
-      return decideJevRouting(await Promise.race([asked, budget]), ctx)
+      const answer = await Promise.race([asked, budget])
+      return this.withJevReason(launch, decideJevRouting(answer, ctx), answer, ctx.supplierLabel)
     } finally {
       timer.cancel()
+    }
+  }
+
+  /**
+   * ADR-020 D2; 09 §4.3 (`launches` CHECK): a Jev cause always names its reason (ISSUE-182). The
+   * advisor's error carries the reason Jev fell back for (`JevAdvisor`, wiring/bridges/
+   * launchAdvisor.ts); a call that rejected, or an advisor that names none, gets the reason its cause
+   * stands for (`unreachable`: Jev was not reached; `low-confidence`: Jev reached no choice), logged,
+   * so the failure can be stored and the launch never stays in `routing`.
+   */
+  private withJevReason(
+    launch: OwnLaunch,
+    routing: JevRouting,
+    answer: unknown,
+    supplierLabel: string
+  ): JevRouting {
+    if (routing.kind !== 'failed') return routing
+    const { cause, jevReason } = routing.failure
+    if (
+      jevReason !== undefined ||
+      (cause !== 'jev-unreachable' && cause !== 'jev-could-not-choose')
+    ) {
+      return routing
+    }
+    const named = (answer as { reason?: JevFallbackReason } | null)?.reason
+    if (named === undefined) {
+      this.deps.log.record({
+        level: 'warn',
+        event: 'launch.jev-reason-missing',
+        subsystem: 'launching',
+        causeClass: cause,
+        launchId: launch.id
+      })
+    }
+    return {
+      kind: 'failed',
+      failure: buildLaunchFailure({
+        cause,
+        supplierLabel,
+        jevReason: named ?? (cause === 'jev-unreachable' ? 'unreachable' : 'low-confidence')
+      })
     }
   }
 
