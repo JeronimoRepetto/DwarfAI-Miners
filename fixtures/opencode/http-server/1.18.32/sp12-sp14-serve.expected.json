@@ -1,0 +1,41 @@
+{
+  "case": "C-28",
+  "description": "15 §4.6 End / kill (SP-14, OpenCode 1.18.32): a turn ended by POST /session/{id}/abort?directory=<cwd>, a POST with no body answered 200 true, after which the shared server stayed up. Its event stream: the person's prompt part is one person message, then busy is status working (the recorded order); session.error MessageAbortedError is the abort DwarfAI asked for, so it is no provider error; idle is status idle once (a repeated idle changes nothing); the aborted assistant message, completed with the counts it reported, is one sealed fidelity-1 usage observation (zero tokens, as reported: never an invented count). No turn.ended (turnEnd none until S-021-2).",
+  "script": [],
+  "events": [
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "opencode:opencode:{session}:00000000-0000-4000-8000-000000000008",
+        "role": "person",
+        "text": "Write the numbers from 1 to 300 as English words, one per line. Use no tools.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "opencode:opencode:{session}:00000000-0000-4000-8000-00000000000c",
+        "unitKey": "00000000-0000-4000-8000-00000000000c",
+        "fidelity": 1,
+        "tokens": {
+          "inputNet": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": 1735689603647
+      }
+    }
+  ]
+}
