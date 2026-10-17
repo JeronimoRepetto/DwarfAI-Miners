@@ -997,25 +997,6 @@ export function composeDwarfNameRows(deps: {
   return { channels: parts.flatMap((part) => part.channels), target: composeRouteTargets(parts) }
 }
 
-/**
- * Whether today's runtime composes its Claude hook half (21 §2 cut 2 "Switched off in legacy"; §1 item 4; §4 row
- * "Claude hook entry"; ISSUE-141, TC-141-06): today's hook installer, the Claude route of its loopback listener, the
- * observed-Claude permission registry and keystroke path. Only while A-40 and A-41 have no `host` route, each one
- * unqualified `legacy` row (the cut-1 table with today's shape, or a cut-2 rollback build, whose row keeps the target
- * shape through `LegacyAnswerShapeAdapter`): from the cut-2 switch the Host is the only writer of the Claude hook
- * entry. Read from the route table, so a rollback build recomposes it. AMENDED for ISSUE-141 (verifier finding,
- * 2026-10-14; was: every route `legacy` with today's shape, which a rollback row keeping the renderer's shape fails).
- */
-export function legacyClaudeHooksComposed(routes: readonly ChannelRoute[]): boolean {
-  return ANSWER_DWARF_ROWS.every((channel) => {
-    const own = routes.filter((route) => route.channel === channel)
-    return (
-      own.length > 0 &&
-      own.every((route) => route.owner === 'legacy' && route.qualifier === undefined)
-    )
-  })
-}
-
 /** An open window of the app, as the pushes reach it. */
 export interface AppWindow extends WindowContents {
   close(): void
@@ -2010,8 +1991,6 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
         { app, dialog, nativeImage, shell, clipboard, globalShortcut },
         {
           ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
-          // Today's Claude hook half only while A-40/A-41 keep their pre-cut-2 routes (TC-141-06).
-          claudeHooks: legacyClaudeHooksComposed(ROUTES),
           log: uiLog
         }
       )
