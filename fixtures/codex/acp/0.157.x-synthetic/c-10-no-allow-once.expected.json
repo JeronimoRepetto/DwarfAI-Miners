@@ -96,11 +96,7 @@
       "method": "initialize",
       "params": {
         "protocolVersion": 1,
-        "clientCapabilities": {
-          "elicitation": {
-            "form": {}
-          }
-        }
+        "clientCapabilities": {}
       }
     },
     {

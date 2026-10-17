@@ -1,6 +1,6 @@
 {
   "case": "C-01",
-  "description": "15 §4.5, §4.10: initialize declares only elicitation.form, session/new {cwd, mcpServers} (no _meta: the mode pin is INITIAL_AGENT_MODE plus session/set_mode), then the first prompt through session/prompt; the launch resolves at the session/new answer and binds the ACP sessionId; two agent chunks are one dwarf message (eventId <turnId>:<seq>); end_turn is one reliable concluded turn.",
+  "description": "15 §4.5, §4.10: initialize declares no client capability (row X2: no question card, so no elicitation), session/new {cwd, mcpServers} (no _meta: the mode pin is INITIAL_AGENT_MODE plus session/set_mode), then the first prompt through session/prompt; the launch resolves at the session/new answer and binds the ACP sessionId; two agent chunks are one dwarf message (eventId <turnId>:<seq>); end_turn is one reliable concluded turn.",
   "script": [
     {
       "do": "launch"
@@ -56,11 +56,7 @@
       "method": "initialize",
       "params": {
         "protocolVersion": 1,
-        "clientCapabilities": {
-          "elicitation": {
-            "form": {}
-          }
-        }
+        "clientCapabilities": {}
       }
     },
     {

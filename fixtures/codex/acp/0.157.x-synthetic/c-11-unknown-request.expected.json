@@ -1,6 +1,6 @@
 {
   "case": "C-11",
-  "description": "15 §1.4 ask.opened, §4.10: an fs or terminal method (client capabilities never declared), an unknown extension request, a malformed permission request and a form that is not a question card are each answered with a JSON-RPC error and open no ask; the turn continues.",
+  "description": "15 §1.4 ask.opened, §4.10: an fs or terminal method (client capabilities never declared), an unknown extension request, a malformed permission request and an elicitation/create (row X2 declares no elicitation, so every form is refused Method not found) are each answered with a JSON-RPC error and open no ask; the turn continues.",
   "script": [
     {
       "do": "launch"
@@ -56,11 +56,7 @@
       "method": "initialize",
       "params": {
         "protocolVersion": 1,
-        "clientCapabilities": {
-          "elicitation": {
-            "form": {}
-          }
-        }
+        "clientCapabilities": {}
       }
     },
     {
@@ -140,8 +136,11 @@
       "jsonrpc": "2.0",
       "id": 110,
       "error": {
-        "code": -32602,
-        "message": "Invalid params: not a question form"
+        "code": -32601,
+        "message": "\"Method not found\": elicitation/create",
+        "data": {
+          "method": "elicitation/create"
+        }
       }
     }
   ]
