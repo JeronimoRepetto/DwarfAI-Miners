@@ -38,6 +38,8 @@ import {
   setAskStepParamsSchema,
   setOpenCodePermissionsParamsSchema,
   setOpenCodePermissionsResultSchema,
+  renameDwarfParamsSchema,
+  renameDwarfResultSchema,
   stopDwarfParamsSchema,
   stopDwarfResultSchema,
   suppliersLaunchableParamsSchema
@@ -842,6 +844,17 @@ export const CHANNELS = {
     status: 'new',
     request: stopDwarfParamsSchema,
     response: ipcResultSchema(stopDwarfResultSchema)
+  },
+  // A-N08 `renameDwarf` (AMENDMENT-2, SC-AR-05; PO #88; INV-29): a person-set name for a dwarf of any rank, the
+  // successor of the legacy `dwarf:setName` (14 §8 I-21); relays B-M22 `crew.rename` unchanged (14 §1.2). The Host
+  // normalizes the text and answers `customName: null` for a reset. 14 lists no sensitive flag for it
+  'dwarf:rename': {
+    name: 'dwarf:rename',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: renameDwarfParamsSchema,
+    response: ipcResultSchema(renameDwarfResultSchema)
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

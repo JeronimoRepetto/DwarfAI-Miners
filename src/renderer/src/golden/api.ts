@@ -221,6 +221,8 @@ export function goldenApi(sample: GoldenSample): Api {
     // configuration.
     answerWelcome: refuse('answerWelcome'),
     // A-N29: a golden draws a fixed sample and never ends a session.
-    stopDwarf: refuse('stopDwarf')
+    stopDwarf: refuse('stopDwarf'),
+    // A-N08: a golden draws a fixed sample and never renames a dwarf.
+    renameDwarf: refuse('renameDwarf')
   }
 }

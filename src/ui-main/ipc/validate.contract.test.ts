@@ -133,7 +133,9 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   // A-N32 (ISSUE-223): B-M40's params, the two ticks and no origin (the Host records `first-run`)
   'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 },
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
-  'dwarf:stop': { dwarfId: U1, requestId: U1 }
+  'dwarf:stop': { dwarfId: U1, requestId: U1 },
+  // A-N08 (ISSUE-172): B-M22's params, a dwarf id, the typed name and a requestId
+  'dwarf:rename': { dwarfId: U1, name: 'Watcher of seals', requestId: U1 }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */
