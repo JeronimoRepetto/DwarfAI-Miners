@@ -119,6 +119,9 @@ import { FsAttachmentReader } from './modules/conversation/adapters/attachments/
 import { NodeAttachmentProbe } from './modules/conversation/adapters/attachments/NodeAttachmentProbe'
 import { createHostConsoleResolver, viewerEntryPath } from './modules/conversation'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
+import { CodexThreadQueue } from './modules/conversation/adapters/observed-send/CodexThreadQueue'
+import { ConsoleTextDelivery } from './modules/conversation/adapters/observed-send/ConsoleTextDelivery'
+import { ObservedSessionTurnSender } from './modules/conversation/adapters/observed-send/ObservedSessionTurnSender'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
@@ -201,6 +204,11 @@ import {
 import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { createKeystrokeRelay } from './wiring/bridges/keystrokeRelay'
+import {
+  installedBinaryOf,
+  observedRouteTargets,
+  observedSendTargets
+} from './wiring/bridges/turnSender'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { ownedSessionsOver } from './wiring/bridges/sessionTerminator'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
@@ -859,7 +867,10 @@ async function bootHost(base: HostBase): Promise<void> {
             ready: () => hostState.current().state === 'ready'
           })
           modules.preferences = preferences
-          return preferences.resumeOnBoot()
+          const resumed = await preferences.resumeOnBoot()
+          // The secrets' flags after a resumed `secrets` step, before any command (ISSUE-216).
+          await preferences.loadSecretStatuses()
+          return resumed
         },
         // Step 3, after the resume: every write a crash left between Tx A and Tx B (07 S14.11).
         reverifyConfigWrites: () => {
@@ -995,6 +1006,32 @@ async function bootHost(base: HostBase): Promise<void> {
             hostEpoch: epoch,
             log
           })
+          // The observed-session send path (ISSUE-167): an observed Claude session's terminal, an
+          // observed Codex thread's own queue, both through the kernel ProcessControl (R17).
+          const observedTerminal = new ConsoleTextDelivery({
+            processes: processControl,
+            platform: hostRuntime().os as NodeJS.Platform,
+            env: process.env,
+            cwd: homedir(),
+            scheduler
+          })
+          const codexQueue = new CodexThreadQueue({
+            processes: processControl,
+            executable: () => installedBinaryOf(modules.suppliers?.registry.drivers('codex') ?? []),
+            env: process.env,
+            cwd: homedir(),
+            scheduler
+          })
+          const observedObservation = modules.observation
+          // Crew's delivery-route read (INV-33), from observation alone: crew's view calls it.
+          const observedRoutes = new ObservedSessionTurnSender({
+            targets: observedRouteTargets({
+              identities: observedObservation.observation.identities,
+              processes: observedObservation.crew.processIdentities
+            }),
+            terminal: observedTerminal,
+            codex: codexQueue
+          })
           modules.crew = servedCrew.wire({
             db,
             transactions,
@@ -1005,8 +1042,12 @@ async function bootHost(base: HostBase): Promise<void> {
             ids,
             hostEpoch: epoch,
             log,
-            // No launch and no delivery route reach the Host yet (later: EPIC-10).
-            links: { owned: () => false, hasDeliveryRoute: () => false },
+            // No launch reaches the Host yet (later: EPIC-10); an observed dwarf has a delivery
+            // route when the observed-session relay has a send path to it (ISSUE-167, INV-33).
+            links: {
+              owned: () => false,
+              hasDeliveryRoute: (dwarfId) => observedRoutes.canDeliverTo(dwarfId)
+            },
             processes: processControl,
             observation: modules.observation.crew,
             // The `dwarfs` section's stored outcome lines (owner amendment E).
@@ -1043,6 +1084,16 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             // The send path's door to a launched session, and its failed-write log (ISSUE-166).
             sessions: modules.suppliers.sessions,
+            // An observed dwarf's turn: the observed-session relay (ISSUE-167).
+            observedTurns: new ObservedSessionTurnSender({
+              targets: observedSendTargets({
+                dwarfs: modules.crew.crew.queries,
+                observation: observedObservation.observation.queries,
+                processes: observedObservation.crew.processIdentities
+              }),
+              terminal: observedTerminal,
+              codex: codexQueue
+            }),
             diagnostics: log,
             // The Host's own check of every attachment path, at describe and again at send
             // (ISSUE-169; ADR-019 item 9; 18 C-17).

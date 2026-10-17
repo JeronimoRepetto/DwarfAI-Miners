@@ -113,7 +113,8 @@ describe('TerminalConsoleRaiser', () => {
     })
   })
 
-  it('[ADR-031, T-11] macOS types only /bin/sh <launcher>; the launcher quotes the argv exactly and removes itself', async () => {
+  // 18 §4.2 T-11 (kept out of the title: not a catalog id).
+  it('[ADR-031] macOS types only /bin/sh <launcher>; the launcher quotes the argv exactly and removes itself', async () => {
     const { spawn, calls } = recordingSpawn(() => true)
     const launcher = files()
     const tricky = { ...COMMAND, args: [COMMAND.args[0] as string, "/data/it's $(here)/v.token"] }

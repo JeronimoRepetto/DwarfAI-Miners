@@ -1,6 +1,7 @@
 // The conversation log's aggregate (06 §9.1; ADR-007 item 2) and the ingest rule for one entry
 // (09 §5.2 steps 1–2 and "Dropped records"). Pure: no I/O, no clock read (05 §2.2, R1).
 import type { AnswerRefusalReason, SourceKey } from '../../../kernel/domain/sharedContracts'
+import { echoesSentText } from './consoleText'
 import type {
   AskId,
   DwarfId,
@@ -219,7 +220,7 @@ export function mayEchoTypedSend(
 
 /**
  * Whether `entry` is the transcript echo of the waiting DwarfAI row `row` (ADR-007 item 3): the
- * exact same text, at a provider time (or, without one, at `now`) inside the row's window.
+ * same text as written, or as the console relay typed it (S-022-1, `echoesSentText`), at a provider time (or, without one, at `now`) inside the row's window.
  */
 export function echoesTypedSend(
   entry: TypedEchoEntry,
@@ -227,7 +228,7 @@ export function echoesTypedSend(
   row: { text: string; createdAt: Instant },
   now: Instant
 ): boolean {
-  if (!mayEchoTypedSend(entry, origin) || entry.text !== row.text) return false
+  if (!mayEchoTypedSend(entry, origin) || !echoesSentText(entry.text, row.text)) return false
   const at = entry.providerTime ?? now
   return at >= row.createdAt - TYPED_ECHO_SKEW_MS && at <= row.createdAt + TYPED_ECHO_WINDOW_MS
 }

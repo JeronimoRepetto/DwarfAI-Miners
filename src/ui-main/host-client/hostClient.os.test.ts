@@ -78,6 +78,9 @@ const SERVED_SINCE_CUT_0 = [
   'frame:integration.changed',
   // The first-run consent step's answer: B-M40, served from cut 2 (ISSUE-323).
   'preferences.answerWelcome',
+  // AMENDED for ISSUE-216 (appended): B-M10 and B-M11, served by the preferences wiring for step 3a.
+  'settings.secret.clear',
+  'settings.secret.set',
   // The asking module: B-M30…B-M32, the `asks` section and the ask frames, from cut 2 (ISSUE-140).
   'asking.answerPermission',
   'asking.answerQuestion',
