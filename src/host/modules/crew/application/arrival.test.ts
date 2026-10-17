@@ -201,6 +201,46 @@ describe('CrewCommands arrival', () => {
     ])
   })
 
+  it('[S2.11, INV-22] rebinding an unrecovered dwarf after its resumed session moves processState back to running, silently, with DwarfRebound only for a new session id', () => {
+    const crew = inMemoryCrew()
+    const same = crew.commands.arrive(arrival())
+    const renewed = crew.commands.arrive(arrival({ ...ROOT, providerSessionId: 'session-9' }))
+    crew.commands.markUnrecovered(same)
+    crew.commands.markUnrecovered(renewed)
+    const published = crew.bus.published.length
+    const next: ProviderIdentity = { ...ROOT, providerSessionId: 'session-10' }
+
+    // The retried resume kept the provider session id: the same identity, rebound twice.
+    crew.commands.rebind(same, ROOT)
+    crew.commands.rebind(same, ROOT)
+    crew.commands.rebind(renewed, next)
+
+    expect(crew.repository.byId(same)).toMatchObject({
+      presence: 'present',
+      processState: 'running',
+      identity: ROOT
+    })
+    expect(crew.repository.byId(renewed)).toMatchObject({
+      processState: 'running',
+      identity: next,
+      previousProviderSessionId: 'session-9'
+    })
+    // The window hears each dwarf once (dwarf.changed); a rebind with no new id is no DwarfRebound.
+    expect(
+      crew.bus.published
+        .slice(published)
+        .map((e) => [e.type, (e.payload as { dwarfId: DwarfId }).dwarfId])
+    ).toEqual([
+      ['DwarfPresenceChanged', same],
+      ['DwarfRebound', renewed],
+      ['DwarfPresenceChanged', renewed]
+    ])
+    // A running dwarf rebound to its own identity changes nothing (the boot pass's resume).
+    const before = crew.bus.published.length
+    crew.commands.rebind(same, ROOT)
+    expect(crew.bus.published).toHaveLength(before)
+  })
+
   it('[INV-26] a departed dwarf is neither rebound nor marked unrecovered', () => {
     const crew = inMemoryCrew()
     const dwarfId = crew.commands.arrive(arrival())

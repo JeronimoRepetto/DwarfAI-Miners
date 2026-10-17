@@ -21,6 +21,9 @@
 //   Its exit instant is then known only to lie between readiness and the window's end, which
 //   `classifyLaunchOutcome` reads as `exited-at-once` (package gap, resolved in development: the
 //   first-agent-event shortcut of ADR-020 D4 needs the stream, so the window always runs whole).
+// - A session handed out to a launch that then fails is never bound to a dwarf, so it is released
+//   to suppliers unbound (GitHub #1316): the late session above, and the one that exited inside
+//   the early window. Otherwise suppliers would hold its entry and events for the Host's life.
 // - It settles exactly once.
 // - A timed check (the handshake budget, the window's end) that runs before `clock.now()` reaches
 //   its deadline finds the outcome `pending` and is armed again for the time left (at least 1 ms):
@@ -49,7 +52,8 @@ import type {
   DriverLaunchRequest,
   DriverRegistry,
   DriverSession,
-  SessionChannels
+  SessionChannels,
+  SessionReleases
 } from '../../modules/suppliers'
 
 export interface SessionStarterBridgeDeps {
@@ -57,6 +61,11 @@ export interface SessionStarterBridgeDeps {
   registry: DriverRegistry
   /** Whether a session handed out is still live (`Suppliers.sessions`). */
   sessions: Pick<SessionChannels, 'sessionFor'>
+  /**
+   * Where a session handed out to a launch that then failed is released unbound (GitHub #1316,
+   * `Suppliers.releases`). Absent in compositions that never read the suppliers index.
+   */
+  releases?: Pick<SessionReleases, 'release'>
   clock: Clock
   /** Runs the handshake budget and the early window. */
   scheduler: Scheduler
@@ -113,8 +122,10 @@ export function createSessionStarter(deps: SessionStarterBridgeDeps): SessionSta
       ): boolean => {
         const outcome = classifyLaunchOutcome(events, t0, clock.now())
         if (outcome.kind === 'pending') return true
-        if (outcome.kind === 'failed') settle(failed(outcome.cause))
-        else if (session !== undefined) settle({ ok: true, value: session })
+        if (outcome.kind === 'failed') {
+          if (session !== undefined) deps.releases?.release(session.ref)
+          settle(failed(outcome.cause))
+        } else if (session !== undefined) settle({ ok: true, value: session })
         return false
       }
       /** Runs `check` at `deadline`, again for the time left while it answers pending. */
@@ -145,6 +156,7 @@ export function createSessionStarter(deps: SessionStarterBridgeDeps): SessionSta
           if (settled || t0 === null) {
             // Too late (the handshake budget ran out), or a driver that never reported its spawn
             // (15 §1.2: never skipped silently): the session is not the launch's.
+            deps.releases?.release(session.ref)
             void session.close('end-thread')
             settle(failed('could-not-start'))
             return
