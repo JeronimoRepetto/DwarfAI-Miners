@@ -110,6 +110,8 @@ import type { OutcomeLine } from './domain/outcomeLine'
 import type { AttachmentReader } from './ports/attachmentReader'
 import type { ConsoleResolver, ConsoleTarget } from './ports/consoleResolver'
 import type { TurnSender } from './ports/turnSender'
+import { SentEchoes } from './application/sentEchoes'
+import type { ConversationEntry } from '../suppliers'
 
 export type {
   ActivityChanged,
@@ -358,12 +360,24 @@ export function createConversation(deps: ConversationDeps): Conversation {
     for (const listener of [...reconciling]) listener(dwarfId, entries)
   }
   let sender: ConversationSender | null = null
+  // INV-60 (ISSUE-182): a launched session's echo of a sent message, claimed at ingest: its key is
+  // kept with no row of its own (INV-68), so it never shows a second bubble. The send path still
+  // hears the entry itself, which is its evidence for the delivery marks (ADR-022).
+  const echoes = new SentEchoes()
+  const stored = (
+    dwarfId: DwarfId,
+    entries: readonly ConversationEntry[],
+    origin: 'live-stream' | 'transcript'
+  ): ConversationEntry[] =>
+    entries.map((entry) =>
+      echoes.claim(dwarfId, entry, origin) === null ? entry : { ...entry, controlPlane: true }
+    )
   /** The batches of joined ingests, handed to the sender after their caller's commit. */
   const joinedBatches: Array<Parameters<IngestCommands['ingest']>> = []
   const commands: IngestCommands = {
     ingest: (dwarfId, entries, origin) => {
       const joined = deps.transactions.isInTransaction()
-      ingest.ingest(dwarfId, entries, origin)
+      ingest.ingest(dwarfId, stored(dwarfId, entries, origin), origin)
       if (joined) joinedBatches.push([dwarfId, entries, origin])
       else {
         heard(dwarfId, entries)
@@ -401,7 +415,8 @@ export function createConversation(deps: ConversationDeps): Conversation {
         clock: deps.clock,
         ids: deps.ids,
         hostEpoch: deps.hostEpoch,
-        diagnostics
+        diagnostics,
+        echoes
       })
       const retrier = new ConversationRetry({
         log,

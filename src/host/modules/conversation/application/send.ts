@@ -75,6 +75,7 @@ import type { TurnHandOver, TurnSender } from '../ports/turnSender'
 import type { MessageDeliveryFailed, MessageHandedOver, MessageSent } from './answerRecords'
 import { revalidateAttachments, type RevalidatedAttachment } from './describeAttachments'
 import type { AttachmentPath, ConversationSendCommand } from './ingest'
+import type { SentEchoes } from './sentEchoes'
 
 /** 08 §0 `MessageReactedTo`: correlated activity after the message (✓✓, S7.05). */
 export type MessageReactedTo = DomainEvent<
@@ -108,6 +109,11 @@ export interface ConversationSendDeps {
   hostEpoch: HostEpoch
   /** Where a failed delivery write is recorded, allowlisted fields only (ADR-026). */
   diagnostics: DiagnosticsLog
+  /**
+   * The sent messages waiting for their echo (INV-60; ISSUE-182): tracked as each hand-over starts,
+   * correlated by its receipt, forgotten when it failed. `ingest` claims the echo from it.
+   */
+  echoes: Pick<SentEchoes, 'track' | 'correlate' | 'forget'>
 }
 
 /** The rows a dwarf can wait on for ✓✓ at once; an older one stays ✓ (bounded Host memory). */
@@ -335,6 +341,8 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
     attachments: readonly RevalidatedAttachment[]
   ): Promise<void> {
     let result: Awaited<ReturnType<TurnSender['send']>>
+    // The echo can arrive before this hand-over answers (INV-60): it is claimed by its text now.
+    this.deps.echoes.track(dwarfId, messageId, text)
     try {
       result = await this.deps.turns.send(dwarfId, {
         messageId,
@@ -346,6 +354,8 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
       // A sender that throws instead of answering is a channel error, never a silent loss.
       result = { ok: false, error: { kind: 'channel-error', reason: 'the hand-over failed' } }
     }
+    if (result.ok) this.deps.echoes.correlate(messageId, result.value.correlation)
+    else this.deps.echoes.forget(messageId)
     const flight = this.inFlight.get(messageId)
     this.inFlight.delete(messageId)
     if (flight === undefined) return

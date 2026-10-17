@@ -122,7 +122,7 @@ describe('launching and conversation write side wired', () => {
     expect(hello.capabilities).toContain('section:recovery')
   })
 
-  it('[C-05, S5.21, S7.04] a launch through the wired Host produces a dwarf, a handed-over message and one turn end', async () => {
+  it('[C-05, S5.21, S7.04, INV-60] a launch through the wired Host produces a dwarf, a handed-over message and one turn end', async () => {
     const w = world()
     const h = await bootHost(w, {
       epoch: 'epoch-182-a',
@@ -153,13 +153,15 @@ describe('launching and conversation write side wired', () => {
     )
     expect(phases).toContain('delivered')
     const feed = h.conversation.conversation.queries.feed(dwarfId, { limit: 50 }).messages
-    // The prompt is the dwarf's first message (US-LAUNCH-005.AC07), and the dwarf replied. The
-    // merge of the driver's echo into the sent row (INV-60) is not asserted here: no production
-    // write sets `messages.pending_echo` yet, so the echo is stored as a second row (reported on
-    // ISSUE-182 as a conversation gap).
-    expect(feed.filter((m) => m.role === 'person').map((m) => m.text)).toContain(
-      'Survey the north seam'
-    )
+    // The prompt is the dwarf's first message (US-LAUNCH-005.AC07); the driver's echo of the sent
+    // message, which arrives while the hand-over is still in flight, merges into the sent row: no
+    // second bubble (INV-60; amendment-16 lead decision of 2026-10-15).
+    expect(
+      feed
+        .filter((m) => m.role === 'person')
+        .map((m) => m.text)
+        .sort()
+    ).toEqual(['Mark the face with chalk', 'Survey the north seam'])
     expect(feed.filter((m) => m.role === 'dwarf')).toHaveLength(1)
     expect(h.events('TurnEnded')).toHaveLength(1)
     expect(evts(ui, 'turn.ended')).toHaveLength(1)
