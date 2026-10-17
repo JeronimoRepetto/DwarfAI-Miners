@@ -9,7 +9,12 @@
  * grows past 40px only for it; the key and the label keep their place (design lead's ruling on
  * MESSAGE-QUESTIONS 6, 2026-09-28; decision log, Question option description). A toggling step's rows are checkboxes rather than radios:
  * the app's multi-select asks (#362), which the design does not draw.
+ *
+ * The label and the description are the agent's words, an ask payload (C-08, 18 §5.1): each is
+ * drawn through untrustedText inside a `<bdi>` of its own (ISSUE-251, ISSUE-260).
  */
+import { untrustedText } from '../../lib/text/untrustedText'
+
 const props = withDefaults(
   defineProps<{
     label: string
@@ -48,8 +53,12 @@ const props = withDefaults(
     :disabled="disabled"
   >
     <span class="dm-qopt__box"></span>
-    <span class="dm-qopt__label">{{ label }}</span>
-    <span v-if="description" class="dm-qopt__desc">{{ description }}</span>
+    <span class="dm-qopt__label"
+      ><bdi>{{ untrustedText(label) }}</bdi></span
+    >
+    <span v-if="description" class="dm-qopt__desc"
+      ><bdi>{{ untrustedText(description) }}</bdi></span
+    >
     <span class="dm-qopt__key">{{ index + 1 }}</span>
   </button>
 </template>

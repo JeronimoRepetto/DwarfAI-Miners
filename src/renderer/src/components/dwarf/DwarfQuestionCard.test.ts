@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
@@ -16,6 +18,7 @@ import {
   type DwarfQuestion
 } from '../../types'
 import DwarfQuestionCard from './DwarfQuestionCard.vue'
+import DwarfPermissionCard from './DwarfPermissionCard.vue'
 
 /*
  * AMENDED for #443 (was: `Partial<DwarfQuestion>` spread over a flat ask with
@@ -1258,5 +1261,158 @@ describe('the question card as the design draws it (#635)', () => {
       'is-done',
       'is-here'
     ])
+  })
+})
+
+/* --- ISSUE-260: the question card against US-ASK-001 and US-ASK-002 — one block, appended --- */
+
+/*
+ * The question card as the stories read it (ISSUE-260): the head and the card's name, each row's
+ * height, picking by click or digit, Submit, and the field under "Other thing…". jsdom lays nothing
+ * out, so a row's height is proven from the stylesheets that decide it; the golden lane draws it.
+ */
+describe('DwarfQuestionCard against US-ASK-001 and US-ASK-002 (ISSUE-260)', () => {
+  const source = (file: string): string => readFileSync(join(import.meta.dirname, file), 'utf8')
+  /** The declarations of the first rule of `css` whose selector is exactly `selector`. */
+  const declarations = (css: string, selector: string): string[] => {
+    const at = css.indexOf('\n' + selector + ' {')
+    expect(at, 'no rule ' + selector).toBeGreaterThan(-1)
+    return css
+      .slice(css.indexOf('{', at) + 1, css.indexOf('}', at))
+      .split(';')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter((line) => line !== '')
+  }
+  const silent = (wrapper: Card): void => {
+    expect(wrapper.emitted('answer')).toBeUndefined()
+    expect(wrapper.emitted('answer-text')).toBeUndefined()
+    expect(wrapper.emitted('send-text')).toBeUndefined()
+  }
+
+  it('[US-ASK-001.AC01, US-ASK-003.AC02] the card head reads its asks mark and the card is named after the dwarf asking', () => {
+    const asking = card()
+    expect(asking.find('.dm-qcard').attributes('aria-label')).toBe('dwarfai-54 is asking')
+    const pill = asking.find('.dm-qcard__head .dm-pill')
+    expect(pill.find('.dm-pill__q').text()).toBe('?')
+    expect(pill.text()).toBe('?asks')
+    const permission = mount(DwarfPermissionCard, {
+      props: {
+        name: 'codex-8',
+        permission: {
+          toolUseId: 'toolu_09',
+          toolName: 'Bash',
+          input: 'npm test',
+          channel: 'held',
+          askedAt: '2026-09-05T09:00:00.000Z'
+        }
+      }
+    })
+    expect(permission.find('.dm-qcard').attributes('aria-label')).toBe('codex-8 is asking')
+  })
+
+  it('[US-ASK-001.AC03] an option with a description grows past 40 px with Small text under its label while every other row keeps 40 px', () => {
+    const wrapper = card()
+    const rows = options(wrapper)
+    expect(rows.map((row) => row.classes().includes('dm-qopt--desc'))).toEqual([true, false, false])
+    expect(rows[0]!.find('.dm-qopt__label').text()).toBe('Postgres')
+    expect(rows[0]!.find('.dm-qopt__desc').text()).toBe('The one the API already uses.')
+    expect(rows.slice(1).map((row) => row.find('.dm-qopt__desc').exists())).toEqual([false, false])
+    // Every row is at least the 40px row; the described one adds a second grid row under the 32px
+    // content row (40px less the 4px padding above and below), in Small text.
+    expect(source('../../assets/design-tokens.css')).toContain('--row: 40px;')
+    const option = source('../message/QuestionOption.vue')
+    expect(declarations(option, '.dm-qopt')).toContain('min-height: var(--row)')
+    expect(declarations(option, '.dm-qopt')).toContain('padding: 4px 10px')
+    expect(declarations(option, '.dm-qopt--desc')).toContain('grid-template-rows: 32px auto')
+    expect(declarations(option, '.dm-qopt__desc')).toContain('grid-row: 2')
+    expect(declarations(option, '.dm-qopt__desc')).toContain(
+      'font: 400 var(--fs-meta) / 1.3 var(--f-meta)'
+    )
+  })
+
+  it("[US-ASK-001.AC04, US-ASK-001.AC05, NFR-A11Y-06] a click or the option's digit key selects it and sends nothing, with Other thing… the last number", async () => {
+    const wrapper = card()
+    await options(wrapper)[1]!.trigger('click')
+    expect(checked(wrapper)).toEqual(['false', 'true', 'false'])
+    silent(wrapper)
+    pressKey(options(wrapper)[1]!.element, '1')
+    await wrapper.vm.$nextTick()
+    expect(checked(wrapper)).toEqual(['true', 'false', 'false'])
+    pressKey(options(wrapper)[0]!.element, '3')
+    await wrapper.vm.$nextTick()
+    expect(checked(wrapper)).toEqual(['false', 'false', 'true'])
+    silent(wrapper)
+    // "Other thing…" is the last row and the last number, one past the agent's options.
+    const rows = wrapper.findAll('.dm-qopt')
+    expect(rows.at(-1)!.classes()).toContain('dm-qopt--other')
+    expect(rows.map((row) => row.find('.dm-qopt__key').text())).toEqual(['1', '2', '3', '4'])
+    pressKey(options(wrapper)[2]!.element, '4')
+    await wrapper.vm.$nextTick()
+    expect(otherRow(wrapper).attributes('aria-checked')).toBe('true')
+    expect(checked(wrapper)).toEqual(['false', 'false', 'false'])
+    silent(wrapper)
+  })
+
+  it('[US-ASK-001.AC08, US-ASK-001.AC09] Submit stays disabled until the last step is answered and Enter there still does nothing', async () => {
+    const wrapper = card({ question: several() })
+    await options(wrapper)[0]!.trigger('click')
+    await wrapper.find('.dm-qcard__next').trigger('click')
+    expect(wrapper.find('.dm-qcard__step').text()).toBe('2 / 2')
+    expect(submitButton(wrapper).text()).toBe(SUBMIT_ANSWERS_NAME)
+    expect(submitButton(wrapper).attributes('disabled')).toBeDefined()
+    await options(wrapper)[0]!.trigger('click')
+    expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
+    pressEnter(options(wrapper)[0]!.element)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dm-qcard__step').text()).toBe('2 / 2')
+    silent(wrapper)
+  })
+
+  it('[US-ASK-002.AC01, US-ASK-002.AC02, US-ASK-002.AC03] Other thing… opens a focused field with the placeholder Your answer and the label Other answer, and typing sends nothing', async () => {
+    const wrapper = card()
+    expect(wrapper.find('.dm-qopt-other-field').exists()).toBe(false)
+    await otherRow(wrapper).trigger('click')
+    await wrapper.vm.$nextTick()
+    const field = wrapper.find('.dm-qopt-other-field input')
+    expect(field.exists()).toBe(true)
+    expect(document.activeElement).toBe(field.element)
+    // Under the options, not among them.
+    expect(wrapper.find('.dm-qcard__opts .dm-qopt-other-field').exists()).toBe(false)
+    expect(field.attributes('placeholder')).toBe('Your answer')
+    expect(field.attributes('aria-label')).toBe('Other answer')
+    await field.setValue('MySQL, please')
+    expect((field.element as HTMLInputElement).value).toBe('MySQL, please')
+    silent(wrapper)
+  })
+
+  it('[US-ASK-002.AC05, US-ASK-002.AC06] Enter in the field on the last step does nothing and an empty field does not count as an answer', async () => {
+    const walked = card({ question: several() })
+    await writeOther(walked, '')
+    expect(walked.find('.dm-qcard__next').attributes('disabled')).toBeDefined()
+    expect(walked.findAll('.dm-qcard__dots i').map((dot) => dot.classes().join(' '))).toEqual([
+      'is-here',
+      ''
+    ])
+
+    const last = card()
+    await writeOther(last, '   ')
+    expect(submitButton(last).attributes('disabled')).toBeDefined()
+    const field = last.find('.dm-qopt-other-field input')
+    pressEnter(field.element)
+    await field.setValue('MySQL')
+    expect(submitButton(last).attributes('disabled')).toBeUndefined()
+    pressEnter(field.element)
+    await last.vm.$nextTick()
+    silent(last)
+  })
+
+  /* C-08 (ISSUE-251 follow-up): the names a screen reader hears are built from the payload too. */
+  it('[NFR-SEC-07] names the options group and the card without the controls of a hostile question or name', () => {
+    const wrapper = card({
+      name: '\u001b[31mGrimli‮exe\u0000',
+      question: question({ question: 'Delete ⁦all⁩ files?\u0007' })
+    })
+    expect(wrapper.find('.dm-qcard').attributes('aria-label')).toBe('Grimliexe is asking')
+    expect(wrapper.find('.dm-qcard__opts').attributes('aria-label')).toBe('Delete all files?')
   })
 })
