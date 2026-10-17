@@ -309,6 +309,19 @@ const canReceive = computed(() => action('chat')?.enabled === true && !hostReadO
  */
 const closed = computed(() => sessionClosed(props.dwarf, props.routeGone === true))
 /*
+ * A draft dies with its session (US-MSG-009.AC05; decision log, Drafts per dwarf): once the
+ * session can no longer take text, whatever caused it, the well empties and the `draft` watch
+ * tells the host to forget it, so nothing is kept to restore. Also on mount, for a chat opened
+ * again on a session that closed while another chat was open.
+ */
+watch(
+  closed,
+  (isClosed) => {
+    if (isClosed) message.value = ''
+  },
+  { immediate: true }
+)
+/*
  * The box's tooltip: the capability model's reason, except where the route went away — the
  * model sees only a dwarf with no channel and would say the no-channel sentence, which is never
  * said of a closed session. An ended session keeps saying it has ended.

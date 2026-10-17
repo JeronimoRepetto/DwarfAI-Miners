@@ -1917,7 +1917,9 @@ describe('DwarfMessagePanel echoes (#309)', () => {
     const wrapper = panel({ echoes: [echo({ state })] })
     const marker = lastMessageRow(wrapper).find('.dm-bubble__mark')
     expect(marker.text()).toBe('✓✓')
-    expect(marker.attributes('title')).toBe(sendMarker(state)!.title)
+    // AMENDED for ISSUE-257 (was: sendMarker(state)!.title, "The session reacted to the message."):
+    // the design titles a ✓✓ bubble "Seen acting on it" (US-MSG-001.AC16; anatomy.md).
+    expect(marker.attributes('title')).toBe('Seen acting on it')
     // AMENDED for #635 (was: the `is-reacted` class): the design's mark name.
     expect(marker.attributes('data-mark')).toBe('reacted')
   })
