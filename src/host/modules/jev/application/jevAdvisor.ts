@@ -13,8 +13,11 @@
 //   US-LAUNCH-003.AC11): `RoutingProviderOption.label`.
 // - No launchable provider: `jev-could-not-choose`, logged `jev.fallback` with the reason only
 //   (19 §9.3), with no key read and nothing sent (ADR-020; the observe-only variant of 3a).
-// - `purpose: 'launch'` with `effort-ceiling` is the fallback suggestion, not an error (16 §6.4); the
-//   configured default it carries is ISSUE-193's (later), so here it names no part.
+// - `purpose: 'launch'` with `effort-ceiling` is the fallback suggestion, not an error (16 §6.4): it
+//   carries the configured Default provider, model and effort, uncapped (ADR-028 items 2-3), read
+//   from `PreferencesQueries.get()` at that moment, so a default just changed in Settings applies
+//   (US-SET-008.AC03). With Default provider "None" it is `jev-could-not-choose` (ADR-028 D2). Any
+//   decision Jev could make ignores the defaults here (US-SET-008.AC06).
 // - The prompt is never logged (14 §1.10).
 import type { Result } from '../../../kernel/domain/values'
 import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
@@ -22,7 +25,12 @@ import type { SecretReader } from '../../../kernel/ports/secretReader'
 import type { PreferencesQueries } from '../../preferences'
 import type { SupplierEntry } from '../../suppliers'
 import { MODEL_CAPABILITIES } from '../domain/capabilities/modelCapability'
-import type { JevCapabilityTable, RoutingModelCatalog } from '../domain/routeDecision'
+import { defaultFallback } from '../domain/defaultFallback'
+import type {
+  JevCapabilityTable,
+  RoutingLaunchDefault,
+  RoutingModelCatalog
+} from '../domain/routeDecision'
 import type { JevModelPart, LaunchDecision, SettledModel } from '../domain/routeModel'
 import type { RoutingProviderOption } from '../domain/routeRequest'
 import type { JevPartOrigin, JevSuggestion } from '../domain/suggestion'
@@ -139,13 +147,24 @@ function toSuggestionView(
   return view
 }
 
-function toResult(advice: JevAdvice): Result<JevSuggestionView, JevAdvisorError> {
+/** The configured Default provider, model and effort (06 §14.2), each only when set. */
+function launchDefault(preferences: ReturnType<PreferencesQueries['get']>): RoutingLaunchDefault {
+  return {
+    ...(preferences.defaultProvider === undefined ? {} : { provider: preferences.defaultProvider }),
+    ...(preferences.defaultModel === undefined ? {} : { model: preferences.defaultModel }),
+    ...(preferences.defaultEffort === undefined ? {} : { effort: preferences.defaultEffort })
+  }
+}
+
+function toResult(
+  advice: JevAdvice,
+  readDefault: () => RoutingLaunchDefault
+): Result<JevSuggestionView, JevAdvisorError> {
   if (!advice.ok) return { ok: false, error: advice.error }
   if (advice.kind === 'fallback') {
-    return {
-      ok: true,
-      value: { confidence: {}, truncated: false, parts: {}, fallback: advice.reason }
-    }
+    const fallback = defaultFallback({ kind: 'fallback', reason: advice.reason }, readDefault())
+    if (fallback === 'no-default') return { ok: false, error: 'jev-could-not-choose' }
+    return { ok: true, value: fallback }
   }
   return { ok: true, value: toSuggestionView(advice.decision, advice.model, advice.truncated) }
 }
@@ -178,16 +197,11 @@ export function createJevAdvisor(deps: JevAdvisorDeps): AbortableJevAdvisor {
       providers: providerOptions(launchable),
       catalogs: modelCatalogs(launchable),
       capabilities,
-      userDefault: {
-        ...(preferences.defaultProvider === undefined
-          ? {}
-          : { provider: preferences.defaultProvider }),
-        ...(preferences.defaultModel === undefined ? {} : { model: preferences.defaultModel }),
-        ...(preferences.defaultEffort === undefined ? {} : { effort: preferences.defaultEffort })
-      },
+      userDefault: launchDefault(preferences),
       ...(opts.signal === undefined ? {} : { signal: opts.signal })
     })
-    return toResult(advice)
+    // Read again at the fallback itself, never a copy from before the request (US-SET-008.AC03).
+    return toResult(advice, () => launchDefault(deps.preferences.get()))
   }
 
   return { suggest }

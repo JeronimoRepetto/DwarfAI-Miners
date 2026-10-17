@@ -4,7 +4,7 @@
 // are the real Claude table's: 'sonnet' balanced/medium on the full ladder, 'default'
 // balanced/unverified.
 //
-// TC-192-01, TC-192-02, TC-192-04, TC-192-05.
+// TC-192-01, TC-192-02, TC-192-04, TC-192-05; TC-193-01..04 (the effort-ceiling default fallback).
 import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
@@ -62,6 +62,8 @@ function harness(
   options: {
     launchable?: readonly SupplierEntry[]
     preferences?: HostPreferences
+    /** A live preferences double, read on every `get` (ISSUE-193); wins over `preferences`. */
+    preferencesSource?: Pick<PreferencesQueries, 'get'>
     capabilities?: typeof MODEL_CAPABILITIES
   } = {}
 ) {
@@ -75,7 +77,7 @@ function harness(
     router,
     secrets,
     routingCatalog,
-    preferences: { get: () => options.preferences ?? PREFERENCES },
+    preferences: options.preferencesSource ?? { get: () => options.preferences ?? PREFERENCES },
     log,
     ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities })
   })
@@ -295,5 +297,170 @@ describe('JevAdvisor.suggest', () => {
     // The second request's candidates are keyed by index, never by model identity (16 §6.2).
     expect(Object.keys(router.modelRequestsSeen()[0]?.candidates ?? {})).toStrictEqual(['0', '1'])
     expect(JSON.stringify(router.modelRequestsSeen()[0]?.candidates)).not.toMatch(/sonnet|default/)
+  })
+})
+
+/**
+ * ISSUE-193: the preferences as the person's Settings selects write them (`preferences.set` merges a
+ * patch into the singleton, 09 §4.8), inline because another module's fakes stay inside it (R15).
+ */
+function livePreferences(initial: HostPreferences) {
+  let current = initial
+  return {
+    get: (): HostPreferences => current,
+    set(patch: Partial<HostPreferences>): void {
+      current = { ...current, ...patch }
+    }
+  }
+}
+
+/** Two Claude models whose allowed efforts all sit above the level Jev works out (ADR-028). */
+function highOnlyCapabilities(): typeof MODEL_CAPABILITIES {
+  const sonnet = MODEL_CAPABILITIES.claude?.sonnet
+  if (sonnet === undefined) throw new Error('the capability table lost claude sonnet')
+  return {
+    ...MODEL_CAPABILITIES,
+    claude: {
+      'c-xhigh': { ...sonnet, tier: 'balanced', effortLevels: ['xhigh', 'max'] },
+      'c-high': { ...sonnet, tier: 'balanced', effortLevels: ['high', 'max'] }
+    }
+  }
+}
+
+const HIGH_ONLY_LAUNCHABLE = [supplier({ models: ['c-xhigh', 'c-high'] })]
+/** Effort score 0 maps to the bottom of the ladder, so every high-only candidate is ineligible. */
+const LOW_EFFORT = answers({ effort: { score: 0 } })
+
+const WITH_DEFAULT: HostPreferences = {
+  ...PREFERENCES,
+  defaultProvider: 'codex',
+  defaultModel: 'gpt-5-codex',
+  defaultEffort: 'max'
+}
+
+describe('JevAdvisor.suggest — the effort-ceiling default fallback (ADR-028 items 2-3)', () => {
+  it('[US-LAUNCH-003.AC13, FM-122] a launch suggestion whose candidates are all above the ceiling answers the configured default and no error', async () => {
+    const { router, advisor } = harness({
+      launchable: HIGH_ONLY_LAUNCHABLE,
+      capabilities: highOnlyCapabilities(),
+      preferences: WITH_DEFAULT
+    })
+    router.queueResponse(LOW_EFFORT)
+
+    const result = await advisor.suggest(LAUNCH)
+
+    // Uncapped: 'max' is the person's own default, not Jev's pick (ADR-028 item 3).
+    expect(result).toStrictEqual({
+      ok: true,
+      value: {
+        providerId: 'codex',
+        model: 'gpt-5-codex',
+        effort: 'max',
+        confidence: {},
+        truncated: false,
+        parts: { providerId: 'safe-default', model: 'safe-default', effort: 'safe-default' },
+        fallback: 'effort-ceiling'
+      }
+    })
+  })
+
+  it('[US-SET-008.AC03] a default set through preferences.set is used by the very next ceiling fallback', async () => {
+    const preferences = livePreferences(WITH_DEFAULT)
+    const { router, advisor } = harness({
+      launchable: HIGH_ONLY_LAUNCHABLE,
+      capabilities: highOnlyCapabilities(),
+      preferencesSource: preferences
+    })
+    router.queueResponse(LOW_EFFORT)
+    expect(await advisor.suggest(LAUNCH)).toMatchObject({
+      ok: true,
+      value: { providerId: 'codex' }
+    })
+
+    preferences.set({ defaultProvider: 'claude', defaultModel: 'sonnet', defaultEffort: 'low' })
+    router.queueResponse(LOW_EFFORT)
+
+    expect(await advisor.suggest(LAUNCH)).toMatchObject({
+      ok: true,
+      value: { providerId: 'claude', model: 'sonnet', effort: 'low', fallback: 'effort-ceiling' }
+    })
+  })
+
+  it('[US-SET-008.AC06] when Jev can decide its own pick is answered whatever the defaults are; when it cannot honour the ceiling the defaults are answered', async () => {
+    const decides = harness({ preferences: WITH_DEFAULT })
+    decides.router.queueResponse(answers())
+
+    const own = await decides.advisor.suggest(LAUNCH)
+
+    expect(own).toMatchObject({
+      ok: true,
+      value: { providerId: 'claude', model: 'sonnet', parts: { providerId: 'answered' } }
+    })
+    expect(own.ok && own.value.fallback).toBe(undefined)
+
+    const ceiling = harness({
+      launchable: HIGH_ONLY_LAUNCHABLE,
+      capabilities: highOnlyCapabilities(),
+      preferences: WITH_DEFAULT
+    })
+    ceiling.router.queueResponse(LOW_EFFORT)
+
+    expect(await ceiling.advisor.suggest(LAUNCH)).toMatchObject({
+      ok: true,
+      value: { providerId: 'codex', model: 'gpt-5-codex', effort: 'max' }
+    })
+  })
+
+  it('[INV-89] a ceiling fallback that launches the default provider sets no Jev launch cause; only a fallback that launched nothing ends with jev-could-not-choose', async () => {
+    const withDefault = harness({
+      launchable: HIGH_ONLY_LAUNCHABLE,
+      capabilities: highOnlyCapabilities(),
+      preferences: WITH_DEFAULT
+    })
+    withDefault.router.queueResponse(LOW_EFFORT)
+    const none = harness({
+      launchable: HIGH_ONLY_LAUNCHABLE,
+      capabilities: highOnlyCapabilities(),
+      preferences: PREFERENCES
+    })
+    none.router.queueResponse(LOW_EFFORT)
+
+    expect((await withDefault.advisor.suggest(LAUNCH)).ok).toBe(true)
+    expect(await none.advisor.suggest(LAUNCH)).toStrictEqual({
+      ok: false,
+      error: 'jev-could-not-choose'
+    })
+  })
+
+  it('[ADR-028] on a fresh install the ceiling fallback answers jev-could-not-choose', async () => {
+    // OQ-72 A: "Default provider" starts at "None" on a fresh install (migration 1's seed, 09 §4.9),
+    // so the fresh preferences carry no default at all.
+    const { router, advisor } = harness({
+      launchable: HIGH_ONLY_LAUNCHABLE,
+      capabilities: highOnlyCapabilities(),
+      preferences: PREFERENCES
+    })
+    router.queueResponse(LOW_EFFORT)
+
+    expect(await advisor.suggest(LAUNCH)).toStrictEqual({
+      ok: false,
+      error: 'jev-could-not-choose'
+    })
+  })
+
+  it('[ADR-028] a subtask whose candidates are all above the ceiling cannot choose, whatever the defaults are', async () => {
+    const { router, advisor } = harness({
+      launchable: HIGH_ONLY_LAUNCHABLE,
+      capabilities: highOnlyCapabilities(),
+      preferences: WITH_DEFAULT
+    })
+    router.queueResponse(LOW_EFFORT)
+
+    expect(await advisor.suggest({ prompt: 'split the parser', purpose: 'subtask' })).toStrictEqual(
+      {
+        ok: false,
+        error: 'jev-could-not-choose'
+      }
+    )
   })
 })
