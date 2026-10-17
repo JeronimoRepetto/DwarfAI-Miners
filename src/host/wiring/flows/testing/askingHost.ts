@@ -346,7 +346,7 @@ export async function bootHost(w: World, options: BootOptions) {
         database: { open: () => Promise.resolve() },
         // Step 3, as host/main.ts wires cut 2: the config writer with the Claude Code hooks target
         // and the channel-token lookup the hook ingress reads.
-        resumeResetSaga: () => {
+        resumeResetSaga: async () => {
           const ingressPort = appMetaIngressPort(db)
           const engine = new ConfigWriterEngine({
             fs: w.disk,
@@ -393,7 +393,9 @@ export async function bootHost(w: World, options: BootOptions) {
             channelTokens: new SqliteChannelTokenStore({ db, ids }),
             ready: () => state.current().state === 'ready'
           })
-          return host.preferences.resumeOnBoot()
+          const resumed = await host.preferences.resumeOnBoot()
+          await host.preferences.loadSecretStatuses()
+          return resumed
         },
         constructModules: () => {
           const preferences = host.preferences

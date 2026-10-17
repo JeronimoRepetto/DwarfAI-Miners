@@ -81,7 +81,12 @@ export type { InstalledToolsReader } from './ports/installedToolsReader'
 export type { WelcomeAnswerStore } from './ports/welcomeAnswerStore'
 export type { MetricsResetResult, ResetMetricsCommand, ResetStep } from './domain/resetSaga'
 export type { ResetDbStep } from './ports/resetJournal'
-export type { SecretBackend, SecretName, SecretStore } from './ports/secretStore'
+export type {
+  SecretBackend,
+  SecretDeleteOutcome,
+  SecretName,
+  SecretStore
+} from './ports/secretStore'
 export type {
   ChannelToken,
   ConfigTarget,
