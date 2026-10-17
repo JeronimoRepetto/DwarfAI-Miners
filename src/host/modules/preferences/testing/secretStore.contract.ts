@@ -1,6 +1,6 @@
 // The SecretStore conformance suite `runSecretStoreContract` (16 §4.12.1; ADR-017 items 1, 3, 5, 7;
 // 17 §1.3): run on the `FakeSecretStore` double and on `OsKeyringSecretStore` (over a scripted
-// keyring binding here; over the real OS keyring in the OS lane once SP-16 records the library).
+// keyring binding in L3; over the real OS keyring in the OS lane, OsKeyringSecretStore.os.test.ts).
 //
 // - `set` then `has` is true and `get` returns the value; `delete` then `get` is null; `delete`
 //   twice succeeds and resolves `'deleted'` both times (ADR-017 item 1, Verification; item 7).

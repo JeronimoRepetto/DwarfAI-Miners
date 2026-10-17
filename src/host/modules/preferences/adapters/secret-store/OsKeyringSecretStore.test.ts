@@ -9,8 +9,8 @@ import { OsKeyringSecretStore, SECRET_SERVICE } from './OsKeyringSecretStore'
 import { ScriptedKeyringBinding } from './testing/ScriptedKeyringBinding'
 
 // L3 (17 §1.3): the adapter runs the same contract as `FakeSecretStore`, over a scripted keyring
-// binding. The real keyring half runs in the OS lane once SP-16 records the library and its
-// dependency PR adds the real binding (keyringBinding.ts, "COMPOSITION SEAM").
+// binding. The real keyring half runs in the OS lane (OsKeyringSecretStore.os.test.ts,
+// OsKeyringSecretStore.noSecretService.os.test.ts).
 
 const drawValue = (): string => randomBytes(24).toString('base64url')
 

@@ -3,13 +3,11 @@
 // (service, account) — and nothing more. The adapter owns the naming, the error mapping, the
 // no-plain-text-fallback rule and the logging; a binding only talks to the OS secret store.
 //
-// COMPOSITION SEAM (lead decision 2026-10-15). The keyring library is not a dependency yet: spike
-// SP-16 (ISSUE-322) chooses it and its own dependency-only PR adds it. That PR adds the one module
-// of the codebase that imports the library, beside this file (R11: the keyring library only under
-// `preferences/adapters/secret-store/**`), implementing `KeyringBinding` with the library's
-// non-blocking API; the wiring then composes `new OsKeyringSecretStore(<that binding>, log)` where
-// it composes `unavailableSecretStore` today (later: ISSUE-324). Until then no real binding exists
-// and nothing pretends to be one.
+// The real binding is `NapiKeyringBinding` (napiKeyringBinding.ts) over `@napi-rs/keyring` 2.1.0,
+// the library SP-16 chose: the one module of the codebase that imports it (R11: the keyring library
+// only under `preferences/adapters/secret-store/**`). The wiring composes
+// `new OsKeyringSecretStore(new NapiKeyringBinding(SECRET_SERVICE), log)` where it composes
+// `unavailableSecretStore` today (later: ISSUE-324). The L3 tests drive `ScriptedKeyringBinding`.
 //
 // Rules every binding keeps:
 // - No method blocks the event loop: a blocking native call runs off it (ADR-017 item 1).

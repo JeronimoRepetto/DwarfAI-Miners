@@ -1,6 +1,6 @@
 // `OsKeyringSecretStore` (ADR-017 item 2; 16 §4.12.1): the `SecretStore` adapter over the OS secret
 // store — macOS Keychain, Windows Credential Manager, Linux Secret Service — through a
-// `KeyringBinding` (keyringBinding.ts, where the real library binding is plugged in).
+// `KeyringBinding` (keyringBinding.ts; the real one is napiKeyringBinding.ts).
 //
 // - One entry per `SecretName`: service `DwarfAI-Miners`, account = the name (item 2).
 // - `backend()` probes the secret service once; a probe that fails counts as `'unavailable'`.
