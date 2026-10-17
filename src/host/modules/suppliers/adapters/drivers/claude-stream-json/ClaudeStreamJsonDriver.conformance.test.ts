@@ -443,10 +443,16 @@ describe('ClaudeStreamJsonDriver', () => {
     expect(claude?.env).not.toHaveProperty('DWARFAI_DELEGATION_TOKEN')
     // The file lives only as long as the session: it is removed once the session exited.
     expect(files.removed).toEqual([config])
-    // Without a gated delegation there is no file and no --mcp-config.
+    // AMENDED by AMENDMENT-21 (owner, 2026-10-17; was: "Without a gated delegation there is no
+    // file and no --mcp-config"): the relay also serves the permission prompt tool, so a launch
+    // without a gated delegation carries the entry too, with the path only and no pre-approval.
     const plain = await launched()
-    expect(plain.files.written.size).toBe(0)
-    expect(plain.run.spawn.spawns[0]?.args).not.toContain('--mcp-config')
+    expect([...plain.files.written.keys()]).toEqual([config])
+    expect(plain.files.written.get(config)).not.toContain(CANARY_TOKEN)
+    expect(plain.run.spawn.spawns[0]?.args).toContain('--mcp-config')
+    expect(plain.run.spawn.spawns[0]?.args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(
+      false
+    )
   })
 
   it('[C-24] no forbidden flag appears in any argv the driver builds, dangerously-skip-permissions included', async () => {
@@ -553,7 +559,11 @@ describe('ClaudeStreamJsonDriver', () => {
       '--permission-prompt-tool',
       'mcp__dwarfai__permission',
       '--disallowedTools',
-      'AskUserQuestion'
+      'AskUserQuestion',
+      // AMENDED by AMENDMENT-21 (owner, 2026-10-17): every launch carries the relay entry that
+      // serves the prompt tool (was: no --mcp-config without a gated delegation).
+      '--mcp-config',
+      `${MCP_DIR}/launch-1.mcp.json`
     ])
     expect(run.session?.capabilities.question).toBe('none')
     expect(run.session?.capabilities.permission).toBe('none')
@@ -833,10 +843,12 @@ describe('ClaudeStreamJsonDriver delegation entry', () => {
 
   it('[C-24] a launch without both gates has no Jev entry and no pre-approval, and no launch carries a forbidden flag', async () => {
     // Without both gates `issueFor` gives no entry (ADR-013 item 4): the request carries none.
+    // AMENDED by AMENDMENT-21 (owner, 2026-10-17; was: no file and no --mcp-config): the launch
+    // still carries the relay entry the prompt tool needs, but never the pre-approval.
     const ungated = await launched()
     const [plain] = ungated.run.spawn.spawns
-    expect(ungated.files.written.size).toBe(0)
-    expect(plain?.args).not.toContain('--mcp-config')
+    expect(ungated.files.written.size).toBe(1)
+    expect(plain?.args).toContain('--mcp-config')
     expect(plain?.args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(false)
     expect(plain?.args.join(' ')).not.toMatch(/delegate_subtask|subtask_result/)
     // With both gates on, exactly the two DwarfAI tools are pre-approved, nothing else.
@@ -864,10 +876,12 @@ describe('ClaudeStreamJsonDriver delegation entry', () => {
 
   it("[C-24, INV-81] a delegated worker's launch, which issueFor gives no delegation entry, has no Jev entry and no pre-approval", async () => {
     // Depth 1 (ADR-013 item 4): a worker's request carries `delegation: null`, like an ungated one.
+    // AMENDED by AMENDMENT-21 (owner, 2026-10-17; was: no file and no --mcp-config): a worker's
+    // launch carries the relay entry for its prompt tool; the pre-approval stays absent.
     const { run, files } = await launched({ delegation: false })
-    expect(files.written.size).toBe(0)
+    expect(files.written.size).toBe(1)
     const args = run.spawn.spawns[0]?.args ?? []
-    expect(args).not.toContain('--mcp-config')
+    expect(args).toContain('--mcp-config')
     expect(args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(false)
     expect(args.join(' ')).not.toMatch(/delegate_subtask|subtask_result/)
   })
