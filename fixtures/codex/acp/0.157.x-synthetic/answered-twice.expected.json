@@ -1,0 +1,149 @@
+{
+  "case": "codex:answered-twice",
+  "description": "ADR-010 item 5, 15 §1.3 answerPermission: a second answer for an ask already answered is refused ask-closed and sends nothing (the first is accepted).",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "call_000000000000000000000101",
+      "decision": "allow"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "call_000000000000000000000101",
+      "decision": "deny"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "kind": "accepted"
+    },
+    {
+      "kind": "refused",
+      "reason": "ask-closed"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:call_000000000000000000000101",
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "edit",
+        "summary": "Write a.txt",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "call_000000000000000000000101",
+        "channel": "driver",
+        "payload": {
+          "toolName": "edit",
+          "requestText": "Write a.txt"
+        },
+        "options": {
+          "hasAllowOnce": true,
+          "hasRejectOnce": true
+        },
+        "turnKey": "codex:codex:{session}:turn:1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:call_000000000000000000000101",
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "edit",
+        "summary": "Write a.txt",
+        "state": "finished",
+        "at": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 111,
+      "result": {
+        "outcome": {
+          "outcome": "selected",
+          "optionId": "allow"
+        }
+      }
+    }
+  ]
+}
