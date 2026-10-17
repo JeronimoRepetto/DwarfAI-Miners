@@ -98,7 +98,9 @@ const SERVED_SINCE_CUT_0 = [
   // Sending a message: B-M24, B-F12 and the `marks` section, from cut 3 (ISSUE-166).
   'conversation.send',
   'frame:message.delivery',
-  'section:marks'
+  'section:marks',
+  // Describing attachments: B-M28, from cut 3 (ISSUE-169).
+  'conversation.describeAttachments'
 ]
 const SERVED_SECTIONS = [
   'meta',
