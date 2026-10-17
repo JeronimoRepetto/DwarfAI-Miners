@@ -859,7 +859,10 @@ async function bootHost(base: HostBase): Promise<void> {
             ready: () => hostState.current().state === 'ready'
           })
           modules.preferences = preferences
-          return preferences.resumeOnBoot()
+          const resumed = await preferences.resumeOnBoot()
+          // The secrets' flags after a resumed `secrets` step, before any command (ISSUE-216).
+          await preferences.loadSecretStatuses()
+          return resumed
         },
         // Step 3, after the resume: every write a crash left between Tx A and Tx B (07 S14.11).
         reverifyConfigWrites: () => {
