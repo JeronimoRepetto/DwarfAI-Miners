@@ -1467,11 +1467,16 @@ describe('OS secret store wiring (step 3a)', () => {
     for (const [place, text] of Object.entries(leaksOf(host, m, [ui]))) {
       expect(text, place).not.toContain(SEEDED)
     }
-    // jev reads it through the kernel port, never by importing preferences (R4).
+    // jev reads it through the kernel port, never through preferences' store (R4). The jev → preferences
+    // edge of 05 §5.2 allows type imports from the module's index only (ISSUE-192 reads PreferencesQueries).
     const jevSources = readdirSync(JEV_MODULE, { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
       .map((entry) => readFileSync(join(entry.parentPath, entry.name), 'utf8'))
     expect(jevSources.length).toBeGreaterThan(0)
-    for (const source of jevSources) expect(source).not.toMatch(/from '[^']*\/preferences[/']/)
+    for (const source of jevSources) {
+      expect(source).not.toMatch(/from '[^']*\/preferences\//)
+      expect(source).not.toMatch(/^import (?!type )[^\n]*from '[^']*\/preferences'/m)
+      expect(source).not.toMatch(/SecretStore/)
+    }
   })
 })
