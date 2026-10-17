@@ -4763,3 +4763,32 @@ describe('DwarfMessagePanel and the ask card in the composer’s place (ISSUE-26
     expect((composer.element as HTMLTextAreaElement).value).toBe('')
   })
 })
+
+/* --- ISSUE-266: an opened chat takes focus even when its composer cannot (NFR-A11Y-04) — one block, appended --- */
+
+/*
+ * An opened chat takes the keyboard one frame after it opens (accessibility.md, Focus). Its composer is the place,
+ * but never a composer the panel explains as dead (#217): then the chat's first live control, the dwarf's name,
+ * takes it, so the keyboard is in the chat that opened and Esc there closes it (found by the L12 E2E, ISSUE-266).
+ */
+describe('DwarfMessagePanel focus on opening, composer dead (ISSUE-266)', () => {
+  it('[NFR-A11Y-04] a chat whose composer cannot take text takes the focus on the dwarf’s name', async () => {
+    const wrapper = mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: { dwarf: defaultDwarf({ textDelivery: undefined }), focusOnOpen: true }
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).toBe(wrapper.get('.dm-msg__rename').element)
+    expect(document.activeElement).not.toBe(wrapper.get('.dm-composer textarea').element)
+    // Not opened on a selection, it takes nothing.
+    wrapper.unmount()
+    const drawn = mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: { dwarf: defaultDwarf({ textDelivery: undefined }), focusOnOpen: false }
+    })
+    await drawn.vm.$nextTick()
+    await drawn.vm.$nextTick()
+    expect(document.activeElement).not.toBe(drawn.get('.dm-msg__rename').element)
+  })
+})

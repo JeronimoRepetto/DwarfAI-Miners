@@ -38,13 +38,18 @@
 //   (application/recoverAfterHostStart.ts). The dwarfs it covers are the `sessionExited` check's
 //   coverage unless a caller passes its own.
 //
+// - The same `recovery(deps)` carries the report's display and the person's two actions (ISSUE-174;
+//   16 §4.5 `retryRecovery`, `dismissRecovery`; 07 machine 16): `report()` is the offered report not
+//   settled yet (the snapshot `recovery` section), `view()` the latest one, settled included (the
+//   `host.recovered` frame), and `shown()` records that a `ui` connection was written it
+//   (application/recoveryActions.ts). Both actions resume through the same `SessionResumer` as the
+//   boot pass (application/sessionResumer.ts).
+//
 // - The Jev path (ISSUE-164): with `advisor` (16 §4.5 `LaunchAdvisor`, the bridge → jev; later:
 //   ISSUE-182) composed, a "Let Jev choose" launch asks Jev in `routing` and settles with Jev's pick
 //   (S5.12), `LaunchHandedBack` with the configured default (S5.13), or one of the two Jev causes
 //   when nothing went out (S5.14, S5.15; ADR-020 item 2; domain/jevFallback.ts). Without it the
 //   path stays hidden until built: the launch is refused `jev-not-built`.
-//
-// The other members join with their issues: Retry and Dismiss of the report (later: ISSUE-174).
 import { LaunchUseCase, type LaunchAccepted, type LaunchingDeps } from './application/launch'
 import { MarkStoppedByPerson } from './application/markStoppedByPerson'
 import { createLaunchDrainGate } from './application/launchDrain'
@@ -67,16 +72,18 @@ import {
   type LaunchingRecoveryDeps,
   type RecoveryRun
 } from './application/recoverAfterHostStart'
+import { RecoveryActions } from './application/recoveryActions'
+import { SessionResumer } from './application/sessionResumer'
 import { LaunchingResetStep } from './adapters/sqlite/LaunchingResetStep'
 import { HostInvariantError } from '../../kernel/domain/errors'
-import type { DwarfId, LaunchId, ProviderIdentity } from '../../kernel/domain/values'
+import type { DwarfId, LaunchId, ProviderIdentity, Result } from '../../kernel/domain/values'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { StopAllOutcome } from '../../kernel/ports/stopAll'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import type { LaunchRecord } from './ports/launchRecordStore'
-import type { HostRecoveryReport } from './domain/recoveryReport'
+import type { HostRecoveryReport, RecoveryReportView } from './domain/recoveryReport'
 import type { LaunchRequestInput } from './application/launch'
 import type { LaunchCustomInput } from './application/launchCustom'
 import type { LaunchingEvent } from './application/events'
@@ -101,13 +108,20 @@ export type {
   LaunchHandedBack,
   LaunchingEvent,
   LaunchRequested,
+  RecoveryDismissed,
+  RecoveryRetried,
+  RecoveryRetryFailed,
   StopAllIncomplete
 } from './application/events'
 export { NO_HOST_RECOVERY } from './application/sessionExited'
 export { RESUME_SPACING_MS } from './application/recoverAfterHostStart'
 export type { LaunchingRecoveryDeps, RecoveryRun } from './application/recoverAfterHostStart'
 export type { RecoveryReportStore } from './ports/recoveryReportStore'
-export type { HostRecoveryReport, UnrecoveredReason } from './domain/recoveryReport'
+export type {
+  HostRecoveryReport,
+  RecoveryReportView,
+  UnrecoveredReason
+} from './domain/recoveryReport'
 export type { RecoveryCoverage, SessionExit, SessionExitResult } from './application/sessionExited'
 export type { LaunchAccepted, LaunchRefusal, LaunchRequestInput } from './application/launch'
 export type { LaunchCustomInput } from './application/launchCustom'
@@ -159,12 +173,25 @@ export interface LaunchingStopAll {
   stopAll(requestId: string): Promise<StopAllOutcome>
 }
 
-/** 16 §4.5 `LaunchCommands.recoverAfterHostStart` (ISSUE-173), once per Host boot. */
+/** 16 §4.5 `LaunchCommands.recoverAfterHostStart` (ISSUE-173) and the report's actions (ISSUE-174). */
 export interface LaunchingRecovery {
   /** Starts the pass (boot step 5 awaits `classified`); a second call answers the same run. */
   start(): RecoveryRun
   /** 16 §4.5: the report once every initial resume settled. */
   recoverAfterHostStart(): Promise<HostRecoveryReport>
+  /** 16 §4.5: the person's Retry of the grouped message; answered once every retried resume settled. */
+  retryRecovery(
+    hostEpoch: string,
+    requestId: string
+  ): Promise<Result<RecoveryReportView, 'no-report'>>
+  /** 16 §4.5: the person's Dismiss of the grouped message. */
+  dismissRecovery(hostEpoch: string, requestId: string): Result<void, 'no-report'>
+  /** The offered report not settled yet, with its display state; null otherwise (snapshot `recovery`). */
+  report(): RecoveryReportView | null
+  /** The latest offered report, settled included (the `host.recovered` frame); null before one. */
+  view(): RecoveryReportView | null
+  /** A `ui` connection was written the report (14 §4.3 rule 5; 07 S16.04): marked shown once. */
+  shown(): void
 }
 
 export interface Launching {
@@ -261,14 +288,37 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
       }),
     recovery: (recoveryDeps) => {
       if (recovery !== null) throw new HostInvariantError('the launching recovery is built once')
+      const resumer = new SessionResumer({
+        records: deps.records,
+        processes: deps.processes,
+        transactions: deps.transactions,
+        suppliers: { registry: deps.suppliers.registry, bindings: deps.suppliers.bindings },
+        crew: recoveryDeps.crew,
+        processControl: recoveryDeps.processControl,
+        hostEpoch: deps.hostEpoch
+      })
+      const actions = new RecoveryActions({
+        reports: recoveryDeps.reports,
+        records: deps.records,
+        transactions: deps.transactions,
+        resumer,
+        crew: recoveryDeps.crew,
+        bus: deps.bus,
+        clock: deps.clock,
+        scheduler: deps.scheduler,
+        ids: deps.ids,
+        hostEpoch: deps.hostEpoch,
+        log: deps.log
+      })
       const pass = new RecoverAfterHostStart({
         ...recoveryDeps,
         records: deps.records,
         processes: deps.processes,
         launches: deps.launches,
         transactions: deps.transactions,
-        suppliers: { registry: deps.suppliers.registry, bindings: deps.suppliers.bindings },
         coverage,
+        resumer,
+        display: actions,
         bus: deps.bus,
         clock: deps.clock,
         scheduler: deps.scheduler,
@@ -278,7 +328,12 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
       })
       recovery = {
         start: () => pass.start(),
-        recoverAfterHostStart: () => pass.start().settled
+        recoverAfterHostStart: () => pass.start().settled,
+        retryRecovery: (hostEpoch, requestId) => actions.retryRecovery(hostEpoch, requestId),
+        dismissRecovery: (hostEpoch, requestId) => actions.dismissRecovery(hostEpoch, requestId),
+        report: () => actions.report(),
+        view: () => actions.view(),
+        shown: () => actions.shown()
       }
       return recovery
     }

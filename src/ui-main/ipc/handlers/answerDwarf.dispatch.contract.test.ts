@@ -48,7 +48,7 @@ class FakeAnswerHost implements Pick<HostClient, 'call'> {
 
   call<M extends HostMethod>(method: M, params: HostParams[M]): Promise<HostResult[M]> {
     this.calls.push({ method, params })
-    return Promise.resolve({ kind: 'accepted' } as HostResult[M])
+    return Promise.resolve({ kind: 'accepted' }) as Promise<HostResult[M]>
   }
 }
 
