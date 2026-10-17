@@ -66,3 +66,24 @@ export function createMcpDelegationServer(
 ): DelegationServer {
   return new McpDelegationServer(listener, log, prompts)
 }
+
+// ISSUE-182 (coordinator ruling on #1413), appended: the lifecycle the composition root builds for
+// the relay of Claude's permission prompt tool (AMENDMENT-21), and the tool failure of a delegation
+// tool call that reaches a Host whose delegation endpoint is not composed yet (later: ISSUE-209).
+import { DelegationLifecycleService } from './application/delegationLifecycle'
+import type {
+  DelegationLifecycle,
+  DelegationLifecycleDeps,
+  PermissionPromptRelayIssuer
+} from './application/delegationLifecycle'
+
+export type { DelegationLifecycleDeps } from './application/delegationLifecycle'
+export type { DelegationLifecycleEvent } from './domain/events'
+export { toolFailure } from './domain/toolFailure'
+
+/** 16 §4.8 `DelegationLifecycle` (AMENDMENT-14) with AMENDMENT-21's prompt-tool relay issuer. */
+export function createDelegationLifecycle(
+  deps: DelegationLifecycleDeps
+): DelegationLifecycle & PermissionPromptRelayIssuer {
+  return new DelegationLifecycleService(deps)
+}

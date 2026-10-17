@@ -333,6 +333,110 @@ describe('launching and conversation write side wired', () => {
       evts<{ report: { items: unknown[] } }>(uiB, 'host.recovered').flatMap((f) => f.report.items)
     ).toEqual([])
   })
+
+  it('[SP-08, ADR-010, US-ASK-001.AC01] a Claude launch through the wired Host carries the prompt tool, and its permission ask reaches the person and goes back allowed', async () => {
+    const w = world()
+    const recorded = claudeRecording()
+    let spawn: RecordingSpawn | undefined
+    const h = await bootHost(w, {
+      epoch: 'epoch-182-a',
+      processes: ({ clock, scheduler }) => {
+        spawn = claudeSpawn(clock, scheduler, recorded.allow, recorded.help)
+        return spawn
+      },
+      installed: ['claude']
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+    const launched = await launchClaude(h, ui, mineId, recorded.allowPrompt)
+
+    // Every stream-json launch carries the relay entry and the prompt tool (AMENDMENT-21).
+    const argv = spawn?.spawns.find((s) => s.args.includes('-p'))?.args ?? []
+    expect(argv).toContain('--mcp-config')
+    expect(argv[argv.indexOf('--permission-prompt-tool') + 1]).toBe('mcp__dwarfai__permission')
+
+    // The relay connects with the launch's credential; its session is served `permission` only.
+    const relay = await h.relay(launched.launchId)
+    expect((await relay.listTools()).tools.map((t) => t.name)).toEqual(['permission'])
+    const answer = relay.callTool({
+      name: 'permission',
+      arguments: {
+        tool_name: 'Write',
+        input: { file_path: 'marker.txt', content: 'marker' },
+        tool_use_id: 'toolu_182_write'
+      }
+    })
+    await h.run(200, ui)
+    const opened = evts<{ ask: { id: string; dwarfId: string; kind: string } }>(ui, 'ask.opened')
+    expect(opened.map((f) => [f.ask.dwarfId, f.ask.kind])).toEqual([
+      [launched.dwarfId, 'permission']
+    ])
+    const allowed = await h.call(ui, 'asking.answerPermission', {
+      askId: opened[0]?.ask.id,
+      decision: 'allow',
+      requestId: h.rid()
+    })
+    await h.run(200, ui)
+
+    expect(allowed).toMatchObject({ ok: true, result: { kind: 'accepted' } })
+    const reply = (await answer) as { content: Array<{ type: string; text?: string }> }
+    expect(JSON.parse(reply.content[0]?.text ?? '{}')).toEqual({
+      behavior: 'allow',
+      updatedInput: { file_path: 'marker.txt', content: 'marker' }
+    })
+
+    // A dwarf that departs takes its relay credential with it: a live row is a live session (16 §5.7).
+    await h.call(ui, 'crew.stop', { dwarfId: launched.dwarfId, requestId: h.rid() })
+    await h.run(10_000, ui)
+    expect(
+      h.db.all(
+        'SELECT revoked_at IS NOT NULL AS revoked FROM delegation_tokens WHERE launch_id = ?',
+        [launched.launchId]
+      )
+    ).toEqual([{ revoked: 1 }])
+  })
+
+  it('[S4.18, SP-15, CH-01] a Host rebuilt after a crash resumes the Claude session with its prompt tool served again', async () => {
+    const w = world()
+    const recorded = claudeRecording()
+    const spawnsOfB: RecordingSpawn[] = []
+    const a = await bootHost(w, {
+      epoch: 'epoch-182-a',
+      processes: ({ clock, scheduler }) =>
+        claudeSpawn(clock, scheduler, recorded.resumeLaunch, recorded.help),
+      installed: ['claude']
+    })
+    const mineId = await a.mine()
+    const uiA = await a.attach()
+    const launched = await launchClaude(a, uiA, mineId, recorded.resumePrompt)
+
+    // Host A stops unexpectedly; Host B starts over the same database and data folder.
+    const b = await bootHost(w, {
+      epoch: 'epoch-182-b',
+      processes: ({ clock, scheduler }) => {
+        const spawn = claudeSpawn(clock, scheduler, recorded.resumed, recorded.help)
+        spawnsOfB.push(spawn)
+        return spawn
+      },
+      installed: ['claude'],
+      previousEpochEnd: { kind: 'crashed', rule: 'none' }
+    })
+    const uiB = await b.attach()
+    const resumeSpawned = () =>
+      spawnsOfB[0]?.spawns.some((spawn) => spawn.args.includes('--resume')) === true
+    for (let step = 0; step < 400 && !resumeSpawned(); step += 1) await b.run(50, uiB)
+    await b.run(4_000, uiB)
+
+    // The resume carries the launch's relay again, and the session is served the prompt tool.
+    const resumed = spawnsOfB[0]?.spawns.find((s) => s.args.includes('--resume'))?.args ?? []
+    expect(resumed).toContain('--mcp-config')
+    expect(b.events('DwarfDeparted')).toEqual([])
+    expect(
+      evts<{ report: { items: unknown[] } }>(uiB, 'host.recovered').flatMap((f) => f.report.items)
+    ).toEqual([])
+    const relay = await b.relay(launched.launchId)
+    expect((await relay.listTools()).tools.map((t) => t.name)).toEqual(['permission'])
+  })
 })
 
 /** The recorded Codex session of C-16 (15 §4.4): a launch, then the resume of the same thread. */
@@ -373,4 +477,97 @@ function codexSpawn(
       return { kind: 'exit', afterMs: 0, code: 1, stdout: '' }
     }
   })
+}
+
+const CLAUDE_FIXTURES = new URL('../../../../fixtures/claude/stream-json/', import.meta.url)
+
+/** The recorded Claude Code 2.1.301 sessions: SP-08 allow (one launch) and SP-15 (launch, resume). */
+function claudeRecording() {
+  const set = readFixtureSet(fileURLToPath(new URL('2.1.x/', CLAUDE_FIXTURES)))
+  const caseOf = (name: string) => set.cases.find((c) => c.name === name)
+  const allow = caseOf('sp08-allow')
+  const sp15 = caseOf('sp15-resume')
+  const allowVariant = allow?.variants[0]
+  const [resumeLaunch, resumed] = sp15?.variants[0]?.processes ?? []
+  const allowPrompt = (allow?.expected.script[0] as { prompt?: string } | undefined)?.prompt
+  const resumePrompt = (sp15?.expected.script[0] as { prompt?: string } | undefined)?.prompt
+  if (
+    allowVariant === undefined ||
+    resumeLaunch === undefined ||
+    resumed === undefined ||
+    allowPrompt === undefined ||
+    resumePrompt === undefined
+  ) {
+    throw new Error('the SP-08 / SP-15 recordings are missing')
+  }
+  return {
+    help: readFileSync(
+      new URL('2.1.x/probe-help-without-prompt-tool.jsonl', CLAUDE_FIXTURES),
+      'utf8'
+    ),
+    allow: { received: allowVariant.received, gates: [...(allowVariant.gates ?? [])] },
+    allowPrompt,
+    resumeLaunch,
+    resumed,
+    resumePrompt
+  }
+}
+
+/** `claude --help` answers the recorded 2.1.301 help; a launch or a resume replays `recorded`. */
+function claudeSpawn(
+  clock: Parameters<Parameters<typeof bootHost>[1]['processes']>[0]['clock'],
+  scheduler: Parameters<Parameters<typeof bootHost>[1]['processes']>[0]['scheduler'],
+  recorded: FixtureProcess,
+  help: string
+): RecordingSpawn {
+  return new RecordingSpawn({
+    clock,
+    scheduler,
+    decide: (spec) => {
+      if (spec.args.includes('--help')) return { kind: 'exit', afterMs: 0, code: 0, stdout: help }
+      if (spec.args.includes('-p')) {
+        return {
+          kind: 'fixture',
+          transport: new FixtureTransport({
+            received: recorded.received,
+            format: 'jsonl',
+            gates: recorded.gates
+          })
+        }
+      }
+      return { kind: 'exit', afterMs: 0, code: 1, stdout: '' }
+    }
+  })
+}
+
+/** A Claude launch into `mineId` over `ui`, settled: its launch and the dwarf it produced. */
+async function launchClaude(
+  h: Host,
+  ui: Parameters<Host['settle']>[0],
+  mineId: MineId,
+  prompt: string
+): Promise<{ launchId: LaunchId; dwarfId: DwarfId }> {
+  const answered = await h.call(ui, 'launching.launch', {
+    mineId,
+    way: { kind: 'supplier', providerId: 'claude' },
+    prompt,
+    jevOn: false,
+    jevAutoAccept: false,
+    requestId: h.rid()
+  })
+  expect(answered).toMatchObject({ ok: true })
+  // The relay's credential and `--mcp-config` files are real files: fake time moves only once each
+  // step's disk work answered, so a slow disk never lets the handshake budget run out first.
+  const settledFrame = () =>
+    evts<LaunchChanged>(ui, 'launch.changed').find((frame) => frame.launch.state === 'succeeded')
+  for (let step = 0; step < 400 && settledFrame() === undefined; step += 1) {
+    if (evts(ui, 'launch.failed').length > 0) break
+    await h.run(50, ui)
+  }
+  // The 3 s early-failure window (ADR-020 D4) is part of the success.
+  const settled = settledFrame()?.launch
+  if (settled?.dwarfId === undefined) {
+    throw new Error(`claude did not launch: ${JSON.stringify(evts(ui, 'launch.failed'))}`)
+  }
+  return { launchId: settled.launchId, dwarfId: settled.dwarfId }
 }

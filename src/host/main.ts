@@ -258,6 +258,14 @@ import { HOST_FRAMES } from './wiring/hostFrames'
 import { createLaunchedSessions } from './wiring/launchedSessions'
 import { createLaunchAdvisor } from './wiring/bridges/launchAdvisor'
 import {
+  mcpEndpointListener,
+  wirePromptTool,
+  type PromptToolWiringDeps,
+  type WiredPromptTool
+} from './wiring/promptTool'
+import type { DelegationLifecycleEvent } from './modules/delegation'
+import { NodeMcpConfigFiles } from './modules/suppliers/adapters/drivers/claude-stream-json/mcpConfigFile'
+import {
   createLaunchDrainGate,
   type LaunchingEvent,
   type LaunchingRecovery,
@@ -310,6 +318,7 @@ type HostEvent =
   | AttentionRouteEvent
   | AskingRouteEvent
   | LaunchingEvent
+  | DelegationLifecycleEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -543,6 +552,10 @@ async function bootHost(base: HostBase): Promise<void> {
   let configWriter: ConfigWriterEngine | undefined
   // Built by boot step 4 over asking's hook route, started by step 6, closed by the clean exit.
   let hookIngress: HttpIngress | undefined
+  // Claude's permission prompt tool (AMENDMENT-21; ISSUE-182, wiring/promptTool.ts): built by boot
+  // step 4 before suppliers attaches the stream-json driver, swept at step 5, listening from step 6
+  // (the MCP endpoint), closed by the clean exit.
+  let promptTool: WiredPromptTool | undefined
   let resetSteps: WiredModuleResetSteps | undefined
   // No spawn-site table reaches the Host yet: no site is stored, and the map places each marker
   // itself (chooseMapSite's documented fallback). The mines module and its Reset step share it.
@@ -730,7 +743,9 @@ async function bootHost(base: HostBase): Promise<void> {
           modules.asking?.stop()
           modules.launching?.stop()
         },
-        closeIngress: () => hookIngress?.close() ?? Promise.resolve(),
+        closeIngress: async () => {
+          await Promise.all([hookIngress?.close(), promptTool?.close()])
+        },
         exit
       })
       return createBootSteps({
@@ -886,6 +901,24 @@ async function bootHost(base: HostBase): Promise<void> {
           ) {
             throw new HostInvariantError('boot step 4 runs after step 3 wired preferences')
           }
+          // Claude's permission prompt tool, before suppliers attaches its driver (ISSUE-182). A typed
+          // constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const promptToolDeps: PromptToolWiringDeps = {
+            db,
+            transactions,
+            bus,
+            clock,
+            ids,
+            hostEpoch: epoch,
+            log,
+            preferences: modules.preferences.preferences.queries,
+            mintCredential,
+            execPath: dataDir.execPath,
+            hostEntryPath: join(appRoot, 'out', 'host', 'main.js'),
+            hostDataDir: dataDir.userDataDir,
+            mcpConfigFiles: new NodeMcpConfigFiles()
+          }
+          promptTool = wirePromptTool(promptToolDeps)
           modules.suppliers = wireSuppliers({
             publicBuild: isPublicBuild(buildKindOf(dataDir)),
             clock,
@@ -913,10 +946,10 @@ async function bootHost(base: HostBase): Promise<void> {
               platform: hostRuntime().os as NodeJS.Platform,
               redact: redactSecrets
             },
-            // The person's own CLIs (ISSUE-182): the Codex app-server driver, with the stored launch
-            // record a restarted Host's resume reads (ISSUE-173). Claude's stream-json driver joins
-            // with its permission prompt tool (AMENDMENT-21), which needs the delegation relay
-            // composed (later: ISSUE-209): until then it is not attached (hidden until built).
+            // The person's own CLIs (ISSUE-182): the Codex app-server driver and Claude's stream-json
+            // driver with its permission prompt tool (AMENDMENT-21), each with the stored launch
+            // record a restarted Host's resume reads (ISSUE-173), which names the launch whose live
+            // relay the Claude resume is served again.
             cliDrivers: {
               processControl,
               loginEnv: process.env,
@@ -924,7 +957,8 @@ async function bootHost(base: HostBase): Promise<void> {
               platform: hostRuntime().os as 'win32' | 'darwin' | 'linux',
               redact: redactSecrets,
               clientInfo: { name: 'dwarfai', version: __DWARFAI_APP_VERSION__ },
-              resumeContext: launched.resumeContext
+              resumeContext: launched.resumeContext,
+              claudeStreamJson: promptTool.driver
             }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))
@@ -1348,25 +1382,53 @@ async function bootHost(base: HostBase): Promise<void> {
             throw new HostInvariantError('boot step 5 runs after step 4 wired launching')
           }
           const recovery = launchingRecovery
+          const tool = promptTool
           return classifyAfterDetection({
             detection: suppliers.bootDetection,
-            classify: () => recovery.start().classified
+            // Then the ADR-015 sweep of the relay tokens: a launch that never reached a dwarf loses
+            // its credential; a recovered session keeps it for its resume (ISSUE-182).
+            classify: async () => {
+              await recovery.start().classified
+              await tool?.sweepOrphans()
+            }
           })
         },
         // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
         // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
         // (ISSUE-209).
-        startHookIngress: () => {
-          if (hookIngress === undefined || configWriter === undefined) {
+        startHookIngress: async () => {
+          if (hookIngress === undefined || configWriter === undefined || promptTool === undefined) {
             throw new HostInvariantError('boot step 6 runs after steps 3 and 4 built its parts')
           }
-          return startHookIngressAtBoot(
+          await startHookIngressAtBoot(
             hookIngress,
             log,
             claudeHookEntryFollower({
               engine: configWriter,
               rolledBack: CUT_2_ROLLBACK_CHOICES.rolledBack,
               mintCredential
+            })
+          )
+          // The MCP endpoint (ADR-013 item 3; ISSUE-182): Claude's relay connects here for the
+          // permission prompt tool. A failure is logged; the sessions then deny every tool use.
+          await promptTool.listen(
+            mcpEndpointListener({
+              facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
+              tokens: promptTool.tokens,
+              clock,
+              scheduler,
+              ids,
+              log,
+              identity: {
+                hostVersion: __DWARFAI_APP_VERSION__,
+                buildId: __DWARFAI_BUILD_ID__,
+                protocolVersion: PROTOCOL_VERSION
+              },
+              epoch,
+              state: () => hostState.current(),
+              ownerOnlyPipe: createNativeOwnerOnlyPipe({
+                prebuildsDir: winPipePrebuildsDir(appRoot)
+              })
             })
           )
         },

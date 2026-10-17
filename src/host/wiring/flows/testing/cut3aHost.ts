@@ -65,6 +65,7 @@ import type {
 } from '../../../modules/suppliers'
 import { SqliteCapabilityRecordStore } from '../../../modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
 import { NodeFs } from '../../../platform/fs/NodeFs'
+import { hostRuntime } from '../../../platform/process/runtimeFacts'
 import { openReadOnlySnapshot } from '../../../platform/sqlite/readOnlySnapshot'
 import { SqliteLifecycleFactLog } from '../../../platform/sqlite/SqliteLifecycleFactLog'
 import { SqliteTransactionRunner } from '../../../platform/sqlite/SqliteTransactionRunner'
@@ -129,6 +130,15 @@ import {
 } from '../../routes/observation'
 import { launchableSource, serveSuppliers } from '../../routes/suppliers'
 import { wireSuppliers, type WiredSuppliers } from '../../suppliersWiring'
+import { wirePromptTool, type PromptToolWiringDeps, type WiredPromptTool } from '../../promptTool'
+import { mintCredential } from '../../../transport/auth/mintCredential'
+import { NodeMcpConfigFiles } from '../../../modules/suppliers/adapters/drivers/claude-stream-json/mcpConfigFile'
+import type {
+  DelegationLifecycleEvent,
+  DelegationRelayConnection,
+  DelegationRelayListener,
+  DelegationToken
+} from '../../../modules/delegation'
 
 export const T0 = 1_792_225_100_000 as Instant
 export const JEV_KEY = 'ts-flow-182-key'
@@ -201,6 +211,7 @@ export type HostBusEvent =
   | AttentionRouteEvent
   | AskingRouteEvent
   | LaunchingEvent
+  | DelegationLifecycleEvent
 
 export interface BootOptions {
   /** This start's epoch (`HelloOk.epoch`, the spawn tag's last field). */
@@ -368,6 +379,8 @@ export async function bootHost(w: World, options: BootOptions) {
     conversation?: ReturnType<typeof servedConversation.wire>
   } = {}
   let wiredPreferences: WiredPreferences | undefined
+  let promptTool: WiredPromptTool | undefined
+  const relays = inProcessRelays()
   const ran = <T>(name: string, port: () => T): (() => T) => {
     return () => {
       order.push(name)
@@ -420,6 +433,24 @@ export async function bootHost(w: World, options: BootOptions) {
         constructModules: ran('construct-modules', () => {
           const preferences = wiredPreferences
           if (preferences === undefined) throw new Error('step 4 runs after step 3')
+          // As host/main.ts: Claude's permission prompt tool, before suppliers attaches its driver.
+          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
+          const promptToolDeps: PromptToolWiringDeps = {
+            db,
+            transactions,
+            bus,
+            clock,
+            ids,
+            hostEpoch: epoch,
+            log,
+            preferences: preferences.preferences.queries,
+            mintCredential,
+            execPath: join(w.root, 'DwarfAI-Miners'),
+            hostEntryPath: join(w.root, 'out', 'host', 'main.js'),
+            hostDataDir: w.root,
+            mcpConfigFiles: new NodeMcpConfigFiles()
+          }
+          promptTool = wirePromptTool(promptToolDeps)
           // As host/main.ts: suppliers with the CLI drivers and the launched sessions' resume lookup.
           const suppliers = wireSuppliers({
             publicBuild: false,
@@ -443,10 +474,14 @@ export async function bootHost(w: World, options: BootOptions) {
               processControl: processes,
               loginEnv: { PATH: TOOLS },
               home: join(w.root, 'home'),
-              platform: 'linux',
+              // This machine's OS, as host/main.ts passes `hostRuntime().os`: the relay entry's
+              // paths are real paths here (relayEntry.ts refuses a path the OS does not call absolute).
+              platform: hostRuntime().os as 'win32' | 'darwin' | 'linux',
               redact: redactSecrets,
               clientInfo: { name: 'dwarfai', version: '0.0.0' },
-              resumeContext: launched.resumeContext
+              resumeContext: launched.resumeContext,
+              // As host/main.ts: Claude's stream-json driver with its permission prompt tool.
+              claudeStreamJson: promptTool.driver
             }
           })
           host.suppliers = suppliers
@@ -702,10 +737,17 @@ export async function bootHost(w: World, options: BootOptions) {
           }
           return classifyAfterDetection({
             detection: host.suppliers.bootDetection,
-            classify: () => recovery.start().classified
+            classify: async () => {
+              await recovery.start().classified
+              await promptTool?.sweepOrphans()
+            }
           })
         }),
-        startHookIngress: ran('start-endpoints', () => Promise.resolve()),
+        // As host/main.ts step 6: the MCP server listens (here on the in-process relay listener).
+        startHookIngress: ran(
+          'start-endpoints',
+          () => promptTool?.listen(relays.listener) ?? Promise.resolve()
+        ),
         startObservation: ran('start-observation', () => host.observation?.start?.()),
         startModules: ran('start-modules', () => host.mines?.start())
       }),
@@ -832,6 +874,8 @@ export async function bootHost(w: World, options: BootOptions) {
     } while (left > 0)
   }
   return {
+    /** A relay of `launchId`'s credential connects to the MCP endpoint: an MCP client over it. */
+    relay: (launchId: string) => relays.connect(db, launchId),
     clock,
     log,
     published,
@@ -879,4 +923,78 @@ export function evts<T = unknown>(client: FrameClient, name: string): T[] {
     const evt = evtFrameSchema.parse(frame)
     return evt.name === name ? [evt.data as T] : []
   })
+}
+
+/** The relay's side of one MCP connection, as raw JSON-RPC (R11: the MCP SDK stays in delegation). */
+export interface RelayClient {
+  listTools(): Promise<{ tools: Array<{ name: string }> }>
+  callTool(call: { name: string; arguments: Record<string, unknown> }): Promise<unknown>
+}
+
+/**
+ * The MCP endpoint's listener in process (the relay's connection after its `McpHello`, 16 §5.2):
+ * `connect` reads the launch's live token row as the transport binds it at authentication (without
+ * its hash) and hands its connection to the server; the returned client speaks MCP JSON-RPC to it
+ * as the relay forwards Claude's frames (initialize, then `tools/list` and `tools/call`).
+ */
+function inProcessRelays() {
+  let accept: ((connection: DelegationRelayConnection) => void) | undefined
+  const listener: DelegationRelayListener = {
+    listen: (onConnection) => {
+      accept = onConnection
+      return Promise.resolve({ endpoint: { path: 'in-process' }, close: () => Promise.resolve() })
+    }
+  }
+  const connect = async (db: SqliteDatabase, launchId: string): Promise<RelayClient> => {
+    const [row] = db.all(
+      `SELECT launch_id, parent_dwarf_id, mechanism, issued_at FROM delegation_tokens
+       WHERE launch_id = ? AND revoked_at IS NULL`,
+      [launchId]
+    )
+    if (row === undefined || accept === undefined) throw new Error(`no live relay for ${launchId}`)
+    const token = {
+      launchId: String(row['launch_id']),
+      parentDwarfId: row['parent_dwarf_id'] === null ? null : String(row['parent_dwarf_id']),
+      mechanism: String(row['mechanism']),
+      issuedAt: Number(row['issued_at'])
+    } as DelegationToken
+    const toServer: Array<(message: unknown) => void> = []
+    const answers = new Map<number, (result: unknown) => void>()
+    let closed = false
+    const connection: DelegationRelayConnection = {
+      token,
+      send: (message) => {
+        const { id, result, error } = message as { id?: number; result?: unknown; error?: unknown }
+        if (id !== undefined) answers.get(id)?.(error === undefined ? result : { error })
+      },
+      onMessage: (l) => toServer.push(l),
+      onClose: () => undefined,
+      close: () => {
+        closed = true
+      }
+    }
+    accept(connection)
+    let nextId = 0
+    const request = (method: string, params: unknown): Promise<unknown> => {
+      nextId += 1
+      const id = nextId
+      const answered = new Promise<unknown>((resolve) => answers.set(id, resolve))
+      queueMicrotask(() => {
+        if (!closed) toServer.forEach((l) => l({ jsonrpc: '2.0', id, method, params }))
+      })
+      return answered
+    }
+    await request('initialize', {
+      protocolVersion: '2025-06-18',
+      capabilities: {},
+      clientInfo: { name: 'claude-relay-under-test', version: '2.1.301' }
+    })
+    toServer.forEach((l) => l({ jsonrpc: '2.0', method: 'notifications/initialized' }))
+    onTestFinished(() => connection.close())
+    return {
+      listTools: () => request('tools/list', {}) as Promise<{ tools: Array<{ name: string }> }>,
+      callTool: (call) => request('tools/call', call)
+    }
+  }
+  return { listener, connect }
 }
