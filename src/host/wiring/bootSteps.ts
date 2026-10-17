@@ -23,7 +23,7 @@ import type { ConnectionRegistry } from '../transport/connectionRegistry'
 import type { Dispatcher } from '../transport/dispatcher'
 import { bindEndpoint, EndpointBindError, type BoundEndpoint } from '../transport/endpoint/server'
 import type { ListenOwnerOnlyPipe } from '../transport/endpoint/windowsPipeSecurity'
-import type { HostIdentity } from '../transport/hello'
+import type { HelloDeps, HostIdentity } from '../transport/hello'
 import { createHelloProbe } from '../transport/helloProbe'
 import { deferUntilPublished } from '../transport/runFiles/hostIdentityFile'
 import { errorCode, type BootStep, type BootStepName, type HostStateReport } from './boot'
@@ -323,6 +323,11 @@ export interface UiEndpointDeps {
   conditions?: () => Iterable<string>
   /** `run/host.identity` (HostIdentityFile), written right after the bind (ADR-002 D3). */
   identityFile: { publish(): Promise<unknown>; remove(): Promise<void> }
+  /**
+   * The console viewer's per-view token check (ADR-003 item 12; ISSUE-170: conversation's
+   * `createHostConsoleResolver`). Absent: every `viewer` hello is refused.
+   */
+  viewers?: HelloDeps['viewers']
 }
 
 /**
@@ -407,7 +412,8 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
             log: deps.log,
             dispatcher: deps.dispatcher,
             connections: deps.connections,
-            throttle
+            throttle,
+            ...(deps.viewers === undefined ? {} : { viewers: deps.viewers })
           })
         ),
         ownerOnlyPipe: deps.ownerOnlyPipe

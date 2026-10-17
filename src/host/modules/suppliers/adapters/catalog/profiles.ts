@@ -21,7 +21,7 @@ import {
   type CapabilityCeiling,
   type ProviderCapabilities
 } from '../../domain/capabilities'
-import type { CatalogRecord } from '../../domain/profile'
+import type { CatalogRecord, PermissionModeCatalog, ProviderProfile } from '../../domain/profile'
 
 /** 15 §3 rows C2–C5 (preferred driver C3, `acp`). */
 const CLAUDE_CEILING: CapabilityCeiling = {
@@ -234,3 +234,17 @@ export const CATALOG_RECORDS: readonly CatalogRecord[] = [
   },
   SIMULATED_RECORD
 ]
+
+/**
+ * ADR-011 item 1 and 15 §2.8 row "Kiro / other ACP": a provider whose permission ceiling is
+ * `none` and that has no verified non-interactive deny policy is not launchable in public builds
+ * (it may still be observed). Its record states it as `publicLaunch: 'gated'`, which the
+ * catalogue and the registry apply; the catalog test holds every record to this rule, so an ACP
+ * agent documenting no permission request (ISSUE-154; Kiro, ISSUE-158) cannot be offered.
+ */
+export function publicLaunchOf(
+  ceiling: Pick<CapabilityCeiling, 'permission'>,
+  modes?: PermissionModeCatalog
+): ProviderProfile['publicLaunch'] {
+  return ceiling.permission === 'none' && modes?.denyPolicyVerified !== true ? 'gated' : 'enabled'
+}

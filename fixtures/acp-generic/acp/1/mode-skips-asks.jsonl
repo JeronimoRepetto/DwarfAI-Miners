@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false,"embeddedContext":true},"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"synthetic-acp-agent","version":"0.0.0-synthetic"},"authMethods":[]}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"00000000-0000-4000-8000-00000000ac01","modes":{"currentModeId":"bypassPermissions","availableModes":[{"id":"ask","name":"Ask"},{"id":"bypassPermissions","name":"Bypass permissions"}]}}}

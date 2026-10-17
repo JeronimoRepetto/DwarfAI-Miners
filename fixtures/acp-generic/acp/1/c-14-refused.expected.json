@@ -1,0 +1,105 @@
+{
+  "case": "C-14",
+  "description": "ADR-010 item 5, 15 §2.7: ACP has no acknowledgement or error for a reply, so the one answer its channel rejects is one the option set cannot carry: an Allow for a set without allow_once is refused channel-rejected and nothing is sent (never allow_always); the ask stays open for the broker's Deny.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "toolu_000000000000000000000111",
+      "decision": "allow"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "kind": "refused",
+      "reason": "channel-rejected"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "acp-generic:acp-generic:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "acp-generic:acp-generic:{session}:toolu_000000000000000000000111",
+        "turnKey": "acp-generic:acp-generic:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "Bash",
+        "summary": "npm publish",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "toolu_000000000000000000000111",
+        "channel": "driver",
+        "payload": {
+          "toolName": "Bash",
+          "requestText": "npm publish"
+        },
+        "options": {
+          "hasAllowOnce": false,
+          "hasRejectOnce": true
+        },
+        "turnKey": "acp-generic:acp-generic:{session}:turn:1"
+      }
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    }
+  ]
+}
