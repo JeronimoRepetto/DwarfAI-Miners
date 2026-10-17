@@ -47,6 +47,7 @@ import type {
   SessionRef,
   TurnInput
 } from '../../../../ports/providerDriver'
+import { turnEndOf } from '../stopReason'
 import { answerReply, CANCEL, DECLINE, formOf, type ElicitationForm } from './elicitation'
 import { EventChannel } from './eventChannel'
 import {
@@ -902,26 +903,6 @@ export class AcpSession implements DriverSession {
 
   private tail(): string {
     return this.stderrTail.slice(-TAIL_CHARS)
-  }
-}
-
-/** ADR-021 item 5: the ACP `stopReason` vocabulary; an unknown word is errored with its detail. */
-export function turnEndOf(stopReason: string): { kind: TurnEndKind; detail?: string } {
-  switch (stopReason) {
-    case 'end_turn':
-      return { kind: 'concluded' }
-    case 'max_tokens':
-    case 'max_turn_requests':
-      return { kind: 'capped', detail: stopReason }
-    case 'cancelled':
-      return { kind: 'interrupted' }
-    case 'refusal':
-      return { kind: 'errored', detail: stopReason }
-    default:
-      return {
-        kind: 'errored',
-        detail: stopReason === '' ? 'stopReason without a value' : stopReason
-      }
   }
 }
 
