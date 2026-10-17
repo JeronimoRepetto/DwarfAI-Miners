@@ -1,0 +1,62 @@
+{
+  "case": "C-28",
+  "description": "FM-064, ADR-014 item 5, 15 §1.3 close: the server answers thread/archive with a protocol error; end-thread is failed protocol-error (ADR-014 then falls through to the tree kill of DwarfAI's own server), and the driver signals no process.",
+  "script": [{ "do": "launch" }, { "do": "close", "mode": "end-thread" }],
+  "outcomes": [{ "resolved": true }, { "kind": "failed", "reason": "protocol-error" }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000001",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "0000000a-0000-4000-8000-000000000001",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "thread/unsubscribe",
+      "params": { "threadId": "{session}" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "thread/archive",
+      "params": { "threadId": "{session}" }
+    }
+  ]
+}

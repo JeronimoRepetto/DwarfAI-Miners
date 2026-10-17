@@ -1,0 +1,39 @@
+{
+  "case": "FM-085",
+  "description": "FM-085, L-07, 15 §4.4: the initialize response names another originator (Codex Desktop) than this connection's client (dwarfai), so the server that answers was started by another Codex host. The turn is attributed only when the rollout confirms it; with no confirmation its messages, usage and turn.ended are not reported and the provider-error path is taken (FM-067's toast). Status still goes working then idle.",
+  "script": [{ "do": "launch" }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "error",
+      "cause": {
+        "kind": "provider-error",
+        "detail": "a foreign Codex app-server ran the turn and its rollout did not confirm it",
+        "retryable": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    }
+  ]
+}

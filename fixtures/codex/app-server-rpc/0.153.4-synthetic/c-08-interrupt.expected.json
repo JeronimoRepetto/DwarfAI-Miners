@@ -1,0 +1,92 @@
+{
+  "case": "C-08",
+  "description": "15 §1.3 interrupt, §4.4 End / kill, ADR-021: mid-permission, interrupt sends turn/interrupt for the open turn and resolves on its response (turn/interrupt is not the turn's end, HR §6 #17); the provider then resolves the pending approval (ask.resolved cancelled, since DwarfAI interrupted its turn) and completes the turn interrupted (cancelledFromApp true).",
+  "script": [{ "do": "launch" }, { "do": "interrupt" }],
+  "outcomes": [{ "resolved": true }, null],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "0",
+        "channel": "driver",
+        "payload": { "toolName": "commandExecution", "requestText": "npm test" },
+        "options": { "hasAllowOnce": true, "hasRejectOnce": true },
+        "turnKey": "0000000a-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000001",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000002",
+        "turnKey": "0000000a-0000-4000-8000-000000000001",
+        "kind": "tool",
+        "toolName": "commandExecution",
+        "summary": "npm test",
+        "state": "started",
+        "at": 1792225108644
+      }
+    },
+    { "t": "ask.resolved", "providerRequestId": "0", "by": "cancelled" },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000002",
+        "turnKey": "0000000a-0000-4000-8000-000000000001",
+        "kind": "tool",
+        "toolName": "commandExecution",
+        "summary": "npm test",
+        "state": "failed",
+        "at": 1792225108645
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "0000000a-0000-4000-8000-000000000001",
+        "kind": "interrupted",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": true
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "turn/interrupt",
+      "params": { "threadId": "{session}", "turnId": "0000000a-0000-4000-8000-000000000001" }
+    }
+  ]
+}
