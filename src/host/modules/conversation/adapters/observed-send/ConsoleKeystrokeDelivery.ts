@@ -23,8 +23,8 @@
 // and is bounded by OBSERVED_KEY_WRITE_TIMEOUT_MS; a tool that overruns is ended by its own
 // identity and the press is refused. A tool's environment is a named allowlist of the Host's. A failure of any step is `refused`: the caller (asking's
 // keystroke channel) turns it into `channel-unavailable`. Nothing here logs a key or a path.
-import { matchesRecorded, type ProcessIdentity } from '../../../../kernel/domain/processIdentity'
-import type { ProcessControl, SpawnedProcess } from '../../../../kernel/ports/processControl'
+import type { ProcessIdentity } from '../../../../kernel/domain/processIdentity'
+import type { ProcessControl } from '../../../../kernel/ports/processControl'
 import type { Scheduler } from '../../../../kernel/ports/scheduler'
 import {
   POWERSHELL_ARGS,
@@ -40,30 +40,22 @@ import {
   windowsKeyWriteScript,
   type ConsoleKey
 } from './consoleKeys'
+import {
+  DEFAULT_COMMANDS,
+  runTool,
+  targetNow,
+  toolEnvironment,
+  type ConsoleCommand,
+  type ConsoleTool
+} from './consoleTools'
+
+export { TOOL_ENV_NAMES, type ConsoleCommand, type ConsoleTool } from './consoleTools'
 
 /**
  * The bound on one tool run. Below the ask broker's 30 s hand-over bound (ADR-010 item 8), so a
  * press is decided before the broker gives up on it; measured writes take about 250 ms (#371).
  */
 export const OBSERVED_KEY_WRITE_TIMEOUT_MS = 20_000
-
-/** How much of a tool's stdout is read; the tools here print one line or a pane list. */
-const STDOUT_CAP_BYTES = 64 * 1024
-
-/** An executable and the arguments placed before the tool's own (a test points it at a stub). */
-export interface ConsoleCommand {
-  executable: string
-  prefix: readonly string[]
-}
-
-export type ConsoleTool = 'powershell' | 'ps' | 'tmux' | 'osascript'
-
-const DEFAULT_COMMANDS: Readonly<Record<ConsoleTool, ConsoleCommand>> = {
-  powershell: { executable: 'powershell.exe', prefix: [] },
-  ps: { executable: 'ps', prefix: [] },
-  tmux: { executable: 'tmux', prefix: [] },
-  osascript: { executable: 'osascript', prefix: [] }
-}
 
 export interface ConsoleKeystrokeDeliveryDeps {
   /** The kernel process port: the identity probe and every tool run (R17). */
@@ -82,45 +74,6 @@ export interface ConsoleKeystrokeDeliveryDeps {
   commands?: Partial<Record<ConsoleTool, ConsoleCommand>>
   timeoutMs?: number
 }
-
-/**
- * The variables a tool may need to start and find its server: the executable search path, the
- * Windows basics PowerShell's `Add-Type` compiles with, and the home, user and tmux socket folder
- * tmux finds its server by. Nothing else of the Host's environment reaches a tool.
- */
-export const TOOL_ENV_NAMES: readonly string[] = [
-  'PATH',
-  'Path',
-  'PATHEXT',
-  'SystemRoot',
-  'SystemDrive',
-  'windir',
-  'TEMP',
-  'TMP',
-  'USERPROFILE',
-  'LOCALAPPDATA',
-  'APPDATA',
-  'HOME',
-  'USER',
-  'LOGNAME',
-  'TMPDIR',
-  'TMUX_TMPDIR',
-  'LANG'
-]
-
-/** The named variables of `env` that are set. */
-function toolEnvironment(
-  env: Readonly<Record<string, string | undefined>>
-): Record<string, string> {
-  const picked: Record<string, string> = {}
-  for (const name of TOOL_ENV_NAMES) {
-    const value = env[name]
-    if (value !== undefined) picked[name] = value
-  }
-  return picked
-}
-
-type ToolRun = { code: number | null; stdout: string } | null
 
 export class ConsoleKeystrokeDelivery {
   constructor(private readonly deps: ConsoleKeystrokeDeliveryDeps) {}
@@ -179,64 +132,25 @@ export class ConsoleKeystrokeDelivery {
 
   /** ADR-014 item 1: only a full identity equal to the recorded one is the target. */
   private async stillTheTarget(target: ProcessIdentity): Promise<boolean> {
-    return matchesRecorded(await this.deps.processes.probe(target.pid), target)
+    return (await targetNow(this.deps.processes, target)) === 'same'
   }
 
   /** Runs one tool to its exit, or null when it could not start, failed, or overran its bound. */
-  private async run(tool: ConsoleTool, args: readonly string[], stdin = ''): Promise<ToolRun> {
-    const { executable, prefix } = this.deps.commands?.[tool] ?? DEFAULT_COMMANDS[tool]
-    let child: SpawnedProcess
-    try {
-      child = this.deps.processes.spawn({
-        executable,
-        args: [...prefix, ...args],
-        cwd: this.deps.cwd,
+  private async run(
+    tool: ConsoleTool,
+    args: readonly string[],
+    stdin = ''
+  ): Promise<{ code: number | null; stdout: string } | null> {
+    const run = await runTool(
+      this.deps,
+      this.deps.commands?.[tool] ?? DEFAULT_COMMANDS[tool],
+      args,
+      {
         env: toolEnvironment(this.deps.env),
-        processGroup: 'inherit',
-        stdio: 'pipe'
-      })
-    } catch {
-      return null
-    }
-    let stdout = ''
-    const drained = new Promise<void>((resolve) => {
-      if (child.stdout === null) return resolve()
-      child.stdout.on('data', (chunk: Buffer | string) => {
-        if (stdout.length < STDOUT_CAP_BYTES) stdout += chunk.toString()
-      })
-      child.stdout.once('end', () => resolve())
-      child.stdout.once('close', () => resolve())
-      child.stdout.once('error', () => resolve())
-    })
-    child.stderr?.resume()
-    child.stdin?.on('error', () => {})
-    child.stdin?.end(stdin)
-
-    let overran!: () => void
-    const deadline = new Promise<'overran'>((resolve) => (overran = () => resolve('overran')))
-    const timer = this.deps.scheduler.after(
-      this.deps.timeoutMs ?? OBSERVED_KEY_WRITE_TIMEOUT_MS,
-      () => {
-        // Its own child, ended by its identity; never the session's process and never a group.
-        void child.identity
-          .then((identity) =>
-            this.deps.processes.killTree(identity, { graceMs: 0, group: 'foreign' })
-          )
-          .catch(() => {})
-        overran()
+        stdin,
+        timeoutMs: this.deps.timeoutMs ?? OBSERVED_KEY_WRITE_TIMEOUT_MS
       }
     )
-    try {
-      const outcome = await Promise.race([
-        Promise.all([child.exited, drained]).then(([exit]) => exit),
-        deadline
-      ])
-      if (outcome === 'overran') return null
-      return { code: outcome.code, stdout }
-    } catch {
-      return null
-    } finally {
-      timer.cancel()
-    }
+    return run.kind === 'exited' ? { code: run.code, stdout: run.stdout } : null
   }
 }
