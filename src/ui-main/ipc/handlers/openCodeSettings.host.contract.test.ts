@@ -33,7 +33,8 @@ const FRESH: PreferencesView = {
   preferences: {
     subagentDelegationOn: false,
     routingProfile: 'balanced',
-    systemNotificationsOn: true
+    systemNotificationsOn: true,
+    openCodePermissionsOn: false
   },
   secrets: [
     { name: 'jev-key', configured: false },

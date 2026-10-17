@@ -5,7 +5,7 @@
 // behind in-process duplexes (14 §2.3 B-M14, §2.4 B-F25, §1.6, §1.7, §3.4, §3.5; ADR-011 item 7;
 // ADR-016 items 1, 5–7; 16 §7.4; AMENDMENT-7). The module side is a scripted toggle publishing on
 // the production event bus, the way `PreferencesCommands.setOpenCodePermissions` does (its own
-// behaviour is the L2 suite, modules/preferences/application/setOpenCodePermissions.test.ts). Every
+// behaviour is the L2 suite, modules/preferences/setOpenCodePermissions.test.ts). Every
 // frame is validated against its contract schema (14 §1.4).
 //
 // TC-228-01, its seam-B half; the seam-A half (A-52, A-53) is

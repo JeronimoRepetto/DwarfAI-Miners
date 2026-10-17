@@ -9,27 +9,27 @@
 // off removes it at once), TC-228-02 (a fresh install is off with no file), TC-228-04 (a password
 // change leaves the toggle as it is).
 import { describe, expect, it } from 'vitest'
-import { FakeClock } from '../../../kernel/fakes/FakeClock'
-import { FakeFs } from '../../../kernel/fakes/FakeFs'
-import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
-import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
-import type { FileSystemSubject } from '../../../kernel/testing/fileSystem.contract'
-import { SqliteTransactionRunner } from '../../../platform/sqlite/SqliteTransactionRunner'
-import { openTemplateCopy } from '../../../platform/sqlite/testing/templateDb'
-import { OPENCODE_PLUGIN_FILE_NAME } from '../adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
+import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { FakeFs } from '../../kernel/fakes/FakeFs'
+import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
+import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
+import type { FileSystemSubject } from '../../kernel/testing/fileSystem.contract'
+import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
+import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
+import { OPENCODE_PLUGIN_FILE_NAME } from './adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
 import {
   fixture,
   FOREIGN_PLUGIN_NAME,
   openCodePluginWorld
-} from '../adapters/external-config/openCodePlugin/testing/openCodePluginWorld'
-import { SqliteChannelTokenStore } from '../adapters/sqlite/SqliteChannelTokenStore'
-import { SqliteIntegrationSettingStore } from '../adapters/sqlite/SqliteIntegrationSettingStore'
-import type { PreferencesEvent } from '../domain/events'
-import { FakeFeatureFlagReader } from '../ports/fakes/FakeFeatureFlagReader'
-import { FakeSecretStore } from '../ports/fakes/FakeSecretStore'
-import { InMemoryPreferencesStore } from '../ports/fakes/InMemoryPreferencesStore'
-import { drawToken, hashOf } from '../testing/inMemoryChannelTokens'
-import { PreferencesService, type MintedCredential } from './preferencesService'
+} from './adapters/external-config/openCodePlugin/testing/openCodePluginWorld'
+import { SqliteChannelTokenStore } from './adapters/sqlite/SqliteChannelTokenStore'
+import { SqliteIntegrationSettingStore } from './adapters/sqlite/SqliteIntegrationSettingStore'
+import type { PreferencesEvent } from './domain/events'
+import { FakeFeatureFlagReader } from './ports/fakes/FakeFeatureFlagReader'
+import { FakeSecretStore } from './ports/fakes/FakeSecretStore'
+import { InMemoryPreferencesStore } from './ports/fakes/InMemoryPreferencesStore'
+import { drawToken, hashOf } from './testing/inMemoryChannelTokens'
+import { PreferencesService, type MintedCredential } from './application/preferencesService'
 
 const T0 = 1_760_000_000_000
 const EPOCH = 'epoch-0228'
