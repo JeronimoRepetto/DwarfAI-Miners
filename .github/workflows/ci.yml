@@ -21,6 +21,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request supersedes its older run, so that run is cancelled and the runners go to
+# the newest commit. Runs on main, tags, the nightly schedule and dispatches are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # @electron/get honors this env var to pick where it caches the downloaded
   # Electron zip. Paired with the actions/cache step below, this avoids
@@ -176,6 +182,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # tsc and vue-tsc check the whole program in one process; the typecheck scripts in package.json raise the
+      # V8 heap ceiling themselves (exit 134 "JavaScript heap out of memory" on macOS at the default, PR #1386,
+      # and locally at 4 GB, 2026-10-18), so every machine runs the same command.
       - name: Typecheck
         run: pnpm typecheck
 

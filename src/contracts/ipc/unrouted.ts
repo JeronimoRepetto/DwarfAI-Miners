@@ -55,7 +55,11 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   'host:connection:confirm-restart': 'generation-2',
   // A-N29, born `host` in 3a (21 §2 step 3a, through `LegacyEndFirstAdapter` for a legacy-launched session); routed
   // by the step-3a switch (ISSUE-001), never by its handler issue (ISSUE-171)
-  'dwarf:stop': 'cut-3a'
+  'dwarf:stop': 'cut-3a',
+  // A-N10, A-N11, born `host` in 3a (21 §2 step 3a: the Host recovery report); routed by the step-3a switch
+  // (ISSUE-001), never by their handler issue (ISSUE-174)
+  'host:recovery:retry': 'cut-3a',
+  'host:recovery:dismiss': 'cut-3a'
 }
 
 /**
