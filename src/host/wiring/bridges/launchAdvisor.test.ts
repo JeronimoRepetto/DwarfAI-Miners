@@ -43,7 +43,7 @@ describe('LaunchAdvisor bridge', () => {
   })
 
   it('[ADR-020, S5.15] a not-configured Jev is reported as the no-key fallback, with no provider', async () => {
-    const { advisor } = jev({ ok: false, error: 'not-configured' })
+    const { advisor } = jev({ ok: false, error: 'not-configured', reason: 'no-key' })
 
     const answer = await createLaunchAdvisor({ advisor }).suggest('Survey the seam', MINE)
 
@@ -52,12 +52,17 @@ describe('LaunchAdvisor bridge', () => {
     expect(answer.ok && answer.value.providerId).toBeUndefined()
   })
 
-  it('[ADR-020, S5.14] the two Jev launch causes come back as the advisor errors they are', async () => {
-    for (const error of ['jev-unreachable', 'jev-could-not-choose'] as const) {
-      const { advisor } = jev({ ok: false, error })
-      expect(await createLaunchAdvisor({ advisor }).suggest('Survey', MINE)).toEqual({
+  it('[ADR-020, S5.14] the two Jev launch causes come back as the advisor errors they are, with the reason Jev fell back for', async () => {
+    const answers = [
+      { error: 'jev-unreachable', reason: 'rate-limited' },
+      { error: 'jev-could-not-choose', reason: 'no-launchable-provider' }
+    ] as const
+    for (const { error, reason } of answers) {
+      const { advisor } = jev({ ok: false, error, reason })
+      expect(await createLaunchAdvisor({ advisor }).suggest('Survey', MINE)).toStrictEqual({
         ok: false,
-        error
+        error,
+        reason
       })
     }
   })

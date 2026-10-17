@@ -19,6 +19,7 @@
 //   (US-SET-008.AC03). With Default provider "None" it is `jev-could-not-choose` (ADR-028 D2). Any
 //   decision Jev could make ignores the defaults here (US-SET-008.AC06).
 // - The prompt is never logged (14 §1.10).
+import type { JevFallbackReason } from '../../../kernel/domain/sharedContracts'
 import type { Result } from '../../../kernel/domain/values'
 import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
 import type { SecretReader } from '../../../kernel/ports/secretReader'
@@ -59,6 +60,16 @@ export interface JevSuggestOptions {
 }
 
 /**
+ * An answer of the advisor the Host composes (ISSUE-182): the 05 §3.9 `Result`, whose error also
+ * names the reason Jev fell back for (06 `JevFallbackReason`), so a launch that fails with a Jev
+ * cause can store its `jev_reason` (09 §4.3 `launches` CHECK; ADR-020 D2). Still a `Result` of the
+ * port (an extra member); `jev.suggest` sends only `ok` and `error` on seam B (14 §3.4).
+ */
+export type JevAdvisorAnswer =
+  | { ok: true; value: JevSuggestionView }
+  | { ok: false; error: JevAdvisorError; reason: JevFallbackReason }
+
+/**
  * The advisor the Host composes: the 05 §3.9 port, whose `suggest` also takes the abort signal
  * 16 §6.5 says the advisor passes (an extra optional argument, so it is still a `JevAdvisor`).
  */
@@ -66,7 +77,7 @@ export interface AbortableJevAdvisor extends JevAdvisor {
   suggest(
     req: Parameters<JevAdvisor['suggest']>[0],
     opts?: JevSuggestOptions
-  ): Promise<Result<JevSuggestionView, JevAdvisorError>>
+  ): Promise<JevAdvisorAnswer>
 }
 
 export interface JevAdvisorDeps {
@@ -156,14 +167,13 @@ function launchDefault(preferences: ReturnType<PreferencesQueries['get']>): Rout
   }
 }
 
-function toResult(
-  advice: JevAdvice,
-  readDefault: () => RoutingLaunchDefault
-): Result<JevSuggestionView, JevAdvisorError> {
-  if (!advice.ok) return { ok: false, error: advice.error }
+function toResult(advice: JevAdvice, readDefault: () => RoutingLaunchDefault): JevAdvisorAnswer {
+  if (!advice.ok) return { ok: false, error: advice.error, reason: advice.reason }
   if (advice.kind === 'fallback') {
     const fallback = defaultFallback({ kind: 'fallback', reason: advice.reason }, readDefault())
-    if (fallback === 'no-default') return { ok: false, error: 'jev-could-not-choose' }
+    if (fallback === 'no-default') {
+      return { ok: false, error: 'jev-could-not-choose', reason: advice.reason }
+    }
     return { ok: true, value: fallback }
   }
   return { ok: true, value: toSuggestionView(advice.decision, advice.model, advice.truncated) }
@@ -176,7 +186,7 @@ export function createJevAdvisor(deps: JevAdvisorDeps): AbortableJevAdvisor {
   async function suggest(
     req: Parameters<JevAdvisor['suggest']>[0],
     opts: JevSuggestOptions = {}
-  ): Promise<Result<JevSuggestionView, JevAdvisorError>> {
+  ): Promise<JevAdvisorAnswer> {
     const launchable = await deps.routingCatalog.launchable()
     if (launchable.length === 0) {
       deps.log.record({
@@ -186,7 +196,7 @@ export function createJevAdvisor(deps: JevAdvisorDeps): AbortableJevAdvisor {
         outcome: 'skipped',
         causeClass: 'no-launchable-provider'
       })
-      return { ok: false, error: 'jev-could-not-choose' }
+      return { ok: false, error: 'jev-could-not-choose', reason: 'no-launchable-provider' }
     }
     const preferences = deps.preferences.get()
     const advice = await core.advise({

@@ -65,12 +65,17 @@ function harness(
     /** A live preferences double, read on every `get` (ISSUE-193); wins over `preferences`. */
     preferencesSource?: Pick<PreferencesQueries, 'get'>
     capabilities?: typeof MODEL_CAPABILITIES
+    /** No Jev key is stored (ISSUE-182). */
+    noKey?: boolean
   } = {}
 ) {
   const clock = new FakeClock()
   const scheduler = new FakeScheduler(clock)
   const router = new FakeJevRouter({ scheduler, attemptTimeoutMs: JEV_ATTEMPT_TIMEOUT_MS })
-  const secrets = new FakeSecretReader({ values: { 'jev-key': KEY }, scheduler })
+  const secrets = new FakeSecretReader({
+    values: options.noKey === true ? {} : { 'jev-key': KEY },
+    scheduler
+  })
   const routingCatalog = new FakeRoutingCatalogSource(options.launchable ?? [supplier()])
   const log = new RecordingDiagnosticsLog()
   const advisor = createJevAdvisor({
@@ -245,7 +250,11 @@ describe('JevAdvisor.suggest', () => {
 
     const result = await advisor.suggest(LAUNCH)
 
-    expect(result).toStrictEqual({ ok: false, error: 'jev-could-not-choose' })
+    expect(result).toStrictEqual({
+      ok: false,
+      error: 'jev-could-not-choose',
+      reason: 'no-launchable-provider'
+    })
     expect(log.byEvent('jev.fallback')).toStrictEqual([
       {
         level: 'warn',
@@ -428,7 +437,8 @@ describe('JevAdvisor.suggest — the effort-ceiling default fallback (ADR-028 it
     expect((await withDefault.advisor.suggest(LAUNCH)).ok).toBe(true)
     expect(await none.advisor.suggest(LAUNCH)).toStrictEqual({
       ok: false,
-      error: 'jev-could-not-choose'
+      error: 'jev-could-not-choose',
+      reason: 'effort-ceiling'
     })
   })
 
@@ -444,7 +454,8 @@ describe('JevAdvisor.suggest — the effort-ceiling default fallback (ADR-028 it
 
     expect(await advisor.suggest(LAUNCH)).toStrictEqual({
       ok: false,
-      error: 'jev-could-not-choose'
+      error: 'jev-could-not-choose',
+      reason: 'effort-ceiling'
     })
   })
 
@@ -459,8 +470,30 @@ describe('JevAdvisor.suggest — the effort-ceiling default fallback (ADR-028 it
     expect(await advisor.suggest({ prompt: 'split the parser', purpose: 'subtask' })).toStrictEqual(
       {
         ok: false,
-        error: 'jev-could-not-choose'
+        error: 'jev-could-not-choose',
+        reason: 'effort-ceiling'
       }
     )
+  })
+})
+
+// Added for ISSUE-182 (coordinator ruling on #1413): an advisor error carries the fallback reason
+// the core had, so a launch that fails with a Jev cause can always store its `jev_reason` (the
+// `launches` CHECK, 09 §4.3). The two error causes and `not-configured` are unchanged (16 §6.4).
+describe('JevAdvisor.suggest error reasons', () => {
+  it('[ADR-020] an error carries the reason Jev fell back for: no launchable provider or no key', async () => {
+    const empty = harness({ launchable: [] })
+    expect(await empty.advisor.suggest(LAUNCH)).toStrictEqual({
+      ok: false,
+      error: 'jev-could-not-choose',
+      reason: 'no-launchable-provider'
+    })
+
+    const keyless = harness({ noKey: true })
+    expect(await keyless.advisor.suggest(LAUNCH)).toStrictEqual({
+      ok: false,
+      error: 'not-configured',
+      reason: 'no-key'
+    })
   })
 })

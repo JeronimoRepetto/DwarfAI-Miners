@@ -41,7 +41,8 @@ type SuggestCall = {
 
 /**
  * The advisor double: a prompt starting with "slow" waits until its signal fires and then answers
- * as the real advisor does for an aborted call (no suggestion); any other answers the pick.
+ * as the real advisor does for an aborted call (no suggestion, the `timeout` reason, ISSUE-182); any
+ * other answers the pick. The reason never reaches seam B (14 §3.4 `JevSuggestResult`).
  */
 function advisorDouble() {
   const calls: SuggestCall[] = []
@@ -51,7 +52,7 @@ function advisorDouble() {
       if (!req.prompt.startsWith('slow')) return Promise.resolve({ ok: true, value: PICK })
       return new Promise((resolve) => {
         opts?.signal?.addEventListener('abort', () =>
-          resolve({ ok: false, error: 'jev-unreachable' })
+          resolve({ ok: false, error: 'jev-unreachable', reason: 'timeout' })
         )
       })
     }

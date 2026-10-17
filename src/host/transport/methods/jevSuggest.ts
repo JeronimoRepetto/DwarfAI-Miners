@@ -37,10 +37,13 @@ export function registerJevSuggest(dispatcher: Dispatcher, deps: JevSuggestDeps)
       const controller = new AbortController()
       inFlight.set(context.clientId, controller)
       try {
-        return await deps.advisor.suggest(
+        const answer = await deps.advisor.suggest(
           { prompt: params.prompt, purpose: 'launch' },
           { signal: controller.signal }
         )
+        // 14 §3.4 `JevSuggestResult`: the error alone; the fallback reason the advisor names for a
+        // launch's `jev_reason` (ISSUE-182) is Host-internal and never sent.
+        return answer.ok ? answer : { ok: false, error: answer.error }
       } finally {
         if (inFlight.get(context.clientId) === controller) inFlight.delete(context.clientId)
       }

@@ -6,7 +6,8 @@
 // (ISSUE-196).
 //
 // - Jev's suggestion and its two launch causes (`jev-unreachable`, `jev-could-not-choose`) come back
-//   unchanged; the launch maps them (launching/domain/jevFallback.ts).
+//   unchanged, each error with the reason Jev fell back for (`JevAdvisor` names it, ISSUE-182), which
+//   the launch stores as its `jev_reason` (launching/application/launch.ts).
 // - `not-configured` (no Jev key stored) is reported as the `no-key` fallback, a suggestion with no
 //   provider (16 §6.4, O-16-06): the launch then fails `jev-could-not-choose` with `jevReason:
 //   'no-key'` and offers Pick manually (S5.15), or runs on the pickers' values when they are set
@@ -35,7 +36,8 @@ export function createLaunchAdvisor(deps: {
       )
       if (answer.ok) return answer
       if (answer.error === 'not-configured') return { ok: true, value: { ...NO_KEY } }
-      return { ok: false, error: answer.error }
+      // The cause with the reason Jev fell back for, so the launch stores its `jev_reason`.
+      return { ok: false, error: answer.error, reason: answer.reason }
     }
   }
 }
