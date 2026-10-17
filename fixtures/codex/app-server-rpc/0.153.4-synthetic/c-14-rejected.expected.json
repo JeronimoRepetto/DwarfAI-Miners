@@ -1,0 +1,54 @@
+{
+  "case": "C-14",
+  "description": "ADR-010 item 5, 15 §1.3: a protocol error reply to an answer is refused channel-rejected. Hand-written and UNVERIFIED: Codex 0.153.4 sends no reply to a reply (codex@8f195c9 outgoing_message.rs notify_client_response; bespoke_event_handling.rs denies a malformed one and resolves it); the fixture holds the JSON-RPC 2.0 §5 error object a peer may send with the answered request's id, which names no request of DwarfAI's own.",
+  "script": [
+    { "do": "launch" },
+    { "do": "answerPermission", "providerRequestId": "101", "decision": "allow" }
+  ],
+  "outcomes": [{ "resolved": true }, { "kind": "refused", "reason": "channel-rejected" }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "101",
+        "channel": "driver",
+        "payload": { "toolName": "commandExecution", "requestText": "npm test" },
+        "options": { "hasAllowOnce": true, "hasRejectOnce": true },
+        "turnKey": "0000000a-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000001",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": 1792225108645
+      }
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    },
+    { "jsonrpc": "2.0", "id": 101, "result": { "decision": "accept" } }
+  ]
+}

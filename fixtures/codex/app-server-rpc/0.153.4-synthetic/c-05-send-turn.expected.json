@@ -1,0 +1,147 @@
+{
+  "case": "C-05",
+  "description": "15 §1.3 sendTurn, §4.4 Keys: a second turn on the same connection goes as turn/start; its response is the protocol acknowledgement (confirmed) and names the turn (SendReceipt.providerTurnId); the userMessage item of that turn is the echo, with echoOf = the messageId; one sealed unit per turn id (the thread total minus the total before the turn); status working then idle. Assembled from S-015-1 run 3: client 1's turn, then client 2's turn/start response and turn as the answer to the second turn/start.",
+  "script": [
+    { "do": "launch", "prompt": "Reply with exactly the word one." },
+    { "do": "sendTurn", "messageId": "m-2", "text": "Reply with exactly the word two." }
+  ],
+  "outcomes": [
+    { "resolved": true },
+    {
+      "confidence": "confirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-2",
+      "providerTurnId": "00000000-0000-4000-8000-000000000005"
+    }
+  ],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000003",
+        "role": "person",
+        "text": "Reply with exactly the word one.",
+        "providerTime": 1792225108644
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000004",
+        "role": "dwarf",
+        "text": "one",
+        "providerTime": 1792225110823
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000002",
+        "unitKey": "00000000-0000-4000-8000-000000000002",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 30751,
+          "output": 5,
+          "cacheRead": 7808,
+          "cacheWrite": 0,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "00000000-0000-4000-8000-000000000002",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" },
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000006",
+        "role": "person",
+        "text": "Reply with exactly the word two.",
+        "providerTime": 1792225113172,
+        "echoOf": "m-2"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000007",
+        "role": "dwarf",
+        "text": "two",
+        "providerTime": 1792225114880
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000005",
+        "unitKey": "00000000-0000-4000-8000-000000000005",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 177,
+          "output": 5,
+          "cacheRead": 38400,
+          "cacheWrite": 0,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "00000000-0000-4000-8000-000000000005",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": {
+        "threadId": "{session}",
+        "input": [{ "type": "text", "text": "Reply with exactly the word one." }]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "turn/start",
+      "params": {
+        "threadId": "{session}",
+        "input": [{ "type": "text", "text": "Reply with exactly the word two." }]
+      }
+    }
+  ]
+}

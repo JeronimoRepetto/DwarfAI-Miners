@@ -145,7 +145,7 @@ describe('JsonRpcStdioClient', () => {
     expect(waiting).toEqual({ state: 'rejected', value: { kind: 'timeout' } })
   })
 
-  it('[HO-11] a response resolves its own waiter by id and an error reply rejects it with its code', async () => {
+  it('[C-14] a response resolves its own waiter by id and an error reply rejects it with its code', async () => {
     const { client, server, written } = rig()
     const start = track(client.request('thread/start', { cwd: '/work/mine' }))
     const turn = track(client.request('turn/start', { threadId: 't-1', input: [] }))
@@ -165,7 +165,7 @@ describe('JsonRpcStdioClient', () => {
     })
   })
 
-  it('[HO-11] server requests read together with notifications reach the owner first', async () => {
+  it('[C-12] server requests read together with notifications reach the owner first', async () => {
     const { server, order } = rig(['item/commandExecution/requestApproval'])
     server.write(
       [
@@ -183,7 +183,7 @@ describe('JsonRpcStdioClient', () => {
     ])
   })
 
-  it('[HO-33] a malformed line is drift and the stream continues', async () => {
+  it('[C-11] a malformed line is drift and the stream continues', async () => {
     const { server, notifications, drift } = rig()
     server.write('not json\n{"jsonrpc":"2.0"}\n{"method":"turn/started","params":{}}\n')
     await settle()
@@ -191,7 +191,7 @@ describe('JsonRpcStdioClient', () => {
     expect(notifications.map((n) => n.method)).toEqual(['turn/started'])
   })
 
-  it('[HO-11] an answer to a server request and a notification are written as JSON-RPC frames', async () => {
+  it('[C-06] an answer to a server request and a notification are written as JSON-RPC frames', async () => {
     const { client, written } = rig()
     expect(client.respond(7, { decision: 'decline' })).toBe(true)
     client.notify('initialized', {})
