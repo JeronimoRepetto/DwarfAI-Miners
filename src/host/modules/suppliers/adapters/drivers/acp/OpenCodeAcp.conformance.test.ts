@@ -188,7 +188,8 @@ describe('OpenCode acp', () => {
     expect(chosen).not.toMatch(/always/)
   })
 
-  it('[ADR-009, HR D8] initialize declares no elicitation and an elicitation request opens no question card', async () => {
+  // HR D8: OpenCode acp has no question channel.
+  it('[ADR-009] initialize declares no elicitation and an elicitation request opens no question card', async () => {
     const run = await runScript(
       factoryWith(),
       [{ do: 'launch' }],
