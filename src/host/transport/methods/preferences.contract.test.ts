@@ -440,12 +440,12 @@ describe('preferences.get, preferences.set and preferences.changed over seam B',
     await evaluate()
     await ui.settle()
 
-    // Cut 2: only Claude Code is offered, and only its old-app entry is listed (21 §2 cut 2).
+    // From step 4a both installed tools are offered and both old-app entries are listed (21 §2 4a).
     const welcome = {
       due: true,
       reason: 'legacy-entries',
-      legacyFound: ['claude-hooks'],
-      offered: ['claude-hooks']
+      legacyFound: ['claude-hooks', 'opencode-permissions'],
+      offered: ['claude-hooks', 'opencode-permissions']
     }
     const read = resultOf(await call(ui, 'preferences.get', {}))
     const page = resultOf(await call(ui, 'session.snapshot', { sections: ['preferences'] })) as {
