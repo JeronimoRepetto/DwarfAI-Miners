@@ -105,7 +105,9 @@ const SERVED_SINCE_CUT_0 = [
   // Describing attachments: B-M28, from cut 3 (ISSUE-169).
   'conversation.describeAttachments',
   // AMENDED for ISSUE-170 (appended): B-M29, the console target of A-13, from cut 3.
-  'conversation.resolveConsole'
+  'conversation.resolveConsole',
+  // AMENDED for ISSUE-196 (appended): B-M38, served by the jev wiring for the step-3a switch.
+  'jev.suggest'
 ]
 const SERVED_SECTIONS = [
   'meta',

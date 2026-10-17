@@ -125,6 +125,7 @@ import { ObservedSessionTurnSender } from './modules/conversation/adapters/obser
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
+import { TypesafeJevRouter } from './modules/jev/adapters/typesafe/TypesafeJevRouter'
 import { ClaudeHooksConfigWriter } from './modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
 import { ConfigWriterEngine } from './modules/preferences/adapters/external-config/configWriterEngine'
 import {
@@ -270,6 +271,8 @@ import { SqliteRecoveryReportStore } from './modules/launching/adapters/sqlite/S
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
+import { serveJev } from './wiring/routes/jev'
+import { routingCatalogSource } from './wiring/bridges/routingCatalogSource'
 import { routeCut1Events } from './wiring/routes/cut1Routes'
 import {
   routeMineBackfillWhenObserving,
@@ -608,6 +611,8 @@ async function bootHost(base: HostBase): Promise<void> {
   const servedLaunching = serveLaunching({ dispatcher, sections })
   // B-M37 `suppliers.launchable` (ISSUE-163), bound when boot step 4 wired suppliers.
   const servedSuppliers = serveSuppliers({ dispatcher })
+  // B-M38 `jev.suggest` (ISSUE-196), bound when boot step 4 wired jev over suppliers.
+  const servedJev = serveJev({ dispatcher })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -922,6 +927,15 @@ async function bootHost(base: HostBase): Promise<void> {
             }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))
+          // Jev (ISSUE-196): TypeSafe behind `JevRouter`, the Jev key through the kernel
+          // SecretReader, its candidates exactly what suppliers can launch now (16 §4.9; 21 §2 cut 3).
+          servedJev.bind({
+            router: new TypesafeJevRouter({ scheduler, log }),
+            secretReader: modules.preferences.secretReader,
+            routingCatalog: routingCatalogSource(modules.suppliers.catalogue),
+            preferences: modules.preferences.preferences.queries,
+            log
+          })
           // The providers' own folders: the environment overrides they honour, else the person's
           // home folder (15 §5; HO-09). Read only, by observation and by the coal backfill.
           const folders = observedProviderFolders(process.env, homedir(), {
