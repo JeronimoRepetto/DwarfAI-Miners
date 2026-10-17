@@ -31,6 +31,7 @@ import type { FolderPath, HostEpoch, Instant, MineId } from '../../../kernel/dom
 import { FakeAppPaths } from '../../../kernel/fakes/FakeAppPaths'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeFs } from '../../../kernel/fakes/FakeFs'
+import { FakeSecretReader } from '../../../kernel/fakes/FakeSecretReader'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../../kernel/fakes/RecordingDiagnosticsLog'
 import { RecordingShutdownCheckpoint } from '../../../kernel/fakes/RecordingShutdownCheckpoint'
@@ -635,6 +636,12 @@ export async function bootHost(w: World, options: BootOptions) {
             log,
             frames: connections,
             claudeProviderId: 'claude' as never,
+            // The OpenCode plugin's asks (ISSUE-229): composed as host/main.ts does; no 3a case posts one.
+            openCodePlugin: {
+              providerId: 'opencode' as never,
+              secrets: new FakeSecretReader({ scheduler }),
+              post: () => Promise.reject(new Error('no OpenCode server in the 3a world'))
+            },
             suppliers,
             observed: observed.adapters,
             conversation: conversation.conversation,
