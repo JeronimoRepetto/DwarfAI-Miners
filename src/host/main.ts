@@ -813,6 +813,7 @@ async function bootHost(base: HostBase): Promise<void> {
             transactions,
             bus,
             clock,
+            scheduler,
             ids,
             hostEpoch: epoch,
             log,
