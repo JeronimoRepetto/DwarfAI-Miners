@@ -19,8 +19,9 @@
 //   reports to the hook ingress on that same persisted port (ADR-016 item 3), so its enable fails
 //   closed without one exactly as the Claude hook entry's does. One writer per release (21 §1 item 4)
 //   still holds: B-M14 has no routed caller before the step-4a switch (ISSUE-235), which moves A-53
-//   off today's installer. `findLegacy` is never true here (S41.02 runs on offered targets only,
-//   offeredFilter.ts; the first-run OpenCode option joins with ISSUE-232). With no plugin writer
+//   off today's installer. `findLegacy` is never true here, and `enablableInstalledTools` keeps
+//   OpenCode out of the first-run step: the step-4a switch opens both together with the A-52/A-53
+//   routes (later: ISSUE-235), so the Host never becomes a second writer of the plugin file. With no plugin writer
 //   composed (a wiring whose OpenCode plugin folder is unknown), `install` fails with `io`, `verify`
 //   answers `absent` and `revert` completes with nothing to remove.
 //
