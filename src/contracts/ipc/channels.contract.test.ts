@@ -35,6 +35,8 @@ import {
   type AnswerWelcomeResult,
   type StopDwarfParams,
   type StopDwarfResult,
+  type RetryMessageParams,
+  type RetryMessageResult,
   type RenameDwarfParams,
   type RenameDwarfResult,
   type ResetDwarfNameParams
@@ -286,6 +288,16 @@ const NEW_ROWS = [
     placement: 'host',
     sensitive: false
   },
+  // ISSUE-168: Retry of a message that failed to deliver, as the same message (US-MSG-003, ADR-022 item 5), born
+  // `host` in 3a; a message id and a requestId
+  {
+    id: 'A-N06',
+    wire: 'dwarf:message:retry',
+    member: 'retryDwarfMessage',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
   // ISSUE-172: a person-set name for a dwarf (SC-AR-05, INV-29), born `host` in 3a; a dwarf id, the typed name and a
   // requestId
   {
@@ -489,6 +501,8 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 },
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
   'dwarf:stop': { dwarfId: U1, requestId: U1 },
+  // A-N06 (ISSUE-168): B-M25's params, a message id and a requestId
+  'dwarf:message:retry': { messageId: U1, requestId: U1 },
   // A-N08 (ISSUE-172): B-M22's params, a dwarf id, the typed name and a requestId
   'dwarf:rename': { dwarfId: U1, name: 'Watcher of seals', requestId: U1 },
   // A-N09 (ISSUE-172): B-M23's params, a dwarf id and a requestId
@@ -895,6 +909,9 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     // A-N29 (ISSUE-171): relays B-M21 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:stop'>>().toEqualTypeOf<StopDwarfParams>()
     expectTypeOf<Res<'dwarf:stop'>>().toEqualTypeOf<IpcResult<StopDwarfResult>>()
+    // A-N06 (ISSUE-168): relays B-M25 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
+    expectTypeOf<Req<'dwarf:message:retry'>>().toEqualTypeOf<RetryMessageParams>()
+    expectTypeOf<Res<'dwarf:message:retry'>>().toEqualTypeOf<IpcResult<RetryMessageResult>>()
     // A-N08 (ISSUE-172): relays B-M22 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:rename'>>().toEqualTypeOf<RenameDwarfParams>()
     expectTypeOf<Res<'dwarf:rename'>>().toEqualTypeOf<IpcResult<RenameDwarfResult>>()

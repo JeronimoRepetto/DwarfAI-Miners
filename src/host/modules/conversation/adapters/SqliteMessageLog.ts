@@ -35,6 +35,10 @@
 //   restart, 14 §1.6) inserts nothing and answers that row's id; one stored for another dwarf is
 //   refused with `RequestIdOfAnotherDwarfError`. `settleDelivery` also records the
 //   delivery's `confidence` and moves a `delivered` delivery to `reacted`, keeping it.
+// - `resend` (AMENDMENT-20, owner, 2026-10-17; ISSUE-168) is Retry's write, inside the caller's
+//   transaction: the row read by its id with its delivery, then that delivery `sending` again (no
+//   failure, confidence or hold, attempts + 1, `sent_at` / `phase_at` = `at`) and `created_at` = `at`;
+//   it answers the delivery read before the write, so the caller's machine-7 refusal rolls it back.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts'
 import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
@@ -148,6 +152,17 @@ const PAGE_SELECT = `SELECT m.id, m.dwarf_id, m.source_key, m.role, m.text, m.is
     d.attempts, d.phase_at
   FROM messages m LEFT JOIN deliveries d ON d.message_id = m.id
   WHERE m.dwarf_id = ?`
+
+// AMENDMENT-20: one row with its delivery, by id alone (B-M25 carries no dwarfId).
+const BY_ID = `${PAGE_SELECT.replace('WHERE m.dwarf_id = ?', 'WHERE m.id = ?')}`
+
+const RESTAMP_MESSAGE = 'UPDATE messages SET created_at = ? WHERE id = ?'
+
+// AMENDMENT-20: Retry's delivery `sending` again, the same row (INV-64).
+const RESEND_DELIVERY = `UPDATE deliveries SET phase = 'sending', confidence = NULL,
+    failure_kind = NULL, failure_reason = NULL, held_until_turn_end = 0, attempts = attempts + 1,
+    sent_at = ?, phase_at = ?
+  WHERE message_id = ?`
 
 const BEFORE = `AND (m.sort_at, m.id) < (SELECT sort_at, id FROM messages WHERE id = ? AND dwarf_id = ?)`
 
@@ -306,6 +321,21 @@ export class SqliteMessageLog implements MessageLog {
     db.run(INSERT_SENT, [messageId, dwarfId, text, at, requestId])
     db.run(INSERT_SENT_DELIVERY, [messageId, dwarfId, at, at])
     return { messageId, existing: false }
+  }
+
+  resend(
+    id: MessageId,
+    at: Instant
+  ): { dwarfId: DwarfId; text: string; delivery: Delivery } | null {
+    const { db } = this.deps
+    this.requireTransaction('resend')
+    const [row] = db.all(BY_ID, [id])
+    if (row === undefined) return null
+    const message = messageOf(row)
+    if (message.delivery === undefined) return null
+    db.run(RESTAMP_MESSAGE, [at, id])
+    db.run(RESEND_DELIVERY, [at, at, id])
+    return { dwarfId: message.dwarfId, text: message.text, delivery: message.delivery }
   }
 
   private requireTransaction(method: string): void {

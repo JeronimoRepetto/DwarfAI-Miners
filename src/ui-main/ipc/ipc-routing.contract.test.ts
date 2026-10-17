@@ -582,6 +582,8 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       'welcome:answer': 'cut-2',
       // AMENDED for ISSUE-171: A-N29 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
       'dwarf:stop': 'cut-3a',
+      // AMENDED for ISSUE-168: A-N06 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
+      'dwarf:message:retry': 'cut-3a',
       // AMENDED for ISSUE-172: A-N08 and A-N09 join them, born `host` in cut 2 (lead decision, 2026-10-17).
       'dwarf:rename': 'cut-2',
       'dwarf:name:reset': 'cut-2'
@@ -1770,6 +1772,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       'ask:step:set': 'cut-2',
       'welcome:answer': 'cut-2',
       'dwarf:stop': 'cut-3a',
+      'dwarf:message:retry': 'cut-3a',
       'dwarf:rename': 'cut-2',
       'dwarf:name:reset': 'cut-2'
     })
@@ -2430,9 +2433,11 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     }
     // Only A-N33 is still unrouted (AMENDMENT-11): the cut-2 entries are routed by this switch (ISSUE-043 rule).
     // AMENDED for ISSUE-171 (was: A-N33 only): A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
+    // AMENDED for ISSUE-168: so does A-N06.
     expect(UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      'dwarf:message:retry': 'cut-3a'
     })
     // The root composes their `host` handlers, each relaying its one seam-B member.
     const sent: Array<[string, unknown]> = []

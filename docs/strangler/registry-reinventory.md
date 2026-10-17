@@ -38,6 +38,8 @@
   has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-171:** A-N29 `stopDwarf` (`dwarf:stop`, NEW, AMENDMENT-2) is declared in the registry and has a
   generated preload member, so its row moved to the found table.
+- **Updated for ISSUE-168:** A-N06 `retryDwarfMessage` (`dwarf:message:retry`, NEW) is declared in the registry and
+  has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-172:** A-N08 `renameDwarf` (`dwarf:rename`) and A-N09 `resetDwarfName` (`dwarf:name:reset`), NEW,
   are declared in the registry with generated preload members, so their rows moved to the found table; today's
   `dwarf:resetName` member is renamed `resetDwarfNameToday`, so the two never share a member name.
@@ -125,6 +127,7 @@ kind `14` gives it.
 | `dwarf:feed`                      | `getDwarfFeed`                | invoke | src/main/index.ts:1684<br>src/preload/index.ts:618<br>src/shared/contracts.ts:5098                                                | A-14    | RETIRE | —                 |                                                                                                                                           |
 | `dwarf:feed:page`                 | `getDwarfFeedPage`            | invoke | src/main/index.ts:1693<br>src/preload/index.ts:624<br>src/shared/contracts.ts:5111                                                | A-15    | CHANGE | —                 |                                                                                                                                           |
 | `dwarf:kick`                      | `kickDwarf`                   | invoke | src/main/index.ts:1841<br>src/preload/index.ts:723<br>src/shared/contracts.ts:5241                                                | A-26    | RETIRE | —                 |                                                                                                                                           |
+| `dwarf:message:retry`             | `retryDwarfMessage`           | invoke | src/preload/index.ts:576                                                                                                          | A-N06   | NEW    | —                 | Declared by ISSUE-168 (US-MSG-003, ADR-022 item 5); its preload member is generated (ISSUE-045); unrouted until cut 3a                    |
 | `dwarf:refreshTelemetry`          | `refreshDwarfTelemetry`       | send   | src/main/index.ts:1711<br>src/preload/index.ts:639<br>src/shared/contracts.ts:5130                                                | A-17    | RETIRE | —                 |                                                                                                                                           |
 | `dwarf:rename`                    | `renameDwarf`                 | invoke | src/preload/index.ts:567                                                                                                          | A-N08   | NEW    | —                 | Declared by ISSUE-172; successor of `dwarf:setName` (§8 I-21); generated member; routed `host` from cut 2 (lead decision)                 |
 | `dwarf:name:reset`                | `resetDwarfName`              | invoke | src/preload/index.ts:568                                                                                                          | A-N09   | NEW    | —                 | Declared by ISSUE-172; successor of `dwarf:resetName` (§8 I-21); generated member; routed `host` from cut 2 (lead decision)               |
@@ -200,7 +203,6 @@ kind `14` gives it.
 
 | Wire name               | Member                | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                    |
 | ----------------------- | --------------------- | ------ | --------- | ----- | ------ | ----------------- | ------------------------------------------------------------------------ |
-| `dwarf:message:retry`   | `retryDwarfMessage`   | invoke | not found | A-N06 | NEW    | —                 |                                                                          |
 | `host:recovery:retry`   | `retryRecovery`       | invoke | not found | A-N10 | NEW    | —                 |                                                                          |
 | `host:recovery:dismiss` | `dismissRecovery`     | invoke | not found | A-N11 | NEW    | —                 |                                                                          |
 | `mode:move`             | `moveToMode`          | invoke | not found | A-N13 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7) |

@@ -6,7 +6,9 @@
 // dwarf, every role counted, a `sending` row kept, a trimmed key never re-inserted, one dwarf's
 // trim never touching another's rows. AMENDMENT-16 (owner, 2026-10-15; ISSUE-166): the sent
 // person row with its `request_id` (a repeat returns the first `messageId`), delivered with its
-// confidence, then reacted only from delivered.
+// confidence, then reacted only from delivered. AMENDMENT-20 (owner, 2026-10-17; ISSUE-168): Retry's
+// `resend` — same row, delivery `sending` again with attempts + 1, restamped, answering the delivery
+// it had before; null for an unknown id; rolled back with its caller's transaction.
 // Owner amendment K (2026-10-09, ISSUE-128): the "Answers:" record of an ask — one row per ask with
 // its delivery `sending`, updated in place by a re-answer (ADR-010 item 13), settled delivered or
 // failed with its refusal reason, never trimmed while it is `sending`.
@@ -741,6 +743,71 @@ export function runMessageLogContract(
         attempts: 1,
         phaseAt: s.now + 2
       })
+    })
+    it('[US-MSG-003.AC02, US-MSG-003.AC06, S7.09, INV-64] resend puts a failed delivery back to sending on the same row, attempts + 1, restamped, and answers the delivery it had before', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const id = s.inTransaction(
+        () =>
+          s.log.writeSent(dwarf, 'try again', '01890a5d-ac96-774b-bcce-b302099a0009', s.now)
+            .messageId
+      )
+      const failure = { kind: 'channel-error' as const, reason: 'pipe closed' }
+      s.inTransaction(() => s.log.settleDelivery(id, { phase: 'failed', failure }, s.now + 1))
+
+      const resent = s.inTransaction(() => s.log.resend(id, s.now + 100))
+
+      expect(resent).toEqual({
+        dwarfId: dwarf,
+        text: 'try again',
+        delivery: {
+          messageId: id,
+          dwarfId: dwarf,
+          kind: 'message',
+          phase: 'failed',
+          failure,
+          attempts: 1,
+          phaseAt: s.now + 1
+        }
+      })
+      expect(s.rowIds(dwarf)).toEqual([id])
+      const [row] = s.log.page(dwarf, {})
+      expect(row?.createdAt).toBe(s.now + 100)
+      expect(row?.delivery).toEqual({
+        messageId: id,
+        dwarfId: dwarf,
+        kind: 'message',
+        phase: 'sending',
+        attempts: 2,
+        phaseAt: s.now + 100
+      })
+    })
+
+    it('[INV-64] resend answers null for an unknown id, runs only inside the caller transaction, and rolls back with it', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const id = s.inTransaction(
+        () =>
+          s.log.writeSent(dwarf, 'kept', '01890a5d-ac96-774b-bcce-b302099a000a', s.now).messageId
+      )
+      const failure = { kind: 'host-interrupted' as const }
+      s.inTransaction(() => s.log.settleDelivery(id, { phase: 'failed', failure }, s.now + 1))
+      const before = s.log.page(dwarf, {})
+
+      expect(
+        s.inTransaction(() =>
+          s.log.resend('01890a5d-ac96-774b-bcce-b302099affff' as MessageId, s.now)
+        )
+      ).toBeNull()
+      expect(() => s.log.resend(id, s.now + 2)).toThrow(HostInvariantError)
+      expect(() =>
+        s.inTransaction(() => {
+          s.log.resend(id, s.now + 3)
+          throw new CallerFailure()
+        })
+      ).toThrow(CallerFailure)
+
+      expect(s.log.page(dwarf, {})).toEqual(before)
     })
   })
 }
