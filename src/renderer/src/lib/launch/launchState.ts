@@ -1,5 +1,13 @@
+import type {
+  IpcResult,
+  JevSuggestParams,
+  JevSuggestResult,
+  JevSuggestionView,
+  MineId
+} from '@dwarfai/contracts'
 import {
   isCodexPermissionMode,
+  isDwarfProvider,
   isHeldPermissionMode,
   type CodexPermissionMode,
   type DwarfProvider,
@@ -601,8 +609,14 @@ export type JevDecision = Extract<JevRouteLaunchResult, { kind: 'decision' }>
  */
 export type JevRoutingPhase =
   | { phase: 'idle' }
-  | { phase: 'asking' }
+  /**
+   * `request` is the per-request token of an A-50 ask in its 14 shape (ISSUE-195, see `jevSuggestAsked`): only
+   * the answer to that very request may land. Today's Enter-time ask (`jevAsked`) carries none.
+   */
+  | { phase: 'asking'; request?: number }
   | { phase: 'decided'; decision: JevDecision }
+  /** A-50's answer in its 14 shape, applied to the pickers (`jevSuggestAnswered`); held here only (INV-87). */
+  | { phase: 'suggested'; suggestion: JevSuggestionView }
   | {
       phase: 'fellBack'
       reason: JevFallbackReason
@@ -963,3 +977,75 @@ export function routedByJev(state: LaunchState): boolean {
   return state.jev.routing.phase === 'decided'
 }
 /* --- end of the #511 block ---------------------------------------------------- */
+
+/* --- A-50 in its 14 shape: the Jev card while typing (ISSUE-195) — one block, appended --- */
+
+/** A-50's answer as UI main returns it (14 §3.8 `routeJevLaunch`): a call error, or the domain outcome. */
+export type JevSuggestAnswer = IpcResult<JevSuggestResult>
+
+/** Whether the prompt as it stands is worth a Jev ask: the option is on and there is a prompt to ask about. */
+export function shouldSuggest(state: LaunchState): boolean {
+  return (
+    state.open &&
+    state.jev.availability === 'ready' &&
+    state.jev.enabled &&
+    launchPrompt(state) !== ''
+  )
+}
+
+/** The A-50 request for the prompt as it stands (14 §3.4 `JevSuggestParams`). */
+export function jevSuggestParams(state: LaunchState, mineId: MineId): JevSuggestParams {
+  return { prompt: launchPrompt(state), mineId }
+}
+
+/** The prompt changed (or was first written): the last card goes, and a new ask leaves under `request`. */
+export function jevSuggestAsked(state: LaunchState, request: number): LaunchState {
+  const cleared = clearJevDecision(state)
+  if (!shouldSuggest(cleared)) return cleared
+  return { ...cleared, jev: { ...cleared.jev, routing: { phase: 'asking', request } } }
+}
+
+/**
+ * A-50 answered `request`. Only the answer to the ask still in flight lands: one that arrives after Dismiss, an
+ * emptied prompt or a newer ask describes a prompt this panel no longer holds, and is dropped (INV-87; 16 §6.5).
+ *
+ * A pick applies through the same paths a person's own click uses, keeping what stood before for Dismiss. Anything
+ * else (a call error, `jev-unreachable`, `jev-could-not-choose`, `not-configured`, or a suggestion that names no
+ * supplier these pickers offer) shows no card: the ask ends and the pickers stay as they stood before it, which the
+ * ask itself never touched (US-LAUNCH-003.AC08).
+ */
+export function jevSuggestAnswered(
+  state: LaunchState,
+  request: number,
+  answer: JevSuggestAnswer
+): LaunchState {
+  const routing = state.jev.routing
+  if (routing.phase !== 'asking' || routing.request !== request) return state
+  const suggestion = answer.ok && answer.value.ok ? answer.value.value : null
+  const provider = suggestion?.providerId
+  if (suggestion === null || !isDwarfProvider(provider)) {
+    return {
+      ...state,
+      jev: {
+        ...state.jev,
+        routing: { phase: 'idle' },
+        previousChoice: null,
+        launchedOnFallback: false
+      }
+    }
+  }
+  const previousChoice: JevPreviousChoice = {
+    choice: state.choice,
+    model: state.model,
+    effort: state.effort
+  }
+  let applied = chooseProvider(state, provider)
+  if (suggestion.model !== undefined) applied = chooseModel(applied, suggestion.model)
+  if (suggestion.effort !== undefined) applied = chooseEffort(applied, suggestion.effort)
+  return {
+    ...applied,
+    jev: { ...applied.jev, routing: { phase: 'suggested', suggestion }, previousChoice }
+  }
+}
+
+/* --- end of the ISSUE-195 block ------------------------------------------------- */
