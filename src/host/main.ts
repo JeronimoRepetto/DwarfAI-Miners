@@ -689,6 +689,8 @@ async function bootHost(base: HostBase): Promise<void> {
           ...BOARD_FRAMES,
           ...LEDGER_FRAMES,
           ...CONVERSATION_READ_FRAMES,
+          // B-F12 `message.delivery`, the send path's marks (ISSUE-166).
+          'message.delivery',
           ...ATTENTION_FRAMES,
           ...ASKING_FRAMES,
           ...LAUNCHING_FRAMES
@@ -1031,6 +1033,9 @@ async function bootHost(base: HostBase): Promise<void> {
           conversation.route({
             crew: modules.crew.crew.queries,
             mines: modules.mines.mines.queries,
+            // The send path's door to a launched session, and its failed-write log (ISSUE-166).
+            sessions: modules.suppliers.sessions,
+            diagnostics: log,
             console: hostConsole.resolver
           })
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not

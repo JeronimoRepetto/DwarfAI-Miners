@@ -11,7 +11,9 @@
 // dwarf by the domain rule `rowsToTrim` (`sending` first), and a trimmed row's key stays with no
 // row. `page` returns every stored row as a `Message` with its delivery, newest first by
 // `sortAt` then id (amendment of 2026-10-05 to 16 §4.6, ISSUE-103). An entry's tool steps are kept on
-// its row as its `ActivitySummary` (ISSUE-101). `setDelivery` is not built (ISSUE-166). Owner
+// its row as its `ActivitySummary` (ISSUE-101). AMENDMENT-16 (owner, 2026-10-15): `writeSent`
+// keeps one sent row per `requestId` (the UNIQUE `messages_send_request`), and `settleDelivery`
+// records the confidence and moves only a `delivered` delivery to `reacted`. Owner
 // amendment K (2026-10-09): `writeAnswersRecord` keeps one "Answers:" record per ask (the UNIQUE
 // `messages_one_record_per_ask`) and updates it in place given `existing`; `settleDelivery` settles a
 // `sending` delivery.
@@ -32,8 +34,9 @@ import {
   type FeedPageRequest,
   type Message
 } from '../domain/messages'
+import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
 import { MESSAGES_PER_DWARF, rowsToTrim } from '../domain/retention'
-import type { MessageLog } from '../ports/messageLog'
+import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
 
 export interface InMemoryMessageLogDeps {
   /** The caller's transaction probe (16 §2.2). */
@@ -50,6 +53,8 @@ interface StoredRow {
   pendingEcho: string | null
   /** The row's `deliveries` row, or null when it has none. */
   delivery: Delivery | null
+  /** `messages.request_id`: set only on the row a `conversation.send` wrote (AMENDMENT-16). */
+  requestId?: string
 }
 
 interface StoredKey {
@@ -143,15 +148,6 @@ export class InMemoryMessageLog implements MessageLog {
       )
   }
 
-  setDelivery(
-    id: MessageId,
-    phase: 'sending' | 'delivered' | 'reacted' | 'failed',
-    at: Instant
-  ): void {
-    void [id, phase, at]
-    throw new HostInvariantError('MessageLog.setDelivery is not built (later: ISSUE-166)')
-  }
-
   trim(dwarfId: DwarfId, keep: number): void {
     if (!this.deps.scope.isInTransaction()) {
       throw new HostInvariantError('MessageLog.trim runs inside the caller transaction (16 §2.2)')
@@ -239,22 +235,75 @@ export class InMemoryMessageLog implements MessageLog {
     return message.id
   }
 
-  settleDelivery(
-    id: MessageId,
-    result: { phase: 'delivered' } | { phase: 'failed'; failure: DeliveryFailure },
-    at: Instant
-  ): void {
+  settleDelivery(id: MessageId, result: DeliverySettlement, at: Instant): void {
     this.requireTransaction('settleDelivery')
-    const row = this.rows.find((r) => r.message.id === id && r.delivery?.phase === 'sending')
+    const from = result.phase === 'reacted' ? 'delivered' : 'sending'
+    const row = this.rows.find((r) => r.message.id === id && r.delivery?.phase === from)
     if (row === undefined || row.delivery === null) {
-      throw new HostInvariantError(`no sending delivery of message ${id}`)
+      throw new HostInvariantError(`no ${from} delivery of message ${id}`)
     }
+    if (result.phase === 'reacted') {
+      row.delivery = { ...row.delivery, phase: 'reacted', phaseAt: at }
+      return
+    }
+    if (result.phase === 'sending') {
+      row.delivery = { ...row.delivery, heldUntilTurnEnd: true }
+      return
+    }
+    const { heldUntilTurnEnd, ...rest } = row.delivery
+    void heldUntilTurnEnd
     row.delivery = {
-      ...row.delivery,
+      ...rest,
       phase: result.phase,
+      ...(result.phase === 'delivered' && result.confidence !== undefined
+        ? { confidence: result.confidence }
+        : {}),
       ...(result.phase === 'failed' ? { failure: result.failure } : {}),
       phaseAt: at
     }
+  }
+
+  writeSent(
+    dwarfId: DwarfId,
+    text: string,
+    requestId: string,
+    at: Instant
+  ): { messageId: MessageId; existing: boolean } {
+    this.requireTransaction('writeSent')
+    if (utf8.encode(text).length > MESSAGE_TEXT_MAX_BYTES) {
+      throw new HostInvariantError('message text over 64 KiB (09 §4.4 CHECK)')
+    }
+    // `messages_send_request` (UNIQUE): the stored row of this requestId, while it is stored.
+    const stored = this.rows.find((r) => r.requestId === requestId)
+    if (stored !== undefined) {
+      if (stored.message.dwarfId !== dwarfId) throw new RequestIdOfAnotherDwarfError()
+      return { messageId: stored.message.id, existing: true }
+    }
+    const message: Message = {
+      id: this.deps.ids.uuidv7() as MessageId,
+      dwarfId,
+      sourceKey: null,
+      role: 'person',
+      text,
+      attachments: [],
+      origin: 'dwarfai',
+      providerTime: null,
+      createdAt: at
+    }
+    this.rows.push({
+      message,
+      pendingEcho: null,
+      requestId,
+      delivery: {
+        messageId: message.id,
+        dwarfId,
+        kind: 'message',
+        phase: 'sending',
+        attempts: 1,
+        phaseAt: at
+      }
+    })
+    return { messageId: message.id, existing: false }
   }
 
   private requireTransaction(method: string): void {
@@ -277,7 +326,7 @@ export class InMemoryMessageLog implements MessageLog {
 
   /**
    * Test seam: a DwarfAI-sent person row whose delivery failed with `failure` (ISSUE-166 settles
-   * these through `setDelivery`).
+   * these through `settleDelivery`).
    */
   seedFailedRow(dwarfId: DwarfId, text: string, failure: DeliveryFailure): MessageId {
     return this.seedDwarfAiRow(dwarfId, 'person', text, null, 'failed', failure)
