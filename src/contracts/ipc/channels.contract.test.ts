@@ -34,7 +34,9 @@ import {
   type AnswerWelcomeParams,
   type AnswerWelcomeResult,
   type StopDwarfParams,
-  type StopDwarfResult
+  type StopDwarfResult,
+  type RetryMessageParams,
+  type RetryMessageResult
 } from '../host-protocol/params'
 import type { IpcResult } from '../host-protocol'
 import type {
@@ -282,6 +284,16 @@ const NEW_ROWS = [
     kind: 'invoke',
     placement: 'host',
     sensitive: false
+  },
+  // ISSUE-168: Retry of a message that failed to deliver, as the same message (US-MSG-003, ADR-022 item 5), born
+  // `host` in 3a; a message id and a requestId
+  {
+    id: 'A-N06',
+    wire: 'dwarf:message:retry',
+    member: 'retryDwarfMessage',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -466,7 +478,9 @@ const VALID_REQUESTS: Record<string, unknown> = {
   // A-N32 (ISSUE-223): B-M40's params, the two ticks and no origin (the Host records `first-run`)
   'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 },
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
-  'dwarf:stop': { dwarfId: U1, requestId: U1 }
+  'dwarf:stop': { dwarfId: U1, requestId: U1 },
+  // A-N06 (ISSUE-168): B-M25's params, a message id and a requestId
+  'dwarf:message:retry': { messageId: U1, requestId: U1 }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */
@@ -869,6 +883,9 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     // A-N29 (ISSUE-171): relays B-M21 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:stop'>>().toEqualTypeOf<StopDwarfParams>()
     expectTypeOf<Res<'dwarf:stop'>>().toEqualTypeOf<IpcResult<StopDwarfResult>>()
+    // A-N06 (ISSUE-168): relays B-M25 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
+    expectTypeOf<Req<'dwarf:message:retry'>>().toEqualTypeOf<RetryMessageParams>()
+    expectTypeOf<Res<'dwarf:message:retry'>>().toEqualTypeOf<IpcResult<RetryMessageResult>>()
     // A-N16 (ISSUE-114): the reveal push, as 14 §2.2 and §3.8 write it.
     expectTypeOf<Req<'mode:revealDwarfChat'>>().toEqualTypeOf<undefined>()
     expectTypeOf<Res<'mode:revealDwarfChat'>>().toEqualTypeOf<{

@@ -93,5 +93,6 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'claude:hooks:set': 'A-N31',
   'ask:step:set': 'A-N07',
   'welcome:answer': 'A-N32',
-  'dwarf:stop': 'A-N29'
+  'dwarf:stop': 'A-N29',
+  'dwarf:message:retry': 'A-N06'
 }

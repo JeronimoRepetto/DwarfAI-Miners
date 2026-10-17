@@ -91,7 +91,9 @@ describe('rollbackOf', () => {
         // AMENDED for ISSUE-223: A-N32, born `host` in cut 2, is unrouted in cut 1 too.
         'welcome:answer': 'cut-2',
         // AMENDED for ISSUE-171: A-N29, born `host` in 3a, is unrouted in cut 1 too.
-        'dwarf:stop': 'cut-3a'
+        'dwarf:stop': 'cut-3a',
+        // AMENDED for ISSUE-168: A-N06, born `host` in 3a, is unrouted in cut 1 too.
+        'dwarf:message:retry': 'cut-3a'
       },
       // An earlier cut's retired row stands for one whose legacy code that cut's retirement already deleted.
       retired: { 'dwarf:feed': 'cut-1', 'mines:get': 'cut-0' }

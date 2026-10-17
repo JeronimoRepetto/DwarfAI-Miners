@@ -38,6 +38,8 @@
   has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-171:** A-N29 `stopDwarf` (`dwarf:stop`, NEW, AMENDMENT-2) is declared in the registry and has a
   generated preload member, so its row moved to the found table.
+- **Updated for ISSUE-168:** A-N06 `retryDwarfMessage` (`dwarf:message:retry`, NEW) is declared in the registry and
+  has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-123:** A-44 is renamed by the cut-1 switch (14 §2.1 CHANGE): the generated preload member
   `reportVisibleMines` sends `presence:visibleMines`, so it has its own row under the same id, and the `panel:openMine`
   row lost its preload location. Today's `setOpenMine` registration and constant stay until cut 5.
@@ -122,6 +124,7 @@ kind `14` gives it.
 | `dwarf:feed`                      | `getDwarfFeed`                | invoke | src/main/index.ts:1684<br>src/preload/index.ts:618<br>src/shared/contracts.ts:5098                                                | A-14    | RETIRE | —                 |                                                                                                                                           |
 | `dwarf:feed:page`                 | `getDwarfFeedPage`            | invoke | src/main/index.ts:1693<br>src/preload/index.ts:624<br>src/shared/contracts.ts:5111                                                | A-15    | CHANGE | —                 |                                                                                                                                           |
 | `dwarf:kick`                      | `kickDwarf`                   | invoke | src/main/index.ts:1841<br>src/preload/index.ts:723<br>src/shared/contracts.ts:5241                                                | A-26    | RETIRE | —                 |                                                                                                                                           |
+| `dwarf:message:retry`             | `retryDwarfMessage`           | invoke | src/preload/index.ts:569                                                                                                          | A-N06   | NEW    | —                 | Declared by ISSUE-168 (US-MSG-003, ADR-022 item 5); its preload member is generated (ISSUE-045); unrouted until cut 3a                    |
 | `dwarf:refreshTelemetry`          | `refreshDwarfTelemetry`       | send   | src/main/index.ts:1711<br>src/preload/index.ts:639<br>src/shared/contracts.ts:5130                                                | A-17    | RETIRE | —                 |                                                                                                                                           |
 | `dwarf:resetName`                 | `resetDwarfName`              | invoke | src/main/index.ts:1736<br>src/preload/index.ts:668<br>src/shared/contracts.ts:5158                                                | §8 I-21 | RETIRE | —                 | Legacy row of 14 §8 I-21 (AMENDMENT-12, OQ-82), no §2 id; successor A-N09 `resetDwarfName` / `dwarf:name:reset`; RETIRE at cut 5          |
 | `dwarf:retire`                    | `retireDwarf`                 | send   | src/main/index.ts:1980<br>src/preload/index.ts:766<br>src/shared/contracts.ts:5248                                                | A-27    | RETIRE | —                 |                                                                                                                                           |
@@ -195,7 +198,6 @@ kind `14` gives it.
 
 | Wire name               | Member                | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
 | ----------------------- | --------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
-| `dwarf:message:retry`   | `retryDwarfMessage`   | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
 | `dwarf:rename`          | `renameDwarf`         | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
 | `dwarf:name:reset`      | `resetDwarfName`      | invoke | not found | A-N09 | NEW    | —                 | Successor of the found legacy `dwarf:resetName` (14 §8 I-21), which uses the same member name |
 | `host:recovery:retry`   | `retryRecovery`       | invoke | not found | A-N10 | NEW    | —                 |                                                                                               |

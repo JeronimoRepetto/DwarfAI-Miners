@@ -2,7 +2,7 @@
 // two parts, as routes/crew.ts:
 //
 // - `serveConversation`, run by the composition root before the boot binds the endpoint: B-M24
-//   `conversation.send` (ISSUE-166), B-M26 `conversation.feed` and B-M27 `conversation.mineHistory`
+//   `conversation.send` (ISSUE-166), B-M25 `conversation.retry` (ISSUE-168), B-M26 `conversation.feed` and B-M27 `conversation.mineHistory`
 //   (14 §2.3), and the `tails` and `marks` snapshot sections (14 §3.7, §4.1), so every `hello.ok`
 //   lists them (14 §1.3). They forward to the one instance boot step 4 constructs; until then the
 //   dispatcher answers HOST_NOT_READY before any handler runs (14 §3.3), and the sections are never
@@ -30,7 +30,7 @@
 //   `DwarfDeparted` → `recordSessionEnd` (05 §4): the cut-1 routes (routes/cut1Routes.ts,
 //   ISSUE-120). The ask routes → `noteAsk`: routes/askingRoutes.ts (ISSUE-140).
 // - The Reset saga's conversation step (`createConversationResetStep`): ISSUE-121.
-// - `retry` (ISSUE-168); the observed-session relay (ISSUE-167); driver events → `ingest` and
+// - The observed-session relay (ISSUE-167); driver events → `ingest` and
 //   `recordTurnEnd` (ISSUE-182), which brings the echo merge and the turn ends ✓✓ waits for.
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
@@ -58,6 +58,7 @@ import type { ConversationFramePublisher } from '../../transport/frames/conversa
 import { toMessageWire } from '../../transport/mappers/wire'
 import { registerConversationFeed } from '../../transport/methods/conversationFeed'
 import { registerConversationMineHistory } from '../../transport/methods/conversationMineHistory'
+import { registerConversationRetry } from '../../transport/methods/conversationRetry'
 import { registerConversationSend } from '../../transport/methods/conversationSend'
 import { registerMarksSection } from '../../transport/snapshot/marksSection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
@@ -70,7 +71,7 @@ import { publishConversationReadFrames } from './conversationFrames'
 export type ConversationRouteEvent = ConversationEvent | SendEvent
 
 export interface ConversationServeDeps {
-  /** The Host dispatcher (hostDispatcher.ts), where B-M24, B-M26 and B-M27 join. */
+  /** The Host dispatcher (hostDispatcher.ts), where B-M24, B-M25, B-M26 and B-M27 join. */
   dispatcher: Dispatcher
   /** The snapshot sections, where `tails` and `marks` join (after the board's, 14 §4.2). */
   sections: SectionRegistry
@@ -128,7 +129,7 @@ export interface ServedConversation {
 /** The members the served methods and sections forward to. */
 type ServedMembers = {
   conversation: Pick<ConversationQueries, 'feed' | 'mineHistory'> &
-    Pick<ConversationCommands, 'send'>
+    Pick<ConversationCommands, 'send' | 'retry'>
   crew: Pick<CrewQueries, 'crewOf'>
   mines: Pick<MinesQueries, 'list'>
 }
@@ -146,6 +147,11 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
     conversation: {
       send: (dwarfId, text, attachments, requestId) =>
         current().conversation.send(dwarfId, text, attachments, requestId)
+    }
+  })
+  registerConversationRetry(serve.dispatcher, {
+    conversation: {
+      retry: (messageId, requestId) => current().conversation.retry(messageId, requestId)
     }
   })
   registerConversationFeed(serve.dispatcher, {
@@ -202,7 +208,8 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
               feed: (dwarfId, page) => conversation.queries.feed(dwarfId, page),
               mineHistory: (mineId) => history.mineHistory(mineId),
               send: (dwarfId, text, attachments, requestId) =>
-                sending.send(dwarfId, text, attachments, requestId)
+                sending.send(dwarfId, text, attachments, requestId),
+              retry: (messageId, requestId) => sending.retry(messageId, requestId)
             },
             crew,
             mines

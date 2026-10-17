@@ -98,7 +98,9 @@ const SERVED_SINCE_CUT_0 = [
   // Sending a message: B-M24, B-F12 and the `marks` section, from cut 3 (ISSUE-166).
   'conversation.send',
   'frame:message.delivery',
-  'section:marks'
+  'section:marks',
+  // Retrying a failed message: B-M25, from cut 3 (ISSUE-168).
+  'conversation.retry'
 ]
 const SERVED_SECTIONS = [
   'meta',
@@ -213,7 +215,7 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
           // A method the Host did not advertise is refused locally (TC-051-02).
           const refused = await client
             .call(
-              'conversation.retry' as never,
+              'launching.retryRecovery' as never,
               { requestId: '01890a5d-ac96-774b-bcce-b302099a8001' } as never
             )
             .catch((error: unknown) => error)
