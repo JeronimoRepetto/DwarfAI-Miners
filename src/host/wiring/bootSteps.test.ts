@@ -672,3 +672,66 @@ describe('config-write re-verification in the boot (16 §7.3, 07 S14.11)', () =>
     )
   })
 })
+
+describe('Host recovery in the boot (16 §8.2 step 5; ADR-015 item 3)', () => {
+  const portsWith = (calls: string[], recoverSessions: () => Promise<void>) => {
+    const clock = new FakeClock()
+    const log = new RecordingDiagnosticsLog()
+    return {
+      log,
+      steps: createBootSteps({
+        paths: new FakeAppPaths(),
+        clock,
+        scheduler: new FakeScheduler(clock),
+        ids: new SequenceIdGenerator(),
+        fs: new FakeFs(),
+        processControl: new FakeProcessControl(),
+        log,
+        endpoint: { bind: () => Promise.resolve('bound'), close: () => Promise.resolve() },
+        database: { open: () => Promise.resolve() },
+        constructModules: () => void calls.push('construct-modules'),
+        recoverSessions,
+        startHookIngress: () => {
+          calls.push('start-hook-ingress')
+          return Promise.resolve()
+        },
+        startObservation: () => void calls.push('start-observation')
+      })
+    }
+  }
+
+  it('[ADR-015, S16.01] step 5 awaits the recovery classification after the modules and before the endpoints and observation', async () => {
+    const calls: string[] = []
+    const { steps } = portsWith(calls, async () => {
+      calls.push('recover-sessions')
+      await Promise.resolve()
+      calls.push('classified')
+    })
+    const context = { reportMigrating: () => undefined }
+    const outcomes = []
+    for (const step of steps) outcomes.push(await step.run(context))
+
+    expect(calls).toStrictEqual([
+      'construct-modules',
+      'recover-sessions',
+      'classified',
+      'start-hook-ingress',
+      'start-observation'
+    ])
+    expect(outcomes[4]).toEqual({ kind: 'done' })
+  })
+
+  it('[ADR-015, ADR-002] a failed classification is logged and never fails the boot: the Host never exits on its own', async () => {
+    const calls: string[] = []
+    const { steps, log } = portsWith(calls, () => Promise.reject(new Error('probe io')))
+    const context = { reportMigrating: () => undefined }
+    const outcomes = []
+    for (const step of steps) outcomes.push(await step.run(context))
+
+    expect(outcomes[4]).toEqual({ kind: 'done' })
+    expect(calls).toContain('start-observation')
+    expect(log.entries).toContainEqual(
+      expect.objectContaining({ level: 'error', event: 'uncaught', subsystem: 'launching' })
+    )
+  })
+})

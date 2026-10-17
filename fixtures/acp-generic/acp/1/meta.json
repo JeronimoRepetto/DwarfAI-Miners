@@ -1,0 +1,14 @@
+{
+  "providerVersion": "1",
+  "capturedAt": "2026-10-17",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §2.7, §4.10 and §6 and the ACP schema of @agentclientprotocol/sdk 1.6.0 (the pinned client); no agent or CLI was run. A generic ACP agent of the catalog (no provider): the common cases follow the synthetic Claude acp set of ../../../claude/acp/2.1.x-synthetic/ without its adapter-only parts (session modes, _meta options), and the cases of this driver are new: an option set with neither allow_once nor reject_once (F-ACP-NOREJECT), an agent that resumes with session/resume and no session/load, usage_update notifications beside the turn usage, and an agent that reports a session mode that skips the permission ask.",
+  "capabilities": {
+    "driver": "acp",
+    "agent": "any ACP agent of the catalog, always the person’s own binary",
+    "note": "the synthetic row of AcpDriver.conformance.test.ts (interactive permission, form questions, resume per initialize, fidelity-1 usage)"
+  }
+}

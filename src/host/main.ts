@@ -117,6 +117,7 @@ import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppB
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
 import { FsAttachmentReader } from './modules/conversation/adapters/attachments/FsAttachmentReader'
 import { NodeAttachmentProbe } from './modules/conversation/adapters/attachments/NodeAttachmentProbe'
+import { createHostConsoleResolver, viewerEntryPath } from './modules/conversation'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
@@ -251,9 +252,12 @@ import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/
 import {
   createLaunchDrainGate,
   type LaunchingEvent,
+  type LaunchingRecovery,
+  type LaunchingRecoveryDeps,
   type LaunchingStopAll,
   type LaunchingStopAllDeps
 } from './modules/launching'
+import { SqliteRecoveryReportStore } from './modules/launching/adapters/sqlite/SqliteRecoveryReportStore'
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
@@ -511,6 +515,9 @@ async function bootHost(base: HostBase): Promise<void> {
   // dispatcher answers HOST_NOT_READY for `host.shutdown` before `ready`, so it is always bound when
   // asked. Unbound, it fails closed: the Host never exits on a stop-all that ended nothing it owns.
   let launchingStopAll: LaunchingStopAll | undefined
+  // Launching's Host recovery pass (ISSUE-173), built at boot step 4 once crew, suppliers and
+  // conversation exist; boot step 5 awaits its classification.
+  let launchingRecovery: LaunchingRecovery | undefined
   // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
   let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
@@ -646,6 +653,25 @@ async function bootHost(base: HostBase): Promise<void> {
         pid: process.pid,
         epoch
       })
+      // ISSUE-170: the console resolver of B-M29 and the viewer's per-view tokens (ADR-031 items 1–3,
+      // ADR-003 item 12). Observed dwarfs focus the provider process observation recorded, `log`
+      // second; launched ones get the `log` view, run on this versioned copy's executable.
+      const hostConsole = createHostConsoleResolver({
+        crew: { get: (dwarfId) => modules.crew?.crew.queries.get(dwarfId) ?? null },
+        observed: {
+          processIdentityOf: (dwarfId) =>
+            modules.observation?.crew.processIdentities.processIdentityOf(dwarfId) ?? null
+        },
+        clock,
+        ids,
+        hostDataDir: dataDir.userDataDir,
+        viewer: {
+          program: dataDir.execPath,
+          // `<appRoot>/out/host/main.js` is this entry (main(): the app root is three folders up).
+          entry: viewerEntryPath(join(appRoot, 'out', 'host', 'main.js')),
+          cwd: dataDir.userDataDir
+        }
+      })
       const endpoint = createUiEndpoint({
         facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
         log,
@@ -681,7 +707,8 @@ async function bootHost(base: HostBase): Promise<void> {
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
         sections: () => sections.names(),
         conditions: () => opened.capabilities(),
-        identityFile
+        identityFile,
+        viewers: hostConsole.viewerTokens
       })
       // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
       cleanExit = composeHostLifecycle({
@@ -716,6 +743,16 @@ async function bootHost(base: HostBase): Promise<void> {
         database: opened,
         // Step 3: preferences first, then the saga's boot resume (07 S13.08).
         resumeResetSaga: async () => {
+          // ADR-015 item 6: the viewer token files a previous Host left go before any method is
+          // served (B-M29 answers HOST_NOT_READY until `ready`).
+          await hostConsole.sweep().catch((error: unknown) =>
+            log.record({
+              level: 'warn',
+              event: 'viewer.sweep.failed',
+              subsystem: 'conversation',
+              errCode: errorCode(error)
+            })
+          )
           const { db, transactions } = opened.connection()
           bus = new InProcessEventBus<HostEvent>({
             transactionScope: transactions,
@@ -1012,7 +1049,8 @@ async function bootHost(base: HostBase): Promise<void> {
             attachments: new FsAttachmentReader({
               platform: hostRuntime().os as NodeJS.Platform,
               probe: new NodeAttachmentProbe()
-            })
+            }),
+            console: hostConsole.resolver
           })
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
           // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).
@@ -1162,6 +1200,36 @@ async function bootHost(base: HostBase): Promise<void> {
             crew: modules.crew.crew.ownedEnds(ownedEndsDeps)
           }
           launchingStopAll = modules.launching.launching.stopAll(stopAllDeps)
+          // Host crash recovery (ISSUE-173; ADR-015 items 3–5): the previous epoch's owned sessions
+          // are classified at step 5 and resumed silently after it, over crew's terminator (a
+          // survivor ends with `why: 'host-recovery'`) and conversation's delivery reconcile (07
+          // S7.16: a 10 s evidence window).
+          const recoveryCrew = modules.crew
+          const recoveryBus = bus
+          const recoveryDeps: LaunchingRecoveryDeps = {
+            reports: new SqliteRecoveryReportStore({ db, scope: transactions, clock }),
+            previousEpochEnd: () => opened.previousEpochEnd(),
+            processControl,
+            crew: {
+              markUnrecovered: (dwarfId) => recoveryCrew.crew.commands.markUnrecovered(dwarfId),
+              rebind: (dwarfId, next) => recoveryCrew.crew.commands.rebind(dwarfId, next),
+              sessionClosed: (dwarfId, cause) =>
+                recoveryCrew.crew.commands.sessionClosed(dwarfId, cause),
+              get: (dwarfId) => recoveryCrew.crew.queries.get(dwarfId)
+            },
+            endSurvivor: (dwarfId) => recoveryCrew.terminator.end(dwarfId, 'host-recovery'),
+            catalogue: modules.suppliers.catalogue,
+            deliveries: {
+              reconcileSending: (dwarfIds) =>
+                conversation.conversation.reconcileSending({
+                  dwarfIds,
+                  windowMs: SENDING_RECONCILE_WINDOW_MS,
+                  scheduler,
+                  bus: recoveryBus
+                })
+            }
+          }
+          launchingRecovery = modules.launching.launching.recovery(recoveryDeps)
           // Stop dwarf ends an owned session through its driver, then its recorded process tree
           // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(
@@ -1182,6 +1250,13 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             attention: modules.attention.attention
           })
+        },
+        // Step 5: the Host recovery's classification (ISSUE-173); its resumes go on after `ready`.
+        recoverSessions: () => {
+          if (launchingRecovery === undefined) {
+            throw new HostInvariantError('boot step 5 runs after step 4 wired launching')
+          }
+          return launchingRecovery.start().classified
         },
         // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
         // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
@@ -1251,6 +1326,9 @@ async function bootHost(base: HostBase): Promise<void> {
     })
   }
 }
+
+/** 07 S7.16: a `sending` row with no evidence within 10 s of the restart is ✕ `host-interrupted`. */
+const SENDING_RECONCILE_WINDOW_MS = 10_000
 
 /** `app_meta.install_id` (09 §4.9), the first field of every spawn tag (ADR-015 item 2). */
 function installIdOf(db: SqliteDatabase): string {

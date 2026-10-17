@@ -1,0 +1,88 @@
+{
+  "case": "C-23",
+  "description": "ISSUE-201, ADR-013 items 2-3, 15 §4.3: a launch with both delegation gates on (the request carries a ticket-file DelegationInjection). session/new carries the relay entry as a stdio MCP server named dwarfai whose own env holds only ELECTRON_RUN_AS_NODE and the credential file PATH, and _meta.claudeCode.options pre-approves exactly DwarfAI's two delegation tools (ADR-008 item 3's named exception, C-24; claude-agent-acp 0.93.0 spreads these options into its Agent SDK query options) beside AMENDMENT-19's allowDangerouslySkipPermissions false. No credential value and no DWARFAI_DELEGATION_TOKEN string is in the adapter's argv, env or any frame (C-23, INV-83).",
+  "script": [{ "do": "launch", "delegation": true }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:1",
+        "role": "dwarf",
+        "text": "Ready.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": { "elicitation": { "form": {} } }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": [
+          {
+            "name": "dwarfai",
+            "command": "/opt/dwarfai/host/dwarfai",
+            "args": ["dwarfai-mcp-relay"],
+            "env": [
+              { "name": "ELECTRON_RUN_AS_NODE", "value": "1" },
+              {
+                "name": "DWARFAI_MCP_CREDENTIAL_FILE",
+                "value": "/home/j/.dwarfai/run/mcp/launch-1.cred"
+              }
+            ]
+          }
+        ],
+        "_meta": {
+          "claudeCode": {
+            "options": {
+              "allowDangerouslySkipPermissions": false,
+              "allowedTools": ["mcp__dwarfai__delegate_subtask", "mcp__dwarfai__subtask_result"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [{ "type": "text", "text": "first prompt" }]
+      }
+    }
+  ]
+}
