@@ -5,7 +5,7 @@
   "os": "any",
   "scrubbed": true,
   "synthetic": true,
-  "source": "Hand-written from 15-provider-driver.md §2.7, §4.3, §4.10 and §6 and the ACP schema of @agentclientprotocol/sdk 1.6.0 (the pinned client); no adapter or CLI was run. The JSON-RPC error frames of c-11 are the pinned SDK's own replies. Recordings against a user-installed claude-agent-acp (and the clacp test fixtures, Apache-2.0) are an owner item of the real-CLI lane; replace each case with a scrubbed maintainer recording when one exists.",
+  "source": "Hand-written from 15-provider-driver.md §2.7, §4.3, §4.10 and §6 and the ACP schema of @agentclientprotocol/sdk 1.6.0 (the pinned client); no adapter or CLI was run. The JSON-RPC error frames of c-11 are the pinned SDK's own replies. The scrubbed maintainer recordings against a user-installed claude-agent-acp 0.93.0 live in ../2.1.x/ (c-01, c-05, c-06, c-07, c-08, c-09, c-16, c-28); the cases here are the ones no recording can show (an option set without allow_once, unknown and malformed requests, stale and twice-given answers, the handover timeout, the turn-end mapping, auth_required, drift, decline and empty answers). Two cases follow what the recordings showed: c-21's prompt usage is per turn, and c-09's forms carry the question in message and a header in the field title. The clacp test fixture (Apache-2.0, at e6681d2) is in ../2.1.x/ with its attribution.",
   "capabilities": {
     "driver": "acp",
     "adapter": "claude-agent-acp (user-installed, never shipped)",

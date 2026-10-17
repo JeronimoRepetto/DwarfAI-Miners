@@ -194,7 +194,6 @@ export class AcpSession implements DriverSession {
   private readonly asks = new Map<string, PendingAsk>()
   private asked = 0
   private readonly continuations: ((arrived: boolean) => void)[] = []
-  private totals: Tokens | null = null
   private readonly reported = new Set<string>()
   private closing = false
   private closed = false
@@ -493,35 +492,28 @@ export class AcpSession implements DriverSession {
   }
 
   /**
-   * ADR-006 items 4 and 6: one sealed observation per turn, the difference of the session totals
-   * `session/prompt` reports (`Usage`: "across all turns"). A resumed session does not know the
-   * totals its earlier turns reached, so its first report only sets them (never counted twice).
+   * ADR-006 items 4 and 6: one sealed observation per turn, the `usage` of that turn's
+   * `session/prompt` response. The pinned schema calls it "token usage for this turn" while its
+   * `Usage` fields say "across all turns"; the recordings of claude-agent-acp 0.93.0
+   * (`fixtures/claude/acp/2.1.x/`) show the turn's own counts (a second turn reports fewer output
+   * tokens than the first), so each report is counted as it is, a resumed session's first one too.
    */
   private reportUsage(turn: OpenTurn, usage: PromptResponse['usage']): void {
     if (usage === null || usage === undefined) return
-    const totals: Tokens = {
+    const tokens: Tokens = {
       inputNet: count(usage.inputTokens),
       output: count(usage.outputTokens),
       cacheRead: count(usage.cachedReadTokens),
       cacheWrite: count(usage.cachedWriteTokens),
       reasoning: count(usage.thoughtTokens)
     }
-    const before = this.totals ?? (this.start.mode.kind === 'new' ? zeroTokens() : null)
-    this.totals = totals
-    if (before === null) return
     this.emit({
       t: 'usage',
       observation: {
         sourceKey: turn.key,
         unitKey: `${this.ref.providerSessionId}:turn:${turn.n}`,
         fidelity: this.capabilities.usage.fidelity,
-        tokens: {
-          inputNet: Math.max(0, totals.inputNet - before.inputNet),
-          output: Math.max(0, totals.output - before.output),
-          cacheRead: Math.max(0, totals.cacheRead - before.cacheRead),
-          cacheWrite: Math.max(0, totals.cacheWrite - before.cacheWrite),
-          reasoning: Math.max(0, totals.reasoning - before.reasoning)
-        },
+        tokens,
         sealed: true,
         providerTime: null
       }
@@ -866,10 +858,6 @@ export function turnEndOf(stopReason: string): { kind: TurnEndKind; detail?: str
         detail: stopReason === '' ? 'stopReason without a value' : stopReason
       }
   }
-}
-
-function zeroTokens(): Tokens {
-  return { inputNet: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
 }
 
 function count(value: unknown): number {

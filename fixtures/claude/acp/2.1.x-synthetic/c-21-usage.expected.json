@@ -1,6 +1,6 @@
 {
   "case": "C-21",
-  "description": "ADR-006 items 4 and 6, 15 §4.10 (fidelity 1): session/prompt reports the session totals; each turn is one sealed observation of the difference, keyed by the turn.",
+  "description": "ADR-006 items 4 and 6, 15 §4.10 (fidelity 1): each session/prompt response reports the usage of its own turn (as the claude-agent-acp 0.93.0 recordings of ../2.1.x/ show); each turn is one sealed observation of it, keyed by the turn.",
   "script": [
     {
       "do": "launch"

@@ -1,8 +1,11 @@
 // ACP form elicitation (`elicitation/create`, mode `form`) ↔ the question card (15 §2.7 Questions
 // row "ACP form elicitation from AskUserQuestion", frozen; `clacp@e6681d2:src/elicitation.ts`).
 // The form's `question_<n>` properties are the steps (in `n` order), each answered with an option
-// label; `question_<n>_custom` carries free text. `{ decline: true }` sends the elicitation
-// `decline` (ADR-009 D3); an empty answers array is an ordinary accept, never a decline. A form
+// label; `question_<n>_custom` carries free text. A step shows its question: the property's
+// `description` (claude-agent-acp writes each question there when the form has several), else the
+// form's `message` (its single question), else the property's `title` (the short header).
+// `{ decline: true }` sends the elicitation `decline` (ADR-009 D3); an empty answers array is an
+// ordinary accept, never a decline. A form
 // with no `question_<n>` property is not a question card: the request is refused (fail closed).
 // Pure: no I/O.
 import type {
@@ -44,7 +47,7 @@ export function formOf(request: {
   const properties = request.requestedSchema.properties
   if (!isRecord(properties)) return null
   const message = typeof request.message === 'string' ? request.message : ''
-  const numbered: { n: number; question: FormQuestion; text: string }[] = []
+  const numbered: { n: number; question: FormQuestion; schema: Record<string, unknown> }[] = []
   for (const [name, schema] of Object.entries(properties)) {
     const match = QUESTION_PROPERTY.exec(name)
     if (match === null) continue
@@ -54,7 +57,7 @@ export function formOf(request: {
     const custom = `${name}_custom`
     numbered.push({
       n: Number(match[1]),
-      text: textOf(schema) ?? message,
+      schema,
       question: {
         property: name,
         customProperty: isRecord(properties[custom]) ? custom : null,
@@ -66,8 +69,8 @@ export function formOf(request: {
   numbered.sort((a, b) => a.n - b.n)
   return {
     payload: {
-      steps: numbered.map(({ text, question }) => ({
-        text,
+      steps: numbered.map(({ schema, question }) => ({
+        text: textOf(schema, numbered.length === 1 ? message : '') ?? message,
         options: [...question.options],
         allowsFreeText: true
       }))
@@ -106,9 +109,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function textOf(schema: Record<string, unknown>): string | null {
-  for (const field of ['title', 'description']) {
-    const value = schema[field]
+/** A step's question: its `description`, else the single question's `message`, else its `title`. */
+function textOf(schema: Record<string, unknown>, message: string): string | null {
+  for (const value of [schema.description, message, schema.title]) {
     if (typeof value === 'string' && value.trim() !== '') return value
   }
   return null

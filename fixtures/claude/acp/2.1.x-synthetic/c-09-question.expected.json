@@ -1,6 +1,6 @@
 {
   "case": "C-09",
-  "description": "15 §2.7 Questions, ACP form elicitation row: each form opens one question ask (question_<n> are the steps); an option answer is sent as question_<n> = the label, { decline: true } as the elicitation decline, and an empty answers array as an accept with no content (never a decline).",
+  "description": "15 §2.7 Questions, ACP form elicitation row: each form opens one question ask (question_<n> are the steps); an option answer is sent as question_<n> = the label, { decline: true } as the elicitation decline, and an empty answers array as an accept with no content (never a decline). Each form carries its question in message and a short header in the field title, as the recorded claude-agent-acp 0.93.0 form does (../2.1.x/c-09-question); the card step shows the question.",
   "script": [
     {
       "do": "launch"

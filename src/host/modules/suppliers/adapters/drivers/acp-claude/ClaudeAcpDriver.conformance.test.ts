@@ -1,8 +1,9 @@
 // L4 conformance of the Claude `acp` driver over a user-installed `claude-agent-acp` (15 §4.3,
-// §4.10, §6; 17 §1.4, §2.3): the harness run over the hand-written cases of
-// `fixtures/claude/acp/2.1.x-synthetic/` (no adapter was run; recordings against a user-installed
-// `claude-agent-acp` are the real-CLI lane's, on the maintainer's machine), then the driver's own
-// cases of ISSUE-151. Every `*.expected.json` is written by hand from the contract.
+// §4.10, §6; 17 §1.4, §2.3): the harness run over the scrubbed maintainer recordings of
+// `fixtures/claude/acp/2.1.x/` (the person's own @agentclientprotocol/claude-agent-acp 0.93.0 with
+// Claude Code 2.1.302) plus the hand-written cases of `2.1.x-synthetic/` that no recording covers,
+// then the driver's own cases of ISSUE-151. Every `*.expected.json` is written by hand from the
+// contract.
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../../../../../kernel/fakes/FakeClock'
@@ -21,17 +22,23 @@ import {
   type DriverFactory
 } from '../../../testing/driverConformance'
 import { bind, compareEvents, differences, sourceKeysOf } from '../../../testing/expected'
-import { readFixtureSet, type FixtureCase, type FixtureVariant } from '../../../testing/fixtureSet'
+import {
+  readFixtureSet,
+  type FixtureCase,
+  type FixtureSet,
+  type FixtureVariant
+} from '../../../testing/fixtureSet'
 import { FixtureTransport } from '../../../testing/fixtureTransport'
 import { RecordingSpawn } from '../../../testing/recordingSpawn'
 import { CATALOG_RECORDS } from '../../catalog/profiles'
 import { acpProbeSource } from '../acp/client/capabilities'
 import { ADAPTER_BINARY, C3_ROW, ClaudeAcpDriver, EXECUTABLE_PIN } from './ClaudeAcpDriver'
 
-const SYNTHETIC = fileURLToPath(
-  new URL('../../../../../../../fixtures/claude/acp/2.1.x-synthetic/', import.meta.url)
-)
-const fixtures = readFixtureSet(SYNTHETIC)
+const FIXTURE_ROOT = new URL('../../../../../../../fixtures/claude/acp/', import.meta.url)
+const recorded = readFixtureSet(fileURLToPath(new URL('2.1.x/', FIXTURE_ROOT)))
+const synthetic = readFixtureSet(fileURLToPath(new URL('2.1.x-synthetic/', FIXTURE_ROOT)))
+/** One set for the harness: the recorded set's location and meta, with both folders' cases. */
+const fixtures: FixtureSet = { ...recorded, cases: [...recorded.cases, ...synthetic.cases] }
 
 const CLAUDE = CATALOG_RECORDS.find((record) => record.profile.id === 'claude') as CatalogRecord
 const ADAPTER_PATH = '/home/j/.npm-global/bin/claude-agent-acp'

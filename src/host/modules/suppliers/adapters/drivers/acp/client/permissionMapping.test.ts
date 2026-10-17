@@ -104,6 +104,41 @@ describe('ACP permission and question mapping (15 §2.7)', () => {
     expect(DECLINE).toEqual({ action: 'decline' })
   })
 
+  it('[C-09] a step shows its question, not the short header claude-agent-acp puts in the field title', () => {
+    const header = (title: string, description?: string) => ({
+      type: 'string',
+      title,
+      ...(description === undefined ? {} : { description }),
+      oneOf: [
+        { const: 'Red', title: 'Red' },
+        { const: 'Blue', title: 'Blue' }
+      ]
+    })
+    // One question: claude-agent-acp 0.93.0 carries it in message (fixtures/claude/acp/2.1.x).
+    const single = formOf({
+      mode: 'form',
+      message: 'Pick a colour',
+      requestedSchema: { type: 'object', properties: { question_0: header('Colour') } }
+    })
+    expect(single?.payload.steps.map((step) => step.text)).toEqual(['Pick a colour'])
+    // Several: each field's description holds its own question.
+    const several = formOf({
+      mode: 'form',
+      message: 'Claude has questions',
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          question_0: header('Colour', 'Pick a colour'),
+          question_1: header('Shade', 'Pick a shade')
+        }
+      }
+    })
+    expect(several?.payload.steps.map((step) => step.text)).toEqual([
+      'Pick a colour',
+      'Pick a shade'
+    ])
+  })
+
   it('[C-11] a form without a question_n property or not in form mode is not a question card', () => {
     expect(formOf({ mode: 'url', message: 'Sign in', requestedSchema: {} })).toBeNull()
     expect(

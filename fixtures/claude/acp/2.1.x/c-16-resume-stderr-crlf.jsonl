@@ -1,0 +1,27 @@
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=validate-cwd durationMs=0 totalMs=0
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=settings durationMs=13 totalMs=13
+Ignoring permission mode bypassPermissions: not available in this session.
+[session/query] sessionId=00000000-0000-4000-8000-000000000001 resume=none apiType=native baseUrl=native
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=prepare-query durationMs=4 totalMs=18
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=sdk-initialize durationMs=310 totalMs=327
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=models durationMs=1 totalMs=328
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=modes durationMs=0 totalMs=329
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=<command-20> durationMs=0 totalMs=329
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=register durationMs=1 totalMs=329
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=validate-cwd durationMs=0 totalMs=0
+[session/models] sessionId=00000000-0000-4000-8000-000000000001 phase=read-transcript durationMs=5 totalMs=5 messages=2 model=claude-opus-5-5
+[session/replay] sessionId=00000000-0000-4000-8000-000000000001 phase=read durationMs=0 messages=2
+[session/replay] sessionId=00000000-0000-4000-8000-000000000001 phase=publish durationMs=1 totalMs=1 messages=2
+[session/models] sessionId=00000000-0000-4000-8000-000000000001 phase=read-transcript-tail durationMs=6 totalMs=6 model=unknown permissionMode=default
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=resume-transcript durationMs=6 totalMs=6
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=settings durationMs=13 totalMs=18
+[session/query] sessionId=00000000-0000-4000-8000-000000000001 resume=00000000-0000-4000-8000-000000000001 apiType=native baseUrl=native
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=prepare-query durationMs=5 totalMs=23
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=sdk-initialize durationMs=352 totalMs=375
+[session/models] sessionId=00000000-0000-4000-8000-000000000001 phase=set-model durationMs=4 model=opus outcome=success
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=models durationMs=5 totalMs=380
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=modes durationMs=0 totalMs=380
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=<command-20> durationMs=0 totalMs=380
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=register durationMs=1 totalMs=381
+[session/load] sessionId=00000000-0000-4000-8000-000000000001 phase=session-ready durationMs=382 totalMs=382
+[session/load] sessionId=00000000-0000-4000-8000-000000000001 phase=replay durationMs=0 totalMs=382
