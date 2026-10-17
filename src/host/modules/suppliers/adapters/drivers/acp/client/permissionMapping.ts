@@ -11,6 +11,8 @@ import type { PermissionPayload } from '../../../../../../kernel/domain/sharedCo
 export interface AcpPermissionOption {
   readonly optionId: string
   readonly kind: string
+  /** The option's `_meta`, kept for a driver whose agent names its native decision there. */
+  readonly meta?: Readonly<Record<string, unknown>>
 }
 
 /** What one Allow or Deny becomes on the wire. */
@@ -61,4 +63,42 @@ export function permissionPayload(
 
 function nonEmpty(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null
+}
+
+/**
+ * A driver's choice of the option for one decision, by optionId (15 §2.7: with
+ * `_meta.codex.decision`, prefer the native `decline`); `null` leaves the default mapping.
+ */
+export type PermissionReplyHook = (
+  options: readonly AcpPermissionOption[],
+  decision: 'allow' | 'deny'
+) => string | null
+
+/** The options of a request as the driver reads them, each with its `_meta` when it has one. */
+export function optionsOf(
+  options: readonly { optionId: string; kind: string; _meta?: unknown }[]
+): AcpPermissionOption[] {
+  return options.map(({ optionId, kind, _meta }) =>
+    _meta !== null && typeof _meta === 'object' && !Array.isArray(_meta)
+      ? { optionId, kind, meta: { ..._meta } }
+      : { optionId, kind }
+  )
+}
+
+/**
+ * The reply of one decision: the hook's option when it is one of the request's options of the
+ * decision's own kind (`allow_once` for Allow, `reject_once` for Deny), else the default mapping.
+ * A hook can never widen an answer to an "always" option (ADR-008 item 3).
+ */
+export function replyWith(
+  options: readonly AcpPermissionOption[],
+  decision: 'allow' | 'deny',
+  hook?: PermissionReplyHook
+): PermissionReply {
+  const wanted = decision === 'allow' ? 'allow_once' : 'reject_once'
+  const chosen = hook?.(options, decision) ?? null
+  const valid = options.some((option) => option.optionId === chosen && option.kind === wanted)
+  return valid && chosen !== null
+    ? { kind: 'select', optionId: chosen }
+    : permissionReply(options, decision)
 }

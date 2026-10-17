@@ -8,7 +8,10 @@
 // the generic client (`../acp/client`, 15 §4.10): permission and question cards through
 // `session/request_permission` and form elicitation, resume through `session/load`, and the
 // delegation relay only as a `ticket-file` stdio entry of `session/new` (`protocol` only after
-// SP-12; the injection itself is ISSUE-201's).
+// SP-12). A launch that carries the entry also pre-approves exactly DwarfAI's two delegation tools
+// in `_meta.claudeCode.options.allowedTools` (ADR-008 item 3's named exception, C-24; ISSUE-201):
+// claude-agent-acp 0.93.0 spreads those options into its Agent SDK query options (`acp-agent.js`
+// `...userProvidedOptions`).
 //
 // No auto-approve option anywhere (ADR-008 item 3), no provider credential read (ADR-008 item 2),
 // no `fs` or `terminal` client capability (15 §4.10). The driver never signals a process: ending
@@ -43,7 +46,8 @@ import {
   type AcpLibraryRecord
 } from '../acp/client/capabilities'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
-import { relayEntry } from '../shared/relayEntry'
+import { assertNoForbidden } from '../shared/forbiddenFlags'
+import { delegationToolIds, relayEntry } from '../shared/relayEntry'
 
 /** The adapter's binary name: always the person's own install (15 §2.4 row Claude `acp`). */
 export const ADAPTER_BINARY = 'claude-agent-acp'
@@ -63,6 +67,17 @@ const RELAY_NAME = 'dwarfai'
 const SESSION_META: Readonly<Record<string, unknown>> = Object.freeze({
   claudeCode: { options: { allowDangerouslySkipPermissions: false } }
 })
+/** A gated launch's options: the same, plus the pre-approval of DwarfAI's two delegation tools. */
+const GATED_SESSION_META: Readonly<Record<string, unknown>> = Object.freeze({
+  claudeCode: {
+    options: {
+      allowDangerouslySkipPermissions: false,
+      allowedTools: delegationToolIds(RELAY_NAME)
+    }
+  }
+})
+const GATE_ON = { subagentDelegationOn: true, launchedWithLetJevChoose: true }
+const GATE_OFF = { subagentDelegationOn: false, launchedWithLetJevChoose: false }
 /** The mode a session must report before it is ready: Claude asks before every change. */
 const PINNED_MODE = 'default'
 /** JSON-RPC "resource not found": the adapter does not know the session id (ADR-015 stale ref). */
@@ -162,12 +177,27 @@ export class ClaudeAcpDriver implements ProviderDriver {
     if (!this.library.s0081) {
       throw launchError('could-not-start', 'the ACP TS SDK has no S-008-1 record')
     }
+    const mcpServers = this.mcpServers(req)
+    const sessionMeta = mcpServers.length === 0 ? SESSION_META : GATED_SESSION_META
+    try {
+      // The entry is present only when `issueFor` gave one, so its presence is the gate (C-24).
+      assertNoForbidden(
+        [],
+        { mcpServers, sessionMeta },
+        {
+          delegationGate: mcpServers.length === 0 ? GATE_OFF : GATE_ON
+        }
+      )
+    } catch {
+      throw launchError('could-not-start', 'the session options were refused (ADR-008 item 3)')
+    }
     const adapter = await this.adapterTarget()
     let session: DriverSession
     try {
       session = await startAcpSession(this.deps, {
         ...this.startOf(req.install, adapter, req.cwd, req.spawnTag),
-        mcpServers: this.mcpServers(req),
+        mcpServers,
+        sessionMeta,
         mode: { kind: 'new', prompt: req.prompt },
         onSpawned: (identity: ProcessIdentity) => req.onSpawned(identity)
       })

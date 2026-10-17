@@ -1,3 +1,4 @@
+import type { ConsoleTarget } from '@dwarfai/contracts'
 import {
   EXTERNAL_LINK_REFUSED_REASON,
   MINE_PATH_UNOPENABLE_REASON,
@@ -13,7 +14,8 @@ import {
  * answers `[]`. Every copied text and opened link is recorded; `clipboardFails` and `refuseLinks` play a clipboard
  * that fails and a link that is refused, each answered as the real actions answer them. `folder` is the folder the
  * person picks for A-30, `null` (the default) a cancelled picker; every opened path is recorded, and `refusePaths`
- * plays an OS that will not open one (ISSUE-091).
+ * plays an OS that will not open one (ISSUE-091). Every console target `raiseConsole` executes is recorded, and
+ * `consoleFails` plays a console that will not open (ISSUE-170).
  */
 export class FakeNativeActions implements ServedNativeActions {
   readonly copied: string[] = []
@@ -24,6 +26,8 @@ export class FakeNativeActions implements ServedNativeActions {
   refusePaths = false
   clipboardFails = false
   refuseLinks = false
+  readonly consoles: ConsoleTarget[] = []
+  consoleFails = false
   private readonly attachments: readonly string[] | null
   private readonly folder: string | null
 
@@ -62,5 +66,10 @@ export class FakeNativeActions implements ServedNativeActions {
     }
     this.openedPaths.push(p)
     return Promise.resolve({ opened: true })
+  }
+
+  raiseConsole(t: ConsoleTarget): Promise<'raised' | 'failed'> {
+    this.consoles.push(t)
+    return Promise.resolve(this.consoleFails ? 'failed' : 'raised')
   }
 }

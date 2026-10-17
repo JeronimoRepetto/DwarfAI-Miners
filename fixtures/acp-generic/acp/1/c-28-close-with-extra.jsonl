@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"embeddedContext":true},"mcpCapabilities":{"http":true,"sse":true},"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"synthetic-acp-agent","version":"0.0.0-synthetic"},"authMethods":[],"dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"00000000-0000-4000-8000-00000000ac01","dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"00000000-0000-4000-8000-00000000ac01","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Done.","dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn","dwarfaiUnknownField":"extra"}}
+{"jsonrpc":"2.0","id":3,"result":{"dwarfaiUnknownField":"extra"}}
