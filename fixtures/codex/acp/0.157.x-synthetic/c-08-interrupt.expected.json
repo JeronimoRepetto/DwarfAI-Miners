@@ -1,0 +1,156 @@
+{
+  "case": "C-08",
+  "description": "15 §4.10 Interrupt, §4.5: interrupt mid-turn and mid-permission sends session/cancel, answers the open permission request cancelled and resolves its ask cancelled; the turn ends interrupted with cancelledFromApp.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "interrupt"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    null
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:1",
+        "role": "dwarf",
+        "text": "Working on it.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:call_0000000000000000000000d1",
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "edit",
+        "summary": "Write plan.md",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "call_0000000000000000000000d1",
+        "channel": "driver",
+        "payload": {
+          "toolName": "edit",
+          "requestText": "Write plan.md"
+        },
+        "options": {
+          "hasAllowOnce": true,
+          "hasRejectOnce": true
+        },
+        "turnKey": "codex:codex:{session}:turn:1"
+      }
+    },
+    {
+      "t": "ask.resolved",
+      "providerRequestId": "call_0000000000000000000000d1",
+      "by": "cancelled"
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:call_0000000000000000000000d1",
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "edit",
+        "summary": "Write plan.md",
+        "state": "failed",
+        "at": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "interrupted",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": true
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/cancel",
+      "params": {
+        "sessionId": "{session}"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 101,
+      "result": {
+        "outcome": {
+          "outcome": "cancelled"
+        }
+      }
+    }
+  ]
+}
