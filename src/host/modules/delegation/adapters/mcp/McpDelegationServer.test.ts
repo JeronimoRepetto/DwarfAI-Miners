@@ -160,3 +160,89 @@ describe('McpDelegationServer (16 §5.4)', () => {
     await server.close()
   })
 })
+
+describe('McpDelegationServer flush report (ISSUE-205; 16 §5.4 "Handoff")', () => {
+  const token: DelegationToken = {
+    launchId: '01890a5d-ac96-774b-bcce-b302099a8a05' as DelegationToken['launchId'],
+    parentDwarfId: null,
+    mechanism: 'ticket-file',
+    issuedAt: 0
+  }
+
+  /** A server over one in-process relay, reporting each done answer's flush. */
+  async function reporting(result: (close: () => void) => SubtaskResultView) {
+    const pair = relayPair(token)
+    const reports: Array<{ answer: SubtaskResultView; flushed: boolean; framesSent: number }> = []
+    const handler: DelegationEndpoint = {
+      delegate: () => Promise.resolve({ ok: true, value: { ticket: 'ticket-205' } }),
+      result: () => Promise.resolve(result(() => pair.connection.close()))
+    }
+    const server = new McpDelegationServer(
+      {
+        listen: (accept) => {
+          accept(pair.connection)
+          return Promise.resolve({
+            endpoint: { path: 'in-process' },
+            close: () => Promise.resolve()
+          })
+        }
+      },
+      new RecordingDiagnosticsLog(),
+      {
+        responseFlushed: (answer, flushed) =>
+          reports.push({ answer, flushed, framesSent: pair.frames.length })
+      }
+    )
+    await server.listen(handler)
+    const client = new Client({ name: 'relay-under-test', version: '1.0.0' })
+    await client.connect(pair.client)
+    return { client, server, reports, frames: pair.frames }
+  }
+
+  it('[S8.08, INV-68] a done answer is reported flushed once its response frame left on the open connection', async () => {
+    const done: SubtaskResultView = { status: 'done', outcome: { kind: 'concluded', text: 'ok' } }
+    const s = await reporting(() => done)
+
+    await s.client.callTool({ name: 'subtask_result', arguments: { ticket: 'ticket-205' } })
+    await s.client.callTool({ name: 'delegate_subtask', arguments: { task: 'Map the shafts' } })
+
+    expect(s.reports.map((r) => [r.answer, r.flushed])).toStrictEqual([
+      [done, true],
+      [done, true]
+    ])
+    // Reported after the response frame was written, never before.
+    const [first] = s.reports
+    expect(s.frames.slice(0, first?.framesSent).at(-1)).toMatchObject({
+      result: { structuredContent: { status: 'done' } }
+    })
+    await s.client.close()
+    await s.server.close()
+  })
+
+  it('[INV-68] a done answer whose connection closed before its response is reported not flushed', async () => {
+    const done: SubtaskResultView = { status: 'done', outcome: { kind: 'concluded', text: 'ok' } }
+    const s = await reporting((close) => {
+      close()
+      return done
+    })
+
+    await s.client
+      .callTool({ name: 'subtask_result', arguments: { ticket: 'ticket-205' } })
+      .catch(() => undefined)
+    for (let i = 0; i < 20; i += 1) await Promise.resolve()
+
+    expect(s.reports.map((r) => [r.answer, r.flushed])).toStrictEqual([[done, false]])
+    await s.server.close()
+  })
+
+  it('[INV-68] a pending or failed answer is never reported: only a done answer is a handoff', async () => {
+    const pending: SubtaskResultView = { status: 'pending', ticket: 'ticket-205' }
+    const s = await reporting(() => pending)
+
+    await s.client.callTool({ name: 'subtask_result', arguments: { ticket: 'ticket-205' } })
+
+    expect(s.reports).toStrictEqual([])
+    await s.client.close()
+    await s.server.close()
+  })
+})

@@ -1,14 +1,19 @@
 // The conversation module over its in-memory doubles, for application tests (L2, 17 §1.2). Never
 // imported by production code (R14). Its transaction runner joins an open transaction, rolls the
 // log, the activity runs and the lifecycle facts back when the outermost work throws, and counts the transactions it
-// opened. `reboot` stands for a Host restart: new commands over the same stored rows.
+// opened. `reboot` stands for a Host restart: new commands over the same stored rows. As
+// `createConversation` composes it, every ingested batch first goes through the handoff echoes'
+// recognition, and `deliverer(route)` builds `deliverInvisibly` over a send route (ISSUE-205).
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { InMemoryLifecycleFactLog } from '../../../kernel/fakes/InMemoryLifecycleFactLog'
 import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
+import { InvisibleHandoffs, type ConversationDeliverCommand } from '../application/deliverInvisibly'
 import { ConversationIngest, type ConversationCommands } from '../application/ingest'
+import type { MessageRecipients } from '../application/send'
+import type { TurnSender } from '../ports/turnSender'
 import { AskNoter } from '../application/noteAsk'
 import { SessionEndRecorder } from '../application/recordSessionEnd'
 import { TurnEndRecorder } from '../application/recordTurnEnd'
@@ -63,8 +68,11 @@ export function inMemoryConversation(options: { guardedBus?: boolean } = {}) {
   )
 
   let boots = 0
+  /** The pushed handoffs whose echoes ingest drops: Host memory, new on every boot. */
+  let handoffs = new InvisibleHandoffs({ ids })
   const boot = (): InMemoryConversationCommands => {
     boots += 1
+    handoffs = new InvisibleHandoffs({ ids })
     const hostEpoch = boots === 1 ? CONVERSATION_EPOCH : `${CONVERSATION_EPOCH}-${boots}`
     const ingest = new ConversationIngest({
       log,
@@ -105,7 +113,8 @@ export function inMemoryConversation(options: { guardedBus?: boolean } = {}) {
       hostEpoch
     })
     return {
-      ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
+      ingest: (dwarfId, entries, origin) =>
+        ingest.ingest(dwarfId, handoffs.recognise(dwarfId, entries), origin),
       noteAsk: (dwarfId, change) => asks.noteAsk(dwarfId, change),
       recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
       recordSessionEnd: (dwarfId, at) => sessionEnds.recordSessionEnd(dwarfId, at),
@@ -128,6 +137,13 @@ export function inMemoryConversation(options: { guardedBus?: boolean } = {}) {
     /** The runner the commands use: a caller's transaction that they join. */
     runner: transactionRunner,
     transactions: () => transactions,
+    /** `deliverInvisibly` over `route`, sharing this boot's pushed handoffs with `ingest`. */
+    deliverer(route: {
+      turns: TurnSender
+      recipients: MessageRecipients
+    }): ConversationDeliverCommand {
+      return { deliverInvisibly: (parent, text) => handoffs.deliverInvisibly(parent, text, route) }
+    },
     /** A Host restart: new commands, with nothing held, over the same stored rows and bus. */
     reboot() {
       commands = boot()

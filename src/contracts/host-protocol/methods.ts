@@ -114,6 +114,12 @@ import {
   type LaunchParams
 } from './params/launching'
 import { suppliersLaunchableParamsSchema } from './params/suppliers'
+import {
+  jevSuggestParamsSchema,
+  jevSuggestResultSchema,
+  type JevSuggestParams,
+  type JevSuggestResult
+} from './params/jev'
 import { outcomeSchema, type Outcome } from './errors'
 import { requestIdSchema } from './requestId'
 import {
@@ -175,6 +181,7 @@ export interface HostMethods {
   'launching.launch':                { params: LaunchParams; result: LaunchAccepted }
   'launching.launchCustom':          { params: LaunchCustomParams; result: LaunchAccepted }
   'suppliers.launchable':            { params: { refresh?: boolean }; result: SupplierEntryView[] }
+  'jev.suggest':                     { params: JevSuggestParams; result: JevSuggestResult }
   // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
@@ -453,6 +460,10 @@ export const HOST_METHOD_SCHEMAS = {
   'suppliers.launchable': {
     params: suppliersLaunchableParamsSchema,
     result: z.array(supplierEntryViewSchema)
+  },
+  'jev.suggest': {
+    params: jevSuggestParamsSchema,
+    result: jevSuggestResultSchema
   },
   'strangler.dwarfIdentities': {
     params: z.object({}).strict(),
