@@ -99,6 +99,8 @@ const SERVED_SINCE_CUT_0 = [
   'conversation.send',
   'frame:message.delivery',
   'section:marks',
+  // Describing attachments: B-M28, from cut 3 (ISSUE-169).
+  'conversation.describeAttachments',
   // AMENDED for ISSUE-170 (appended): B-M29, the console target of A-13, from cut 3.
   'conversation.resolveConsole'
 ]

@@ -1,0 +1,58 @@
+{
+  "providerVersion": "2.1.x",
+  "capturedAt": "2026-10-17",
+  "capturedBy": "maintainer",
+  "os": "win32",
+  "scrubbed": true,
+  "source": "Recorded on the maintainer's machine (real-CLI lane, 17 §5.5) through scripts/fixtures/record.mjs and scrub.mjs, against the person's own user-installed @agentclientprotocol/claude-agent-acp 0.93.0 (Apache-2.0, npm global install; never bundled or shipped by DwarfAI, OQ-52) with CLAUDE_CODE_EXECUTABLE pinned to the person's Claude Code 2.1.302, started as node <adapter entry> with shell: false. The recorder framed what ClaudeAcpDriver sends (initialize with elicitation.form only, session/new and session/load {cwd, mcpServers: []}, session/prompt, session/cancel, session/close; asks answered allow_once, reject_once or cancelled). One difference, visible in each -sent stream: session/new and session/load also carried _meta.claudeCode.options {settingSources: [], strictMcpConfig: true, allowDangerouslySkipPermissions: false}, so the maintainer's own settings, hooks, plugins and MCP servers stayed out of the recording and no auto-approving mode could start; the frame count and order equal the driver's. Cases no recording covers stay in ../2.1.x-synthetic/.",
+  "capabilities": {
+    "driver": "acp",
+    "adapter": "@agentclientprotocol/claude-agent-acp",
+    "adapterVersion": "0.93.0",
+    "adapterLicense": "Apache-2.0",
+    "measuredVersion": "2.1.302",
+    "protocolVersion": 1,
+    "loadSession": true,
+    "sessionCapabilities": [
+      "additionalDirectories",
+      "close",
+      "delete",
+      "fork",
+      "list",
+      "resume",
+      "systemPrompt"
+    ],
+    "authMethods": [],
+    "permissionOptionKinds": ["allow_once", "allow_always", "reject_once"],
+    "questionChannel": "elicitation/create, mode form (question_<n>, question_<n>_custom)",
+    "promptUsage": "per turn: each session/prompt response's usage counts that turn only",
+    "loadReplaysBeforeResponse": true,
+    "cancelStopReason": "cancelled",
+    "extraNotifications": ["_auth/status_update"],
+    "rateLimitMetaObserved": false
+  },
+  "recordedCases": [
+    "c-01-launch",
+    "c-05-send-turn",
+    "c-06-permission-allow",
+    "c-07-permission-deny",
+    "c-08-interrupt",
+    "c-09-question",
+    "c-16-resume",
+    "c-28-close"
+  ],
+  "thirdParty": [
+    {
+      "files": [
+        "clacp-usage-limit-session.jsonl",
+        "clacp-usage-limit-session-with-extra.jsonl",
+        "clacp-usage-limit-session-crlf.jsonl"
+      ],
+      "source": "agentclientprotocol/claude-agent-acp (clacp) at e6681d2, src/tests/fixtures/usage-limit-session.jsonl",
+      "license": "Apache-2.0",
+      "copyright": "the claude-agent-acp authors",
+      "changes": "copied byte for byte (LF); the -with-extra and CRLF variants are DwarfAI additions",
+      "note": "A Claude session transcript the adapter replays on session/load (a spend-limit error turn), synthetic upstream; it is the adapter's on-disk input, not ACP traffic, so no expected file replays it through the driver. Kept as the reference shape for usage.rateLimits, which stays false until a recording shows _meta[\"_claude/rateLimit\"]."
+    }
+  ]
+}

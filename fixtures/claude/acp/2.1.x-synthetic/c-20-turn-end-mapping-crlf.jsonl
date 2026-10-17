@@ -1,0 +1,8 @@
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"embeddedContext":true},"mcpCapabilities":{"http":true,"sse":true},"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"claude-agent-acp","version":"0.0.0-synthetic"},"authMethods":[]}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"00000000-0000-4000-8000-00000000ac01","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Manual"},{"id":"acceptEdits","name":"Accept edits"},{"id":"plan","name":"Plan"},{"id":"bypassPermissions","name":"Bypass permissions"}]}}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"max_tokens"}}
+{"jsonrpc":"2.0","id":4,"result":{"stopReason":"max_turn_requests"}}
+{"jsonrpc":"2.0","id":5,"result":{"stopReason":"refusal"}}
+{"jsonrpc":"2.0","id":6,"result":{"stopReason":"cancelled"}}
+{"jsonrpc":"2.0","id":7,"result":{"stopReason":"dwarfai_unknown_reason"}}
