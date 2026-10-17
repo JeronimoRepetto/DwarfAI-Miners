@@ -120,7 +120,7 @@ export function goldenApi(sample: GoldenSample): Api {
     setDwarfTuning: refuse('setDwarfTuning'),
     // Dwarf names (#635): the golden stage renames nothing.
     setDwarfName: refuse('setDwarfName'),
-    resetDwarfName: refuse('resetDwarfName'),
+    resetDwarfNameToday: refuse('resetDwarfNameToday'),
     // A-19 reads the Host's message log from the cut-1 switch (ISSUE-123), keyed by Host ids the sample does not carry:
     // a full-screen history state is one this fake does not model yet, and the page's error list says so.
     getMineHistory: refuse('getMineHistory'),
@@ -222,6 +222,10 @@ export function goldenApi(sample: GoldenSample): Api {
     answerWelcome: refuse('answerWelcome'),
     // A-N29: a golden draws a fixed sample and never ends a session.
     stopDwarf: refuse('stopDwarf'),
+    // A-N08: a golden draws a fixed sample and never renames a dwarf.
+    renameDwarf: refuse('renameDwarf'),
+    // A-N09: a golden draws a fixed sample and never resets a dwarf's name.
+    resetDwarfName: refuse('resetDwarfName'),
     // A-N10, A-N11: a golden draws a fixed sample and never acts on a recovery report.
     retryRecovery: refuse('retryRecovery'),
     dismissRecovery: refuse('dismissRecovery')

@@ -35,7 +35,10 @@ import {
   type AnswerWelcomeResult,
   type RecoveryActionParams,
   type StopDwarfParams,
-  type StopDwarfResult
+  type StopDwarfResult,
+  type RenameDwarfParams,
+  type RenameDwarfResult,
+  type ResetDwarfNameParams
 } from '../host-protocol/params'
 import type { IpcResult, Outcome } from '../host-protocol'
 import type {
@@ -285,6 +288,25 @@ const NEW_ROWS = [
     placement: 'host',
     sensitive: false
   },
+  // ISSUE-172: a person-set name for a dwarf (SC-AR-05, INV-29), born `host` in 3a; a dwarf id, the typed name and a
+  // requestId
+  {
+    id: 'A-N08',
+    wire: 'dwarf:rename',
+    member: 'renameDwarf',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
+  // ISSUE-172: the ⋯ menu's Reset name (US-MSG-006), born `host` in cut 2; a dwarf id and a requestId
+  {
+    id: 'A-N09',
+    wire: 'dwarf:name:reset',
+    member: 'resetDwarfName',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
   // ISSUE-174: the grouped recovery message's Retry and Dismiss (PO #90; OQ-41 A, OQ-43), born `host` in 3a; a
   // Host epoch and a requestId
   {
@@ -487,6 +509,10 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 },
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
   'dwarf:stop': { dwarfId: U1, requestId: U1 },
+  // A-N08 (ISSUE-172): B-M22's params, a dwarf id, the typed name and a requestId
+  'dwarf:rename': { dwarfId: U1, name: 'Watcher of seals', requestId: U1 },
+  // A-N09 (ISSUE-172): B-M23's params, a dwarf id and a requestId
+  'dwarf:name:reset': { dwarfId: U1, requestId: U1 },
   // A-N10, A-N11 (ISSUE-174): B-M35 / B-M36's params, a Host epoch and a requestId
   'host:recovery:retry': { hostEpoch: 'epoch-0174', requestId: U1 },
   'host:recovery:dismiss': { hostEpoch: 'epoch-0174', requestId: U1 }
@@ -892,6 +918,12 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     // A-N29 (ISSUE-171): relays B-M21 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:stop'>>().toEqualTypeOf<StopDwarfParams>()
     expectTypeOf<Res<'dwarf:stop'>>().toEqualTypeOf<IpcResult<StopDwarfResult>>()
+    // A-N08 (ISSUE-172): relays B-M22 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
+    expectTypeOf<Req<'dwarf:rename'>>().toEqualTypeOf<RenameDwarfParams>()
+    expectTypeOf<Res<'dwarf:rename'>>().toEqualTypeOf<IpcResult<RenameDwarfResult>>()
+    // A-N09 (ISSUE-172): relays B-M23, as 14 §2.2 and §3.4 write it, `{}` read as `IpcResult<void>` (14 §1.2).
+    expectTypeOf<Req<'dwarf:name:reset'>>().toEqualTypeOf<ResetDwarfNameParams>()
+    expectTypeOf<Res<'dwarf:name:reset'>>().toEqualTypeOf<IpcResult<void>>()
     // A-N10, A-N11 (ISSUE-174): relay B-M35 / B-M36 unchanged, as 14 §2.2 and §3.4 write them (14 §1.2).
     expectTypeOf<Req<'host:recovery:retry'>>().toEqualTypeOf<RecoveryActionParams>()
     expectTypeOf<Res<'host:recovery:retry'>>().toEqualTypeOf<

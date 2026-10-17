@@ -34,10 +34,21 @@ export interface HelloDeps {
   epoch: string
   state: () => HostStateReport
   capabilities: () => readonly string[]
+  /**
+   * The console viewer's per-view tokens (ADR-003 item 12): the dwarf a token is bound to, or null
+   * to refuse it; consumes the view either way. Absent where no console resolver is composed.
+   */
+  viewers?: { consume(viewId: string, token: string): string | null }
 }
 
 export type HelloAnswer =
-  | { kind: 'accepted'; role: ChannelRole; helloOk: HelloOk }
+  | {
+      kind: 'accepted'
+      role: ChannelRole
+      helloOk: HelloOk
+      /** `viewer` only: the one dwarf its per-view token is bound to (ADR-031 item 2). */
+      dwarfId?: string
+    }
   | { kind: 'refused'; code: ProtocolErrorCode }
 
 const refused = (code: ProtocolErrorCode): HelloAnswer => ({ kind: 'refused', code })
@@ -53,8 +64,16 @@ export function answerHello(message: unknown, deps: HelloDeps): HelloAnswer {
   }
   const hello = helloSchema.safeParse(message)
   if (!hello.success) return refused('PROTOCOL_ERROR')
-  if (hello.data.role === 'viewer') return refused('AUTH_FAILED')
-  if (!deps.token.verify(hello.data.token)) return refused('AUTH_FAILED')
+  let dwarfId: string | undefined
+  if (hello.data.role === 'viewer') {
+    const viewId = hello.data.viewId
+    const bound =
+      viewId === undefined ? null : (deps.viewers?.consume(viewId, hello.data.token) ?? null)
+    if (bound === null) return refused('AUTH_FAILED')
+    dwarfId = bound
+  } else if (!deps.token.verify(hello.data.token)) {
+    return refused('AUTH_FAILED')
+  }
 
   const { state, jobStatus } = deps.state()
   return {
@@ -71,6 +90,7 @@ export function answerHello(message: unknown, deps: HelloDeps): HelloAnswer {
       jobStatus,
       capabilities: [...deps.capabilities()],
       clientId: deps.ids.uuidv7()
-    }
+    },
+    ...(dwarfId === undefined ? {} : { dwarfId })
   }
 }

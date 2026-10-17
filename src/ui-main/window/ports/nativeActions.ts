@@ -7,6 +7,8 @@
 // `FolderPicker` (16 §4.14) is not declared here: its one caller, A-30's folder picker, is built with
 // `mines.declare` (ISSUE-091), which declares it beside its adapter.
 
+import type { ConsoleTarget } from '@dwarfai/contracts'
+
 /**
  * Package gap: 16 §4.14 names `WindowRef` as the parent of a picker but does not define it. It is an opaque handle on
  * one window of the app, the window's Electron id, so the port never carries an Electron object; the picker adapter
@@ -24,3 +26,14 @@ export interface FilePicker { pickMany(parent: WindowRef): Promise<string[]> }
 export interface ClipboardPort { write(text: string): Promise<void> }
 // prettier-ignore
 export interface ExternalOpener { openPath(p: string): Promise<string | null>; openExternal(url: string): Promise<void> }
+
+/**
+ * Package gap (16 §4.14 names `NativeActions.raiseConsole(t)` and UC-036 a `WindowRaiser` in UI main, with no port of
+ * their own): the driven port behind `raiseConsole` (ISSUE-170), one console target executed right after the person's
+ * click (ADR-031 item 4): a `focus-terminal` target raises the window of that process, a `log` target opens the OS
+ * terminal running its command, with no shell (05 R17). `'raised'` when it was done, `'failed'` otherwise (no toast,
+ * PO #42). Adapter `TerminalConsoleRaiser`.
+ */
+export interface ConsoleRaiser {
+  raise(t: ConsoleTarget): Promise<'raised' | 'failed'>
+}

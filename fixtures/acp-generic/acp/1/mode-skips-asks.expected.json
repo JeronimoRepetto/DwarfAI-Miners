@@ -1,0 +1,42 @@
+{
+  "case": "acp-generic:mode-skips-asks",
+  "description": "ADR-008 item 3 (AMENDMENT-19 for any ACP agent): a session that reports a mode named like one of ADR-008 item 3's auto-approve options would never ask, so with no pinned mode of its own the launch fails closed as could-not-start before any prompt is sent.",
+  "script": [
+    {
+      "do": "launch"
+    }
+  ],
+  "outcomes": [
+    {
+      "rejected": {
+        "cause": "could-not-start",
+        "detail": "the agent reports permission mode bypassPermissions, which skips the permission ask"
+      }
+    }
+  ],
+  "events": [],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    }
+  ]
+}

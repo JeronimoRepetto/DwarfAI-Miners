@@ -196,4 +196,49 @@ describe('forbidden flags (ADR-008 item 3)', () => {
       expect(refuses(form.argv, form.options, BOTH_ON), form.name).toBe(true)
     }
   })
+
+  it('[C-24, ADR-013] the Claude relay entry, registered as dwarfai, may pre-approve only its two delegation tools, never its permission tool, and only with both gates on', () => {
+    // 15 §4.2: the Claude drivers register the relay as `dwarfai` (it also serves
+    // `mcp__dwarfai__permission`), so their Jev tools are `mcp__dwarfai__<tool>`.
+    const claudeForms: readonly { name: string; argv: readonly string[]; options: unknown }[] = [
+      {
+        name: 'stream-json --allowedTools',
+        argv: [
+          '-p',
+          '--allowedTools',
+          'mcp__dwarfai__delegate_subtask,mcp__dwarfai__subtask_result'
+        ],
+        options: {}
+      },
+      {
+        name: 'acp session options',
+        argv: [],
+        options: {
+          claudeCode: {
+            options: {
+              allowedTools: ['mcp__dwarfai__delegate_subtask', 'mcp__dwarfai__subtask_result']
+            }
+          }
+        }
+      }
+    ]
+    for (const form of claudeForms) {
+      for (const gate of GATES) {
+        const bothOn = gate.subagentDelegationOn && gate.launchedWithLetJevChoose
+        expect(refuses(form.argv, form.options, gate), `${form.name} ${JSON.stringify(gate)}`).toBe(
+          !bothOn
+        )
+      }
+    }
+    for (const tools of [
+      'mcp__dwarfai__permission',
+      'mcp__dwarfai__delegate_subtask,mcp__dwarfai__permission',
+      'mcp__dwarfai',
+      'mcp__dwarfai__*',
+      'mcp__other__delegate_subtask'
+    ]) {
+      expect(refuses(['--allowedTools', tools], {}, BOTH_ON), tools).toBe(true)
+      expect(refuses([], { allowedTools: tools.split(',') }, BOTH_ON), `option ${tools}`).toBe(true)
+    }
+  })
 })

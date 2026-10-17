@@ -134,6 +134,10 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 },
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
   'dwarf:stop': { dwarfId: U1, requestId: U1 },
+  // A-N08 (ISSUE-172): B-M22's params, a dwarf id, the typed name and a requestId
+  'dwarf:rename': { dwarfId: U1, name: 'Watcher of seals', requestId: U1 },
+  // A-N09 (ISSUE-172): B-M23's params, a dwarf id and a requestId
+  'dwarf:name:reset': { dwarfId: U1, requestId: U1 },
   // A-N10, A-N11 (ISSUE-174): B-M35 / B-M36's params, a Host epoch and a requestId
   'host:recovery:retry': { hostEpoch: 'epoch-0174', requestId: U1 },
   'host:recovery:dismiss': { hostEpoch: 'epoch-0174', requestId: U1 }

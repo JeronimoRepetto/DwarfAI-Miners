@@ -24,8 +24,8 @@
 //   owner-consistent reading, recorded in the ISSUE-082 hand-off.
 // - `dwarf.changed {dwarf}` (B-F09) ← `DwarfStatusChanged`, `DwarfPresenceChanged`, and crew's end
 //   events `DwarfStopRequested` and `DwarfStopFailed` (ISSUE-171), which set and clear `stopInFlight`
-//   and so `stopUnavailableReason` (US-MSG-016.AC02; 07 S15.01, S15.15); `DwarfRenamed` joins with
-//   its owner;
+//   and so `stopUnavailableReason` (US-MSG-016.AC02; 07 S15.01, S15.15), and `DwarfRenamed` (ISSUE-172),
+//   so every window shows the custom name, or the base name after a reset, at once (BR-14);
 //   `OutcomeLineChanged` is conversation's route (host/wiring/routes/conversationFrames.ts,
 //   ISSUE-108). Every `dwarf.changed` and `dwarf.arrived` here carries the dwarf's stored outcome
 //   line (`ConversationQueries.outcomeOf`, owner amendment E, 2026-10-06). The outbound queue folds a waiting `dwarf.changed` into the newer
@@ -176,6 +176,7 @@ export function publishBoardFrames(deps: BoardFramesDeps): () => void {
     deps.events.crew.subscribe('DwarfPresenceChanged', (event) =>
       dwarfChanged(event.payload.dwarfId)
     ),
+    deps.events.crew.subscribe('DwarfRenamed', (event) => dwarfChanged(event.payload.dwarfId)),
     deps.events.crew.subscribe('DwarfDeparted', (event) => {
       const { dwarfId, mineId, cause } = event.payload
       frames.publishFrame('dwarf.departed', { dwarfId, mineId, cause }, { dwarfId })
