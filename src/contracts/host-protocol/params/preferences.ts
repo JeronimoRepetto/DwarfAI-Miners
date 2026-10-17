@@ -6,11 +6,15 @@ import {
   integrationStateSchema,
   jevRoutingProfileSchema,
   providerIdSchema,
+  secretNameSchema,
+  secretStatusSchema,
   welcomeStepStateSchema,
   type ConsentOrigin,
   type HostPreferences,
   type IntegrationId,
   type IntegrationState,
+  type SecretName,
+  type SecretStatus,
   type WelcomeStepState
 } from '../../wire'
 import { outcomeSchema, type Outcome } from '../errors'
@@ -241,3 +245,45 @@ export const welcomeResultSchema = z
 export const answerWelcomeResultSchema = z
   .object({ integrations: welcomeResultSchema, welcome: welcomeStepStateSchema })
   .strict()
+
+// As 14 §3.4 writes them (names, fields and comments; layout by prettier): preferences and secrets, B-M10
+export interface SecretSetParams {
+  name: SecretName
+  value: string
+  requestId: string
+  origin: 'settings' | 'migration'
+}
+export type SecretStatusResult = Outcome<SecretStatus, 'backend-unavailable'> // ADR-017 item 5: no plain-text fallback
+
+/**
+ * Package gap (14 is silent on the Host's bound): the longest secret value the Host takes, the larger of
+ * the found tree's two caps (`MAX_OPENCODE_SERVER_PASSWORD_CHARS` 1024, `MAX_JEV_API_KEY_CHARS` 512, which
+ * UI main enforces per row, A-48, A-54). The Host re-checks it (ADR-019), so an oversized value never
+ * reaches the OS secret store.
+ */
+export const SECRET_VALUE_MAX_CHARS = 1024
+
+/**
+ * B-M10 `settings.secret.set` params (14 §2.3, §3.4; ADR-017 item 4): the value travels once, UI → Host,
+ * and is **sensitive** (14 §3.5 SENSITIVE_METHODS): no side logs it. An empty value is refused like an
+ * oversized one: clearing is B-M11.
+ */
+export const secretSetParamsSchema = z
+  .object({
+    name: secretNameSchema,
+    value: z.string().min(1).max(SECRET_VALUE_MAX_CHARS),
+    requestId: requestIdSchema,
+    origin: z.enum(['settings', 'migration'])
+  })
+  .strict()
+
+/** B-M11 `settings.secret.clear` params (14 §2.3, §3.4). */
+export const secretClearParamsSchema = z
+  .object({ name: secretNameSchema, requestId: requestIdSchema })
+  .strict()
+
+/** B-M10's and B-M11's result: the configured flag, never a value; no usable secret service is an outcome. */
+export const secretStatusResultSchema = outcomeSchema(
+  secretStatusSchema,
+  z.literal('backend-unavailable')
+)

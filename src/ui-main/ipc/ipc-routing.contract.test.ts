@@ -1,5 +1,5 @@
 // layer: L6
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   CHANNELS,
   PRELOAD_HELPERS,
@@ -27,7 +27,9 @@ import {
   composeLegacyDwarfIdBridge,
   composeLegacyLaunchObservation,
   composeHostReads,
+  composeJevKeyRows,
   composeMinesAdmin,
+  composeOpenCodePasswordRows,
   composePresence,
   composeProviderShapeAdapters,
   composeResetFanout,
@@ -39,7 +41,9 @@ import {
 import type { HostEvent } from '../window/ports/hostClient'
 import { createStopEverything } from '../window/application/stopEverything'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { CUT_1_ROLLBACK, CUT_2_ROLLBACK } from '../../contracts/strangler'
 import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
@@ -2990,5 +2994,411 @@ describe('shape adapters (21 §3.1)', () => {
         !path.startsWith('legacy-bridge/') && /(from|import\()\s*'[^']*legacy-bridge\//.test(text)
     )
     expect(outside.map(([path]) => path)).toEqual(['ui-main/index.ts'])
+  })
+})
+
+// ADDED for ISSUE-217: the Jev key rows of step 3a (21 §2 cut 3a, §3 `SecretMigrationBridge`, §3.1
+// `JevSettingsShapeAdapter`, §4 row "Jev API key"). The route rows are the step-3a switch's (later: ISSUE-001); these
+// cases drive a 3a table built here, over a temp legacy `userData` holding today's encrypted Jev-key file.
+describe('Jev key rows (21 §2 cut 3a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const KEY = 'ts-live-0123456789abcdef'
+  const MINTED = '01920000-0000-7000-a000-000000000217'
+  const PREFERENCES = { profile: 'premium', default: { provider: 'claude' }, delegation: true }
+  const GET: ChannelKey = 'jev:settings:get' // A-47
+  const SET: ChannelKey = 'jev:apiKey:set' // A-48
+  const CLEAR: ChannelKey = 'jev:apiKey:clear' // A-49
+
+  const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-3a',
+    parity: 'passed',
+    shape: 'target'
+  })
+  /** A-47 through the adapter, A-48/A-49 `host`, as ISSUE-001's 3a rows will read. */
+  const JEV_3A: ChannelRoute[] = [
+    {
+      channel: GET,
+      owner: 'legacy',
+      since: 'cut-3a',
+      parity: 'n/a',
+      shape: 'target',
+      shapeAdapter: 'JevSettingsShapeAdapter'
+    },
+    hostRoute(SET),
+    hostRoute(CLEAR)
+  ]
+
+  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
+    decryptString: (data: Buffer) => {
+      const text = data.toString('utf8')
+      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
+      return text.slice('enc:'.length)
+    }
+  }
+
+  /** The Host over an in-memory Jev key: B-M10, B-M11 and B-M12, recording each call. */
+  function jevHost() {
+    const calls: Array<[string, unknown]> = []
+    let key: string | undefined
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'settings.secret.set') {
+        key = (params as { value: string }).value
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: true } })
+      }
+      if (method === 'settings.secret.clear') {
+        key = undefined
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: false } })
+      }
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences: {},
+          secrets: [{ name: 'jev-key', configured: key !== undefined }],
+          secretBackend: 'os-secret-store',
+          integrations: [],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      key: () => key,
+      client: client as unknown as Parameters<typeof composeJevKeyRows>[0]['client']
+    }
+  }
+
+  /** Today's runtime: its A-47 handler answers today's stored preferences (its key verdict is dropped). */
+  const legacy = {
+    serve: (channel: string) =>
+      Promise.resolve(channel === GET ? { configured: false, preferences: PREFERENCES } : undefined)
+  }
+
+  it('[ADR-001] the release table composes no Jev key row and no migration; a release the adapters do not live in binds neither', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
+    try {
+      const base = {
+        legacy,
+        client: jevHost().client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      }
+      expect(
+        composeJevKeyRows({ ...base, routes: ROUTES, release: ROUTES_RELEASE })
+      ).toBeUndefined()
+      const late = composeJevKeyRows({ ...base, routes: JEV_3A, release: 'cut-5' })
+      expect(late?.migration).toBeUndefined()
+      expect(late?.shapeAdapters).toEqual({})
+      // Without the Host attach nothing is composed.
+      expect(
+        composeJevKeyRows({ ...base, client: undefined, routes: JEV_3A, release: 'cut-3a' })
+      ).toBeUndefined()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('[ADR-017, C-23] in a 3a table the legacy Jev-key file moves to the Host once before A-47 answers, and A-48/A-49 round-trip through B-M10 and B-M11', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
+    try {
+      const encrypted = safeStorage.encryptString(KEY).toString('base64')
+      await writeFile(join(userData, 'jev-api-key-v1.json'), `${JSON.stringify({ encrypted })}\n`)
+      const host = jevHost()
+      const jev = composeJevKeyRows({
+        routes: JEV_3A,
+        release: 'cut-3a',
+        legacy,
+        client: host.client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      })
+      expect(jev?.part?.channels).toEqual([SET, CLEAR])
+      expect(Object.keys(jev?.shapeAdapters ?? {})).toEqual(['JevSettingsShapeAdapter'])
+      const router = createRouter({
+        routes: JEV_3A,
+        legacy: { serve: () => Promise.reject(new Error('no legacy Jev row from 3a')) },
+        ...(jev?.part === undefined ? {} : { host: jev.part.target }),
+        shapeAdapters: jev?.shapeAdapters ?? {},
+        senders
+      })
+      const response = CHANNELS[GET].response
+
+      // A-47 waits for the run: the key is in the Host, configured, and today's file is gone.
+      expect(response.parse(await router.dispatch(GET, FROM_PANEL as never, undefined))).toEqual({
+        configured: true,
+        preferences: PREFERENCES
+      })
+      expect(host.key()).toBe(KEY)
+      expect(host.calls[0]).toEqual([
+        'settings.secret.set',
+        { name: 'jev-key', value: KEY, requestId: MINTED, origin: 'migration' }
+      ])
+      expect(await readdir(userData)).toEqual([])
+
+      // A malformed value never crosses: the gate (over the cap) and the handler (blank) answer the state in force.
+      const before = host.calls.length
+      for (const payload of ['a'.repeat(513), '  ']) {
+        expect(response.parse(await router.dispatch(SET, FROM_PANEL as never, payload))).toEqual({
+          configured: true,
+          preferences: PREFERENCES
+        })
+      }
+      expect(host.calls.slice(before).map(([method]) => method)).toEqual([
+        'preferences.get',
+        'preferences.get'
+      ])
+
+      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
+        configured: false,
+        preferences: PREFERENCES
+      })
+      expect(response.parse(await router.dispatch(SET, FROM_PANEL as never, 'ts-new'))).toEqual({
+        configured: true,
+        preferences: PREFERENCES
+      })
+      expect(host.key()).toBe('ts-new')
+      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
+        [
+          'settings.secret.set',
+          { name: 'jev-key', value: KEY, requestId: MINTED, origin: 'migration' }
+        ],
+        ['settings.secret.clear', { name: 'jev-key', requestId: MINTED }],
+        [
+          'settings.secret.set',
+          { name: 'jev-key', value: 'ts-new', requestId: MINTED, origin: 'settings' }
+        ]
+      ])
+      jev?.migration?.dispose()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+})
+
+// ADDED for ISSUE-231: the OpenCode server password rows of step 4a (21 §2 cut 4a, §3 `SecretMigrationBridge`, §4 row
+// "OpenCode server password"). The route rows are the step-4a switch's (later: ISSUE-235); these cases drive a 4a table
+// built here, over a temp legacy `userData` holding today's encrypted password file.
+describe('OpenCode server password rows (21 §2 cut 4a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const PASSWORD = ' migrated pass 0231 '
+  const TYPED = 'typed-pass-4a-0231'
+  const MINTED = '01920000-0000-7000-a000-000000000231'
+  const PASSWORD_FILE = 'opencode-server-password-v1.json'
+  const SET: ChannelKey = 'opencode:password:set' // A-54
+  const CLEAR: ChannelKey = 'opencode:password:clear' // A-55
+
+  const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-4a',
+    parity: 'passed',
+    shape: 'target'
+  })
+  /** A-54/A-55 `host`, as ISSUE-235's 4a rows will read. */
+  const PASSWORD_4A: ChannelRoute[] = [hostRoute(SET), hostRoute(CLEAR)]
+
+  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
+    decryptString: (data: Buffer) => {
+      const text = data.toString('utf8')
+      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
+      return text.slice('enc:'.length)
+    }
+  }
+
+  /** The Host over an in-memory password: B-M10, B-M11 and B-M12, recording each call. */
+  function passwordHost(backend: 'os-secret-store' | 'unavailable' = 'os-secret-store') {
+    const calls: Array<[string, unknown]> = []
+    let password: string | undefined
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'settings.secret.set') {
+        if (backend === 'unavailable') {
+          return Promise.resolve({ ok: false, error: 'backend-unavailable' })
+        }
+        password = (params as { value: string }).value
+        return Promise.resolve({ ok: true, value: { name: 'opencode-password', configured: true } })
+      }
+      if (method === 'settings.secret.clear') {
+        password = undefined
+        return Promise.resolve({
+          ok: true,
+          value: { name: 'opencode-password', configured: false }
+        })
+      }
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences: {},
+          secrets: [{ name: 'opencode-password', configured: password !== undefined }],
+          secretBackend: backend,
+          integrations: [],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      password: () => password,
+      client: client as unknown as Parameters<typeof composeOpenCodePasswordRows>[0]['client']
+    }
+  }
+
+  async function seedPassword(userData: string): Promise<void> {
+    const encrypted = safeStorage.encryptString(PASSWORD).toString('base64')
+    await writeFile(join(userData, PASSWORD_FILE), `${JSON.stringify({ encrypted })}\n`)
+  }
+
+  it('[ADR-001] the release table composes no password row and no migration; a release the bridge does not live in runs none', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+    try {
+      const base = {
+        client: passwordHost().client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      }
+      expect(
+        composeOpenCodePasswordRows({ ...base, routes: ROUTES, release: ROUTES_RELEASE })
+      ).toBeUndefined()
+      const late = composeOpenCodePasswordRows({ ...base, routes: PASSWORD_4A, release: 'cut-5' })
+      expect(late?.part.channels).toEqual([SET, CLEAR])
+      expect(late?.migration).toBeUndefined()
+      // Without the Host attach nothing is composed.
+      expect(
+        composeOpenCodePasswordRows({
+          ...base,
+          client: undefined,
+          routes: PASSWORD_4A,
+          release: 'cut-4a'
+        })
+      ).toBeUndefined()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('[ADR-017, C-23] in a 4a table the legacy password file moves to the Host once before A-54/A-55 answer, and they round-trip through B-M10 and B-M11', async () => {
+    // TC-231-01, TC-231-02
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+    try {
+      await seedPassword(userData)
+      const host = passwordHost()
+      const rows = composeOpenCodePasswordRows({
+        routes: PASSWORD_4A,
+        release: 'cut-4a',
+        client: host.client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      })
+      expect(rows?.part.channels).toEqual([SET, CLEAR])
+      const router = createRouter({
+        routes: PASSWORD_4A,
+        legacy: { serve: () => Promise.reject(new Error('no legacy password row from 4a')) },
+        ...(rows === undefined ? {} : { host: rows.part.target }),
+        senders
+      })
+      const response = CHANNELS[SET].response
+
+      // A-55 waits for the run: the migrated password was in the Host before the clear, and today's file is gone.
+      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
+        ok: true,
+        value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+      })
+      expect(await readdir(userData)).toEqual([])
+
+      // Over the cap: refused in main, it never crosses.
+      const refused = await router.dispatch(SET, FROM_PANEL as never, 'a'.repeat(1025))
+      expect(JSON.stringify(refused)).not.toContain('a'.repeat(1025))
+
+      const saved = response.parse(await router.dispatch(SET, FROM_PANEL as never, TYPED))
+      expect(saved).toEqual({
+        ok: true,
+        value: { permissions: 'off', passwordConfigured: true, secretBackend: 'os-secret-store' }
+      })
+      expect(JSON.stringify(saved)).not.toContain(TYPED)
+      expect(host.password()).toBe(TYPED)
+      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
+        [
+          'settings.secret.set',
+          { name: 'opencode-password', value: PASSWORD, requestId: MINTED, origin: 'migration' }
+        ],
+        ['settings.secret.clear', { name: 'opencode-password', requestId: MINTED }],
+        [
+          'settings.secret.set',
+          { name: 'opencode-password', value: TYPED, requestId: MINTED, origin: 'settings' }
+        ]
+      ])
+      rows?.migration?.dispose()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('[NFR-SEC-12] the migrated or typed password never reaches a log line', async () => {
+    // L7 (17 §1.7 log redaction): the UI log and every console method, over a migration that succeeds, one the Host
+    // refuses, and a typed save.
+    const consoleLines: unknown[][] = []
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        consoleLines.push(args)
+      })
+    )
+    const logged: unknown[] = []
+    try {
+      for (const backend of ['os-secret-store', 'unavailable'] as const) {
+        const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+        try {
+          await seedPassword(userData)
+          const host = passwordHost(backend)
+          const rows = composeOpenCodePasswordRows({
+            routes: PASSWORD_4A,
+            release: 'cut-4a',
+            client: host.client,
+            migration: { userDataDir: userData, safeStorage },
+            log: { record: (entry) => logged.push(entry) },
+            mintId: () => MINTED
+          })
+          await rows?.part.target.serve(SET, TYPED, FROM_PANEL as never)
+          rows?.migration?.dispose()
+        } finally {
+          await rm(userData, { recursive: true, force: true })
+        }
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
+
+    expect(logged.length).toBeGreaterThan(0)
+    for (const line of [...logged, ...consoleLines]) {
+      expect(JSON.stringify(line)).not.toContain(PASSWORD.trim())
+      expect(JSON.stringify(line)).not.toContain(TYPED)
+    }
   })
 })

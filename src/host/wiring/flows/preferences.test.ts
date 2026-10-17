@@ -54,6 +54,7 @@ import { SqliteChannelTokenStore } from '../../modules/preferences/adapters/sqli
 import { SqliteConfigWriteLedger } from '../../modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from '../../modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
 import { fixture } from '../../modules/preferences/adapters/external-config/claudeHooks/testing/claudeHooksWorld'
+import { FakeSecretStore } from '../../modules/preferences/testing/fakeSecretStore'
 import type { InstallResolver, SuppliersEvent } from '../../modules/suppliers'
 import { SqliteCapabilityRecordStore } from '../../modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
 import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedgerRepository'
@@ -228,6 +229,8 @@ interface HostOptions {
   ingressBoundAtBoot?: boolean
   /** A `ui` client attached before the boot runs (it connects while the Host is `starting`). */
   attachBeforeBoot?: boolean
+  /** The secret store step 3 wires (ISSUE-216); none usable (`unavailableSecretStore`) by default. */
+  secrets?: SecretStore
 }
 
 /**
@@ -441,7 +444,7 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
                     return Promise.reject(new HostKilled())
                   }
                 }
-              : unavailableSecretStore
+              : (options.secrets ?? unavailableSecretStore)
           host.wired = preferences.wire({
             db,
             transactions: connection.transactions,
@@ -474,7 +477,10 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
             ),
             ready: () => state.current().state === 'ready'
           })
-          return host.wired.resumeOnBoot()
+          const resumed = await host.wired.resumeOnBoot()
+          // What host/main.ts does after the resume: the secrets' flags, before any command.
+          await host.wired.loadSecretStatuses()
+          return resumed
         },
         // Step 3, after the resume: the boot re-verification of unverified config writes.
         reverifyConfigWrites: () => (host.engine as ConfigWriterEngine).settleUnverified(),
@@ -793,6 +799,95 @@ describe('preferences wiring', () => {
     expect(host.wired?.preferences.queries.get()).toMatchObject({ systemNotificationsOn: true })
     expect(db.all('SELECT key FROM attention_keys')).toEqual([])
     expect(host.journal()).toMatchObject({ step: 'done', epoch: 1 })
+  })
+
+  // Added for ISSUE-216 (TC-216-01, TC-216-03; UC-029): B-M10 and B-M11 over the wired Host, and
+  // `SecretStatusChanged` routed to B-F24 on every `ui` connection (routes/preferencesRoutes.ts).
+  it('[ADR-017] a save or a clear publishes SecretStatusChanged and every UI gets preferences.changed with the new flag', async () => {
+    const store = new FakeSecretStore()
+    const host = await bootHost(machine(), { secrets: store })
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    const a = await host.attach()
+    const b = await host.attach()
+    const flags = (client: FrameClient) =>
+      wire(client)
+        .filter((item) => item.name === 'preferences.changed')
+        .map((item) => (item.data as { secrets: unknown }).secrets)
+
+    const set = request(a, 'settings.secret.set', {
+      name: 'jev-key',
+      value: 'sk-flow-216-seeded',
+      requestId: RID_1,
+      origin: 'settings'
+    })
+    expect((await response(a, set)).ok).toBe(true)
+    await until(() => flags(b).length === 1)
+    const clear = request(b, 'settings.secret.clear', { name: 'jev-key', requestId: RID_2 })
+    expect((await response(b, clear)).ok).toBe(true)
+    await until(() => flags(a).length === 2)
+
+    for (const client of [a, b]) {
+      expect(flags(client)).toStrictEqual([
+        [
+          { name: 'jev-key', configured: true },
+          { name: 'opencode-password', configured: false }
+        ],
+        [
+          { name: 'jev-key', configured: false },
+          { name: 'opencode-password', configured: false }
+        ]
+      ])
+    }
+    // 14 §1.7 "effects before response": the caller's frame precedes its res.
+    expect(names(a, (item) => item.name === 'preferences.changed' || item.id === set)).toEqual([
+      'preferences.changed',
+      'res',
+      'preferences.changed'
+    ])
+    expect(await store.get('jev-key')).toBeNull()
+  })
+
+  // Added for ISSUE-216: the saga's `secrets` step deletes through the module's `clearSecret`
+  // (preferencesWiring.ts `sagaSecretStore`), so the flags and every UI follow the step (14 §6.3).
+  it('[ADR-017, ADR-023] Reset metrics deletes every secret through SecretStore and every ui client gets preferences.changed with the secrets cleared', async () => {
+    const store = new FakeSecretStore()
+    await store.set('opencode-password', 'pw-flow-216-seeded')
+    const host = await bootHost(machine(), { secrets: store })
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    const a = await host.attach()
+    const b = await host.attach()
+    const set = request(a, 'settings.secret.set', {
+      name: 'jev-key',
+      value: 'sk-flow-216-seeded',
+      requestId: RID_1,
+      origin: 'settings'
+    })
+    expect((await response(a, set)).ok).toBe(true)
+    expect(wiredOf(host).preferences.queries.secretStatuses()).toStrictEqual([
+      { name: 'jev-key', configured: true },
+      { name: 'opencode-password', configured: true }
+    ])
+
+    const id = request(a, 'preferences.resetMetrics', { confirmed: 'yes', requestId: RID_2 })
+    await until(() =>
+      [a, b].every((client) => wire(client).some((item) => item.name === 'ui.resetPreferences'))
+    )
+    await ackResets(a)
+    await ackResets(b)
+    const res = await response(a, id)
+
+    expect(res.ok && res.result).toStrictEqual({ outcome: 'reset', epoch: 1 })
+    expect(store.deleted).toStrictEqual(['jev-key', 'opencode-password'])
+    expect([await store.get('jev-key'), await store.get('opencode-password')]).toEqual([null, null])
+    const cleared = [
+      { name: 'jev-key', configured: false },
+      { name: 'opencode-password', configured: false }
+    ]
+    expect(wiredOf(host).preferences.queries.secretStatuses()).toStrictEqual(cleared)
+    for (const client of [a, b]) {
+      const changed = wire(client).filter((item) => item.name === 'preferences.changed')
+      expect(changed.at(-1)?.data).toMatchObject({ secrets: cleared })
+    }
   })
 
   it('[ADR-017] before the OS secret store is wired every SecretReader read answers not set and nothing is read from disk', async () => {
