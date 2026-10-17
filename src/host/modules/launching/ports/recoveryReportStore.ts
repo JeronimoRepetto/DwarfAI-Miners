@@ -14,6 +14,8 @@
 // - `dismissed` has no `retry_outcome` value (10 §`host_recovery_items`: `resumed` | `failed`):
 //   a dismissed item leaves the report (package gap, resolved in development: the grouped message
 //   no longer lists a dwarf the person dismissed; storing the outcome needs a schema change).
+//   Retry and Dismiss are ISSUE-174's (later: ISSUE-174), which adds that migration if its ACs need
+//   the stored outcome.
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
 import type { HostRecoveryReport } from '../domain/recoveryReport'
 
