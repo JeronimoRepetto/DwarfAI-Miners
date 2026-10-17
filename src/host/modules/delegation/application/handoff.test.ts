@@ -7,7 +7,9 @@
 // writing the response frame (its own case: adapters/mcp/McpDelegationServer.test.ts).
 //
 // TC-205-01 (sending → delivered, succeeded, no row), the turn-input path (never retried) and
-// NFR-SEC-12 (the result text in no row and no log record).
+// NFR-SEC-12 (the result text in no row and no log record). ISSUE-206 (TC-206-03, TC-206-04): a
+// failed push settles the delegation `handoff-failed` while the parent is alive (S8.13), else
+// `parent-gone` (S8.11).
 import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
@@ -69,7 +71,7 @@ class HandoffHistoryStore extends InMemoryDelegationTicketStore {
   }
 }
 
-function setUp(via: DelegationHandoff['via'] = 'tool-result') {
+function setUp(via: DelegationHandoff['via'] = 'tool-result', parentAlive = true) {
   const clock = new FakeClock(T0)
   const scheduler = new FakeScheduler(clock)
   const ids = new SequenceIdGenerator()
@@ -90,6 +92,7 @@ function setUp(via: DelegationHandoff['via'] = 'tool-result') {
     tickets,
     deliverer,
     viaOf: () => via,
+    parentAlive: (parent) => parent === PARENT && parentAlive,
     transactions: { inTransaction: (work) => work() },
     bus,
     clock,
@@ -284,5 +287,47 @@ describe('parent handoff (16 §5.4; ADR-013 item 6; 07 S8.08)', () => {
     // The failed pushes were logged, by class only.
     expect(pushed.log.entries).toHaveLength(1)
     expect(rejected.log.entries).toHaveLength(1)
+  })
+})
+
+describe('a failed turn-input push (07 S8.13, S8.11; ADR-013 O-13b; ISSUE-206)', () => {
+  it('[S8.13] a failed push while the parent is alive settles the delegation handoff-failed once, never retried', async () => {
+    for (const answer of [{ ok: false, error: 'failed' } as const, 'reject' as const]) {
+      const s = setUp('turn-input')
+      s.deliverer.queue(answer)
+
+      await s.handoff.workerTurnEnded(turnEnd(), RESULT)
+      await s.handoff.workerTurnEnded(turnEnd({ turnKey: 'worker-turn-2' }), RESULT)
+      s.clock.advance(60_000)
+      await settle()
+
+      expect(s.deliverer.calls).toHaveLength(1)
+      expect(s.tickets.handoffs.map((h) => h?.phase)).toStrictEqual(['sending', 'failed'])
+      expect(s.tickets.byTicket(TICKET)).toMatchObject({
+        state: 'failed',
+        failure: 'handoff-failed',
+        handoff: { via: 'turn-input', phase: 'failed' }
+      })
+      expect(s.bus.ofType('DelegationFailed').map((e) => e.payload)).toStrictEqual([
+        { delegationId: DELEGATION, parentDwarfId: PARENT, failure: 'handoff-failed' }
+      ])
+      expect(s.bus.ofType('DelegationSucceeded')).toStrictEqual([])
+    }
+  })
+
+  it('[S8.11] a failed push after the parent left settles the delegation parent-gone', async () => {
+    const s = setUp('turn-input', false)
+    s.deliverer.queue({ ok: false, error: 'cannot-receive' })
+
+    await s.handoff.workerTurnEnded(turnEnd(), RESULT)
+
+    expect(s.tickets.byTicket(TICKET)).toMatchObject({
+      state: 'failed',
+      failure: 'parent-gone',
+      handoff: { via: 'turn-input', phase: 'failed' }
+    })
+    expect(s.bus.ofType('DelegationFailed').map((e) => e.payload.failure)).toStrictEqual([
+      'parent-gone'
+    ])
   })
 })

@@ -90,3 +90,12 @@ export function createHandoffMcpDelegationServer(
 ): DelegationServer {
   return new McpDelegationServer(listener, log, handoffs)
 }
+
+// ISSUE-206: the parent's one chat line for a failed delegation (US-DLG-005; 08 §2.8), written by
+// host/wiring's `DelegationFailed` route.
+export {
+  delegationFailedLineKey,
+  delegationFailedLineText,
+  parentFailureLine,
+  type ParentFailureLine
+} from './application/failureLine'

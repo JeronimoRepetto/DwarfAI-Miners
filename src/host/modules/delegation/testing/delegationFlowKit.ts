@@ -5,6 +5,7 @@
 import type { HostEpoch } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
+import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import type { PreferencesQueries } from '../../preferences'
@@ -29,9 +30,11 @@ export function inMemoryDelegationLifecycle(deps: {
   hostEpoch: HostEpoch
   log: DiagnosticsLog
   preferences: Pick<PreferencesQueries, 'get'>
+  /** The flow's own bus, so its routes see `DelegationFailed{parent-gone}`; else a recording one. */
+  bus?: DomainEventBus<DelegationLifecycleEvent>
 }) {
   const files = new InMemoryCredentialFileStore()
-  const bus = new RecordingEventBus<DelegationLifecycleEvent>()
+  const bus = deps.bus ?? new RecordingEventBus<DelegationLifecycleEvent>()
   const lifecycle = new DelegationLifecycleService({
     ...deps,
     files,

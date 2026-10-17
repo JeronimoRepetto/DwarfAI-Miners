@@ -20,9 +20,13 @@
 //     'sending'}`, then ONE `ParentDeliverer.deliver(parent, marked text)` (the marker names the
 //     delegation, 18 T-25); `delivered` → `succeeded` and `DelegationSucceeded`. A failed or
 //     rejected push is never retried (ADR-013 O-13b: a second copy could reach the parent twice)
-//     and is logged by class only; settling it (S8.13, the parent's line) is later: ISSUE-206.
-// - No message row, frame, toast or badge exists for a handoff (PO #19, 14 §2.4): this file writes
-//   only the delegation record. Events go out after the commit (16 §2.3), then `settled(ticket)`
+//     and is logged by class only. It settles the delegation `failed` with the handoff `failed`
+//     (ISSUE-206): `handoff-failed` while the parent's session is alive (S8.13; its chat gets the
+//     PO #45 line through the `DelegationFailed` route), `parent-gone` once it is not (S8.11, no
+//     line). `parentAlive(parent)` is read when the push has failed, so a parent that left during
+//     the push is seen as gone.
+// - No message row, frame, toast or badge exists for a delivered handoff (PO #19, 14 §2.4): this
+//   file writes only the delegation record. Events go out after the commit (16 §2.3), then `settled(ticket)`
 //   wakes the `result` calls waiting on the ticket.
 //
 // Package gap (resolved in dev): 16 §5.4 names "a driver that needs the result pushed as turn
@@ -43,7 +47,7 @@ import {
   type DelegationHandoff,
   type DelegationId
 } from '../domain/delegation'
-import type { DelegationSucceeded } from '../domain/events'
+import type { DelegationFailed, DelegationSucceeded } from '../domain/events'
 import type { DelegationTicketStore } from '../ports/delegationStores'
 import type {
   DelegationHandoffReport,
@@ -53,7 +57,7 @@ import type {
 } from '../ports/delegationServer'
 
 /** Every event the handoff publishes (08 §0). */
-export type HandoffEvent = DelegationSucceeded
+export type HandoffEvent = DelegationSucceeded | DelegationFailed
 
 export interface HandoffDeps {
   tickets: DelegationTicketStore
@@ -61,6 +65,8 @@ export interface HandoffDeps {
   deliverer: ParentDeliverer
   /** How the parent's driver takes a result (see the file header). */
   viaOf(parent: DwarfId): DelegationHandoff['via']
+  /** Whether the parent's session is alive, read when a push failed (S8.13 vs S8.11). */
+  parentAlive(parent: DwarfId): boolean
   transactions: TransactionRunner
   /** Publishes after each commit (16 §2.3). */
   bus: Pick<DomainEventBus<HandoffEvent>, 'publish'>
@@ -161,13 +167,47 @@ export class ParentHandoffService implements DelegationHandoffReport, ToolResult
       pushed = await this.deps.deliverer.deliver(delegation.parentDwarfId, text)
     } catch {
       this.logFailure('rejected')
+      this.pushFailed(delegation)
       return
     }
     if (!pushed.ok) {
       this.logFailure(pushed.error)
+      this.pushFailed(delegation)
       return
     }
     this.delivered(delegation.ticket)
+  }
+
+  /** S8.13 (`handoff-failed`) or S8.11 (`parent-gone`): settled once, then `DelegationFailed`. */
+  private pushFailed(delegation: Delegation): void {
+    const { transactions, tickets, clock } = this.deps
+    const parentSessionAlive = this.deps.parentAlive(delegation.parentDwarfId)
+    const failed = transactions.inTransaction(() => {
+      const current = tickets.byTicket(delegation.ticket)
+      if (current === null) return null
+      const next = applyEvent(
+        current,
+        { type: 'handoff-push-failed', parentSessionAlive },
+        clock.now()
+      )
+      if (!next.ok) return null
+      tickets.save(next.value.delegation)
+      return next.value.delegation
+    })
+    if (failed === null || failed.failure === undefined) return
+    this.deps.bus.publish({
+      type: 'DelegationFailed',
+      v: 1,
+      id: this.deps.ids.uuidv7() as EventId,
+      at: clock.now(),
+      hostEpoch: this.deps.hostEpoch,
+      payload: {
+        delegationId: failed.id,
+        parentDwarfId: failed.parentDwarfId,
+        failure: failed.failure
+      }
+    })
+    this.deps.settled?.(delegation.ticket)
   }
 
   /** S8.08: `delivered`, `succeeded`, then `DelegationSucceeded` and the wake-up. */

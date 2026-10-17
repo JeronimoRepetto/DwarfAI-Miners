@@ -15,10 +15,18 @@
 // MCP adapter's flush report is called by the test as the adapter calls it. Those routes are
 // composed here until ISSUE-209 composes them in the Host.
 //
+// ISSUE-206 adds the `DelegationFailed` route (08 §2.8): the parent's one PO #45 line through the
+// in-memory conversation's `ingest`, with the parent's display name from the in-memory crew. The
+// handoff reads the parent's liveness from that crew (S8.13 vs S8.11), the lifecycle publishes on
+// the flow's bus, and a test may put a `FakeSubtaskRouter` in front of the subtask run or a
+// `FakeParentDeliverer` in place of the deliverer bridge (scripted failures).
+//
 // The delegating dwarf is a root launch made with "Let Jev choose" while "Subagent delegation" is
 // on (the gate of UC-009), holding its bound delegation token. Passing an earlier host's
 // `database` is the CH-01 injector (17 §4): the earlier composition is dropped and a new one is
-// composed over the same stores, as a Host restarted over the same database file is.
+// composed over the same stores, as a Host restarted over the same database file is. The crew and
+// the conversation live in that same file, so a restart may pass the earlier ones too (`crew`,
+// `conversation`).
 import { CATALOG_PROVIDER_IDS } from '@dwarfai/contracts'
 import type { DwarfId, HostEpoch, LaunchId, ProviderId } from '../../../kernel/domain/values'
 import type { SecretValue } from '../../../kernel/ports/secretReader'
@@ -64,7 +72,15 @@ import type { TurnSender, TurnSendResult } from '../../../modules/conversation'
 import { inMemoryConversation } from '../../../modules/conversation/testing/inMemoryConversation'
 import { ParentHandoffService, type HandoffEvent } from '../../../modules/delegation'
 import type { TurnInput } from '../../../modules/suppliers'
+import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
+import type {
+  DelegationFailed,
+  DelegationLifecycleEvent,
+  ParentDeliverer,
+  SubtaskRouter
+} from '../../../modules/delegation'
 import { createParentDeliverer } from '../../bridges/parentDeliverer'
+import { registerDelegationFailed } from '../../routes/delegationFailed'
 import { routeSessionExits, routeStops } from '../../routes/launching'
 
 export const SIMULATED = 'simulated' as ProviderId
@@ -169,6 +185,14 @@ export function delegationHost(
     delegationOn?: boolean
     /** How the parent's driver takes a result (ISSUE-205; default: as a tool result). */
     via?: 'tool-result' | 'turn-input'
+    /** A scripted router in front of the subtask run (default: the real bridge to Jev). */
+    router?: SubtaskRouter
+    /** A scripted deliverer for the turn-input push (default: the real bridge). */
+    deliverer?: ParentDeliverer
+    /** The earlier Host's crew, restarted over the same database (CH-01). */
+    crew?: ReturnType<typeof inMemoryCrew>
+    /** The earlier Host's conversation, restarted over the same database (CH-01). */
+    conversation?: ReturnType<typeof inMemoryConversation>
   } = {}
 ) {
   const database: DelegationDatabase = options.database ?? {
@@ -182,7 +206,7 @@ export function delegationHost(
   const ids = new SequenceIdGenerator()
   const log = new RecordingDiagnosticsLog()
   const launchingBus = new RecordingEventBus<LaunchingEvent>()
-  const crew = inMemoryCrew()
+  const crew = options.crew ?? inMemoryCrew()
   const suppliers = createSuppliers({
     catalogIds: CATALOG_PROVIDER_IDS as unknown as ProviderId[],
     publicBuild: false,
@@ -253,19 +277,25 @@ export function delegationHost(
     DelegationEndpointEvent | SubtaskRunEvent | HandoffEvent
   >()
   // ISSUE-205: the handoff, over the in-memory conversation and the parent's recorded session.
-  const conversation = inMemoryConversation()
+  const conversation = options.conversation ?? inMemoryConversation()
   const parentSession = new RecordingParentSession()
-  const deliverer = createParentDeliverer({
-    conversation: conversation.deliverer({
-      turns: parentSession,
-      recipients: { canReceiveMessages: () => true }
+  const deliverer =
+    options.deliverer ??
+    createParentDeliverer({
+      conversation: conversation.deliverer({
+        turns: parentSession,
+        recipients: { canReceiveMessages: () => true }
+      })
     })
-  })
   const settledTickets: string[] = []
   const handoff = new ParentHandoffService({
     tickets: database.tickets,
     deliverer,
     viaOf: () => options.via ?? 'tool-result',
+    parentAlive: (parent) => {
+      const view = crew.queries.get(parent)
+      return view !== null && !view.departed
+    },
     transactions: { inTransaction: (work) => work() },
     bus: delegationBus,
     clock,
@@ -302,7 +332,7 @@ export function delegationHost(
   })
   const subtasks = new SubtaskRunService({
     tickets: database.tickets,
-    router: createSubtaskRouter({ jev: jev.advisor }),
+    router: options.router ?? createSubtaskRouter({ jev: jev.advisor }),
     launcher: createWorkerLauncher({
       launching: launching.commands,
       events: launchingBus,
@@ -381,6 +411,10 @@ export function delegationHost(
     ends.push(workerEnds.endDelegated(payload.workerDwarfId, payload.delegationId))
   })
 
+  // The lifecycle's and the failure route's views of the flow's one bus. Bound through typed
+  // constants: passed inline, TypeScript 6.0.3's checker hits a Debug Failure on these arguments.
+  const lifecycleBus: DomainEventBus<DelegationLifecycleEvent> = delegationBus
+  const failedEvents: Pick<DomainEventBus<DelegationFailed>, 'subscribe'> = delegationBus
   // What the SessionStarter bridge asks at each launch (AMENDMENT-14 A14-02): issue or not.
   const { lifecycle } = inMemoryDelegationLifecycle({
     tokens: database.tokens,
@@ -389,7 +423,15 @@ export function delegationHost(
     ids,
     hostEpoch,
     log,
-    preferences
+    preferences,
+    bus: lifecycleBus
+  })
+  // The `DelegationFailed` route (08 §2.8; ISSUE-206). Later: ISSUE-209 registers it in the Host.
+  registerDelegationFailed({
+    bus: failedEvents,
+    crew: crew.queries,
+    conversation: conversation.commands,
+    log
   })
   // The `SubtaskDelegated` route, off the tool call (later: ISSUE-209 composes it in host/wiring).
   const routes: Promise<void>[] = []
