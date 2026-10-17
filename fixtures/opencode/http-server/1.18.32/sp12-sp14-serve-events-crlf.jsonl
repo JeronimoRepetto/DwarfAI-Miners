@@ -1,0 +1,68 @@
+{"id":"00000000-0000-4000-8000-000000000001","type":"server.connected","properties":{}}
+{"id":"00000000-0000-4000-8000-000000000002","type":"session.created","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"id":"00000000-0000-4000-8000-000000000003","slug":"calm-star","version":"1.18.32","projectID":"[redacted]","directory":"<REPO>","path":"","title":"New session - 2026-10-17T08:21:25.008Z","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1735689600008,"updated":1735689600008}}}}
+{"id":"00000000-0000-4000-8000-000000000004","type":"session.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"id":"00000000-0000-4000-8000-000000000003","slug":"calm-star","projectID":"[redacted]","directory":"<REPO>","path":"","title":"New session - 2026-10-17T08:21:25.008Z","agent":"gentle-orchestrator","model":{"id":"qwen3.8-flash","providerID":"opencode-go","variant":"default"},"version":"1.18.32","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1735689600008,"updated":1735689600048}}}}
+{"id":"00000000-0000-4000-8000-000000000005","type":"message.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"id":"00000000-0000-4000-8000-000000000006","role":"user","sessionID":"00000000-0000-4000-8000-000000000003","time":{"created":1735689600048},"agent":"gentle-orchestrator","model":{"providerID":"opencode-go","modelID":"qwen3.8-flash"}}}}
+{"id":"00000000-0000-4000-8000-000000000007","type":"message.part.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","part":{"type":"text","text":"Write the numbers from 1 to 300 as English words, one per line. Use no tools.","messageID":"00000000-0000-4000-8000-000000000006","sessionID":"00000000-0000-4000-8000-000000000003","id":"00000000-0000-4000-8000-000000000008"},"time":1735689600066}}
+{"id":"00000000-0000-4000-8000-000000000009","type":"session.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"id":"00000000-0000-4000-8000-000000000003","slug":"calm-star","projectID":"[redacted]","directory":"<REPO>","path":"","title":"New session - 2026-10-17T08:21:25.008Z","agent":"gentle-orchestrator","model":{"id":"qwen3.8-flash","providerID":"opencode-go","variant":"default"},"version":"1.18.32","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1735689600008,"updated":1735689600069}}}}
+{"id":"00000000-0000-4000-8000-00000000000a","type":"session.status","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","status":{"type":"busy"}}}
+{"id":"00000000-0000-4000-8000-00000000000b","type":"message.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"id":"00000000-0000-4000-8000-00000000000c","parentID":"00000000-0000-4000-8000-000000000006","role":"assistant","mode":"gentle-orchestrator","agent":"gentle-orchestrator","path":{"cwd":"<REPO>","root":"<REPO>"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"modelID":"qwen3.8-flash","providerID":"opencode-go","time":{"created":1735689600075},"sessionID":"00000000-0000-4000-8000-000000000003"}}}
+{"id":"00000000-0000-4000-8000-00000000000d","type":"session.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"id":"00000000-0000-4000-8000-000000000003","slug":"calm-star","projectID":"[redacted]","directory":"<REPO>","path":"","title":"New session - 2026-10-17T08:21:25.008Z","agent":"gentle-orchestrator","model":{"id":"qwen3.8-flash","providerID":"opencode-go","variant":"default"},"version":"1.18.32","summary":{"additions":0,"deletions":0,"files":0},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1735689600008,"updated":1735689600463}}}}
+{"id":"00000000-0000-4000-8000-00000000000e","type":"session.diff","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","diff":[]}}
+{"id":"00000000-0000-4000-8000-00000000000f","type":"message.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"role":"user","time":{"created":1735689600048},"agent":"gentle-orchestrator","model":{"providerID":"opencode-go","modelID":"qwen3.8-flash"},"id":"00000000-0000-4000-8000-000000000006","sessionID":"00000000-0000-4000-8000-000000000003","summary":{"diffs":[]}}}}
+{"id":"00000000-0000-4000-8000-000000000010","type":"plugin.added","properties":{"id":"core/config-reference"}}
+{"id":"00000000-0000-4000-8000-000000000011","type":"plugin.added","properties":{"id":"agent"}}
+{"id":"00000000-0000-4000-8000-000000000012","type":"plugin.added","properties":{"id":"command"}}
+{"id":"00000000-0000-4000-8000-000000000013","type":"plugin.added","properties":{"id":"skill"}}
+{"id":"00000000-0000-4000-8000-000000000014","type":"plugin.added","properties":{"id":"models-dev"}}
+{"id":"00000000-0000-4000-8000-000000000015","type":"plugin.added","properties":{"id":"config-agent"}}
+{"id":"00000000-0000-4000-8000-000000000016","type":"plugin.added","properties":{"id":"config-command"}}
+{"id":"00000000-0000-4000-8000-000000000017","type":"plugin.added","properties":{"id":"config-skill"}}
+{"id":"00000000-0000-4000-8000-000000000018","type":"plugin.added","properties":{"id":"alibaba"}}
+{"id":"00000000-0000-4000-8000-000000000019","type":"plugin.added","properties":{"id":"amazon-bedrock"}}
+{"id":"00000000-0000-4000-8000-00000000001a","type":"plugin.added","properties":{"id":"anthropic"}}
+{"id":"00000000-0000-4000-8000-00000000001b","type":"plugin.added","properties":{"id":"azure-cognitive-services"}}
+{"id":"00000000-0000-4000-8000-00000000001c","type":"plugin.added","properties":{"id":"azure"}}
+{"id":"00000000-0000-4000-8000-00000000001d","type":"plugin.added","properties":{"id":"cerebras"}}
+{"id":"00000000-0000-4000-8000-00000000001e","type":"plugin.added","properties":{"id":"cloudflare-ai-gateway"}}
+{"id":"00000000-0000-4000-8000-00000000001f","type":"plugin.added","properties":{"id":"cloudflare-workers-ai"}}
+{"id":"00000000-0000-4000-8000-000000000020","type":"plugin.added","properties":{"id":"cohere"}}
+{"id":"00000000-0000-4000-8000-000000000021","type":"plugin.added","properties":{"id":"deepinfra"}}
+{"id":"00000000-0000-4000-8000-000000000022","type":"plugin.added","properties":{"id":"gateway"}}
+{"id":"00000000-0000-4000-8000-000000000023","type":"plugin.added","properties":{"id":"github-copilot"}}
+{"id":"00000000-0000-4000-8000-000000000024","type":"plugin.added","properties":{"id":"gitlab"}}
+{"id":"00000000-0000-4000-8000-000000000025","type":"plugin.added","properties":{"id":"google"}}
+{"id":"00000000-0000-4000-8000-000000000026","type":"plugin.added","properties":{"id":"google-vertex-anthropic"}}
+{"id":"00000000-0000-4000-8000-000000000027","type":"plugin.added","properties":{"id":"google-vertex"}}
+{"id":"00000000-0000-4000-8000-000000000028","type":"plugin.added","properties":{"id":"groq"}}
+{"id":"00000000-0000-4000-8000-000000000029","type":"plugin.added","properties":{"id":"kilo"}}
+{"id":"00000000-0000-4000-8000-00000000002a","type":"plugin.added","properties":{"id":"llmgateway"}}
+{"id":"00000000-0000-4000-8000-00000000002b","type":"plugin.added","properties":{"id":"mistral"}}
+{"id":"00000000-0000-4000-8000-00000000002c","type":"plugin.added","properties":{"id":"nvidia"}}
+{"id":"00000000-0000-4000-8000-00000000002d","type":"plugin.added","properties":{"id":"opencode"}}
+{"id":"00000000-0000-4000-8000-00000000002e","type":"plugin.added","properties":{"id":"snowflake-cortex"}}
+{"id":"00000000-0000-4000-8000-00000000002f","type":"plugin.added","properties":{"id":"openai-compatible"}}
+{"id":"00000000-0000-4000-8000-000000000030","type":"plugin.added","properties":{"id":"openai"}}
+{"id":"00000000-0000-4000-8000-000000000031","type":"plugin.added","properties":{"id":"openrouter"}}
+{"id":"00000000-0000-4000-8000-000000000032","type":"plugin.added","properties":{"id":"perplexity"}}
+{"id":"00000000-0000-4000-8000-000000000033","type":"plugin.added","properties":{"id":"sap-ai-core"}}
+{"id":"00000000-0000-4000-8000-000000000034","type":"catalog.updated","properties":{}}
+{"id":"00000000-0000-4000-8000-000000000035","type":"plugin.added","properties":{"id":"togetherai"}}
+{"id":"00000000-0000-4000-8000-000000000036","type":"plugin.added","properties":{"id":"vercel"}}
+{"id":"00000000-0000-4000-8000-000000000037","type":"plugin.added","properties":{"id":"venice"}}
+{"id":"00000000-0000-4000-8000-000000000038","type":"plugin.added","properties":{"id":"xai"}}
+{"id":"00000000-0000-4000-8000-000000000039","type":"plugin.added","properties":{"id":"zenmux"}}
+{"id":"00000000-0000-4000-8000-00000000003a","type":"plugin.added","properties":{"id":"dynamic-provider"}}
+{"id":"00000000-0000-4000-8000-00000000003b","type":"plugin.added","properties":{"id":"config-plugin"}}
+{"id":"00000000-0000-4000-8000-00000000003c","type":"plugin.added","properties":{"id":"config-provider"}}
+{"id":"00000000-0000-4000-8000-00000000003d","type":"plugin.added","properties":{"id":"variant"}}
+{"id":"00000000-0000-4000-8000-00000000003e","type":"reference.updated","properties":{}}
+{"id":"00000000-0000-4000-8000-00000000003f","type":"integration.updated","properties":{}}
+{"id":"00000000-0000-4000-8000-000000000040","type":"catalog.updated","properties":{}}
+{"id":"00000000-0000-4000-8000-000000000041","type":"session.status","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","status":{"type":"busy"}}}
+{"id":"00000000-0000-4000-8000-000000000042","type":"session.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"id":"00000000-0000-4000-8000-000000000003","slug":"calm-star","projectID":"[redacted]","directory":"<REPO>","path":"","title":"Numbers 1-300 as English words","agent":"gentle-orchestrator","model":{"id":"qwen3.8-flash","providerID":"opencode-go","variant":"default"},"version":"1.18.32","summary":{"additions":0,"deletions":0,"files":0},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1735689600008,"updated":1735689600463}}}}
+{"id":"00000000-0000-4000-8000-000000000043","type":"session.error","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","error":{"name":"MessageAbortedError","data":{"message":"Aborted"}}}}
+{"id":"00000000-0000-4000-8000-000000000044","type":"session.status","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","status":{"type":"idle"}}}
+{"id":"00000000-0000-4000-8000-000000000045","type":"session.idle","properties":{"sessionID":"00000000-0000-4000-8000-000000000003"}}
+{"id":"00000000-0000-4000-8000-000000000046","type":"message.updated","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","info":{"id":"00000000-0000-4000-8000-00000000000c","parentID":"00000000-0000-4000-8000-000000000006","role":"assistant","mode":"gentle-orchestrator","agent":"gentle-orchestrator","path":{"cwd":"<REPO>","root":"<REPO>"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"modelID":"qwen3.8-flash","providerID":"opencode-go","time":{"created":1735689600075,"completed":1735689603647},"sessionID":"00000000-0000-4000-8000-000000000003","error":{"name":"MessageAbortedError","data":{"message":"Aborted"}}}}}
+{"id":"00000000-0000-4000-8000-000000000047","type":"session.status","properties":{"sessionID":"00000000-0000-4000-8000-000000000003","status":{"type":"idle"}}}
+{"id":"00000000-0000-4000-8000-000000000048","type":"session.idle","properties":{"sessionID":"00000000-0000-4000-8000-000000000003"}}
