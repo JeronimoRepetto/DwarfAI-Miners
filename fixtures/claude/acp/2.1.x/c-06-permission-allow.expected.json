@@ -1,0 +1,166 @@
+{
+  "case": "C-06",
+  "description": "Recorded against the user-installed @agentclientprotocol/claude-agent-acp 0.93.0 with Claude Code 2.1.302 (scrubbed). 15 §2.7 ACP row: the adapter's session/request_permission for Write (options allow_once, allow_always, reject_once) opens one permission ask whose providerRequestId is the toolCallId; Allow is sent as the allow_once optionId, never allow_always, and is accepted once the agent continues.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "00000000-0000-4000-8000-000000000002",
+      "decision": "allow"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "kind": "accepted"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000002",
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "Write",
+        "summary": "Preparing file…",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "00000000-0000-4000-8000-000000000002",
+        "channel": "driver",
+        "payload": {
+          "toolName": "Write",
+          "requestText": "Write notes.md"
+        },
+        "options": {
+          "hasAllowOnce": true,
+          "hasRejectOnce": true
+        },
+        "turnKey": "claude:claude:{session}:turn:1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000002",
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "Write",
+        "summary": "Write notes.md",
+        "state": "finished",
+        "at": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:1",
+        "role": "dwarf",
+        "text": "done",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:turn:1",
+        "unitKey": "{session}:turn:1",
+        "fidelity": 1,
+        "tokens": {
+          "inputNet": 4,
+          "output": 127,
+          "cacheRead": 43776,
+          "cacheWrite": 4276,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "result": {
+        "outcome": {
+          "outcome": "selected",
+          "optionId": "allow-once"
+        }
+      }
+    }
+  ]
+}
