@@ -172,7 +172,7 @@ describe('ACP permission reply hook (15 §2.7: a native decision in an option _m
     { optionId: 'yes', kind: 'allow_once', _meta: { native: 'accept' } },
     { optionId: 'stop', kind: 'reject_once', _meta: { native: 'cancel' } },
     { optionId: 'no', kind: 'reject_once', _meta: { native: 'decline' } },
-    { optionId: 'always', kind: 'allow_always', _meta: { native: 'acceptForSession' } }
+    { optionId: 'always', kind: 'allow_always', _meta: { native: 'accept-always' } }
   ]
   const byNative =
     (want: string): PermissionReplyHook =>
@@ -198,7 +198,7 @@ describe('ACP permission reply hook (15 §2.7: a native decision in an option _m
       optionId: 'no'
     })
     // A choice the decision's kind cannot carry falls back to the default mapping (fail closed).
-    expect(replyWith(options, 'allow', byNative('acceptForSession'))).toEqual({
+    expect(replyWith(options, 'allow', byNative('accept-always'))).toEqual({
       kind: 'select',
       optionId: 'yes'
     })
