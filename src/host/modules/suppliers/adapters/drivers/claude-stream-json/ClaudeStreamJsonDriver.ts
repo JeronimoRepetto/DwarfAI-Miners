@@ -105,9 +105,16 @@ export interface ClaudeStreamJsonDriverDeps {
   readonly mcpConfig: { readonly dir: string; readonly files: McpConfigFiles }
   /** One-line redaction of activity summaries (`contracts/logging` `redactSecrets`, bound by wiring). */
   readonly redact: (text: string) => string
+  /**
+   * What a resume needs that `SessionRef` does not carry, read from the stored launch record when
+   * this driver instance did not launch the session (a restarted Host, ISSUE-173): its folder and
+   * the spawn tag of the resumed process. Bound by host/wiring (bridges/resumeContext.ts); the
+   * driver never imports launching (R3, R4). Absent, or null: the session is unknown here.
+   */
+  readonly resumeContext?: (ref: SessionRef) => { cwd: string; spawnTag: string } | null
 }
 
-/** What a resume needs that `SessionRef` does not carry (package gap, recorded in the hand-off). */
+/** What a resume needs that `SessionRef` does not carry (package gap): remembered at launch, or read through `resumeContext`. */
 interface Remembered {
   readonly cwd: string
   readonly spawnTag: string
@@ -212,7 +219,9 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     if (this.live.has(ref.providerSessionId)) {
       throw resumeError('resume-error', 'the session is live in this Host')
     }
-    const known = this.remembered.get(ref.providerSessionId)
+    // This instance's own launch first; else the stored launch record (a restarted Host, ISSUE-173).
+    const known =
+      this.remembered.get(ref.providerSessionId) ?? this.deps.resumeContext?.(ref) ?? undefined
     if (known === undefined) {
       throw resumeError('resume-error', 'the folder and spawn tag of the session are unknown')
     }
