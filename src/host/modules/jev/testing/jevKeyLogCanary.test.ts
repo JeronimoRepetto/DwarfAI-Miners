@@ -34,9 +34,18 @@ afterEach(() => {
 
 describe('Jev key log canary', () => {
   it('[NFR-SEC-12] the Jev key never appears in a log record or an error', async () => {
-    const console = (['debug', 'info', 'log', 'warn', 'error'] as const).map((method) =>
-      vi.spyOn(globalThis.console, method).mockImplementation(() => {})
-    )
+    // The SDK's default logger prints through the global console. The test swaps that global for a
+    // recorder (a spy, not a Host log call: noConsole.test.ts keeps console calls out of src/host).
+    const printed: unknown[][] = []
+    const record = (...args: unknown[]): void => void printed.push(args)
+    vi.spyOn(globalThis, 'console', 'get').mockReturnValue({
+      ...globalThis['console'],
+      debug: record,
+      info: record,
+      log: record,
+      warn: record,
+      error: record
+    })
     const credentials = CANARY_CORPUS.filter((c) => c.class === 'credential').map((c) => c.value)
     const prompt = CANARY_CORPUS.find((c) => c.kind === 'prompt')!.value
     const keys = [...credentials, 'ts-live-fake-key-7f3a9c']
@@ -64,9 +73,9 @@ describe('Jev key log canary', () => {
         seen.push(...(await Promise.all(asked)), subject.log.entries, subject.log.refused)
       }
     }
-    const written = JSON.stringify(seen) + JSON.stringify(console.map((spy) => spy.mock.calls))
+    const written = JSON.stringify(seen) + JSON.stringify(printed)
     for (const key of keys) expect(written).not.toContain(key)
     expect(written).not.toContain(prompt)
-    for (const spy of console) expect(spy).not.toHaveBeenCalled()
+    expect(printed).toStrictEqual([])
   })
 })
