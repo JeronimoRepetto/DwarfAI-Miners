@@ -19,8 +19,8 @@
 // ConnectionRegistry. The seam-B Dispatcher comes from wiring/hostDispatcher.ts, which registers
 // the transport's own `ping`, `events.subscribe` and `host.shutdown` and where each method joins
 // with the issue that serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every
-// owned session: bound to the empty-owner implementation, since the Host owns no session yet,
-// until the launching module serves it (later: ISSUE-175).
+// owned session: bound to the launching module's `stopAll` from boot step 4 on, which ends them
+// through crew's `endOwned` (ISSUE-175).
 // The upgrade drain asks the DrainGate what is still open: the Host's binding (wiring/hostDrainGate.ts),
 // which reports the blockers of each module bound to it, so it drains at once until one is: the asking
 // module's live asks from boot step 4 (#1290), the launching module's in-flight launches (ISSUE-162); a
@@ -44,8 +44,9 @@
 // (ClaudeHooksConfigWriter on `<CLAUDE_CONFIG_DIR or ~/.claude>/settings.json`, the one file the
 // revert mode reverts too), behind wiring/bridges/hostConfigWriter.ts (the hook entry is written
 // only once the hook ingress persisted its port, `app_meta.ingress_port`; the OpenCode plugin
-// target stays the legacy installer's), the SqliteChannelTokenStore the hook ingress's lookup
-// reads, the first-run step's answer (B-M40), and, right after the saga resume, the boot
+// target is only verified and reverted there, ISSUE-233, its enable staying the legacy
+// installer's), the SqliteChannelTokenStore the hook ingress's lookup reads, the first-run step's
+// answer (B-M40), and, right after the saga resume, the boot
 // re-verification of the config writes a crash left unverified (16 §7.3, 07 S14.11). Boot step 4 constructs the other modules,
 // each wired by its issue: suppliers (ISSUE-159) with the one CliInstallResolver, the
 // SqliteCapabilityRecordStore, the Host's event bus and the integration gate bridge to preferences;
@@ -120,6 +121,10 @@ import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistor
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
 import { ClaudeHooksConfigWriter } from './modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
 import { ConfigWriterEngine } from './modules/preferences/adapters/external-config/configWriterEngine'
+import {
+  OPENCODE_PLUGIN_FILE_NAME,
+  OpenCodePluginConfigWriter
+} from './modules/preferences/adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
 import { SqliteChannelTokenStore } from './modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from './modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from './modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
@@ -215,7 +220,6 @@ import {
   routeLaunchDrainRechecks
 } from './wiring/hostDrainGate'
 import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
-import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
   servePreferences,
   unavailableSecretStore,
@@ -242,7 +246,12 @@ import {
 } from './wiring/routes/conversation'
 import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
 import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/routes/launching'
-import { createLaunchDrainGate, type LaunchingEvent } from './modules/launching'
+import {
+  createLaunchDrainGate,
+  type LaunchingEvent,
+  type LaunchingStopAll,
+  type LaunchingStopAllDeps
+} from './modules/launching'
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
@@ -443,6 +452,20 @@ function claudeSettingsPathHere(): string {
   return join(observedProviderFolders(process.env, homedir()).claudeConfigDir, 'settings.json')
 }
 
+/**
+ * DwarfAI's plugin file in OpenCode's global plugin folder (16 §7.1): `$XDG_CONFIG_HOME/opencode/plugin`
+ * when set, else `~/.config/opencode/plugin`, on every OS (OpenCode's own rule, the one the legacy
+ * installer follows). Blank counts as unset; a relative value names no single folder (OpenCode would
+ * resolve it against each session's working directory), so there is no plugin file to revert: `null`.
+ */
+function openCodePluginPathHere(): string | null {
+  const configured = process.env['XDG_CONFIG_HOME']?.trim()
+  if (configured !== undefined && configured !== '' && !isAbsolute(configured)) return null
+  const configHome =
+    configured === undefined || configured === '' ? join(homedir(), '.config') : configured
+  return join(configHome, 'opencode', 'plugin', OPENCODE_PLUGIN_FILE_NAME)
+}
+
 /** The normal boot (16 §8.2): every step, then the Host serves until its clean exit. */
 async function bootHost(base: HostBase): Promise<void> {
   const { appRoot, isPackaged, paths, privilege, runQuery, clock, fs, log, scheduler, ids } = base
@@ -482,6 +505,10 @@ async function bootHost(base: HostBase): Promise<void> {
   // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
   let stopDrainRechecks: (() => void) | undefined
   let stopLaunchDrainRechecks: (() => void) | undefined
+  // Launching's `stopAll` (ISSUE-175), bound at boot step 4 once crew and launching exist; the
+  // dispatcher answers HOST_NOT_READY for `host.shutdown` before `ready`, so it is always bound when
+  // asked. Unbound, it fails closed: the Host never exits on a stop-all that ended nothing it owns.
+  let launchingStopAll: LaunchingStopAll | undefined
   // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
   let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
@@ -530,8 +557,15 @@ async function bootHost(base: HostBase): Promise<void> {
     clock,
     scheduler,
     state: () => hostState.current().state,
-    // Cut 0: no owned session exists yet (later: ISSUE-175 binds launching.stopAll).
-    stopAll: emptyOwnerStopAll,
+    // Launching's `stopAll`: every owned session ends through crew's `endOwned` (ISSUE-175).
+    stopAll: {
+      stopAll: (requestId) => {
+        if (launchingStopAll === undefined) {
+          return Promise.reject(new HostInvariantError('stop-all is served from boot step 4 on'))
+        }
+        return launchingStopAll.stopAll(requestId)
+      }
+    },
     lifecycle,
     connections,
     epoch,
@@ -701,7 +735,10 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // Cut 2 (ISSUE-323): the one writer of DwarfAI's entries in other tools' configs (16 §7),
           // with the Claude Code hooks target; the hook entry carries the ingress's persisted port.
+          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches only to verify and
+          // revert (the Reset saga's `external-config` step; lead decision 2026-10-16).
           const ingressPort = appMetaIngressPort(db)
+          const openCodePluginPath = openCodePluginPathHere()
           configWriter = new ConfigWriterEngine({
             fs,
             transactions,
@@ -719,7 +756,16 @@ async function bootHost(base: HostBase): Promise<void> {
                 ingressPort: persistedIngressPort(ingressPort),
                 // A cut-2 rollback build: today's installer owns the old app's entry again (ISSUE-141).
                 keepOldAppEntries: CUT_2_ROLLBACK_CHOICES.keepsOldAppEntries
-              })
+              }),
+              ...(openCodePluginPath === null
+                ? []
+                : [
+                    new OpenCodePluginConfigWriter({
+                      path: openCodePluginPath,
+                      installId: installIdOf(db),
+                      ingressPort: persistedIngressPort(ingressPort)
+                    })
+                  ])
             ]
           })
           const preferences = servedPreferences.wire({
@@ -747,7 +793,12 @@ async function bootHost(base: HostBase): Promise<void> {
             secrets: unavailableSecretStore,
             // A cut-2 rollback build refuses every install: today's installer is the entry's one writer there.
             externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(
-              hostConfigWriter({ claudeHooks: configWriter, ingressPort, log }),
+              hostConfigWriter({
+                claudeHooks: configWriter,
+                ...(openCodePluginPath === null ? {} : { openCodePlugin: configWriter }),
+                ingressPort,
+                log
+              }),
               log
             ),
             // The hashes the hook ingress's lookup reads (WiredPreferences.channelTokens).
@@ -806,7 +857,15 @@ async function bootHost(base: HostBase): Promise<void> {
             bus,
             hostEpoch: epoch,
             // A new demo world each Host start (15 §4.12); development builds only.
-            simulatedSeed: epoch
+            simulatedSeed: epoch,
+            // "Other…" (ISSUE-165; 15 §4.11): the person's command spawned with no shell, its
+            // environment the childEnv allowlist copied from the Host's own (15 §4, INV-59).
+            hostedCommand: {
+              processControl,
+              loginEnv: process.env,
+              platform: hostRuntime().os as NodeJS.Platform,
+              redact: redactSecrets
+            }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))
           // The providers' own folders: the environment overrides they honour, else the person's
@@ -1084,6 +1143,17 @@ async function bootHost(base: HostBase): Promise<void> {
           // asks it again at once.
           drainGate.bind(createLaunchDrainGate({ launches: modules.launching.launching.queries }))
           stopLaunchDrainRechecks = routeLaunchDrainRechecks({ events: bus, drain })
+          // Stop everything and quit (ISSUE-175; ADR-002 D7 step 3): launching's `stopAll` waits for
+          // the launches in flight and ends every owned session through crew's `endOwned`, over
+          // the same terminator as Stop dwarf; its `StopAllIncomplete` toast is a launching route.
+          const ownedEndsDeps: Parameters<WiredCrew['crew']['ownedEnds']>[0] = {
+            terminator: modules.crew.terminator,
+            bus
+          }
+          const stopAllDeps: LaunchingStopAllDeps = {
+            crew: modules.crew.crew.ownedEnds(ownedEndsDeps)
+          }
+          launchingStopAll = modules.launching.launching.stopAll(stopAllDeps)
           // Stop dwarf ends an owned session through its driver, then its recorded process tree
           // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(

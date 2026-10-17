@@ -78,6 +78,7 @@ describe('the rollback rehearsal build (ISSUE-057)', () => {
     const configs = [
       'electron.vite.config.ts',
       'electron.vite.host.config.ts',
+      'electron.vite.relay.config.ts',
       'electron.vite.jevMcpServer.config.ts'
     ]
     for (const file of configs) {

@@ -65,6 +65,7 @@ import { dockReplaceMotion, dockWindowMotion } from './lib/shell/dockMotion'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { needsYouCount, reachableArea } from './lib/shell/panelNav'
+import { SHIPPED_MODES, leverModes } from './lib/shell/builtDestinations'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import type {
   AppBuild,
@@ -905,6 +906,12 @@ const mineHistory = computed<MineHistoryResult | undefined>(() => historyAsToday
  * window slot, which holds one thing at a time, so the chat or the Add panel is put away.
  */
 function openHistory(): void {
+  /*
+   * Esc or Close history hands the keyboard back to what opened it (ISSUE-254; NFR-A11Y-02):
+   * the mine's History button, remembered at the press. Opened from the chat in the slot, the
+   * chat's own button goes with the chat, so the control that opened the chat stays the one.
+   */
+  if (dockItem.value === null) rememberDockOpener()
   closeMessagePanel()
   historyOpen.value = true
 }
@@ -954,6 +961,7 @@ watch([() => viewState.mineId !== null, () => dockItem.value !== null], ([mineOp
 
 function closeHistory(): void {
   historyOpen.value = false
+  closeDockToOpener()
 }
 
 /*
@@ -1453,6 +1461,11 @@ const {
         destination is not built yet, so the nav's own "no dead buttons" rule
         is the fallback until that is ruled on.
 
+        AMENDED for ISSUE-267 (ruled: ADR-034 item 2, BR-19): the lever's sides
+        come from the build's feature list (lib/shell/builtDestinations), no
+        longer a hard-coded false. With the Panel alone there are none, so the
+        nav draws no lever at all; between Veta and Valle, "▼ Veta" alone.
+
         AMENDED for #635: the nav and the page are always there while the
         window shows ("the page and the nav are always there"), so neither is
         mounted or retained by the fold any more; only the mine column is.
@@ -1464,7 +1477,7 @@ const {
           :badge="needsYou"
           :music="musicPlaying"
           :warn="shortcutBroken"
-          :lever="false"
+          :modes="leverModes(SHIPPED_MODES)"
           @nav="selectArea"
           @mark="hidePanel"
           @music="toggleMusicAndSay"

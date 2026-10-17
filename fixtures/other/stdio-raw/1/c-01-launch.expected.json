@@ -1,0 +1,19 @@
+{
+  "case": "C-01",
+  "description": "The command's own argv is spawned, the first prompt goes on its stdin, and launch() resolves once the 3 s early-failure window has passed with no exit (earlyFailure exit-only). The output it printed meanwhile is buffered and delivered as a log entry.",
+  "script": [{ "do": "launch", "readyAfterMs": 3000 }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "other:other:{session}:stdout@0",
+        "role": "dwarf",
+        "text": "Agent ready. Reading the prompt.",
+        "providerTime": null
+      }
+    }
+  ],
+  "sent": ["first prompt"]
+}

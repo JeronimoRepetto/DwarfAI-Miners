@@ -138,11 +138,13 @@ describe('resetParticipants with the delegation step', () => {
     const result = await saga.resetMetrics({ confirmed: 'yes' })
 
     expect(result.outcome).toBe('reset')
-    // The settled delegation went; the running one, its worker and the tokens stayed.
+    // The settled delegation went; the running one, its worker, its launch and its token stayed.
+    // Amended with ISSUE-181: the launching step of 09 §7.2 (4) now deletes the settled worker
+    // launch, and its token goes by the schema's `delegation_tokens.launch_id ... ON DELETE
+    // CASCADE` (the list was both tokens while no launching step was registered).
     expect(column('SELECT id FROM delegations')).toStrictEqual([RUNNING])
     expect(column('SELECT launch_id FROM delegation_tokens ORDER BY launch_id')).toStrictEqual([
-      RUNNING_LAUNCH,
-      SETTLED_LAUNCH
+      RUNNING_LAUNCH
     ])
     expect(column(`SELECT worker_dwarf_id FROM delegations WHERE id = '${RUNNING}'`)).toStrictEqual(
       [WORKER]
@@ -169,11 +171,15 @@ describe('resetParticipants with the delegation step', () => {
     const result = await saga.resetMetrics({ confirmed: 'yes' })
 
     const names = participants.dbSteps.map((step) => step.name)
-    expect(names.at(-1)).toBe('delegation')
+    // Amended with ISSUE-181: the launching step of (4) now follows, so the delegation step is
+    // the one right before it (it was the last step while no launching step was registered).
+    expect(names.indexOf('delegation')).toBe(names.indexOf('launching') - 1)
+    expect(names.at(-1)).toBe('launching')
     expect(names.indexOf('delegation')).toBeGreaterThan(names.indexOf('attention'))
     expect(result.outcome).toBe('reset')
-    // The settled delegation's worker launch kept its row: only the launching step of (4) deletes
-    // settled launches, and it is not registered yet.
-    expect(column('SELECT id FROM launches ORDER BY id')).toContain(RUNNING_LAUNCH)
+    // The running delegation's worker launch stays; the settled one's worker launch is deleted by
+    // the launching step of (4) (amended with ISSUE-181: it kept its row while no launching step
+    // was registered).
+    expect(column('SELECT id FROM launches ORDER BY id')).toStrictEqual([RUNNING_LAUNCH])
   })
 })

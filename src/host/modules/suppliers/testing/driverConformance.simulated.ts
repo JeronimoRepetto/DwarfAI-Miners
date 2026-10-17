@@ -2,7 +2,7 @@
 // its fixture set `fixtures/simulated/simulated/1/`. Shared by the reference run and the harness's
 // own negative tests, whose broken drivers are built over the reference one.
 import { fileURLToPath } from 'node:url'
-import { SIMULATED_RECORD } from '../adapters/catalog/profiles'
+import { SIMULATED_CAPABILITIES, SIMULATED_RECORD } from '../adapters/catalog/profiles'
 import {
   SimulatedDriver,
   type SimulatedSession
@@ -23,7 +23,7 @@ export const simulatedFactory: DriverFactory = (rig) =>
   new SimulatedDriver({
     profile: SIMULATED_RECORD.profile,
     transport: 'acp',
-    capabilities: SIMULATED_RECORD.ceiling,
+    capabilities: SIMULATED_CAPABILITIES,
     seed: 'conformance',
     clock: rig.clock,
     scheduler: rig.scheduler

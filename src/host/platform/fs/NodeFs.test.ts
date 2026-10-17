@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runFileSystemContract } from '../../kernel/testing/fileSystem.contract'
-import { NodeFs, fsErrorOf } from './NodeFs'
+import { NodeFs, atomicWriteModes, fsErrorOf, newDirMode } from './NodeFs'
 
 describe('NodeFs', () => {
   // A fresh temporary root per test, removed afterwards (17 §1.3).
@@ -39,5 +39,26 @@ describe('NodeFs', () => {
     expect(fsErrorOf(osError('EISDIR'))).toBe('io')
     expect(fsErrorOf(new Error('no code'))).toBe('io')
     expect(fsErrorOf(null)).toBe('io')
+  })
+
+  // ADDED for ISSUE-227 (foreman decision, 2026-10-16): a file the Host writes into another tool's folder may hold a
+  // channel token (ADR-016 item 1), so a new file is owner-only and a replaced file keeps the person's own mode. The
+  // decision is pinned here on every OS; `NodeFs.os.test.ts` proves it on a POSIX disk. Windows has no POSIX modes:
+  // nothing changes there.
+  it("[ADR-016] an atomic write creates a new file owner-only and keeps a replaced file's mode on POSIX, and changes nothing on Windows", () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      expect(atomicWriteModes(null, platform)).toStrictEqual({ create: 0o600, chmod: null })
+      expect(atomicWriteModes(0o100644, platform)).toStrictEqual({ create: 0o600, chmod: 0o644 })
+      expect(atomicWriteModes(0o100600, platform)).toStrictEqual({ create: 0o600, chmod: 0o600 })
+      expect(atomicWriteModes(0o104755, platform)).toStrictEqual({ create: 0o600, chmod: 0o4755 })
+    }
+    expect(atomicWriteModes(null, 'win32')).toStrictEqual({ create: 0o666, chmod: null })
+    expect(atomicWriteModes(0o100444, 'win32')).toStrictEqual({ create: 0o666, chmod: null })
+  })
+
+  it('[ADR-016] a folder the Host makes is owner-only on POSIX, and made as before on Windows', () => {
+    expect(newDirMode('linux')).toBe(0o700)
+    expect(newDirMode('darwin')).toBe(0o700)
+    expect(newDirMode('win32')).toBeUndefined()
   })
 })

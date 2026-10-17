@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { usePanelLayout } from './usePanelLayout'
 import { panelLeaveBoundMs } from '../lib/shell/panelMotion'
 
@@ -24,7 +25,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     setPanelLayout: vi.fn().mockResolvedValue(OPEN),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api)
+  })
   return api
 }
 

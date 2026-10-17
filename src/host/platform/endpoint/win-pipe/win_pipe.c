@@ -34,6 +34,10 @@
 //     S12.04). The Host reads it once, before it spawns anything: libuv adds the process itself to a job
 //     of its own at its first non-detached spawn, so a later read always answers true (ISSUE-056).
 //     Throws "WIN32_<n>" when it cannot be read.
+//   currentUserSid(): string
+//     this process's token user SID in string form (ConvertSidToStringSidW, what `whoami /user`
+//     prints). The MCP relay names the Host's MCP endpoint with it without starting a process
+//     (ADR-013 item 3; owner-approved 2026-10-15, ISSUE-200). Throws "WIN32_<n>" when it cannot be read.
 //
 // The listener keeps the event loop alive until it is closed. The static C runtime (/MT) keeps the
 // binary free of any VC++ redistributable (the build's import check proves it).
@@ -454,6 +458,18 @@ static napi_value js_is_process_in_job(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static napi_value js_current_user_sid(napi_env env, napi_callback_info info) {
+  (void)info;
+  wchar_t *sid = NULL;
+  DWORD error = current_user_sid(&sid);
+  if (error != 0) return throw_win32(env, error, "the user SID could not be read");
+  napi_value result;
+  napi_status status = napi_create_string_utf16(env, (const char16_t *)sid, NAPI_AUTO_LENGTH, &result);
+  LocalFree(sid);
+  if (status != napi_ok) return throw_win32(env, ERROR_NOT_ENOUGH_MEMORY, "out of memory");
+  return result;
+}
+
 NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   open_osfhandle = (open_osfhandle_fn)(void *)GetProcAddress(GetModuleHandleW(NULL), "uv_open_osfhandle");
   if (open_osfhandle == NULL) {
@@ -471,5 +487,7 @@ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   napi_set_named_property(env, exports, "protectDirectory", function);
   napi_create_function(env, "isProcessInJob", NAPI_AUTO_LENGTH, js_is_process_in_job, NULL, &function);
   napi_set_named_property(env, exports, "isProcessInJob", function);
+  napi_create_function(env, "currentUserSid", NAPI_AUTO_LENGTH, js_current_user_sid, NULL, &function);
+  napi_set_named_property(env, exports, "currentUserSid", function);
   return exports;
 }

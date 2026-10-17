@@ -1,0 +1,16 @@
+{
+  "case": "C-26",
+  "description": "ADR-009 D4, 15 §2.3, SP-08: a claude --help without --permission-prompt-tool probes launch false (the help process exits at once; the advance lets the fake scheduler run its exit).",
+  "script": [
+    {
+      "do": "probe"
+    },
+    {
+      "do": "advance",
+      "ms": 0
+    }
+  ],
+  "outcomes": [null, null],
+  "events": [],
+  "sent": []
+}

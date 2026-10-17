@@ -1,0 +1,72 @@
+{
+  "case": "sp10-deny",
+  "spike": "SP-10",
+  "claudeVersion": "2.1.301",
+  "osRelease": "10.0.26200",
+  "arch": "x64",
+  "date": "2026-10-16",
+  "skipped": null,
+  "marker": {
+    "name": "sp10-deny-marker.txt",
+    "existsAfter": false
+  },
+  "stubMethods": [],
+  "stubCalls": [],
+  "steps": [
+    {
+      "kind": "launch",
+      "argv": [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--session-id",
+        "<session-id>",
+        "--permission-mode",
+        "default",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "AskUserQuestion"
+      ],
+      "spawnError": null,
+      "firstStdoutMs": 339,
+      "firstLines": [
+        "system/hook_started",
+        "system/hook_started",
+        "system/hook_started",
+        "system/hook_response",
+        "system/hook_response",
+        "system/hook_response",
+        "system/init",
+        "assistant"
+      ],
+      "initMs": 4557,
+      "initBeforeFirstInput": false,
+      "initSessionIdEqualsRequested": true,
+      "promptToolServerStatus": "not listed",
+      "askUserQuestionInTools": false,
+      "firstInputMs": 3,
+      "toolUses": ["Write"],
+      "results": [
+        {
+          "subtype": "success",
+          "isError": false,
+          "numTurns": 2,
+          "permissionDenials": ["Write"],
+          "sessionIdEqualsRequested": true,
+          "reply": "<longer text>",
+          "atMs": 13136
+        }
+      ],
+      "idleLinesAfterLastResult": 0,
+      "stderrBytes": 0,
+      "exitCode": 0,
+      "exitSignal": null,
+      "exitMs": 17369,
+      "exitedBeforeReadiness": false,
+      "killedAfterTimeout": false
+    }
+  ]
+}

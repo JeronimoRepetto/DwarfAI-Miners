@@ -99,3 +99,25 @@ describe('OpenCodeSettings — the server password (#588 T6, F1)', () => {
     expect(wrapper.find('.password-unavailable').text()).toMatch(/encrypt/i)
   })
 })
+
+/*
+ * ISSUE-264 (EPIC-16) — APPENDED: the permission-requests help paragraph (US-SET-009.AC01), the
+ * design's string word for word (DwarfAI-Miners-Design d12d3fc, settings.js:195). It is true while
+ * A-52…A-55 route to legacy, whose installer bakes the shared hook token. The cut-4a switch that
+ * routes them to the Host must replace it: under ADR-016 item 1 the Host's plugin file carries its
+ * own `openCodePluginToken`, and design owes the DG-22 copy for that moment.
+ */
+describe('OpenCodeSettings — the help paragraph (ISSUE-264)', () => {
+  it("[US-SET-009.AC01] the OpenCode permission-requests help paragraph is the design's delivered string", () => {
+    const wrapper = render({ pluginEnabled: true })
+    expect(wrapper.get('.opencode-settings .dm-srow__label').text()).toBe(
+      'OpenCode · permission requests'
+    )
+    expect(wrapper.get(CONSENT).text()).toBe(
+      'Turning this on writes one plugin file into OpenCode’s own configuration folder, so a permission an OpenCode session asks for appears on its dwarf and can be answered from the panel. That file holds, in plain text, the same token this app uses to trust Claude Code’s instant updates, so any program on this machine that can read it could also send this app false Claude Code session events.'
+    )
+    expect(wrapper.get('.opencode-plugin-enabled').attributes('aria-label')).toBe(
+      'Answer OpenCode permission requests from the panel'
+    )
+  })
+})

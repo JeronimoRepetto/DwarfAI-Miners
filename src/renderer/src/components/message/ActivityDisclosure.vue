@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { untrustedText } from '../../lib/text/untrustedText'
 /*
  * One run of tool steps folded to a line (#294, #635), `molecules/activity` in the design: a
  * disclosure button with the run's label, and the step list it opens. A read or edit step names a
@@ -40,12 +41,12 @@ const emit = defineEmits<{
           class="dm-activity__path"
           type="button"
           :data-row-key="line.key"
-          :title="line.title ?? line.text"
+          :title="untrustedText(line.title ?? line.text)"
           @click="emit('open-path', { key: line.key, target: line.target })"
         >
-          {{ line.text }}
+          <bdi>{{ untrustedText(line.text) }}</bdi>
         </button>
-        <template v-else>{{ line.text }}</template>
+        <bdi v-else>{{ untrustedText(line.text) }}</bdi>
       </li>
     </ul>
   </div>

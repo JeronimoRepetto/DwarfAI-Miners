@@ -2,8 +2,8 @@
 // B-F19, §4.1 `launches`; ISSUE-162), in two parts, as routes/askingRoutes.ts:
 //
 // - `serveLaunching`, run by the composition root before the boot binds the endpoint: B-M33
-//   `launching.launch` and the snapshot's `launches` section, so every `hello.ok` lists them
-//   (14 §1.3); the launch frames (`LAUNCHING_FRAMES`) are advertised with the endpoint's frame list.
+//   `launching.launch`, B-M34 `launching.launchCustom` (ISSUE-165) and the snapshot's `launches`
+//   section, so every `hello.ok` lists them (14 §1.3); the launch frames (`LAUNCHING_FRAMES`) are advertised with the endpoint's frame list.
 //   They forward to the one instance boot step 4 constructs; until then the dispatcher answers
 //   HOST_NOT_READY (14 §3.3).
 // - `wire`, run by boot step 4 once suppliers, conversation, crew and mines exist: the module over
@@ -46,6 +46,11 @@
 //   requestId, dwarfId}` (14 §2.4 B-F28; ADR-014 item 6), for `ui`; a failed Remove mine, stop-all or
 //   delegation end sends none per dwarf (their one grouped message is their owner's). `toast` is
 //   advertised with the board frames (frames/board.ts `BOARD_FRAMES`). `routeStops`.
+// - `StopAllIncomplete` (launching; ISSUE-175) → the one `toast {kind: 'stop-all-incomplete',
+//   requestId, ended, failed}` (14 §2.4 B-F28, §3.6 `HostToast`; 05 §4; 08 §2.5; ADR-014 item 9):
+//   ONE danger message naming every dwarf Stop everything and quit could not end, for `ui`. It is
+//   published only with `failed ≠ ∅` (16 §4.5), and no `DwarfStopFailed{why: 'stop-all'}` raises a
+//   toast of its own (`routeStops`).
 //
 // The frames are the same for every `ui` connection, whatever its mode (US-LAUNCH-006.AC13). They
 // are sensitive (14 §3.5 SENSITIVE_FRAMES); nothing here logs their data.
@@ -82,6 +87,7 @@ import type { Dispatcher } from '../../transport/dispatcher'
 import type { AttachedConnection } from '../../transport/connectionRegistry'
 import type { FrameAudience } from '../../transport/events/framePublisher'
 import { registerLaunchingLaunch } from '../../transport/methods/launchingLaunch'
+import { registerLaunchingLaunchCustom } from '../../transport/methods/launchingLaunchCustom'
 import { registerLaunchesSection, toLaunchWire } from '../../transport/snapshot/launchesSection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { createSessionStarter } from '../bridges/sessionStarter'
@@ -138,6 +144,15 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
     events.subscribe('LaunchedSessionCrashed', (event) => {
       const { dwarfId, launchId } = event.payload
       frames.publishFrame('toast', { kind: 'session-crashed', dwarfId, launchId })
+    }),
+    events.subscribe('StopAllIncomplete', (event) => {
+      const { requestId, ended, failed } = event.payload
+      frames.publishFrame('toast', {
+        kind: 'stop-all-incomplete',
+        requestId,
+        ended: [...ended],
+        failed: [...failed]
+      })
     }),
     events.subscribe('LaunchFailed', (event) => {
       const { launchId, mineId, failure } = event.payload
@@ -262,6 +277,9 @@ export function serveLaunching(serve: LaunchingServeDeps): ServedLaunching {
   }
   registerLaunchingLaunch(serve.dispatcher, {
     launching: { launch: (req) => current().launching.commands.launch(req) }
+  })
+  registerLaunchingLaunchCustom(serve.dispatcher, {
+    launching: { launchCustom: (req) => current().launching.commands.launchCustom(req) }
   })
   registerLaunchesSection(serve.sections, {
     launches: { snapshot: () => current().launching.snapshots.snapshot() }

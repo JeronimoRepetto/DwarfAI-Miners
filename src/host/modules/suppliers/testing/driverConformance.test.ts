@@ -1,8 +1,14 @@
 // The harness's own negative tests (ISSUE-144): each purpose-built broken driver must fail the
 // case it violates, while its conformant twin passes the same case.
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { DriverEvent, DriverSession, ProviderDriver } from '../ports/providerDriver'
-import { SIMULATED_RECORD } from '../adapters/catalog/profiles'
+import { SIMULATED_CAPABILITIES, SIMULATED_RECORD } from '../adapters/catalog/profiles'
+import { HostedCommandDriver } from '../adapters/drivers/hosted-command/HostedCommandDriver'
+import {
+  HOSTED_COMMAND_CEILING,
+  HOSTED_COMMAND_PROFILE
+} from '../adapters/drivers/hosted-command/profile'
 import { SimulatedDriver } from '../adapters/drivers/simulated/SimulatedDriver'
 import {
   CASE_IDS,
@@ -22,7 +28,7 @@ import {
   readReferenceFixtures,
   simulatedFactory
 } from './driverConformance.simulated'
-import { fixtureSetFromFiles } from './fixtureSet'
+import { fixtureSetFromFiles, readFixtureSet } from './fixtureSet'
 
 /** A session whose event stream is rewritten by `map` (one input event → zero or more events). */
 function mapEvents(
@@ -197,7 +203,7 @@ describe('driverConformance harness', () => {
         ...SIMULATED_OPTIONS,
         cases: { 'C-16': { inapplicable: 'resume is none' } }
       }
-      const resumable = { ...SIMULATED_OPTIONS.ceiling, resume: 'load' as const }
+      const resumable = { ...SIMULATED_CAPABILITIES, resume: 'load' as const }
       const loadFactory: DriverFactory = (rig) =>
         new SimulatedDriver({
           profile: SIMULATED_RECORD.profile,
@@ -394,6 +400,88 @@ describe('driverConformance harness', () => {
       expect(refusal(unscrubbed)).toMatch(/scrubbed/)
       expect(refusal(person)).toMatch(/capturedBy/)
       expect(refusal(noCrlf)).toMatch(/c-01-launch\.jsonl has no CRLF variant/)
+    })
+  })
+
+  // ISSUE-157: an exit-only driver (`earlyFailure: 'exit-only'`, no handshake) is ready at
+  // `t0 + 3 s`, so an exit at 3 000 ms is a launched session (15 §6 C-04 "success") and its
+  // output closing with its exit is its normal end (C-18: only `exited`). The HostedCommandDriver
+  // is the conformant exit-only twin; each broken one is built over it.
+  describe('exit-only drivers', () => {
+    const argv = ['/usr/local/bin/my-agent', '--non-interactive']
+    const hostedFixtures = readFixtureSet(
+      fileURLToPath(new URL('../../../../../fixtures/other/stdio-raw/1/', import.meta.url))
+    )
+    const hostedOptions: ConformanceOptions = {
+      ceiling: HOSTED_COMMAND_CEILING,
+      install: {
+        providerId: HOSTED_COMMAND_PROFILE.id,
+        binaryPath: argv[0] as string,
+        version: null,
+        resolvedVia: 'path',
+        statMtimeMs: 0
+      }
+    }
+    /** The HostedCommandDriver with the parsed argv, its sessions rewritten by `wrap`. */
+    const hosted =
+      (wrap: (session: DriverSession) => Promise<DriverSession> = async (s) => s): DriverFactory =>
+      (rig) => {
+        const inner = new HostedCommandDriver({ ...rig, platform: 'linux', redact: (t) => t })
+        return {
+          profile: inner.profile,
+          transport: inner.transport,
+          detect: () => inner.detect(),
+          probe: () => inner.probe(),
+          launch: async (req) => wrap(await inner.launch({ ...req, customArgv: argv }))
+        }
+      }
+
+    it('[C-03, C-04, C-18] the conformant exit-only driver passes the cases a handshake driver would fail', async () => {
+      for (const id of ['C-03', 'C-04', 'C-18'] as const) {
+        expect(await runCase(id, hosted(), hostedFixtures, hostedOptions)).toEqual(OK)
+      }
+    })
+
+    it('[C-04] an exit-only driver that refuses an exit at 3 000 ms as could-not-start fails the harness', async () => {
+      // It reads its first events and refuses the launch when the process already exited.
+      const handshakeLike = hosted(async (session) => {
+        const seen: DriverEvent[] = []
+        void (async () => {
+          for await (const event of session.events()) seen.push(event)
+        })()
+        for (let round = 0; round < 50; round++) await new Promise((r) => process.nextTick(r))
+        if (seen.some((event) => event.t === 'exited')) {
+          throw { cause: 'could-not-start', detail: 'no handshake before the exit' }
+        }
+        return session
+      })
+      const broken = await runCase('C-04', handshakeLike, hostedFixtures, hostedOptions)
+      expect(broken.ok).toBe(false)
+      expect(broken.failures.join('\n')).toMatch(/exit at 3000 ms gave .*could-not-start/)
+    })
+
+    it('[C-18] an exit-only driver that reports transport-lost for an EOF with its exit fails the harness', async () => {
+      // A class session keeps its methods on the prototype: bind them before mapping the stream.
+      const plain = (session: DriverSession): DriverSession => ({
+        ref: session.ref,
+        capabilities: session.capabilities,
+        events: () => session.events(),
+        sendTurn: (input) => session.sendTurn(input),
+        interrupt: () => session.interrupt(),
+        answerPermission: (req) => session.answerPermission(req),
+        answerQuestion: (req) => session.answerQuestion(req),
+        close: (mode) => session.close(mode)
+      })
+      const noisy = hosted(async (session) =>
+        mapEvents(plain(session), (event) =>
+          event.t === 'exited'
+            ? [{ t: 'error', cause: { kind: 'transport-lost', detail: 'output ended' } }, event]
+            : [event]
+        )
+      )
+      const broken = await runCase('C-18', noisy, hostedFixtures, hostedOptions)
+      expect(broken.ok).toBe(false)
+      expect(broken.failures.join('\n')).toMatch(/exit-only driver reported transport-lost/)
     })
   })
 })

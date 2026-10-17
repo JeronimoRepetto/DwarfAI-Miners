@@ -1,0 +1,6 @@
+{"at":1735689601085,"event":"rpc","method":"server/discover","dwarfaiUnknownField":"extra"}
+{"at":1735689601088,"event":"rpc","method":"initialize","dwarfaiUnknownField":"extra"}
+{"at":1735689601089,"event":"rpc","method":"notifications/initialized","dwarfaiUnknownField":"extra"}
+{"at":1735689601091,"event":"rpc","method":"tools/list","dwarfaiUnknownField":"extra"}
+{"at":1735689607439,"event":"rpc","method":"tools/call","dwarfaiUnknownField":"extra"}
+{"at":1735689607439,"event":"call","tool":"permission","arguments":{"tool_name":"Write","input":{"file_path":"<REPO>\\sp08-deny-marker.txt","content":"marker","dwarfaiUnknownField":"extra"},"tool_use_id":"00000000-0000-4000-8000-000000000001","dwarfaiUnknownField":"extra"},"decision":{"behavior":"deny","message":"Denied by the SP-08 probe.","dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}

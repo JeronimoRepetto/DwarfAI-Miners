@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { REACTION_WINDOW_MS } from '../lib/delivery/reaction'
 import { defaultDwarf } from '../testing/factories'
 import type { Dwarf, DwarfKickResult } from '../types'
@@ -9,10 +10,12 @@ import { RESULT_VISIBLE_MS, useDwarfKicking } from './useDwarfKicking'
 const retireDwarf = vi.fn()
 
 function stubApi(kickDwarf: (...args: never[]) => Promise<DwarfKickResult>): void {
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
   Object.defineProperty(window, 'api', {
     configurable: true,
     writable: true,
-    value: { kickDwarf, retireDwarf }
+    value: createFakeWindowApi({ kickDwarf, retireDwarf } as unknown as Partial<Window['api']>)
   })
 }
 

@@ -56,6 +56,7 @@ import {
 } from '../../lib/message/rename'
 import { belongsToComposition } from '../../lib/controls/input'
 import { dwarfDisplayName } from '../../lib/dwarf/displayName'
+import { untrustedText } from '../../lib/text/untrustedText'
 import {
   cleanDwarfName,
   filterDwarfName,
@@ -90,6 +91,7 @@ import {
 import { useHoverTip } from '../../composables/useHoverTip'
 import { useHostConnection } from '../../composables/useHostConnection'
 import { useDwarfRename } from '../../composables/useDwarfRename'
+import { useAttachments } from '../../composables/useAttachments'
 import { useToasts } from '../../composables/useToasts'
 import ActionButton from '../controls/ActionButton.vue'
 import FieldHint from '../controls/FieldHint.vue'
@@ -403,6 +405,9 @@ function attachmentsOfEcho(echoId: string): readonly DwarfAttachment[] {
   return props.echoAttachments?.[echoId] ?? []
 }
 
+// The picker, the drop helper and the description (A-24, A-X1, A-25) go through the composable (ADR-033 item 2).
+const attaching = useAttachments()
+
 /**
  * Take what main said about a set of paths, and say what was refused — the one place a file
  * becomes pending, so the drop and the picker cannot grow separate rules.
@@ -417,7 +422,7 @@ function absorb(picks: readonly DwarfAttachmentPick[]): void {
 async function describeAndAbsorb(paths: readonly string[]): Promise<void> {
   if (paths.length === 0) return
   try {
-    absorb(await window.api.describeDwarfAttachments(paths))
+    absorb(await attaching.describe(paths))
   } catch {
     // The bridge is the only thing that can fail here, and a file that vanished
     // without a word is exactly what this line exists to prevent.
@@ -433,18 +438,14 @@ async function onDrop(event: DragEvent): Promise<void> {
     return
   }
   const files = [...(event.dataTransfer?.files ?? [])]
-  // `webUtils` in preload is the only thing that can turn a dropped File into a
-  // path; a File carrying none — a drag out of a web page — answers '' and is
-  // dropped rather than guessed at.
-  const paths = files
-    .map((file) => window.api.pathForDroppedFile(file))
-    .filter((path) => path !== '')
-  await describeAndAbsorb(paths)
+  // A File carrying no path — a drag out of a web page — is dropped rather than
+  // guessed at (useAttachments).
+  await describeAndAbsorb(attaching.droppedPaths(files))
 }
 
 async function onAttachClick(): Promise<void> {
   if (!canAttach.value) return
-  const chosen = await window.api.chooseDwarfAttachments()
+  const chosen = await attaching.choose()
   await describeAndAbsorb(chosen)
   // The OS dialog took the keyboard; the person's next act is typing (#409).
   await focusComposer()
@@ -550,9 +551,10 @@ const outcome = computed(() =>
 /*
  * The line's tooltip (MESSAGE-QUESTIONS 9): what the line leaves out, on hover after the tooltip
  * delay and at once on keyboard focus, as every tooltip here shows (useHoverTip). With nothing to
- * add the line has no tooltip and takes no focus.
+ * add the line has no tooltip and takes no focus. It sits below the line, aligned to its start
+ * (US-MSG-012.AC06).
  */
-const outcomeTip = useHoverTip<'outcome'>()
+const outcomeTip = useHoverTip<'outcome'>({ side: 'bottom', align: 'start' })
 const outcomeTipId = 'dm-outcome-tip-' + props.dwarf.id
 
 /** A row as the log draws it: a day divider, a run of steps, or something said. */
@@ -777,6 +779,16 @@ function submit(): void {
 }
 
 /*
+ * A card's submit is a send (US-MSG-009.AC04, US-ASK-006.AC05; ISSUE-260): the "Answers:" record,
+ * or the message sent under "Other thing…", takes the place of whatever the composer held, so the
+ * draft is cleared as an ordinary Send clears it and the composer that comes back is empty. The
+ * `draft` watch reports the empty text to the host that keeps the draft.
+ */
+function sentFromCard(): void {
+  message.value = ''
+}
+
+/*
  * The composer's own element, for the keyboard (composerRef): the composer is a component now, and
  * the focus code reads the element it draws.
  */
@@ -789,7 +801,7 @@ function bindComposer(instance: unknown): void {
  * not for a dwarf the Host's board carries, until the step-3a switch routes A-N08 / A-N09
  * (useDwarfRename). Where it cannot, the name is plain text and Reset name is not in the menu.
  */
-const { canRename } = useDwarfRename()
+const { canRename, setName, resetName: resetDwarfName } = useDwarfRename()
 const renamable = computed(() => canRename(props.dwarf.id))
 
 /*
@@ -921,7 +933,7 @@ async function saveName(text: string): Promise<void> {
   if (!renameChanges(text, props.dwarf)) return
   const base = props.dwarf.name
   try {
-    const result = await window.api.setDwarfName({
+    const result = await setName({
       dwarfId: props.dwarf.id,
       name: cleanDwarfName(text)
     })
@@ -935,7 +947,7 @@ async function saveName(text: string): Promise<void> {
 async function resetName(): Promise<void> {
   const base = props.dwarf.name
   try {
-    tell(await window.api.resetDwarfName(props.dwarf.id), base)
+    tell(await resetDwarfName(props.dwarf.id), base)
   } catch {
     // As for a save: the board still carries the name, and the panel shows it.
   }
@@ -989,14 +1001,16 @@ async function resetName(): Promise<void> {
             @click="startRename"
             @keydown="onNameKey"
           >
-            {{ displayName }}
+            <bdi>{{ untrustedText(displayName) }}</bdi>
           </button>
           <!-- Hidden until built (BR-19): a name nothing can change yet is shown, not offered. -->
-          <span v-else class="dm-msg__title">{{ displayName }}</span>
+          <span v-else class="dm-msg__title"
+            ><bdi>{{ untrustedText(displayName) }}</bdi></span
+          >
         </h2>
         <!-- The base name, only under a custom name and never while renaming (Dwarf names). -->
         <p v-if="dwarf.customName !== undefined && editing === null" class="dm-msg__base">
-          {{ dwarf.name }}
+          <bdi>{{ untrustedText(dwarf.name) }}</bdi>
         </p>
         <div v-show="editing === null" class="dm-msg__chips">
           <MetaChip v-for="chip in chips" :key="chip" :text="chip" />
@@ -1113,10 +1127,12 @@ async function resetName(): Promise<void> {
               v-for="item in attachmentsOfEcho(entry.message.echo.id)"
               :key="item.path"
               class="dm-composer__file"
-              :title="item.name"
+              :title="untrustedText(item.name)"
             >
               <PixelIcon name="attach" />
-              <span>{{ item.name }}</span>
+              <span
+                ><bdi>{{ untrustedText(item.name) }}</bdi></span
+              >
             </li>
           </ul>
         </ChatBubble>
@@ -1149,8 +1165,8 @@ async function resetName(): Promise<void> {
         :permission="shownAsk.permission"
         :name="displayName"
         :answer-state="answerState"
-        @decide="emit('decide', $event)"
-        @send-text="emit('send', $event)"
+        @decide="(sentFromCard(), emit('decide', $event))"
+        @send-text="(sentFromCard(), emit('send', $event))"
         @open-console="emit('open-console')"
       />
       <DwarfQuestionCard
@@ -1160,9 +1176,9 @@ async function resetName(): Promise<void> {
         :at="shownAsk.at"
         :name="displayName"
         :answer-state="answerState"
-        @answer="emit('answer', $event)"
-        @answer-text="emit('answer-text', $event)"
-        @send-text="emit('send', $event)"
+        @answer="(sentFromCard(), emit('answer', $event))"
+        @answer-text="(sentFromCard(), emit('answer-text', $event))"
+        @send-text="(sentFromCard(), emit('send', $event))"
         @open-console="emit('open-console')"
       />
       <!--

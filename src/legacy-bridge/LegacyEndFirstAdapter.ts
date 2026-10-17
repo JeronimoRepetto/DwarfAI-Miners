@@ -22,11 +22,25 @@
 // for it (15 §5 `no-identity`). Only then does it relay `mines.remove {mineId, requestId}` through `remove`; a refused
 // or thrown kill, or a departure that does not arrive in time, answers A-32's "unchanged" shape
 // (./rowShapes/mineNotRemoved.ts) and relays nothing (INV-06). It reads the Host only (snapshot and frames); the one
-// command it relays is the caller's. The A-N29 half comes later (ISSUE-178). Deleted at the end of cut 4 with
-// `LegacyDwarfIdBridge` (later: ISSUE-241).
+// command it relays is the caller's.
 //
-// Candidate decision (21 §6): no candidate exists for the A-32 half; new code.
-import type { HostFrames, IpcError, StopAllOutcome } from '@dwarfai/contracts'
+// The A-N29 half (ISSUE-178, from 3a, composed only with `LegacyDwarfIdBridge`): `beforeStopDwarf` joins the one Host
+// dwarf to today's launch through the same exact join. A dwarf with no such launch (the person's own session, INV-120,
+// or one the Host launched) is relayed straight to `crew.stop` (B-M21). Otherwise it ends that launch through the same
+// legacy kill and waits, within its bound, for the end report and the Host's `dwarf.departed`: the Host has no process
+// identity for it (15 §5 `no-identity`). Only then is the caller's `crew.stop` relayed; a refused or thrown kill, or a
+// departure that does not arrive in time, answers `could-not-end` (14 §3.4 `StopDwarfResult`) and relays nothing.
+// Deleted at the end of cut 4 with `LegacyDwarfIdBridge` (later: ISSUE-241).
+//
+// Candidate decision (21 §6): no candidate exists for the A-32 or A-N29 halves; new code. The adapter of ISSUE-054 and
+// ISSUE-090 is kept and extended: the A-N29 half reuses its join, its legacy kill and its departure watch unchanged.
+import type {
+  HostFrames,
+  IpcError,
+  StopAllOutcome,
+  StopDwarfParams,
+  StopDwarfResult
+} from '@dwarfai/contracts'
 import type { MineUndeclareResult } from '../main/domain/types'
 import {
   LaunchedSessionRegistry,
@@ -48,6 +62,9 @@ import { MINE_DWARF_NOT_ENDED } from './rowShapes/mineNotRemoved'
  * (`main/platform/processEnd.ts` `runEndCommand`), after which it reports the kill as not done.
  */
 export const LEGACY_KILL_BOUND_MS = 5_000
+
+/** A-N29's failure shape (14 §2.2, §3.4 `StopDwarfResult`) when the legacy end did not complete: nothing relayed. */
+const COULD_NOT_END: StopDwarfResult = { ok: false, error: 'could-not-end' }
 
 /** One live session the legacy runtime launched. */
 export interface LegacyLaunch {
@@ -101,7 +118,7 @@ export interface LegacyEndFirstAdapter {
   ): Promise<StopAllOutcome>
 }
 
-/** The A-32 half (cut 1 on), composed only where the bridge exists. */
+/** The halves composed only where the bridge exists: A-32 (cut 1 on) and A-N29 (3a on). */
 export interface LegacyEndFirstRemoval {
   /**
    * The A-32 relay: ends every legacy-launched session of the Host mine `mineId`, waits for each one's
@@ -113,6 +130,15 @@ export interface LegacyEndFirstRemoval {
     requestId: string,
     remove: (mineId: string, requestId: string) => Promise<MineUndeclareResult>
   ): Promise<MineUndeclareResult>
+  /**
+   * The A-N29 relay (from 3a): when today's runtime launched the dwarf, ends that launch, waits for its
+   * `dwarf.departed` (B-F10), then relays through `stop`; otherwise answers `could-not-end` and relays nothing. A
+   * dwarf today's runtime did not launch is relayed at once.
+   */
+  beforeStopDwarf(
+    params: StopDwarfParams,
+    stop: (params: StopDwarfParams) => Promise<StopDwarfResult>
+  ): Promise<StopDwarfResult>
   /** Unsubscribes; nothing is read after. */
   dispose(): void
 }
@@ -231,13 +257,18 @@ export function createLegacyEndFirstAdapter(
       }
     }
 
+  /** The launch today's runtime bound to the Host dwarf `dwarfId` (the exact join, 21 §3), or undefined: no guess. */
+  async function legacyLaunchOf(dwarfId: string): Promise<string | undefined> {
+    const legacyId = await bridge.toLegacy(dwarfId)
+    return legacyId === null ? undefined : launches.launchIdOfDwarf(legacyId)
+  }
+
   /** The mine's Host dwarfs that today's runtime launched, each with its launch (the exact join, 21 §3). */
   async function legacyLaunchedIn(mineId: string): Promise<Array<[string, string]>> {
     const inMine = [...present].filter(([, of]) => of === mineId).map(([dwarfId]) => dwarfId)
     const joined = await Promise.all(
       inMine.map(async (dwarfId): Promise<[string, string] | null> => {
-        const legacyId = await bridge.toLegacy(dwarfId)
-        const launchId = legacyId === null ? undefined : launches.launchIdOfDwarf(legacyId)
+        const launchId = await legacyLaunchOf(dwarfId)
         return launchId === undefined ? null : [dwarfId, launchId]
       })
     )
@@ -253,6 +284,12 @@ export function createLegacyEndFirstAdapter(
       )
       if (ended.some((done) => !done)) return { ...MINE_DWARF_NOT_ENDED }
       return remove(mineId, requestId)
+    },
+    async beforeStopDwarf(params, stop) {
+      const launchId = await legacyLaunchOf(params.dwarfId)
+      if (launchId === undefined) return stop(params)
+      if (!(await endWithinBound(launchId, departureOf(params.dwarfId)))) return COULD_NOT_END
+      return stop(params)
     },
     dispose() {
       unsubscribe()

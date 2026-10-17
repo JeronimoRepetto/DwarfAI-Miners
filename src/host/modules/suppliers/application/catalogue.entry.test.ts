@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { FAIL_CLOSED_CAPABILITIES, type ProviderCapabilities } from '../domain/capabilities'
+import {
+  ceilingOf,
+  FAIL_CLOSED_CAPABILITIES,
+  type ProviderCapabilities
+} from '../domain/capabilities'
 import type {
   CatalogRecord,
   PermissionModeCatalog,
@@ -9,6 +13,7 @@ import type {
 import type { InstalledProvider } from '../ports/providerDriver'
 import { StubCliProcessControl } from '../testing/StubCliProcessControl'
 import { catalogueMachine, settle } from '../testing/catalogueMachine'
+import { preferredRow } from '../testing/ceilingRow'
 import { PROBE_TIMEOUT_MS } from './probe'
 
 const INTERACTIVE: ProviderCapabilities = {
@@ -67,7 +72,7 @@ function record(
       publicLaunch: 'enabled',
       ...profile
     },
-    ceiling,
+    ceiling: ceilingOf(ceiling),
     modes: MODES
   }
 }
@@ -111,7 +116,9 @@ describe('SupplierCatalogueQueries entry and capabilities (ISSUE-147)', () => {
     // Bravo's driver measures policy-only permission: its own list keeps only what it honours.
     const m = catalogueMachine([ALPHA, BRAVO], {
       probe: (r) => async () =>
-        r === BRAVO ? { ...r.ceiling, permission: 'policy-only' } : structuredClone(r.ceiling)
+        r === BRAVO
+          ? { ...preferredRow(r.ceiling), permission: 'policy-only' }
+          : preferredRow(r.ceiling)
     })
     m.install('alpha-cli')
     m.install('bravo-cli')
@@ -211,9 +218,9 @@ describe('SupplierCatalogueQueries entry and capabilities (ISSUE-147)', () => {
         transport === 'stream-json'
           ? async (install) =>
               (await readHelp(pc, install)).includes('--permission-prompt-tool')
-                ? structuredClone(r.ceiling)
-                : { ...structuredClone(r.ceiling), launch: false }
-          : async () => ({ ...structuredClone(r.ceiling), permission: 'policy-only' })
+                ? preferredRow(r.ceiling)
+                : { ...preferredRow(r.ceiling), launch: false }
+          : async () => ({ ...preferredRow(r.ceiling), permission: 'policy-only' })
     })
     m.install('twin-cli', { version: '2.0.0', mtimeMs: 1_000 })
 
@@ -246,7 +253,7 @@ describe('SupplierCatalogueQueries entry and capabilities (ISSUE-147)', () => {
     const m = catalogueMachine([ALPHA, BRAVO], {
       probe: (r) => async (install) => {
         await readHelp(pc, install)
-        return structuredClone(r.ceiling)
+        return preferredRow(r.ceiling)
       }
     })
     m.install('alpha-cli')

@@ -24,7 +24,7 @@ import {
 } from '../../lib/message/conversation'
 import { CONVERSATION_START_NOTE, READING_OLDER_NOTE } from '../../lib/message/feedPages'
 import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
-import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
+import { TIP_DELAY_MS, TIP_GAP } from '../../lib/overlay/tipCard'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf, defaultMine } from '../../testing/factories'
 import {
@@ -47,6 +47,10 @@ import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
 import { useMines } from '../../composables/useMines'
 import { useToasts } from '../../composables/useToasts'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
+/* --- ISSUE-252 imports, appended --- */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+/* --- end of the ISSUE-252 imports --- */
 import MenuButton from '../overlay/MenuButton.vue'
 import DialogCard from '../overlay/DialogCard.vue'
 import ModalDialog from '../overlay/ModalDialog.vue'
@@ -2408,7 +2412,11 @@ function fakeApi(picks: DwarfAttachmentPick[][] = [], chosen: string[] = []) {
     chooseDwarfAttachments: vi.fn().mockResolvedValue(chosen),
     describeDwarfAttachments
   }
-  ;(window as unknown as { api: unknown }).api = api
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
+    api as unknown as Partial<Window['api']>
+  )
   return api
 }
 
@@ -3428,7 +3436,11 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
       setDwarfName: vi.fn().mockResolvedValue(answer),
       resetDwarfName: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
     }
-    ;(window as unknown as { api: unknown }).api = api
+    // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+    // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+    ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
+      api as unknown as Partial<Window['api']>
+    )
     return api
   }
 
@@ -4033,8 +4045,691 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
 })
 /* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
 
+/* --- The panel's IPC through composables (ISSUE-252) — one block, appended ---------------------------------- */
+describe('DwarfMessagePanel IPC through composables (ISSUE-252)', () => {
+  // ADR-033 item 2; 05 §5.1 R13: the picker, the drop helper and the description go through useAttachments, and the
+  // rename calls through useDwarfRename. The attach cases above prove the chips and refusals did not move (TC-252-02).
+  it('[R13, ADR-033] the MessagePanel attaches, drops and describes files through useAttachments and references no window.api', () => {
+    const source = readFileSync(join(import.meta.dirname, 'DwarfMessagePanel.vue'), 'utf8')
+    expect(source).toContain("from '../../composables/useAttachments'")
+    expect(source.match(/window\.api/g) ?? []).toEqual([])
+  })
+})
+/* --- end of the ISSUE-252 block ------------------------------------------------------------------------------- */
+
 describe('DwarfMessagePanel test teardown (#635)', () => {
   it('finds nothing an earlier test mounted still in the document', () => {
     expect(document.body.childNodes.length).toBe(0)
+  })
+})
+
+/*
+ * C-08 (18 §5.1, ISSUE-251): a custom name and an attachment's file name are text somebody else
+ * chose. Each is drawn without its controls and escapes, inside a bidi-isolated text node.
+ */
+describe('DwarfMessagePanel untrusted strings (C-08)', () => {
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('[NFR-SEC-07] draws a hostile custom name stripped and inside a bidi-isolated text node', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'terminal',
+        customName: `\u001b[31mGrimli\u202Eexe.txt\u0000\u001b[0m`
+      })
+    })
+    const isolate = wrapper.find('.dm-msg__title > bdi, .dm-msg__rename > bdi')
+    expect(isolate.exists(), 'no <bdi> around the custom name').toBe(true)
+    expect(isolate.element.textContent).toBe('Grimliexe.txt')
+  })
+
+  it('[NFR-SEC-07] draws a sent attachment with a hostile file name stripped and inside a bidi-isolated text node', () => {
+    fakeApi()
+    const echo: MessageEcho = {
+      id: 'echo-1',
+      text: 'look at this',
+      sentAt: 1,
+      state: { phase: 'delivered' }
+    }
+    const wrapper = attachPanel({
+      echoes: [echo],
+      echoAttachments: {
+        'echo-1': [{ ...SHOT, name: `\u001b[31mred\u202Eexe.txt\u0000\u001b[0m` }]
+      }
+    })
+    const chip = wrapper.find('.dm-msg__files .dm-composer__file')
+    const isolate = chip.find('span > bdi')
+    expect(isolate.exists(), 'no <bdi> around the file name').toBe(true)
+    expect(isolate.element.textContent).toBe('redexe.txt')
+    expect(chip.attributes('title')).toBe('redexe.txt')
+  })
+})
+
+/* --- ISSUE-259: activity disclosures, the outcome line's tooltip and the widths — one block, appended --- */
+
+/*
+ * Three MessagePanel details (ISSUE-259): each folded activity line opens and folds its step list on
+ * its own (US-MSG-004); the turn outcome line's square and tooltip (US-MSG-011.AC08, US-MSG-012);
+ * and the panel's width (US-MSG-015). jsdom lays nothing out, so the widths are proven from the
+ * stylesheets that decide them; the maintainer's golden lane draws them.
+ */
+describe('DwarfMessagePanel disclosures, outcome tooltip and widths (ISSUE-259)', () => {
+  const step = (text: string, t: string) => ({
+    role: 'assistant' as const,
+    text,
+    timestamp: t,
+    activity: { kind: 'run' as const, target: text }
+  })
+  const TWO_RUNS = heldFeed([
+    { role: 'user', text: 'Dig.', timestamp: 't0' },
+    step('Ran one', 't1'),
+    step('Ran two', 't2'),
+    { role: 'assistant', text: 'Halfway.', timestamp: 't3' },
+    step('Ran three', 't4'),
+    { role: 'assistant', text: 'Done.', timestamp: 't5' }
+  ])
+  const source = (file: string): string => readFileSync(join(import.meta.dirname, file), 'utf8')
+  /** The body of the first rule of `css` whose selector is exactly `selector`. */
+  const rule = (css: string, selector: string): string => {
+    const at = css.indexOf('\n' + selector + ' {')
+    expect(at, 'no rule ' + selector).toBeGreaterThan(-1)
+    return css.slice(at, css.indexOf('}', at))
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function ended(lastTurn: NonNullable<ReturnType<typeof defaultDwarf>['lastTurn']>) {
+    return mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: { dwarf: defaultDwarf({ status: 'waiting', lastTurn }), feed: heldFeed(HELD) }
+    })
+  }
+
+  it('[US-MSG-004.AC01, US-MSG-004.AC02] a click on a folded activity line opens its step list fading in and a second click folds it back', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: TWO_RUNS })
+    const toggle = () => wrapper.findAll('.dm-activity__toggle')[0]!
+    const list = () => wrapper.findAll('.dm-activity__list')[0]!
+    expect(list().attributes('hidden')).toBeDefined()
+
+    await toggle().trigger('click')
+    expect(list().attributes('hidden')).toBeUndefined()
+    expect(toggle().attributes('aria-expanded')).toBe('true')
+    expect(
+      list()
+        .findAll('li')
+        .map((line) => line.text())
+    ).toEqual(['Ran one', 'Ran two'])
+    // It fades in on opacity alone (NFR-PERF-01), each time it is shown.
+    const css = source('ActivityDisclosure.vue')
+    expect(rule(css, '.dm-activity__list')).toContain('animation: dm-fade-in')
+    expect(css).toMatch(
+      /@keyframes dm-fade-in \{\s*from \{\s*opacity: 0;\s*\}\s*to \{\s*opacity: 1;/
+    )
+
+    await toggle().trigger('click')
+    expect(list().attributes('hidden')).toBeDefined()
+    expect(toggle().attributes('aria-expanded')).toBe('false')
+  })
+
+  it('[US-MSG-004.AC04] every disclosure starts folded and toggles on its own', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: TWO_RUNS })
+    const expanded = () =>
+      wrapper.findAll('.dm-activity__toggle').map((row) => row.attributes('aria-expanded'))
+    expect(expanded()).toEqual(['false', 'false'])
+
+    await wrapper.findAll('.dm-activity__toggle')[1]!.trigger('click')
+    expect(expanded()).toEqual(['false', 'true'])
+    await wrapper.findAll('.dm-activity__toggle')[0]!.trigger('click')
+    expect(expanded()).toEqual(['true', 'true'])
+    await wrapper.findAll('.dm-activity__toggle')[1]!.trigger('click')
+    expect(expanded()).toEqual(['true', 'false'])
+  })
+
+  it('[US-MSG-011.AC08] an idle dwarf’s status square shows the same green as working', () => {
+    const line = panel({ dwarf: defaultDwarf({ status: 'leaving' }) }).find('.dm-msg__outcome')
+    expect(line.attributes('data-status')).toBe('idle')
+    // The square is the working green unless asking (brass) or asleep (steel) say otherwise.
+    const css = source('DwarfMessagePanel.vue')
+    expect(rule(css, '.dm-msg__outcome i')).toContain('background: var(--ok)')
+    expect(css).not.toContain(".dm-msg__outcome[data-status='idle']")
+    expect(css).not.toContain(".dm-msg__outcome[data-status='working']")
+  })
+
+  it('[US-MSG-012.AC01] a bad ending’s tooltip reads its sentence, a colon and the provider detail verbatim', async () => {
+    const wrapper = ended({ kind: 'errored', detail: '<b>overloaded</b>', endedAt: Date.now() })
+    await wrapper.find('.dm-msg__outcome').trigger('focus')
+    await flushPromises()
+    const tip = document.body.querySelector('.dm-tip')
+    expect(tip?.textContent?.trim()).toBe('Failed: <b>overloaded</b>')
+    // The provider's word is data: drawn as text, never as markup.
+    expect(tip?.querySelector('b')).toBeNull()
+  })
+
+  it('[US-MSG-012.AC02, US-MSG-012.AC07] closing words are trimmed to 200 grapheme clusters with an ellipsis', async () => {
+    const accented = 'é'
+    const wrapper = ended({ kind: 'concluded', text: accented.repeat(250), endedAt: Date.now() })
+    await wrapper.find('.dm-msg__outcome').trigger('focus')
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')?.textContent?.trim()).toBe(
+      accented.repeat(200) + '…'
+    )
+  })
+
+  it('[US-MSG-012.AC03] while working or asking, or with nothing to add, no tooltip appears and the line takes no focus', async () => {
+    vi.useFakeTimers()
+    const lastTurn = { kind: 'errored' as const, detail: 'error_during_execution', endedAt: 1 }
+    for (const dwarf of [
+      defaultDwarf({ status: 'working', lastTurn }),
+      defaultDwarf({ status: 'waiting', waitingReason: 'approval', lastTurn }),
+      defaultDwarf({ status: 'waiting', lastTurn: { kind: 'errored', endedAt: 1 } })
+    ]) {
+      const wrapper = mount(DwarfMessagePanel, {
+        attachTo: document.body,
+        props: { dwarf, feed: heldFeed(HELD) }
+      })
+      const line = wrapper.find('.dm-msg__outcome')
+      expect(line.attributes('tabindex')).toBeUndefined()
+      await line.trigger('focus')
+      await line.trigger('pointerenter')
+      await vi.advanceTimersByTimeAsync(TIP_DELAY_MS * 2)
+      expect(document.body.querySelector('.dm-tip')).toBeNull()
+      wrapper.unmount()
+    }
+  })
+
+  it('[US-MSG-012.AC04, US-MSG-012.AC05, NFR-TIM-01] the tooltip opens after 300 ms of hover or at once on focus', async () => {
+    vi.useFakeTimers()
+    const wrapper = ended({ kind: 'concluded', text: 'Found the seam.', endedAt: Date.now() })
+    const line = wrapper.find('.dm-msg__outcome')
+    expect(TIP_DELAY_MS).toBe(300)
+    await line.trigger('pointerenter')
+    await vi.advanceTimersByTimeAsync(299)
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(document.body.querySelector('.dm-tip')).not.toBeNull()
+    await line.trigger('pointerleave')
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+
+    // Focus shows it with no timer at all: no fake time passes before it is there.
+    await line.trigger('focus')
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')?.textContent?.trim()).toBe('Found the seam.')
+  })
+
+  it('[US-MSG-012.AC06] the tooltip sits below the outcome line, aligned to its start', async () => {
+    const wrapper = ended({ kind: 'concluded', text: 'Found the seam.', endedAt: Date.now() })
+    const line = wrapper.find('.dm-msg__outcome')
+    vi.spyOn(line.element, 'getBoundingClientRect').mockReturnValue({
+      left: 40,
+      top: 100,
+      width: 300,
+      height: 20,
+      right: 340,
+      bottom: 120,
+      x: 40,
+      y: 100,
+      toJSON: () => ({})
+    })
+    await line.trigger('focus')
+    await flushPromises()
+    const tip = document.body.querySelector<HTMLElement>('.dm-tip')!
+    // Its left edge on the line's left edge, its top the tooltip gap below the line's bottom.
+    expect(tip.style.left).toBe('40px')
+    expect(tip.style.top).toBe(120 + TIP_GAP + 'px')
+  })
+
+  it('[US-MSG-015.AC01] docked in the Panel the MessagePanel is 440 px wide and bounded by its host', () => {
+    const panelRule = rule(source('DwarfMessagePanel.vue'), '.dm-msg')
+    expect(panelRule).toContain('width: 440px;')
+    expect(panelRule).toContain('max-width: 100%;')
+  })
+
+  it('[US-MSG-015.AC03, US-MSG-015.AC04, US-MSG-015.AC05] at its narrowest the portrait, header tools, Attach and Send keep their size, only the name, chips and writing well shrink, and Jump to terminal alone wraps', () => {
+    const panelCss = source('DwarfMessagePanel.vue')
+    // Header: the 40px portrait never shrinks; the tools are buttons of a fixed hit size that never
+    // wrap; the name block alone takes what is left and ellipsizes the name and the chips.
+    const portrait = source('../dwarf/DwarfPortrait.vue')
+    expect(portrait).toContain('--size: 40px')
+    expect(portrait).toContain('flex: none')
+    const button = rule(source('../controls/ActionButton.vue'), '.dm-btn')
+    expect(button).toContain('min-width: var(--hit)')
+    expect(button).toContain('white-space: nowrap')
+    const who = rule(panelCss, '.dm-msg__who')
+    expect(who).toContain('flex: 1;')
+    expect(who).toContain('min-width: 0;')
+    for (const selector of ['.dm-msg__rename,\n.dm-msg__title', '.dm-msg__base']) {
+      expect(rule(panelCss, selector)).toContain('text-overflow: ellipsis')
+    }
+    // Composer: Attach and Send never shrink; the writing well alone narrows.
+    const composer = source('MessageComposer.vue')
+    expect(rule(composer, '.dm-composer__row :deep(.dm-btn)')).toContain('flex: none')
+    const well = rule(composer, '.dm-composer__row :deep(.dm-field)')
+    expect(well).toContain('flex: 1;')
+    expect(well).toContain('min-width: 0;')
+    // Question card: Jump to terminal is the one walk control whose label may wrap.
+    const card = source('QuestionCard.vue')
+    expect(rule(card, '.dm-qcard__walk .dm-qcard__jump :deep(.dm-btn__label)')).toContain(
+      'white-space: normal'
+    )
+    expect(card.match(/white-space: normal/g)).toHaveLength(1)
+  })
+})
+/* --- end of the ISSUE-259 block --------------------------------------------------------------------- */
+
+/*
+ * ISSUE-258 (EPIC-16): the header, the rename field, the ⋯ menu and the stop dialog against the
+ * stories' own wordings, one test per group of acceptance criteria, appended. The dwarf is a legacy
+ * one (`defaultDwarf`), so the rename stays offered (BR-19 hides it only for a Host-board dwarf).
+ */
+describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
+  const BASE = 'dwarfai-58'
+  const named = (customName?: string) =>
+    defaultDwarf({
+      id: 'd58',
+      name: BASE,
+      textDelivery: 'terminal',
+      // A session the terminal can interrupt, so Stop dwarf… is live unless a case says otherwise.
+      capabilities: {
+        sendText: 'terminal',
+        cancel: 'terminal',
+        adjustEffort: null,
+        attach: 'terminal'
+      },
+      ...(customName === undefined ? {} : { customName })
+    })
+
+  // Main's answer as main gives it: a name that is empty or the base name leaves no custom name.
+  function fakeNames() {
+    const api = {
+      setDwarfName: vi.fn(async ({ name }: { name: string }) =>
+        name === '' || name === BASE ? { saved: true } : { saved: true, customName: name }
+      ),
+      resetDwarfName: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
+    }
+    ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
+      api as unknown as Partial<Window['api']>
+    )
+    return api
+  }
+
+  let host: HTMLElement | null = null
+  function attached(props: Record<string, unknown> = {}) {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    return mount(DwarfMessagePanel, {
+      attachTo: host,
+      props: { dwarf: named(), feed: heldFeed(HELD), ...props }
+    })
+  }
+
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+  afterEach(() => {
+    host?.remove()
+    host = null
+  })
+
+  type Wrapper = ReturnType<typeof panel>
+  const input = (wrapper: Wrapper) =>
+    wrapper.get('.dm-msg__field input').element as HTMLInputElement
+  const said = (wrapper: Wrapper) =>
+    wrapper.get('.sr-only[role="status"][aria-live="polite"]').text()
+  const items = (wrapper: Wrapper) =>
+    wrapper.findComponent(MenuButton).props('items') as (MenuItem | { separator: true })[]
+
+  async function type(wrapper: Wrapper, text: string): Promise<void> {
+    const field = input(wrapper)
+    field.value = text
+    field.setSelectionRange(text.length, text.length)
+    await wrapper.get('.dm-msg__field input').trigger('input')
+  }
+
+  async function save(wrapper: Wrapper): Promise<void> {
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+  }
+
+  /** Opens the real ⋯ menu, drawn in <body>, and returns its rows. */
+  async function openMenu(wrapper: Wrapper): Promise<HTMLButtonElement[]> {
+    await wrapper.get('[aria-haspopup="menu"]').trigger('click')
+    await flushPromises()
+    return [...document.querySelectorAll<HTMLButtonElement>('.dm-menu [role="menuitem"]')]
+  }
+
+  const key = (target: Element, name: string, shiftKey = false): void => {
+    target.dispatchEvent(
+      new KeyboardEvent('keydown', { key: name, shiftKey, bubbles: true, cancelable: true })
+    )
+  }
+
+  it('[US-MSG-005.AC01, US-MSG-005.AC15] the name button is titled Rename and named Rename with the name, and a click, Enter or F2 opens the field with the name selected', async () => {
+    fakeNames()
+    for (const how of ['click', 'Enter', 'F2']) {
+      const wrapper = attached({ dwarf: named('Watcher') })
+      const name = wrapper.get('h2.dm-msg__name button.dm-msg__rename')
+      expect(name.attributes('title')).toBe('Rename')
+      expect(name.attributes('aria-label')).toBe('Rename Watcher')
+      if (how === 'click') await name.trigger('click')
+      else await name.trigger('keydown', { key: how })
+      await flushPromises()
+      const field = input(wrapper)
+      expect(field.value, how).toBe('Watcher')
+      expect(document.activeElement, how).toBe(field)
+      expect([field.selectionStart, field.selectionEnd], how).toEqual([0, 'Watcher'.length])
+      wrapper.unmount()
+      host?.remove()
+    }
+  })
+
+  it('[US-MSG-005.AC03] Esc cancels the edit, keeps the name and keeps the panel open', async () => {
+    const api = fakeNames()
+    const wrapper = attached({ dwarf: named('Watcher') })
+    await wrapper.get('.dm-msg__rename').trigger('click')
+    await flushPromises()
+    await type(wrapper, 'Warden')
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(wrapper.find('.dm-msg__field').exists()).toBe(false)
+    expect(wrapper.get('.dm-msg__rename').text()).toBe('Watcher')
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  it('[US-MSG-005.AC16, US-MSG-005.AC17, US-MSG-005.AC18, US-MSG-005.AC19] the field is named Dwarf name and its hint reads its saving, empty and 24-character wordings', async () => {
+    fakeNames()
+    const wrapper = attached()
+    await wrapper.get('.dm-msg__rename').trigger('click')
+    await flushPromises()
+    expect(input(wrapper).getAttribute('aria-label')).toBe('Dwarf name')
+    const hint = () => wrapper.get('.dm-msg__hint')
+    expect(input(wrapper).getAttribute('aria-describedby')).toBe(hint().attributes('id'))
+    await type(wrapper, 'Watcher')
+    expect(hint().text()).toBe('Enter saves · Esc cancels')
+    await type(wrapper, '')
+    expect(hint().text()).toBe('Empty · Enter goes back to ' + BASE)
+    await type(wrapper, 'Keeper of the tier seals')
+    expect(hint().text()).toBe('24 of 24 characters')
+  })
+
+  it('[US-MSG-005.AC10] with a custom name the header keeps the base name as a small line', () => {
+    const wrapper = panel({ dwarf: named('Watcher') })
+    expect(wrapper.get('.dm-msg__rename').text()).toBe('Watcher')
+    expect(wrapper.get('.dm-msg__head p.dm-msg__base').text()).toBe(BASE)
+    expect(panel({ dwarf: named() }).find('p.dm-msg__base').exists()).toBe(false)
+  })
+
+  it('[US-MSG-005.AC20, US-MSG-005.AC21, US-MSG-006.AC04] a save announces Renamed to the new name, and a save back to the base name or a reset announces Name reset to the base name', async () => {
+    const api = fakeNames()
+    const renamed = attached()
+    await renamed.get('.dm-msg__rename').trigger('click')
+    await flushPromises()
+    await type(renamed, 'Watcher')
+    await save(renamed)
+    expect(said(renamed)).toBe('Renamed to Watcher')
+    renamed.unmount()
+    host?.remove()
+
+    for (const text of ['', BASE]) {
+      const back = attached({ dwarf: named('Watcher') })
+      await back.get('.dm-msg__rename').trigger('click')
+      await flushPromises()
+      await type(back, text)
+      await save(back)
+      expect(said(back), JSON.stringify(text)).toBe('Name reset to ' + BASE)
+      back.unmount()
+      host?.remove()
+    }
+
+    const reset = attached({ dwarf: named('Watcher') })
+    reset.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
+    await flushPromises()
+    expect(api.resetDwarfName).toHaveBeenCalledWith('d58')
+    expect(said(reset)).toBe('Name reset to ' + BASE)
+  })
+
+  it('[US-MSG-006.AC01, US-MSG-006.AC02] Reset name is in the ⋯ menu only while a custom name is set', () => {
+    const labels = (wrapper: Wrapper) =>
+      items(wrapper).map((entry) => ('label' in entry ? entry.label : '—'))
+    expect(labels(panel({ dwarf: named('Watcher') }))).toContain('Reset name')
+    expect(labels(panel({ dwarf: named() }))).not.toContain('Reset name')
+  })
+
+  it('[US-MSG-007.AC04, US-MSG-007.AC05] the header icon and the menu item read Open console and an asking card’s link reads Jump to terminal', () => {
+    const wrapper = panel()
+    const tool = wrapper.get('.dm-msg__console')
+    expect(tool.attributes('title')).toBe('Open console')
+    expect(tool.attributes('aria-label') ?? tool.attributes('title')).toBe('Open console')
+    expect((items(wrapper)[MENU_CONSOLE] as MenuItem).label).toBe('Open console')
+
+    const asking = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'terminal',
+        pendingQuestion: {
+          toolUseId: 'toolu_258',
+          channel: 'terminal' as const,
+          questions: [
+            { question: 'Which database?', multiSelect: false, options: [{ label: 'SQLite' }] },
+            { question: 'Which region?', multiSelect: false, options: [{ label: 'East' }] }
+          ]
+        }
+      })
+    })
+    expect(asking.get('.dm-qcard .dm-qcard__jump').text()).toBe('Jump to terminal')
+  })
+
+  it('[US-MSG-008.AC01, BR-18] Stop dwarf… stands below a rule, styled as a dangerous action', async () => {
+    const wrapper = attached()
+    const entries = items(wrapper)
+    expect(entries.at(-2)).toEqual({ separator: true })
+    expect(entries.at(-1)).toMatchObject({ label: 'Stop dwarf…', danger: true })
+    const rows = await openMenu(wrapper)
+    const stop = rows.at(-1)!
+    expect(stop.textContent).toBe('Stop dwarf…')
+    expect(stop.classList.contains('dm-menu__item--danger')).toBe(true)
+    expect(stop.previousElementSibling?.matches('hr[role="separator"]')).toBe(true)
+    expect(rows.filter((row) => row.classList.contains('dm-menu__item--danger'))).toEqual([stop])
+  })
+
+  it('[US-MSG-016.AC03, US-MSG-016.AC05, NFR-A11Y-14] a disabled Stop dwarf… keeps its label and place without the danger red, arrow keys skip it, and its reason from the title is its accessible description', async () => {
+    const wrapper = attached({ kickState: { phase: 'kicking' } })
+    const rows = await openMenu(wrapper)
+    const stop = rows.at(-1)!
+    expect(rows).toHaveLength(3)
+    expect(stop.textContent).toBe('Stop dwarf…')
+    expect(stop.previousElementSibling?.matches('hr[role="separator"]')).toBe(true)
+    expect(stop.disabled).toBe(true)
+    // The reason is the title alone (US-MSG-016.AC05; molecules/menu): the row is named by its
+    // text, with no aria-label and no aria-describedby, so the accessible-name computation leaves
+    // the title as its description.
+    expect(stop.getAttribute('title')).toBe('Stop dwarf · already stopping')
+    expect(stop.hasAttribute('aria-label')).toBe(false)
+    expect(stop.hasAttribute('aria-describedby')).toBe(false)
+    // The danger red does not show on a disabled danger item: the menu's own rule draws it as
+    // every disabled item (molecules/menu, `.dm-menu__item--danger:disabled`).
+    const menuSource = readFileSync(
+      join(import.meta.dirname, '..', 'overlay', 'MenuList.vue'),
+      'utf8'
+    )
+    expect(menuSource).toMatch(
+      /\.dm-menu__item--danger:disabled \{\s*color: var\(--ink-faint\);\s*background: none;\s*box-shadow: none;\s*\}/
+    )
+    // The arrows move between Open console and Mine history only, wrapping past the disabled row.
+    expect(document.activeElement).toBe(rows[0])
+    key(rows[0]!, 'ArrowDown')
+    expect(document.activeElement).toBe(rows[1])
+    key(rows[1]!, 'ArrowDown')
+    expect(document.activeElement).toBe(rows[0])
+    key(rows[0]!, 'ArrowUp')
+    expect(document.activeElement).toBe(rows[1])
+    key(rows[1]!, 'End')
+    expect(document.activeElement).toBe(rows[1])
+  })
+
+  it('[US-MSG-008.AC04, US-OBS-005.AC06, NFR-A11Y-03] Stop dwarf… opens the dialog with its title, body and the actions Cancel and Stop dwarf, focus trapped and starting on Cancel', async () => {
+    const wrapper = attached({ dwarf: named('Watcher') })
+    const more = wrapper.get('[aria-haspopup="menu"]').element as HTMLElement
+    const rows = await openMenu(wrapper)
+    rows.at(-1)!.click()
+    await flushPromises()
+    const dialog = document.querySelector<HTMLElement>('.dm-scrim [role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog!.textContent).toContain('Stop Watcher?')
+    expect(dialog!.textContent).toContain(
+      'The session ends and the dwarf walks out. The conversation stays in the mine history.'
+    )
+    const actions = [...dialog!.querySelectorAll<HTMLButtonElement>('.dm-dialog__actions button')]
+    expect(actions.map((button) => button.textContent?.trim())).toEqual(['Cancel', 'Stop dwarf'])
+    expect(document.activeElement).toBe(actions[0])
+    // Tab and Shift+Tab stay inside the dialog (TC-258-02).
+    key(document.activeElement!, 'Tab')
+    expect(document.activeElement).toBe(actions[1])
+    key(document.activeElement!, 'Tab')
+    expect(document.activeElement).toBe(actions[0])
+    key(document.activeElement!, 'Tab', true)
+    expect(document.activeElement).toBe(actions[1])
+    // Closing it gives the focus back to the ⋯ button the menu was opened from.
+    actions[0]!.click()
+    await flushPromises()
+    expect(document.activeElement).toBe(more)
+  })
+
+  it('[US-MSG-008.AC02] Cancel leaves the dwarf untouched', async () => {
+    const wrapper = attached()
+    const rows = await openMenu(wrapper)
+    rows.at(-1)!.click()
+    await flushPromises()
+    console.log(
+      'DBG',
+      rows.length,
+      rows.map((r) => r.textContent),
+      wrapper.findComponent(ModalDialog).props('open'),
+      document.querySelectorAll('.dm-menu').length
+    )
+    const cancel = document.querySelector<HTMLButtonElement>('.dm-dialog__actions button')!
+    expect(cancel.textContent?.trim()).toBe('Cancel')
+    cancel.click()
+    await flushPromises()
+    expect(wrapper.emitted('kick')).toBeUndefined()
+    expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
+  })
+})
+
+/*
+ * APPENDED (ISSUE-265): Boost is absent from the MessagePanel, not disabled. Its own block at the
+ * end of the file, after the teardown check, so other appenders merge beside it untouched.
+ */
+describe('DwarfMessagePanel and Boost (ISSUE-265)', () => {
+  it('[US-GUILD-003.AC01, US-GUILD-003.AC02, BR-19] the composer and the ⋯ menu hold no Boost control and no on state exists in the renderer', async () => {
+    const { readdirSync } = await import('node:fs')
+    const wrapper = panel()
+    const boost = /boost/i
+    // The composer: no control, no name, no title, no class that says Boost.
+    const composer = wrapper.get('.dm-composer')
+    expect(composer.html()).not.toMatch(boost)
+    // The header's tools, the ⋯ menu among them.
+    const tools = wrapper.findAll('.dm-msg__tools button').map((tool) => tool.attributes('title'))
+    expect(tools).toEqual(['Mine history', 'Open console', 'More', 'Close chat'])
+    // The ⋯ menu's rows.
+    const items = wrapper.findComponent(MenuButton).props('items') as MenuItem[]
+    expect(items.length).toBeGreaterThan(0)
+    for (const item of items) expect(JSON.stringify(item)).not.toMatch(boost)
+    // Nowhere else in the panel either.
+    expect(wrapper.html()).not.toMatch(boost)
+    // No on state: no renderer source reads a Boost flag; BOOST_ENABLED stays Host-side (14 §8 I-07).
+    const rendererRoot = join(import.meta.dirname, '..', '..')
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = join(dir, entry.name)
+        if (entry.isDirectory()) walk(file)
+        else if (/\.(ts|vue)$/.test(entry.name) && !/\.test\.ts$/.test(entry.name))
+          if (/boostEnabled|BOOST_ENABLED/.test(readFileSync(file, 'utf8'))) offenders.push(file)
+      }
+    }
+    walk(rendererRoot)
+    expect(offenders).toEqual([])
+  })
+})
+
+/* --- ISSUE-260: the card in the composer's place (US-ASK-001.AC02, US-ASK-006) — one block, appended --- */
+
+/*
+ * The card takes the composer's slot while the dwarf asks, and gives it back once answered
+ * (US-ASK-006): focus moves with it (NFR-A11Y-04), and a draft does not come back, since the
+ * submit just sent a fresh "Answers:" record (US-MSG-009.AC04). Attached to the document, because
+ * `document.activeElement` means nothing against a detached tree.
+ */
+describe('DwarfMessagePanel and the ask card in the composer’s place (ISSUE-260)', () => {
+  const twoSteps = {
+    toolUseId: 'toolu_26',
+    channel: 'held' as const,
+    questions: [
+      {
+        question: 'Which database?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      },
+      { question: 'Run migrations?', multiSelect: false, options: [{ label: 'Yes' }] }
+    ]
+  }
+  const oneStep = { ...twoSteps, questions: [twoSteps.questions[0]!] }
+
+  function attached(props: Record<string, unknown> = {}) {
+    return mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }), focusOnOpen: true, ...props }
+    })
+  }
+
+  async function settle(wrapper: ReturnType<typeof attached>): Promise<void> {
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+  }
+
+  it('[US-ASK-001.AC02] a multi-step question opens with its first option focused and the step count 1 of n', async () => {
+    const wrapper = attached({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: twoSteps })
+    })
+    await settle(wrapper)
+    expect(document.activeElement).toBe(wrapper.find('.dm-qcard .dm-qopt').element)
+    expect(wrapper.find('.dm-qcard .dm-qopt__label').text()).toBe('Postgres')
+    expect(wrapper.find('.dm-qcard__step').text()).toBe('1 / 2')
+  })
+
+  it('[US-ASK-006.AC01, NFR-A11Y-04] when the dwarf starts asking the card replaces the composer and takes focus', async () => {
+    const wrapper = attached()
+    await settle(wrapper)
+    expect(document.activeElement).toBe(wrapper.find('.dm-composer textarea').element)
+    await wrapper.setProps({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: oneStep })
+    })
+    await settle(wrapper)
+    expect(wrapper.find('.dm-composer').exists()).toBe(false)
+    expect(wrapper.find('.dm-qcard').attributes('aria-label')).toContain('is asking')
+    expect(document.activeElement).toBe(wrapper.find('.dm-qcard .dm-qopt').element)
+  })
+
+  it('[US-ASK-006.AC04, US-ASK-006.AC05] a fully submitted card leaves, the composer comes back focused and no draft is restored', async () => {
+    const wrapper = attached({
+      draft: 'half a thought',
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: oneStep })
+    })
+    await settle(wrapper)
+    await wrapper.find('.dm-qcard .dm-qopt').trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
+    expect(wrapper.emitted('answer')).toEqual([['Postgres']])
+    expect(wrapper.emitted('draft')?.at(-1)).toEqual([''])
+
+    // The Host's next frame closes the ask: the card exits and the composer takes its place.
+    await wrapper.setProps({ dwarf: defaultDwarf({ textDelivery: 'terminal' }) })
+    await settle(wrapper)
+    expect(wrapper.find('.dm-qcard').exists()).toBe(false)
+    const composer = wrapper.find('.dm-composer textarea')
+    expect(document.activeElement).toBe(composer.element)
+    expect((composer.element as HTMLTextAreaElement).value).toBe('')
   })
 })

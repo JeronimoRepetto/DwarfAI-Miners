@@ -8,6 +8,7 @@
 import { computed } from 'vue'
 import DwarfPortrait from './DwarfPortrait.vue'
 import { dwarfTip } from '../../lib/dwarf/dwarfTip'
+import { untrustedText } from '../../lib/text/untrustedText'
 import type { Dwarf } from '../../types'
 
 const props = defineProps<{ dwarf: Dwarf }>()
@@ -19,7 +20,9 @@ const tip = computed(() => dwarfTip(props.dwarf))
   <div class="dm-dtip">
     <DwarfPortrait :role="dwarf.role" :status="tip.status" size="sm" />
     <div class="dm-dtip__lines">
-      <div class="dm-dtip__name">{{ tip.name }}</div>
+      <div class="dm-dtip__name">
+        <bdi>{{ untrustedText(tip.name) }}</bdi>
+      </div>
       <div v-if="tip.baseName !== undefined" class="dm-dtip__base">{{ tip.baseName }}</div>
       <div class="dm-dtip__line">
         {{ tip.rank }} · <b>{{ tip.provider }}</b>

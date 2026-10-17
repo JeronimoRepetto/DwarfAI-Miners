@@ -1,0 +1,27 @@
+{
+  "$comment": "The provider list of 20 §2.3 P-03 (ADR-008 items 1 and 2; ADR-009 D5; OQ-52), read by scripts/release/lockfile-provider-scan.mjs and scripts/release/packaged/p03-no-provider-binaries.packaged.mjs. Package patterns end in * for a prefix and start with @*/ for any scope. Extend it when the provider list grows; never shrink it to let a package through (scripts/release/provider-scan.allowance.json is the only allowance).",
+  "executables": ["claude", "codex", "opencode", "agy", "kimi", "kiro-cli"],
+  "executableExtensions": [".exe", ".cmd", ".bat", ".ps1", ".com", ".sh"],
+  "packages": [
+    "@anthropic-ai/claude-agent-sdk",
+    "@anthropic-ai/claude-agent-sdk-*",
+    "claude-agent-acp",
+    "@*/claude-agent-acp",
+    "@anthropic-ai/claude-code",
+    "@openai/codex",
+    "opencode-ai"
+  ],
+  "credentialLocations": [
+    ".credentials.json",
+    "auth.json",
+    "oauth_creds.json",
+    "google_accounts.json",
+    "antigravity-oauth-token"
+  ],
+  "loginEndpoints": [
+    "claude.ai/oauth",
+    "console.anthropic.com/oauth",
+    "auth.openai.com",
+    "accounts.google.com/o/oauth2"
+  ]
+}
