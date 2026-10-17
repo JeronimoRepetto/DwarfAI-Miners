@@ -17,11 +17,13 @@
 //   machine 41; 16 §4.12; ISSUE-222), in B-M12, the snapshot section and B-F24 alike; its
 //   `WelcomeStepChanged` is sent as `preferences.changed` with the same view (07 S41.05).
 //
-// Lead decision (2026-09-30): the view's `secrets` and `secretBackend` have no source in cut 1
-// (SecretStore: ISSUE-215), so they are served as none configured and `'unavailable'`. No renderer
-// reads them before 3a / cut 2. `integrations` is the stored `integration_settings` (14 §4.1;
-// `queries.integrationSettings()`, ISSUE-221), whose changes reach the UIs as `integration.changed`
-// (setClaudeHooks.ts), not as `preferences.changed`.
+// - `secrets` and `secretBackend` are the module's configured flags and backend (16 §4.12
+//   `secretStatus`, read from `SecretStore.has()`/`backend()`, ISSUE-216): a flag for every
+//   `SecretName`, never a value (ADR-017 item 4; 14 §3.6). `SecretStatusChanged`, published after
+//   every save and clear, is sent as `preferences.changed` with the same view, so every `ui`
+//   connection learns the new flag (08 §3; UC-029). `integrations` is the stored
+//   `integration_settings` (14 §4.1; `queries.integrationSettings()`, ISSUE-221), whose changes reach
+//   the UIs as `integration.changed` (setClaudeHooks.ts), not as `preferences.changed`.
 import {
   HOST_METHOD_SCHEMAS,
   type HostFrameName,
@@ -31,13 +33,12 @@ import {
 } from '@dwarfai/contracts'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type {
-  IntegrationSetting,
   IntegrationSettingsQueries,
   Preferences,
   PreferencesEvent,
   PreferencesQueries,
-  WelcomeQueries,
-  WelcomeStepState
+  SecretQueries,
+  WelcomeQueries
 } from '../../modules/preferences'
 import type { FramePublisher } from '../connectionRegistry'
 import type { Dispatcher } from '../dispatcher'
@@ -47,20 +48,27 @@ import type { SectionProvider } from '../snapshot/sectionRegistry'
 /** The frames this file publishes, for `hello.ok.capabilities` (14 §1.3). */
 export const PREFERENCES_FRAMES: readonly HostFrameName[] = Object.freeze(['preferences.changed'])
 
-/** The module as these members read it: its queries with the first-run step's `welcome()`. */
-export type ServedPreferences = Preferences & { queries: PreferencesQueries & WelcomeQueries }
+/** What the view reads besides the stored preferences: the step, the integrations and the secrets. */
+export type PreferencesViewQueries = WelcomeQueries &
+  IntegrationSettingsQueries &
+  Pick<SecretQueries, 'secretStatuses' | 'secretBackend'>
 
-/** 14 §3.6 `PreferencesView` over the stored `preferences`, integrations and the step (see above). */
+/** The module as these members read it: its queries with the first-run step and the secrets. */
+export type ServedPreferences = Preferences & {
+  queries: PreferencesQueries & PreferencesViewQueries
+}
+
+/** 14 §3.6 `PreferencesView` over the stored `preferences` and the module's other reads (see above). */
 export function preferencesView(
   preferences: HostPreferences,
-  welcome: WelcomeStepState,
-  integrations: IntegrationSetting[]
+  queries: PreferencesViewQueries,
+  welcome = queries.welcome()
 ): PreferencesView {
   return {
     preferences,
-    secrets: [],
-    secretBackend: 'unavailable',
-    integrations,
+    secrets: queries.secretStatuses(),
+    secretBackend: queries.secretBackend(),
+    integrations: queries.integrationSettings(),
     welcome
   }
 }
@@ -76,8 +84,7 @@ export function registerPreferences(dispatcher: Dispatcher, deps: PreferencesMet
     'preferences.get',
     HOST_METHOD_SCHEMAS['preferences.get'].params,
     METHOD_ROLES['preferences.get'] ?? [],
-    (): HostMethods['preferences.get']['result'] =>
-      preferencesView(queries.get(), queries.welcome(), queries.integrationSettings())
+    (): HostMethods['preferences.get']['result'] => preferencesView(queries.get(), queries)
   )
   dispatcher.registerMutating(
     'preferences.set',
@@ -89,38 +96,35 @@ export function registerPreferences(dispatcher: Dispatcher, deps: PreferencesMet
 
 /** The snapshot's `preferences` section (14 §4.1): the same view as `preferences.get`. */
 export function preferencesSection(preferences: ServedPreferences): SectionProvider<'preferences'> {
-  return () =>
-    preferencesView(
-      preferences.queries.get(),
-      preferences.queries.welcome(),
-      preferences.queries.integrationSettings()
-    )
+  return () => preferencesView(preferences.queries.get(), preferences.queries)
 }
 
 /**
- * Routes `HostPreferencesChanged` and `WelcomeStepChanged` (07 S41.05) to `preferences.changed`
- * (B-F24) on `frames`, each with the full view; returns the unsubscribe. The step's state is read
- * from `queries`, which already holds the new state when its event is published.
+ * Routes `HostPreferencesChanged`, `WelcomeStepChanged` (07 S41.05) and `SecretStatusChanged` (08
+ * §3) to `preferences.changed` (B-F24) on `frames`, each with the full view; returns the
+ * unsubscribe. The step's state and the secrets' flags are read from `queries`, which already hold
+ * the new state when its event is published.
  */
 export function publishPreferencesChanged(
   bus: DomainEventBus<PreferencesEvent>,
   frames: FramePublisher,
-  queries: Pick<PreferencesQueries, 'get'> & WelcomeQueries & IntegrationSettingsQueries
+  queries: Pick<PreferencesQueries, 'get'> & PreferencesViewQueries
 ): () => void {
   const offPreferences = bus.subscribe('HostPreferencesChanged', (event) =>
-    frames.publish(
-      'preferences.changed',
-      preferencesView(event.payload.preferences, queries.welcome(), queries.integrationSettings())
-    )
+    frames.publish('preferences.changed', preferencesView(event.payload.preferences, queries))
   )
   const offWelcome = bus.subscribe('WelcomeStepChanged', (event) =>
     frames.publish(
       'preferences.changed',
-      preferencesView(queries.get(), event.payload.state, queries.integrationSettings())
+      preferencesView(queries.get(), queries, event.payload.state)
     )
+  )
+  const offSecrets = bus.subscribe('SecretStatusChanged', () =>
+    frames.publish('preferences.changed', preferencesView(queries.get(), queries))
   )
   return () => {
     offPreferences()
     offWelcome()
+    offSecrets()
   }
 }

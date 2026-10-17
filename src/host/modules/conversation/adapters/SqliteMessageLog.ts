@@ -77,9 +77,11 @@ const CLAIM_KEY = `INSERT INTO message_keys (source_key, dwarf_id, first_seen_at
 const WAITING_ROW = `SELECT id FROM messages WHERE dwarf_id = ? AND pending_echo = ?
   ORDER BY created_at, id LIMIT 1`
 
-// The waiting rows an uncorrelated observed entry may echo, oldest first (`messages_pending_echo`).
-const TYPED_CANDIDATES = `SELECT id, created_at FROM messages
-  WHERE dwarf_id = ? AND pending_echo IS NOT NULL AND text = ?
+// The waiting rows an uncorrelated observed entry may echo, oldest first (`messages_pending_echo`),
+// with their text: `echoesTypedSend` decides per row (the text as written, or as the console relay
+// typed it, S-022-1), so the text is not compared here.
+const TYPED_CANDIDATES = `SELECT id, text, created_at FROM messages
+  WHERE dwarf_id = ? AND pending_echo IS NOT NULL
   ORDER BY created_at, id`
 
 const MERGE_ECHO = `UPDATE messages SET source_key = ?, pending_echo = NULL, provider_time = ?
@@ -325,12 +327,12 @@ export class SqliteMessageLog implements MessageLog {
   ): string | null {
     if (!mayEchoTypedSend(entry, origin)) return null
     const row = this.deps.db
-      .all(TYPED_CANDIDATES, [dwarfId, entry.text])
+      .all(TYPED_CANDIDATES, [dwarfId])
       .find((r) =>
         echoesTypedSend(
           entry,
           origin,
-          { text: entry.text, createdAt: Number(r['created_at']) },
+          { text: String(r['text']), createdAt: Number(r['created_at']) },
           now
         )
       )
