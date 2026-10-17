@@ -5,7 +5,7 @@
 //   to bind; every authenticated relay connection gets its own MCP server over a frame transport:
 //   one MCP JSON-RPC message per frame, unchanged (ADR-013 item 3). The connection's bound token is
 //   the first argument of every `DelegationEndpoint` call; the server never sees a credential.
-// - Exactly two tools, `delegate_subtask` (`task` 1..4 000 characters, `context` ≤ 16 000, 06
+// - The two delegation tools, `delegate_subtask` (`task` 1..4 000 characters, `context` ≤ 16 000, 06
 //   `SubtaskText`) and `subtask_result` (`ticket`). The schemas type the arguments only: the
 //   bounds are counted in code points by `SubtaskText` (09 §4.6), and an out-of-bound input is a
 //   tool failure with the fallback sentence. A zod `.min`/`.max` would count UTF-16 units and
@@ -15,6 +15,18 @@
 // - One tool-result shape (16 §5.4) as structured content and as one JSON text block, for a client
 //   that reads only text. A delegation failure is that shape with `status: 'failed'`: `isError` is
 //   never set for it (`jevMcpServerCore.ts:40` at `0bfd108`, kept).
+// - A third tool, `permission` (AMENDMENT-21, owner-approved 2026-10-17; 16 §5.4 lists three tools),
+//   only on a connection whose bound token's launch is an owned Claude `stream-json` session
+//   (`PermissionPromptEndpoint.serves`, read once when the connection is accepted): Claude's
+//   `--permission-prompt-tool mcp__dwarfai__permission`. Its input and answer are Claude's shape
+//   (15 §2.7, `answerPermissionPrompt`): the answer is one JSON text block, and every failure is a
+//   deny, never `isError`. Its schema types nothing (each field `unknown`), so a malformed call
+//   reaches the fail-closed reader instead of the SDK's `isError` refusal. Any other connection
+//   (another launch's credential, a driver without the prompt tool) never sees the tool, and a
+//   call to it is the SDK's unknown-tool refusal. A cancelled call aborts the signal it hands on.
+//   Such a session whose launch the delegation gates left out (`delegationGated` false) is listed
+//   `permission` alone: the two delegation tools would always refuse it (INV-80). A gated one gets
+//   all three; any other connection keeps the two.
 // - A `done` answer is the handoff (16 §5.4, ISSUE-205): once its response frame is written, the
 //   `DelegationHandoffReport` is told whether it left on an open connection.
 // - A closed relay never cancels anything (16 §5.5): the ticket stays readable by a new relay of
@@ -29,6 +41,8 @@ import type { CallToolResult, JSONRPCMessage, RequestId } from '@modelcontextpro
 import { z } from 'zod'
 import type { DiagnosticsLog } from '../../../../kernel/ports/diagnosticsLog'
 import { answerDelegateSubtask, answerSubtaskResult } from '../../application/delegationEndpoint'
+import { answerPermissionPrompt } from '../../application/permissionPrompt'
+import type { PermissionPromptReply } from '../../domain/permissionPrompt'
 import { MAX_DELEGATION_CONTEXT_CHARS, MAX_DELEGATION_TASK_CHARS } from '../../domain/subtaskText'
 import { NATIVE_SUBAGENT_FALLBACK_SENTENCE } from '../../domain/toolFailure'
 import {
@@ -41,9 +55,17 @@ import {
   type LoopbackEndpoint,
   type SubtaskResultView
 } from '../../ports/delegationServer'
+import type { PermissionPromptEndpoint } from '../../ports/permissionPrompt'
 
 export const DELEGATE_SUBTASK_TOOL_NAME = 'delegate_subtask'
 export const SUBTASK_RESULT_TOOL_NAME = 'subtask_result'
+/** Claude's prompt tool, `mcp__dwarfai__permission` under the Claude relay entry (15 §4.2). */
+export const PERMISSION_TOOL_NAME = 'permission'
+
+/** Read by the model only (Claude's `--permission-prompt-tool` is never offered to it as a tool). */
+export const PERMISSION_DESCRIPTION =
+  'Asks the person in DwarfAI-Miners whether a tool use may run. Answers allow, with the input ' +
+  'unchanged as updatedInput, or deny with a message.'
 
 const SERVER_INFO = { name: 'dwarfai-miners-jev-delegation', version: '1.0.0' } as const
 
@@ -75,6 +97,8 @@ export class McpDelegationServer implements DelegationServer {
   constructor(
     private readonly listener: DelegationRelayListener,
     private readonly log: DiagnosticsLog,
+    /** Absent: no connection is served the `permission` tool. */
+    private readonly prompts?: PermissionPromptEndpoint,
     /** Told each `done` answer's flush (ISSUE-205; 16 §5.4 "Handoff"). */
     private readonly handoffs?: DelegationHandoffReport
   ) {}
@@ -83,7 +107,7 @@ export class McpDelegationServer implements DelegationServer {
     const bound = await this.listener.listen((connection) => {
       this.relays.add(connection)
       connection.onClose(() => this.relays.delete(connection))
-      void serveRelay(connection, handler, this.log, this.handoffs)
+      void serveRelay(connection, handler, this.log, this.prompts, this.handoffs)
     })
     this.stop = bound.close
     return { endpoint: bound.endpoint }
@@ -103,10 +127,11 @@ export async function serveRelay(
   connection: DelegationRelayConnection,
   handler: DelegationEndpoint,
   log: DiagnosticsLog,
+  prompts?: PermissionPromptEndpoint,
   handoffs?: DelegationHandoffReport
 ): Promise<void> {
   const transport = new FrameTransport(connection, handoffs)
-  const server = createDelegationMcpServer(connection, handler, log, (requestId, view) =>
+  const server = createDelegationMcpServer(connection, handler, log, prompts, (requestId, view) =>
     transport.expectResponse(requestId, view)
   )
   await server.connect(transport)
@@ -119,9 +144,44 @@ function createDelegationMcpServer(
   connection: DelegationRelayConnection,
   handler: DelegationEndpoint,
   log: DiagnosticsLog,
+  prompts: PermissionPromptEndpoint | undefined,
   answered: Answered
 ): McpServer {
   const server = new McpServer(SERVER_INFO)
+  // Read once, when the connection is accepted: an owned stream-json session's relay gets the
+  // prompt tool, and the delegation tools only when its launch was gated in (AMENDMENT-21).
+  const servedPrompts = prompts !== undefined && prompts.serves(connection.token)
+  const listsDelegation = !servedPrompts || prompts.delegationGated(connection.token)
+  if (listsDelegation) registerDelegationTools(server, connection, handler, log, answered)
+  if (servedPrompts) {
+    server.registerTool(
+      PERMISSION_TOOL_NAME,
+      {
+        title: 'Ask the person about a tool use',
+        description: PERMISSION_DESCRIPTION,
+        inputSchema: {
+          tool_name: z.unknown().describe('The tool Claude wants to run.'),
+          input: z.unknown().describe('The input it wants to run the tool with.'),
+          tool_use_id: z.unknown().describe('The id of the tool use block.')
+        }
+      },
+      async (args, extra) =>
+        toPromptResult(
+          await answerPermissionPrompt(prompts, connection.token, args, extra.signal, log)
+        )
+    )
+  }
+  return server
+}
+
+/** `delegate_subtask` and `subtask_result` (16 §5.4). */
+function registerDelegationTools(
+  server: McpServer,
+  connection: DelegationRelayConnection,
+  handler: DelegationEndpoint,
+  log: DiagnosticsLog,
+  answered: Answered
+): void {
   server.registerTool(
     DELEGATE_SUBTASK_TOOL_NAME,
     {
@@ -178,7 +238,11 @@ function createDelegationMcpServer(
       return toCallToolResult(view)
     }
   )
-  return server
+}
+
+/** Claude reads the prompt tool's answer from its one JSON text block (15 §2.7). */
+function toPromptResult(reply: PermissionPromptReply): CallToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(reply) }] }
 }
 
 /** The one shape, structured and as text; never `isError` (16 §5.4). */

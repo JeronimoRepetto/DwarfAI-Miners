@@ -5,17 +5,20 @@
 //
 // - The idempotency key is `hostEpoch`: a second `save` of the same epoch updates that report — its
 //   `resumed` list, the items it adds and an item's `messageIds` (the 10 s delivery reconcile lists
-//   them after classification); an item's `reason` is fixed by its first save (ADR-015 item 5).
-// - `pending()` is the latest report that still has an unsettled item; `markShown` stamps the first
-//   display (`shown_at`, the first instant wins) and keeps it pending.
+//   them after classification); an item's `reason` is fixed by its first save (ADR-015 item 5). A
+//   `save` of another epoch supersedes every earlier report not settled yet (07 S16.09): the
+//   recovery pass reads the earlier `pending()` first and carries its unsettled items over.
+// - `pending()` is the latest report that still has an unsettled item, listing those items only (a
+//   settled dwarf leaves the grouped message, 07 S2.11, S2.12); `markShown` stamps the first display
+//   (`shown_at`, the first instant wins) and keeps it pending.
 // - `settleItem` records one outcome per listed dwarf, once: `resumed` or `failed` (the person's
-//   Retry, OQ-41 A, OQ-43) in `retry_outcome`, or `dismissed`. A second settle, or a settle of a
-//   dwarf the report does not list, changes nothing. The last settled item settles the report.
-// - `dismissed` has no `retry_outcome` value (10 §`host_recovery_items`: `resumed` | `failed`):
-//   a dismissed item leaves the report (package gap, resolved in development: the grouped message
-//   no longer lists a dwarf the person dismissed; storing the outcome needs a schema change).
-//   Retry and Dismiss are ISSUE-174's (later: ISSUE-174), which adds that migration if its ACs need
-//   the stored outcome.
+//   Retry, OQ-41 A, OQ-43) in `retry_outcome`, or `dismissed`. A second settle, a settle of a dwarf
+//   the report does not list, or one of a superseded report changes nothing. The last settled item
+//   settles the report.
+// - `dismissed` has no `retry_outcome` value (10 §`host_recovery_items`: `resumed` | `failed`): a
+//   dismissed item leaves the report. ISSUE-174 needs no stored `dismissed` outcome (no new
+//   migration): after a Dismiss the dwarf is gone or its session runs, the report is `settled`, and
+//   nothing reads the outcome back (US-RES-009.AC06).
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
 import type { HostRecoveryReport } from '../domain/recoveryReport'
 
