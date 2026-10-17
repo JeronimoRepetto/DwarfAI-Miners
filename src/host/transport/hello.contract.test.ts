@@ -187,11 +187,13 @@ describe('the seam-B transport: hello first, roles, dispatcher (ADR-003 items 3â
     )
   })
 
-  it('[ADR-003] a viewer hello gets AUTH_FAILED until the per-view token issuer exists', async () => {
+  it('[ADR-003] a viewer hello with the uiToken gets AUTH_FAILED: a viewer authenticates only with a per-view token', async () => {
     const host = await boot()
     const client = host.connect()
 
-    // Even with the uiToken: a viewer authenticates only with a per-view token (later: ISSUE-170).
+    // AMENDED for ISSUE-170 (was: "AUTH_FAILED until the per-view token issuer exists"): ISSUE-170
+    // builds the per-view token issuer (ADR-003 item 12), and the uiToken still never admits a viewer
+    // (viewerRole.contract.test.ts proves the per-view tokens).
     client.send(hello(host.token, { role: 'viewer', viewId: 'view-1' }))
     await client.settle()
 
