@@ -23,6 +23,7 @@ import type { CatalogRecord } from '../../../domain/profile'
 import { FakeInstallResolver } from '../../../ports/fakes/FakeInstallResolver'
 import type { InstalledProvider } from '../../../ports/providerDriver'
 import {
+  CANARY_TOKEN,
   driverConformance,
   runCase,
   runScript,
@@ -30,8 +31,10 @@ import {
   type ConformanceRig,
   type DriverFactory
 } from '../../../testing/driverConformance'
+import { bind, compareEvents, differences, type Json } from '../../../testing/expected'
 import { readFixtureSet, type FixtureSet, type FixtureVariant } from '../../../testing/fixtureSet'
 import { CATALOG_RECORDS, OPENCODE_ACP } from '../../catalog/profiles'
+import { FORBIDDEN_FLAGS } from '../shared/forbiddenFlags'
 import { AcpDriver } from './AcpDriver'
 
 const FIXTURE_ROOT = new URL('../../../../../../../fixtures/opencode/acp/', import.meta.url)
@@ -248,5 +251,115 @@ describe('OpenCode acp', () => {
     expect(
       await probeWith('Commands:\n  opencode serve   starts a headless opencode server\n')
     ).toBe(false)
+  })
+})
+
+// ---------- the delegation entry (ISSUE-203 "Tests to write FIRST") ----------
+
+/** The gated delegation launch: both gates on, so the request carries a ticket-file entry. */
+const GATED = 'c-23-gated-delegation'
+/** The variables only the relay entry's own env may hold (15 §4 "Delegation relay form"). */
+const RELAY_ONLY = ['ELECTRON_RUN_AS_NODE', 'DWARFAI_MCP_CREDENTIAL_FILE'] as const
+
+/** The `session/new` frame of a run. */
+function sessionNew(sent: readonly unknown[]): {
+  params: { cwd: string; mcpServers: { env: { name: string; value: string }[] }[] }
+} {
+  const frame = sent.find((f) => (f as { method?: string }).method === 'session/new')
+  if (frame === undefined) throw new Error('no session/new frame')
+  return frame as ReturnType<typeof sessionNew>
+}
+
+/** Every variant of the gated case run against its hand-written expected file; failures as lines. */
+async function gatedAgainstExpected(): Promise<string[]> {
+  const own = fixtures.cases.find((fixture) => fixture.name === GATED)
+  if (own === undefined) throw new Error(`no fixture ${GATED}`)
+  const out: string[] = []
+  for (const variant of own.variants) {
+    const run = await runScript(factoryWith(), own.expected.script, { variant }, OPTIONS)
+    const why = [
+      ...run.failures,
+      ...compareEvents(run.events, own.expected.events ?? [], run.bindings),
+      ...(own.expected.outcomes ?? []).flatMap((want, index) =>
+        want === null ? [] : differences(run.outcomes[index], bind(want, run.bindings), `#${index}`)
+      ),
+      ...differences(run.sent, bind((own.expected.sent ?? []) as Json, run.bindings), 'sent')
+    ]
+    out.push(...why.map((line) => `${variant.label}: ${line}`))
+  }
+  return out
+}
+
+async function gatedRun() {
+  return runScript(
+    factoryWith(),
+    [{ do: 'launch', delegation: true }],
+    { variant: variantOf(GATED) },
+    OPTIONS
+  )
+}
+
+describe('OpenCode acp delegation entry', () => {
+  it('[C-23, INV-59, INV-83] a gated OpenCode launch has no credential and no DWARFAI_DELEGATION_TOKEN string in any captured argv, env or configuration content; the configuration names the relay command and the credential-file path only', async () => {
+    expect(await gatedAgainstExpected()).toEqual([])
+    const run = await gatedRun()
+    // `opencode acp` is the only process DwarfAI starts; the relay is started by opencode itself.
+    expect(run.spawn.spawns.map((spawn) => [spawn.executable, ...spawn.args])).toEqual([
+      [INSTALL.binaryPath, 'acp']
+    ])
+    const captured = JSON.stringify([
+      run.spawn.spawns.map((spawn) => [spawn.args, spawn.env]),
+      run.sent
+    ])
+    expect(captured).not.toContain(CANARY_TOKEN)
+    expect(captured).not.toContain('DWARFAI_DELEGATION_TOKEN')
+    // The configuration content is session/new: exactly one entry, the relay command and the path.
+    expect(sessionNew(run.sent).params.mcpServers).toEqual([
+      {
+        name: 'dwarfai',
+        command: '/opt/dwarfai/host/dwarfai',
+        args: ['dwarfai-mcp-relay'],
+        env: [
+          { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+          { name: 'DWARFAI_MCP_CREDENTIAL_FILE', value: '/home/j/.dwarfai/run/mcp/launch-1.cred' }
+        ]
+      }
+    ])
+  })
+
+  it("[C-23] ELECTRON_RUN_AS_NODE and DWARFAI_MCP_CREDENTIAL_FILE appear only inside the relay entry, never in opencode's own environment, and DWARFAI_SPAWN is in it", async () => {
+    const run = await gatedRun()
+    const [opencode] = run.spawn.spawns
+    expect(opencode?.env.DWARFAI_SPAWN).toBe(run.launches[0]?.request.spawnTag)
+    for (const name of RELAY_ONLY) {
+      expect(opencode?.env, name).not.toHaveProperty(name)
+      expect(JSON.stringify(opencode?.args), name).not.toContain(name)
+    }
+    // Outside the entry no frame names them; inside it they are its whole env.
+    const [entry] = sessionNew(run.sent).params.mcpServers
+    expect(entry?.env.map((variable) => variable.name)).toEqual([...RELAY_ONLY])
+    const withoutEntry = run.sent.filter(
+      (frame) => (frame as { method?: string }).method !== 'session/new'
+    )
+    for (const name of RELAY_ONLY) expect(JSON.stringify(withoutEntry), name).not.toContain(name)
+  })
+
+  it('[C-24, INV-81] without both gates, or for a delegated worker, there is no Jev entry', async () => {
+    // Without both gates, and for a delegated worker, `issueFor` gives no entry (ADR-013 item 4).
+    const ungated = await runScript(
+      factoryWith(),
+      [{ do: 'launch', delegation: false }],
+      { variant: variantOf('c-01-launch') },
+      OPTIONS
+    )
+    const params = sessionNew(ungated.sent).params
+    expect(params.mcpServers).toEqual([])
+    expect(JSON.stringify(params)).not.toMatch(/dwarfai|delegate_subtask|subtask_result/)
+    // No launch, gated or not, carries a forbidden flag or a blanket approval (ADR-008 item 3).
+    const gated = await gatedRun()
+    for (const run of [gated, ungated]) {
+      const texts = JSON.stringify([run.spawn.spawns, run.sent])
+      for (const flag of FORBIDDEN_FLAGS) expect(texts).not.toContain(flag)
+    }
   })
 })

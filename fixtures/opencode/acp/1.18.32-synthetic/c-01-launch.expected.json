@@ -1,6 +1,6 @@
 {
   "case": "C-01",
-  "description": "15 §4.7, §4.10, §2.2 row acp: OpenCode acp has no question channel, so initialize declares no client capability at all (no elicitation, no fs, no terminal); session/new {cwd, mcpServers} with no relay entry (mcpInjection U→none, SP-12), then the first prompt through session/prompt. The agent side is the recorded OpenCode 1.18.32 initialize and session/new answers (sp12-session-new-mcp, no session modes, so no mode is pinned); the launch binds the OpenCode sessionId; two agent chunks are one dwarf message; end_turn is one reliable concluded turn.",
+  "description": "15 §4.7, §4.10, §2.2 row acp: OpenCode acp has no question channel, so initialize declares no client capability at all (no elicitation, no fs, no terminal); session/new {cwd, mcpServers} with no relay entry (a launch without both delegation gates; the gated launch is c-23-gated-delegation), then the first prompt through session/prompt. The agent side is the recorded OpenCode 1.18.32 initialize and session/new answers (sp12-session-new-mcp, no session modes, so no mode is pinned); the launch binds the OpenCode sessionId; two agent chunks are one dwarf message; end_turn is one reliable concluded turn.",
   "script": [
     {
       "do": "launch"
