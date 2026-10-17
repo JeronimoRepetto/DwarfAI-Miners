@@ -46,8 +46,15 @@ export interface DelegationGate {
 /** The Jev MCP entry's server name and the two tools DwarfAI serves on it (ADR-013 items 1, 3). */
 const JEV_SERVER = 'jev'
 const JEV_TOOLS: readonly string[] = ['delegate_subtask', 'subtask_result']
+/**
+ * The name the Claude drivers register the same relay under (15 §4.2: it also serves
+ * `mcp__dwarfai__permission`, which is never pre-approvable).
+ */
+const CLAUDE_RELAY_SERVER = 'dwarfai'
 /** The same two tools as an allowed-tools list names them (`mcp__<server>__<tool>`). */
-const JEV_TOOL_IDS: readonly string[] = JEV_TOOLS.map((tool) => `mcp__${JEV_SERVER}__${tool}`)
+const JEV_TOOL_IDS: readonly string[] = [JEV_SERVER, CLAUDE_RELAY_SERVER].flatMap((server) =>
+  JEV_TOOLS.map((tool) => `mcp__${server}__${tool}`)
+)
 
 /** A flag or key that sets an approval or permission: an "always" value there is refused. */
 const APPROVAL_CONTEXT = /approv|permission/i

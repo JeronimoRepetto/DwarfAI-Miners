@@ -24,6 +24,14 @@
 //   `sessions`; without them every hand-over answers `session-closed`. Crew answers
 //   `canReceiveMessages` false until a delivery route is wired (main.ts `links`, later: EPIC-10),
 //   so a send is refused `cannot-receive` before any row: nothing is offered that is not built.
+// - Attachments (ISSUE-169): B-M28 `conversation.describeAttachments` is served with the others,
+//   and `route` passes the `AttachmentReader` the composition root built (`FsAttachmentReader`) to
+//   both describe and `send`, which re-validates every path before any row (16 §4.6; ADR-019
+//   item 9). Without one, every path is `unreadable` and a send with files `attachment-refused`.
+//
+// - B-M29 `conversation.resolveConsole` (ISSUE-170) is served with the read side and answers from
+//   `route` on, over the `console` resolver the composition root passes (conversation's
+//   `createHostConsoleResolver`); a route with none answers INTERNAL (a wiring defect).
 //
 // Not routed here, and why:
 // - `ObservedTurnEnded` (observation) → `recordTurnEnd`, `TurnEnded` → crew and attention,
@@ -47,7 +55,11 @@ import {
   type Conversation,
   type ConversationCommands,
   type ConversationEvent,
+  type AttachmentReader,
+  type ConversationAttachmentCommand,
   type ConversationQueries,
+  type ConsoleResolver,
+  type ResolveConsole,
   type SendEvent
 } from '../../modules/conversation'
 import type { CrewQueries } from '../../modules/crew'
@@ -56,8 +68,10 @@ import type { SessionChannels } from '../../modules/suppliers'
 import type { Dispatcher } from '../../transport/dispatcher'
 import type { ConversationFramePublisher } from '../../transport/frames/conversationAppended'
 import { toMessageWire } from '../../transport/mappers/wire'
+import { registerConversationDescribeAttachments } from '../../transport/methods/conversationDescribeAttachments'
 import { registerConversationFeed } from '../../transport/methods/conversationFeed'
 import { registerConversationMineHistory } from '../../transport/methods/conversationMineHistory'
+import { registerConversationResolveConsole } from '../../transport/methods/conversationResolveConsole'
 import { registerConversationSend } from '../../transport/methods/conversationSend'
 import { registerMarksSection } from '../../transport/snapshot/marksSection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
@@ -70,7 +84,7 @@ import { publishConversationReadFrames } from './conversationFrames'
 export type ConversationRouteEvent = ConversationEvent | SendEvent
 
 export interface ConversationServeDeps {
-  /** The Host dispatcher (hostDispatcher.ts), where B-M24, B-M26 and B-M27 join. */
+  /** The Host dispatcher (hostDispatcher.ts), where B-M24, B-M26, B-M27 and B-M28 join. */
   dispatcher: Dispatcher
   /** The snapshot sections, where `tails` and `marks` join (after the board's, 14 §4.2). */
   sections: SectionRegistry
@@ -103,6 +117,13 @@ export interface ConversationCrewRoute {
    * passes the Host log; a harness that never sends may leave it out.
    */
   diagnostics?: DiagnosticsLog
+  /**
+   * The Host's check of every attachment path a UI sends (ISSUE-169): the composition root passes
+   * `FsAttachmentReader`. Without one, nothing is offered that is not built: every path is refused.
+   */
+  attachments?: AttachmentReader
+  /** The console targets of B-M29 (ISSUE-170): `createHostConsoleResolver(...).resolver`. */
+  console?: ConsoleResolver
 }
 
 /** No log: for harnesses that wire the read side only. */
@@ -128,9 +149,11 @@ export interface ServedConversation {
 /** The members the served methods and sections forward to. */
 type ServedMembers = {
   conversation: Pick<ConversationQueries, 'feed' | 'mineHistory'> &
-    Pick<ConversationCommands, 'send'>
+    Pick<ConversationCommands, 'send'> &
+    ConversationAttachmentCommand
   crew: Pick<CrewQueries, 'crewOf'>
   mines: Pick<MinesQueries, 'list'>
+  console: ResolveConsole | undefined
 }
 
 /** Serves the module's seam-B members before it exists; `wire` constructs it at boot step 4. */
@@ -148,11 +171,25 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
         current().conversation.send(dwarfId, text, attachments, requestId)
     }
   })
+  registerConversationDescribeAttachments(serve.dispatcher, {
+    conversation: {
+      describeAttachments: (paths) => current().conversation.describeAttachments(paths)
+    }
+  })
   registerConversationFeed(serve.dispatcher, {
     conversation: { feed: (dwarfId, page) => current().conversation.feed(dwarfId, page) }
   })
   registerConversationMineHistory(serve.dispatcher, {
     conversation: { mineHistory: (mineId) => current().conversation.mineHistory(mineId) }
+  })
+  registerConversationResolveConsole(serve.dispatcher, {
+    conversation: {
+      resolveConsole: (dwarfId) => {
+        const consoles = current().console
+        if (consoles === undefined) throw new HostInvariantError('no console resolver is composed')
+        return consoles.resolveConsole(dwarfId)
+      }
+    }
   })
   const boardReads = {
     mines: { list: (query: Parameters<MinesQueries['list']>[0]) => current().mines.list(query) },
@@ -176,7 +213,7 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
       return {
         conversation,
         batchHalf: conversationBatchHalf(conversation),
-        route: ({ crew, mines, sessions, diagnostics }) => {
+        route: ({ crew, mines, sessions, diagnostics, attachments, console: resolver }) => {
           if (served !== undefined) throw new HostInvariantError('conversation is routed once')
           publishConversationReadFrames({ events: deps.bus, crew, frames: deps.frames })
           publishDeliveryFrames({ events: deps.bus, conversation, frames: deps.frames })
@@ -195,17 +232,20 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
               canReceiveMessages: (dwarfId) => crew.get(dwarfId)?.canReceiveMessages ?? false
             },
             bus: deps.bus,
-            diagnostics: diagnostics ?? NO_DIAGNOSTICS
+            diagnostics: diagnostics ?? NO_DIAGNOSTICS,
+            ...(attachments === undefined ? {} : { attachments })
           })
           served = {
             conversation: {
               feed: (dwarfId, page) => conversation.queries.feed(dwarfId, page),
               mineHistory: (mineId) => history.mineHistory(mineId),
-              send: (dwarfId, text, attachments, requestId) =>
-                sending.send(dwarfId, text, attachments, requestId)
+              send: (dwarfId, text, paths, requestId) =>
+                sending.send(dwarfId, text, paths, requestId),
+              describeAttachments: (paths) => sending.describeAttachments(paths)
             },
             crew,
-            mines
+            mines,
+            console: resolver === undefined ? undefined : conversation.console({ resolver })
           }
         }
       }
