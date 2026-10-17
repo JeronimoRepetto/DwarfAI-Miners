@@ -1,0 +1,129 @@
+{
+  "provider": "opencode",
+  "phase": "sp12",
+  "version": "1.18.32",
+  "initialize": {
+    "protocolVersion": 1,
+    "agentInfo": {
+      "name": "OpenCode",
+      "version": "1.18.32"
+    },
+    "agentCapabilities": {
+      "loadSession": true,
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "promptCapabilities": {
+        "embeddedContext": true,
+        "image": true
+      },
+      "sessionCapabilities": {
+        "close": {},
+        "fork": {},
+        "list": {},
+        "resume": {}
+      }
+    },
+    "authMethods": ["opencode-login"]
+  },
+  "sessionNew": {
+    "sessionId": "<id>",
+    "modes": null,
+    "currentMode": null
+  },
+  "probeStarted": true,
+  "tree": [
+    {
+      "depth": 0,
+      "name": "opencode.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 1,
+      "name": "conhost.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 1,
+      "name": "cmd.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 2,
+      "name": "conhost.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 2,
+      "name": "node.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 3,
+      "name": "node.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 1,
+      "name": "engram.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 2,
+      "name": "conhost.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 1,
+      "name": "node.exe",
+      "isProbe": true,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    },
+    {
+      "depth": 2,
+      "name": "conhost.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCred": false
+    }
+  ],
+  "probeReports": [
+    {
+      "event": "start",
+      "ppidIsAgent": true,
+      "ppidInTree": true,
+      "sentinelPresent": true,
+      "credFilePresent": true,
+      "envKeyCount": 77,
+      "envKeysSpecial": [
+        "AGENT",
+        "AI_AGENT",
+        "DWARFAI_MCP_CREDENTIAL_FILE",
+        "OPENCODE",
+        "OPENCODE_CLIENT",
+        "OPENCODE_PID",
+        "SP12_REPORT",
+        "SP12_SENTINEL"
+      ]
+    }
+  ],
+  "repoFilesWithSentinel": []
+}
