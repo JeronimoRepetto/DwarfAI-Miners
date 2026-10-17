@@ -34,6 +34,15 @@ export interface SessionBindings {
   bind(ref: SessionRef, dwarfId: DwarfId): void
 }
 
+/**
+ * Called by a launch that failed after its session was handed out, so `bind` never comes
+ * (GitHub #1316): the unbound entry and its held events leave suppliers. The caller ends the
+ * session itself (`close`). A bound or unknown session is left as it is.
+ */
+export interface SessionReleases {
+  release(ref: SessionRef): void
+}
+
 export interface LiveSessionsDeps {
   readonly sink: SuppliedEventSink
   /** `UsageObservation.observedAt` is when suppliers saw it (15 §1.2 "suppliers fills both"). */
@@ -56,7 +65,12 @@ interface Tracked {
 export function trackLiveSessions(
   registry: DriverRegistry,
   deps: LiveSessionsDeps
-): { registry: DriverRegistry; channels: SessionChannels; bindings: SessionBindings } {
+): {
+  registry: DriverRegistry
+  channels: SessionChannels
+  bindings: SessionBindings
+  releases: SessionReleases
+} {
   const live = new Map<string, DriverSession>()
   const sessions = new Map<string, Tracked>()
   const wrapped = new WeakMap<ProviderDriver, ProviderDriver>()
@@ -67,9 +81,10 @@ export function trackLiveSessions(
   }
 
   const receive = (key: string, event: DriverEvent): void => {
+    // A released session (no entry) is still reachable until its `exited`, then it leaves too.
+    if (event.t === 'exited') live.delete(key)
     const entry = sessions.get(key)
     if (entry === undefined) return
-    if (event.t === 'exited') live.delete(key)
     const at = deps.clock.now()
     if (entry.dwarfId === null) entry.held.push({ event, at })
     else deliver(entry, entry.dwarfId, event, at)
@@ -155,6 +170,12 @@ export function trackLiveSessions(
         }
         entry.dwarfId = dwarfId
         for (const { event, at } of entry.held.splice(0)) deliver(entry, dwarfId, event, at)
+      }
+    },
+    releases: {
+      release(ref) {
+        const key = identityKey(ref)
+        if (sessions.get(key)?.dwarfId === null) sessions.delete(key)
       }
     }
   }
