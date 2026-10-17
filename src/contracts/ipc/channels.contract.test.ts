@@ -33,16 +33,20 @@ import {
   type SetOpenCodePermissionsResult,
   type AnswerWelcomeParams,
   type AnswerWelcomeResult,
+  type RecoveryActionParams,
   type StopDwarfParams,
   type StopDwarfResult,
+  type RetryMessageParams,
+  type RetryMessageResult,
   type RenameDwarfParams,
   type RenameDwarfResult,
   type ResetDwarfNameParams
 } from '../host-protocol/params'
-import type { IpcResult } from '../host-protocol'
+import type { IpcResult, Outcome } from '../host-protocol'
 import type {
   DwarfId,
   FeedPage,
+  HostRecoveryReportView,
   MineHistoryView,
   MineId,
   StopAllOutcome,
@@ -286,6 +290,16 @@ const NEW_ROWS = [
     placement: 'host',
     sensitive: false
   },
+  // ISSUE-168: Retry of a message that failed to deliver, as the same message (US-MSG-003, ADR-022 item 5), born
+  // `host` in 3a; a message id and a requestId
+  {
+    id: 'A-N06',
+    wire: 'dwarf:message:retry',
+    member: 'retryDwarfMessage',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
   // ISSUE-172: a person-set name for a dwarf (SC-AR-05, INV-29), born `host` in 3a; a dwarf id, the typed name and a
   // requestId
   {
@@ -301,6 +315,24 @@ const NEW_ROWS = [
     id: 'A-N09',
     wire: 'dwarf:name:reset',
     member: 'resetDwarfName',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
+  // ISSUE-174: the grouped recovery message's Retry and Dismiss (PO #90; OQ-41 A, OQ-43), born `host` in 3a; a
+  // Host epoch and a requestId
+  {
+    id: 'A-N10',
+    wire: 'host:recovery:retry',
+    member: 'retryRecovery',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
+  {
+    id: 'A-N11',
+    wire: 'host:recovery:dismiss',
+    member: 'dismissRecovery',
     kind: 'invoke',
     placement: 'host',
     sensitive: false
@@ -489,10 +521,15 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 },
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
   'dwarf:stop': { dwarfId: U1, requestId: U1 },
+  // A-N06 (ISSUE-168): B-M25's params, a message id and a requestId
+  'dwarf:message:retry': { messageId: U1, requestId: U1 },
   // A-N08 (ISSUE-172): B-M22's params, a dwarf id, the typed name and a requestId
   'dwarf:rename': { dwarfId: U1, name: 'Watcher of seals', requestId: U1 },
   // A-N09 (ISSUE-172): B-M23's params, a dwarf id and a requestId
-  'dwarf:name:reset': { dwarfId: U1, requestId: U1 }
+  'dwarf:name:reset': { dwarfId: U1, requestId: U1 },
+  // A-N10, A-N11 (ISSUE-174): B-M35 / B-M36's params, a Host epoch and a requestId
+  'host:recovery:retry': { hostEpoch: 'epoch-0174', requestId: U1 },
+  'host:recovery:dismiss': { hostEpoch: 'epoch-0174', requestId: U1 }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */
@@ -895,12 +932,25 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     // A-N29 (ISSUE-171): relays B-M21 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:stop'>>().toEqualTypeOf<StopDwarfParams>()
     expectTypeOf<Res<'dwarf:stop'>>().toEqualTypeOf<IpcResult<StopDwarfResult>>()
+    // A-N06 (ISSUE-168): relays B-M25 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
+    expectTypeOf<Req<'dwarf:message:retry'>>().toEqualTypeOf<RetryMessageParams>()
+    expectTypeOf<Res<'dwarf:message:retry'>>().toEqualTypeOf<IpcResult<RetryMessageResult>>()
     // A-N08 (ISSUE-172): relays B-M22 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:rename'>>().toEqualTypeOf<RenameDwarfParams>()
     expectTypeOf<Res<'dwarf:rename'>>().toEqualTypeOf<IpcResult<RenameDwarfResult>>()
     // A-N09 (ISSUE-172): relays B-M23, as 14 §2.2 and §3.4 write it, `{}` read as `IpcResult<void>` (14 §1.2).
     expectTypeOf<Req<'dwarf:name:reset'>>().toEqualTypeOf<ResetDwarfNameParams>()
     expectTypeOf<Res<'dwarf:name:reset'>>().toEqualTypeOf<IpcResult<void>>()
+    // A-N10, A-N11 (ISSUE-174): relay B-M35 / B-M36 unchanged, as 14 §2.2 and §3.4 write them (14 §1.2).
+    expectTypeOf<Req<'host:recovery:retry'>>().toEqualTypeOf<RecoveryActionParams>()
+    expectTypeOf<Res<'host:recovery:retry'>>().toEqualTypeOf<
+      IpcResult<Outcome<HostRecoveryReportView, 'no-report'>>
+    >()
+    expectTypeOf<Req<'host:recovery:dismiss'>>().toEqualTypeOf<RecoveryActionParams>()
+    expectTypeOf<Res<'host:recovery:dismiss'>>().toEqualTypeOf<
+      // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §2.2 spells the empty value as {}
+      IpcResult<Outcome<{}, 'no-report'>>
+    >()
     // A-N16 (ISSUE-114): the reveal push, as 14 §2.2 and §3.8 write it.
     expectTypeOf<Req<'mode:revealDwarfChat'>>().toEqualTypeOf<undefined>()
     expectTypeOf<Res<'mode:revealDwarfChat'>>().toEqualTypeOf<{

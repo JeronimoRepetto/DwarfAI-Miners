@@ -124,8 +124,11 @@ const MEMBERS = {
   'ask:step:set': 'setAskStep', // A-N07 (unrouted until cut 2)
   'welcome:answer': 'answerWelcome', // A-N32 (unrouted until cut 2)
   'dwarf:stop': 'stopDwarf', // A-N29 (unrouted until cut 3a)
+  'dwarf:message:retry': 'retryDwarfMessage', // A-N06 (unrouted until cut 3a)
   'dwarf:rename': 'renameDwarf', // A-N08
-  'dwarf:name:reset': 'resetDwarfName' // A-N09
+  'dwarf:name:reset': 'resetDwarfName', // A-N09
+  'host:recovery:retry': 'retryRecovery', // A-N10 (unrouted until cut 3a)
+  'host:recovery:dismiss': 'dismissRecovery' // A-N11 (unrouted until cut 3a)
 }
 
 /**

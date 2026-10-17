@@ -9,6 +9,7 @@ import { z } from 'zod'
 import {
   hostEpochSchema,
   hostPreferencesSchema,
+  hostRecoveryReportViewSchema,
   instantSchema,
   mineIdSchema,
   preferencesViewSchema,
@@ -22,6 +23,7 @@ import {
   type FolderPath,
   type HostEpoch,
   type HostPreferences,
+  type HostRecoveryReportView,
   type Instant,
   type MineHistoryView,
   type MineId,
@@ -73,6 +75,8 @@ import {
   describeAttachmentsParamsSchema,
   consoleTargetSchema,
   feedParamsSchema,
+  retryMessageParamsSchema,
+  retryMessageResultSchema,
   resolveConsoleParamsSchema,
   sendMessageParamsSchema,
   sendMessageResultSchema,
@@ -80,6 +84,8 @@ import {
   type AttachmentPick,
   type ConsoleTarget,
   type FeedParams,
+  type RetryMessageParams,
+  type RetryMessageResult,
   type SendMessageParams,
   type SendMessageResult
 } from './params/conversation'
@@ -109,11 +115,19 @@ import {
   launchAcceptedSchema,
   launchCustomParamsSchema,
   launchParamsSchema,
+  recoveryActionParamsSchema,
   type LaunchAccepted,
   type LaunchCustomParams,
-  type LaunchParams
+  type LaunchParams,
+  type RecoveryActionParams
 } from './params/launching'
 import { suppliersLaunchableParamsSchema } from './params/suppliers'
+import {
+  jevSuggestParamsSchema,
+  jevSuggestResultSchema,
+  type JevSuggestParams,
+  type JevSuggestResult
+} from './params/jev'
 import { outcomeSchema, type Outcome } from './errors'
 import { requestIdSchema } from './requestId'
 import {
@@ -124,7 +138,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M10, B-M11, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M10, B-M11, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M35, B-M36, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -162,6 +176,7 @@ export interface HostMethods {
   'crew.resetName':                  { params: ResetDwarfNameParams; result: {} }
   // conversation
   'conversation.send':               { params: SendMessageParams; result: SendMessageResult }
+  'conversation.retry':              { params: RetryMessageParams; result: RetryMessageResult }
   'conversation.feed':               { params: FeedParams; result: FeedPage }
   'conversation.mineHistory':        { params: { mineId: MineId }; result: MineHistoryView }
   'conversation.describeAttachments': { params: { paths: AttachmentPath[] }; result: AttachmentPick[] }
@@ -174,7 +189,11 @@ export interface HostMethods {
   // launching, suppliers, jev
   'launching.launch':                { params: LaunchParams; result: LaunchAccepted }
   'launching.launchCustom':          { params: LaunchCustomParams; result: LaunchAccepted }
+  'launching.retryRecovery':         { params: RecoveryActionParams; result: Outcome<HostRecoveryReportView, 'no-report'> }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty value as {}
+  'launching.dismissRecovery':       { params: RecoveryActionParams; result: Outcome<{}, 'no-report'> }
   'suppliers.launchable':            { params: { refresh?: boolean }; result: SupplierEntryView[] }
+  'jev.suggest':                     { params: JevSuggestParams; result: JevSuggestResult }
   // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
@@ -385,6 +404,13 @@ export const HOST_METHOD_SCHEMAS = {
     params: sendMessageParamsSchema,
     result: sendMessageResultSchema
   },
+  // B-M25 (14 §2.3, §1.7; ADR-022 item 5): `ui` only, mutating (requestId, deduped at the transport,
+  // 14 §1.6); answered at acceptance once the same message's delivery is `sending` again
+  // (host/transport/methods/conversationRetry.ts), the settlement arriving only as `message.delivery`.
+  'conversation.retry': {
+    params: retryMessageParamsSchema,
+    result: retryMessageResultSchema
+  },
   // B-M26 (14 §2.3, §3.6): `ui` and `viewer` (its own dwarf only, host/transport/methods/conversationFeed.ts);
   // a query, so no requestId (14 §1.6). Its result is sensitive (14 §3.5 SENSITIVE_METHODS).
   'conversation.feed': {
@@ -445,6 +471,17 @@ export const HOST_METHOD_SCHEMAS = {
     params: launchCustomParamsSchema,
     result: launchAcceptedSchema
   },
+  // B-M35, B-M36 (14 §2.3; ADR-015 item 5; OQ-41 A, OQ-43): `ui` only, mutating (requestId, 14 §1.6); by
+  // `hostEpoch`, outcome `no-report` when that epoch has no unsettled report. Retry answers once every
+  // retried resume settled, with the settled report (host/transport/methods/launchingRetryRecovery.ts).
+  'launching.retryRecovery': {
+    params: recoveryActionParamsSchema,
+    result: outcomeSchema(hostRecoveryReportViewSchema, z.literal('no-report'))
+  },
+  'launching.dismissRecovery': {
+    params: recoveryActionParamsSchema,
+    result: outcomeSchema(z.object({}).strict(), z.literal('no-report'))
+  },
   // B-M41 (14 §2.3, §1.10; AMENDMENT-8, OQ-69): `ui` only, never relayed to seam A; deleted with
   // LegacyDwarfIdBridge at the end of cut 4 (later: ISSUE-241).
   // B-M37 (14 §2.3, §4.1; ADR-009 D5, ADR-011): `ui` only, a query (no requestId, 14 §1.6); the
@@ -453,6 +490,10 @@ export const HOST_METHOD_SCHEMAS = {
   'suppliers.launchable': {
     params: suppliersLaunchableParamsSchema,
     result: z.array(supplierEntryViewSchema)
+  },
+  'jev.suggest': {
+    params: jevSuggestParamsSchema,
+    result: jevSuggestResultSchema
   },
   'strangler.dwarfIdentities': {
     params: z.object({}).strict(),

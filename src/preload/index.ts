@@ -306,12 +306,24 @@ export interface DwarfAiMinersApi {
   ) => Promise<TargetResult<'welcome:answer'>>
   /** A-N29 · `dwarf:stop` · invoke · NEW · target shape */
   stopDwarf: (request: TargetRequest<'dwarf:stop'>) => Promise<TargetResult<'dwarf:stop'>>
+  /** A-N06 · `dwarf:message:retry` · invoke · NEW · target shape */
+  retryDwarfMessage: (
+    request: TargetRequest<'dwarf:message:retry'>
+  ) => Promise<TargetResult<'dwarf:message:retry'>>
   /** A-N08 · `dwarf:rename` · invoke · NEW · target shape */
   renameDwarf: (request: TargetRequest<'dwarf:rename'>) => Promise<TargetResult<'dwarf:rename'>>
   /** A-N09 · `dwarf:name:reset` · invoke · NEW · target shape */
   resetDwarfName: (
     request: TargetRequest<'dwarf:name:reset'>
   ) => Promise<TargetResult<'dwarf:name:reset'>>
+  /** A-N10 · `host:recovery:retry` · invoke · NEW · target shape */
+  retryRecovery: (
+    request: TargetRequest<'host:recovery:retry'>
+  ) => Promise<TargetResult<'host:recovery:retry'>>
+  /** A-N11 · `host:recovery:dismiss` · invoke · NEW · target shape */
+  dismissRecovery: (
+    request: TargetRequest<'host:recovery:dismiss'>
+  ) => Promise<TargetResult<'host:recovery:dismiss'>>
 }
 
 const api: DwarfAiMinersApi = {
@@ -568,8 +580,15 @@ const api: DwarfAiMinersApi = {
   setAskStep: (request) => invokeOrReject(() => ipcRenderer.invoke('ask:step:set', request)),
   answerWelcome: (request) => invokeOrReject(() => ipcRenderer.invoke('welcome:answer', request)),
   stopDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:stop', request)),
+  retryDwarfMessage: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:message:retry', request)),
   renameDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:rename', request)),
-  resetDwarfName: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:name:reset', request))
+  resetDwarfName: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:name:reset', request)),
+  retryRecovery: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('host:recovery:retry', request)),
+  dismissRecovery: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('host:recovery:dismiss', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

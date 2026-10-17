@@ -31,6 +31,8 @@ export function toLaunchWire(view: LaunchView): LaunchWire {
   if (view.effort !== undefined) wire.effort = view.effort
   if (view.dwarfId !== undefined) wire.dwarfId = view.dwarfId
   if (view.retryOf !== undefined) wire.retryOf = view.retryOf
+  // A `handed-back` launch's picks: what Jev's fallback put into the pickers (S5.13; ISSUE-182).
+  if (view.picks !== undefined) wire.picks = { ...view.picks }
   if (view.failure !== undefined) wire.failure = { ...view.failure }
   return wire
 }

@@ -22,6 +22,7 @@ import {
   composeAskStepAndIntegrationRows,
   composeBoardFacade,
   composeDwarfNameRows,
+  composeJevRouteRow,
   composeLegacyAgentRegistryFeed,
   composeLegacyAskRelay,
   composeLegacyDwarfIdBridge,
@@ -585,9 +586,14 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       'welcome:answer': 'cut-2',
       // AMENDED for ISSUE-171: A-N29 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
       'dwarf:stop': 'cut-3a',
+      // AMENDED for ISSUE-168: A-N06 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
+      'dwarf:message:retry': 'cut-3a',
       // AMENDED for ISSUE-172: A-N08 and A-N09 join them, born `host` in cut 2 (lead decision, 2026-10-17).
       'dwarf:rename': 'cut-2',
-      'dwarf:name:reset': 'cut-2'
+      'dwarf:name:reset': 'cut-2',
+      // AMENDED for ISSUE-174: A-N10 and A-N11 join them, born `host` in 3a and routed by the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
   })
 
@@ -1773,8 +1779,12 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       'ask:step:set': 'cut-2',
       'welcome:answer': 'cut-2',
       'dwarf:stop': 'cut-3a',
+      'dwarf:message:retry': 'cut-3a',
       'dwarf:rename': 'cut-2',
-      'dwarf:name:reset': 'cut-2'
+      'dwarf:name:reset': 'cut-2',
+      // AMENDED for ISSUE-174: A-N10 and A-N11, born `host` in 3a, wait for the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
     // A-44 on its 14 wire feeds UI main's PresenceTracker, which tells the Host (B-M07) once the report settled.
     const host = recordingHost()
@@ -2433,9 +2443,14 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     }
     // Only A-N33 is still unrouted (AMENDMENT-11): the cut-2 entries are routed by this switch (ISSUE-043 rule).
     // AMENDED for ISSUE-171 (was: A-N33 only): A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
+    // AMENDED for ISSUE-168: so does A-N06.
     expect(UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      'dwarf:message:retry': 'cut-3a',
+      // AMENDED for ISSUE-174: A-N10 and A-N11, born `host` in 3a, wait for the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
     // The root composes their `host` handlers, each relaying its one seam-B member.
     const sent: Array<[string, unknown]> = []
@@ -2993,6 +3008,71 @@ describe('shape adapters (21 §3.1)', () => {
         !path.startsWith('legacy-bridge/') && /(from|import\()\s*'[^']*legacy-bridge\//.test(text)
     )
     expect(outside.map(([path]) => path)).toEqual(['ui-main/index.ts'])
+  })
+})
+
+// ADDED for ISSUE-192: A-50 `routeJevLaunch` relayed to B-M38 `jev.suggest` where the table routes it `host`. The route
+// row is the step-3a switch's (later: ISSUE-001); these cases drive a 3a row built here.
+describe('Jev suggestion row (21 §2 cut 3a)', () => {
+  const SRC = resolve(import.meta.dirname, '../..')
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const MINE = '01920000-0000-7000-9000-0000000000f1'
+  const A_50: ChannelRoute = {
+    channel: 'jev:route',
+    owner: 'host',
+    since: 'cut-3a',
+    parity: 'passed',
+    shape: 'target'
+  }
+
+  it('[US-LAUNCH-003.AC02] where the table routes A-50 host, routeJevLaunch relays jev.suggest and the renderer gets its result unchanged', async () => {
+    const sent: Array<[string, unknown]> = []
+    const suggestion = {
+      ok: true,
+      value: {
+        providerId: 'claude',
+        model: 'sonnet',
+        tier: 'balanced',
+        confidence: { providerId: 0.9 },
+        truncated: false,
+        parts: { providerId: 'answered', model: 'answered', tier: 'answered' }
+      }
+    }
+    const client = {
+      call: (method: string, params: unknown) => {
+        sent.push([method, params])
+        return Promise.resolve(suggestion)
+      }
+    } as unknown as Parameters<typeof composeJevRouteRow>[0]['client']
+
+    const rows = composeJevRouteRow({ routes: [A_50], client })
+    expect(rows?.channels).toEqual(['jev:route'])
+    const router = createRouter({
+      routes: [A_50],
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(rows === undefined ? {} : { host: rows.target }),
+      senders
+    })
+    const request = { prompt: 'add a field to this form', mineId: MINE }
+    expect(await router.dispatch('jev:route', FROM_PANEL, request)).toEqual({
+      ok: true,
+      value: suggestion
+    })
+    expect(sent).toEqual([['jev.suggest', request]])
+  })
+
+  it('[ADR-001] the release table and the cut tables compose no Jev suggestion row: A-50 stays legacy until the step-3a switch', () => {
+    const client = {
+      call: () => Promise.reject(new Error('never called'))
+    } as unknown as Parameters<typeof composeJevRouteRow>[0]['client']
+    for (const routes of [ROUTES, CUT_1_ROUTES, CUT_0_ROUTES]) {
+      expect(composeJevRouteRow({ routes, client })).toBeUndefined()
+    }
+    expect(readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')).toMatch(
+      /composeJevRouteRow\(\{ routes, client: host\.client \}\)/
+    )
   })
 })
 

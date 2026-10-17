@@ -46,6 +46,12 @@ export type SendMessageResult = Outcome<
   { messageId: MessageId },
   'cannot-receive' | 'attachment-refused'
 >
+export interface RetryMessageParams {
+  messageId: MessageId
+  requestId: string
+} // same MessageId, restamped
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty value as {}
+export type RetryMessageResult = Outcome<{}, 'cannot-receive' | 'not-failed'>
 export interface FeedParams {
   dwarfId: DwarfId
   page?: FeedPageRequest
@@ -66,6 +72,17 @@ export const sendMessageParamsSchema = z
 export const sendMessageResultSchema = outcomeSchema(
   z.object({ messageId: messageIdSchema }).strict(),
   z.enum(['cannot-receive', 'attachment-refused'])
+)
+
+/** B-M25 `conversation.retry` params; A-N06's request is this same object (14 §1.2). */
+export const retryMessageParamsSchema = z
+  .object({ messageId: messageIdSchema, requestId: requestIdSchema })
+  .strict()
+
+/** B-M25 outcomes (14 §2.3): accepted with `{}`, or `cannot-receive` / `not-failed`. */
+export const retryMessageResultSchema = outcomeSchema(
+  z.object({}).strict(),
+  z.enum(['cannot-receive', 'not-failed'])
 )
 
 /** B-M28 `conversation.describeAttachments` params (14 §3.4): the paths to re-validate; no count limit. */

@@ -163,23 +163,45 @@ export class CrewArrivals implements CrewCommands {
     return arrived.id
   }
 
+  /**
+   * Host-driven resume only (INV-22). A new provider identity is stored once (`DwarfRebound`). A
+   * dwarf listed `unrecovered` whose session was resumed again (the person's Retry, S2.11; or a later
+   * boot's resume of a carried item, S16.09) is `running` again, silently: `DwarfPresenceChanged`
+   * lets the window redraw it (08 §0 `RecoveryRetried`: success → `DwarfRebound` /
+   * `DwarfPresenceChanged`). Package gap, resolved in development: 16 §4.2 has no member for S2.11,
+   * and only a Host resume calls `rebind`, so it carries the step with its signature unchanged.
+   */
   rebind(dwarfId: DwarfId, next: ProviderIdentity): void {
     const { repository, facts, transactions, clock } = this.deps
-    const rebound = transactions.inTransaction(() => {
+    const moved = transactions.inTransaction(() => {
       const dwarf = this.existing(dwarfId)
-      if (isGone(dwarf) || sameProviderIdentity(dwarf.identity, next)) return null
-      const fact = facts.record({
-        type: 'DwarfRebound',
-        dwarfId,
-        identityKey: providerIdentityKey(next),
-        occurredAt: clock.now()
-      })
-      if (fact === 'duplicate') return null
-      repository.save(rebindDwarf(dwarf, next))
-      return { previous: dwarf.identity }
+      if (isGone(dwarf)) return null
+      let current = dwarf
+      let previous: ProviderIdentity | null = null
+      if (!sameProviderIdentity(dwarf.identity, next)) {
+        const fact = facts.record({
+          type: 'DwarfRebound',
+          dwarfId,
+          identityKey: providerIdentityKey(next),
+          occurredAt: clock.now()
+        })
+        if (fact !== 'duplicate') {
+          current = rebindDwarf(dwarf, next)
+          previous = dwarf.identity
+        }
+      }
+      const retried = applyPresence(current, { type: 'retry-succeeded' })
+      const running = retried.ok
+      if (running) current = retried.value
+      if (previous === null && !running) return null
+      repository.save(current)
+      return { previous, running, presence: current.presence }
     })
-    if (rebound !== null)
-      this.publish('DwarfRebound', { dwarfId, previous: rebound.previous, next })
+    if (moved === null) return
+    if (moved.previous !== null) {
+      this.publish('DwarfRebound', { dwarfId, previous: moved.previous, next })
+    }
+    if (moved.running) this.publish('DwarfPresenceChanged', { dwarfId, presence: moved.presence })
   }
 
   recordActivity(

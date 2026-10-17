@@ -102,10 +102,19 @@ const SERVED_SINCE_CUT_0 = [
   'conversation.send',
   'frame:message.delivery',
   'section:marks',
+  // Retrying a failed message: B-M25, from cut 3 (ISSUE-168).
+  'conversation.retry',
   // Describing attachments: B-M28, from cut 3 (ISSUE-169).
   'conversation.describeAttachments',
   // AMENDED for ISSUE-170 (appended): B-M29, the console target of A-13, from cut 3.
-  'conversation.resolveConsole'
+  'conversation.resolveConsole',
+  // AMENDED for ISSUE-196 (appended): B-M38, served by the jev wiring for the step-3a switch.
+  'jev.suggest',
+  // The Host recovery report: B-M35, B-M36, B-F21 and the `recovery` section, from cut 3 (ISSUE-174).
+  'frame:host.recovered',
+  'launching.dismissRecovery',
+  'launching.retryRecovery',
+  'section:recovery'
 ]
 const SERVED_SECTIONS = [
   'meta',
@@ -114,6 +123,7 @@ const SERVED_SECTIONS = [
   'dwarfs',
   'asks',
   'launches',
+  'recovery',
   'tails',
   'marks'
 ]
@@ -217,10 +227,12 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
           expect(first.next).toBeUndefined()
           expect(first.chunks.map((c) => c.section)).toEqual(SERVED_SECTIONS)
 
-          // A method the Host did not advertise is refused locally (TC-051-02).
+          // A method the Host did not advertise is refused locally (TC-051-02). Every seam-B member
+          // of the catalog is served since step 3a (ISSUE-168 serves B-M25, ISSUE-174 B-M35), so
+          // the example is a name no Host advertises.
           const refused = await client
             .call(
-              'conversation.retry' as never,
+              'launching.notServed' as never,
               { requestId: '01890a5d-ac96-774b-bcce-b302099a8001' } as never
             )
             .catch((error: unknown) => error)

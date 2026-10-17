@@ -222,9 +222,14 @@ export function goldenApi(sample: GoldenSample): Api {
     answerWelcome: refuse('answerWelcome'),
     // A-N29: a golden draws a fixed sample and never ends a session.
     stopDwarf: refuse('stopDwarf'),
+    // A-N06: a golden draws a fixed sample and never re-sends a message.
+    retryDwarfMessage: refuse('retryDwarfMessage'),
     // A-N08: a golden draws a fixed sample and never renames a dwarf.
     renameDwarf: refuse('renameDwarf'),
     // A-N09: a golden draws a fixed sample and never resets a dwarf's name.
-    resetDwarfName: refuse('resetDwarfName')
+    resetDwarfName: refuse('resetDwarfName'),
+    // A-N10, A-N11: a golden draws a fixed sample and never acts on a recovery report.
+    retryRecovery: refuse('retryRecovery'),
+    dismissRecovery: refuse('dismissRecovery')
   }
 }

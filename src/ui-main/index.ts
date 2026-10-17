@@ -261,6 +261,11 @@ import {
   RESET_DWARF_NAME_ROWS
 } from './ipc/handlers/resetDwarfName.host'
 import {
+  createRouteJevLaunchRow,
+  ROUTE_JEV_LAUNCH,
+  ROUTE_JEV_LAUNCH_ROWS
+} from './ipc/handlers/routeJevLaunch.host'
+import {
   createSetClaudeHooksRow,
   SET_CLAUDE_HOOKS,
   SET_CLAUDE_HOOKS_ROWS
@@ -1077,6 +1082,19 @@ export function composeDwarfNameRows(deps: {
 }
 
 /**
+ * A-50 `routeJevLaunch` (14 §2.2 CHANGE; ISSUE-192): relayed to B-M38 `jev.suggest`, a part of the `host` target only
+ * where the table routes it `host`. `undefined` before the step-3a switch (ISSUE-001), which routes it so: until then
+ * today's runtime answers the card.
+ */
+export function composeJevRouteRow(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+}): RouteTargetPart | undefined {
+  if (!routedTo(deps.routes, ROUTE_JEV_LAUNCH, 'host')) return undefined
+  return { channels: ROUTE_JEV_LAUNCH_ROWS, target: createRouteJevLaunchRow(deps.client) }
+}
+
+/**
  * Whether today's runtime composes its Claude hook half (21 §2 cut 2 "Switched off in legacy"; §1 item 4; §4 row
  * "Claude hook entry"; ISSUE-141, TC-141-06): today's hook installer, the Claude route of its loopback listener, the
  * observed-Claude permission registry and keystroke path. Only while A-40 and A-41 have no `host` route, each one
@@ -1508,6 +1526,9 @@ export async function startUiMain({
       : composeAskStepAndIntegrationRows({ routes, client: host.client })
   const dwarfNameRows =
     host === undefined ? undefined : composeDwarfNameRows({ routes, client: host.client })
+  // A-50, once the step-3a switch routes it `host` (ISSUE-001; ISSUE-192).
+  const jevRouteRow =
+    host === undefined ? undefined : composeJevRouteRow({ routes, client: host.client })
   // A-47…A-49 and the one-time Jev-key migration, once the step-3a switch routes them (ISSUE-001; ISSUE-217).
   const jevKey = composeJevKeyRows({
     routes,
@@ -1526,6 +1547,7 @@ export async function startUiMain({
     askAnswers?.part === undefined &&
     cut2Rows === undefined &&
     dwarfNameRows === undefined &&
+    jevRouteRow === undefined &&
     jevKey?.part === undefined
       ? stopRows
       : composeRouteTargets([
@@ -1540,6 +1562,7 @@ export async function startUiMain({
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
           ...(cut2Rows === undefined ? [] : [cut2Rows]),
           ...(dwarfNameRows === undefined ? [] : [dwarfNameRows]),
+          ...(jevRouteRow === undefined ? [] : [jevRouteRow]),
           ...(jevKey?.part === undefined ? [] : [jevKey.part])
         ])
   const allShapeAdapters = {
