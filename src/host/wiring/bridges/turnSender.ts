@@ -8,8 +8,12 @@
 import type { DwarfId, ProviderIdentity } from '../../kernel/domain/values'
 import type { TurnSender, TurnSendFailure, TurnSendResult } from '../../modules/conversation'
 import type { ObservedSendTarget } from '../../modules/conversation/adapters/observed-send/ObservedSessionTurnSender'
-import type { ObservationQueries, ObservedProcessIdentities } from '../../modules/observation'
-import type { SessionChannels, TurnInput } from '../../modules/suppliers'
+import type {
+  ObservationQueries,
+  ObservedIdentities,
+  ObservedProcessIdentities
+} from '../../modules/observation'
+import type { ProviderDriver, SessionChannels, TurnInput } from '../../modules/suppliers'
 
 export interface LaunchedTurnSenderDeps {
   /** The dwarf's provider identity (crew's `DwarfView.identity`), or null when it has none. */
@@ -121,4 +125,47 @@ export function observedSendTargets(deps: ObservedSendTargetsDeps): {
       }
     }
   }
+}
+
+/**
+ * The targets crew's `hasDeliveryRoute` reads (INV-33: `canReceiveMessages` needs a delivery route),
+ * from observation alone: crew's own view calls this read, so it must not ask crew back. A dwarf
+ * observation wrote to this Host run is a target with its provider identity and the process identity
+ * observation recorded; any other (a launched dwarf, a dwarf not written to since the Host started)
+ * has no observed route.
+ */
+export function observedRouteTargets(deps: {
+  identities: ObservedIdentities
+  processes: ObservedProcessIdentities
+}): { targetOf(dwarfId: DwarfId): ObservedSendTarget | null } {
+  return {
+    targetOf: (dwarfId) => {
+      const identity = deps.identities.identityOf(dwarfId)
+      if (identity === null) return null
+      return {
+        providerId: identity.providerId,
+        providerSessionId: identity.providerSessionId,
+        process: deps.processes.processIdentityOf(dwarfId)
+      }
+    }
+  }
+}
+
+/**
+ * The person's own CLI binary (ADR-009 D5: one resolver behind every driver's `detect()`; ADR-008
+ * item 1: never one DwarfAI ships), from the first of `drivers` whose detection answers installed;
+ * null when none does. The observed Codex queue runs it (ISSUE-167).
+ */
+export async function installedBinaryOf(
+  drivers: readonly Pick<ProviderDriver, 'detect'>[]
+): Promise<string | null> {
+  for (const driver of drivers) {
+    try {
+      const detected = await driver.detect()
+      if (detected.kind === 'installed') return detected.install.binaryPath
+    } catch {
+      // A detection that fails is no install; the next driver may answer.
+    }
+  }
+  return null
 }

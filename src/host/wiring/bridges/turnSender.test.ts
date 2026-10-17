@@ -4,9 +4,21 @@
 // answer becomes the receipt facts or a `DriverSendError`-shaped failure, never a silent loss.
 import { describe, expect, it } from 'vitest'
 import type { DwarfId, MessageId, ProviderIdentity } from '../../kernel/domain/values'
-import type { DriverSession, SendReceipt, TurnInput } from '../../modules/suppliers'
+import type {
+  DetectResult,
+  DriverSession,
+  ProviderDriver,
+  SendReceipt,
+  TurnInput
+} from '../../modules/suppliers'
 import type { TurnSender } from '../../modules/conversation'
-import { launchedTurnSender, observedSendTargets, routedTurnSender } from './turnSender'
+import {
+  installedBinaryOf,
+  launchedTurnSender,
+  observedRouteTargets,
+  observedSendTargets,
+  routedTurnSender
+} from './turnSender'
 
 const DWARF = '00000000-0000-7000-8000-0000000000d1' as DwarfId
 const IDENTITY: ProviderIdentity = { providerId: 'simulated', providerSessionId: 'session-1' }
@@ -216,5 +228,59 @@ describe('TurnSender bridge: launched sessions to their driver, observed dwarfs 
     expect(targets(view({ departed: true })).targetOf(DWARF)).toBeNull()
     expect(targets(view({ owned: true })).targetOf(DWARF)).toBeNull()
     expect(targets(view(), false).targetOf(DWARF)).toBeNull()
+  })
+})
+
+describe('TurnSender bridge: the delivery-route read, without asking crew (INV-33, ISSUE-167)', () => {
+  it('[INV-33, ADR-014] a dwarf observation wrote to is a route target with its identity and recorded process; any other is none', () => {
+    const PROCESS = { pid: 7, processStartTimeMs: 1, bootId: 'b' }
+    const targets = (identity: ProviderIdentity | null, process: typeof PROCESS | null) =>
+      observedRouteTargets({
+        identities: { identityOf: () => identity },
+        processes: { processIdentityOf: () => process }
+      })
+    expect(targets(IDENTITY, PROCESS).targetOf(DWARF)).toEqual({
+      providerId: 'simulated',
+      providerSessionId: 'session-1',
+      process: PROCESS
+    })
+    expect(targets(IDENTITY, null).targetOf(DWARF)).toEqual({
+      providerId: 'simulated',
+      providerSessionId: 'session-1',
+      process: null
+    })
+    expect(targets(null, PROCESS).targetOf(DWARF)).toBeNull()
+  })
+})
+
+describe('TurnSender bridge: the user binary the observed Codex queue runs (ADR-009 D5)', () => {
+  it('[ADR-008, ADR-009] is the first installed one suppliers detection resolved, or null when none is', async () => {
+    const driver = (answer: DetectResult | Error) =>
+      ({
+        detect: async () => {
+          if (answer instanceof Error) throw answer
+          return answer
+        }
+      }) as unknown as ProviderDriver
+    const installed = (binaryPath: string): DetectResult => ({
+      kind: 'installed',
+      install: {
+        providerId: 'codex',
+        binaryPath,
+        version: '0.153.4',
+        resolvedVia: 'path',
+        statMtimeMs: 1
+      }
+    })
+    expect(
+      await installedBinaryOf([
+        driver(new Error('probe failed')),
+        driver({ kind: 'not-installed' }),
+        driver(installed('/home/j/.local/bin/codex')),
+        driver(installed('/other/codex'))
+      ])
+    ).toBe('/home/j/.local/bin/codex')
+    expect(await installedBinaryOf([driver({ kind: 'not-installed' })])).toBeNull()
+    expect(await installedBinaryOf([])).toBeNull()
   })
 })
