@@ -31,10 +31,13 @@ import { InProcessEventBus, type HandlerFailure } from '../../kernel/InProcessEv
 import type { IntegrationId } from '../../kernel/domain/values'
 import {
   createPreferences,
+  createSecrets,
   createWelcomeStep,
   type ConfigTarget,
-  type PreferencesEvent
+  type PreferencesEvent,
+  type SecretName
 } from '../../modules/preferences'
+import { FakeSecretStore } from '../../modules/preferences/testing/fakeSecretStore'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { emptyDrainGate } from '../../wiring/emptyDrainGate'
@@ -84,7 +87,12 @@ const DEFAULTS = {
  */
 const view = (preferences: object) => ({
   preferences,
-  secrets: [],
+  // AMENDED for ISSUE-216: a configured flag for every SecretName (16 §4.12 `secretStatus`), none
+  // configured here. Was: `secrets: []`, the ISSUE-210 placeholder with no source.
+  secrets: [
+    { name: 'jev-key', configured: false },
+    { name: 'opencode-password', configured: false }
+  ],
   secretBackend: 'unavailable',
   integrations: [
     { id: 'claude-hooks', state: 'off', changedAt: expect.any(Number) as number },
@@ -184,6 +192,13 @@ async function host(
       findLegacy: (target) => Promise.resolve((world.legacy ?? []).includes(target))
     }
   })
+  const secrets = createSecrets({
+    secrets: new FakeSecretStore(),
+    bus,
+    clock,
+    ids,
+    hostEpoch: EPOCH
+  })
   const preferences = {
     commands: module.commands,
     queries: {
@@ -191,7 +206,12 @@ async function host(
       featureFlags: () => module.queries.featureFlags(),
       integrationState: (id: IntegrationId) => module.queries.integrationState(id),
       integrationSettings: () => module.queries.integrationSettings(),
-      welcome: () => welcome.welcome()
+      welcome: () => welcome.welcome(),
+      // AMENDED for ISSUE-216: the view reads the secrets' flags and backend (16 §4.12), here over
+      // the double, never loaded, so nothing is configured and the backend is 'unavailable'.
+      secretStatus: (name: SecretName) => secrets.secretStatus(name),
+      secretStatuses: () => secrets.secretStatuses(),
+      secretBackend: () => secrets.secretBackend()
     }
   }
   registerPreferences(dispatcher, { preferences })

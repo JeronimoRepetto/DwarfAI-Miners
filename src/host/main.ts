@@ -867,7 +867,10 @@ async function bootHost(base: HostBase): Promise<void> {
             ready: () => hostState.current().state === 'ready'
           })
           modules.preferences = preferences
-          return preferences.resumeOnBoot()
+          const resumed = await preferences.resumeOnBoot()
+          // The secrets' flags after a resumed `secrets` step, before any command (ISSUE-216).
+          await preferences.loadSecretStatuses()
+          return resumed
         },
         // Step 3, after the resume: every write a crash left between Tx A and Tx B (07 S14.11).
         reverifyConfigWrites: () => {
@@ -1277,7 +1280,8 @@ async function bootHost(base: HostBase): Promise<void> {
                 })
             }
           }
-          launchingRecovery = modules.launching.launching.recovery(recoveryDeps)
+          // Its report reaches the window as one grouped message with Retry and Dismiss (ISSUE-174).
+          launchingRecovery = modules.launching.recover(recoveryDeps)
           // Stop dwarf ends an owned session through its driver, then its recorded process tree
           // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(

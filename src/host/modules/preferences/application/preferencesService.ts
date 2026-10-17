@@ -8,9 +8,10 @@
 // toggle over the same writer. `WelcomeStepService` below is
 // `PreferencesQueries.welcome` and the first-run step's boot evaluation (07 machine 41, ISSUE-222),
 // joined to the queries by host/wiring; `WelcomeAnswerService` is `PreferencesCommands.answerWelcome`
-// (ISSUE-223), joined to the commands by host/wiring (later: ISSUE-323). The other members of the
-// driving ports (secrets) join with their issues (later: ISSUE-215, ISSUE-216); Reset metrics is
-// the saga's (resetSaga.ts), joined to the commands by host/wiring.
+// (ISSUE-223), joined to the commands by host/wiring (later: ISSUE-323). `SecretStatusService` below
+// is `saveSecret`, `clearSecret` and `secretStatus` (ISSUE-216), joined by host/wiring too. The
+// OpenCode toggle is `setOpenCodePermissions` (ISSUE-228), joined by host/wiring as well; Reset metrics
+// is the saga's (resetSaga.ts), joined to the commands by host/wiring.
 //
 // `set` (INV-105; ADR-024 D9; IPC Gap 10) runs in one transaction: it reads the row, applies the
 // key within the provider rule (domain `withPreference`), saves only when something changed and
@@ -53,6 +54,8 @@ import type { FeatureFlagReader, FeatureFlags } from '../ports/featureFlagReader
 import type { InstalledToolsReader } from '../ports/installedToolsReader'
 import type { WelcomeAnswerStore } from '../ports/welcomeAnswerStore'
 import type { PreferencesStore } from '../ports/preferencesStore'
+import type { SecretBackend, SecretName, SecretStore } from '../ports/secretStore'
+import type { SecretStatus } from '../domain/secretStatus'
 
 /**
  * A credential as the transport mints it (host/transport/auth/mintCredential.ts; ADR-016 item 1):
@@ -554,5 +557,145 @@ function sameWelcome(a: WelcomeStepState, b: WelcomeStepState): boolean {
     a.reason === b.reason &&
     sameList(a.legacyFound, b.legacyFound) &&
     sameList(a.offered, b.offered)
+  )
+}
+
+/**
+ * 16 §4.12 `PreferencesCommands.saveSecret` / `clearSecret` (ADR-017 item 4; ISSUE-216): host/wiring
+ * joins them to the module's commands, as it joins `resetMetrics` and `answerWelcome`.
+ */
+export interface SecretCommands {
+  saveSecret(name: SecretName, value: string): Promise<SecretStatus>
+  clearSecret(name: SecretName): Promise<SecretStatus>
+}
+
+/**
+ * 16 §4.12 `PreferencesQueries.secretStatus`. Package gap: `PreferencesView.secrets` and
+ * `secretBackend` (14 §3.6; source `SecretStore.has()`, 14 §4.1) need every flag and the backend,
+ * which no 16 §4.12 query returns, so `secretStatuses` and `secretBackend` join the queries in
+ * host/wiring, as `integrationSettings` does; no frozen port changes.
+ */
+export interface SecretQueries {
+  secretStatus(name: SecretName): SecretStatus
+  secretStatuses(): SecretStatus[]
+  secretBackend(): SecretBackend
+}
+
+/** The flags' boot read (the queries are synchronous; `SecretStore` is not, 16 §4.12.1). */
+export interface SecretBoot {
+  loadSecretStatuses(): Promise<void>
+}
+
+export interface SecretStatusServiceDeps {
+  /** The OS secret store (ADR-017 item 1): the only place a value is ever written. */
+  secrets: SecretStore
+  bus: DomainEventBus<PreferencesEvent>
+  clock: Clock
+  ids: IdGenerator
+  /** This boot's epoch, carried by every event (ADR-015). */
+  hostEpoch: HostEpoch
+}
+
+/** Every secret, in the order `PreferencesView.secrets` lists them (ADR-017 item 1). */
+const SECRETS: readonly SecretName[] = ['jev-key', 'opencode-password']
+
+/**
+ * The secrets' use cases (16 §4.12, §4.12.1; ADR-017 items 1, 4, 5; 06 INV-107; UC-029). A value
+ * arrives once, is handed to `SecretStore.set` and is never kept, returned, published or validated:
+ * the module holds the configured flags only, as the store answers them (`has`).
+ *
+ * - `saveSecret`: an `'unavailable'` backend writes nothing anywhere (no plain-text fallback, item
+ *   5) and answers `configured: false`; so does a `set` refused as `SecretStoreUnavailable` after
+ *   the backend answered available. Otherwise the answer is `has(name)` after the write. Saving
+ *   never validates the value or makes a network call (INV-107): this service has no other port.
+ * - `clearSecret`: `delete` is idempotent and resolves `'unavailable'` as a successful no-op
+ *   (AMENDMENT-2), so a second clear succeeds; the answer is `has(name)` after it.
+ * - `SecretStatusChanged` with the answered flag is published after each, so every UI connection
+ *   learns it (`preferences.changed`). Any other store failure rejects, publishes nothing and
+ *   leaves the flags as they were.
+ * - One call at a time, in the order asked: a clear asked while a save runs settles after it.
+ * - Until `loadSecretStatuses` read the store at boot, nothing is configured and the backend is
+ *   `'unavailable'` (fail closed).
+ */
+export class SecretStatusService implements SecretCommands, SecretQueries, SecretBoot {
+  private readonly configured = new Map<SecretName, boolean>()
+  private backend: SecretBackend = 'unavailable'
+  /** The saves and clears, one at a time. */
+  private queue: Promise<unknown> = Promise.resolve()
+
+  constructor(private readonly deps: SecretStatusServiceDeps) {}
+
+  saveSecret(name: SecretName, value: string): Promise<SecretStatus> {
+    return this.serialized(async () => {
+      const { secrets } = this.deps
+      this.backend = await secrets.backend()
+      if (this.backend === 'unavailable') return this.settled(name, false)
+      try {
+        await secrets.set(name, value)
+      } catch (error) {
+        if (!isSecretStoreUnavailable(error)) throw error
+        this.backend = 'unavailable'
+        return this.settled(name, false)
+      }
+      return this.settled(name, await secrets.has(name))
+    })
+  }
+
+  clearSecret(name: SecretName): Promise<SecretStatus> {
+    return this.serialized(async () => {
+      const { secrets } = this.deps
+      const outcome = await secrets.delete(name)
+      this.backend = outcome === 'unavailable' ? 'unavailable' : await secrets.backend()
+      return this.settled(name, await secrets.has(name))
+    })
+  }
+
+  secretStatus(name: SecretName): SecretStatus {
+    return { name, configured: this.configured.get(name) ?? false }
+  }
+
+  secretStatuses(): SecretStatus[] {
+    return SECRETS.map((name) => this.secretStatus(name))
+  }
+
+  secretBackend(): SecretBackend {
+    return this.backend
+  }
+
+  async loadSecretStatuses(): Promise<void> {
+    const { secrets } = this.deps
+    this.backend = await secrets.backend()
+    for (const name of SECRETS) this.configured.set(name, await secrets.has(name))
+  }
+
+  private serialized(work: () => Promise<SecretStatus>): Promise<SecretStatus> {
+    const run = this.queue.then(work)
+    this.queue = run.catch(() => undefined)
+    return run
+  }
+
+  /** Keeps the flag, publishes `SecretStatusChanged` with it and answers it. */
+  private settled(name: SecretName, configured: boolean): SecretStatus {
+    this.configured.set(name, configured)
+    this.deps.bus.publish({
+      type: 'SecretStatusChanged',
+      v: 1,
+      id: this.deps.ids.uuidv7() as EventId,
+      at: this.deps.clock.now(),
+      hostEpoch: this.deps.hostEpoch,
+      payload: { status: { name, configured } }
+    })
+    return { name, configured }
+  }
+}
+
+/**
+ * ADR-017 item 1: `set` throws `SecretStoreUnavailable` when no secret service is usable. The class
+ * is the adapter's (R6 keeps it out of reach here), so the refusal is recognised by its name.
+ */
+function isSecretStoreUnavailable(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'SecretStoreUnavailable' || error.message.startsWith('SecretStoreUnavailable'))
   )
 }
