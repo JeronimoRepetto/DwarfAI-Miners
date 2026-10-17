@@ -50,6 +50,9 @@ describe('the legacy seam-A replay scenario (21 §2 note 1)', () => {
     const todayWire: Partial<Record<ChannelKey, string>> = {
       'presence:visibleMines': 'panel:openMine'
     }
+    const renamedSinceCut0: Partial<Record<ChannelKey, string>> = {
+      'dwarf:resetName': 'resetDwarfNameToday'
+    }
     // AMENDED for ISSUE-123 (was: every entry): the generated preload is the release's, so only a row the release still
     // speaks with today's shape is looked up in it; a row a later cut moved spoke its cut-0 member in the cut-0 build.
     const spokenToday = new Set(
@@ -59,7 +62,11 @@ describe('the legacy seam-A replay scenario (21 §2 note 1)', () => {
       const key = entry.channel as ChannelKey
       expect(CHANNELS[key], entry.channel).toBeDefined()
       if (!spokenToday.has(key)) continue
-      expect(members.get(todayWire[key] ?? key), entry.channel).toBe(entry.member)
+      // AMENDED for ISSUE-172: the legacy reset is spoken through `resetDwarfNameToday`, A-N09 owning
+      // `resetDwarfName` (14 §2.2, §8 I-21).
+      expect(members.get(todayWire[key] ?? key), entry.channel).toBe(
+        renamedSinceCut0[key] ?? entry.member
+      )
     }
     // A push row is listened to, never called; every other row is called.
     for (const push of scenario.pushes) {
