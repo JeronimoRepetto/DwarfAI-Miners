@@ -954,6 +954,14 @@ function dockMotion(leaving: boolean): ReturnType<typeof dockWindowMotion> {
   return dockWindowMotion(leaving, layout.value.edge, { withMine: viewState.mineId === null })
 }
 
+/**
+ * A page swap (US-SHELL-003.AC01; motion.md, "Page swap (Panel and Valle)"): the new page fades in
+ * where it stands, with no travel, and the old one is hidden at once, with no exit. The motion is
+ * the one the window slot plays when what it holds is replaced (`dockReplaceMotion`: --dur-base
+ * and --ease-out in, 0 ms out), so it is named here rather than written out a second time.
+ */
+const pageSwapMotion = dockReplaceMotion
+
 watch([() => viewState.mineId !== null, () => dockItem.value !== null], ([mineOpen, dockOpen]) => {
   void applyLayout({ mineOpen, dockOpen })
 })
@@ -1482,7 +1490,7 @@ const {
       bounds nothing is resizing.
     -->
         <div ref="secondaryEl" class="shell-secondary">
-          <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
+          <PanelTransition :motion="pageSwapMotion" :engine="props.engine" @leave="trackPanelLeave">
             <!--
           The Map page (#635) in the page column, where the Mines page stands: the redesign
           replaced the 21px map frame, so the painting is no longer letterboxed inside it.
