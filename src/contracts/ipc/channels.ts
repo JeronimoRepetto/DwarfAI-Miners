@@ -40,6 +40,7 @@ import {
   setOpenCodePermissionsResultSchema,
   renameDwarfParamsSchema,
   renameDwarfResultSchema,
+  resetDwarfNameParamsSchema,
   stopDwarfParamsSchema,
   stopDwarfResultSchema,
   suppliersLaunchableParamsSchema
@@ -855,6 +856,18 @@ export const CHANNELS = {
     status: 'new',
     request: renameDwarfParamsSchema,
     response: ipcResultSchema(renameDwarfResultSchema)
+  },
+  // A-N09 `resetDwarfName` (PO #88; US-MSG-006): the ⋯ menu's Reset name, with no confirmation, the successor of the
+  // legacy `dwarf:resetName` (14 §8 I-21, whose preload member is `resetDwarfNameToday` so the two never share a
+  // name); relays B-M23 `crew.resetName` unchanged (14 §1.2), B-M23's `{}` read as 14 §2.2's `IpcResult<void>`. A dwarf
+  // id and a requestId, so not `sensitive`
+  'dwarf:name:reset': {
+    name: 'dwarf:name:reset',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: resetDwarfNameParamsSchema,
+    response: ipcVoidResultSchema
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

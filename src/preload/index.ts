@@ -237,7 +237,7 @@ export interface DwarfAiMinersApi {
   /** §8 I-21 · `dwarf:setName` · invoke · RETIRE · today shape */
   setDwarfName: (request: TodayRequest<'dwarf:setName'>) => Promise<TodayResult<'dwarf:setName'>>
   /** §8 I-21 · `dwarf:resetName` · invoke · RETIRE · today shape */
-  resetDwarfName: (
+  resetDwarfNameToday: (
     request: TodayRequest<'dwarf:resetName'>
   ) => Promise<TodayResult<'dwarf:resetName'>>
   /** A-N30 · `diag:renderer:report` · send · NEW · target shape */
@@ -308,6 +308,10 @@ export interface DwarfAiMinersApi {
   stopDwarf: (request: TargetRequest<'dwarf:stop'>) => Promise<TargetResult<'dwarf:stop'>>
   /** A-N08 · `dwarf:rename` · invoke · NEW · target shape */
   renameDwarf: (request: TargetRequest<'dwarf:rename'>) => Promise<TargetResult<'dwarf:rename'>>
+  /** A-N09 · `dwarf:name:reset` · invoke · NEW · target shape */
+  resetDwarfName: (
+    request: TargetRequest<'dwarf:name:reset'>
+  ) => Promise<TargetResult<'dwarf:name:reset'>>
 }
 
 const api: DwarfAiMinersApi = {
@@ -497,7 +501,7 @@ const api: DwarfAiMinersApi = {
         ...(typeof request?.name === 'string' ? { name: request.name } : {})
       })
     ),
-  resetDwarfName: (request) =>
+  resetDwarfNameToday: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('dwarf:resetName', textOf(request))),
   reportRendererDiagnostic: (request) =>
     sendOrDrop(() => ipcRenderer.send('diag:renderer:report', request)),
@@ -564,7 +568,8 @@ const api: DwarfAiMinersApi = {
   setAskStep: (request) => invokeOrReject(() => ipcRenderer.invoke('ask:step:set', request)),
   answerWelcome: (request) => invokeOrReject(() => ipcRenderer.invoke('welcome:answer', request)),
   stopDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:stop', request)),
-  renameDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:rename', request))
+  renameDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:rename', request)),
+  resetDwarfName: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:name:reset', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

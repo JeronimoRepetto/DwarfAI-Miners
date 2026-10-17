@@ -94,5 +94,6 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'ask:step:set': 'A-N07',
   'welcome:answer': 'A-N32',
   'dwarf:stop': 'A-N29',
-  'dwarf:rename': 'A-N08'
+  'dwarf:rename': 'A-N08',
+  'dwarf:name:reset': 'A-N09'
 }

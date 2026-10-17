@@ -21,7 +21,9 @@ export const CUT_1_UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   ...UNROUTED,
   'claude:hooks:set': 'cut-2', // A-N31, born `host` in cut 2 (ISSUE-221)
   'ask:step:set': 'cut-2', // A-N07, born `host` in cut 2 (ISSUE-129)
-  'welcome:answer': 'cut-2' // A-N32, born `host` in cut 2 (ISSUE-223)
+  'welcome:answer': 'cut-2', // A-N32, born `host` in cut 2 (ISSUE-223)
+  'dwarf:rename': 'cut-2', // A-N08, born `host` in cut 2 (ISSUE-172 lead decision)
+  'dwarf:name:reset': 'cut-2' // A-N09, born `host` in cut 2 (ISSUE-172 lead decision)
 }
 
 export const CUT_1_ROUTES: readonly ChannelRoute[] = [
