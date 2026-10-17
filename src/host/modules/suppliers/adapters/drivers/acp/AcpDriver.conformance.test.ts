@@ -377,6 +377,20 @@ describe('AcpDriver', () => {
     expect(await againstExpected('c-11-unknown-request')).toEqual([])
   })
 
+  it('[ADR-009, C-11] a row without a question channel declares no form elicitation in initialize', async () => {
+    const run = await runScript(
+      factoryWith({ row: { ...ROW, question: 'none' } }),
+      [{ do: 'launch' }],
+      { variant: variantOf('c-01-launch') },
+      OPTIONS
+    )
+    expect(run.outcomes[0]).toEqual({ resolved: true })
+    expect(run.sent[0]).toMatchObject({ method: 'initialize', params: { clientCapabilities: {} } })
+    expect(
+      (run.sent[0] as { params: { clientCapabilities: unknown } }).params.clientCapabilities
+    ).toEqual({})
+  })
+
   it('[ADR-009, C-01] probe opens launch only when the person agent --help lists its ACP subcommand', async () => {
     const probeWith = async (help: string) => {
       const run = await runScript(factoryWith({ help }), [], { variant: null }, OPTIONS)

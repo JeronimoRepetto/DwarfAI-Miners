@@ -302,6 +302,8 @@ export class AcpDriver implements ProviderDriver {
       env,
       ...(this.deps.pinnedMode === undefined ? {} : { pinnedMode: this.deps.pinnedMode }),
       refusedMode: skipsPermissionAsk,
+      // 15 §2.2 row acp: no form elicitation is declared when the row has no question channel.
+      elicitation: this.deps.row.question === 'none' ? 'none' : 'form',
       capabilitiesFor: (init) =>
         merge(this.deps.record.ceiling, combineLowest(protocolSource(init), probe)),
       onExit: (ref) => this.live.delete(ref.providerSessionId)
