@@ -7,23 +7,23 @@
 //
 // TC-169-03 (a path that fails re-validation at send: `attachment-refused` before any row).
 import { describe, expect, it } from 'vitest'
-import type { DwarfId, MineId, ProviderIdentity } from '../../kernel/domain/values'
+import type { DwarfId, MessageId, MineId, ProviderIdentity } from '../../kernel/domain/values'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { FakeFs } from '../../kernel/fakes/FakeFs'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
-import { MAX_ATTACHMENT_BYTES } from '../../modules/conversation'
+import { MAX_ATTACHMENT_BYTES, type TurnSender } from '../../modules/conversation'
 import { FakeAttachmentReader } from '../../modules/conversation/testing/FakeAttachmentReader'
 import type { DwarfView } from '../../modules/crew'
-import type { DriverSession, TurnInput } from '../../modules/suppliers'
+import type { DriverSession, SendReceipt, TurnInput } from '../../modules/suppliers'
 import { SqliteLifecycleFactLog } from '../../platform/sqlite/SqliteLifecycleFactLog'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { Dispatcher } from '../../transport/dispatcher'
 import { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
-import { serveConversation, type ConversationRouteEvent } from './conversation'
+import { conversationTurns, serveConversation, type ConversationRouteEvent } from './conversation'
 
 const T0 = 1_790_000_000_000
 const MINE = '00000000-0000-7000-8000-0000000001a9' as MineId
@@ -245,5 +245,89 @@ describe('attachments (F4)', () => {
       .map((row) => String(row['name']))
     const stored = tables.flatMap((table) => w.db.all(`SELECT * FROM "${table}"`))
     expect(JSON.stringify(stored)).not.toContain(BYTES_CANARY)
+  })
+})
+
+// L2 (17 §1.2): the send path's `TurnSender` as `route` composes it (16 §4.6 row `TurnSender`;
+// ISSUE-166, ISSUE-167): over crew's view of the dwarf, a launched dwarf's turn goes to its driver
+// session, an observed dwarf's to the observed-session relay, and a departed dwarf, an owned dwarf
+// whose session is gone, or an observed dwarf with no relay wired answers `session-closed`.
+const ROUTED_DWARF = '00000000-0000-7000-8000-0000000167d1' as DwarfId
+const ROUTED_IDENTITY: ProviderIdentity = {
+  providerId: 'simulated',
+  providerSessionId: 'session-167'
+}
+const TURN: TurnInput = {
+  messageId: '00000000-0000-7000-8000-0000000167a1' as MessageId,
+  kind: 'message',
+  text: 'dig',
+  attachments: []
+}
+const RECEIPT: SendReceipt = { confidence: 'confirmed', heldUntilTurnEnd: false, correlation: 'c' }
+const RELAYED = {
+  ok: true as const,
+  value: {
+    confidence: 'unconfirmed' as const,
+    heldUntilTurnEnd: false,
+    correlation: TURN.messageId,
+    reactionEvidence: 'transcript-match' as const
+  }
+}
+
+function turnsWorld(opts: {
+  dwarf: { departed: boolean; owned: boolean } | null
+  live: boolean
+  observed?: boolean
+}) {
+  const relayed: DwarfId[] = []
+  const observedTurns: TurnSender = {
+    send: async (dwarfId) => {
+      relayed.push(dwarfId)
+      return RELAYED
+    }
+  }
+  const session = {
+    ref: ROUTED_IDENTITY,
+    capabilities: { reactionEvidence: 'turn-id' },
+    sendTurn: async () => RECEIPT
+  } as unknown as DriverSession
+  const turns = conversationTurns({
+    crew: {
+      get: () =>
+        opts.dwarf === null ? null : ({ identity: ROUTED_IDENTITY, ...opts.dwarf } as never)
+    },
+    sessions: { sessionFor: () => (opts.live ? session : null) },
+    ...(opts.observed === false ? {} : { observedTurns })
+  })
+  return { turns, relayed }
+}
+
+describe('conversation route: the send path TurnSender', () => {
+  it('[ADR-022, S7.04] a launched dwarf goes to its driver session, an observed dwarf to the observed relay', async () => {
+    const launched = turnsWorld({ dwarf: { departed: false, owned: true }, live: true })
+    expect(await launched.turns.send(ROUTED_DWARF, TURN)).toMatchObject({
+      ok: true,
+      value: { confidence: 'confirmed', reactionEvidence: 'turn-id' }
+    })
+    expect(launched.relayed).toEqual([])
+    const observed = turnsWorld({ dwarf: { departed: false, owned: false }, live: false })
+    expect(await observed.turns.send(ROUTED_DWARF, TURN)).toEqual(RELAYED)
+    expect(observed.relayed).toEqual([ROUTED_DWARF])
+  })
+
+  it('[FM-078, S7.07] a departed or unknown dwarf, an owned dwarf whose session is gone, or no relay wired is session-closed', async () => {
+    for (const opts of [
+      { dwarf: null, live: false },
+      { dwarf: { departed: true, owned: false }, live: false },
+      { dwarf: { departed: false, owned: true }, live: false },
+      { dwarf: { departed: false, owned: false }, live: false, observed: false }
+    ]) {
+      const { turns, relayed } = turnsWorld(opts)
+      expect({ opts, result: await turns.send(ROUTED_DWARF, TURN) }).toEqual({
+        opts,
+        result: { ok: false, error: { kind: 'session-closed' } }
+      })
+      expect(relayed).toEqual([])
+    }
   })
 })

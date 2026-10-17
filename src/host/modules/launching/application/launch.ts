@@ -87,6 +87,7 @@ import {
 } from '../../suppliers'
 import { applyLaunchEvent, requestLaunch, type Launch, type LaunchRequest } from '../domain/launch'
 import { buildLaunchFailure } from '../domain/launchFailure'
+import { spawnTagFor } from '../domain/spawnTag'
 import { CUSTOM_COMMAND_LABEL, NO_SUPPLIER_LABEL } from '../domain/supplierLabel'
 import type { LaunchRecordStore } from '../ports/launchRecordStore'
 import type { LaunchStore } from '../ports/launchStore'
@@ -394,7 +395,7 @@ export class LaunchUseCase {
         ...(request.effort === undefined ? {} : { effort: request.effort }),
         permissionMode: null,
         delegation: null,
-        spawnTag: `v1:${this.deps.installId}:${launch.id}:${launch.hostEpoch}`,
+        spawnTag: spawnTagFor(this.deps.installId, launch.id, launch.hostEpoch),
         onSpawned: async (identity) => {
           if (settled || spawned !== undefined) return
           spawned = identity

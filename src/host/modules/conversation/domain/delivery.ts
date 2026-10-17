@@ -203,3 +203,35 @@ export function reconcileDelivery(
   const found: Delivery = { ...moved(row, 'delivered', at), confidence: 'confirmed' }
   return evidence.actedAfter ? to('S7.15', { ...found, phase: 'reacted' }) : to('S7.14', found)
 }
+
+/** What the boot reconcile reads of an entry ingested for the dwarf (15 §1.2 `ConversationEntry`). */
+export interface ReconcileEntry {
+  role: 'person' | 'dwarf' | 'system-line'
+  text: string
+  providerTime: Instant | null
+  providerAgentId?: string
+}
+
+/**
+ * S7.13: the evidence for a row the Host left `sending` (ADR-022 item 2), in the entries ingested
+ * since the restart, in their order. Found: a `person` entry whose text equals the text as sent
+ * (no folding, S-022-1's uncorrelated rule; the receipt's correlation is Host memory, gone with the
+ * old Host) at or after it was sent, or with no provider time. Acted after: a later `dwarf` entry of
+ * the main conversation (no `providerAgentId`, ADR-022 item 3).
+ */
+export function sendingEvidence(
+  row: { text: string; sentAt: Instant },
+  entries: readonly ReconcileEntry[]
+): ReconcileEvidence {
+  const echo = entries.findIndex(
+    (entry) =>
+      entry.role === 'person' &&
+      entry.text === row.text &&
+      (entry.providerTime === null || entry.providerTime >= row.sentAt)
+  )
+  if (echo < 0) return { found: false }
+  const actedAfter = entries
+    .slice(echo + 1)
+    .some((entry) => entry.role === 'dwarf' && entry.providerAgentId === undefined)
+  return { found: true, actedAfter }
+}
