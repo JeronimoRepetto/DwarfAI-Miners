@@ -138,6 +138,13 @@ export interface CodexAppServerDriverDeps {
   readonly redact: (text: string) => string
   /** FM-085: the rollout check (wiring binds the observer's reader); absent: never confirmed. */
   readonly rolloutConfirms?: RolloutCheck
+  /**
+   * What a resume needs that `SessionRef` does not carry, read from the stored launch record when
+   * this driver instance did not launch the thread (a restarted Host, ISSUE-173): its folder and
+   * the spawn tag of the resumed process. Bound by host/wiring (bridges/resumeContext.ts); the
+   * driver never imports launching (R3, R4). Absent, or null: the thread is unknown here.
+   */
+  readonly resumeContext?: (ref: SessionRef) => { cwd: string; spawnTag: string } | null
 }
 
 /** What a resume needs that `SessionRef` does not carry (package gap, recorded in the hand-off). */
@@ -233,7 +240,9 @@ export class CodexAppServerDriver implements ProviderDriver {
     if (this.live.has(ref.providerSessionId)) {
       throw resumeError('resume-error', 'the thread is live in this Host')
     }
-    const known = this.remembered.get(ref.providerSessionId)
+    // This instance's own launch first; else the stored launch record (a restarted Host, ISSUE-173).
+    const known =
+      this.remembered.get(ref.providerSessionId) ?? this.deps.resumeContext?.(ref) ?? undefined
     if (known === undefined) {
       throw resumeError('resume-error', 'the folder and spawn tag of the thread are unknown')
     }
