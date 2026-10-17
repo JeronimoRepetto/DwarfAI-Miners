@@ -208,8 +208,16 @@ describe('ClaudeAcpDriver', () => {
             ]
           }
         ],
-        // AMENDMENT-19: the adapter refuses skip-permission modes for this session.
-        _meta: { claudeCode: { options: { allowDangerouslySkipPermissions: false } } }
+        // AMENDMENT-19: the adapter refuses skip-permission modes for this session. The launch is
+        // gated, so DwarfAI's two delegation tools are pre-approved (ISSUE-201, ADR-008 item 3).
+        _meta: {
+          claudeCode: {
+            options: {
+              allowDangerouslySkipPermissions: false,
+              allowedTools: ['mcp__dwarfai__delegate_subtask', 'mcp__dwarfai__subtask_result']
+            }
+          }
+        }
       }
     })
     // initialize declares only the form elicitation the question card implements (15 §4.10).
