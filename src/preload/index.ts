@@ -312,6 +312,14 @@ export interface DwarfAiMinersApi {
   resetDwarfName: (
     request: TargetRequest<'dwarf:name:reset'>
   ) => Promise<TargetResult<'dwarf:name:reset'>>
+  /** A-N10 · `host:recovery:retry` · invoke · NEW · target shape */
+  retryRecovery: (
+    request: TargetRequest<'host:recovery:retry'>
+  ) => Promise<TargetResult<'host:recovery:retry'>>
+  /** A-N11 · `host:recovery:dismiss` · invoke · NEW · target shape */
+  dismissRecovery: (
+    request: TargetRequest<'host:recovery:dismiss'>
+  ) => Promise<TargetResult<'host:recovery:dismiss'>>
 }
 
 const api: DwarfAiMinersApi = {
@@ -569,7 +577,12 @@ const api: DwarfAiMinersApi = {
   answerWelcome: (request) => invokeOrReject(() => ipcRenderer.invoke('welcome:answer', request)),
   stopDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:stop', request)),
   renameDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:rename', request)),
-  resetDwarfName: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:name:reset', request))
+  resetDwarfName: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:name:reset', request)),
+  retryRecovery: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('host:recovery:retry', request)),
+  dismissRecovery: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('host:recovery:dismiss', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -9,13 +9,14 @@
 import { z } from 'zod'
 import {
   feedPageSchema,
+  hostRecoveryReportViewSchema,
   mineHistoryViewSchema,
   mineIdSchema,
   stopAllOutcomeSchema,
   supplierEntryViewSchema
 } from '../wire'
 import { hostFrameSchema } from '../host-protocol/envelope'
-import { ipcResultSchema, type IpcResult } from '../host-protocol/errors'
+import { ipcResultSchema, outcomeSchema, type IpcResult } from '../host-protocol/errors'
 import { snapshotPageSchema, snapshotParamsSchema } from '../host-protocol/snapshot'
 import {
   answerOutcomeSchema,
@@ -30,6 +31,7 @@ import {
   launchCustomParamsSchema,
   launchParamsSchema,
   metricsResetResultSchema,
+  recoveryActionParamsSchema,
   resetMetricsParamsSchema,
   sendMessageParamsSchema,
   sendMessageResultSchema,
@@ -868,6 +870,27 @@ export const CHANNELS = {
     status: 'new',
     request: resetDwarfNameParamsSchema,
     response: ipcVoidResultSchema
+  },
+  // A-N10 `retryRecovery` (PO #90; OQ-41 A; ADR-015 item 5): the grouped recovery message's Retry; relays B-M35
+  // `launching.retryRecovery` unchanged (14 §1.2), answered with the settled report or `no-report`. The request is
+  // an epoch and a requestId, so not `sensitive`
+  'host:recovery:retry': {
+    name: 'host:recovery:retry',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: recoveryActionParamsSchema,
+    response: ipcResultSchema(outcomeSchema(hostRecoveryReportViewSchema, z.literal('no-report')))
+  },
+  // A-N11 `dismissRecovery` (PO #90; OQ-43): the grouped recovery message's Dismiss; relays B-M36
+  // `launching.dismissRecovery` unchanged (14 §1.2). An epoch and a requestId, so not `sensitive`
+  'host:recovery:dismiss': {
+    name: 'host:recovery:dismiss',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: recoveryActionParamsSchema,
+    response: ipcResultSchema(outcomeSchema(z.object({}).strict(), z.literal('no-report')))
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

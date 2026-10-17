@@ -55,6 +55,14 @@ describe('echoesTypedSend', () => {
   })
   const at = (providerTime: number) => echoesTypedSend(echo({ providerTime }), 'transcript', row, 0)
 
+  it('[INV-60, S-022-1] the transcript echo of a multi-line message typed by the console relay is its console normalization', () => {
+    const typed = { text: 'Dig  the north\r\nseam ', createdAt: WRITTEN_AT }
+    expect(echoesTypedSend(echo(), 'transcript', typed, 0)).toBe(true)
+    expect(echoesTypedSend(echo({ text: 'Dig the north  seam' }), 'transcript', typed, 0)).toBe(
+      false
+    )
+  })
+
   it('[INV-60, ADR-007] an observed person entry echoes a waiting row only with the exact text inside the typed-echo window', () => {
     expect(at(WRITTEN_AT + TYPED_ECHO_WINDOW_MS)).toBe(true)
     expect(at(WRITTEN_AT + TYPED_ECHO_WINDOW_MS + 1)).toBe(false)
