@@ -28,6 +28,15 @@ export const FORBIDDEN_FLAGS: readonly string[] = [
  */
 export const ALWAYS_OPTION_KINDS: readonly string[] = ['allow_always']
 
+/**
+ * The permission modes that settle a tool use without asking (AMENDMENT-19): Claude Code 2.1.x's
+ * `--permission-mode` choices `acceptEdits`, `auto` and `dontAsk` (its fourth such choice is
+ * `bypassPermissions`, already in `FORBIDDEN_FLAGS`). Refused only as the value of a
+ * `--permission-mode` flag or a `permissionMode` option, never as a substring: `auto` is an
+ * ordinary word elsewhere (a model or effort value), so the static test does not scan for these.
+ */
+export const AUTO_APPROVE_PERMISSION_MODES: readonly string[] = ['acceptEdits', 'auto', 'dontAsk']
+
 /** The two launch facts of ADR-013 item 4; the exception needs both on. */
 export interface DelegationGate {
   readonly subagentDelegationOn: boolean
@@ -47,8 +56,18 @@ const ALLOWED_TOOLS_KEY = /^allowed_?tools$/i
 const APPROVAL_MODE_KEY = /approval_mode$/i
 const PRE_APPROVE = 'approve'
 
+const PERMISSION_MODE_FLAG = /^--permission-mode(?:=(.*))?$/i
+const PERMISSION_MODE_KEY = /^permission_?mode$/i
+
 const REFUSED: readonly string[] = [...FORBIDDEN_FLAGS, ...ALWAYS_OPTION_KINDS]
 const REFUSED_LOWER = REFUSED.map((flag) => flag.toLowerCase())
+const AUTO_APPROVE_LOWER = AUTO_APPROVE_PERMISSION_MODES.map((mode) => mode.toLowerCase())
+
+/** A permission-mode value that settles a tool use without asking is refused (AMENDMENT-19). */
+function checkPermissionMode(value: string): void {
+  if (AUTO_APPROVE_LOWER.includes(unquote(value).toLowerCase()))
+    refuse(`a permission mode that does not ask (${value.trim()})`)
+}
 
 function refuse(reason: string): never {
   throw new HostInvariantError(
@@ -108,6 +127,13 @@ function checkArgv(argv: readonly string[], gateOn: boolean): void {
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index] ?? ''
     checkText(token)
+    const mode = PERMISSION_MODE_FLAG.exec(token)
+    if (mode !== null) {
+      const value = mode[1] ?? argv[++index] ?? ''
+      checkText(value)
+      checkPermissionMode(value)
+      continue
+    }
     const allowed = ALLOWED_TOOLS_FLAG.exec(token)
     if (allowed !== null) {
       const value = allowed[1] ?? argv[++index] ?? ''
@@ -136,6 +162,7 @@ function checkArgv(argv: readonly string[], gateOn: boolean): void {
 function checkOptions(value: unknown, path: readonly string[], gateOn: boolean): void {
   if (typeof value === 'string') {
     checkText(value)
+    if (PERMISSION_MODE_KEY.test(path[path.length - 1] ?? '')) checkPermissionMode(value)
     checkSetting(path, value, gateOn)
     return
   }

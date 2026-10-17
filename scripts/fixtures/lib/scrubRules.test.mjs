@@ -705,4 +705,132 @@ describe('scrub rules (17 §1.4)', () => {
     const [scrubbed] = scrubFixtureSet([{ name: 'leaky.jsonl', text: leaky }], IDENTITY)
     expect(findSurvivors(scrubbed.text, IDENTITY)).toEqual([])
   })
+
+  it('[ADR-008] the organization name of a claude-agent-acp auth status is replaced wherever the set repeats it, and the plan stays', () => {
+    const raw = jsonl('c-01-launch.jsonl', [
+      {
+        jsonrpc: '2.0',
+        method: '_auth/status_update',
+        params: {
+          authStatus: {
+            kind: 'account',
+            label: 'Claude Team',
+            account: { plan: 'team', email: 'canary.user@example.com', organization: 'CanaryCo' }
+          }
+        }
+      },
+      { method: 'session/update', params: { update: { text: 'Signed in to CanaryCo.' } } }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const lines = records(scrubbed)
+
+    expect(scrubbed.text.toLowerCase()).not.toContain('canary')
+    expect(lines[0].params.authStatus.account).toEqual({
+      plan: 'team',
+      email: '<EMAIL>',
+      organization: '<ORGANIZATION>'
+    })
+    expect(lines[1].params.update.text).toBe('Signed in to <ORGANIZATION>.')
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] Claude Code built-in commands and permission modes listed by claude-agent-acp stay, so protocol keys such as model and _claude/model are never rewritten', () => {
+    const raw = jsonl('c-01-launch.jsonl', [
+      {
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'available_commands_update',
+            availableCommands: [
+              'model',
+              'effort',
+              'fast',
+              'config',
+              'context',
+              'run',
+              'canary-deploy'
+            ].map((name) => ({ name, description: name, input: null }))
+          }
+        }
+      },
+      {
+        id: 1,
+        result: {
+          configOptions: [
+            {
+              id: 'mode',
+              category: 'mode',
+              options: ['default', 'acceptEdits', 'bypassPermissions', 'dontAsk', 'plan'].map(
+                (value) => ({ value })
+              )
+            },
+            { id: 'effort', category: 'thought_level', options: [{ value: 'high' }] },
+            { id: 'fast', category: 'model_config', options: [{ value: 'on' }] }
+          ]
+        }
+      },
+      {
+        method: 'session/update',
+        params: { update: { sessionUpdate: 'usage_update', _meta: { '_claude/model': 'm' } } }
+      },
+      { id: 2, result: { _meta: { quota: { model_usage: [{ model: 'm' }] } } } }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const lines = records(scrubbed)
+
+    expect(lines[0].params.update.availableCommands.map((c) => c.name)).toEqual([
+      'model',
+      'effort',
+      'fast',
+      'config',
+      'context',
+      'run',
+      '<command-1>'
+    ])
+    expect(lines[1].result.configOptions.map((o) => o.id)).toEqual(['mode', 'effort', 'fast'])
+    expect(lines[1].result.configOptions[0].options.map((o) => o.value)).toEqual([
+      'default',
+      'acceptEdits',
+      'bypassPermissions',
+      'dontAsk',
+      'plan'
+    ])
+    expect(lines[2].params.update._meta).toEqual({ '_claude/model': 'm' })
+    expect(lines[3].result._meta.quota).toEqual({ model_usage: [{ model: 'm' }] })
+  })
+
+  it('[C-04, C-19] the timing stream counts the bytes of the scrubbed streams, so each received line still completes after the same sent frames', () => {
+    const repo = IDENTITY.repoRoot
+    const first = `${JSON.stringify({ id: 0, result: { cwd: repo } })}\n`
+    const second = `${JSON.stringify({ id: 1, result: { text: 'hello' } })}\n`
+    const received = { name: 'c-01-launch.jsonl', text: first + second }
+    const sent = { name: 'c-01-launch-sent.jsonl', text: '{"id":0}\n{"id":1}\n' }
+    const at = 1_800_000_000_000
+    const half = Math.floor(Buffer.byteLength(first) / 2)
+    const timing = jsonl('c-01-launch-timing.jsonl', [
+      { at, event: 'spawned' },
+      { at, stream: 'sent', bytes: 9 },
+      // The first line arrives in two chunks; the second only after the second sent frame.
+      { at: at + 1, stream: 'received', bytes: half },
+      { at: at + 2, stream: 'received', bytes: Buffer.byteLength(first) - half },
+      { at: at + 3, stream: 'sent', bytes: 9 },
+      { at: at + 4, stream: 'received', bytes: Buffer.byteLength(second) }
+    ])
+
+    const scrubbed = scrubFixtureSet([received, sent, timing], IDENTITY)
+    const [scrubbedReceived, , scrubbedTiming] = scrubbed
+    const lines = scrubbedReceived.text.split(/(?<=\n)/)
+    const marks = records(scrubbedTiming)
+
+    expect(lines[0]).toContain('<REPO>')
+    expect(marks.filter((mark) => mark.stream === 'received').map((mark) => mark.bytes)).toEqual([
+      0,
+      Buffer.byteLength(lines[0]),
+      Buffer.byteLength(lines[1])
+    ])
+    expect(marks.filter((mark) => mark.stream === 'sent').map((mark) => mark.bytes)).toEqual([9, 9])
+    expect(scrubFixtureSet(scrubbed, IDENTITY)).toEqual(scrubbed)
+  })
 })

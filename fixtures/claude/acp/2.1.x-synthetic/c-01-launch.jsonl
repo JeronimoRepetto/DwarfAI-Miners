@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"embeddedContext":true},"mcpCapabilities":{"http":true,"sse":true},"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"claude-agent-acp","version":"0.0.0-synthetic"},"authMethods":[]}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"00000000-0000-4000-8000-00000000ac01","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Manual"},{"id":"acceptEdits","name":"Accept edits"},{"id":"plan","name":"Plan"},{"id":"bypassPermissions","name":"Bypass permissions"}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"00000000-0000-4000-8000-00000000ac01","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Ready when "}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"00000000-0000-4000-8000-00000000ac01","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"you are."}}}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}

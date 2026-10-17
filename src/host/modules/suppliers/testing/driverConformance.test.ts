@@ -115,6 +115,33 @@ describe('driverConformance harness', () => {
       expect(broken.failures.join('\n')).toMatch(/\/opt\/dwarfai\/bundled\/line-test/)
     })
 
+    it('[C-02, ADR-009] a spawned executable passes only when it is the install or a declared user-installed adapter', async () => {
+      // The broken line driver spawns `/opt/dwarfai/bundled/line-test` instead of the install.
+      const spawnsOther = lineFactory({ bundledPath: true })
+      // Declared as the person's resolved adapter (ADR-009 D5 (a)), that executable is allowed.
+      const declared = await runCase('C-02', spawnsOther, lineFixtures, {
+        ...LINE_OPTIONS,
+        userAdapters: ['/opt/dwarfai/bundled/line-test']
+      })
+      expect(declared).toEqual(OK)
+      // Any other path still fails, whatever adapters are declared: a bundled binary is never one.
+      const otherAdapter = await runCase('C-02', spawnsOther, lineFixtures, {
+        ...LINE_OPTIONS,
+        userAdapters: ['/home/j/.npm-global/bin/line-test-acp']
+      })
+      expect(otherAdapter.ok).toBe(false)
+      expect(otherAdapter.failures.join('\n')).toMatch(
+        /spawned \/opt\/dwarfai\/bundled\/line-test, not the person's install/
+      )
+      // A declared adapter does not widen the install: the conformant driver still passes.
+      expect(
+        await runCase('C-02', lineFactory(), lineFixtures, {
+          ...LINE_OPTIONS,
+          userAdapters: ['/home/j/.npm-global/bin/line-test-acp']
+        })
+      ).toEqual(OK)
+    })
+
     it('[C-03] a driver that reports a spawn EACCES, a refused shim or a handshake timeout as anything but could-not-start with an output tail of at most 400 characters fails the harness', async () => {
       const { conformant, broken } = await twins('C-03', { eaccesAsNotInstalled: true })
       const unbounded = await runCase(
