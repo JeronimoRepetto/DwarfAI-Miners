@@ -1,0 +1,88 @@
+{
+  "case": "C-11",
+  "description": "15 §1.4 ask.opened, §2.7 (HO-11), FM-070: an unknown server request is answered JSON-RPC -32601 and opens no ask — the ChatGPT token refresh (DwarfAI never handles a provider credential, ADR-008 item 2) and a dynamic tool call; an approval without its thread, turn and item ids is malformed and answered decline (fail closed). Each drift is reported once; the turn goes on.",
+  "script": [{ "do": "launch" }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "error",
+      "cause": {
+        "kind": "protocol-drift",
+        "detail": "unknown server request account/chatgptAuthTokens/refresh"
+      }
+    },
+    {
+      "t": "error",
+      "cause": { "kind": "protocol-drift", "detail": "unknown server request item/tool/call" }
+    },
+    {
+      "t": "error",
+      "cause": {
+        "kind": "protocol-drift",
+        "detail": "malformed server request item/commandExecution/requestApproval"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000001",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000003",
+        "role": "dwarf",
+        "text": "Carrying on.",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "0000000a-0000-4000-8000-000000000001",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 106,
+      "error": { "code": -32601, "message": "Method not found" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 105,
+      "error": { "code": -32601, "message": "Method not found" }
+    },
+    { "jsonrpc": "2.0", "id": 107, "result": { "decision": "decline" } }
+  ]
+}
