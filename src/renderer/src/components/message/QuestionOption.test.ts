@@ -93,3 +93,30 @@ describe('the request block', () => {
     }
   })
 })
+
+/* --- ISSUE-260: the option rows under the C-08 rule (ISSUE-251 follow-up) — one block, appended --- */
+
+/*
+ * An option's label and description are the agent's words, an ask payload (18 §5.1, C-08): drawn
+ * without their controls and escapes, each inside a bidi-isolated text node of its own, so an
+ * override inside one cannot reorder the row's number key or the next row.
+ */
+describe('QuestionOption untrusted strings (C-08)', () => {
+  it('[NFR-SEC-07] draws a hostile label and description stripped, each inside its own bdi', () => {
+    const row = mount(QuestionOption, {
+      props: {
+        label: '\u001b[31mAllow\u202E exe.txt\u0000\u001b[0m',
+        index: 0,
+        description: 'Runs \u2066it\u2069 now\u0007'
+      }
+    })
+    expect(row.find('.dm-qopt__label').element.textContent).toBe('Allow exe.txt')
+    expect(row.find('.dm-qopt__desc').element.textContent).toBe('Runs it now')
+    const label = row.find('.dm-qopt__label > bdi')
+    expect(label.exists(), 'no <bdi> around the label').toBe(true)
+    expect(label.element.textContent).toBe('Allow exe.txt')
+    const description = row.find('.dm-qopt__desc > bdi')
+    expect(description.exists(), 'no <bdi> around the description').toBe(true)
+    expect(description.element.textContent).toBe('Runs it now')
+  })
+})
