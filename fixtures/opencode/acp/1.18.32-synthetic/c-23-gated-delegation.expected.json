@@ -1,0 +1,77 @@
+{
+  "case": "C-23",
+  "description": "ISSUE-203, ADR-013 items 2-3, 15 §4.7, §4.10: a launch with both delegation gates on (the request carries a ticket-file DelegationInjection; row O2 mcpInjection ticket-file per the SP-12 foreman ruling of 2026-10-17). session/new carries the relay entry as a stdio MCP server named dwarfai whose own env holds only ELECTRON_RUN_AS_NODE and the credential file PATH; opencode's own argv and env hold neither, and no credential value and no DWARFAI_DELEGATION_TOKEN string is in any argv, env or frame (C-23, INV-59, INV-83). OpenCode acp has no pre-approval option, so nothing else is added to session/new (C-24). The agent side is the c-01-launch handshake (the recorded OpenCode 1.18.32 initialize and session/new answers): the agent's answers do not depend on mcpServers.",
+  "script": [{ "do": "launch", "delegation": true }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "opencode:opencode:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "opencode:opencode:{session}:1:1",
+        "role": "dwarf",
+        "text": "Ready when you are.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "opencode:opencode:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": { "protocolVersion": 1, "clientCapabilities": {} }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": [
+          {
+            "name": "dwarfai",
+            "command": "/opt/dwarfai/host/dwarfai",
+            "args": ["dwarfai-mcp-relay"],
+            "env": [
+              { "name": "ELECTRON_RUN_AS_NODE", "value": "1" },
+              {
+                "name": "DWARFAI_MCP_CREDENTIAL_FILE",
+                "value": "/home/j/.dwarfai/run/mcp/launch-1.cred"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [{ "type": "text", "text": "first prompt" }]
+      }
+    }
+  ]
+}
