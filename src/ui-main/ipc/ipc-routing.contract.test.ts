@@ -32,7 +32,6 @@ import {
   composeProviderShapeAdapters,
   composeResetFanout,
   composeStopAllRelay,
-  legacyClaudeHooksComposed,
   type LegacyAskRelayComposition,
   type LegacyRuntimeSurface
 } from '../index'
@@ -2551,26 +2550,6 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     expect(composeDwarfNameRows({ routes: CUT_1_ROUTES, client })).toBeUndefined()
   })
 
-  it('[ADR-001] in cut 2 the legacy hook installer and the Claude half of the legacy hook channel are not composed, and the OpenCode plugin route still is', () => {
-    // TC-141-06: the root derives the legacy Claude hook composition from the route table (21 §1 item 4, §4 row
-    // "Claude hook entry": the Host is that entry's only writer from cut 2).
-    expect(legacyClaudeHooksComposed(ROUTES)).toBe(false)
-    expect(legacyClaudeHooksComposed(CUT_1_ROUTES)).toBe(true)
-    // LegacyRuntimeRoute builds today's Claude HookChannel (installer and restore) only through the switch, and the
-    // shared listener's Claude events reach today's permission registry only through it; the OpenCode plugin channel
-    // and its route of the shared listener are composed whatever the table (until 4a). The switch's behaviour is
-    // proven in src/legacy-bridge/legacyClaudeHooksSwitch.test.ts.
-    const SRC = resolve(import.meta.dirname, '../..')
-    const route = readFileSync(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'), 'utf8')
-    expect(route).toMatch(/legacyClaudeHookComposition\(options\.claudeHooks/)
-    expect(route).not.toMatch(/=\s*new HookChannel\(/)
-    expect(route).toMatch(/onEvent: \(event\) => claude\.onEvent\(event\)/)
-    expect(route).toMatch(/new OpenCodePluginChannel\(\{[^}]*listener: hookListener/s)
-    // The root hands the decision to today's composition.
-    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
-    expect(root).toMatch(/claudeHooks: legacyClaudeHooksComposed\(ROUTES\)/)
-  })
-
   it('[ADR-001] in cut 2 every host route uses only seam-B members born by cut 2 and none has parity pending', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of ROUTES.filter((r) => r.owner === 'host')) {
@@ -2614,7 +2593,10 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     })
   })
 
-  it('[ADR-016] with A-40 and A-41 flipped back to their cut-1 routes the legacy hook installer and the Claude hook route are composed again, and never while the Host writes the Claude hook entry', async () => {
+  it('[ADR-016] with A-40 and A-41 flipped back to their cut-1 routes the build withdraws the rows that write the Claude hook entry, and the router refuses them', async () => {
+    // AMENDED for ISSUE-142 (was: "…the legacy hook installer and the Claude hook route are composed again, and never
+    // while the Host writes the Claude hook entry"): after the cut-2 retirement today's Claude hook half is composed in
+    // no table, the rollback one included ("cut-2 retirement" below), so this case keeps the rollback rows only.
     // AMENDED for ISSUE-141 (verifier finding, 2026-10-14; was: `legacy` with today's shape, `legacyToday(key)`): the
     // folded row keeps the renderer's target shape through `LegacyAnswerShapeAdapter`, or no answer would be delivered.
     // TC-141-06 (21 §2 cut 2 row "Rollback"; §2.1 item 1; §1 items 4, 8): the rollback build of cut 2 routes A-40 and
@@ -2651,17 +2633,8 @@ describe('release cut 2 (21 §2 cut 2)', () => {
             ['preferences.setClaudeHooks', 'preferences.answerWelcome'].includes(member)
           )
       )
-    expect(legacyClaudeHooksComposed(rolledBack.routes)).toBe(true)
     expect(hostWritesClaudeEntry(rolledBack)).toBe(false)
-    expect(legacyClaudeHooksComposed(cut2.routes)).toBe(false)
     expect(hostWritesClaudeEntry(cut2)).toBe(true)
-    // One writer per release, in every table this tree can build (21 §1 item 4).
-    for (const table of [CUT_1_TABLE, cut2, rolledBack]) {
-      expect(
-        legacyClaudeHooksComposed(table.routes) && hostWritesClaudeEntry(table),
-        table.release
-      ).toBe(false)
-    }
     // The rollback build's router refuses the withdrawn rows like a row with no route. (AMENDED for ISSUE-141: its
     // A-40/A-41 rows name `LegacyAnswerShapeAdapter`, so the router is handed one, as the root binds it.)
     const reached: string[] = []
@@ -2696,6 +2669,49 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     expect(CUT_2_ROLLBACK).toBe(cut2RolledBack(cut2))
     expect(cut2RolledBack(cut2)).toBe(false)
     expect(cut2RolledBack(rollbackOf(cut2, 'cut-2'))).toBe(true)
+  })
+})
+
+describe('cut-2 retirement (21 §2 cut 2)', () => {
+  // ISSUE-142 (21 §2 cut 2 "Retired at the end"; 21 §1 items 3, 4, 7; §4 row "Claude hook entry"): after the cut-2 soak
+  // (OQ-71) today's Claude ask composition leaves LegacyRuntimeRoute whatever the route table, so a table that routes
+  // A-40 and A-41 `legacy` again composes none of it either: from here cut 2 rolls forward only. The Host's evaluated
+  // copies in `asking` and its ingress are the only path; the shared loopback listener stays for the OpenCode plugin
+  // route until 4a. The legacy files leave with the legacy tree in cut 5 (src/legacy-bridge/retiredClaudeAsks.test.ts).
+  const cut2: RouteTable = {
+    release: ROUTES_RELEASE,
+    routes: ROUTES,
+    unrouted: UNROUTED,
+    retired: RETIRED,
+    adapters: LEGACY_BRIDGE_ADAPTERS
+  }
+  const SRC = resolve(import.meta.dirname, '../..')
+  const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
+
+  it('[ADR-012] after the cut-2 retirement no legacy Claude hook installer, hook route, prompt registry or keystroke path is composed, whatever the route table', () => {
+    for (const table of [cut2, rollbackOf(cut2, 'cut-2')]) {
+      expect(checkRouteTable(table, KEYS)).toEqual([])
+    }
+    const route = read('legacy-bridge/LegacyRuntimeRoute.ts')
+    // No hook installer: today's `HookChannel` (installer and restore) is neither imported nor built.
+    expect(route).not.toMatch(/\bHookChannel\b|main\/hooks\/(hookChannel|hookInstaller)'/)
+    // No Claude hook route and no prompt registry: nothing hands a Claude hook event to today's runtime.
+    expect(route).not.toMatch(/noteHookEvent|main\/hooks\/permissionPrompts'/)
+    // No keystroke path: today's permission keystrokes are not composed.
+    expect(route).not.toMatch(/main\/textDelivery\/permissionKeys'|permissionKeystroke/)
+    // Whatever the route table: the root derives nothing of today's Claude hook half from it any more.
+    expect(route).not.toMatch(/options\.claudeHooks|legacyClaudeHookComposition/)
+    expect(read('ui-main/index.ts')).not.toMatch(/legacyClaudeHooks(Composed|Composition)\b/)
+  })
+
+  it('[ADR-016] after the cut-2 retirement the legacy loopback listener serves only the OpenCode plugin route', () => {
+    const route = read('legacy-bridge/LegacyRuntimeRoute.ts')
+    // One listener, whose Claude sink reaches nothing: only today's hook channel (the installer's) opened its Claude route.
+    expect(route.match(/new HookListener\(/g)).toHaveLength(1)
+    expect(route).toMatch(/new HookListener\(\{[^}]*onEvent: \(\) => \{\},\s*onOpenCodePush,/s)
+    // The OpenCode plugin channel still opens its own route on that listener (until 4a).
+    expect(route).toMatch(/new OpenCodePluginChannel\(\{[^}]*listener: hookListener/s)
+    expect(route).toMatch(/openCodePluginError = \(await openCodePlugin\.restore\(\)\)\?\.error/)
   })
 })
 
