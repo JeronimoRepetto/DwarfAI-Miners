@@ -5,6 +5,7 @@ import { HostInvariantError } from '../../../../../kernel/domain/errors'
 import {
   ALWAYS_OPTION_KINDS,
   assertNoForbidden,
+  AUTO_APPROVE_PERMISSION_MODES,
   FORBIDDEN_FLAGS,
   type DelegationGate
 } from './forbiddenFlags'
@@ -92,6 +93,29 @@ describe('forbidden flags (ADR-008 item 3)', () => {
         true
       )
     }
+  })
+
+  it('[C-24] a permission mode that runs tools without asking is refused as a permission-mode value (AMENDMENT-19)', () => {
+    // Claude Code 2.1.x `--permission-mode` choices (fixtures/claude/stream-json/2.1.x help):
+    // acceptEdits, auto, bypassPermissions, manual, dontAsk, plan. Each of acceptEdits, auto and
+    // dontAsk settles a tool use without the permission channel being asked.
+    const autoApprove: readonly string[] = ['acceptEdits', 'auto', 'dontAsk']
+    expect(AUTO_APPROVE_PERMISSION_MODES).toEqual(expect.arrayContaining([...autoApprove]))
+    for (const mode of [...autoApprove, 'bypassPermissions']) {
+      expect(refuses(['-p', '--permission-mode', mode], {}), `argv ${mode}`).toBe(true)
+      expect(refuses(['-p', `--permission-mode=${mode}`], {}), `argv =${mode}`).toBe(true)
+      expect(refuses(['--permission-mode', mode.toUpperCase()], {}), `argv ${mode} any case`).toBe(
+        true
+      )
+      expect(refuses([], { permissionMode: mode }), `option ${mode}`).toBe(true)
+      expect(refuses([], { session: { permission_mode: mode } }), `nested ${mode}`).toBe(true)
+    }
+    // The asking modes pass, and the words are refused only as a mode value, never elsewhere.
+    for (const mode of ['default', 'plan']) {
+      expect(refuses(['-p', '--permission-mode', mode], {}), `argv ${mode}`).toBe(false)
+      expect(refuses([], { permissionMode: mode }), `option ${mode}`).toBe(false)
+    }
+    expect(refuses(['--model', 'auto', '--effort', 'auto'], { mode: 'auto' })).toBe(false)
   })
 
   it('[C-24] an "always" approval is refused wherever an approval or permission is set', () => {
