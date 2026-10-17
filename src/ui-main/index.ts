@@ -140,6 +140,7 @@ import {
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
 import { createNativeActions, type ServedNativeActions } from './window/application/nativeActions'
+import { TerminalConsoleRaiser } from './window/adapters/terminal/TerminalConsoleRaiser'
 import { ElectronFolderPicker } from './window/adapters/ElectronFolderPicker'
 import {
   createMinesAdminRows,
@@ -1771,7 +1772,9 @@ function electronNativeRows(panelWindow: () => BrowserWindow | undefined): {
     clipboard: new ElectronClipboard(clipboard),
     opener: new ElectronExternalOpener(shell),
     // Cut 0 has one mode window, the Panel, where every attach and add control is pressed.
-    parentWindow: () => ({ windowId: panelWindow()?.id ?? -1 })
+    parentWindow: () => ({ windowId: panelWindow()?.id ?? -1 }),
+    // A-13's execute half (ISSUE-170): the console target the Host resolved, raised or opened in the OS terminal.
+    consoles: new TerminalConsoleRaiser()
   })
   return {
     rows: createNativeRows({

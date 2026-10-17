@@ -66,6 +66,8 @@ type ConnectionState =
       kind: 'authenticated'
       role: ChannelRole
       clientId: string
+      /** `viewer` only: the dwarf its per-view token is bound to (ADR-031 item 2). */
+      dwarfId?: string
       attached: AttachedConnection
       outbound: Outbound
       silence: SilenceWatch
@@ -177,6 +179,8 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
       const attached: AttachedConnection = {
         role: answer.role,
         clientId: answer.helloOk.clientId,
+        // ADR-031 item 2: a viewer receives only the frames of the dwarf its token is bound to.
+        ...(answer.dwarfId === undefined ? {} : { dwarfId: answer.dwarfId }),
         send: (name, data, seq) =>
           outbound.sendEvt({ type: 'evt', seq, epoch: deps.epoch, name, data }),
         end: () => end()
@@ -185,6 +189,7 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
         kind: 'authenticated',
         role: answer.role,
         clientId: answer.helloOk.clientId,
+        ...(answer.dwarfId === undefined ? {} : { dwarfId: answer.dwarfId }),
         attached,
         outbound,
         silence: watchSilence(deps.scheduler, detachSilent)
@@ -206,7 +211,12 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
       close('PROTOCOL_ERROR')
       return
     }
-    const context = { role: state.role, clientId: state.clientId }
+    const context = {
+      role: state.role,
+      clientId: state.clientId,
+      // ADR-031 item 2: what a viewer may read (`conversation.feed` of its own dwarf only).
+      ...(state.dwarfId === undefined ? {} : { dwarfId: state.dwarfId })
+    }
     // The answer is written as the dispatcher settles it, before any effect deferred past it
     // (14 §1.7: `host.shutdown {stop-all}` answers before its host.closing; the frames that follow
     // an `events.subscribe` result, 14 §3.4).
