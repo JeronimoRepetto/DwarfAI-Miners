@@ -1494,13 +1494,35 @@ describe('preload dwarf-name contract (#635)', () => {
     expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: 'claude:s1', name: '' })
   })
 
+  // AMENDED for ISSUE-172 (was: `api.resetDwarfName`): the legacy member is `resetDwarfNameToday` now, so it never
+  // shares its name with A-N09 `resetDwarfName` / `dwarf:name:reset` (14 §2.2, §8 I-21).
   it('sends a reset on the dwarf:resetName channel, naming the dwarf alone', async () => {
     invoke.mockResolvedValueOnce({ saved: true })
-    await expect(api.resetDwarfName('claude:s1')).resolves.toEqual({ saved: true })
+    await expect(api.resetDwarfNameToday('claude:s1')).resolves.toEqual({ saved: true })
     expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', 'claude:s1')
 
-    await api.resetDwarfName(undefined as unknown as string)
+    await api.resetDwarfNameToday(undefined as unknown as string)
     expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', '')
+  })
+
+  it('[ADR-019, US-MSG-005.AC02, US-MSG-006.AC03] A-N08 and A-N09 send their payloads unchanged on dwarf:rename and dwarf:name:reset', async () => {
+    const dwarfId = '01920000-0000-7000-a000-000000000172' as unknown as Parameters<
+      typeof api.resetDwarfName
+    >[0]['dwarfId']
+    const requestId = '01920000-0000-7000-a000-000000000173'
+    invoke.mockResolvedValueOnce({ ok: true, value: { ok: true, value: { customName: 'Ori' } } })
+    await expect(api.renameDwarf({ dwarfId, name: ' Ori ', requestId })).resolves.toEqual({
+      ok: true,
+      value: { ok: true, value: { customName: 'Ori' } }
+    })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:rename', { dwarfId, name: ' Ori ', requestId })
+
+    invoke.mockResolvedValueOnce({ ok: true, value: undefined })
+    await expect(api.resetDwarfName({ dwarfId, requestId })).resolves.toEqual({
+      ok: true,
+      value: undefined
+    })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:name:reset', { dwarfId, requestId })
   })
 })
 /* --- end of the #635 dwarf names block -------------------------------------- */

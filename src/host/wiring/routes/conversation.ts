@@ -29,6 +29,10 @@
 //   both describe and `send`, which re-validates every path before any row (16 §4.6; ADR-019
 //   item 9). Without one, every path is `unreadable` and a send with files `attachment-refused`.
 //
+// - B-M29 `conversation.resolveConsole` (ISSUE-170) is served with the read side and answers from
+//   `route` on, over the `console` resolver the composition root passes (conversation's
+//   `createHostConsoleResolver`); a route with none answers INTERNAL (a wiring defect).
+//
 // Not routed here, and why:
 // - `ObservedTurnEnded` (observation) → `recordTurnEnd`, `TurnEnded` → crew and attention,
 //   `DwarfDeparted` → `recordSessionEnd` (05 §4): the cut-1 routes (routes/cut1Routes.ts,
@@ -54,6 +58,8 @@ import {
   type AttachmentReader,
   type ConversationAttachmentCommand,
   type ConversationQueries,
+  type ConsoleResolver,
+  type ResolveConsole,
   type SendEvent
 } from '../../modules/conversation'
 import type { CrewQueries } from '../../modules/crew'
@@ -65,6 +71,7 @@ import { toMessageWire } from '../../transport/mappers/wire'
 import { registerConversationDescribeAttachments } from '../../transport/methods/conversationDescribeAttachments'
 import { registerConversationFeed } from '../../transport/methods/conversationFeed'
 import { registerConversationMineHistory } from '../../transport/methods/conversationMineHistory'
+import { registerConversationResolveConsole } from '../../transport/methods/conversationResolveConsole'
 import { registerConversationSend } from '../../transport/methods/conversationSend'
 import { registerMarksSection } from '../../transport/snapshot/marksSection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
@@ -115,6 +122,8 @@ export interface ConversationCrewRoute {
    * `FsAttachmentReader`. Without one, nothing is offered that is not built: every path is refused.
    */
   attachments?: AttachmentReader
+  /** The console targets of B-M29 (ISSUE-170): `createHostConsoleResolver(...).resolver`. */
+  console?: ConsoleResolver
 }
 
 /** No log: for harnesses that wire the read side only. */
@@ -144,6 +153,7 @@ type ServedMembers = {
     ConversationAttachmentCommand
   crew: Pick<CrewQueries, 'crewOf'>
   mines: Pick<MinesQueries, 'list'>
+  console: ResolveConsole | undefined
 }
 
 /** Serves the module's seam-B members before it exists; `wire` constructs it at boot step 4. */
@@ -172,6 +182,15 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
   registerConversationMineHistory(serve.dispatcher, {
     conversation: { mineHistory: (mineId) => current().conversation.mineHistory(mineId) }
   })
+  registerConversationResolveConsole(serve.dispatcher, {
+    conversation: {
+      resolveConsole: (dwarfId) => {
+        const consoles = current().console
+        if (consoles === undefined) throw new HostInvariantError('no console resolver is composed')
+        return consoles.resolveConsole(dwarfId)
+      }
+    }
+  })
   const boardReads = {
     mines: { list: (query: Parameters<MinesQueries['list']>[0]) => current().mines.list(query) },
     crew: {
@@ -194,7 +213,7 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
       return {
         conversation,
         batchHalf: conversationBatchHalf(conversation),
-        route: ({ crew, mines, sessions, diagnostics, attachments }) => {
+        route: ({ crew, mines, sessions, diagnostics, attachments, console: resolver }) => {
           if (served !== undefined) throw new HostInvariantError('conversation is routed once')
           publishConversationReadFrames({ events: deps.bus, crew, frames: deps.frames })
           publishDeliveryFrames({ events: deps.bus, conversation, frames: deps.frames })
@@ -225,7 +244,8 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
               describeAttachments: (paths) => sending.describeAttachments(paths)
             },
             crew,
-            mines
+            mines,
+            console: resolver === undefined ? undefined : conversation.console({ resolver })
           }
         }
       }

@@ -61,4 +61,24 @@ describe('the seam-A replay of a later release (21 §2 note 1)', () => {
       /does not follow the scenario/
     )
   })
+
+  it('[ADR-001] a legacy member renamed after its recording is called by its new name, the recording untouched', () => {
+    const reset = { row: '§8 I-21', channel: 'dwarf:resetName', member: 'resetDwarfName' }
+    const recording = { calls: [{ ...reset, answer: { saved: false } }], pushes: {} }
+    const part = legacyTodayPart(
+      { ...scenario, calls: [{ ...reset, args: ['replay:none'] }], pushes: [] },
+      recording,
+      [{ channel: 'dwarf:resetName', owner: 'legacy', shape: 'today' }]
+    )
+
+    // ISSUE-172: A-N09 owns `resetDwarfName`, so today's reset is `resetDwarfNameToday` (14 §2.2, §8 I-21).
+    expect(part.scenario.calls).toEqual([
+      { ...reset, member: 'resetDwarfNameToday', args: ['replay:none'] }
+    ])
+    // The recorded answer is compared under the same name; the recording itself is not changed.
+    expect(part.recorded.calls).toEqual([
+      { ...reset, member: 'resetDwarfNameToday', answer: { saved: false } }
+    ])
+    expect(recording.calls[0].member).toBe('resetDwarfName')
+  })
 })

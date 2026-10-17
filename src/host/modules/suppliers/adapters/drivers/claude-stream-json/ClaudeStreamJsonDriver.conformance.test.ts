@@ -742,3 +742,150 @@ describe('ClaudeStreamJsonDriver', () => {
     expect(run.transports[0]?.sent).toHaveLength(1)
   })
 })
+
+// ---------- the delegation entry (ISSUE-201 "Tests to write FIRST" item 1) ----------
+
+/** The hand-written parts of `gated-delegation-launch.expected.json` that the harness does not read. */
+interface GatedExpected {
+  readonly launchArgv: readonly string[]
+  readonly mcpConfigFile: { readonly path: string; readonly content: Json }
+}
+
+const GATED = 'gated-delegation-launch'
+const gatedExpected = fixture(GATED).expected as unknown as GatedExpected
+/** The two tools DwarfAI's relay serves, as Claude names them under the `dwarfai` entry. */
+const JEV_TOOLS = 'mcp__dwarfai__delegate_subtask,mcp__dwarfai__subtask_result'
+
+/** One run of the gated launch fixture per variant, each over its own file store. */
+async function gatedRuns(
+  extra: { do: 'transportLost' }[] = []
+): Promise<{ label: string; run: Run; files: RecordingMcpConfigFiles; failures: string[] }[]> {
+  const own = fixture(GATED)
+  const out = []
+  for (const variant of own.variants) {
+    const files = new RecordingMcpConfigFiles()
+    const run = await runScript(
+      factoryWith(files),
+      [...own.expected.script, ...extra],
+      { variant },
+      OPTIONS
+    )
+    const failures = [
+      ...run.failures,
+      ...compareEvents(run.events, own.expected.events ?? [], run.bindings),
+      ...differences(run.outcomes[0], bind(own.expected.outcomes?.[0] ?? null, run.bindings), '#0'),
+      ...differences(run.sent, bind(own.expected.sent ?? [], run.bindings), 'sent')
+    ]
+    out.push({ label: variant.label, run, files, failures })
+  }
+  return out
+}
+
+/** Every text a captured process or the mcp-config file holds: argv, env values, file contents. */
+function capturedTexts(run: Run, files: RecordingMcpConfigFiles): string[] {
+  return [
+    ...run.spawn.spawns.flatMap((spawn) => [
+      spawn.executable,
+      ...spawn.args,
+      ...Object.entries(spawn.env).flat()
+    ]),
+    ...files.written.values()
+  ]
+}
+
+describe('ClaudeStreamJsonDriver delegation entry', () => {
+  it('[C-23, INV-59, INV-83] a gated delegation launch puts no credential and no DWARFAI_DELEGATION_TOKEN string in any captured argv, env or the mcp-config file; the file holds only the relay command and the credential-file path', async () => {
+    for (const { label, run, files, failures } of await gatedRuns()) {
+      expect(failures, label).toEqual([])
+      expect(
+        run.spawn.spawns.map((spawn) => spawn.args),
+        label
+      ).toEqual([gatedExpected.launchArgv])
+      expect([...files.written.keys()], label).toEqual([gatedExpected.mcpConfigFile.path])
+      const text = files.written.get(gatedExpected.mcpConfigFile.path) ?? ''
+      expect(JSON.parse(text), label).toEqual(gatedExpected.mcpConfigFile.content)
+      for (const captured of capturedTexts(run, files)) {
+        expect(captured, label).not.toContain(CANARY_TOKEN)
+        expect(captured, label).not.toContain('DWARFAI_DELEGATION_TOKEN')
+      }
+    }
+  })
+
+  it("[C-23] DWARFAI_SPAWN is in the claude child's env and ELECTRON_RUN_AS_NODE and DWARFAI_MCP_CREDENTIAL_FILE are only in the relay entry's env", async () => {
+    for (const { label, run, files } of await gatedRuns()) {
+      const [claude, ...others] = run.spawn.spawns
+      expect(others, label).toEqual([])
+      expect(claude?.env.DWARFAI_SPAWN, label).toBe('v1:conformance:launch-1:1')
+      for (const name of ['ELECTRON_RUN_AS_NODE', 'DWARFAI_MCP_CREDENTIAL_FILE']) {
+        expect(claude?.env, `${label} ${name}`).not.toHaveProperty(name)
+        expect(claude?.args.join(' '), `${label} ${name}`).not.toContain(name)
+      }
+      const config = JSON.parse(files.written.get(gatedExpected.mcpConfigFile.path) ?? '{}') as {
+        mcpServers: Record<string, { env: Record<string, string> }>
+      }
+      expect(Object.keys(config.mcpServers), label).toEqual(['dwarfai'])
+      expect(Object.keys(config.mcpServers.dwarfai?.env ?? {}).sort(), label).toEqual([
+        'DWARFAI_MCP_CREDENTIAL_FILE',
+        'ELECTRON_RUN_AS_NODE'
+      ])
+    }
+  })
+
+  it('[C-24] a launch without both gates has no Jev entry and no pre-approval, and no launch carries a forbidden flag', async () => {
+    // Without both gates `issueFor` gives no entry (ADR-013 item 4): the request carries none.
+    const ungated = await launched()
+    const [plain] = ungated.run.spawn.spawns
+    expect(ungated.files.written.size).toBe(0)
+    expect(plain?.args).not.toContain('--mcp-config')
+    expect(plain?.args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(false)
+    expect(plain?.args.join(' ')).not.toMatch(/delegate_subtask|subtask_result/)
+    // With both gates on, exactly the two DwarfAI tools are pre-approved, nothing else.
+    const [first] = await gatedRuns()
+    const args: readonly string[] = first?.run.spawn.spawns[0]?.args ?? []
+    const allowed = args.flatMap((arg, index) =>
+      /^--allowed-?tools/i.test(arg) ? [args[index + 1] ?? ''] : []
+    )
+    expect(allowed).toEqual([JEV_TOOLS])
+    for (const argv of [plain?.args ?? [], args]) {
+      for (const flag of FORBIDDEN_FLAGS) {
+        expect(argv.join(' ').toLowerCase()).not.toContain(flag.toLowerCase())
+      }
+    }
+    // A permission mode cannot smuggle the pre-approval into an ungated launch.
+    expect(() =>
+      buildArgv({
+        kind: 'launch',
+        sessionId: SESSION,
+        mcpConfigPath: null,
+        policyArgv: ['--allowedTools', JEV_TOOLS]
+      })
+    ).toThrow(/forbidden/)
+  })
+
+  it("[C-24, INV-81] a delegated worker's launch, which issueFor gives no delegation entry, has no Jev entry and no pre-approval", async () => {
+    // Depth 1 (ADR-013 item 4): a worker's request carries `delegation: null`, like an ungated one.
+    const { run, files } = await launched({ delegation: false })
+    expect(files.written.size).toBe(0)
+    const args = run.spawn.spawns[0]?.args ?? []
+    expect(args).not.toContain('--mcp-config')
+    expect(args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(false)
+    expect(args.join(' ')).not.toMatch(/delegate_subtask|subtask_result/)
+  })
+
+  it('[ADR-013] the --mcp-config file is deleted when the session ends', async () => {
+    for (const { label, files } of await gatedRuns([{ do: 'transportLost' }])) {
+      expect(files.removed, label).toEqual([gatedExpected.mcpConfigFile.path])
+    }
+    // A launch whose spawn fails after the file was written removes it too.
+    const files = new RecordingMcpConfigFiles()
+    const failed = await runScript(
+      factoryWith(files),
+      fixture(GATED).expected.script,
+      { variant: null, spawn: () => ({ kind: 'fail', code: 'EACCES' }) },
+      OPTIONS
+    )
+    expect(failed.outcomes[0]).toMatchObject({ rejected: { cause: 'could-not-start' } })
+    expect([...files.written.keys()]).toEqual([gatedExpected.mcpConfigFile.path])
+    expect(files.removed).toEqual([gatedExpected.mcpConfigFile.path])
+  })
+})

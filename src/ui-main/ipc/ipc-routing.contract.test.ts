@@ -21,6 +21,7 @@ import {
   composeAskAnswers,
   composeAskStepAndIntegrationRows,
   composeBoardFacade,
+  composeDwarfNameRows,
   composeLegacyAgentRegistryFeed,
   composeLegacyAskRelay,
   composeLegacyDwarfIdBridge,
@@ -580,7 +581,10 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       // AMENDED for ISSUE-223: A-N32 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
       'welcome:answer': 'cut-2',
       // AMENDED for ISSUE-171: A-N29 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      // AMENDED for ISSUE-172: A-N08 and A-N09 join them, born `host` in cut 2 (lead decision, 2026-10-17).
+      'dwarf:rename': 'cut-2',
+      'dwarf:name:reset': 'cut-2'
     })
   })
 
@@ -1759,12 +1763,15 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     // AMENDED for ISSUE-129: A-N07, born `host` in cut 2, waits for the same switch.
     // AMENDED for ISSUE-223: A-N32, born `host` in cut 2, waits for the same switch.
     // AMENDED for ISSUE-171: A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
+    // AMENDED for ISSUE-172: A-N08 and A-N09, born `host` in cut 2 (lead decision, 2026-10-17).
     expect(CUT_1_UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
       'claude:hooks:set': 'cut-2',
       'ask:step:set': 'cut-2',
       'welcome:answer': 'cut-2',
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      'dwarf:rename': 'cut-2',
+      'dwarf:name:reset': 'cut-2'
     })
     // A-44 on its 14 wire feeds UI main's PresenceTracker, which tells the Host (B-M07) once the report settled.
     const host = recordingHost()
@@ -2473,6 +2480,77 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     expect(composeAskStepAndIntegrationRows({ routes: CUT_1_ROUTES, client })).toBeUndefined()
   })
 
+  // ADDED for ISSUE-172 (lead decision, 2026-10-17): A-N08 and A-N09 are NEW rows with no legacy owner; the renderer's
+  // board is the Host's once its first snapshot is read (useMines, one writer), so every dwarf it can rename is a Host
+  // dwarf and the rows are born `host` in cut 2 rather than waiting for the step-3a switch.
+  it('[ADR-001, US-MSG-005.AC02, US-MSG-006.AC03] in cut 2 A-N08 and A-N09 exist and route host, relaying crew.rename and crew.resetName', async () => {
+    const born: ChannelKey[] = ['dwarf:rename', 'dwarf:name:reset']
+    for (const key of born) {
+      expect(CHANNELS[key].status, key).toBe('new')
+      expect(routeOf(key), key).toEqual([
+        { channel: key, owner: 'host', since: 'cut-2', parity: 'passed', shape: 'target' }
+      ])
+    }
+    expect(HOST_ROUTE_MEMBERS['dwarf:rename']).toEqual(['crew.rename'])
+    expect(HOST_ROUTE_MEMBERS['dwarf:name:reset']).toEqual(['crew.resetName'])
+    // The legacy rows of 14 §8 I-21 keep today's runtime for a board still fed by today's feed (a build that refuses
+    // A-N01); their RETIRE is cut 5's.
+    expect(routeOf('dwarf:setName')).toEqual([
+      {
+        channel: 'dwarf:setName',
+        owner: 'legacy',
+        since: 'pre-cut-0',
+        parity: 'n/a',
+        shape: 'today'
+      }
+    ])
+    expect(routeOf('dwarf:resetName')).toEqual([
+      {
+        channel: 'dwarf:resetName',
+        owner: 'legacy',
+        since: 'pre-cut-0',
+        parity: 'n/a',
+        shape: 'today'
+      }
+    ])
+    const sent: Array<[string, unknown]> = []
+    const replies: Record<string, unknown> = {
+      'crew.rename': { ok: true, value: { customName: 'Watcher of seals' } },
+      'crew.resetName': {}
+    }
+    const client = {
+      call: (method: string, params: unknown) => {
+        sent.push([method, params])
+        return Promise.resolve(replies[method])
+      }
+    } as unknown as Parameters<typeof composeDwarfNameRows>[0]['client']
+    const rows = composeDwarfNameRows({ routes: ROUTES, client })
+    expect(rows?.channels).toEqual(born)
+    const router = createRouter({
+      routes: ROUTES.filter((r) => born.includes(r.channel)),
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(rows === undefined ? {} : { host: rows.target }),
+      senders
+    })
+    const DWARF = '01920000-0000-7000-a000-000000000172'
+    expect(
+      await router.dispatch('dwarf:rename', FROM_PANEL, {
+        dwarfId: DWARF,
+        name: 'Watcher of seals',
+        requestId: REQUEST
+      })
+    ).toEqual({ ok: true, value: { ok: true, value: { customName: 'Watcher of seals' } } })
+    expect(
+      await router.dispatch('dwarf:name:reset', FROM_PANEL, { dwarfId: DWARF, requestId: REQUEST })
+    ).toEqual({ ok: true, value: undefined })
+    expect(sent).toEqual([
+      ['crew.rename', { dwarfId: DWARF, name: 'Watcher of seals', requestId: REQUEST }],
+      ['crew.resetName', { dwarfId: DWARF, requestId: REQUEST }]
+    ])
+    // A table that leaves them unrouted (the cut-1 table) composes neither.
+    expect(composeDwarfNameRows({ routes: CUT_1_ROUTES, client })).toBeUndefined()
+  })
+
   it('[ADR-001] in cut 2 the legacy hook installer and the Claude half of the legacy hook channel are not composed, and the OpenCode plugin route still is', () => {
     // TC-141-06: the root derives the legacy Claude hook composition from the route table (21 §1 item 4, §4 row
     // "Claude hook entry": the Host is that entry's only writer from cut 2).
@@ -2508,6 +2586,7 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       }
     }
     // 21 §2 "Seam B members: the cut in which each is born", row 2: B-M30…B-M32, B-M39, B-M40.
+    // AMENDED for ISSUE-172 (lead decision, 2026-10-17): B-M22 and B-M23 join them, served from cut 2 for A-N08 / A-N09.
     expect(
       Object.fromEntries(Object.entries(SEAM_B_METHODS_BORN).filter(([, step]) => step === 'cut-2'))
     ).toEqual({
@@ -2515,7 +2594,9 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       'asking.answerPermission': 'cut-2', // B-M31
       'asking.setStep': 'cut-2', // B-M32
       'preferences.setClaudeHooks': 'cut-2', // B-M39
-      'preferences.answerWelcome': 'cut-2' // B-M40
+      'preferences.answerWelcome': 'cut-2', // B-M40
+      'crew.rename': 'cut-2', // B-M22
+      'crew.resetName': 'cut-2' // B-M23
     })
     expect(
       Object.fromEntries(
@@ -2526,7 +2607,10 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       'agent:answerPermission': ['asking.answerPermission'], // A-41 → B-M31
       'ask:step:set': ['asking.setStep'], // A-N07 → B-M32
       'claude:hooks:set': ['preferences.setClaudeHooks'], // A-N31 → B-M39
-      'welcome:answer': ['preferences.answerWelcome'] // A-N32 → B-M40
+      'welcome:answer': ['preferences.answerWelcome'], // A-N32 → B-M40
+      // AMENDED for ISSUE-172 (lead decision, 2026-10-17): A-N08 and A-N09 are born `host` in cut 2.
+      'dwarf:rename': ['crew.rename'], // A-N08 → B-M22
+      'dwarf:name:reset': ['crew.resetName'] // A-N09 → B-M23
     })
   })
 
