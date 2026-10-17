@@ -168,6 +168,35 @@ export function runMessageLogContract(
       expect(s.rowCount(other)).toBe(2)
     })
 
+    it('[INV-60, S-022-1] the transcript echo of a multi-line message typed by the console relay merges into its waiting row: no second bubble', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const waiting = s.seedWaitingRow(
+        dwarf,
+        'typed:relay-ml',
+        'dig  the north\r\ntunnel\n\tthen rest '
+      )
+      const relayed = entry(1, {
+        role: 'person',
+        text: 'dig the north tunnel then rest',
+        providerTime: s.now
+      })
+      // Folded further than the relay folds: another message.
+      const other = entry(2, {
+        role: 'person',
+        text: 'dig the north tunnel then  rest',
+        providerTime: s.now
+      })
+
+      const merged = s.inTransaction(() => s.log.append(dwarf, [relayed], 'transcript'))
+      const inserted = s.inTransaction(() => s.log.append(dwarf, [other], 'transcript'))
+
+      expect(merged).toEqual({ inserted: 0, appended: [] })
+      expect(s.keyOf(relayed.sourceKey)).toEqual({ dwarfId: dwarf, messageId: waiting })
+      expect(inserted.inserted).toBe(1)
+      expect(s.rowCount(dwarf)).toBe(2)
+    })
+
     it('[ADR-007] page returns the newest rows first and never a row of another dwarf', async () => {
       const s = await setUp()
       const [dwarf, other] = s.dwarfIds

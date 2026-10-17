@@ -16,7 +16,8 @@
 //   and crew's, the frames of conversation's events (routes/conversationFrames.ts), subscribed
 //   before step 7's catch-up publishes the first of them (16 §8.2), and the send path (ISSUE-166):
 //   `ConversationCommands.send` over crew's `canReceiveMessages` (INV-33) and the `TurnSender`
-//   bridge to suppliers' sessions (bridges/turnSender.ts; AMENDMENT-16, owner, 2026-10-15), with its
+//   bridge to suppliers' sessions, or for an observed dwarf to the observed-session relay
+//   (`conversationTurns`, bridges/turnSender.ts; AMENDMENT-16, owner, 2026-10-15; ISSUE-167), with its
 //   `message.delivery` frames (B-F12, `ui` only): each of `MessageSent`, `MessageHandedOver`,
 //   `MessageReactedTo` and `MessageDeliveryFailed` — the person's messages and asking's
 //   answers-records alike — sends the `Delivery` the Host stored, read after the commit, never one
@@ -38,7 +39,7 @@
 //   `DwarfDeparted` → `recordSessionEnd` (05 §4): the cut-1 routes (routes/cut1Routes.ts,
 //   ISSUE-120). The ask routes → `noteAsk`: routes/askingRoutes.ts (ISSUE-140).
 // - The Reset saga's conversation step (`createConversationResetStep`): ISSUE-121.
-// - The observed-session relay (ISSUE-167); driver events → `ingest` and
+// - Driver events → `ingest` and
 //   `recordTurnEnd` (ISSUE-182), which brings the echo merge and the turn ends ✓✓ waits for.
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
@@ -60,7 +61,8 @@ import {
   type ConversationQueries,
   type ConsoleResolver,
   type ResolveConsole,
-  type SendEvent
+  type SendEvent,
+  type TurnSender
 } from '../../modules/conversation'
 import type { CrewQueries } from '../../modules/crew'
 import type { MinesQueries } from '../../modules/mines'
@@ -78,7 +80,7 @@ import { registerMarksSection } from '../../transport/snapshot/marksSection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { registerTailsSection } from '../../transport/snapshot/tailsSection'
 import { conversationBatchHalf, type ObservedBatchHalf } from '../bridges/observedBatchSink'
-import { launchedTurnSender } from '../bridges/turnSender'
+import { routedTurnSender } from '../bridges/turnSender'
 import { publishConversationReadFrames } from './conversationFrames'
 
 /** The events the conversation wiring publishes or projects: one Host bus carries them all (16 §2.3). */
@@ -113,6 +115,11 @@ export interface ConversationCrewRoute {
   mines: Pick<MinesQueries, 'list'>
   /** Suppliers' live sessions, the send path's only door to a driver (16 §4.4). */
   sessions?: Pick<SessionChannels, 'sessionFor'>
+  /**
+   * The observed-session relay (`ObservedSessionTurnSender`, ISSUE-167): an observed dwarf's turn
+   * goes here. Without it, an observed dwarf's hand-over answers `session-closed`.
+   */
+  observedTurns?: TurnSender
   /**
    * Where the send path records a failed delivery write (ADR-026 allowlist). The composition root
    * passes the Host log; a harness that never sends may leave it out.
@@ -219,20 +226,24 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
       return {
         conversation,
         batchHalf: conversationBatchHalf(conversation),
-        route: ({ crew, mines, sessions, diagnostics, attachments, console: resolver }) => {
+        route: ({
+          crew,
+          mines,
+          sessions,
+          observedTurns,
+          diagnostics,
+          attachments,
+          console: resolver
+        }) => {
           if (served !== undefined) throw new HostInvariantError('conversation is routed once')
           publishConversationReadFrames({ events: deps.bus, crew, frames: deps.frames })
           publishDeliveryFrames({ events: deps.bus, conversation, frames: deps.frames })
           const history = conversation.history({ crew })
           const sending = conversation.sending({
-            turns: launchedTurnSender({
-              dwarfs: {
-                identityOf: (dwarfId) => {
-                  const dwarf = crew.get(dwarfId)
-                  return dwarf === null || dwarf.departed ? null : dwarf.identity
-                }
-              },
-              sessions: sessions ?? NO_SESSIONS
+            turns: conversationTurns({
+              crew,
+              sessions: sessions ?? NO_SESSIONS,
+              ...(observedTurns === undefined ? {} : { observedTurns })
             }),
             recipients: {
               canReceiveMessages: (dwarfId) => crew.get(dwarfId)?.canReceiveMessages ?? false
@@ -281,4 +292,32 @@ function publishDeliveryFrames(deps: {
   deps.events.subscribe('MessageHandedOver', ({ payload }) => send(payload))
   deps.events.subscribe('MessageReactedTo', ({ payload }) => send(payload))
   deps.events.subscribe('MessageDeliveryFailed', ({ payload }) => send(payload))
+}
+
+/** No observed-session relay: an observed dwarf's hand-over answers `session-closed` (FM-078). */
+const NO_OBSERVED_TURNS: TurnSender = {
+  send: async () => ({ ok: false, error: { kind: 'session-closed' } })
+}
+
+/**
+ * The send path's `TurnSender` (16 §4.6 row `TurnSender`; ISSUE-166, ISSUE-167): over crew's view of
+ * the dwarf, `routedTurnSender` hands a launched dwarf's turn to its driver session and an observed
+ * dwarf's to the observed-session relay; a departed dwarf has no identity to send to.
+ */
+export function conversationTurns(deps: {
+  crew: Pick<CrewQueries, 'get'>
+  sessions: Pick<SessionChannels, 'sessionFor'>
+  observedTurns?: TurnSender
+}): TurnSender {
+  return routedTurnSender({
+    dwarfs: {
+      identityOf: (dwarfId) => {
+        const dwarf = deps.crew.get(dwarfId)
+        return dwarf === null || dwarf.departed ? null : dwarf.identity
+      },
+      owned: (dwarfId) => deps.crew.get(dwarfId)?.owned ?? false
+    },
+    sessions: deps.sessions,
+    observed: deps.observedTurns ?? NO_OBSERVED_TURNS
+  })
 }

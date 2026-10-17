@@ -58,7 +58,11 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   'dwarf:stop': 'cut-3a',
   // A-N06, born `host` in 3a (14 §5.1 "Send, stop, console"); routed by the step-3a switch (ISSUE-001), never by
   // its handler issue (ISSUE-168)
-  'dwarf:message:retry': 'cut-3a'
+  'dwarf:message:retry': 'cut-3a',
+  // A-N10, A-N11, born `host` in 3a (21 §2 step 3a: the Host recovery report); routed by the step-3a switch
+  // (ISSUE-001), never by their handler issue (ISSUE-174)
+  'host:recovery:retry': 'cut-3a',
+  'host:recovery:dismiss': 'cut-3a'
 }
 
 /**

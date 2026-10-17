@@ -1,0 +1,86 @@
+{
+  "case": "C-07",
+  "description": "15 §2.7 row OpenCode HTTP, §4.6 Ask / answer and Keys (S-011-1, person-run server, OpenCode 1.18.32): the event stream of one turn whose write tool asks edit permission. the person's prompt part is one person message, then busy is status working (the recorded order) keyed opencode:opencode:<sessionId>:<partId>; the write tool part is activity started then failed (rejected), keyed by its part id, its summary the tool name only (never its input); permission.asked is one permission ask on the driver channel keyed by the permission id, with Allow once and Deny reject both possible; permission.replied claims nothing (answeredElsewhere U→no, SP-09); the completed assistant message is one sealed fidelity-1 usage observation keyed by its message id; idle is status idle. Every other event (session.updated, session.diff, plugin.added, catalog.updated, deltas, reasoning, step parts, session.idle) is skipped; no turn.ended (turnEnd none until S-021-2). The Deny this run sent is the reply body reject.",
+  "script": [],
+  "events": [
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "opencode:opencode:{session}:00000000-0000-4000-8000-000000000008",
+        "role": "person",
+        "text": "Create a file named deny-probe.txt in the current directory containing the single word probe, using your file-writing tool. If the write is refused, reply with the word refused and stop.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "opencode:opencode:{session}:00000000-0000-4000-8000-00000000005f",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "write",
+        "summary": "write",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "00000000-0000-4000-8000-000000000062",
+        "channel": "driver",
+        "payload": {
+          "toolName": "write",
+          "requestText": "edit: deny-probe.txt"
+        },
+        "options": {
+          "hasAllowOnce": true,
+          "hasRejectOnce": true
+        }
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "opencode:opencode:{session}:00000000-0000-4000-8000-00000000005f",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "write",
+        "summary": "write",
+        "state": "failed",
+        "at": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "opencode:opencode:{session}:00000000-0000-4000-8000-00000000000c",
+        "unitKey": "00000000-0000-4000-8000-00000000000c",
+        "fidelity": 1,
+        "tokens": {
+          "inputNet": 6,
+          "output": 147,
+          "cacheRead": 0,
+          "cacheWrite": 25617,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": 1735689606604
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "reply": "reject"
+    }
+  ]
+}

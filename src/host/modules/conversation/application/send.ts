@@ -31,8 +31,9 @@
 //     (`concluded` or `capped`), also when that turn ended before the receipt came back.
 //   - `transcript-match`, by spike S-022-1's rule (ISSUE-325, passed): an ingested `person` entry
 //     echoes the message — its `echoOf` is the receipt's `correlation` (the replayed uuid), or,
-//     uncorrelated, a transcript record whose text equals the text as sent, with no folding, at
-//     or after `sentAt`, claimed by the oldest message waiting for it — and a later `dwarf` entry
+//     uncorrelated, a transcript record whose text equals the text as sent or its console
+//     normalization (the relay's, domain/consoleText.ts), with no further folding, at or after
+//     `sentAt`, claimed by the oldest message waiting for it — and a later `dwarf` entry
 //     of the main conversation (no `providerAgentId`) follows it. Evidence ingested before the
 //     receipt, or while the message was held, counts once the receipt names the channel. Matching
 //     the transcript record itself (its `parentUuid` chain, the relay's own normalization) is the
@@ -63,6 +64,7 @@ import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { ConversationEntry } from '../../suppliers'
+import { echoesSentText } from '../domain/consoleText'
 import { advance, startDelivery, type DeliveryFact } from '../domain/delivery'
 import type { MessagesAppended } from '../domain/events'
 import type { Delivery, MessageView } from '../domain/messages'
@@ -556,7 +558,7 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
 /**
  * One ingested `person` entry against the dwarf's watched messages (S-022-1): a correlated echo
  * names one receipt's `correlation` (kept while that is not known yet); an uncorrelated transcript
- * record equal to the text as sent, at or after `sentAt`, is the echo of the oldest message still
+ * record equal to the text as sent or as the console relay typed it, at or after `sentAt`, is the echo of the oldest message still
  * waiting for one. A live-stream line without `echoOf` is no echo.
  */
 function noteEcho(
@@ -576,7 +578,9 @@ function noteEcho(
   }
   if (origin !== 'transcript') return
   const at = entry.providerTime ?? now
-  const claimed = watching.find((w) => !w.echoSeen && w.text === entry.text && at >= w.sentAt)
+  const claimed = watching.find(
+    (w) => !w.echoSeen && echoesSentText(entry.text, w.text) && at >= w.sentAt
+  )
   if (claimed !== undefined) claimed.echoSeen = true
 }
 

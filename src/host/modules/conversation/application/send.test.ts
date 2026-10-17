@@ -385,7 +385,7 @@ describe('ConversationSender: transcript-match correlation (S-022-1)', () => {
     expect(h.bus.ofType('MessageReactedTo')).toEqual([])
   })
 
-  it('[S7.05, S-022-1] an uncorrelated echo matches the text exactly as sent, at or after sentAt, with no folding, and claims one message only', async () => {
+  it('[S7.05, S-022-1] an uncorrelated echo matches the text as sent or as the console relay typed it, at or after sentAt, and claims one message only', async () => {
     const h = harness()
     const padded = 'two  spaces	and a tab'
     const first = await h.send(12, padded)
@@ -395,8 +395,9 @@ describe('ConversationSender: transcript-match correlation (S-022-1)', () => {
     h.turns.answer({ ok: true, value: { ...TRANSCRIPT_RECEIPT, correlation: 'echo-b' } })
     await settle()
 
-    // An earlier record of the same text, a folded copy, or a live-stream line is no echo.
-    h.ingest([person(padded, T0 - 1), person('two spaces and a tab', T0 + 5), dwarf()])
+    // An earlier record of the same text, a copy folded further than the relay folds, or a
+    // live-stream line is no echo. (S-022-1: the relay's own normalization IS an echo, below.)
+    h.ingest([person(padded, T0 - 1), person('two spaces and a  tab', T0 + 5), dwarf()])
     h.ingest([person(padded, T0 + 5), dwarf()], 'live-stream')
     expect(h.bus.ofType('MessageReactedTo')).toEqual([])
 
@@ -409,6 +410,22 @@ describe('ConversationSender: transcript-match correlation (S-022-1)', () => {
       first,
       second
     ])
+  })
+
+  it('[S7.05, S-022-1] a multi-line message relayed into an observed terminal gets its ✓✓ on the echo of its relay text', async () => {
+    const h = harness()
+    const multiLine = 'dig  the north\r\ntunnel\n\tthen rest '
+    const messageId = await h.send(15, multiLine)
+    h.turns.answer({
+      ok: true,
+      value: { ...TRANSCRIPT_RECEIPT, confidence: 'unconfirmed', correlation: 'relay-1' }
+    })
+    await settle()
+    expect(h.stored()).toMatchObject({ phase: 'delivered', confidence: 'unconfirmed' })
+
+    h.ingest([person('dig the north tunnel then rest', T0 + 300), dwarf()])
+    expect(h.stored()).toMatchObject({ phase: 'reacted', confidence: 'unconfirmed' })
+    expect(h.bus.ofType('MessageReactedTo').map((e) => e.payload.messageId)).toEqual([messageId])
   })
 
   it('[S7.05, S-022-1] a subagent record is not the reply: only a record of the main conversation follows the echo', async () => {
