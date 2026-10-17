@@ -38,18 +38,18 @@
 //   (application/recoverAfterHostStart.ts). The dwarfs it covers are the `sessionExited` check's
 //   coverage unless a caller passes its own.
 //
-// - The Jev path (ISSUE-164): with `advisor` (16 §4.5 `LaunchAdvisor`, the bridge → jev; later:
-//   ISSUE-182) composed, a "Let Jev choose" launch asks Jev in `routing` and settles with Jev's pick
-//   (S5.12), `LaunchHandedBack` with the configured default (S5.13), or one of the two Jev causes
-//   when nothing went out (S5.14, S5.15; ADR-020 item 2; domain/jevFallback.ts). Without it the
-//   path stays hidden until built: the launch is refused `jev-not-built`.
-//
 // - The same `recovery(deps)` carries the report's display and the person's two actions (ISSUE-174;
 //   16 §4.5 `retryRecovery`, `dismissRecovery`; 07 machine 16): `report()` is the offered report not
 //   settled yet (the snapshot `recovery` section), `view()` the latest one, settled included (the
 //   `host.recovered` frame), and `shown()` records that a `ui` connection was written it
 //   (application/recoveryActions.ts). Both actions resume through the same `SessionResumer` as the
 //   boot pass (application/sessionResumer.ts).
+//
+// - The Jev path (ISSUE-164): with `advisor` (16 §4.5 `LaunchAdvisor`, the bridge → jev; later:
+//   ISSUE-182) composed, a "Let Jev choose" launch asks Jev in `routing` and settles with Jev's pick
+//   (S5.12), `LaunchHandedBack` with the configured default (S5.13), or one of the two Jev causes
+//   when nothing went out (S5.14, S5.15; ADR-020 item 2; domain/jevFallback.ts). Without it the
+//   path stays hidden until built: the launch is refused `jev-not-built`.
 import { LaunchUseCase, type LaunchAccepted, type LaunchingDeps } from './application/launch'
 import { MarkStoppedByPerson } from './application/markStoppedByPerson'
 import { createLaunchDrainGate } from './application/launchDrain'

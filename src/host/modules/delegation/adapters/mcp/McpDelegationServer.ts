@@ -131,12 +131,8 @@ export async function serveRelay(
   handoffs?: DelegationHandoffReport
 ): Promise<void> {
   const transport = new FrameTransport(connection, handoffs)
-  const server = createDelegationMcpServer(
-    connection,
-    handler,
-    log,
-    (requestId, view) => transport.expectResponse(requestId, view),
-    prompts
+  const server = createDelegationMcpServer(connection, handler, log, prompts, (requestId, view) =>
+    transport.expectResponse(requestId, view)
   )
   await server.connect(transport)
 }
@@ -148,8 +144,8 @@ function createDelegationMcpServer(
   connection: DelegationRelayConnection,
   handler: DelegationEndpoint,
   log: DiagnosticsLog,
-  answered: Answered,
-  prompts?: PermissionPromptEndpoint
+  prompts: PermissionPromptEndpoint | undefined,
+  answered: Answered
 ): McpServer {
   const server = new McpServer(SERVER_INFO)
   // Read once, when the connection is accepted: an owned stream-json session's relay gets the
