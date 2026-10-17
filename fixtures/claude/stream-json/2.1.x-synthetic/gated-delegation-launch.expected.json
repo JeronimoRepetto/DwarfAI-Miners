@@ -1,0 +1,62 @@
+{
+  "case": "C-23",
+  "description": "ISSUE-201, ADR-013 items 2-3, 15 §4.2: a launch with both delegation gates on (the request carries a ticket-file DelegationInjection). The Host writes the --mcp-config file before the spawn; it holds only the relay entry (command, args, and the relay's own env with ELECTRON_RUN_AS_NODE and the credential file PATH), registered as dwarfai. The argv pins the permission mode (AMENDMENT-19), passes the file's path, and pre-approves exactly DwarfAI's two delegation tools (ADR-008 item 3's named exception, C-24). No credential value and no DWARFAI_DELEGATION_TOKEN string is in the argv, the env or the file (C-23, INV-59, INV-83). launchArgv and mcpConfigFile are read by the driver's own test.",
+  "script": [{ "do": "launch", "delegation": true }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "first prompt" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ],
+  "launchArgv": [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--session-id",
+    "00000000-0000-7000-8000-000000000001",
+    "--permission-mode",
+    "default",
+    "--permission-prompt-tool",
+    "mcp__dwarfai__permission",
+    "--disallowedTools",
+    "AskUserQuestion",
+    "--mcp-config",
+    "/home/j/.dwarfai/run/mcp/launch-1.mcp.json",
+    "--allowedTools",
+    "mcp__dwarfai__delegate_subtask,mcp__dwarfai__subtask_result"
+  ],
+  "mcpConfigFile": {
+    "path": "/home/j/.dwarfai/run/mcp/launch-1.mcp.json",
+    "content": {
+      "mcpServers": {
+        "dwarfai": {
+          "command": "/opt/dwarfai/host/dwarfai",
+          "args": ["dwarfai-mcp-relay"],
+          "env": {
+            "ELECTRON_RUN_AS_NODE": "1",
+            "DWARFAI_MCP_CREDENTIAL_FILE": "/home/j/.dwarfai/run/mcp/launch-1.cred"
+          }
+        }
+      }
+    }
+  }
+}

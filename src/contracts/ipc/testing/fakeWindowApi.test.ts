@@ -36,7 +36,10 @@ const helpers: readonly string[] = PRELOAD_HELPERS
  * today's name for every row): the cut-1 switch routes A-44 with its target shape, so the fake carries its 14 name.
  */
 const RENAMED_FROM_CUT_1: Partial<Record<ChannelKey, string>> = {
-  'presence:visibleMines': 'reportVisibleMines'
+  'presence:visibleMines': 'reportVisibleMines',
+  // AMENDED for ISSUE-172: 14 gives `resetDwarfName` to A-N09 and to this legacy row of §8 I-21, both live until cut 5;
+  // the legacy member is renamed so window.api has one member per row.
+  'dwarf:resetName': 'resetDwarfNameToday'
 }
 
 /** A row's 14 member name. */
