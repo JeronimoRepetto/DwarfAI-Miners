@@ -3,12 +3,14 @@
 // the flags the `FeatureFlagReader` read once when the service was built (INV-110), and
 // `PreferencesQueries.integrationState`, the stored state of `integration_settings`, and
 // `PreferencesCommands.setClaudeHooks` (AMENDMENT-7; ISSUE-221), the "Claude Code · instant
-// updates" toggle and the enable path the first-run step reuses. `WelcomeStepService` below is
+// updates" toggle and the enable path the first-run step reuses, and
+// `PreferencesCommands.setOpenCodePermissions` (ISSUE-228), the "OpenCode · permission requests"
+// toggle over the same writer. `WelcomeStepService` below is
 // `PreferencesQueries.welcome` and the first-run step's boot evaluation (07 machine 41, ISSUE-222),
 // joined to the queries by host/wiring; `WelcomeAnswerService` is `PreferencesCommands.answerWelcome`
 // (ISSUE-223), joined to the commands by host/wiring (later: ISSUE-323). The other members of the
-// driving ports (secrets, the OpenCode toggle) join with their issues (later: ISSUE-215, ISSUE-216,
-// ISSUE-228); Reset metrics is the saga's (resetSaga.ts), joined to the commands by host/wiring.
+// driving ports (secrets) join with their issues (later: ISSUE-215, ISSUE-216); Reset metrics is
+// the saga's (resetSaga.ts), joined to the commands by host/wiring.
 //
 // `set` (INV-105; ADR-024 D9; IPC Gap 10) runs in one transaction: it reads the row, applies the
 // key within the provider rule (domain `withPreference`), saves only when something changed and
@@ -39,7 +41,7 @@ import {
   type WelcomeResult,
   type WelcomeStepState
 } from '../domain/welcomeStep'
-import type { ChannelTokenStore } from '../ports/channelTokenStore'
+import type { ChannelTokenStore, TokenChannel } from '../ports/channelTokenStore'
 import type {
   ChannelToken,
   ConfigTarget,
@@ -77,6 +79,10 @@ export interface PreferencesCommands {
    * origin 'settings' or 'first-run'; a failed revert keeps the option on (16 §7.4).
    */
   setClaudeHooks(
+    on: boolean,
+    origin: ConsentOrigin
+  ): Promise<Result<{ state: IntegrationState }, 'config-write-failed' | 'config-revert-failed'>>
+  setOpenCodePermissions(
     on: boolean,
     origin: ConsentOrigin
   ): Promise<Result<{ state: IntegrationState }, 'config-write-failed' | 'config-revert-failed'>>
@@ -194,27 +200,48 @@ export class PreferencesService
    * included (16 §4.12; 16 §7.4). The plaintext token goes to the writer only.
    */
   setClaudeHooks(on: boolean, origin: ConsentOrigin): Promise<ToggleResult> {
-    if (!CLAUDE_HOOKS_ORIGINS.includes(origin)) {
+    return this.toggle(CLAUDE_HOOKS_TOGGLE, on, origin)
+  }
+
+  /**
+   * 16 §4.12 `setOpenCodePermissions` (ADR-011 item 7; 16 §7.3, §7.4; 07 machine 14; ADR-016 items
+   * 1, 5–7; UC-028): "OpenCode · permission requests", the same toggle over DwarfAI's plugin file in
+   * OpenCode's plugin folder (target `opencode-plugin`) and the `opencode-plugin` channel token the
+   * plugin reports with. Origin `settings` (the Settings toggle), `add-panel` (the Add panel's
+   * notice action, PO #104) or `first-run` (`answerWelcome` only; B-M14 refuses it at the
+   * transport, AMENDMENT-7). What `setClaudeHooks` says holds here too: one call at a time, shared
+   * with it (16 §7.5); on mints a new token and the writer installs the file and reads it back
+   * (`on-verified` = written and read back, S-011-1); off reverts it at once, with no confirmation,
+   * then revokes the token; a locked file keeps the option on (FM-125); a failed write leaves it as
+   * it was (FM-124); `IntegrationChanged` after every outcome, before the answer. Nothing here
+   * launches, and no launch, Jev pick or migration calls it (18 C-21): the Add panel's enable
+   * completes before its launch is sent.
+   */
+  setOpenCodePermissions(on: boolean, origin: ConsentOrigin): Promise<ToggleResult> {
+    return this.toggle(OPENCODE_PERMISSIONS_TOGGLE, on, origin)
+  }
+
+  /** One toggle call, run after the one before it settled (16 §7.5); an origin it does not take is refused. */
+  private toggle(toggle: Toggle, on: boolean, origin: ConsentOrigin): Promise<ToggleResult> {
+    if (!toggle.origins.includes(origin)) {
       return Promise.reject(
         new HostInvariantError(
-          `consent origin ${origin} cannot turn claude-hooks on or off (09 CHECK)`
+          `consent origin ${origin} cannot turn ${toggle.id} on or off (09 CHECK)`
         )
       )
     }
-    const run = this.toggles.then(() =>
-      on ? this.enableClaudeHooks(origin) : this.disableClaudeHooks()
-    )
+    const run = this.toggles.then(() => (on ? this.enable(toggle, origin) : this.disable(toggle)))
     this.toggles = run.catch(() => undefined)
     return run
   }
 
-  private async enableClaudeHooks(origin: ConsentOrigin): Promise<ToggleResult> {
+  private async enable(toggle: Toggle, origin: ConsentOrigin): Promise<ToggleResult> {
     const { integrations, externalConfig } = this.deps
     if (
-      integrations.get(CLAUDE_HOOKS).state === 'on-verified' &&
-      (await externalConfig.verify(CLAUDE_HOOKS)) === 'verified'
+      integrations.get(toggle.id).state === 'on-verified' &&
+      (await externalConfig.verify(toggle.target)) === 'verified'
     ) {
-      return this.settled(CLAUDE_HOOKS, null)
+      return this.settled(toggle.id, null)
     }
     // Owner amendment M: the writer issues the new hash in its own Tx A, together with the `config_writes` row,
     // and its Tx B (failure) withdraws it in the transaction that deletes the Tx A rows, making the previous token
@@ -222,21 +249,21 @@ export class PreferencesService
     // re-enable leaves the working token of an `on-*` integration active.
     const credential = this.deps.mintCredential()
     const installed = await externalConfig.install(
-      CLAUDE_HOOKS,
+      toggle.target,
       credential.value as ChannelToken,
       origin,
       credential.sha256
     )
-    if (!installed.ok) return this.settled(CLAUDE_HOOKS, 'config-write-failed')
-    return this.settled(CLAUDE_HOOKS, null)
+    if (!installed.ok) return this.settled(toggle.id, 'config-write-failed')
+    return this.settled(toggle.id, null)
   }
 
-  private async disableClaudeHooks(): Promise<ToggleResult> {
+  private async disable(toggle: Toggle): Promise<ToggleResult> {
     const { tokens, externalConfig, transactions, clock } = this.deps
-    const reverted = await externalConfig.revert(CLAUDE_HOOKS)
-    if (!reverted.ok) return this.settled(CLAUDE_HOOKS, 'config-revert-failed')
-    transactions.inTransaction(() => tokens.revoke(CLAUDE_HOOKS, clock.now()))
-    return this.settled(CLAUDE_HOOKS, null)
+    const reverted = await externalConfig.revert(toggle.target)
+    if (!reverted.ok) return this.settled(toggle.id, 'config-revert-failed')
+    transactions.inTransaction(() => tokens.revoke(toggle.target, clock.now()))
+    return this.settled(toggle.id, null)
   }
 
   /** Publishes the stored state (`IntegrationChanged`, after every commit) and answers it. */
@@ -262,8 +289,29 @@ const INTEGRATIONS: readonly IntegrationId[] = ['claude-hooks', 'opencode-permis
 
 const CLAUDE_HOOKS = 'claude-hooks'
 
-/** 16 §4.12 (AMENDMENT-7): the consent entry points of `claude-hooks`; never `add-panel` (09 CHECK). */
-const CLAUDE_HOOKS_ORIGINS: readonly ConsentOrigin[] = ['settings', 'first-run']
+/**
+ * An integration toggle: its integration, the config target its entry is written to, which is also
+ * the channel of its token (16 §4.12 `ChannelTokenStore`), and its consent entry points.
+ */
+interface Toggle {
+  id: IntegrationId
+  target: ConfigTarget & TokenChannel
+  origins: readonly ConsentOrigin[]
+}
+
+/** 16 §4.12 (AMENDMENT-7): `claude-hooks` and its consent entry points; never `add-panel` (09 CHECK). */
+const CLAUDE_HOOKS_TOGGLE: Toggle = {
+  id: CLAUDE_HOOKS,
+  target: 'claude-hooks',
+  origins: ['settings', 'first-run']
+}
+
+/** 16 §4.12 row `setOpenCodePermissions`: its consent entry points (ADR-016 item 5; 07 S14.01). */
+const OPENCODE_PERMISSIONS_TOGGLE: Toggle = {
+  id: 'opencode-permissions',
+  target: 'opencode-plugin',
+  origins: ['settings', 'add-panel', 'first-run']
+}
 
 /**
  * The integrations whose enable path the first-run step can run. `opencode-permissions` joins with
