@@ -84,9 +84,10 @@ describe('the OpenCode catalog record', () => {
     expect(opencode?.profile.drivers).toEqual(['http-server', 'acp'])
     expect(opencode?.profile.answerChannelGate).toBe('opencode-permissions')
     expect(OPENCODE_ACP.agentArgs).toEqual(['acp'])
-    // 15 §4.7 (HR D8): no question channel; SP-12: no relay entry for `opencode acp`.
+    // 15 §4.7 (HR D8): no question channel; SP-12 (foreman ruling 2026-10-17): the path-only
+    // ticket-file relay entry for `opencode acp`.
     expect(OPENCODE_ACP.row.question).toBe('none')
-    expect(OPENCODE_ACP.row.mcpInjection).toBe('none')
+    expect(OPENCODE_ACP.row.mcpInjection).toBe('ticket-file')
     // The row is inside the ceiling: the ADR-009 D2 merge lowers none of its fields.
     const ceiling = opencode?.ceiling as CapabilityCeiling
     const row = { ...OPENCODE_ACP.row, resume: 'none' as const }

@@ -119,6 +119,9 @@ import { FsAttachmentReader } from './modules/conversation/adapters/attachments/
 import { NodeAttachmentProbe } from './modules/conversation/adapters/attachments/NodeAttachmentProbe'
 import { createHostConsoleResolver, viewerEntryPath } from './modules/conversation'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
+import { CodexThreadQueue } from './modules/conversation/adapters/observed-send/CodexThreadQueue'
+import { ConsoleTextDelivery } from './modules/conversation/adapters/observed-send/ConsoleTextDelivery'
+import { ObservedSessionTurnSender } from './modules/conversation/adapters/observed-send/ObservedSessionTurnSender'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
@@ -201,6 +204,11 @@ import {
 import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { createKeystrokeRelay } from './wiring/bridges/keystrokeRelay'
+import {
+  installedBinaryOf,
+  observedRouteTargets,
+  observedSendTargets
+} from './wiring/bridges/turnSender'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { ownedSessionsOver } from './wiring/bridges/sessionTerminator'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
@@ -252,9 +260,12 @@ import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/
 import {
   createLaunchDrainGate,
   type LaunchingEvent,
+  type LaunchingRecovery,
+  type LaunchingRecoveryDeps,
   type LaunchingStopAll,
   type LaunchingStopAllDeps
 } from './modules/launching'
+import { SqliteRecoveryReportStore } from './modules/launching/adapters/sqlite/SqliteRecoveryReportStore'
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
@@ -512,6 +523,9 @@ async function bootHost(base: HostBase): Promise<void> {
   // dispatcher answers HOST_NOT_READY for `host.shutdown` before `ready`, so it is always bound when
   // asked. Unbound, it fails closed: the Host never exits on a stop-all that ended nothing it owns.
   let launchingStopAll: LaunchingStopAll | undefined
+  // Launching's Host recovery pass (ISSUE-173), built at boot step 4 once crew, suppliers and
+  // conversation exist; boot step 5 awaits its classification.
+  let launchingRecovery: LaunchingRecovery | undefined
   // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
   let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
@@ -989,6 +1003,32 @@ async function bootHost(base: HostBase): Promise<void> {
             hostEpoch: epoch,
             log
           })
+          // The observed-session send path (ISSUE-167): an observed Claude session's terminal, an
+          // observed Codex thread's own queue, both through the kernel ProcessControl (R17).
+          const observedTerminal = new ConsoleTextDelivery({
+            processes: processControl,
+            platform: hostRuntime().os as NodeJS.Platform,
+            env: process.env,
+            cwd: homedir(),
+            scheduler
+          })
+          const codexQueue = new CodexThreadQueue({
+            processes: processControl,
+            executable: () => installedBinaryOf(modules.suppliers?.registry.drivers('codex') ?? []),
+            env: process.env,
+            cwd: homedir(),
+            scheduler
+          })
+          const observedObservation = modules.observation
+          // Crew's delivery-route read (INV-33), from observation alone: crew's view calls it.
+          const observedRoutes = new ObservedSessionTurnSender({
+            targets: observedRouteTargets({
+              identities: observedObservation.observation.identities,
+              processes: observedObservation.crew.processIdentities
+            }),
+            terminal: observedTerminal,
+            codex: codexQueue
+          })
           modules.crew = servedCrew.wire({
             db,
             transactions,
@@ -999,8 +1039,12 @@ async function bootHost(base: HostBase): Promise<void> {
             ids,
             hostEpoch: epoch,
             log,
-            // No launch and no delivery route reach the Host yet (later: EPIC-10).
-            links: { owned: () => false, hasDeliveryRoute: () => false },
+            // No launch reaches the Host yet (later: EPIC-10); an observed dwarf has a delivery
+            // route when the observed-session relay has a send path to it (ISSUE-167, INV-33).
+            links: {
+              owned: () => false,
+              hasDeliveryRoute: (dwarfId) => observedRoutes.canDeliverTo(dwarfId)
+            },
             processes: processControl,
             observation: modules.observation.crew,
             // The `dwarfs` section's stored outcome lines (owner amendment E).
@@ -1037,6 +1081,16 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             // The send path's door to a launched session, and its failed-write log (ISSUE-166).
             sessions: modules.suppliers.sessions,
+            // An observed dwarf's turn: the observed-session relay (ISSUE-167).
+            observedTurns: new ObservedSessionTurnSender({
+              targets: observedSendTargets({
+                dwarfs: modules.crew.crew.queries,
+                observation: observedObservation.observation.queries,
+                processes: observedObservation.crew.processIdentities
+              }),
+              terminal: observedTerminal,
+              codex: codexQueue
+            }),
             diagnostics: log,
             // The Host's own check of every attachment path, at describe and again at send
             // (ISSUE-169; ADR-019 item 9; 18 C-17).
@@ -1194,6 +1248,36 @@ async function bootHost(base: HostBase): Promise<void> {
             crew: modules.crew.crew.ownedEnds(ownedEndsDeps)
           }
           launchingStopAll = modules.launching.launching.stopAll(stopAllDeps)
+          // Host crash recovery (ISSUE-173; ADR-015 items 3–5): the previous epoch's owned sessions
+          // are classified at step 5 and resumed silently after it, over crew's terminator (a
+          // survivor ends with `why: 'host-recovery'`) and conversation's delivery reconcile (07
+          // S7.16: a 10 s evidence window).
+          const recoveryCrew = modules.crew
+          const recoveryBus = bus
+          const recoveryDeps: LaunchingRecoveryDeps = {
+            reports: new SqliteRecoveryReportStore({ db, scope: transactions, clock }),
+            previousEpochEnd: () => opened.previousEpochEnd(),
+            processControl,
+            crew: {
+              markUnrecovered: (dwarfId) => recoveryCrew.crew.commands.markUnrecovered(dwarfId),
+              rebind: (dwarfId, next) => recoveryCrew.crew.commands.rebind(dwarfId, next),
+              sessionClosed: (dwarfId, cause) =>
+                recoveryCrew.crew.commands.sessionClosed(dwarfId, cause),
+              get: (dwarfId) => recoveryCrew.crew.queries.get(dwarfId)
+            },
+            endSurvivor: (dwarfId) => recoveryCrew.terminator.end(dwarfId, 'host-recovery'),
+            catalogue: modules.suppliers.catalogue,
+            deliveries: {
+              reconcileSending: (dwarfIds) =>
+                conversation.conversation.reconcileSending({
+                  dwarfIds,
+                  windowMs: SENDING_RECONCILE_WINDOW_MS,
+                  scheduler,
+                  bus: recoveryBus
+                })
+            }
+          }
+          launchingRecovery = modules.launching.launching.recovery(recoveryDeps)
           // Stop dwarf ends an owned session through its driver, then its recorded process tree
           // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(
@@ -1214,6 +1298,13 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             attention: modules.attention.attention
           })
+        },
+        // Step 5: the Host recovery's classification (ISSUE-173); its resumes go on after `ready`.
+        recoverSessions: () => {
+          if (launchingRecovery === undefined) {
+            throw new HostInvariantError('boot step 5 runs after step 4 wired launching')
+          }
+          return launchingRecovery.start().classified
         },
         // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
         // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
@@ -1283,6 +1374,9 @@ async function bootHost(base: HostBase): Promise<void> {
     })
   }
 }
+
+/** 07 S7.16: a `sending` row with no evidence within 10 s of the restart is ✕ `host-interrupted`. */
+const SENDING_RECONCILE_WINDOW_MS = 10_000
 
 /** `app_meta.install_id` (09 §4.9), the first field of every spawn tag (ADR-015 item 2). */
 function installIdOf(db: SqliteDatabase): string {

@@ -3,7 +3,14 @@
 // SQL straight into a template copy. Never imported by production code (R14).
 import type { DwarfId, FolderPath, LaunchId, MineId } from '../../../kernel/domain/values'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
+import type { Clock } from '../../../kernel/ports/clock'
+import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
+import type { TransactionScope } from '../../../kernel/ports/transactionScope'
+import { SqliteLaunchRecordStore } from '../adapters/sqlite/SqliteLaunchRecordStore'
+import { SqliteLaunchStore } from '../adapters/sqlite/SqliteLaunchStore'
+import { SqliteProcessRecordStore } from '../adapters/sqlite/SqliteProcessRecordStore'
+import { SqliteRecoveryReportStore } from '../adapters/sqlite/SqliteRecoveryReportStore'
 
 export const T0 = 1_790_000_000_000
 export const MINE = '00000000-0000-7000-8000-0000000161f1' as MineId
@@ -63,4 +70,28 @@ export function seedSucceededLaunch(
       [launchId, MINE, MINE_FOLDER, launchedWithLetJevChoose ? 1 : 0, T0, T0, T0]
     )
   )
+}
+
+/**
+ * The launching SQLite stores over one connection, as wiring/routes/launching.ts builds them, for a
+ * test outside the module that composes a Host over a database file (hostCrash.os.test.ts, R6).
+ */
+export function sqliteLaunchingStores(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+  clock: Clock
+  ids: IdGenerator
+}) {
+  const { db, scope, clock, ids } = deps
+  return {
+    launches: new SqliteLaunchStore({
+      db,
+      scope,
+      clock,
+      folderOf: (mineId) => (mineId === MINE ? MINE_FOLDER : null)
+    }),
+    processes: new SqliteProcessRecordStore({ db, scope, clock, ids }),
+    records: new SqliteLaunchRecordStore({ db, scope }),
+    reports: new SqliteRecoveryReportStore({ db, scope, clock })
+  }
 }
