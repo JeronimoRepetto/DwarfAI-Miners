@@ -1,0 +1,77 @@
+{
+  "case": "C-10",
+  "description": "15 §2.7 row Codex approvals: item/permissions/requestApproval has no accept-once decision (its reply grants a permission profile; shape UNVERIFIED) → the option-set rule: the ask opens with hasAllowOnce false (OQ-42 B: the broker auto-denies it); Deny grants nothing for the turn.",
+  "script": [
+    { "do": "launch" },
+    { "do": "answerPermission", "providerRequestId": "0", "decision": "deny" }
+  ],
+  "outcomes": [{ "resolved": true }, { "kind": "accepted" }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "0",
+        "channel": "driver",
+        "payload": {
+          "toolName": "permissions",
+          "requestText": "network access to fetch a package"
+        },
+        "options": { "hasAllowOnce": false, "hasRejectOnce": true },
+        "turnKey": "0000000a-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000001",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000003",
+        "role": "dwarf",
+        "text": "I will work offline.",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "0000000a-0000-4000-8000-000000000001",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    },
+    { "jsonrpc": "2.0", "id": 0, "result": { "permissions": {}, "scope": "turn" } }
+  ]
+}

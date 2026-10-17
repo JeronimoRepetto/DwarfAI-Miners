@@ -38,7 +38,7 @@ import {
 import { FixtureTransport, splitLines } from '../../../testing/fixtureTransport'
 import { RecordingSpawn } from '../../../testing/recordingSpawn'
 import { CATALOG_RECORDS } from '../../catalog/profiles'
-import { FORBIDDEN_FLAGS } from '../shared/forbiddenFlags'
+import { AUTO_APPROVE_PERMISSION_MODES, FORBIDDEN_FLAGS } from '../shared/forbiddenFlags'
 import { buildArgv } from './argv'
 import { capabilitiesFromHelp, SPIKE_RECORDS } from './capabilities'
 import { ClaudeStreamJsonDriver } from './ClaudeStreamJsonDriver'
@@ -481,6 +481,60 @@ describe('ClaudeStreamJsonDriver', () => {
     }
   })
 
+  it('[C-24] every launch and resume argv pins --permission-mode, so the person settings defaultMode never applies (AMENDMENT-19)', async () => {
+    /** The values of every `--permission-mode` in `argv`, in order. */
+    const modes = (argv: readonly string[]): string[] =>
+      argv.flatMap((arg, index) => (arg === '--permission-mode' ? [argv[index + 1] ?? ''] : []))
+    // The recorded spawns: a launch, and the launch then the resume of the SP-15 recording.
+    const { run } = await launched()
+    const resumed = await resumedRun(fixture('sp15-resume').variants[0] as FixtureVariant, 1)
+    const recordedArgv = [
+      run.spawn.spawns[0]?.args ?? [],
+      ...resumed.spawn.spawns.map((spawn) => spawn.args)
+    ]
+    expect(resumed.spawn.spawns[1]?.args).toContain('--resume')
+    for (const argv of recordedArgv) expect(modes(argv), argv.join(' ')).toEqual(['default'])
+    for (const kind of ['launch', 'resume'] as const) {
+      const built = buildArgv({ kind, sessionId: SESSION, mcpConfigPath: null, policyArgv: [] })
+      expect(modes(built), kind).toEqual(['default'])
+      // A DwarfAI permission mode that sets its own asking value: exactly one, the policy's.
+      const plan = buildArgv({
+        kind,
+        sessionId: SESSION,
+        mcpConfigPath: null,
+        policyArgv: ['--permission-mode', 'plan']
+      })
+      expect(modes(plan), `${kind} with a policy mode`).toEqual(['plan'])
+      expect(
+        buildArgv({
+          kind,
+          sessionId: SESSION,
+          mcpConfigPath: null,
+          policyArgv: ['--permission-mode=plan']
+        }).filter((arg) => arg.startsWith('--permission-mode')),
+        `${kind} with a policy mode=`
+      ).toEqual(['--permission-mode=plan'])
+    }
+    // A policy whose mode settles a tool use without asking is refused before any spawn, and so
+    // is a policy that sets the mode twice.
+    for (const mode of [...AUTO_APPROVE_PERMISSION_MODES, ...FORBIDDEN_FLAGS]) {
+      for (const policyArgv of [['--permission-mode', mode], [`--permission-mode=${mode}`]]) {
+        expect(
+          () => buildArgv({ kind: 'launch', sessionId: SESSION, mcpConfigPath: null, policyArgv }),
+          policyArgv.join(' ')
+        ).toThrow(/forbidden/)
+      }
+    }
+    expect(() =>
+      buildArgv({
+        kind: 'launch',
+        sessionId: SESSION,
+        mcpConfigPath: null,
+        policyArgv: ['--permission-mode', 'plan', '--permission-mode', 'default']
+      })
+    ).toThrow(/one --permission-mode/)
+  })
+
   it('[C-09, SP-08] with question none the question tool is disallowed in the argv', async () => {
     const { run } = await launched()
     const args = run.spawn.spawns[0]?.args ?? []
@@ -493,6 +547,9 @@ describe('ClaudeStreamJsonDriver', () => {
       '--verbose',
       '--session-id',
       SESSION,
+      // AMENDMENT-19: the permission mode is pinned, never the person's settings defaultMode.
+      '--permission-mode',
+      'default',
       '--permission-prompt-tool',
       'mcp__dwarfai__permission',
       '--disallowedTools',

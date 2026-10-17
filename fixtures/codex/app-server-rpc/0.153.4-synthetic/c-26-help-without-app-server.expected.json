@@ -1,0 +1,8 @@
+{
+  "case": "C-26",
+  "description": "15 §2.3 row Codex, FM-083: the recorded Codex 0.153.4 help with its app-server line removed; the probe gives app-server-rpc launch false, so the profile falls to codex-acp (ADR-009 D4). The help process exits at once; the advance lets the fake scheduler run its exit.",
+  "script": [{ "do": "probe" }, { "do": "advance", "ms": 0 }],
+  "outcomes": [null, null],
+  "events": [],
+  "sent": []
+}
