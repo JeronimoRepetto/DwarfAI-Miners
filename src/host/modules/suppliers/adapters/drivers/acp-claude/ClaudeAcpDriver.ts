@@ -53,6 +53,18 @@ const NODE_BINARY = 'node'
 export const EXECUTABLE_PIN = 'CLAUDE_CODE_EXECUTABLE'
 /** The Jev entry's name in `session/new` `mcpServers` (ADR-013 item 3). */
 const RELAY_NAME = 'dwarfai'
+/**
+ * AMENDMENT-19 (owner, 2026-10-17; ADR-008 item 3): claude-agent-acp starts a session in the
+ * person's own `permissions.defaultMode`, which may skip the permission check. The adapter's
+ * client options live in `_meta.claudeCode.options` (claude-agent-acp 0.93.0 README; its
+ * `acp-agent.js` reads `allowDangerouslySkipPermissions` there), and `false` refuses every
+ * skip-permission mode for the session.
+ */
+const SESSION_META: Readonly<Record<string, unknown>> = Object.freeze({
+  claudeCode: { options: { allowDangerouslySkipPermissions: false } }
+})
+/** The mode a session must report before it is ready: Claude asks before every change. */
+const PINNED_MODE = 'default'
 /** JSON-RPC "resource not found": the adapter does not know the session id (ADR-015 stale ref). */
 const RESOURCE_NOT_FOUND = -32002
 
@@ -243,6 +255,8 @@ export class ClaudeAcpDriver implements ProviderDriver {
       args: [...adapter.leadingArgs],
       cwd,
       env,
+      sessionMeta: SESSION_META,
+      pinnedMode: PINNED_MODE,
       capabilitiesFor: (init) =>
         merge(this.deps.record.ceiling, combineLowest(protocolSource(init), probe)),
       onExit: (ref) => this.live.delete(ref.providerSessionId)
@@ -281,7 +295,11 @@ function installKey(install: InstalledProvider): string {
   return JSON.stringify([install.binaryPath, install.version, install.statMtimeMs])
 }
 
-/** ADR-020 D4: spawn ENOENT is not-installed; an exit inside 3 s is exited-at-once. */
+/**
+ * ADR-020 D4: spawn ENOENT is not-installed; an exit inside 3 s is exited-at-once. A session that
+ * cannot be put in the pinned mode (AMENDMENT-19) is could-not-start (D1 cause 3: the adapter was
+ * found and ran, but would not start the way DwarfAI requires), never an early exit.
+ */
 function launchFailure(failure: HandshakeFailure): DriverLaunchError {
   if (failure.spawnCode === 'ENOENT') return launchError('not-installed', failure.detail)
   return launchError(

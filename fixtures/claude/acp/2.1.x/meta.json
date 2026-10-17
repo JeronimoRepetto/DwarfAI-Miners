@@ -48,7 +48,7 @@
         "clacp-usage-limit-session-with-extra.jsonl",
         "clacp-usage-limit-session-crlf.jsonl"
       ],
-      "source": "agentclientprotocol/claude-agent-acp (clacp) at e6681d2a5734857727352474c8c9aa848f9210ee, src/tests/fixtures/usage-limit-session.jsonl",
+      "source": "agentclientprotocol/claude-agent-acp (clacp) at e6681d2, src/tests/fixtures/usage-limit-session.jsonl",
       "license": "Apache-2.0",
       "copyright": "the claude-agent-acp authors",
       "changes": "copied byte for byte (LF); the -with-extra and CRLF variants are DwarfAI additions",

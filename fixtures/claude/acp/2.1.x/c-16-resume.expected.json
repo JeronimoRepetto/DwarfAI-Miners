@@ -188,7 +188,14 @@
       "method": "session/new",
       "params": {
         "cwd": "/work/mine",
-        "mcpServers": []
+        "mcpServers": [],
+        "_meta": {
+          "claudeCode": {
+            "options": {
+              "allowDangerouslySkipPermissions": false
+            }
+          }
+        }
       }
     },
     {
@@ -225,7 +232,14 @@
       "params": {
         "sessionId": "{session}",
         "cwd": "/work/mine",
-        "mcpServers": []
+        "mcpServers": [],
+        "_meta": {
+          "claudeCode": {
+            "options": {
+              "allowDangerouslySkipPermissions": false
+            }
+          }
+        }
       }
     },
     {

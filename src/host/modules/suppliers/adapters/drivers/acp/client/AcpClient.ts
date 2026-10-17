@@ -109,6 +109,8 @@ export interface HandshakeFailure {
   readonly code?: number
   /** The process could not be spawned at all (its spawn error code). */
   readonly spawnCode?: string
+  /** The session could not be put in the pinned permission mode (AMENDMENT-19): never early. */
+  readonly modePin?: true
 }
 
 export interface AcpStart {
@@ -118,6 +120,17 @@ export interface AcpStart {
   readonly cwd: string
   readonly env: Readonly<Record<string, string>>
   readonly mcpServers: readonly McpServer[]
+  /**
+   * AMENDMENT-19: the `_meta` sent with `session/new` and `session/load` (the driver's documented
+   * adapter options, such as one that refuses skip-permission modes).
+   */
+  readonly sessionMeta?: Readonly<Record<string, unknown>>
+  /**
+   * AMENDMENT-19: the permission mode the session must report before it is ready. A session in
+   * another mode is sent `session/set_mode`; one that reports no mode, refuses it or keeps another
+   * mode fails the handshake closed. Absent: no pin.
+   */
+  readonly pinnedMode?: string
   /** A launch opens a new session and sends its first prompt; a resume reopens `sessionId`. */
   readonly mode:
     | { readonly kind: 'new'; readonly prompt: string }
@@ -182,6 +195,8 @@ export class AcpSession implements DriverSession {
   private connection: ClientSideConnection | null = null
   private init: InitializeResponse | null = null
   private settleReady: ((failure: Omit<HandshakeFailure, 'early' | 'tail'> | null) => void) | null
+  /** The session's permission mode as the agent last reported it (AMENDMENT-19). */
+  private currentMode: string | null = null
   private handshakeTimer: { cancel(): void } | null = null
   private stderrTail = ''
   private turn: OpenTurn | null = null
@@ -232,6 +247,7 @@ export class AcpSession implements DriverSession {
         }
         const early =
           failure.spawnCode === undefined &&
+          failure.modePin !== true &&
           failure.detail !== 'handshake timeout' &&
           deps.clock.now() - this.spawnedAt < EARLY_FAILURE_WINDOW_MS
         this.closeInput()
@@ -326,11 +342,13 @@ export class AcpSession implements DriverSession {
     }
     this.init = init
     this.capabilities = this.start.capabilitiesFor(init)
-    const { cwd, mcpServers, mode } = this.start
+    const { cwd, mcpServers, mode, sessionMeta } = this.start
+    const meta = sessionMeta === undefined ? {} : { _meta: { ...sessionMeta } }
     if (mode.kind === 'new') {
-      const opened = await connection.newSession({ cwd, mcpServers: [...mcpServers] })
+      const opened = await connection.newSession({ cwd, mcpServers: [...mcpServers], ...meta })
       if (this.settleReady === null) return
       this.ref = { ...this.ref, providerSessionId: opened.sessionId }
+      if (!(await this.pinMode(connection, opened.modes?.currentModeId))) return
       this.settleReady(null)
       this.startTurn(mode.prompt, null)
       return
@@ -339,20 +357,64 @@ export class AcpSession implements DriverSession {
     if (agent?.loadSession === true) {
       // `session/load` replays the history as `session/update`s before it answers.
       this.replaying = true
-      await connection.loadSession({ sessionId: mode.sessionId, cwd, mcpServers: [...mcpServers] })
-      this.flushSegment()
-      this.replaying = false
-    } else if (agent?.sessionCapabilities?.resume != null) {
-      await connection.resumeSession({
+      const loaded = await connection.loadSession({
         sessionId: mode.sessionId,
         cwd,
-        mcpServers: [...mcpServers]
+        mcpServers: [...mcpServers],
+        ...meta
       })
+      this.flushSegment()
+      this.replaying = false
+      if (!(await this.pinMode(connection, loaded?.modes?.currentModeId))) return
+    } else if (agent?.sessionCapabilities?.resume != null) {
+      const resumed = await connection.resumeSession({
+        sessionId: mode.sessionId,
+        cwd,
+        mcpServers: [...mcpServers],
+        ...meta
+      })
+      if (!(await this.pinMode(connection, resumed?.modes?.currentModeId))) return
     } else {
       this.settleReady?.({ detail: 'the agent offers neither session/load nor session/resume' })
       return
     }
     this.settleReady?.(null)
+  }
+
+  /**
+   * AMENDMENT-19 (ADR-008 item 3): before the session is ready it must report the pinned mode, so
+   * the person's own default mode (one that skips the permission check) never applies. Another
+   * mode is changed with `session/set_mode`; the agent answers `{}` and reports a different
+   * effective mode with `current_mode_update` before its answer. False when the handshake failed.
+   */
+  private async pinMode(
+    connection: ClientSideConnection,
+    reported: string | null | undefined
+  ): Promise<boolean> {
+    const pinned = this.start.pinnedMode
+    if (pinned === undefined) return true
+    if (typeof reported === 'string') this.currentMode = reported
+    const fail = (detail: string): false => {
+      this.settleReady?.({ detail, modePin: true })
+      return false
+    }
+    if (this.currentMode === null) return fail('the agent reports no permission mode')
+    if (this.currentMode === pinned) return true
+    const before = this.currentMode
+    this.currentMode = pinned
+    try {
+      await connection.setSessionMode({ sessionId: this.ref.providerSessionId, modeId: pinned })
+    } catch (error) {
+      const code = error instanceof RequestError ? `with ${error.code}` : 'by the transport'
+      return fail(
+        `the agent kept permission mode ${before}: set_mode ${pinned} was refused ${code}`
+      )
+    }
+    if (this.settleReady === null) return false
+    if (this.currentMode !== pinned) {
+      return fail(`the agent kept permission mode ${this.currentMode} after set_mode ${pinned}`)
+    }
+    return true
   }
 
   /**
@@ -542,6 +604,9 @@ export class AcpSession implements DriverSession {
     if (notification.sessionId !== this.ref.providerSessionId) return
     const update = notification.update
     switch (update.sessionUpdate) {
+      case 'current_mode_update':
+        this.currentMode = update.currentModeId
+        return
       case 'agent_message_chunk':
         if (update.content.type === 'text') this.append('dwarf', update.content.text)
         return

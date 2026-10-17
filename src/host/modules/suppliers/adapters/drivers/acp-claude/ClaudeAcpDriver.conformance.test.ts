@@ -207,7 +207,9 @@ describe('ClaudeAcpDriver', () => {
               }
             ]
           }
-        ]
+        ],
+        // AMENDMENT-19: the adapter refuses skip-permission modes for this session.
+        _meta: { claudeCode: { options: { allowDangerouslySkipPermissions: false } } }
       }
     })
     // initialize declares only the form elicitation the question card implements (15 §4.10).
@@ -428,5 +430,94 @@ describe('ClaudeAcpDriver', () => {
         attachments: [{ path: '/work/mine/a.png', name: 'a.png', bytes: 3 }]
       })
     ).rejects.toEqual({ kind: 'channel-error', reason: expect.any(String) })
+  })
+
+  // ---------- AMENDMENT-19 (owner, 2026-10-17): the permission mode is pinned ----------
+
+  it('[C-24, ADR-008] a launch whose adapter reports an auto-approving mode is pinned to default before its first prompt, and its first tool use still opens a DwarfAI permission ask', async () => {
+    expect(await againstExpected('c-24-mode-pin-bypass')).toEqual([])
+    expect(await againstExpected('c-24-mode-pin-accept-edits')).toEqual([])
+  })
+
+  it('[C-24, ADR-008] session/new and session/load carry allowDangerouslySkipPermissions false in _meta.claudeCode.options', async () => {
+    const own = fixture('c-16-resume')
+    const run = await runScript(
+      factoryWith(),
+      own.expected.script,
+      { variant: own.variants[0] as FixtureVariant },
+      OPTIONS
+    )
+    const opened = run.sent.filter((frame) =>
+      ['session/new', 'session/load'].includes((frame as { method?: string }).method ?? '')
+    )
+    expect(opened.map((frame) => (frame as { method: string }).method)).toEqual([
+      'session/new',
+      'session/load'
+    ])
+    for (const frame of opened) {
+      expect((frame as { params: { _meta?: unknown } }).params._meta).toEqual({
+        claudeCode: { options: { allowDangerouslySkipPermissions: false } }
+      })
+    }
+  })
+
+  it('[C-24, ADR-008, ADR-020] a session that cannot be put in default mode fails the launch closed as could-not-start and sends no prompt', async () => {
+    expect(await againstExpected('c-24-mode-pin-refused')).toEqual([])
+    const session = '00000000-0000-4000-8000-00000000ac01'
+    const init = { jsonrpc: '2.0', id: 0, result: { protocolVersion: 1, agentCapabilities: {} } }
+    const replay = (lines: readonly unknown[], gates: readonly number[]) => ({
+      kind: 'fixture' as const,
+      transport: new FixtureTransport({
+        received: lines.map((line) => `${JSON.stringify(line)}\n`).join(''),
+        format: 'jsonl',
+        gates
+      })
+    })
+    const cases: [string, ReturnType<typeof replay>][] = [
+      // The adapter reports no mode at all: nothing proves the session asks (fail closed).
+      [
+        'the agent reports no permission mode',
+        replay([init, { jsonrpc: '2.0', id: 1, result: { sessionId: session } }], [1, 2])
+      ],
+      // set_mode is answered, but the adapter reports it kept another mode.
+      [
+        'the agent kept permission mode acceptEdits after set_mode default',
+        replay(
+          [
+            init,
+            {
+              jsonrpc: '2.0',
+              id: 1,
+              result: {
+                sessionId: session,
+                modes: { currentModeId: 'acceptEdits', availableModes: [{ id: 'default' }] }
+              }
+            },
+            {
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: session,
+                update: { sessionUpdate: 'current_mode_update', currentModeId: 'acceptEdits' }
+              }
+            },
+            { jsonrpc: '2.0', id: 2, result: {} }
+          ],
+          [1, 2, 3, 3]
+        )
+      ]
+    ]
+    for (const [detail, transport] of cases) {
+      const run = await runScript(
+        factoryWith(),
+        [{ do: 'launch' }],
+        { variant: variantOf('c-01-launch'), spawn: () => transport },
+        OPTIONS
+      )
+      expect(run.outcomes[0]).toEqual({ rejected: { cause: 'could-not-start', detail } })
+      expect(
+        run.sent.some((frame) => (frame as { method?: string }).method === 'session/prompt')
+      ).toBe(false)
+    }
   })
 })
