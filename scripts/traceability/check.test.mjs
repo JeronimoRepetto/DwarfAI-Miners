@@ -376,21 +376,26 @@ describe('trace:check (17 §3.2)', () => {
     const realBaseline = JSON.parse(readFileSync(path.join(here, 'mapped.baseline.json'), 'utf8'))
 
     const real = check(makeRoot({ testTree: repoRoot, closed: realClosed, baseline: realBaseline }))
+    // Synthetic ids that no test title can carry, so no later issue's tests can map them.
+    const untestedAc = 'US-TRACE-000.AC00'
+    const untestedRule = 'BR-000'
     const closedStillChecked = check(
-      makeRoot({ testTree: repoRoot, closed: [...realClosed, 'US-MSG-001.AC04'] })
+      makeRoot({ testTree: repoRoot, closed: [...realClosed, untestedAc] })
     )
     const ratchetStillChecked = check(
-      makeRoot({ testTree: repoRoot, baseline: [...realBaseline, 'BR-17'] })
+      makeRoot({ testTree: repoRoot, baseline: [...realBaseline, untestedRule] })
     )
 
     expect(real.status, real.stderr).toBe(0)
     expect(real.stdout).toContain(SKIP_NOTICE)
     expect(closedStillChecked.status).toBe(1)
     expect(closedStillChecked.stdout).toContain(SKIP_NOTICE)
-    expect(closedStillChecked.stderr).toContain('closed.json: US-MSG-001.AC04 has no test')
+    expect(closedStillChecked.stderr).toContain(`closed.json: ${untestedAc} has no test`)
     expect(ratchetStillChecked.status).toBe(1)
     expect(ratchetStillChecked.stdout).toContain(SKIP_NOTICE)
-    expect(ratchetStillChecked.stderr).toContain('mapped.baseline.json: BR-17 lost its last test')
+    expect(ratchetStillChecked.stderr).toContain(
+      `mapped.baseline.json: ${untestedRule} lost its last test`
+    )
   })
 
   // ADDED for the cut-0 conformance audit: both lists were empty, so checks 2 and 3 passed on any tree.
