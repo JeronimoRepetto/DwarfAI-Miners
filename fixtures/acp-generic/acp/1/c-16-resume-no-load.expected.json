@@ -1,0 +1,194 @@
+{
+  "case": "C-16",
+  "description": "15 §4.10 Resume (session-setup.mdx:83-243): an agent whose initialize offers sessionCapabilities.resume and no loadSession is resumed with session/resume, which replays nothing; the session keeps its id and the next turn continues the turn count of the session it resumes, so its keys never meet the first turn’s.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "transportLost"
+    },
+    {
+      "do": "resume"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-2",
+      "text": "and now?"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    null,
+    null,
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-2",
+      "providerTurnId": "2"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "acp-generic:acp-generic:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "acp-generic:acp-generic:{session}:1:1",
+        "role": "dwarf",
+        "text": "Hello.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "acp-generic:acp-generic:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "error",
+      "cause": {
+        "kind": "transport-lost",
+        "detail": "$string"
+      }
+    },
+    {
+      "t": "exited",
+      "code": null
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "acp-generic:acp-generic:{session}:2:0",
+        "role": "person",
+        "text": "and now?",
+        "providerTime": null,
+        "echoOf": "m-2"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "acp-generic:acp-generic:{session}:2:1",
+        "role": "dwarf",
+        "text": "Now this.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "acp-generic:acp-generic:{session}:turn:2",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/resume",
+      "params": {
+        "sessionId": "{session}",
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "and now?"
+          }
+        ]
+      }
+    }
+  ]
+}
