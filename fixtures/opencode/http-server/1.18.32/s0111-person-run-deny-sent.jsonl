@@ -1,0 +1,15 @@
+{"method":"POST","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","body":{}}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"POST","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","body":{"parts":[{"type":"text","text":"Create a file named deny-probe.txt in the current directory containing the single word probe, using your file-writing tool. If the write is refused, reply with the word refused and stop."}]}}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"POST","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","body":{"reply":"reject"}}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]"}

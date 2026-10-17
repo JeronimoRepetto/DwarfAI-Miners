@@ -13,6 +13,8 @@
     "attachPasswordDelivery": ["argv", "env"],
     "pluginLoadedSignal": "none",
     "pluginLoadsOnFirstDirectoryOpen": true,
-    "denyByConfigContent": true
+    "denyByConfigContent": true,
+    "denyByPermissionReply": true,
+    "pluginPermissionAskHookCalled": false
   }
 }
