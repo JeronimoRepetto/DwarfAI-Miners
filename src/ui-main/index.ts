@@ -272,6 +272,8 @@ import {
 } from './ipc/handlers/answerWelcome.host'
 import {
   createSecretMigrationBridge,
+  LEGACY_JEV_KEY,
+  LEGACY_OPENCODE_PASSWORD,
   type MigrationHostClient,
   type SecretMigrationBridge,
   type SecretMigrationBridgeDeps
@@ -281,6 +283,10 @@ import {
   JEV_SETTINGS_SHAPE_ADAPTER
 } from '../legacy-bridge/secrets/jevSettingsShapeAdapter'
 import { createJevApiKeyRows, JEV_API_KEY_ROWS } from './ipc/handlers/jevApiKey.host'
+import {
+  createOpenCodePasswordRows,
+  OPENCODE_PASSWORD_ROWS
+} from './ipc/handlers/openCodePassword.host'
 
 /** The 21 §3.1 shape adapter of A-40/A-41's qualified `legacy` routes (cuts 2–4). */
 const LEGACY_ANSWER_SHAPE_ADAPTER = 'LegacyAnswerShapeAdapter'
@@ -1026,6 +1032,7 @@ export function composeJevKeyRows(deps: {
     bridgeLivesIn('SecretMigrationBridge', release)
       ? createSecretMigrationBridge({
           ...deps.migration,
+          secret: LEGACY_JEV_KEY,
           hostClient: client,
           newRequestId: deps.mintId,
           log: deps.log
@@ -1051,6 +1058,59 @@ export function composeJevKeyRows(deps: {
       named && bridgeLivesIn(JEV_SETTINGS_SHAPE_ADAPTER, release)
         ? { [JEV_SETTINGS_SHAPE_ADAPTER]: afterMigration(settings) }
         : {},
+    migration
+  }
+}
+
+/** The OpenCode server password rows as the root composes them (ISSUE-231). */
+export interface OpenCodePasswordComposition {
+  /** A-54/A-55's `host` target part. */
+  part: RouteTargetPart
+  /** The one-time password migration, running over the Host attach; disposed at will-quit. */
+  migration: SecretMigrationBridge | undefined
+}
+
+/**
+ * The OpenCode server password rows from step 4a (21 §2 cut 4a, §3, §4 row "OpenCode server password"; ADR-017 items
+ * 3–5, 8; ISSUE-231): A-54 `setOpenCodeServerPassword` and A-55 `clearOpenCodeServerPassword` relayed to B-M10 / B-M11
+ * where the table routes them `host`. There, `SecretMigrationBridge` moves today's `safeStorage` password file into the
+ * Host once (in the releases it is listed for), and both rows are served after the run started so far has settled, so
+ * the password is never stored twice (C-23). `undefined` before the step-4a switch (later: ISSUE-235), which routes
+ * neither so, or without the Host attach.
+ */
+export function composeOpenCodePasswordRows(deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+  client: (MigrationHostClient & Pick<HostClient, 'call'>) | undefined
+  migration: Pick<SecretMigrationBridgeDeps, 'userDataDir' | 'safeStorage'> | undefined
+  log: LegacyLog
+  mintId: () => string
+}): OpenCodePasswordComposition | undefined {
+  const { routes, release, client } = deps
+  const rows = OPENCODE_PASSWORD_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
+  if (client === undefined || rows.length === 0) return undefined
+  const migration =
+    deps.migration !== undefined && bridgeLivesIn('SecretMigrationBridge', release)
+      ? createSecretMigrationBridge({
+          ...deps.migration,
+          secret: LEGACY_OPENCODE_PASSWORD,
+          hostClient: client,
+          newRequestId: deps.mintId,
+          log: deps.log
+        })
+      : undefined
+  const target = createOpenCodePasswordRows({ client, mintId: deps.mintId })
+  return {
+    part: {
+      channels: rows,
+      target:
+        migration === undefined
+          ? target
+          : {
+              serve: (channel, payload, sender) =>
+                migration.idle().then(() => target.serve(channel, payload, sender))
+            }
+    },
     migration
   }
 }
@@ -1249,7 +1309,7 @@ export interface UiMainDeps {
   /**
    * `SecretMigrationBridge` (21 §3, steps 3a and 4a; ADR-017 item 8; ISSUE-217): where today's `safeStorage` files live
    * and Electron's `safeStorage` to decrypt them with. Run over the Host attach only where the table routes A-48 `host`
-   * (`composeJevKeyRows`).
+   * (`composeJevKeyRows`, the Jev key) or A-54/A-55 `host` (`composeOpenCodePasswordRows`, the OpenCode password).
    */
   secretMigration?: Pick<SecretMigrationBridgeDeps, 'userDataDir' | 'safeStorage'>
   /**
@@ -1518,6 +1578,15 @@ export async function startUiMain({
     log: uiLog ?? { record: () => {} },
     mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
   })
+  // A-54/A-55 and the one-time OpenCode password migration, once the step-4a switch routes them (ISSUE-235; ISSUE-231).
+  const openCodePassword = composeOpenCodePasswordRows({
+    routes,
+    release,
+    client: host?.client,
+    migration: secretMigration,
+    log: uiLog ?? { record: () => {} },
+    mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
+  })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
     boardFacade === undefined &&
@@ -1526,7 +1595,8 @@ export async function startUiMain({
     askAnswers?.part === undefined &&
     cut2Rows === undefined &&
     dwarfNameRows === undefined &&
-    jevKey?.part === undefined
+    jevKey?.part === undefined &&
+    openCodePassword === undefined
       ? stopRows
       : composeRouteTargets([
           ...(stopRows === undefined
@@ -1540,7 +1610,8 @@ export async function startUiMain({
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
           ...(cut2Rows === undefined ? [] : [cut2Rows]),
           ...(dwarfNameRows === undefined ? [] : [dwarfNameRows]),
-          ...(jevKey?.part === undefined ? [] : [jevKey.part])
+          ...(jevKey?.part === undefined ? [] : [jevKey.part]),
+          ...(openCodePassword === undefined ? [] : [openCodePassword.part])
         ])
   const allShapeAdapters = {
     ...shapeAdapters,
@@ -1671,6 +1742,7 @@ export async function startUiMain({
     stopResetListening?.()
     mirror?.dispose()
     jevKey?.migration?.dispose()
+    openCodePassword?.migration?.dispose()
     boardFacade?.dispose()
     minesAdmin?.dispose()
     hostReads?.dispose()
@@ -2175,7 +2247,8 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
       legacy: legacySettingsWrites,
       halves: [createNotificationsMirrorHalf(legacyRuntime)]
     },
-    // Today's Jev-key file lives where today's store wrote it (`src/main/shell/jevApiKey.ts`, under `userData`).
+    // Today's Jev-key and OpenCode password files live where today's stores wrote them (`src/main/shell/jevApiKey.ts`,
+    // `src/main/opencodePermissions/openCodeServerPassword.ts`, under `userData`).
     secretMigration: { userDataDir: app.getPath('userData'), safeStorage }
   })
 }
