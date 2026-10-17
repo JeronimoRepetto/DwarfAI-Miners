@@ -1,0 +1,172 @@
+{
+  "case": "C-05",
+  "description": "15 §1.3 sendTurn, §4.10: a second turn is one more session/prompt; its person message echoes the messageId (echoOf), its tool call is activity started then finished, and its stopReason ends it once. The receipt is unconfirmed (a prompt is acknowledged only at its end) with the turn ordinal as providerTurnId.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-1",
+      "text": "list the files"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-1",
+      "providerTurnId": "2"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:1",
+        "role": "dwarf",
+        "text": "Ready when you are.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:2:0",
+        "role": "person",
+        "text": "list the files",
+        "providerTime": null,
+        "echoOf": "m-1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:call_0000000000000000000000b1",
+        "turnKey": "codex:codex:{session}:turn:2",
+        "kind": "tool",
+        "toolName": "execute",
+        "summary": "ls",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:call_0000000000000000000000b1",
+        "turnKey": "codex:codex:{session}:turn:2",
+        "kind": "tool",
+        "toolName": "execute",
+        "summary": "ls",
+        "state": "finished",
+        "at": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:2:1",
+        "role": "dwarf",
+        "text": "Two entries: README.md and src.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:2",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "list the files"
+          }
+        ]
+      }
+    }
+  ]
+}

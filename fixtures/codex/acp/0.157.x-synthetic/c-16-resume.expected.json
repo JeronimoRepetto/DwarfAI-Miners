@@ -1,0 +1,204 @@
+{
+  "case": "C-16",
+  "description": "15 §1.3 resume, §4.5 (session/load replays, 15 §3 row X2): after the transport is lost, resume starts the adapter again and loads the same sessionId; the replayed person and dwarf messages get the keys the live ones had (<turnId>:<seq>), so they add no row; the next turn continues the turn count.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "transportLost"
+    },
+    {
+      "do": "resume"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-2",
+      "text": "and now?"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    null,
+    null,
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-2",
+      "providerTurnId": "2"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:1",
+        "role": "dwarf",
+        "text": "Hello.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "error",
+      "cause": {
+        "kind": "transport-lost",
+        "detail": "$string"
+      }
+    },
+    {
+      "t": "exited",
+      "code": null
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:1",
+        "role": "dwarf",
+        "text": "Hello.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:2:0",
+        "role": "person",
+        "text": "and now?",
+        "providerTime": null,
+        "echoOf": "m-2"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:2:1",
+        "role": "dwarf",
+        "text": "Now this.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:2",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/load",
+      "params": {
+        "sessionId": "{session}",
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "and now?"
+          }
+        ]
+      }
+    }
+  ]
+}
