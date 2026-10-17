@@ -46,16 +46,35 @@ const FOCUSED_STOP = `(() => {
   return { id: path.join('.'), part }
 })()`
 
-/** Hands the focus back to the document, so the next Tab starts from the top. */
-const BLUR = 'document.activeElement?.blur()'
+/**
+ * Moves the sequential focus navigation starting point to the start of the document (`'start'`) or its end
+ * (`'end'`), with no element focused, so the next Tab (or Shift+Tab) walks from there.
+ *
+ * `blur()` alone is not enough: it hands the focus back to the document but leaves the starting point where the focus
+ * was (HTML, "sequential focus navigation starting point"), so after a click on a dwarf or a Map marker the next Tab
+ * went on from that control instead of from the top. A focusable but untabbable marker at the chosen end takes the
+ * focus and gives it back, which puts the starting point there; it is never a Tab stop itself.
+ */
+const walkFrom = (end: 'start' | 'end'): string => `(() => {
+  document.querySelector('[data-e2e-walk-start]')?.remove()
+  const marker = document.createElement('span')
+  marker.tabIndex = -1
+  marker.setAttribute('data-e2e-walk-start', '')
+  document.body.${end === 'start' ? 'prepend' : 'append'}(marker)
+  marker.focus()
+  marker.blur()
+})()`
+
+/** Removes the marker `walkFrom` left, once the walk is over. */
+const END_WALK = "document.querySelector('[data-e2e-walk-start]')?.remove()"
 
 /**
- * The parts Tab (or Shift+Tab) visits from the start of the document, in order, each run of stops inside one part
- * counted once. Walks until the focus comes back to the document itself or to the first stop, with a cap well above
- * the shell's own number of controls so a trap fails the case instead of hanging it.
+ * The parts Tab (or Shift+Tab) visits from the start (or the end) of the document, in order, each run of stops inside
+ * one part counted once. Walks until the focus comes back to the document itself or to the first stop, with a cap
+ * well above the shell's own number of controls so a trap fails the case instead of hanging it.
  */
 async function partsWalked(window: Page, key: 'Tab' | 'Shift+Tab'): Promise<Part[]> {
-  await window.evaluate(BLUR)
+  await window.evaluate(walkFrom(key === 'Tab' ? 'start' : 'end'))
   const parts: Part[] = []
   let first: string | null = null
   for (let stop = 0; stop < 400; stop++) {
@@ -68,6 +87,7 @@ async function partsWalked(window: Page, key: 'Tab' | 'Shift+Tab'): Promise<Part
     first ??= focused.id
     if (focused.part !== null && parts[parts.length - 1] !== focused.part) parts.push(focused.part)
   }
+  await window.evaluate(END_WALK)
   return parts
 }
 
@@ -169,7 +189,7 @@ test.describe('the Panel shell: Tab order and the narrow screen (ISSUE-262)', ()
         'mine'
       ])
       // The dwarfs are reached with the mine, after the page.
-      await window.evaluate(BLUR)
+      await window.evaluate(walkFrom('start'))
       let reachedDwarf = false
       for (let stop = 0; stop < 400 && !reachedDwarf; stop++) {
         await window.keyboard.press('Tab')
@@ -177,6 +197,7 @@ test.describe('the Panel shell: Tab order and the narrow screen (ISSUE-262)', ()
           "document.activeElement?.matches('.shell-mine button.dm-dwarf[data-dwarf]') === true"
         )) as boolean
       }
+      await window.evaluate(END_WALK)
       expect(reachedDwarf, `the dwarf takes the focus, docked ${edge}`).toBe(true)
     }
   })
