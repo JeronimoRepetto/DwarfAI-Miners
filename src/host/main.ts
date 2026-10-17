@@ -1229,7 +1229,8 @@ async function bootHost(base: HostBase): Promise<void> {
                 })
             }
           }
-          launchingRecovery = modules.launching.launching.recovery(recoveryDeps)
+          // Its report reaches the window as one grouped message with Retry and Dismiss (ISSUE-174).
+          launchingRecovery = modules.launching.recover(recoveryDeps)
           // Stop dwarf ends an owned session through its driver, then its recorded process tree
           // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(
