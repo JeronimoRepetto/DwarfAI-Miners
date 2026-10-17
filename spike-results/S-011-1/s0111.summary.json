@@ -8,13 +8,13 @@
     "markerPidIsServer": true,
     "logLinesMentioningPlugin": [],
     "configPluginField": [
-      "file:///<HOME>/.config/opencode/plugin/dwarfai-miners-permission.ts",
-      "file:///<HOME>/.config/opencode/plugins/telemetry-runtime.ts",
-      "file:///<HOME>/.config/opencode/plugins/skill-registry.ts",
-      "file:///<HOME>/.config/opencode/plugins/sdd-task-result-artifacts.ts",
-      "file:///<HOME>/.config/opencode/plugins/opencode-review-transport.ts",
-      "file:///<HOME>/.config/opencode/plugins/model-variants.ts",
-      "file:///<HOME>/.config/opencode/plugins/engram.ts",
+      "file:///<HOME>/.config/opencode/plugin/<plugin-1>.ts",
+      "file:///<HOME>/.config/opencode/plugins/<plugin-2>.ts",
+      "file:///<HOME>/.config/opencode/plugins/<plugin-3>.ts",
+      "file:///<HOME>/.config/opencode/plugins/<plugin-4>.ts",
+      "file:///<HOME>/.config/opencode/plugins/<plugin-5>.ts",
+      "file:///<HOME>/.config/opencode/plugins/<plugin-6>.ts",
+      "file:///<HOME>/.config/opencode/plugins/<plugin-7>.ts",
       "file:///<HOME>/AppData/Local/Temp/dwarfai-rec-325-oc-s0111-host-N2vRI6/.opencode/plugin/sp-probe.js"
     ],
     "configPermissionField": {
@@ -42,7 +42,7 @@
       "fileCreated": false,
       "toolParts": [
         {
-          "tool": "engram_mem_current_project",
+          "tool": "<mcp-server-6>_mem_current_project",
           "status": "completed",
           "error": ""
         },
@@ -52,14 +52,14 @@
           "error": ""
         },
         {
-          "tool": "engram_mem_save",
+          "tool": "<mcp-server-6>_mem_save",
           "status": "completed",
           "error": ""
         }
       ],
       "permissionAskedEvents": [],
       "finalText": [
-        "I can't reply \"done\" — that would be false. **The file was not created**, and I can't create it.\n\nI checked my actual tool surface before answering: this session provides no file-writing tool (no Write/Edit, no Bash) — only read/search tools (read, glob, grep, codegraph, memory, web). I also delegated to the `gentle-ai-worker`, which hit the same wall, and a read-back confirmed `deny-probe.txt` does not exist in the directory.\n\nSo the request is blocked by capability, not by anything in the repo. If you enable a write/edit tool for this session (or run it where one exists), I'll create `deny-probe.txt` with the word `probe` immediately."
+        "I can't reply \"done\" — that would be false. **The file was not created**, and I can't create it.\n\nI checked my actual tool surface before answering: this session provides no file-writing tool (no Write/Edit, no Bash) — only read/search tools (read, glob, grep, <mcp-server-4>, memory, web). I also delegated to the `<agent-2>`, which hit the same wall, and a read-back confirmed `deny-probe.txt` does not exist in the directory.\n\nSo the request is blocked by capability, not by anything in the repo. If you enable a write/edit tool for this session (or run it where one exists), I'll create `deny-probe.txt` with the word `probe` immediately."
       ]
     },
     "eventTypes": [

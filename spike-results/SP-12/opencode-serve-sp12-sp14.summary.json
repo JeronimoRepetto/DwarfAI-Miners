@@ -4,9 +4,9 @@
   "up": true,
   "mcpAddStatus": 200,
   "mcpAddResult": {
-    "engram": "connected",
-    "codegraph": "connected",
-    "context7": "connected",
+    "<mcp-server-6>": "connected",
+    "<mcp-server-4>": "connected",
+    "<mcp-server-5>": "connected",
     "sp12": "connected"
   },
   "tree": [
@@ -54,7 +54,7 @@
     },
     {
       "depth": 1,
-      "name": "engram.exe",
+      "name": "<mcp-server-6>.exe",
       "isProbe": false,
       "argvHasSentinel": false,
       "argvHasCred": false

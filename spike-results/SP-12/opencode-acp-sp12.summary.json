@@ -78,7 +78,7 @@
     },
     {
       "depth": 1,
-      "name": "engram.exe",
+      "name": "<mcp-server-6>.exe",
       "isProbe": false,
       "argvHasSentinel": false,
       "argvHasCred": false

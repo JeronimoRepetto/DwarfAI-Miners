@@ -398,7 +398,7 @@ describe('scrub rules (17 §1.4)', () => {
 
     expect(scrubbed.text).not.toContain('canary')
     expect(record.body.permission).toEqual({ edit: 'deny' })
-    expect(record.body.plugin).toEqual(['file:///<HOME>/.config/opencode/plugin/probe.js'])
+    expect(record.body.plugin).toEqual(['file:///<HOME>/.config/opencode/plugin/<plugin-1>.js'])
     expect(record.body.agent).toEqual({
       '<agent-1>': { prompt: '<agent-1>', mode: '<agent-1>', hidden: false }
     })
@@ -475,6 +475,134 @@ describe('scrub rules (17 §1.4)', () => {
       findSurvivors(raw.text, { ...IDENTITY, repoRoot: '' }).map(({ rule }) => rule)
     ).toContain('home')
     expect(findSurvivors(scrubbed.text, IDENTITY)).toEqual([])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[C-19] the id at the end of a Codex hook run id maps to a fake UUID, the same one in every event of the run', () => {
+    const run = (status) => ({
+      method: `hook/${status}`,
+      params: {
+        run: {
+          id: 'pre-tool-use:0:C:\\Users\\canary.user\\.codex\\hooks.json:exec-dd51f60c-0000-4000-8000-canaryhookrn',
+          status
+        }
+      }
+    })
+    const raw = jsonl('s0151-client1.jsonl', [run('started'), run('completed')])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [started, completed] = records(scrubbed)
+
+    expect(scrubbed.text).not.toContain('canary')
+    expect(started.params.run.id).toMatch(
+      /^pre-tool-use:0:<HOME>\\\.codex\\hooks\.json:exec-00000000-0000-4000-8000-[0-9a-f]{12}$/
+    )
+    expect(completed.params.run.id).toBe(started.params.run.id)
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] the names of the person own commands, agents, skills and MCP servers become numbered placeholders wherever the set repeats them, and built-in names stay', () => {
+    const commands = jsonl('sp12-session-new-mcp.jsonl', [
+      {
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'available_commands_update',
+            availableCommands: [
+              { name: 'init', description: 'create AGENTS.md' },
+              { name: 'skill:canary-deploy', description: 'Deploy the canary app' }
+            ]
+          }
+        }
+      },
+      {
+        result: {
+          configOptions: [
+            {
+              category: 'mode',
+              options: [
+                { value: 'build', name: 'build' },
+                { value: 'canary-boss', name: 'canary-boss' }
+              ]
+            }
+          ]
+        }
+      },
+      { type: 'message.updated', properties: { info: { agent: 'canary-boss' } } },
+      {
+        method: 'mcpServer/startupStatus/updated',
+        params: { name: 'canary_mcp', status: 'ready' }
+      },
+      {
+        type: 'tool',
+        tool: 'canary_mcp_save',
+        text: 'canary-boss ran canary-deploy, then init. Canary_mcp says so.'
+      }
+    ])
+    const stderr = {
+      name: 'sp12-session-new-mcp-stderr.jsonl',
+      text: 'WARN message="duplicate skill name" name=canary-notes existing="x"\n'
+    }
+
+    const [scrubbed, scrubbedStderr] = scrubFixtureSet([commands, stderr], IDENTITY)
+    const lines = records(scrubbed)
+
+    expect((scrubbed.text + scrubbedStderr.text).toLowerCase()).not.toContain('canary')
+    expect(lines[0].params.update.availableCommands).toEqual([
+      { name: 'init', description: 'create AGENTS.md' },
+      { name: 'skill:<command-1>', description: '<command-1>' }
+    ])
+    expect(lines[1].result.configOptions[0].options).toEqual([
+      { value: 'build', name: 'build' },
+      { value: '<agent-1>', name: '<agent-1>' }
+    ])
+    expect(lines[2].properties.info.agent).toBe('<agent-1>')
+    expect(lines[3].params.name).toBe('<mcp-server-1>')
+    expect(lines[4]).toEqual({
+      type: 'tool',
+      tool: '<mcp-server-1>_save',
+      text: '<agent-1> ran <command-1>, then init. <mcp-server-1> says so.'
+    })
+    expect(scrubbedStderr.text).toBe(
+      'WARN message="duplicate skill name" name=<skill-1> existing="x"\n'
+    )
+    expect(scrubFixtureSet([scrubbed, scrubbedStderr], IDENTITY)).toEqual([
+      scrubbed,
+      scrubbedStderr
+    ])
+  })
+
+  it('[ADR-008] inside an OpenCode config the setup names used as keys and the global plugin file names are replaced too, and a project plugin stays', () => {
+    const raw = jsonl('s0111-host-launched.jsonl', [
+      {
+        body: {
+          $schema: 'https://opencode.ai/config.json',
+          plugin: [
+            'file:///C:/Users/canary.user/.config/opencode/plugins/canary-guard.ts',
+            'file:///C:/Users/canary.user/AppData/Local/Temp/dwarfai-rec-1/.opencode/plugin/sp-probe.js'
+          ],
+          agent: {
+            'canary-boss': { permission: { task: { 'canary-helper': 'allow' } } },
+            'canary-helper': { prompt: 'help' }
+          }
+        }
+      },
+      { tool: 'x', text: 'canary-guard loaded; <mcp-server-1>_canary-boss' }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [config, text] = records(scrubbed)
+
+    expect(scrubbed.text).not.toContain('canary')
+    expect(config.body.plugin).toEqual([
+      'file:///<HOME>/.config/opencode/plugins/<plugin-1>.ts',
+      'file:///<REPO>/.opencode/plugin/sp-probe.js'
+    ])
+    expect(config.body.agent).toEqual({
+      '<agent-1>': { permission: { task: { '<agent-2>': '<agent-1>' } } },
+      '<agent-2>': { prompt: '<agent-2>' }
+    })
+    expect(text.text).toBe('<plugin-1> loaded; <mcp-server-1>_<agent-1>')
     expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
   })
 

@@ -213,14 +213,173 @@ export const OPENCODE_CONFIG_MAPS = Object.freeze({
 const isOpenCodeConfig = (value) =>
   typeof value.$schema === 'string' && /opencode\.ai\/config\.json$/.test(value.$schema)
 
+/** A numbered placeholder this scrubber wrote, such as `<agent-3>`. */
+const NUMBERED_PLACEHOLDER = /^<[a-z]+(?:-[a-z]+)*-\d+>$/
+
+/**
+ * The placeholder of one setup name: the set-wide one when the name was harvested (so a listing
+ * and a later mention agree), the name itself when it already is one, else the listing's own.
+ */
+function setupPlaceholder(name, scrub, fallback) {
+  const scrubbed = scrub(name)
+  return NUMBERED_PLACEHOLDER.test(scrubbed) ? scrubbed : fallback
+}
+
 /** Every entry of a setup map under its numbered placeholder, the key included. */
-function placeholderMap(map, stem) {
+function placeholderMap(map, stem, scrub) {
   return Object.fromEntries(
-    Object.values(map).map((entry, index) => {
-      const placeholder = `<${stem}-${index + 1}>`
-      return [placeholder, placeholderItem(entry, placeholder)]
+    Object.entries(map).map(([name, entry], index) => {
+      const placeholder = setupPlaceholder(name, scrub, `<${stem}-${index + 1}>`)
+      return [placeholder, placeholderItem(entry, placeholder, scrub)]
     })
   )
+}
+
+/**
+ * The names a person gives their own setup: built-in commands, agents, modes and tools of the
+ * providers stay, so a fixture keeps what every installation shows.
+ */
+const BUILTIN_SETUP_NAMES = new Set([
+  'default',
+  'plan',
+  'auto',
+  'yolo',
+  'build',
+  'general',
+  'explore',
+  'compaction',
+  'title',
+  'summary',
+  'init',
+  'review',
+  'compact',
+  'status',
+  'usage',
+  'mcp',
+  'tasks',
+  'help',
+  'task',
+  'read',
+  'write',
+  'edit',
+  'bash',
+  'glob',
+  'grep',
+  'list',
+  'webfetch',
+  'todowrite',
+  'todoread'
+])
+
+/** A plugin file of the person's global OpenCode config (a project's own plugin stays). */
+const GLOBAL_OPENCODE_PLUGIN = /[\\/]\.config[\\/]opencode[\\/]plugins?[\\/]([^\\/]+?)\.[cm]?[jt]s$/
+
+/** A Kimi skill command is `skill:<name>`; the name is what other lines repeat. */
+const commandName = (name) => name.replace(/^skill:/, '')
+
+/** OpenCode `--print-logs`: `message="duplicate skill name" name=<skill>`. */
+const DUPLICATE_SKILL = /duplicate skill name" name=([^\s"<>]+)/g
+
+/** An OpenCode `GET /mcp` body: each MCP server name to its `{ status }`. */
+const isMcpStatusMap = (value) =>
+  value !== null &&
+  typeof value === 'object' &&
+  !Array.isArray(value) &&
+  Object.keys(value).length > 0 &&
+  Object.values(value).every(
+    (entry) => entry !== null && typeof entry === 'object' && typeof entry.status === 'string'
+  )
+
+/** Calls `visit(object)` for every object of a parsed value. */
+function walkObjects(value, visit) {
+  if (Array.isArray(value)) for (const item of value) walkObjects(item, visit)
+  else if (value !== null && typeof value === 'object') {
+    visit(value)
+    for (const item of Object.values(value)) walkObjects(item, visit)
+  }
+}
+
+/**
+ * The names of the recording person's own setup in one set, each to a numbered placeholder in
+ * first-seen order: command listings (ACP `available_commands_update`), agents and modes, MCP
+ * servers (Codex startup status and status list, OpenCode `/mcp` and `/config`), and the skills
+ * OpenCode warns about. They are replaced wherever the set repeats them, tool names and prose too.
+ */
+function buildSetupNameMap(values, documents) {
+  const map = new Map()
+  const counters = new Map()
+  const add = (name, stem) => {
+    if (typeof name !== 'string' || name === '' || name.startsWith('<')) return
+    if (BUILTIN_SETUP_NAMES.has(name) || map.has(name)) return
+    const n = (counters.get(stem) ?? 0) + 1
+    counters.set(stem, n)
+    map.set(name, `<${stem}-${n}>`)
+  }
+  for (const value of values) {
+    walkObjects(value, (object) => {
+      if (Array.isArray(object.availableCommands)) {
+        for (const command of object.availableCommands)
+          add(commandName(command?.name ?? ''), 'command')
+      }
+      if (object.category === 'mode' && Array.isArray(object.options)) {
+        for (const option of object.options) add(option?.value, 'agent')
+      }
+      if (typeof object.agent === 'string') add(object.agent, 'agent')
+      if (object.method === 'mcpServer/startupStatus/updated')
+        add(object.params?.name, 'mcp-server')
+      if (isMcpServerStatus(object)) add(object.name, 'mcp-server')
+      if (isMcpStatusMap(object.body))
+        for (const name of Object.keys(object.body)) add(name, 'mcp-server')
+      if (isOpenCodeConfig(object)) {
+        for (const [field, stem] of Object.entries(OPENCODE_CONFIG_MAPS)) {
+          const entries = object[field]
+          if (entries !== null && typeof entries === 'object' && !Array.isArray(entries)) {
+            for (const name of Object.keys(entries)) add(name, stem)
+          }
+        }
+        if (Array.isArray(object.plugin)) {
+          for (const plugin of object.plugin) {
+            const global = typeof plugin === 'string' ? GLOBAL_OPENCODE_PLUGIN.exec(plugin) : null
+            if (global) add(global[1], 'plugin')
+          }
+        }
+      }
+    })
+  }
+  for (const { text } of documents) {
+    for (const match of text.matchAll(DUPLICATE_SKILL)) add(match[1], 'skill')
+  }
+  return map
+}
+
+/**
+ * One entry of an ACP command listing: a person's own command keeps its (placeholder) name, and
+ * every other string of it, its description too, becomes that placeholder; a built-in command stays.
+ */
+function placeholderCommand(command, scrub, shiftMs) {
+  if (command === null || typeof command !== 'object' || typeof command.name !== 'string') {
+    return scrubValue(command, scrub, shiftMs)
+  }
+  const placeholder = setupPlaceholder(commandName(command.name), scrub, null)
+  if (placeholder === null) return scrubValue(command, scrub, shiftMs)
+  return Object.fromEntries(
+    Object.entries(command).map(([field, inner]) => [
+      field,
+      field === 'name' ? scrub(inner) : placeholderItem(inner, placeholder, scrub)
+    ])
+  )
+}
+
+/** Replaces every setup name inside a string, as a whole name, the longest first. */
+function setupNameReplacer(map) {
+  const patterns = [...map.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map((name) => [
+      new RegExp(`(?<![A-Za-z0-9-])${escapeRegExp(name)}(?![A-Za-z0-9-])`, 'gi'),
+      map.get(name)
+    ])
+  return (s) =>
+    patterns.reduce((result, [pattern, placeholder]) => result.replace(pattern, placeholder), s)
 }
 
 /**
@@ -236,30 +395,36 @@ const isMcpServerStatus = (item) =>
   )
 
 /** One MCP server status under `<mcp-server-n>`, its tools under `<mcp-server-n-tool-k>`. */
-function placeholderMcpServer(item, n) {
-  const placeholder = `<mcp-server-${n}>`
+function placeholderMcpServer(item, index, scrub) {
+  const placeholder = setupPlaceholder(item.name, scrub, `<mcp-server-${index}>`)
+  const n = placeholder.slice(1, -1)
   const out = {}
   for (const [field, inner] of Object.entries(item)) {
     out[field] =
       field === 'tools' && inner !== null && typeof inner === 'object' && !Array.isArray(inner)
         ? Object.fromEntries(
             Object.values(inner).map((tool, index) => [
-              `<mcp-server-${n}-tool-${index + 1}>`,
-              placeholderItem(tool, placeholder)
+              `<${n}-tool-${index + 1}>`,
+              placeholderItem(tool, placeholder, scrub)
             ])
           )
-        : placeholderItem(inner, placeholder)
+        : placeholderItem(inner, placeholder, scrub)
   }
   return out
 }
 
 /** Every string of one list item replaced by its numbered placeholder; other leaves stay. */
-function placeholderItem(item, placeholder) {
+function placeholderItem(item, placeholder, scrubKey = (key) => key) {
   if (typeof item === 'string') return placeholder
-  if (Array.isArray(item)) return item.map((inner) => placeholderItem(inner, placeholder))
+  if (Array.isArray(item)) {
+    return item.map((inner) => placeholderItem(inner, placeholder, scrubKey))
+  }
   if (item !== null && typeof item === 'object') {
     return Object.fromEntries(
-      Object.entries(item).map(([key, inner]) => [key, placeholderItem(inner, placeholder)])
+      Object.entries(item).map(([key, inner]) => [
+        scrubKey(key),
+        placeholderItem(inner, placeholder, scrubKey)
+      ])
     )
   }
   return item
@@ -379,6 +544,12 @@ function walkFields(value, visit, parentKey = null) {
  * The id map of one fixture set: every provider id, in first-seen order, to a fake UUID. Fake ids
  * already in the set keep their number and no new id takes it (17 §1.4: C-19 needs repeated ids).
  */
+/**
+ * A composite id whose last part is the provider's own run id: Codex names a hook run
+ * `<event>:<n>:<hooks file>:exec-<uuid>`. Only that last part is an id; the rest is scrubbed as text.
+ */
+const EMBEDDED_RUN_ID = /:exec-([A-Za-z0-9][A-Za-z0-9-]{7,})$/
+
 function buildIdMap(values) {
   const found = []
   const used = new Set()
@@ -386,9 +557,11 @@ function buildIdMap(values) {
     walkFields(value, (key, item, parentKey) => {
       if (typeof item !== 'string' || !PROVIDER_ID_KEYS.has(key)) return
       if (NOT_PROVIDER_ID_PARENTS.has(parentKey)) return
-      const fake = FAKE_ID.exec(item)
+      const embedded = EMBEDDED_RUN_ID.exec(item)
+      const id = embedded ? embedded[1] : item
+      const fake = FAKE_ID.exec(id)
       if (fake) used.add(Number.parseInt(fake[1], 16))
-      else if (OPAQUE_ID.test(item)) found.push(item)
+      else if (OPAQUE_ID.test(id)) found.push(id)
     })
   }
   const map = new Map()
@@ -568,7 +741,7 @@ function scrubValue(value, scrub, shiftMs, key = null) {
   }
   if (Array.isArray(value)) {
     if (value.length > 0 && value.every(isMcpServerStatus)) {
-      return value.map((item, index) => placeholderMcpServer(item, index + 1))
+      return value.map((item, index) => placeholderMcpServer(item, index + 1, scrub))
     }
     return value.map((item) => scrubValue(item, scrub, shiftMs, key))
   }
@@ -585,7 +758,11 @@ function scrubValue(value, scrub, shiftMs, key = null) {
         typeof item === 'object' &&
         !Array.isArray(item)
       ) {
-        out[field] = placeholderMap(item, OPENCODE_CONFIG_MAPS[field])
+        out[field] = placeholderMap(item, OPENCODE_CONFIG_MAPS[field], scrub)
+        continue
+      }
+      if (field === 'availableCommands' && Array.isArray(item)) {
+        out[field] = item.map((command) => placeholderCommand(command, scrub, shiftMs))
         continue
       }
       const stem =
@@ -626,7 +803,8 @@ export function scrubFixtureSet(documents, identity) {
   const replacePersonalIds = idReplacer(buildPersonalIdMap(values))
   const replaceIds = idReplacer(buildIdMap(values))
   const shiftMs = timeShift(values)
-  const scrub = (s) => scrubText(replaceIds(replacePersonalIds(s)), rules)
+  const replaceSetupNames = setupNameReplacer(buildSetupNameMap(values, documents))
+  const scrub = (s) => scrubText(replaceSetupNames(replaceIds(replacePersonalIds(s))), rules)
   return documents.map(({ name, text }) => {
     if (name.endsWith('.jsonl')) {
       const lines = text.split(/\r?\n/)

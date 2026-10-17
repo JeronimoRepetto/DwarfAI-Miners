@@ -18,7 +18,7 @@
       "toolCount": 0
     },
     {
-      "name": "codegraph",
+      "name": "<mcp-server-4>",
       "toolCount": 1
     },
     {
@@ -26,23 +26,23 @@
       "toolCount": 0
     },
     {
-      "name": "codex_apps",
+      "name": "<mcp-server-1>",
       "toolCount": 238
     },
     {
-      "name": "context7",
+      "name": "<mcp-server-5>",
       "toolCount": 2
     },
     {
-      "name": "cua_repl",
+      "name": "<mcp-server-3>",
       "toolCount": 3
     },
     {
-      "name": "engram",
+      "name": "<mcp-server-6>",
       "toolCount": 19
     },
     {
-      "name": "node_repl",
+      "name": "<mcp-server-2>",
       "toolCount": 4
     }
   ],
@@ -113,7 +113,7 @@
     {
       "pid": 57448,
       "depth": 1,
-      "name": "node_repl.exe",
+      "name": "<mcp-server-2>.exe",
       "isProbe": false,
       "argvHasSentinel": false,
       "argvHasCredPath": false,
@@ -131,7 +131,7 @@
     {
       "pid": 14780,
       "depth": 2,
-      "name": "node_repl.exe",
+      "name": "<mcp-server-2>.exe",
       "isProbe": false,
       "argvHasSentinel": false,
       "argvHasCredPath": false,
@@ -140,7 +140,7 @@
     {
       "pid": 43208,
       "depth": 1,
-      "name": "engram.exe",
+      "name": "<mcp-server-6>.exe",
       "isProbe": false,
       "argvHasSentinel": false,
       "argvHasCredPath": false,

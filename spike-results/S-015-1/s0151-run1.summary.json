@@ -30,7 +30,7 @@
     },
     {
       "depth": 1,
-      "name": "node_repl.exe",
+      "name": "<mcp-server-2>.exe",
       "argvHasSentinel": false,
       "argvHasCred": false,
       "isProbe": false
@@ -44,14 +44,14 @@
     },
     {
       "depth": 2,
-      "name": "node_repl.exe",
+      "name": "<mcp-server-2>.exe",
       "argvHasSentinel": false,
       "argvHasCred": false,
       "isProbe": false
     },
     {
       "depth": 1,
-      "name": "engram.exe",
+      "name": "<mcp-server-6>.exe",
       "argvHasSentinel": false,
       "argvHasCred": false,
       "isProbe": false
