@@ -450,7 +450,8 @@ describe('Host crash recovery (F7)', () => {
     expect(hostB.resumable.calls.map((c) => c.op)).toEqual(['resume'])
   })
 
-  it('[S4.24, FM-110, TC-173-03] after a machine reboot no session is resumed and no report item exists, and the dwarf leaves with no toast', async () => {
+  // TC-173-03.
+  it('[S4.24, FM-110] after a machine reboot no session is resumed and no report item exists, and the dwarf leaves with no toast', async () => {
     const w = world()
     const owned = w.launched(1)
     const before = w.crew.bus.published.length
