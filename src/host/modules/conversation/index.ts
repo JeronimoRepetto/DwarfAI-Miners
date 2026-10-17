@@ -27,7 +27,9 @@
 // ISSUE-166: `sending` builds `ConversationCommands.send` over the `TurnSender` and the dwarf's
 // `canReceiveMessages` that host/wiring passes (the bridge to suppliers, crew's read): the person's
 // row and its `sending` mark before any hand-over, the marks moved only on evidence through machine 7
-// (domain/delivery.ts), and the `MessageLog` writes of AMENDMENT-16 (owner, 2026-10-15).
+// (domain/delivery.ts), and the `MessageLog` writes of AMENDMENT-16 (owner, 2026-10-15). Each
+// committed `ingest` batch reaches the sender as `transcript-match` evidence (S-022-1); a batch that
+// joined a caller's transaction reaches it only after that caller's commit (`joinedEvents`).
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
@@ -257,8 +259,16 @@ export function createConversation(deps: ConversationDeps): Conversation {
   })
   const feed = new ConversationFeedQueries({ log })
   let sender: ConversationSender | null = null
+  /** The batches of joined ingests, handed to the sender after their caller's commit. */
+  const joinedBatches: Array<Parameters<IngestCommands['ingest']>> = []
   const commands: IngestCommands = {
-    ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
+    ingest: (dwarfId, entries, origin) => {
+      const joined = deps.transactions.isInTransaction()
+      ingest.ingest(dwarfId, entries, origin)
+      if (sender === null) return
+      if (joined) joinedBatches.push([dwarfId, entries, origin])
+      else sender.entriesIngested(dwarfId, entries, origin)
+    },
     recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
     // ISSUE-166: the same route ends the dwarf's held deliveries (S7.07) once the run is closed.
     recordSessionEnd: (dwarfId, at) => {
@@ -294,8 +304,14 @@ export function createConversation(deps: ConversationDeps): Conversation {
       return { send: (...args) => (sender as ConversationSender).send(...args) }
     },
     joinedEvents: {
-      publish: () => ingest.publishJoined(),
-      discard: () => ingest.discardJoined()
+      publish: () => {
+        ingest.publishJoined()
+        for (const batch of joinedBatches.splice(0)) sender?.entriesIngested(...batch)
+      },
+      discard: () => {
+        ingest.discardJoined()
+        joinedBatches.length = 0
+      }
     },
     answerRecords: createAnswerRecords({ log, scope: deps.transactions, clock: deps.clock })
   }

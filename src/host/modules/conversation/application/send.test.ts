@@ -11,7 +11,7 @@ import { RecordingDiagnosticsLog } from '../../../kernel/fakes/RecordingDiagnost
 import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
-import type { TurnInput } from '../../suppliers'
+import type { ConversationEntry, TurnInput } from '../../suppliers'
 import type { Delivery } from '../domain/messages'
 import type { MessageLog } from '../ports/messageLog'
 import type { TurnHandOver, TurnSender, TurnSendResult } from '../ports/turnSender'
@@ -145,8 +145,15 @@ function harness() {
         cancelledFromApp: false
       })
     },
-    async send(n: number): Promise<MessageId> {
-      const sent = await sender.send(DWARF, TEXT, [], request(n))
+    /** One ingested batch of the dwarf's entries, as the module's `ingest` hands it over. */
+    ingest(
+      entries: ConversationEntry[],
+      origin: 'live-stream' | 'transcript' = 'transcript'
+    ): void {
+      sender.entriesIngested(DWARF, entries, origin)
+    },
+    async send(n: number, text = TEXT): Promise<MessageId> {
+      const sent = await sender.send(DWARF, text, [], request(n))
       if (!sent.ok) throw new Error(`refused: ${sent.error}`)
       await settle()
       return sent.value
@@ -303,5 +310,140 @@ describe('ConversationSender: a turn end before the receipt is not lost', () => 
     await settle()
 
     expect(h.stored()).toMatchObject({ phase: 'sending', heldUntilTurnEnd: true })
+  })
+})
+
+/** S-022-1 (ISSUE-325, passed): a `transcript-match` session's receipt, with its echo correlation. */
+const TRANSCRIPT_RECEIPT: TurnHandOver = {
+  confidence: 'confirmed',
+  heldUntilTurnEnd: false,
+  correlation: 'echo-1',
+  reactionEvidence: 'transcript-match'
+}
+
+let entryN = 0
+const person = (text: string, at: number | null, extra: Partial<ConversationEntry> = {}) =>
+  ({
+    sourceKey: `claude:session-0:user-${(entryN += 1)}`,
+    role: 'person',
+    text,
+    providerTime: at,
+    ...extra
+  }) satisfies ConversationEntry
+const dwarf = (extra: Partial<ConversationEntry> = {}) =>
+  ({
+    sourceKey: `claude:session-0:assistant-${(entryN += 1)}`,
+    role: 'dwarf',
+    text: 'on it',
+    providerTime: null,
+    ...extra
+  }) satisfies ConversationEntry
+
+describe('ConversationSender: transcript-match correlation (S-022-1)', () => {
+  it('[US-MSG-001.AC04, S7.05, S-022-1] a transcript-match message becomes reacted only when its echo is followed by a dwarf record, never on a turn end', async () => {
+    const h = harness()
+    const messageId = await h.send(10)
+    h.turns.answer({ ok: true, value: TRANSCRIPT_RECEIPT })
+    await settle()
+    expect(h.stored()).toMatchObject({ phase: 'delivered', confidence: 'confirmed' })
+
+    // A turn end, or the dwarf speaking before the echo, is no evidence for this channel.
+    h.turnEnd('some-turn')
+    h.ingest([dwarf()])
+    expect(h.stored()?.phase).toBe('delivered')
+    // The echo alone is delivery, not reaction.
+    h.ingest([person(TEXT, T0 + 5, { echoOf: 'echo-1' })])
+    expect(h.stored()?.phase).toBe('delivered')
+
+    h.ingest([dwarf()])
+    expect(h.stored()).toMatchObject({ phase: 'reacted', confidence: 'confirmed' })
+    expect(h.bus.ofType('MessageReactedTo').map((e) => e.payload)).toEqual([
+      { messageId, dwarfId: DWARF }
+    ])
+  })
+
+  it('[US-MSG-001.AC05, NFR-TIM-05, S-022-1] a transcript-match message whose echo never comes stays delivered however long the clock advances', async () => {
+    const h = harness()
+    await h.send(11)
+    h.turns.answer({ ok: true, value: TRANSCRIPT_RECEIPT })
+    await settle()
+
+    for (const ms of [60_000, 3_600_000, 86_400_000 * 30]) {
+      h.clock.advance(ms)
+      h.turnEnd(`turn-${ms}`)
+      h.ingest([
+        person('another line', h.clock.now()),
+        person(TEXT, h.clock.now(), { echoOf: 'echo-of-another-send' }),
+        dwarf()
+      ])
+      await settle()
+      expect(h.stored()).toMatchObject({ phase: 'delivered', confidence: 'confirmed' })
+    }
+    expect(h.bus.ofType('MessageReactedTo')).toEqual([])
+  })
+
+  it('[S7.05, S-022-1] an uncorrelated echo matches the text exactly as sent, at or after sentAt, with no folding, and claims one message only', async () => {
+    const h = harness()
+    const padded = 'two  spaces	and a tab'
+    const first = await h.send(12, padded)
+    h.turns.answer({ ok: true, value: { ...TRANSCRIPT_RECEIPT, correlation: 'echo-a' } })
+    await settle()
+    const second = await h.send(13, padded)
+    h.turns.answer({ ok: true, value: { ...TRANSCRIPT_RECEIPT, correlation: 'echo-b' } })
+    await settle()
+
+    // An earlier record of the same text, a folded copy, or a live-stream line is no echo.
+    h.ingest([person(padded, T0 - 1), person('two spaces and a tab', T0 + 5), dwarf()])
+    h.ingest([person(padded, T0 + 5), dwarf()], 'live-stream')
+    expect(h.bus.ofType('MessageReactedTo')).toEqual([])
+
+    // One exact echo at or after sentAt, then a dwarf record: the oldest message only.
+    h.ingest([person(padded, T0), dwarf()])
+    expect(h.bus.ofType('MessageReactedTo').map((e) => e.payload.messageId)).toEqual([first])
+    // The second echo, then the reply, reaches the second one.
+    h.ingest([person(padded, T0 + 9), dwarf()])
+    expect(h.bus.ofType('MessageReactedTo').map((e) => e.payload.messageId)).toEqual([
+      first,
+      second
+    ])
+  })
+
+  it('[S7.05, S-022-1] a subagent record is not the reply: only a record of the main conversation follows the echo', async () => {
+    const h = harness()
+    await h.send(14)
+    h.turns.answer({ ok: true, value: TRANSCRIPT_RECEIPT })
+    await settle()
+
+    h.ingest([person(TEXT, T0 + 5, { echoOf: 'echo-1' }), dwarf({ providerAgentId: 'agent-7' })])
+    expect(h.stored()?.phase).toBe('delivered')
+    h.ingest([dwarf()])
+    expect(h.stored()?.phase).toBe('reacted')
+  })
+
+  it('[S7.05, S-022-1] an echo and the reply ingested before the receipt still make the message reacted', async () => {
+    const h = harness()
+    const messageId = await h.send(15)
+    h.ingest([person(TEXT, T0 + 5, { echoOf: 'echo-1' }), dwarf()])
+    h.turns.answer({ ok: true, value: TRANSCRIPT_RECEIPT })
+    await settle()
+
+    expect(h.stored()).toMatchObject({ phase: 'reacted', confidence: 'confirmed' })
+    expect(h.bus.ofType('MessageReactedTo').map((e) => e.payload)).toEqual([
+      { messageId, dwarfId: DWARF }
+    ])
+  })
+
+  it('[S7.05, S-022-1] a turn-id session ignores transcript evidence, and a none session never reaches reacted', async () => {
+    for (const reactionEvidence of ['turn-id', 'none'] as const) {
+      const h = harness()
+      await h.send(16)
+      h.turns.answer({
+        ok: true,
+        value: { ...TRANSCRIPT_RECEIPT, reactionEvidence, providerTurnId: 'own-turn' }
+      })
+      await settle()
+      h.ingest([person(TEXT, T0 + 5, { echoOf: 'echo-1' }), dwarf()])
+      expect(h.stored()?.phase).toBe('delivered')
+    }
   })
 })

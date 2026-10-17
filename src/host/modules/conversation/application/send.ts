@@ -22,12 +22,20 @@
 //   held (S7.03), and `delivered` only when the turn it waits behind ends with work done; held when
 //   the session ends → `failed` (S7.07); `channel-error` → `failed` with Retry (S7.06, FM-076);
 //   `session-closed` → `failed` with Copy alone (S7.07, FM-078). Nothing retries on its own (BR-17).
-// - ✓✓ (S7.05, ADR-022 item 3): only for a session whose `reactionEvidence` is `turn-id`, when the
-//   turn the receipt named (`providerTurnId`) is seen ending with work done (`concluded` or
-//   `capped`) — also when that turn ended before the receipt came back. `transcript-match` stays at
-//   ✓ until spike S-022-1 records its match rule (ISSUE-325), and `none` never reaches ✓✓ (PO #57).
-//   No time ever moves ✓ to ✓✓ (NFR-TIM-05). The turn → message correlation lives in Host memory:
-//   after a Host restart a ✓ stays ✓ (truthful; the boot reconcile is ISSUE-173's).
+// - ✓✓ (S7.05, ADR-022 item 3), per the session's `reactionEvidence`:
+//   - `turn-id`: the turn the receipt named (`providerTurnId`) is seen ending with work done
+//     (`concluded` or `capped`), also when that turn ended before the receipt came back.
+//   - `transcript-match`, by spike S-022-1's rule (ISSUE-325, passed): an ingested `person` entry
+//     echoes the message — its `echoOf` is the receipt's `correlation` (the replayed uuid), or,
+//     uncorrelated, a transcript record whose text equals the text as sent, with no folding, at
+//     or after `sentAt`, claimed by the oldest message waiting for it — and a later `dwarf` entry
+//     of the main conversation (no `providerAgentId`) follows it. Evidence ingested before the
+//     receipt, or while the message was held, counts once the receipt names the channel. Matching
+//     the transcript record itself (its `parentUuid` chain, the relay's own normalization) is the
+//     reader's: it hands conversation entries (later: ISSUE-167, ISSUE-182).
+//   - `none`: never (PO #57).
+//   No time ever moves ✓ to ✓✓ (NFR-TIM-05). The correlation lives in Host memory: after a Host
+//   restart a ✓ stays ✓ (truthful; the boot reconcile is ISSUE-173's).
 // - Nothing here throws into the Host: the hand-over runs with no caller and the `TurnEnded`
 //   subscriber runs on the bus, where a throw would end the Host (wiring/uncaught.ts). A delivery
 //   whose row went away ends its tracking quietly; any other failed write is logged with
@@ -37,12 +45,20 @@
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
-import type { DwarfId, EventId, HostEpoch, MessageId, Result } from '../../../kernel/domain/values'
+import type {
+  DwarfId,
+  EventId,
+  HostEpoch,
+  Instant,
+  MessageId,
+  Result
+} from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
+import type { ConversationEntry } from '../../suppliers'
 import { advance, startDelivery, type DeliveryFact } from '../domain/delivery'
 import type { MessagesAppended } from '../domain/events'
 import type { Delivery, MessageView } from '../domain/messages'
@@ -89,10 +105,33 @@ const WATCHED_PER_DWARF = MESSAGES_PER_DWARF
 
 class CannotReceive extends Error {}
 
-/** A delivered message waiting for the turn that consumed it (`reactionEvidence: 'turn-id'`). */
+/**
+ * A delivered message waiting for its ✓✓: the turn that consumed it (`turn-id`), or, with no
+ * `providerTurnId`, its transcript echo and the reply after it (`transcript-match`, `echoes`).
+ */
 interface Watched {
   dwarfId: DwarfId
-  providerTurnId: string
+  providerTurnId?: string
+}
+
+/** The echoes an in-flight message keeps before its receipt names its correlation (bounded). */
+const EARLY_ECHOES_KEPT = 16
+
+/**
+ * What the transcript has shown of a sent message so far (S-022-1), from the send until its ✓✓ or
+ * the end of its tracking. The receipt's `correlation` is not known while the hand-over is in
+ * flight, so correlated echoes seen meanwhile are kept, each with whether a reply followed it.
+ */
+interface EchoWatch {
+  dwarfId: DwarfId
+  text: string
+  sentAt: Instant
+  correlation: string | null
+  echoSeen: boolean
+  repliedAfterEcho: boolean
+  earlyEchoes: Array<{ echoOf: string; replied: boolean }>
+  /** The receipt said `transcript-match`: a reply after the echo is ✓✓ now. */
+  live: boolean
 }
 
 /** A message the driver queued behind a running turn, with what its receipt said. */
@@ -132,6 +171,7 @@ export class ConversationSender implements ConversationSendCommand {
   private readonly inFlight = new Map<MessageId, InFlight>()
   private readonly held = new Map<MessageId, Held>()
   private readonly watched = new Map<MessageId, Watched>()
+  private readonly echoes = new Map<MessageId, EchoWatch>()
 
   constructor(private readonly deps: ConversationSendDeps) {
     deps.onTurnEnded((end) => this.turnEnded(end))
@@ -166,6 +206,16 @@ export class ConversationSender implements ConversationSendCommand {
     const { delivery } = startDelivery({ messageId, dwarfId, kind: 'message', at })
     this.deliveries.set(messageId, delivery)
     this.inFlight.set(messageId, { dwarfId, endsSeen: [], sessionEnded: false })
+    this.echoes.set(messageId, {
+      dwarfId,
+      text,
+      sentAt: at,
+      correlation: null,
+      echoSeen: false,
+      repliedAfterEcho: false,
+      earlyEchoes: [],
+      live: false
+    })
     const view: MessageView = {
       id: messageId,
       dwarfId,
@@ -202,6 +252,33 @@ export class ConversationSender implements ConversationSendCommand {
     }
     for (const [messageId, watched] of [...this.watched]) {
       if (watched.dwarfId === dwarfId) this.forget(messageId)
+    }
+  }
+
+  /**
+   * A batch of the dwarf's entries `ingest` committed, in order: the transcript evidence of
+   * `transcript-match` (S-022-1). Never throws to its caller: `move` records its own failures.
+   */
+  entriesIngested(
+    dwarfId: DwarfId,
+    entries: readonly ConversationEntry[],
+    origin: 'live-stream' | 'transcript'
+  ): void {
+    const watching = [...this.echoes.values()].filter((w) => w.dwarfId === dwarfId)
+    if (watching.length === 0) return
+    const now = this.deps.clock.now()
+    for (const entry of entries) {
+      if (entry.handoffEcho === true || entry.controlPlane === true) continue
+      if (entry.role === 'person') noteEcho(watching, entry, origin, now)
+      else if (entry.role === 'dwarf' && entry.providerAgentId === undefined) {
+        for (const w of watching) {
+          if (w.echoSeen) w.repliedAfterEcho = true
+          for (const early of w.earlyEchoes) early.replied = true
+        }
+      }
+    }
+    for (const [messageId, w] of [...this.echoes]) {
+      if (w.live && w.repliedAfterEcho) this.react(messageId, 'transcript-match')
     }
   }
 
@@ -261,7 +338,11 @@ export class ConversationSender implements ConversationSendCommand {
     endsSeen: readonly TurnEnded[]
   ): void {
     if (!this.move(messageId, { t: 'accepted', confidence: receipt.confidence })) return
-    // S-022-1 gate: only `turn-id` correlates here; `transcript-match` and `none` stay at ✓.
+    if (receipt.reactionEvidence === 'transcript-match') {
+      this.watchTranscript(dwarfId, messageId, receipt.correlation)
+      return
+    }
+    this.echoes.delete(messageId)
     const turnId = receipt.reactionEvidence === 'turn-id' ? receipt.providerTurnId : undefined
     if (turnId === undefined) {
       this.forget(messageId)
@@ -276,6 +357,34 @@ export class ConversationSender implements ConversationSendCommand {
     if (workDone(own)) {
       this.move(messageId, { t: 'activity-correlated', reactionEvidence: 'turn-id' })
     }
+    this.forget(messageId)
+  }
+
+  /**
+   * `transcript-match`: the correlation is known now, so the echoes seen before it are resolved;
+   * a reply already seen after the echo is ✓✓ at once, else the message waits for one.
+   */
+  private watchTranscript(dwarfId: DwarfId, messageId: MessageId, correlation: string): void {
+    const w = this.echoes.get(messageId)
+    if (w === undefined) return
+    w.correlation = correlation
+    for (const early of w.earlyEchoes) {
+      if (early.echoOf !== correlation) continue
+      w.echoSeen = true
+      if (early.replied) w.repliedAfterEcho = true
+    }
+    w.earlyEchoes = []
+    if (w.repliedAfterEcho) {
+      this.react(messageId, 'transcript-match')
+      return
+    }
+    w.live = true
+    this.watch(messageId, { dwarfId })
+  }
+
+  /** S7.05 on the evidence of `reactionEvidence`, then the tracking ends. */
+  private react(messageId: MessageId, reactionEvidence: 'turn-id' | 'transcript-match'): void {
+    this.move(messageId, { t: 'activity-correlated', reactionEvidence })
     this.forget(messageId)
   }
 
@@ -323,6 +432,7 @@ export class ConversationSender implements ConversationSendCommand {
     this.inFlight.delete(messageId)
     this.held.delete(messageId)
     this.watched.delete(messageId)
+    this.echoes.delete(messageId)
   }
 
   /**
@@ -392,6 +502,33 @@ export class ConversationSender implements ConversationSendCommand {
       payload
     } as Extract<SendEvent, { type: T }>)
   }
+}
+
+/**
+ * One ingested `person` entry against the dwarf's watched messages (S-022-1): a correlated echo
+ * names one receipt's `correlation` (kept while that is not known yet); an uncorrelated transcript
+ * record equal to the text as sent, at or after `sentAt`, is the echo of the oldest message still
+ * waiting for one. A live-stream line without `echoOf` is no echo.
+ */
+function noteEcho(
+  watching: readonly EchoWatch[],
+  entry: ConversationEntry,
+  origin: 'live-stream' | 'transcript',
+  now: Instant
+): void {
+  if (entry.echoOf !== undefined) {
+    for (const w of watching) {
+      if (w.correlation === entry.echoOf) w.echoSeen = true
+      else if (w.correlation === null && w.earlyEchoes.length < EARLY_ECHOES_KEPT) {
+        w.earlyEchoes.push({ echoOf: entry.echoOf, replied: false })
+      }
+    }
+    return
+  }
+  if (origin !== 'transcript') return
+  const at = entry.providerTime ?? now
+  const claimed = watching.find((w) => !w.echoSeen && w.text === entry.text && at >= w.sentAt)
+  if (claimed !== undefined) claimed.echoSeen = true
 }
 
 /** What `MessageLog.settleDelivery` stores for a delivery machine 7 just produced. */
