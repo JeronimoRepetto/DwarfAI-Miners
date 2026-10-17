@@ -7,9 +7,7 @@
 // - `DelegationServer` is the driven port the MCP adapter (`McpDelegationServer`) implements: it
 //   listens on the MCP endpoint (ADR-013 item 3), never on loopback TCP.
 // - `ParentDeliverer` is the bridge to conversation (the turn-input handoff, ISSUE-205).
-// - `SubtaskRouter` and `WorkerLauncher` (16 §4.8) name `JevSuggestionView`, which the jev module
-//   does not export yet (it has no `index.ts`, and a port imports another module only through it,
-//   R2). They join this file with the routing issue (later: ISSUE-204), which uses them.
+// - `SubtaskRouter` and `WorkerLauncher` (16 §4.8) are in `subtaskRouting.ts` (ISSUE-204).
 //
 // Package gaps, filled here (resolved in dev, recorded in the hand-off):
 // - `LoopbackEndpoint` is named by 16 §4.8 and defined nowhere. The endpoint it describes is a
