@@ -28,12 +28,26 @@ export type PromptToolHandler = (
   signal: AbortSignal
 ) => Promise<'allow' | 'deny'>
 
+/** What the relay serves a session besides the prompt tool. */
+export interface PromptToolScope {
+  /**
+   * Both delegation gates let the launch in (its request carried a `DelegationInjection`): its
+   * relay lists the two delegation tools too. An ungated launch's relay lists `permission` only.
+   */
+  readonly delegationGated: boolean
+}
+
 export interface PromptToolSessions {
-  register(launchId: LaunchId, handler: PromptToolHandler): () => void
+  register(launchId: LaunchId, scope: PromptToolScope, handler: PromptToolHandler): () => void
 }
 
 export interface PromptToolRelay {
   issue(launchId: LaunchId): Promise<DelegationInjection | null>
+  /**
+   * Revokes a credential `issue` gave, when the launch it was issued for failed to start: its row
+   * and file never outlive a launch that never ran. Never called for a gated request's own entry.
+   */
+  release(launchId: LaunchId): Promise<void>
 }
 
 /** The driver's dependency: both halves, bound by the composition root. */

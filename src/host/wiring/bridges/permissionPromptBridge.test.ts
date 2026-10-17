@@ -22,16 +22,17 @@ const CALL: PermissionPromptCall = {
   toolUseId: 'toolu_01'
 }
 const signal = new AbortController().signal
+const UNGATED = { delegationGated: false }
 
 describe('PermissionPromptBridge (AMENDMENT-21)', () => {
   it('[ADR-013] a credential reaches the session of its own launch only', async () => {
     const bridge = new PermissionPromptBridge()
     const asked: string[] = []
-    bridge.register(A, async (call) => {
+    bridge.register(A, UNGATED, async (call) => {
       asked.push(`A:${call.toolUseId}`)
       return 'allow'
     })
-    bridge.register(B, async (call) => {
+    bridge.register(B, UNGATED, async (call) => {
       asked.push(`B:${call.toolUseId}`)
       return 'deny'
     })
@@ -44,7 +45,7 @@ describe('PermissionPromptBridge (AMENDMENT-21)', () => {
   it('[ADR-013] a launch with no owned stream-json session, or a revoked credential, is not served and is denied unasked', async () => {
     const bridge = new PermissionPromptBridge()
     const asked: string[] = []
-    bridge.register(A, async () => {
+    bridge.register(A, UNGATED, async () => {
       asked.push('A')
       return 'allow'
     })
@@ -59,12 +60,12 @@ describe('PermissionPromptBridge (AMENDMENT-21)', () => {
 
   it('[ADR-013] unregistering ends the session service, and a late unregister never removes a newer session of the launch', async () => {
     const bridge = new PermissionPromptBridge()
-    const first = bridge.register(A, async () => 'deny')
+    const first = bridge.register(A, UNGATED, async () => 'deny')
     first()
     expect(bridge.serves(tokenOf(A))).toBe(false)
 
-    const old = bridge.register(A, async () => 'deny')
-    bridge.register(A, async () => 'allow')
+    const old = bridge.register(A, UNGATED, async () => 'deny')
+    bridge.register(A, UNGATED, async () => 'allow')
     old()
 
     expect(bridge.serves(tokenOf(A))).toBe(true)
@@ -75,7 +76,7 @@ describe('PermissionPromptBridge (AMENDMENT-21)', () => {
     const bridge = new PermissionPromptBridge()
     const abort = new AbortController()
     let seen: { call: PermissionPromptCall; signal: AbortSignal } | null = null
-    bridge.register(A, async (call, received) => {
+    bridge.register(A, UNGATED, async (call, received) => {
       seen = { call, signal: received }
       return 'deny'
     })
@@ -83,5 +84,18 @@ describe('PermissionPromptBridge (AMENDMENT-21)', () => {
     await bridge.decide(tokenOf(A), CALL, abort.signal)
 
     expect(seen).toEqual({ call: CALL, signal: abort.signal })
+  })
+
+  it('[ADR-013, INV-80] each launch reports the delegation gate it registered with, and an unserved launch is never gated', () => {
+    const bridge = new PermissionPromptBridge()
+    bridge.register(A, { delegationGated: true }, async () => 'deny')
+    bridge.register(B, UNGATED, async () => 'deny')
+
+    expect(bridge.delegationGated(tokenOf(A))).toBe(true)
+    expect(bridge.delegationGated(tokenOf(B))).toBe(false)
+    expect(bridge.delegationGated(tokenOf(A, 5))).toBe(false)
+    expect(
+      bridge.delegationGated(tokenOf('01890a5d-ac96-774b-bcce-b302099a8a03' as LaunchId))
+    ).toBe(false)
   })
 })

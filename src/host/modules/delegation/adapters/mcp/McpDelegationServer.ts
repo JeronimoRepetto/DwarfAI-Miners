@@ -24,6 +24,9 @@
 //   reaches the fail-closed reader instead of the SDK's `isError` refusal. Any other connection
 //   (another launch's credential, a driver without the prompt tool) never sees the tool, and a
 //   call to it is the SDK's unknown-tool refusal. A cancelled call aborts the signal it hands on.
+//   Such a session whose launch the delegation gates left out (`delegationGated` false) is listed
+//   `permission` alone: the two delegation tools would always refuse it (INV-80). A gated one gets
+//   all three; any other connection keeps the two.
 // - A closed relay never cancels anything (16 §5.5): the ticket stays readable by a new relay of
 //   the same launch. `close` stops the endpoint and ends every relay connection.
 //
@@ -132,6 +135,39 @@ function createDelegationMcpServer(
   prompts?: PermissionPromptEndpoint
 ): McpServer {
   const server = new McpServer(SERVER_INFO)
+  // Read once, when the connection is accepted: an owned stream-json session's relay gets the
+  // prompt tool, and the delegation tools only when its launch was gated in (AMENDMENT-21).
+  const servedPrompts = prompts !== undefined && prompts.serves(connection.token)
+  const listsDelegation = !servedPrompts || prompts.delegationGated(connection.token)
+  if (listsDelegation) registerDelegationTools(server, connection, handler, log)
+  if (servedPrompts) {
+    server.registerTool(
+      PERMISSION_TOOL_NAME,
+      {
+        title: 'Ask the person about a tool use',
+        description: PERMISSION_DESCRIPTION,
+        inputSchema: {
+          tool_name: z.unknown().describe('The tool Claude wants to run.'),
+          input: z.unknown().describe('The input it wants to run the tool with.'),
+          tool_use_id: z.unknown().describe('The id of the tool use block.')
+        }
+      },
+      async (args, extra) =>
+        toPromptResult(
+          await answerPermissionPrompt(prompts, connection.token, args, extra.signal, log)
+        )
+    )
+  }
+  return server
+}
+
+/** `delegate_subtask` and `subtask_result` (16 §5.4). */
+function registerDelegationTools(
+  server: McpServer,
+  connection: DelegationRelayConnection,
+  handler: DelegationEndpoint,
+  log: DiagnosticsLog
+): void {
   server.registerTool(
     DELEGATE_SUBTASK_TOOL_NAME,
     {
@@ -180,25 +216,6 @@ function createDelegationMcpServer(
         await answerSubtaskResult(handler, connection.token, args.ticket, DELEGATION_WAIT_MS, log)
       )
   )
-  if (prompts !== undefined && prompts.serves(connection.token)) {
-    server.registerTool(
-      PERMISSION_TOOL_NAME,
-      {
-        title: 'Ask the person about a tool use',
-        description: PERMISSION_DESCRIPTION,
-        inputSchema: {
-          tool_name: z.unknown().describe('The tool Claude wants to run.'),
-          input: z.unknown().describe('The input it wants to run the tool with.'),
-          tool_use_id: z.unknown().describe('The id of the tool use block.')
-        }
-      },
-      async (args, extra) =>
-        toPromptResult(
-          await answerPermissionPrompt(prompts, connection.token, args, extra.signal, log)
-        )
-    )
-  }
-  return server
 }
 
 /** Claude reads the prompt tool's answer from its one JSON text block (15 §2.7). */

@@ -47,6 +47,7 @@ import type {
   PromptToolCall,
   PromptToolHandler,
   PromptToolRelay,
+  PromptToolScope,
   PromptToolSessions
 } from './promptTool'
 import type { DelegationInjection } from '../../../ports/providerDriver'
@@ -95,10 +96,14 @@ class RecordingMcpConfigFiles implements McpConfigFiles {
  */
 class RecordingPromptTools implements PromptToolSessions, PromptToolRelay {
   readonly handlers = new Map<string, PromptToolHandler>()
+  /** Every registration's scope, in order: `[launchId, delegationGated]`. */
+  readonly scopes: Array<[string, boolean]> = []
   readonly issued: string[] = []
+  readonly released: string[] = []
   fail = false
 
-  register(launchId: string, handler: PromptToolHandler): () => void {
+  register(launchId: string, scope: PromptToolScope, handler: PromptToolHandler): () => void {
+    this.scopes.push([launchId, scope.delegationGated])
     this.handlers.set(launchId, handler)
     return () => {
       if (this.handlers.get(launchId) === handler) this.handlers.delete(launchId)
@@ -113,6 +118,10 @@ class RecordingPromptTools implements PromptToolSessions, PromptToolRelay {
       relay: { program: '/opt/dwarfai/host/dwarfai', args: ['dwarfai-mcp-relay'] },
       credentialFilePath: `/home/j/.dwarfai/run/mcp/${launchId}.cred`
     }
+  }
+
+  async release(launchId: string): Promise<void> {
+    this.released.push(launchId)
   }
 
   /** The relay's `permission` call for `launchId`'s session. */
@@ -1196,5 +1205,58 @@ describe('ClaudeStreamJsonDriver permission prompt tool (AMENDMENT-21)', () => {
     expect(capabilitiesFromHelp(HELP_2_1_301, { ...SPIKE_RECORDS, sp08: false }).permission).toBe(
       'none'
     )
+  })
+
+  it('[ADR-013, INV-80] a session registers the delegation gate of its launch: false ungated, true gated, and a resume keeps its launch gate', async () => {
+    const ungated = new RecordingPromptTools()
+    await launched({}, new RecordingMcpConfigFiles(), ungated)
+    const gated = new RecordingPromptTools()
+    await launched({ delegation: true }, new RecordingMcpConfigFiles(), gated)
+    const resumed = new RecordingPromptTools()
+    await resumedRun(fixture('sp15-resume').variants[0] as FixtureVariant, 1, resumed)
+
+    expect(ungated.scopes).toEqual([['launch-1', false]])
+    expect(gated.scopes).toEqual([['launch-1', true]])
+    expect(resumed.scopes).toEqual([
+      ['launch-1', false],
+      ['launch-1', false]
+    ])
+  })
+
+  it('[ADR-013, INV-83] a launch that fails to start releases the prompt relay credential it was issued, never a gated request entry', async () => {
+    const failSpawn = { variant: null, spawn: () => ({ kind: 'fail', code: 'EACCES' }) as const }
+    const spawnFailed = new RecordingPromptTools()
+    const run = await runScript(
+      factoryWith(undefined, undefined, spawnFailed),
+      [{ do: 'launch' }],
+      failSpawn,
+      OPTIONS
+    )
+    expect(run.outcomes[0]).toMatchObject({ rejected: { cause: 'could-not-start' } })
+    expect(spawnFailed.released).toEqual(['launch-1'])
+
+    // An error result before system/init: the process ran but the launch never became ready.
+    const early = new RecordingPromptTools()
+    await runScript(
+      factoryWith(undefined, undefined, early),
+      fixture('s0201-early-exit').expected.script,
+      { variant: variantOf('s0201-early-exit') },
+      OPTIONS
+    )
+    expect(early.released).toEqual(['launch-1'])
+
+    // A gated request's entry is the delegation lifecycle's to revoke (its revokeLaunch).
+    const gated = new RecordingPromptTools()
+    await runScript(
+      factoryWith(undefined, undefined, gated),
+      [{ do: 'launch', delegation: true }],
+      failSpawn,
+      OPTIONS
+    )
+    expect(gated.released).toEqual([])
+    // A launch that started keeps its credential: it is revoked when its dwarf departs.
+    const started = new RecordingPromptTools()
+    await launched({}, new RecordingMcpConfigFiles(), started)
+    expect(started.released).toEqual([])
   })
 })

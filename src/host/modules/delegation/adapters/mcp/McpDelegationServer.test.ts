@@ -179,7 +179,9 @@ describe('McpDelegationServer (16 §5.4)', () => {
 function promptsFor(
   owned: DelegationToken['launchId'] | null,
   decide: (call: PermissionPromptCall, signal: AbortSignal) => Promise<'allow' | 'deny'> = () =>
-    Promise.resolve('allow')
+    Promise.resolve('allow'),
+  /** Whether `owned` was launched with both delegation gates on. */
+  gated = true
 ): PermissionPromptEndpoint & {
   asked: Array<{ launchId: string; call: PermissionPromptCall; signal: AbortSignal }>
 } {
@@ -187,6 +189,7 @@ function promptsFor(
   return {
     asked,
     serves: (t) => owned !== null && t.launchId === owned,
+    delegationGated: (t) => gated && owned !== null && t.launchId === owned,
     decide: (t, call, signal) => {
       asked.push({ launchId: t.launchId, call, signal })
       return decide(call, signal)
@@ -225,7 +228,7 @@ describe('McpDelegationServer permission tool (AMENDMENT-21, 16 §5.4, 15 §2.7)
     result: () => new Promise(() => {})
   }
 
-  it('[ADR-013] an owned stream-json session connection lists three tools: the two delegation tools and permission', async () => {
+  it('[ADR-013] a gated owned stream-json session connection lists three tools: the two delegation tools and permission', async () => {
     const { client, server } = await connectedClient(
       never,
       owned,
@@ -242,6 +245,25 @@ describe('McpDelegationServer permission tool (AMENDMENT-21, 16 §5.4, 15 §2.7)
       'input',
       'tool_use_id'
     ])
+    await client.close()
+    await server.close()
+  })
+
+  it('[ADR-013, INV-80] an ungated owned stream-json session connection lists only permission: no delegation tool it could never use', async () => {
+    const prompts = promptsFor(owned.launchId, undefined, false)
+    const { client, server } = await connectedClient(never, owned, undefined, prompts)
+
+    const { tools } = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(['permission'])
+
+    // A call to an unlisted delegation tool is the SDK's unknown-tool refusal.
+    const delegated = await client
+      .callTool({ name: 'delegate_subtask', arguments: { task: 'anything' } })
+      .then(
+        (result) => (result as CallToolResult).isError === true,
+        () => true
+      )
+    expect(delegated).toBe(true)
     await client.close()
     await server.close()
   })

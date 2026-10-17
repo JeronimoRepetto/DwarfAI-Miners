@@ -27,7 +27,10 @@ export { DELEGATION_WAIT_MS } from './ports/delegationServer'
 // AMENDMENT-21: the permission prompt tool's port, its call, and the stream-json relay issuer.
 export type { PermissionPromptEndpoint } from './ports/permissionPrompt'
 export type { PermissionPromptCall } from './domain/permissionPrompt'
-export type { PermissionPromptRelayIssuer } from './application/delegationLifecycle'
+export type {
+  DelegationLifecycle,
+  PermissionPromptRelayIssuer
+} from './application/delegationLifecycle'
 
 /** Structurally the preferences module's `ResetDbStep` (16 §4.12); delegation never imports it. */
 export interface DelegationResetDbStep {

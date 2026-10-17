@@ -14,6 +14,12 @@ export interface PermissionPromptEndpoint {
   /** Whether the token's launch is an owned Claude `stream-json` session now. */
   serves(token: DelegationToken): boolean
   /**
+   * Whether that session's launch was let in by both delegation gates (its request carried a
+   * `DelegationInjection`, ADR-013 item 4). An ungated one is listed `permission` only: the two
+   * delegation tools would always refuse it (INV-80), so it never sees them.
+   */
+  delegationGated(token: DelegationToken): boolean
+  /**
    * The person's answer to one prompt of the token's own session. `signal` aborts when the tool
    * call is cancelled (the ask is then resolved `cancelled`). Rejects on a bridge failure.
    */

@@ -34,6 +34,7 @@ function endpoint(
   return {
     asked,
     serves: (token) => served && token.launchId === LAUNCH,
+    delegationGated: () => false,
     decide: async (token, call) => {
       expect(token.launchId).toBe(LAUNCH)
       asked.push(call)

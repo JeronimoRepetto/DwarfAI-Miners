@@ -129,6 +129,8 @@ interface Remembered {
   /** The launch whose relay credential a resume carries again (AMENDMENT-21). */
   readonly launchId: LaunchId
   readonly relay: RelayEntryInput
+  /** Both delegation gates let the launch in; its resumes keep that listing. */
+  readonly delegationGated: boolean
   /** Resumes so far: each writes its own `--mcp-config` file. */
   resumes: number
 }
@@ -183,13 +185,21 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       throw launchError('could-not-start', 'the permission prompt tool relay could not be issued')
     }
     // Registered before the spawn: claude connects its MCP servers while it starts.
-    const prompts = this.promptsFor(req.launchId)
-    const config = await this.writeMcpConfig(req.launchId, relay.entry).catch((error: unknown) => {
+    const prompts = this.promptsFor(req.launchId, relay.gated)
+    // A credential this launch was issued never outlives a start that failed; a gated request's
+    // own entry is the delegation lifecycle's to revoke (its `revokeLaunch`).
+    const release = async (): Promise<void> => {
       prompts.unregister()
-      throw error
-    })
+      if (!relay.gated) await this.releaseRelay(req.launchId)
+    }
+    const config = await this.writeMcpConfig(req.launchId, relay.entry).catch(
+      async (error: unknown) => {
+        await release()
+        throw error
+      }
+    )
     const abandon = async (): Promise<void> => {
-      prompts.unregister()
+      await release()
       await config.remove()
     }
     let argv: string[]
@@ -244,6 +254,7 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       spawnTag: req.spawnTag,
       launchId: req.launchId,
       relay: relay.entry,
+      delegationGated: relay.gated,
       resumes: 0
     })
     session.writePrompt(req.prompt, this.deps.ids.uuidv7())
@@ -251,6 +262,8 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       return await session.ready
     } catch (error) {
       this.live.delete(sessionId)
+      // A launch that never became ready is never resumed: its credential is released.
+      this.remembered.delete(sessionId)
       await abandon()
       throw error
     }
@@ -268,7 +281,7 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     if (detected.kind !== 'installed') throw launchError('not-installed', 'claude is not installed')
     // The launch's relay again (AMENDMENT-21), in a file of its own; no pre-approval on a resume.
     known.resumes += 1
-    const prompts = this.promptsFor(known.launchId)
+    const prompts = this.promptsFor(known.launchId, known.delegationGated)
     const config = await this.writeMcpConfig(
       `${known.launchId}.resume-${known.resumes}`,
       known.relay
@@ -372,7 +385,9 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       return entry === null ? null : { entry, gated: true }
     }
     const issued = await this.deps.promptTool.relay.issue(req.launchId).catch(() => null)
-    const entry = issued === null ? null : ticketFileEntry(issued)
+    if (issued === null) return null
+    const entry = ticketFileEntry(issued)
+    if (entry === null) await this.releaseRelay(req.launchId)
     return entry === null ? null : { entry, gated: false }
   }
 
@@ -380,14 +395,20 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
    * The launch's prompt-tool registration: made before the spawn, bound to the session once it
    * exists. A call before that, or after the registration ended, is denied (fail closed).
    */
-  private promptsFor(launchId: LaunchId): {
+  private promptsFor(
+    launchId: LaunchId,
+    delegationGated: boolean
+  ): {
     bind(session: StreamJsonSession): void
     unregister(): void
   } {
     let session: StreamJsonSession | null = null
     let registered = true
-    const unregister = this.deps.promptTool.sessions.register(launchId, (call, signal) =>
-      session === null ? Promise.resolve('deny') : session.promptPermission(call, signal)
+    const unregister = this.deps.promptTool.sessions.register(
+      launchId,
+      { delegationGated },
+      (call, signal) =>
+        session === null ? Promise.resolve('deny') : session.promptPermission(call, signal)
     )
     return {
       bind: (bound) => {
@@ -400,6 +421,11 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
         unregister()
       }
     }
+  }
+
+  /** Revokes a prompt relay credential this driver was issued; a failure is the boot sweep's. */
+  private async releaseRelay(launchId: LaunchId): Promise<void> {
+    await this.deps.promptTool.relay.release(launchId).catch(() => undefined)
   }
 
   /** ADR-013 item 3 `ticket-file`: the relay entry with the credential-file path, before the spawn. */
