@@ -78,6 +78,9 @@ const SERVED_SINCE_CUT_0 = [
   'frame:integration.changed',
   // The first-run consent step's answer: B-M40, served from cut 2 (ISSUE-323).
   'preferences.answerWelcome',
+  // AMENDED for ISSUE-216 (appended): B-M10 and B-M11, served by the preferences wiring for step 3a.
+  'settings.secret.clear',
+  'settings.secret.set',
   // The asking module: B-M30…B-M32, the `asks` section and the ask frames, from cut 2 (ISSUE-140).
   'asking.answerPermission',
   'asking.answerQuestion',
@@ -102,7 +105,9 @@ const SERVED_SINCE_CUT_0 = [
   // Describing attachments: B-M28, from cut 3 (ISSUE-169).
   'conversation.describeAttachments',
   // AMENDED for ISSUE-170 (appended): B-M29, the console target of A-13, from cut 3.
-  'conversation.resolveConsole'
+  'conversation.resolveConsole',
+  // AMENDED for ISSUE-196 (appended): B-M38, served by the jev wiring for the step-3a switch.
+  'jev.suggest'
 ]
 const SERVED_SECTIONS = [
   'meta',

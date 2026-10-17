@@ -125,12 +125,18 @@ import { ObservedSessionTurnSender } from './modules/conversation/adapters/obser
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
+import { TypesafeJevRouter } from './modules/jev/adapters/typesafe/TypesafeJevRouter'
 import { ClaudeHooksConfigWriter } from './modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
 import { ConfigWriterEngine } from './modules/preferences/adapters/external-config/configWriterEngine'
 import {
   OPENCODE_PLUGIN_FILE_NAME,
   OpenCodePluginConfigWriter
 } from './modules/preferences/adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
+import { NapiKeyringBinding } from './modules/preferences/adapters/secret-store/napiKeyringBinding'
+import {
+  OsKeyringSecretStore,
+  SECRET_SERVICE
+} from './modules/preferences/adapters/secret-store/OsKeyringSecretStore'
 import { SqliteChannelTokenStore } from './modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from './modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from './modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
@@ -231,11 +237,7 @@ import {
   routeLaunchDrainRechecks
 } from './wiring/hostDrainGate'
 import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
-import {
-  servePreferences,
-  unavailableSecretStore,
-  type WiredPreferences
-} from './wiring/preferencesWiring'
+import { servePreferences, type WiredPreferences } from './wiring/preferencesWiring'
 import {
   ASKING_FRAMES,
   serveAsking,
@@ -269,6 +271,8 @@ import { SqliteRecoveryReportStore } from './modules/launching/adapters/sqlite/S
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
+import { serveJev } from './wiring/routes/jev'
+import { routingCatalogSource } from './wiring/bridges/routingCatalogSource'
 import { routeCut1Events } from './wiring/routes/cut1Routes'
 import {
   routeMineBackfillWhenObserving,
@@ -607,6 +611,8 @@ async function bootHost(base: HostBase): Promise<void> {
   const servedLaunching = serveLaunching({ dispatcher, sections })
   // B-M37 `suppliers.launchable` (ISSUE-163), bound when boot step 4 wired suppliers.
   const servedSuppliers = serveSuppliers({ dispatcher })
+  // B-M38 `jev.suggest` (ISSUE-196), bound when boot step 4 wired jev over suppliers.
+  const servedJev = serveJev({ dispatcher })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -820,6 +826,7 @@ async function bootHost(base: HostBase): Promise<void> {
             transactions,
             bus,
             clock,
+            scheduler,
             ids,
             hostEpoch: epoch,
             log,
@@ -836,8 +843,10 @@ async function bootHost(base: HostBase): Promise<void> {
             // `LedgerRepository.setInstallMoment` (16 §4.10) and the cut-1 module steps (ISSUE-121).
             ledger: ledgerRepository,
             moduleSteps: resetSteps.steps,
-            // No OS secret store yet (later: ISSUE-324).
-            secrets: unavailableSecretStore,
+            // The OS secret store (ADR-017 item 2; ISSUE-324): the Jev key and, from 4a, the
+            // OpenCode password live there only. No plain-text fallback (item 5): with no usable
+            // secret service it answers 'unavailable'.
+            secrets: new OsKeyringSecretStore(new NapiKeyringBinding(SECRET_SERVICE), log),
             // A cut-2 rollback build refuses every install: today's installer is the entry's one writer there.
             externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(
               hostConfigWriter({
@@ -867,7 +876,10 @@ async function bootHost(base: HostBase): Promise<void> {
             ready: () => hostState.current().state === 'ready'
           })
           modules.preferences = preferences
-          return preferences.resumeOnBoot()
+          const resumed = await preferences.resumeOnBoot()
+          // The secrets' flags after a resumed `secrets` step, before any command (ISSUE-216).
+          await preferences.loadSecretStatuses()
+          return resumed
         },
         // Step 3, after the resume: every write a crash left between Tx A and Tx B (07 S14.11).
         reverifyConfigWrites: () => {
@@ -915,6 +927,15 @@ async function bootHost(base: HostBase): Promise<void> {
             }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))
+          // Jev (ISSUE-196): TypeSafe behind `JevRouter`, the Jev key through the kernel
+          // SecretReader, its candidates exactly what suppliers can launch now (16 §4.9; 21 §2 cut 3).
+          servedJev.bind({
+            router: new TypesafeJevRouter({ scheduler, log }),
+            secretReader: modules.preferences.secretReader,
+            routingCatalog: routingCatalogSource(modules.suppliers.catalogue),
+            preferences: modules.preferences.preferences.queries,
+            log
+          })
           // The providers' own folders: the environment overrides they honour, else the person's
           // home folder (15 §5; HO-09). Read only, by observation and by the coal backfill.
           const folders = observedProviderFolders(process.env, homedir(), {
