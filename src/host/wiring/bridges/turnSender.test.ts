@@ -5,7 +5,8 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfId, MessageId, ProviderIdentity } from '../../kernel/domain/values'
 import type { DriverSession, SendReceipt, TurnInput } from '../../modules/suppliers'
-import { launchedTurnSender } from './turnSender'
+import type { TurnSender } from '../../modules/conversation'
+import { launchedTurnSender, observedSendTargets, routedTurnSender } from './turnSender'
 
 const DWARF = '00000000-0000-7000-8000-0000000000d1' as DwarfId
 const IDENTITY: ProviderIdentity = { providerId: 'simulated', providerSessionId: 'session-1' }
@@ -110,5 +111,110 @@ describe('TurnSender bridge (conversation → suppliers)', () => {
       ok: false,
       error: { kind: 'channel-error', reason: 'the hand-over failed' }
     })
+  })
+})
+
+describe('TurnSender bridge: launched sessions to their driver, observed dwarfs to the observed relay (ISSUE-167)', () => {
+  const RECEIPT: SendReceipt = {
+    confidence: 'confirmed',
+    heldUntilTurnEnd: false,
+    correlation: 'c-1'
+  }
+  const OBSERVED_RECEIPT = {
+    ok: true as const,
+    value: {
+      confidence: 'unconfirmed' as const,
+      heldUntilTurnEnd: false,
+      correlation: 'm-1',
+      reactionEvidence: 'transcript-match' as const
+    }
+  }
+
+  function routed(opts: {
+    live: DriverSession | null
+    owned: boolean
+    identity?: ProviderIdentity | null
+  }) {
+    const toObserved: DwarfId[] = []
+    const observed: TurnSender = {
+      send: async (dwarfId) => {
+        toObserved.push(dwarfId)
+        return OBSERVED_RECEIPT
+      }
+    }
+    const sender = routedTurnSender({
+      dwarfs: {
+        identityOf: () => (opts.identity === undefined ? IDENTITY : opts.identity),
+        owned: () => opts.owned
+      },
+      sessions: { sessionFor: () => opts.live },
+      observed
+    })
+    return { sender, toObserved }
+  }
+
+  it('[ADR-022, S7.04] a dwarf with a live driver session is handed to its driver, never to the relay', async () => {
+    const { sender, toObserved } = routed({ live: session(async () => RECEIPT), owned: true })
+    expect(await sender.send(DWARF, TURN)).toMatchObject({
+      ok: true,
+      value: { confidence: 'confirmed' }
+    })
+    expect(toObserved).toEqual([])
+  })
+
+  it('[ADR-022, S7.04] an observed dwarf (not owned, no driver session) is handed to the observed relay', async () => {
+    const { sender, toObserved } = routed({ live: null, owned: false })
+    expect(await sender.send(DWARF, TURN)).toEqual(OBSERVED_RECEIPT)
+    expect(toObserved).toEqual([DWARF])
+  })
+
+  it('[ADR-012, FM-078, S7.07] an owned dwarf whose session is gone, or a dwarf with no identity, is session-closed and never relayed', async () => {
+    for (const opts of [
+      { live: null, owned: true },
+      { live: null, owned: false, identity: null }
+    ]) {
+      const { sender, toObserved } = routed(opts)
+      expect(await sender.send(DWARF, TURN)).toEqual({
+        ok: false,
+        error: { kind: 'session-closed' }
+      })
+      expect(toObserved).toEqual([])
+    }
+  })
+
+  it('[ADR-014, INV-33] an observed dwarf is a target with its provider identity and the process observation recorded; anything else is none', () => {
+    const PROCESS = { pid: 7, processStartTimeMs: 1, bootId: 'b' }
+    const view = (over: Partial<{ departed: boolean; owned: boolean }> = {}) => ({
+      identity: IDENTITY,
+      departed: false,
+      owned: false,
+      ...over
+    })
+    const targets = (
+      dwarf: ReturnType<typeof view> | null,
+      held = true,
+      process: typeof PROCESS | null = PROCESS
+    ) =>
+      observedSendTargets({
+        dwarfs: { get: () => dwarf },
+        observation: {
+          observedSessionOf: () => (held ? { dwarfId: DWARF, streamIds: ['s'] } : null)
+        },
+        processes: { processIdentityOf: () => process }
+      })
+    expect(targets(view()).targetOf(DWARF)).toEqual({
+      providerId: 'simulated',
+      providerSessionId: 'session-1',
+      process: PROCESS
+    })
+    expect(targets(view(), true, null).targetOf(DWARF)).toEqual({
+      providerId: 'simulated',
+      providerSessionId: 'session-1',
+      process: null
+    })
+    expect(targets(null).targetOf(DWARF)).toBeNull()
+    expect(targets(view({ departed: true })).targetOf(DWARF)).toBeNull()
+    expect(targets(view({ owned: true })).targetOf(DWARF)).toBeNull()
+    expect(targets(view(), false).targetOf(DWARF)).toBeNull()
   })
 })
