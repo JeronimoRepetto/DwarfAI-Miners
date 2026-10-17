@@ -176,6 +176,52 @@ describe('SessionChannels and the dwarf binding', () => {
     expect(() => session.events()).toThrow(HostInvariantError)
   })
 
+  // GitHub #1316: a launch that fails after its session was handed out never binds it, so the
+  // launch's failure path releases the unbound entry instead of leaving it, held events included,
+  // for the life of the Host.
+  it('[ADR-015] a released session that exited at once before any binding leaves no entry and delivers nothing', async () => {
+    const { sink, tracked, session, scripted } = await setup()
+    scripted.emit({ t: 'status', value: 'working' })
+    scripted.emit({ t: 'exited', code: 1 })
+    await settle()
+    expect(tracked.channels.sessionFor(session.ref)).toBeNull()
+
+    tracked.releases.release(session.ref)
+
+    expect(() => tracked.bindings.bind(session.ref, DWARF)).toThrow(HostInvariantError)
+    expect(sink.deliveries).toEqual([])
+  })
+
+  it('[ADR-015] a released session closed before any binding leaves no entry once its exited arrives', async () => {
+    const { sink, tracked, session, scripted } = await setup()
+    scripted.emit({ t: 'status', value: 'working' })
+    await settle()
+
+    tracked.releases.release(session.ref)
+    await session.close('end-thread')
+    scripted.emit({ t: 'status', value: 'idle' })
+    scripted.emit({ t: 'exited', code: null })
+    await settle()
+
+    expect(tracked.channels.sessionFor(session.ref)).toBeNull()
+    expect(() => tracked.bindings.bind(session.ref, DWARF)).toThrow(HostInvariantError)
+    expect(sink.deliveries).toEqual([])
+  })
+
+  it('[ADR-015] releasing a session already bound to its dwarf changes nothing', async () => {
+    const { sink, tracked, session, scripted } = await setup()
+    tracked.bindings.bind(session.ref, DWARF)
+
+    tracked.releases.release(session.ref)
+    tracked.releases.release({ providerId: PROFILE.id, providerSessionId: 'never-launched' })
+    scripted.emit({ t: 'exited', code: 0 })
+    await settle()
+
+    expect(sink.deliveries).toEqual([
+      { dwarfId: DWARF, ref: session.ref, event: { t: 'exited', code: 0 } }
+    ])
+  })
+
   it('[ADR-009] a stream that throws becomes error transport-lost then exited', async () => {
     const { sink, tracked, session, scripted } = await setup()
     tracked.bindings.bind(session.ref, DWARF)

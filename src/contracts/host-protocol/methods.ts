@@ -26,6 +26,7 @@ import {
   type MineHistoryView,
   type MineId,
   type PreferencesView,
+  type SecretName,
   type StopAllOutcome,
   type StranglerDwarfIdentity,
   type SupplierEntryView
@@ -52,6 +53,9 @@ import {
   preferenceSetParamsSchema,
   resetEpochSchema,
   resetMetricsParamsSchema,
+  secretClearParamsSchema,
+  secretSetParamsSchema,
+  secretStatusResultSchema,
   setClaudeHooksParamsSchema,
   setClaudeHooksResultSchema,
   type AnswerWelcomeParams,
@@ -59,6 +63,8 @@ import {
   type MetricsResetResult,
   type PreferenceSetParams,
   type ResetMetricsParams,
+  type SecretSetParams,
+  type SecretStatusResult,
   type SetClaudeHooksParams,
   type SetClaudeHooksResult
 } from './params/preferences'
@@ -118,7 +124,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M10, B-M11, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -135,6 +141,8 @@ export interface HostMethods {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
   'ui.resetPreferences.ack':         { params: { epoch: number }; result: {} }
   // preferences and secrets
+  'settings.secret.set':             { params: SecretSetParams; result: SecretStatusResult }
+  'settings.secret.clear':           { params: { name: SecretName; requestId: string }; result: SecretStatusResult }
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'preferences.get':                 { params: {}; result: PreferencesView }
   'preferences.set':                 { params: PreferenceSetParams; result: HostPreferences }
@@ -278,6 +286,17 @@ export const HOST_METHOD_SCHEMAS = {
   'attention.clicked': {
     params: z.object({ key: z.string() }).strict(),
     result: z.object({}).strict()
+  },
+  // B-M10, B-M11 (14 §2.3, §3.5; ADR-017 items 4, 5): `ui` only, mutating (requestId), **sensitive**
+  // params (SENSITIVE_METHODS). The answer is the configured flag, never the value; no usable secret
+  // service is the B-M10 outcome 'backend-unavailable' (host/transport/methods/settingsSecret.ts).
+  'settings.secret.set': {
+    params: secretSetParamsSchema,
+    result: secretStatusResultSchema
+  },
+  'settings.secret.clear': {
+    params: secretClearParamsSchema,
+    result: secretStatusResultSchema
   },
   // B-M12, B-M13 (14 §2.3): `ui` only; B-M13 answers the stored HostPreferences (IPC Gap 10).
   'preferences.get': {

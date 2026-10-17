@@ -3,6 +3,7 @@ import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { IntegrationId, IntegrationState } from '../../../kernel/domain/values'
 import type { HostPreferences } from './hostPreferences'
 import type { ResetStep } from './resetSaga'
+import type { SecretStatus } from './secretStatus'
 import type { WelcomeStepState } from './welcomeStep'
 
 /** 08 `HostPreferencesChanged`: only when the stored preferences changed (ADR-024 D9). */
@@ -47,6 +48,13 @@ export type IntegrationChanged = DomainEvent<
   { id: IntegrationId; state: IntegrationState }
 >
 
+/**
+ * 08 §0 `SecretStatusChanged { status: SecretStatus }` (ADR-017; 16 §4.12): published after every
+ * `saveSecret` and `clearSecret`, with the configured flag the store answers (`has`). It never
+ * carries a secret value (INV-107); every UI connection learns it as `preferences.changed`.
+ */
+export type SecretStatusChanged = DomainEvent<'SecretStatusChanged', { status: SecretStatus }>
+
 /** Every event this module publishes. */
 export type PreferencesEvent =
   | HostPreferencesChanged
@@ -54,4 +62,5 @@ export type PreferencesEvent =
   | MetricsResetStarted
   | MetricsResetFinished
   | MetricsResetFailed
+  | SecretStatusChanged
   | WelcomeStepChanged
