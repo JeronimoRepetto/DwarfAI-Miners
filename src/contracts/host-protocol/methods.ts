@@ -73,6 +73,8 @@ import {
   describeAttachmentsParamsSchema,
   consoleTargetSchema,
   feedParamsSchema,
+  retryMessageParamsSchema,
+  retryMessageResultSchema,
   resolveConsoleParamsSchema,
   sendMessageParamsSchema,
   sendMessageResultSchema,
@@ -80,6 +82,8 @@ import {
   type AttachmentPick,
   type ConsoleTarget,
   type FeedParams,
+  type RetryMessageParams,
+  type RetryMessageResult,
   type SendMessageParams,
   type SendMessageResult
 } from './params/conversation'
@@ -168,6 +172,7 @@ export interface HostMethods {
   'crew.resetName':                  { params: ResetDwarfNameParams; result: {} }
   // conversation
   'conversation.send':               { params: SendMessageParams; result: SendMessageResult }
+  'conversation.retry':              { params: RetryMessageParams; result: RetryMessageResult }
   'conversation.feed':               { params: FeedParams; result: FeedPage }
   'conversation.mineHistory':        { params: { mineId: MineId }; result: MineHistoryView }
   'conversation.describeAttachments': { params: { paths: AttachmentPath[] }; result: AttachmentPick[] }
@@ -391,6 +396,13 @@ export const HOST_METHOD_SCHEMAS = {
   'conversation.send': {
     params: sendMessageParamsSchema,
     result: sendMessageResultSchema
+  },
+  // B-M25 (14 §2.3, §1.7; ADR-022 item 5): `ui` only, mutating (requestId, deduped at the transport,
+  // 14 §1.6); answered at acceptance once the same message's delivery is `sending` again
+  // (host/transport/methods/conversationRetry.ts), the settlement arriving only as `message.delivery`.
+  'conversation.retry': {
+    params: retryMessageParamsSchema,
+    result: retryMessageResultSchema
   },
   // B-M26 (14 §2.3, §3.6): `ui` and `viewer` (its own dwarf only, host/transport/methods/conversationFeed.ts);
   // a query, so no requestId (14 §1.6). Its result is sensitive (14 §3.5 SENSITIVE_METHODS).

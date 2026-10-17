@@ -80,6 +80,7 @@ import {
   type MineCrew
 } from './application/queries'
 import { SessionEndRecorder } from './application/recordSessionEnd'
+import { ConversationRetry } from './application/retry'
 import {
   describeAttachments,
   type ConversationAttachmentCommand
@@ -402,8 +403,16 @@ export function createConversation(deps: ConversationDeps): Conversation {
         hostEpoch: deps.hostEpoch,
         diagnostics
       })
+      const retrier = new ConversationRetry({
+        log,
+        transactions: deps.transactions,
+        recipients,
+        clock: deps.clock,
+        sender
+      })
       return {
         send: (...args) => (sender as ConversationSender).send(...args),
+        retry: (messageId, requestId) => retrier.retry(messageId, requestId),
         describeAttachments: (paths) => describeAttachments(paths, attachments)
       }
     },

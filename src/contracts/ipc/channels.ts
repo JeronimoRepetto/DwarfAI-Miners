@@ -31,6 +31,8 @@ import {
   launchParamsSchema,
   metricsResetResultSchema,
   resetMetricsParamsSchema,
+  retryMessageParamsSchema,
+  retryMessageResultSchema,
   sendMessageParamsSchema,
   sendMessageResultSchema,
   setClaudeHooksParamsSchema,
@@ -845,6 +847,17 @@ export const CHANNELS = {
     status: 'new',
     request: stopDwarfParamsSchema,
     response: ipcResultSchema(stopDwarfResultSchema)
+  },
+  // A-N06 `retryDwarfMessage` (US-MSG-003; PO #86; ADR-022 item 5): Retry of a message that failed to deliver, as the
+  // same message; relays B-M25 `conversation.retry` unchanged (14 §1.2). A message id and a requestId, so not
+  // `sensitive`. Routed by the step-3a switch (ISSUE-001), never by its handler issue (ISSUE-168)
+  'dwarf:message:retry': {
+    name: 'dwarf:message:retry',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: retryMessageParamsSchema,
+    response: ipcResultSchema(retryMessageResultSchema)
   },
   // A-N08 `renameDwarf` (AMENDMENT-2, SC-AR-05; PO #88; INV-29): a person-set name for a dwarf of any rank, the
   // successor of the legacy `dwarf:setName` (14 §8 I-21); relays B-M22 `crew.rename` unchanged (14 §1.2). The Host

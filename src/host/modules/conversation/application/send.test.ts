@@ -85,6 +85,7 @@ function harness() {
     trim: (...args) => memory.trim(...args),
     writeAnswersRecord: (...args) => memory.writeAnswersRecord(...args),
     writeSent: (...args) => memory.writeSent(...args),
+    resend: (...args) => memory.resend(...args),
     settleDelivery: (...args) => {
       if (failSettle !== null) throw failSettle()
       memory.settleDelivery(...args)

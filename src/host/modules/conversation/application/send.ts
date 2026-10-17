@@ -176,7 +176,7 @@ function codeOf(error: unknown): string {
   return 'unknown'
 }
 
-export class ConversationSender implements ConversationSendCommand {
+export class ConversationSender implements Pick<ConversationSendCommand, 'send'> {
   /** The Host's current delivery of each message still `sending`, held, or watched for ✓✓. */
   private readonly deliveries = new Map<MessageId, Delivery>()
   private readonly inFlight = new Map<MessageId, InFlight>()
@@ -222,18 +222,7 @@ export class ConversationSender implements ConversationSendCommand {
     if (written.existing) return { ok: true, value: messageId }
 
     const { delivery } = startDelivery({ messageId, dwarfId, kind: 'message', at })
-    this.deliveries.set(messageId, delivery)
-    this.inFlight.set(messageId, { dwarfId, endsSeen: [], sessionEnded: false })
-    this.echoes.set(messageId, {
-      dwarfId,
-      text,
-      sentAt: at,
-      correlation: null,
-      echoSeen: false,
-      repliedAfterEcho: false,
-      earlyEchoes: [],
-      live: false
-    })
+    this.track(delivery, text)
     const view: MessageView = {
       id: messageId,
       dwarfId,
@@ -245,13 +234,52 @@ export class ConversationSender implements ConversationSendCommand {
       createdAt: at
     }
     this.publish('MessagesAppended', { dwarfId, messages: [view] })
+    this.handOverLater(delivery, text, files ?? [])
+    return { ok: true, value: messageId }
+  }
+
+  /**
+   * S7.09 (application/retry.ts, ISSUE-168): a retried message's `sending` delivery, already
+   * committed by `MessageLog.resend` (AMENDMENT-20), walks its marks again as the same message —
+   * `MessageSent`, then the hand-over with the same `TurnInput.messageId` (ADR-022 item 5) — with
+   * no second bubble (no `MessagesAppended`). The row stores no attachments (`MessageView.attachments`
+   * is `[]` at send), so the retry hands over the stored text alone.
+   */
+  resume(delivery: Delivery, text: string): void {
+    this.track(delivery, text)
+    this.handOverLater(delivery, text, [])
+  }
+
+  /** The Host-memory tracking of a delivery just put in `sending`, sent at `delivery.phaseAt`. */
+  private track(delivery: Delivery, text: string): void {
+    const { messageId, dwarfId } = delivery
+    this.deliveries.set(messageId, delivery)
+    this.inFlight.set(messageId, { dwarfId, endsSeen: [], sessionEnded: false })
+    this.echoes.set(messageId, {
+      dwarfId,
+      text,
+      sentAt: delivery.phaseAt,
+      correlation: null,
+      echoSeen: false,
+      repliedAfterEcho: false,
+      earlyEchoes: [],
+      live: false
+    })
+  }
+
+  /** `MessageSent` (the "…" mark), then the hand-over after the caller's answer. */
+  private handOverLater(
+    delivery: Delivery,
+    text: string,
+    attachments: readonly RevalidatedAttachment[]
+  ): void {
+    const { messageId, dwarfId } = delivery
     this.publish('MessageSent', { messageId, dwarfId, kind: 'message' })
     // The hand-over continues after this answer, with no caller (14 §1.7). It never rejects: an
     // unhandled rejection would end the Host (wiring/uncaught.ts).
     void Promise.resolve()
-      .then(() => this.handOver(dwarfId, messageId, text, files ?? []))
+      .then(() => this.handOver(dwarfId, messageId, text, attachments))
       .catch((error: unknown) => this.dropAfter(error, messageId, dwarfId))
-    return { ok: true, value: messageId }
   }
 
   /**
