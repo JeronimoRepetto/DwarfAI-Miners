@@ -24,6 +24,10 @@
 //   `sessions`; without them every hand-over answers `session-closed`. Crew answers
 //   `canReceiveMessages` false until a delivery route is wired (main.ts `links`, later: EPIC-10),
 //   so a send is refused `cannot-receive` before any row: nothing is offered that is not built.
+// - Attachments (ISSUE-169): B-M28 `conversation.describeAttachments` is served with the others,
+//   and `route` passes the `AttachmentReader` the composition root built (`FsAttachmentReader`) to
+//   both describe and `send`, which re-validates every path before any row (16 §4.6; ADR-019
+//   item 9). Without one, every path is `unreadable` and a send with files `attachment-refused`.
 //
 // Not routed here, and why:
 // - `ObservedTurnEnded` (observation) → `recordTurnEnd`, `TurnEnded` → crew and attention,
@@ -47,6 +51,8 @@ import {
   type Conversation,
   type ConversationCommands,
   type ConversationEvent,
+  type AttachmentReader,
+  type ConversationAttachmentCommand,
   type ConversationQueries,
   type SendEvent
 } from '../../modules/conversation'
@@ -56,6 +62,7 @@ import type { SessionChannels } from '../../modules/suppliers'
 import type { Dispatcher } from '../../transport/dispatcher'
 import type { ConversationFramePublisher } from '../../transport/frames/conversationAppended'
 import { toMessageWire } from '../../transport/mappers/wire'
+import { registerConversationDescribeAttachments } from '../../transport/methods/conversationDescribeAttachments'
 import { registerConversationFeed } from '../../transport/methods/conversationFeed'
 import { registerConversationMineHistory } from '../../transport/methods/conversationMineHistory'
 import { registerConversationRetry } from '../../transport/methods/conversationRetry'
@@ -71,7 +78,7 @@ import { publishConversationReadFrames } from './conversationFrames'
 export type ConversationRouteEvent = ConversationEvent | SendEvent
 
 export interface ConversationServeDeps {
-  /** The Host dispatcher (hostDispatcher.ts), where B-M24, B-M25, B-M26 and B-M27 join. */
+  /** The Host dispatcher (hostDispatcher.ts), where B-M24, B-M25, B-M26, B-M27 and B-M28 join. */
   dispatcher: Dispatcher
   /** The snapshot sections, where `tails` and `marks` join (after the board's, 14 §4.2). */
   sections: SectionRegistry
@@ -104,6 +111,11 @@ export interface ConversationCrewRoute {
    * passes the Host log; a harness that never sends may leave it out.
    */
   diagnostics?: DiagnosticsLog
+  /**
+   * The Host's check of every attachment path a UI sends (ISSUE-169): the composition root passes
+   * `FsAttachmentReader`. Without one, nothing is offered that is not built: every path is refused.
+   */
+  attachments?: AttachmentReader
 }
 
 /** No log: for harnesses that wire the read side only. */
@@ -129,7 +141,8 @@ export interface ServedConversation {
 /** The members the served methods and sections forward to. */
 type ServedMembers = {
   conversation: Pick<ConversationQueries, 'feed' | 'mineHistory'> &
-    Pick<ConversationCommands, 'send' | 'retry'>
+    Pick<ConversationCommands, 'send' | 'retry'> &
+    ConversationAttachmentCommand
   crew: Pick<CrewQueries, 'crewOf'>
   mines: Pick<MinesQueries, 'list'>
 }
@@ -152,6 +165,11 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
   registerConversationRetry(serve.dispatcher, {
     conversation: {
       retry: (messageId, requestId) => current().conversation.retry(messageId, requestId)
+    }
+  })
+  registerConversationDescribeAttachments(serve.dispatcher, {
+    conversation: {
+      describeAttachments: (paths) => current().conversation.describeAttachments(paths)
     }
   })
   registerConversationFeed(serve.dispatcher, {
@@ -182,7 +200,7 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
       return {
         conversation,
         batchHalf: conversationBatchHalf(conversation),
-        route: ({ crew, mines, sessions, diagnostics }) => {
+        route: ({ crew, mines, sessions, diagnostics, attachments }) => {
           if (served !== undefined) throw new HostInvariantError('conversation is routed once')
           publishConversationReadFrames({ events: deps.bus, crew, frames: deps.frames })
           publishDeliveryFrames({ events: deps.bus, conversation, frames: deps.frames })
@@ -201,15 +219,17 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
               canReceiveMessages: (dwarfId) => crew.get(dwarfId)?.canReceiveMessages ?? false
             },
             bus: deps.bus,
-            diagnostics: diagnostics ?? NO_DIAGNOSTICS
+            diagnostics: diagnostics ?? NO_DIAGNOSTICS,
+            ...(attachments === undefined ? {} : { attachments })
           })
           served = {
             conversation: {
               feed: (dwarfId, page) => conversation.queries.feed(dwarfId, page),
               mineHistory: (mineId) => history.mineHistory(mineId),
-              send: (dwarfId, text, attachments, requestId) =>
-                sending.send(dwarfId, text, attachments, requestId),
-              retry: (messageId, requestId) => sending.retry(messageId, requestId)
+              send: (dwarfId, text, paths, requestId) =>
+                sending.send(dwarfId, text, paths, requestId),
+              retry: (messageId, requestId) => sending.retry(messageId, requestId),
+              describeAttachments: (paths) => sending.describeAttachments(paths)
             },
             crew,
             mines

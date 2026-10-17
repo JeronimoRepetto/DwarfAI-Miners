@@ -1,0 +1,58 @@
+{
+  "case": "C-24",
+  "description": "AMENDMENT-19, ADR-020 D1: synthetic, hand-written. The adapter reports acceptEdits and refuses session/set_mode default: the session cannot be pinned, so the launch fails closed as could-not-start (cause 3: the adapter was found and ran, but it would not start in the mode DwarfAI requires) and no prompt is sent. The launch binds no session, so the set_mode frame names the agent's session id literally.",
+  "script": [
+    {
+      "do": "launch"
+    }
+  ],
+  "outcomes": [
+    {
+      "rejected": {
+        "cause": "could-not-start",
+        "detail": "the agent kept permission mode acceptEdits: set_mode default was refused with -32603"
+      }
+    }
+  ],
+  "events": [],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": [],
+        "_meta": {
+          "claudeCode": {
+            "options": {
+              "allowDangerouslySkipPermissions": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/set_mode",
+      "params": {
+        "sessionId": "00000000-0000-4000-8000-00000000ac01",
+        "modeId": "default"
+      }
+    }
+  ]
+}

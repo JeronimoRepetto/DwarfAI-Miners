@@ -22,6 +22,7 @@ export const PLACEHOLDERS = Object.freeze({
   email: '<EMAIL>',
   path: '<PATH>',
   account: '<ACCOUNT_ID>',
+  organization: '<ORGANIZATION>',
   sid: '<SID>',
   signature: '<SIGNATURE>',
   installation: '<INSTALLATION_ID>',
@@ -125,6 +126,18 @@ export const ACCOUNT_ID_KEYS = new Set([
  * Codex `remoteControl/status/changed` carries `installationId` (S-015-1). Replaced whole. The list
  * is open: a driver issue adds the keys of its provider's protocol.
  */
+/**
+ * The keys whose value is the name of the provider organization the recording person belongs to:
+ * claude-agent-acp `_auth/status_update` carries `account.organization` (ISSUE-151). Replaced
+ * whole, and wherever the set repeats it. The list is open: a driver issue adds the keys of its
+ * provider's protocol.
+ */
+export const ORGANIZATION_NAME_KEYS = new Set([
+  'organization',
+  'organizationName',
+  'organization_name'
+])
+
 export const INSTALLATION_ID_KEYS = new Set(['installationId', 'installation_id'])
 
 /**
@@ -268,7 +281,20 @@ const BUILTIN_SETUP_NAMES = new Set([
   'list',
   'webfetch',
   'todowrite',
-  'todoread'
+  'todoread',
+  // Claude Code built-in commands that claude-agent-acp lists and that are also its own protocol
+  // vocabulary (`_claude/model`, `model_usage`, the `effort` and `fast` config options).
+  'model',
+  'effort',
+  'fast',
+  'config',
+  'context',
+  // A Claude Code bundled skill whose name is an everyday word of the agent's own replies.
+  'run',
+  // Claude Code permission modes (the ACP `mode` config option).
+  'acceptEdits',
+  'bypassPermissions',
+  'dontAsk'
 ])
 
 /** A plugin file of the person's global OpenCode config (a project's own plugin stays). */
@@ -584,7 +610,12 @@ function buildPersonalIdMap(values) {
   const map = new Map()
   for (const value of values) {
     walkFields(value, (key, item) => {
-      if (typeof item !== 'string' || !OPAQUE_ID.test(item)) return
+      if (typeof item !== 'string') return
+      if (ORGANIZATION_NAME_KEYS.has(key) && item.trim() !== '' && !item.startsWith('<')) {
+        map.set(item, PLACEHOLDERS.organization)
+        return
+      }
+      if (!OPAQUE_ID.test(item)) return
       if (ACCOUNT_ID_KEYS.has(key)) map.set(item, PLACEHOLDERS.account)
       else if (INSTALLATION_ID_KEYS.has(key)) map.set(item, PLACEHOLDERS.installation)
     })
@@ -720,6 +751,9 @@ function scrubValue(value, scrub, shiftMs, key = null) {
   ) {
     return PLACEHOLDERS.account
   }
+  if (key !== null && ORGANIZATION_NAME_KEYS.has(key) && typeof value === 'string') {
+    return PLACEHOLDERS.organization
+  }
   if (
     key !== null &&
     INSTALLATION_ID_KEYS.has(key) &&
@@ -805,7 +839,7 @@ export function scrubFixtureSet(documents, identity) {
   const shiftMs = timeShift(values)
   const replaceSetupNames = setupNameReplacer(buildSetupNameMap(values, documents))
   const scrub = (s) => scrubText(replaceSetupNames(replaceIds(replacePersonalIds(s))), rules)
-  return documents.map(({ name, text }) => {
+  const scrubbed = documents.map(({ name, text }) => {
     if (name.endsWith('.jsonl')) {
       const lines = text.split(/\r?\n/)
       return {
@@ -819,6 +853,72 @@ export function scrubFixtureSet(documents, identity) {
       return { name, text: `${scrubJsonOrText(text.trim(), scrub, shiftMs, 2)}\n` }
     }
     return { name, text: scrub(text.replace(/\r\n/g, '\n')) }
+  })
+  return remeasureTiming(documents, scrubbed)
+}
+
+const TIMING_SUFFIX = '-timing.jsonl'
+
+/** The byte offset at which each line of a JSONL text ends, its newline included. */
+function lineEnds(text) {
+  const ends = []
+  let offset = 0
+  for (const line of text.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    offset += Buffer.byteLength(line)
+    ends.push(offset)
+  }
+  return ends
+}
+
+/**
+ * The timing stream re-measured against the scrubbed streams (17 §1.4). The recorder counted the
+ * raw bytes of each chunk, and scrubbing changes the length of a line (a path becomes `<REPO>`, a
+ * name a placeholder), so a replay that cuts the scrubbed stream by the raw counts releases a line
+ * after the wrong sent frames. Each chunk is given the scrubbed bytes of the lines it completed in
+ * the raw stream (0 when it completed none), so every line completes after the same sent frames as
+ * recorded. A stream whose scrubbed line count differs from its raw one is left as it is.
+ */
+function remeasureTiming(documents, scrubbed) {
+  const raw = new Map(documents.map(({ name, text }) => [name, text]))
+  const out = new Map(scrubbed.map(({ name, text }) => [name, text]))
+  return scrubbed.map((document) => {
+    if (!document.name.endsWith(TIMING_SUFFIX)) return document
+    const caseName = document.name.slice(0, -TIMING_SUFFIX.length)
+    const streams = new Map()
+    const streamOf = (stream) => {
+      if (!streams.has(stream)) {
+        const file = stream === 'received' ? `${caseName}.jsonl` : `${caseName}-${stream}.jsonl`
+        const before = raw.has(file) ? lineEnds(raw.get(file)) : []
+        const after = out.has(file) ? lineEnds(out.get(file)) : []
+        const usable = before.length > 0 && before.length === after.length
+        streams.set(stream, usable ? { before, after, consumed: 0, done: 0, emitted: 0 } : null)
+      }
+      return streams.get(stream)
+    }
+    const text = document.text
+      .split('\n')
+      .map((line) => {
+        if (line === '') return line
+        let mark
+        try {
+          mark = JSON.parse(line)
+        } catch {
+          return line
+        }
+        if (typeof mark?.stream !== 'string' || typeof mark.bytes !== 'number') return line
+        const state = streamOf(mark.stream)
+        if (state === null) return line
+        state.consumed += mark.bytes
+        while (state.done < state.before.length && state.before[state.done] <= state.consumed) {
+          state.done += 1
+        }
+        const end = state.done === 0 ? 0 : state.after[state.done - 1]
+        const bytes = end - state.emitted
+        state.emitted = end
+        return JSON.stringify({ ...mark, bytes })
+      })
+      .join('\n')
+    return { name: document.name, text }
   })
 }
 

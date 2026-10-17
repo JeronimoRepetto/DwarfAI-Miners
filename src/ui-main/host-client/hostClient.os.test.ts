@@ -100,7 +100,9 @@ const SERVED_SINCE_CUT_0 = [
   'frame:message.delivery',
   'section:marks',
   // Retrying a failed message: B-M25, from cut 3 (ISSUE-168).
-  'conversation.retry'
+  'conversation.retry',
+  // Describing attachments: B-M28, from cut 3 (ISSUE-169).
+  'conversation.describeAttachments'
 ]
 const SERVED_SECTIONS = [
   'meta',

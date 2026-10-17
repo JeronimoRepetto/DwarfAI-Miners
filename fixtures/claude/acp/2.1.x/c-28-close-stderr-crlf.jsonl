@@ -1,0 +1,10 @@
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=validate-cwd durationMs=0 totalMs=0
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=settings durationMs=13 totalMs=13
+Ignoring permission mode bypassPermissions: not available in this session.
+[session/query] sessionId=00000000-0000-4000-8000-000000000001 resume=none apiType=native baseUrl=native
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=prepare-query durationMs=4 totalMs=18
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=sdk-initialize durationMs=312 totalMs=330
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=models durationMs=1 totalMs=331
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=modes durationMs=0 totalMs=331
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=<command-20> durationMs=0 totalMs=331
+[session/create] sessionId=00000000-0000-4000-8000-000000000001 phase=register durationMs=1 totalMs=332

@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":{}}}}}
+{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"<REPO>","mcpServers":[],"_meta":{"claudeCode":{"options":{"settingSources":[],"strictMcpConfig":true,"allowDangerouslySkipPermissions":false}}}}}
+{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"00000000-0000-4000-8000-000000000001","prompt":[{"type":"text","text":"Use the Write tool to create a file named notes.md in the current folder, containing the single word marker. Do not use any other tool. Then reply with the single word done."}]}}
+{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"00000000-0000-4000-8000-000000000001"}}
+{"jsonrpc":"2.0","id":0,"result":{"outcome":{"outcome":"cancelled"}}}
