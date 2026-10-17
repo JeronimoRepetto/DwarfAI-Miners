@@ -58,14 +58,18 @@ const firstAction = (): HTMLElement | null =>
   focusables()[0] ??
   null
 
+/*
+ * Esc is heard once everything inside has had it (the bubble phase), and only if nothing took it: a layer above the
+ * dialog's own controls, such as a search field with text, clears first and goes no further (NFR-A11Y-02).
+ */
+function escape(event: KeyboardEvent): void {
+  if (!onTop.value || event.key !== 'Escape' || event.defaultPrevented) return
+  event.preventDefault()
+  emit('cancel')
+}
+
 function keydown(event: KeyboardEvent): void {
-  if (!onTop.value) return
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    emit('cancel')
-    return
-  }
-  if (event.key !== 'Tab') return
+  if (!onTop.value || event.key !== 'Tab') return
   const all = focusables()
   const at = trapTab(all.length, all.indexOf(document.activeElement as HTMLElement), event.shiftKey)
   event.preventDefault()
@@ -81,9 +85,11 @@ function focusin(event: FocusEvent): void {
 function listen(on: boolean): void {
   if (on) {
     document.addEventListener('keydown', keydown, true)
+    document.addEventListener('keydown', escape)
     document.addEventListener('focusin', focusin, true)
   } else {
     document.removeEventListener('keydown', keydown, true)
+    document.removeEventListener('keydown', escape)
     document.removeEventListener('focusin', focusin, true)
   }
 }

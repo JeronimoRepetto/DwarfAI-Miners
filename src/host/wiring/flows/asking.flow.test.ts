@@ -21,10 +21,45 @@
 // the person's home folder or a provider credential (AGENTS §6).
 //
 // TC-140-01 … TC-140-04.
+//
+// ISSUE-229 (TC-229-02, TC-229-04): OpenCode plugin reports reach the `/opencode/*` route the
+// wiring builds, in process, from an observed OpenCode session (a legacy-launched one is observed:
+// still `legacy` until 4b); "OpenCode · permission requests" is set in its stored row with an
+// active plugin token (the plugin file's writer is ISSUE-227/228's), and the `http` channel posts
+// to a fake OpenCode server. A launched OpenCode session's auto-deny runs over the wiring's OpenCode
+// part on a template copy (the last describe), since no launch reaches this Host before 4b.
+import { randomBytes } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { frameCapability, methodCapability } from '@dwarfai/contracts'
-import type { AskId } from '../../kernel/domain/values'
+import { frameCapability, methodCapability, redactSecrets } from '@dwarfai/contracts'
+import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
+import { FakeSecretReader } from '../../kernel/fakes/FakeSecretReader'
+import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
+import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
+import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
+import type {
+  AskId,
+  DwarfId,
+  HostEpoch,
+  IntegrationState,
+  MessageId,
+  ProviderId
+} from '../../kernel/domain/values'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
+import {
+  createAsking,
+  createAskOpening,
+  type AskCapabilities,
+  type AskingEvent,
+  type AskSession
+} from '../../modules/asking'
+import type { OpenCodeHttpPost } from '../../modules/asking/adapters/openCodePlugin/OpenCodePluginAskChannel'
+import { FakeAnswerRecords } from '../../modules/asking/testing/FakeAnswerRecords'
+import { FakeConversationLines } from '../../modules/asking/testing/FakeConversationLines'
+import { seededAskDb } from '../../modules/asking/testing/sqliteAskDb'
+import type { AnswerRecordEvent } from '../../modules/conversation'
+import { OPENCODE_OBSERVED_CAPABILITIES, type ObservedSession } from '../../modules/observation'
+import { inMemoryChannelTokens } from '../../modules/preferences/testing/inMemoryChannelTokens'
+import { wireOpenCodePluginAsking } from '../routes/askingRoutes'
 import { FsSourceWeightScanner } from '../../modules/mines/adapters/FsSourceWeightScanner'
 import { INGRESS_TOKEN_HEADER } from '../../transport/ingress/httpIngress'
 import { appMetaIngressPort } from '../bridges/ingressPort'
@@ -40,6 +75,8 @@ import {
   world,
   type BootOptions
 } from './testing/askingHost'
+
+const OPENCODE_ID = 'opencode' as ProviderId
 
 afterEach(cleanUp)
 
@@ -336,5 +373,349 @@ describe('the asking module wired into the Host (ISSUE-140)', () => {
     await bootHost(w)
 
     expect(appMetaIngressPort(w.db as SqliteDatabase).read()).toBeNull()
+  })
+})
+
+/** A `permission.asked` report of an OpenCode session as the written plugin posts it (S-011-1). */
+function openCodeAsked(sessionId: string, requestId: string): Record<string, unknown> {
+  return {
+    event: {
+      type: 'permission.asked',
+      properties: {
+        id: requestId,
+        sessionID: sessionId,
+        permission: 'bash',
+        patterns: ['git status']
+      }
+    },
+    serverUrl: 'http://127.0.0.1:4096/'
+  }
+}
+
+describe('OpenCode plugin asks in the Host (ISSUE-229)', () => {
+  it('[C-27, ADR-011] with opencode-permissions on-verified a plugin permission report opens one card in the Host broker', async () => {
+    const w = world()
+    const h = await bootHost(w)
+    const mineId = await h.mine()
+    const { ui, notifier } = await h.clients()
+    const dwarfId = h.openCodeDwarf(mineId, 'ses-oc')
+
+    // on-unverified: the token works, but the observed session's request is no ask (ADR-011 item 4).
+    const unverified = h.openCodePermissions('on-unverified')
+    expect(await h.openCodeReport(unverified, openCodeAsked('ses-oc', 'per-1'))).toBe(204)
+    await h.settle(ui, notifier)
+    expect(askOf(h, dwarfId)).toBeNull()
+
+    // off: the plugin token is revoked with the integration, so nothing arrives at all.
+    h.openCodePermissions('off')
+    expect(await h.openCodeReport(unverified, openCodeAsked('ses-oc', 'per-2'))).toBe(401)
+
+    const verified = h.openCodePermissions('on-verified')
+    // A reply report is evidence of a reply only: it opens nothing.
+    expect(
+      await h.openCodeReport(verified, {
+        event: {
+          type: 'permission.replied',
+          properties: { sessionID: 'ses-oc', requestID: 'per-3' }
+        },
+        serverUrl: null
+      })
+    ).toBe(204)
+    expect(askOf(h, dwarfId)).toBeNull()
+    // OpenCode reports an ask once, but a repeated report never opens a second card (INV-71).
+    expect(await h.openCodeReport(verified, openCodeAsked('ses-oc', 'per-3'))).toBe(204)
+    expect(await h.openCodeReport(verified, openCodeAsked('ses-oc', 'per-3'))).toBe(204)
+    await h.settle(ui, notifier)
+
+    expect(askOf(h, dwarfId)).toMatchObject({
+      kind: 'permission',
+      channel: 'http',
+      providerRequestId: 'per-3',
+      state: 'open',
+      payload: { toolName: 'bash', requestText: 'bash: git status' }
+    })
+    expect(evts(ui, 'ask.opened')).toHaveLength(1)
+    expect(h.crew.crew.queries.get(dwarfId)?.status).toBe('asking')
+    expect(h.openCodeRequests).toEqual([])
+  })
+
+  it('[ADR-011] a plugin ask of a legacy-launched OpenCode session reaches the Host broker and is answered by the Host', async () => {
+    const w = world()
+    const h = await bootHost(w)
+    const mineId = await h.mine()
+    const { ui, notifier } = await h.clients()
+    const dwarfId = h.openCodeDwarf(mineId, 'ses-oc')
+    const token = h.openCodePermissions('on-verified')
+
+    const answers: string[] = []
+    for (const [requestId, decision] of [
+      ['per-allow', 'allow'],
+      ['per-deny', 'deny']
+    ] as const) {
+      await h.openCodeReport(token, openCodeAsked('ses-oc', requestId))
+      await h.settle(ui, notifier)
+      const ask = askOf(h, dwarfId)
+      if (ask === null) throw new Error('no ask opened')
+      const answered = await h.call(ui, 'asking.answerPermission', {
+        askId: ask.id,
+        decision,
+        requestId: h.rid()
+      })
+      await h.settle(ui, notifier)
+      expect(answered).toMatchObject({ ok: true, result: { kind: 'accepted' } })
+      answers.push(ask.id)
+    }
+
+    expect(h.events<{ askId: string; reason: string }>('AskClosed')).toEqual(
+      answers.map((askId) => expect.objectContaining({ askId, reason: 'answered-in-app' }))
+    )
+    // Allow is once, Deny is reject, to the server that asked, in the session's folder, with the
+    // password only in the Authorization header.
+    const authorization = `Basic ${Buffer.from(`opencode:${h.openCodePassword}`).toString('base64')}`
+    const directory = encodeURIComponent(h.openCodeFolderOf('ses-oc'))
+    expect(h.openCodeRequests).toEqual([
+      {
+        url: `http://127.0.0.1:4096/permission/per-allow/reply?directory=${directory}`,
+        headers: { 'content-type': 'application/json', authorization },
+        body: { reply: 'once' }
+      },
+      {
+        url: `http://127.0.0.1:4096/permission/per-deny/reply?directory=${directory}`,
+        headers: { 'content-type': 'application/json', authorization },
+        body: { reply: 'reject' }
+      }
+    ])
+  })
+})
+
+const EPOCH = 'epoch-0229' as HostEpoch
+const SERVER_URL = 'http://127.0.0.1:4096/'
+
+/** The OpenCode observation adapter's declaration as the asking wiring reads it (omitted → none). */
+const OPENCODE_DECLARED: AskCapabilities = {
+  permission: OPENCODE_OBSERVED_CAPABILITIES.permission ?? 'none',
+  question: OPENCODE_OBSERVED_CAPABILITIES.question ?? 'none',
+  observedPermission: OPENCODE_OBSERVED_CAPABILITIES.observedPermission ?? 'none',
+  observedQuestion: OPENCODE_OBSERVED_CAPABILITIES.observedQuestion ?? 'none'
+}
+
+/** The text of the one chat line an auto-denied request leaves (ADR-011 item 3, owner-approved). */
+const AUTO_DENIED_LINE = 'Declined automatically: this request cannot be answered from the panel.'
+
+/** A `permission.asked` report as the written plugin posts it (S-011-1 event shape). */
+function pluginReport(sessionId: string, requestId: string): string {
+  return JSON.stringify({
+    event: {
+      id: `evt-${requestId}`,
+      type: 'permission.asked',
+      properties: {
+        id: requestId,
+        sessionID: sessionId,
+        permission: 'edit',
+        patterns: ['deny-probe.txt'],
+        metadata: { filepath: '/work/mine-one/deny-probe.txt', diff: '+probe' },
+        always: ['*'],
+        tool: { messageID: 'msg-1', callID: 'call-1' }
+      }
+    },
+    serverUrl: SERVER_URL
+  })
+}
+
+/**
+ * conversation's answers-records as the double keeps them, each also written as the `messages` row
+ * `ask_answers.message_id` references (09 §4.5), inside the answer's transaction.
+ */
+class StoredAnswerRecords extends FakeAnswerRecords {
+  constructor(
+    private readonly db: SqliteDatabase,
+    deps: ConstructorParameters<typeof FakeAnswerRecords>[0]
+  ) {
+    super(deps)
+  }
+
+  override write(dwarfId: DwarfId, askId: AskId, text: string, existing?: MessageId): MessageId {
+    const id = super.write(dwarfId, askId, text, existing)
+    if (existing === undefined) {
+      this.db.run(
+        `INSERT INTO messages (id, dwarf_id, role, text, origin, created_at, ask_id)
+         VALUES (?, ?, 'answers-record', ?, 'dwarfai', 0, ?)`,
+        [id, dwarfId, text, askId]
+      )
+    }
+    return id
+  }
+}
+
+/**
+ * The asking wiring's OpenCode part (`wireOpenCodePluginAsking`) composed over the broker on a
+ * migrated template copy, with a launched OpenCode dwarf: the full Host above has no launch path
+ * before EPIC-10 and 4b, so suppliers' launched capabilities are the catalogue's gate as data.
+ * `observed` and `launched` are its dwarfs.
+ */
+function composedOpenCodeHost() {
+  const seeded = seededAskDb()
+  const { runner, clock } = seeded
+  const [observed, launched] = seeded.dwarfs
+  const scheduler = new FakeScheduler(clock)
+  const ids = new SequenceIdGenerator()
+  const log = new RecordingDiagnosticsLog()
+  const bus = new RecordingEventBus<AskingEvent | AnswerRecordEvent>({ transactionScope: runner })
+  const lines = new FakeConversationLines(runner)
+  const tokens = inMemoryChannelTokens()
+  const password = randomBytes(12).toString('hex')
+  const secrets = new FakeSecretReader({ scheduler, values: { 'opencode-password': password } })
+  const received: Array<{ url: string; headers: Record<string, string>; body: unknown }> = []
+  const post: OpenCodeHttpPost = (url, init) => {
+    received.push({ url, headers: { ...init.headers }, body: JSON.parse(init.body) })
+    return Promise.resolve({ status: 200, text: () => Promise.resolve('true') })
+  }
+  let state: IntegrationState = 'on-verified'
+
+  /** The sessions observation knows: a legacy-launched one it observes, and a Host-launched one. */
+  const sessions = new Map<string, ObservedSession>([
+    ['ses-observed', { dwarfId: observed, cwd: '/work/mine-one' } as ObservedSession],
+    ['ses-launched', { dwarfId: launched, cwd: '/work/mine-one' } as ObservedSession]
+  ])
+  const asks = seeded.open()
+  let open: ReturnType<typeof createAskOpening>['open'] = () => {
+    throw new Error('not wired')
+  }
+  const wired = wireOpenCodePluginAsking({
+    providerId: OPENCODE_ID,
+    sessions: {
+      byIdentity: (identity) =>
+        identity.providerId === OPENCODE_ID
+          ? (sessions.get(identity.providerSessionId) ?? null)
+          : null
+    },
+    asks: { open: (dwarfId, input) => open(dwarfId, input) },
+    preferences: {
+      queries: { integrationState: () => state },
+      channelTokens: tokens.store
+    },
+    observation: { nudge: () => undefined },
+    secrets,
+    post,
+    scheduler,
+    redact: redactSecrets,
+    log
+  })
+  const channelFor = (channel: string) => (channel === 'http' ? wired.channel : null)
+
+  /** Suppliers' launched OpenCode capabilities: the catalog ceiling only while the gate is open. */
+  const launchedCapabilities = (): AskCapabilities =>
+    state === 'on-verified'
+      ? {
+          permission: 'interactive',
+          question: 'none',
+          observedPermission: 'none',
+          observedQuestion: 'none'
+        }
+      : {
+          permission: 'none',
+          question: 'none',
+          observedPermission: 'none',
+          observedQuestion: 'none'
+        }
+  const sessionOf = (dwarfId: DwarfId): AskSession =>
+    dwarfId === launched
+      ? { providerId: OPENCODE_ID, origin: 'launched', capabilities: launchedCapabilities() }
+      : {
+          providerId: OPENCODE_ID,
+          origin: 'observed',
+          capabilities: wired.observedCapabilities(OPENCODE_ID, OPENCODE_DECLARED)
+        }
+
+  const opening = createAskOpening({
+    asks,
+    sessions: { sessionOf },
+    lines,
+    joinedLines: lines,
+    channelFor,
+    transactions: runner,
+    bus,
+    clock,
+    ids,
+    hostEpoch: EPOCH
+  })
+  open = (dwarfId, input) => opening.open(dwarfId, input)
+  const answering = createAsking({
+    asks,
+    records: new StoredAnswerRecords(seeded.db, { scope: runner, clock, ids }),
+    channelFor,
+    staleAnswerSafe: (channel) => channelFor(channel)?.capabilities.staleAnswerSafe ?? true,
+    transactions: runner,
+    bus,
+    clock,
+    scheduler,
+    ids,
+    hostEpoch: EPOCH
+  })
+
+  const pluginToken = tokens.issue('opencode-plugin', clock.now())
+  /** One plugin request as the ingress serves it: the admission, then the accepted delivery. */
+  const plugin = (body: string, token = pluginToken): 'accepted' | 401 | 400 => {
+    if (!wired.route.admits(token)) return 401
+    const delivery = wired.route.accept(body)
+    if (delivery === null) return 400
+    delivery()
+    return 'accepted'
+  }
+
+  return {
+    observed,
+    launched,
+    asks,
+    bus,
+    lines,
+    received,
+    password,
+    answering,
+    plugin,
+    tokens,
+    setState: (next: IntegrationState) => {
+      state = next
+    }
+  }
+}
+
+/** Lets the answer channel's awaited secret read and post settle (no timer involved). */
+async function settleAnswers(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) await Promise.resolve()
+}
+
+describe('the OpenCode plugin asks of a launched session (ISSUE-229)', () => {
+  it("[C-27, ADR-011] with the gate off or on-unverified no card opens; a launched session's request is auto-denied with one chat line", async () => {
+    const h = composedOpenCodeHost()
+    h.setState('on-unverified')
+
+    expect(h.plugin(pluginReport('ses-observed', 'per-2'))).toBe('accepted')
+    expect(h.asks.byProviderRequest({ dwarfId: h.observed }, 'per-2')).toBeNull()
+
+    expect(h.plugin(pluginReport('ses-launched', 'per-3'))).toBe('accepted')
+    await settleAnswers()
+
+    expect(h.bus.ofType('AskOpened')).toStrictEqual([])
+    expect(h.asks.byProviderRequest({ dwarfId: h.launched }, 'per-3')?.state).toBe('auto-denied')
+    expect(h.bus.ofType('AskClosed').map((event) => event.payload.reason)).toStrictEqual([
+      'auto-denied'
+    ])
+    expect(h.lines.rows.map((row) => [row.dwarfId, row.entry.text])).toStrictEqual([
+      [h.launched, AUTO_DENIED_LINE]
+    ])
+    // Denied through the OpenCode protocol, on the server that asked.
+    expect(h.received.map((sent) => [sent.url, sent.body])).toStrictEqual([
+      [
+        'http://127.0.0.1:4096/permission/per-3/reply?directory=%2Fwork%2Fmine-one',
+        { reply: 'reject' }
+      ]
+    ])
+
+    // Off: the plugin token is revoked with the integration (ADR-016 item 1), so nothing arrives.
+    h.setState('off')
+    h.tokens.store.revoke('opencode-plugin', 2)
+    expect(h.plugin(pluginReport('ses-launched', 'per-4'))).toBe(401)
+    expect(h.asks.byProviderRequest({ dwarfId: h.launched }, 'per-4')).toBeNull()
   })
 })

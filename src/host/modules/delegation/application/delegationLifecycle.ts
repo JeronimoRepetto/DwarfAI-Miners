@@ -11,6 +11,9 @@
 //   entry argument, and the file PATH. The value is never in the injection, a row or a log (ADR-013
 //   item 2, C-16). A file that cannot be written revokes the row and returns `null`: the launch
 //   proceeds without delegation (logged). `none` and `in-process` (no v1 driver) get `null`.
+// - `issuePromptRelay(launchId)` (AMENDMENT-21; the stream-json driver, before its spawn, for a launch
+//   `issueFor` left out): the same row and file whatever the gates, so the relay can serve the
+//   permission prompt tool; only `issueFor` leads to the delegation tools' pre-approval.
 // - `bindParent(launchId, dwarfId)` (route of `DwarfLaunched`): the launch's dwarf becomes its
 //   token's parent, once; a launch with no token is a no-op. Releasing the `delegate` calls that
 //   wait for the bind (16 §5.2 item 5) is the endpoint's (ISSUE-199).
@@ -91,7 +94,23 @@ export interface DelegationLifecycle {
   sweepOrphans(): Promise<{ revoked: number; deleted: number }> // boot, after the ADR-015 reconcile: revoke live tokens with no parent; delete every credential file without a live token
 }
 
-export class DelegationLifecycleService implements DelegationLifecycle {
+/**
+ * AMENDMENT-21 (owner-approved 2026-10-17): every Claude `stream-json` launch carries the relay
+ * `--mcp-config` entry, because the relay also serves its permission prompt tool. A launch the
+ * delegation gates leave out (`issueFor` gave `null`) gets its relay credential here: the same
+ * hash-only `delegation_tokens` row and owner-only credential file, so the same bind, revoke and
+ * sweep cover it. The gates stay where they are: the endpoint re-reads them on every delegation
+ * call (16 §5.2 item 5) and refuses `gate-closed` for this launch, and only `issueFor` leads to
+ * the delegation tools' pre-approval (ADR-013 item 4).
+ */
+export interface PermissionPromptRelayIssuer {
+  // the stream-json driver calls it before its spawn when the launch carries no DelegationInjection; null when the file cannot be written
+  issuePromptRelay(launchId: LaunchId): Promise<DelegationInjection | null>
+}
+
+export class DelegationLifecycleService
+  implements DelegationLifecycle, PermissionPromptRelayIssuer
+{
   constructor(private readonly deps: DelegationLifecycleDeps) {}
 
   async issueFor(launch: DelegationIssueRequest): Promise<DelegationInjection | null> {
@@ -105,7 +124,18 @@ export class DelegationLifecycleService implements DelegationLifecycle {
     // `none`: no delegation for this driver. `in-process`: no v1 driver uses it (OQ-52; 15 §4.1),
     // and its server object is built only when such a driver is cleared.
     if (!gate || (mechanism !== 'ticket-file' && mechanism !== 'protocol')) return null
+    return this.issueRelay(launchId, mechanism)
+  }
 
+  async issuePromptRelay(launchId: LaunchId): Promise<DelegationInjection | null> {
+    return this.issueRelay(launchId, 'ticket-file')
+  }
+
+  /** Mints the launch's credential: the hash-only row first, then the owner-only file. */
+  private async issueRelay(
+    launchId: LaunchId,
+    mechanism: 'ticket-file' | 'protocol'
+  ): Promise<DelegationInjection | null> {
     const { transactions, tokens, clock, files } = this.deps
     const credential = this.deps.mintCredential()
     transactions.inTransaction(() =>
