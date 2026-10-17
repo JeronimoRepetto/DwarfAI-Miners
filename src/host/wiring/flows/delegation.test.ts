@@ -17,6 +17,8 @@ import type { DwarfId, LaunchId } from '../../kernel/domain/values'
 import { rankForDepth } from '../../modules/crew'
 
 import { MINE } from '../../modules/launching/testing/sqliteLaunchingDb'
+import { toDwarfWire } from '../../transport/mappers/wire'
+import { delegatedChat } from './testing/delegatedChat'
 import {
   delegationHost,
   SETTLE_MS,
@@ -202,5 +204,170 @@ describe('delegation flow (11 F6; UC-017)', () => {
     // No worker was launched for it, before or after the restart.
     expect([...before.starter.starts, ...after.starter.starts]).toStrictEqual([])
     expect(after.jevRouter.requests).toStrictEqual([])
+  })
+})
+
+// ISSUE-207 (14 §2.4 note, §3.6 `DwarfWire.delegated`, `parentDwarfId`; ADR-013 item 5; INV-85;
+// 11 F6 steps 4–5): the worker is an ordinary dwarf the UI can tell apart. Its chat and its send
+// path are every dwarf's: compared here with an ordinary launch of the same supplier in the same
+// mine. TC-207-01, TC-207-03.
+describe('the delegated worker as the UI sees it (ISSUE-207)', () => {
+  /** An ordinary launch of the simulated supplier in the parent's mine, settled; its dwarf. */
+  async function launchedOrdinary(h: Host, prompt: string): Promise<DwarfId> {
+    const { launchId } = await h.launching.commands.launch({
+      mineId: MINE,
+      way: { kind: 'supplier', providerId: SIMULATED },
+      prompt,
+      jevOn: false,
+      jevAutoAccept: false
+    })
+    await h.run(SETTLE_MS)
+    const launched = h.launchingBus
+      .ofType('DwarfLaunched')
+      .find((e) => e.payload.launchId === launchId)
+    if (launched === undefined) throw new Error('the ordinary launch did not settle')
+    return launched.payload.dwarfId
+  }
+
+  /**
+   * One rule for every dwarf, delegated or not: a dwarf whose session launching holds live is
+   * owned, and its session is its delivery route (INV-30, INV-33).
+   */
+  function linkLaunched(h: Host, dwarfs: readonly DwarfId[]): void {
+    for (const dwarfId of dwarfs) {
+      if (h.launching.owned.liveRecordOf(dwarfId) === null) continue
+      h.crew.owned.add(dwarfId)
+      h.crew.routed.add(dwarfId)
+    }
+  }
+
+  function wireOf(h: Host, dwarfId: DwarfId) {
+    const view = h.crew.queries.get(dwarfId)
+    if (view === null) throw new Error(`no dwarf ${dwarfId}`)
+    return toDwarfWire(view)
+  }
+
+  it("[US-DLG-002.AC05, INV-85] a delegated worker is stored and published with delegated true and its parent's id", async () => {
+    const h = delegationHost()
+
+    const { parent, worker } = await delegated(h)
+    const ordinary = await launchedOrdinary(h, 'Survey the east gallery')
+
+    expect(h.crew.repository.byId(worker)).toMatchObject({ delegated: true, parentDwarfId: parent })
+    const arrived = h.crew.bus.ofType('DwarfArrived').map((e) => e.payload)
+    expect(arrived.find((p) => p.dwarfId === worker)).toMatchObject({
+      delegated: true,
+      parentDwarfId: parent
+    })
+    expect(wireOf(h, worker)).toMatchObject({ delegated: true, parentDwarfId: parent })
+    // Any other dwarf is no delegation: the parent, and a dwarf the person launched.
+    for (const other of [parent, ordinary]) {
+      expect(arrived.find((p) => p.dwarfId === other)).toMatchObject({ delegated: false })
+      expect(wireOf(h, other)).toMatchObject({ delegated: false, parentDwarfId: null })
+    }
+  })
+
+  it('[US-DLG-003.AC01] the worker can receive messages and exposes the same chat facts as any dwarf', async () => {
+    const h = delegationHost()
+    const chat = delegatedChat(h)
+    const { worker } = await delegated(h)
+    const ordinary = await launchedOrdinary(h, 'Survey the east gallery')
+
+    linkLaunched(h, [worker, ordinary])
+
+    const chatFacts = (dwarfId: DwarfId) => {
+      const wire = wireOf(h, dwarfId)
+      return {
+        presence: wire.presence,
+        processState: wire.processState,
+        status: wire.status,
+        needsYou: wire.needsYou,
+        canReceiveMessages: wire.canReceiveMessages,
+        stopInFlight: wire.stopInFlight,
+        stopUnavailableReason: wire.stopUnavailableReason,
+        owned: wire.owned
+      }
+    }
+    expect(chatFacts(worker)).toMatchObject({ canReceiveMessages: true, owned: true })
+    expect(chatFacts(worker)).toStrictEqual(chatFacts(ordinary))
+    // Its chat opens on the same feed: its first message is the subtask brief, in the person's
+    // place, as an ordinary dwarf's first message is the prompt it was launched with (INV-85).
+    const shape = (dwarfId: DwarfId) =>
+      chat.feed(dwarfId).messages.map(({ role, delivery, attachments }) => ({
+        role,
+        delivery,
+        attachments
+      }))
+    expect(chat.feed(worker).messages.map((m) => m.text)).toStrictEqual([TASK])
+    expect(shape(worker)).toStrictEqual(shape(ordinary))
+  })
+
+  it('[US-DLG-003.AC02] a message sent to the worker goes through conversation.send and is delivered as any message', async () => {
+    const h = delegationHost()
+    const chat = delegatedChat(h)
+    const { worker } = await delegated(h)
+    const ordinary = await launchedOrdinary(h, 'Survey the east gallery')
+    linkLaunched(h, [worker, ordinary])
+
+    /** One send: its answer, the events it published and the delivery it stored. */
+    const sent = async (dwarfId: DwarfId, requestId: string) => {
+      const before = chat.bus.published.length
+      const at = h.clock.now()
+      const answer = await chat.send(dwarfId, 'Check the pumps too', requestId)
+      await h.run(10)
+      // Accepted like any send: never `cannot-receive` for a worker (14 §1.7).
+      expect(answer).toMatchObject({ ok: true })
+      if (!answer.ok) throw new Error(`the send was refused: ${answer.error}`)
+      const [stored] = chat.feed(dwarfId).messages
+      return {
+        events: chat.bus.published
+          .slice(before)
+          .map((e) => ({ type: e.type, dwarfId: (e.payload as { dwarfId?: DwarfId }).dwarfId })),
+        stored: {
+          id: stored?.id,
+          role: stored?.role,
+          text: stored?.text,
+          delivery: stored?.delivery
+        },
+        messageId: answer.value,
+        /** How long after the send its delivery last moved. */
+        settledAfter: (stored?.delivery?.phaseAt ?? Number.NaN) - at
+      }
+    }
+    const toWorker = await sent(worker, '01890a5d-ac96-774b-bcce-000000000207')
+    const toOrdinary = await sent(ordinary, '01890a5d-ac96-774b-bcce-000000000208')
+
+    // Handed over once, as the same turn any dwarf gets.
+    expect(chat.turns.turns).toStrictEqual([
+      {
+        dwarfId: worker,
+        turn: {
+          messageId: toWorker.messageId,
+          kind: 'message',
+          text: 'Check the pumps too',
+          attachments: []
+        }
+      },
+      {
+        dwarfId: ordinary,
+        turn: {
+          messageId: toOrdinary.messageId,
+          kind: 'message',
+          text: 'Check the pumps too',
+          attachments: []
+        }
+      }
+    ])
+    expect(toWorker.stored).toMatchObject({
+      id: toWorker.messageId,
+      role: 'person',
+      delivery: { phase: 'delivered', confidence: 'confirmed' }
+    })
+    // The same events and the same stored delivery as the ordinary dwarf's send.
+    const same = (s: typeof toWorker, dwarfId: DwarfId) => ({
+      events: s.events.map((e) => ({ ...e, dwarfId: e.dwarfId === dwarfId ? 'self' : e.dwarfId })),
+      delivery: { ...s.stored.delivery, messageId: 'x', dwarfId: 'x', phaseAt: s.settledAfter }
+    })
+    expect(same(toWorker, worker)).toStrictEqual(same(toOrdinary, ordinary))
   })
 })

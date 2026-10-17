@@ -259,6 +259,7 @@ export function delegationHost(
     log,
     crew,
     starter,
+    launching,
     launchingBus,
     jevRouter,
     delegationBus,
