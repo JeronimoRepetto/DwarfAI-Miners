@@ -5052,3 +5052,84 @@ describe('App Music slot (ISSUE-262)', () => {
   })
 })
 /* --- end of the ISSUE-262 block -------------------------------------------------------------- */
+
+/* --- Recovery message (ISSUE-330) — one block, appended ------------------------------------------ */
+/*
+ * The one grouped recovery message on the Host-state surface (ADR-015 item 5; 14 §6.4 recovery-message store). App
+ * owns useRecoveryReport and mounts RecoveryMessage while the `recovery` snapshot section holds an unsettled report;
+ * Dismiss sends A-N11 with the report's epoch and nothing else. Every other test answers the section with a refusal,
+ * so the message stays hidden there.
+ */
+describe('App recovery message (ISSUE-330)', () => {
+  const EPOCH = 'epoch-330'
+  const LOST = '01920000-0000-7000-a000-000000000332'
+
+  function hostWithReport() {
+    const dismissRecovery = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } })
+    const stopDwarf = vi.fn()
+    return {
+      dismissRecovery,
+      stopDwarf,
+      overrides: {
+        getHostSnapshot: vi.fn((params: { sections?: string[] } | undefined) =>
+          Promise.resolve(
+            params?.sections?.includes('recovery') === true
+              ? {
+                  ok: true,
+                  value: {
+                    snapshotId: 'snap-recovery',
+                    seq: 7,
+                    epoch: EPOCH,
+                    chunks: [
+                      {
+                        section: 'recovery',
+                        data: {
+                          hostEpoch: EPOCH,
+                          at: 1,
+                          resumed: [],
+                          unrecovered: [{ dwarfId: LOST, reason: 'no-resume' }],
+                          state: 'pending-display'
+                        }
+                      }
+                    ]
+                  }
+                }
+              : params?.sections?.includes('tails') === true
+                ? EMPTY_HOST_TAILS
+                : HOST_CONNECTION_UNROUTED
+          )
+        ),
+        dismissRecovery,
+        stopDwarf
+      }
+    }
+  }
+
+  it('[S16.08, US-RES-009.AC03, ADR-015] a pending report at attach shows one message, and Dismiss sends only dismissRecovery', async () => {
+    const host = hostWithReport()
+    await mountOpenApp(host.overrides)
+
+    const dialogs = document.body.querySelectorAll('[role="dialog"]')
+    expect(dialogs).toHaveLength(1)
+    expect(dialogs[0]!.getAttribute('aria-label')).toBe('Some dwarfs could not come back')
+    // A dwarf the board does not hold is named by its id.
+    expect(dialogs[0]!.querySelector('li bdi')?.textContent).toBe(LOST)
+
+    const dismiss = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')
+    ].find((button) => button.textContent?.trim() === 'Dismiss')!
+    dismiss.click()
+    await flushPromises()
+    expect(host.dismissRecovery).toHaveBeenCalledTimes(1)
+    expect(host.dismissRecovery).toHaveBeenCalledWith(expect.objectContaining({ hostEpoch: EPOCH }))
+    expect(host.stopDwarf).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('[ADR-015] while the Host reports no recovery, nothing is shown', async () => {
+    await mountOpenApp()
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+/* --- end of the ISSUE-330 block ------------------------------------------------------------------ */
