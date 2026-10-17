@@ -25,3 +25,9 @@ export interface JevRouter {                                   // driven: TypeSa
 export interface RoutingCatalogSource { launchable(): Promise<SupplierEntry[]> }                         // bridge → suppliers
 // The Jev key is read through the kernel SecretReader (§3 kernel ports); a 'timeout' read is 'jev-unreachable'.
 // end verbatim: 16 §4.9
+
+/**
+ * 16 §2.6, §6.5: how long one Jev request (one attempt) may take before it resolves as the fallback
+ * `timeout`. An architect value and config key (O-16-10); the adapter arms it on the kernel Scheduler.
+ */
+export const JEV_ATTEMPT_TIMEOUT_MS = 8_000
