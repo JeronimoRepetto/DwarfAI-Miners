@@ -1,0 +1,16 @@
+{
+  "providerVersion": "0.41.0",
+  "capturedAt": "2026-10-17T00:00:00.000Z",
+  "capturedBy": "maintainer",
+  "os": "win32",
+  "scrubbed": true,
+  "capabilities": {
+    "driver": "acp",
+    "launch": true,
+    "permissionObserved": false,
+    "questionObserved": false,
+    "resumeLoadSession": true,
+    "mcpInjectionArgvClean": true,
+    "mcpChildEnv": "inherited"
+  }
+}

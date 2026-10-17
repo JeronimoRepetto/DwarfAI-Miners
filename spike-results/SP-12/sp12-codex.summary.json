@@ -1,0 +1,216 @@
+{
+  "case": "sp12-app-server-protocol-entry",
+  "sentinelNote": "random per run",
+  "steps": [
+    {
+      "initialize": "ok"
+    },
+    {
+      "threadStart": {
+        "threadId": "<thread-id>"
+      }
+    }
+  ],
+  "probeStarted": true,
+  "mcpStatus": [
+    {
+      "name": "code-review",
+      "toolCount": 0
+    },
+    {
+      "name": "<mcp-server-4>",
+      "toolCount": 1
+    },
+    {
+      "name": "codex_app",
+      "toolCount": 0
+    },
+    {
+      "name": "<mcp-server-1>",
+      "toolCount": 238
+    },
+    {
+      "name": "<mcp-server-5>",
+      "toolCount": 2
+    },
+    {
+      "name": "<mcp-server-3>",
+      "toolCount": 3
+    },
+    {
+      "name": "<mcp-server-6>",
+      "toolCount": 19
+    },
+    {
+      "name": "<mcp-server-2>",
+      "toolCount": 4
+    }
+  ],
+  "tree": [
+    {
+      "pid": 100008,
+      "depth": 0,
+      "name": "codex.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 34492,
+      "depth": 1,
+      "name": "conhost.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 22652,
+      "depth": 1,
+      "name": "git.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 75752,
+      "depth": 2,
+      "name": "git.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 52908,
+      "depth": 3,
+      "name": "git-remote-https.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 60868,
+      "depth": 2,
+      "name": "git.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 69732,
+      "depth": 1,
+      "name": "node.exe",
+      "isProbe": true,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": true
+    },
+    {
+      "pid": 57448,
+      "depth": 1,
+      "name": "<mcp-server-2>.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 98248,
+      "depth": 1,
+      "name": "node.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 14780,
+      "depth": 2,
+      "name": "<mcp-server-2>.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 43208,
+      "depth": 1,
+      "name": "<mcp-server-6>.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 74664,
+      "depth": 1,
+      "name": "cmd.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 19192,
+      "depth": 2,
+      "name": "node.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    },
+    {
+      "pid": 90980,
+      "depth": 3,
+      "name": "node.exe",
+      "isProbe": false,
+      "argvHasSentinel": false,
+      "argvHasCredPath": false,
+      "argvHasProbeEntry": false
+    }
+  ],
+  "probeReports": [
+    {
+      "at": "2026-10-17T07:52:47.611Z",
+      "pid": 69732,
+      "ppid": 100008,
+      "argv": [],
+      "envKeys": [
+        "APPDATA",
+        "COMSPEC",
+        "DWARFAI_MCP_CREDENTIAL_FILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMW6432",
+        "SHELL",
+        "SP12_REPORT",
+        "SP12_SENTINEL",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "USERDOMAIN",
+        "USERNAME",
+        "USERPROFILE",
+        "WINDIR"
+      ],
+      "sentinelPresent": true,
+      "credFilePresent": true,
+      "electronRunAsNodePresent": false,
+      "event": "start"
+    }
+  ],
+  "configFilesWithSentinel": [],
+  "repoFilesWithSentinel": []
+}

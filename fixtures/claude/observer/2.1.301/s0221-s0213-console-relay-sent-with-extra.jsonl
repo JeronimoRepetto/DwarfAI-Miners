@@ -1,0 +1,1 @@
+{"relay":"console-input","text":"S-022-1 probe:  two  spaces,\ta tab,\r\na CRLF break,\nan LF break, trailing spaces   \n é ✓ 🙂 — reply with the single word ok.","normalized":"S-022-1 probe: two spaces, a tab, a CRLF break, an LF break, trailing spaces é ✓ 🙂 — reply with the single word ok.","dwarfaiUnknownField":"extra"}

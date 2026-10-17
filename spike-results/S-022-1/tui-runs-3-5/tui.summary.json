@@ -1,0 +1,73 @@
+{
+  "phase": "tui",
+  "version": "2.1.301",
+  "argv": [
+    "--setting-sources",
+    "project",
+    "--strict-mcp-config",
+    "--permission-mode",
+    "default",
+    "--settings",
+    "<hook settings file>",
+    "--session-id",
+    "<session-id>",
+    "--debug-file",
+    "<debug file>"
+  ],
+  "pidFound": true,
+  "alive": true,
+  "trustDigitExit": 0,
+  "aliveAfterDigit": true,
+  "trustEnterExit": 0,
+  "aliveAfterTrust": false,
+  "debugTail": [
+    "2026-10-17T08:57:06.655Z [DEBUG] Error log sink initialized",
+    "2026-10-17T08:57:06.706Z [DEBUG] Error log sink initialized",
+    "2026-10-17T08:57:06.708Z [DEBUG] hooks modules not loaded until workspace trust is accepted: cc-plugin-sec-default, cc-plugin-agents-md, cc-plugin-telemetry, cc-plugin-plugin-authoring",
+    "2026-10-17T08:57:06.733Z [DEBUG] [keybindings] KeybindingSetup initialized with 224 bindings, 0 warnings",
+    "2026-10-17T08:57:19.540Z [DEBUG] Skipping SessionEnd:other hook execution - workspace trust not accepted",
+    "2026-10-17T08:57:19.892Z [WARN] [stderr] \\u001b[?25h"
+  ],
+  "messageWriteExit": 2,
+  "transcriptFound": false,
+  "screens": [
+    {
+      "label": "after-launch",
+      "lines": []
+    },
+    {
+      "label": "after-trust-enter",
+      "error": 2
+    },
+    {
+      "label": "after-reply",
+      "error": 2
+    }
+  ],
+  "transcriptRecordTypes": [],
+  "relayNormalizedText": "S-022-1 probe: two spaces, a tab, a CRLF break, an LF break, trailing spaces é ✓ 🙂 — reply with the single word ok.",
+  "s0221": [
+    {
+      "label": "R1-console-relay",
+      "sentAt": "2026-10-17T08:57:25.729Z",
+      "sentLength": 123,
+      "matchExact": 0,
+      "matchAfterCrlfToLf": 0,
+      "matchAfterTrim": 0,
+      "recordTimestamp": null,
+      "sentAtLeRecordTime": null,
+      "recordUuid": null,
+      "recordUuidEqualsReplay": null,
+      "contentShape": null,
+      "recordTextDiff": null,
+      "nextRecordType": null,
+      "nextIsAgentRecord": false,
+      "nextParentIsThis": null
+    }
+  ],
+  "s0213": {
+    "hookCalls": []
+  },
+  "exitWrite": 2,
+  "exitedAfterSlashExit": true
+}

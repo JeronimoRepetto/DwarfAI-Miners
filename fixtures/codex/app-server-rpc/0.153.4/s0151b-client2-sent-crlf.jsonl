@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"spike-2","version":"0.0.1"}}}
+{"jsonrpc":"2.0","method":"initialized","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"thread/loaded/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"thread/resume","params":{"threadId":"00000000-0000-4000-8000-000000000001"}}
+{"jsonrpc":"2.0","id":4,"method":"turn/start","params":{"threadId":"00000000-0000-4000-8000-000000000001","input":[{"type":"text","text":"Reply with exactly the word two."}]}}

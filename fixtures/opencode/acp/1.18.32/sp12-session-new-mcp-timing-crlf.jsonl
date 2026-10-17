@@ -1,0 +1,7 @@
+{"at":5,"event":"spawn","pid":44752}
+{"at":6,"stream":"sent","bytes":224}
+{"at":1664,"stream":"received","bytes":445}
+{"at":1665,"stream":"sent","bytes":728}
+{"at":3654,"stream":"received","bytes":3518}
+{"at":3655,"stream":"received","bytes":14563}
+{"at":5131,"event":"exit","code":1,"signal":null}
