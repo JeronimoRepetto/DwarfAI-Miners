@@ -3,7 +3,7 @@
 //
 // Acceptance (synchronous, before the answer):
 // - Refused before any row (`LaunchRefusedError`; 16 §4.5: no failure result at acceptance): the
-//   Jev path (ISSUE-164, hidden until built); a mine that is missing or not enterable, or a request
+//   Jev path while no `LaunchAdvisor` is composed (hidden until built, 21 §1 item 8); a mine that is missing or not enterable, or a request
 //   that is not sendable (INV-50); a supplier this build's catalogue does not hold; a permission
 //   mode that is not among the entry's offered modes now (ADR-011 item 1: re-derived at send time);
 //   a `retryOf` that names no failed launch whose cause allows Retry (INV-54).
@@ -33,6 +33,15 @@
 //   failure kept in Host memory with its `toolOutputTail` (ADR-020 item 6; INV-55), one
 //   `launch.failed` diagnostics record with the cause only, then `LaunchFailed`. An unexpected
 //   error is `could-not-start`, never a sixth cause (INV-52).
+//
+// "Let Jev choose" (ISSUE-164; UC-009; 07 S5.10, S5.12–S5.15; ADR-020 item 2; ADR-028 D2): the row is
+// committed in `routing` and the settlement asks Jev through the `LaunchAdvisor` with an
+// `AbortSignal`, aborted at `JEV_ROUTING_BUDGET_MS` (16 §6.5). Jev's pick moves it to `resolving`
+// and the supplier path above runs with the pick's provider, model and capped effort (S5.12);
+// a fallback with the pickers' values launches on them (S5.12); a fallback carrying the configured
+// default ends `handed-back` with `LaunchHandedBack{picks}` and no `LaunchFailed` (S5.13, OQ-38 B);
+// otherwise nothing went out and it fails with one of the two Jev causes and its reason (S5.14,
+// S5.15; domain/jevFallback.ts).
 //
 // A delegated worker (ISSUE-180; ADR-013 items 1, 4; 09 D-17; UC-017), a request with `delegation`
 // set, which only the `WorkerLauncher` bridge sends (wiring/bridges/workerLauncher.ts):
@@ -64,7 +73,8 @@ import type {
   Instant,
   LaunchId,
   MineId,
-  ProviderId
+  ProviderId,
+  Result
 } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
@@ -86,12 +96,23 @@ import {
   type SupplierCatalogueQueries
 } from '../../suppliers'
 import { applyLaunchEvent, requestLaunch, type Launch, type LaunchRequest } from '../domain/launch'
+import {
+  decideJevRouting,
+  JEV_ROUTING_BUDGET_MS,
+  jevFallbackFailure,
+  type JevAnswer,
+  type JevLaunchCause,
+  type JevPick,
+  type JevPicks,
+  type JevRouting
+} from '../domain/jevFallback'
 import { buildLaunchFailure } from '../domain/launchFailure'
 import { spawnTagFor } from '../domain/spawnTag'
 import { CUSTOM_COMMAND_LABEL, NO_SUPPLIER_LABEL } from '../domain/supplierLabel'
 import type { LaunchRecordStore } from '../ports/launchRecordStore'
 import type { LaunchStore } from '../ports/launchStore'
 import type { ProcessRecordStore } from '../ports/processRecordStore'
+import type { AbortableLaunchAdvisor } from '../ports/launchAdvisor'
 import type { SessionStarter } from '../ports/sessionStarter'
 import type { LaunchingEvent } from './events'
 import {
@@ -127,14 +148,6 @@ interface WorkerDelegation {
   parentDwarfId: DwarfId
 }
 
-/** ADR-020 D2: the fallbacks where Jev could not be reached (S5.14); the others could not choose (S5.15). */
-const JEV_UNREACHABLE: ReadonlySet<JevFallbackReason> = new Set([
-  'unreachable',
-  'timeout',
-  'rate-limited',
-  'invalid-response'
-])
-
 /**
  * Why a launch is refused before any `launches` row is written (INV-50; ADR-011 item 1): there is
  * no failure result at acceptance (16 §4.5), so a request that cannot become a `Launch` is a
@@ -169,6 +182,11 @@ export interface LaunchingDeps {
   records: LaunchRecordStore
   transactions: TransactionRunner
   starter: SessionStarter
+  /**
+   * The `LaunchAdvisor` bridge → jev (16 §4.5; later: ISSUE-182). Without it the Jev path is hidden
+   * until built (21 §1 item 8): a "Let Jev choose" launch is refused `jev-not-built`.
+   */
+  advisor?: AbortableLaunchAdvisor
   /** Calls along the launching → suppliers edge (05 §1.3). */
   suppliers: {
     registry: Pick<DriverRegistry, 'drivers'>
@@ -225,9 +243,11 @@ export class LaunchUseCase {
   async launch(input: LaunchRequestInput): Promise<LaunchAccepted> {
     const { ids, hostEpoch } = this.deps
     const { delegation } = input
-    if (input.jevOn) throw new LaunchRefusedError('jev-not-built')
-    // A `jev` way is a delegated worker whose pick fell back; any other is the Jev path (ISSUE-164).
-    if (input.way.kind === 'jev' && delegation?.fallback === undefined) {
+    // "Let Jev choose" (S5.10) needs the advisor; a `jev` way without it is only a delegated worker
+    // whose pick fell back.
+    const asksJev = input.jevOn && delegation === undefined
+    if (asksJev && this.deps.advisor === undefined) throw new LaunchRefusedError('jev-not-built')
+    if (input.way.kind === 'jev' && !asksJev && delegation?.fallback === undefined) {
       throw new LaunchRefusedError('jev-not-built')
     }
     const cwd = this.enterableFolder(input.mineId)
@@ -360,8 +380,9 @@ export class LaunchUseCase {
   }
 
   /** The settlement of one accepted launch; it settles exactly once and never throws. */
-  private async settle(accepted: OwnLaunch, facts: Accepted): Promise<void> {
+  private async settle(accepted: OwnLaunch, acceptedFacts: Accepted): Promise<void> {
     let launch = accepted
+    let facts = acceptedFacts
     let spawned: ProcessIdentity | undefined
     let settled = false
     const failWith = (failure: LaunchFailure, detail?: string): void => {
@@ -376,7 +397,30 @@ export class LaunchUseCase {
           failWith(this.jevFailure(facts.fallback, facts))
           return
         }
-        launch = this.picked(launch, facts)
+        let pick: JevPick | undefined
+        if (facts.delegation === undefined) {
+          // A normal launch with "Let Jev choose" (S5.10): Jev is asked now (UC-009).
+          const routed = await this.route(launch, facts)
+          if (routed.kind === 'failed') {
+            failWith(routed.failure)
+            return
+          }
+          if (routed.kind === 'handed-back') {
+            settled = true
+            this.handBack(launch, routed.picks, facts)
+            return
+          }
+          if (routed.kind === 'picked') {
+            pick = routed.pick
+            facts = {
+              ...facts,
+              providerId: pick.providerId,
+              supplierLabel:
+                this.deps.suppliers.catalogue.entry(pick.providerId)?.label ?? NO_SUPPLIER_LABEL
+            }
+          }
+        }
+        launch = this.picked(launch, facts, pick)
       }
       const resolved = await this.resolve(facts)
       if (!resolved.ok) {
@@ -391,8 +435,7 @@ export class LaunchUseCase {
         ...(resolved.customArgv === undefined ? {} : { customArgv: resolved.customArgv }),
         cwd: facts.cwd,
         prompt: request.prompt,
-        ...(request.model === undefined ? {} : { model: request.model }),
-        ...(request.effort === undefined ? {} : { effort: request.effort }),
+        ...runsWith(launch),
         permissionMode: null,
         delegation: null,
         spawnTag: spawnTagFor(this.deps.installId, launch.id, launch.hostEpoch),
@@ -467,9 +510,68 @@ export class LaunchUseCase {
     })
   }
 
-  /** S5.12: the delegated worker's pick, taken as given, moves it to `resolving`. */
-  private picked(launch: OwnLaunch, facts: Accepted): OwnLaunch {
-    const step = applyLaunchEvent(launch, { t: 'jev-picked' })
+  /**
+   * S5.10 → S5.12–S5.15: asks Jev through the `LaunchAdvisor` with an `AbortSignal` (16 §4.5,
+   * §6.5) and decides the way out of `routing` (domain/jevFallback.ts). A call that has not
+   * answered within `JEV_ROUTING_BUDGET_MS` is aborted and settles as the `timeout` fallback; a call
+   * that rejects is Jev not reached, with no reason it did not name (logged by its code only, ADR-026).
+   */
+  private async route(launch: OwnLaunch, facts: Accepted): Promise<JevRouting> {
+    const ctx = {
+      supplierLabel: facts.supplierLabel,
+      pickers: launch.request.way.kind === 'supplier'
+    }
+    const { advisor } = this.deps
+    // Refused at acceptance without an advisor; kept total for the type.
+    if (advisor === undefined) return decideJevRouting({ ok: false, error: 'jev-unreachable' }, ctx)
+    const controller = new AbortController()
+    const budget = new Promise<Result<JevAnswer, JevLaunchCause>>((resolve) => {
+      controller.signal.addEventListener(
+        'abort',
+        () => resolve({ ok: true, value: { fallback: 'timeout' } }),
+        { once: true }
+      )
+    })
+    const timer = this.deps.scheduler.after(JEV_ROUTING_BUDGET_MS, () => controller.abort())
+    try {
+      const asked = advisor
+        .suggest(launch.request.prompt, launch.request.mineId, { signal: controller.signal })
+        .catch((error: unknown): Result<JevAnswer, JevLaunchCause> => {
+          this.uncaught(launch.id, error)
+          return { ok: false, error: 'jev-unreachable' }
+        })
+      return decideJevRouting(await Promise.race([asked, budget]), ctx)
+    } finally {
+      timer.cancel()
+    }
+  }
+
+  /**
+   * S5.13 (OQ-38 B): `handed-back` with the configured default in the picks; no failure and no
+   * notice. The launch leaves the board once `LaunchHandedBack` was published.
+   */
+  private handBack(launch: OwnLaunch, picks: JevPicks, facts: Accepted): void {
+    const step = applyLaunchEvent(launch, { t: 'handed-back', picks })
+    if (!step.ok) return
+    const next = step.value.launch
+    this.deps.transactions.inTransaction(() => this.deps.launches.put(next))
+    this.deps.memory.put(viewOf(next, facts.requestedAt))
+    this.publish({
+      type: 'LaunchHandedBack',
+      payload: { launchId: launch.id, mineId: launch.request.mineId, picks }
+    })
+    this.deps.memory.forget(launch.id)
+  }
+
+  /**
+   * S5.12: Jev's pick (a normal launch), the pickers' values its fallback launches on, or a delegated
+   * worker's pick taken as given, moves the launch to `resolving`.
+   */
+  private picked(launch: OwnLaunch, facts: Accepted, pick?: JevPick): OwnLaunch {
+    const step = applyLaunchEvent(launch, {
+      t: 'jev-picked',
+      ...(pick === undefined ? {} : { pick })
+    })
     if (!step.ok) return launch
     const next = step.value.launch
     this.deps.transactions.inTransaction(() => this.deps.launches.put(next))
@@ -571,8 +673,7 @@ export class LaunchUseCase {
         cwd: facts.cwd,
         launchOptions: {
           providerId: facts.providerId,
-          ...(request.model === undefined ? {} : { model: request.model }),
-          ...(request.effort === undefined ? {} : { effort: request.effort }),
+          ...runsWith(launch),
           ...(request.permissionMode === undefined
             ? {}
             : { permissionMode: request.permissionMode })
@@ -633,11 +734,7 @@ export class LaunchUseCase {
 
   /** S5.14, S5.15: a delegated worker's fallen-back pick, with its reason (ADR-020 D2; ADR-028 D2). */
   private jevFailure(reason: JevFallbackReason, facts: Accepted): LaunchFailure {
-    return buildLaunchFailure({
-      cause: JEV_UNREACHABLE.has(reason) ? 'jev-unreachable' : 'jev-could-not-choose',
-      supplierLabel: facts.supplierLabel,
-      jevReason: reason
-    })
+    return jevFallbackFailure(reason, facts.supplierLabel)
   }
 
   private publish(event: Pick<LaunchingEvent, 'type' | 'payload'>): void {
@@ -648,6 +745,15 @@ export class LaunchUseCase {
       at: this.deps.clock.now(),
       hostEpoch: this.deps.hostEpoch
     } as LaunchingEvent)
+  }
+}
+
+/** What the driver runs: Jev's pick when it picked (effort as capped, ADR-028 D1), else the request's. */
+function runsWith(launch: OwnLaunch): { model?: string; effort?: string } {
+  const { model, effort } = launch.pick ?? launch.request
+  return {
+    ...(model === undefined ? {} : { model }),
+    ...(effort === undefined ? {} : { effort })
   }
 }
 
