@@ -134,3 +134,7 @@ export {
   parentFailureLine,
   type ParentFailureLine
 } from './application/failureLine'
+
+// ISSUE-209: the worker loss (07 S8.09; INV-84), the route of a worker's `DwarfDeparted` and the
+// boot reconcile of the running delegations whose worker did not survive a restart.
+export { DelegationWorkerLoss, type WorkerLossDeps } from './application/workerLoss'
