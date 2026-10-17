@@ -7,11 +7,13 @@
 // "Stop dwarf…" over the same terminator (`Crew.stops`), with its availability rule. ISSUE-172:
 // `rename` and `resetName` over the `DwarfName` value object, publishing `DwarfRenamed`. ISSUE-175:
 // `endOwned`, Stop everything and quit's ends over the same terminator (`Crew.ownedEnds`), which
-// launching's `stopAll` calls. Crew imports only
+// launching's `stopAll` calls. ISSUE-205: `endDelegated`, the worker's end once its delegation
+// result reached its parent (`Crew.delegatedEnds`). Crew imports only
 // suppliers (05 §1.3, R4); what it reads of launching and of the delivery routes comes in as
 // `SessionLinks`.
 import type { HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
+import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { LifecycleFactLog } from '../../kernel/ports/lifecycleFactLog'
@@ -25,6 +27,7 @@ import { CrewArrivals, OpenAskMemory, type CrewCommands } from './application/ar
 import { CrewReadModel, type CrewQueries, type SessionLinks } from './application/crewQueries'
 import { CrewEndAllIn, type CrewEnds } from './application/endAllIn'
 import { CrewEndOwned, type CrewOwnedEnds } from './application/endOwned'
+import { CrewEndDelegated, type CrewDelegatedEnds } from './application/endDelegated'
 import { CrewStop, PendingEndMemory, type CrewStops } from './application/stop'
 import type { CrewEndEvent } from './application/events'
 import { StatusTimer } from './application/statusTimer'
@@ -81,6 +84,12 @@ export type { CrewCommands, CrewQueries, SessionLinks }
 // Strangler-only (05 §3.2; AMENDMENT-8): the B-M41 record, deleted with B-M41 at the end of cut 4.
 export type { PresentIdentity } from './application/crewQueries'
 export type { EndOutcome, SessionTerminator } from './ports/sessionTerminator'
+// ISSUE-205: `endDelegated`, the route of `DelegationSucceeded` (16 §4.2).
+export {
+  CrewEndDelegated,
+  type CrewDelegatedEnds,
+  type CrewEndDelegatedDeps
+} from './application/endDelegated'
 
 export interface CrewDeps {
   /** The Host's one writer (09 §8.1). */
@@ -131,6 +140,15 @@ export interface Crew {
     terminator: SessionTerminator
     bus: Pick<DomainEventBus<CrewEndEvent>, 'publish'>
   }): CrewOwnedEnds
+  /**
+   * `endDelegated` (16 §4.2, ISSUE-205) over the same terminator and Host bus: the route of
+   * `DelegationSucceeded` (05 §4) calls it (later: ISSUE-209 composes it).
+   */
+  delegatedEnds(deps: {
+    terminator: SessionTerminator
+    bus: Pick<DomainEventBus<CrewEndEvent>, 'publish'>
+    log: DiagnosticsLog
+  }): CrewDelegatedEnds
 }
 
 /** The module over the Host database. */
@@ -195,7 +213,19 @@ export function createCrew(deps: CrewDeps): Crew {
       terminator,
       departures: commands
     })
-  return { commands, queries, statusTimer, ends, stops, ownedEnds }
+  const delegatedEnds: Crew['delegatedEnds'] = ({ terminator, bus, log }) =>
+    new CrewEndDelegated({
+      repository,
+      transactions: deps.transactions,
+      bus,
+      clock: deps.clock,
+      ids: deps.ids,
+      hostEpoch: deps.hostEpoch,
+      terminator,
+      departures: commands,
+      log
+    })
+  return { commands, queries, statusTimer, ends, stops, ownedEnds, delegatedEnds }
 }
 
 /**
