@@ -281,6 +281,16 @@ import {
   JEV_SETTINGS_SHAPE_ADAPTER
 } from '../legacy-bridge/secrets/jevSettingsShapeAdapter'
 import { createJevApiKeyRows, JEV_API_KEY_ROWS } from './ipc/handlers/jevApiKey.host'
+import {
+  createHostJevSettings,
+  createJevSettingsRows,
+  GET_JEV_SETTINGS,
+  JEV_SETTINGS_ROWS
+} from './ipc/handlers/jevSettings.host'
+import {
+  createSystemNotificationsRows,
+  SYSTEM_NOTIFICATIONS_ROWS
+} from './ipc/handlers/systemNotifications.host'
 
 /** The 21 §3.1 shape adapter of A-40/A-41's qualified `legacy` routes (cuts 2–4). */
 const LEGACY_ANSWER_SHAPE_ADAPTER = 'LegacyAnswerShapeAdapter'
@@ -988,9 +998,9 @@ export function composeAskStepAndIntegrationRows(deps: {
   return { channels: parts.flatMap((part) => part.channels), target: composeRouteTargets(parts) }
 }
 
-/** The Jev key rows as the root composes them (ISSUE-217). */
+/** The Jev key rows as the root composes them (ISSUE-217), and the Jev settings rows (ISSUE-230). */
 export interface JevKeyComposition {
-  /** A-48/A-49's `host` target part, where the table routes them `host`. */
+  /** A-48/A-49's and, from 4a, A-47/A-51's `host` target part, where the table routes them `host`. */
   part: RouteTargetPart | undefined
   /** A-47's `JevSettingsShapeAdapter`, under its name, where a route of the table names it. */
   shapeAdapters: Readonly<Record<string, RouteTarget>>
@@ -1006,6 +1016,11 @@ export interface JevKeyComposition {
  * it is listed for), and every one of the three rows is served after the run started so far has settled, so the key is
  * never stored twice (C-23). `undefined` before the step-3a switch (ISSUE-001), which routes none of them so, or
  * without the Host attach.
+ *
+ * From step 4a (21 §2 cut 4a; ISSUE-230) A-47 `getJevSettings` and A-51 `setJevPreferences` are served by their `host`
+ * handler where the table routes them `host` (the step-4a switch, ISSUE-235), from the Host's preferences; A-48/A-49
+ * then answer the `JevSettings` the Host holds too, never today's preferences (`JevSettingsShapeAdapter` reads those,
+ * up to 4a). They wait for the migration as the other Jev rows do.
  */
 export function composeJevKeyRows(deps: {
   routes: readonly ChannelRoute[]
@@ -1019,7 +1034,10 @@ export function composeJevKeyRows(deps: {
   const { routes, release, client } = deps
   const named = routes.some((route) => route.shapeAdapter === JEV_SETTINGS_SHAPE_ADAPTER)
   const rows = JEV_API_KEY_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
-  if (client === undefined || (!named && rows.length === 0)) return undefined
+  const settingsRows = JEV_SETTINGS_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
+  if (client === undefined || (!named && rows.length === 0 && settingsRows.length === 0)) {
+    return undefined
+  }
   const migration =
     rows.length > 0 &&
     deps.migration !== undefined &&
@@ -1038,20 +1056,58 @@ export function composeJevKeyRows(deps: {
           serve: (channel, payload, sender) =>
             migration.idle().then(() => target.serve(channel, payload, sender))
         }
-  const settings = createJevSettingsShapeAdapter({ legacy: deps.legacy, client })
+  const adapter = createJevSettingsShapeAdapter({ legacy: deps.legacy, client })
+  // The `JevSettings` A-48/A-49 answer: the Host's once it serves A-47 (4a), today's preferences through the adapter
+  // before.
+  const settings = routedTo(routes, GET_JEV_SETTINGS, 'host')
+    ? createHostJevSettings(client)
+    : adapter
+  const parts: RouteTargetPart[] = []
+  if (rows.length > 0) {
+    parts.push({
+      channels: rows,
+      target: createJevApiKeyRows({ client, settings, mintId: deps.mintId })
+    })
+  }
+  if (settingsRows.length > 0) {
+    parts.push({
+      channels: settingsRows,
+      target: createJevSettingsRows({ client, settings, mintId: deps.mintId })
+    })
+  }
   return {
     part:
-      rows.length === 0
+      parts.length === 0
         ? undefined
         : {
-            channels: rows,
-            target: afterMigration(createJevApiKeyRows({ client, settings, mintId: deps.mintId }))
+            channels: parts.flatMap((part) => part.channels),
+            target: afterMigration(composeRouteTargets(parts))
           },
     shapeAdapters:
       named && bridgeLivesIn(JEV_SETTINGS_SHAPE_ADAPTER, release)
-        ? { [JEV_SETTINGS_SHAPE_ADAPTER]: afterMigration(settings) }
+        ? { [JEV_SETTINGS_SHAPE_ADAPTER]: afterMigration(adapter) }
         : {},
     migration
+  }
+}
+
+/**
+ * A-42 `getNotificationsEnabled` and A-43 `setNotificationsEnabled` from step 4a (21 §2 cut 4a; ISSUE-230): a part of
+ * the `host` target only where the table routes them `host` (the step-4a switch, ISSUE-235). `undefined` when it routes
+ * neither (every table before 4a, where today's runtime serves them and `SettingsMirrorBridge` mirrors the switch).
+ */
+export function composeSystemNotificationRows(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+  mintId: () => string
+}): RouteTargetPart | undefined {
+  const channels = SYSTEM_NOTIFICATIONS_ROWS.filter((channel) =>
+    routedTo(deps.routes, channel, 'host')
+  )
+  if (channels.length === 0) return undefined
+  return {
+    channels,
+    target: createSystemNotificationsRows({ client: deps.client, mintId: deps.mintId })
   }
 }
 
@@ -1508,7 +1564,10 @@ export async function startUiMain({
       : composeAskStepAndIntegrationRows({ routes, client: host.client })
   const dwarfNameRows =
     host === undefined ? undefined : composeDwarfNameRows({ routes, client: host.client })
-  // A-47…A-49 and the one-time Jev-key migration, once the step-3a switch routes them (ISSUE-001; ISSUE-217).
+  const mintSettingsId = () =>
+    mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
+  // A-47…A-49 and the one-time Jev-key migration, once the step-3a switch routes them (ISSUE-001; ISSUE-217); A-47 and
+  // A-51 from the Host once the step-4a switch routes them `host` (ISSUE-235; ISSUE-230).
   const jevKey = composeJevKeyRows({
     routes,
     release,
@@ -1516,8 +1575,13 @@ export async function startUiMain({
     client: host?.client,
     migration: secretMigration,
     log: uiLog ?? { record: () => {} },
-    mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
+    mintId: mintSettingsId
   })
+  // A-42/A-43 from the Host once the step-4a switch routes them `host` (ISSUE-235; ISSUE-230).
+  const notificationRows =
+    host === undefined
+      ? undefined
+      : composeSystemNotificationRows({ routes, client: host.client, mintId: mintSettingsId })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
     boardFacade === undefined &&
@@ -1526,7 +1590,8 @@ export async function startUiMain({
     askAnswers?.part === undefined &&
     cut2Rows === undefined &&
     dwarfNameRows === undefined &&
-    jevKey?.part === undefined
+    jevKey?.part === undefined &&
+    notificationRows === undefined
       ? stopRows
       : composeRouteTargets([
           ...(stopRows === undefined
@@ -1540,7 +1605,8 @@ export async function startUiMain({
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
           ...(cut2Rows === undefined ? [] : [cut2Rows]),
           ...(dwarfNameRows === undefined ? [] : [dwarfNameRows]),
-          ...(jevKey?.part === undefined ? [] : [jevKey.part])
+          ...(jevKey?.part === undefined ? [] : [jevKey.part]),
+          ...(notificationRows === undefined ? [] : [notificationRows])
         ])
   const allShapeAdapters = {
     ...shapeAdapters,

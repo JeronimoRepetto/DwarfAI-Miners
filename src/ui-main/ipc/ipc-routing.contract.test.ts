@@ -33,6 +33,7 @@ import {
   composeProviderShapeAdapters,
   composeResetFanout,
   composeStopAllRelay,
+  composeSystemNotificationRows,
   legacyClaudeHooksComposed,
   type LegacyAskRelayComposition,
   type LegacyRuntimeSurface
@@ -48,6 +49,7 @@ import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
 import { rollbackOf } from './rollbackTable'
+import { composeRouteTargets } from './composeRouteTargets'
 import { createRouter } from './router'
 import { resolveRoute } from './routeResolver'
 import { CUT_0_ROUTES, CUT_0_TABLE, CUT_0_UI_LOCAL_IDS, CUT_0_UNROUTED } from './testing/cut0Routes'
@@ -3186,5 +3188,155 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
     } finally {
       await rm(userData, { recursive: true, force: true })
     }
+  })
+})
+
+// ADDED for ISSUE-230: the Settings rows of step 4a (21 §2 cut 4a "New core serves"; 14 §2.1 A-42, A-43, A-47, A-51).
+// The route rows are the step-4a switch's (later: ISSUE-235); these cases drive a 4a table built here. The handlers'
+// own cases are in handlers/settingsParity.contract.test.ts.
+describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const MINTED = '01920000-0000-7000-a000-000000000230'
+  const NOTIFICATIONS_GET: ChannelKey = 'notifications:enabled:get' // A-42
+  const NOTIFICATIONS_SET: ChannelKey = 'notifications:enabled:set' // A-43
+  const JEV_GET: ChannelKey = 'jev:settings:get' // A-47
+  const KEY_SET: ChannelKey = 'jev:apiKey:set' // A-48
+  const KEY_CLEAR: ChannelKey = 'jev:apiKey:clear' // A-49
+  const JEV_SET: ChannelKey = 'jev:preferences:set' // A-51
+
+  const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-4a',
+    parity: 'passed',
+    shape: 'target'
+  })
+  /** Every Settings row of this issue and the Jev key rows `host`, as ISSUE-235's 4a rows will read. */
+  const SETTINGS_4A: ChannelRoute[] = [
+    NOTIFICATIONS_GET,
+    NOTIFICATIONS_SET,
+    JEV_GET,
+    KEY_SET,
+    KEY_CLEAR,
+    JEV_SET
+  ].map(hostRoute)
+
+  /** The Host over in-memory preferences and Jev key: B-M10…B-M13, recording each call. */
+  function settingsHost() {
+    const calls: Array<[string, unknown]> = []
+    let key: string | undefined
+    let preferences: Record<string, unknown> = {
+      subagentDelegationOn: false,
+      routingProfile: 'balanced',
+      systemNotificationsOn: true,
+      openCodePermissionsOn: false
+    }
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'settings.secret.set') {
+        key = (params as { value: string }).value
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: true } })
+      }
+      if (method === 'settings.secret.clear') {
+        key = undefined
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: false } })
+      }
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences,
+          secrets: [{ name: 'jev-key', configured: key !== undefined }],
+          secretBackend: 'os-secret-store',
+          integrations: [],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      if (method === 'preferences.set') {
+        const { key: name, value } = params as { key: string; value: unknown }
+        preferences = { ...preferences, [name]: value }
+        return Promise.resolve(preferences)
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      client: client as unknown as NonNullable<Parameters<typeof composeJevKeyRows>[0]['client']>
+    }
+  }
+
+  /** Today's runtime never answers a Settings row of this table. */
+  const legacy = { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) }
+
+  it('[ADR-001] the release table composes none of A-42, A-43, A-47 and A-51 from the Host', () => {
+    const { client } = settingsHost()
+    expect(
+      composeSystemNotificationRows({ routes: ROUTES, client, mintId: () => MINTED })
+    ).toBeUndefined()
+    const jev = composeJevKeyRows({
+      routes: ROUTES,
+      release: ROUTES_RELEASE,
+      legacy,
+      client,
+      migration: undefined,
+      log: { record: () => {} },
+      mintId: () => MINTED
+    })
+    expect(jev?.part?.channels ?? []).not.toContain(JEV_GET)
+    expect(jev?.part?.channels ?? []).not.toContain(JEV_SET)
+  })
+
+  it("[ADR-001] in a 4a table A-42, A-43, A-47 and A-51 are served by the Host, and A-48/A-49 answer the Host's Jev preferences", async () => {
+    const host = settingsHost()
+    const jev = composeJevKeyRows({
+      routes: SETTINGS_4A,
+      release: 'cut-4a',
+      legacy,
+      client: host.client,
+      migration: undefined,
+      log: { record: () => {} },
+      mintId: () => MINTED
+    })
+    const notifications = composeSystemNotificationRows({
+      routes: SETTINGS_4A,
+      client: host.client,
+      mintId: () => MINTED
+    })
+    expect(jev?.part?.channels).toEqual([KEY_SET, KEY_CLEAR, JEV_GET, JEV_SET])
+    expect(notifications?.channels).toEqual([NOTIFICATIONS_GET, NOTIFICATIONS_SET])
+    expect(jev?.shapeAdapters).toEqual({})
+    const parts = [jev?.part, notifications].filter((part) => part !== undefined)
+    const router = createRouter({
+      routes: SETTINGS_4A,
+      legacy,
+      host: composeRouteTargets(parts),
+      senders
+    })
+    const dispatch = async (channel: ChannelKey, payload?: unknown) =>
+      CHANNELS[channel].response.parse(await router.dispatch(channel, FROM_PANEL as never, payload))
+
+    expect(await dispatch(NOTIFICATIONS_GET)).toBe(true)
+    expect(await dispatch(NOTIFICATIONS_SET, false)).toBe(false)
+    expect(await dispatch(NOTIFICATIONS_GET)).toBe(false)
+    const premium = { profile: 'premium', default: { provider: 'claude' }, delegation: true }
+    expect(await dispatch(JEV_SET, premium)).toEqual({ configured: false, preferences: premium })
+    // A-48 answers the preferences the Host holds, never today's (JevSettingsShapeAdapter is not composed).
+    expect(await dispatch(KEY_SET, 'ts-live-0123456789abcdef')).toEqual({
+      configured: true,
+      preferences: premium
+    })
+    expect(await dispatch(JEV_GET)).toEqual({ configured: true, preferences: premium })
+    expect(host.calls.filter(([method]) => method === 'preferences.set')).toEqual([
+      ['preferences.set', { key: 'systemNotificationsOn', value: false, requestId: MINTED }],
+      ['preferences.set', { key: 'routingProfile', value: 'premium', requestId: MINTED }],
+      ['preferences.set', { key: 'defaultProvider', value: 'claude', requestId: MINTED }],
+      ['preferences.set', { key: 'subagentDelegationOn', value: true, requestId: MINTED }]
+    ])
   })
 })
