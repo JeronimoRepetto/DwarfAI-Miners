@@ -1102,6 +1102,12 @@ async function bootHost(base: HostBase): Promise<void> {
             log,
             frames: connections,
             claudeProviderId: 'claude' as ProviderId,
+            // The OpenCode plugin's asks (ISSUE-229): the password only through the kernel reader.
+            openCodePlugin: {
+              providerId: 'opencode' as ProviderId,
+              secrets: modules.preferences.secretReader,
+              post: (url, init) => globalThis.fetch(url, init)
+            },
             suppliers: modules.suppliers,
             observed: observed.adapters,
             conversation: conversation.conversation,
