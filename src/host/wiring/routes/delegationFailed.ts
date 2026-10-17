@@ -16,8 +16,8 @@
 //   event id or time, appends nothing (INV-82; conversation claims the key in `message_keys`).
 // - A failing write is logged `delegation.failed-line.failed` and never reaches the publisher.
 //
-// Later: ISSUE-209 registers this route in the Host's composition with the other delegation routes;
-// until then the F6 flow harness (flows/testing/delegationHost.ts) composes it.
+// The Host registers it with the other delegation routes (wiring/delegationWiring.ts, ISSUE-209);
+// the in-memory F6 flow harness (flows/testing/delegationHost.ts) composes it the same way.
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { ConversationCommands } from '../../modules/conversation'

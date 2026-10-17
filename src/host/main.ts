@@ -257,12 +257,15 @@ import { serveLaunching, type WiredLaunching } from './wiring/routes/launching'
 import { HOST_FRAMES } from './wiring/hostFrames'
 import { createLaunchedSessions } from './wiring/launchedSessions'
 import { createLaunchAdvisor } from './wiring/bridges/launchAdvisor'
+import { cleanUpHelpers } from './wiring/helperCleanup'
 import {
   mcpEndpointListener,
-  wirePromptTool,
-  type PromptToolWiringDeps,
-  type WiredPromptTool
-} from './wiring/promptTool'
+  wireDelegation,
+  type DelegationRouteDeps,
+  type DelegationRouteEvent,
+  type DelegationWiringDeps,
+  type WiredDelegation
+} from './wiring/delegationWiring'
 import type { DelegationLifecycleEvent } from './modules/delegation'
 import { NodeMcpConfigFiles } from './modules/suppliers/adapters/drivers/claude-stream-json/mcpConfigFile'
 import {
@@ -319,6 +322,7 @@ type HostEvent =
   | AskingRouteEvent
   | LaunchingEvent
   | DelegationLifecycleEvent
+  | DelegationRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -552,10 +556,11 @@ async function bootHost(base: HostBase): Promise<void> {
   let configWriter: ConfigWriterEngine | undefined
   // Built by boot step 4 over asking's hook route, started by step 6, closed by the clean exit.
   let hookIngress: HttpIngress | undefined
-  // Claude's permission prompt tool (AMENDMENT-21; ISSUE-182, wiring/promptTool.ts): built by boot
-  // step 4 before suppliers attaches the stream-json driver, swept at step 5, listening from step 6
-  // (the MCP endpoint), closed by the clean exit.
-  let promptTool: WiredPromptTool | undefined
+  // The delegation module (ISSUE-209, wiring/delegationWiring.ts) with Claude's permission prompt
+  // tool (AMENDMENT-21; ISSUE-182): built by boot step 4 before suppliers attaches the stream-json
+  // driver and composed once launching, crew and conversation exist; reconciled and swept at step 5,
+  // listening from step 6 (the MCP endpoint), closed by the clean exit.
+  let delegation: WiredDelegation | undefined
   let resetSteps: WiredModuleResetSteps | undefined
   // No spawn-site table reaches the Host yet: no site is stored, and the map places each marker
   // itself (chooseMapSite's documented fallback). The mines module and its Reset step share it.
@@ -744,7 +749,7 @@ async function bootHost(base: HostBase): Promise<void> {
           modules.launching?.stop()
         },
         closeIngress: async () => {
-          await Promise.all([hookIngress?.close(), promptTool?.close()])
+          await Promise.all([hookIngress?.close(), delegation?.close()])
         },
         exit
       })
@@ -901,9 +906,10 @@ async function bootHost(base: HostBase): Promise<void> {
           ) {
             throw new HostInvariantError('boot step 4 runs after step 3 wired preferences')
           }
-          // Claude's permission prompt tool, before suppliers attaches its driver (ISSUE-182). A typed
-          // constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
-          const promptToolDeps: PromptToolWiringDeps = {
+          // The delegation module's stores, lifecycle and Claude's permission prompt tool, before
+          // suppliers attaches its driver (ISSUE-182, ISSUE-209). A typed constant, not an inline
+          // literal: TypeScript 6.0.3 crashes checking that call.
+          const delegationDeps: DelegationWiringDeps = {
             db,
             transactions,
             bus,
@@ -918,7 +924,8 @@ async function bootHost(base: HostBase): Promise<void> {
             hostDataDir: dataDir.userDataDir,
             mcpConfigFiles: new NodeMcpConfigFiles()
           }
-          promptTool = wirePromptTool(promptToolDeps)
+          const wiredDelegation = wireDelegation(delegationDeps)
+          delegation = wiredDelegation
           modules.suppliers = wireSuppliers({
             publicBuild: isPublicBuild(buildKindOf(dataDir)),
             clock,
@@ -958,7 +965,7 @@ async function bootHost(base: HostBase): Promise<void> {
               redact: redactSecrets,
               clientInfo: { name: 'dwarfai', version: __DWARFAI_APP_VERSION__ },
               resumeContext: launched.resumeContext,
-              claudeStreamJson: promptTool.driver
+              claudeStreamJson: wiredDelegation.driver
             }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))
@@ -1292,7 +1299,9 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             crew: modules.crew.crew.commands,
             conversation: conversation.conversation.commands,
-            advisor: createLaunchAdvisor({ advisor: jev.advisor })
+            advisor: createLaunchAdvisor({ advisor: jev.advisor }),
+            // The SessionStarter bridge asks `issueFor` before each driver start (ISSUE-209).
+            delegation: wiredDelegation.starter
           })
           // Its in-flight launches hold the upgrade drain too (ADR-002 D8 item 2); a settled launch
           // asks it again at once.
@@ -1361,6 +1370,34 @@ async function bootHost(base: HostBase): Promise<void> {
               crew: modules.crew.crew
             })
           )
+          // Delegation (ISSUE-209; 05 §4): the endpoint behind the MCP endpoint, the subtask run over the
+          // `SubtaskRouter` bridge to jev and the `WorkerLauncher` bridge to launching, the handoff
+          // over the `ParentDeliverer` bridge to conversation, and their routes (`SubtaskDelegated`,
+          // a worker's `TurnEnded`, `DelegationSucceeded` → crew `endDelegated`, `DelegationFailed`
+          // → the parent's line). A typed constant: TypeScript 6.0.3 crashes on the inline literal.
+          const delegationRoutes: DelegationRouteDeps = {
+            bus,
+            scheduler,
+            jev: jev.advisor,
+            launching: {
+              commands: modules.launching.launching.commands,
+              queries: modules.launching.launching.queries
+            },
+            crew: {
+              queries: modules.crew.crew.queries,
+              ends: modules.crew.crew.delegatedEnds({
+                terminator: modules.crew.terminator,
+                bus,
+                log
+              })
+            },
+            conversation: {
+              queries: conversation.conversation.queries,
+              commands: conversation.conversation.commands,
+              deliverer: conversation.deliverer
+            }
+          }
+          wiredDelegation.compose(delegationRoutes)
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.
@@ -1382,22 +1419,40 @@ async function bootHost(base: HostBase): Promise<void> {
             throw new HostInvariantError('boot step 5 runs after step 4 wired launching')
           }
           const recovery = launchingRecovery
-          const tool = promptTool
           return classifyAfterDetection({
             detection: suppliers.bootDetection,
-            // Then the ADR-015 sweep of the relay tokens: a launch that never reached a dwarf loses
-            // its credential; a recovered session keeps it for its resume (ISSUE-182).
             classify: async () => {
               await recovery.start().classified
-              await tool?.sweepOrphans()
             }
           })
         },
+        // Step 5, once classified: the ADR-015 item 6 cleanup pass (ISSUE-209). The helpers a dead
+        // epoch left, ended only on a positive identity match (wiring/helperCleanup.ts), then
+        // delegation's boot pass: a delegation still being routed when the Host stopped fails
+        // `worker-lost` (S8.12), and the sweep of the relay tokens and credential files (a launch
+        // that never reached a dwarf loses its credential; a recovered session keeps it for its
+        // resume, ISSUE-182).
+        cleanUpAfterRecovery: async () => {
+          const { launching } = modules
+          if (launching === undefined || delegation === undefined) {
+            throw new HostInvariantError('the cleanup pass runs after step 4 wired launching')
+          }
+          const { transactions } = opened.connection()
+          await cleanUpHelpers({
+            processes: launching.processes,
+            transactions,
+            processControl,
+            clock,
+            hostEpoch: epoch,
+            log
+          })
+          await delegation.recoverOnBoot()
+        },
         // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
-        // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
+        // the bound port (07 S14.10; none in a cut-2 rollback build); then the MCP endpoint
         // (ISSUE-209).
         startHookIngress: async () => {
-          if (hookIngress === undefined || configWriter === undefined || promptTool === undefined) {
+          if (hookIngress === undefined || configWriter === undefined || delegation === undefined) {
             throw new HostInvariantError('boot step 6 runs after steps 3 and 4 built its parts')
           }
           await startHookIngressAtBoot(
@@ -1409,12 +1464,13 @@ async function bootHost(base: HostBase): Promise<void> {
               mintCredential
             })
           )
-          // The MCP endpoint (ADR-013 item 3; ISSUE-182): Claude's relay connects here for the
-          // permission prompt tool. A failure is logged; the sessions then deny every tool use.
-          await promptTool.listen(
+          // The MCP endpoint (ADR-013 item 3; ISSUE-182, ISSUE-209): a relay connects here for the
+          // two delegation tools of a gated launch and Claude's permission prompt tool. A failure is
+          // logged; no parent can delegate and the stream-json sessions deny every tool use.
+          await delegation.listen(
             mcpEndpointListener({
               facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
-              tokens: promptTool.tokens,
+              tokens: delegation.tokens,
               clock,
               scheduler,
               ids,

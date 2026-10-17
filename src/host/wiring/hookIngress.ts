@@ -3,7 +3,7 @@
 // the `/hooks/claude/*` route boot step 4 wires (routes/askingRoutes.ts), on the stable port in
 // `app_meta.ingress_port` (bridges/ingressPort.ts). Boot step 6 starts it after recovery and before
 // observation and `ready`; the Host's composed end of life closes it (hostLifecycle.ts). The
-// delegation MCP endpoint, step 6's other half, is not here (later: ISSUE-209).
+// delegation MCP endpoint, step 6's other half, is delegationWiring.ts's (ISSUE-209).
 //
 // Package gap (ISSUE-140, recorded in the PR): ADR-016 item 3 has the port "chosen when the first
 // HTTP integration is enabled", while 16 §8.2 step 6 starts the ingress at every boot. The ingress

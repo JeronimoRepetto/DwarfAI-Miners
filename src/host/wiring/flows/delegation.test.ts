@@ -12,11 +12,17 @@
 // `CrewCommands.endDelegated`) is the handoff issue's (later: ISSUE-205). Here the worker's session
 // closes through the crew command every ended session goes through, and its walk-out is compared
 // with an ordinary dwarf's.
-import { describe, expect, it } from 'vitest'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { DwarfId, LaunchId } from '../../kernel/domain/values'
 import { markHandoff } from '../../modules/conversation'
 import { rankForDepth } from '../../modules/crew'
-import type { DelegationFailed, DelegationToken } from '../../modules/delegation'
+import {
+  delegationFailedLineText,
+  type DelegationFailed,
+  type DelegationToken
+} from '../../modules/delegation'
 import {
   FakeParentDeliverer,
   FakeSubtaskRouter
@@ -25,6 +31,24 @@ import {
 import { MINE } from '../../modules/launching/testing/sqliteLaunchingDb'
 import { toDwarfWire } from '../../transport/mappers/wire'
 import { delegatedChat } from './testing/delegatedChat'
+import type { RecordingSpawn } from '../../modules/suppliers/testing/recordingSpawn'
+import { FakeProcessControl } from '../../kernel/fakes/FakeProcessControl'
+import { seedDelegationRows } from '../../modules/delegation/testing/seedDelegationRows'
+import {
+  bootHost as bootWiredHost,
+  cleanUp as cleanUpWired,
+  evts as wiredEvts,
+  JEV_KEY,
+  world as wiredWorld
+} from './testing/cut3aHost'
+import {
+  claudeRecording,
+  claudeSpawn,
+  DELEGATION_CAPABILITIES,
+  jevPicks,
+  launchClaudeWithJev,
+  turnDelegationOn
+} from './testing/delegatingParent'
 import {
   delegationHost,
   PARENT_LAUNCH,
@@ -34,6 +58,13 @@ import {
 } from './testing/delegationHost'
 
 const TASK = 'Map the old shafts below the north seam'
+// ISSUE-209's boot sweep: synthetic launches and the dwarf a live token is bound to.
+const UNBOUND = '01890a5d-ac96-774b-bcce-b30220905001'
+const REVOKED = '01890a5d-ac96-774b-bcce-b30220905002'
+const KEPT = '01890a5d-ac96-774b-bcce-b30220905003'
+const ORPHAN = '01890a5d-ac96-774b-bcce-b30220905004'
+const KEPT_PARENT = '01890a5d-ac96-774b-bcce-b30220905005'
+const ROUTING = '01890a5d-ac96-774b-bcce-b30220905006'
 const CONTEXT = 'The north seam floods after rain.'
 
 function picksSimulated(): JevRouteAnswers {
@@ -844,5 +875,292 @@ describe('delegation failure fallback (US-DLG-005; ISSUE-206)', () => {
     expect(parentRows(h, parent)).toStrictEqual([
       { role: 'system-line', text: approvedLine(h, parent) }
     ])
+  })
+})
+
+// ISSUE-209 (17 §1.2 F6 once with the real modules wired; 05 §4; 16 §5.2-§5.5, §8.2; ADR-013;
+// ADR-015 item 6): the delegation module composed into the Host as host/main.ts composes it
+// (flows/testing/cut3aHost.ts) — the real boot steps, delegation, jev, launching, crew,
+// conversation, suppliers and preferences. The parent is a gated Claude launch over the recorded
+// SP-08 session, the worker the development build's SimulatedDriver (testing/delegatingParent.ts),
+// Jev the recording router double, and the MCP endpoint the in-process relay listener: a relay
+// authenticated with the launch's credential speaks MCP JSON-RPC to the Host's delegation server.
+// TC-209-01 (the F6 flow end to end), TC-209-02 (revoke, sweep, settle at restart), TC-209-03 (the
+// SessionStarter bridge's entry only for a gated launch).
+describe('the delegation module wired into the Host (ISSUE-209)', () => {
+  afterEach(cleanUpWired)
+
+  /** A wired Host with a gated Claude parent working in its mine and its relay connected. */
+  async function gatedParent() {
+    const w = wiredWorld()
+    const recorded = claudeRecording()
+    const spawns: RecordingSpawn[] = []
+    const h = await bootWiredHost(w, {
+      epoch: 'epoch-209-a',
+      processes: ({ clock, scheduler }) => {
+        const spawn = claudeSpawn(clock, scheduler, recorded.allow, recorded.help)
+        spawns.push(spawn)
+        return spawn
+      },
+      installed: ['claude'],
+      jevKey: JEV_KEY,
+      jevClaudeModels: ['sonnet'],
+      jevCapabilities: DELEGATION_CAPABILITIES
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+    await turnDelegationOn(h, ui)
+    const parent = await launchClaudeWithJev(h, ui, mineId, recorded.prompt)
+    const relay = await h.relay(parent.launchId)
+    return { w, h, ui, mineId, parent, relay, spawns }
+  }
+
+  /** The parent delegates TASK through its relay; Jev picks the simulated worker. */
+  async function delegatedThroughRelay(s: Awaited<ReturnType<typeof gatedParent>>) {
+    s.h.router.queue(jevPicks('simulated'))
+    const answer = s.relay.callTool({
+      name: 'delegate_subtask',
+      arguments: { task: TASK, context: CONTEXT }
+    })
+    for (let step = 0; step < 200; step += 1) {
+      if (s.h.events('DelegationWorkerLaunched').length > 0) break
+      await s.h.run(50, s.ui)
+    }
+    const [launched] = s.h.events<{ delegationId: string; workerDwarfId: DwarfId }>(
+      'DelegationWorkerLaunched'
+    )
+    if (launched === undefined) throw new Error('no worker was launched')
+    return { answer, worker: launched.workerDwarfId, delegationId: launched.delegationId }
+  }
+
+  it('[US-DLG-002.AC01, ADR-013] a gated parent calls delegate_subtask through the MCP endpoint and a worker arrives in its mine', async () => {
+    const s = await gatedParent()
+
+    // Both gates let the launch in: its relay lists the two delegation tools beside `permission`.
+    expect((await s.relay.listTools()).tools.map((t) => t.name)).toEqual([
+      'delegate_subtask',
+      'subtask_result',
+      'permission'
+    ])
+    const { worker } = await delegatedThroughRelay(s)
+
+    // The subtask reached Jev as a subtask, and its worker arrived in the parent's mine as a
+    // delegated dwarf whose first message is the task.
+    expect(JSON.stringify(s.h.router.requests[1])).toContain(TASK)
+    expect(s.h.crew.crew.queries.get(worker)).toMatchObject({
+      mineId: s.mineId,
+      delegated: true,
+      parentDwarfId: s.parent.dwarfId,
+      departed: false
+    })
+    const firstMessages = s.h.conversation.conversation.queries
+      .feed(worker)
+      .messages.filter((m) => m.role === 'person')
+      .map((m) => m.text)
+    expect(firstMessages).toEqual([TASK])
+    // ADR-013 items 2-3: the credential value is in its owner-only file only, never in the
+    // parent's argv or environment, nor in its `--mcp-config` file.
+    const credential = readFileSync(
+      join(s.w.root, 'run', 'mcp', `${s.parent.launchId}.cred`),
+      'utf8'
+    )
+    expect(credential.length).toBeGreaterThan(0)
+    const spawned = s.spawns.flatMap((spawn) => spawn.spawns)
+    expect(spawned.some((spawn) => spawn.args.includes('-p'))).toBe(true)
+    for (const spawn of spawned) {
+      expect(spawn.args.join('\n')).not.toContain(credential)
+      expect(Object.values(spawn.env).join('\n')).not.toContain(credential)
+    }
+    for (const name of readdirSync(join(s.w.root, 'run', 'mcp'))) {
+      if (name.endsWith('.cred')) continue
+      expect(readFileSync(join(s.w.root, 'run', 'mcp', name), 'utf8')).not.toContain(credential)
+    }
+  })
+
+  it('[US-DLG-004.AC03, S8.08] the wired Host ends the finished worker after the handoff and it departs with no toast', async () => {
+    const s = await gatedParent()
+    const { answer, worker, delegationId } = await delegatedThroughRelay(s)
+
+    // The simulated worker takes no turn on its first message (15 §4.12): the person nudges it, as
+    // any dwarf (US-DLG-003.AC02). Its reply ends its turn: the result goes back as the answer of
+    // the parent's own pending tool call (`tool-result`), then the worker walks out.
+    const sent = await s.h.call(s.ui, 'conversation.send', {
+      dwarfId: worker,
+      text: 'Report what you found',
+      attachments: [],
+      requestId: s.h.rid()
+    })
+    expect(sent).toMatchObject({ ok: true, result: { ok: true } })
+    for (let step = 0; step < 200; step += 1) {
+      if (s.h.events('DwarfDeparted').length > 0) break
+      await s.h.run(50, s.ui)
+    }
+    const reply = (await answer) as { structuredContent?: { status?: string } }
+
+    expect(reply.structuredContent).toMatchObject({ status: 'done' })
+    expect(s.h.events('DelegationSucceeded')).toEqual([
+      expect.objectContaining({ delegationId, workerDwarfId: worker, via: 'tool-result' })
+    ])
+    expect(s.h.events<{ dwarfId: DwarfId; cause: string }>('DwarfDeparted')).toEqual([
+      expect.objectContaining({ dwarfId: worker, cause: 'stopped' })
+    ])
+    expect(s.h.crew.crew.queries.get(s.parent.dwarfId)).toMatchObject({ departed: false })
+    expect(wiredEvts(s.ui, 'toast')).toEqual([])
+  })
+
+  it("[S8.11, INV-83] a departing parent's credential is revoked, its file deleted and its running delegations fail parent-gone", async () => {
+    const s = await gatedParent()
+    const { delegationId } = await delegatedThroughRelay(s)
+    const file = join(s.w.root, 'run', 'mcp', `${s.parent.launchId}.cred`)
+    expect(existsSync(file)).toBe(true)
+
+    await s.h.call(s.ui, 'crew.stop', { dwarfId: s.parent.dwarfId, requestId: s.h.rid() })
+    await s.h.run(10_000, s.ui)
+
+    expect(
+      s.h.db.all(
+        'SELECT revoked_at IS NOT NULL AS revoked FROM delegation_tokens WHERE launch_id = ?',
+        [s.parent.launchId]
+      )
+    ).toEqual([{ revoked: 1 }])
+    expect(existsSync(file)).toBe(false)
+    expect(s.h.events('DelegationFailed')).toEqual([
+      { delegationId, parentDwarfId: s.parent.dwarfId, failure: 'parent-gone' }
+    ])
+    // S8.11: a parent that is gone gets no line.
+    expect(
+      s.h.conversation.conversation.queries
+        .feed(s.parent.dwarfId)
+        .messages.filter((m) => m.role === 'system-line')
+    ).toEqual([])
+  })
+
+  it('[S8.12, FM-021, CH-01] a Host rebuilt while a delegation was being routed fails it worker-lost at boot and the parent, still present, gets the line', async () => {
+    const w = wiredWorld()
+    seedDelegationRows(w.db, { dwarfs: [KEPT_PARENT], launches: [] })
+    w.db.run(
+      `INSERT INTO delegations (id, parent_dwarf_id, ticket, task_text, state, created_at)
+       VALUES (?, ?, 'ticket-209-routing', ?, 'attempted', 1)`,
+      [ROUTING, KEPT_PARENT, TASK]
+    )
+
+    const h = await bootWiredHost(w, {
+      epoch: 'epoch-209-b',
+      processes: () => new FakeProcessControl({ bootId: 'boot-a' })
+    })
+
+    expect(
+      h.db.all('SELECT state, failure, task_text FROM delegations WHERE id = ?', [ROUTING])
+    ).toEqual([{ state: 'failed', failure: 'worker-lost', task_text: null }])
+    expect(h.events('DelegationFailed')).toEqual([
+      { delegationId: ROUTING, parentDwarfId: KEPT_PARENT, failure: 'worker-lost' }
+    ])
+    expect(
+      h.conversation.conversation.queries
+        .feed(KEPT_PARENT as DwarfId)
+        .messages.filter((m) => m.role === 'system-line')
+        .map((m) => m.text)
+    ).toEqual([delegationFailedLineText('Durin')])
+  })
+
+  it('[ADR-013] the boot pass deletes credential files that have no live, unrevoked token', async () => {
+    const w = wiredWorld()
+    seedDelegationRows(w.db, { dwarfs: [KEPT_PARENT], launches: [UNBOUND, REVOKED, KEPT] })
+    const token = (launchId: string, parent: string | null, revokedAt: number | null) =>
+      w.db.run(
+        `INSERT INTO delegation_tokens (launch_id, parent_dwarf_id, mechanism, credential_hash,
+           issued_at, revoked_at) VALUES (?, ?, 'ticket-file', ?, 1, ?)`,
+        [launchId, parent, 'c'.repeat(64), revokedAt]
+      )
+    token(UNBOUND, null, null) // its launch never reached a dwarf and did not survive
+    token(REVOKED, KEPT_PARENT, 2)
+    token(KEPT, KEPT_PARENT, null)
+    const dir = join(w.root, 'run', 'mcp')
+    mkdirSync(dir, { recursive: true })
+    for (const launchId of [UNBOUND, REVOKED, KEPT, ORPHAN]) {
+      writeFileSync(join(dir, `${launchId}.cred`), 'c'.repeat(64))
+    }
+
+    const h = await bootWiredHost(w, {
+      epoch: 'epoch-209-b',
+      processes: () => new FakeProcessControl({ bootId: 'boot-a' })
+    })
+
+    expect(readdirSync(dir).filter((name) => name.endsWith('.cred'))).toEqual([`${KEPT}.cred`])
+    expect(
+      h.db.all(
+        `SELECT launch_id, revoked_at IS NOT NULL AS revoked FROM delegation_tokens
+         ORDER BY launch_id`
+      )
+    ).toEqual(
+      [
+        { launch_id: UNBOUND, revoked: 1 },
+        { launch_id: REVOKED, revoked: 1 },
+        { launch_id: KEPT, revoked: 0 }
+      ].sort((a, b) => a.launch_id.localeCompare(b.launch_id))
+    )
+  })
+
+  it('[INV-80] a launch without both gates gets no relay entry from the SessionStarter bridge', async () => {
+    const w = wiredWorld()
+    const recorded = claudeRecording()
+    const h = await bootWiredHost(w, {
+      epoch: 'epoch-209-a',
+      processes: ({ clock, scheduler }) =>
+        claudeSpawn(clock, scheduler, recorded.allow, recorded.help),
+      installed: ['claude'],
+      jevKey: JEV_KEY,
+      jevClaudeModels: ['sonnet'],
+      jevCapabilities: DELEGATION_CAPABILITIES
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+
+    // "Subagent delegation" is off: a "Let Jev choose" launch is not gated in ...
+    const settingOff = await launchClaudeWithJev(h, ui, mineId, recorded.prompt)
+    // ... and with it on, a launch without "Let Jev choose" is not either.
+    await turnDelegationOn(h, ui)
+    const notJev = await launchClaudeWithJev(h, ui, mineId, recorded.prompt, false)
+
+    for (const launch of [settingOff, notJev]) {
+      // Its relay carries the prompt tool only (AMENDMENT-21), never the two delegation tools.
+      const relay = await h.relay(launch.launchId)
+      expect((await relay.listTools()).tools.map((t) => t.name)).toEqual(['permission'])
+      const refused = (await relay.callTool({
+        name: 'delegate_subtask',
+        arguments: { task: TASK }
+      })) as { isError?: boolean; error?: unknown }
+      expect(refused.isError === true || refused.error !== undefined).toBe(true)
+    }
+    expect(h.events('SubtaskDelegated')).toEqual([])
+    expect(h.router.requests).toHaveLength(1) // the first launch's own Jev request only
+  })
+
+  it('[FM-025, INV-57] the boot cleanup pass ends a leftover mcp-relay of a dead epoch only on a positive identity match and never signals a provider session process', async () => {
+    const w = wiredWorld()
+    const relay = { pid: 7_101, processStartTimeMs: 1_700_000_007_101, bootId: 'boot-a' }
+    const reused = { pid: 7_102, processStartTimeMs: 1_700_000_007_102, bootId: 'boot-a' }
+    const session = { pid: 7_103, processStartTimeMs: 1_700_000_007_103, bootId: 'boot-a' }
+    const record = (id: string, p: typeof relay, purpose: string) =>
+      w.db.run(
+        `INSERT INTO processes (id, pid, process_start_time_ms, boot_id, purpose, launch_id,
+           host_epoch, recorded_at) VALUES (?, ?, ?, ?, ?, NULL, 'epoch-209-dead', 1)`,
+        [id, p.pid, p.processStartTimeMs, p.bootId, purpose]
+      )
+    record('01890a5d-ac96-774b-bcce-b30220907101', relay, 'mcp-relay')
+    record('01890a5d-ac96-774b-bcce-b30220907102', reused, 'mcp-relay')
+    record('01890a5d-ac96-774b-bcce-b30220907103', session, 'session')
+    const processes = new FakeProcessControl({ bootId: 'boot-a' })
+    processes.scriptTree(relay)
+    // The second relay's pid now names another process (another start time).
+    processes.script(reused.pid, { ...reused, processStartTimeMs: 1 })
+    processes.scriptTree(session)
+
+    const h = await bootWiredHost(w, { epoch: 'epoch-209-b', processes: () => processes })
+
+    expect(processes.signals.map((signal) => signal.pid)).toEqual([relay.pid])
+    expect(
+      h.db.all('SELECT pid FROM processes WHERE host_epoch = ? ORDER BY pid', ['epoch-209-dead'])
+    ).toEqual([{ pid: session.pid }])
   })
 })

@@ -91,6 +91,7 @@ import {
   type LaunchingEvent,
   type LaunchingRecovery,
   type LaunchingRecoveryDeps,
+  type ProcessRecordStore,
   type RecoveryReportView
 } from '../../modules/launching'
 import { SqliteLaunchRecordStore } from '../../modules/launching/adapters/sqlite/SqliteLaunchRecordStore'
@@ -112,6 +113,7 @@ import {
 } from '../../transport/snapshot/recoverySection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { createSessionStarter } from '../bridges/sessionStarter'
+import type { DelegationLifecycle } from '../../modules/delegation'
 
 /** The frames the launching wiring publishes, for `hello.ok.capabilities` (14 §1.3). */
 export const LAUNCHING_FRAMES: readonly HostFrameName[] = Object.freeze([
@@ -343,10 +345,20 @@ export interface LaunchingWiringDeps {
    * choose" launch is refused `jev-not-built` (hidden until built, 21 §1 item 8).
    */
   advisor?: AbortableLaunchAdvisor
+  /**
+   * The delegation lifecycle the `SessionStarter` bridge asks before each driver start (16 §5.3;
+   * ISSUE-209). Without it every launch starts with no relay entry.
+   */
+  delegation?: Pick<DelegationLifecycle, 'issueFor' | 'revokeLaunch'>
 }
 
 export interface WiredLaunching {
   readonly launching: Launching
+  /**
+   * The `processes` records (16 §4.5 `ProcessRecordStore`): the boot cleanup pass reads the helpers
+   * a dead epoch left (wiring/helperCleanup.ts; ADR-015 item 6; ISSUE-209).
+   */
+  readonly processes: ProcessRecordStore
   /**
    * Builds the Host recovery (ISSUE-173; `Launching.recovery`) once, and routes its report
    * (`routeRecovery`, ISSUE-174): B-M35, B-M36 and the `recovery` section serve it from then on.
@@ -413,6 +425,7 @@ export function serveLaunching(serve: LaunchingServeDeps): ServedLaunching {
 
 function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
   const { db, transactions, clock, suppliers } = deps
+  const processes = new SqliteProcessRecordStore({ db, scope: transactions, clock, ids: deps.ids })
   const launching = createLaunching({
     launches: new SqliteLaunchStore({
       db,
@@ -420,7 +433,7 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
       clock,
       folderOf: (mineId) => deps.mines.folderOf(mineId)
     }),
-    processes: new SqliteProcessRecordStore({ db, scope: transactions, clock, ids: deps.ids }),
+    processes,
     records: new SqliteLaunchRecordStore({ db, scope: transactions }),
     transactions,
     starter: createSessionStarter({
@@ -428,7 +441,15 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
       sessions: suppliers.sessions,
       releases: suppliers.releases,
       clock,
-      scheduler: deps.scheduler
+      scheduler: deps.scheduler,
+      ...(deps.delegation === undefined
+        ? {}
+        : {
+            delegation: {
+              lifecycle: deps.delegation,
+              mechanismOf: (providerId) => suppliers.catalogue.capabilities(providerId).mcpInjection
+            }
+          })
     }),
     suppliers: {
       registry: suppliers.registry,
@@ -458,6 +479,7 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
   let recovery: RoutedLaunchingRecovery | null = null
   return {
     launching,
+    processes,
     recover: (recoveryDeps) => {
       if (recovery !== null) throw new HostInvariantError('the Host recovery is built once')
       const built = launching.recovery(recoveryDeps)

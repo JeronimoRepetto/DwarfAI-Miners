@@ -735,3 +735,73 @@ describe('Host recovery in the boot (16 §8.2 step 5; ADR-015 item 3)', () => {
     )
   })
 })
+
+// ISSUE-209 (16 §8.2 steps 5-6; ADR-015 item 6): the cleanup pass runs in step 5 once the recovery
+// classified, before the endpoints listen; step 6 starts the MCP endpoint too, so no part of it is
+// left pending.
+describe('the cleanup pass and the MCP endpoint in the boot (ISSUE-209)', () => {
+  const portsWith = (calls: string[], cleanUpAfterRecovery: () => Promise<void>) => {
+    const clock = new FakeClock()
+    const log = new RecordingDiagnosticsLog()
+    return {
+      log,
+      steps: createBootSteps({
+        paths: new FakeAppPaths(),
+        clock,
+        scheduler: new FakeScheduler(clock),
+        ids: new SequenceIdGenerator(),
+        fs: new FakeFs(),
+        processControl: new FakeProcessControl(),
+        log,
+        endpoint: { bind: () => Promise.resolve('bound'), close: () => Promise.resolve() },
+        database: { open: () => Promise.resolve() },
+        constructModules: () => void calls.push('construct-modules'),
+        recoverSessions: () => {
+          calls.push('classified')
+          return Promise.resolve()
+        },
+        cleanUpAfterRecovery,
+        startHookIngress: () => {
+          calls.push('start-endpoints')
+          return Promise.resolve()
+        },
+        startObservation: () => void calls.push('start-observation')
+      })
+    }
+  }
+
+  it('[ADR-015, ADR-013] step 5 runs the cleanup pass after the classification and before step 6 starts the endpoints', async () => {
+    const calls: string[] = []
+    const { steps } = portsWith(calls, () => {
+      calls.push('cleanup-pass')
+      return Promise.resolve()
+    })
+    const context = { reportMigrating: () => undefined }
+    const outcomes = []
+    for (const step of steps) outcomes.push(await step.run(context))
+
+    expect(calls).toStrictEqual([
+      'construct-modules',
+      'classified',
+      'cleanup-pass',
+      'start-endpoints',
+      'start-observation'
+    ])
+    // Step 6 starts the hook ingress and the MCP endpoint: nothing of it is pending any more.
+    expect(outcomes[5]).toEqual({ kind: 'done' })
+  })
+
+  it('[ADR-015, ADR-002] a failed cleanup pass is logged and never fails the boot', async () => {
+    const calls: string[] = []
+    const { steps, log } = portsWith(calls, () => Promise.reject(new Error('sweep io')))
+    const context = { reportMigrating: () => undefined }
+    const outcomes = []
+    for (const step of steps) outcomes.push(await step.run(context))
+
+    expect(outcomes[4]).toEqual({ kind: 'done' })
+    expect(calls).toContain('start-endpoints')
+    expect(log.entries).toContainEqual(
+      expect.objectContaining({ level: 'error', event: 'uncaught', subsystem: 'host' })
+    )
+  })
+})

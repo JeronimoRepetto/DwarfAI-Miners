@@ -93,6 +93,7 @@ import { emptyDrainGate } from '../../emptyDrainGate'
 import { createHostDispatcher } from '../../hostDispatcher'
 import { HOST_FRAMES } from '../../hostFrames'
 import { composeHostLifecycle } from '../../hostLifecycle'
+import { cleanUpHelpers } from '../../helperCleanup'
 import { createLaunchedSessions } from '../../launchedSessions'
 import { createModuleResetSteps } from '../../moduleResetSteps'
 import {
@@ -130,7 +131,13 @@ import {
 } from '../../routes/observation'
 import { launchableSource, serveSuppliers } from '../../routes/suppliers'
 import { wireSuppliers, type WiredSuppliers } from '../../suppliersWiring'
-import { wirePromptTool, type PromptToolWiringDeps, type WiredPromptTool } from '../../promptTool'
+import {
+  wireDelegation,
+  type DelegationRouteDeps,
+  type DelegationRouteEvent,
+  type DelegationWiringDeps,
+  type WiredDelegation
+} from '../../delegationWiring'
 import { mintCredential } from '../../../transport/auth/mintCredential'
 import { NodeMcpConfigFiles } from '../../../modules/suppliers/adapters/drivers/claude-stream-json/mcpConfigFile'
 import type {
@@ -212,6 +219,7 @@ export type HostBusEvent =
   | AskingRouteEvent
   | LaunchingEvent
   | DelegationLifecycleEvent
+  | DelegationRouteEvent
 
 export interface BootOptions {
   /** This start's epoch (`HelloOk.epoch`, the spawn tag's last field). */
@@ -379,7 +387,7 @@ export async function bootHost(w: World, options: BootOptions) {
     conversation?: ReturnType<typeof servedConversation.wire>
   } = {}
   let wiredPreferences: WiredPreferences | undefined
-  let promptTool: WiredPromptTool | undefined
+  let delegation: WiredDelegation | undefined
   const relays = inProcessRelays()
   const ran = <T>(name: string, port: () => T): (() => T) => {
     return () => {
@@ -433,9 +441,10 @@ export async function bootHost(w: World, options: BootOptions) {
         constructModules: ran('construct-modules', () => {
           const preferences = wiredPreferences
           if (preferences === undefined) throw new Error('step 4 runs after step 3')
-          // As host/main.ts: Claude's permission prompt tool, before suppliers attaches its driver.
-          // A typed constant, not an inline literal: TypeScript 6.0.3 crashes checking that call.
-          const promptToolDeps: PromptToolWiringDeps = {
+          // As host/main.ts: the delegation module and Claude's permission prompt tool, before
+          // suppliers attaches its driver. A typed constant, not an inline literal: TypeScript 6.0.3
+          // crashes checking that call.
+          const delegationDeps: DelegationWiringDeps = {
             db,
             transactions,
             bus,
@@ -450,7 +459,8 @@ export async function bootHost(w: World, options: BootOptions) {
             hostDataDir: w.root,
             mcpConfigFiles: new NodeMcpConfigFiles()
           }
-          promptTool = wirePromptTool(promptToolDeps)
+          const wiredDelegation = wireDelegation(delegationDeps)
+          delegation = wiredDelegation
           // As host/main.ts: suppliers with the CLI drivers and the launched sessions' resume lookup.
           const suppliers = wireSuppliers({
             publicBuild: false,
@@ -481,7 +491,7 @@ export async function bootHost(w: World, options: BootOptions) {
               clientInfo: { name: 'dwarfai', version: '0.0.0' },
               resumeContext: launched.resumeContext,
               // As host/main.ts: Claude's stream-json driver with its permission prompt tool.
-              claudeStreamJson: promptTool.driver
+              claudeStreamJson: wiredDelegation.driver
             }
           })
           host.suppliers = suppliers
@@ -670,7 +680,8 @@ export async function bootHost(w: World, options: BootOptions) {
             mines: mines.mines.queries,
             crew: crew.crew.commands,
             conversation: conversation.conversation.commands,
-            advisor: createLaunchAdvisor({ advisor: jev.advisor })
+            advisor: createLaunchAdvisor({ advisor: jev.advisor }),
+            delegation: wiredDelegation.starter
           })
           host.launching = launching
           const ownedEndsDeps: Parameters<WiredCrew['crew']['ownedEnds']>[0] = {
@@ -719,6 +730,26 @@ export async function bootHost(w: World, options: BootOptions) {
               crew: crew.crew
             })
           )
+          // As host/main.ts: the delegation endpoint and its routes (ISSUE-209).
+          const delegationRoutes: DelegationRouteDeps = {
+            bus,
+            scheduler,
+            jev: jev.advisor,
+            launching: {
+              commands: launching.launching.commands,
+              queries: launching.launching.queries
+            },
+            crew: {
+              queries: crew.crew.queries,
+              ends: crew.crew.delegatedEnds({ terminator: crew.terminator, bus, log })
+            },
+            conversation: {
+              queries: conversation.conversation.queries,
+              commands: conversation.conversation.commands,
+              deliverer: conversation.deliverer
+            }
+          }
+          wiredDelegation.compose(delegationRoutes)
           routeCut1Events({
             bus,
             observed: observed.adapters,
@@ -739,14 +770,28 @@ export async function bootHost(w: World, options: BootOptions) {
             detection: host.suppliers.bootDetection,
             classify: async () => {
               await recovery.start().classified
-              await promptTool?.sweepOrphans()
             }
           })
+        }),
+        // As host/main.ts: the ADR-015 item 6 cleanup pass once classified.
+        cleanUpAfterRecovery: ran('cleanup-pass', async () => {
+          if (host.launching === undefined || delegation === undefined) {
+            throw new Error('the cleanup pass runs after step 4')
+          }
+          await cleanUpHelpers({
+            processes: host.launching.processes,
+            transactions,
+            processControl: processes,
+            clock,
+            hostEpoch: epoch,
+            log
+          })
+          await delegation.recoverOnBoot()
         }),
         // As host/main.ts step 6: the MCP server listens (here on the in-process relay listener).
         startHookIngress: ran(
           'start-endpoints',
-          () => promptTool?.listen(relays.listener) ?? Promise.resolve()
+          () => delegation?.listen(relays.listener) ?? Promise.resolve()
         ),
         startObservation: ran('start-observation', () => host.observation?.start?.()),
         startModules: ran('start-modules', () => host.mines?.start())

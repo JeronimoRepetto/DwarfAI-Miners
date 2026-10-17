@@ -58,6 +58,7 @@ import {
   type ConversationEvent,
   type AttachmentReader,
   type ConversationAttachmentCommand,
+  type ConversationDeliverCommand,
   type ConversationQueries,
   type ConsoleResolver,
   type ResolveConsole,
@@ -147,6 +148,11 @@ export interface WiredConversation {
   batchHalf: ObservedBatchHalf
   /** Boot step 4, once crew and mines are wired: the history, the tails, the send path, the frames. */
   route(deps: ConversationCrewRoute): void
+  /**
+   * `deliverInvisibly` over the routed send path (ISSUE-205): the `ParentDeliverer` bridge's door
+   * (ISSUE-209). Called before `route`, it is a Host invariant failure.
+   */
+  readonly deliverer: Pick<ConversationDeliverCommand, 'deliverInvisibly'>
 }
 
 export interface ServedConversation {
@@ -223,9 +229,18 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
       if (wired) throw new HostInvariantError('conversation is wired once')
       wired = true
       const conversation = createConversation(deps)
+      let routedDeliverer: Pick<ConversationDeliverCommand, 'deliverInvisibly'> | undefined
       return {
         conversation,
         batchHalf: conversationBatchHalf(conversation),
+        deliverer: {
+          deliverInvisibly: (parent, text) => {
+            if (routedDeliverer === undefined) {
+              throw new HostInvariantError('conversation delivers once it is routed')
+            }
+            return routedDeliverer.deliverInvisibly(parent, text)
+          }
+        },
         route: ({
           crew,
           mines,
@@ -252,6 +267,7 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
             diagnostics: diagnostics ?? NO_DIAGNOSTICS,
             ...(attachments === undefined ? {} : { attachments })
           })
+          routedDeliverer = sending
           served = {
             conversation: {
               feed: (dwarfId, page) => conversation.queries.feed(dwarfId, page),

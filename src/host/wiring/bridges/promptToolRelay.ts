@@ -15,7 +15,7 @@
 //   The file's path follows `RunDirCredentialFileStore` (`<hostDataDir>/run/mcp/<launchId>.cred`,
 //   ADR-013 item 3); promptToolRelay.test.ts holds the two to the same path.
 //
-// Composed with the driver by the composition root (wiring/promptTool.ts).
+// Composed with the driver by the composition root (wiring/delegationWiring.ts).
 import { join } from 'node:path'
 import type { LaunchId } from '../../kernel/domain/values'
 import type {

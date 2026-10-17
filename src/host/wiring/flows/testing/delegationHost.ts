@@ -12,8 +12,8 @@
 // assistant message is the outcome, lead decision 2026-09-30), and the `DelegationSucceeded` route
 // to crew's real `endDelegated` over a terminator double that delivers the worker's exit through
 // the real exit route (`routeSessionExits`), with launching's real stop routes (`routeStops`). The
-// MCP adapter's flush report is called by the test as the adapter calls it. Those routes are
-// composed here until ISSUE-209 composes them in the Host.
+// MCP adapter's flush report is called by the test as the adapter calls it. The Host composes the
+// same routes in wiring/delegationWiring.ts (ISSUE-209); this in-memory harness keeps its own.
 //
 // ISSUE-206 adds the `DelegationFailed` route (08 §2.8): the parent's one PO #45 line through the
 // in-memory conversation's `ingest`, with the parent's display name from the in-memory crew. The
@@ -351,7 +351,7 @@ export function delegationHost(
     for (const ticket of settledTickets.splice(0)) endpoint.delegationSettled(ticket)
   }
   // The worker's `TurnEnded` route: its last assistant message is the outcome (lead decision,
-  // 2026-09-30). Later: ISSUE-209 composes it in the Host.
+  // 2026-09-30), as wiring/delegationWiring.ts composes it in the Host.
   const handoffRuns: Promise<void>[] = []
   conversation.bus.subscribe('TurnEnded', ({ payload }) => {
     const last = conversation.log
@@ -405,7 +405,7 @@ export function delegationHost(
     departures: crew.commands,
     log
   })
-  // The `DelegationSucceeded` route (05 §4). Later: ISSUE-209 registers it in the Host.
+  // The `DelegationSucceeded` route (05 §4), as the Host registers it (wiring/delegationWiring.ts).
   const ends: Promise<EndOutcome>[] = []
   delegationBus.subscribe('DelegationSucceeded', ({ payload }) => {
     ends.push(workerEnds.endDelegated(payload.workerDwarfId, payload.delegationId))
@@ -426,14 +426,14 @@ export function delegationHost(
     preferences,
     bus: lifecycleBus
   })
-  // The `DelegationFailed` route (08 §2.8; ISSUE-206). Later: ISSUE-209 registers it in the Host.
+  // The `DelegationFailed` route (08 §2.8; ISSUE-206), as the Host registers it.
   registerDelegationFailed({
     bus: failedEvents,
     crew: crew.queries,
     conversation: conversation.commands,
     log
   })
-  // The `SubtaskDelegated` route, off the tool call (later: ISSUE-209 composes it in host/wiring).
+  // The `SubtaskDelegated` route, off the tool call, as the Host composes it.
   const routes: Promise<void>[] = []
   delegationBus.subscribe('SubtaskDelegated', (e) => {
     routes.push(subtasks.run(e.payload.delegationId))

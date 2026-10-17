@@ -142,7 +142,7 @@ export interface Crew {
   }): CrewOwnedEnds
   /**
    * `endDelegated` (16 §4.2, ISSUE-205) over the same terminator and Host bus: the route of
-   * `DelegationSucceeded` (05 §4) calls it (later: ISSUE-209 composes it).
+   * `DelegationSucceeded` (05 §4) calls it (host/wiring/delegationWiring.ts, ISSUE-209).
    */
   delegatedEnds(deps: {
     terminator: SessionTerminator
