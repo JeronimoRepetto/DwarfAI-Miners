@@ -3,7 +3,7 @@
 // OpenCode plugin becomes in the Host broker, and the address the person's answer goes to.
 //
 // - The report's session is resolved to its dwarf and folder through the lookup the Host binds
-//   (wiring/routes/asking.ts: observation's `ProviderIdentity → DwarfId` index, whose `cwd` is the
+//   (wiring/routes/askingRoutes.ts: observation's `ProviderIdentity → DwarfId` index, whose `cwd` is the
 //   session's folder). Then one `open(dwarfId, input)` on the `http` channel: a permission whose
 //   tool is OpenCode's permission kind, whose line is that kind and its patterns, redacted and cut
 //   to one line (ADR-007 item 4), with Allow once and Deny reject both offered (15 §2.7: OpenCode

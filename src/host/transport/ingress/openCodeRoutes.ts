@@ -8,7 +8,7 @@
 //   The channel is fixed here: a Claude hooks token, or any other channel's, never authenticates
 //   on this route (ADR-016 items 1–2). The integration gate is not read here: with the integration
 //   off the token is revoked (ADR-016 item 1), and while it is on but not verified the asking open
-//   route applies ADR-011 items 1–4 (wiring/routes/asking.ts), so a launched session's request is
+//   route applies ADR-011 items 1–4 (wiring/routes/askingRoutes.ts), so a launched session's request is
 //   still denied through the protocol.
 // - The hardening (`127.0.0.1`, no `Origin`, the `Host` check, the 256 KiB cap, the rate limit) is
 //   the ingress's, shared with the Claude routes (httpIngress.ts).
@@ -23,7 +23,7 @@
 //   plain `http` on this machine's loopback (`127.0.0.1`, `localhost`, `[::1]`), or that carries
 //   credentials, is `400`. The answer channel checks it again before it sends anything.
 // - An accepted report is evidence, never a command (ADR-016 item 4): it nudges the observer for
-//   the session and hands the evidence to the OpenCode plugin asks (wiring/routes/asking.ts), which
+//   the session and hands the evidence to the OpenCode plugin asks (wiring/routes/askingRoutes.ts), which
 //   may open an ask; the route reaches no other port, so it can never answer an ask, launch, end a
 //   session or change a setting. Both run after the answer was sent (httpIngress.ts) and a failure
 //   in either is swallowed (FM-038).
@@ -57,7 +57,7 @@ export type OpenCodePluginEvidence =
     }
   | { readonly kind: 'permission.replied'; readonly sessionId: string; readonly requestId: string }
 
-/** The OpenCode plugin asks' hand-off (wiring/routes/asking.ts): evidence in, nothing back. */
+/** The OpenCode plugin asks' hand-off (wiring/routes/askingRoutes.ts): evidence in, nothing back. */
 export interface OpenCodePluginEvidenceSink {
   accept(evidence: OpenCodePluginEvidence): void
 }

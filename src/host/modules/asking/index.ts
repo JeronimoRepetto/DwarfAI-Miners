@@ -25,7 +25,7 @@
 // which host/wiring imports directly (R6); wiring/routes/observedClaudeAsks.ts feeds them.
 // ISSUE-229: the OpenCode plugin's `http` answer channel and its asks (`adapters/openCodePlugin/`:
 // `OpenCodePluginAskChannel`, `OpenCodePluginAsks`), which host/wiring imports directly (R6);
-// wiring/routes/asking.ts composes them with the `/opencode/*` ingress route.
+// wiring/routes/askingRoutes.ts composes them with the `/opencode/*` ingress route.
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { Ask } from './domain/ask'
 import type { RestartFacts } from './domain/askMachine'
