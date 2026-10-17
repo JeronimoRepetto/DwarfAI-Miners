@@ -78,6 +78,8 @@ const SERVED_SINCE_CUT_0 = [
   'frame:integration.changed',
   // The first-run consent step's answer: B-M40, served from cut 2 (ISSUE-323).
   'preferences.answerWelcome',
+  // OpenCode permission requests: B-M14, served from step 4a (ISSUE-228).
+  'preferences.setOpenCodePermissions',
   // The asking module: B-M30…B-M32, the `asks` section and the ask frames, from cut 2 (ISSUE-140).
   'asking.answerPermission',
   'asking.answerQuestion',
