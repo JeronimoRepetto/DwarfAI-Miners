@@ -9,6 +9,7 @@ import { z } from 'zod'
 import {
   hostEpochSchema,
   hostPreferencesSchema,
+  hostRecoveryReportViewSchema,
   instantSchema,
   mineIdSchema,
   preferencesViewSchema,
@@ -22,10 +23,12 @@ import {
   type FolderPath,
   type HostEpoch,
   type HostPreferences,
+  type HostRecoveryReportView,
   type Instant,
   type MineHistoryView,
   type MineId,
   type PreferencesView,
+  type SecretName,
   type StopAllOutcome,
   type StranglerDwarfIdentity,
   type SupplierEntryView
@@ -52,6 +55,9 @@ import {
   preferenceSetParamsSchema,
   resetEpochSchema,
   resetMetricsParamsSchema,
+  secretClearParamsSchema,
+  secretSetParamsSchema,
+  secretStatusResultSchema,
   setClaudeHooksParamsSchema,
   setClaudeHooksResultSchema,
   type AnswerWelcomeParams,
@@ -59,6 +65,8 @@ import {
   type MetricsResetResult,
   type PreferenceSetParams,
   type ResetMetricsParams,
+  type SecretSetParams,
+  type SecretStatusResult,
   type SetClaudeHooksParams,
   type SetClaudeHooksResult
 } from './params/preferences'
@@ -103,9 +111,11 @@ import {
   launchAcceptedSchema,
   launchCustomParamsSchema,
   launchParamsSchema,
+  recoveryActionParamsSchema,
   type LaunchAccepted,
   type LaunchCustomParams,
-  type LaunchParams
+  type LaunchParams,
+  type RecoveryActionParams
 } from './params/launching'
 import { suppliersLaunchableParamsSchema } from './params/suppliers'
 import { outcomeSchema, type Outcome } from './errors'
@@ -118,7 +128,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M10, B-M11, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M35, B-M36, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -135,6 +145,8 @@ export interface HostMethods {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
   'ui.resetPreferences.ack':         { params: { epoch: number }; result: {} }
   // preferences and secrets
+  'settings.secret.set':             { params: SecretSetParams; result: SecretStatusResult }
+  'settings.secret.clear':           { params: { name: SecretName; requestId: string }; result: SecretStatusResult }
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'preferences.get':                 { params: {}; result: PreferencesView }
   'preferences.set':                 { params: PreferenceSetParams; result: HostPreferences }
@@ -166,6 +178,9 @@ export interface HostMethods {
   // launching, suppliers, jev
   'launching.launch':                { params: LaunchParams; result: LaunchAccepted }
   'launching.launchCustom':          { params: LaunchCustomParams; result: LaunchAccepted }
+  'launching.retryRecovery':         { params: RecoveryActionParams; result: Outcome<HostRecoveryReportView, 'no-report'> }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty value as {}
+  'launching.dismissRecovery':       { params: RecoveryActionParams; result: Outcome<{}, 'no-report'> }
   'suppliers.launchable':            { params: { refresh?: boolean }; result: SupplierEntryView[] }
   // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
@@ -278,6 +293,17 @@ export const HOST_METHOD_SCHEMAS = {
   'attention.clicked': {
     params: z.object({ key: z.string() }).strict(),
     result: z.object({}).strict()
+  },
+  // B-M10, B-M11 (14 §2.3, §3.5; ADR-017 items 4, 5): `ui` only, mutating (requestId), **sensitive**
+  // params (SENSITIVE_METHODS). The answer is the configured flag, never the value; no usable secret
+  // service is the B-M10 outcome 'backend-unavailable' (host/transport/methods/settingsSecret.ts).
+  'settings.secret.set': {
+    params: secretSetParamsSchema,
+    result: secretStatusResultSchema
+  },
+  'settings.secret.clear': {
+    params: secretClearParamsSchema,
+    result: secretStatusResultSchema
   },
   // B-M12, B-M13 (14 §2.3): `ui` only; B-M13 answers the stored HostPreferences (IPC Gap 10).
   'preferences.get': {
@@ -425,6 +451,17 @@ export const HOST_METHOD_SCHEMAS = {
   'launching.launchCustom': {
     params: launchCustomParamsSchema,
     result: launchAcceptedSchema
+  },
+  // B-M35, B-M36 (14 §2.3; ADR-015 item 5; OQ-41 A, OQ-43): `ui` only, mutating (requestId, 14 §1.6); by
+  // `hostEpoch`, outcome `no-report` when that epoch has no unsettled report. Retry answers once every
+  // retried resume settled, with the settled report (host/transport/methods/launchingRetryRecovery.ts).
+  'launching.retryRecovery': {
+    params: recoveryActionParamsSchema,
+    result: outcomeSchema(hostRecoveryReportViewSchema, z.literal('no-report'))
+  },
+  'launching.dismissRecovery': {
+    params: recoveryActionParamsSchema,
+    result: outcomeSchema(z.object({}).strict(), z.literal('no-report'))
   },
   // B-M41 (14 §2.3, §1.10; AMENDMENT-8, OQ-69): `ui` only, never relayed to seam A; deleted with
   // LegacyDwarfIdBridge at the end of cut 4 (later: ISSUE-241).

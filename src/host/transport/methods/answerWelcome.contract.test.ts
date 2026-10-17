@@ -34,6 +34,8 @@ import type {
   HostPreferences,
   IntegrationSetting,
   PreferencesEvent,
+  SecretBackend,
+  SecretStatus,
   WelcomeChoice,
   WelcomeResult,
   WelcomeStepState
@@ -113,6 +115,15 @@ class ScriptedWelcome {
 
   integrationSettings(): IntegrationSetting[] {
     return [{ ...this.claude }, { id: 'opencode-permissions', state: 'off', changedAt: T0 }]
+  }
+
+  // AMENDED for ISSUE-216: the view also reads the secrets' flags (16 §4.12); none here.
+  secretStatuses(): SecretStatus[] {
+    return []
+  }
+
+  secretBackend(): SecretBackend {
+    return 'unavailable'
   }
 
   answerWelcome(choice: WelcomeChoice): Promise<WelcomeResult> {

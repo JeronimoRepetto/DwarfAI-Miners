@@ -2,6 +2,7 @@
 // temp world with the recorded observed-Claude fixture session, shared by the L2 flow
 // (asking.flow.test.ts) and the L8 hook-ingress flow (hookIngress.os.test.ts). Never imported by
 // production code (R14). The composition is described in asking.flow.test.ts.
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -31,6 +32,7 @@ import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeFs } from '../../../kernel/fakes/FakeFs'
 import { FakeProcessControl } from '../../../kernel/fakes/FakeProcessControl'
 import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
+import { FakeSecretReader } from '../../../kernel/fakes/FakeSecretReader'
 import { RecordingDiagnosticsLog } from '../../../kernel/fakes/RecordingDiagnosticsLog'
 import { RecordingShutdownCheckpoint } from '../../../kernel/fakes/RecordingShutdownCheckpoint'
 import { RecordingStopAll } from '../../../kernel/fakes/RecordingStopAll'
@@ -49,7 +51,7 @@ import { SqliteLedgerRepository } from '../../../modules/ledger/adapters/SqliteL
 import { createHostGitRepoInspector } from '../../../modules/mines/adapters/FsGitRepoInspector'
 import type { SourceWeightScanner } from '../../../modules/mines'
 import { OBSERVATION_POLL_MS, createSqliteObservationStores } from '../../../modules/observation'
-import type { PreferencesEvent } from '../../../modules/preferences'
+import type { PreferencesEvent, SecretStore } from '../../../modules/preferences'
 import { ClaudeHooksConfigWriter } from '../../../modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
 import { ConfigWriterEngine } from '../../../modules/preferences/adapters/external-config/configWriterEngine'
 import { SqliteChannelTokenStore } from '../../../modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
@@ -149,6 +151,15 @@ export const INGRESS_PORT = 41_234
 /** Claude Code's settings file on the FakeFs (`CLAUDE_CONFIG_DIR` unset: `~/.claude`, 16 §7.1). */
 export const CLAUDE_SETTINGS = '/home/person/.claude/settings.json'
 export const CLAUDE = 'claude' as ProviderId
+/** OpenCode's catalog id, as host/main.ts passes it to the asking wiring (ISSUE-229). */
+export const OPENCODE = 'opencode' as ProviderId
+
+/** One request the fake OpenCode server received from the `http` answer channel. */
+export interface OpenCodeServerRequest {
+  url: string
+  headers: Record<string, string>
+  body: unknown
+}
 
 export const cleanups: Array<() => void> = []
 
@@ -245,6 +256,8 @@ export interface BootOptions {
    * the L8 flow passes a fixed weight instead (the mine's tier is not what it proves).
    */
   scanner: SourceWeightScanner
+  /** The secret store boot step 3 wires (ISSUE-216); none usable (`unavailableSecretStore`) by default. */
+  secrets?: SecretStore
 }
 
 export async function bootHost(w: World, options: BootOptions) {
@@ -321,6 +334,21 @@ export async function bootHost(w: World, options: BootOptions) {
   }
   const fs = new NodeFs()
   const relay = new FakeKeystrokeRelay()
+  // The OpenCode server the `http` answer channel posts to: a fake that records each request and
+  // answers 200 `true`; the password is drawn at run time (no secret value in the repository).
+  const openCodePassword = randomBytes(12).toString('hex')
+  const openCodeRequests: OpenCodeServerRequest[] = []
+  const openCodePlugin: AskingWiringDeps['openCodePlugin'] = {
+    providerId: OPENCODE,
+    secrets: new FakeSecretReader({
+      scheduler,
+      values: { 'opencode-password': openCodePassword }
+    }),
+    post: (url, init) => {
+      openCodeRequests.push({ url, headers: { ...init.headers }, body: JSON.parse(init.body) })
+      return Promise.resolve({ status: 200, text: () => Promise.resolve('true') })
+    }
+  }
   const host: {
     preferences?: WiredPreferences
     conversation?: WiredConversation
@@ -346,7 +374,7 @@ export async function bootHost(w: World, options: BootOptions) {
         database: { open: () => Promise.resolve() },
         // Step 3, as host/main.ts wires cut 2: the config writer with the Claude Code hooks target
         // and the channel-token lookup the hook ingress reads.
-        resumeResetSaga: () => {
+        resumeResetSaga: async () => {
           const ingressPort = appMetaIngressPort(db)
           const engine = new ConfigWriterEngine({
             fs: w.disk,
@@ -371,6 +399,7 @@ export async function bootHost(w: World, options: BootOptions) {
             transactions,
             bus,
             clock,
+            scheduler,
             ids,
             hostEpoch: epoch as HostEpoch,
             log,
@@ -388,12 +417,14 @@ export async function bootHost(w: World, options: BootOptions) {
               mapSites: [],
               random: () => 0
             }).steps,
-            secrets: unavailableSecretStore,
+            secrets: options.secrets ?? unavailableSecretStore,
             externalConfig: hostConfigWriter({ claudeHooks: engine, ingressPort, log }),
             channelTokens: new SqliteChannelTokenStore({ db, ids }),
             ready: () => state.current().state === 'ready'
           })
-          return host.preferences.resumeOnBoot()
+          const resumed = await host.preferences.resumeOnBoot()
+          await host.preferences.loadSecretStatuses()
+          return resumed
         },
         constructModules: () => {
           const preferences = host.preferences
@@ -548,6 +579,7 @@ export async function bootHost(w: World, options: BootOptions) {
             log,
             frames: connections,
             claudeProviderId: CLAUDE,
+            openCodePlugin,
             suppliers,
             observed: observed.adapters,
             conversation: conversation.conversation,
@@ -796,6 +828,61 @@ export async function bootHost(w: World, options: BootOptions) {
     hook: async (token: string, body: Record<string, unknown>): Promise<204 | 401 | 400> => {
       const route = asking.hookRoutes.find((r) => r.prefix === '/hooks/claude/')
       if (route === undefined) throw new Error('no Claude hook route was wired')
+      if (!route.admits(token)) return 401
+      const deliver = route.accept(JSON.stringify(body))
+      if (deliver === null) return 400
+      deliver()
+      await settle()
+      return 204
+    },
+    /** The OpenCode password the fake server expects, and every request it received. */
+    openCodePassword,
+    openCodeRequests,
+    /**
+     * "OpenCode · permission requests" in `state` as its setting row stores it, with an active
+     * `opencode-plugin` token while it is on (the plugin file's writer is ISSUE-227/228's); returns
+     * the plaintext token the written plugin would carry.
+     */
+    openCodePermissions: (state: 'off' | 'on-unverified' | 'on-verified'): string => {
+      const token = randomBytes(32).toString('hex')
+      db.run(
+        `UPDATE integration_settings SET state = ?, consent_origin = ?, changed_at = ?
+         WHERE id = 'opencode-permissions'`,
+        [state, state === 'off' ? null : 'settings', clock.now()]
+      )
+      db.run(
+        `UPDATE channel_tokens SET revoked_at = ? WHERE channel = 'opencode-plugin' AND revoked_at IS NULL`,
+        [clock.now()]
+      )
+      if (state !== 'off') {
+        db.run(
+          `INSERT INTO channel_tokens (id, channel, token_sha256, created_at) VALUES (?, 'opencode-plugin', ?, ?)`,
+          [ids.uuidv7(), createHash('sha256').update(token, 'utf8').digest('hex'), clock.now()]
+        )
+      }
+      return token
+    },
+    /** The folder observation's index answers for an OpenCode session (its `cwd`). */
+    openCodeFolderOf: (providerSessionId: string): string =>
+      observation.crew.sessions.byIdentity({ providerId: OPENCODE, providerSessionId })?.cwd ?? '',
+    /** An observed OpenCode session (a legacy-launched one is observed) arrived in `mineId`. */
+    openCodeDwarf: (mineId: MineId, providerSessionId: string): DwarfId =>
+      crew.crew.commands.arrive({
+        mineId,
+        identity: { providerId: OPENCODE, providerSessionId },
+        rank: 'foreman',
+        status: 'working'
+      }),
+    /**
+     * One OpenCode plugin report at `/opencode/*` as the ingress hands it to its route: the
+     * admission by the presented token (401 otherwise), then the body's delivery after the answer.
+     */
+    openCodeReport: async (
+      token: string,
+      body: Record<string, unknown>
+    ): Promise<204 | 401 | 400> => {
+      const route = asking.hookRoutes.find((r) => r.prefix === '/opencode/')
+      if (route === undefined) throw new Error('no OpenCode plugin route was wired')
       if (!route.admits(token)) return 401
       const deliver = route.accept(JSON.stringify(body))
       if (deliver === null) return 400

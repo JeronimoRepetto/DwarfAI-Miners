@@ -1,7 +1,7 @@
 // The preferences module's wiring (05 §3.12, §4; 16 §4.12, §8.2), in two parts:
 //
 // - `servePreferences`, run by the composition root before the boot binds the endpoint: the
-//   module's seam-B members (14 §2.3 B-M12, B-M13, B-M15, B-M09, B-M39, B-M40) on the Host dispatcher and its
+//   module's seam-B members (14 §2.3 B-M10, B-M11, B-M12, B-M13, B-M15, B-M09, B-M39, B-M40) on the Host dispatcher and its
 //   snapshot section (14 §4.1). A UI that attaches while the Host is `starting` gets a `hello.ok`
 //   whose capabilities already list them (14 §1.3), so its HostClient never refuses them locally.
 //   They forward to the module boot step 3 constructs; until then (`starting`, `migrating`) the
@@ -20,21 +20,27 @@
 //   updates" toggle (`setClaudeHooks`, ISSUE-221) with the transport's credential minter
 //   (transport/auth/mintCredential.ts; lead decision 2026-09-30, ISSUE-198), the first-run step's
 //   answer (`createWelcomeAnswer`, ISSUE-223: `answerWelcome` joined to the module's commands and
-//   served as B-M40; ISSUE-323), its event routes (routes/preferencesRoutes.ts: B-F24, B-F25, B-F03,
+//   served as B-M40; ISSUE-323), the secrets' configured flags (`createSecrets`, ISSUE-216:
+//   `saveSecret`/`clearSecret` joined to the commands and served as B-M10/B-M11, `secretStatus` and
+//   the view's reads joined to the queries; their boot read, `loadSecretStatuses`, runs in boot
+//   step 3 after the saga resume, so a resumed `secrets` step is already reflected), its event routes (routes/preferencesRoutes.ts: B-F24, B-F25, B-F03,
 //   B-F26, B-F27), and the bridges other modules read it through, never by a module import (R4): the
-//   kernel `SecretReader`, the suppliers `IntegrationGateReader` and the channel-token lookup the
-//   hook ingress reads (bridges/).
+//   kernel `SecretReader` (bridges/secretReader.ts `storeSecretReader`: the store host/main.ts
+//   built, `OsKeyringSecretStore` since step 3a, read with its SECRET_READ_TIMEOUT_MS deadline on
+//   the Host scheduler; ISSUE-324), the suppliers `IntegrationGateReader` and the channel-token
+//   lookup the hook ingress reads (bridges/). The Reset saga deletes the secrets through the module's
+//   `clearSecret` (`sagaSecretStore` below), so the flags and every UI follow its `secrets` step
+//   (14 §6.3: `preferences.changed` with the secrets cleared).
 //
 // The config writer is the composition root's (host/main.ts, cut 2 since ISSUE-323: the engine
 // with the Claude Code hooks target behind bridges/hostConfigWriter.ts), and so is its boot
 // re-verification, which boot step 3 runs right after `resumeOnBoot` (bootSteps.ts
 // `reverifyConfigWrites`; 16 §7.3, 07 S14.11).
 //
-// Until a later step wires it, one binding of cut 1 stands in, the true value while nothing exists
-// to read or write (fail closed):
-// - `unavailableSecretStore`: the Host has no OS secret store yet (`OsKeyringSecretStore`, later:
-//   ISSUE-324). Nothing can have been stored, so the saga's `secrets` step completes as a no-op
-//   (`delete` resolves `'unavailable'`, ADR-017 items 5, 7; AMENDMENT-2), and `set` refuses.
+// `unavailableSecretStore` stays for a wiring with no OS secret store to compose (L2 cases of other
+// modules; host/main.ts composes `OsKeyringSecretStore` since ISSUE-324): nothing can have been
+// stored, so the saga's `secrets` step completes as a no-op (`delete` resolves `'unavailable'`,
+// ADR-017 items 5, 7; AMENDMENT-2), `set` refuses, and the `SecretReader` reads "not set".
 // `noOwnedConfigWriter` stays for a wiring with no config writer to compose (L2 cases of other
 // modules): DwarfAI owns no entry, so the `external-config` step is a no-op and nothing is
 // installed.
@@ -44,6 +50,7 @@ import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../kernel/ports/idGenerator'
+import type { Scheduler } from '../kernel/ports/scheduler'
 import type { SecretReader } from '../kernel/ports/secretReader'
 import type { SqliteDatabase } from '../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../kernel/ports/transactionRunner'
@@ -53,6 +60,7 @@ import {
   createPreferences,
   createPreferencesResetStep,
   createResetSaga,
+  createSecrets,
   createWelcomeAnswer,
   createWelcomeStep,
   type ChannelTokenStore,
@@ -68,6 +76,10 @@ import {
   type PreferencesQueries,
   type ResetDbMaintenance,
   type ResetMetricsCommands,
+  type SecretBackend,
+  type SecretCommands,
+  type SecretDeleteOutcome,
+  type SecretQueries,
   type SecretStore,
   type WelcomeAnswer,
   type WelcomeQueries,
@@ -81,10 +93,11 @@ import { preferencesSection, registerPreferences } from '../transport/methods/pr
 import { ConnectionResetUiFanout, registerResetMetrics } from '../transport/methods/resetMetrics'
 import { registerAnswerWelcome } from '../transport/methods/answerWelcome'
 import { registerSetClaudeHooks } from '../transport/methods/setClaudeHooks'
+import { registerSettingsSecret } from '../transport/methods/settingsSecret'
 import type { SectionRegistry } from '../transport/snapshot/sectionRegistry'
 import { ingressChannelTokens } from './bridges/channelTokens'
 import { preferencesIntegrationGate } from './bridges/integrationGateReader'
-import { failClosedSecretReader } from './bridges/secretReader'
+import { storeSecretReader } from './bridges/secretReader'
 import {
   resetParticipants,
   type LedgerInstallMoment,
@@ -92,7 +105,7 @@ import {
 } from './resetParticipants'
 import { routePreferences } from './routes/preferencesRoutes'
 
-/** No OS secret store is wired (later: ISSUE-324): nothing is stored, nothing can be. */
+/** A wiring with no OS secret store (host/main.ts composes the real one): nothing is stored, nothing can be. */
 export const unavailableSecretStore: SecretStore = {
   backend: () => Promise.resolve('unavailable'),
   get: () => Promise.resolve(null),
@@ -127,6 +140,8 @@ export interface PreferencesWiringDeps {
   /** The Host's one event bus (16 §2.3). */
   bus: DomainEventBus<PreferencesEvent>
   clock: Clock
+  /** The Host scheduler: where each `SecretReader` read waits for its 10 000 ms deadline (16 §2.6). */
+  scheduler: Scheduler
   ids: IdGenerator
   hostEpoch: HostEpoch
   log: DiagnosticsLog
@@ -138,7 +153,7 @@ export interface PreferencesWiringDeps {
   ledger: LedgerInstallMoment
   /** The cut-1 module steps (`createModuleResetSteps(...).steps`, moduleResetSteps.ts). */
   moduleSteps: ModuleResetSteps
-  /** `unavailableSecretStore` until ISSUE-324. */
+  /** The OS secret store (host/main.ts: `OsKeyringSecretStore`, ISSUE-324; ADR-017 item 2). */
   secrets: SecretStore
   /** The one config writer (host/main.ts: bridges/hostConfigWriter.ts over the engine, cut 2). */
   externalConfig: ExternalConfigWriter
@@ -181,11 +196,13 @@ export interface WiredPreferences {
    * and `welcome` to its queries.
    */
   preferences: Preferences & {
-    commands: PreferencesCommands & ResetMetricsCommands & WelcomeAnswer
-    queries: PreferencesQueries & IntegrationSettingsQueries & WelcomeQueries
+    commands: PreferencesCommands & ResetMetricsCommands & WelcomeAnswer & SecretCommands
+    queries: PreferencesQueries & IntegrationSettingsQueries & WelcomeQueries & SecretQueries
   }
   /** 07 S13.08: the saga's boot resume, run by boot step 3. */
   resumeOnBoot(): Promise<MetricsResetResult | null>
+  /** The secrets' configured flags and backend, read once by boot step 3 after `resumeOnBoot`. */
+  loadSecretStatuses(): Promise<void>
   /**
    * 07 S41.01, S41.02, S41.09: the first-run step's boot evaluation, run by boot step 8 right after
    * the start-up installed detection (bootSteps.ts `evaluateWelcomeAfterDetection`).
@@ -193,7 +210,7 @@ export interface WiredPreferences {
   evaluateWelcomeAtBoot(): Promise<WelcomeStepState>
   /** The suppliers bridge (16 §4.4). */
   integrationGate: IntegrationGateReader
-  /** The kernel bridge (16 §3), fail closed until ISSUE-324. */
+  /** The kernel bridge (16 §3): reads through `secrets` with SECRET_READ_TIMEOUT_MS (ISSUE-324). */
   secretReader: SecretReader
   /** The channel-token lookup the hook ingress reads (bridges/channelTokens.ts; ISSUE-140). */
   channelTokens: Pick<ChannelTokenStore, 'active'>
@@ -214,17 +231,23 @@ export function servePreferences(serve: PreferencesServeDeps): ServedPreferences
       set: (key, value) => current().commands.set(key, value),
       setClaudeHooks: (on, origin) => current().commands.setClaudeHooks(on, origin),
       resetMetrics: (cmd) => current().commands.resetMetrics(cmd),
-      answerWelcome: (choice) => current().commands.answerWelcome(choice)
+      answerWelcome: (choice) => current().commands.answerWelcome(choice),
+      saveSecret: (name, value) => current().commands.saveSecret(name, value),
+      clearSecret: (name) => current().commands.clearSecret(name)
     },
     queries: {
       get: () => current().queries.get(),
       featureFlags: () => current().queries.featureFlags(),
       integrationState: (id) => current().queries.integrationState(id),
       integrationSettings: () => current().queries.integrationSettings(),
-      welcome: () => current().queries.welcome()
+      welcome: () => current().queries.welcome(),
+      secretStatus: (name) => current().queries.secretStatus(name),
+      secretStatuses: () => current().queries.secretStatuses(),
+      secretBackend: () => current().queries.secretBackend()
     }
   }
   registerPreferences(serve.dispatcher, { preferences: served })
+  registerSettingsSecret(serve.dispatcher, { commands: served.commands })
   registerSetClaudeHooks(serve.dispatcher, { commands: served.commands })
   registerAnswerWelcome(serve.dispatcher, { commands: served.commands, queries: served.queries })
   registerResetMetrics(serve.dispatcher, { reset: served.commands, fanout: acks })
@@ -275,12 +298,16 @@ function wirePreferences(
     preferences: module,
     externalConfig: deps.externalConfig
   })
+  const secrets = createSecrets({ secrets: deps.secrets, bus, clock, ids, hostEpoch })
   const queries: WiredPreferences['preferences']['queries'] = {
     get: () => module.queries.get(),
     featureFlags: () => module.queries.featureFlags(),
     integrationState: (id) => module.queries.integrationState(id),
     integrationSettings: () => module.queries.integrationSettings(),
-    welcome: () => welcome.welcome()
+    welcome: () => welcome.welcome(),
+    secretStatus: (name) => secrets.secretStatus(name),
+    secretStatuses: () => secrets.secretStatuses(),
+    secretBackend: () => secrets.secretBackend()
   }
   const sagaUi = routePreferences({
     bus,
@@ -303,7 +330,7 @@ function wirePreferences(
     dbSteps: participants.dbSteps,
     installMoment: participants.installMoment,
     maintenance: deps.maintenance,
-    secrets: deps.secrets,
+    secrets: sagaSecretStore(deps.secrets, secrets),
     externalConfig: deps.externalConfig,
     ui: sagaUi,
     bus,
@@ -317,16 +344,44 @@ function wirePreferences(
       set: (key, value) => module.commands.set(key, value),
       setClaudeHooks: (on, origin) => module.commands.setClaudeHooks(on, origin),
       resetMetrics: (cmd) => saga.resetMetrics(cmd),
-      answerWelcome: (choice) => answer.answerWelcome(choice)
+      answerWelcome: (choice) => answer.answerWelcome(choice),
+      saveSecret: (name, value) => secrets.saveSecret(name, value),
+      clearSecret: (name) => secrets.clearSecret(name)
     },
     queries
   }
   return {
     preferences,
     resumeOnBoot: () => saga.resumeOnBoot(),
+    loadSecretStatuses: () => secrets.loadSecretStatuses(),
     evaluateWelcomeAtBoot: () => welcome.evaluateWelcomeAtBoot(),
     integrationGate: preferencesIntegrationGate(module.queries),
-    secretReader: failClosedSecretReader,
+    secretReader: storeSecretReader({ store: deps.secrets, scheduler: deps.scheduler }),
     channelTokens: ingressChannelTokens(deps.channelTokens ?? noActiveChannelTokens)
+  }
+}
+
+/**
+ * The `SecretStore` the Reset saga's `secrets` step deletes through (ADR-023; 16 §4.12.1): its
+ * `delete` is the module's `clearSecret`, so the configured flags follow the step and
+ * `SecretStatusChanged` reaches every UI as `preferences.changed`. The outcome keeps the port's
+ * contract: `'unavailable'` when no secret service is usable (AMENDMENT-2), `'deleted'` otherwise; a
+ * failing delete rejects, which fails the step (07 S13.07). The other members are the store's own.
+ */
+export function sagaSecretStore(
+  store: SecretStore,
+  secrets: Pick<SecretCommands, 'clearSecret'> & Pick<SecretQueries, 'secretBackend'>
+): SecretStore {
+  const outcomeOf = (backend: SecretBackend): SecretDeleteOutcome =>
+    backend === 'unavailable' ? 'unavailable' : 'deleted'
+  return {
+    backend: () => store.backend(),
+    get: (name) => store.get(name),
+    has: (name) => store.has(name),
+    set: (name, value) => store.set(name, value),
+    delete: async (name) => {
+      await secrets.clearSecret(name)
+      return outcomeOf(secrets.secretBackend())
+    }
   }
 }
