@@ -32,6 +32,7 @@ import { FixtureTransport } from '../../../testing/fixtureTransport'
 import { RecordingSpawn } from '../../../testing/recordingSpawn'
 import { CATALOG_RECORDS } from '../../catalog/profiles'
 import { acpProbeSource } from '../acp/client/capabilities'
+import { FORBIDDEN_FLAGS } from '../shared/forbiddenFlags'
 import { ADAPTER_BINARY, C3_ROW, ClaudeAcpDriver, EXECUTABLE_PIN } from './ClaudeAcpDriver'
 
 const FIXTURE_ROOT = new URL('../../../../../../../fixtures/claude/acp/', import.meta.url)
@@ -527,5 +528,91 @@ describe('ClaudeAcpDriver', () => {
         run.sent.some((frame) => (frame as { method?: string }).method === 'session/prompt')
       ).toBe(false)
     }
+  })
+})
+
+// ---------- the delegation entry (ISSUE-201 "Tests to write FIRST" item 2) ----------
+
+const GATED = 'gated-delegation-launch'
+const JEV_TOOLS = ['mcp__dwarfai__delegate_subtask', 'mcp__dwarfai__subtask_result']
+
+/** The `session/new` frame of a run. */
+function sessionNew(sent: readonly unknown[]): {
+  params: { mcpServers: unknown[]; _meta?: { claudeCode?: { options?: Record<string, unknown> } } }
+} {
+  const frame = sent.find((f) => (f as { method?: string }).method === 'session/new')
+  if (frame === undefined) throw new Error('no session/new frame')
+  return frame as ReturnType<typeof sessionNew>
+}
+
+describe('ClaudeAcpDriver delegation entry', () => {
+  it("[C-23, INV-83] session/new carries the relay entry with the credential-file path only, and neither the adapter's nor claude's captured env holds the credential", async () => {
+    expect(await againstExpected(GATED)).toEqual([])
+    const run = await runScript(
+      factoryWith(),
+      fixture(GATED).expected.script,
+      { variant: variantOf(GATED) },
+      OPTIONS
+    )
+    // The adapter is the only process DwarfAI starts; it forwards its env to claude (15 §4.3), so
+    // its env is what claude sees, and the relay entry's own env reaches only the relay.
+    expect(run.spawn.spawns.map((spawn) => spawn.executable)).toEqual([ADAPTER_PATH])
+    const [adapter] = run.spawn.spawns
+    for (const name of [
+      'DWARFAI_DELEGATION_TOKEN',
+      'DWARFAI_MCP_CREDENTIAL_FILE',
+      'ELECTRON_RUN_AS_NODE'
+    ]) {
+      expect(adapter?.env, name).not.toHaveProperty(name)
+    }
+    const captured = JSON.stringify([adapter?.args, adapter?.env, run.sent])
+    expect(captured).not.toContain(CANARY_TOKEN)
+    expect(captured).not.toContain('DWARFAI_DELEGATION_TOKEN')
+    const [entry, ...others] = sessionNew(run.sent).params.mcpServers as {
+      env: { name: string; value: string }[]
+    }[]
+    expect(others).toEqual([])
+    expect(entry?.env).toEqual([
+      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+      { name: 'DWARFAI_MCP_CREDENTIAL_FILE', value: '/home/j/.dwarfai/run/mcp/launch-1.cred' }
+    ])
+  })
+
+  it('[C-24] only delegate_subtask and subtask_result may be pre-approved, and only with both gates on', async () => {
+    const gated = await runScript(
+      factoryWith(),
+      fixture(GATED).expected.script,
+      { variant: variantOf(GATED) },
+      OPTIONS
+    )
+    const options = sessionNew(gated.sent).params._meta?.claudeCode?.options ?? {}
+    expect(options.allowedTools).toEqual(JEV_TOOLS)
+    expect(Object.keys(options).sort()).toEqual(['allowDangerouslySkipPermissions', 'allowedTools'])
+    // Without both gates `issueFor` gives no entry (ADR-013 item 4): nothing to pre-approve.
+    const ungated = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf('c-01-launch') },
+      OPTIONS
+    )
+    const plain = sessionNew(ungated.sent).params
+    expect(plain.mcpServers).toEqual([])
+    expect(plain._meta?.claudeCode?.options).toEqual({ allowDangerouslySkipPermissions: false })
+    for (const run of [gated, ungated]) {
+      const texts = JSON.stringify([run.spawn.spawns, run.sent])
+      for (const flag of FORBIDDEN_FLAGS) expect(texts).not.toContain(flag)
+    }
+  })
+
+  it("[C-24, INV-81] a delegated worker's launch, which issueFor gives no delegation entry, has no Jev entry and no pre-approval", async () => {
+    const worker = await runScript(
+      factoryWith(),
+      [{ do: 'launch', delegation: false }],
+      { variant: variantOf('c-01-launch') },
+      OPTIONS
+    )
+    const params = sessionNew(worker.sent).params
+    expect(params.mcpServers).toEqual([])
+    expect(JSON.stringify(params)).not.toMatch(/allowedTools|delegate_subtask|subtask_result/)
   })
 })

@@ -15,6 +15,7 @@
 // no prompt tool and no forbidden-flag guard.
 import { HostInvariantError } from '../../../../../kernel/domain/errors'
 import { assertNoForbidden } from '../shared/forbiddenFlags'
+import { delegationToolIds } from '../shared/relayEntry'
 
 /** The MCP server name the relay is registered under in the `--mcp-config` file. */
 export const PERMISSION_SERVER = 'dwarfai'
@@ -33,16 +34,10 @@ const STREAM_JSON = [
 ]
 
 /**
- * DwarfAI's two delegation tools as Claude names them under the relay entry (ADR-013 items 1, 3).
- * Pre-approving exactly these is ADR-008 item 3's named exception (C-24), and only on a launch
- * whose request carries the delegation entry: `issueFor` gives one only with both gates on and
- * never to a delegated worker (ADR-013 item 4, INV-81), and the `--mcp-config` file exists only
- * then, so its path is the gate.
+ * DwarfAI's two delegation tools, pre-approved only on a launch that carries the relay entry
+ * (`delegationToolIds`). The `--mcp-config` file exists only then, so its path is the gate.
  */
-export const DELEGATION_TOOLS = [
-  `mcp__${PERMISSION_SERVER}__delegate_subtask`,
-  `mcp__${PERMISSION_SERVER}__subtask_result`
-]
+export const DELEGATION_TOOLS = delegationToolIds(PERMISSION_SERVER)
 const GATE_ON = { subagentDelegationOn: true, launchedWithLetJevChoose: true }
 const GATE_OFF = { subagentDelegationOn: false, launchedWithLetJevChoose: false }
 
