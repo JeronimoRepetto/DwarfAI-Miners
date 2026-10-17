@@ -28,3 +28,13 @@ export function relayEntry(input: {
     env: { ELECTRON_RUN_AS_NODE: '1', DWARFAI_MCP_CREDENTIAL_FILE: input.credentialFilePath }
   }
 }
+
+/**
+ * DwarfAI's two delegation tools as a provider names them under the relay entry registered as
+ * `server` (`mcp__<server>__<tool>`, ADR-013 items 1, 3). Pre-approving exactly these is ADR-008
+ * item 3's named exception (C-24), only on a launch that carries the entry: `issueFor` gives one
+ * only with both gates on and never to a delegated worker (ADR-013 item 4, INV-81).
+ */
+export function delegationToolIds(server: string): string[] {
+  return ['delegate_subtask', 'subtask_result'].map((tool) => `mcp__${server}__${tool}`)
+}
