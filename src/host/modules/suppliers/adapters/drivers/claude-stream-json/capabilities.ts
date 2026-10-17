@@ -2,9 +2,11 @@
 // ADR-009 D4). Every UNVERIFIED `U→x` value of row C2 is held at its in-force `x` (INV-44) until
 // its spike records a measured value. Recorded for Claude Code 2.1.301 on Windows (ISSUE-321,
 // `spike-results/`): `launch` (SP-08), `earlyFailure` (S-020-1), `resume` (SP-15). Still at their
-// in-force values: `interrupt`, `permission` and `question` (SP-08 proved the prompt-tool channel,
-// but the Host serves no ask route for `mcp__dwarfai__permission` yet, so no ask can open: hidden
-// until built, 21 §1 item 8), `reactionEvidence` (S-022-1), `subagents`.
+// in-force values: `interrupt`, `question` (ADR-009 D4), `reactionEvidence` (S-022-1),
+// `subagents`. `permission` (AMENDMENT-21, owner-approved 2026-10-17): the Host serves
+// `mcp__dwarfai__permission` on the relay every launch carries, so SP-08's prompt-tool channel
+// opens it to `interactive` exactly when the probe opens the prompt tool (15 §3 row C2:
+// "U→none (interactive via prompt tool, SP-08)"); a help that could not be read keeps `none`.
 import type { ProviderCapabilities } from '../../../domain/capabilities'
 
 /** The spike records this driver's capability values follow; each is a committed record. */
@@ -29,7 +31,7 @@ export const STREAM_JSON_ROW: Readonly<ProviderCapabilities> = Object.freeze({
   observe: true,
   sendTurn: true,
   interrupt: false, // U→no: the stream-json interrupt is UNVERIFIED (15 §4.2 End / kill)
-  permission: 'none', // U→none: interactive only once the prompt tool's ask route exists
+  permission: 'none', // U→none: the probe opens `interactive` with the prompt tool (SP-08)
   question: 'none', // ADR-009 D4: --disallowedTools AskUserQuestion
   answeredElsewhere: false,
   staleAnswerSafe: true,
@@ -70,7 +72,8 @@ function promptToolAdvertised(help: string): boolean {
 
 /**
  * The probed capabilities (15 §2.3): `launch` is true only when the help advertises the prompt
- * tool and `--disallowedTools` and SP-08 has passed; a help that could not be read (`null`: no
+ * tool and `--disallowedTools` and SP-08 has passed, and `permission` is `interactive` when the
+ * prompt tool is advertised with SP-08 passed (AMENDMENT-21); a help that could not be read (`null`: no
  * answer within PROBE_TIMEOUT_MS, a failed run) gives the fail-closed `launch` (15 §1.3 `probe`).
  * `earlyFailure` and `resume` are the recorded protocol facts of the version (S-020-1, SP-15), not
  * probed: the merge with the ceiling decides what is effective (ADR-009 D2).
@@ -79,12 +82,13 @@ export function capabilitiesFromHelp(
   help: string | null,
   gates: SpikeRecords
 ): ProviderCapabilities {
-  const launch =
-    help !== null && gates.sp08 && promptToolAdvertised(help) && DISALLOWED_TOOLS_OPTION.test(help)
+  const promptTool = help !== null && gates.sp08 && promptToolAdvertised(help)
+  const launch = promptTool && DISALLOWED_TOOLS_OPTION.test(help)
   return {
     ...STREAM_JSON_ROW,
     usage: { ...STREAM_JSON_ROW.usage },
     launch,
+    permission: promptTool ? 'interactive' : STREAM_JSON_ROW.permission,
     resume: gates.sp15 ? 'cli-flag' : STREAM_JSON_ROW.resume,
     earlyFailure: gates.s0201 ? 'handshake' : STREAM_JSON_ROW.earlyFailure
   }

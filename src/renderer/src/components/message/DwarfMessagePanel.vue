@@ -373,12 +373,15 @@ async function focusCard(): Promise<void> {
 
 /*
  * The panel is keyed by dwarf id (App.vue, the dock slot), so MOUNTING is the moment a person
- * selected one. Never on a control the panel is already explaining as dead (#217).
+ * selected one. Never on a control the panel is already explaining as dead (#217): then the
+ * chat's first live control, the dwarf's name, takes the keyboard, so it is still in the chat that
+ * opened (NFR-A11Y-04; ISSUE-266).
  */
 onMounted(() => {
   if (!props.focusOnOpen) return
   if (showsComposer.value && canReceive.value) void focusComposer()
   else if (!showsComposer.value) void focusCard()
+  else void nextTick(() => nameRef.value?.focus({ preventScroll: true }))
 })
 
 /*

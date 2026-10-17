@@ -163,6 +163,16 @@ export interface ObservedProcessIdentities {
   processIdentityOf(dwarfId: DwarfId): ProcessIdentity | null
 }
 
+/**
+ * The provider identity of a dwarf observation wrote a batch to this Host run, or null (the same
+ * memory `ObservedProcessIdentities` reads). Read by the observed-session send path's route
+ * (crew's `hasDeliveryRoute`, INV-33; ISSUE-167), which cannot ask crew itself. Package gap, kept
+ * off the frozen `ObservationQueries` like `ObservedProcessIdentities`.
+ */
+export interface ObservedIdentities {
+  identityOf(dwarfId: DwarfId): ProviderIdentity | null
+}
+
 export interface Observation {
   control: ObservationControl
   queries: ObservationQueries
@@ -175,6 +185,8 @@ export interface Observation {
    * wrote nothing since answers `null` until it does.
    */
   processIdentities: ObservedProcessIdentities
+  /** Stub. */
+  identities: ObservedIdentities
   /** Resolves once no observation cycle is in flight (tests and an orderly shutdown). */
   whenIdle(): Promise<void>
 }
@@ -202,6 +214,7 @@ export function createObservation(deps: ObservationDeps): Observation {
         return null
       }
     },
+    identities: { identityOf: (dwarfId) => loop.identityOf(dwarfId) },
     whenIdle: () => loop.whenIdle()
   }
 }

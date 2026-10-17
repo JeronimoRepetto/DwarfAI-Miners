@@ -96,7 +96,9 @@ export const WINDOW_API_MEMBERS = {
   answerWelcome: 'invoke',
   stopDwarf: 'invoke',
   renameDwarf: 'invoke',
-  resetDwarfName: 'invoke'
+  resetDwarfName: 'invoke',
+  retryRecovery: 'invoke',
+  dismissRecovery: 'invoke'
 } as const satisfies Record<keyof DwarfAiMinersApi, WindowApiMemberKind>
 
 const MEMBERS: Readonly<Record<string, WindowApiMemberKind>> = WINDOW_API_MEMBERS
