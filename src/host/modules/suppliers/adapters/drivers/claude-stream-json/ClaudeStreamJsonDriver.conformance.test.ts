@@ -95,7 +95,16 @@ class RecordedIds implements IdGenerator {
   }
 }
 
-function factoryWith(shared?: McpConfigFiles, ids?: () => IdGenerator): DriverFactory {
+/** What a fresh driver reads of the stored launch record to resume (ISSUE-173). */
+type ResumeContextLookup = NonNullable<
+  ConstructorParameters<typeof ClaudeStreamJsonDriver>[0]['resumeContext']
+>
+
+function factoryWith(
+  shared?: McpConfigFiles,
+  ids?: () => IdGenerator,
+  resumeContext?: ResumeContextLookup
+): DriverFactory {
   return (rig: ConformanceRig) => {
     const files = shared ?? new RecordingMcpConfigFiles()
     const resolver = new FakeInstallResolver()
@@ -115,7 +124,8 @@ function factoryWith(shared?: McpConfigFiles, ids?: () => IdGenerator): DriverFa
       home: '/home/j',
       platform: 'linux',
       mcpConfig: { dir: MCP_DIR, files },
-      redact: (text) => text
+      redact: (text) => text,
+      ...(resumeContext === undefined ? {} : { resumeContext })
     })
   }
 }
@@ -285,7 +295,9 @@ function processesOf(
 /** One SP-15 run: launch over the first process, then resume over `resumedProcess`. */
 async function resumedRun(
   variant: FixtureVariant,
-  resumedProcess: number
+  resumedProcess: number,
+  /** Resume through a new driver instance (a restarted Host) with this record lookup. */
+  fresh?: { resumeContext?: ResumeContextLookup }
 ): Promise<{
   /** Per session (the launched one, then the resumed one): its own events, in order. */
   events: [DriverEvent[], DriverEvent[]]
@@ -344,9 +356,33 @@ async function resumedRun(
   transports[0]?.eof()
   await settle()
   let resumed: DriverSession | null = null
-  void driver.resume(session.ref).then((value) => {
-    resumed = value
-  })
+  let rejected: unknown = null
+  const resumer =
+    fresh === undefined
+      ? driver
+      : (factoryWith(
+          undefined,
+          () => new RecordedIds(RECORDED_SESSION),
+          fresh.resumeContext
+        )({
+          clock,
+          scheduler,
+          processControl: spawn,
+          loginEnv: LOGIN_ENV
+        }) as ClaudeStreamJsonDriver)
+  void resumer
+    .resume({
+      providerId: session.ref.providerId,
+      providerSessionId: session.ref.providerSessionId
+    })
+    .then(
+      (value) => {
+        resumed = value
+      },
+      (error: unknown) => {
+        rejected = error
+      }
+    )
   await settle()
   clock.advance(2_999)
   await settle()
@@ -354,7 +390,14 @@ async function resumedRun(
   clock.advance(1)
   await settle()
   if (resumed === null) {
-    return { events: [launchedEvents, []], outcomes: [], sent: [], spawn, session, resumed: null }
+    return {
+      events: [launchedEvents, []],
+      outcomes: rejected === null ? [] : [{ rejected }],
+      sent: [],
+      spawn,
+      session,
+      resumed: null
+    }
   }
   const ready = resumed as DriverSession
   drain(ready, resumedEvents)
@@ -609,6 +652,38 @@ describe('ClaudeStreamJsonDriver', () => {
     expect(live.outcomes[1]).toEqual({
       rejected: { reason: 'resume-error', detail: expect.any(String) }
     })
+  })
+
+  it('[C-16, SP-15, S4.16] a fresh driver instance resumes a stored session from the launch record lookup, in its folder and with its spawn tag', async () => {
+    const variant = fixture('sp15-resume').variants[0] as FixtureVariant
+    const asked: string[] = []
+    const run = await resumedRun(variant, 1, {
+      resumeContext: (ref) => {
+        asked.push(ref.providerSessionId)
+        return ref.providerSessionId === RECORDED_SESSION
+          ? { cwd: '/work/stored-mine', spawnTag: 'v1:install-173:launch-1:epoch-2' }
+          : null
+      }
+    })
+    expect(run.outcomes).not.toContainEqual(
+      expect.objectContaining({ rejected: expect.anything() })
+    )
+    expect(run.resumed?.ref).toMatchObject({ providerSessionId: RECORDED_SESSION })
+    expect(asked).toEqual([RECORDED_SESSION])
+    const spawned = run.spawn.spawns[1]
+    expect(spawned?.cwd).toBe('/work/stored-mine')
+    expect(spawned?.env.DWARFAI_SPAWN).toBe('v1:install-173:launch-1:epoch-2')
+    expect(spawned?.args[(spawned?.args.indexOf('--resume') ?? 0) + 1]).toBe(RECORDED_SESSION)
+
+    // No lookup, or a lookup that knows nothing of the session: a resume-error, nothing spawned.
+    for (const fresh of [{}, { resumeContext: () => null }]) {
+      const unknown = await resumedRun(variant, 1, fresh)
+      expect(unknown.resumed).toBeNull()
+      expect(unknown.outcomes).toEqual([
+        { rejected: { reason: 'resume-error', detail: expect.any(String) } }
+      ])
+      expect(unknown.spawn.spawns).toHaveLength(1)
+    }
   })
 
   it('[C-16, SP-15] a launched session keeps resume cli-flag through the Claude ceiling (AMENDMENT-18)', async () => {
