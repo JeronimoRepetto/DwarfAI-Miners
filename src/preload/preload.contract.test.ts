@@ -110,6 +110,9 @@ const speaksToday = (key: ChannelKey): boolean =>
 function memberOf(key: ChannelKey): string | undefined {
   const id = ROW_IDS[key]
   if (key === 'presence:visibleMines' && !speaksToday(key)) return 'reportVisibleMines'
+  // AMENDED for ISSUE-172: 14 gives `resetDwarfName` to A-N09 and to this §8 I-21 legacy row, both live until cut 5, so
+  // the legacy member is renamed (as A-44's) and window.api keeps one member per row.
+  if (key === 'dwarf:resetName') return 'resetDwarfNameToday'
   return catalog14.find((row) => row.id === id && (id !== I21 || row.wire === key))?.member
 }
 

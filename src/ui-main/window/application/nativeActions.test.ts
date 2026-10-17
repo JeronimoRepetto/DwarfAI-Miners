@@ -114,4 +114,43 @@ describe('native actions (05 §3.14; 14 §2.1 A-21, A-22, A-24)', () => {
     expect(MINE_PATH_UNOPENABLE_REASON).toBe('That file could not be opened.')
     expect(opener.openedPaths).toEqual(['/home/j/work/ore/src/a.ts', '/home/j/work/ore/src/b.ts'])
   })
+
+  // ISSUE-170: `raiseConsole` executes the Host's console target over the ConsoleRaiser port.
+  it('[ADR-031] raiseConsole hands the target to the ConsoleRaiser and answers what it did', async () => {
+    const raised: unknown[] = []
+    const target = { mode: 'log' as const, credentialFile: '/data/run/viewers/v.token' }
+    const actions = createNativeActions({
+      files: new FakeFilePicker(null),
+      clipboard: new FakeClipboard(),
+      opener: new FakeExternalOpener(),
+      parentWindow: () => ({ windowId: 7 }),
+      consoles: {
+        raise: (t) => {
+          raised.push(t)
+          return Promise.resolve('raised')
+        }
+      }
+    })
+
+    expect(await actions.raiseConsole(target)).toBe('raised')
+    expect(raised).toEqual([target])
+  })
+
+  it('[ADR-031] with no ConsoleRaiser composed, or one that throws, raiseConsole answers failed', async () => {
+    const base = {
+      files: new FakeFilePicker(null),
+      clipboard: new FakeClipboard(),
+      opener: new FakeExternalOpener(),
+      parentWindow: () => ({ windowId: 7 })
+    }
+    const target = { mode: 'log' as const }
+
+    expect(await createNativeActions(base).raiseConsole(target)).toBe('failed')
+    expect(
+      await createNativeActions({
+        ...base,
+        consoles: { raise: () => Promise.reject(new Error('no terminal')) }
+      }).raiseConsole(target)
+    ).toBe('failed')
+  })
 })

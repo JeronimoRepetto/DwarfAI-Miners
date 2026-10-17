@@ -827,19 +827,17 @@ function bindComposer(instance: unknown): void {
 }
 
 /*
- * Whether this dwarf's name can change from here today (BR-19; 21 §1 item 8, hidden until built):
- * not for a dwarf the Host's board carries, until the step-3a switch routes A-N08 / A-N09
- * (useDwarfRename). Where it cannot, the name is plain text and Reset name is not in the menu.
+ * Every dwarf can be renamed from here (US-MSG-005.AC14): useDwarfRename sends a dwarf the Host's
+ * board carries to A-N08 / A-N09 and one only today's runtime carries to the legacy rows (ISSUE-172).
  */
-const { canRename, setName, resetName: resetDwarfName } = useDwarfRename()
-const renamable = computed(() => canRename(props.dwarf.id))
+const { setName, resetName: resetDwarfName } = useDwarfRename()
 
 /*
- * The ⋯ menu: Open console, Mine history, Reset name while the dwarf has a custom name it can lose
- * (renamable), and Stop dwarf…, which confirms first, disabled with its reason only while the kick
+ * The ⋯ menu: Open console, Mine history, Reset name while the dwarf has a custom name it can lose,
+ * and Stop dwarf…, which confirms first, disabled with its reason only while the kick
  * itself is (MESSAGE-QUESTIONS 13).
  */
-const offersReset = computed(() => renamable.value && props.dwarf.customName !== undefined)
+const offersReset = computed(() => props.dwarf.customName !== undefined)
 const menu = computed(() =>
   messagePanelMenu(kickBlocked(props.dwarf, transient.value), offersReset.value)
 )
@@ -879,7 +877,7 @@ function onStopAction(index: number): void {
  * lib/message/rename's.
  */
 const editing = ref<{ text: string; refused: DwarfNameRefusal | null; forced: boolean } | null>(
-  props.renaming === undefined || !renamable.value
+  props.renaming === undefined
     ? null
     : { text: props.renaming.value, refused: props.renaming.refused ?? null, forced: true }
 )
@@ -895,11 +893,6 @@ const nameFieldRef = ref<ComponentPublicInstance | null>(null)
 const said = ref('')
 const { showToast } = useToasts()
 
-// A field left open on a dwarf that can no longer be renamed from here closes, saving nothing.
-watch(renamable, (can) => {
-  if (!can) editing.value = null
-})
-
 /** Says what main answered: a save or a reset politely, a failure as a warning everyone sees. */
 function tell(result: DwarfNameResult, base: string): void {
   const notice = renameNotice(result, base)
@@ -910,7 +903,7 @@ function tell(result: DwarfNameResult, base: string): void {
 const keptName = (raw: string): string => filterDwarfName(raw).text
 
 async function startRename(): Promise<void> {
-  if (editing.value !== null || !renamable.value) return
+  if (editing.value !== null) return
   editing.value = { text: displayName.value, refused: null, forced: false }
   await nextTick()
   const input = (nameFieldRef.value?.$el as HTMLElement | undefined)?.querySelector('input')
@@ -1022,7 +1015,7 @@ async function resetName(): Promise<void> {
             @focusout="finishRename(true, false)"
           />
           <button
-            v-else-if="renamable"
+            v-else
             ref="nameRef"
             type="button"
             :class="['dm-msg__rename', ...(nameState ? ['is-' + nameState] : [])]"
@@ -1033,10 +1026,6 @@ async function resetName(): Promise<void> {
           >
             <bdi>{{ untrustedText(displayName) }}</bdi>
           </button>
-          <!-- Hidden until built (BR-19): a name nothing can change yet is shown, not offered. -->
-          <span v-else class="dm-msg__title"
-            ><bdi>{{ untrustedText(displayName) }}</bdi></span
-          >
         </h2>
         <!-- The base name, only under a custom name and never while renaming (Dwarf names). -->
         <p v-if="dwarf.customName !== undefined && editing === null" class="dm-msg__base">

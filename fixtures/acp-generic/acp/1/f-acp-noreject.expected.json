@@ -1,0 +1,147 @@
+{
+  "case": "C-11",
+  "description": "15 §2.7 ACP row, fixture F-ACP-NOREJECT (HR A3): a permission request whose options are only allow_always and reject_always opens the ask with neither allow_once nor reject_once. An Allow would have to widen to allow_always (ADR-008 item 3), so it is refused channel-rejected and nothing is sent; the Deny (the broker's auto-deny, ADR-011 item 3) has no reject_once to select, so the request is answered with a JSON-RPC error (fail closed) and the turn continues.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "tool_000000000000000000000131",
+      "decision": "allow"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "tool_000000000000000000000131",
+      "decision": "deny"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "kind": "refused",
+      "reason": "channel-rejected"
+    },
+    {
+      "kind": "accepted"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "acp-generic:acp-generic:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "acp-generic:acp-generic:{session}:tool_000000000000000000000131",
+        "turnKey": "acp-generic:acp-generic:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "edit_file",
+        "summary": "write notes.md",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "tool_000000000000000000000131",
+        "channel": "driver",
+        "payload": {
+          "toolName": "edit_file",
+          "requestText": "write notes.md"
+        },
+        "options": {
+          "hasAllowOnce": false,
+          "hasRejectOnce": false
+        },
+        "turnKey": "acp-generic:acp-generic:{session}:turn:1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "acp-generic:acp-generic:{session}:tool_000000000000000000000131",
+        "turnKey": "acp-generic:acp-generic:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "edit_file",
+        "summary": "write notes.md",
+        "state": "failed",
+        "at": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "acp-generic:acp-generic:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 131,
+      "error": {
+        "code": -32603,
+        "message": "Internal error: denied: no reject_once option"
+      }
+    }
+  ]
+}
