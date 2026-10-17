@@ -9,6 +9,6 @@
   "capabilities": {
     "driver": "acp",
     "agent": "opencode acp, always the person’s own binary",
-    "note": "row O2 of 15 §3 (OPENCODE_ACP in catalog/profiles.ts): permission interactive iff the OpenCode integration is on-verified, no question channel, resume none, fidelity-1 usage, no relay entry"
+    "note": "row O2 of 15 §3 (OPENCODE_ACP in catalog/profiles.ts): permission interactive iff the OpenCode integration is on-verified, no question channel, resume none, fidelity-1 usage, the path-only ticket-file relay entry on a gated delegation launch (SP-12 foreman ruling 2026-10-17)"
   }
 }
