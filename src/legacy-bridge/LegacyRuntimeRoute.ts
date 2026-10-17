@@ -96,13 +96,10 @@ import {
 import { sumTokensObserved } from '../main/domain/aggregate'
 import { parseLaunchTuning } from '../main/domain/launchTuning'
 import { parseLaunchPermissionMode } from '../main/domain/codexPermissions'
-import { HookChannel } from '../main/hooks/hookChannel'
 import { NodeHookFs } from '../main/hooks/hookFs'
 import { DelegationService } from '../main/mcp/delegationService'
 import { delegationFailure } from '../main/mcp/delegationServerProtocol'
 import { HookListener } from '../main/hooks/hookListener'
-import { legacyClaudeHookComposition } from './legacyClaudeHooksSwitch'
-import type { HookEvent } from '../main/hooks/hookPayload'
 import { OpenCodePluginChannel } from '../main/opencodePermissions/openCodePluginChannel'
 import { openCodeGlobalPluginDir } from '../main/opencodePermissions/openCodePluginInstaller'
 import { createOpenCodeServerPasswordStore } from '../main/opencodePermissions/openCodeServerPassword'
@@ -141,7 +138,7 @@ import {
 } from '../main/shell/jevPreferences'
 import { createJevLaunchRouter } from '../main/jev/routeLaunch'
 import { createTypesafeJevRouter } from '../main/jev/typesafeJevRouter'
-import { AgentRuntime, expandHomePath, type RuntimeOptions } from '../main/runtime/runtime'
+import { AgentRuntime, type RuntimeOptions } from '../main/runtime/runtime'
 import type { GlobalShortcutLike } from '../main/shell/shortcuts'
 import { createTypographyPreferenceStore } from '../main/shell/typographyPreference'
 import { parseAnswerRequest } from '../main/shell/answerRequest'
@@ -329,11 +326,6 @@ export interface LegacyPanelSurface {
 export interface LegacyCompositionOptions {
   /** The rebuilt Panel; absent while the route table serves the window family `legacy`. */
   panel?: LegacyPanelSurface
-  /**
-   * Whether today's Claude hook half is composed: true only while A-40/A-41 keep their pre-cut-2 routes (the root's
-   * `legacyClaudeHooksComposed(ROUTES)`; ISSUE-141, TC-141-06; ./legacyClaudeHooksSwitch.ts).
-   */
-  claudeHooks: boolean
   /**
    * Whether today's OpenCode plugin half is composed: true only while A-53 has no `host` route (the root's
    * `legacyOpenCodePluginComposed(ROUTES)`; ISSUE-235, 21 §2 cut 4a, §1 item 4): today's plugin installer, its
@@ -552,7 +544,6 @@ export function composeLegacyRuntime(
 
   // Today's module-level singletons: the quit teardown reads them, null-safe, at any time.
   let runtime: AgentRuntime | null = null
-  let hooks: HookChannel | null = null
   let delegationService: DelegationService | null = null
   let hookListener: HookListener | null = null
   let openCodePlugin: OpenCodePluginChannel | null = null
@@ -804,12 +795,14 @@ export function composeLegacyRuntime(
     })
     await delegationService.start()
 
-    // Optional push channels (#94, #203, #588 T6 F5): one shared listener, opt-in routes.
+    // The OpenCode plugin's push channel (#588 T6 F5) over the shared loopback listener, composed until 4a.
+    // ISSUE-142 (21 §2 cut 2 "Retired at the end"; §1 item 4; §4 row "Claude hook entry"): today's hook installer, the
+    // Claude route of this listener, the observed-Claude permission registry it fed and its keystroke path are no
+    // longer composed, whatever the route table; the Host is the only writer of the Claude hook entry and its ingress
+    // the only reader. Only today's hook channel (the installer's) opened the listener's Claude route, so the listener serves the
+    // OpenCode plugin route alone and its Claude sink is never reached (a call from an old-app Claude hook entry finds
+    // a closed route, 404, or no bound port).
     const hookFs = new NodeHookFs()
-    const onHookEvent = (event: HookEvent): void => {
-      runtime?.noteHookEvent(event)
-      runtime?.nudge()
-    }
     const onOpenCodePush = (push: OpenCodePermissionPush): void => {
       // ISSUE-235: no OpenCode push reaches today's registry once the Host answers the plugin's asks (route off).
       if (!options.openCodePlugin) return
@@ -820,34 +813,12 @@ export function composeLegacyRuntime(
       fs: hookFs,
       userDataDir: app.getPath('userData'),
       port: config.hooksPort,
-      // Today's Claude half hears the listener only while the route table composes it (TC-141-06, below).
-      onEvent: (event) => claude.onEvent(event),
+      onEvent: () => {},
       onOpenCodePush,
       log: unrouted,
       warn: warnFrom('hooks')
     })
     hookListener = listener
-    // ISSUE-141 (21 §2 cut 2 "Switched off in legacy"; TC-141-06): today's hook installer, the Claude route of the
-    // listener and the observed-Claude permission registry it feeds are composed only while A-40/A-41 keep their
-    // pre-cut-2 routes (the cut-1 table, or a cut-2 rollback build); from the cut-2 switch the Host is the only writer
-    // of the Claude hook entry (21 §4). The OpenCode plugin route below stays composed until 4a.
-    const claude = legacyClaudeHookComposition(options.claudeHooks, {
-      onHookEvent,
-      hookChannel: () =>
-        new HookChannel({
-          fs: hookFs,
-          roots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
-          userDataDir: app.getPath('userData'),
-          port: config.hooksPort,
-          platform: process.platform,
-          onEvent: onHookEvent,
-          listener,
-          log: unrouted,
-          warn: warnFrom('hooks')
-        })
-    })
-    hooks = claude.hooks
-    await hooks?.restore()
     // ISSUE-235 (21 §2 cut 4a; §1 item 4): today's plugin installer and its listener route only while A-53 keeps its
     // pre-4a route (the 3e table, or a rollback build that flips it back); from the step-4a switch the Host is the one
     // writer of the plugin file, so today's `restore()` never reinstalls the old app's file beside it.
@@ -1243,9 +1214,7 @@ export function composeLegacyRuntime(
     beforeQuit() {
       runtime?.stop()
       runtime = null
-      // Releases the ports only: the installed hooks and opt-ins bring the channels back next launch.
-      void hooks?.shutdown()
-      hooks = null
+      // Releases the ports only: the installed opt-ins bring the channels back next launch.
       void delegationService?.stop()
       delegationService = null
       void openCodePlugin?.shutdown()

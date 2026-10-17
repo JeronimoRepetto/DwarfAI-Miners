@@ -78,6 +78,12 @@ rollback build's Host boots, but no route answers a Host `AskId` in that build (
 as a request the Host no longer holds: it closes answered elsewhere (`07` S6.11, S6.20), its card disappears with no
 notice, and the person answers in the provider's own terminal (#1293).
 
+**Cut 2 retirement (ISSUE-142): no rollback past this point.** From the ISSUE-142 commit today's Claude hook half
+(the hook installer, the Claude route of the shared listener, the observed-Claude permission registry and its keystroke
+path) is composed in no table, a cut-2 rollback table included: `legacyClaudeHooksComposed` and
+`legacyClaudeHooksSwitch.ts` are deleted. `rollbackOf(table, 'cut-2')` still folds A-40 and A-41 and withdraws A-N31 and
+A-N32, but the build it makes answers no Claude ask from today's code, so cut 2 rolls forward only (`21` §2.1 item 4).
+
 **Step 3a note (ISSUE-001).** A 3a rollback build exists only before the 3a deletion commit merges (ISSUE-184, after the
 soak); after it, 3a rolls forward (`21` §2 cut 3 "Rollback (each step)"). `rollbackOf(table, 'cut-3a')` decides each
 row as follows (`src/ui-main/ipc/rollbackTable.test.ts`, the 3a case):
