@@ -25,6 +25,7 @@
 // (owner amendment K, 2026-10-09); asking publishes their `MessageSent` / `MessageHandedOver` /
 // `MessageDeliveryFailed` after its commit.
 // Conversation imports only suppliers and crew (05 §1.3, R4).
+import type { ProcessIdentity } from '../../kernel/domain/processIdentity'
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
@@ -33,6 +34,9 @@ import type { LifecycleFactLog } from '../../kernel/ports/lifecycleFactLog'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
+import { HostConsoleResolver } from './adapters/console/HostConsoleResolver'
+import { RunDirViewerTokenFiles } from './adapters/console/RunDirViewerTokenFiles'
+import { ViewTokenRegistry } from './adapters/console/ViewTokenRegistry'
 import { SqliteActivityLog } from './adapters/SqliteActivityLog'
 import { SqliteMessageLog } from './adapters/SqliteMessageLog'
 import { ConversationResetStep } from './adapters/sqlite/ConversationResetStep'
@@ -45,10 +49,20 @@ import {
   type MineCrew
 } from './application/queries'
 import { SessionEndRecorder } from './application/recordSessionEnd'
+import {
+  consolePlan,
+  consoleSessionOf,
+  createResolveConsole,
+  type ConsoleDwarf,
+  type ConsolePlan,
+  type ConsoleSession,
+  type ResolveConsole
+} from './application/resolveConsole'
 import { TurnEndRecorder } from './application/recordTurnEnd'
 import type { ConversationEvent } from './domain/events'
 import type { FeedPage, FeedPageRequest, MineHistoryView } from './domain/messages'
 import type { OutcomeLine } from './domain/outcomeLine'
+import type { ConsoleResolver, ConsoleTarget } from './ports/consoleResolver'
 
 export type {
   ActivityChanged,
@@ -85,6 +99,17 @@ export type {
   MessageSent
 } from './application/answerRecords'
 export type { AskChange, ConversationCommands }
+export type {
+  ConsoleDwarf,
+  ConsolePlan,
+  ConsoleResolver,
+  ConsoleSession,
+  ConsoleTarget,
+  ResolveConsole
+}
+export { consolePlan }
+export { VIEW_TOKEN_TTL_MS } from './adapters/console/ViewTokenRegistry'
+export { VIEWER_ENTRY_FILE, viewerEntryPath } from './adapters/console/viewer/viewerEntry'
 /** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
 export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
 
@@ -140,6 +165,11 @@ export interface Conversation {
   joinedEvents: JoinedEvents
   /** 16 §4.6 `AnswerRecords`, for asking only: joins asking's open transaction (ISSUE-128). */
   answerRecords: AnswerRecords
+  /**
+   * 16 §4.6 `ConversationCommands.resolveConsole` (ISSUE-170) over the `ConsoleResolver` that
+   * `host/wiring` passes (`createHostConsoleResolver` in production).
+   */
+  console(deps: { resolver: ConsoleResolver }): ResolveConsole
 }
 
 /**
@@ -227,6 +257,48 @@ export function createConversation(deps: ConversationDeps): Conversation {
       publish: () => ingest.publishJoined(),
       discard: () => ingest.discardJoined()
     },
-    answerRecords: createAnswerRecords({ log, scope: deps.transactions, clock: deps.clock })
+    answerRecords: createAnswerRecords({ log, scope: deps.transactions, clock: deps.clock }),
+    console: ({ resolver }) => createResolveConsole({ resolver })
+  }
+}
+
+export interface HostConsoleResolverDeps {
+  /** Crew's view of a dwarf (the conversation → crew edge, 05 §1.3), read at each resolve. */
+  crew: { get(dwarfId: DwarfId): ConsoleDwarf | null }
+  /** The provider process observation recorded for an observed dwarf (ADR-014 item 2), or null. */
+  observed: { processIdentityOf(dwarfId: DwarfId): ProcessIdentity | null }
+  clock: Clock
+  ids: IdGenerator
+  /** `<hostDataDir>`: the token files go to `run/viewers/` under it (ADR-003 item 12). */
+  hostDataDir: string
+  /** The versioned-copy executable, the viewer script (`viewerEntryPath`) and the viewer's cwd. */
+  viewer: { program: string; entry: string; cwd: string }
+}
+
+/** The console resolver of the Host, with its per-view tokens (ADR-003 item 12). */
+export interface HostConsole {
+  resolver: ConsoleResolver
+  /** The `viewer` hello's check (transport/hello.ts): the dwarf a token is bound to, or null. */
+  viewerTokens: { consume(viewId: string, token: string): DwarfId | null }
+  /** Removes the token files a previous Host run left (boot, ADR-015 item 6). */
+  sweep(): Promise<void>
+}
+
+export function createHostConsoleResolver(deps: HostConsoleResolverDeps): HostConsole {
+  const tokens = new ViewTokenRegistry({ clock: deps.clock, ids: deps.ids })
+  const files = new RunDirViewerTokenFiles({ hostDataDir: deps.hostDataDir })
+  return {
+    resolver: new HostConsoleResolver({
+      sessions: {
+        sessionOf: (dwarfId) =>
+          consoleSessionOf(deps.crew.get(dwarfId), () => deps.observed.processIdentityOf(dwarfId))
+      },
+      plan: consolePlan,
+      tokens,
+      files,
+      viewer: deps.viewer
+    }),
+    viewerTokens: { consume: (viewId, token) => tokens.consume(viewId, token) },
+    sweep: () => files.sweep()
   }
 }

@@ -94,7 +94,9 @@ const SERVED_SINCE_CUT_0 = [
   'launching.launchCustom',
   'section:launches',
   // The Add panel's supplier list: B-M37, from cut 3 (ISSUE-163).
-  'suppliers.launchable'
+  'suppliers.launchable',
+  // AMENDED for ISSUE-170 (appended): B-M29, the console target of A-13, from cut 3.
+  'conversation.resolveConsole'
 ]
 const SERVED_SECTIONS = ['meta', 'preferences', 'mines', 'dwarfs', 'asks', 'launches', 'tails']
 

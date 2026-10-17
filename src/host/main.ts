@@ -115,6 +115,7 @@ import { SqliteAskRepository } from './modules/asking/adapters/SqliteAskReposito
 import { createAskDrainGate, createAskRestartSettlement } from './modules/asking'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
+import { createHostConsoleResolver, viewerEntryPath } from './modules/conversation'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
@@ -644,6 +645,25 @@ async function bootHost(base: HostBase): Promise<void> {
         pid: process.pid,
         epoch
       })
+      // ISSUE-170: the console resolver of B-M29 and the viewer's per-view tokens (ADR-031 items 1–3,
+      // ADR-003 item 12). Observed dwarfs focus the provider process observation recorded, `log`
+      // second; launched ones get the `log` view, run on this versioned copy's executable.
+      const hostConsole = createHostConsoleResolver({
+        crew: { get: (dwarfId) => modules.crew?.crew.queries.get(dwarfId) ?? null },
+        observed: {
+          processIdentityOf: (dwarfId) =>
+            modules.observation?.crew.processIdentities.processIdentityOf(dwarfId) ?? null
+        },
+        clock,
+        ids,
+        hostDataDir: dataDir.userDataDir,
+        viewer: {
+          program: dataDir.execPath,
+          // `<appRoot>/out/host/main.js` is this entry (main(): the app root is three folders up).
+          entry: viewerEntryPath(join(appRoot, 'out', 'host', 'main.js')),
+          cwd: dataDir.userDataDir
+        }
+      })
       const endpoint = createUiEndpoint({
         facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
         log,
@@ -677,7 +697,8 @@ async function bootHost(base: HostBase): Promise<void> {
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
         sections: () => sections.names(),
         conditions: () => opened.capabilities(),
-        identityFile
+        identityFile,
+        viewers: hostConsole.viewerTokens
       })
       // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
       cleanExit = composeHostLifecycle({
@@ -712,6 +733,16 @@ async function bootHost(base: HostBase): Promise<void> {
         database: opened,
         // Step 3: preferences first, then the saga's boot resume (07 S13.08).
         resumeResetSaga: async () => {
+          // ADR-015 item 6: the viewer token files a previous Host left go before any method is
+          // served (B-M29 answers HOST_NOT_READY until `ready`).
+          await hostConsole.sweep().catch((error: unknown) =>
+            log.record({
+              level: 'warn',
+              event: 'viewer.sweep.failed',
+              subsystem: 'conversation',
+              errCode: errorCode(error)
+            })
+          )
           const { db, transactions } = opened.connection()
           bus = new InProcessEventBus<HostEvent>({
             transactionScope: transactions,
@@ -999,7 +1030,8 @@ async function bootHost(base: HostBase): Promise<void> {
           ledger.route({ mines: modules.mines.mines.queries })
           conversation.route({
             crew: modules.crew.crew.queries,
-            mines: modules.mines.mines.queries
+            mines: modules.mines.mines.queries,
+            console: hostConsole.resolver
           })
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
           // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).

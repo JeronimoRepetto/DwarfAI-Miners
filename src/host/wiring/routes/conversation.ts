@@ -15,6 +15,10 @@
 //   the frames of conversation's events (routes/conversationFrames.ts), subscribed before step 7's
 //   catch-up publishes the first of them (16 §8.2).
 //
+// - B-M29 `conversation.resolveConsole` (ISSUE-170) is served with the read side and answers from
+//   `route` on, over the `console` resolver the composition root passes (conversation's
+//   `createHostConsoleResolver`); a route with none answers INTERNAL (a wiring defect).
+//
 // Not routed here, and why:
 // - `ObservedTurnEnded` (observation) → `recordTurnEnd`, `TurnEnded` → crew and attention,
 //   `DwarfDeparted` → `recordSessionEnd` (05 §4): the cut-1 routes (routes/cut1Routes.ts,
@@ -34,7 +38,9 @@ import {
   createConversation,
   type Conversation,
   type ConversationEvent,
-  type ConversationQueries
+  type ConversationQueries,
+  type ConsoleResolver,
+  type ResolveConsole
 } from '../../modules/conversation'
 import type { CrewQueries } from '../../modules/crew'
 import type { MinesQueries } from '../../modules/mines'
@@ -42,6 +48,7 @@ import type { Dispatcher } from '../../transport/dispatcher'
 import type { ConversationFramePublisher } from '../../transport/frames/conversationAppended'
 import { registerConversationFeed } from '../../transport/methods/conversationFeed'
 import { registerConversationMineHistory } from '../../transport/methods/conversationMineHistory'
+import { registerConversationResolveConsole } from '../../transport/methods/conversationResolveConsole'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
 import { registerTailsSection } from '../../transport/snapshot/tailsSection'
 import { conversationBatchHalf, type ObservedBatchHalf } from '../bridges/observedBatchSink'
@@ -77,6 +84,8 @@ export interface ConversationWiringDeps {
 export interface ConversationCrewRoute {
   crew: Pick<CrewQueries, 'get' | 'crewOf'>
   mines: Pick<MinesQueries, 'list'>
+  /** The console targets of B-M29 (ISSUE-170): `createHostConsoleResolver(...).resolver`. */
+  console?: ConsoleResolver
 }
 
 export interface WiredConversation {
@@ -98,6 +107,7 @@ type ServedMembers = {
   conversation: Pick<ConversationQueries, 'feed' | 'mineHistory'>
   crew: Pick<CrewQueries, 'crewOf'>
   mines: Pick<MinesQueries, 'list'>
+  console: ResolveConsole | undefined
 }
 
 /** Serves the module's seam-B members before it exists; `wire` constructs it at boot step 4. */
@@ -115,6 +125,15 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
   registerConversationMineHistory(serve.dispatcher, {
     conversation: { mineHistory: (mineId) => current().conversation.mineHistory(mineId) }
   })
+  registerConversationResolveConsole(serve.dispatcher, {
+    conversation: {
+      resolveConsole: (dwarfId) => {
+        const consoles = current().console
+        if (consoles === undefined) throw new HostInvariantError('no console resolver is composed')
+        return consoles.resolveConsole(dwarfId)
+      }
+    }
+  })
   registerTailsSection(serve.sections, {
     mines: { list: (query) => current().mines.list(query) },
     crew: { crewOf: (mineId, opts) => current().crew.crewOf(mineId, opts) },
@@ -129,7 +148,7 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
       return {
         conversation,
         batchHalf: conversationBatchHalf(conversation),
-        route: ({ crew, mines }) => {
+        route: ({ crew, mines, console: resolver }) => {
           if (served !== undefined) throw new HostInvariantError('conversation is routed once')
           publishConversationReadFrames({ events: deps.bus, crew, frames: deps.frames })
           const history = conversation.history({ crew })
@@ -139,7 +158,8 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
               mineHistory: (mineId) => history.mineHistory(mineId)
             },
             crew,
-            mines
+            mines,
+            console: resolver === undefined ? undefined : conversation.console({ resolver })
           }
         }
       }
