@@ -193,10 +193,16 @@ export const CATALOG_RECORDS: readonly CatalogRecord[] = [
       models: [],
       efforts: [],
       permissionModes: [],
+      // ADR-009 D4: the person's `codex app-server` (CodexAppServerDriver, ISSUE-152), then
+      // `codex-acp` when the probe finds no app-server subcommand (15 §2.3, §4.5).
       drivers: ['app-server-rpc', 'acp'],
       publicLaunch: 'enabled'
     },
-    ceiling: CODEX_CEILING
+    ceiling: CODEX_CEILING,
+    // 15 §4 `childEnv`: the Codex variable a launched `codex` must share with the person's own (15
+    // §5 Codex row: honour CODEX_HOME), so its config, login and rollouts are the ones the observer
+    // reads. A path, never a credential (ADR-008 item 2).
+    providerEnvVars: ['CODEX_HOME']
   },
   {
     profile: {

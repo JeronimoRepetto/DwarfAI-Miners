@@ -1,5 +1,6 @@
-// The Claude catalog record as the stream-json driver reads it (15 §4 `childEnv`, §5 Claude row;
-// ADR-009 D4): its transports in preference order and the one documented variable it carries.
+// The Claude and Codex catalog records as their drivers read them (15 §4 `childEnv`, §5 Claude and
+// Codex rows; ADR-009 D4): their transports in preference order and the one documented variable
+// each carries.
 import { describe, expect, it } from 'vitest'
 import { childEnv } from '../drivers/shared/childEnv'
 import type { PermissionModeCatalog } from '../../domain/profile'
@@ -43,5 +44,31 @@ describe('the public launch of a catalog record', () => {
         expect(record.profile.publicLaunch, record.profile.id).toBe('gated')
       }
     }
+  })
+})
+
+const codex = CATALOG_RECORDS.find((record) => record.profile.id === 'codex')
+
+describe('the Codex catalog record', () => {
+  it('[C-23, ADR-009] the app-server child keeps the person CODEX_HOME, app-server-rpc first, and nothing outside the allowlist', () => {
+    // ADR-009 D4: the preferred Codex driver is CodexAppServerDriver, then codex-acp (15 §4.4, §4.5).
+    expect(codex?.profile.drivers).toEqual(['app-server-rpc', 'acp'])
+    const env = childEnv(
+      {
+        PATH: '/usr/bin',
+        CODEX_HOME: '/home/j/.codex-work',
+        OPENAI_API_KEY: 'never-forwarded',
+        CODEX_INTERNAL_ORIGINATOR_OVERRIDE: 'never-forwarded'
+      },
+      'v1:install:launch-1:epoch',
+      { providerVars: codex?.providerEnvVars ?? [], loopbackRelay: false, platform: 'linux' }
+    )
+    // 15 §5 Codex row: honour CODEX_HOME, so the launched codex's login, config and rollouts are
+    // the ones the observer reads. A path, never a credential (ADR-008 item 2).
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      CODEX_HOME: '/home/j/.codex-work',
+      DWARFAI_SPAWN: 'v1:install:launch-1:epoch'
+    })
   })
 })
