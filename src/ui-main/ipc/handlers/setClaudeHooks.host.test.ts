@@ -31,7 +31,7 @@ class FakeHooksHost implements Pick<HostClient, 'call'> {
   call<M extends HostMethod>(method: M, params: HostParams[M]): Promise<HostResult[M]> {
     this.calls.push({ method, params })
     if (this.refusal !== null) return Promise.reject(new HostCallError(this.refusal))
-    return Promise.resolve(this.result as HostResult[M])
+    return Promise.resolve(this.result) as Promise<HostResult[M]>
   }
 }
 

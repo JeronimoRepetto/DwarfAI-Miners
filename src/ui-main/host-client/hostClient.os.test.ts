@@ -106,6 +106,11 @@ const SERVED_SINCE_CUT_0 = [
   'conversation.describeAttachments',
   // AMENDED for ISSUE-170 (appended): B-M29, the console target of A-13, from cut 3.
   'conversation.resolveConsole',
+  // The Host recovery report: B-M35, B-M36, B-F21 and the `recovery` section, from cut 3 (ISSUE-174).
+  'frame:host.recovered',
+  'launching.dismissRecovery',
+  'launching.retryRecovery',
+  'section:recovery',
   // AMENDED for ISSUE-196 (appended): B-M38, served by the jev wiring for the step-3a switch.
   'jev.suggest'
 ]
@@ -116,6 +121,7 @@ const SERVED_SECTIONS = [
   'dwarfs',
   'asks',
   'launches',
+  'recovery',
   'tails',
   'marks'
 ]

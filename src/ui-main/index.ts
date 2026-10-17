@@ -1526,9 +1526,6 @@ export async function startUiMain({
       : composeAskStepAndIntegrationRows({ routes, client: host.client })
   const dwarfNameRows =
     host === undefined ? undefined : composeDwarfNameRows({ routes, client: host.client })
-  // A-50, once the step-3a switch routes it `host` (ISSUE-001; ISSUE-192).
-  const jevRouteRow =
-    host === undefined ? undefined : composeJevRouteRow({ routes, client: host.client })
   // A-47…A-49 and the one-time Jev-key migration, once the step-3a switch routes them (ISSUE-001; ISSUE-217).
   const jevKey = composeJevKeyRows({
     routes,
@@ -1539,6 +1536,9 @@ export async function startUiMain({
     log: uiLog ?? { record: () => {} },
     mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
   })
+  // A-50, once the step-3a switch routes it `host` (ISSUE-001; ISSUE-192).
+  const jevRouteRow =
+    host === undefined ? undefined : composeJevRouteRow({ routes, client: host.client })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
     boardFacade === undefined &&
@@ -1547,8 +1547,8 @@ export async function startUiMain({
     askAnswers?.part === undefined &&
     cut2Rows === undefined &&
     dwarfNameRows === undefined &&
-    jevRouteRow === undefined &&
-    jevKey?.part === undefined
+    jevKey?.part === undefined &&
+    jevRouteRow === undefined
       ? stopRows
       : composeRouteTargets([
           ...(stopRows === undefined
@@ -1562,8 +1562,8 @@ export async function startUiMain({
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
           ...(cut2Rows === undefined ? [] : [cut2Rows]),
           ...(dwarfNameRows === undefined ? [] : [dwarfNameRows]),
-          ...(jevRouteRow === undefined ? [] : [jevRouteRow]),
-          ...(jevKey?.part === undefined ? [] : [jevKey.part])
+          ...(jevKey?.part === undefined ? [] : [jevKey.part]),
+          ...(jevRouteRow === undefined ? [] : [jevRouteRow])
         ])
   const allShapeAdapters = {
     ...shapeAdapters,
