@@ -132,10 +132,24 @@ export interface AcpStart {
    * mode fails the handshake closed. Absent: no pin.
    */
   readonly pinnedMode?: string
+  /**
+   * ADR-008 item 3: whether a reported session mode skips the permission ask. With no pinned mode,
+   * a session that reports such a mode fails the handshake closed. Absent: no mode is refused.
+   */
+  readonly refusedMode?: (modeId: string) => boolean
   /** A launch opens a new session and sends its first prompt; a resume reopens `sessionId`. */
   readonly mode:
     | { readonly kind: 'new'; readonly prompt: string }
-    | { readonly kind: 'resume'; readonly sessionId: string }
+    | {
+        readonly kind: 'resume'
+        readonly sessionId: string
+        /**
+         * The turns the resumed session already had. `session/resume` replays nothing, so its next
+         * turn continues this count (`eventId = <turnId>:<seq>` never meets an earlier turn's);
+         * `session/load` rebuilds the count from its replay. Absent: 0.
+         */
+        readonly turnsBefore?: number
+      }
   /** The effective capabilities once `initialize` answered (the driver merges its sources). */
   readonly capabilitiesFor: (init: InitializeResponse) => ProviderCapabilities
   readonly onSpawned?: (identity: ProcessIdentity) => Promise<void>
@@ -264,6 +278,11 @@ export class AcpSession implements DriverSession {
   }
 
   /** A session serializes as what it is to the Host: its ref and effective capabilities. */
+  /** How many turns this session started or replayed so far (a resume continues it). */
+  get turns(): number {
+    return this.turnCount
+  }
+
   toJSON(): { ref: SessionRef; capabilities: ProviderCapabilities } {
     return { ref: this.ref, capabilities: this.capabilities }
   }
@@ -368,6 +387,8 @@ export class AcpSession implements DriverSession {
       this.replaying = false
       if (!(await this.pinMode(connection, loaded?.modes?.currentModeId))) return
     } else if (agent?.sessionCapabilities?.resume != null) {
+      // `session/resume` replays nothing: the next turn continues the resumed session's count.
+      this.turnCount = mode.turnsBefore ?? 0
       const resumed = await connection.resumeSession({
         sessionId: mode.sessionId,
         cwd,
@@ -386,18 +407,24 @@ export class AcpSession implements DriverSession {
    * AMENDMENT-19 (ADR-008 item 3): before the session is ready it must report the pinned mode, so
    * the person's own default mode (one that skips the permission check) never applies. Another
    * mode is changed with `session/set_mode`; the agent answers `{}` and reports a different
-   * effective mode with `current_mode_update` before its answer. False when the handshake failed.
+   * effective mode with `current_mode_update` before its answer. With no pinned mode, a reported
+   * mode the driver refuses (`refusedMode`) fails closed instead. False when the handshake failed.
    */
   private async pinMode(
     connection: ClientSideConnection,
     reported: string | null | undefined
   ): Promise<boolean> {
     const pinned = this.start.pinnedMode
-    if (pinned === undefined) return true
     if (typeof reported === 'string') this.currentMode = reported
     const fail = (detail: string): false => {
       this.settleReady?.({ detail, modePin: true })
       return false
+    }
+    if (pinned === undefined) {
+      const mode = this.currentMode
+      return mode !== null && this.start.refusedMode?.(mode) === true
+        ? fail(`the agent reports permission mode ${mode}, which skips the permission ask`)
+        : true
     }
     if (this.currentMode === null) return fail('the agent reports no permission mode')
     if (this.currentMode === pinned) return true
