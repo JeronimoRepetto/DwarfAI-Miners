@@ -33,19 +33,20 @@
 //   window, S7.13…S7.16); one marked ✕ `host-interrupted` is listed on its dwarf's item, a dwarf
 //   with no item then listed `turn-lost` (its turn was lost with the Host).
 // - Once every initial resume settled, the report is saved again with every item and `resumed`,
-//   and `HostRecovered` is published only when `unrecovered` is not empty (S16.02, S16.03).
+//   and `HostRecovered` is published only when `unrecovered` is not empty (S16.02, S16.03); the
+//   report's display phase (recoveryActions.ts `RecoveryActions`) is told first, so the frame and
+//   the snapshot `recovery` section carry it from then on.
+// - Another Host crash before the previous report settled (S16.09): the previous epoch's pending
+//   report is read before this boot saves, its unsettled items' ✕ message ids are carried onto the
+//   items this boot lists again, and this boot's save supersedes it (`RecoveryReportStore.save`).
+//   A carried dwarf's record is still live, so this boot classifies it again; its new reason wins.
+// - The resume itself is `SessionResumer`'s (sessionResumer.ts), the same one Retry uses.
 //
 // Nothing here throws into the Host after classification: a failed step is logged with ids only
 // (ADR-026) and its dwarf listed.
 import type { PreviousEpochEnd } from '../../../kernel/domain/bootIdentity'
 import type { EndOutcome, ProcessIdentity } from '../../../kernel/domain/processIdentity'
-import type {
-  DwarfId,
-  EventId,
-  HostEpoch,
-  MessageId,
-  ProviderIdentity
-} from '../../../kernel/domain/values'
+import type { DwarfId, EventId, HostEpoch, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
@@ -54,14 +55,7 @@ import type { ProcessControl } from '../../../kernel/ports/processControl'
 import type { Scheduler } from '../../../kernel/ports/scheduler'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { CrewCommands, CrewQueries } from '../../crew'
-import type {
-  DriverRegistry,
-  DriverSession,
-  ProviderDriver,
-  SessionBindings,
-  SessionRef,
-  SupplierCatalogueQueries
-} from '../../suppliers'
+import type { SupplierCatalogueQueries } from '../../suppliers'
 import { applyLaunchEvent } from '../domain/launch'
 import {
   reconcileOnBoot,
@@ -76,6 +70,7 @@ import type { ProcessRecordStore } from '../ports/processRecordStore'
 import type { RecoveryReportStore } from '../ports/recoveryReportStore'
 import type { LaunchingEvent } from './events'
 import type { RecoveryCoverage } from './sessionExited'
+import type { SessionResumer } from './sessionResumer'
 
 /** ADR-015 item 5 (herdr `startup_per_agent_delay_ms`): one resume start per 500 ms. */
 export const RESUME_SPACING_MS = 500
@@ -121,11 +116,11 @@ export interface RecoverAfterHostStartDeps extends LaunchingRecoveryDeps {
   processes: ProcessRecordStore
   launches: LaunchStore
   transactions: TransactionRunner
-  suppliers: {
-    registry: Pick<DriverRegistry, 'drivers'>
-    bindings: SessionBindings
-  }
   coverage: HostRecoveryCoverage
+  /** The resume of one owned session (sessionResumer.ts), shared with Retry. */
+  resumer: SessionResumer
+  /** The report's display phase (07 machine 16), told before `HostRecovered` is published. */
+  display: { collecting(): void; classified(report: HostRecoveryReport): void }
   bus: Pick<DomainEventBus<LaunchingEvent>, 'publish'>
   clock: Clock
   scheduler: Scheduler
@@ -147,23 +142,11 @@ type Job = Extract<RecordTransition, { t: 'adopt' | 'end-survivor' | 'resume' }>
 
 const CRASHED: PreviousEpochEnd = { kind: 'crashed', rule: 'none' }
 
-function identityOf(ref: SessionRef): ProviderIdentity {
-  return {
-    providerId: ref.providerId,
-    providerSessionId: ref.providerSessionId,
-    ...(ref.providerAgentId === undefined ? {} : { providerAgentId: ref.providerAgentId })
-  }
-}
-
-/** `DriverResumeError.reason` (ADR-009 D3) maps 1:1 to the report; anything else is an error. */
-function resumeFailure(error: unknown): Extract<UnrecoveredReason, 'stale-ref' | 'resume-error'> {
-  const reason = (error as { reason?: unknown } | null)?.reason
-  return reason === 'stale-ref' ? 'stale-ref' : 'resume-error'
-}
-
 export class RecoverAfterHostStart {
   private readonly items = new Map<DwarfId, Item>()
   private readonly resumed: DwarfId[] = []
+  /** S16.09: the unsettled items of a previous epoch's report this boot replaces. */
+  private carried: HostRecoveryReport['unrecovered'] = []
   private run: RecoveryRun | null = null
   /** `HostRecoveryReport.at`: when the boot classified (10 §`host_recovery_reports`). */
   private classifiedAt: number | null = null
@@ -173,6 +156,7 @@ export class RecoverAfterHostStart {
   /** Runs the pass once per Host boot; a second call answers the same run (`hostEpoch`). */
   start(): RecoveryRun {
     if (this.run !== null) return this.run
+    this.deps.display.collecting()
     const jobs = this.classify()
     this.run = {
       classified: jobs.then(() => undefined),
@@ -186,16 +170,27 @@ export class RecoverAfterHostStart {
     const live = records.live()
     const inFlight = launches.inFlight()
     const previous = this.deps.previousEpochEnd()
-    if (live.length === 0 && inFlight.length === 0) return []
+    const earlier = this.deps.reports.pending()
+    if (earlier !== null && earlier.hostEpoch !== this.deps.hostEpoch) {
+      this.carried = earlier.unrecovered
+    }
+    if (live.length === 0 && inFlight.length === 0) {
+      // Nothing to classify, but an earlier report is still replaced by this boot's (S16.09).
+      if (this.carried.length > 0) {
+        this.classifiedAt = this.deps.clock.now()
+        this.deps.transactions.inTransaction(() => this.deps.reports.save(this.report()))
+      }
+      return []
+    }
     const boot = previous ?? CRASHED
     const purposes = processes.live()
     const probes = new Map<number, Awaited<ReturnType<ProcessControl['probe']>>>()
     for (const record of live) {
       if (record.process === undefined || probes.has(record.process.pid)) continue
-      probes.set(record.process.pid, await this.probe(record.process.pid))
+      probes.set(record.process.pid, await this.deps.resumer.probe(record.process.pid))
     }
     const facts = live.map((record): OwnedRecordFacts => {
-      const driver = this.driverOf(record)
+      const driver = this.deps.resumer.driverOf(record)
       const capabilities = this.capabilitiesOf(record)
       const process = record.process
       const serverKind =
@@ -302,10 +297,12 @@ export class RecoverAfterHostStart {
       const item = this.items.get(dwarfId) ?? { dwarfId, reason: 'turn-lost' as const }
       this.items.set(dwarfId, { ...item, messageIds: [...(item.messageIds ?? []), ...messageIds] })
     }
+    this.carryOver()
     const report = this.report()
     if (records.size > 0 || report.unrecovered.length > 0) {
       this.deps.transactions.inTransaction(() => this.deps.reports.save(report))
     }
+    this.deps.display.classified(report)
     if (report.unrecovered.length > 0) {
       this.deps.bus.publish({
         type: 'HostRecovered',
@@ -320,7 +317,7 @@ export class RecoverAfterHostStart {
   }
 
   private async runJob(job: Job, record: LaunchRecord): Promise<void> {
-    const driver = this.driverOf(record)
+    const driver = this.deps.resumer.driverOf(record)
     if (job.t === 'end-survivor') {
       const outcome = await this.deps.endSurvivor(job.dwarfId)
       if (outcome.kind !== 'ended') {
@@ -328,89 +325,31 @@ export class RecoverAfterHostStart {
         return
       }
       this.processEnded(job.process)
-      await this.afterSurvivor(job.then, record, driver)
+      await this.afterSurvivor(job.then, record)
       return
     }
     if (job.t === 'adopt') {
       const adopted = await driver?.adopt?.(record.ref).catch(() => null)
       if (adopted !== undefined && adopted !== null) {
-        this.owned(record, adopted)
+        this.deps.resumer.owned(record, adopted)
+        this.resumed.push(record.dwarfId)
         return
       }
-      await this.afterSurvivor(job.then, record, driver)
+      await this.afterSurvivor(job.then, record)
       return
     }
-    await this.resume(record, driver)
+    await this.resume(record)
   }
 
-  private async afterSurvivor(
-    then: AfterSurvivor,
-    record: LaunchRecord,
-    driver: ProviderDriver | undefined
-  ): Promise<void> {
+  private async afterSurvivor(then: AfterSurvivor, record: LaunchRecord): Promise<void> {
     if (then === 'no-resume') this.unrecovered(record.dwarfId, 'no-resume')
-    else await this.resume(record, driver)
+    else await this.resume(record)
   }
 
-  private async resume(record: LaunchRecord, driver: ProviderDriver | undefined): Promise<void> {
-    if (driver?.resume === undefined) {
-      this.unrecovered(record.dwarfId, 'no-resume')
-      return
-    }
-    let session: DriverSession
-    try {
-      session = await driver.resume(record.ref)
-    } catch (error) {
-      this.unrecovered(record.dwarfId, resumeFailure(error))
-      return
-    }
-    await this.ownResumed(record, session)
-  }
-
-  /** S4.18: the same dwarf, its record moved to the resumed session and this epoch. */
-  private async ownResumed(record: LaunchRecord, session: DriverSession): Promise<void> {
-    const { ref } = session
-    const identity = await this.processOf(ref)
-    this.deps.suppliers.bindings.bind(ref, record.dwarfId)
-    if (ref.providerSessionId !== record.ref.providerSessionId) {
-      this.deps.crew.rebind(record.dwarfId, identityOf(ref))
-    }
-    this.deps.transactions.inTransaction(() => {
-      if (identity !== null) {
-        this.deps.processes.put({
-          identity,
-          purpose: 'session',
-          launchId: record.launchId,
-          hostEpoch: this.deps.hostEpoch
-        })
-      }
-      const { process: _old, ...rest } = record
-      void _old
-      this.deps.records.put({
-        ...rest,
-        ref,
-        ...(identity === null ? {} : { process: identity }),
-        hostEpoch: this.deps.hostEpoch
-      })
-    })
-    this.resumed.push(record.dwarfId)
-  }
-
-  /** S4.11: a re-adopted session keeps its process; it is bound to the same dwarf. */
-  private owned(record: LaunchRecord, session: DriverSession): void {
-    this.deps.suppliers.bindings.bind(session.ref, record.dwarfId)
-    this.deps.transactions.inTransaction(() =>
-      this.deps.records.put({ ...record, ref: session.ref, hostEpoch: this.deps.hostEpoch })
-    )
-    this.resumed.push(record.dwarfId)
-  }
-
-  /** The full identity of the resumed session's process, read back by its pid (INV-51). */
-  private async processOf(ref: SessionRef): Promise<ProcessIdentity | null> {
-    if (ref.pid === undefined) return null
-    const probed = await this.probe(ref.pid)
-    if (probed === 'absent' || probed === 'unknown') return null
-    return probed
+  private async resume(record: LaunchRecord): Promise<void> {
+    const resumed = await this.deps.resumer.resume(record)
+    if (resumed.ok) this.resumed.push(record.dwarfId)
+    else this.unrecovered(record.dwarfId, resumed.error)
   }
 
   private processEnded(process: ProcessIdentity): void {
@@ -428,6 +367,16 @@ export class RecoverAfterHostStart {
     if (!this.items.has(dwarfId)) this.items.set(dwarfId, { dwarfId, reason })
   }
 
+  /** S16.09: a carried item's ✕ message ids join the item this boot lists for the same dwarf. */
+  private carryOver(): void {
+    for (const earlier of this.carried) {
+      const item = this.items.get(earlier.dwarfId as DwarfId)
+      if (item === undefined || earlier.messageIds === undefined) continue
+      const messageIds = [...new Set([...earlier.messageIds, ...(item.messageIds ?? [])])]
+      this.items.set(earlier.dwarfId as DwarfId, { ...item, messageIds })
+    }
+  }
+
   private report(): HostRecoveryReport {
     return {
       hostEpoch: this.deps.hostEpoch,
@@ -437,25 +386,11 @@ export class RecoverAfterHostStart {
     }
   }
 
-  private driverOf(record: LaunchRecord): ProviderDriver | undefined {
-    return this.deps.suppliers.registry
-      .drivers(record.ref.providerId)
-      .find((driver) => driver.transport === record.driverTransport)
-  }
-
   private capabilitiesOf(record: LaunchRecord): { resume: string; adopt: boolean } {
     try {
       return this.deps.catalogue.capabilities(record.ref.providerId)
     } catch {
       return { resume: 'none', adopt: false }
-    }
-  }
-
-  private async probe(pid: number): Promise<Awaited<ReturnType<ProcessControl['probe']>>> {
-    try {
-      return await this.deps.processControl.probe(pid)
-    } catch {
-      return 'unknown'
     }
   }
 
