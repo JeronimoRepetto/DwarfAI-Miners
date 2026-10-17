@@ -176,8 +176,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # tsc and vue-tsc check the whole program in one process. On the macOS runner the default V8 heap (about
+      # 2 GB) is no longer enough (exit 134, "JavaScript heap out of memory", PR #1386, 2026-10-17); 4 GB stays
+      # well inside every runner's memory.
       - name: Typecheck
         run: pnpm typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
 
       # `pnpm lint` runs ESLint, then dependency-cruiser (`pnpm depcruise`),
       # so the four-command local gate stays the whole gate (17 §0).
