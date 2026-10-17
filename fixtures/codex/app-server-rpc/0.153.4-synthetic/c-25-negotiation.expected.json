@@ -1,0 +1,29 @@
+{
+  "case": "C-25",
+  "description": "ADR-009 D2, 15 §2.1–§2.3: the app-server handshake negotiates no capability field, and a probe that does not answer within PROBE_TIMEOUT_MS gives launch its fail-closed false; the session's capabilities are the Codex ceiling merged with the in-force X1 row and that probe (the merge never rises above the lower source). The first turn is written and never answered.",
+  "script": [{ "do": "launch" }, { "do": "probe" }, { "do": "advance", "ms": 5000 }],
+  "outcomes": [{ "resolved": true }, null, null],
+  "negotiated": { "protocol": {} },
+  "events": [{ "t": "status", "value": "working" }],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    }
+  ]
+}

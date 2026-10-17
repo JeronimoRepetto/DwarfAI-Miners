@@ -1,0 +1,12 @@
+{
+  "id": 103,
+  "method": "item/tool/requestUserInput",
+  "params": {
+    "threadId": "thr_123",
+    "turnId": "turn_1",
+    "itemId": "item_tool_1",
+    "questions": [],
+    "dwarfaiUnknownField": "extra"
+  },
+  "dwarfaiUnknownField": "extra"
+}

@@ -1,0 +1,109 @@
+{
+  "case": "C-09",
+  "description": "15 §2.7 Questions row Codex item/tool/requestUserInput (EXPERIMENTAL): one ask per request, one step per question (its text, its option labels; free text always allowed); answers go as answers{<questionId>: {answers: [label or free text]}}; { decline: true } sends the empty answer set, the only decline the protocol offers (HR A6). The second request arrives in the same read as the first one's serverRequest/resolved, so it opens first (HO-11).",
+  "script": [
+    { "do": "launch" },
+    {
+      "do": "answerQuestion",
+      "providerRequestId": "0",
+      "answers": [
+        { "step": 0, "option": "Yes" },
+        { "step": 1, "freeText": "blue" }
+      ]
+    },
+    { "do": "answerQuestion", "providerRequestId": "1", "decline": true }
+  ],
+  "outcomes": [{ "resolved": true }, { "kind": "accepted" }, { "kind": "accepted" }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "question",
+        "providerRequestId": "0",
+        "channel": "driver",
+        "payload": {
+          "steps": [
+            { "text": "Run the migration now?", "options": ["Yes", "No"], "allowsFreeText": true },
+            { "text": "Which colour should the badge be?", "options": [], "allowsFreeText": true }
+          ]
+        },
+        "secret": false,
+        "turnKey": "0000000a-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000001",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "question",
+        "providerRequestId": "1",
+        "channel": "driver",
+        "payload": {
+          "steps": [
+            { "text": "Which folder should I clean?", "options": [], "allowsFreeText": true }
+          ]
+        },
+        "secret": false,
+        "turnKey": "0000000a-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000003",
+        "role": "dwarf",
+        "text": "Done.",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "0000000a-0000-4000-8000-000000000001",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "result": {
+        "answers": { "confirm": { "answers": ["Yes"] }, "colour": { "answers": ["blue"] } }
+      }
+    },
+    { "jsonrpc": "2.0", "id": 1, "result": { "answers": {} } }
+  ]
+}
