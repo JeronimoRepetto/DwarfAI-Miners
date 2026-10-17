@@ -38,6 +38,9 @@
   has a generated preload member, so its row moved to the found table.
 - **Updated for ISSUE-171:** A-N29 `stopDwarf` (`dwarf:stop`, NEW, AMENDMENT-2) is declared in the registry and has a
   generated preload member, so its row moved to the found table.
+- **Updated for ISSUE-174:** A-N10 `retryRecovery` (`host:recovery:retry`, NEW) and A-N11 `dismissRecovery`
+  (`host:recovery:dismiss`, NEW) are declared in the registry and have generated preload members, so their rows moved
+  to the found table.
 - **Updated for ISSUE-123:** A-44 is renamed by the cut-1 switch (14 §2.1 CHANGE): the generated preload member
   `reportVisibleMines` sends `presence:visibleMines`, so it has its own row under the same id, and the `panel:openMine`
   row lost its preload location. Today's `setOpenMine` registration and constant stay until cut 5.
@@ -135,6 +138,8 @@ kind `14` gives it.
 | `host:connection:get`             | `getHostConnection`           | invoke | src/preload/index.ts:533                                                                                                          | A-N03   | NEW    | —                 | Declared by ISSUE-052; its preload member is generated (ISSUE-045); unrouted until cut 0                                                  |
 | `host:connection:retry`           | `retryHostConnection`         | invoke | src/preload/index.ts:541                                                                                                          | A-N05   | NEW    | —                 | Declared by ISSUE-052; its preload member is generated (ISSUE-045); unrouted until cut 0                                                  |
 | `host:event`                      | `onHostEvent`                 | push   | src/preload/index.ts:596                                                                                                          | A-N02   | NEW    | —                 | Declared by ISSUE-082; its preload member is generated (ISSUE-045); UI main pushes it, unrouted until cut 1                               |
+| `host:recovery:dismiss`           | `dismissRecovery`             | invoke | src/preload/index.ts:575                                                                                                          | A-N11   | NEW    | —                 | Declared by ISSUE-174 (PO #90; OQ-43); its preload member is generated (ISSUE-045); unrouted until cut 3a                                 |
+| `host:recovery:retry`             | `retryRecovery`               | invoke | src/preload/index.ts:573                                                                                                          | A-N10   | NEW    | —                 | Declared by ISSUE-174 (PO #90; OQ-41 A); its preload member is generated (ISSUE-045); unrouted until cut 3a                               |
 | `host:snapshot`                   | `getHostSnapshot`             | invoke | src/preload/index.ts:595                                                                                                          | A-N01   | NEW    | —                 | Declared by ISSUE-082; its preload member is generated (ISSUE-045); unrouted until cut 1                                                  |
 | —                                 | `pathForDroppedFile`          | helper | src/preload/index.ts:707                                                                                                          | A-X1    | KEEP   | —                 |                                                                                                                                           |
 | `jev:apiKey:clear`                | `clearJevApiKey`              | invoke | src/main/index.ts:1498<br>src/preload/index.ts:932<br>src/shared/contracts.ts:5456                                                | A-49    | KEEP   | —                 |                                                                                                                                           |
@@ -193,19 +198,17 @@ kind `14` gives it.
 
 ### 14 §2.2 rows not in the tree
 
-| Wire name               | Member                | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
-| ----------------------- | --------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
-| `dwarf:message:retry`   | `retryDwarfMessage`   | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
-| `dwarf:rename`          | `renameDwarf`         | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
-| `dwarf:name:reset`      | `resetDwarfName`      | invoke | not found | A-N09 | NEW    | —                 | Successor of the found legacy `dwarf:resetName` (14 §8 I-21), which uses the same member name |
-| `host:recovery:retry`   | `retryRecovery`       | invoke | not found | A-N10 | NEW    | —                 |                                                                                               |
-| `host:recovery:dismiss` | `dismissRecovery`     | invoke | not found | A-N11 | NEW    | —                 |                                                                                               |
-| `mode:move`             | `moveToMode`          | invoke | not found | A-N13 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `mode:transition`       | `onModeTransition`    | push   | not found | A-N14 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `mode:transition:done`  | `modeTransitionDone`  | send   | not found | A-N15 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `veta:clickThrough`     | `setVetaClickThrough` | send   | not found | A-N22 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `veta:layout`           | `layoutVeta`          | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `window:limits`         | `getWindowingLimits`  | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `veta:dock:changed`     | `onVetaDockChanged`   | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| Wire name              | Member                | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
+| ---------------------- | --------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
+| `dwarf:message:retry`  | `retryDwarfMessage`   | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
+| `dwarf:rename`         | `renameDwarf`         | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
+| `dwarf:name:reset`     | `resetDwarfName`      | invoke | not found | A-N09 | NEW    | —                 | Successor of the found legacy `dwarf:resetName` (14 §8 I-21), which uses the same member name |
+| `mode:move`            | `moveToMode`          | invoke | not found | A-N13 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `mode:transition`      | `onModeTransition`    | push   | not found | A-N14 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `mode:transition:done` | `modeTransitionDone`  | send   | not found | A-N15 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:clickThrough`    | `setVetaClickThrough` | send   | not found | A-N22 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:layout`          | `layoutVeta`          | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `window:limits`        | `getWindowingLimits`  | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:dock:changed`    | `onVetaDockChanged`   | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 
 <!-- reinventory-table:end -->

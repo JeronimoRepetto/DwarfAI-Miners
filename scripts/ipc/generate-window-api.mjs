@@ -122,7 +122,9 @@ const MEMBERS = {
   'claude:hooks:set': 'setClaudeHooksEnabled', // A-N31 (unrouted until cut 2)
   'ask:step:set': 'setAskStep', // A-N07 (unrouted until cut 2)
   'welcome:answer': 'answerWelcome', // A-N32 (unrouted until cut 2)
-  'dwarf:stop': 'stopDwarf' // A-N29 (unrouted until cut 3a)
+  'dwarf:stop': 'stopDwarf', // A-N29 (unrouted until cut 3a)
+  'host:recovery:retry': 'retryRecovery', // A-N10 (unrouted until cut 3a)
+  'host:recovery:dismiss': 'dismissRecovery' // A-N11 (unrouted until cut 3a)
 }
 
 /**

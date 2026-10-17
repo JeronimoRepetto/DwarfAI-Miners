@@ -100,7 +100,12 @@ const SERVED_SINCE_CUT_0 = [
   'frame:message.delivery',
   'section:marks',
   // Describing attachments: B-M28, from cut 3 (ISSUE-169).
-  'conversation.describeAttachments'
+  'conversation.describeAttachments',
+  // The Host recovery report: B-M35, B-M36, B-F21 and the `recovery` section, from cut 3 (ISSUE-174).
+  'frame:host.recovered',
+  'launching.dismissRecovery',
+  'launching.retryRecovery',
+  'section:recovery'
 ]
 const SERVED_SECTIONS = [
   'meta',
@@ -109,6 +114,7 @@ const SERVED_SECTIONS = [
   'dwarfs',
   'asks',
   'launches',
+  'recovery',
   'tails',
   'marks'
 ]

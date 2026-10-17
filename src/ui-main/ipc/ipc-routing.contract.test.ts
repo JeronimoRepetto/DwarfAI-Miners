@@ -580,7 +580,10 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       // AMENDED for ISSUE-223: A-N32 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
       'welcome:answer': 'cut-2',
       // AMENDED for ISSUE-171: A-N29 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      // AMENDED for ISSUE-174: A-N10 and A-N11 join them, born `host` in 3a and routed by the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
   })
 
@@ -1764,7 +1767,10 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       'claude:hooks:set': 'cut-2',
       'ask:step:set': 'cut-2',
       'welcome:answer': 'cut-2',
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      // AMENDED for ISSUE-174: A-N10 and A-N11, born `host` in 3a, wait for the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
     // A-44 on its 14 wire feeds UI main's PresenceTracker, which tells the Host (B-M07) once the report settled.
     const host = recordingHost()
@@ -2425,7 +2431,10 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     // AMENDED for ISSUE-171 (was: A-N33 only): A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
     expect(UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      // AMENDED for ISSUE-174: A-N10 and A-N11, born `host` in 3a, wait for the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
     // The root composes their `host` handlers, each relaying its one seam-B member.
     const sent: Array<[string, unknown]> = []
