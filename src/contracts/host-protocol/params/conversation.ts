@@ -15,6 +15,26 @@ import { messageTextSchema, wirePathSchema } from './bounds'
 /** 05 `AttachmentPath` (14 §3 imports it; 05 gives no definition): a picker or drop path, re-validated by the Host. */
 export type AttachmentPath = string
 
+/**
+ * 05 `AttachmentPick` (14 §3 imports it; 05 gives no shape): 14 §8 I-10 fixes it to today's
+ * `DwarfAttachmentPick` field names, so A-25 keeps its shape (`[]` + a per-item `refusal`). The Host
+ * describes a file without reading it (16 §4.6), so it never sets `thumbnail`, and of the refusals
+ * it answers only `directory` (not a regular file), `unreadable` and `file-too-large` (over
+ * 300 000 000 bytes, AMENDMENT-1); the others are the composer's own (ISSUE-169).
+ */
+export interface AttachmentPick {
+  path: AttachmentPath
+  attachment?: { path: AttachmentPath; name: string; kind: 'image' | 'file'; bytes: number }
+  refusal?:
+    | 'directory'
+    | 'unreadable'
+    | 'already-attached'
+    | 'too-many'
+    | 'file-too-large'
+    | 'total-too-large'
+  thumbnail?: string
+}
+
 // As 14 §3.4 writes them (names, fields and comments; layout by prettier): conversation
 export interface SendMessageParams {
   dwarfId: DwarfId
@@ -47,6 +67,38 @@ export const sendMessageResultSchema = outcomeSchema(
   z.object({ messageId: messageIdSchema }).strict(),
   z.enum(['cannot-receive', 'attachment-refused'])
 )
+
+/** B-M28 `conversation.describeAttachments` params (14 §3.4): the paths to re-validate; no count limit. */
+export const describeAttachmentsParamsSchema = z
+  .object({ paths: z.array(attachmentPathSchema) })
+  .strict()
+
+/** B-M28 result item: one `AttachmentPick` per path, in the order asked. */
+export const attachmentPickSchema = z
+  .object({
+    path: attachmentPathSchema,
+    attachment: z
+      .object({
+        path: attachmentPathSchema,
+        name: wirePathSchema,
+        kind: z.enum(['image', 'file']),
+        bytes: z.number().int().nonnegative()
+      })
+      .strict()
+      .optional(),
+    refusal: z
+      .enum([
+        'directory',
+        'unreadable',
+        'already-attached',
+        'too-many',
+        'file-too-large',
+        'total-too-large'
+      ])
+      .optional(),
+    thumbnail: z.string().optional()
+  })
+  .strict()
 
 /** B-M26 `conversation.feed` params; A-15's request is this same object (14 §1.2). */
 export const feedParamsSchema = z

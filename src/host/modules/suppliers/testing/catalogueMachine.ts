@@ -2,7 +2,7 @@
 // installed detection over `FakeInstallResolver` and a recording `FakeFs`, one `ProbeTestDriver`
 // per record transport (in the profile's preference order), the real capability probing over an
 // `InMemoryCapabilityRecordStore`, a recording event bus and a `FakeIntegrationGateReader`.
-// By default every driver measures exactly its record's ceiling.
+// By default every driver measures exactly its record's ceiling (`preferredRow`).
 import type { HostEpoch } from '../../../kernel/domain/values'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { FakeFs } from '../../../kernel/fakes/FakeFs'
@@ -18,6 +18,7 @@ import { FakeDriverRegistry } from '../ports/fakes/FakeDriverRegistry'
 import { FakeInstallResolver, type FakeInstall } from '../ports/fakes/FakeInstallResolver'
 import { FakeIntegrationGateReader } from '../ports/fakes/FakeIntegrationGateReader'
 import { InMemoryCapabilityRecordStore } from '../ports/fakes/InMemoryCapabilityRecordStore'
+import { preferredRow } from './ceilingRow'
 import { ProbeTestDriver, type ProbeScript } from './ProbeTestDriver'
 
 export interface CatalogueMachineOptions {
@@ -64,7 +65,7 @@ export function catalogueMachine(
           detection,
           probe:
             options.probe?.(record, transport) ??
-            (() => Promise.resolve(structuredClone(record.ceiling)))
+            (() => Promise.resolve(preferredRow(record.ceiling)))
         })
     )
   )

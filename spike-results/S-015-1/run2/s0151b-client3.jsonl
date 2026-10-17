@@ -1,0 +1,5 @@
+{"id":1,"result":{"userAgent":"spike-1/0.153.4 (Windows 10.0.26200; x86_64) xterm-256color (spike-3; 0.0.1)","codexHome":"<HOME>\\.codex","platformFamily":"windows","platformOs":"windows"}}
+{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"<HOST>","installationId":"<INSTALLATION_ID>","environmentId":null},"emittedAtMs":1792224895318}
+{"error":{"code":-32600,"message":"no rollout found for thread id 00000000-0000-4000-8000-000000000001"},"id":2}
+{"method":"thread/status/changed","params":{"threadId":"00000000-0000-4000-8000-000000000001","status":{"type":"active","activeFlags":[]}},"emittedAtMs":1792224897672}
+{"method":"thread/status/changed","params":{"threadId":"00000000-0000-4000-8000-000000000001","status":{"type":"idle"}},"emittedAtMs":1792224903065}

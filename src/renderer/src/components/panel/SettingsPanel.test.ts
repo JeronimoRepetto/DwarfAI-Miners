@@ -17,6 +17,14 @@ import {
   /* --- end of the #588 T6 block --------------------------------------------- */
 } from '../../types'
 import SettingsPanel from './SettingsPanel.vue'
+/* --- ISSUE-264 — one import, appended ------------------------------------- */
+import {
+  ATTENTION_SFX_KINDS,
+  AUDIO_BASE_VOLUME,
+  channelVolume,
+  sfxVolume
+} from '../../lib/audio/volume'
+/* --- end of the ISSUE-264 import ------------------------------------------ */
 
 /**
  * The redesigned Settings screen's container (#138, screens/settings.md):
@@ -276,7 +284,10 @@ describe('SettingsPanel — sections in the design’s order', () => {
     expect(tab.attributes('aria-controls')).toBe(panel.attributes('id'))
   })
 
-  it('draws Integrations as the Jev rows, then OpenCode, then the privacy notice', () => {
+  // AMENDED (ISSUE-264): was "the Jev rows, then OpenCode, then the privacy notice". The pinned
+  // design puts the notice where the Jev rows end and before OpenCode (DwarfAI-Miners-Design
+  // c30a151, "after the Jev rows and before OpenCode"; settings.js:191-196), so the order is that.
+  it('draws Integrations as the Jev rows, then the privacy notice, then OpenCode', () => {
     const wrapper = render({
       section: 'Integrations',
       jevSettings: { configured: false, unavailableReason: 'encryption-unavailable' }
@@ -285,8 +296,8 @@ describe('SettingsPanel — sections in the design’s order', () => {
     const order = [...panel.querySelectorAll('.jev-settings, .opencode-settings, .privacy-notice')]
     expect(order.map((element) => element.classList[element.classList.length - 1])).toEqual([
       'jev-settings',
-      'opencode-settings',
-      'privacy-notice'
+      'privacy-notice',
+      'opencode-settings'
     ])
     // The notice stands whatever the Jev rows show, storage unavailable included.
     expect(wrapper.get('.privacy-notice').text()).toContain('api.typesafe.ai')
@@ -690,3 +701,289 @@ describe('SettingsPanel — the OpenCode section (#588 T6)', () => {
   })
 })
 /* --- end of the #588 T6 block --------------------------------------------- */
+
+/*
+ * ISSUE-264 (EPIC-16) — APPENDED: Settings against the pinned design (DwarfAI-Miners-Design
+ * d12d3fc, prototype/organisms/settings/settings.js). Every expected string below is the design
+ * component's own, copied from that file with its line (BR-20); none is retyped from a summary.
+ */
+describe('SettingsPanel — the design’s sections (ISSUE-264)', () => {
+  const SECTIONS = [
+    'General',
+    'Appearance',
+    'Sound',
+    'Notifications',
+    'Integrations',
+    'Data',
+    'About'
+  ]
+  const rowOf = (wrapper: ReturnType<typeof render>, label: string) =>
+    wrapper.findAll('.dm-srow').find((row) => row.get('.dm-srow__label').text() === label)!
+  const labels = (wrapper: ReturnType<typeof render>) =>
+    wrapper.findAll('.dm-srow__label').map((label) => label.text())
+
+  it('[US-SET-001.AC01, US-SET-001.AC05, US-SET-001.AC06, NFR-PERS-11] Settings is titled Settings with a vertical tablist named Settings sections holding seven tabs in order, opening on the last section or on General', () => {
+    const first = render({ section: undefined })
+    expect(first.get('.dm-phead__title').text()).toBe('Settings')
+    const list = first.get('[role="tablist"]')
+    expect(list.attributes('aria-orientation')).toBe('vertical')
+    expect(list.attributes('aria-label')).toBe('Settings sections')
+    expect(list.findAll('[role="tab"]').map((tab) => tab.text())).toEqual(SECTIONS)
+    // One tabpanel, owned by the selected tab: a screen reader counts seven tabs and says which.
+    const panel = first.get('[role="tabpanel"]')
+    for (const tab of first.findAll('[role="tab"]'))
+      expect(tab.attributes('aria-controls')).toBe(panel.attributes('id'))
+    expect(first.get('[aria-selected="true"]').text()).toBe('General')
+
+    // The section last open (the owner hands it back as `section`) is the one showing.
+    const reopened = render({ section: 'Sound' })
+    expect(reopened.get('[aria-selected="true"]').text()).toBe('Sound')
+    expect(reopened.get('.dm-settings__h').text()).toBe('Sound')
+
+    // US-SHELL-008.AC02: a shortcut that failed to register opens General with its banner instead.
+    const failed = render({ section: 'Sound', shortcutState: shortcutState({ registered: false }) })
+    expect(failed.get('[aria-selected="true"]').text()).toBe('General')
+    expect(failed.find('.dm-banner').exists()).toBe(true)
+  })
+
+  it('[US-SET-001.AC02, NFR-A11Y-06] ↓ and ↑ move through the sections in order and wrap', async () => {
+    const wrapper = mount(SettingsPanel, { props: baseProps() as never, attachTo: document.body })
+    const list = wrapper.get('[role="tablist"]')
+    const walk = async (key: string): Promise<string[]> => {
+      const seen: string[] = []
+      for (let i = 0; i < SECTIONS.length; i++) {
+        await list.trigger('keydown', { key })
+        await flushPromises()
+        seen.push(wrapper.get('[aria-selected="true"]').text())
+        expect(wrapper.get('.dm-settings__h').text()).toBe(seen.at(-1))
+      }
+      return seen
+    }
+    expect(await walk('ArrowDown')).toEqual([...SECTIONS.slice(1), 'General'])
+    expect(await walk('ArrowUp')).toEqual([...SECTIONS].reverse())
+    wrapper.unmount()
+  })
+
+  it('[US-SET-001.AC03] a click selects a section without reloading the rest of the Panel', async () => {
+    const wrapper = render()
+    const page = wrapper.element
+    const header = wrapper.get('.dm-phead').element
+    await wrapper.get('[data-s="Integrations"]').trigger('click')
+    expect(wrapper.get('[data-s="Integrations"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('.jev-settings').exists()).toBe(true)
+    // The same page and header nodes: only the section panel's rows were replaced.
+    expect(wrapper.element).toBe(page)
+    expect(wrapper.get('.dm-phead').element).toBe(header)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    // The owner learns which section is open, to hand it back next time (A-N21 lastSettingsSection).
+    expect(wrapper.emitted('section-change')).toEqual([['Integrations']])
+  })
+
+  it('[US-SET-002.AC01] General shows its rows in the fixed order with their defaults, Mode at launch only when Veta is built', () => {
+    // TC-264-02. A Panel build: no second mode, so no "Mode at launch" (ADR-034 item 2). The
+    // design's General (settings.js:39-50) draws Mode at launch, Position, Panel shortcut, Always
+    // on top.
+    const wrapper = render()
+    const table = [
+      ['Position', () => wrapper.get('.position-right').attributes('aria-checked'), 'true'],
+      ['Panel shortcut', () => wrapper.get('.recorder').text(), 'Ctrl + Alt + Shift + P'],
+      ['Always on top', () => wrapper.get('.pin').attributes('aria-checked'), 'true']
+    ] as const
+    expect(labels(wrapper)).toEqual(table.map(([label]) => label))
+    for (const [, read, expected] of table) expect(read()).toBe(expected)
+    expect(wrapper.text()).not.toContain('Mode at launch')
+  })
+
+  it('[US-SET-004.AC01, US-SET-004.AC04] Sound shows Music at startup and the Music, Ambience and Effects sliders with percentages, only Effects carrying the help text', () => {
+    const wrapper = render({ section: 'Sound' })
+    expect(wrapper.get('.music-at-startup').attributes('aria-checked')).toBe(
+      String(DEFAULT_AUDIO_PREFERENCES.musicAtStartup)
+    )
+    const sliders = ['Music', 'Ambience', 'Effects']
+    expect(labels(wrapper).filter((label) => sliders.includes(label))).toEqual(sliders)
+    for (const label of sliders)
+      expect(rowOf(wrapper, label).get('.dm-slider__value').text()).toMatch(/^\d{1,3}%$/)
+    expect(
+      sliders.filter((label) => rowOf(wrapper, label).find('.dm-srow__help').exists())
+    ).toEqual(['Effects'])
+    // settings.js:137, word for word.
+    expect(rowOf(wrapper, 'Effects').get('.dm-srow__help').text()).toBe(
+      'Music plays while the shell is open, and the mine’s ambience only inside a mine. Effects are a dwarf’s voice and the interface’s own sounds.'
+    )
+  })
+
+  it('[NFR-SND-10] moving the Music, Ambience or Effects slider applies its 0–100 % level to that channel at once', async () => {
+    const wrapper = render({ section: 'Sound' })
+    const moves = [
+      ['music', 'musicVolume', '0'],
+      ['ambience', 'ambienceVolume', '55'],
+      ['voice', 'voiceVolume', '100']
+    ] as const
+    for (const [channel, , value] of moves) {
+      const slider = wrapper.get(`.${channel}-volume input`)
+      ;(slider.element as HTMLInputElement).value = value
+      await slider.trigger('input')
+    }
+    const patches = wrapper.emitted('audio-change')!.map(([patch]) => patch)
+    expect(patches).toEqual(moves.map(([, field, value]) => ({ [field]: Number(value) / 100 })))
+    // The level each patch stores is the level its channel plays at: base × the fraction.
+    for (const [channel, field, value] of moves) {
+      const settings = { ...DEFAULT_AUDIO_PREFERENCES, [field]: Number(value) / 100 }
+      expect(channelVolume(channel, settings, { hidden: false, collapsed: false })).toBeCloseTo(
+        AUDIO_BASE_VOLUME[channel] * (Number(value) / 100)
+      )
+    }
+  })
+
+  it("[US-SET-004.AC05, US-SET-005.AC03] Music at startup never changes the nav toggle or the slider, and a mine's ambience mute never changes the attention cues", async () => {
+    const wrapper = render({ section: 'Sound' })
+    await wrapper.get('.music-at-startup').trigger('click')
+    await wrapper.get('.notification-sounds').trigger('click')
+    // Each switch asks for its own field alone: no volume, nothing the nav's Music toggle reads.
+    expect(wrapper.emitted('audio-change')).toEqual([
+      [{ musicAtStartup: !DEFAULT_AUDIO_PREFERENCES.musicAtStartup }],
+      [{ notificationSounds: !DEFAULT_AUDIO_PREFERENCES.notificationSounds }]
+    ])
+    // A cue's level reads no ambience at all: the ambience silenced or full, every cue is the same.
+    const gates = { hidden: false, collapsed: false }
+    for (const cue of ATTENTION_SFX_KINDS) {
+      const silent = { ...DEFAULT_AUDIO_PREFERENCES, ambienceVolume: 0 }
+      const full = { ...DEFAULT_AUDIO_PREFERENCES, ambienceVolume: 1 }
+      expect(sfxVolume(cue, silent, gates)).toBe(sfxVolume(cue, full, gates))
+      expect(sfxVolume(cue, silent, gates)).toBeGreaterThan(0)
+    }
+  })
+
+  it("[US-SET-007.AC05, US-DLG-001.AC04, US-DLG-001.AC06, BR-20] the Jev privacy notice and the delegation toggle's copy are the design's strings and the toggle is named Let Jev choose subagents by subtask complexity", () => {
+    const wrapper = render({
+      section: 'Integrations',
+      jevSettings: { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
+    })
+    // settings.js:192, word for word.
+    expect(wrapper.get('.privacy-notice').text().replace(/\s+/g, ' ')).toBe(
+      "With Jev on, the prompt text and the list of providers and models this machine can launch are sent to TypeSafe's API (api.typesafe.ai) when a session starts, so it can choose one for you. The key is stored encrypted on this machine and is sent only to TypeSafe, to authenticate that request."
+    )
+    // settings.js:189-190, word for word.
+    const delegation = rowOf(wrapper, 'Subagent delegation · beta')
+    expect(delegation.get('.dm-srow__help').text()).toBe(
+      'Let Jev choose subagents by subtask complexity. A launched session may hand a subtask back through Jev, so a bigger job can be split across cheaper models instead of running entirely on the one you started.'
+    )
+    expect(delegation.get('.delegation-toggle').attributes('aria-label')).toBe(
+      'Let Jev choose subagents by subtask complexity'
+    )
+  })
+
+  it("[US-SET-011.AC01] About shows the app's name and installed version and nothing else but Hide panel", () => {
+    const wrapper = render({ section: 'About', versionText: '1.2.3' })
+    const about = wrapper.get('.dm-settings__about')
+    // settings.js:231; the prototype-only line (settings.js:233) is never in the product.
+    expect(about.findAll('p').map((p) => p.text())).toEqual(['DwarfAI-Miners · version 1.2.3'])
+    expect(about.findAll('button').map((button) => button.text())).toEqual(['Hide panel'])
+    expect(wrapper.get('[role="tabpanel"]').findAll('button, input, select')).toHaveLength(1)
+  })
+})
+
+describe('SettingsPanel — the Reset metrics confirmation (ISSUE-264)', () => {
+  const mounted: { unmount: () => void }[] = []
+  afterEach(() => {
+    for (const wrapper of mounted.splice(0)) wrapper.unmount()
+    document.body.innerHTML = ''
+  })
+  function data() {
+    const wrapper = mount(SettingsPanel, {
+      props: { ...baseProps(), section: 'Data' } as never,
+      attachTo: document.body
+    })
+    mounted.push(wrapper)
+    return wrapper
+  }
+  const scrim = () => document.body.querySelector<HTMLElement>('.dm-scrim')
+  const field = () => scrim()!.querySelector<HTMLInputElement>('input')!
+  const action = (index: number) =>
+    [...scrim()!.querySelectorAll<HTMLButtonElement>('.dm-dialog__actions button')][index]!
+  async function open(wrapper: ReturnType<typeof data>): Promise<void> {
+    await wrapper.get('.reset-metrics').trigger('click')
+    await flushPromises()
+  }
+  async function type(value: string): Promise<void> {
+    field().value = value
+    field().dispatchEvent(new Event('input'))
+    await flushPromises()
+  }
+
+  it('[US-SET-010.AC01, US-SET-010.AC02, US-SET-010.AC03, NFR-A11Y-03, BR-18] Reset metrics… opens the typed-confirmation dialog disabled, and only a trimmed, case-insensitive yes enables it', async () => {
+    const wrapper = data()
+    await open(wrapper)
+    expect(scrim()!.querySelector('[role="dialog"]')!.getAttribute('aria-modal')).toBe('true')
+    expect(action(1).textContent).toBe('Reset metrics')
+    expect(action(1).disabled).toBe(true)
+    for (const no of ['', 'no', 'ye', 'yess', 'y es', 'yes!']) {
+      await type(no)
+      expect(action(1).disabled, JSON.stringify(no)).toBe(true)
+    }
+    for (const yes of ['yes', 'YES', 'yes ', ' Yes', '\tyEs  ']) {
+      await type(yes)
+      expect(action(1).disabled, JSON.stringify(yes)).toBe(false)
+    }
+    // Reopened, it starts disabled again whatever the field held when it closed.
+    action(0).click()
+    await flushPromises()
+    await open(wrapper)
+    expect(action(1).disabled).toBe(true)
+  })
+
+  it('[US-SET-010.AC04] Cancel, Esc or a click outside closes the dialog and resets nothing', async () => {
+    const wrapper = data()
+    await open(wrapper)
+    await type('yes')
+    action(0).click()
+    await flushPromises()
+    expect(scrim()).toBeNull()
+
+    await open(wrapper)
+    await type('yes')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(scrim()).toBeNull()
+
+    // A press on the scrim, outside the card: the design's dialog is not dismissed from outside
+    // (prototype/molecules/dialog/dialog.js:26, `outside: false`), so it stays open, resets nothing.
+    await open(wrapper)
+    scrim()!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    scrim()!.click()
+    await flushPromises()
+    expect(scrim()).not.toBeNull()
+    expect(wrapper.emitted('reset-confirm')).toBeUndefined()
+  })
+})
+
+describe('SettingsPanel — hidden until built (ISSUE-267)', () => {
+  it('[ADR-034, BR-19] General draws no Mode at launch row while the build ships the Panel alone', () => {
+    const general = render({ section: 'General' }).get('.dm-settings__panel')
+    // Absent, not disabled: no row, no select, no label, so no space is held for it.
+    expect(general.text()).not.toContain('Mode at launch')
+    expect(general.find('[aria-label="Mode at launch"]').exists()).toBe(false)
+    expect(general.findAll('select').length).toBe(0)
+  })
+
+  it('[BR-19] the default-provider select offers no provider whose launch is not offered', () => {
+    const wrapper = render({
+      section: 'Integrations',
+      jevSettings: { configured: true, preferences: DEFAULT_JEV_PREFERENCES },
+      jevProviders: [
+        { provider: 'claude', installed: true, launchable: true },
+        {
+          provider: 'antigravity',
+          installed: true,
+          launchable: false,
+          reason: 'That agent cannot be started from the panel yet.'
+        }
+      ]
+    })
+    const options = wrapper
+      .get('[aria-label="Default provider"]')
+      .findAll('option')
+      .map((node) => node.text())
+    expect(options).toEqual(['None', 'Claude'])
+  })
+})

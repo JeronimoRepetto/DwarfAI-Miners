@@ -240,12 +240,66 @@ describe('migration 0001-initial: schema v1 (09 §4)', () => {
     ])
   })
 
-  it('[ADR-005] foreign_key_check and integrity_check are clean after migration 1', () => {
+  it('[ADR-005] foreign_key_check and integrity_check are clean after every migration', () => {
     const opened = migrate()
 
-    expect(opened).toMatchObject({ readOnly: false, version: 1, applied: [1] })
+    // AMENDED for owner amendment N (AMENDMENT-14): migration 2 rebuilds delegation_tokens.
+    expect(opened).toMatchObject({ readOnly: false, version: 2, applied: [1, 2] })
     expect(opened.db.all('PRAGMA foreign_key_check')).toEqual([])
     expect(opened.db.all('PRAGMA integrity_check')).toEqual([{ integrity_check: 'ok' }])
+  })
+
+  it('[ADR-005, ADR-013] migration 2 keeps every delegation_tokens row of a schema-v1 file and then stores a protocol hash and an unbound parent', () => {
+    // Owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15: the 09 §6.3 rebuild copies all six
+    // columns; foreign_key_check stays clean.
+    const all = migrationsFor({ clock, ids: new SequenceIdGenerator() })
+    const v1 = migrate({ migrations: all.slice(0, 1) })
+    const row = {
+      launch_id: '00000000-0000-7000-8000-00000000f0a1',
+      parent_dwarf_id: '00000000-0000-7000-8000-00000000f0d1',
+      mechanism: 'ticket-file',
+      credential_hash: 'c'.repeat(64),
+      issued_at: 10,
+      revoked_at: 20
+    }
+    v1.db.run(
+      `INSERT INTO mines (id, canonical_path, name, name_norm, state, created_at, last_used_at)
+       VALUES ('00000000-0000-7000-8000-00000000f0e1', '/work/m', 'm', 'm', 'active', 1, 1)`
+    )
+    v1.db.run(
+      `INSERT INTO dwarfs (id, mine_id, provider_id, provider_session_id, base_name, rank,
+         process_state, turn_state, arrived_at, last_activity_at)
+       VALUES (?, '00000000-0000-7000-8000-00000000f0e1', 'claude', 's-1', 'Durin', 'foreman',
+         'running', 'none-yet', 1, 1)`,
+      [row.parent_dwarf_id]
+    )
+    v1.db.run(
+      `INSERT INTO launches (id, mine_id, cwd, way_kind, provider_id, launched_with_let_jev_choose,
+         state, delegated, host_epoch, requested_at)
+       VALUES (?, '00000000-0000-7000-8000-00000000f0e1', '/work/m', 'supplier', 'claude', 1,
+         'routing', 0, 'epoch-1', 1)`,
+      [row.launch_id]
+    )
+    v1.db.run(
+      `INSERT INTO delegation_tokens (launch_id, parent_dwarf_id, mechanism, credential_hash,
+         issued_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      Object.values(row)
+    )
+    toClose.splice(toClose.indexOf(v1.db), 1)
+    v1.db.close()
+
+    const v2 = migrate({ migrations: all })
+
+    expect(v2).toMatchObject({ version: 2, applied: [2] })
+    expect(v2.db.all('SELECT * FROM delegation_tokens')).toEqual([row])
+    expect(v2.db.all('PRAGMA foreign_key_check')).toEqual([])
+    v2.db.run(
+      `UPDATE delegation_tokens SET mechanism = 'protocol', parent_dwarf_id = NULL WHERE launch_id = ?`,
+      [row.launch_id]
+    )
+    expect(v2.db.all('SELECT mechanism, parent_dwarf_id FROM delegation_tokens')).toEqual([
+      { mechanism: 'protocol', parent_dwarf_id: null }
+    ])
   })
 
   it('[ADR-005] the checksum of 0001-initial is stable across a CRLF checkout', () => {
@@ -822,7 +876,8 @@ describe('schema contract probes (17 §1.5, 09 §12)', () => {
 
   describe('09 §4.1 meta, migrations, install moment, reset journal', () => {
     it('[ADR-005] schema_migrations: a version from 1 with a 64-character checksum and a new name stores; version 0, a short checksum and a repeated name are rejected', () => {
-      T('schema_migrations.version CHECK', insert('schema_migrations', { version: 2 }))
+      // AMENDED for owner amendment N (AMENDMENT-14): version 2 is migration 0002's own row.
+      T('schema_migrations.version CHECK', insert('schema_migrations', { version: 99 }))
       R('schema_migrations.version CHECK', insert('schema_migrations', { version: 0 }))
       T('schema_migrations.checksum CHECK', insert('schema_migrations', { checksum: hex64(7) }))
       R('schema_migrations.checksum CHECK', insert('schema_migrations', { checksum: 'abc' }))
@@ -2774,24 +2829,37 @@ describe('schema contract probes (17 §1.5, 09 §12)', () => {
       )
     })
 
-    it('[ADR-013] delegation_tokens: each mechanism stores, a ticket file with its 64-character credential hash; an unknown mechanism, a short hash, a ticket file without a hash and a hash on another mechanism are rejected; a token goes with its launch or its parent', () => {
+    // AMENDED for owner amendment N (AMENDMENT-14, OQ-85), 2026-10-15, migration 0002: every relay entry
+    // (`ticket-file`, `protocol`) authenticates with the credential file, so both store its hash
+    // (A14-05); the token row is written before its launch's dwarf exists, so its parent is NULL
+    // until `DwarfLaunched` (A14-06).
+    it('[ADR-013] delegation_tokens: each mechanism stores, a ticket file or a protocol entry with its 64-character credential hash; an unknown mechanism, a short hash, a relay entry without a hash and a hash on in-process are rejected; a token goes with its launch or its parent', () => {
       put(insert('delegation_tokens'))
       const key = { launch_id: LAUNCH }
-      for (const mechanism of ['in-process', 'protocol']) {
-        T('delegation_tokens.mechanism CHECK', update('delegation_tokens', { mechanism }, key))
-      }
+      T(
+        'delegation_tokens.mechanism CHECK',
+        update('delegation_tokens', { mechanism: 'protocol', credential_hash: hex64(8) }, key)
+      )
+      T(
+        'delegation_tokens.mechanism CHECK',
+        update('delegation_tokens', { mechanism: 'in-process', credential_hash: null }, key)
+      )
       R('delegation_tokens.mechanism CHECK', update('delegation_tokens', { mechanism: 'env' }, key))
       T(
-        "delegation_tokens CHECK ((mechanism = 'ticket-file') = (credential_hash IS NOT NULL))",
+        "delegation_tokens CHECK ((mechanism IN ('ticket-file', 'protocol')) = (credential_hash IS NOT NULL))",
         update('delegation_tokens', { mechanism: 'ticket-file', credential_hash: hex64(9) }, key)
       )
       R(
-        "delegation_tokens CHECK ((mechanism = 'ticket-file') = (credential_hash IS NOT NULL))",
+        "delegation_tokens CHECK ((mechanism IN ('ticket-file', 'protocol')) = (credential_hash IS NOT NULL))",
         update('delegation_tokens', { credential_hash: null }, key)
       )
-      R(
-        "delegation_tokens CHECK ((mechanism = 'ticket-file') = (credential_hash IS NOT NULL))",
+      T(
+        "delegation_tokens CHECK ((mechanism IN ('ticket-file', 'protocol')) = (credential_hash IS NOT NULL))",
         update('delegation_tokens', { mechanism: 'protocol' }, key)
+      )
+      R(
+        "delegation_tokens CHECK ((mechanism IN ('ticket-file', 'protocol')) = (credential_hash IS NOT NULL))",
+        update('delegation_tokens', { mechanism: 'in-process' }, key)
       )
       T(
         'delegation_tokens.credential_hash CHECK',
@@ -2810,16 +2878,31 @@ describe('schema contract probes (17 §1.5, 09 §12)', () => {
       expect(value('SELECT count(*) FROM delegation_tokens')).toBe(0)
       const launch = newId()
       const spare = newId()
+      const unbound = newId()
       put(
         insert('launches', { id: launch }),
         insert('launches', { id: spare }),
+        insert('launches', { id: unbound }),
         insert('delegation_tokens', { launch_id: launch, parent_dwarf_id: DWARF2 })
       )
       R(
         'fk delegation_tokens.parent_dwarf_id → dwarfs',
         insert('delegation_tokens', { launch_id: spare, parent_dwarf_id: GHOST })
       )
+      // A token issued before its launch's dwarf arrived has no parent yet (A14-06).
+      T(
+        'fk delegation_tokens.parent_dwarf_id → dwarfs',
+        insert('delegation_tokens', { launch_id: unbound, parent_dwarf_id: null })
+      )
       T('fk delegation_tokens.parent_dwarf_id → dwarfs', remove('dwarfs', { id: DWARF2 }))
+      expect(value('SELECT count(*) FROM delegation_tokens')).toBe(1)
+      const arrived = newId()
+      put(insert('dwarfs', { id: arrived }))
+      T(
+        'fk delegation_tokens.parent_dwarf_id → dwarfs',
+        update('delegation_tokens', { parent_dwarf_id: arrived }, { launch_id: unbound })
+      )
+      T('fk delegation_tokens.parent_dwarf_id → dwarfs', remove('dwarfs', { id: arrived }))
       expect(value('SELECT count(*) FROM delegation_tokens')).toBe(0)
     })
   })

@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"spike-1","version":"0.0.1","dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}
+{"jsonrpc":"2.0","method":"initialized","params":{"dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}
+{"jsonrpc":"2.0","id":2,"method":"thread/start","params":{"cwd":"<REPO>","approvalPolicy":"on-request","sandbox":"read-only","dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}
+{"jsonrpc":"2.0","id":3,"method":"turn/start","params":{"threadId":"00000000-0000-4000-8000-000000000001","input":[{"type":"text","text":"Reply with exactly the word one.","dwarfaiUnknownField":"extra"}],"dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}

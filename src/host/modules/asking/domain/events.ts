@@ -1,8 +1,8 @@
 // The asking module's domain events (08 §0, §2.7), over the kernel envelope (08 §1.2). Each is
 // published after the transaction that wrote its rows committed (16 §2.3). ISSUE-130 declares
 // `AskOpened` and `AskStepChanged` for their frame projections (transport/frames/askFrames.ts);
-// the broker publishes them with the issues that build `open` and `setStep` (later: ISSUE-129,
-// ISSUE-140). Pure types (05 §2.2, R1).
+// the broker publishes them from `open` and `setStep` (ISSUE-132, ISSUE-129), and the Host routes
+// them (ISSUE-140). Pure types (05 §2.2, R1).
 import type { DomainEvent } from '../../../kernel/domain/domainEvent'
 import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts'
 import type { AskId, DwarfId } from '../../../kernel/domain/values'

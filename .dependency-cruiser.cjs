@@ -14,6 +14,15 @@
 //    drops those dependencies, dependency-cruiser src/extract/extract-dependencies.mjs:180-181); the
 //    ISSUE-005 canary suite proves R16 through ESLint's arch/legacy-only-through-bridge rule
 //    (eslint.config.mjs, which replaces 05 §5.3's IMP.legacy group).
+// 5. R9 split, owner-approved 2026-10-15, ISSUE-200 (deviation from 05 §5.1 R9, which lets the relay
+//    shim import contracts/logging only): the relay `host/modules/delegation/adapters/mcp/relay/**`
+//    may also import `contracts/host-protocol/**` by relative path (the ADR-003 item 4 frame codec,
+//    `McpHello`, the ADR-002 D2 endpoint rule), never the `@dwarfai/contracts` barrel; the diagnostics
+//    adapters stay logging-only (R9-diagnostics-only-logging, R9-relay-only-logging-and-host-protocol).
+// 6. R6-relay-entry-not-imported (ISSUE-200, security review of #1328): `relayMain.ts` is the relay
+//    process's entry (built as out/host/dwarfai-mcp.js by electron.vite.relay.config.ts) and holds the credential; nothing imports it
+//    but its own tests (`relay/*.test.ts`), not even the composition root. What the Host needs of
+//    the relay (the entry file name, the variable name, the 15 §4 entry) lives in relayEntry.ts.
 //
 // Each rule's `comment` names the ADR-004 principle it enforces, or "05 local rule" (05 §5.1 column
 // "ADR-004"); scripts/checks/rule-principles.test.mjs reads them (ADR-004 Verification).
@@ -37,6 +46,13 @@ const EDGES = {
   preferences: [],
   diagnostics: []
 }
+// Type-only module→module edges: the importer may name the target's types (`import type`) and
+// nothing else, so a value import is still an R4 violation. Owner amendment N (AMENDMENT-14,
+// OQ-85), addendum A14-07, 2026-10-15: delegation's `issueFor` returns suppliers'
+// `DelegationInjection` (15 §1.2) and reads `ProviderCapabilities['mcpInjection']`.
+const TYPE_ONLY_EDGES = {
+  delegation: ['suppliers']
+}
 const edgeRules = Object.entries(EDGES).map(([from, allowed]) => ({
   name: `R4-module-edge-${from}`,
   severity: 'error',
@@ -44,7 +60,19 @@ const edgeRules = Object.entries(EDGES).map(([from, allowed]) => ({
   from: { path: `^src/host/modules/${from}/` },
   to: {
     path: '^src/host/modules/[^/]+/index\\.ts$',
-    pathNot: [`^src/host/modules/(${[from, ...allowed].join('|')})/index\\.ts$`]
+    pathNot: [
+      `^src/host/modules/(${[from, ...allowed, ...(TYPE_ONLY_EDGES[from] ?? [])].join('|')})/index\\.ts$`
+    ]
+  }
+}))
+const typeOnlyEdgeRules = Object.entries(TYPE_ONLY_EDGES).map(([from, typesOf]) => ({
+  name: `R4-module-edge-${from}-type-only`,
+  severity: 'error',
+  comment: `${from} may import only the types of ${typesOf.join(', ')} (05 §1.3, AMENDMENT-14 A14-07; ADR-004 P3)`,
+  from: { path: `^src/host/modules/${from}/` },
+  to: {
+    path: `^src/host/modules/(${typesOf.join('|')})/index\\.ts$`,
+    dependencyTypesNot: ['type-only']
   }
 }))
 
@@ -119,6 +147,7 @@ module.exports = {
       }
     },
     ...edgeRules,
+    ...typeOnlyEdgeRules,
     {
       name: 'R5-no-cycles',
       comment: 'the module graph is acyclic (05 R5; ADR-004 P10)',
@@ -137,6 +166,16 @@ module.exports = {
         pathNot: ['^src/host/modules/', '^src/host/main\\.ts$', '^src/host/wiring/']
       },
       to: { path: '^src/host/modules/[^/]+/adapters/' }
+    },
+    {
+      name: 'R6-relay-entry-not-imported',
+      comment:
+        'the relay entry relayMain.ts is imported only by its own tests (05 R6, deviation 6; ADR-004 P4)',
+      severity: 'error',
+      from: {
+        pathNot: '^src/host/modules/delegation/adapters/mcp/relay/[^/]+\.test\.ts$'
+      },
+      to: { path: '^src/host/modules/delegation/adapters/mcp/relay/relayMain\.ts$' }
     },
     {
       name: 'R7-electron-only-ui-main',
@@ -193,11 +232,18 @@ module.exports = {
     },
     {
       name: 'R9-diagnostics-only-logging',
-      comment:
-        'diagnostics adapters and the relay shim import only contracts/logging (05 R9; ADR-004 P5, P13)',
+      comment: 'diagnostics adapters import only contracts/logging (05 R9; ADR-004 P5, P13)',
       severity: 'error',
-      from: { path: '^src/host/modules/(diagnostics/adapters|delegation/adapters/mcp/relay)/' },
+      from: { path: '^src/host/modules/diagnostics/adapters/' },
       to: { path: '^src/contracts/', pathNot: '^src/contracts/logging/' }
+    },
+    {
+      name: 'R9-relay-only-logging-and-host-protocol',
+      comment:
+        'the relay shim imports only contracts/logging and contracts/host-protocol (05 R9, deviation 5; ADR-004 P5, P13)',
+      severity: 'error',
+      from: { path: '^src/host/modules/delegation/adapters/mcp/relay/' },
+      to: { path: '^src/contracts/', pathNot: '^src/contracts/(logging|host-protocol)/' }
     },
     {
       name: 'R10-host-not-ui',

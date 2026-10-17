@@ -14,7 +14,17 @@ import type {
   SnapshotParams
 } from '@dwarfai/contracts'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
-import { sessionClosed } from '../lib/delivery/actionBar'
+import {
+  buildActionBar,
+  CHANNEL_HINT,
+  KICK_HINT,
+  kickBlocked,
+  NO_CHANNEL_REASON,
+  refusalLine,
+  sessionClosed
+} from '../lib/delivery/actionBar'
+import { dwarfTip } from '../lib/dwarf/dwarfTip'
+import { sceneDwarfStatus } from '../lib/scene/sceneDwarf'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../testing/factories'
 import { useMines, type BoardWalk } from './useMines'
 import { useToasts } from './useToasts'
@@ -480,5 +490,145 @@ describe('useMines from the Host read model', () => {
     useMines().setMines(facade({}))
     expect(borin()?.pendingPermission).toBeUndefined()
     expect(borin()?.waitingReason).toBeUndefined()
+  })
+
+  // A-23 `dwarf:sendText` and A-26 `dwarf:kick` stay `legacy` through `LegacyDwarfIdBridge` in cuts 1–2, so the route a
+  // message or a kick takes is today's runtime's: it reaches the Host board only on A-P2, beside the asks.
+  it('[ADR-001] in cut 1 the Host board carries the text delivery route and capabilities today’s runtime resolved, which only A-P2 brings', async () => {
+    installHost([page(3, [mineWire()], [dwarfWire(BORIN), dwarfWire(DAIN, { status: 'working' })])])
+    await useMines().start()
+    const delivery = {
+      textDelivery: 'terminal' as const,
+      capabilities: {
+        sendText: 'terminal' as const,
+        cancel: 'terminal' as const,
+        adjustEffort: null,
+        attach: 'terminal' as const
+      }
+    }
+    const facade = (borin: Partial<ReturnType<typeof defaultDwarf>>) => ({
+      mines: [
+        defaultMine({
+          id: ALPHA,
+          dwarfs: [defaultDwarf({ id: BORIN, ...borin }), defaultDwarf({ id: DAIN })]
+        })
+      ],
+      tokensObserved: 0
+    })
+    const shown = (id: DwarfId) => boardDwarfs().find((dwarf) => dwarf.id === id)!
+    const entry = (id: DwarfId, action: 'chat' | 'kick') =>
+      buildActionBar(shown(id), { kicking: false }).find((it) => it.id === action)!
+
+    useMines().setMines(facade(delivery))
+    expect(shown(BORIN)).toMatchObject(delivery)
+    expect(entry(BORIN, 'chat')).toMatchObject({ enabled: true, hint: CHANNEL_HINT.terminal })
+    expect(refusalLine(shown(BORIN))).toBeNull()
+    expect(entry(BORIN, 'kick')).toMatchObject({ enabled: true, hint: KICK_HINT.terminal })
+    // Fail closed: a dwarf today's runtime reports no route for gets none, and keeps today's refusal.
+    expect(shown(DAIN).textDelivery).toBeUndefined()
+    expect(shown(DAIN).capabilities).toBeUndefined()
+    expect(entry(DAIN, 'chat')).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
+    expect(kickBlocked(shown(DAIN), { kicking: false })).toBe('open-turn')
+    // The route closes when A-P2 no longer carries it.
+    useMines().setMines(facade({}))
+    expect(shown(BORIN).textDelivery).toBeUndefined()
+    expect(entry(BORIN, 'chat')).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
+  })
+
+  /*
+   * APPENDED for ISSUE-255. The walk-out keeps today's corridor route and speed (the pinned design's
+   * ruling), so it can take seconds or a fraction of one: the board keeps a departed dwarf for as long
+   * as its own sprite walks out and fades, said by the sprite itself (SceneDwarf), never for a flat
+   * 720 ms. One no sprite walks (its mine is not open) still goes after WALK_OUT_MS. Under reduced
+   * motion there is no walk, so it goes at once.
+   */
+  describe('the walk-out (ISSUE-255)', () => {
+    afterEach(() => {
+      Reflect.deleteProperty(window, 'matchMedia')
+    })
+
+    async function departed(): Promise<void> {
+      const host = installHost([page(3, [mineWire()], [dwarfWire(BORIN), dwarfWire(DAIN)])])
+      await useMines().start()
+      host.push([frame(4, 'dwarf.departed', { dwarfId: BORIN, mineId: ALPHA, cause: 'stopped' })])
+    }
+    const leaving = () =>
+      boardDwarfs()
+        .filter((dwarf) => dwarf.status === 'leaving')
+        .map((dwarf) => dwarf.id)
+
+    it('[NFR-TIM-09] a long walk-out is not cut short: the dwarf stays on the board until its own walk-out ends', async () => {
+      await departed()
+      useMines().walkingOut(BORIN)
+      // A climb from the ceiling gallery: far longer than 720 ms.
+      vi.advanceTimersByTime(9_000)
+      expect(leaving()).toEqual([BORIN])
+      useMines().walkedOut(BORIN)
+      expect(leaving()).toEqual([])
+      expect(boardDwarfs().map((dwarf) => dwarf.id)).toEqual([DAIN])
+    })
+
+    it('[NFR-TIM-09] a short walk-out is not held: the dwarf goes when its walk-out ends', async () => {
+      await departed()
+      useMines().walkingOut(BORIN)
+      vi.advanceTimersByTime(300)
+      useMines().walkedOut(BORIN)
+      expect(leaving()).toEqual([])
+    })
+
+    it('[NFR-TIM-09] a walk-out nobody reports ending still ends, however the sprite went', async () => {
+      await departed()
+      useMines().walkingOut(BORIN)
+      vi.advanceTimersByTime(60_000)
+      expect(leaving()).toEqual([])
+    })
+
+    it('[US-MINE-009.AC05, NFR-A11Y-10] under reduced motion a departed dwarf leaves the board at once, its walk-out still told', async () => {
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        value: () => ({ matches: true })
+      })
+      const walks = recordWalks()
+      await departed()
+      expect(boardDwarfs().map((dwarf) => dwarf.id)).toEqual([DAIN])
+      expect(walks).toEqual([
+        { kind: 'walk-out', dwarfId: BORIN, mineId: ALPHA, cause: 'stopped', panel: 'read-only' }
+      ])
+    })
+  })
+
+  /*
+   * APPENDED for ISSUE-254: the Host's status reaches the scene as the Host said it. Today's board has
+   * one `waiting` for asking, idle and asleep alike, so the Host's own word rides on the board dwarf
+   * and the scene reads it first: a Host-idle dwarf is "Waiting", never drawn asleep.
+   */
+  it('[US-OBS-002.AC05, US-OBS-004.AC11, ADR-033] a Host-idle dwarf reads Waiting, not asleep, and every Host status is drawn as the Host said it', async () => {
+    const CALLED = {
+      idle: '01920000-0000-7000-8000-00000000d011',
+      asleep: '01920000-0000-7000-8000-00000000d012',
+      asking: '01920000-0000-7000-8000-00000000d013',
+      working: '01920000-0000-7000-8000-00000000d014'
+    } as const
+    installHost([
+      page(
+        3,
+        [mineWire()],
+        (Object.keys(CALLED) as Array<keyof typeof CALLED>).map((status) =>
+          dwarfWire(CALLED[status] as DwarfId, { status, needsYou: status === 'asking' })
+        )
+      )
+    ])
+    await useMines().start()
+    await settle()
+    const drawn = boardDwarfs().map((dwarf) => ({
+      scene: sceneDwarfStatus(dwarf),
+      tip: dwarfTip(dwarf).statusText
+    }))
+    expect(drawn).toEqual([
+      { scene: 'idle', tip: 'Waiting' },
+      { scene: 'asleep', tip: 'asleep' },
+      { scene: 'asking', tip: 'needs you' },
+      { scene: 'working', tip: 'working' }
+    ])
   })
 })

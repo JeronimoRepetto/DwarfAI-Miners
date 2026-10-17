@@ -42,8 +42,41 @@ export function fsErrorOf(error: unknown): FsError {
   }
 }
 
+/** POSIX permission bits of a mode (`st_mode` without its file-type bits). */
+const PERMISSION_BITS = 0o7777
+/** What `open` creates a file with when no mode is given: Node's default, kept on Windows. */
+const NODE_DEFAULT_FILE_MODE = 0o666
+
+/**
+ * The modes of a temp-and-rename write (ISSUE-227, foreman decision 2026-10-16): a file the Host
+ * writes may hold a channel token in another tool's folder (ADR-016 item 1), so on POSIX a new file
+ * is created owner-only (`create`, then masked by the umask as always), and a file it replaces keeps
+ * the person's own permission bits (`chmod`, applied to the temp before the rename, since the rename
+ * would otherwise give the target the temp's mode). Windows has no POSIX modes: Node's default,
+ * nothing applied, as before.
+ */
+export function atomicWriteModes(
+  existingMode: number | null,
+  platform: NodeJS.Platform
+): { create: number; chmod: number | null } {
+  if (platform === 'win32') return { create: NODE_DEFAULT_FILE_MODE, chmod: null }
+  return { create: 0o600, chmod: existingMode === null ? null : existingMode & PERMISSION_BITS }
+}
+
+/** The mode of every folder `makeDir` creates: owner-only on POSIX; on Windows none is given, as before. */
+export function newDirMode(platform: NodeJS.Platform): number | undefined {
+  return platform === 'win32' ? undefined : 0o700
+}
+
 /** Real Node implementation used by the running Host. */
 export class NodeFs implements FileSystem {
+  /** The OS the modes are decided for; the running one unless a test says otherwise. */
+  constructor(private readonly options: { platform?: NodeJS.Platform } = {}) {}
+
+  private get platform(): NodeJS.Platform {
+    return this.options.platform ?? process.platform
+  }
+
   async readTextTail(path: string, maxBytes: number): Promise<string> {
     const handle = await open(path, 'r')
     try {
@@ -138,10 +171,12 @@ export class NodeFs implements FileSystem {
     const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
     let created = false
     try {
-      const handle = await open(temp, 'wx')
+      const modes = atomicWriteModes(await this.modeOf(path), this.platform)
+      const handle = await open(temp, 'wx', modes.create)
       created = true
       try {
         await handle.writeFile(data)
+        if (modes.chmod !== null) await handle.chmod(modes.chmod)
         await handle.sync()
       } finally {
         await handle.close()
@@ -151,6 +186,16 @@ export class NodeFs implements FileSystem {
     } catch (error) {
       if (created) await unlink(temp).catch(() => undefined)
       return { ok: false, error: fsErrorOf(error) }
+    }
+  }
+
+  /** The current mode of `path`, `null` when there is no file to keep a mode of (absent or unreadable). */
+  private async modeOf(path: string): Promise<number | null> {
+    if (this.platform === 'win32') return null
+    try {
+      return (await fsStat(path)).mode
+    } catch {
+      return null
     }
   }
 
@@ -181,7 +226,9 @@ export class NodeFs implements FileSystem {
 
   async makeDir(path: string): Promise<Result<void, FsError>> {
     return settled(async () => {
-      await mkdir(path, { recursive: true })
+      // Only the folders this call creates get the mode; an existing one is left as it is.
+      const mode = newDirMode(this.platform)
+      await mkdir(path, mode === undefined ? { recursive: true } : { recursive: true, mode })
     })
   }
 }

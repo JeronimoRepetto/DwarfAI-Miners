@@ -219,6 +219,8 @@ export function goldenApi(sample: GoldenSample): Api {
     setAskStep: refuse('setAskStep'),
     // A-N32: a golden draws a fixed sample, never answers the first-run step and never writes another tool's
     // configuration.
-    answerWelcome: refuse('answerWelcome')
+    answerWelcome: refuse('answerWelcome'),
+    // A-N29: a golden draws a fixed sample and never ends a session.
+    stopDwarf: refuse('stopDwarf')
   }
 }

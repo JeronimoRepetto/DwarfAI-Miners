@@ -1,0 +1,40 @@
+{
+  "case": "claude:rate-limit",
+  "description": "15 §1.2 DriverErrorCause rate-limited (HR U2, U4): a rate_limit_event whose status is rejected is error rate-limited with its reset instant in milliseconds; an allowed one is nothing. usage.rateLimits stays false (15 §3 row C2).",
+  "script": [{ "do": "launch" }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    { "t": "error", "cause": { "kind": "rate-limited", "resetAt": 1767225600000 } },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-0000000c0041",
+        "kind": "errored",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false,
+        "detail": "error_during_execution"
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "first prompt" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}

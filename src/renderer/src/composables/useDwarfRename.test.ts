@@ -99,4 +99,26 @@ describe('useDwarfRename', () => {
   it('[BR-19] keeps the rename for a dwarf only today’s runtime carries', () => {
     expect(useDwarfRename().canRename('d55')).toBe(true)
   })
+
+  it('[ADR-033] renames and resets a dwarf through setDwarfName and resetDwarfName, answering main’s verdict', async () => {
+    const setDwarfName = vi.fn().mockResolvedValue({ saved: true, customName: 'Watcher' })
+    const resetDwarfName = vi.fn().mockResolvedValue({ saved: false, reason: 'gone' })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      writable: true,
+      value: createFakeWindowApi({
+        setDwarfName: setDwarfName as unknown as Api['setDwarfName'],
+        resetDwarfName: resetDwarfName as unknown as Api['resetDwarfName']
+      })
+    })
+    const rename = useDwarfRename()
+
+    await expect(rename.setName({ dwarfId: 'd55', name: 'Watcher' })).resolves.toEqual({
+      saved: true,
+      customName: 'Watcher'
+    })
+    await expect(rename.resetName('d55')).resolves.toEqual({ saved: false, reason: 'gone' })
+    expect(setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: 'Watcher' })
+    expect(resetDwarfName).toHaveBeenCalledWith('d55')
+  })
 })

@@ -14,7 +14,13 @@ import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { CATALOG_RECORDS } from './adapters/catalog/profiles'
 import { SIMULATED_HANDSHAKE_MS } from './adapters/drivers/simulated/SimulatedDriver'
-import { createSuppliers, type DriverLaunchRequest, type SuppliersEvent } from './index'
+import { FakeProcessControl } from '../../kernel/fakes/FakeProcessControl'
+import {
+  createSuppliers,
+  HOSTED_COMMAND_PROVIDER_ID,
+  type DriverLaunchRequest,
+  type SuppliersEvent
+} from './index'
 import { FakeInstallResolver } from './ports/fakes/FakeInstallResolver'
 import { FakeIntegrationGateReader } from './ports/fakes/FakeIntegrationGateReader'
 import { InMemoryCapabilityRecordStore } from './ports/fakes/InMemoryCapabilityRecordStore'
@@ -164,5 +170,43 @@ describe('createSuppliers (suppliers skeleton)', () => {
     expect(known.entry('claude')?.installed).toBe(true)
     expect(known.entry('opencode')?.installed).toBe(true)
     expect(known.entry('codex')?.installed).toBe(false)
+  })
+})
+
+// ISSUE-165 (INV-43; 15 §4.11): with the process deps the composition root hands over, the module
+// attaches the "Other…" `HostedCommandDriver` to the registry it tracks, and the catalogue never
+// shows it.
+describe('createSuppliers and "Other…" (ISSUE-165)', () => {
+  it('[INV-43, US-OBS-007.AC05] the "Other…" driver is reachable through the registry and is in no catalogue entry or launchable list', async () => {
+    const clock = new FakeClock()
+    const scheduler = new FakeScheduler(clock)
+    const suppliers = createSuppliers({
+      catalogIds: CATALOG_PROVIDER_IDS,
+      publicBuild: true,
+      clock,
+      scheduler,
+      simulatedSeed: 'seed',
+      sink: new RecordingSuppliedEventSink(),
+      installResolver: new FakeInstallResolver(),
+      fs: new FakeFs(),
+      capabilityRecords: new InMemoryCapabilityRecordStore(),
+      integrationGate: new FakeIntegrationGateReader(),
+      bus: new RecordingEventBus<SuppliersEvent>(),
+      ids: new SequenceIdGenerator(),
+      hostEpoch: 'epoch-1' as HostEpoch,
+      hostedCommand: {
+        processControl: new FakeProcessControl({ clock }),
+        loginEnv: { PATH: '/usr/bin' },
+        platform: 'linux',
+        redact: (text) => text
+      }
+    })
+
+    const [driver] = suppliers.registry.drivers(HOSTED_COMMAND_PROVIDER_ID)
+    expect(driver?.transport).toBe('stdio-raw')
+    expect(driver?.profile.label).toBe('Other…')
+    expect(suppliers.catalogue.entry(HOSTED_COMMAND_PROVIDER_ID)).toBeNull()
+    const launchable = await suppliers.catalogue.launchable()
+    expect(launchable.map((entry) => entry.providerId)).not.toContain(HOSTED_COMMAND_PROVIDER_ID)
   })
 })

@@ -1,0 +1,9 @@
+{
+  "name": "@agentclientprotocol/sdk",
+  "version": "1.6.0",
+  "license": "Apache-2.0",
+  "peerDependencies": {
+    "zod": "^3.25.0 || ^4.0.0"
+  },
+  "dist.integrity": "sha512-XxXrmX7aZkDgOB0Rg9cu+ZFyiUUc5lF2n9seO3Gc4OR+MTdfZOwIqF6m3LvsmmM8K3qgPmXkDH8/IFM2u9vdcQ=="
+}

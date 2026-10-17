@@ -1,0 +1,147 @@
+{
+  "case": "C-10",
+  "description": "OQ-42 B, ADR-010 item 3: an option set without allow_once opens the ask with hasAllowOnce false (the broker shows no card and auto-denies); the Deny is sent as reject_once.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "toolu_0000000000000000000000f1",
+      "decision": "deny"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "kind": "accepted"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "claude:claude:{session}:toolu_0000000000000000000000f1",
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "Bash",
+        "summary": "rm -rf build",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "toolu_0000000000000000000000f1",
+        "channel": "driver",
+        "payload": {
+          "toolName": "Bash",
+          "requestText": "rm -rf build"
+        },
+        "options": {
+          "hasAllowOnce": false,
+          "hasRejectOnce": true
+        },
+        "turnKey": "claude:claude:{session}:turn:1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "claude:claude:{session}:toolu_0000000000000000000000f1",
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "Bash",
+        "summary": "rm -rf build",
+        "state": "failed",
+        "at": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": [],
+        "_meta": {
+          "claudeCode": {
+            "options": {
+              "allowDangerouslySkipPermissions": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 105,
+      "result": {
+        "outcome": {
+          "outcome": "selected",
+          "optionId": "reject"
+        }
+      }
+    }
+  ]
+}

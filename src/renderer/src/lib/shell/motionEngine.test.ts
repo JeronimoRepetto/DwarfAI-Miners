@@ -211,10 +211,24 @@ describe('motion-v engine: the imperative controls contract the bound relies on'
     // to be what decides an element's resting state, and why a caller with
     // no `settle` needs `releaseWritten` to clear whatever is there rather
     // than trust `cancel()` left something clean.
+    //
+    // AMENDED (flake fix): the first frame is driven by hand, as in the
+    // #566 T2b case below. Waiting on jsdom's real `requestAnimationFrame`
+    // made the outcome depend on real time: a first frame landing more than
+    // 40 ms after `animate()` is rebased onto the keyframe resolution time,
+    // renders the initial keyframe (`1`), and fails the mid-flight bounds.
     const element = document.createElement('div')
     document.body.append(element)
+    MotionGlobalConfig.useManualTiming = true
+    // Lets motion-dom's synchronous `time` cache clear, as it would between two
+    // real frames, so the next `time.now()` reads the clock this test sets.
+    const flushEngineMicrotasks = (): Promise<void> => Promise.resolve()
+    const start = 1000
+    frameData.timestamp = start
+    await flushEngineMicrotasks()
     const controls = animate(element, { opacity: [1, 0] }, { duration: 0.25, ease: [0.2, 0, 0, 1] })
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await flushEngineMicrotasks()
+    renderEngineFrame(start + FRAME_MS)
     const midFlight = Number(element.style.opacity)
     expect(midFlight).toBeGreaterThan(0)
     expect(midFlight).toBeLessThan(1)

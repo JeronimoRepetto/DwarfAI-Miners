@@ -6,6 +6,7 @@ import type {
   AskState,
   AttentionKind,
   ConsentOrigin,
+  Delivery,
   DwarfId,
   DwarfWire,
   HostToast,
@@ -418,6 +419,42 @@ describe('conversation.appended payload (14 §3.5, B-F11) and SENSITIVE_METHODS'
     expect(SENSITIVE_FRAMES).toContain('conversation.appended')
     expect(SENSITIVE_METHODS['conversation.feed']).toBe('result')
     expect(SENSITIVE_METHODS['session.snapshot']).toBe('result')
+  })
+})
+
+// The B-F12 payload of 14 §3.5 (ADR-022 `Delivery`) and its strict() schema (14 §1.4).
+
+describe('message.delivery payload (14 §3.5, B-F12)', () => {
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099a8057'
+  const delivery = {
+    messageId: '01890a5d-ac96-774b-bcce-b302099a8058',
+    dwarfId: DWARF,
+    kind: 'message',
+    phase: 'delivered',
+    confidence: 'unconfirmed',
+    attempts: 1,
+    phaseAt: 1_001
+  }
+
+  it('[ADR-022, US-MSG-001.AC03] the message.delivery schema infers exactly { delivery: Delivery } and refuses an unknown phase or key', () => {
+    expectTypeOf<HostFrames['message.delivery']>().toEqualTypeOf<{ delivery: Delivery }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['message.delivery']>>().toEqualTypeOf<
+      HostFrames['message.delivery']
+    >()
+
+    const frame = HOST_FRAME_SCHEMAS['message.delivery']
+    expect(frame.safeParse({ delivery }).success).toBe(true)
+    expect(
+      frame.safeParse({
+        delivery: { ...delivery, phase: 'failed', failure: { kind: 'session-closed' } }
+      }).success
+    ).toBe(true)
+    expect(frame.safeParse({ delivery: { ...delivery, phase: 'read' } }).success).toBe(false)
+    expect(frame.safeParse({ delivery, seq: 1 }).success).toBe(false)
+    expect(frame.safeParse({ delivery: { ...delivery, text: 'hello' } }).success).toBe(false)
+    // A mark carries no message text, so the frame is not a sensitive one (14 §3.5).
+    expect(SENSITIVE_FRAMES).not.toContain('message.delivery')
+    expect(SENSITIVE_METHODS['conversation.send']).toBe('params')
   })
 })
 

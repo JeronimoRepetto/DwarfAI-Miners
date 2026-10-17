@@ -24,9 +24,21 @@
 // section (edge asking → conversation), over `MessageLog.writeAnswersRecord` / `settleDelivery`
 // (owner amendment K, 2026-10-09); asking publishes their `MessageSent` / `MessageHandedOver` /
 // `MessageDeliveryFailed` after its commit.
+// ISSUE-166: `sending` builds `ConversationCommands.send` over the `TurnSender` and the dwarf's
+// `canReceiveMessages` that host/wiring passes (the bridge to suppliers, crew's read): the person's
+// row and its `sending` mark before any hand-over, the marks moved only on evidence through machine 7
+// (domain/delivery.ts), and the `MessageLog` writes of AMENDMENT-16 (owner, 2026-10-15). Each
+// committed `ingest` batch reaches the sender as `transcript-match` evidence (S-022-1); a batch that
+// joined a caller's transaction reaches it only after that caller's commit (`joinedEvents`).
+// ISSUE-169: `sending` also takes the `AttachmentReader` host/wiring passes (`FsAttachmentReader`)
+// and builds `describeAttachments` over it; `send` re-validates every path with the same reader
+// before any row and hands the accepted ones over in `TurnInput.attachments`. With no reader,
+// every path is refused (`unreadable`), so a send with files stays `attachment-refused`.
 // Conversation imports only suppliers and crew (05 §1.3, R4).
+import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, HostEpoch, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
+import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { LifecycleFactLog } from '../../kernel/ports/lifecycleFactLog'
@@ -37,7 +49,12 @@ import { SqliteActivityLog } from './adapters/SqliteActivityLog'
 import { SqliteMessageLog } from './adapters/SqliteMessageLog'
 import { ConversationResetStep } from './adapters/sqlite/ConversationResetStep'
 import { createAnswerRecords, type AnswerRecords } from './application/answerRecords'
-import { ConversationIngest, type AskChange, type ConversationCommands } from './application/ingest'
+import {
+  ConversationIngest,
+  type AskChange,
+  type ConversationCommands as IngestCommands,
+  type ConversationSendCommand
+} from './application/ingest'
 import { AskNoter } from './application/noteAsk'
 import {
   ConversationFeedQueries,
@@ -45,10 +62,17 @@ import {
   type MineCrew
 } from './application/queries'
 import { SessionEndRecorder } from './application/recordSessionEnd'
+import {
+  describeAttachments,
+  type ConversationAttachmentCommand
+} from './application/describeAttachments'
+import { ConversationSender, type MessageRecipients, type SendEvent } from './application/send'
 import { TurnEndRecorder } from './application/recordTurnEnd'
 import type { ConversationEvent } from './domain/events'
 import type { FeedPage, FeedPageRequest, MineHistoryView } from './domain/messages'
 import type { OutcomeLine } from './domain/outcomeLine'
+import type { AttachmentReader } from './ports/attachmentReader'
+import type { TurnSender } from './ports/turnSender'
 
 export type {
   ActivityChanged,
@@ -84,7 +108,32 @@ export type {
   MessageHandedOver,
   MessageSent
 } from './application/answerRecords'
-export type { AskChange, ConversationCommands }
+export type { AskChange }
+/** 16 §4.6 `ConversationCommands`: the members built so far, `send` included (ISSUE-166). */
+export type ConversationCommands = IngestCommands & ConversationSendCommand
+export type { AttachmentPath } from './application/ingest'
+export type { ConversationAttachmentCommand } from './application/describeAttachments'
+export {
+  MAX_ATTACHMENT_BYTES,
+  type AttachmentKind,
+  type AttachmentPick,
+  type AttachmentPickRefusal,
+  type DescribedAttachment
+} from './domain/attachments'
+export type { AttachmentReader } from './ports/attachmentReader'
+export type { MessageReactedTo, MessageRecipients, SendEvent } from './application/send'
+export type { TurnHandOver, TurnSender, TurnSendFailure, TurnSendResult } from './ports/turnSender'
+export type { ReactionEvidence } from './domain/delivery'
+export {
+  advance,
+  RequestIdOfAnotherDwarfError,
+  reconcileDelivery,
+  startDelivery,
+  type DeliveryFact,
+  type DeliveryStep,
+  type DeliveryTransitionId,
+  type ReconcileEvidence
+} from './domain/delivery'
 /** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
 export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
 
@@ -127,8 +176,33 @@ export interface JoinedEvents {
   discard(): void
 }
 
+/** What `sending` needs from host/wiring (ISSUE-166). */
+export interface ConversationSendingDeps {
+  /** The bridge to suppliers' sessions (host/wiring/bridges/turnSender.ts). */
+  turns: TurnSender
+  /** Crew's derived `canReceiveMessages` (INV-33), through the conversation → crew edge. */
+  recipients: MessageRecipients
+  /** The Host bus, where the delivery events go after their commit (16 §2.3). */
+  bus: Pick<DomainEventBus<SendEvent>, 'publish'>
+  /** Where a failed delivery write is recorded, allowlisted fields only (ADR-026). */
+  diagnostics: DiagnosticsLog
+  /** The Host's check of every attachment path (ISSUE-169); absent, every path is refused. */
+  attachments?: AttachmentReader
+}
+
+/** No reader built: every path is refused, so nothing is offered that is not built (21 §1 item 8). */
+const NO_ATTACHMENTS: AttachmentReader = {
+  describe: async () => ({ refused: 'unreadable' })
+}
+
 export interface Conversation {
-  commands: ConversationCommands
+  /** Every command but `send`, which `sending` builds once its routes exist. */
+  commands: IngestCommands
+  /**
+   * `ConversationCommands.send` (ISSUE-166), built once by host/wiring when crew and suppliers are
+   * wired; a second call is a wiring defect.
+   */
+  sending(deps: ConversationSendingDeps): ConversationSendCommand & ConversationAttachmentCommand
   /** The feed (ISSUE-103) and the stored outcome line (owner amendment E, ISSUE-108). */
   queries: Pick<ConversationQueries, 'feed' | 'outcomeOf'>
   /**
@@ -209,10 +283,23 @@ export function createConversation(deps: ConversationDeps): Conversation {
     hostEpoch: deps.hostEpoch
   })
   const feed = new ConversationFeedQueries({ log })
-  const commands: ConversationCommands = {
-    ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
+  let sender: ConversationSender | null = null
+  /** The batches of joined ingests, handed to the sender after their caller's commit. */
+  const joinedBatches: Array<Parameters<IngestCommands['ingest']>> = []
+  const commands: IngestCommands = {
+    ingest: (dwarfId, entries, origin) => {
+      const joined = deps.transactions.isInTransaction()
+      ingest.ingest(dwarfId, entries, origin)
+      if (sender === null) return
+      if (joined) joinedBatches.push([dwarfId, entries, origin])
+      else sender.entriesIngested(dwarfId, entries, origin)
+    },
     recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
-    recordSessionEnd: (dwarfId, at) => sessionEnds.recordSessionEnd(dwarfId, at),
+    // ISSUE-166: the same route ends the dwarf's held deliveries (S7.07) once the run is closed.
+    recordSessionEnd: (dwarfId, at) => {
+      sessionEnds.recordSessionEnd(dwarfId, at)
+      sender?.sessionEnded(dwarfId)
+    },
     noteAsk: (dwarfId, change) => asks.noteAsk(dwarfId, change)
   }
   return {
@@ -223,9 +310,37 @@ export function createConversation(deps: ConversationDeps): Conversation {
       outcomeOf: (dwarfId) => activity.storedOutcomeOf(dwarfId)
     },
     history: ({ crew }) => new ConversationMineHistory({ log, crew }),
+    sending: ({ turns, recipients, bus, diagnostics, attachments = NO_ATTACHMENTS }) => {
+      if (sender !== null) throw new HostInvariantError('conversation sending is built once')
+      sender = new ConversationSender({
+        attachments,
+        log,
+        transactions: deps.transactions,
+        bus,
+        onTurnEnded: (handler) => {
+          deps.bus.subscribe('TurnEnded', ({ payload }) => handler(payload.end))
+        },
+        turns,
+        recipients,
+        clock: deps.clock,
+        ids: deps.ids,
+        hostEpoch: deps.hostEpoch,
+        diagnostics
+      })
+      return {
+        send: (...args) => (sender as ConversationSender).send(...args),
+        describeAttachments: (paths) => describeAttachments(paths, attachments)
+      }
+    },
     joinedEvents: {
-      publish: () => ingest.publishJoined(),
-      discard: () => ingest.discardJoined()
+      publish: () => {
+        ingest.publishJoined()
+        for (const batch of joinedBatches.splice(0)) sender?.entriesIngested(...batch)
+      },
+      discard: () => {
+        ingest.discardJoined()
+        joinedBatches.length = 0
+      }
     },
     answerRecords: createAnswerRecords({ log, scope: deps.transactions, clock: deps.clock })
   }

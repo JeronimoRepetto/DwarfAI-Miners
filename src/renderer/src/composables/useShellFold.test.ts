@@ -1608,3 +1608,102 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     test.wrapper.unmount()
   })
 })
+
+/*
+ * APPENDED (ISSUE-262): the mine column opening and closing in the Panel's own row, by the ids of
+ * US-SHELL-004. The harness above models the retired rail compositions; this one is wired the way
+ * App.vue wires the fold since #635: the page is the one carried column, the nav is the strip and
+ * is never carried, and docked right the row runs page, mine, nav from the free edge.
+ *
+ * The timing is the owner's ruling, not NFR-TIM-12's 180/90 ms (#566: motion-v's own defaults,
+ * no authored durations), and the column is uncovered in place rather than faded (#585, the
+ * maintainer's drawing): an owner-ruled accepted difference. These cases assert what the ACs fix
+ * beyond that: the nav never moves, and the page moves aside and back by a transform alone.
+ */
+describe('useShellFold in the Panel row (ISSUE-262)', () => {
+  const PAD = 8
+  const PAGE = 440
+  const MINE = 300
+  const NAV = 56
+  const WITHOUT_MINE = PAD + PAGE + PAD + NAV + PAD
+  const WITH_MINE = WITHOUT_MINE + MINE + PAD
+
+  function panelRow(width: number) {
+    const media = new EventTarget() as MediaQueryList
+    Object.defineProperty(media, 'matches', { configurable: true, value: false })
+    vi.stubGlobal('matchMedia', () => media)
+    const shell = sized(document.createElement('div'), width)
+    shell.style.columnGap = `${PAD}px`
+    shell.style.padding = `${PAD}px`
+    shell.style.borderRadius = '12px'
+    Object.defineProperty(shell, 'animate', { configurable: true, value: () => undefined })
+    document.body.append(shell)
+    const engine = fakeEngine()
+    const row = {
+      shell,
+      page: carriedColumn(PAD, PAGE),
+      nav: carriedColumn(width - PAD - NAV, NAV)
+    }
+    let fold!: ReturnType<typeof useShellFold>
+    // A bare setup, mounted for the lifecycle the composable hooks into.
+    const wrapper = mount({
+      setup: () => {
+        fold = useShellFold({
+          shell: () => row.shell,
+          edge: () => 'right',
+          carried: () => [row.page],
+          strip: () => row.nav,
+          engine: engine.animate
+        })
+        return () => h('div')
+      }
+    })
+    return { row, runs: engine.runs, wrapper, fold: () => fold }
+  }
+  const runsOn = <Run extends { element: Element }>(runs: Run[], element: Element): Run[] =>
+    runs.filter((run) => run.element === element)
+
+  it('[US-SHELL-004.AC01, NFR-TIM-12] opening a mine moves the page aside by a transform alone and never moves the nav (#566 timing)', async () => {
+    const test = panelRow(WITHOUT_MINE)
+    test.fold().settle(false)
+    // Main has grown the window on its free side; the row repacks against the docked edge.
+    test.row.shell = sized(test.row.shell, WITH_MINE)
+    placed(test.row.nav, WITH_MINE - PAD - NAV, NAV)
+    const mine = carriedColumn(PAD + PAGE + PAD, MINE)
+    test.fold().enter(mine)
+    test.fold().settle(false)
+    await settled()
+    const page = runsOn(test.runs, test.row.page)
+    expect(page).toHaveLength(1)
+    expect(Object.keys(page[0]!.keyframes)).toEqual(['transform'])
+    expect(transformFrames(page[0]!.keyframes)[1]).toBe('translateX(0px)')
+    expect(runsOn(test.runs, test.row.nav)).toEqual([])
+    expect(test.row.nav.style.transform).toBe('')
+    // The column itself never travels: it is uncovered where it stands (#585).
+    for (const run of runsOn(test.runs, mine)) {
+      expect(run.keyframes).not.toHaveProperty('transform')
+      expect(run.keyframes).not.toHaveProperty('x')
+    }
+    test.wrapper.unmount()
+  })
+
+  it('[US-SHELL-004.AC03, NFR-TIM-12] closing a mine moves the page back by a transform alone and never moves the nav (#566 timing)', async () => {
+    const test = panelRow(WITH_MINE)
+    test.row.nav = carriedColumn(WITH_MINE - PAD - NAV, NAV)
+    test.fold().settle(false)
+    const mine = carriedColumn(PAD + PAGE + PAD, MINE)
+    void test.fold().hold(mine)
+    await settled()
+    const page = runsOn(test.runs, test.row.page)
+    expect(page).toHaveLength(1)
+    expect(Object.keys(page[0]!.keyframes)).toEqual(['transform'])
+    // Toward the docked edge by the room the column and its gap leave.
+    expect(transformFrames(page[0]!.keyframes)).toEqual([
+      'translateX(0px)',
+      `translateX(${MINE + PAD}px)`
+    ])
+    expect(runsOn(test.runs, test.row.nav)).toEqual([])
+    expect(test.row.nav.style.transform).toBe('')
+    test.wrapper.unmount()
+  })
+})

@@ -3,7 +3,7 @@
 // the session to its dwarf; ADR-012 items 3–6; ADR-010 item 10) over the asking module as the Host
 // composes it — `createAskOpening` and `createAsking` over in-memory doubles, the real
 // `PermissionPromptRegistry` and `ObservedClaudeKeystrokeChannel` — with a fake transcript tail and
-// a fake keystroke relay recording keys. Composing it into the Host's main is later: ISSUE-140.
+// a fake keystroke relay recording keys. The Host composes it in routes/askingRoutes.ts (ISSUE-140).
 import { describe, expect, it } from 'vitest'
 import { redactSecrets } from '../../../contracts/logging'
 import type { DwarfId, ProviderId, ProviderIdentity } from '../../kernel/domain/values'

@@ -76,6 +76,8 @@ const MODULE_GRAPH_EDGES = [
   ['jev', 'preferences'],
   ['attention', 'preferences']
 ]
+// Type-only edges (AMENDMENT-14 A14-07): delegation → suppliers, `import type` only; proven by
+// the "[R4] a type-only edge …" case and the lint-canaries/R4-type-only-edge canary.
 
 describe('dependency-cruiser rules (05 §5.2)', () => {
   it(
@@ -293,6 +295,78 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
     CRUISE_TIMEOUT_MS
   )
 
+  // Deviation from 05 §5.1 R9, owner-approved 2026-10-15 (ISSUE-200): the relay shim may import
+  // contracts/host-protocol (frame codec, McpHello, endpoint rule) besides contracts/logging; the
+  // diagnostics adapters stay logging-only.
+  it(
+    '[R9] the relay shim importing contracts/logging and contracts/host-protocol reports nothing; another contracts folder is R9-relay-only-logging-and-host-protocol',
+    async () => {
+      const relay = 'src/host/modules/delegation/adapters/mcp/relay/relayMain.ts'
+      const frames = 'src/contracts/host-protocol/frameCodec.ts'
+      const logging = 'src/contracts/logging/toLogLine.ts'
+      const config = 'src/contracts/config/flags.ts'
+      const result = await cruise({
+        files: {
+          [relay]:
+            "import { a } from '../../../../../../contracts/host-protocol/frameCodec'\n" +
+            "import { b } from '../../../../../../contracts/logging/toLogLine'\n" +
+            "import { c } from '../../../../../../contracts/config/flags'\n" +
+            'export const relay = [a, b, c]\n',
+          [frames]: 'export const a = 1\n',
+          [logging]: 'export const b = 1\n',
+          [config]: 'export const c = 1\n'
+        }
+      })
+      const fromRelay = result.violations.filter((violation) => violation.from === relay)
+      expect(fromRelay.map((violation) => `${violation.rule} ${violation.to}`)).toEqual([
+        `R9-relay-only-logging-and-host-protocol ${config}`
+      ])
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
+  it(
+    "[R6] anything but the relay's own tests importing the relay entry relayMain.ts is reported as R6-relay-entry-not-imported",
+    async () => {
+      const relayDir = 'src/host/modules/delegation/adapters/mcp/relay'
+      const entry = `${relayDir}/relayMain.ts`
+      const root = 'src/host/main.ts'
+      const sibling = `${relayDir}/relayEntry.ts`
+      const test = `${relayDir}/relayMain.test.ts`
+      const result = await cruise({
+        files: {
+          [entry]: TEST_FILE,
+          [root]:
+            "import { value } from './modules/delegation/adapters/mcp/relay/relayMain'\nexport const host = value\n",
+          [sibling]: "import { value } from './relayMain'\nexport const entry = value\n",
+          [test]: "import { value } from './relayMain'\nexport const t = value\n"
+        }
+      })
+      expectViolation(result, 'R6-relay-entry-not-imported', root, entry)
+      expectViolation(result, 'R6-relay-entry-not-imported', sibling, entry)
+      const fromTest = result.violations.filter((violation) => violation.from === test)
+      expect(fromTest).toEqual([])
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
+  it(
+    '[R9] a diagnostics adapter importing contracts/host-protocol is still R9-diagnostics-only-logging',
+    async () => {
+      const from = 'src/host/modules/diagnostics/adapters/HostLog.ts'
+      const to = 'src/contracts/host-protocol/frameCodec.ts'
+      const result = await cruise({
+        files: {
+          [from]:
+            "import { a } from '../../../../contracts/host-protocol/frameCodec'\nexport const log = a\n",
+          [to]: 'export const a = 1\n'
+        }
+      })
+      expectViolation(result, 'R9-diagnostics-only-logging', from, to)
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
   it(
     '[R10] src/ui-main importing src/host is reported as R10-ui-not-host',
     async () => {
@@ -422,6 +496,26 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
       }
       const result = await cruise({ files })
       expect(result.violations).toEqual([])
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
+  it(
+    '[R4] a type-only edge allows import type and reports a value import: delegation and suppliers (AMENDMENT-14 A14-07)',
+    async () => {
+      const typeOnly = 'src/host/modules/delegation/application/usesSupplierTypes.ts'
+      const value = 'src/host/modules/delegation/application/usesSupplierValue.ts'
+      const target = 'src/host/modules/suppliers/index.ts'
+      const result = await cruise({
+        files: {
+          [target]: 'export type Injection = { mechanism: string }\nexport const value = 1\n',
+          [typeOnly]:
+            "import type { Injection } from '../../suppliers/index'\nexport const shape = (i: Injection) => i\n",
+          [value]: "import { value } from '../../suppliers/index'\nexport const useCase = value\n"
+        }
+      })
+      expect(result.violations.filter((violation) => violation.from === typeOnly)).toEqual([])
+      expectViolation(result, 'R4-module-edge-delegation-type-only', value, target)
     },
     CRUISE_TIMEOUT_MS
   )

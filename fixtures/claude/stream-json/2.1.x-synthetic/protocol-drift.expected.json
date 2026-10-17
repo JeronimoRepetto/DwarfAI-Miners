@@ -1,0 +1,70 @@
+{
+  "case": "claude:protocol-drift",
+  "description": "15 §1.2 protocol-drift (HO-33): a line that is not JSON, a JSON value that is not a record and a record of an unknown type are skipped, never thrown; each distinct drift is reported once and the session continues.",
+  "script": [{ "do": "launch" }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    { "t": "error", "cause": { "kind": "protocol-drift", "detail": "a line that is not JSON" } },
+    {
+      "t": "error",
+      "cause": {
+        "kind": "protocol-drift",
+        "detail": "a record of unknown type dwarfai_future_record"
+      }
+    },
+    {
+      "t": "error",
+      "cause": { "kind": "protocol-drift", "detail": "a line that is not a record" }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-0000000b0061",
+        "role": "dwarf",
+        "text": "Still here.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:msg_000000000000000000000161",
+        "unitKey": "msg_000000000000000000000161",
+        "fidelity": 2,
+        "tokens": { "inputNet": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-0000000c0061",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": { "role": "user", "content": "first prompt" },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}

@@ -14,6 +14,7 @@ import {
   preferencesViewSchema,
   stopAllOutcomeSchema,
   stranglerDwarfIdentitySchema,
+  supplierEntryViewSchema,
   feedPageSchema,
   mineHistoryViewSchema,
   type DwarfId,
@@ -26,7 +27,8 @@ import {
   type MineId,
   type PreferencesView,
   type StopAllOutcome,
-  type StranglerDwarfIdentity
+  type StranglerDwarfIdentity,
+  type SupplierEntryView
 } from '../wire'
 import {
   adoptMainProjectParamsSchema,
@@ -60,7 +62,30 @@ import {
   type SetClaudeHooksParams,
   type SetClaudeHooksResult
 } from './params/preferences'
-import { feedParamsSchema, type FeedParams } from './params/conversation'
+import {
+  attachmentPickSchema,
+  describeAttachmentsParamsSchema,
+  feedParamsSchema,
+  sendMessageParamsSchema,
+  sendMessageResultSchema,
+  type AttachmentPath,
+  type AttachmentPick,
+  type FeedParams,
+  type SendMessageParams,
+  type SendMessageResult
+} from './params/conversation'
+import {
+  renameDwarfParamsSchema,
+  renameDwarfResultSchema,
+  resetDwarfNameParamsSchema,
+  stopDwarfParamsSchema,
+  stopDwarfResultSchema,
+  type RenameDwarfParams,
+  type RenameDwarfResult,
+  type ResetDwarfNameParams,
+  type StopDwarfParams,
+  type StopDwarfResult
+} from './params/crew'
 import {
   answerOutcomeSchema,
   answerPermissionParamsSchema,
@@ -71,6 +96,15 @@ import {
   type AnswerQuestionParams,
   type SetAskStepParams
 } from './params/asking'
+import {
+  launchAcceptedSchema,
+  launchCustomParamsSchema,
+  launchParamsSchema,
+  type LaunchAccepted,
+  type LaunchCustomParams,
+  type LaunchParams
+} from './params/launching'
+import { suppliersLaunchableParamsSchema } from './params/suppliers'
 import { outcomeSchema, type Outcome } from './errors'
 import { requestIdSchema } from './requestId'
 import {
@@ -81,7 +115,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M26, B-M27, B-M30, B-M31, B-M32, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M30, B-M31, B-M32, B-M33, B-M34, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -110,14 +144,25 @@ export interface HostMethods {
   'mines.remove':                    { params: { mineId: MineId; requestId: string }; result: RemoveMineResult }
   'mines.list':                      { params: MineListParams; result: MineListResult }
   'mines.resolveFile':               { params: { mineId: MineId; dwarfId?: DwarfId; target: string }; result: ResolveFileResult }
+  // crew
+  'crew.stop':                       { params: StopDwarfParams; result: StopDwarfResult }
+  'crew.rename':                     { params: RenameDwarfParams; result: RenameDwarfResult }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+  'crew.resetName':                  { params: ResetDwarfNameParams; result: {} }
   // conversation
+  'conversation.send':               { params: SendMessageParams; result: SendMessageResult }
   'conversation.feed':               { params: FeedParams; result: FeedPage }
   'conversation.mineHistory':        { params: { mineId: MineId }; result: MineHistoryView }
+  'conversation.describeAttachments': { params: { paths: AttachmentPath[] }; result: AttachmentPick[] }
   // asking
   'asking.answerQuestion':           { params: AnswerQuestionParams; result: AnswerOutcome }
   'asking.answerPermission':         { params: AnswerPermissionParams; result: AnswerOutcome }
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
   'asking.setStep':                  { params: SetAskStepParams; result: {} }
+  // launching, suppliers, jev
+  'launching.launch':                { params: LaunchParams; result: LaunchAccepted }
+  'launching.launchCustom':          { params: LaunchCustomParams; result: LaunchAccepted }
+  'suppliers.launchable':            { params: { refresh?: boolean }; result: SupplierEntryView[] }
   // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
@@ -291,6 +336,32 @@ export const HOST_METHOD_SCHEMAS = {
     params: resolveFileParamsSchema,
     result: resolveFileResultSchema
   },
+  // B-M21 (14 §2.3, §3.4; AMENDMENT-2, OQ-54): `ui` only, mutating (requestId); answered after the
+  // end settled (14 §1.7). An open turn is not a refusal: the whole session ends
+  // (host/transport/methods/crewStop.ts).
+  'crew.stop': {
+    params: stopDwarfParamsSchema,
+    result: stopDwarfResultSchema
+  },
+  // B-M22, B-M23 (14 §2.3, §3.4; AMENDMENT-2, SC-AR-05): `ui` only, mutating (requestId). The name's
+  // DwarfName rules, its 'empty' outcome and the base-name reset are the Host's
+  // (host/transport/methods/crewRename.ts); B-M22's params are sensitive (14 §3.5 SENSITIVE_METHODS).
+  'crew.rename': {
+    params: renameDwarfParamsSchema,
+    result: renameDwarfResultSchema
+  },
+  'crew.resetName': {
+    params: resetDwarfNameParamsSchema,
+    result: z.object({}).strict()
+  },
+  // B-M24 (14 §2.3, §1.7; ADR-022): `ui` only, mutating (requestId = `messages.request_id`, a
+  // durable key, 14 §1.6); answered at acceptance once the message row and its `sending` mark are
+  // committed (host/transport/methods/conversationSend.ts), the settlement arriving only as
+  // `message.delivery`. Its params are sensitive (14 §3.5 SENSITIVE_METHODS: the text).
+  'conversation.send': {
+    params: sendMessageParamsSchema,
+    result: sendMessageResultSchema
+  },
   // B-M26 (14 §2.3, §3.6): `ui` and `viewer` (its own dwarf only, host/transport/methods/conversationFeed.ts);
   // a query, so no requestId (14 §1.6). Its result is sensitive (14 §3.5 SENSITIVE_METHODS).
   'conversation.feed': {
@@ -302,6 +373,13 @@ export const HOST_METHOD_SCHEMAS = {
   'conversation.mineHistory': {
     params: z.object({ mineId: mineIdSchema }).strict(),
     result: mineHistoryViewSchema
+  },
+  // B-M28 (14 §2.3; ADR-019 item 9): `ui` only (host/transport/methods/conversationDescribeAttachments.ts);
+  // a query, so no requestId (14 §1.6). The Host re-validates every path and answers one pick per
+  // path. Sensitive both ways (14 §3.5 SENSITIVE_METHODS: paths).
+  'conversation.describeAttachments': {
+    params: describeAttachmentsParamsSchema,
+    result: z.array(attachmentPickSchema)
   },
   // B-M30, B-M31 (14 §2.3, §1.7; ADR-010): `ui` only, mutating (requestId = the `ask_answers` PK, a
   // durable key, 14 §1.6); answered after the channel result. A permission is Allow or Deny only
@@ -321,8 +399,31 @@ export const HOST_METHOD_SCHEMAS = {
     params: setAskStepParamsSchema,
     result: z.object({}).strict()
   },
+  // B-M33 (14 §2.3, §1.7; ADR-020): `ui` only, mutating (requestId); answered at acceptance once the
+  // `launches` row is committed (host/transport/methods/launchingLaunch.ts), the settlement arriving
+  // only as `launch.changed` / `launch.failed`. Its params are sensitive (14 §3.5 SENSITIVE_METHODS:
+  // the prompt).
+  'launching.launch': {
+    params: launchParamsSchema,
+    result: launchAcceptedSchema
+  },
+  // B-M34 (14 §2.3, §1.7; ADR-020 item 3): "Other…", as B-M33: `ui` only, mutating (requestId),
+  // answered at acceptance (host/transport/methods/launchingLaunchCustom.ts); a parser refusal
+  // settles as `launch.failed{could-not-start}`, never as a call error. Params sensitive (the prompt
+  // and the custom command, 14 §3.5 SENSITIVE_METHODS).
+  'launching.launchCustom': {
+    params: launchCustomParamsSchema,
+    result: launchAcceptedSchema
+  },
   // B-M41 (14 §2.3, §1.10; AMENDMENT-8, OQ-69): `ui` only, never relayed to seam A; deleted with
   // LegacyDwarfIdBridge at the end of cut 4 (later: ISSUE-241).
+  // B-M37 (14 §2.3, §4.1; ADR-009 D5, ADR-011): `ui` only, a query (no requestId, 14 §1.6); the
+  // installed detection runs on each call, that is on each Add-panel open
+  // (host/transport/methods/suppliersLaunchable.ts).
+  'suppliers.launchable': {
+    params: suppliersLaunchableParamsSchema,
+    result: z.array(supplierEntryViewSchema)
+  },
   'strangler.dwarfIdentities': {
     params: z.object({}).strict(),
     result: z.array(stranglerDwarfIdentitySchema)

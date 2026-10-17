@@ -230,6 +230,16 @@ import {
   RESET_FANOUT_NAME
 } from '../legacy-bridge/reset/resetFanout'
 import { createLegacyAnswerShapeAdapter } from '../legacy-bridge/asks/LegacyAnswerShapeAdapter'
+import {
+  createPerProviderShapeAdapter,
+  PER_PROVIDER_SHAPE_ADAPTER,
+  PER_PROVIDER_SHAPE_CHANNELS
+} from '../legacy-bridge/shape/PerProviderShapeAdapter'
+import {
+  CATALOG_MERGE_ADAPTER,
+  CATALOG_MERGE_CHANNELS,
+  createCatalogMergeAdapter
+} from '../legacy-bridge/shape/CatalogMergeAdapter'
 import type { LegacyAskRelay } from '../legacy-bridge/LegacyAskRelay'
 import { ANSWER_DWARF_ROWS, createAnswerDwarfRows } from './ipc/handlers/answerDwarf.host'
 import { createAnswerQualifier } from './ipc/handlers/answerDwarf.dispatch'
@@ -251,6 +261,9 @@ import {
 
 /** The 21 §3.1 shape adapter of A-40/A-41's qualified `legacy` routes (cuts 2–4). */
 const LEGACY_ANSWER_SHAPE_ADAPTER = 'LegacyAnswerShapeAdapter'
+
+/** Today's model catalog handler (A-37's), the one door to it (21 §3 `LegacyRuntimeRoute`); no route reaches it from 3a. */
+const LEGACY_MODEL_CATALOG = 'agent:models'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -473,7 +486,8 @@ export interface BoardFacadeComposition {
  * composables not yet switched to A-N01/A-N02. Composed once the table routes A-12 to the Host (the cut-1 switch,
  * ISSUE-123), as a part of the `host` target; A-P2 reaches the mode windows only while the table routes it to the Host
  * too, so today's runtime and the facade never push the board together (21 §1 item 4). `undefined` in a table that
- * serves A-12 `legacy`. In cuts 1–4 its dwarfs carry today's ask fields from `LegacyAskRelay` (`askFields`, 21 §3).
+ * serves A-12 `legacy`. In cuts 1–4 its dwarfs carry today's board fields from `LegacyAskRelay` (`askFields`, 21 §3):
+ * the open asks, and the text delivery route and capabilities of the rows still `legacy` (A-23, A-26).
  * Deleted at cut 5 after a test proves no consumer (ISSUE-242).
  */
 export function composeBoardFacade(deps: {
@@ -612,6 +626,61 @@ export function composeResetFanout(deps: {
       now: deps.now ?? (() => Date.now())
     })
   }
+}
+
+/** The providers whose A-36 route is qualified to them and owned by the Host: moved (21 §1 item 2, §2 cut 3). */
+function movedProvidersOf(routes: readonly ChannelRoute[]): ReadonlySet<string> {
+  const moved = new Set<string>()
+  for (const route of routes) {
+    const provider = route.qualifier?.provider
+    if (route.channel === 'agent:providers' && route.owner === 'host' && provider !== undefined) {
+      moved.add(provider)
+    }
+  }
+  return moved
+}
+
+/**
+ * The per-provider shape adapters of steps 3a–4b (21 §3.1; ISSUE-177): `PerProviderShapeAdapter` (A-13, A-23, A-35 and
+ * its Retry path) and `CatalogMergeAdapter` (A-36), each over today's runtime behind `LegacyDwarfIdBridge`'s rows.
+ * Each is bound under its name only where a route of the table names it and it lives in the release; `undefined` when
+ * neither is. A route naming one of them for a row it does not convert stops the router, as a route naming an unbound
+ * adapter does: the router starts only where the table and the composition agree. The catalog merge takes its moved
+ * providers from the table (an A-36 route qualified to a provider and owned by the Host, 21 §1 item 2) and today's
+ * model catalog from `models`, never through the A-37 row.
+ */
+export function composeProviderShapeAdapters(deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+  legacy: RouteTarget
+  models: { read(): Promise<unknown> }
+  client: Pick<HostClient, 'call'> | undefined
+  mintId: () => string
+}): Readonly<Record<string, RouteTarget>> | undefined {
+  const served: ReadonlyArray<readonly [string, readonly string[]]> = [
+    [PER_PROVIDER_SHAPE_ADAPTER, PER_PROVIDER_SHAPE_CHANNELS],
+    [CATALOG_MERGE_ADAPTER, CATALOG_MERGE_CHANNELS]
+  ]
+  const bound: Record<string, RouteTarget> = {}
+  for (const [name, channels] of served) {
+    const naming = deps.routes.filter((route) => route.shapeAdapter === name)
+    if (naming.length === 0 || !bridgeLivesIn(name, deps.release)) continue
+    const stray = naming.find((route) => !channels.includes(route.channel))
+    if (stray !== undefined) {
+      throw new Error(`router: shape adapter ${name} does not serve ${stray.channel}`)
+    }
+    if (name === PER_PROVIDER_SHAPE_ADAPTER) {
+      bound[name] = createPerProviderShapeAdapter({ legacy: deps.legacy, mintId: deps.mintId })
+    } else {
+      bound[name] = createCatalogMergeAdapter({
+        legacy: deps.legacy,
+        models: deps.models,
+        client: deps.client,
+        movedProviders: movedProvidersOf(deps.routes)
+      })
+    }
+  }
+  return Object.keys(bound).length === 0 ? undefined : bound
 }
 
 /** Whether the legacy-bridge adapter `name` lives in `release`: composed exactly in the steps 21 §3 lists it for. */
@@ -755,7 +824,7 @@ export interface LegacyAskRelayComposition {
   registry: LegacyRuntimeSurface & { registry: LegacyRegistry }
   /** The today wires of the rows the relay is composed on (A-40, A-41). */
   channels: readonly string[]
-  /** Today's ask fields of a Host dwarf, for `BoardFacadeAdapter`. */
+  /** Today's board fields of a Host dwarf (asks, text delivery, capabilities), for `BoardFacadeAdapter`. */
   askFields(dwarfId: DwarfId): LegacyAskFields
   /** The relay's cut-2 answer half, for `LegacyAnswerShapeAdapter` and the A-40/A-41 qualifier (21 §3, §3.1). */
   answers: Pick<LegacyAskRelay, 'asks' | 'answer'>
@@ -769,7 +838,8 @@ export interface LegacyAskRelayComposition {
 /**
  * `LegacyAskRelay` (21 §3, cuts 1–4; 14 §8 I-11), cut-1 half: today's runtime's open asks, read from the registry the
  * feed writes, are shown as ask cards in `legacy:<legacyAskId>` ids on the Host dwarf through `BoardFacadeAdapter`, and
- * an A-40 / A-41 answer to one reaches today's runtime with the legacy ids. A-40 and A-41 keep their `legacy` route
+ * an A-40 / A-41 answer to one reaches today's runtime with the legacy ids. The text delivery route and capabilities
+ * today's runtime resolved travel the same way, so the composer and the kick read the route A-23 / A-26 take. A-40 and A-41 keep their `legacy` route
  * (21 §2 cut 1); the relay is composed in front of the bridged legacy target, in the releases it is listed for (cut 1,
  * its rollback build included, to the end of 4b), never in the cut-0 table, and only over a composed
  * `LegacyDwarfIdBridge` (whose join it uses). No Host command path. Deleted at the end of cut 4 (ISSUE-241).
@@ -1271,6 +1341,16 @@ export async function startUiMain({
     legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
     client: host?.client
   })
+  // A-13, A-23, A-35 and A-36 for the providers not yet moved, once a step switch names their shape adapters (21 §3.1;
+  // ISSUE-177): today's runtime behind the dwarf id bridge, and today's model catalog read through its own handler.
+  const providerShapes = composeProviderShapeAdapters({
+    routes,
+    release,
+    legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
+    models: { read: () => legacyRuntime.serve(LEGACY_MODEL_CATALOG, undefined) },
+    client: host?.client,
+    mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
+  })
 
   // A-12 and A-P2 from the Host board, once the table routes them there (the cut-1 switch, ISSUE-123; 21 §3).
   const boardFacade =
@@ -1328,7 +1408,11 @@ export async function startUiMain({
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
           ...(cut2Rows === undefined ? [] : [cut2Rows])
         ])
-  const allShapeAdapters = { ...shapeAdapters, ...askAnswers?.shapeAdapters }
+  const allShapeAdapters = {
+    ...shapeAdapters,
+    ...providerShapes,
+    ...askAnswers?.shapeAdapters
+  }
 
   // Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the notifier connection's frames, from the start of the
   // attach, are drawn once Electron is ready (a notification cannot be built before), in arrival order; where S-018-1

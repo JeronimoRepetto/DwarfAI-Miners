@@ -1,0 +1,193 @@
+{
+  "case": "C-05",
+  "description": "Recorded against the user-installed @agentclientprotocol/claude-agent-acp 0.93.0 with Claude Code 2.1.302 (scrubbed). A second turn after the first ended: a new session/prompt on the same session, echoed as the person message of turn 2. Each PromptResponse.usage is that turn's own (turn 2 reports fewer output tokens than turn 1, so it is not a session total): one sealed observation per turn.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "sendTurn",
+      "messageId": "m-1",
+      "text": "second prompt"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "confidence": "unconfirmed",
+      "heldUntilTurnEnd": false,
+      "correlation": "m-1",
+      "providerTurnId": "2"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:1:1",
+        "role": "dwarf",
+        "text": "hello",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:turn:1",
+        "unitKey": "{session}:turn:1",
+        "fidelity": 1,
+        "tokens": {
+          "inputNet": 2,
+          "output": 4,
+          "cacheRead": 19866,
+          "cacheWrite": 4016,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    },
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:2:0",
+        "role": "person",
+        "text": "second prompt",
+        "providerTime": null,
+        "echoOf": "m-1"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:2:1",
+        "role": "dwarf",
+        "text": "two",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:turn:2",
+        "unitKey": "{session}:turn:2",
+        "fidelity": 1,
+        "tokens": {
+          "inputNet": 2,
+          "output": 3,
+          "cacheRead": 20468,
+          "cacheWrite": 3466,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:turn:2",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": [],
+        "_meta": {
+          "claudeCode": {
+            "options": {
+              "allowDangerouslySkipPermissions": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "second prompt"
+          }
+        ]
+      }
+    }
+  ]
+}

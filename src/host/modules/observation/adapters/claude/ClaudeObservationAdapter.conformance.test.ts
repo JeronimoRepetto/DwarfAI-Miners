@@ -224,12 +224,18 @@ async function readCase(file: string): Promise<{ read: ClaudeRead; source: Sourc
   return { read: await adapter.read(source, null), source }
 }
 
+// One test per fixture, so no single test replays the whole folder (17 §5.3: each case its own
+// temp folder, no order dependency between cases).
+const CASES = await transcriptCases()
+
 describe('ClaudeObservationAdapter conformance (fixtures/claude/observer)', () => {
-  it('[C-19] every Claude fixture replayed twice yields identical source keys and no new event', async () => {
-    const cases = await transcriptCases()
-    expect(cases.length).toBeGreaterThanOrEqual(18)
-    const keysOfBase = new Map<string, string[]>()
-    for (const { file, base, expected } of cases) {
+  it('[C-19] the Claude observer fixtures hold every case', () => {
+    expect(CASES.length).toBeGreaterThanOrEqual(18)
+  })
+
+  it.each(CASES)(
+    '[C-19] Claude fixture $file replayed twice yields identical source keys and no new event',
+    async ({ file, base, expected }) => {
       const configDir = await tempDir()
       await place(configDir, file)
       const adapter = adapterAt(configDir)
@@ -248,12 +254,14 @@ describe('ClaudeObservationAdapter conformance (fixtures/claude/observer)', () =
       expect(keysOf(replay), file).toEqual(keysOf(first))
       expect(new Set(keysOf(first)).size, file).toBe(keysOf(first).length)
 
-      // The same records in other bytes (CRLF, unknown fields) are the same facts: the same keys.
-      const known = keysOfBase.get(base)
-      if (known === undefined) keysOfBase.set(base, keysOf(first))
-      else expect(keysOf(first), file).toEqual(known)
+      // The same records in other bytes (CRLF, unknown fields) are the same facts: the same keys
+      // as the case's own file.
+      if (file !== `${base}.jsonl`) {
+        const { read: known } = await readCase(`${base}.jsonl`)
+        expect(keysOf(first), file).toEqual(keysOf(known))
+      }
     }
-  })
+  )
 
   it('[C-11, FM-086] a malformed line and control-plane entries are skipped with a warning and never throw', async () => {
     for (const file of ['malformed-line.jsonl', 'malformed-line-crlf.jsonl']) {

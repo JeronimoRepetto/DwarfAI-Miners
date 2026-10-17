@@ -1,0 +1,15 @@
+{"method":"POST","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","body":{"dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"POST","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","body":{"parts":[{"type":"text","text":"Create a file named deny-probe.txt in the current directory containing the single word probe, using your file-writing tool. If the write is refused, reply with the word refused and stop.","dwarfaiUnknownField":"extra"}],"dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"POST","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","body":{"reply":"reject","dwarfaiUnknownField":"extra"},"dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}
+{"method":"GET","path":"<PATH>?directory=<HOME>%2FAppData%2FLocal%2FTemp%[redacted]","dwarfaiUnknownField":"extra"}

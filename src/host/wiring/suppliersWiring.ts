@@ -26,6 +26,7 @@ import type { Scheduler } from '../kernel/ports/scheduler'
 import {
   createSuppliers,
   type CapabilityRecordStore,
+  type HostedCommandDeps,
   type InstallResolver,
   type IntegrationGateReader,
   type SuppliedEventSink,
@@ -53,6 +54,8 @@ export interface SuppliersWiringDeps {
   hostEpoch: HostEpoch
   /** The SimulatedDriver's seed (15 §4.12), used by development builds only. */
   simulatedSeed: string
+  /** The "Other…" driver's process deps (ISSUE-165; 15 §4.11), handed on to the module as given. */
+  hostedCommand?: HostedCommandDeps
 }
 
 /**
@@ -118,7 +121,8 @@ export function wireSuppliers(deps: SuppliersWiringDeps): WiredSuppliers {
     integrationGate: deps.integrationGate,
     bus: deps.bus,
     ids: deps.ids,
-    hostEpoch: deps.hostEpoch
+    hostEpoch: deps.hostEpoch,
+    ...(deps.hostedCommand === undefined ? {} : { hostedCommand: deps.hostedCommand })
   })
   // The start-up pass, then every check it left running, then one more pass over the filled cache
   // (a check that answered late is read from the cache; an installed one is not resolved again).

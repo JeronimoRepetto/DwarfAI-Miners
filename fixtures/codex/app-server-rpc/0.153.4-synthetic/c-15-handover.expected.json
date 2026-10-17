@@ -1,0 +1,55 @@
+{
+  "case": "C-15",
+  "description": "ADR-010 item 8, CH-05: the provider hangs after the request; the answer is written, no serverRequest/resolved ever comes, and the broker's 30 s hand-over gives channel-unavailable.",
+  "script": [
+    { "do": "launch" },
+    { "do": "answerPermission", "providerRequestId": "0", "decision": "allow" },
+    { "do": "advance", "ms": 30000 }
+  ],
+  "outcomes": [{ "resolved": true }, { "kind": "refused", "reason": "channel-unavailable" }, null],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "0",
+        "channel": "driver",
+        "payload": { "toolName": "commandExecution", "requestText": "npm test" },
+        "options": { "hasAllowOnce": true, "hasRejectOnce": true },
+        "turnKey": "0000000a-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000001",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": 1792225108645
+      }
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    },
+    { "jsonrpc": "2.0", "id": 0, "result": { "decision": "accept" } }
+  ]
+}

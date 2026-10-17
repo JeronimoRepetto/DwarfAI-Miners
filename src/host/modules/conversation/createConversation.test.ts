@@ -2,6 +2,7 @@
 // `messages` CHECK and UNIQUE keys behind `ingest`, read back from the rows.
 import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import type { TurnEnded } from '../../kernel/domain/sharedContracts'
@@ -10,7 +11,7 @@ import { SqliteLifecycleFactLog } from '../../platform/sqlite/SqliteLifecycleFac
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import type { ConversationEntry } from '../suppliers'
-import { createConversation, type ConversationEvent } from './index'
+import { createConversation, type ConversationEvent, type SendEvent } from './index'
 import { seedConversationDb } from './testing/sqliteConversationDb'
 
 const T0 = 1_790_000_000_000
@@ -203,5 +204,106 @@ describe('the wired recordTurnEnd (16 §4.6; 09 §5.6)', () => {
     expect(bus.ofType('TurnEnded').map((e) => e.payload)).toEqual([
       { dwarfId: dwarf, end: end(dwarf) }
     ])
+  })
+})
+
+describe('the wired transcript-match evidence (S-022-1; ADR-022 item 3)', () => {
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 30; i++) await Promise.resolve()
+  }
+  /** The module with `sending` built over a sender that accepts every turn as `transcript-match`. */
+  function sendingSetUp() {
+    const { db } = openTemplateCopy()
+    const transactions = new SqliteTransactionRunner(db)
+    const [dwarf] = seedConversationDb(db, transactions, T0)
+    const bus = new RecordingEventBus<ConversationEvent>({ transactionScope: transactions })
+    const clock = new FakeClock(T0)
+    const ids = new SequenceIdGenerator()
+    const lifecycleFacts = new SqliteLifecycleFactLog({ db, scope: transactions, ids, clock })
+    const conversation = createConversation({
+      db,
+      transactions,
+      bus,
+      lifecycleFacts,
+      clock,
+      ids,
+      hostEpoch: 'epoch-0166'
+    })
+    const sendBus = new RecordingEventBus<SendEvent>({ transactionScope: transactions })
+    const sending = conversation.sending({
+      turns: {
+        send: () =>
+          Promise.resolve({
+            ok: true,
+            value: {
+              confidence: 'confirmed',
+              heldUntilTurnEnd: false,
+              correlation: 'echo-1',
+              reactionEvidence: 'transcript-match'
+            }
+          })
+      },
+      recipients: { canReceiveMessages: () => true },
+      bus: sendBus,
+      diagnostics: new RecordingDiagnosticsLog()
+    })
+    let sent: string | undefined
+    const send = async (requestId: string) => {
+      const result = await sending.send(dwarf, 'hi', [], requestId)
+      if (result.ok) sent = result.value
+      await settle()
+    }
+    const phase = () =>
+      conversation.queries.feed(dwarf).messages.find((m) => m.id === sent)?.delivery?.phase
+    return { conversation, send, transactions, dwarf, phase }
+  }
+  const evidence = (): ConversationEntry[] => [
+    {
+      sourceKey: 'claude:session-0:user-1',
+      role: 'person',
+      text: 'hi',
+      providerTime: T0 + 5,
+      echoOf: 'echo-1'
+    },
+    {
+      sourceKey: 'claude:session-0:assistant-1',
+      role: 'dwarf',
+      text: 'on it',
+      providerTime: T0 + 9
+    }
+  ]
+
+  it('[US-MSG-001.AC04, S7.05, S-022-1] an ingested echo followed by a dwarf record makes the sent message reacted', async () => {
+    const { conversation, send, dwarf, phase } = sendingSetUp()
+    await send('01890a5d-ac96-774b-bcce-000000000166')
+    expect(phase()).toBe('delivered')
+
+    conversation.commands.ingest(dwarf, evidence(), 'transcript')
+
+    expect(phase()).toBe('reacted')
+  })
+
+  it('[S7.05, S-022-1, ADR-006] evidence ingested inside a caller transaction counts only after that caller commits', async () => {
+    const { conversation, send, transactions, dwarf, phase } = sendingSetUp()
+    await send('01890a5d-ac96-774b-bcce-000000000167')
+
+    // The observed batch rolled back: its entries never happened.
+    transactions.inTransaction(() => conversation.commands.ingest(dwarf, evidence(), 'transcript'))
+    conversation.joinedEvents.discard()
+    conversation.joinedEvents.publish()
+    expect(phase()).toBe('delivered')
+
+    // The same batch, committed by its caller: the evidence counts after the commit.
+    const [echo, reply] = evidence()
+    const again = [
+      { ...(echo as ConversationEntry), sourceKey: 'claude:session-0:user-2' },
+      { ...(reply as ConversationEntry), sourceKey: 'claude:session-0:assistant-2' }
+    ]
+    transactions.inTransaction(() => {
+      conversation.commands.ingest(dwarf, again, 'transcript')
+      expect(phase()).toBe('delivered')
+    })
+    conversation.joinedEvents.publish()
+    expect(phase()).toBe('reacted')
   })
 })

@@ -130,6 +130,15 @@ option fails "a rollback build offers no first-run option") and pinned to the ta
 `src/ui-main/ipc/ipc-routing.contract.test.ts` ("the cut-2 rollback setting is on if and only if…"; broken on purpose:
 the setting on in a normal build fails it).
 
+Asks left by the cut-2 build (#1293, follow-up of the ISSUE-141 verification): an observed session outlives the Host
+(`07` S6.17), so an ask the cut-2 build opened can still be `open` when the rollback build's Host boots, while no route
+answers a Host `AskId` there (`INVALID_PARAMS`). With `CUT_2_ROLLBACK` on, the Host settles every ask left `open` or
+`answering` at boot as a request it no longer holds (`07` S6.11, S6.20, machine 6's `reconcileAfterRestart`): it closes
+answered elsewhere with no notice, so no unanswerable card is shown (hidden until built, `21` §1 item 8). No new state,
+reason or event. Proven in `src/host/wiring/cut2Rollback.test.ts` (broken on purpose: a rollback build that leaves the
+ask open fails "a rollback build closes every ask the cut-2 build left live") and
+`src/host/modules/asking/application/askRestart.test.ts`.
+
 Dialog precedence (lead decision, 2026-10-14; ADR-002 D7, OQ-63): Stop everything and quit's confirmation opens above
 every other dialog, whichever opened first, the first-run step included, which has no close and no skip
 (US-SET-012.AC06). Dialogs open at once stack (`src/renderer/src/lib/overlay/dialogStack.ts`): only the top one is
@@ -159,8 +168,13 @@ Package gaps decided for this step:
   without this switch: with A-N32 unrouted, the step that the first boot makes due had no way out
   (`e2e/cut-2/first-run-step-ui.e2e.ts` "the step is never a trap"; proven by breaking A-N32's composition, which left
   the step on screen). Decided by: lead, 2026-10-14.
-- **S14.10, rewriting the entry when the port changes,** is not built in this step: a taken port at a later boot gives a
-  new port, and the entry written earlier is not rewritten. Decided by: lead, 2026-10-14 (follow-up).
+- **S14.10, rewriting the entry when the port changes,** was not built when the step was switched: a taken port at a later
+  boot gave a new port, and the entry written earlier was not rewritten. Decided by: lead, 2026-10-14 (follow-up). Built
+  since (#1289): after boot step 6 binds the ingress, the Host's own entry of an `on-verified` integration that names
+  another port is written again through the config writer engine (backup, fresh token, read-back, the consent on
+  record), replacing DwarfAI's own entry only; an old-app entry is never written, an integration that is off or
+  `on-unverified` is left alone, and a cut-2 rollback build never rewrites. The check runs at every bind, so a rewrite a
+  full disk refused is made at the next boot.
 
 Real-CLI evidence (`21` §4 row "Claude hook entry", TC-141-03): the Claude CLI treats a `401` from the Host ingress, or no
 answer from the old app's Claude route, as a non-blocking hook failure. Run by the owner in the opt-in real-CLI lane

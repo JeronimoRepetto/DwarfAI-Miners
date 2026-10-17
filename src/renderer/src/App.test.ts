@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../contracts/ipc/testing/fakeWindowApi'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import { MotionConfig } from 'motion-v'
 import App from './App.vue'
@@ -405,7 +406,13 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     onUiSessionChanged: vi.fn().mockReturnValue(() => undefined),
     ...overrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api as unknown as Partial<Window['api']>)
+  })
   return api
 }
 
@@ -3280,7 +3287,13 @@ describe('App shell packing (#488)', () => {
     expect(rule('.shell-secondary')).toMatch(/(^|[;\s])width:\s*var\(--page-width\)/)
     // And on a screen narrower than the dock the page is still the part that gives way.
     expect(rule('.shell-secondary')).toMatch(/min-width:\s*0/)
-    expect(rule('.shell')).toMatch(/min-width:\s*0/)
+    // AMENDED for ISSUE-262 (was: `min-width: 0` on `.shell`): shrunk to nothing, the plate clipped
+    // the mine column and the nav from their free side while the window stayed whole, against the
+    // decision log's Narrow screen rule. The page still gives way; the plate stops at the docked
+    // parts ('App narrow screen (ISSUE-262)' pins the floor).
+    expect(rule('.shell')).toMatch(
+      /min-width:\s*calc\(2 \* var\(--shell-pad\) \+ var\(--nav-width\)/
+    )
   })
 
   it('keeps no separate rule for the frames a fold is held over', () => {
@@ -4189,11 +4202,15 @@ describe('App message dock (#635)', () => {
   })
 
   it('asks main for no second window: the panel is never a surface of its own', async () => {
-    const setMessagePanel = vi.fn().mockImplementation((state: unknown) => Promise.resolve(state))
-    const { wrapper } = await openMine({ setMessagePanel })
+    // AMENDED for ISSUE-250 (was: a hand stub's `setMessagePanel`, asserted never called): that member is no row of
+    // the channel registry (14 §2), so the generated fake `window.api` (ADR-033 item 7) refuses it outright, and App
+    // reading it would throw. The case keeps its subject: the bridge has no second-window request, and the click
+    // opens the panel in this window, which App draws itself.
+    const { wrapper } = await openMine()
+    expect('setMessagePanel' in window.api).toBe(false)
     await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
-    expect(setMessagePanel).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
   })
 })
 
@@ -4372,3 +4389,666 @@ describe('App Host asks (ISSUE-138)', () => {
   })
 })
 /* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
+
+/* --- The mine column (ISSUE-254) — one block, appended ------------------------------------------- */
+/*
+ * What the shell does with the column's presses (US-MINE-002, US-MINE-006…008, US-OBS-004): the chat
+ * it opens and where the keyboard lands, the current mine, the Add panel in the dock slot, the
+ * history's way back, and one status reaching every place a dwarf is drawn in the same render.
+ */
+describe('App mine column (ISSUE-254)', () => {
+  const ALPHA = 'C:/dev/alpha'
+  const BETA = 'C:/dev/beta'
+  const WORKER = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'worker',
+    name: 'dwarfai-53',
+    status: 'working',
+    sessionId: 's1',
+    textDelivery: 'terminal'
+  }
+  const ASKING = {
+    ...WORKER,
+    id: 'claude:s2',
+    name: 'dwarfai-54',
+    sessionId: 's2',
+    status: 'waiting',
+    waitingReason: 'user-input',
+    pendingQuestion: {
+      toolUseId: 't1',
+      channel: 'terminal',
+      questions: [
+        { question: 'Which one?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }
+      ]
+    }
+  }
+  const mineOf = (id: string, name: string, dwarfs: unknown[]) => ({
+    id,
+    path: id,
+    name,
+    tier: 'bronze',
+    dwarfs,
+    tokensObserved: 0,
+    updatedAt: 0
+  })
+  const project = (id: string, name: string) => ({
+    id,
+    path: id,
+    name,
+    declared: false,
+    addedAt: 1,
+    live: true
+  })
+
+  beforeEach(() => {
+    useView().clear()
+    useDwarfMessaging().clearAll()
+  })
+  afterEach(() => useView().clear())
+
+  /*
+   * Mounted into the page, unlike mountApp: where the keyboard lands is only real in a document, and
+   * the focus is what these cases read.
+   */
+  async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
+    const api = stubApi({
+      getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT),
+      getMines: vi.fn().mockResolvedValue({
+        mines: [mineOf(ALPHA, 'alpha', dwarfs), mineOf(BETA, 'beta', [])],
+        tokensObserved: 0
+      }),
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [project(ALPHA, 'alpha'), project(BETA, 'beta')]
+      }),
+      ...overrides
+    })
+    const wrapper = mount(App, { attachTo: document.body })
+    mounted.push(wrapper)
+    await flushPromises()
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.find(`[data-mine="${ALPHA}"] .dm-card__hit`).trigger('click')
+    await flushPromises()
+    return { wrapper, api }
+  }
+
+  const current = (wrapper: VueWrapper) =>
+    wrapper
+      .findAll('.dm-card__hit[aria-current="true"]')
+      .map((hit) => hit.element.closest('[data-mine]')?.getAttribute('data-mine'))
+
+  it('[US-MINE-002.AC03, NFR-A11Y-04] the opened chat has focus on the next frame: the composer, or the question card’s first option', async () => {
+    const { wrapper } = await openMineWith([WORKER, ASKING])
+    await wrapper.find(`button.dm-dwarf[data-dwarf="${WORKER.id}"]`).trigger('click')
+    await flushPromises()
+    const panel = wrapper.findComponent(DwarfMessagePanel)
+    expect(panel.props('dwarf')).toMatchObject({ id: WORKER.id })
+    expect(document.activeElement?.tagName).toBe('TEXTAREA')
+    expect(panel.element.contains(document.activeElement)).toBe(true)
+
+    await wrapper.find(`.dm-roster button.dm-portrait[data-dwarf="${ASKING.id}"]`).trigger('click')
+    await flushPromises()
+    const asking = wrapper.findComponent(DwarfMessagePanel)
+    expect(asking.props('dwarf')).toMatchObject({ id: ASKING.id })
+    expect(document.activeElement?.classList.contains('dm-qopt')).toBe(true)
+    expect(asking.element.contains(document.activeElement)).toBe(true)
+  })
+
+  it('[US-MINE-002.AC04, US-MINE-002.AC05] a chat gaining focus makes its mine current with the mark and the sound, and a click on the mine painting or header makes it current without moving chat focus', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    // The open mine is the current one: its card wears the mark, and only its card.
+    expect(current(wrapper)).toEqual([ALPHA])
+    expect(wrapper.find('.dm-minecol').attributes('data-mine')).toBe(ALPHA)
+
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([ALPHA])
+    const focused = document.activeElement
+    expect(wrapper.findComponent(DwarfMessagePanel).element.contains(focused)).toBe(true)
+
+    // A click on the mine's painting or its header keeps it current and leaves the chat focused.
+    await wrapper.find('.dm-minecol__art').trigger('click')
+    await wrapper.find('.dm-minecol__bar').trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([ALPHA])
+    expect(wrapper.findComponent(DwarfMessagePanel).props('dwarf')).toMatchObject({
+      id: WORKER.id
+    })
+    expect(document.activeElement).toBe(focused)
+
+    // Opening another mine makes that one current, and the mark follows it.
+    await wrapper.find(`[data-mine="${BETA}"] .dm-card__hit`).trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([BETA])
+    expect(wrapper.find('.dm-minecol').attributes('data-mine')).toBe(BETA)
+  })
+
+  it('[US-OBS-004.AC06, US-OBS-004.AC10] a status change reaches sprite pose, tooltip, roster and outcome line in the same render, and working shows the working pose and Working with its step count', async () => {
+    const { wrapper, api } = await openMineWith([{ ...WORKER, status: 'waiting' }])
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    await wrapper.find('.dm-roster button.dm-portrait').trigger('focus')
+    await flushPromises()
+
+    const shown = () => ({
+      sprite: wrapper.find('button.dm-dwarf').attributes('data-status'),
+      roster: wrapper.find('.dm-roster button.dm-portrait').attributes('data-status'),
+      tooltip: document.body.querySelector('.dm-tip .dm-dtip__status')?.textContent,
+      outcome: wrapper.find('.dm-msg__outcome').text()
+    })
+    expect(shown()).toMatchObject({ sprite: 'asleep', roster: 'asleep', tooltip: 'asleep' })
+    expect(shown().outcome).not.toMatch(/^Working/)
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({
+      mines: [mineOf(ALPHA, 'alpha', [WORKER]), mineOf(BETA, 'beta', [])],
+      tokensObserved: 0
+    })
+    // One render: every place the dwarf is drawn has changed together.
+    await wrapper.vm.$nextTick()
+    const now = shown()
+    expect(now).toMatchObject({ sprite: 'working', roster: 'working', tooltip: 'working' })
+    expect(now.outcome).toMatch(/^Working( · \d+ steps? so far)?$/)
+  })
+
+  it('[US-MINE-007.AC02, US-MINE-007.AC03, US-MINE-007.AC06] the toolbar opens Mine history, closes the mine and is named Mine and the mine name, with its tier chip', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    const column = wrapper.find('section.dm-minecol')
+    expect(column.attributes('aria-label')).toBe('Mine alpha')
+    expect(column.find('header.dm-minecol__bar .dm-tier').attributes('data-tier')).toBe('bronze')
+    expect(column.find('header.dm-minecol__bar h2').text()).toBe('alpha')
+
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(HistoryPanel).props('mine')).toMatchObject({ id: ALPHA })
+    expect(wrapper.find('.dm-hist__title').text()).toBe('History · alpha')
+
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+    expect(wrapper.find('.dm-hist').exists()).toBe(false)
+  })
+
+  /*
+   * The story returns to the MessagePanel when the history was opened from it; the pinned design
+   * rules otherwise (screens/shell.md, Layout: closing the history "closes the window ... it never
+   * returns to the chat it replaced"), and the new design wins. Either way the column is in view.
+   */
+  it('[US-MINE-006.AC06, NFR-A11Y-02] Close history or Esc closes the panel and the mine column is in view', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    for (const close of ['button', 'escape'] as const) {
+      // Reached by the keyboard, as Enter on a focused button presses it.
+      const opener = wrapper.find('button[aria-label="Mine history"]')
+      ;(opener.element as HTMLElement).focus()
+      await opener.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.dm-hist').exists()).toBe(true)
+      // The keyboard moves into the panel, as Tab takes it there, and closes it from inside.
+      const inside = wrapper.find('button[aria-label="Close history"]')
+      ;(inside.element as HTMLElement).focus()
+      expect(document.activeElement).toBe(inside.element)
+      if (close === 'button') await inside.trigger('click')
+      else await inside.trigger('keydown', { key: 'Escape' })
+      await flushPromises()
+      expect(wrapper.find('.dm-hist').exists(), close).toBe(false)
+      expect(wrapper.find('.dm-minecol .dm-minecol__art').exists(), close).toBe(true)
+      expect(document.activeElement, close).toBe(
+        wrapper.find('button[aria-label="Mine history"]').element
+      )
+    }
+  })
+
+  it('[US-MINE-008.AC01, US-MINE-008.AC02, US-MINE-008.AC03] + Dwarf is the footer’s only primary button and opens the Add panel aimed at this mine in the dock slot, replacing a MessagePanel', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dock-window').findComponent(DwarfMessagePanel).exists()).toBe(true)
+
+    const primaries = wrapper.find('.dm-minecol').findAll('.dm-btn--primary')
+    expect(primaries.map((button) => button.text())).toEqual(['+ Dwarf'])
+    await primaries[0]!.trigger('click')
+    await flushPromises()
+
+    // The same dock slot, the chat replaced, the Add panel aimed at this mine.
+    const slot = wrapper.findAll('.dock-window')
+    expect(slot).toHaveLength(1)
+    expect(slot[0]!.findComponent(AddPanel).exists()).toBe(true)
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+    expect(useAgentLaunch().mineId.value).toBe(ALPHA)
+    expect(wrapper.find('.dm-minecol .dm-minecol__art').exists()).toBe(true)
+  })
+})
+/* --- end of the ISSUE-254 block ------------------------------------------------------------------ */
+
+/* --- ISSUE-265: the guild flag across the whole shell ---------------------------------------- */
+describe('App and the guild flag (ISSUE-265)', () => {
+  const GUILD_NAMES = /\b(Lab|Market|Laboral Union|Guild)\b/
+
+  it('[US-GUILD-002.AC01, BR-19, INV-110] with the flag off no control anywhere in the app names or opens a guild page, and the flags are read once', async () => {
+    const { wrapper, api } = await mountOpenApp()
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+    expect(wrapper.find('.dm-nav__group[aria-label="Guild"]').exists()).toBe(false)
+    const controls = wrapper.findAll('button, a, [role="button"], [role="menuitem"], [role="tab"]')
+    expect(controls.length).toBeGreaterThan(0)
+    for (const control of controls) {
+      const names = [
+        control.text(),
+        control.attributes('aria-label') ?? '',
+        control.attributes('title') ?? '',
+        control.attributes('data-label') ?? '',
+        control.attributes('data-slot') ?? ''
+      ].join(' ')
+      expect(names).not.toMatch(GUILD_NAMES)
+      expect(control.attributes('data-slot') ?? '').not.toMatch(/^(lab|market|union)$/)
+    }
+    // Pressing every nav control still never shows a guild page.
+    for (const slot of wrapper.findAll(NAV)) {
+      await slot.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.dm-guild').exists()).toBe(false)
+    }
+    // Read once: nothing the person did asked main for the flags again.
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+  })
+
+  it('[US-GUILD-002.AC02, US-GUILD-001.AC03] with the flag on each guild slot opens its own page, replacing the one before', async () => {
+    const { wrapper } = await mountOpenApp(GUILD_ON)
+    for (const name of ['Lab', 'Market', 'Laboral Union', 'Lab']) {
+      await wrapper.find(`${NAV}[data-label="${name}"]`).trigger('click')
+      await flushPromises()
+      const pages = wrapper.findAll('.dm-guild')
+      expect(pages).toHaveLength(1)
+      expect(pages[0]!.attributes('aria-label')).toBe(name)
+      expect(pages[0]!.get('h1').text()).toBe(name)
+    }
+  })
+})
+/* --- end of the ISSUE-265 block -------------------------------------------------------------- */
+
+/* --- ISSUE-267: hidden until built — one block, appended ----------------------------------------- */
+/*
+ * A Panel build shows no control whose destination is not built (ADR-034 item 2; BR-19; 21 §1
+ * item 8): the nav's mode lever and Settings › General "Mode at launch" are absent while the build's
+ * feature list ships the Panel alone, and a provider whose launch main does not offer has no chip.
+ */
+describe('App, hidden until built (ISSUE-267)', () => {
+  const MINE = {
+    id: 'mine:c:\\x\\anvil',
+    path: 'C:\\x\\anvil',
+    name: 'anvil',
+    tier: 'bronze',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  beforeEach(() => useView().clear())
+
+  it('[ADR-034, BR-19] the nav and General render nothing for an unshipped mode, taking no space, and the Add panel renders no chip for a provider whose launch is not offered', async () => {
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      // Detected, and not offered: what main answers for Antigravity in a public build (R-03) or
+      // for any provider whose driver is not built.
+      listAgentProviders: vi.fn().mockResolvedValue({
+        providers: [
+          { provider: 'claude', installed: true, launchable: true },
+          {
+            provider: 'antigravity',
+            installed: true,
+            launchable: false,
+            reason: 'That agent cannot be started from the panel yet.'
+          }
+        ]
+      })
+    })
+
+    // The nav: no lever group, no side of it, no MODE label, so the System group ends at Music.
+    const nav = wrapper.get('.dm-nav')
+    expect(nav.find('.dm-nav__lever').exists()).toBe(false)
+    expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
+    expect(nav.text()).not.toContain('MODE')
+    expect(
+      nav
+        .get('.dm-nav__group[aria-label="System"]')
+        .findAll('.dm-slot')
+        .map((slot) => slot.attributes('data-label'))
+    ).toEqual(['Settings', 'Music'])
+
+    // Settings › General: no Mode at launch row.
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await openSection(wrapper, 'General')
+    expect(wrapper.get('.dm-settings__panel').text()).not.toContain('Mode at launch')
+
+    // The Add panel: Claude and Other, and no chip for the provider main did not offer.
+    await wrapper.find(NAV_MAP).trigger('click')
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('.dm-minecol__foot .dm-btn--primary').trigger('click')
+    await flushPromises()
+    const chips = wrapper
+      .get('.dm-add__chips')
+      .findAll('[data-value]')
+      .map((chip) => chip.attributes('data-value'))
+    expect(chips).toEqual(['claude', 'other'])
+  })
+})
+/* --- end of the ISSUE-267 block ------------------------------------------------------------------ */
+
+/* --- ISSUE-262: the nav, the mine column, the window slot and the Music slot ------------------ */
+describe('App shell motion and window slot (ISSUE-262)', () => {
+  const runs: {
+    element: Element
+    keyframes: DOMKeyframesDefinition
+    transition: unknown
+    finish: () => void
+  }[] = []
+  const wrappers: VueWrapper[] = []
+  /** motion-v's `animate()` stood in for, recording what each run was handed (see 'App panel motion'). */
+  const engine: MotionAnimate = (element, keyframes: DOMKeyframesDefinition, transition) => {
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    runs.push({ element, keyframes, transition, finish })
+    return {
+      cancel: () => undefined,
+      then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+    }
+  }
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    runs.length = 0
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value: () => undefined
+    })
+  })
+  afterEach(() => {
+    for (const wrapper of wrappers.splice(0)) wrapper.unmount()
+    Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+    useAgentLaunch().close()
+    vi.useRealTimers()
+  })
+  async function finishRuns(): Promise<void> {
+    for (const run of runs.splice(0)) run.finish()
+    await flushPromises()
+  }
+  async function animatedApp(overrides: Record<string, unknown> = {}) {
+    const api = stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT), ...overrides })
+    const wrapper = mount(App, { props: { engine }, global: { stubs: { transition: false } } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await finishRuns()
+    return { wrapper, api }
+  }
+
+  it('[US-SHELL-003.AC01] a World slot or Settings swaps the page at once, the new page fading in where it stands', async () => {
+    const { wrapper, api } = await animatedApp()
+    for (const slot of [NAV_SETTINGS, NAV_MINES, NAV_MAP]) {
+      await wrapper.get(slot).trigger('click')
+      await flushPromises()
+      const pageRuns = runs.filter((run) => run.element.classList.contains('shell-page'))
+      expect(pageRuns).toHaveLength(2)
+      const leaving = pageRuns.find((run) => (run.element as HTMLElement).inert)!
+      const entering = pageRuns.find((run) => !(run.element as HTMLElement).inert)!
+      // The old page is hidden at once, with no exit: no travel, and no time to play one.
+      expect(leaving.keyframes).toEqual({ opacity: [1, 0] })
+      expect(leaving.transition).toEqual({ duration: 0 })
+      // The new one fades in where it stands (motion.md, Page swap: --dur-base, --ease-out).
+      expect(entering.keyframes).toEqual({ opacity: [0, 1] })
+      expect(entering.transition).toEqual({ duration: 0.14, ease: [0.2, 0.7, 0.1, 1] })
+      await finishRuns()
+      expect(wrapper.findAll('.shell-page')).toHaveLength(1)
+    }
+    // Same-size pages: the window is never asked to change for a page swap.
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+  })
+
+  it('[US-SHELL-003.AC05] opening another page leaves the open mine untouched', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper, api } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    await finishRuns()
+    const column = wrapper.findComponent(MineColumn).vm.$
+    api.setPanelLayout.mockClear()
+    for (const slot of [NAV_SETTINGS, NAV_MINES, NAV_MAP]) {
+      await wrapper.get(slot).trigger('click')
+      await flushPromises()
+      // Only the page column moves; nothing runs on the mine column or the shell's ground.
+      expect(runs.length).toBeGreaterThan(0)
+      expect(runs.every((run) => run.element.classList.contains('shell-page'))).toBe(true)
+      await finishRuns()
+      expect(wrapper.findComponent(MineColumn).vm.$).toBe(column)
+    }
+    expect(useView().state.mineId).toBe(mine.id)
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The mine column's own motion is the owner's ruling, not the 180/90 ms of NFR-TIM-12 (#566:
+   * motion-v's own defaults, no authored durations; #585: the maintainer's drawing of the column
+   * uncovered in place). That is an owner-ruled accepted difference. What the ACs fix beyond the
+   * timing is asserted here; the fold's own geometry is useShellFold.test.ts's.
+   */
+  it('[US-SHELL-004.AC02, NFR-TIM-12] another mine swaps the column in place, and nothing else on screen moves (#566 timing)', async () => {
+    const first = defaultMine({ id: 'p1', name: 'first', dwarfs: [defaultDwarf({ id: 'd1' })] })
+    const second = defaultMine({ id: 'p2', name: 'second', dwarfs: [defaultDwarf({ id: 'd2' })] })
+    const { wrapper, api } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [first, second], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', first.id)
+    await flushPromises()
+    await finishRuns()
+    const before = wrapper.findComponent(MineColumn).vm.$
+    api.setPanelLayout.mockClear()
+    wrapper.findComponent(MapPage).vm.$emit('open', second.id)
+    await flushPromises()
+    // A fresh column for the other mine, in the same place...
+    expect(wrapper.findComponent(MineColumn).vm.$).not.toBe(before)
+    expect(wrapper.findComponent(MineColumn).props('mine')).toMatchObject({ id: second.id })
+    // ...and nothing else moved: no fold of the ground, no carried page, the nav untouched.
+    expect(runs).toEqual([])
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    expect((wrapper.get('.dm-nav').element as HTMLElement).style.transform).toBe('')
+  })
+
+  it('[US-SHELL-004.AC03, NFR-TIM-12] Close mine closes any window first, then the column leaves on the fold, and only then does the window give the room back (#566 timing)', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper, api } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    await finishRuns()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    await finishRuns()
+    api.setPanelLayout.mockClear()
+    wrapper.findComponent(MineColumn).vm.$emit('close')
+    await flushPromises()
+    // The window first, at once (0 ms, no travel), then the shell folding over the column.
+    expect(runs.map((run) => run.element.classList[0])).toEqual(['dock-window', 'shell'])
+    expect(runs[0]!.keyframes).toEqual({ opacity: [1, 0] })
+    expect(runs[0]!.transition).toEqual({ duration: 0 })
+    // The column still stands where it was, and the window keeps its room, until the fold ends.
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    await finishRuns()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: false, dockOpen: false })
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+  })
+
+  it('[US-SHELL-004.AC06] the window slot holds one of chat, history or Add panel, and closing history or the Add panel closes the slot', async () => {
+    const dwarf = defaultDwarf()
+    const mine = defaultMine({ dwarfs: [dwarf] })
+    const { wrapper } = await mountApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    const slotHolds = (): string[] => {
+      const slot = wrapper.findAll('.dock-window')
+      if (slot.length === 0) return []
+      expect(slot).toHaveLength(1)
+      const held: string[] = []
+      if (slot[0]!.findComponent(DwarfMessagePanel).exists()) held.push('chat')
+      if (slot[0]!.findComponent(HistoryPanel).exists()) held.push('history')
+      if (slot[0]!.findComponent(AddPanel).exists()) held.push('add')
+      return held
+    }
+    // The chat, then the history replacing it; closing the history closes the slot, not back to the chat.
+    wrapper.findComponent(MineColumn).vm.$emit('select', dwarf)
+    await flushPromises()
+    expect(slotHolds()).toEqual(['chat'])
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    expect(slotHolds()).toEqual(['history'])
+    wrapper.findComponent(HistoryPanel).vm.$emit('close')
+    await flushPromises()
+    expect(slotHolds()).toEqual([])
+    // The chat, then the Add panel replacing it; closing the Add panel closes the slot as well.
+    wrapper.findComponent(MineColumn).vm.$emit('select', dwarf)
+    await flushPromises()
+    expect(slotHolds()).toEqual(['chat'])
+    wrapper.findComponent(MineColumn).vm.$emit('add')
+    await flushPromises()
+    expect(slotHolds()).toEqual(['add'])
+    wrapper.findComponent(AddPanel).vm.$emit('close')
+    await flushPromises()
+    expect(slotHolds()).toEqual([])
+  })
+})
+
+/*
+ * The narrow-screen rule (decision log, Narrow screen; screens/shell.md): the nav, the mine column
+ * and the window stay whole at the docked edge, the page's column gives way and clips, and what
+ * still does not fit runs off the far side. jsdom lays nothing out, so the declarations that make
+ * the rule are pinned here, off the stylesheets; e2e/panel/shell.e2e.ts measures the real layout.
+ */
+describe('App narrow screen (ISSUE-262)', () => {
+  function rulesOf(file: string): (selector: string) => string {
+    const source = readFileSync(join(import.meta.dirname, file), 'utf8')
+    const tag = '<style scoped>'
+    const style = source.slice(source.indexOf(tag) + tag.length).replace(/\/\*[\s\S]*?\*\//g, '')
+    return (selector) =>
+      [...style.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+        .filter((match) => match[1]!.split(',').some((one) => one.trim() === selector))
+        .map((match) => match[2]!)
+        .join(';')
+  }
+  const app = rulesOf('App.vue')
+  const nav = rulesOf('components/shell/PanelNav.vue')
+
+  it('[US-SHELL-007.AC01, US-SHELL-007.AC02, US-SHELL-007.AC03, US-SHELL-007.AC05, NFR-PLAT-12] docked parts keep their width, the page shrinks and clips, then the farthest part runs off-screen, with no minimum width', () => {
+    // The docked parts never shrink.
+    expect(app('.dock-window')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(app('.shell-mine')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(nav('.dm-nav')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(nav('.dm-nav')).toMatch(/(^|[;\s])width:\s*var\(--nav-width, 56px\)/)
+    // The page's column is the one part that gives way, and it clips.
+    expect(app('.shell-secondary')).toMatch(/(^|[;\s])flex:\s*0 1 var\(--page-width\)/)
+    expect(app('.shell-secondary')).toMatch(/min-width:\s*0/)
+    expect(app('.shell-secondary')).toMatch(/overflow:\s*hidden/)
+    // The plate shrinks only by its page: never below the nav, and the mine column while one stands.
+    expect(app('.shell')).toMatch(/(^|[;\s])--nav-width:\s*56px/)
+    expect(app('.shell')).toMatch(
+      /min-width:\s*calc\(2 \* var\(--shell-pad\) \+ var\(--nav-width\) \+ var\(--shell-gap\)\)/
+    )
+    expect(app('.shell:has(> .shell-mine)')).toMatch(
+      /min-width:\s*calc\(\s*2 \* var\(--shell-pad\) \+ var\(--nav-width\) \+ var\(--mine-column-width\) \+\s*2 \* var\(--shell-gap\)\s*\)/
+    )
+    // What still does not fit runs off the far side: packed at the docked edge, clipped by the dock.
+    expect(app('.panel-dock')).toMatch(/justify-content:\s*flex-end/)
+    expect(app('.panel-dock')).toMatch(/overflow:\s*hidden/)
+    // No named minimum anywhere the dock is laid out.
+    for (const selector of ['.panel-dock', '.panel-dock.edge-left', '.dock-window'])
+      expect(app(selector)).not.toMatch(/min-width/)
+  })
+
+  it('[US-SHELL-007.AC06] the page clips on its inward side for either dock', () => {
+    // Docked right the page keeps its 440px against its right (the mine column) and is cut on its
+    // left; docked left the anchor and the cut are mirrored.
+    expect(app('.shell-secondary > .shell-page')).toMatch(/(^|[;\s])right:\s*0/)
+    expect(app('.shell-secondary > .shell-page')).toMatch(/(^|[;\s])width:\s*var\(--page-width\)/)
+    expect(app('.shell.edge-left .shell-secondary > .shell-page')).toMatch(/right:\s*auto/)
+    expect(app('.shell.edge-left .shell-secondary > .shell-page')).toMatch(/left:\s*0/)
+  })
+})
+
+describe('App Music slot (ISSUE-262)', () => {
+  let realAudio: typeof Audio
+  beforeEach(() => {
+    realAudio = window.Audio
+    // jsdom's media element has no pipeline (see 'App audio'): only what the player touches.
+    class FakeAudio {
+      preload = ''
+      loop = false
+      volume = 0
+      currentTime = 0
+      duration = Number.NaN
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      removeAttribute(): void {}
+      play(): void {}
+      pause(): void {}
+      load(): void {}
+    }
+    Object.defineProperty(window, 'Audio', { configurable: true, value: FakeAudio })
+  })
+  afterEach(() => {
+    Object.defineProperty(window, 'Audio', { configurable: true, value: realAudio })
+  })
+  const musicIcon = (wrapper: VueWrapper): unknown =>
+    wrapper.get(NAV_MUSIC).findComponent({ name: 'PixelIcon' }).props('name')
+  const toastTexts = (wrapper: VueWrapper): string[] =>
+    wrapper.findAll('.dm-toast').map((toast) => toast.text())
+  const musicApp = (overrides: Record<string, unknown> = {}) =>
+    mountOpenApp({ getPanelVisible: vi.fn().mockResolvedValue(true), ...overrides })
+
+  it('[US-SHELL-005.AC01] with Music at startup on, the Music slot starts pressed and lit', async () => {
+    const { wrapper } = await musicApp({
+      getAudioPreferences: vi
+        .fn()
+        .mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES, musicAtStartup: true })
+    })
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
+    expect(musicIcon(wrapper)).toBe('music-on')
+  })
+
+  it('[US-SHELL-005.AC02, US-SHELL-005.AC03] toggling Music dims or lights its icon with the toast Music off or Music on', async () => {
+    const { wrapper } = await musicApp()
+    expect(musicIcon(wrapper)).toBe('music-on')
+    await wrapper.get(NAV_MUSIC).trigger('click')
+    await flushPromises()
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-pressed')).toBe('false')
+    expect(musicIcon(wrapper)).toBe('music-off')
+    expect(toastTexts(wrapper)).toContain('Music off')
+    await wrapper.get(NAV_MUSIC).trigger('click')
+    await flushPromises()
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
+    expect(musicIcon(wrapper)).toBe('music-on')
+    expect(toastTexts(wrapper)).toContain('Music on')
+  })
+
+  it('[US-SHELL-005.AC04, US-SHELL-005.AC05] a pressed Music slot never takes the gold current-page mark and toggling changes neither the Music volume nor Notification sounds', async () => {
+    const { wrapper, api } = await musicApp()
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-current')).toBeUndefined()
+    expect(wrapper.get(NAV_MAP).attributes('aria-current')).toBe('page')
+    for (let press = 0; press < 3; press++) {
+      await wrapper.get(NAV_MUSIC).trigger('click')
+      await flushPromises()
+      expect(wrapper.get(NAV_MUSIC).attributes('aria-current')).toBeUndefined()
+      expect(wrapper.get(NAV_MAP).attributes('aria-current')).toBe('page')
+    }
+    // The volume and Notification sounds are stored audio preferences; the toggle writes none.
+    expect(api.setAudioPreferences).not.toHaveBeenCalled()
+    expect(api.setNotificationsEnabled).not.toHaveBeenCalled()
+  })
+})
+/* --- end of the ISSUE-262 block -------------------------------------------------------------- */

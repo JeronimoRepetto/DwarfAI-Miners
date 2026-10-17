@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import TierMarker from './TierMarker.vue'
@@ -93,5 +95,65 @@ describe('TierMarker pulse phase (#635)', () => {
       .filter((rule) => rule[1]!.trim() === '.dm-marker__pulse')
       .map((rule) => rule[2]!)
     expect(pulse.some((body) => body.includes('animation-delay: var(--delay, 0ms);'))).toBe(true)
+  })
+})
+
+/*
+ * APPENDED for ISSUE-263 (US-SHELL-011.AC01; motion.md, Reduced motion, d12d3fc). jsdom applies no
+ * media query, so the stand-in is read from the two stylesheets that hold it: design-tokens.css
+ * stops the pulse, and the marker's own rule keeps the halo steady, in the tier's colour.
+ */
+describe('TierMarker reduced-motion stand-in (ISSUE-263)', () => {
+  const tokensSource = readFileSync(
+    join(import.meta.dirname, '../../assets/design-tokens.css'),
+    'utf8'
+  )
+  const REDUCED = '@media (prefers-reduced-motion: reduce)'
+
+  /** The declarations of every rule naming `part` inside a reduced-motion block of `source`. */
+  function reducedFor(source: string, part: string): Map<string, string>[] {
+    const found: Map<string, string>[] = []
+    for (let at = source.indexOf(REDUCED); at !== -1; at = source.indexOf(REDUCED, at + 1)) {
+      const open = source.indexOf('{', at)
+      let depth = 1
+      let end = open + 1
+      for (; depth > 0; end += 1) depth += source[end] === '{' ? 1 : source[end] === '}' ? -1 : 0
+      const block = source.slice(open + 1, end - 1).replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const [, head, body] of block.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (!head!.split(',').some((selector) => selector.trim() === part)) continue
+        found.push(
+          new Map(
+            body!
+              .split(';')
+              .map((line) => [
+                line.slice(0, line.indexOf(':')).trim(),
+                line.slice(line.indexOf(':') + 1).trim()
+              ])
+              .filter(([name]) => name)
+              .map(([name, value]) => [name!, value!])
+          )
+        )
+      }
+    }
+    return found
+  }
+
+  it('[US-SHELL-011.AC01, NFR-A11Y-10] a marker that would pulse shows a steady halo with its tier still readable', () => {
+    // The pulse stops...
+    expect(
+      reducedFor(tokensSource, '.dm-marker__pulse').map((rule) => rule.get('animation'))
+    ).toContain('none !important')
+    // ...and the halo holds one steady frame rather than its hidden rest state.
+    const halo = reducedFor(markerSource, '.dm-marker__pulse')
+    expect(halo.map((rule) => [rule.get('opacity'), rule.get('transform')])).toEqual([
+      ['0.45', 'scale(1.15)']
+    ])
+    // The halo is drawn in the tier's own colour, and the marker says which tier it is.
+    expect(markerSource).toMatch(/\.dm-marker__pulse \{[^}]*background: var\(--tier-c\);/)
+    expect(markerSource).toMatch(/\[data-tier='gold'\] \{\s*--tier-c: var\(--tier-gold\);/)
+    const marker = mount(TierMarker, { props: { tier: 'gold' } })
+    expect(marker.attributes('data-tier')).toBe('gold')
+    expect(marker.attributes('aria-label')).toBe('Gold mine')
+    expect(marker.find('.dm-marker__pulse').exists()).toBe(true)
   })
 })

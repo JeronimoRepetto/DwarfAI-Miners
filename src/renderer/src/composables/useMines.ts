@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, type InjectionKey } from 'vue'
 import {
   HOST_FRAME_SCHEMAS,
   type DepartureCause,
@@ -20,6 +20,9 @@ import {
   type Mine,
   type MinesSnapshot
 } from '../types'
+import { LEAVING_EXIT_MS } from '../lib/presentation'
+import type { BoardDwarf } from '../lib/scene/boardDwarf'
+import { MAX_WALK_MS, prefersReducedMotion } from '../lib/scene/sceneMotion'
 import { createReadModel, followHost } from './readModel'
 import { useToasts } from './useToasts'
 
@@ -55,8 +58,9 @@ function dwarfIdsIn(snapshot: MinesSnapshot): Set<string> {
  * way `BoardFacadeAdapter` (ISSUE-086) folds the same facts for A-12/A-P2, so both sources show one board.
  *
  * - One writer at a time (21 §1 item 4). Until the first Host snapshot is read, `setMines` (today's A-12/A-P2 feed)
- *   writes the board; from then on the Host does, and `setMines` brings only today's open asks onto it (from cut 1
- *   A-P2 is `BoardFacadeAdapter`'s, which folds `LegacyAskRelay`'s asks onto the Host dwarfs until cut 2). The shell
+ *   writes the board; from then on the Host does, and `setMines` brings only today's board fields onto it: open asks,
+ *   text delivery and capabilities (from cut 1 A-P2 is `BoardFacadeAdapter`'s, which folds `LegacyAskRelay`'s fields
+ *   onto the Host dwarfs). The shell
  *   `start`s the Host half at mount from the cut-1 switch (ISSUE-123); a table that refuses A-N01 leaves the board on
  *   today's feed.
  * - Arrivals: a snapshot is never an arrival (S2.03); a `dwarf.arrived` frame emits one walk-in and puts the dwarf in
@@ -83,8 +87,18 @@ export type BoardWalk =
       panel: 'read-only' | 'closed'
     }
 
-/** How long a departed dwarf stays on the board while it walks out (NFR-TIM-09: 720 ms, binding until DI-06). */
+/**
+ * How long a departed dwarf stays on the board when no sprite says it is walking out (its mine is not open, or the
+ * column never walked it): the 720 ms of US-MINE-009 (NFR-TIM-09).
+ *
+ * A sprite that IS walking out holds it instead (ISSUE-255): the walk keeps today's corridor route and speed, the
+ * pinned design's ruling over the 720 ms, so it lasts as long as that route and its fade, from a fraction of a second
+ * to a long climb. The sprite says when it has gone (`walkedOut`); a flat 720 ms would cut a long walk-out short and
+ * hold a short one.
+ */
 const WALK_OUT_MS = 720
+/** The longest a walking-out sprite may hold its dwarf on the board: the longest walk and its fade. */
+const WALK_OUT_HOLD_MS = MAX_WALK_MS + LEAVING_EXIT_MS
 
 const MATERIALS: readonly Material[] = ['coal', 'bronze', 'copper', 'silver', 'gold', 'uranium']
 
@@ -111,13 +125,22 @@ let arrivals = new Set<string>()
 /** Whether the Host feeds the board: set by the first Host snapshot, cleared by `stop`. */
 let hostFed = false
 
-/** Today's ask fields of a dwarf, the only part of A-P2 a Host-fed board takes (see `setMines`). */
-type LegacyAsks = Partial<Pick<Dwarf, 'pendingQuestion' | 'pendingPermission' | 'waitingReason'>>
+/** Today's board fields of a dwarf, the only part of A-P2 a Host-fed board takes (see `setMines`). */
+type LegacyAsks = Partial<
+  Pick<
+    Dwarf,
+    'pendingQuestion' | 'pendingPermission' | 'waitingReason' | 'textDelivery' | 'capabilities'
+  >
+>
 
 /**
- * The open asks today's runtime holds, per Host dwarf id, as A-P2 last carried them (21 §3 `LegacyAskRelay`, cuts 1–4:
- * until cut 2 the ask cards of the rows still `legacy` reach the renderer only through `BoardFacadeAdapter`'s board,
- * which folds them onto the Host dwarf). Cut 2 moves the asks to the Host broker and its `asks` section.
+ * Today's board fields per Host dwarf id, as A-P2 last carried them (21 §3 `LegacyAskRelay`, cuts 1–4, which folds them
+ * onto the Host dwarf of the exact `LegacyDwarfIdBridge` join in `BoardFacadeAdapter`'s board):
+ * - the open asks: until cut 2 the ask cards of the rows still `legacy` reach the renderer only this way; cut 2 moves
+ *   them to the Host broker and its `asks` section;
+ * - the text delivery route and capabilities today's runtime resolved: A-23 `dwarf:sendText` and A-26 `dwarf:kick` are
+ *   served by today's runtime until their Host routes land, so the composer and the kick read its route. A dwarf A-P2
+ *   carries no route for has none (fail closed), and keeps today's refusal.
  */
 let legacyAsks = new Map<string, LegacyAsks>()
 
@@ -127,13 +150,24 @@ function asksOf(dwarf: Dwarf): LegacyAsks {
     ...(dwarf.pendingPermission === undefined
       ? {}
       : { pendingPermission: dwarf.pendingPermission }),
-    ...(dwarf.waitingReason === undefined ? {} : { waitingReason: dwarf.waitingReason })
+    ...(dwarf.waitingReason === undefined ? {} : { waitingReason: dwarf.waitingReason }),
+    ...(dwarf.textDelivery === undefined ? {} : { textDelivery: dwarf.textDelivery }),
+    ...(dwarf.capabilities === undefined ? {} : { capabilities: dwarf.capabilities })
   }
 }
 const walkers = new Set<(walk: BoardWalk) => void>()
 
 function emit(walk: BoardWalk): void {
   for (const walker of walkers) walker(walk)
+}
+
+/** Drops a departed dwarf from the board, once its walk-out is over. */
+function dropLeaver(dwarfId: string): void {
+  const entry = leaving.get(dwarfId as DwarfId)
+  if (entry === undefined) return
+  clearTimeout(entry.timer)
+  leaving.delete(dwarfId as DwarfId)
+  publish()
 }
 
 function forgetLeaving(): void {
@@ -156,7 +190,12 @@ function statusOf(dwarf: DwarfWire): Dwarf['status'] {
   return dwarf.status === 'working' ? 'working' : 'waiting'
 }
 
-function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): Dwarf {
+/*
+ * AMENDED for ISSUE-254 (ADR-032 D2; ADR-033 item 3): the Host's own status rides on the board dwarf
+ * (`hostStatus`, lib/scene/boardDwarf), since today's `status` folds asking, idle and asleep into one
+ * `waiting`; the scene reads it first, so a Host-idle dwarf reads "Waiting", never asleep.
+ */
+function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): BoardDwarf {
   const { model, effort } = dwarf.sessionProfile
   return {
     id: dwarf.id,
@@ -167,6 +206,7 @@ function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): Dwarf {
     ...(model === undefined ? {} : { model }),
     ...(effort === undefined ? {} : { effort }),
     status,
+    hostStatus: dwarf.status,
     ...(dwarf.parentDwarfId === null ? {} : { parentId: dwarf.parentDwarfId }),
     // Today's board names a dwarf's session; the Host's id stands in for it (ADR-015: provider ids stay apart).
     sessionId: dwarf.id,
@@ -234,11 +274,10 @@ function depart(dwarfId: DwarfId, mineId: MineId, cause: DepartureCause): void {
   const dwarf = board.dwarfs.get(dwarfId)
   if (dwarf === undefined) return
   board.dwarfs.delete(dwarfId)
-  const timer = setTimeout(() => {
-    leaving.delete(dwarfId)
-    publish()
-  }, WALK_OUT_MS)
-  leaving.set(dwarfId, { dwarf, timer })
+  // Under reduced motion there is no walk-out to wait for: the dwarf is gone at once (US-MINE-009.AC05).
+  if (!prefersReducedMotion()) {
+    leaving.set(dwarfId, { dwarf, timer: setTimeout(() => dropLeaver(dwarfId), WALK_OUT_MS) })
+  }
   emit({
     kind: 'walk-out',
     dwarfId,
@@ -327,11 +366,21 @@ function stop(): void {
   legacyAsks = new Map()
 }
 
+/**
+ * What a sprite tells the board about a departed dwarf's walk-out (ISSUE-255): `useMines`'s own `walkingOut` and
+ * `walkedOut` by default; a test, or a page with no board, provides its own under this key.
+ */
+export interface WalkOutReporter {
+  walkingOut: (dwarfId: string) => void
+  walkedOut: (dwarfId: string) => void
+}
+export const WALK_OUT_KEY: InjectionKey<WalkOutReporter> = Symbol('walk-out')
+
 export function useMines() {
   function setMines(snapshot: MinesSnapshot): void {
     // One writer at a time (21 §1 item 4): once the Host feeds the board, today's feed no longer writes it. From the
-    // cut-1 switch that feed is `BoardFacadeAdapter`'s, and the one thing it still brings is today's open asks
-    // (`legacyAsks`), which only it carries until cut 2.
+    // cut-1 switch that feed is `BoardFacadeAdapter`'s, and what it still brings is today's board fields (`legacyAsks`):
+    // the open asks, which only it carries until cut 2, and the delivery route of the rows still `legacy`.
     if (hostFed) {
       legacyAsks = new Map(
         snapshot.mines.flatMap((mine) => mine.dwarfs).map((dwarf) => [dwarf.id, asksOf(dwarf)])
@@ -374,6 +423,20 @@ export function useMines() {
       return () => {
         walkers.delete(listener)
       }
+    },
+    /**
+     * A sprite has set off on this departed dwarf's walk-out (SceneDwarf): the board keeps the dwarf until that sprite
+     * says it has gone, for at most the longest walk and its fade. A dwarf that is not departing is left alone.
+     */
+    walkingOut(dwarfId: string): void {
+      const entry = leaving.get(dwarfId as DwarfId)
+      if (entry === undefined) return
+      clearTimeout(entry.timer)
+      entry.timer = setTimeout(() => dropLeaver(dwarfId), WALK_OUT_HOLD_MS)
+    },
+    /** The sprite walking this departed dwarf out has gone: the board drops it now. */
+    walkedOut(dwarfId: string): void {
+      dropLeaver(dwarfId)
     },
     /** The Host read model's dwarfs (snapshot `dwarfs` with live frames), e.g. for Stop everything's count. */
     hostDwarfs: (): readonly DwarfWire[] => [...board.dwarfs.values()]

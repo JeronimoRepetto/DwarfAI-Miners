@@ -12,22 +12,32 @@
 //   `config-write-failed` (16 §7.3 Tx B failure, the same outcome). An entry pointing at a port
 //   nothing listens on would be an integration that is never on in fact. Turning it off, the boot
 //   re-verification and the legacy probe need no port and always reach the engine.
-// - `opencode-plugin` → nothing: in cuts 2 to 3e the OpenCode plugin file's writer is still the
-//   legacy installer (21 §2 cut 2; offeredFilter.ts), and a foreign config entry has exactly one
-//   writer per release (21 §1 item 4). This Host never writes it, so it owns no entry there: `verify`
-//   answers `absent`, `revert` completes with nothing to remove (the Reset saga's `external-config`
-//   step, 16 §7.4), `findLegacy` is never true (S41.02 runs on offered targets only), and `install`
-//   is refused. The OpenCode target joins the engine with its writer (later: ISSUE-227, ISSUE-232).
+// - `opencode-plugin` → `verify` and `revert` only (lead decision 2026-10-16, ISSUE-233): the Reset
+//   saga's `external-config` step removes the plugin file (16 §7.4; ADR-023 item 1; S13.03), so
+//   host/main.ts passes the config writer engine with the `OpenCodePluginConfigWriter` target
+//   (ISSUE-227), and the boot re-verification reaches it too (16 §7.3). The enable stays with the
+//   legacy installer until ISSUE-228 and ISSUE-232, since a foreign config entry has exactly one
+//   writer per release (21 §1 item 4): `install` is refused and `findLegacy` is never true (S41.02
+//   runs on offered targets only, offeredFilter.ts). With no plugin writer composed (a wiring whose
+//   OpenCode plugin folder is unknown), `verify` answers `absent` and `revert` completes with
+//   nothing to remove.
 //
 // Neither the token nor its hash reaches a log record (NFR-SEC-12, ADR-026).
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
-import type { ExternalConfigWriter, InstalledToolsReader } from '../../modules/preferences'
+import type {
+  ChannelToken,
+  CredentialMinter,
+  ExternalConfigWriter,
+  InstalledToolsReader
+} from '../../modules/preferences'
 import type { IngressPortRecord } from '../../transport/ingress/ingressPort'
 
 export interface HostConfigWriterDeps {
   /** The config writer engine with the `claude-hooks` target (host/main.ts). */
   claudeHooks: ExternalConfigWriter
+  /** The config writer engine with the `opencode-plugin` target (host/main.ts, ISSUE-233). */
+  openCodePlugin?: Pick<ExternalConfigWriter, 'verify' | 'revert'>
   /** `app_meta.ingress_port` as the hook ingress persisted it (bridges/ingressPort.ts). */
   ingressPort: Pick<IngressPortRecord, 'read'>
   log: DiagnosticsLog
@@ -35,7 +45,7 @@ export interface HostConfigWriterDeps {
 
 /** The `ExternalConfigWriter` the preferences module, its first-run step and its Reset saga use. */
 export function hostConfigWriter(deps: HostConfigWriterDeps): ExternalConfigWriter {
-  const { claudeHooks } = deps
+  const { claudeHooks, openCodePlugin } = deps
   return {
     install: (target, token, origin, tokenSha256) => {
       if (target !== 'claude-hooks') return Promise.resolve({ ok: false, error: 'io' })
@@ -52,12 +62,18 @@ export function hostConfigWriter(deps: HostConfigWriterDeps): ExternalConfigWrit
       }
       return claudeHooks.install(target, token, origin, tokenSha256)
     },
-    verify: (target) =>
-      target === 'claude-hooks' ? claudeHooks.verify(target) : Promise.resolve('absent'),
-    revert: (target) =>
-      target === 'claude-hooks'
-        ? claudeHooks.revert(target)
-        : Promise.resolve({ ok: true, value: undefined }),
+    verify: (target) => {
+      if (target === 'claude-hooks') return claudeHooks.verify(target)
+      return openCodePlugin === undefined
+        ? Promise.resolve('absent')
+        : openCodePlugin.verify(target)
+    },
+    revert: (target) => {
+      if (target === 'claude-hooks') return claudeHooks.revert(target)
+      return openCodePlugin === undefined
+        ? Promise.resolve({ ok: true, value: undefined })
+        : openCodePlugin.revert(target)
+    },
     findLegacy: (target) =>
       target === 'claude-hooks' ? claudeHooks.findLegacy(target) : Promise.resolve(false)
   }
@@ -95,5 +111,40 @@ export function enablableInstalledTools(
   return {
     installed: () =>
       installed.installed().filter((id) => id === 'claude-hooks' && ingressPort.read() !== null)
+  }
+}
+
+/** The engine's 07 S14.10 rewrite as this bridge sees it (ConfigWriterEngine.followIngressPort). */
+export interface IngressPortFollowing {
+  followIngressPort(
+    target: 'claude-hooks',
+    credential: () => { token: ChannelToken; tokenSha256: string }
+  ): Promise<unknown>
+}
+
+export interface ClaudeHookEntryFollowerDeps {
+  engine: IngressPortFollowing
+  /** A cut-2 rollback build (wiring/cut2Rollback.ts `rolledBack`). */
+  rolledBack: boolean
+  /** The transport's token issuance (transport/auth/mintCredential.ts). */
+  mintCredential: CredentialMinter
+}
+
+/**
+ * Boot step 6's 07 S14.10 half (ADR-016 item 3; 16 §7.4): once the hook ingress is bound, the Host's
+ * own Claude hook entry follows the port it is bound on. The engine writes only an `on-verified`
+ * integration's own entry, only when it names another port, under the consent on record, with a
+ * token minted here (lead decision 2026-09-30, ISSUE-198: the transport mints, never the module).
+ * A cut-2 rollback build writes nothing: today's installer is the entry's one writer there (21 §1
+ * item 4; wiring/cut2Rollback.ts), and the entry this Host wrote was removed before that build
+ * started (`--revert-integrations`, docs/strangler/rollback.md).
+ */
+export function claudeHookEntryFollower(deps: ClaudeHookEntryFollowerDeps): () => Promise<void> {
+  if (deps.rolledBack) return () => Promise.resolve()
+  return async () => {
+    await deps.engine.followIngressPort('claude-hooks', () => {
+      const credential = deps.mintCredential()
+      return { token: credential.value as ChannelToken, tokenSha256: credential.sha256 }
+    })
   }
 }

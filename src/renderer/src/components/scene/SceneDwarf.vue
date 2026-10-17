@@ -27,11 +27,12 @@
  * tint of a selected sprite (the design's brass halo replaces it), and the per-depth and
  * per-column scaling (the design draws every dwarf at 1x, 36 x 38).
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import DwarfTip from '../dwarf/DwarfTip.vue'
 import SpriteStrip from '../dwarf/SpriteStrip.vue'
 import TooltipCard from '../overlay/TooltipCard.vue'
 import { useHoverTip } from '../../composables/useHoverTip'
+import { useMines, WALK_OUT_KEY } from '../../composables/useMines'
 import { preloadDwarfArt } from '../../lib/art'
 import { dwarfDisplayName } from '../../lib/dwarf/displayName'
 import {
@@ -47,6 +48,7 @@ import {
   type CrewSoundSignal
 } from '../../lib/sprite/crewSound'
 import { LEAVING_EXIT_MS } from '../../lib/presentation'
+import { prefersReducedMotion, watchReducedMotion } from '../../lib/scene/sceneMotion'
 import { DWARF_CREW, DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
 import { dwarfClips, settledClips } from '../../lib/sprite/dwarfSequence'
 import type { SequencePosition, SpriteClip } from '../../lib/sprite/spriteSheet'
@@ -198,8 +200,68 @@ watch(
 )
 const departed = computed(() => walkedOut.value && props.dwarf.status === 'leaving')
 
+/*
+ * Under reduced motion there is no walk (ISSUE-255, US-MINE-009.AC05; components.md, "the walk reads
+ * 0ms"): an arrival is drawn on its station at once, the column walking nobody, and a leaver is gone
+ * at once, with no footsteps either way. Watched, so turning it on mid walk-out takes the leaver too.
+ */
+const reducedMotion = ref(prefersReducedMotion())
+const stopWatchingMotion = watchReducedMotion((reduced) => {
+  reducedMotion.value = reduced
+})
+const leaving = computed(() => props.dwarf.status === 'leaving')
+const gone = computed(() => leaving.value && reducedMotion.value)
+// Gone to the eye, so gone to the keyboard and the screen reader too, as a departed leaver is.
+const hidden = computed(() => departed.value || gone.value)
+
+/*
+ * The walk-out lasts as long as this sprite's own route and fade (ISSUE-255): today's corridor route
+ * and speed, the pinned design's ruling, so the board cannot know it on a clock. The sprite tells it:
+ * `walkingOut` as it sets off, `walkedOut` once it has faded at the way out, or at once when there is
+ * no walk (reduced motion) or the sprite is taken away mid walk-out. A leaver the column never walked
+ * tells nothing, and the board's own short wait drops it. The column cannot pass this on for it.
+ */
+const walkOut = inject(WALK_OUT_KEY, () => useMines(), true)
+let holding = false
+let fadeTimer: ReturnType<typeof setTimeout> | undefined
+function letGo(): void {
+  if (fadeTimer !== undefined) clearTimeout(fadeTimer)
+  fadeTimer = undefined
+  if (!holding) return
+  holding = false
+  walkOut.walkedOut(props.dwarf.id)
+}
+watch(
+  [leaving, () => props.walking === true, gone] as const,
+  ([isLeaving, isWalking, isGone]) => {
+    if (!isLeaving) {
+      // One that comes back under the same id holds nothing any more.
+      holding = false
+      if (fadeTimer !== undefined) clearTimeout(fadeTimer)
+      fadeTimer = undefined
+      return
+    }
+    if (isGone) {
+      holding = true
+      letGo()
+      return
+    }
+    if (isWalking && !holding) {
+      holding = true
+      walkOut.walkingOut(props.dwarf.id)
+    }
+  },
+  { immediate: true }
+)
+watch(departed, (isDeparted) => {
+  if (!isDeparted || !holding) return
+  fadeTimer = setTimeout(letGo, LEAVING_EXIT_MS)
+})
+
 // A dwarf dropping out of the crew between polls takes its grind and its footsteps with it.
 onBeforeUnmount(() => {
+  stopWatchingMotion()
+  letGo()
   for (const cue of ['walk', 'shift'] as const) {
     if (cue === 'walk' && props.walking !== true) continue
     if (cue === 'shift' && !atWork.value) continue
@@ -215,8 +277,8 @@ const tip = useHoverTip<string>()
  * the screen reader at once too (#635): the button turns inert, leaves the tab order and the
  * accessibility tree, and takes its card with it, rather than waiting for the board to drop it.
  */
-watch(departed, (gone) => {
-  if (gone) tip.hide()
+watch(hidden, (isHidden) => {
+  if (isHidden) tip.hide()
 })
 
 function press(): void {
@@ -248,6 +310,7 @@ const rootStyle = computed(() => ({
     :class="{
       'is-leaving': dwarf.status === 'leaving',
       'is-departed': departed,
+      'is-gone': gone,
       'is-hover': state === 'hover'
     }"
     type="button"
@@ -257,9 +320,9 @@ const rootStyle = computed(() => ({
     :aria-label="label"
     :data-mark="mark?.mark"
     :style="rootStyle"
-    :inert="departed || undefined"
-    :tabindex="departed ? -1 : undefined"
-    :aria-hidden="departed ? 'true' : undefined"
+    :inert="hidden || undefined"
+    :tabindex="hidden ? -1 : undefined"
+    :aria-hidden="hidden ? 'true' : undefined"
     @click="press"
     @pointerenter="tip.hover(dwarf.id, $event)"
     @pointerleave="tip.leave"
@@ -442,6 +505,10 @@ const rootStyle = computed(() => ({
     opacity: 0;
   }
 }
+/* Under reduced motion a leaver is gone at once, with no walk to the way out (ISSUE-255). */
+.dm-dwarf.is-gone {
+  visibility: hidden;
+}
 @media (prefers-reduced-motion: reduce) {
   .dm-dwarf {
     transition: none;
@@ -449,6 +516,14 @@ const rootStyle = computed(() => ({
   .dm-dwarf.is-departed {
     animation: none;
     opacity: 0.55;
+  }
+  /*
+   * The "z" stops bobbing and stays drawn, as the "?" does from design-tokens.css (motion.md,
+   * Reduced motion: the bobbing "?" and "z" stop; US-SHELL-011.AC02). The pinned dwarf.css lists
+   * only the "?", so the stop for the "z" is the Panel's own.
+   */
+  .dm-dwarf__z {
+    animation: none;
   }
 }
 /* The tooltip's entry and exit (motion.md, Overlays): transform and opacity only. */

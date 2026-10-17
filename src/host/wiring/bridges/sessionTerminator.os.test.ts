@@ -15,6 +15,7 @@ import {
   type ProcessIdentity
 } from '../../kernel/domain/processIdentity'
 import type { DwarfId, Instant, MineId, ProviderIdentity } from '../../kernel/domain/values'
+import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import type { SpawnedProcess } from '../../kernel/ports/processControl'
 import { rankForDepth } from '../../modules/crew'
 import { inMemoryCrew } from '../../modules/crew/testing/inMemoryCrew'
@@ -121,7 +122,11 @@ function terminatorCases(): void {
       observed: { processIdentityOf: (dwarfId) => identities.get(dwarfId) ?? null },
       processes: control,
       endedLedger: { recordEnded: (identity, at) => recorded.push({ identity, at }) },
-      clock: crew.clock
+      clock: crew.clock,
+      // AMENDED for ISSUE-171: the bridge also takes the owned path's budget and lookup; this case
+      // ends observed sessions only (the owned tree is src/host/stopDwarf.os.test.ts).
+      scheduler: new FakeScheduler(crew.clock),
+      owned: () => null
     })
     const seat = (providerSessionId: string, identity: ProcessIdentity): DwarfId => {
       const dwarfId = crew.commands.arrive({

@@ -1,6 +1,6 @@
-// The StopAllPort conformance suite (16 §2.8, 17 §1.3): run against RecordingStopAll and every
-// production binding — the empty-owner one of cut 0 (host/wiring/emptyOwnerStopAll.ts) and,
-// later, the launching module's (later: ISSUE-175).
+// The StopAllPort conformance suite (16 §2.8, 17 §1.3): run against RecordingStopAll and the
+// production binding, the launching module's `stopAll` (modules/launching/application/stopAll.test.ts,
+// ISSUE-175), which replaced the empty-owner binding of cut 0.
 import { describe, expect, it } from 'vitest'
 import type { DwarfId } from '../../../contracts/wire'
 import type { StopAllPort } from '../ports/stopAll'
