@@ -399,6 +399,7 @@ export async function bootHost(w: World, options: BootOptions) {
             transactions,
             bus,
             clock,
+            scheduler,
             ids,
             hostEpoch: epoch as HostEpoch,
             log,
