@@ -6,9 +6,10 @@
 // - The resume asks the session's own driver (the registry's driver of the record's transport).
 //   A driver without `resume` answers `no-resume`; a refusal maps `DriverResumeError.reason` 1:1
 //   (`stale-ref`), anything else is `resume-error`.
-// - A resumed session is bound to the same dwarf (`SessionBindings.bind`, ADR-015 item 7); a new
-//   provider session id rebinds the dwarf (crew `rebind`, S4.18, `previousProviderSessionId`), so its
-//   id and custom name stay. Its record then names the new session, its new process (read back by
+// - A resumed session is bound to the same dwarf (`SessionBindings.bind`, ADR-015 item 7) and
+//   crew's `rebind` is told its identity: a new provider session id rebinds the dwarf (S4.18,
+//   `previousProviderSessionId`), so its id and custom name stay, and a dwarf listed `unrecovered`
+//   runs again (S2.11). Its record then names the new session, its new process (read back by
 //   pid, INV-51) and this epoch, so a later crash recovers it again.
 // - A re-adopted live server-kind session (S4.11) keeps its process and is bound the same way.
 import type { ProcessIdentity } from '../../../kernel/domain/processIdentity'
@@ -103,9 +104,9 @@ export class SessionResumer {
     const { ref } = session
     const identity = await this.processOf(ref)
     this.deps.suppliers.bindings.bind(ref, record.dwarfId)
-    if (ref.providerSessionId !== record.ref.providerSessionId) {
-      this.deps.crew.rebind(record.dwarfId as DwarfId, identityOf(ref))
-    }
+    // Always told: a new id rebinds the dwarf (S4.18), and a dwarf listed `unrecovered` runs again
+    // (S2.11); crew's `rebind` changes nothing for a running dwarf with the same identity.
+    this.deps.crew.rebind(record.dwarfId as DwarfId, identityOf(ref))
     this.deps.transactions.inTransaction(() => {
       if (identity !== null) {
         this.deps.processes.put({

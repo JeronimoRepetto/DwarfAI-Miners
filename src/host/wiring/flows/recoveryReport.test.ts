@@ -150,6 +150,12 @@ describe('Host recovery report', () => {
     ])
     expect(w.crew.queries.crewOf(MINE).map((d) => d.id)).toEqual([resumes.dwarfId])
     expect(w.db.records.live().map((r) => r.dwarfId)).toEqual([resumes.dwarfId])
+    // S2.11: the resumed dwarf runs again; the window hears it as a dwarf change, never a toast.
+    expect(w.crew.queries.get(resumes.dwarfId)?.processState).toBe('running')
+    expect(w.crew.bus.ofType('DwarfPresenceChanged').at(-1)?.payload).toEqual({
+      dwarfId: resumes.dwarfId,
+      presence: 'present'
+    })
     const after = host.frames.published.slice(framesBefore)
     expect(after.some((f) => f.name === 'toast')).toBe(false)
     expect(reportFrames(after).map((f) => f.report.state)).toEqual([
