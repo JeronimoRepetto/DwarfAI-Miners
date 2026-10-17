@@ -782,8 +782,8 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // Cut 2 (ISSUE-323): the one writer of DwarfAI's entries in other tools' configs (16 §7),
           // with the Claude Code hooks target; the hook entry carries the ingress's persisted port.
-          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches only to verify and
-          // revert (the Reset saga's `external-config` step; lead decision 2026-10-16).
+          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches to verify and revert (the
+          // Reset saga's `external-config` step) and, from ISSUE-228, to install (B-M14, the ingress port set).
           const ingressPort = appMetaIngressPort(db)
           const openCodePluginPath = openCodePluginPathHere()
           configWriter = new ConfigWriterEngine({

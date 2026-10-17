@@ -3,12 +3,14 @@
 // the flags the `FeatureFlagReader` read once when the service was built (INV-110), and
 // `PreferencesQueries.integrationState`, the stored state of `integration_settings`, and
 // `PreferencesCommands.setClaudeHooks` (AMENDMENT-7; ISSUE-221), the "Claude Code · instant
-// updates" toggle and the enable path the first-run step reuses. `WelcomeStepService` below is
+// updates" toggle and the enable path the first-run step reuses, and
+// `PreferencesCommands.setOpenCodePermissions` (ISSUE-228), the "OpenCode · permission requests"
+// toggle over the same writer. `WelcomeStepService` below is
 // `PreferencesQueries.welcome` and the first-run step's boot evaluation (07 machine 41, ISSUE-222),
 // joined to the queries by host/wiring; `WelcomeAnswerService` is `PreferencesCommands.answerWelcome`
 // (ISSUE-223), joined to the commands by host/wiring (later: ISSUE-323). The other members of the
-// driving ports (secrets, the OpenCode toggle) join with their issues (later: ISSUE-215, ISSUE-216,
-// ISSUE-228); Reset metrics is the saga's (resetSaga.ts), joined to the commands by host/wiring.
+// driving ports (secrets) join with their issues (later: ISSUE-215, ISSUE-216); Reset metrics is
+// the saga's (resetSaga.ts), joined to the commands by host/wiring.
 //
 // `set` (INV-105; ADR-024 D9; IPC Gap 10) runs in one transaction: it reads the row, applies the
 // key within the provider rule (domain `withPreference`), saves only when something changed and
@@ -39,7 +41,7 @@ import {
   type WelcomeResult,
   type WelcomeStepState
 } from '../domain/welcomeStep'
-import type { ChannelTokenStore } from '../ports/channelTokenStore'
+import type { ChannelTokenStore, TokenChannel } from '../ports/channelTokenStore'
 import type {
   ChannelToken,
   ConfigTarget,
@@ -77,6 +79,10 @@ export interface PreferencesCommands {
    * origin 'settings' or 'first-run'; a failed revert keeps the option on (16 §7.4).
    */
   setClaudeHooks(
+    on: boolean,
+    origin: ConsentOrigin
+  ): Promise<Result<{ state: IntegrationState }, 'config-write-failed' | 'config-revert-failed'>>
+  setOpenCodePermissions(
     on: boolean,
     origin: ConsentOrigin
   ): Promise<Result<{ state: IntegrationState }, 'config-write-failed' | 'config-revert-failed'>>
@@ -194,27 +200,48 @@ export class PreferencesService
    * included (16 §4.12; 16 §7.4). The plaintext token goes to the writer only.
    */
   setClaudeHooks(on: boolean, origin: ConsentOrigin): Promise<ToggleResult> {
-    if (!CLAUDE_HOOKS_ORIGINS.includes(origin)) {
+    return this.toggle(CLAUDE_HOOKS_TOGGLE, on, origin)
+  }
+
+  /**
+   * 16 §4.12 `setOpenCodePermissions` (ADR-011 item 7; 16 §7.3, §7.4; 07 machine 14; ADR-016 items
+   * 1, 5–7; UC-028): "OpenCode · permission requests", the same toggle over DwarfAI's plugin file in
+   * OpenCode's plugin folder (target `opencode-plugin`) and the `opencode-plugin` channel token the
+   * plugin reports with. Origin `settings` (the Settings toggle), `add-panel` (the Add panel's
+   * notice action, PO #104) or `first-run` (`answerWelcome` only; B-M14 refuses it at the
+   * transport, AMENDMENT-7). What `setClaudeHooks` says holds here too: one call at a time, shared
+   * with it (16 §7.5); on mints a new token and the writer installs the file and reads it back
+   * (`on-verified` = written and read back, S-011-1); off reverts it at once, with no confirmation,
+   * then revokes the token; a locked file keeps the option on (FM-125); a failed write leaves it as
+   * it was (FM-124); `IntegrationChanged` after every outcome, before the answer. Nothing here
+   * launches, and no launch, Jev pick or migration calls it (18 C-21): the Add panel's enable
+   * completes before its launch is sent.
+   */
+  setOpenCodePermissions(on: boolean, origin: ConsentOrigin): Promise<ToggleResult> {
+    return this.toggle(OPENCODE_PERMISSIONS_TOGGLE, on, origin)
+  }
+
+  /** One toggle call, run after the one before it settled (16 §7.5); an origin it does not take is refused. */
+  private toggle(toggle: Toggle, on: boolean, origin: ConsentOrigin): Promise<ToggleResult> {
+    if (!toggle.origins.includes(origin)) {
       return Promise.reject(
         new HostInvariantError(
-          `consent origin ${origin} cannot turn claude-hooks on or off (09 CHECK)`
+          `consent origin ${origin} cannot turn ${toggle.id} on or off (09 CHECK)`
         )
       )
     }
-    const run = this.toggles.then(() =>
-      on ? this.enableClaudeHooks(origin) : this.disableClaudeHooks()
-    )
+    const run = this.toggles.then(() => (on ? this.enable(toggle, origin) : this.disable(toggle)))
     this.toggles = run.catch(() => undefined)
     return run
   }
 
-  private async enableClaudeHooks(origin: ConsentOrigin): Promise<ToggleResult> {
+  private async enable(toggle: Toggle, origin: ConsentOrigin): Promise<ToggleResult> {
     const { integrations, externalConfig } = this.deps
     if (
-      integrations.get(CLAUDE_HOOKS).state === 'on-verified' &&
-      (await externalConfig.verify(CLAUDE_HOOKS)) === 'verified'
+      integrations.get(toggle.id).state === 'on-verified' &&
+      (await externalConfig.verify(toggle.target)) === 'verified'
     ) {
-      return this.settled(CLAUDE_HOOKS, null)
+      return this.settled(toggle.id, null)
     }
     // Owner amendment M: the writer issues the new hash in its own Tx A, together with the `config_writes` row,
     // and its Tx B (failure) withdraws it in the transaction that deletes the Tx A rows, making the previous token
@@ -222,21 +249,21 @@ export class PreferencesService
     // re-enable leaves the working token of an `on-*` integration active.
     const credential = this.deps.mintCredential()
     const installed = await externalConfig.install(
-      CLAUDE_HOOKS,
+      toggle.target,
       credential.value as ChannelToken,
       origin,
       credential.sha256
     )
-    if (!installed.ok) return this.settled(CLAUDE_HOOKS, 'config-write-failed')
-    return this.settled(CLAUDE_HOOKS, null)
+    if (!installed.ok) return this.settled(toggle.id, 'config-write-failed')
+    return this.settled(toggle.id, null)
   }
 
-  private async disableClaudeHooks(): Promise<ToggleResult> {
+  private async disable(toggle: Toggle): Promise<ToggleResult> {
     const { tokens, externalConfig, transactions, clock } = this.deps
-    const reverted = await externalConfig.revert(CLAUDE_HOOKS)
-    if (!reverted.ok) return this.settled(CLAUDE_HOOKS, 'config-revert-failed')
-    transactions.inTransaction(() => tokens.revoke(CLAUDE_HOOKS, clock.now()))
-    return this.settled(CLAUDE_HOOKS, null)
+    const reverted = await externalConfig.revert(toggle.target)
+    if (!reverted.ok) return this.settled(toggle.id, 'config-revert-failed')
+    transactions.inTransaction(() => tokens.revoke(toggle.target, clock.now()))
+    return this.settled(toggle.id, null)
   }
 
   /** Publishes the stored state (`IntegrationChanged`, after every commit) and answers it. */
@@ -262,14 +289,29 @@ const INTEGRATIONS: readonly IntegrationId[] = ['claude-hooks', 'opencode-permis
 
 const CLAUDE_HOOKS = 'claude-hooks'
 
-/** 16 §4.12 (AMENDMENT-7): the consent entry points of `claude-hooks`; never `add-panel` (09 CHECK). */
-const CLAUDE_HOOKS_ORIGINS: readonly ConsentOrigin[] = ['settings', 'first-run']
-
 /**
- * The integrations whose enable path the first-run step can run. `opencode-permissions` joins with
- * its toggle (later: ISSUE-228) when the cut offers it (later: ISSUE-232).
+ * An integration toggle: its integration, the config target its entry is written to, which is also
+ * the channel of its token (16 §4.12 `ChannelTokenStore`), and its consent entry points.
  */
-const ENABLE_PATHS: readonly IntegrationId[] = [CLAUDE_HOOKS]
+interface Toggle {
+  id: IntegrationId
+  target: ConfigTarget & TokenChannel
+  origins: readonly ConsentOrigin[]
+}
+
+/** 16 §4.12 (AMENDMENT-7): `claude-hooks` and its consent entry points; never `add-panel` (09 CHECK). */
+const CLAUDE_HOOKS_TOGGLE: Toggle = {
+  id: CLAUDE_HOOKS,
+  target: 'claude-hooks',
+  origins: ['settings', 'first-run']
+}
+
+/** 16 §4.12 row `setOpenCodePermissions`: its consent entry points (ADR-016 item 5; 07 S14.01). */
+const OPENCODE_PERMISSIONS_TOGGLE: Toggle = {
+  id: 'opencode-permissions',
+  target: 'opencode-plugin',
+  origins: ['settings', 'add-panel', 'first-run']
+}
 
 /** 16 §4.12 `PreferencesQueries.welcome` (AMENDMENT-7); host/wiring joins it to the module's queries. */
 export interface WelcomeQueries {
@@ -291,8 +333,6 @@ export interface WelcomeStepServiceDeps {
   installed: InstalledToolsReader
   /** The one config writer's legacy probe (16 §7.1); evaluation never writes or reverts. */
   legacy: Pick<ExternalConfigWriter, 'findLegacy'>
-  /** The integrations this cut offers (domain/offeredFilter.ts; later: ISSUE-232). */
-  cutFilter: readonly IntegrationId[]
   bus: DomainEventBus<PreferencesEvent>
   clock: Clock
   ids: IdGenerator
@@ -311,9 +351,10 @@ const NOT_EVALUATED: WelcomeStepState = Object.freeze({ due: false, legacyFound:
 
 /**
  * The first-run consent step (07 machine 41; 16 §4.12 `welcome()`). At boot it reads the installed
- * tools, keeps those the cut filter allows (`offered`), asks the legacy probe about the offered
- * targets only (S41.02 never looks at a target the cut does not offer, 21 §2 cut 2), reads the
- * stored answer and evaluates the step (domain/welcomeStep.ts). Nothing is written, reverted or
+ * tools, which are the ones offered (ADR-016 item 5), asks the legacy probe about every offered
+ * target, `claude-hooks` and, from step 4a, `opencode-plugin` (S41.02 never looks at a target that
+ * is not offered; 21 §2 4a), reads the stored answer and evaluates the step
+ * (domain/welcomeStep.ts). Nothing is written, reverted or
  * answered here: an old-app entry is only listed (ADR-016, never adopted silently), and a skip with
  * nothing offered is not an answer (S41.09). `WelcomeStepChanged` is published only when the state
  * differs from the one held (the first is the not-evaluated state, so a skip publishes nothing).
@@ -324,24 +365,14 @@ export class WelcomeStepService implements WelcomeQueries, WelcomeBoot, WelcomeS
   constructor(private readonly deps: WelcomeStepServiceDeps) {}
 
   async evaluateWelcomeAtBoot(): Promise<WelcomeStepState> {
-    const { answers, installed, legacy, cutFilter } = this.deps
+    const { answers, installed, legacy } = this.deps
     const tools = installed.installed()
-    const offered = evaluate({
-      answeredAt: null,
-      installed: tools,
-      legacyFound: [],
-      cutFilter
-    }).offered
+    const offered = evaluate({ answeredAt: null, installed: tools, legacyFound: [] }).offered
     const legacyFound: IntegrationId[] = []
     for (const id of offered) {
       if (await legacy.findLegacy(TARGET_OF[id])) legacyFound.push(id)
     }
-    const next = evaluate({
-      answeredAt: answers.answeredAt(),
-      installed: tools,
-      legacyFound,
-      cutFilter
-    })
+    const next = evaluate({ answeredAt: answers.answeredAt(), installed: tools, legacyFound })
     if (!sameWelcome(this.state, next)) {
       this.state = next
       this.deps.bus.publish({
@@ -369,8 +400,7 @@ export class WelcomeStepService implements WelcomeQueries, WelcomeBoot, WelcomeS
     const next = evaluate({
       answeredAt: this.deps.clock.now(),
       installed: this.state.offered,
-      legacyFound: [],
-      cutFilter: this.deps.cutFilter
+      legacyFound: []
     })
     if (!sameWelcome(this.state, next)) {
       this.state = next
@@ -392,8 +422,11 @@ export interface WelcomeAnswer {
   answerWelcome(choice: WelcomeChoice): Promise<WelcomeResult>
 }
 
-/** What answering reads and runs of the integration toggles: their enable path and stored state. */
-export type WelcomeIntegrations = Pick<PreferencesCommands, 'setClaudeHooks'> &
+/** What answering reads and runs of the integration toggles: their enable paths and stored state. */
+export type WelcomeIntegrations = Pick<
+  PreferencesCommands,
+  'setClaudeHooks' | 'setOpenCodePermissions'
+> &
   Pick<PreferencesQueries, 'integrationState'>
 
 export interface WelcomeAnswerServiceDeps {
@@ -409,8 +442,6 @@ export interface WelcomeAnswerServiceDeps {
   /** The enable path a ticked option runs with origin `first-run`, and the stored states. */
   integrations: WelcomeIntegrations
   transactions: TransactionRunner
-  /** The integrations whose foreign entry the Host writes in this cut (domain/offeredFilter.ts). */
-  cutFilter: readonly IntegrationId[]
   bus: DomainEventBus<PreferencesEvent>
   clock: Clock
   ids: IdGenerator
@@ -430,9 +461,8 @@ export interface WelcomeAnswerServiceDeps {
  *   replaces an old-app entry in the same write; S14.15 the writer's no-op when it is already on).
  *   A `true` for an option not offered is treated as `false` (S41.04). An option left unticked
  *   that is already on stays on (S14.15); otherwise only an old-app entry the legacy probe finds
- *   is reverted (S14.12, S14.13), and nothing at all happens without one (S14.14). A target the
- *   Host does not write in this cut is never probed or reverted: its writer is still the legacy
- *   installer (21 §2 cut 2, no double writer).
+ *   is reverted (S14.12, S14.13), and nothing at all happens without one (S14.14). From step 4a
+ *   the Host writes both targets (21 §2 4a), so both run here (ISSUE-232).
  * - After both settled, one transaction records `welcome_answered_at`; a failed write or revert
  *   does not keep the step open, it is in the result (S41.05; 13 FM-148, FM-149). A Host that dies
  *   before that transaction leaves the step unanswered, so the next boot shows it again (S41.06).
@@ -444,13 +474,7 @@ export class WelcomeAnswerService implements WelcomeAnswer {
   /** The answers, one at a time (16 §4.12 "one answer at a time"). */
   private queue: Promise<unknown> = Promise.resolve()
 
-  constructor(private readonly deps: WelcomeAnswerServiceDeps) {
-    for (const id of deps.cutFilter) {
-      if (!ENABLE_PATHS.includes(id)) {
-        throw new HostInvariantError(`the first-run step cannot offer ${id}: no enable path yet`)
-      }
-    }
-  }
+  constructor(private readonly deps: WelcomeAnswerServiceDeps) {}
 
   answerWelcome(choice: WelcomeChoice): Promise<WelcomeResult> {
     const run = this.queue.then(() => this.answer(choice))
@@ -477,19 +501,20 @@ export class WelcomeAnswerService implements WelcomeAnswer {
     return this.currentStates(failures)
   }
 
-  /** The toggle's enable path with origin `first-run` (only `claude-hooks` has one before cut 4a). */
+  /** The toggle's enable path with origin `first-run` (16 §4.12 `setClaudeHooks`, `setOpenCodePermissions`). */
   private async enable(id: IntegrationId): Promise<ToggleFailure | null> {
-    if (id !== CLAUDE_HOOKS) {
-      throw new HostInvariantError(`the first-run step cannot offer ${id}: no enable path yet`)
-    }
-    const result = await this.deps.integrations.setClaudeHooks(true, 'first-run')
+    const { integrations } = this.deps
+    const result =
+      id === CLAUDE_HOOKS
+        ? await integrations.setClaudeHooks(true, 'first-run')
+        : await integrations.setOpenCodePermissions(true, 'first-run')
     return result.ok ? null : result.error
   }
 
   /** An unticked (or hidden) option: only an old-app entry is reverted, and only when it is off. */
   private async decline(id: IntegrationId): Promise<ToggleFailure | null> {
-    const { cutFilter, integrations, legacy } = this.deps
-    if (!cutFilter.includes(id) || integrations.integrationState(id) !== 'off') return null
+    const { integrations, legacy } = this.deps
+    if (integrations.integrationState(id) !== 'off') return null
     const target = TARGET_OF[id]
     if (!(await legacy.findLegacy(target))) return null
     const reverted = await legacy.revert(target)

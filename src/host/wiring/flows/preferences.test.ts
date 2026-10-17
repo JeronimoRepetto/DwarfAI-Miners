@@ -49,6 +49,10 @@ import type { SecretName } from '../../kernel/ports/secretReader'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { ExternalConfigWriter, PreferencesEvent, SecretStore } from '../../modules/preferences'
 import { ClaudeHooksConfigWriter } from '../../modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
+import {
+  OPENCODE_PLUGIN_FILE_NAME,
+  OpenCodePluginConfigWriter
+} from '../../modules/preferences/adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
 import { ConfigWriterEngine } from '../../modules/preferences/adapters/external-config/configWriterEngine'
 import { SqliteChannelTokenStore } from '../../modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from '../../modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
@@ -106,6 +110,9 @@ const DWARF = '00000000-0000-7000-8000-0000000226d1'
 const RESET_STEPS = ['db', 'secrets', 'external-config', 'ui-prefs', 'install-moment', 'done']
 /** Claude Code's settings file on this machine (`CLAUDE_CONFIG_DIR` unset: `~/.claude`, 16 §7.1). */
 const CLAUDE_SETTINGS = '/home/person/.claude/settings.json'
+/** OpenCode's global plugin folder (16 §7.1), which OpenCode made; DwarfAI's file is not in it yet. */
+const OPENCODE_PLUGIN_DIR = '/home/person/.config/opencode/plugin'
+const OPENCODE_PLUGIN = `${OPENCODE_PLUGIN_DIR}/${OPENCODE_PLUGIN_FILE_NAME}`
 /** The port the hook ingress persisted when it first bound (ADR-016 item 3; wiring/hookIngress.ts, ISSUE-140). */
 const INGRESS_PORT = 41_234
 
@@ -199,6 +206,8 @@ function machine(options: { installed?: readonly string[] } = {}) {
   for (const binary of installed) disk.addFile(`/opt/tools/${binary}`, 'cli', 1)
   // Claude Code's own folder exists once it ran; its settings.json may not (16 §7.1).
   if (installed.includes('claude')) void disk.makeDir('/home/person/.claude')
+  // ADDED for ISSUE-228: OpenCode's plugin folder exists once OpenCode ran.
+  if (installed.includes('opencode')) void disk.makeDir(OPENCODE_PLUGIN_DIR)
   const fs = counted(disk)
   return {
     dataDir,
@@ -412,6 +421,14 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
                 path: CLAUDE_SETTINGS,
                 platform: 'linux',
                 ingressPort: persistedIngressPort(ingressPort)
+              }),
+              // ADDED for ISSUE-228: the OpenCode plugin target, as host/main.ts composes it (ISSUE-233).
+              new OpenCodePluginConfigWriter({
+                path: OPENCODE_PLUGIN,
+                installId: String(
+                  db.all('SELECT install_id FROM app_meta WHERE id = 1')[0]?.['install_id']
+                ),
+                ingressPort: persistedIngressPort(ingressPort)
               })
             ]
           })
@@ -466,7 +483,12 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
             }),
             moduleSteps,
             secrets,
-            externalConfig: hostConfigWriter({ claudeHooks: engine, ingressPort, log }),
+            externalConfig: hostConfigWriter({
+              claudeHooks: engine,
+              openCodePlugin: engine,
+              ingressPort,
+              log
+            }),
             channelTokens: new SqliteChannelTokenStore({ db, ids: m.ids }),
             installedTools: enablableInstalledTools(
               suppliersInstalledTools(() => host.suppliers?.catalogue ?? null),
@@ -969,7 +991,8 @@ describe('first-run consent step wiring (07 machine 41)', () => {
       due: true,
       reason: 'legacy-entries',
       legacyFound: ['claude-hooks'],
-      offered: ['claude-hooks']
+      // From step 4a both installed tools are offered (21 §2 4a; ISSUE-232).
+      offered: ['claude-hooks', 'opencode-permissions']
     }
     expect(await wired.evaluateWelcomeAtBoot()).toStrictEqual(due)
     expect(wired.preferences.queries.welcome()).toStrictEqual(due)
@@ -1231,5 +1254,78 @@ describe('Claude hooks integration and first-run step wiring (cut 2)', () => {
     expect(current).not.toBe(previous)
     expect(lookup.active('claude-hooks')).toStrictEqual({ hash: sha256Hex(current) })
     expect(lookup.active('claude-hooks')).not.toStrictEqual({ hash: sha256Hex(previous) })
+  })
+
+  // ADDED for ISSUE-228: B-M14 through the Host's real config writer bridge (bridges/hostConfigWriter.ts) and the
+  // engine's OpenCode plugin target, as host/main.ts composes them. TC-228-01, its wired half.
+  /** B-M14 over `client`, answered. */
+  const setOpenCodePermissions = async (
+    client: FrameClient,
+    on: boolean,
+    origin: 'settings' | 'add-panel'
+  ): Promise<Res> =>
+    response(
+      client,
+      request(client, 'preferences.setOpenCodePermissions', { on, origin, requestId: rid() })
+    )
+
+  it('[US-LAUNCH-001.AC13, S14.02, ADR-016] turning OpenCode permission requests on from the Add panel over the wired Host writes the plugin file through the bridge, reaches on-verified and every ui client gets integration.changed', async () => {
+    const m = machine({ installed: ['opencode'] })
+    const host = await bootHost(m)
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    ingressBound(host)
+    const a = await host.attach()
+    const b = await host.attach()
+
+    const answered = await setOpenCodePermissions(a, true, 'add-panel')
+
+    expect(answered.ok && answered.result).toStrictEqual({
+      ok: true,
+      value: { state: 'on-verified' }
+    })
+    await until(() => integrationFrames(b).length > 0)
+    for (const client of [a, b]) {
+      expect(integrationFrames(client)).toStrictEqual([
+        { id: 'opencode-permissions', state: 'on-verified', consentOrigin: 'add-panel' }
+      ])
+    }
+    const read = await m.disk.readFile(OPENCODE_PLUGIN)
+    expect(read.ok, 'no plugin file was written').toBe(true)
+    const text = read.ok ? decoder.decode(read.value) : ''
+    const [token] = [...new Set(text.match(/[0-9a-f]{64}/g) ?? [])]
+    expect(wiredOf(host).channelTokens.active('opencode-plugin')).toStrictEqual({
+      hash: sha256Hex(token ?? '')
+    })
+    expect(wiredOf(host).preferences.queries.integrationState('opencode-permissions')).toBe(
+      'on-verified'
+    )
+    // NFR-SEC-12: the token never reaches a frame or a log record.
+    for (const secret of [token ?? '', sha256Hex(token ?? '')]) {
+      expect(JSON.stringify([a.frames, b.frames])).not.toContain(secret)
+      expect(JSON.stringify(host.log.entries)).not.toContain(secret)
+    }
+
+    // US-SET-009.AC02, AC08: off removes the file at once and revokes the token.
+    const off = await setOpenCodePermissions(a, false, 'settings')
+    expect(off.ok && off.result).toStrictEqual({ ok: true, value: { state: 'off' } })
+    expect(m.disk.headNow(OPENCODE_PLUGIN, 1)).toBeNull()
+    expect(wiredOf(host).channelTokens.active('opencode-plugin')).toBeNull()
+  })
+
+  it('[FM-124, ADR-016] before the hook ingress persisted a port, turning OpenCode permission requests on writes nothing, issues no token and answers config-write-failed', async () => {
+    const m = machine({ installed: ['opencode'] })
+    const host = await bootHost(m)
+    const a = await host.attach()
+
+    const answered = await setOpenCodePermissions(a, true, 'settings')
+
+    expect(answered.ok && answered.result).toStrictEqual({
+      ok: false,
+      error: 'config-write-failed'
+    })
+    expect(m.disk.headNow(OPENCODE_PLUGIN, 1)).toBeNull()
+    expect(wiredOf(host).channelTokens.active('opencode-plugin')).toBeNull()
+    expect(host.database.connection().db.all('SELECT id FROM config_writes')).toStrictEqual([])
+    expect(wiredOf(host).preferences.queries.integrationState('opencode-permissions')).toBe('off')
   })
 })
