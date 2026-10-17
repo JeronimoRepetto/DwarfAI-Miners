@@ -288,6 +288,397 @@ describe('scrub rules (17 §1.4)', () => {
     expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
   })
 
+  it('[ADR-008] a Codex installationId is replaced by its placeholder, and so is the same id anywhere in the set', () => {
+    const installation = '4f1c2b3a-0000-4abc-8def-canary000001'
+    const notification = jsonl('s0151b-client1.jsonl', [
+      {
+        method: 'remoteControl/status/changed',
+        params: { status: 'disabled', installationId: installation, environmentId: null }
+      }
+    ])
+    const stderr = {
+      name: 's0151b-client1-stderr.jsonl',
+      text: `starting remote control websocket task installation_id=${installation}\n`
+    }
+
+    const [scrubbed, scrubbedStderr] = scrubFixtureSet([notification, stderr], IDENTITY)
+    const [record] = records(scrubbed)
+
+    expect(record.params).toEqual({
+      status: 'disabled',
+      installationId: '<INSTALLATION_ID>',
+      environmentId: null
+    })
+    expect(scrubbedStderr.text).toBe(
+      'starting remote control websocket task installation_id=<INSTALLATION_ID>\n'
+    )
+    expect(scrubFixtureSet([scrubbed, scrubbedStderr], IDENTITY)).toEqual([
+      scrubbed,
+      scrubbedStderr
+    ])
+  })
+
+  it('[ADR-008] an organization id seen under an account key is replaced wherever the set repeats it', () => {
+    const org = 'a1b2c3d4-0000-4000-8000-canaryorg001'
+    const raw = jsonl('s0221-stream-transcript.jsonl', [
+      { type: 'attachment', attachment: { type: 'model', organizationUuid: org } },
+      { type: 'system', note: `skills synced for ${org} today` }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+
+    expect(scrubbed.text).not.toContain(org)
+    expect(records(scrubbed)[1].note).toBe('skills synced for <ACCOUNT_ID> today')
+  })
+
+  it('[ADR-008] a Claude synced-skill folder, named by the organization id, never keeps its ids in another provider log', () => {
+    const folder = 'a1b2c3d4-0000-4000-8000-canaryorg001_efb568b5-0000-4000-8000-canaryskill1'
+    const stderr = {
+      name: 'sp12-sp14-serve-stderr.jsonl',
+      text: [
+        `WARN duplicate skill name existing="C:\\Users\\canary.user\\.claude\\skills\\synced\\${folder}\\pptx\\SKILL.md"`,
+        `WARN duplicate skill name existing="/home/canary.user/.claude/skills/synced/${folder}/pptx/SKILL.md"`
+      ].join('\n')
+    }
+
+    const [scrubbed] = scrubFixtureSet([stderr], IDENTITY)
+
+    expect(scrubbed.text).not.toContain('canaryorg001')
+    expect(scrubbed.text).not.toContain('canaryskill1')
+    expect(scrubbed.text.split('\n')).toEqual([
+      'WARN duplicate skill name existing="<HOME>\\.claude\\skills\\synced\\<CLAUDE_SYNCED_SKILL_DIR>\\pptx\\SKILL.md"',
+      'WARN duplicate skill name existing="<HOME>/.claude/skills/synced/<CLAUDE_SYNCED_SKILL_DIR>/pptx/SKILL.md"'
+    ])
+    expect(
+      findSurvivors(stderr.text, { ...IDENTITY, home: '', user: '' }).map(({ rule }) => rule)
+    ).toContain('claude-synced-skill')
+    expect(findSurvivors(scrubbed.text, IDENTITY)).toEqual([])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[C-19] a Claude prompt, API request, tool-use and hook id maps to a fake UUID like the other provider ids', () => {
+    const ids = {
+      promptId: 'e9055bb6-0000-4000-8000-canaryprompt',
+      requestRef: 'e932888b-0000-4000-8000-canaryreqref',
+      toolUseID: '42edc44f-0000-4000-8000-canarytoolid',
+      hook_id: '7a6b5c4d-0000-4000-8000-canaryhookid'
+    }
+    const raw = jsonl('s0221-stream-transcript.jsonl', [ids, { promptId: ids.promptId }])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [first, second] = records(scrubbed)
+
+    expect(scrubbed.text).not.toContain('canary')
+    for (const value of Object.values(first)) {
+      expect(value).toMatch(/^00000000-0000-4000-8000-[0-9a-f]{12}$/)
+    }
+    expect(second.promptId).toBe(first.promptId)
+  })
+
+  it('[ADR-008] an OpenCode config keeps its plugin and permission fields, and its agents, commands and MCP servers become numbered placeholders', () => {
+    const raw = jsonl('s0111-host-launched.jsonl', [
+      {
+        status: 200,
+        path: '/config',
+        body: {
+          $schema: 'https://opencode.ai/config.json',
+          plugin: ['file:///C:/Users/canary.user/.config/opencode/plugin/probe.js'],
+          permission: { edit: 'deny' },
+          agent: {
+            'canary-orchestrator': { prompt: 'You are canary.', mode: 'primary', hidden: false }
+          },
+          command: { 'canary-cmd': { template: 'run canary', description: 'canary' } },
+          mcp: { 'canary-mcp': { type: 'local', command: ['canary-server'] } }
+        }
+      }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [record] = records(scrubbed)
+
+    expect(scrubbed.text).not.toContain('canary')
+    expect(record.body.permission).toEqual({ edit: 'deny' })
+    expect(record.body.plugin).toEqual(['file:///<HOME>/.config/opencode/plugin/<plugin-1>.js'])
+    expect(record.body.agent).toEqual({
+      '<agent-1>': { prompt: '<agent-1>', mode: '<agent-1>', hidden: false }
+    })
+    expect(record.body.command).toEqual({
+      '<command-1>': { template: '<command-1>', description: '<command-1>' }
+    })
+    expect(record.body.mcp).toEqual({
+      '<mcp-server-1>': { type: '<mcp-server-1>', command: ['<mcp-server-1>'] }
+    })
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] a Codex MCP server status list becomes numbered placeholders of the same shape', () => {
+    const raw = jsonl('sp12-app-server-protocol-entry.jsonl', [
+      {
+        id: 3,
+        result: {
+          data: [
+            {
+              name: 'canary-apps',
+              pluginId: null,
+              serverInfo: { name: 'canary-apps', version: '1.0' },
+              tools: { canary_mail_send: { description: 'Send canary mail', inputSchema: {} } },
+              resources: [],
+              resourceTemplates: [],
+              authStatus: 'oAuth'
+            }
+          ],
+          nextCursor: null
+        }
+      }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [record] = records(scrubbed)
+
+    expect(scrubbed.text).not.toContain('canary')
+    expect(record.result).toEqual({
+      data: [
+        {
+          name: '<mcp-server-1>',
+          pluginId: null,
+          serverInfo: { name: '<mcp-server-1>', version: '<mcp-server-1>' },
+          tools: { '<mcp-server-1-tool-1>': { description: '<mcp-server-1>', inputSchema: {} } },
+          resources: [],
+          resourceTemplates: [],
+          authStatus: '<mcp-server-1>'
+        }
+      ],
+      nextCursor: null
+    })
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] a percent-encoded home or repository path in a URL query is replaced like its plain spelling', () => {
+    const raw = jsonl('s0111-host-launched-sent.jsonl', [
+      {
+        method: 'GET',
+        url: 'http://127.0.0.1:4096/config?directory=C%3A%2FUsers%2Fcanary.user%2FAppData%2FLocal%2FTemp%2Fdwarfai-rec-1&x=1',
+        other: '/session?directory=C%3a%5cUsers%5ccanary.user%5cwork%5cproject',
+        posix: '/session?directory=%2Fhome%2Fsomeone%2Fproject'
+      }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [record] = records(scrubbed)
+
+    expect(scrubbed.text.toLowerCase()).not.toContain('canary')
+    expect(scrubbed.text).not.toContain('someone')
+    expect(record.url).toBe('http://127.0.0.1:4096/config?directory=<REPO>&x=1')
+    expect(record.other).toBe('<PATH>?directory=<HOME>%5cwork%5cproject')
+    expect(record.posix).toBe('<PATH>?directory=<HOME>%2Fproject')
+    expect(
+      findSurvivors(raw.text, { ...IDENTITY, repoRoot: '' }).map(({ rule }) => rule)
+    ).toContain('home')
+    expect(findSurvivors(scrubbed.text, IDENTITY)).toEqual([])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[C-19] the id at the end of a Codex hook run id maps to a fake UUID, the same one in every event of the run', () => {
+    const run = (status) => ({
+      method: `hook/${status}`,
+      params: {
+        run: {
+          id: 'pre-tool-use:0:C:\\Users\\canary.user\\.codex\\hooks.json:exec-dd51f60c-0000-4000-8000-canaryhookrn',
+          status
+        }
+      }
+    })
+    const raw = jsonl('s0151-client1.jsonl', [run('started'), run('completed')])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [started, completed] = records(scrubbed)
+
+    expect(scrubbed.text).not.toContain('canary')
+    expect(started.params.run.id).toMatch(
+      /^pre-tool-use:0:<HOME>\\\.codex\\hooks\.json:exec-00000000-0000-4000-8000-[0-9a-f]{12}$/
+    )
+    expect(completed.params.run.id).toBe(started.params.run.id)
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] the names of the person own commands, agents, skills and MCP servers become numbered placeholders wherever the set repeats them, and built-in names stay', () => {
+    const commands = jsonl('sp12-session-new-mcp.jsonl', [
+      {
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'available_commands_update',
+            availableCommands: [
+              { name: 'init', description: 'create AGENTS.md' },
+              { name: 'skill:canary-deploy', description: 'Deploy the canary app' }
+            ]
+          }
+        }
+      },
+      {
+        result: {
+          configOptions: [
+            {
+              category: 'mode',
+              options: [
+                { value: 'build', name: 'build' },
+                { value: 'canary-boss', name: 'canary-boss' }
+              ]
+            }
+          ]
+        }
+      },
+      { type: 'message.updated', properties: { info: { agent: 'canary-boss' } } },
+      {
+        method: 'mcpServer/startupStatus/updated',
+        params: { name: 'canary_mcp', status: 'ready' }
+      },
+      {
+        type: 'tool',
+        tool: 'canary_mcp_save',
+        text: 'canary-boss ran canary-deploy, then init. Canary_mcp says so.'
+      }
+    ])
+    const stderr = {
+      name: 'sp12-session-new-mcp-stderr.jsonl',
+      text: 'WARN message="duplicate skill name" name=canary-notes existing="x"\n'
+    }
+
+    const [scrubbed, scrubbedStderr] = scrubFixtureSet([commands, stderr], IDENTITY)
+    const lines = records(scrubbed)
+
+    expect((scrubbed.text + scrubbedStderr.text).toLowerCase()).not.toContain('canary')
+    expect(lines[0].params.update.availableCommands).toEqual([
+      { name: 'init', description: 'create AGENTS.md' },
+      { name: 'skill:<command-1>', description: '<command-1>' }
+    ])
+    expect(lines[1].result.configOptions[0].options).toEqual([
+      { value: 'build', name: 'build' },
+      { value: '<agent-1>', name: '<agent-1>' }
+    ])
+    expect(lines[2].properties.info.agent).toBe('<agent-1>')
+    expect(lines[3].params.name).toBe('<mcp-server-1>')
+    expect(lines[4]).toEqual({
+      type: 'tool',
+      tool: '<mcp-server-1>_save',
+      text: '<agent-1> ran <command-1>, then init. <mcp-server-1> says so.'
+    })
+    expect(scrubbedStderr.text).toBe(
+      'WARN message="duplicate skill name" name=<skill-1> existing="x"\n'
+    )
+    expect(scrubFixtureSet([scrubbed, scrubbedStderr], IDENTITY)).toEqual([
+      scrubbed,
+      scrubbedStderr
+    ])
+  })
+
+  it('[ADR-008] inside an OpenCode config the setup names used as keys and the global plugin file names are replaced too, and a project plugin stays', () => {
+    const raw = jsonl('s0111-host-launched.jsonl', [
+      {
+        body: {
+          $schema: 'https://opencode.ai/config.json',
+          plugin: [
+            'file:///C:/Users/canary.user/.config/opencode/plugins/canary-guard.ts',
+            'file:///C:/Users/canary.user/AppData/Local/Temp/dwarfai-rec-1/.opencode/plugin/sp-probe.js'
+          ],
+          agent: {
+            'canary-boss': { permission: { task: { 'canary-helper': 'allow' } } },
+            'canary-helper': { prompt: 'help' }
+          }
+        }
+      },
+      { tool: 'x', text: 'canary-guard loaded; <mcp-server-1>_canary-boss' }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const [config, text] = records(scrubbed)
+
+    expect(scrubbed.text).not.toContain('canary')
+    expect(config.body.plugin).toEqual([
+      'file:///<HOME>/.config/opencode/plugins/<plugin-1>.ts',
+      'file:///<REPO>/.opencode/plugin/sp-probe.js'
+    ])
+    expect(config.body.agent).toEqual({
+      '<agent-1>': { permission: { task: { '<agent-2>': '<agent-1>' } } },
+      '<agent-2>': { prompt: '<agent-2>' }
+    })
+    expect(text.text).toBe('<plugin-1> loaded; <mcp-server-1>_<agent-1>')
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] the session folder of an agent scratchpad that ran the probe never keeps its session id', () => {
+    const session = '9c8b7a65-0000-4000-8000-canarysessn1'
+    const raw = jsonl('sp12-session-new-mcp-sent.jsonl', [
+      {
+        command: 'node',
+        args: [
+          `C:\\Users\\canary.user\\AppData\\Local\\Temp\\claude\\C--Users-canary-user-work\\${session}\\scratchpad\\probe\\probe-mcp.mjs`
+        ]
+      }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+
+    expect(scrubbed.text).not.toContain('canarysessn1')
+    expect(records(scrubbed)[0].args).toEqual([
+      '<HOME>\\AppData\\Local\\Temp\\claude\\<AGENT_SCRATCHPAD>\\probe\\probe-mcp.mjs'
+    ])
+    expect(findSurvivors(scrubbed.text, IDENTITY)).toEqual([])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
+  it('[ADR-008] a Claude attachment that renders the person setup keeps only its type, and an API request dump keeps only its record type', () => {
+    const raw = jsonl('s0221-stream-transcript.jsonl', [
+      {
+        type: 'attachment',
+        uuid: 'att-canary-0001',
+        attachment: { type: 'instructions', content: '# CLAUDE.md of canary\nrules' },
+        rendered: [{ content: '<system-reminder>CLAUDE.md of canary</system-reminder>' }],
+        renderedRole: 'user'
+      },
+      {
+        type: 'attachment',
+        attachment: { type: 'skill_listing', skills: ['canary-skill-a', 'canary-skill-b'] },
+        rendered: 'canary-skill-a, canary-skill-b'
+      },
+      { type: 'attachment', attachment: { type: 'credential_org', org: 'canary-org-name' } },
+      {
+        type: 'attachment',
+        attachment: { type: 'date', date: '2026-10-17' },
+        rendered: [{ content: 'Today is 2026-10-17.' }]
+      },
+      { type: 'api-request', request: { system: 'canary system prompt', messages: ['hi'] } },
+      { type: 'api-request-shape', shape: { tools: ['canary-tool'] } }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const lines = records(scrubbed)
+
+    expect(lines[0]).toEqual({
+      type: 'attachment',
+      uuid: lines[0].uuid,
+      attachment: { type: 'instructions', redacted: '<PERSONAL_SETUP>' },
+      rendered: '<PERSONAL_SETUP>',
+      renderedRole: 'user'
+    })
+    expect(lines[1]).toEqual({
+      type: 'attachment',
+      attachment: { type: 'skill_listing', redacted: '<PERSONAL_SETUP>' },
+      rendered: '<PERSONAL_SETUP>'
+    })
+    expect(lines[2]).toEqual({
+      type: 'attachment',
+      attachment: { type: 'credential_org', redacted: '<PERSONAL_SETUP>' }
+    })
+    expect(lines[3].attachment).toEqual({ type: 'date', date: '2026-10-17' })
+    expect(lines[4]).toEqual({ type: 'api-request', redacted: '<API_REQUEST>' })
+    expect(lines[5]).toEqual({ type: 'api-request-shape', redacted: '<API_REQUEST>' })
+    expect(scrubbed.text).not.toContain('canary-skill')
+    expect(scrubbed.text).not.toContain('canary system prompt')
+    expect(scrubbed.text).not.toContain('canary-org-name')
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
   it('[ADR-008, ADR-026] the survivor check names each personal value or secret left in a text, and nothing in a scrubbed one', () => {
     const leaky = [
       '{"cwd":"C:\\\\Users\\\\canary.user\\\\work"}',

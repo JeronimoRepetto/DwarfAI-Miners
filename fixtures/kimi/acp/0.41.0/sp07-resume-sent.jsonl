@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"dwarfai-spike","version":"0.0.1"}}}
+{"jsonrpc":"2.0","id":2,"method":"session/load","params":{"sessionId":"00000000-0000-4000-8000-000000000001","cwd":"<REPO>","mcpServers":[]}}
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"00000000-0000-4000-8000-000000000001","prompt":[{"type":"text","text":"What file name did I ask you to create earlier in this conversation? Reply with the file name only."}]}}

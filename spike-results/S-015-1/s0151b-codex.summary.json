@@ -1,0 +1,31 @@
+{
+  "c1Upgraded": true,
+  "c1Init": "ok",
+  "threadStarted": true,
+  "turn1Completed": true,
+  "turn1Text": ["one"],
+  "c3UpgradedWhileC1Connected": true,
+  "c3Init": "ok",
+  "c3ResumeWhileC1Connected": "ok",
+  "serverAliveAfterC1Gone": true,
+  "c3UpgradedAfterC1Gone": "n/a",
+  "c2Upgraded": true,
+  "c2Init": "ok",
+  "loadedListHasThread": true,
+  "c2Resume": "ok",
+  "c2ResumeTurns": 1,
+  "turnCompletedOnAdopter": true,
+  "adopterText": ["two"],
+  "c3SawTurn2Methods": [
+    "thread/goal/cleared",
+    "thread/status/changed",
+    "turn/started",
+    "item/started",
+    "item/completed",
+    "item/agentMessage/delta",
+    "thread/tokenUsage/updated",
+    "account/rateLimits/updated",
+    "turn/completed"
+  ],
+  "serverSamePidAlive": true
+}

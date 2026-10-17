@@ -1,0 +1,97 @@
+{
+  "phase": "tui",
+  "version": "2.1.301",
+  "argv": [
+    "--setting-sources",
+    "project",
+    "--strict-mcp-config",
+    "--permission-mode",
+    "default",
+    "--settings",
+    "<hook settings file>",
+    "--session-id",
+    "<session-id>",
+    "--debug-file",
+    "<debug file>"
+  ],
+  "pidFound": true,
+  "alive": true,
+  "replMounted": true,
+  "setupScreensLine": "showSetupScreens() completed in 1ms",
+  "aliveBeforeWrite": true,
+  "debugTail": [
+    "2026-10-17T09:10:30.454Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.454Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.454Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.454Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.454Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.454Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.454Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.492Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.493Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.501Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.531Z [DEBUG] [keybindings] KeybindingSetup initialized with 224 bindings, 0 warnings",
+    "2026-10-17T09:10:30.561Z [DEBUG] [jobStateNameSync] watch skipped: Error: ENOENT: no such file or directory, watch '<HOME>\\.claude\\jobs\\ac0cd6ce'",
+    "2026-10-17T09:10:30.594Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.594Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.738Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.781Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.781Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.782Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.782Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.782Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.782Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.782Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.782Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can",
+    "2026-10-17T09:10:30.801Z [DEBUG] Loaded plugins - Enabled: 5, Disabled: 1, Commands: 0, Agents: 0, Errors: 0",
+    "2026-10-17T09:10:30.887Z [WARN] localSettings: not canonicalizing the consent store to <HOME>\\Desktop\\DwarfAI-Miners — this platform has no uid semantics to verify directory ownership with, so the store stays at the session cwd (can"
+  ],
+  "messageWriteExit": 0,
+  "transcriptFound": true,
+  "transcriptRecordTypes": [
+    "mode",
+    "permission-mode",
+    "atis-latch",
+    "file-history-snapshot",
+    "user",
+    "attachment",
+    "last-prompt",
+    "ai-title",
+    "assistant",
+    "system"
+  ],
+  "relayNormalizedText": "S-022-1 probe: two spaces, a tab, a CRLF break, an LF break, trailing spaces é ✓ 🙂 — reply with the single word ok.",
+  "s0221": [
+    {
+      "label": "R1-console-relay",
+      "sentAt": "2026-10-17T09:10:32.981Z",
+      "sentLength": 123,
+      "matchExact": 1,
+      "matchAfterCrlfToLf": 1,
+      "matchAfterTrim": 1,
+      "recordTimestamp": "2026-10-17T09:10:33.283Z",
+      "sentAtLeRecordTime": true,
+      "recordUuid": "<uuid>",
+      "recordUuidEqualsReplay": null,
+      "contentShape": "string",
+      "recordTextDiff": {
+        "sentJson": "\"S-022-1 probe:  two  spaces,\\ta tab,\\r\\na CRLF break,\\nan LF break, trailing spaces   \\n é ✓ 🙂 — reply with the single word ok.\"",
+        "recordJson": "\"S-022-1 probe: two spaces, a tab, a CRLF break, an LF break, trailing spaces é ✓ 🙂 — reply with the single word ok.\""
+      },
+      "nextRecordType": "assistant",
+      "nextIsAgentRecord": true,
+      "nextParentIsThis": false
+    }
+  ],
+  "s0213": {
+    "hookCalls": [
+      {
+        "event": "Stop",
+        "stop_hook_active": false,
+        "fields": "background_tasks,cwd,effort,hook_event_name,last_assistant_message,permission_mode,prompt_id,scratchpad_dir,session_crons,session_id,stop_hook_active,transcript_path"
+      }
+    ]
+  },
+  "exitWrite": 0,
+  "exitedAfterSlashExit": true
+}

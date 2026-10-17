@@ -1,0 +1,98 @@
+{
+  "serverStderr": "\u001b[2m2026-10-17T08:05:45.861408Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_core::tools::router\u001b[0m\u001b[2m:\u001b[0m \u001b[3merror\u001b[0m\u001b[2m=\u001b[0mexec_command failed: CreateProcess { message: \"Rejected(\\\"Failed to create unified exec process: CreateProcessWithLogonW failed: 267\\\")\" }\n",
+  "serverPid0": 51608,
+  "client1Upgraded": true,
+  "threadStartError": null,
+  "turn1Completed": true,
+  "turn1Commands": [],
+  "turn1Text": ["exec_command failed: CreateProcessWithLogonW failed: 267"],
+  "treeDuringSession": [
+    {
+      "depth": 0,
+      "name": "codex.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 1,
+      "name": "conhost.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 1,
+      "name": "node.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": true
+    },
+    {
+      "depth": 1,
+      "name": "<mcp-server-2>.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 1,
+      "name": "node.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 2,
+      "name": "<mcp-server-2>.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 1,
+      "name": "<mcp-server-6>.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 1,
+      "name": "cmd.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 2,
+      "name": "node.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 3,
+      "name": "node.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    },
+    {
+      "depth": 1,
+      "name": "codex-code-mode-host.exe",
+      "argvHasSentinel": false,
+      "argvHasCred": false,
+      "isProbe": false
+    }
+  ],
+  "probeReports": [
+    {
+      "event": "start",
+      "ppidIsServer": true,
+      "sentinelPresent": true,
+      "credFilePresent": true,
+      "envKeys": "APPDATA,COMSPEC,DWARFAI_MCP_CREDENTIAL_FILE,HOMEDRIVE,HOMEPATH,LOCALAPPDATA,PATH,PATHEXT,PROGRAMDATA,PROGRAMFILES,PROGRAMFILES(X86),PROGRAMW6432,SHELL,SP12_REPORT,SP12_SENTINEL,SYSTEMDRIVE,SYSTEMROOT,TEMP,TMP,USERDOMAIN,USERNAME,USERPROFILE,WINDIR"
+    }
+  ],
+  "error": "Error: timeout initialize (stack trimmed: agent scratch path)"
+}
