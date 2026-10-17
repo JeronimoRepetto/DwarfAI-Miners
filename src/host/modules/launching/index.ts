@@ -64,7 +64,7 @@ import {
 } from './application/recoverAfterHostStart'
 import { LaunchingResetStep } from './adapters/sqlite/LaunchingResetStep'
 import { HostInvariantError } from '../../kernel/domain/errors'
-import type { DwarfId, LaunchId } from '../../kernel/domain/values'
+import type { DwarfId, LaunchId, ProviderIdentity } from '../../kernel/domain/values'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { StopAllOutcome } from '../../kernel/ports/stopAll'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
@@ -109,6 +109,7 @@ export {
   type LaunchOutcomeEvent
 } from './domain/classifyLaunchOutcome'
 export { buildLaunchFailure } from './domain/launchFailure'
+export { spawnTagFor } from './domain/spawnTag'
 export { NO_SUPPLIER_LABEL } from './domain/supplierLabel'
 
 /** The commands of 16 §4.5 `LaunchCommands` built so far, and the seen record of a failure. */
@@ -128,6 +129,11 @@ export interface LaunchingCommands {
 export interface OwnedLaunches {
   /** The dwarf's live `LaunchRecord` (no `endedAt`), null when launching owns no session for it. */
   liveRecordOf(dwarfId: DwarfId): LaunchRecord | null
+  /**
+   * The live record of a provider session (ADR-015 item 7 identity), null when launching owns none:
+   * what a restarted Host's driver reads to resume it (wiring/bridges/resumeContext.ts, ISSUE-173).
+   */
+  liveRecordOfSession(identity: ProviderIdentity): LaunchRecord | null
 }
 
 /** What `Launching.stopAll` runs over, bound by `host/wiring` once crew and launching exist. */
@@ -212,7 +218,16 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
       markStoppedByPerson: (dwarfId) => stops.mark(dwarfId)
     },
     owned: {
-      liveRecordOf: (dwarfId) => deps.records.live().find((r) => r.dwarfId === dwarfId) ?? null
+      liveRecordOf: (dwarfId) => deps.records.live().find((r) => r.dwarfId === dwarfId) ?? null,
+      liveRecordOfSession: (identity) =>
+        deps.records
+          .live()
+          .find(
+            (r) =>
+              r.ref.providerId === identity.providerId &&
+              r.ref.providerSessionId === identity.providerSessionId &&
+              r.ref.providerAgentId === identity.providerAgentId
+          ) ?? null
     },
     queries,
     snapshots: memory,
