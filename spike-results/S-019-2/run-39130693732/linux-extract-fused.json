@@ -1,0 +1,23 @@
+{
+  "environment": {
+    "date": "2026-10-18T13:21:42.475Z",
+    "platform": "linux",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Linux",
+    "imageOs": "ubuntu24",
+    "imageVersion": "20261012.334.1"
+  },
+  "results": [
+    {
+      "artifact": "DwarfAI-Miners-0.13.1-amd64.deb",
+      "kind": "deb",
+      "ok": true
+    },
+    {
+      "artifact": "DwarfAI-Miners-0.13.1-x86_64.AppImage",
+      "kind": "AppImage",
+      "ok": true
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "spike": "S-027-1",
+  "part": "portable",
+  "environment": {
+    "date": "2026-10-18T14:36:06.790Z",
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Windows",
+    "imageOs": "win25-vs2026",
+    "imageVersion": "20261007.264.1"
+  },
+  "exe": "DwarfAI-Miners-0.13.1-win-x64.exe",
+  "cleared": [],
+  "hostMs": 27648,
+  "hostStarted": true,
+  "processes": [
+    {
+      "executable": "D:\\a\\DwarfAI-Miners\\DwarfAI-Miners\\release-portable\\DwarfAI-Miners-0.13.1-win-x64.exe",
+      "commandLine": "D:\\a\\DwarfAI-Miners\\DwarfAI-Miners\\release-portable\\DwarfAI-Miners-0.13.1-win-x64.exe --background"
+    },
+    {
+      "executable": "<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\DwarfAI-Miners.exe",
+      "commandLine": "<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\DwarfAI-Miners.exe --background"
+    },
+    {
+      "executable": "<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\DwarfAI-Miners.exe",
+      "commandLine": "\"<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\DwarfAI-Miners.exe\" --type=gpu-process --user-data-dir=\"<home>\\AppData\\Roaming\\DwarfAI-Miners\" --gpu-preferences=WAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAAEAAAAAIAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --field-trial-handle=1940,i,9550767778019507319,6037648438688816791,262144 --enable-features=PdfUseShowSaveFilePicker --disable-features=DropInputEventsWhilePaintHolding,LocalNetworkAccessChecks,NetworkServiceSandbox,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TraceSiteInstanceGetProcessCreation --variations-seed-version --pseudonymization-salt-handle=1948,i,11605866673018671347,1884647661372897166,4 --trace-process-track-uuid=3190708988185955192 --mojo-platform-channel-handle=1936 /prefetch:2"
+    },
+    {
+      "executable": "<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\DwarfAI-Miners.exe",
+      "commandLine": "\"<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\DwarfAI-Miners.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --user-data-dir=\"<home>\\AppData\\Roaming\\DwarfAI-Miners\" --field-trial-handle=1940,i,9550767778019507319,6037648438688816791,262144 --enable-features=PdfUseShowSaveFilePicker --disable-features=DropInputEventsWhilePaintHolding,LocalNetworkAccessChecks,NetworkServiceSandbox,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TraceSiteInstanceGetProcessCreation --variations-seed-version --pseudonymization-salt-handle=1948,i,11605866673018671347,1884647661372897166,4 --trace-process-track-uuid=3190708989122997041 --mojo-platform-channel-handle=2064 /prefetch:11"
+    },
+    {
+      "executable": "<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\DwarfAI-Miners.exe",
+      "commandLine": "\"<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\DwarfAI-Miners.exe\" --type=renderer --user-data-dir=\"<home>\\AppData\\Roaming\\DwarfAI-Miners\" --app-path=\"<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1\\resources\\app.asar\" --enable-sandbox --video-capture-use-gpu-memory-buffer --lang=en-US --device-scale-factor=1 --num-raster-threads=2 --enable-main-frame-before-activation --renderer-client-id=4 --launch-time-ticks=2220515531 --field-trial-handle=1940,i,9550767778019507319,6037648438688816791,262144 --enable-features=PdfUseShowSaveFilePicker --disable-features=DropInputEventsWhilePaintHolding,LocalNetworkAccessChecks,NetworkServiceSandbox,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TraceSiteInstanceGetProcessCreation --variations-seed-version --pseudonymization-salt-handle=1948,i,11605866673018671347,1884647661372897166,4 --trace-process-track-uuid=3190708990060038890 --mojo-platform-channel-handle=2520 /prefetch:1"
+    },
+    {
+      "executable": "<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe",
+      "commandLine": "\"<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe\" \"<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\resources\\app.asar\\out\\host\\main.js\""
+    }
+  ],
+  "extractedTo": [
+    "D:\\a\\DwarfAI-Miners\\DwarfAI-Miners\\release-portable",
+    "<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1",
+    "<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1"
+  ],
+  "hostExecutable": "<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe",
+  "runsInPlace": false,
+  "extractedAfterExit": [
+    {
+      "dir": "D:\\a\\DwarfAI-Miners\\DwarfAI-Miners\\release-portable",
+      "exists": true
+    },
+    {
+      "dir": "<temp>\\3Ks5jlXNx6hg22MJy29GMtKb4I1",
+      "exists": true
+    },
+    {
+      "dir": "<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1",
+      "exists": true
+    }
+  ],
+  "clearedAfter": ["<home>\\AppData\\Roaming\\DwarfAI-Miners", "<home>\\AppData\\Local\\DwarfAI"]
+}

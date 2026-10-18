@@ -1,0 +1,4 @@
+{"ts":"2026-10-18T14:15:49.823Z","level":"info","proc":"ui","pid":2904,"appVersion":"0.13.1","event":"versioned-copy","subsystem":"host-launcher","outcome":"ok","causeClass":"copy","durationMs":2681}
+{"ts":"2026-10-18T14:15:55.800Z","level":"info","proc":"ui","pid":7496,"appVersion":"0.13.1","event":"host.upgrade","subsystem":"host-launcher","outcome":"ok","causeClass":"attach"}
+{"ts":"2026-10-18T14:15:55.835Z","level":"info","proc":"ui","pid":7496,"appVersion":"0.13.1","event":"host.connection","subsystem":"host-client","outcome":"ok","causeClass":"connected"}
+{"ts":"2026-10-18T14:16:04.974Z","level":"info","proc":"ui","pid":9312,"appVersion":"0.13.1","event":"versioned-copy","subsystem":"host-launcher","outcome":"ok","causeClass":"reuse","durationMs":14}

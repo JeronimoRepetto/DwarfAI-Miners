@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
   dictionaryRequests,
   hostsOf,
+  installDirOf,
   netLogUrls,
   nextPatchVersion,
   scoopManifest,
-  scrubText
+  scrubText,
+  tarCommand
 } from './packagingSpikes.mjs'
 
 describe('packaging spike lane helpers (ISSUE-328)', () => {
@@ -58,6 +60,18 @@ describe('packaging spike lane helpers (ISSUE-328)', () => {
     expect(hostsOf(urls)).toEqual(['example.org', 'redirector.gvt1.com'])
   })
 
+  // Run 39130693732: the CDN redirect of a dictionary download carries the client's public IP in its query (`mip=`).
+  it('[S-019-3] lists dictionary requests without their query, so no client address reaches the evidence', () => {
+    const urls = [
+      'https://rr2---sn-x.gvt1.com/edgedl/chrome/dict/en-us-10-1.bdic?cms_redirect=yes&mip=203.0.113.7&mm=28',
+      'https://redirector.gvt1.com/edgedl/chrome/dict/en-us-10-1.bdic'
+    ]
+    expect(dictionaryRequests(urls)).toEqual([
+      'https://rr2---sn-x.gvt1.com/edgedl/chrome/dict/en-us-10-1.bdic',
+      'https://redirector.gvt1.com/edgedl/chrome/dict/en-us-10-1.bdic'
+    ])
+  })
+
   it('[S-019-3] scrubs the runner home folder and user name from evidence text, in both path spellings', () => {
     const text =
       'C:\\Users\\dwarfai-ci\\AppData\\x and "C:\\\\Users\\\\dwarfai-ci\\\\y" by dwarfai-ci'
@@ -67,5 +81,47 @@ describe('packaging spike lane helpers (ISSUE-328)', () => {
         ['dwarfai-ci', '<user>']
       ])
     ).toBe('<home>\\AppData\\x and "<home>\\\\y" by <user>')
+  })
+
+  // Run 39130693732: the user `runner` of the macOS and Linux runners turned the evidence key `runnerOs` into
+  // `<user>Os`. A user or host name is replaced only where it stands as a whole word.
+  it('[S-019-3] scrubs a user or host name only where it stands alone, never inside a longer word', () => {
+    const text = '{"runnerOs":"Linux","home":"/home/runner/work","by":"runner","host":"runner-1"}'
+    expect(scrubText(text, [['runner', '<user>', { word: true }]])).toBe(
+      '{"runnerOs":"Linux","home":"/home/<user>/work","by":"<user>","host":"<user>-1"}'
+    )
+    expect(scrubText('runnerOs', [['runner', '<user>']]), 'a plain entry still replaces').toBe(
+      '<user>Os'
+    )
+  })
+
+  // Run 39130693732: in the workflow's bash step on Windows, `tar` is Git's GNU tar, which reads `D:\...` as a remote
+  // host ("Cannot connect to D: resolve failed") and cannot read a zip at all. Windows' own bsdtar reads both.
+  it('[S-027-1, S-019-2] reads a zip on Windows with the system bsdtar, never the tar first on PATH', () => {
+    expect(tarCommand('win32', { SystemRoot: 'C:\\Windows' })).toBe(
+      'C:\\Windows\\System32\\tar.exe'
+    )
+    expect(tarCommand('win32', {})).toBe('C:\\Windows\\System32\\tar.exe')
+    expect(tarCommand('linux', { SystemRoot: 'C:\\Windows' })).toBe('tar')
+  })
+
+  // Run 39130693732: electron-builder's per-user nsis installer writes no InstallLocation in its uninstall key, so the
+  // S-027-3 harness never found the installed app. The uninstaller sits in the install folder.
+  it('[S-027-3] finds the nsis install folder from the uninstall string when the key has no InstallLocation', () => {
+    const uninstall =
+      '"C:\\Users\\j\\AppData\\Local\\Programs\\dwarfai-miners\\Uninstall DwarfAI-Miners.exe"'
+    expect(
+      installDirOf({ InstallLocation: null, UninstallString: `${uninstall} /currentuser` })
+    ).toBe('C:\\Users\\j\\AppData\\Local\\Programs\\dwarfai-miners')
+    expect(
+      installDirOf({
+        InstallLocation: 'D:\\Apps\\dwarfai',
+        UninstallString: `${uninstall} /currentuser`
+      }),
+      'InstallLocation wins when present'
+    ).toBe('D:\\Apps\\dwarfai')
+    expect(installDirOf({ UninstallString: 'C:\\x\\un.exe /S' })).toBe('C:\\x')
+    expect(installDirOf(null)).toBeNull()
+    expect(installDirOf({ InstallLocation: null, UninstallString: null })).toBeNull()
   })
 })

@@ -1,0 +1,66 @@
+{
+  "spike": "SP-03",
+  "layout": "linux-deb",
+  "environment": {
+    "date": "2026-10-18T13:23:36.699Z",
+    "platform": "linux",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Linux",
+    "imageOs": "ubuntu24",
+    "imageVersion": "20261012.334.1"
+  },
+  "app": "dwarfai-miners",
+  "appBytes": 227163464,
+  "signatureBefore": null,
+  "cleared": [],
+  "firstStart": {
+    "copyCompleteMs": 4766,
+    "hostIdentityMs": 5017,
+    "uiExitCode": null,
+    "copy": {
+      "version": "0.13.1",
+      "files": 95,
+      "bytes": 641337767
+    },
+    "copyTopLevel": [
+      "LICENSE.electron.txt",
+      "LICENSES.chromium.html",
+      "chrome-sandbox",
+      "chrome_100_percent.pak",
+      "chrome_200_percent.pak",
+      "chrome_crashpad_handler",
+      "dwarfai-miners",
+      "host-manifest.json",
+      "icudtl.dat",
+      "libffmpeg.so",
+      "libvk_swiftshader.so",
+      "libvulkan.so.1",
+      "locales",
+      "resources",
+      "resources.pak",
+      "snapshot_blob.bin",
+      "v8_context_snapshot.bin",
+      "vk_swiftshader_icd.json"
+    ],
+    "hostProcess": {
+      "executable": "<home>/.local/share/dwarfai/host/0.13.1/dwarfai-miners",
+      "commandLine": "<home>/.local/share/dwarfai/host/0.13.1/dwarfai-miners <home>/.local/share/dwarfai/host/0.13.1/resources/app.asar/out/host/main.js"
+    },
+    "fuseMounts": []
+  },
+  "afterUiEnded": {
+    "hostAlive": true,
+    "hostProcess": {
+      "executable": "<home>/.local/share/dwarfai/host/0.13.1/dwarfai-miners",
+      "commandLine": "<home>/.local/share/dwarfai/host/0.13.1/dwarfai-miners <home>/.local/share/dwarfai/host/0.13.1/resources/app.asar/out/host/main.js"
+    },
+    "fuseMounts": []
+  },
+  "secondStart": {
+    "hostIdentityMs": 754,
+    "copyReused": true
+  },
+  "signatureAfter": null,
+  "clearedAfter": ["<home>/.config/DwarfAI-Miners", "<home>/.local/share/dwarfai"]
+}
