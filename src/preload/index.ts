@@ -156,10 +156,10 @@ export interface DwarfAiMinersApi {
   launchHeldSession: (
     request: TargetRequest<'agent:launchHeld'>
   ) => Promise<TargetResult<'agent:launchHeld'>>
-  /** A-39 · `agent:launchHosted` · invoke · CHANGE · today shape */
+  /** A-39 · `agent:launchHosted` · invoke · CHANGE · target shape */
   launchHostedProcess: (
-    request: TodayRequest<'agent:launchHosted'>
-  ) => Promise<TodayResult<'agent:launchHosted'>>
+    request: TargetRequest<'agent:launchHosted'>
+  ) => Promise<TargetResult<'agent:launchHosted'>>
   /** A-40 · `agent:answerQuestion` · invoke · CHANGE · target shape */
   answerDwarfQuestion: (
     request: TargetRequest<'agent:answerQuestion'>
@@ -396,13 +396,7 @@ const api: DwarfAiMinersApi = {
   launchHeldSession: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('agent:launchHeld', request)),
   launchHostedProcess: (request) =>
-    invokeOrReject(() =>
-      ipcRenderer.invoke('agent:launchHosted', {
-        mineId: textOf(request?.mineId),
-        command: textOf(request?.command),
-        prompt: textOf(request?.prompt)
-      })
-    ),
+    invokeOrReject(() => ipcRenderer.invoke('agent:launchHosted', request)),
   answerDwarfQuestion: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('agent:answerQuestion', request)),
   answerDwarfPermission: (request) =>

@@ -24,7 +24,9 @@
 // `LegacyEndFirstAdapter` ends those first for A-N29 and A-32 through this same join (21 §3; package gap: the feed row
 // says only "shrinks", the adapter row needs the join for exactly these sessions); Codex keeps `pending-questions` (its
 // pending questions only) for `LegacyAskRelay` until the end of cut 4, when the bridge is deleted with
-// `LegacyDwarfIdBridge` (21 §2 cut 4b). `off` composes nothing.
+// `LegacyDwarfIdBridge` (21 §2 cut 4b). From its own step (3b) Codex keeps both, `legacy-launched-or-pending-questions`:
+// its legacy-launched sessions for `LegacyEndFirstAdapter` and the questions of person-launched Codex sessions, which
+// stay behind `LegacyAskRelay` until the end of cut 4 (21 §2 cut 2 "Qualified routes"; ISSUE-002). `off` composes nothing.
 import type { DwarfProvider, ProviderSnapshot } from '../main/domain/types'
 import type { Provider } from '../main/providers/provider'
 
@@ -33,7 +35,12 @@ import type { Provider } from '../main/providers/provider'
  * (Codex, for `LegacyAskRelay`, 21 §2 cut 4a), only the sessions today's runtime launched (a moved provider, for
  * `LegacyEndFirstAdapter`), or nothing.
  */
-export type LegacyFeedMode = 'discover' | 'pending-questions' | 'legacy-launched' | 'off'
+export type LegacyFeedMode =
+  | 'discover'
+  | 'pending-questions'
+  | 'legacy-launched'
+  | 'legacy-launched-or-pending-questions'
+  | 'off'
 
 /** The feed's per-provider switch: every legacy provider has a mode, so a new one cannot be left out by omission. */
 export type LegacyFeedModes = Readonly<Record<DwarfProvider, LegacyFeedMode>>
@@ -54,6 +61,42 @@ export const LEGACY_FEED_PROVIDERS_CUT_1: LegacyFeedModes = {
 export const LEGACY_FEED_PROVIDERS_CUT_3A: LegacyFeedModes = {
   ...LEGACY_FEED_PROVIDERS_CUT_1,
   claude: 'legacy-launched'
+}
+
+/**
+ * Step 3b (21 §2 cut 3b): Codex's launch, send, console and stop rows move to the Host too, so its legacy discovery keeps
+ * only the sessions today's runtime launched (for `LegacyEndFirstAdapter`) and the sessions blocked on a pending
+ * question (person-launched Codex sessions, still answered through `LegacyAskRelay` until the end of cut 4). Passed by
+ * the step's route switch (ISSUE-002).
+ */
+export const LEGACY_FEED_PROVIDERS_CUT_3B: LegacyFeedModes = {
+  ...LEGACY_FEED_PROVIDERS_CUT_3A,
+  codex: 'legacy-launched-or-pending-questions'
+}
+
+/**
+ * What each legacy provider keeps once its own step moved its rows to the Host (21 §3: the feed shrinks per provider
+ * step): only its legacy-launched sessions, and for Codex also its pending questions (`LegacyAskRelay`, until the end
+ * of cut 4).
+ */
+const MODE_ONCE_MOVED: LegacyFeedModes = {
+  claude: 'legacy-launched',
+  codex: 'legacy-launched-or-pending-questions',
+  antigravity: 'legacy-launched',
+  opencode: 'legacy-launched'
+}
+
+/**
+ * The feed's modes for a release whose route table moved `moved` (the providers whose A-36 entry the Host serves):
+ * every discovery for a provider not moved, its `MODE_ONCE_MOVED` for a moved one. The composition root derives
+ * `moved` from the table, so a rollback build composes the rolled-back provider's whole discovery again.
+ */
+export function legacyFeedModesFor(moved: ReadonlySet<string>): LegacyFeedModes {
+  const modes: Record<DwarfProvider, LegacyFeedMode> = { ...LEGACY_FEED_PROVIDERS_CUT_1 }
+  for (const kind of Object.keys(modes) as DwarfProvider[]) {
+    if (moved.has(kind)) modes[kind] = MODE_ONCE_MOVED[kind]
+  }
+  return modes
 }
 
 /**
@@ -104,6 +147,11 @@ function composed(
   if (mode === 'discover') return [...sessions]
   if (mode === 'legacy-launched') {
     return sessions.filter((session) => session.dwarfs.some((d) => launched(d.id)))
+  }
+  if (mode === 'legacy-launched-or-pending-questions') {
+    return sessions.filter((session) =>
+      session.dwarfs.some((d) => launched(d.id) || d.pendingQuestion !== undefined)
+    )
   }
   return sessions.filter((session) => session.dwarfs.some((d) => d.pendingQuestion !== undefined))
 }

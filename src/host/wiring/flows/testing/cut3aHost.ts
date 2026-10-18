@@ -1,7 +1,8 @@
 // The cut-3a Host (ISSUE-182): one Host start composed as host/main.ts composes it — the real boot
 // steps of bootSteps.ts, the Host dispatcher with every seam-B member served before the bind, the
 // endpoint's frame list (wiring/hostFrames.ts), preferences at step 3, and at step 4 suppliers with
-// the development build's SimulatedDriver and the person's own Codex app-server driver, jev, the
+// the development build's SimulatedDriver and the person's own CLI drivers (Codex app-server and,
+// from ISSUE-188, Antigravity `ndjson`), jev, the
 // ledger, conversation, observation, crew, mines, attention, asking, launching with the
 // `LaunchAdvisor` bridge, the launched sessions (wiring/launchedSessions.ts), Stop everything and
 // quit, and the Host recovery that step 5 awaits — over a temp world and one copy of the template
@@ -228,7 +229,7 @@ export interface BootOptions {
   /** The kernel process control every module and driver spawns and probes through, over this start's clock. */
   processes: (time: { clock: FakeClock; scheduler: FakeScheduler }) => ProcessControl
   /** The CLIs the one `InstallResolver` finds, with the files their detection stats. */
-  installed?: readonly ('codex' | 'claude')[]
+  installed?: readonly ('codex' | 'claude' | 'agy')[]
   /** The Jev key in the OS secret store; none by default. */
   jevKey?: string
   /** How the previous Host epoch ended (boot step 2); none by default (a first start). */
@@ -498,6 +499,14 @@ export async function bootHost(w: World, options: BootOptions) {
             bus,
             hostEpoch: epoch,
             simulatedSeed: 'seed-182',
+            // As host/main.ts: "Other…" (ISSUE-165; 15 §4.11), the person's command spawned with no
+            // shell. ADDED for ISSUE-186, so the step-3d flows launch "Other…" through this Host.
+            hostedCommand: {
+              processControl: processes,
+              loginEnv: { PATH: TOOLS },
+              platform: hostRuntime().os as 'win32' | 'darwin' | 'linux',
+              redact: redactSecrets
+            },
             cliDrivers: {
               processControl: processes,
               loginEnv: { PATH: TOOLS },

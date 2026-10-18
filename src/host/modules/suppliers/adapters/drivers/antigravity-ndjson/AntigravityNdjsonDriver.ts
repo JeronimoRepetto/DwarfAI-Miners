@@ -59,6 +59,7 @@ import type {
   TurnInput
 } from '../../../ports/providerDriver'
 import { probeEnv } from '../../install/searchDirs'
+import { adapterLaunch, type LaunchTarget } from '../acp/client/adapterLaunch'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
 import { buildArgv } from './argv'
 import { capabilitiesFromHelp } from './capabilities'
@@ -79,6 +80,8 @@ export const OUTPUT_DRAIN_MS = 2_000
 const TAIL_CHARS = 400
 /** A `--help` probe reads at most this much. */
 const HELP_READ_CHARS = 256 * 1024
+/** The program that runs a Windows script entry (ADR-029 row 8, #1360). */
+const NODE_BINARY = 'node'
 /** A conversation id agy could be handed back as one `--conversation` value. */
 const CONVERSATION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
@@ -172,8 +175,9 @@ export class AntigravityNdjsonDriver implements ProviderDriver {
       if (error instanceof HostInvariantError) throw launchError('could-not-start', error.message)
       throw error
     }
+    const target = await this.startTarget(req.install.binaryPath)
     const spawnedAt = this.deps.clock.now()
-    const child = this.spawn(req.install.binaryPath, argv, req.cwd, env)
+    const child = this.spawn(target, argv, req.cwd, env)
     let identity: ProcessIdentity
     try {
       identity = await child.identity
@@ -244,8 +248,9 @@ export class AntigravityNdjsonDriver implements ProviderDriver {
       if (error instanceof HostInvariantError) throw resumeError('resume-error', error.message)
       throw error
     }
+    const target = await this.startTarget(detected.install.binaryPath)
     const spawnedAt = this.deps.clock.now()
-    const child = this.spawn(detected.install.binaryPath, argv, known.cwd, env)
+    const child = this.spawn(target, argv, known.cwd, env)
     let identity: ProcessIdentity
     try {
       identity = await child.identity
@@ -291,15 +296,39 @@ export class AntigravityNdjsonDriver implements ProviderDriver {
     })
   }
 
+  /**
+   * How to start the person's agy, resolved like a binary (ADR-009 D5). agy's own install is an
+   * executable started as it is; a Windows install the one resolver answers as a script entry
+   * (an `agy.cmd` shim, #1360) cannot be started by the OS and R17 forbids a shell, so the
+   * person's `node`, found through the same detection, runs it (`adapterLaunch`). Not installed
+   * when that `node` does not resolve: no spawn.
+   */
+  private async startTarget(binaryPath: string): Promise<LaunchTarget> {
+    const target = await adapterLaunch(binaryPath, this.deps.platform, async () => {
+      const found = await this.deps.detection.detect({
+        providerId: this.profile.id,
+        binaries: [NODE_BINARY]
+      })
+      return found.kind === 'installed' ? found.install.binaryPath : null
+    })
+    if (target === null) {
+      throw launchError(
+        'not-installed',
+        `${NODE_BINARY}, which runs ${this.profile.label}, is not installed`
+      )
+    }
+    return target
+  }
+
   private spawn(
-    executable: string,
+    target: LaunchTarget,
     args: readonly string[],
     cwd: string,
     env: Record<string, string>
   ): SpawnedProcess {
     return this.deps.processControl.spawn({
-      executable,
-      args,
+      executable: target.program,
+      args: [...target.leadingArgs, ...args],
       cwd,
       env,
       processGroup: 'own',
@@ -313,9 +342,10 @@ export class AntigravityNdjsonDriver implements ProviderDriver {
    */
   private async readHelp(install: InstalledProvider): Promise<string | null> {
     const { processControl, scheduler, loginEnv, platform, home } = this.deps
+    const target = await this.startTarget(install.binaryPath)
     const child = processControl.spawn({
-      executable: install.binaryPath,
-      args: ['--help'],
+      executable: target.program,
+      args: [...target.leadingArgs, '--help'],
       cwd: home,
       env: probeEnv(loginEnv, platform),
       processGroup: 'own',

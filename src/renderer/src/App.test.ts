@@ -4734,8 +4734,11 @@ describe('App, hidden until built (ISSUE-267)', () => {
           models: [],
           permissionModes: [],
           offeredModes: [],
-          installed: true,
-          publicLaunch: providerId === 'claude' ? 'enabled' : 'gated',
+          // AMENDED for ISSUE-188 (was: `installed: true` and Antigravity `publicLaunch: 'gated'`): the Host lists only
+          // what it may launch in its build (ADR-009 D6, development builds keep a gated one), so the entry the panel
+          // must not offer is one that cannot start here.
+          installed: providerId === 'claude',
+          publicLaunch: 'enabled',
           answerChannel: 'available'
         }))
       })

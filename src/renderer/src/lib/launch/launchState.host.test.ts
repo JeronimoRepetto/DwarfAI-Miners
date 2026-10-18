@@ -8,6 +8,8 @@ import {
   chooseModel,
   chooseProvider,
   closedLaunch,
+  commitCommand,
+  customLaunchParamsOf,
   hostLaunchAccepted,
   hostLaunchFollowed,
   launchFailed,
@@ -17,6 +19,7 @@ import {
   setJevSettings,
   submitStarted,
   toggleJev,
+  typeCommand,
   typePrompt,
   unstatedLaunchTimedOut,
   DETACHED_TIMEOUT_MESSAGE,
@@ -168,5 +171,35 @@ describe('A-35 in its 14 shape (ISSUE-001)', () => {
     const timedOut = unstatedLaunchTimedOut(sending, LAUNCH, false)
     expect(timedOut.submitting).toBe(false)
     expect(timedOut.error).toBe(DETACHED_TIMEOUT_MESSAGE)
+  })
+})
+
+// ADDED for ISSUE-186: from step 3d A-39 has its 14 shape (21 §3.1: it switches with its route), `LaunchCustomParams`
+// → `IpcResult<LaunchAccepted>`, and an "Other…" launch settles like any Host launch, on its frames.
+describe('A-39 in its 14 shape (ISSUE-186)', () => {
+  function other(command: string): LaunchState {
+    const chosen = chooseProvider(openLaunch(closedLaunch()), OTHER_CHOICE)
+    return typePrompt(commitCommand(typeCommand(chosen, command)), '  map the build  ')
+  }
+
+  it('[ADR-020] an Other launch carries the 14 LaunchCustomParams with the committed command, and its Retry names the failed launch', () => {
+    expect(customLaunchParamsOf(other('  my-agent --once  '), MINE, REQUEST)).toEqual({
+      mineId: MINE,
+      command: 'my-agent --once',
+      prompt: 'map the build',
+      requestId: REQUEST
+    })
+    expect(customLaunchParamsOf(other('my-agent'), MINE, REQUEST, FAILED)).toEqual({
+      mineId: MINE,
+      command: 'my-agent',
+      prompt: 'map the build',
+      retryOf: FAILED,
+      requestId: REQUEST
+    })
+  })
+
+  it('[ADR-020] a supplier or Jev launch has no custom request, and an Other launch no A-35 request', () => {
+    expect(customLaunchParamsOf(ready('codex'), MINE, REQUEST)).toBeNull()
+    expect(launchParamsOf(other('my-agent'), MINE, REQUEST)).toBeNull()
   })
 })
