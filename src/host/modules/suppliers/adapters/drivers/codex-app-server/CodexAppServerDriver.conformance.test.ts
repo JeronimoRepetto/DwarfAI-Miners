@@ -16,7 +16,11 @@ import type { CatalogRecord } from '../../../domain/profile'
 import { FakeDriverRegistry } from '../../../ports/fakes/FakeDriverRegistry'
 import { FakeInstallResolver } from '../../../ports/fakes/FakeInstallResolver'
 import { InMemoryCapabilityRecordStore } from '../../../ports/fakes/InMemoryCapabilityRecordStore'
-import type { DriverSession, InstalledProvider } from '../../../ports/providerDriver'
+import type {
+  DelegationInjection,
+  DriverSession,
+  InstalledProvider
+} from '../../../ports/providerDriver'
 import {
   CANARY_TOKEN,
   LOGIN_ENV,
@@ -227,6 +231,78 @@ async function probedLaunch(
 }
 
 describe('CodexAppServerDriver', () => {
+  it('[C-02, ADR-029] on Windows an npm-installed codex that resolves to a script entry is probed and launched by the person node with the entry as its first argument, never through a shell', async () => {
+    // A Windows npm `codex.cmd` resolves to its quoted script entry (#1360), which the OS cannot
+    // start by itself (spawn EFTYPE) and R17 forbids running through a shell (ISSUE-002, the 3b E2E).
+    const entry = String.raw`C:\Users\j\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js`
+    const node = String.raw`C:\Program Files\nodejs\node.exe`
+    const windowsFactory =
+      (withNode: boolean): DriverFactory =>
+      (rig) => {
+        const resolver = new FakeInstallResolver()
+        resolver.install('codex', { path: entry, version: '0.153.4' })
+        if (withNode) resolver.install('node', { path: node })
+        return new CodexAppServerDriver({
+          record: CODEX,
+          detection: createInstallDetection({
+            resolver,
+            fs: { stat: async () => ({ mtimeMs: 0, size: 1, isDirectory: false }) },
+            scheduler: rig.scheduler
+          }),
+          processControl: rig.processControl,
+          clock: rig.clock,
+          scheduler: rig.scheduler,
+          loginEnv: rig.loginEnv,
+          home: String.raw`C:\Users\j`,
+          platform: 'win32',
+          clientInfo: { name: 'dwarfai', version: '0.0.0' },
+          redact: (text) => text
+        })
+      }
+    const install = { ...INSTALL, binaryPath: entry }
+    const options = { ...OPTIONS, install }
+    const run = await runScript(
+      windowsFactory(true),
+      [{ do: 'launch' }, { do: 'transportLost' }],
+      { variant: variantOf('s0151b-client1') },
+      options
+    )
+    expect(run.spawn.spawns.map((s) => s.executable)).toEqual([node])
+    expect(run.spawn.spawns[0]?.args[0]).toBe(entry)
+    expect(run.spawn.spawns[0]?.args).toContain('app-server')
+    // The help probe starts the same way.
+    const clock = new FakeClock(0)
+    const scheduler = new FakeScheduler(clock)
+    const spawn = new RecordingSpawn({
+      clock,
+      scheduler,
+      decide: () => ({ kind: 'exit', afterMs: 0, code: 0, stdout: HELP_0_153_4 })
+    })
+    const probing = windowsFactory(true)({
+      clock,
+      scheduler,
+      processControl: spawn,
+      loginEnv: LOGIN_ENV
+    }).probe(install)
+    for (let round = 0; round < 20; round++) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      clock.advance(0)
+    }
+    expect((await probing).launch).toBe(true)
+    expect(spawn.spawns.map((s) => [s.executable, ...s.args])).toEqual([[node, entry, '--help']])
+    // No node the resolver can find: not installed, and nothing is spawned (no shell fallback).
+    const noNode = await runScript(
+      windowsFactory(false),
+      [{ do: 'launch' }, { do: 'transportLost' }],
+      { variant: variantOf('s0151b-client1') },
+      options
+    )
+    expect(noNode.outcomes[0]).toEqual({
+      rejected: { cause: 'not-installed', detail: 'node, which runs Codex, is not installed' }
+    })
+    expect(noNode.spawn.spawns).toEqual([])
+  })
+
   it('[C-06, C-07] Allow sends accept and Deny sends decline, never the session-wide accept and never cancel', async () => {
     expect(await againstExpected('c-06-allow')).toEqual([])
     expect(await againstExpected('c-07-deny')).toEqual([])
@@ -488,5 +564,172 @@ describe('CodexAppServerDriver', () => {
 
   it('[C-05, ADR-015] a subagent thread is its own identity and its items are not the parent messages', async () => {
     expect(await againstExpected('subagent')).toEqual([])
+  })
+})
+
+// ---------- the delegation entry (ISSUE-202 "Tests to write FIRST" item 1) ----------
+
+/** The gated delegation launch: both gates on, so the request carries a ticket-file entry. */
+const GATED = 'c-23-gated-delegation'
+/** The variables only the relay entry's own env may hold (15 §4 "Delegation relay form"). */
+const RELAY_ONLY = ['ELECTRON_RUN_AS_NODE', 'DWARFAI_MCP_CREDENTIAL_FILE'] as const
+/** The `-c` key prefix of the Jev entry; any other `-c` key would configure something else. */
+const JEV_AT = 'mcp_servers.jev.'
+
+/** The gated case's hand-written argv (without the executable); only this case states one. */
+function expectedArgv(): string[] {
+  const { argv } = fixture(GATED).expected as { argv?: string[] }
+  if (argv === undefined) throw new Error(`${GATED} states no argv`)
+  return argv
+}
+
+/** The `-c` values of an argv, in order. */
+function overrides(argv: readonly string[]): string[] {
+  return argv.flatMap((arg, index) => (argv[index - 1] === '-c' ? [arg] : []))
+}
+
+/** The Jev entry's own env as Codex reads it: the TOML inline table of `mcp_servers.jev.env`. */
+function jevEnv(argv: readonly string[]): Record<string, string> {
+  const setting = overrides(argv).find((value) => value.startsWith(`${JEV_AT}env=`))
+  if (setting === undefined) throw new Error('no jev env override')
+  // `{KEY="value",…}`: bare keys and TOML basic strings (JSON's escapes), as `argv.ts` writes them.
+  const pairs = [...setting.matchAll(/([A-Z_]+)=("(?:[^"\\]|\\.)*")/g)]
+  return Object.fromEntries(pairs.map(([, key, value]) => [key, JSON.parse(value as string)]))
+}
+
+/** The gated case run over its first variant. */
+async function gatedRun(): Promise<Awaited<ReturnType<typeof runScript>>> {
+  return runScript(
+    factoryWith(),
+    fixture(GATED).expected.script,
+    { variant: variantOf(GATED) },
+    OPTIONS
+  )
+}
+
+/** Every variant of the gated case against its expected file, the argv included; failures as lines. */
+async function gatedAgainstExpected(): Promise<string[]> {
+  const own = fixture(GATED)
+  const out: string[] = []
+  for (const variant of own.variants) {
+    const run = await runScript(factoryWith(), own.expected.script, { variant }, OPTIONS)
+    const why = [
+      ...run.failures,
+      ...compareEvents(run.events, own.expected.events ?? [], run.bindings),
+      ...(own.expected.outcomes ?? []).flatMap((want, index) =>
+        want === null ? [] : differences(run.outcomes[index], bind(want, run.bindings), `#${index}`)
+      ),
+      ...differences(run.sent, bind(own.expected.sent ?? [], run.bindings), 'sent'),
+      ...differences(run.spawn.spawns[0]?.args ?? null, expectedArgv(), 'argv')
+    ]
+    out.push(...why.map((line) => `${variant.label}: ${line}`))
+  }
+  return out
+}
+
+/** The driver with every launch carrying `delegation` as given, whatever the harness built. */
+function launchedWith(delegation: DelegationInjection | null): DriverFactory {
+  return (rig: ConformanceRig) => {
+    const driver = factoryWith()(rig)
+    return {
+      profile: driver.profile,
+      transport: driver.transport,
+      detect: () => driver.detect(),
+      probe: (install) => driver.probe(install),
+      launch: (req) => driver.launch({ ...req, delegation })
+    }
+  }
+}
+
+describe('CodexAppServerDriver conformance', () => {
+  it("[C-23, INV-59, INV-83] a gated delegation launch has no credential and no DWARFAI_DELEGATION_TOKEN string in any captured argv or env; the jev entry's env names only DWARFAI_MCP_CREDENTIAL_FILE with a path", async () => {
+    expect(await gatedAgainstExpected()).toEqual([])
+    const run = await gatedRun()
+    // `codex app-server` is the only process DwarfAI starts; codex starts the relay itself.
+    expect(run.spawn.spawns.map((spawn) => spawn.executable)).toEqual([INSTALL.binaryPath])
+    const [codex] = run.spawn.spawns
+    // The person's login env holds the canary token: it reaches nothing DwarfAI starts or sends.
+    const captured = JSON.stringify([codex?.args, codex?.env, run.sent])
+    expect(captured).not.toContain(CANARY_TOKEN)
+    expect(captured).not.toContain('DWARFAI_DELEGATION_TOKEN')
+    // The entry's env is the relay form; its one credential reference is the file path.
+    const env = jevEnv(codex?.args ?? [])
+    expect(Object.keys(env)).toEqual([...RELAY_ONLY])
+    expect(env.ELECTRON_RUN_AS_NODE).toBe('1')
+    expect(env.DWARFAI_MCP_CREDENTIAL_FILE).toBe(
+      run.launches[0]?.request.delegation?.credentialFilePath
+    )
+    expect(env.DWARFAI_MCP_CREDENTIAL_FILE).toMatch(/^\/home\/j\/\.dwarfai\/run\/mcp\/[^/]+\.cred$/)
+    // Outside the entry's env neither relay variable appears: not in codex's env, another
+    // override or a frame.
+    const elsewhere = overrides(codex?.args ?? []).filter(
+      (value) => !value.startsWith(`${JEV_AT}env=`)
+    )
+    for (const name of RELAY_ONLY) {
+      expect(codex?.env, name).not.toHaveProperty(name)
+      expect(JSON.stringify([elsewhere, run.sent]), name).not.toContain(name)
+    }
+    expect(codex?.env.DWARFAI_SPAWN).toBe(run.launches[0]?.request.spawnTag)
+  })
+
+  it('[C-24] with both gates on exactly delegate_subtask and subtask_result are pre-approved inside the jev entry and no other tool, server or session-wide approval appears', async () => {
+    const run = await gatedRun()
+    expect(run.outcomes[0]).toEqual({ resolved: true })
+    expect(run.spawn.spawns).toHaveLength(1)
+    const argv = run.spawn.spawns[0]?.args ?? []
+    const settings = overrides(argv)
+    // Every override belongs to the Jev entry: no other server and no global key is set.
+    expect(settings.filter((value) => !value.startsWith(JEV_AT))).toEqual([])
+    // The approvals are exactly the two DwarfAI tools, each scoped to its own name in the entry.
+    expect(JEV_TOOLS).toEqual(['delegate_subtask', 'subtask_result'])
+    expect(settings.filter((value) => /approv|bypass|trust|sandbox/i.test(value))).toEqual(
+      JEV_TOOLS.map((tool) => `${JEV_AT}tools.${tool}.approval_mode="approve"`)
+    )
+    // Besides the overrides only the subcommand, no forbidden flag, and the thread asks on request.
+    expect(argv.filter((arg, index) => arg !== '-c' && argv[index - 1] !== '-c')).toEqual([
+      'app-server'
+    ])
+    for (const flag of FORBIDDEN_FLAGS) {
+      expect(argv.join(' ').toLowerCase()).not.toContain(flag.toLowerCase())
+    }
+    const started = run.sent.find(
+      (frame) => (frame as { method?: string }).method === 'thread/start'
+    ) as { params?: Json } | undefined
+    expect(started?.params).toEqual({ cwd: '/work/mine', approvalPolicy: 'on-request' })
+  })
+
+  it('[C-24, INV-81] without both gates, or for a delegated worker, there is no jev entry and no pre-approval', async () => {
+    // Without both gates, and for a delegated worker, `issueFor` gives no entry (ADR-013 item 4),
+    // so the request carries `delegation: null`.
+    const ungated = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf(GATED) },
+      OPTIONS
+    )
+    expect(ungated.launches[0]?.request.delegation).toBeNull()
+    expect(ungated.spawn.spawns[0]?.args).toEqual(['app-server'])
+    // A request that is not the ticket-file form this row injects gets no entry either: no
+    // protocol entry while SP-12 is partial, and never a relay without its credential file path.
+    const relay = { program: '/opt/dwarfai/host/dwarfai', args: ['dwarfai-mcp-relay'] }
+    const path = '/home/j/.dwarfai/run/mcp/launch-1.cred'
+    const requests: (DelegationInjection | null)[] = [
+      null,
+      { mechanism: 'protocol', relay, credentialFilePath: path },
+      { mechanism: 'ticket-file', relay },
+      { mechanism: 'ticket-file', credentialFilePath: path }
+    ]
+    for (const delegation of requests) {
+      const run = await runScript(
+        launchedWith(delegation),
+        [{ do: 'launch' }],
+        { variant: variantOf(GATED) },
+        OPTIONS
+      )
+      expect(run.spawn.spawns[0]?.args, JSON.stringify(delegation)).toEqual(['app-server'])
+      const captured = JSON.stringify([run.spawn.spawns[0]?.args, run.sent])
+      expect(captured).not.toContain('mcp_servers')
+      expect(captured).not.toContain('approval_mode')
+    }
   })
 })

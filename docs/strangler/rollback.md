@@ -99,6 +99,21 @@ Known limit of a 3a rollback build: a "Let Jev choose" launch has no `host` rout
 `PerProviderShapeAdapter`, which refuses it (`INVALID_PARAMS`, "a Jev launch is served by the Host only"); the person
 picks a supplier on the pickers. Widening Jev's candidates with an adapter was decided against (`21` §11 OI-21-4).
 
+**Step 3b note (ISSUE-002).** A 3b rollback build exists only before the 3b deletion commit merges (ISSUE-185, after the
+soak); after it, 3b rolls forward. 3b moves one more provider beside the shape-adapter routes 3a created, so
+`rollbackOf(table, 'cut-3b')` gives back exactly the 3a table (`src/ui-main/ipc/rollbackTable.test.ts` and
+`ipc-routing.contract.test.ts`, the 3b rollback cases):
+
+| Rows                                     | In the 3b rollback build                                                                                                                                                                                       |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-13, A-23, A-35, A-36 (Codex-qualified) | The Codex-qualified `host` route goes; Codex reaches the unqualified 3a route again (`PerProviderShapeAdapter`, `CatalogMergeAdapter`), with the 14 shapes the build's renderer sends. Claude's 3a routes stay |
+| A-27, A-P3, A-P4                         | Codex's `legacy` row with today's shape comes back beside Antigravity's and OpenCode's, as 3a had it                                                                                                           |
+| Every other row                          | As the 3b table routes it (3b moved no other row and bore no NEW row)                                                                                                                                          |
+
+With Codex no longer moved, `legacyFeedModesOf` composes Codex's whole discovery again (the 3a modes), a Codex launch
+settles on A-P3/A-P4 through the settlement join, and "Let Jev choose" chooses among Claude only. Codex sessions the
+faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
