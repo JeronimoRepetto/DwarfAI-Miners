@@ -50,9 +50,12 @@ export function netLogUrls(text) {
   return urls
 }
 
-/** The URLs that fetch a spellcheck dictionary (Chromium's `.bdic` files under `/chrome/dict/`). */
+/**
+ * The URLs that fetch a spellcheck dictionary (Chromium's `.bdic` files under `/chrome/dict/`), without their query:
+ * the CDN's redirect carries the client's public IP in it (`mip=`).
+ */
 export function dictionaryRequests(urls) {
-  return urls.filter((url) => /\/dict\/|\.bdic(\?|$)/i.test(url))
+  return urls.filter((url) => /\/dict\/|\.bdic(\?|$)/i.test(url)).map((url) => url.split('?')[0])
 }
 
 /** The sorted distinct hosts of the http(s) URLs. */
@@ -69,13 +72,48 @@ export function hostsOf(urls) {
   return [...hosts].sort()
 }
 
-/** `text` with each `[value, placeholder]` replaced, as written and as JSON-escaped (doubled backslashes). */
+/**
+ * The `tar` that reads a zip. On Windows that is the system's bsdtar (`%SystemRoot%\System32\tar.exe`): the `tar`
+ * first on PATH in the workflow's bash step is Git's GNU tar, which reads `D:\...` as a remote host and reads no zip.
+ */
+export function tarCommand(platform, env) {
+  if (platform !== 'win32') return 'tar'
+  return `${env.SystemRoot ?? 'C:\\Windows'}\\System32\\tar.exe`
+}
+
+/**
+ * The install folder of an uninstall registry entry: its `InstallLocation`, or else the folder of the uninstaller its
+ * `UninstallString` names (electron-builder's per-user nsis installer writes no `InstallLocation`). Null when neither
+ * names one.
+ */
+export function installDirOf(entry) {
+  if (entry?.InstallLocation) return entry.InstallLocation
+  const command = entry?.UninstallString
+  if (!command) return null
+  const file = (/^"([^"]+)"/.exec(command) ?? /^(\S+)/.exec(command))?.[1]
+  if (!file) return null
+  const cut = Math.max(file.lastIndexOf('\\'), file.lastIndexOf('/'))
+  return cut > 0 ? file.slice(0, cut) : null
+}
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * `text` with each `[value, placeholder, options]` replaced, as written and as JSON-escaped (doubled backslashes).
+ * With `{ word: true }` a value is replaced only where it stands alone, not inside a longer word (a user named
+ * `runner` leaves the key `runnerOs` alone).
+ */
 export function scrubText(text, replacements) {
   let out = text
-  for (const [value, placeholder] of replacements) {
+  for (const [value, placeholder, options = {}] of replacements) {
     if (!value) continue
     for (const spelling of [JSON.stringify(value).slice(1, -1), value]) {
-      out = out.split(spelling).join(placeholder)
+      out = options.word
+        ? out.replace(
+            new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(spelling)}(?![A-Za-z0-9_])`, 'g'),
+            () => placeholder
+          )
+        : out.split(spelling).join(placeholder)
     }
   }
   return out

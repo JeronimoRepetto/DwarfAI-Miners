@@ -4,9 +4,10 @@
 //
 // Modes: `off` (webPreferences.spellcheck false), `on` (true, Electron's default dictionary download URL), `on-unreachable`
 // (true, the download URL set to a closed local port, so no dictionary can be fetched) and `cached-unreachable` (as
-// `on-unreachable`, reusing the userData folder an `on` run filled). The probe opens one window with a misspelled text
-// in a focused textarea, records every request of its session and the dictionary download events, right-clicks the
-// first misspelled word and records what Chromium reports for it (`misspelledWord`, `dictionarySuggestions`), then
+// `on-unreachable`, reusing the userData folder an `on` run filled). The probe opens one window with an empty focused
+// textarea and types a misspelled text into it (`webContents.insertText`: Chromium marked nothing in text that was
+// already there when the page loaded, run 39130693732), records every request of its session and the dictionary
+// download events, right-clicks the first misspelled word and records what Chromium reports for it (`misspelledWord`, `dictionarySuggestions`), then
 // writes one JSON report and quits. It never runs the product.
 // A main-process error must never open a modal on the desktop: it is written into the report and the probe exits.
 const { writeFileSync } = process.getBuiltinModule('node:fs')
@@ -39,6 +40,11 @@ function finish() {
 
 app.whenReady().then(async () => {
   const ses = session.defaultSession
+  // Settles when the dictionary is ready or its download failed: text typed before then is never marked.
+  let dictionarySettled
+  const dictionaryReady = new Promise((resolve) => {
+    dictionarySettled = resolve
+  })
   ses.webRequest.onBeforeRequest((details, callback) => {
     report.requests.push(details.url)
     callback({})
@@ -49,7 +55,10 @@ app.whenReady().then(async () => {
     'spellcheck-dictionary-download-success',
     'spellcheck-dictionary-download-failure'
   ]) {
-    ses.on(event, (_e, languageCode) => report.dictionaryEvents.push({ event, languageCode }))
+    ses.on(event, (_e, languageCode) => {
+      report.dictionaryEvents.push({ event, languageCode })
+      if (event.endsWith('initialized') || event.endsWith('failure')) dictionarySettled()
+    })
   }
   if (mode === 'on-unreachable' || mode === 'cached-unreachable') {
     ses.setSpellCheckerDictionaryDownloadURL('http://127.0.0.1:9/')
@@ -78,12 +87,15 @@ app.whenReady().then(async () => {
   })
   const html =
     '<!doctype html><body style="margin:0"><textarea id="t" style="position:absolute;left:0;top:0;width:580px;height:100px;font:20px sans-serif">' +
-    'Thiss sentense has misspeled wordz</textarea><script>const t=document.getElementById("t");t.focus();' +
+    '</textarea><script>const t=document.getElementById("t");t.focus();' +
     't.setSelectionRange(0,0)</script></body>'
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  // Give the spellchecker time to load or download its dictionary, then type and give it time to mark the text.
+  await Promise.race([dictionaryReady, new Promise((resolve) => setTimeout(resolve, 20000))])
   win.focus()
-  // Give the spellchecker time to load or download its dictionary and to mark the text.
-  await new Promise((resolve) => setTimeout(resolve, 8000))
+  win.webContents.focus()
+  await win.webContents.insertText('Thiss sentense has misspeled wordz ')
+  await new Promise((resolve) => setTimeout(resolve, 4000))
   for (const type of ['mouseDown', 'mouseUp']) {
     win.webContents.sendInputEvent({ type, x: 20, y: 15, button: 'right', clickCount: 1 })
   }

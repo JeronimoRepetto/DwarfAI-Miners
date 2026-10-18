@@ -6,14 +6,15 @@
 //        [--install-scoop] [--allow-local]
 //   node spikes/S-027-1/scoopLayout.mjs portable --exe <portable exe> --out <dir> [--allow-local]
 //
-// `layout` reads the zip's entry list only (`tar -tf`): where the executable and `resources/app.asar` sit, so the
-// manifest knows whether it needs `extract_dir`.
+// `layout` reads the zip's entry list only (`tar -tf`, the system bsdtar): where the executable and
+// `resources/app.asar` sit, so the manifest knows whether it needs `extract_dir`.
 //
 // `scoop` installs the zip through a real Scoop from a local manifest (spikes/_packaged and scripts/ci/packagingSpikes
 // `scoopManifest`), the zips served on 127.0.0.1 only. Every install and uninstall hook logs the variables it can read.
-// It starts the installed app with `--background` until the Host runs, then `scoop update`s to the next version with
-// that Host running, then `scoop uninstall`s, recording each command's output, the hook log, whether the Host survived,
-// and what is left. `--install-scoop` first installs Scoop for the current user with its official one-line installer
+// It starts the installed app with `--background` until the Host runs, then `scoop update`s to the next version and
+// `scoop uninstall`s twice: first with the UI still running from the Scoop folder, then with the UI ended and only the
+// Host running from its copy. It records each command's output, the hook log, whether the Host survived, and what is
+// left; the product logs go to `<out>/product-logs/` before the state is cleared. `--install-scoop` first installs Scoop for the current user with its official one-line installer
 // (https://get.scoop.sh); nothing else is downloaded. Run it as a standard user (the workflow wraps it in
 // scripts/ci/run-unelevated.mjs).
 //
@@ -34,12 +35,13 @@ import {
 import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
-import { scoopManifest } from '../../scripts/ci/packagingSpikes.mjs'
+import { scoopManifest, tarCommand } from '../../scripts/ci/packagingSpikes.mjs'
 import {
   assertDisposable,
   clearState,
   copyRoot,
   dwarfaiDataDirs,
+  endProcessesUnder,
   environmentFacts,
   isAlive,
   killTree,
@@ -58,7 +60,10 @@ const EXE = 'DwarfAI-Miners.exe'
 const POWERSHELL = 'powershell.exe'
 
 function zipEntries(zip) {
-  return execFileSync('tar', ['-tf', zip], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  return execFileSync(tarCommand(process.platform, process.env), ['-tf', zip], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024
+  })
     .split(/\r?\n/)
     .filter(Boolean)
     .map((entry) => entry.replace(/\\/g, '/'))
@@ -204,35 +209,65 @@ async function scoop(args) {
         logFile: path.join(args.out, 'logs', 'S-027-1-scoop.log')
       })
       runs.push(run)
+      const launchedAt = Date.now()
       const identity = await waitFor(() => {
         const found = readHostIdentity()
         return found && isAlive(found.pid) ? found : null
-      }, 180000)
+      }, 240000)
       const host = identity && processes().find((p) => p.pid === identity.pid)
       evidence.host = identity
-        ? { pid: identity.pid, executable: host?.executable ?? null, copyRoot: listing(copyRoot()) }
+        ? {
+            pid: identity.pid,
+            ms: Date.now() - launchedAt,
+            executable: host?.executable ?? null,
+            copyRoot: listing(copyRoot())
+          }
         : null
+      // When no Host came: what ran from the Scoop folder and what the copy root held at the deadline.
+      evidence.hostWait = {
+        copyRoot: listing(copyRoot()),
+        appProcesses: processes()
+          .filter((p) => /dwarfai/i.test(p.executable))
+          .map((p) => p.commandLine.slice(0, 200))
+      }
 
       evidence.nextVersion = writeManifest(args['next-zip'])
-      const hooksBefore = readHookLog(hookLog).length
-      evidence.update = await scoopCmd(`update ${APP}`)
-      evidence.update.hooks = readHookLog(hookLog).slice(hooksBefore)
-      evidence.update.hostAlive = identity ? isAlive(identity.pid) : null
-      evidence.update.appDir = listing(appDir)
-      evidence.update.revertIntegrationsRan = evidence.update.hooks.some((hook) =>
-        String(hook.commandLine ?? '').includes('--revert-integrations')
-      )
-
-      const running = readHostIdentity()
-      const hooksBeforeUninstall = readHookLog(hookLog).length
-      evidence.uninstall = await scoopCmd(`uninstall ${APP}`)
-      evidence.uninstall.hooks = readHookLog(hookLog).slice(hooksBeforeUninstall)
-      evidence.uninstall.hostAlive = running ? isAlive(running.pid) : null
-      evidence.uninstall.leftovers = {
-        appDir: listing(appDir),
-        persist: listing(path.join(scoopRoot, 'persist', APP)),
-        copyRoot: listing(copyRoot()),
-        appData: dwarfaiDataDirs().map((dir) => path.basename(dir))
+      const tryUpdate = async () => {
+        const hooksBefore = readHookLog(hookLog).length
+        const result = await scoopCmd(`update ${APP}`)
+        result.hooks = readHookLog(hookLog).slice(hooksBefore)
+        result.hostAlive = identity ? isAlive(identity.pid) : null
+        result.appDir = listing(appDir)
+        result.revertIntegrationsRan = result.hooks.some((hook) =>
+          String(hook.commandLine ?? '').includes('--revert-integrations')
+        )
+        return result
+      }
+      const tryUninstall = async () => {
+        const running = readHostIdentity()
+        const hooksBefore = readHookLog(hookLog).length
+        const result = await scoopCmd(`uninstall ${APP}`)
+        result.hooks = readHookLog(hookLog).slice(hooksBefore)
+        result.hostAlive = running ? isAlive(running.pid) : null
+        result.leftovers = {
+          appDir: listing(appDir),
+          persist: listing(path.join(scoopRoot, 'persist', APP)),
+          copyRoot: listing(copyRoot()),
+          appData: dwarfaiDataDirs().map((dir) => path.basename(dir))
+        }
+        return result
+      }
+      // First with the UI still running from the Scoop folder (the tray of a person who did not quit): Scoop refuses
+      // to touch an app with a running process under its folder. Run 39130693732 showed `uninstall` running
+      // `pre_uninstall` before that refusal.
+      evidence.update = await tryUpdate()
+      evidence.uninstall = await tryUninstall()
+      // Then the register's case: the UI ended (as the tray's Quit would), the Host running from its copy.
+      if (existsSync(path.join(current, EXE))) {
+        evidence.uiEnded = endProcessesUnder([appDir]).length
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        evidence.updateUiEnded = await tryUpdate()
+        evidence.uninstallUiEnded = await tryUninstall()
       }
     }
   } finally {
@@ -241,7 +276,10 @@ async function scoop(args) {
       run.flushLog()
     }
     server.close()
-    evidence.clearedAfter = await clearState({ appDirs: [appDir] })
+    evidence.clearedAfter = await clearState({
+      appDirs: [appDir],
+      logsTo: { outDir: args.out, label: 'S-027-1-scoop' }
+    })
     rmSync(work, { recursive: true, force: true })
     writeEvidence(args.out, 'S-027-1-scoop', evidence)
   }
@@ -249,7 +287,10 @@ async function scoop(args) {
     `S-027-1 scoop: install exit ${evidence.install?.exitCode}; Host started: ${Boolean(evidence.host)}; ` +
       `update exit ${evidence.update?.exitCode}, hooks ${JSON.stringify(evidence.update?.hooks?.map((h) => `${h.hook}:${h.cmd}`) ?? [])}, ` +
       `Host alive ${evidence.update?.hostAlive}; uninstall exit ${evidence.uninstall?.exitCode}, hooks ` +
-      `${JSON.stringify(evidence.uninstall?.hooks?.map((h) => `${h.hook}:${h.cmd}`) ?? [])}`
+      `${JSON.stringify(evidence.uninstall?.hooks?.map((h) => `${h.hook}:${h.cmd}`) ?? [])}; UI ended: update hooks ` +
+      `${JSON.stringify(evidence.updateUiEnded?.hooks?.map((h) => `${h.hook}:${h.cmd}`) ?? [])}, Host alive ` +
+      `${evidence.updateUiEnded?.hostAlive}; uninstall hooks ` +
+      `${JSON.stringify(evidence.uninstallUiEnded?.hooks?.map((h) => `${h.hook}:${h.cmd}`) ?? [])}`
   )
   return evidence.install?.exitCode === 0 && evidence.host ? 0 : 1
 }
@@ -268,10 +309,12 @@ async function portable(args) {
     logFile: path.join(args.out, 'logs', 'S-027-1-portable.log')
   })
   try {
+    const launchedAt = Date.now()
     const identity = await waitFor(() => {
       const found = readHostIdentity()
       return found && isAlive(found.pid) ? found : null
     }, 240000)
+    evidence.hostMs = identity ? Date.now() - launchedAt : null
     const started = processes().filter(
       (p) => !before.has(p.pid) && /dwarfai/i.test(`${p.executable} ${p.commandLine}`)
     )
@@ -299,7 +342,10 @@ async function portable(args) {
   } finally {
     killTree(run.child.pid)
     run.flushLog()
-    evidence.clearedAfter = await clearState({ appDirs: [path.dirname(exe)] })
+    evidence.clearedAfter = await clearState({
+      appDirs: [path.dirname(exe)],
+      logsTo: { outDir: args.out, label: 'S-027-1-portable' }
+    })
     writeEvidence(args.out, 'S-027-1-portable', evidence)
   }
   console.log(

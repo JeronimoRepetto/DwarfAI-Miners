@@ -153,17 +153,37 @@ jobs:
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: node scripts/release/lockfile-provider-scan.mjs
 
-      # The same targets with the ADR-019 item 5 fuse set asked of electron-builder (electronFuses), into release-fused.
+      # The same targets with the ADR-019 item 5 fuse set, into release-fused. The spike's afterPack hook flips the fuses
+      # before the Host manifest is written (electronFuses flips them after it, run 39134423991), and the manifest is
+      # checked as ci.yml checks release/.
       - name: Package with the ADR-019 fuse set
         id: fused
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
-        run: pnpm exec electron-builder --publish never --config spikes/S-019-2/electron-builder.fused.cjs ${{ matrix.package_args }}
+        run: |
+          pnpm exec electron-builder --publish never --config spikes/S-019-2/electron-builder.fused.cjs ${{ matrix.package_args }}
+          node scripts/build/verify-packaged-host-manifest.mjs release-fused
 
       - name: S-019-2 fuses of the build with the ADR-019 set
+        id: fused-read
         if: ${{ !cancelled() && steps.fused.outcome == 'success' }}
         run: |
           node spikes/_packaged/extract.mjs release-fused spike-work/extracted-fused --evidence spike-evidence/extract-fused
           node spikes/S-019-2/fuses.packaged.mjs --root release-fused --root spike-work/extracted-fused --label adr-019-set --out spike-evidence/S-019-2
+
+      # A fuse set that stops the Host is no answer for ISSUE-269 (RunAsNode stays on, the Host runs app.asar's
+      # out/host/main.js): the SP-03 harness starts the fused build once per OS and records whether its Host comes up.
+      - name: S-019-2 the build with the ADR-019 set starts its Host
+        if: ${{ !cancelled() && steps.fused-read.outcome == 'success' }}
+        run: |
+          case "$RUNNER_OS" in
+            Windows) node scripts/ci/run-unelevated.mjs -- node spikes/SP-03/packagedCopy.mjs --find "$(ls -d spike-work/extracted-fused/*-win-x64.zip)" --layout win-zip-adr-019-set --out spike-evidence/S-019-2/start ;;
+            macOS) node spikes/SP-03/packagedCopy.mjs --find "$(ls -d spike-work/extracted-fused/*-arm64.zip)" --layout mac-zip-arm64-adr-019-set --out spike-evidence/S-019-2/start ;;
+            Linux)
+              appimage=$(ls release-fused/*.AppImage)
+              chmod +x "$appimage"
+              xvfb-run --auto-servernum node spikes/SP-03/packagedCopy.mjs --app "$appimage" --layout linux-appimage-adr-019-set --out spike-evidence/S-019-2/start
+              ;;
+          esac
 
       - name: S-019-3 spellcheck probe (Electron's spellchecker)
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
@@ -180,7 +200,13 @@ jobs:
           case "$RUNNER_OS" in
             Windows) node scripts/ci/run-unelevated.mjs -- node spikes/S-019-3/spellcheck.mjs packaged --find "$(ls -d spike-work/extracted/*-win-x64.zip)" --out spike-evidence/S-019-3 ;;
             macOS) node spikes/S-019-3/spellcheck.mjs packaged --find "$(ls -d spike-work/extracted/*-arm64.zip)" --out spike-evidence/S-019-3 ;;
-            Linux) xvfb-run --auto-servernum node spikes/S-019-3/spellcheck.mjs packaged --find release/linux-unpacked --out spike-evidence/S-019-3 ;;
+            # The AppImage, not linux-unpacked: run 39130693732 showed linux-unpacked's chrome-sandbox is not root-owned
+            # with mode 4755, so Chromium aborts there; the AppImage and the deb install start (SP-03).
+            Linux)
+              appimage=$(ls release/*.AppImage)
+              chmod +x "$appimage"
+              xvfb-run --auto-servernum node spikes/S-019-3/spellcheck.mjs packaged --app "$appimage" --out spike-evidence/S-019-3
+              ;;
           esac
 
       - name: SP-03 versioned copy per layout

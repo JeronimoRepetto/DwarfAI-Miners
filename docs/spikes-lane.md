@@ -106,21 +106,32 @@ The harnesses then run against what it wrote:
 
 Some of these steps build extra packages that are not release targets:
 
-- **S-019-2** builds the same targets a second time into `release-fused/`, with the ADR-019 item 5 fuse set requested
-  through electron-builder's `electronFuses` (`spikes/S-019-2/electron-builder.fused.cjs`). It then reads the fuse wire
+- **S-019-2** builds the same targets a second time into `release-fused/`, with the ADR-019 item 5 fuse set
+  (`spikes/S-019-2/electron-builder.fused.cjs`). Its afterPack hook (`spikes/S-019-2/afterPack.fused.mjs`) flips the
+  fuses through electron-builder's `addElectronFuses` before the product's afterPack writes `host-manifest.json`:
+  electron-builder's `electronFuses` option flips them after afterPack, which left the manifest naming the unfused
+  binary on macOS and Linux (run 39134423991). The step checks the fused build's manifest, then reads the fuse wire
   and the asar integrity of every unpacked app and every extracted artifact (`spikes/_packaged/extract.mjs`) in both
-  builds. Flipping the fuses in the real release build is ISSUE-269's work.
+  builds, then starts the fused build once with the SP-03 harness to see whether its Host still comes up
+  (`S-019-2/start/`). Flipping the fuses in the real release build is ISSUE-269's work.
 - **S-027-3 and S-027-1** need an upgrade, so the Windows leg also packages the same commit at the next patch version
   (`release-next/`). S-027-1 also needs electron-builder's `portable` exe (`release-portable/`).
+
+On Linux the S-019-3 traffic capture starts the AppImage, not `linux-unpacked`: that folder's `chrome-sandbox` is not
+root-owned with mode 4755, so Chromium aborts there, while the AppImage and the installed deb start on the same image.
 
 The Windows harnesses that start the app run as the standard user that `scripts/ci/run-unelevated.mjs` creates,
 because the Host refuses to start elevated (ADR-002 D6). S-027-1 installs Scoop for that user with Scoop's official
 one-line installer (`https://get.scoop.sh`) and serves the zips from `127.0.0.1` only. Every Scoop install and
 uninstall hook logs the variables it can read (`$cmd`, `$app`, `$version`, `$global`, `$dir`) and its command line.
 This shows whether `scoop update` runs `pre_uninstall` and how a hook can tell an update from an uninstall (OQ-59).
+S-027-1 updates and uninstalls twice: first with the UI still running from the Scoop folder (Scoop then refuses), then
+with the UI ended and only the Host running from its copy. S-027-3 ends the installed UI before the upgrade and before
+the uninstall, for the same reason.
 
 A harness that starts the app clears the current user's DwarfAI app data, Host copies and run files first, and again
-when it ends. That is why it refuses to run outside GitHub Actions unless you pass `--allow-local`. Never pass that
+when it ends. Before that last clear it copies the tail of the product's own log files (ADR-026, allowlisted fields)
+into `<spike>/product-logs/`, so a run whose Host never starts still shows why. That is why it refuses to run outside GitHub Actions unless you pass `--allow-local`. Never pass that
 flag on a machine whose DwarfAI data matters.
 
 ### Dispatch
@@ -146,8 +157,16 @@ with the AppImage and Chromium's sandbox. Turn it on only for a second run that 
 - Each JSON file holds `environment` (date, OS, arch, Node, runner image) for the record's NFR-OBS-04 front matter.
 - A harness step that fails turns the job red, but the steps after it still run. Read the evidence of every spike,
   not only the failed one.
+- Zips on Windows are read with the system bsdtar (`%SystemRoot%\System32\tar.exe`). The `tar` first on the bash
+  step's PATH is Git's GNU tar, which cannot read a zip and reads `D:\...` as a remote host (run 39130693732).
 - The S-019-3 harness is the automated half of that spike. The manual traffic-capture procedure is
   `spikes/S-019-3/spellcheck-traffic.md`. The Scoop procedure for a real desktop is `spikes/S-027-1/scoop.md`.
 - What the lane does not cover: S-027-4 (login entry) and S-018-2 (click raise) are re-checked on the packaged builds
   by hand (`spikes/S-027-4/clean-vm.md`, `spikes/S-018-2/click-raise.md`). The L8 test
   `spikes/S-027-3/installerVsHost.os.test.ts` asserts the S-027-3 verdict once the record exists.
+
+### Runs
+
+| Run         | Date       | Commit     | Outcome                                                                                                                                                                                                                                      | Records                                                                               |
+| ----------- | ---------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| 39130693732 | 2026-10-18 | `a222591f` | macOS green; Windows red (GNU `tar` on zips; nsis install folder not found; no Host from the Scoop install); Linux red (`linux-unpacked` sandbox abort in S-019-3). The harness and lane bugs are fixed in the branch that wrote the records | S-019-2, S-019-3, S-027-1, S-027-3 (new); SP-03, S-008-1, S-027-4, S-018-2 (appended) |

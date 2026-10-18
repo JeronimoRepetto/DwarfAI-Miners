@@ -1,0 +1,178 @@
+{
+  "spike": "S-019-3",
+  "part": "probe",
+  "environment": {
+    "date": "2026-10-18T13:54:53.719Z",
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.11.1",
+    "runnerOs": null,
+    "imageOs": null,
+    "imageVersion": null
+  },
+  "runs": [
+    {
+      "mode": "off",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "off",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "win32",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "es-ES"
+          }
+        ],
+        "languages": ["es-ES"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "",
+          "dictionarySuggestions": []
+        },
+        "errors": [],
+        "languagesAfter": ["es-ES"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    },
+    {
+      "mode": "on",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "on",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "win32",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-download-begin",
+            "languageCode": "en-US"
+          },
+          {
+            "event": "spellcheck-dictionary-download-begin",
+            "languageCode": "en-US"
+          },
+          {
+            "event": "spellcheck-dictionary-download-success",
+            "languageCode": "en-US"
+          },
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "Thiss",
+          "dictionarySuggestions": ["Hiss", "T hiss", "This", "Thins"]
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 2,
+        "hosts": ["redirector.gvt1.com", "rr2---sn-w511uxa-5ajl.gvt1.com"],
+        "dictionaryRequests": [
+          "https://redirector.gvt1.com/edgedl/chrome/dict/en-us-10-1.bdic",
+          "https://rr2---sn-w511uxa-5ajl.gvt1.com/edgedl/chrome/dict/en-us-10-1.bdic"
+        ]
+      }
+    },
+    {
+      "mode": "on-unreachable",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "on-unreachable",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "win32",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-download-begin",
+            "languageCode": "en-US"
+          },
+          {
+            "event": "spellcheck-dictionary-download-begin",
+            "languageCode": "en-US"
+          },
+          {
+            "event": "spellcheck-dictionary-download-failure",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "",
+          "dictionarySuggestions": []
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 1,
+        "hosts": ["127.0.0.1"],
+        "dictionaryRequests": ["http://127.0.0.1:9/en-us-10-1.bdic"]
+      }
+    },
+    {
+      "mode": "cached-unreachable",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "cached-unreachable",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "win32",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "Thiss",
+          "dictionarySuggestions": ["Hiss", "T hiss", "This", "Thins"]
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    }
+  ]
+}
