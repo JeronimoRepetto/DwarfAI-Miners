@@ -44,7 +44,7 @@ import {
   type HeldTuningState
 } from './heldSession'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
-import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
+import type { HeldDelegationLink } from './heldSession'
 
 /**
  * Every session the panel is currently holding, and the ask-answer loop over

@@ -1,5 +1,5 @@
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
-import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
+import type { DelegationLink } from '../mcp/delegationLink'
 import { permissionInputLine, toolActivityLine } from '../domain/permissionSummary'
 import { redactSecrets } from '../domain/redactSecrets'
 // Shared with the renderer's echo reconciliation (#424) — see
@@ -488,6 +488,8 @@ export interface HeldSessionStartRequest {
    * `type: 'stdio'` `mcpServers` entry ends up on the CLASSIC `claude`
    * process's own `--mcp-config` argv, readable by any other local user via
    * `ps`, while a `type: 'sdk'` one (what this becomes) never does.
+   * (ISSUE-184 deleted `delegationHeldServer.ts` with the Agent SDK; no engine
+   * reads this field any more.)
    */
   delegation?: HeldDelegationLink
   /**
@@ -1712,4 +1714,16 @@ export function stampHeldStatus(mines: Mine[], stateOf: HeldActivityLookup): Min
       return stamped
     })
   }))
+}
+
+/**
+ * What a held launch's in-process delegation server was handed (#511 M1a): an
+ * already-built `DelegationLink` and a wait budget. AMENDED for ISSUE-184, the
+ * step-3a deletion (was: declared in `delegationHeldServer.ts`, the Agent SDK
+ * server that read it): the server left the tree with the Agent SDK, and the
+ * type stays for today's runtime and registry until they go (ISSUE-243).
+ */
+export interface HeldDelegationLink {
+  link: DelegationLink
+  waitMs: number
 }

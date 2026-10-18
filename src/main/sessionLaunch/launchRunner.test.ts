@@ -15,12 +15,10 @@ import {
   EARLY_FAILURE_WINDOW_MS,
   STDERR_TAIL_BYTES,
   STDOUT_TAIL_BYTES,
-  createNodeDelegationConfigFile,
   createNodeStderrFile,
   createNodeStdoutFile,
   launchClaudeSession,
   runLaunchProcess,
-  type DelegationConfigFile,
   type LaunchChild,
   type LaunchInvocation,
   type LaunchRunner,
@@ -94,52 +92,25 @@ function launch(options: {
   tuning?: LaunchTuning
   /** #511 T4: the gate's own approved injection, or absent for an ordinary launch. */
   delegation?: DelegationInjectionContext
-  /** #511 T4: the `--mcp-config` temp-file port; defaults to a deterministic in-memory fake. */
-  delegationConfigFile?: DelegationConfigFile
 }) {
   const run = options.run ?? vi.fn().mockResolvedValue(undefined)
+  // AMENDED for ISSUE-184, the step-3a deletion (was: Claude and a detected
+  // `claude` by default): today's launcher starts OpenCode only, so the cases
+  // that prove the launcher itself run on a detected OpenCode.
   return {
     run,
     result: launchClaudeSession({
-      provider: options.provider ?? 'claude',
+      provider: options.provider ?? 'opencode',
       minePath: MINE_PATH,
       prompt: options.prompt ?? 'set up the build',
-      detector: options.cli ?? installed(),
+      detector: options.cli ?? installedOpenCode(),
       env: options.env ?? { PATH: '/usr/bin' },
       platform: options.platform ?? 'linux',
       fs: options.fs ?? new FakeFs(),
       run,
       ...(options.delegation === undefined ? {} : { delegation: options.delegation }),
-      ...(options.delegationConfigFile === undefined
-        ? {}
-        : { delegationConfigFile: options.delegationConfigFile }),
       ...(options.tuning === undefined ? {} : options.tuning)
     })
-  }
-}
-
-/**
- * A deterministic in-memory `DelegationConfigFile` (#511 T4), on the same
- * terms `fakeStderrFile`/`fakeStdoutFile` below are: a real launch writes a
- * real temp JSON file for Claude's own `--mcp-config <file>`, and this suite
- * never touches disk for it.
- */
-function fakeDelegationConfigFile(): DelegationConfigFile & {
-  writtenAt: (path: string) => string | undefined
-  removedPaths: () => string[]
-} {
-  const contents = new Map<string, string>()
-  const removed: string[] = []
-  let next = 0
-  return {
-    path: () => `fake-mcp-config-${next++}.json`,
-    write: (path, text) => contents.set(path, text),
-    remove: (path) => {
-      contents.delete(path)
-      removed.push(path)
-    },
-    writtenAt: (path) => contents.get(path),
-    removedPaths: () => removed
   }
 }
 
@@ -149,17 +120,20 @@ function argvOf(run: LaunchRunner): string[] {
   return invocation.args
 }
 
+// AMENDED for ISSUE-184, the step-3a deletion (was: these cases on a detected
+// Claude): the launcher's own behaviour runs on OpenCode, the one provider it
+// still starts.
 describe('launchClaudeSession', () => {
   it('starts the detected binary in the mine folder, with the prompt on stdin', async () => {
     const { run, result } = launch({ prompt: 'set up the build' })
 
-    await expect(result).resolves.toEqual({ launched: true, provider: 'claude' })
+    await expect(result).resolves.toEqual({ launched: true, provider: 'opencode' })
     expect(run).toHaveBeenCalledTimes(1)
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
     // cwd is the whole trick: aggregation groups sessions by cwd, so this is
     // what puts the new dwarf in the mine the user launched it from.
     expect(invocation.cwd).toBe(MINE_PATH)
-    expect(invocation.command).toBe(CLAUDE_PATH)
+    expect(invocation.command).toBe(OPENCODE_PATH)
     expect(invocation.stdin).toBe('set up the build')
   })
 
@@ -174,7 +148,7 @@ describe('launchClaudeSession', () => {
   })
 
   it("leads the child's PATH with the binary's own directory", async () => {
-    // Same reason the relay does it: a re-exec of `claude` inside the child
+    // Same reason the relay does it: a re-exec of the CLI inside the child
     // must find the real binary rather than a shim earlier on PATH.
     const { run, result } = launch({ env: { PATH: '/usr/bin' } })
     await result
@@ -241,22 +215,22 @@ describe('launchClaudeSession', () => {
   // without `cause`). Every failure to start now names its cause as a field.
   it('gives "not installed" its own reason, carrying what detection said', async () => {
     const { run, result } = launch({
-      cli: detector({ cli: 'claude', installed: false, reason: 'claude not found on PATH' })
+      cli: detector({ cli: 'opencode', installed: false, reason: 'opencode not found on PATH' })
     })
 
     await expect(result).resolves.toEqual({
       launched: false,
-      provider: 'claude',
-      error: 'Claude Code is not installed on this machine. claude not found on PATH',
+      provider: 'opencode',
+      error: 'OpenCode is not installed on this machine. opencode not found on PATH',
       cause: 'not-installed'
     })
     expect(run).not.toHaveBeenCalled()
   })
 
   it('still refuses when detection claims installed but names no path', async () => {
-    const { run, result } = launch({ cli: detector({ cli: 'claude', installed: true }) })
+    const { run, result } = launch({ cli: detector({ cli: 'opencode', installed: true }) })
 
-    await expect(result).resolves.toMatchObject({ launched: false, provider: 'claude' })
+    await expect(result).resolves.toMatchObject({ launched: false, provider: 'opencode' })
     expect(run).not.toHaveBeenCalled()
   })
 
@@ -274,8 +248,8 @@ describe('launchClaudeSession', () => {
 
     await expect(result).resolves.toEqual({
       launched: false,
-      provider: 'claude',
-      error: `Claude Code could not be started: ${CLAUDE_PATH} — ENOENT.`,
+      provider: 'opencode',
+      error: `OpenCode could not be started: ${OPENCODE_PATH} — ENOENT.`,
       cause: 'could-not-start'
     })
   })
@@ -286,7 +260,7 @@ describe('launchClaudeSession', () => {
   // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact verdict
   // without `cause`).
   it('names the path tried and the spawn error on macOS', async () => {
-    const spawnError = Object.assign(new Error('spawn /home/j/.local/bin/claude EACCES'), {
+    const spawnError = Object.assign(new Error('spawn /home/j/.local/bin/opencode EACCES'), {
       code: 'EACCES'
     })
     const { result } = launch({
@@ -296,8 +270,8 @@ describe('launchClaudeSession', () => {
 
     await expect(result).resolves.toEqual({
       launched: false,
-      provider: 'claude',
-      error: `Claude Code could not be started: ${CLAUDE_PATH} — EACCES.`,
+      provider: 'opencode',
+      error: `OpenCode could not be started: ${OPENCODE_PATH} — EACCES.`,
       cause: 'could-not-start'
     })
   })
@@ -305,7 +279,7 @@ describe('launchClaudeSession', () => {
   it('claims only that the process started, never that a dwarf exists', async () => {
     // The exact shape is the assertion: a launch result carries no dwarf id and
     // no mine, because the poll — not this call — is what discovers the session.
-    await expect(launch({}).result).resolves.toEqual({ launched: true, provider: 'claude' })
+    await expect(launch({}).result).resolves.toEqual({ launched: true, provider: 'opencode' })
   })
 
   /*
@@ -316,10 +290,10 @@ describe('launchClaudeSession', () => {
    * for a user who pressed something else, in a real folder.
    */
   it('detects the provider it was asked for rather than a hardcoded one', async () => {
-    const cli = installed()
+    const cli = installedOpenCode()
     await launch({ cli }).result
 
-    expect(cli.detect).toHaveBeenCalledWith('claude')
+    expect(cli.detect).toHaveBeenCalledWith('opencode')
   })
 })
 
@@ -529,72 +503,6 @@ describe('detached delegation injection (#511 T4)', () => {
     }
   }
 
-  it('writes the mcp-config file and appends --mcp-config/--allowedTools for a detached Claude launch', async () => {
-    const configFile = fakeDelegationConfigFile()
-    const { run, result } = launch({
-      provider: 'claude',
-      delegation: context(),
-      delegationConfigFile: configFile
-    })
-    await result
-
-    const invocation = argvOf(run)
-    const configIndex = invocation.indexOf('--mcp-config')
-    expect(configIndex).toBeGreaterThanOrEqual(0)
-    const configPath = invocation[configIndex + 1]!
-    expect(invocation.slice(configIndex + 2)).toEqual([
-      '--allowedTools',
-      'mcp__jev__delegate_subtask',
-      'mcp__jev__subtask_result'
-    ])
-    expect(JSON.parse(configFile.writtenAt(configPath)!)).toEqual({
-      mcpServers: {
-        jev: {
-          type: 'stdio',
-          command: context().serverCommand,
-          args: context().serverArgs,
-          env: {
-            ELECTRON_RUN_AS_NODE: '1',
-            DWARFAI_DELEGATION_ENDPOINT: context().endpoint,
-            DWARFAI_DELEGATION_TOKEN: context().token
-          }
-        }
-      }
-    })
-  })
-
-  it('never passes --strict-mcp-config, so the user’s own MCP servers are never dropped', async () => {
-    const { run, result } = launch({
-      provider: 'claude',
-      delegation: context(),
-      delegationConfigFile: fakeDelegationConfigFile()
-    })
-    await result
-
-    expect(argvOf(run)).not.toContain('--strict-mcp-config')
-  })
-
-  it('leaves a Claude launch with no delegation byte for byte what it always was', async () => {
-    const { run, result } = launch({ provider: 'claude' })
-    await result
-
-    expect(argvOf(run)).toEqual(['-p', '--input-format', 'text'])
-  })
-
-  it('carries LaunchInvocation.delegationConfigFile so the runner can remove it on exit', async () => {
-    const configFile = fakeDelegationConfigFile()
-    const { run, result } = launch({
-      provider: 'claude',
-      delegation: context(),
-      delegationConfigFile: configFile
-    })
-    await result
-
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation.delegationConfigFile).toBeDefined()
-    expect(configFile.writtenAt(invocation.delegationConfigFile!)).not.toBeUndefined()
-  })
-
   it('merges the delegation server into OPENCODE_CONFIG_CONTENT and touches no argv', async () => {
     const { run, result } = launch({
       provider: 'opencode',
@@ -695,7 +603,7 @@ describe('launchClaudeSession retention', () => {
 
     await expect(result).resolves.toEqual({
       launched: true,
-      provider: 'claude',
+      provider: 'opencode',
       retained: started
     })
   })
@@ -714,7 +622,7 @@ describe('launchClaudeSession retention', () => {
   it('reports no process when the runner had none to hand back', async () => {
     const { result } = launch({ run: vi.fn().mockResolvedValue(undefined) })
 
-    await expect(result).resolves.toEqual({ launched: true, provider: 'claude' })
+    await expect(result).resolves.toEqual({ launched: true, provider: 'opencode' })
   })
 })
 
@@ -892,44 +800,6 @@ function fakeStdoutFile(): StdoutFile & {
     removedPaths: () => removed
   }
 }
-
-/*
- * #511 M1b. An independent verifier found this file written with no `mode`
- * at all — 0644 on Linux/macOS, world-readable in a shared `/tmp`, and it
- * carries this launch's own delegation endpoint AND token. Proven by
- * pinning the CALL this app makes (`{ mode: 0o600, flag: 'wx' }`), never the
- * OS's own enforcement of it — see `WriteFileSyncLike`'s own comment in
- * launchRunner.ts for why: Windows has no real per-class permission bits
- * for a round-tripped `fs.statSync` to disagree with a Linux/macOS
- * assertion about.
- */
-describe('createNodeDelegationConfigFile (#511 M1b)', () => {
-  it('writes with mode 0o600 and an exclusive create flag, so the file is neither world-readable nor silently overwritten', () => {
-    const calls: Array<{ path: string; contents: string; options: unknown }> = []
-    const file = createNodeDelegationConfigFile((path, contents, options) => {
-      calls.push({ path, contents, options })
-    })
-
-    file.write('/tmp/mcp-config.json', '{"mcpServers":{}}')
-
-    expect(calls).toEqual([
-      {
-        path: '/tmp/mcp-config.json',
-        contents: '{"mcpServers":{}}',
-        options: { encoding: 'utf8', mode: 0o600, flag: 'wx' }
-      }
-    ])
-  })
-
-  it('still produces a fresh path per call and removes it the same way as before', () => {
-    const file = createNodeDelegationConfigFile(() => {})
-    const first = file.path()
-    const second = file.path()
-
-    expect(first).not.toBe(second)
-    expect(() => file.remove('/tmp/does-not-exist.json')).not.toThrow()
-  })
-})
 
 describe('runLaunchProcess', () => {
   function invocation(overrides: Partial<LaunchInvocation> = {}): LaunchInvocation {
@@ -1186,74 +1056,6 @@ describe('runLaunchProcess', () => {
     // right away.
     expect(files.removedPaths()).toHaveLength(1)
     expect(outFiles.removedPaths()).toHaveLength(1)
-  })
-
-  /*
-   * #511 L1. Before this fix the delegation config file — this launch's own
-   * secret — was left on disk in exactly this branch, on the reasoning that
-   * a launch with no pid to retain is vanishingly rare. An independent
-   * verifier asked for it to be cleaned up anyway: rare is still a stray
-   * secret. It goes through the SAME `StdoutFile` port `outputFile`'s own
-   * cleanup already uses.
-   */
-  it('also removes the delegation config file when the child reports no pid at all (#511 L1)', async () => {
-    const spawn = fakeSpawn('spawn', null)
-    const files = fakeStderrFile()
-    const outFiles = fakeStdoutFile()
-
-    await runLaunchProcess(
-      invocation({ delegationConfigFile: 'mcp-config.json' }),
-      spawn.spawnProcess,
-      files,
-      outFiles
-    )
-
-    expect(outFiles.removedPaths()).toContain('mcp-config.json')
-  })
-
-  /*
-   * #511 L1's other half: a spawn that throws SYNCHRONOUSLY (before the
-   * child ever exists to raise its own 'error' event) reached `reject`
-   * directly, cleaning up the stdout/stderr files but never the delegation
-   * config file — nothing else in this process was ever going to.
-   */
-  it('removes the delegation config file when spawn itself throws synchronously (#511 L1)', async () => {
-    const throwingSpawn: SpawnLaunch = () => {
-      throw new Error('EMFILE')
-    }
-    const outFiles = fakeStdoutFile()
-
-    await expect(
-      runLaunchProcess(
-        invocation({ delegationConfigFile: 'mcp-config.json' }),
-        throwingSpawn,
-        fakeStderrFile(),
-        outFiles
-      )
-    ).rejects.toThrow('EMFILE')
-
-    expect(outFiles.removedPaths()).toContain('mcp-config.json')
-  })
-
-  /*
-   * #511 L1's third path: the child raises its own async 'error' event
-   * before ever reaching `retainedProcess` (a real spawn that starts but
-   * cannot actually run the program). Same fix, same reasoning.
-   */
-  it('removes the delegation config file when the child reports it could not start (#511 L1)', async () => {
-    const spawn = fakeSpawn('error')
-    const outFiles = fakeStdoutFile()
-
-    await expect(
-      runLaunchProcess(
-        invocation({ delegationConfigFile: 'mcp-config.json' }),
-        spawn.spawnProcess,
-        fakeStderrFile(),
-        outFiles
-      )
-    ).rejects.toThrow('EINVAL')
-
-    expect(outFiles.removedPaths()).toContain('mcp-config.json')
   })
 
   it('keeps the prompt off argv with the intermediary in the chain too', async () => {
@@ -1575,30 +1377,6 @@ describe('onTurnOutcome (#510)', () => {
       detail: 'SIGTERM',
       endedAt: NOW
     })
-  })
-
-  /*
-   * #511 T4: the `--mcp-config` temp file `launchClaudeSession` writes for a
-   * delegating Claude launch is removed on exit through the SAME `StdoutFile`
-   * port as the piped stdout capture (and, until ISSUE-185, Codex's own `-o` file) — it is just
-   * another path this app owns and must not leave behind, never a fourth
-   * kind of file with its own lifecycle.
-   */
-  it('removes the mcp-config file on exit, same as the stdout capture and the Codex output file', async () => {
-    const spawn = fakeSpawn()
-    const outFiles = fakeStdoutFile()
-    const configPath = 'fake-mcp-config-1.json'
-    await runLaunchProcess(
-      invocation({ delegationConfigFile: configPath }),
-      spawn.spawnProcess,
-      fakeStderrFile(),
-      outFiles,
-      () => NOW
-    )
-
-    spawn.exit(0)
-
-    expect(outFiles.removedPaths()).toContain(configPath)
   })
 
   it('removes the stdout capture file on exit, same as stderr already does', async () => {
@@ -1944,31 +1722,10 @@ describe('a detached launch that names a model and an effort (#239)', () => {
   it('leaves the argv untouched when the request tunes nothing', async () => {
     // The promise the Add Panel's row rests on: a person who ignores it gets
     // the launch this app has always made.
-    const { run, result } = launch({ provider: 'claude' })
+    // AMENDED for ISSUE-184 (was: Claude's `['-p', '--input-format', 'text']`).
+    const { run, result } = launch({})
     await result
-    expect(argvOf(run)).toEqual(['-p', '--input-format', 'text'])
-  })
-
-  it("carries the model into Claude's argv, and still not the prompt", async () => {
-    const { run, result } = launch({
-      provider: 'claude',
-      prompt: 'rotate the deploy key',
-      tuning: { model: 'sonnet', effort: 'high' }
-    })
-    await result
-
-    expect(argvOf(run)).toEqual([
-      '-p',
-      '--input-format',
-      'text',
-      '--model',
-      'sonnet',
-      '--effort',
-      'high'
-    ])
-    // The argv/stdin split survives the new flags: what a user typed is still
-    // invisible to every other process on this machine.
-    expect(argvOf(run).join(' ')).not.toContain('rotate the deploy key')
+    expect(argvOf(run)).toEqual(['run', '--format', 'json'])
   })
 
   it('keeps the tuning behind the shim’s own node entry, not in front of it', async () => {
@@ -2021,8 +1778,9 @@ describe('a detached launch that names a model and an effort (#239)', () => {
   it('says nothing about the model in the verdict, because it cannot know', async () => {
     // What model a session actually ran is the CLI's to report. Repeating the
     // request back would be a claim dressed as an observation.
-    const { result } = launch({ provider: 'claude', tuning: { model: 'sonnet', effort: 'low' } })
-    await expect(result).resolves.toEqual({ launched: true, provider: 'claude' })
+    // AMENDED for ISSUE-184 (was: on Claude, `{ model: 'sonnet', effort: 'low' }`).
+    const { result } = launch({ tuning: { model: 'opencode/big-pickle', effort: 'low' } })
+    await expect(result).resolves.toEqual({ launched: true, provider: 'opencode' })
   })
 })
 
@@ -2040,8 +1798,9 @@ describe('a detached launch that names a model and an effort (#239)', () => {
  * for detection to refuse) stops inside cliDetection.ts, the port.
  */
 // AMENDED for ISSUE-185, the step-3b deletion (was: the not-installed and
-// shim cases on Codex): the classification is the launcher's, so they run on
-// OpenCode.
+// shim cases on Codex) and ISSUE-184, the step-3a deletion (was: the
+// configured-path and spawn-error cases on Claude): the classification is the
+// launcher's, so they run on OpenCode.
 describe('the cause a failed detached launch names (#635)', () => {
   const HOMES: Record<Platform, string> = {
     win32: 'C:\\Users\\j',
@@ -2070,7 +1829,7 @@ describe('the cause a failed detached launch names (#635)', () => {
         platform,
         fs: new FakeFs(),
         env: {},
-        overrides: { claude: platform === 'win32' ? 'C:\\tools\\claude.exe' : '/opt/claude' }
+        overrides: { opencode: platform === 'win32' ? 'C:\\tools\\opencode.exe' : '/opt/opencode' }
       })
       const { result } = launch({ platform, cli })
 
@@ -2083,12 +1842,12 @@ describe('the cause a failed detached launch names (#635)', () => {
       ['ENOENT', 'EACCES', 'EPERM', 'UNKNOWN'].map((code) => [platform, code] as const)
     )
   )('says could-not-start for a spawn error on %s (%s)', async (platform, code) => {
-    const spawnError = Object.assign(new Error(`spawn ${CLAUDE_PATH} ${code}`), { code })
+    const spawnError = Object.assign(new Error(`spawn ${OPENCODE_PATH} ${code}`), { code })
     const { result } = launch({ platform, run: vi.fn().mockRejectedValue(spawnError) })
 
     await expect(result).resolves.toMatchObject({
       launched: false,
-      provider: 'claude',
+      provider: 'opencode',
       cause: 'could-not-start'
     })
   })

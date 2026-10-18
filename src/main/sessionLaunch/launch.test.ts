@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import { DWARF_PROVIDERS, MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import {
   ONE_SHOT_STDOUT_IS_TURN_TEXT,
-  buildClaudeLaunchArgs,
   buildLaunchArgs,
   buildOpenCodeLaunchArgs,
   isShellShim,
@@ -37,23 +36,14 @@ describe('prepareLaunchPrompt', () => {
   })
 })
 
-describe('buildClaudeLaunchArgs', () => {
-  it('asks for one non-interactive turn reading its prompt from stdin', () => {
-    expect(buildClaudeLaunchArgs()).toEqual(['-p', '--input-format', 'text'])
-  })
-
-  it('carries no positional prompt, whatever the prompt says', () => {
-    // The point of the whole argv/stdin split: nothing a user types can end up
-    // in a command line other processes on this machine can read.
-    expect(buildClaudeLaunchArgs().some((arg) => !arg.startsWith('-') && arg !== 'text')).toBe(
-      false
-    )
-  })
-})
-
 describe('buildLaunchArgs', () => {
-  it("answers Claude with Claude's own headless argv", () => {
-    expect(buildLaunchArgs('claude')).toEqual(buildClaudeLaunchArgs())
+  /*
+   * AMENDED for ISSUE-184, the step-3a deletion (was: "answers Claude with
+   * Claude's own headless argv"): today's Claude launch left the tree, so the
+   * dispatch refuses it, as it refuses Codex and Antigravity.
+   */
+  it('refuses Claude, whose launch left today’s launcher with the step-3a deletion', () => {
+    expect(() => buildLaunchArgs('claude')).toThrow(NOT_LAUNCHABLE)
   })
 
   /*
@@ -167,85 +157,6 @@ describe('launch argv with a model and an effort, OpenCode (#534)', () => {
   it('still carries no positional prompt, whatever is tuned', () => {
     const tuned = buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle', effort: 'high' })
     expect(tuned).not.toContain('dig the east gallery')
-  })
-})
-
-describe('launch argv with a model and an effort (#239)', () => {
-  /*
-   * Both flags are read out of the installed CLIs' own help, on 2026-09-07:
-   *
-   * Claude Code 2.1.263
-   *   --model <model>   Model for the current session. Provide an alias for the
-   *                     latest model (e.g. 'fable', 'opus', or 'sonnet') or a
-   *                     model's full name (e.g. 'claude-fable-5').
-   *   --effort <level>  Effort level for the current session (low, medium,
-   *                     high, xhigh, max)
-   *
-   * AMENDED for ISSUE-185, the step-3b deletion: the Codex half of this block
-   * (its `-m` model and its `-c model_reasoning_effort=` override) left with
-   * today's Codex launch.
-   *
-   * `--effort` being documented on this build is the fact #239 asked to be
-   * verified before wiring anything: the issue's own table marked it
-   * "`CLAUDE_EFFORT`-style env or `--effort` — verify the flag on this build
-   * before relying on it". It is a real flag, with its levels printed beside
-   * it, so it is what is wired.
-   */
-  it('leaves both CLIs exactly as they were when nothing is tuned', () => {
-    // The whole promise of the Add Panel's new row: ignoring it launches
-    // precisely as every launch before #239 did. (ISSUE-185: Codex's half left
-    // with today's Codex launch.)
-    expect(buildClaudeLaunchArgs()).toEqual(['-p', '--input-format', 'text'])
-    expect(buildLaunchArgs('claude', {})).toEqual(['-p', '--input-format', 'text'])
-  })
-
-  it("names Claude's model with the flag Claude's own help documents", () => {
-    expect(buildClaudeLaunchArgs({ model: 'sonnet' })).toEqual([
-      '-p',
-      '--input-format',
-      'text',
-      '--model',
-      'sonnet'
-    ])
-  })
-
-  it("names Claude's effort with --effort, verified on this build", () => {
-    expect(buildClaudeLaunchArgs({ effort: 'xhigh' })).toEqual([
-      '-p',
-      '--input-format',
-      'text',
-      '--effort',
-      'xhigh'
-    ])
-  })
-
-  it('carries both for Claude, model before effort', () => {
-    expect(buildClaudeLaunchArgs({ model: 'claude-fable-5-1[1m]', effort: 'max' })).toEqual([
-      '-p',
-      '--input-format',
-      'text',
-      '--model',
-      'claude-fable-5-1[1m]',
-      '--effort',
-      'max'
-    ])
-  })
-
-  it('dispatches the tuning to the chosen provider and never lends one CLI the other’s flags', () => {
-    // Argv does not transfer between CLIs — the reason `buildLaunchArgs` is
-    // exhaustive with no default arm. A tuned launch must not become the one
-    // place where it does.
-    expect(buildLaunchArgs('claude', { model: 'sonnet', effort: 'low' })).toEqual(
-      buildClaudeLaunchArgs({ model: 'sonnet', effort: 'low' })
-    )
-    expect(buildLaunchArgs('claude', { effort: 'low' })).not.toContain('model_reasoning_effort=low')
-  })
-
-  it('still carries no positional prompt, whatever is tuned', () => {
-    // The argv/stdin split is the privacy rule at the top of launch.ts, and a
-    // new flag is exactly the kind of change that quietly breaks it.
-    const claude = buildClaudeLaunchArgs({ model: 'sonnet', effort: 'high' })
-    expect(claude).not.toContain('dig the east gallery')
   })
 })
 

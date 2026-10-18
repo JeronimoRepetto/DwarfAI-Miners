@@ -12,7 +12,7 @@ import {
 } from './heldSessionRegistry'
 import { HELD_CONTEXT_USAGE_TIMEOUT_MS, HELD_TUNING_TIMEOUT_MS } from './heldSession'
 import { EARLY_FAILURE_WINDOW_MS } from './launchRunner'
-import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
+import type { HeldDelegationLink } from './heldSession'
 import type { DelegationLink } from '../mcp/delegationLink'
 import type {
   HeldAnswer,

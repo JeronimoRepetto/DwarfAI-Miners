@@ -71,7 +71,9 @@ describe('createJevPreferenceStore — saving a valid default', () => {
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     const preferences = {
       profile: 'balanced' as const,
-      default: { provider: 'claude' as const },
+      // ISSUE-184: Claude is no longer launchable by today's launcher, so the
+      // saved default pins OpenCode (was: 'claude').
+      default: { provider: 'opencode' as const },
       delegation: false
     }
     expect(await store.save(preferences)).toEqual({ saved: true })
@@ -83,7 +85,8 @@ describe('createJevPreferenceStore — saving a valid default', () => {
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     const preferences = {
       profile: 'economy' as const,
-      default: { provider: 'claude' as const, model: 'sonnet', effort: 'low' },
+      // ISSUE-184 (was: Claude, `sonnet`, `low`).
+      default: { provider: 'opencode' as const, model: 'opencode/big-pickle', effort: 'low' },
       delegation: false
     }
     expect(await store.save(preferences)).toEqual({ saved: true })
@@ -146,7 +149,7 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     const result = await store.save({
       profile: 'balanced',
-      default: { provider: 'claude', effort: 'ultra' },
+      default: { provider: 'opencode', effort: 'ultra' }, // ISSUE-184 (was: 'claude')
       delegation: false
     })
     expect(result).toEqual({ saved: false, reason: 'default-tuning-invalid' })
@@ -174,7 +177,7 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     const good = {
       profile: 'balanced' as const,
-      default: { provider: 'claude' as const },
+      default: { provider: 'opencode' as const }, // ISSUE-184 (was: 'claude')
       delegation: false
     }
     await store.save(good)

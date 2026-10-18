@@ -33,8 +33,6 @@ import type {
   DwarfTuningResult,
   CopyTextResult,
   ExternalLinkResult,
-  HeldSessionLaunchRequest,
-  HeldSessionLaunchResult,
   DwarfSendSettledPush,
   LaunchFailedPush,
   MaterialTotals,
@@ -63,7 +61,6 @@ import type {
 import {
   IPC_CHANNELS,
   isDwarfProvider,
-  isHeldPermissionMode,
   isMineTier,
   parseAudioPreferences,
   parseLaunchView,
@@ -250,7 +247,6 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
   ipcMain.removeHandler(IPC_CHANNELS.listAgentProviders)
   ipcMain.removeHandler(IPC_CHANNELS.listAgentModels)
-  ipcMain.removeHandler(IPC_CHANNELS.launchHeldSession)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfPermission)
   /* --- Message attachments (#408) — one block, appended -------------------- */
@@ -390,43 +386,6 @@ function parseTuningRequest(payload: unknown): DwarfTuningRequest | null {
     return { dwarfId: record.dwarfId, change: { kind: 'effort', effort: named.effort } }
   }
   return null
-}
-
-/**
- * Same boundary discipline as parseTextRequest, and the prompt is never logged
- * here either. Note what is NOT accepted: a directory. The renderer names a
- * mine and the runtime decides which folder that is, so this channel cannot be
- * talked into starting a process somewhere the panel is not showing.
- */
-function parseHeldLaunchRequest(payload: unknown): HeldSessionLaunchRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
-  // Same ruling as parseLaunchRequest, and for the same reason (#168): which
-  // provider is being held is checked against this build's own list, and the
-  // registry then refuses the ones it has no stream for by name.
-  if (!isDwarfProvider(record.provider)) return null
-  // Same boundary check as parseLaunchRequest, and for the same reason (#239).
-  const tuning = parseLaunchTuning(record.provider, record)
-  if (tuning === null) return null
-  // The permission mode this HELD launch asked for (#239), checked against
-  // HELD_PERMISSION_MODES — a list that deliberately has no `bypassPermissions`
-  // member, so a request naming it is refused here exactly as an unrecognised
-  // mode would be, never carried through as a lesser choice. Held-only: a
-  // detached or hosted launch has no `canUseTool` callback for a mode to
-  // change the behaviour of, which is why this channel alone checks it.
-  if (record.permissionMode !== undefined && !isHeldPermissionMode(record.permissionMode)) {
-    return null
-  }
-  return {
-    mineId: record.mineId,
-    provider: record.provider,
-    prompt: record.prompt,
-    ...tuning,
-    ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode }),
-    // Same rule and same reasoning as parseLaunchRequest's own (#511).
-    ...(record.routedByJev === true ? { routedByJev: true } : {})
-  }
 }
 
 const PERMISSION_DECISIONS: readonly DwarfPermissionDecision[] = ['allow', 'deny']
@@ -1705,22 +1664,15 @@ async function init(): Promise<void> {
     return runtime?.queryProjects(query) ?? notQueried
   })
 
-  // Starting a session the panel holds, and answering what it asks (#86, #94).
-  // Both refusals below are what a runtime that never came up would say,
-  // phrased for the panel rather than left silent.
-  const notHeldLaunched: HeldSessionLaunchResult = {
-    launched: false,
-    error: 'The agent could not be started.'
-  }
+  // Answering what a session asks (#86, #94). The refusal below is what a
+  // runtime that never came up would say, phrased for the panel rather than
+  // left silent. AMENDED for ISSUE-184, the step-3a deletion (was: also the
+  // A-38 `launchHeldSession` handler): the row was retired in 3a, and the
+  // Agent SDK held session left the tree.
   const notAnswered: DwarfQuestionAnswerResult = {
     answered: false,
     error: 'That answer could not be delivered.'
   }
-  ipcMain.handle(IPC_CHANNELS.launchHeldSession, (_event, payload: unknown) => {
-    const request = parseHeldLaunchRequest(payload)
-    if (request === null) return notHeldLaunched
-    return runtime?.launchHeldSession(request) ?? notHeldLaunched
-  })
   ipcMain.handle(IPC_CHANNELS.answerDwarfQuestion, (_event, payload: unknown) => {
     const request = parseAnswerRequest(payload)
     if (request === null) return notAnswered

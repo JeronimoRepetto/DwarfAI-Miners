@@ -49,10 +49,7 @@ import type { HookEvent } from '../hooks/hookPayload'
 import type { CodexThreadModel } from '../domain/agentModelCatalog'
 import { EARLY_FAILURE_WINDOW_MS, type SessionLauncher } from '../sessionLaunch/launchRunner'
 import { resolveDelegationServerScriptPath } from '../mcp/delegationServerCommand'
-import {
-  MODEL_CATALOG_TIMEOUT_MS,
-  type ClaudeModelCatalogPort
-} from '../sessionLaunch/sdkHeldSession'
+import { MODEL_CATALOG_TIMEOUT_MS, type ClaudeModelCatalogPort } from '../domain/agentModelCatalog'
 import type { AntigravityModelCatalogPort } from '../providers/antigravity/models'
 import type { OpenCodeModelCatalogPort } from '../providers/opencode/models'
 import { nullLedgerStore } from '../ledger/ledgerStore'
@@ -10518,11 +10515,15 @@ describe('AgentRuntime provider availability (#86)', () => {
     })
   }
 
-  it('reports a CLI it can find as installed and launchable', async () => {
+  // AMENDED for ISSUE-184, the step-3a deletion (was: "reports a CLI it can
+  // find as installed and launchable", Claude launchable): today's Claude
+  // launch left the tree, so a found Claude is installed and not launchable
+  // here; the Host's Claude drivers are its only launcher.
+  it('reports a CLI it can find as installed, and Claude not launchable since the step-3a deletion', async () => {
     const list = await runtimeSeeing([CLAUDE_BIN]).listAgentProviders()
 
     const claude = list.providers.find((entry) => entry.provider === 'claude')
-    expect(claude).toEqual({ provider: 'claude', installed: true, launchable: true })
+    expect(claude).toMatchObject({ provider: 'claude', installed: true, launchable: false })
   })
 
   it('reports a CLI it cannot find rather than dropping it from the list', async () => {

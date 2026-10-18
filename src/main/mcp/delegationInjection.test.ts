@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DELEGATION_ALLOWED_TOOLS,
   DELEGATION_SERVER_NAME,
-  claudeDetachedExtraArgs,
-  claudeHeldMcpServers,
-  claudeMcpConfigJson,
   mergeOpenCodeConfigContent,
   type DelegationInjectionContext
 } from './delegationInjection'
@@ -27,58 +23,14 @@ const CTX: DelegationInjectionContext = {
   token: 'tok-abc123'
 }
 
-describe('DELEGATION_ALLOWED_TOOLS', () => {
-  it('names both tools with the mcp__<server>__<tool> spelling the CLI documents', () => {
-    expect(DELEGATION_SERVER_NAME).toBe('jev')
-    expect(DELEGATION_ALLOWED_TOOLS).toEqual([
-      'mcp__jev__delegate_subtask',
-      'mcp__jev__subtask_result'
-    ])
-  })
-})
-
-describe('claudeHeldMcpServers', () => {
-  it('builds one stdio server entry carrying the loopback env, plus ELECTRON_RUN_AS_NODE for the spawned server itself', () => {
-    expect(claudeHeldMcpServers(CTX)).toEqual({
-      jev: {
-        type: 'stdio',
-        command: CTX.serverCommand,
-        args: CTX.serverArgs,
-        env: {
-          ELECTRON_RUN_AS_NODE: '1',
-          DWARFAI_DELEGATION_ENDPOINT: CTX.endpoint,
-          DWARFAI_DELEGATION_TOKEN: CTX.token
-        }
-      }
-    })
-  })
-
-  it('carries an explicit waitMs override as DWARFAI_DELEGATION_WAIT_MS, never when absent', () => {
-    const withWait = claudeHeldMcpServers({ ...CTX, waitMs: 12_000 })
-    expect(withWait.jev?.env.DWARFAI_DELEGATION_WAIT_MS).toBe('12000')
-    expect(claudeHeldMcpServers(CTX).jev?.env.DWARFAI_DELEGATION_WAIT_MS).toBeUndefined()
-  })
-})
-
-describe('claudeMcpConfigJson / claudeDetachedExtraArgs', () => {
-  it('serializes the exact same server map --mcp-config would read from a file', () => {
-    const parsed: unknown = JSON.parse(claudeMcpConfigJson(CTX))
-    expect(parsed).toEqual({ mcpServers: claudeHeldMcpServers(CTX) })
-  })
-
-  it('appends --mcp-config <path> and --allowedTools <tool> <tool> as separate argv elements', () => {
-    expect(claudeDetachedExtraArgs('C:\\Users\\j\\AppData\\Local\\Temp\\mcp-config.json')).toEqual([
-      '--mcp-config',
-      'C:\\Users\\j\\AppData\\Local\\Temp\\mcp-config.json',
-      '--allowedTools',
-      'mcp__jev__delegate_subtask',
-      'mcp__jev__subtask_result'
-    ])
-  })
-})
-
+// AMENDED for ISSUE-184, the step-3a deletion (was: the blocks
+// 'DELEGATION_ALLOWED_TOOLS', 'claudeHeldMcpServers' and
+// 'claudeMcpConfigJson / claudeDetachedExtraArgs'): Claude's builders left the
+// tree with today's Claude launch; the server name OpenCode's entry is keyed
+// by stays pinned below.
 describe('mergeOpenCodeConfigContent', () => {
   it('builds a fresh OPENCODE_CONFIG_CONTENT when the launch env carries none', () => {
+    expect(DELEGATION_SERVER_NAME).toBe('jev')
     const merged: unknown = JSON.parse(mergeOpenCodeConfigContent(undefined, CTX)!)
     expect(merged).toEqual({
       mcp: {

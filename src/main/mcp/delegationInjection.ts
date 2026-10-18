@@ -1,7 +1,7 @@
 // Runtime values come from the main-only twin, never `./delegationProtocol`
 // directly (#511 T4) — see `delegationServerProtocol.ts`'s own top comment
 // for why: THIS module is a runtime dependency of `index.js`'s build graph
-// (via `sdkHeldSession.ts`/`launchRunner.ts`), and `delegationProtocol.ts` is
+// (via `launchRunner.ts`), and `delegationProtocol.ts` is
 // ALSO a runtime dependency of `jevMcpServer.js`'s own graph — importing a
 // runtime value from it here reproduced the exact regression that file's
 // comment describes: a fresh `out/main/chunks/delegationProtocol-*.js` that
@@ -9,11 +9,9 @@
 // `electron.vite.config.ts` promises. `DelegationInjectionContext` needs no
 // such import at all — it is this module's own type.
 import {
-  DELEGATE_SUBTASK_TOOL_NAME,
   DELEGATION_ENDPOINT_ENV,
   DELEGATION_TOKEN_ENV,
-  DELEGATION_WAIT_MS_ENV,
-  SUBTASK_RESULT_TOOL_NAME
+  DELEGATION_WAIT_MS_ENV
 } from './delegationServerProtocol'
 
 /**
@@ -22,11 +20,15 @@ import {
  * evaluates the gate (`delegationGate.ts`) or issues a token
  * (`delegationService.ts`); it only says what bytes a provider's own
  * per-invocation MCP mechanism needs, given a token already issued and a
- * resolved server command already in hand. Wired into the launch paths in
- * `sessionLaunch/sdkHeldSession.ts` (Claude held), `sessionLaunch/launchRunner.ts`
- * (Claude `-p`, OpenCode) and `runtime.ts` (the gate check and token
- * lifecycle) — see each for how a `DelegationInjectionContext` is built and
- * when it is revoked.
+ * resolved server command already in hand. Wired into the launch path in
+ * `sessionLaunch/launchRunner.ts` (OpenCode) and `runtime.ts` (the gate check
+ * and token lifecycle) — see each for how a `DelegationInjectionContext` is
+ * built and when it is revoked.
+ *
+ * AMENDED for ISSUE-184, the step-3a deletion (was: also Claude's builders,
+ * `claudeHeldMcpServers`, `claudeMcpConfigJson`, `claudeDetachedExtraArgs` and
+ * `DELEGATION_ALLOWED_TOOLS`, read by the Agent SDK held session and the
+ * detached `claude -p` launch): today's Claude launch left the tree.
  *
  * AMENDED for ISSUE-185, the step-3b deletion (was: also Codex's
  * `codexDelegationConfigArgs`, the `-c` TOML overrides whose `env` table put
@@ -61,24 +63,6 @@ export interface DelegationInjectionContext {
  */
 export const DELEGATION_SERVER_NAME = 'jev'
 
-function wireToolName(tool: string): string {
-  return `mcp__${DELEGATION_SERVER_NAME}__${tool}`
-}
-
-/**
- * The two tools a delegating session needs pre-approved (#511 T4's own
- * permission decision — see `sdkHeldSession.ts` and `launchRunner.ts` for
- * where each is actually applied): `delegate_subtask` and `subtask_result`,
- * and nothing else. Naming exactly these two, rather than every
- * `mcp__jev__*` tool, keeps the grant as narrow as the server's own surface —
- * there is no third tool today, but a future one would need its own line
- * here rather than inheriting approval by wildcard.
- */
-export const DELEGATION_ALLOWED_TOOLS: readonly [string, string] = [
-  wireToolName(DELEGATE_SUBTASK_TOOL_NAME),
-  wireToolName(SUBTASK_RESULT_TOOL_NAME)
-]
-
 /**
  * The env every provider's own MCP server entry carries (#511 T4) — the
  * three loopback vars `delegationProtocol.ts` (T2) already fixed, PLUS
@@ -97,64 +81,6 @@ function delegationEnv(context: DelegationInjectionContext): Record<string, stri
     [DELEGATION_TOKEN_ENV]: context.token,
     ...(context.waitMs === undefined ? {} : { [DELEGATION_WAIT_MS_ENV]: String(context.waitMs) })
   }
-}
-
-/** The exact shape the Agent SDK's `McpStdioServerConfig` takes (verified against `sdk.d.ts`). */
-export interface ClaudeMcpStdioServerConfig {
-  type: 'stdio'
-  command: string
-  args: string[]
-  env: Record<string, string>
-}
-
-/**
- * The `mcpServers` map for a Claude session, held or detached alike — one
- * entry named `jev`, so both `sdkHeldSession.ts`'s own `Options.mcpServers`
- * and the `--mcp-config` file `claudeMcpConfigJson` below serializes agree
- * byte for byte on what a session actually sees.
- */
-export function claudeHeldMcpServers(
-  context: DelegationInjectionContext
-): Record<string, ClaudeMcpStdioServerConfig> {
-  return {
-    [DELEGATION_SERVER_NAME]: {
-      type: 'stdio',
-      command: context.serverCommand,
-      args: [...context.serverArgs],
-      env: delegationEnv(context)
-    }
-  }
-}
-
-/**
- * The `--mcp-config` file body for a detached `claude -p` launch (#511 T4) —
- * the SAME server map `claudeHeldMcpServers` builds for a held session,
- * wrapped in the `{ mcpServers: … }` shape Claude Code's own `.mcp.json`
- * documents, so a file this app writes and a held session's own `Options`
- * describe identical behaviour.
- */
-export function claudeMcpConfigJson(context: DelegationInjectionContext): string {
-  return JSON.stringify({ mcpServers: claudeHeldMcpServers(context) })
-}
-
-/**
- * The extra argv a detached `claude -p` launch carries once the gate allows
- * it (#511 T4): `--mcp-config <file>` naming the config
- * `claudeMcpConfigJson` produced (written and removed by the launch's own
- * temp-file lifecycle — see `launchRunner.ts`), and `--allowedTools` naming
- * exactly the two delegation tools, so the turn can call them without the
- * interactive permission prompt a detached, unattended launch has nobody to
- * answer (see the module comment on `sdkHeldSession.ts` for the measured
- * consequence of an unanswered prompt: the request comes out as prose and
- * the turn ends).
- *
- * `--strict-mcp-config` is DELIBERATELY never added here — see
- * `launchRunner.ts`'s own comment on `launchClaudeSession` for the decision
- * and why: it would drop every MCP server the user's own config already
- * grants this session, which #511 has no business doing.
- */
-export function claudeDetachedExtraArgs(configFilePath: string): string[] {
-  return ['--mcp-config', configFilePath, '--allowedTools', ...DELEGATION_ALLOWED_TOOLS]
 }
 
 /** One `mcp.<name>` entry OpenCode's own docs shape (`type: 'local'`, an argv array, `environment`, `enabled`). */

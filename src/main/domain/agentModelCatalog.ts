@@ -27,6 +27,26 @@ function effortsFor(provider: DwarfProvider): string[] {
  * the SDK's own `ModelInfo` — this is the app's side of that boundary, and it
  * keeps only what a catalogue entry needs.
  */
+/**
+ * Ask a short-lived query for Claude's own model list (#239). AMENDED for
+ * ISSUE-184, the step-3a deletion (was: declared beside its one real
+ * implementation, `sdkHeldSession.ts`'s `createSdkModelCatalog` over the Agent
+ * SDK): the port stays for today's runtime, which composes no implementation.
+ */
+export type ClaudeModelCatalogPort = (options: {
+  executablePath: string
+}) => Promise<ClaudeModelInfo[]>
+
+/**
+ * How long a model-catalogue ask is given before the caller gives up on it
+ * (#239). A CLI that spawns but never finishes its own init handshake must not
+ * leave `listAgentModels` waiting forever. Named beside the PORT, because the
+ * bound is part of what calling this port promises: a fake port injected in a
+ * test is held to it exactly as a real one would be (runtime.ts's
+ * `listAgentModels`, where the race runs).
+ */
+export const MODEL_CATALOG_TIMEOUT_MS = 5_000
+
 export interface ClaudeModelInfo {
   value: string
   displayName: string

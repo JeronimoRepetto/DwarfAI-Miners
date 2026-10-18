@@ -9,7 +9,8 @@ import { NOT_LAUNCHABLE } from '../domain/launchProviders'
  * existence, and until now the app had never started an agent at all.
  *
  * The mechanism is the provider's own programmatic interface rather than a
- * terminal window (#95): one headless `claude -p` turn in the mine's folder.
+ * terminal window (#95): one headless turn in the mine's folder (`claude -p`
+ * until ISSUE-184, `opencode run` since #534).
  * That makes the launched session a foreman by construction — a run with no
  * parent is a root, and role is topology (see contracts.ts) — so there is no
  * role to choose and none is plumbed here.
@@ -62,39 +63,6 @@ import { NOT_LAUNCHABLE } from '../domain/launchProviders'
  */
 export function prepareLaunchPrompt(text: string): string {
   return text.trim()
-}
-
-/**
- * Argv for one headless turn. It carries no prompt: the text goes down stdin,
- * so nothing a user types is visible in this machine's process list.
- *
- * Both tuning flags are read out of the installed CLI's own help, exactly as
- * the argv above was — Claude Code 2.1.263, 2026-09-07:
- *
- *     --model <model>   Model for the current session. Provide an alias for the
- *                       latest model (e.g. 'fable', 'opus', or 'sonnet') or a
- *                       model's full name (e.g. 'claude-fable-5').
- *     --effort <level>  Effort level for the current session (low, medium,
- *                       high, xhigh, max)
- *
- * `--effort` is the fact #239 asked to be verified before anything was wired,
- * because the issue's own table was unsure of it ("`CLAUDE_EFFORT`-style env
- * or `--effort` — verify the flag on this build before relying on it"). It is
- * a documented flag on this build, with its five levels printed beside it, and
- * those five are also the Agent SDK's `EffortLevel` — so the detached and held
- * routes take the same vocabulary. See PROVIDER_EFFORT_LEVELS.
- *
- * An absent field adds nothing, which is what keeps an untuned launch byte for
- * byte what it was before #239.
- */
-export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
-  return [
-    '-p',
-    '--input-format',
-    'text',
-    ...(tuning.model === undefined ? [] : ['--model', tuning.model]),
-    ...(tuning.effort === undefined ? [] : ['--effort', tuning.effort])
-  ]
 }
 
 /**
@@ -172,7 +140,11 @@ export function buildOpenCodeLaunchArgs(tuning: LaunchTuning = {}): string[] {
 export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = {}): string[] {
   switch (provider) {
     case 'claude':
-      return buildClaudeLaunchArgs(tuning)
+      // AMENDED for ISSUE-184, the step-3a deletion (was: `buildClaudeLaunchArgs`,
+      // its `claude -p --input-format text` argv): `LAUNCHABLE_PROVIDERS`
+      // refuses Claude before this is reached; the Host's Claude drivers are its
+      // only launcher.
+      throw new Error(NOT_LAUNCHABLE)
     case 'codex':
       // AMENDED for ISSUE-185, the step-3b deletion (was: `buildCodexLaunchArgs`,
       // its `codex exec … -` argv): `LAUNCHABLE_PROVIDERS` refuses Codex before
@@ -211,9 +183,9 @@ export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = 
  * `launchClaudeSession` reads out of it before handing a `LaunchInvocation`
  * to that provider-agnostic runner.
  *
- * - `claude`: `true`. `buildClaudeLaunchArgs` carries no `--output-format`
- *   flag at all — `claude -p` prints its response as plain text by default
- *   (Claude Code 2.1.263's own `--help`, quoted above `buildClaudeLaunchArgs`).
+ * - `claude`: `true`, unread since the step-3a deletion (ISSUE-184): today's
+ *   launcher no longer starts Claude. Its `claude -p` argv carried no
+ *   `--output-format`, so it printed plain text.
  * - `codex`: `true`, unread since the step-3b deletion (ISSUE-185): today's
  *   launcher no longer starts Codex. `codex exec` has no `--format`/`--json`
  *   flag in its own `--help`, so its stdout was prose.

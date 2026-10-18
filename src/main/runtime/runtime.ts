@@ -150,12 +150,7 @@ import {
   type LaunchFailure
 } from '../sessionLaunch/launchedSessions'
 import { LaunchReceiptRegistry, stampLaunchReceipts } from '../sessionLaunch/launchReceipts'
-import {
-  createSdkHeldSession,
-  createSdkModelCatalog,
-  MODEL_CATALOG_TIMEOUT_MS,
-  type ClaudeModelCatalogPort
-} from '../sessionLaunch/sdkHeldSession'
+import { MODEL_CATALOG_TIMEOUT_MS, type ClaudeModelCatalogPort } from '../domain/agentModelCatalog'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
 import {
   launchClaudeSession,
@@ -164,7 +159,7 @@ import {
 } from '../sessionLaunch/launchRunner'
 import { delegationEnabledFor } from '../mcp/delegationGate'
 import type { DelegationInjectionContext } from '../mcp/delegationInjection'
-import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
+import type { HeldDelegationLink } from '../sessionLaunch/heldSession'
 import { createDirectDelegationLink } from '../mcp/delegationDirectLink'
 import type { DelegationFailure, DelegationRouting, ResultBody } from '../mcp/delegationProtocol'
 import { DEFAULT_DELEGATION_WAIT_MS } from '../mcp/delegationServerProtocol'
@@ -1483,17 +1478,17 @@ export class AgentRuntime {
         // Antigravity's engine left with the step-3e deletion (ISSUE-189):
         // the Host's AntigravityNdjsonDriver is its only launcher, so the
         // registry refuses an Antigravity launch as it refuses any provider
-        // with no engine.
-        start: {
-          claude: createSdkHeldSession()
-        },
+        // with no engine. Claude's Agent SDK engine left with the step-3a
+        // deletion (ISSUE-184; ADR-001 item 7): no engine is left, so the
+        // registry refuses every held launch.
+        start: {},
         now: this.now,
         log: (message) => console.log(message)
       })
-    // Composed here rather than in platformAdapters, for the same reason
-    // heldSessions is: asking the SDK for its model list is the same act on
-    // all three platforms (#239).
-    this.claudeModelCatalog = options.claudeModelCatalog ?? createSdkModelCatalog()
+    // AMENDED for ISSUE-184, the step-3a deletion (was: `createSdkModelCatalog`,
+    // a short-lived Agent SDK query, #239): the Agent SDK left the tree, so no
+    // implementation is composed and Claude's live catalogue answers empty.
+    this.claudeModelCatalog = options.claudeModelCatalog ?? (async () => [])
     // Codex's own registry, read exactly as the mine-history reader's `codex`
     // block above reads it — same sqlite adapter, same stateDb path, and the
     // same degrade-to-empty on every failure that registry read already holds

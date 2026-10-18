@@ -76,8 +76,12 @@ export interface CliPresence {
  * 'opencode']`): today's Codex launch left the tree with its `codex exec`
  * argv; the Host's Codex drivers are Codex's only launcher, so today's
  * launcher refuses it before anything is spawned.
+ *
+ * AMENDED for ISSUE-184, the step-3a deletion (was: `['claude', 'opencode']`):
+ * today's Claude launch left the tree with its `claude -p` argv and the Agent
+ * SDK held session; the Host's Claude drivers are Claude's only launcher.
  */
-export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'opencode']
+export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['opencode']
 
 /**
  * What a detected provider with no launch path says for itself.

@@ -33,10 +33,12 @@ describe('agentProviderList', () => {
     expect(list.providers.map((entry) => entry.installed)).toEqual([true, false, false, false])
   })
 
+  // AMENDED for ISSUE-184, the step-3a deletion (was: on a detected Claude):
+  // OpenCode is the one provider today's launcher still starts.
   it('marks a detected provider the engine can start as launchable, with no reason', () => {
-    const [claude] = agentProviderList([found('claude')]).providers
+    const [, , , opencode] = agentProviderList([found('opencode')]).providers
 
-    expect(claude).toEqual({ provider: 'claude', installed: true, launchable: true })
+    expect(opencode).toEqual({ provider: 'opencode', installed: true, launchable: true })
   })
 
   /*
@@ -106,7 +108,10 @@ describe('agentProviderList', () => {
     // AMENDED for ISSUE-185, the step-3b deletion (was: ['claude', 'codex',
     // 'opencode']): today's Codex launch left the tree; the Host's Codex
     // drivers are its only launcher.
-    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'opencode'])
+    // AMENDED for ISSUE-184, the step-3a deletion (was: ['claude',
+    // 'opencode']): today's Claude launch left the tree; the Host's Claude
+    // drivers are its only launcher.
+    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['opencode'])
   })
 
   /*

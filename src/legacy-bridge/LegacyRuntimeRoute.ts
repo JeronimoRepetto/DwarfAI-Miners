@@ -25,8 +25,6 @@ import type {
   FeatureFlags,
   DwarfFeedPage,
   DwarfFeedResult,
-  DwarfKickRequest,
-  DwarfKickResult,
   DwarfPermissionAnswerRequest,
   DwarfPermissionDecision,
   DwarfQuestionAnswerResult,
@@ -37,8 +35,6 @@ import type {
   DwarfTuningResult,
   CopyTextResult,
   ExternalLinkResult,
-  HeldSessionLaunchRequest,
-  HeldSessionLaunchResult,
   MaterialTotals,
   MetricsResetResult,
   Mine,
@@ -59,7 +55,6 @@ import type {
 import {
   IPC_CHANNELS,
   isDwarfProvider,
-  isHeldPermissionMode,
   isMineTier,
   parseAudioPreferences,
   parseLaunchView,
@@ -394,13 +389,6 @@ function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
   }
 }
 
-function parseKickRequest(payload: unknown): DwarfKickRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.dwarfId !== 'string') return null
-  return { dwarfId: record.dwarfId }
-}
-
 /** Boundary check of `setDwarfTuning` (#96): a `kind` this build cannot read takes the request down. */
 function parseTuningRequest(payload: unknown): DwarfTuningRequest | null {
   if (typeof payload !== 'object' || payload === null) return null
@@ -416,27 +404,6 @@ function parseTuningRequest(payload: unknown): DwarfTuningRequest | null {
     return { dwarfId: record.dwarfId, change: { kind: 'effort', effort: named.effort } }
   }
   return null
-}
-
-/** Boundary check of `launchHeldSession` (#168, #239, #511): no `bypassPermissions` ever passes. */
-function parseHeldLaunchRequest(payload: unknown): HeldSessionLaunchRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
-  if (!isDwarfProvider(record.provider)) return null
-  const tuning = parseLaunchTuning(record.provider, record)
-  if (tuning === null) return null
-  if (record.permissionMode !== undefined && !isHeldPermissionMode(record.permissionMode)) {
-    return null
-  }
-  return {
-    mineId: record.mineId,
-    provider: record.provider,
-    prompt: record.prompt,
-    ...tuning,
-    ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode }),
-    ...(record.routedByJev === true ? { routedByJev: true } : {})
-  }
 }
 
 /** Boundary check of `answerDwarfPermission`: the decision is one of the closed list. */
@@ -1083,17 +1050,6 @@ export function composeLegacyRuntime(
       return describeAttachments(paths.slice(0, MAX_DWARF_ATTACHMENTS), attachmentFiles)
     })
 
-    const notKicked: DwarfKickResult = {
-      delivered: false,
-      via: 'none',
-      error: 'The kick could not be delivered.'
-    }
-    handle(IPC_CHANNELS.kickDwarf, (payload) => {
-      const request = parseKickRequest(payload)
-      if (request === null) return notKicked
-      return runtime?.kickDwarf(request) ?? notKicked
-    })
-
     const notLaunched: AgentLaunchResult = {
       launched: false,
       provider: 'none',
@@ -1150,19 +1106,12 @@ export function composeLegacyRuntime(
       return runtime?.queryProjects(query) ?? notQueried
     })
 
-    const notHeldLaunched: HeldSessionLaunchResult = {
-      launched: false,
-      error: 'The agent could not be started.'
-    }
+    // AMENDED for ISSUE-184, the step-3a deletion (was: also the A-38
+    // `launchHeldSession` and A-26 `kickDwarf` handlers, both rows retired in 3a).
     const notAnswered: DwarfQuestionAnswerResult = {
       answered: false,
       error: 'That answer could not be delivered.'
     }
-    handle(IPC_CHANNELS.launchHeldSession, (payload) => {
-      const request = parseHeldLaunchRequest(payload)
-      if (request === null) return notHeldLaunched
-      return runtime?.launchHeldSession(request) ?? notHeldLaunched
-    })
     handle(IPC_CHANNELS.answerDwarfQuestion, (payload) => {
       const request = parseAnswerRequest(payload)
       if (request === null) return notAnswered

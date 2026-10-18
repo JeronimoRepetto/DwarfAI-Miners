@@ -1,6 +1,6 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { closeSync, fstatSync, openSync, readSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, fstatSync, openSync, readSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
@@ -22,8 +22,6 @@ import {
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
 import {
-  claudeDetachedExtraArgs,
-  claudeMcpConfigJson,
   mergeOpenCodeConfigContent,
   type DelegationInjectionContext
 } from '../mcp/delegationInjection'
@@ -221,70 +219,6 @@ export function createNodeStdoutFile(): StdoutFile {
 }
 
 /**
- * Where a detached Claude launch's own `--mcp-config` file lives (#511 T4) —
- * a small port on the same shape `StderrFile`/`StdoutFile` are, but simpler:
- * this app WRITES the whole file once, synchronously, before `spawn`, rather
- * than opening an fd for a child to stream into. Removed on exit through the
- * same `StdoutFile` port that already owns the stdout capture — see
- * `TurnOutcomeWatch`'s own comment on why one more path belongs there rather
- * than a third file lifecycle.
- */
-export interface DelegationConfigFile {
-  /** A fresh, unique path for one launch's own mcp-config file. */
-  path(): string
-  /** Writes `contents` to `path`, synchronously, before `spawn` is called. */
-  write(path: string, contents: string): void
-  /** Removes `path`; safe to call on one already gone. */
-  remove(path: string): void
-}
-
-/**
- * The low-level write primitive `createNodeDelegationConfigFile` calls,
- * injectable so a test can pin the exact OPTIONS this app passes without
- * depending on the OS actually enforcing them (#511 M1b) — Windows has no
- * real per-class (owner/group/other) permission bits to read back, so a
- * test asserting the round-tripped file mode would pass or fail on the
- * wrong grounds depending on which OS runs it. What this app controls, and
- * what is worth pinning, is the CALL: `{ mode: 0o600, flag: 'wx' }`.
- */
-type WriteFileSyncLike = (
-  path: string,
-  contents: string,
-  options: { encoding: 'utf8'; mode: number; flag: string }
-) => void
-
-/**
- * The `--mcp-config` temp file's own permissions (#511 M1b) — an independent
- * verifier found this written with no `mode` at all, which is 0644 on
- * Linux/macOS: the file (this launch's own delegation endpoint AND token)
- * lands world-readable in a SHARED `/tmp`. `mode: 0o600` restricts it to
- * this app's own OS user; `flag: 'wx'` creates it exclusively (`O_CREAT |
- * O_EXCL`), refusing to write over a path that already exists rather than
- * silently truncating one a `randomUUID()` collision (or something else)
- * left behind — the same "fail rather than clobber" posture a secret file
- * deserves. Both apply on Windows too, where `flag: 'wx'` behaves
- * identically even though `mode`'s effect is limited to the read-only
- * attribute there — see this file's own `WriteFileSyncLike` comment for why
- * this is proven by pinning the CALL rather than the OS's own enforcement.
- */
-export function createNodeDelegationConfigFile(
-  writeFile: WriteFileSyncLike = writeFileSync
-): DelegationConfigFile {
-  return {
-    path: () => join(tmpdir(), `dwarfai-launch-mcp-config-${randomUUID()}.json`),
-    write: (path, contents) =>
-      writeFile(path, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' }),
-    remove: (path) => {
-      try {
-        unlinkSync(path)
-      } catch {
-        // Already gone, or never created — nothing left to remove.
-      }
-    }
-  }
-}
-
-/**
  * Watches one child for an early failure (#263): reads its stderr FILE (see
  * `buildLaunchSpawn` for why a file and never a pipe) once, on exit, and
  * latches at most one verdict — a clean 0 or an exit past the window is not
@@ -381,19 +315,12 @@ class TurnOutcomeWatch {
     private readonly stderrPath: string,
     private readonly stderrFile: StderrFile,
     private readonly stdoutIsTurnText: boolean,
-    private readonly now: () => number,
-    /** #511 T4: a delegating Claude launch's own `--mcp-config` temp file, or absent. */
-    private readonly delegationConfigFile: string | undefined = undefined
+    private readonly now: () => number
   ) {
     child.once('exit', (code, signal) => {
       const stderrTail = this.stderrFile.readTail(this.stderrPath, STDERR_TAIL_BYTES)
       const stdoutTail = this.stdoutFile.readTail(this.stdoutPath, STDOUT_TAIL_BYTES)
       this.stdoutFile.remove(this.stdoutPath)
-      // #511 T4: removed unconditionally on every exit, the same discipline
-      // `stdoutPath` above already holds — through the SAME `StdoutFile`
-      // port, since this is just another path this app owns, never a third
-      // file lifecycle.
-      if (this.delegationConfigFile !== undefined) this.stdoutFile.remove(this.delegationConfigFile)
       this.latch(
         oneShotTurnOutcome({
           exitCode: code,
@@ -474,15 +401,6 @@ export interface LaunchInvocation {
    * purpose — only `TurnOutcomeWatch`'s exit handler does.
    */
   stdoutIsTurnText: boolean
-  /**
-   * The `--mcp-config` temp file this launch wrote for a delegating Claude
-   * session (#511 T4), so `TurnOutcomeWatch` can remove it on exit the same
-   * unconditional way it already removes the stdout capture — never
-   * opened for writing through this app's own `StdoutFile`/`StderrFile`
-   * ports (see `DelegationConfigFile`, whose own `write` is synchronous and
-   * runs before `spawn`), only read back for cleanup here.
-   */
-  delegationConfigFile?: string
 }
 
 /**
@@ -553,7 +471,7 @@ export type SessionLauncher = (
      * The MCP delegation server this launch's own gate check
      * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
      * absent when it declined (#511 T4) — read only by `launchClaudeSession`
-     * for `claude`/`opencode`; no other provider's builder sees it.
+     * for `opencode`; no other provider's builder sees it.
      */
     delegation?: DelegationInjectionContext
   } & LaunchTuning
@@ -755,15 +673,6 @@ export function runLaunchProcess(
       stderrFile.remove(stderrPath)
       stdoutFile.close(stdoutFd)
       stdoutFile.remove(stdoutPath)
-      // #511 L1: nothing will ever spawn to read this delegation config file
-      // back either — an independent verifier found it left behind on this
-      // exact path (a synchronous spawn throw, before `options.run`'s
-      // promise ever settles), and it carries this launch's own delegation
-      // secret, so it is removed on every path that opened it, the same
-      // discipline the two capture files above already hold.
-      if (invocation.delegationConfigFile !== undefined) {
-        stdoutFile.remove(invocation.delegationConfigFile)
-      }
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
@@ -778,12 +687,6 @@ export function runLaunchProcess(
       settled = true
       stderrFile.remove(stderrPath)
       stdoutFile.remove(stdoutPath)
-      // #511 L1: same reasoning as the synchronous spawn-throw branch above
-      // — the child never reached `retainedProcess`, so nothing else will
-      // ever remove this file.
-      if (invocation.delegationConfigFile !== undefined) {
-        stdoutFile.remove(invocation.delegationConfigFile)
-      }
       reject(error)
     })
     child.once('spawn', () => {
@@ -803,8 +706,7 @@ export function runLaunchProcess(
           stderrPath,
           stderrFile,
           invocation.stdoutIsTurnText,
-          now,
-          invocation.delegationConfigFile
+          now
         )
       )
     })
@@ -831,26 +733,15 @@ function retainedProcess(
   stderrPath: string,
   stderrFile: StderrFile,
   stdoutIsTurnText: boolean,
-  now: () => number,
-  delegationConfigFile?: string
+  now: () => number
 ): LaunchedProcess | undefined {
   const pid = child.pid
   if (pid === undefined) {
     // Nothing to hold means nothing to watch either (#263, #510) — these
     // files will never be read, because there is no handle left to
     // correlate an exit to, so there is no reason to wait for one.
-    //
-    // AMENDED for #511 L1 (was: the mcp-config file left behind here as an
-    // accepted tradeoff, on the reasoning that a launch with no pid to
-    // retain is vanishingly rare). An independent verifier asked for it to
-    // be cleaned up anyway: unlike the stdout/stderr capture files, this one
-    // carries a live delegation secret, and "vanishingly rare" is still a
-    // stray secret on disk rather than nothing. It goes through the SAME
-    // `StdoutFile` port the stdout capture's own cleanup already uses — never
-    // a third file lifecycle of its own.
     stdoutFile.remove(stdoutPath)
     stderrFile.remove(stderrPath)
-    if (delegationConfigFile !== undefined) stdoutFile.remove(delegationConfigFile)
     return undefined
   }
   // TurnOutcomeWatch is registered BEFORE EarlyFailureWatch, on purpose —
@@ -867,8 +758,7 @@ function retainedProcess(
     stderrPath,
     stderrFile,
     stdoutIsTurnText,
-    now,
-    delegationConfigFile
+    now
   )
   const earlyFailure = new EarlyFailureWatch(child, stderrPath, stderrFile)
   return {
@@ -908,20 +798,15 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
   /**
    * The MCP delegation server this launch's own gate check
    * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
-   * absent when it declined (#511 T4) — read only for `claude` (a temp
-   * `--mcp-config` file) and `opencode` (`OPENCODE_CONFIG_CONTENT`); no other
-   * provider's builder sees it, on the same exhaustive-dispatch discipline
-   * `buildLaunchArgs` already holds for argv. AMENDED for ISSUE-185 (was:
-   * also Codex's `-o` output path, its permission mode and its delegation
-   * argv): today's Codex launch left the tree.
+   * absent when it declined (#511 T4) — read only for `opencode`
+   * (`OPENCODE_CONFIG_CONTENT`); no other provider's builder sees it, on the
+   * same exhaustive-dispatch discipline `buildLaunchArgs` already holds for
+   * argv. AMENDED for ISSUE-185 (was: also Codex's `-o` output path, its
+   * permission mode and its delegation argv) and ISSUE-184 (was: also
+   * Claude's `--mcp-config` temp file and its `delegationConfigFile` port):
+   * today's Codex and Claude launches left the tree.
    */
   delegation?: DelegationInjectionContext
-  /**
-   * The `--mcp-config` temp-file port for a delegating Claude launch (#511
-   * T4). Defaults to a real one; a test injects a deterministic fake so it
-   * can assert the exact path and body written.
-   */
-  delegationConfigFile?: DelegationConfigFile
 }
 
 /**
@@ -935,29 +820,20 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
  * through unchanged if it ever were. AMENDED for ISSUE-185, the step-3b
  * deletion (was: a `codex` branch returning the `-c` TOML overrides whose
  * `env` table carried this launch's token in argv, ADR-013 items 2, 8):
- * today's Codex launch left the tree.
- *
- * The side effect (writing the temp file) lives here rather than in
- * `delegationInjection.ts`, which stays pure — this function is the one
- * impure seam that decides WHEN to write, and `configFile` is the injected
- * port a test replaces.
+ * today's Codex launch left the tree. AMENDED for ISSUE-184, the step-3a
+ * deletion (was: a `claude` branch writing a `--mcp-config` temp file and
+ * appending `--mcp-config`/`--allowedTools`): today's Claude launch left the
+ * tree.
  */
 function delegationInjectionFor(
   provider: DwarfProvider,
   delegation: DelegationInjectionContext | undefined,
-  env: NodeJS.ProcessEnv,
-  configFile: DelegationConfigFile
+  env: NodeJS.ProcessEnv
 ): {
   extraArgs: string[]
   env: NodeJS.ProcessEnv
-  delegationConfigFile?: string
 } {
   if (delegation === undefined) return { extraArgs: [], env }
-  if (provider === 'claude') {
-    const path = configFile.path()
-    configFile.write(path, claudeMcpConfigJson(delegation))
-    return { extraArgs: claudeDetachedExtraArgs(path), env, delegationConfigFile: path }
-  }
   if (provider === 'opencode') {
     // #511 L3: this env is inherited by the CLI process itself (never only
     // the server this app spawns from it), so `DWARFAI_DELEGATION_TOKEN`
@@ -966,7 +842,7 @@ function delegationInjectionFor(
     // which this app has no visibility into. Left as a documented, deferred
     // risk (T5's own privacy doc covers it) rather than fixed here: unlike
     // the held-Claude argv exposure (#511 M1a) or the detached-Claude temp
-    // file (#511 M1b), there is no narrower per-invocation mechanism
+    // file (#511 M1b), both gone with ISSUE-184, there is no narrower per-invocation mechanism
     // OpenCode's own docs expose that would keep this env off the CLI's own
     // process without also keeping it off the SERVER process that needs it.
     const merged = mergeOpenCodeConfigContent(env.OPENCODE_CONFIG_CONTENT, delegation)
@@ -988,9 +864,10 @@ function delegationInjectionFor(
  * Detached is the whole of what this function does, and since #534 it is what
  * an OpenCode launch IS: OpenCode has no held-session engine in this app, so
  * the only shape available to it is start-and-let-go, with the ordinary poll
- * discovering the session afterwards. Claude can be launched either way; the
- * held route lives in `heldSessionRegistry`. AMENDED for ISSUE-185 (was:
- * Codex's detached launch, which left the tree with the step-3b deletion).
+ * discovering the session afterwards. AMENDED for ISSUE-185 (was: Codex's
+ * detached launch, which left the tree with the step-3b deletion) and
+ * ISSUE-184 (was: Claude's detached `claude -p` launch, which left the tree
+ * with the step-3a deletion): OpenCode is the one provider this launches.
  *
  * Every failure becomes a `launched: false` verdict with a reason, never a
  * silent no-op — the discipline deliverViaRelay already holds. "Not installed"
@@ -1050,17 +927,15 @@ export async function launchClaudeSession(
     const injection = delegationInjectionFor(
       options.provider,
       options.delegation,
-      buildRelayEnv(options.env, detection.path, options.platform),
-      options.delegationConfigFile ?? createNodeDelegationConfigFile()
+      buildRelayEnv(options.env, detection.path, options.platform)
     )
     const started = await options.run({
       command: program.command,
       // The tuning belongs to the CLI's own argv, so it lands AFTER a shim's
       // node entry (#239): in front of it, `--model` would be an argument to
       // node rather than to the program node is about to run. Delegation's
-      // own extra argv (#511 T4) lands LAST: `claudeDetachedExtraArgs`
-      // documents why `--strict-mcp-config` is never among it, so nothing
-      // here narrows what the CLI's OWN config already grants this session.
+      // own extra argv (#511 T4) lands LAST, so nothing here narrows what the
+      // CLI's OWN config already grants this session.
       args: [
         ...program.args,
         ...buildLaunchArgs(options.provider, {
@@ -1082,10 +957,7 @@ export async function launchClaudeSession(
       // #510 correction. Read once here, from the table that decides it
       // beside each provider's own argv (`ONE_SHOT_STDOUT_IS_TURN_TEXT`,
       // launch.ts) — never re-derived at the point that reads the capture.
-      stdoutIsTurnText: ONE_SHOT_STDOUT_IS_TURN_TEXT[options.provider],
-      ...(injection.delegationConfigFile === undefined
-        ? {}
-        : { delegationConfigFile: injection.delegationConfigFile })
+      stdoutIsTurnText: ONE_SHOT_STDOUT_IS_TURN_TEXT[options.provider]
     })
     // Reported rather than kept: whoever asked for the launch decides whether
     // to hold onto it, because deciding needs the board and this does not have
