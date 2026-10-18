@@ -7,6 +7,8 @@
 // the `finally`, and the case checks that none is left running.
 import { randomBytes } from 'node:crypto'
 import {
+  cpSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -14,6 +16,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -203,6 +206,68 @@ describe('the Host runs from its versioned copy (ADR-002 D5, ADR-027 item 2)', (
         )
         expect(isInside(host?.execPath ?? '', sourceDir), 'not from the build output').toBe(false)
         expect(readdirSync(world.copyRoot), 'no temporary directory is left').toEqual([VERSION])
+        expect(log.byEvent('versioned-copy')).toMatchObject([{ outcome: 'ok', causeClass: 'copy' }])
+      } finally {
+        for (const host of hostRecords(world.hostDataDir)) {
+          if (!(await endProcess(host.pid, host.recordedAtMs))) survivors.push(host.pid)
+        }
+        const removed = await removeFolder(world.root)
+        expect(survivors, 'no Host process is left running').toEqual([])
+        expect(removed, 'the temporary folder is removed').toBe(true)
+      }
+    },
+    CASE_TIMEOUT_MS
+  )
+
+  it(
+    '[SP-03, ADR-002] an install reached through a link to its folder (a Scoop current junction, a Homebrew-style symlink) starts the Host from a real copy of its real folder',
+    async () => {
+      const world = newWorld()
+      const survivors: number[] = []
+      try {
+        // A private install made from the Electron runtime, so nothing is written next to the
+        // installed package: the real folder holds the files the package manager adds beside the
+        // app (Scoop's install.json and manifest.json, GitHub #1439), and the app starts through a
+        // link to that folder: a junction on Windows (no privilege needed), a symbolic link on
+        // macOS and Linux (links inside Electron.app stay links).
+        const electronSource = copySourceOf(ELECTRON, PLATFORM)
+        const realSource = path.join(world.root, 'apps', 'real', path.basename(electronSource))
+        cpSync(electronSource, realSource, { recursive: true, verbatimSymlinks: true })
+        mkdirSync(path.dirname(world.manifest), { recursive: true })
+        writeFileSync(world.manifest, serializeManifest(await buildManifest(realSource)))
+        writeFileSync(path.join(realSource, 'install.json'), '{}')
+        writeFileSync(path.join(realSource, 'manifest.json'), '{}')
+        const linkedSource = path.join(world.root, 'apps', 'current', path.basename(electronSource))
+        mkdirSync(path.dirname(linkedSource), { recursive: true })
+        symlinkSync(realSource, linkedSource, 'junction')
+        const log = new RecordingUiLog()
+        const launcher = createNodeHostLauncher({
+          hostDataDir: world.hostDataDir,
+          execPath: path.join(linkedSource, path.relative(electronSource, ELECTRON)),
+          hostEntry: FAKE_HOST,
+          hostManifest: world.manifest,
+          log,
+          client: { appVersion: VERSION, buildId: 'os-test' },
+          endpoint: world.endpoint,
+          build: 'dev',
+          copyRoot: world.copyRoot,
+          prebuildsDir: path.join(REPO_ROOT, 'prebuilds')
+        })
+
+        expect(await launcher.ensureHostRunning(), JSON.stringify(log.entries)).toBe('spawned')
+
+        const copyDir = path.join(world.copyRoot, VERSION)
+        const contentDir =
+          PLATFORM === 'darwin' ? path.join(copyDir, path.basename(electronSource)) : copyDir
+        expect(lstatSync(contentDir).isSymbolicLink(), 'the copy is a real tree').toBe(false)
+        const [host] = hostReports(world.hostDataDir)
+        expect(isInside(host?.execPath ?? '', copyDir), 'the Host runs from host/<version>/').toBe(
+          true
+        )
+        expect(isInside(host?.execPath ?? '', realSource), 'not from the install').toBe(false)
+        expect(readdirSync(contentDir), 'the package manager files stay out').not.toContain(
+          'install.json'
+        )
         expect(log.byEvent('versioned-copy')).toMatchObject([{ outcome: 'ok', causeClass: 'copy' }])
       } finally {
         for (const host of hostRecords(world.hostDataDir)) {

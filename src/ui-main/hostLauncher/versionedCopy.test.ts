@@ -1,14 +1,24 @@
 // The Host's versioned copy (ADR-002 D5; ADR-027 item 2; 13 FM-129; SP-03 decision table).
 // L3-style over a temporary directory: the copy, the rename and the removal are real file
 // operations; a fault (a copy killed mid-way) is injected through CopyOps.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeLauncherClock } from './fakes/FakeLauncherClock'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
-import { buildManifest, serializeManifest, verifyManifest } from './hostManifest'
+import { buildManifest, parseManifest, serializeManifest, verifyManifest } from './hostManifest'
 import {
   copySourceOf,
   ensureVersionedCopy,
@@ -265,6 +275,73 @@ describe('ensureVersionedCopy (ADR-002 D5, ADR-027 item 2)', () => {
       'resources'
     ])
   })
+
+  it('[ADR-002, ADR-027] an install reached through a link to its folder (a Scoop `current` junction, a symlinked install root) is copied from its real folder: the copy is a real tree, not a link', async () => {
+    const w = await world()
+    // Scoop starts the app through `<app>\current`, a junction to `<app>\<version>`, and writes
+    // its own files beside the app (GitHub #1439). A junction needs no privilege on Windows; on
+    // macOS and Linux the type is ignored and the link is a symbolic link to the folder.
+    writeFileSync(path.join(w.sourceDir, 'install.json'), 'scoop install info')
+    writeFileSync(path.join(w.sourceDir, 'manifest.json'), 'scoop manifest')
+    const linked = path.join(w.base, 'current')
+    symlinkSync(w.sourceDir, linked, 'junction')
+
+    const outcome = await ensureVersionedCopy(w.request({ sourceDir: linked }))
+
+    const copyDir = path.join(w.root, VERSION)
+    expect(outcome).toEqual({ ok: true, reused: false, copyDir, contentDir: copyDir })
+    expect(lstatSync(copyDir).isSymbolicLink(), 'the copy is not a link to the install').toBe(false)
+    expect(readdirSync(copyDir).sort()).toEqual(['app.exe', 'host-manifest.json', 'resources'])
+    const manifest = parseManifest(await readFile(w.manifestPath, 'utf8'))
+    if (!manifest.ok) throw new Error('the test manifest does not parse')
+    expect(
+      await verifyManifest(copyDir, manifest.value, { exclude: ['host-manifest.json'] })
+    ).toEqual({ ok: true })
+    expect(readdirSync(w.sourceDir), 'nothing is written into the install').not.toContain(
+      'host-manifest.json'
+    )
+  })
+
+  it('[SP-03, ADR-002] on macOS a linked .app bundle (a Homebrew-style symlink) is copied whole from its real bundle, under the linked name', async () => {
+    const w = await world('DwarfAI-Miners-real.app')
+    const linkedDir = path.join(w.base, 'Applications')
+    mkdirSync(linkedDir)
+    const linked = path.join(linkedDir, 'DwarfAI-Miners.app')
+    symlinkSync(w.sourceDir, linked, 'junction')
+
+    const outcome = await ensureVersionedCopy(w.request({ sourceDir: linked, platform: 'darwin' }))
+
+    const contentDir = path.join(w.root, VERSION, 'DwarfAI-Miners.app')
+    expect(outcome).toEqual({
+      ok: true,
+      reused: false,
+      copyDir: path.join(w.root, VERSION),
+      contentDir
+    })
+    expect(lstatSync(contentDir).isSymbolicLink(), 'the bundle copy is not a link').toBe(false)
+    expect(existsSync(path.join(contentDir, 'resources', 'app.asar'))).toBe(true)
+  })
+
+  // A relative link to a folder needs a privilege (or developer mode) on Windows, which a test
+  // never assumes; the macOS lane copies Electron.app's framework links through a linked bundle
+  // (versionedCopy.os.test.ts).
+  it.runIf(process.platform !== 'win32')(
+    '[SP-03, ADR-002] a link inside an install reached through a link stays a link with its own target, as the manifest lists it',
+    async () => {
+      const w = await world()
+      symlinkSync('app.asar', path.join(w.sourceDir, 'resources', 'current.asar'))
+      await w.writeManifest()
+      const linked = path.join(w.base, 'current')
+      symlinkSync(w.sourceDir, linked)
+
+      const outcome = await ensureVersionedCopy(w.request({ sourceDir: linked }))
+
+      const copied = path.join(w.root, VERSION, 'resources', 'current.asar')
+      expect(outcome).toMatchObject({ ok: true, reused: false })
+      expect(lstatSync(copied).isSymbolicLink()).toBe(true)
+      expect(readlinkSync(copied)).toBe('app.asar')
+    }
+  )
 
   it('[ADR-002, FM-129] a listed file missing from the copy source still fails the copy', async () => {
     const w = await world()
