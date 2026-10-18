@@ -107,6 +107,8 @@ describe('JevAdvisor.suggest', () => {
         tier: 'balanced',
         confidence: { providerId: 0.91, tier: 0.88 },
         truncated: false,
+        // AMENDED for AMENDMENT-22 (06 §12): a decided suggestion carries the flags; Jev said "no" to both.
+        flags: { trivial: false, largeContext: false },
         parts: {
           providerId: 'answered',
           model: 'answered',
@@ -131,6 +133,8 @@ describe('JevAdvisor.suggest', () => {
         tier: 'balanced',
         confidence: { providerId: 0.91, tier: 0.88 },
         truncated: false,
+        // AMENDED for AMENDMENT-22 (06 §12): a decided suggestion carries the flags; Jev said "no" to both.
+        flags: { trivial: false, largeContext: false },
         parts: { providerId: 'answered', tier: 'answered' }
       }
     })
@@ -204,6 +208,8 @@ describe('JevAdvisor.suggest', () => {
         tier: 'balanced',
         confidence: { providerId: 0.93, tier: 0.88 },
         truncated: false,
+        // AMENDED for AMENDMENT-22 (06 §12): a decided suggestion carries the flags; Jev said "no" to both.
+        flags: { trivial: false, largeContext: false },
         parts: { providerId: 'answered', model: 'answered', tier: 'answered' }
       }
     })
@@ -235,6 +241,8 @@ describe('JevAdvisor.suggest', () => {
         tier: 'balanced',
         confidence: { model: 0.86, tier: 0.88 },
         truncated: true,
+        // AMENDED for AMENDMENT-22 (06 §12): a decided suggestion carries the flags; Jev said "no" to both.
+        flags: { trivial: false, largeContext: false },
         parts: {
           providerId: 'safe-default',
           model: 'answered',
@@ -243,6 +251,27 @@ describe('JevAdvisor.suggest', () => {
         }
       }
     })
+  })
+
+  // AMENDMENT-22 (owner-approved 2026-10-18; 06 §12): the decision's trivial and large-context answers, past their
+  // floors, reach the suggestion as `flags` for the tooltip's two flag lines. TC-192-05.
+  it('[US-LAUNCH-008.AC04] the suggestion carries the trivial and large-context flags of the decision', async () => {
+    const large = harness()
+    large.router.queueResponse(answers({ largeContext: { probability: 0.9 } }))
+    const trivial = harness()
+    trivial.router.queueResponse(answers({ trivial: { probability: 0.9 } }))
+    const neither = harness()
+    neither.router.queueResponse(answers())
+
+    const flagsOf = async (advisor: typeof large.advisor) => {
+      const result = await advisor.suggest(LAUNCH)
+      return result.ok ? result.value.flags : result
+    }
+
+    expect(await flagsOf(large.advisor)).toStrictEqual({ trivial: false, largeContext: true })
+    expect(await flagsOf(trivial.advisor)).toStrictEqual({ trivial: true, largeContext: false })
+    // Jev answered both questions with "no": the flags are there, both false, so no line shows.
+    expect(await flagsOf(neither.advisor)).toStrictEqual({ trivial: false, largeContext: false })
   })
 
   it('[ADR-020] with no launchable provider the advisor answers jev-could-not-choose with reason no-launchable-provider and sends nothing to TypeSafe', async () => {

@@ -3,9 +3,9 @@
 // and the providers the Host can launch now through `RoutingCatalogSource` (16 §4.9 "bridge →
 // suppliers", the step's launchable list, never widened: 21 §2 cut 3 "Let Jev choose"). The core
 // builds the request (ISSUE-190), asks the router and applies the decision; this file maps the
-// outcome onto `JevSuggestionView` (06 §12): exactly the parts Jev decided, the per-part confidence
-// and the truncated flag — never a permission mode, a reason sentence or a fallback supplier, and
-// never stored (INV-87).
+// outcome onto `JevSuggestionView` (06 §12): exactly the parts Jev decided, the per-part confidence,
+// the truncated flag and, since AMENDMENT-22, the trivial and large-context flags — never a
+// permission mode, a reason sentence or a fallback supplier, and never stored (INV-87).
 //
 // - Inputs leave the Host only as the core builds them: the prompt and one criterion per launchable
 //   provider (16 §6.2; C-26). No mine id, path, custom name or attachment is an input here at all.
@@ -134,7 +134,9 @@ function toSuggestionView(
     providerId: decided.provider,
     confidence: {},
     truncated,
-    parts: { providerId: provider.applied }
+    parts: { providerId: provider.applied },
+    // AMENDMENT-22: Jev's trivial and large-context answers, past their floors, for the tooltip.
+    flags: { trivial: decided.parts.trivial.value, largeContext: decided.parts.largeContext.value }
   }
   // A decision lands on a routing tier only; 'special-purpose' is a capability-table concept.
   if (decided.tier !== 'special-purpose') {

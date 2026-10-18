@@ -28,6 +28,8 @@ export type JevPartOrigin = 'answered' | 'safe-default'
  *   part Jev did not answer has none.
  * - `parts` is answered vs fallen back: each part present in the pick with its origin.
  * - `truncated`: the prompt sent to Jev was itself trimmed to fit its request budget.
+ * - `flags` (AMENDMENT-22): Jev's trivial and large-context answers; absent when Jev answered no
+ *   part, so a fallback suggestion carries none.
  */
 export interface JevSuggestion {
   providerId?: ProviderId
@@ -43,4 +45,5 @@ export interface JevSuggestion {
     tier?: JevPartOrigin
   }
   fallback?: JevFallbackReason
+  flags?: { trivial: boolean; largeContext: boolean }
 }
