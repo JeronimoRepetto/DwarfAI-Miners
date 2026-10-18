@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useId, watch } from 'vue'
-import { formatAccelerator } from '../../../../shared/accelerator'
+import { formatAccelerator } from '@dwarfai/contracts'
 import type {
   AgentModelCatalog,
   AgentProviderOption,

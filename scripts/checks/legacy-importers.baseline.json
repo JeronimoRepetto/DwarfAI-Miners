@@ -1,0 +1,12 @@
+[
+  {
+    "file": "e2e/panel/hidden-until-built.e2e.ts",
+    "removedBy": "ISSUE-246",
+    "why": "applies the renderer's own chip filter, isDwarfProvider: the legacy closed four-provider set, which has no src/contracts owner (contracts/catalog CATALOG_PROVIDER_IDS is the open catalog and includes simulated, ADR-009 D2); it moves with the regenerated renderer barrel"
+  },
+  {
+    "file": "src/renderer/src/types.ts",
+    "removedBy": "ISSUE-246",
+    "why": "re-exports about 190 shared/contracts.ts wire types and values that have no src/contracts owner yet; ISSUE-246 regenerates the barrel from src/contracts/wire (ADR-033 item 6, 22 §5: never hand-edited)"
+  }
+]
