@@ -62,6 +62,7 @@ import {
   MENU_RESET_NAME,
   MENU_STOP
 } from '../../lib/message/panelChrome'
+import { publishBoard } from '../../testing/board'
 
 // Every mounted panel is unmounted after its test, so no outcome clock or tooltip it started
 // outlives the document jsdom's teardown empties (#635: CI caught five updating a detached tree).
@@ -3999,7 +4000,7 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
       pendingPermission: permission,
       pendingQuestion: question
     })
-    useMines().setMines({ mines: [defaultMine({ dwarfs: [dwarf] })], tokensObserved: 0 })
+    publishBoard({ mines: [defaultMine({ dwarfs: [dwarf] })], tokensObserved: 0 })
     const wrapper = panel({ dwarf })
     await flushPromises()
 
@@ -4008,7 +4009,7 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
 
     // A board whose ids are outside the relay's namespace (no front card) draws its own ask too.
     const raw = defaultDwarf({ id: DWARF, textDelivery: 'terminal', pendingQuestion: question })
-    useMines().setMines({ mines: [defaultMine({ dwarfs: [raw] })], tokensObserved: 0 })
+    publishBoard({ mines: [defaultMine({ dwarfs: [raw] })], tokensObserved: 0 })
     await wrapper.setProps({ dwarf: raw })
 
     expect(wrapper.find('.dm-qcard__q').exists()).toBe(true)

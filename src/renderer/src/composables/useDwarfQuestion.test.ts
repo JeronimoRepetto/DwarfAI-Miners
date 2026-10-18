@@ -29,6 +29,7 @@ import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
 import { useMines } from './useMines'
 import { useToasts } from './useToasts'
+import { publishBoard } from '../testing/board'
 
 /**
  * AMENDED for ISSUE-141 (was: the fake answered today's `DwarfQuestionAnswerResult`): from the cut-2 switch A-40 and
@@ -800,7 +801,7 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
 
   /** The facade's board (A-12/A-P2) with today's open asks on its dwarfs, ids in the relay's namespace. */
   function facadeBoard(dwarfs: Array<Partial<Dwarf> & { id: string }>): void {
-    useMines().setMines({
+    publishBoard({
       mines: [defaultMine({ dwarfs: dwarfs.map((dwarf) => defaultDwarf(dwarf)) })],
       tokensObserved: 0
     })

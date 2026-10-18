@@ -25,6 +25,7 @@ import {
   DEFAULT_TYPOGRAPHY_PREFERENCES,
   MATERIALS,
   type MaterialTotals,
+  type MinesSnapshot,
   type PanelLayout,
   type ProjectQuery,
   type ProjectSummary
@@ -96,6 +97,20 @@ function browse(sample: GoldenSample, query: ProjectQuery): ProjectSummary[] {
   return found.slice(offset, query.limit === undefined ? undefined : offset + query.limit)
 }
 
+/**
+ * The board a full-screen golden draws: the sample's mines, and the vault as each material summed on its own.
+ * AMENDED for ISSUE-242, cut 5 (was: the answer of A-12 `getMines`, with A-P2 never pushing): A-12 and A-P2 left with
+ * `BoardFacadeAdapter` and the board is the Host read model's (`useMines`), which a golden does not follow, so the page
+ * writes this board into it before the shell mounts (page.ts).
+ */
+export function goldenBoard(sample: GoldenSample): MinesSnapshot {
+  return {
+    mines: sample.mines,
+    tokensObserved: sample.mines.reduce((sum, m) => sum + m.tokensObserved, 0),
+    materials: vault(sample)
+  }
+}
+
 export function goldenApi(sample: GoldenSample): Api {
   let layout: PanelLayout = { edge: sample.edge, mineOpen: false, dockOpen: false }
   const shortcut = {
@@ -123,12 +138,7 @@ export function goldenApi(sample: GoldenSample): Api {
     },
     getToggleShortcut: () => Promise.resolve({ ...shortcut }),
     setToggleShortcut: refuse('setToggleShortcut'),
-    getMines: () =>
-      Promise.resolve({
-        mines: sample.mines,
-        tokensObserved: sample.mines.reduce((sum, m) => sum + m.tokensObserved, 0),
-        materials: vault(sample)
-      }),
+    getMines: refuse('getMines'),
     onMinesUpdated: unsubscribe,
     activateDwarf: refuse('activateDwarf'),
     // The open dwarf's conversation (#635, the MessagePanel slice), as the sample carries it.

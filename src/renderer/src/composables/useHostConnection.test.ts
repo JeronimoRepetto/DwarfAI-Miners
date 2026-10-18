@@ -22,6 +22,7 @@ import { DEFAULT_OPENCODE_SETTINGS_VIEW, useOpenCodeSettings } from './useOpenCo
 import { useProjectBrowse } from './useProjectBrowse'
 import { useResetMetrics } from './useResetMetrics'
 import { useToasts } from './useToasts'
+import { publishBoard } from '../testing/board'
 
 /** `window.api`'s own type, as the preload declares it on `Window` (R8: never imported from the preload). */
 type DwarfAiMinersApi = Window['api']
@@ -319,7 +320,7 @@ describe('useHostConnection', () => {
     const mines = useMines()
     mines.clear()
     const crew = [defaultDwarf({ id: 'a' }), defaultDwarf({ id: 'b' })]
-    mines.setMines({ mines: [defaultMine({ dwarfs: crew })], tokensObserved: 0 })
+    publishBoard({ mines: [defaultMine({ dwarfs: crew })], tokensObserved: 0 })
     const before = mines.state.mines
 
     push(reconnecting)

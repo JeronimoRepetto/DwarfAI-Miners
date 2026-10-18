@@ -20,14 +20,15 @@ import { DEFAULT_AUDIO_PREFERENCES } from '../types'
 import { useAttentionCues } from './useAttentionCues'
 import { useAudio } from './useAudio'
 import { useMines } from './useMines'
+import { publishBoard } from '../testing/board'
 
 /*
  * LEVEL 2 IN THE RENDERER (ISSUE-117; ADR-018 items 1 and 8, ADR-021 item 3).
  *
  * The cue composable against the real sound composable and engine, with the transplanted `fakeAudioPlayer` standing
- * in for the `Audio` elements and the fake `window.api` generated from the registry (17 §1.6). The board is fed the
- * way cut 1 feeds it (today's A-12/A-P2 snapshot through `useMines().setMines`, whose asks come from
- * `LegacyAskRelay` and carry no `reannounce`), and `turn.ended` (B-F14) arrives as an A-N02 batch.
+ * in for the `Audio` elements and the fake `window.api` generated from the registry (17 §1.6). The board is written
+ * as one publish of the read model (`testing/board.ts`; AMENDED for ISSUE-242, was: today's A-12/A-P2 snapshot through
+ * `useMines().setMines`, deleted at cut 5), and `turn.ended` (B-F14) arrives as an A-N02 batch.
  */
 
 type Api = ReturnType<typeof createFakeWindowApi>
@@ -77,13 +78,13 @@ const BORIN = '01920000-0000-7000-8000-00000000d001' as DwarfId
 const MINE_A = 'C:/dev/a'
 const MINE_B = 'C:/dev/b'
 
-/** Today's feed writes the whole board, a new array every time, exactly as a poll re-renders it. */
+/** One publish writes the whole board, a new array every time, exactly as the read model re-renders it. */
 function board(...dwarfs: Dwarf[]): void {
   const mines: Mine[] = [
     defaultMine({ id: MINE_A, path: MINE_A, name: 'a', dwarfs }),
     defaultMine({ id: MINE_B, path: MINE_B, name: 'b', dwarfs: [] })
   ]
-  useMines().setMines({ mines, tokensObserved: 0 })
+  publishBoard({ mines, tokensObserved: 0 })
 }
 
 function turnEnded(seq: number, data: HostFrames['turn.ended']): HostFrame {

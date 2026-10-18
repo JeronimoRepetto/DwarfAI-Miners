@@ -18,8 +18,7 @@ import {
   type Dwarf,
   type DwarfProvider,
   type MaterialTotals,
-  type Mine,
-  type MinesSnapshot
+  type Mine
 } from '../types'
 import { LEAVING_EXIT_MS } from '../lib/presentation'
 import type { BoardDwarf } from '../lib/scene/boardDwarf'
@@ -31,39 +30,17 @@ import { useToasts } from './useToasts'
 // (house style shared with a sibling Vue project).
 const state = reactive(defaultMinesState())
 
-/**
- * Every dwarf id the last snapshot carried, or null before the first one.
- *
- * Null and empty are different facts (#156): null is "the panel has not looked
- * yet", so nothing on the next snapshot is an arrival; empty is "the panel
- * looked and the valley was idle", so the next session to start IS one. Kept
- * outside `state` because nothing renders it — it exists only to answer what
- * changed between two snapshots.
- */
-let previousDwarfIds: Set<string> | null = null
-
-function dwarfIdsIn(snapshot: MinesSnapshot): Set<string> {
-  const ids = new Set<string>()
-  for (const mine of snapshot.mines) {
-    for (const dwarf of mine.dwarfs) ids.add(dwarf.id)
-  }
-  return ids
-}
-
 /*
  * THE BOARD FROM THE HOST (ISSUE-092; ADR-033 item 3; 14 §4.3, §6.4 row `useMines`).
  *
  * The same singleton becomes a read model of the snapshot's `mines` and `dwarfs` sections and the frames
  * `mine.changed`, `dwarf.arrived`, `dwarf.changed`, `dwarf.departed` (14 §3.5; `mine.removed` and `ledger.changed`
- * join when their catalog entries land). `state` keeps the shape `lib/**` and the components read today, folded the
- * way `BoardFacadeAdapter` (ISSUE-086) folds the same facts for A-12/A-P2, so both sources show one board.
+ * join when their catalog entries land). `state` keeps the shape `lib/**` and the components read today.
  *
- * - One writer at a time (21 §1 item 4). Until the first Host snapshot is read, `setMines` (today's A-12/A-P2 feed)
- *   writes the board; from then on the Host does, and `setMines` brings only today's board fields onto it: open asks,
- *   text delivery and capabilities (from cut 1 A-P2 is `BoardFacadeAdapter`'s, which folds `LegacyAskRelay`'s fields
- *   onto the Host dwarfs). The shell
- *   `start`s the Host half at mount from the cut-1 switch (ISSUE-123); a table that refuses A-N01 leaves the board on
- *   today's feed.
+ * - The Host is the board's one writer (21 §1 item 4). AMENDED for ISSUE-242, cut 5 (was: until the first Host snapshot
+ *   was read, today's A-12/A-P2 feed, from cut 1 `BoardFacadeAdapter`'s, wrote the board through `setMines`, and after it
+ *   brought today's board fields onto the Host dwarfs): A-12 and A-P2 are deleted with the facade, so the shell `start`s
+ *   this read model at mount and a Host that has not answered yet shows an empty board.
  * - Arrivals: a snapshot is never an arrival (S2.03); a `dwarf.arrived` frame emits one walk-in and puts the dwarf in
  *   `state.arrived` for the batch it came in (S2.02), and with `announce` raises the toast "<d> started in <name>"
  *   (US-OBS-002.AC07; 08 §2.2).
@@ -103,7 +80,7 @@ const WALK_OUT_HOLD_MS = MAX_WALK_MS + LEAVING_EXIT_MS
 
 const MATERIALS: readonly Material[] = ['coal', 'bronze', 'copper', 'silver', 'gold', 'uranium']
 
-/** Today's default tier of a mine not measured yet, as `BoardFacadeAdapter` shows it. */
+/** Today's default tier of a mine not measured yet (`defaultMine()` of today's board). */
 const UNMEASURED_TIER: Mine['tier'] = 'bronze'
 
 const LEGACY_PROVIDERS: ReadonlySet<string> = new Set(DWARF_PROVIDERS)
@@ -123,8 +100,6 @@ const board: HostBoard = { mines: new Map(), dwarfs: new Map() }
 const leaving = new Map<DwarfId, { dwarf: DwarfWire; timer: ReturnType<typeof setTimeout> }>()
 /** The dwarfs that arrived by frame since the board was last published. */
 let arrivals = new Set<string>()
-/** Whether the Host feeds the board: set by the first Host snapshot, cleared by `stop`. */
-let hostFed = false
 /**
  * Each Host dwarf's `stopUnavailableReason` (14 §3.6 `DwarfWire`) as the board last published it: the one fact
  * "Stop dwarf…" reads its availability from (INV-31; 14 §4.1 `dwarfs` consumer `useDwarfStopping`). Reactive, so a
@@ -132,36 +107,6 @@ let hostFed = false
  */
 const stopReasons = shallowRef<ReadonlyMap<string, StopUnavailableReason | null>>(new Map())
 
-/** Today's board fields of a dwarf, the only part of A-P2 a Host-fed board takes (see `setMines`). */
-type LegacyAsks = Partial<
-  Pick<
-    Dwarf,
-    'pendingQuestion' | 'pendingPermission' | 'waitingReason' | 'textDelivery' | 'capabilities'
-  >
->
-
-/**
- * Today's board fields per Host dwarf id, as A-P2 last carried them (21 §3 `LegacyAskRelay`, cuts 1–4, which folds them
- * onto the Host dwarf of the exact `LegacyDwarfIdBridge` join in `BoardFacadeAdapter`'s board):
- * - the open asks: until cut 2 the ask cards of the rows still `legacy` reach the renderer only this way; cut 2 moves
- *   them to the Host broker and its `asks` section;
- * - the text delivery route and capabilities today's runtime resolved: A-23 `dwarf:sendText` and A-26 `dwarf:kick` are
- *   served by today's runtime until their Host routes land, so the composer and the kick read its route. A dwarf A-P2
- *   carries no route for has none (fail closed), and keeps today's refusal.
- */
-let legacyAsks = new Map<string, LegacyAsks>()
-
-function asksOf(dwarf: Dwarf): LegacyAsks {
-  return {
-    ...(dwarf.pendingQuestion === undefined ? {} : { pendingQuestion: dwarf.pendingQuestion }),
-    ...(dwarf.pendingPermission === undefined
-      ? {}
-      : { pendingPermission: dwarf.pendingPermission }),
-    ...(dwarf.waitingReason === undefined ? {} : { waitingReason: dwarf.waitingReason }),
-    ...(dwarf.textDelivery === undefined ? {} : { textDelivery: dwarf.textDelivery }),
-    ...(dwarf.capabilities === undefined ? {} : { capabilities: dwarf.capabilities })
-  }
-}
 const walkers = new Set<(walk: BoardWalk) => void>()
 
 function emit(walk: BoardWalk): void {
@@ -225,17 +170,12 @@ function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): BoardDwarf {
             ...(dwarf.workplace.branch === undefined ? {} : { branch: dwarf.workplace.branch })
           }
         }),
-    startedAt: dwarf.arrivedAt,
-    ...legacyAsks.get(dwarf.id)
+    startedAt: dwarf.arrivedAt
   }
 }
 
-/**
- * Writes the Host board into `state`, in today's shape, with the arrivals of this batch. A republish for new asks only
- * (`asksOnly`) leaves the arrivals alone: they belong to the Host batch that brought them, still to be drawn.
- */
-function publish(asksOnly = false): void {
-  hostFed = true
+/** Writes the Host board into `state`, in today's shape, with the arrivals of this batch. */
+function publish(): void {
   const shown: Array<{ dwarf: DwarfWire; status: Dwarf['status'] }> = [
     ...[...board.dwarfs.values()].map((dwarf) => ({ dwarf, status: statusOf(dwarf) })),
     ...[...leaving.values()].map(({ dwarf }) => ({ dwarf, status: 'leaving' as const }))
@@ -265,7 +205,6 @@ function publish(asksOnly = false): void {
   stopReasons.value = new Map(
     [...board.dwarfs.values()].map((dwarf) => [dwarf.id, dwarf.stopUnavailableReason])
   )
-  if (asksOnly) return
   state.arrived = arrivals
   arrivals = new Set()
 }
@@ -350,8 +289,8 @@ function boardOf(chunks: readonly SnapshotChunk[]): HostBoard {
 let follower: ReturnType<typeof followHost<HostBoard>> | null = null
 
 /**
- * Follows the Host read path (A-N02 first, then A-N01). Answers whether the Host now feeds the board; when it
- * does not (the rows are unrouted, or the Host did not answer a snapshot), today's feed keeps writing it.
+ * Follows the Host read path (A-N02 first, then A-N01). Answers whether the Host now feeds the board; when it does
+ * not (the Host did not answer a snapshot), the board stays as it is until a later read succeeds.
  */
 async function start(): Promise<boolean> {
   follower ??= followHost(
@@ -364,7 +303,7 @@ async function start(): Promise<boolean> {
   return follower.start()
 }
 
-/** Stops following the Host; the board keeps its last state and today's feed may write it again. */
+/** Stops following the Host; the board keeps its last state. */
 function stop(): void {
   follower?.stop()
   follower = null
@@ -372,8 +311,6 @@ function stop(): void {
   board.mines = new Map()
   board.dwarfs = new Map()
   arrivals = new Set()
-  hostFed = false
-  legacyAsks = new Map()
   stopReasons.value = new Map()
 }
 
@@ -388,43 +325,15 @@ export interface WalkOutReporter {
 export const WALK_OUT_KEY: InjectionKey<WalkOutReporter> = Symbol('walk-out')
 
 export function useMines() {
-  function setMines(snapshot: MinesSnapshot): void {
-    // One writer at a time (21 §1 item 4): once the Host feeds the board, today's feed no longer writes it. From the
-    // cut-1 switch that feed is `BoardFacadeAdapter`'s, and what it still brings is today's board fields (`legacyAsks`):
-    // the open asks, which only it carries until cut 2, and the delivery route of the rows still `legacy`.
-    if (hostFed) {
-      legacyAsks = new Map(
-        snapshot.mines.flatMap((mine) => mine.dwarfs).map((dwarf) => [dwarf.id, asksOf(dwarf)])
-      )
-      publish(true)
-      return
-    }
-    const ids = dwarfIdsIn(snapshot)
-    state.arrived =
-      previousDwarfIds === null
-        ? new Set()
-        : new Set([...ids].filter((id) => !previousDwarfIds!.has(id)))
-    previousDwarfIds = ids
-    state.mines = snapshot.mines
-    state.tokensObserved = snapshot.tokensObserved
-    // Carried through as published, undefined included: an older snapshot with
-    // no breakdown is an empty vault the panel can render, not a fault.
-    state.materials = snapshot.materials
-  }
-
   function clear(): void {
     state.mines = []
     state.tokensObserved = 0
     state.materials = undefined
-    // Back to "has not looked": what the panel sees next is a first snapshot
-    // again, not a valley of arrivals.
     state.arrived = new Set()
-    previousDwarfIds = null
   }
 
   return {
     state,
-    setMines,
     clear,
     start,
     stop,

@@ -3,7 +3,7 @@ import type { MineId } from '@dwarfai/contracts'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '@dwarfai/contracts'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
 import { launchSourcesOf } from '../lib/launch/supplierEntries'
-import { goldenApi } from './api'
+import { goldenApi, goldenBoard } from './api'
 import { adaptSample } from './sample'
 
 /*
@@ -26,14 +26,14 @@ function sampleOf(data: Record<string, unknown> = {}) {
 }
 
 describe('goldenApi — the board', () => {
-  it('answers the sample mines, and the vault as each material summed on its own', async () => {
+  it('answers the sample mines, and the vault as each material summed on its own', () => {
     const sample = sampleOf({
       mines: [
         { ...shaft, ore: { coal: 2 } },
         { ...shaft, id: 'south-shaft', ore: { coal: 1, gold: 1 } }
       ]
     })
-    const snapshot = await goldenApi(sample).getMines()
+    const snapshot = goldenBoard(sample)
     expect(snapshot.mines.map((m) => m.id)).toEqual(['north-shaft', 'south-shaft'])
     expect(snapshot.materials).toMatchObject({
       coal: 3 * MATERIAL_TOKENS_PER_UNIT.coal,
@@ -42,8 +42,8 @@ describe('goldenApi — the board', () => {
     })
   })
 
-  it('answers an empty board with an empty vault', async () => {
-    const snapshot = await goldenApi(sampleOf()).getMines()
+  it('answers an empty board with an empty vault', () => {
+    const snapshot = goldenBoard(sampleOf())
     expect(snapshot.mines).toEqual([])
     expect(snapshot.tokensObserved).toBe(0)
   })

@@ -22,8 +22,7 @@ import type {
   DwarfSendState,
   FeedMessage,
   MessagePanelState,
-  Mine,
-  MinesSnapshot
+  Mine
 } from '../types'
 
 /**
@@ -220,24 +219,20 @@ export function useMessageDock() {
   watch(openDwarfId, (dwarfId) => holdOlderPages(dwarfId), { immediate: true })
 
   /**
-   * One poll's whole board, as App has just stored it: a launch in flight is watching for its own
-   * dwarf, which arrives on an ordinary poll like every other session's. AMENDED for ISSUE-123
-   * (was: also adopting the feed main pushed with the poll, #196): the chat is the Host's.
-   */
-  function observeSnapshot(snapshot: MinesSnapshot): void {
-    launch.observe(snapshot.mines)
-  }
-
-  /**
    * Every poll's whole board, folded into the two delivery stores (#21) — every dwarf rather than
    * one mine's crew: a session whose mine closed still deserves the verdict of the message
    * somebody sent it. Not a deep watch: the board is replaced whole on every poll.
+   *
+   * AMENDED for ISSUE-242, cut 5 (was: `observeSnapshot`, which App called with each A-12/A-P2
+   * board): a launch in flight watches the same Host board for its own dwarf, which arrives on it
+   * like every other session's.
    */
   watch(
     () => mines.mines,
     (board) => {
       const dwarfs = board.flatMap((mine) => mine.dwarfs)
       observeSends(dwarfs)
+      launch.observe(board)
     },
     { immediate: true }
   )
@@ -552,7 +547,6 @@ export function useMessageDock() {
     drafts,
     setDraft,
     error,
-    observeSnapshot,
     sendText,
     retryMessage,
     copyMessage,
