@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CATALOG_PROVIDER_IDS,
   CHANNELS,
+  MEMBER_REMOVED,
   PRELOAD_HELPERS,
   RETIRED,
   ROW_IDS,
@@ -703,13 +704,19 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     expect(registered.map((wire) => keyOfWire(wire)).sort()).toEqual([...callable].sort())
 
     // The preload: every `ipcRenderer` wire the generated preload speaks is one CHANNELS entry, and every non-helper
-    // entry is spoken exactly once; its one helper is A-X1, the preload-only member.
+    // entry is spoken exactly once; its one helper is A-X1, the preload-only member. AMENDED for ISSUE-183 (was: every
+    // non-helper entry): the preload is this tree's, generated for the release table, so a RETIRE row whose member left
+    // with its route by then (`MEMBER_REMOVED`, A-26 in 3a) is not spoken.
     const preload = readFileSync(resolve(import.meta.dirname, '../../preload/index.ts'), 'utf8')
     const spoken = [...preload.matchAll(/ipcRenderer\.(?:invoke|send|on)\(\s*'([^']+)'/g)].map(
       (match) => match[1] ?? ''
     )
+    const memberGone = (key: ChannelKey): boolean => {
+      const step = MEMBER_REMOVED[key]
+      return step !== undefined && STEP_ORDER.indexOf(step) <= STEP_ORDER.indexOf(ROUTES_RELEASE)
+    }
     expect(spoken.map((wire) => keyOfWire(wire)).sort()).toEqual(
-      KEYS.filter((key) => !helpers.includes(key)).sort()
+      KEYS.filter((key) => !helpers.includes(key) && !memberGone(key)).sort()
     )
     expect(PRELOAD_HELPERS).toEqual(['pathForDroppedFile'])
 
