@@ -1,5 +1,5 @@
 // layer: L6
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   CATALOG_PROVIDER_IDS,
   CHANNELS,
@@ -34,6 +34,7 @@ import {
   composeJevRouteRow,
   composeJevKeyRows,
   composeMinesAdmin,
+  composeOpenCodePasswordRows,
   composePresence,
   composeProviderRouting,
   composeProviderShapeAdapters,
@@ -41,6 +42,7 @@ import {
   composeSettlementJoin,
   composeStopAllRelay,
   composeStopDwarf,
+  composeSystemNotificationRows,
   legacyClaudeHooksComposed,
   legacyFeedModesOf,
   type LegacyAskRelayComposition,
@@ -5094,6 +5096,369 @@ describe('step 4a A-52 and A-53 (21 §2 step 4a)', () => {
     expect(sent).toEqual([
       ['preferences.get', {}],
       ['preferences.setOpenCodePermissions', { on: true, origin: 'add-panel', requestId: REQUEST }]
+    ])
+  })
+})
+
+// ADDED for ISSUE-231: the OpenCode server password rows of step 4a (21 §2 cut 4a, §3 `SecretMigrationBridge`, §4 row
+// "OpenCode server password"). The route rows are the step-4a switch's (later: ISSUE-235); these cases drive a 4a table
+// built here, over a temp legacy `userData` holding today's encrypted password file.
+describe('OpenCode server password rows (21 §2 cut 4a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const PASSWORD = ' migrated pass 0231 '
+  const TYPED = 'typed-pass-4a-0231'
+  const MINTED = '01920000-0000-7000-a000-000000000231'
+  const PASSWORD_FILE = 'opencode-server-password-v1.json'
+  const SET: ChannelKey = 'opencode:password:set' // A-54
+  const CLEAR: ChannelKey = 'opencode:password:clear' // A-55
+
+  const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-4a',
+    parity: 'passed',
+    shape: 'target'
+  })
+  /** A-54/A-55 `host`, as ISSUE-235's 4a rows will read. */
+  const PASSWORD_4A: ChannelRoute[] = [hostRoute(SET), hostRoute(CLEAR)]
+
+  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
+    decryptString: (data: Buffer) => {
+      const text = data.toString('utf8')
+      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
+      return text.slice('enc:'.length)
+    }
+  }
+
+  /** The Host over an in-memory password: B-M10, B-M11 and B-M12, recording each call. */
+  function passwordHost(backend: 'os-secret-store' | 'unavailable' = 'os-secret-store') {
+    const calls: Array<[string, unknown]> = []
+    let password: string | undefined
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'settings.secret.set') {
+        if (backend === 'unavailable') {
+          return Promise.resolve({ ok: false, error: 'backend-unavailable' })
+        }
+        password = (params as { value: string }).value
+        return Promise.resolve({ ok: true, value: { name: 'opencode-password', configured: true } })
+      }
+      if (method === 'settings.secret.clear') {
+        password = undefined
+        return Promise.resolve({
+          ok: true,
+          value: { name: 'opencode-password', configured: false }
+        })
+      }
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences: {},
+          secrets: [{ name: 'opencode-password', configured: password !== undefined }],
+          secretBackend: backend,
+          integrations: [],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      password: () => password,
+      client: client as unknown as Parameters<typeof composeOpenCodePasswordRows>[0]['client']
+    }
+  }
+
+  async function seedPassword(userData: string): Promise<void> {
+    const encrypted = safeStorage.encryptString(PASSWORD).toString('base64')
+    await writeFile(join(userData, PASSWORD_FILE), `${JSON.stringify({ encrypted })}\n`)
+  }
+
+  it('[ADR-001] the release table composes no password row and no migration; a release the bridge does not live in runs none', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+    try {
+      const base = {
+        client: passwordHost().client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      }
+      expect(
+        composeOpenCodePasswordRows({ ...base, routes: ROUTES, release: ROUTES_RELEASE })
+      ).toBeUndefined()
+      const late = composeOpenCodePasswordRows({ ...base, routes: PASSWORD_4A, release: 'cut-5' })
+      expect(late?.part.channels).toEqual([SET, CLEAR])
+      expect(late?.migration).toBeUndefined()
+      // Without the Host attach nothing is composed.
+      expect(
+        composeOpenCodePasswordRows({
+          ...base,
+          client: undefined,
+          routes: PASSWORD_4A,
+          release: 'cut-4a'
+        })
+      ).toBeUndefined()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('[ADR-017, C-23] in a 4a table the legacy password file moves to the Host once before A-54/A-55 answer, and they round-trip through B-M10 and B-M11', async () => {
+    // TC-231-01, TC-231-02
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+    try {
+      await seedPassword(userData)
+      const host = passwordHost()
+      const rows = composeOpenCodePasswordRows({
+        routes: PASSWORD_4A,
+        release: 'cut-4a',
+        client: host.client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      })
+      expect(rows?.part.channels).toEqual([SET, CLEAR])
+      const router = createRouter({
+        routes: PASSWORD_4A,
+        legacy: { serve: () => Promise.reject(new Error('no legacy password row from 4a')) },
+        ...(rows === undefined ? {} : { host: rows.part.target }),
+        senders
+      })
+      const response = CHANNELS[SET].response
+
+      // A-55 waits for the run: the migrated password was in the Host before the clear, and today's file is gone.
+      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
+        ok: true,
+        value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+      })
+      expect(await readdir(userData)).toEqual([])
+
+      // Over the cap: refused in main, it never crosses.
+      const refused = await router.dispatch(SET, FROM_PANEL as never, 'a'.repeat(1025))
+      expect(JSON.stringify(refused)).not.toContain('a'.repeat(1025))
+
+      const saved = response.parse(await router.dispatch(SET, FROM_PANEL as never, TYPED))
+      expect(saved).toEqual({
+        ok: true,
+        value: { permissions: 'off', passwordConfigured: true, secretBackend: 'os-secret-store' }
+      })
+      expect(JSON.stringify(saved)).not.toContain(TYPED)
+      expect(host.password()).toBe(TYPED)
+      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
+        [
+          'settings.secret.set',
+          { name: 'opencode-password', value: PASSWORD, requestId: MINTED, origin: 'migration' }
+        ],
+        ['settings.secret.clear', { name: 'opencode-password', requestId: MINTED }],
+        [
+          'settings.secret.set',
+          { name: 'opencode-password', value: TYPED, requestId: MINTED, origin: 'settings' }
+        ]
+      ])
+      rows?.migration?.dispose()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('[NFR-SEC-12] the migrated or typed password never reaches a log line', async () => {
+    // L7 (17 §1.7 log redaction): the UI log and every console method, over a migration that succeeds, one the Host
+    // refuses, and a typed save.
+    const consoleLines: unknown[][] = []
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        consoleLines.push(args)
+      })
+    )
+    const logged: unknown[] = []
+    try {
+      for (const backend of ['os-secret-store', 'unavailable'] as const) {
+        const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+        try {
+          await seedPassword(userData)
+          const host = passwordHost(backend)
+          const rows = composeOpenCodePasswordRows({
+            routes: PASSWORD_4A,
+            release: 'cut-4a',
+            client: host.client,
+            migration: { userDataDir: userData, safeStorage },
+            log: { record: (entry) => logged.push(entry) },
+            mintId: () => MINTED
+          })
+          await rows?.part.target.serve(SET, TYPED, FROM_PANEL as never)
+          rows?.migration?.dispose()
+        } finally {
+          await rm(userData, { recursive: true, force: true })
+        }
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
+
+    expect(logged.length).toBeGreaterThan(0)
+    for (const line of [...logged, ...consoleLines]) {
+      expect(JSON.stringify(line)).not.toContain(PASSWORD.trim())
+      expect(JSON.stringify(line)).not.toContain(TYPED)
+    }
+  })
+})
+
+// ADDED for ISSUE-230: the Settings rows of step 4a (21 §2 cut 4a "New core serves"; 14 §2.1 A-42, A-43, A-47, A-51).
+// The route rows are the step-4a switch's (later: ISSUE-235); these cases drive a 4a table built here. The handlers'
+// own cases are in handlers/settingsParity.contract.test.ts.
+describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const MINTED = '01920000-0000-7000-a000-000000000230'
+  const NOTIFICATIONS_GET: ChannelKey = 'notifications:enabled:get' // A-42
+  const NOTIFICATIONS_SET: ChannelKey = 'notifications:enabled:set' // A-43
+  const JEV_GET: ChannelKey = 'jev:settings:get' // A-47
+  const KEY_SET: ChannelKey = 'jev:apiKey:set' // A-48
+  const KEY_CLEAR: ChannelKey = 'jev:apiKey:clear' // A-49
+  const JEV_SET: ChannelKey = 'jev:preferences:set' // A-51
+
+  const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-4a',
+    parity: 'passed',
+    shape: 'target'
+  })
+  /** Every Settings row of this issue and the Jev key rows `host`, as ISSUE-235's 4a rows will read. */
+  const SETTINGS_4A: ChannelRoute[] = [
+    NOTIFICATIONS_GET,
+    NOTIFICATIONS_SET,
+    JEV_GET,
+    KEY_SET,
+    KEY_CLEAR,
+    JEV_SET
+  ].map(hostRoute)
+
+  /** The Host over in-memory preferences and Jev key: B-M10…B-M13, recording each call. */
+  function settingsHost() {
+    const calls: Array<[string, unknown]> = []
+    let key: string | undefined
+    let preferences: Record<string, unknown> = {
+      subagentDelegationOn: false,
+      routingProfile: 'balanced',
+      systemNotificationsOn: true,
+      openCodePermissionsOn: false
+    }
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'settings.secret.set') {
+        key = (params as { value: string }).value
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: true } })
+      }
+      if (method === 'settings.secret.clear') {
+        key = undefined
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: false } })
+      }
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences,
+          secrets: [{ name: 'jev-key', configured: key !== undefined }],
+          secretBackend: 'os-secret-store',
+          integrations: [],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      if (method === 'preferences.set') {
+        const { key: name, value } = params as { key: string; value: unknown }
+        preferences = { ...preferences, [name]: value }
+        return Promise.resolve(preferences)
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      client: client as unknown as NonNullable<Parameters<typeof composeJevKeyRows>[0]['client']>
+    }
+  }
+
+  /** Today's runtime never answers a Settings row of this table. */
+  const legacy = { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) }
+
+  it('[ADR-001] the release table composes none of A-42, A-43, A-47 and A-51 from the Host', () => {
+    const { client } = settingsHost()
+    expect(
+      composeSystemNotificationRows({ routes: ROUTES, client, mintId: () => MINTED })
+    ).toBeUndefined()
+    const jev = composeJevKeyRows({
+      routes: ROUTES,
+      release: ROUTES_RELEASE,
+      legacy,
+      client,
+      migration: undefined,
+      log: { record: () => {} },
+      mintId: () => MINTED
+    })
+    expect(jev?.part?.channels ?? []).not.toContain(JEV_GET)
+    expect(jev?.part?.channels ?? []).not.toContain(JEV_SET)
+  })
+
+  it("[ADR-001] in a 4a table A-42, A-43, A-47 and A-51 are served by the Host, and A-48/A-49 answer the Host's Jev preferences", async () => {
+    const host = settingsHost()
+    const jev = composeJevKeyRows({
+      routes: SETTINGS_4A,
+      release: 'cut-4a',
+      legacy,
+      client: host.client,
+      migration: undefined,
+      log: { record: () => {} },
+      mintId: () => MINTED
+    })
+    const notifications = composeSystemNotificationRows({
+      routes: SETTINGS_4A,
+      client: host.client,
+      mintId: () => MINTED
+    })
+    expect(jev?.part?.channels).toEqual([KEY_SET, KEY_CLEAR, JEV_GET, JEV_SET])
+    expect(notifications?.channels).toEqual([NOTIFICATIONS_GET, NOTIFICATIONS_SET])
+    expect(jev?.shapeAdapters).toEqual({})
+    const parts = [jev?.part, notifications].filter((part) => part !== undefined)
+    const router = createRouter({
+      routes: SETTINGS_4A,
+      legacy,
+      host: composeRouteTargets(parts),
+      senders
+    })
+    const dispatch = async (channel: ChannelKey, payload?: unknown) =>
+      CHANNELS[channel].response.parse(await router.dispatch(channel, FROM_PANEL as never, payload))
+
+    expect(await dispatch(NOTIFICATIONS_GET)).toBe(true)
+    expect(await dispatch(NOTIFICATIONS_SET, false)).toBe(false)
+    expect(await dispatch(NOTIFICATIONS_GET)).toBe(false)
+    const premium = { profile: 'premium', default: { provider: 'claude' }, delegation: true }
+    expect(await dispatch(JEV_SET, premium)).toEqual({ configured: false, preferences: premium })
+    // A-48 answers the preferences the Host holds, never today's (JevSettingsShapeAdapter is not composed).
+    expect(await dispatch(KEY_SET, 'ts-live-0123456789abcdef')).toEqual({
+      configured: true,
+      preferences: premium
+    })
+    expect(await dispatch(JEV_GET)).toEqual({ configured: true, preferences: premium })
+    expect(host.calls.filter(([method]) => method === 'preferences.set')).toEqual([
+      ['preferences.set', { key: 'systemNotificationsOn', value: false, requestId: MINTED }],
+      ['preferences.set', { key: 'routingProfile', value: 'premium', requestId: MINTED }],
+      ['preferences.set', { key: 'defaultProvider', value: 'claude', requestId: MINTED }],
+      ['preferences.set', { key: 'subagentDelegationOn', value: true, requestId: MINTED }]
     ])
   })
 })
