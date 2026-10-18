@@ -118,13 +118,14 @@ function host(spawn: () => SpawnScript = () => ({ kind: 'exit', afterMs: 60_000,
     records: db.records,
     transactions: { inTransaction: (work) => db.inTransaction(work) },
     starter: createSessionStarter({
-      registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       sessions: suppliers.sessions,
       clock,
       scheduler
     }),
     suppliers: {
       registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       catalogue: suppliers.catalogue,
       bindings: suppliers.bindings
     },

@@ -237,6 +237,7 @@ export function delegationHost(
     starter,
     suppliers: {
       registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       catalogue: { entry: (id) => suppliers.catalogue.entry(id) },
       bindings: { bind: () => undefined }
     },
