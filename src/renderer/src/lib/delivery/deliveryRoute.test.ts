@@ -50,3 +50,31 @@ describe('routeWentAway', () => {
     expect(routeWentAway(seen, defaultDwarf({ id: 'b', textDelivery: undefined }))).toBe(false)
   })
 })
+
+/*
+ * APPENDED: a Host board dwarf's route is the Host's `canReceiveMessages` (14 §3.6, INV-33), so a
+ * route that went away is told from the Host flag too, with no `textDelivery` on the dwarf.
+ */
+describe('a Host board dwarf’s route', () => {
+  const host = (id: string, canReceiveMessages: boolean) => ({
+    ...defaultDwarf({ id, textDelivery: undefined }),
+    canReceiveMessages
+  })
+
+  it('[US-MSG-013.AC06, INV-33] a dwarf once seen able to receive, which the Host now says cannot, had its route go away', () => {
+    const seen = rememberRoutes(new Set(), [host('a', true), host('b', false)])
+    expect([...seen]).toEqual(['a'])
+    expect(routeWentAway(seen, host('a', false))).toBe(true)
+    expect(routeWentAway(seen, host('a', true))).toBe(false)
+    expect(routeWentAway(seen, host('b', false))).toBe(false)
+  })
+
+  it('[US-MSG-013.AC06, INV-33] the Host flag wins over a textDelivery today’s overlay still carries', () => {
+    const stale = {
+      ...defaultDwarf({ id: 'a', textDelivery: 'terminal' }),
+      canReceiveMessages: false
+    }
+    expect(rememberRoutes(new Set(), [stale]).size).toBe(0)
+    expect(routeWentAway(new Set(['a']), stale)).toBe(true)
+  })
+})

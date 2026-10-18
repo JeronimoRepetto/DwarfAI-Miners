@@ -524,15 +524,47 @@ describe('useMines from the Host read model', () => {
     expect(entry(BORIN, 'chat')).toMatchObject({ enabled: true, hint: CHANNEL_HINT.terminal })
     expect(refusalLine(shown(BORIN))).toBeNull()
     expect(entry(BORIN, 'kick')).toMatchObject({ enabled: true, hint: KICK_HINT.terminal })
-    // Fail closed: a dwarf today's runtime reports no route for gets none, and keeps today's refusal.
+    // A dwarf today's runtime reports no route for gets none.
+    // AMENDED (was: its chat disabled with NO_CHANNEL_REASON, and BORIN's too once A-P2 dropped its
+    // route): the composer is enabled from the Host's `canReceiveMessages` (14 §3.6, INV-33), which
+    // is true for both here, never from A-P2's route; with no route to name for an observed dwarf
+    // its hint is empty. The disabled case is the Host-flag test below.
     expect(shown(DAIN).textDelivery).toBeUndefined()
     expect(shown(DAIN).capabilities).toBeUndefined()
-    expect(entry(DAIN, 'chat')).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
+    expect(entry(DAIN, 'chat')).toMatchObject({ enabled: true, hint: '' })
     expect(kickBlocked(shown(DAIN), { kicking: false })).toBe('open-turn')
     // The route closes when A-P2 no longer carries it.
     useMines().setMines(facade({}))
     expect(shown(BORIN).textDelivery).toBeUndefined()
-    expect(entry(BORIN, 'chat')).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
+    expect(entry(BORIN, 'chat')).toMatchObject({ enabled: true, hint: '' })
+  })
+
+  /*
+   * APPENDED: the composer of a Host board dwarf is enabled from the Host's own `canReceiveMessages`
+   * (14 §3.6 `DwarfWire`, "composer enabled", INV-33), kept current by `dwarf.changed`, so the board
+   * needs no `textDelivery` from today's overlay (A-12/A-P2, removed in cut 5) to enable chat.
+   */
+  it('[US-MSG-001.AC11, US-MSG-013.AC01, INV-33] a Host board dwarf’s composer follows the Host’s canReceiveMessages, with no textDelivery', async () => {
+    const host = installHost([
+      page(
+        3,
+        [mineWire()],
+        [dwarfWire(BORIN, { owned: true }), dwarfWire(DAIN, { canReceiveMessages: false })]
+      )
+    ])
+    await useMines().start()
+    const shown = (id: DwarfId) => boardDwarfs().find((dwarf) => dwarf.id === id)!
+    const chat = (id: DwarfId) =>
+      buildActionBar(shown(id), { kicking: false }).find((it) => it.id === 'chat')!
+    expect(shown(BORIN).textDelivery).toBeUndefined()
+    expect(chat(BORIN)).toMatchObject({ enabled: true, hint: CHANNEL_HINT['held-session'] })
+    expect(chat(DAIN)).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
+    host.push([
+      frame(4, 'dwarf.changed', {
+        dwarf: dwarfWire(BORIN, { owned: true, canReceiveMessages: false })
+      })
+    ])
+    expect(chat(BORIN).enabled).toBe(false)
   })
 
   /*
