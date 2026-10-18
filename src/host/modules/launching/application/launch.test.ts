@@ -61,7 +61,13 @@ const ENTRY: SupplierEntry = {
 /** What the suppliers' bindings saw when the launch bound its session's held events. */
 type BindSeen = (ref: unknown, dwarfId: DwarfId) => void
 
-function host(onBind: BindSeen = () => undefined) {
+/** The provider's drivers in preference order, and the one its capability check selected. */
+interface DriverChoice {
+  readonly drivers: readonly ProviderDriver[]
+  readonly selected: ProviderDriver
+}
+
+function host(onBind: BindSeen = () => undefined, choice?: DriverChoice) {
   const db = inMemoryLaunching(T0)
   const clock = db.clock
   const scheduler = new FakeScheduler(clock)
@@ -89,7 +95,8 @@ function host(onBind: BindSeen = () => undefined) {
     transactions: { inTransaction: (work) => db.inTransaction(work) },
     starter,
     suppliers: {
-      registry: { drivers: (id) => (id === SIMULATED ? [DRIVER] : []) },
+      registry: { drivers: (id) => (id === SIMULATED ? (choice?.drivers ?? [DRIVER]) : []) },
+      launchDriver: async (id) => (id === SIMULATED ? (choice?.selected ?? DRIVER) : undefined),
       catalogue: { entry: (id) => (id === SIMULATED ? ENTRY : null) },
       bindings: { bind: (ref, dwarfId) => onBind(ref, dwarfId as DwarfId) }
     },
@@ -249,5 +256,52 @@ describe('LaunchUseCase: owning before binding', () => {
 
     expect(h.db.launches.byId(launchId)?.state).toBe('succeeded')
     expect(ownedAtBind).toEqual([true])
+  })
+})
+
+// GitHub #1431: a provider may have several drivers in preference order (ADR-009 D4); the one a launch starts through is
+// the one the capability check selected ("first verified wins"), never merely the first. OpenCode's server driver comes
+// first and cannot launch (S-031-3), so taking the first made every OpenCode launch fail.
+describe('LaunchUseCase: the selected driver', () => {
+  /** A driver of the simulated supplier on `transport`, installed, that counts its detections. */
+  function installedDriver(transport: string): {
+    driver: ProviderDriver
+    detections: () => number
+  } {
+    let detections = 0
+    const driver = {
+      transport,
+      detect: async () => {
+        detections += 1
+        return {
+          kind: 'installed',
+          install: {
+            providerId: SIMULATED,
+            binaryPath: '/bin/simulated',
+            version: '1.0.0',
+            resolvedVia: 'path',
+            statMtimeMs: 0
+          }
+        }
+      }
+    } as unknown as ProviderDriver
+    return { driver, detections: () => detections }
+  }
+
+  it('[ADR-009, S5.21] a launch starts through the driver the capability check selected, not the first of the provider', async () => {
+    const first = installedDriver('http-server')
+    const selected = installedDriver('acp')
+    const h = host(undefined, {
+      drivers: [first.driver, selected.driver],
+      selected: selected.driver
+    })
+
+    const { launchId } = await h.launching.commands.launch(worker(h.parent))
+    await h.run(SETTLE_MS)
+
+    expect(h.db.launches.byId(launchId)?.state).toBe('succeeded')
+    expect(h.db.records.live()).toMatchObject([{ launchId, driverTransport: 'acp' }])
+    expect(first.detections()).toBe(0)
+    expect(selected.detections()).toBe(1)
   })
 })

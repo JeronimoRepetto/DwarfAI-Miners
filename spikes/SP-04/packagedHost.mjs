@@ -4,11 +4,13 @@
 // spike-results/SP-04.md; it becomes the L8 packaged smoke once EPIC-17 builds it (later: ISSUE-271).
 //
 //   node spikes/SP-04/packagedHost.mjs [--out <file>]
+//   node spikes/SP-04/packagedHost.mjs --exe <packaged executable> [--out <file>]
 //
 // Builder mode (plain Node): packs this file into a temp Electron app with electron-builder (`dir` target, current
 // OS, nothing signed, nothing published), runs the packaged executable with ELECTRON_RUN_AS_NODE=1 on its own copy of
 // this file, once from inside app.asar and once from app.asar.unpacked, prints the scrubbed JSON and deletes the
-// build. Probe mode (`--probe` under ELECTRON_RUN_AS_NODE=1): prints one JSON line and exits. The probe only looks
+// build. Packaged mode (`--exe`): runs the probe with an app packaged elsewhere (the real app `pnpm package` wrote, in
+// the spike lane, docs/spikes-lane.md), so process.resourcesPath is that app's; nothing is built. Probe mode (`--probe` under ELECTRON_RUN_AS_NODE=1): prints one JSON line and exits. The probe only looks
 // the CLIs up; it never runs them and never reads their configuration or credentials (ADR-008 item 2).
 
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -253,33 +255,10 @@ async function buildAndRun() {
     const buildMs = Date.now() - started
     const exe = packagedExecutable(path.join(buildDir, 'out'))
     const resources = resourcesDirOf(exe)
-    const runs = {}
-    const scripts = [
+    const runs = runProbes(exe, [
       ['asar', path.join(resources, 'app.asar', 'host', 'packagedHost.mjs')],
       ['unpacked', path.join(resources, 'app.asar.unpacked', 'host', 'packagedHost.mjs')]
-    ]
-    for (const [envLabel, env] of probeEnvironments()) {
-      for (const [scriptLabel, script] of scripts) {
-        const label = envLabel === 'terminalEnv' ? scriptLabel : `${scriptLabel}-${envLabel}`
-        const result = spawnSync(exe, [script, '--probe'], {
-          env,
-          encoding: 'utf8',
-          timeout: 60000,
-          windowsHide: true
-        })
-        let report = null
-        try {
-          report = JSON.parse(result.stdout.trim().split(/\r?\n/).pop() ?? '')
-        } catch {
-          // kept as raw output below
-        }
-        runs[label] = {
-          exitCode: result.status,
-          report,
-          stderr: result.stderr?.trim().slice(0, 2000) || null
-        }
-      }
-    }
+    ])
     const record = {
       date: new Date().toISOString().slice(0, 10),
       builder: { electronBuilder: builderVersion(), target: 'dir', buildMs },
@@ -293,5 +272,64 @@ async function buildAndRun() {
   }
 }
 
+/**
+ * Runs the probe with `exe` under ELECTRON_RUN_AS_NODE=1, once per script and per environment of `probeEnvironments()`,
+ * and returns each run's exit code, parsed report and stderr by label.
+ */
+function runProbes(exe, scripts) {
+  const runs = {}
+  for (const [envLabel, env] of probeEnvironments()) {
+    for (const [scriptLabel, script] of scripts) {
+      const label = envLabel === 'terminalEnv' ? scriptLabel : `${scriptLabel}-${envLabel}`
+      const result = spawnSync(exe, [script, '--probe'], {
+        env,
+        encoding: 'utf8',
+        timeout: 60000,
+        windowsHide: true
+      })
+      let report = null
+      try {
+        report = JSON.parse(result.stdout.trim().split(/\r?\n/).pop() ?? '')
+      } catch {
+        // kept as raw output below
+      }
+      runs[label] = {
+        exitCode: result.status,
+        report,
+        stderr: result.stderr?.trim().slice(0, 2000) || null
+      }
+    }
+  }
+  return runs
+}
+
+/**
+ * Packaged mode: copies this file to a temp folder and runs it with an executable packaged elsewhere (the real app of
+ * `pnpm package`), so `process.resourcesPath` is that app's resources folder.
+ */
+function runPackaged(exe, outFile) {
+  const workDir = mkdtempSync(path.join(tmpdir(), 'dwarfai-sp04-app-'))
+  try {
+    const script = path.join(workDir, 'packagedHost.mjs')
+    cpSync(fileURLToPath(import.meta.url), script)
+    const record = {
+      date: new Date().toISOString().slice(0, 10),
+      packagedApp: { executable: path.basename(exe) },
+      runs: runProbes(path.resolve(exe), [['outside-asar', script]])
+    }
+    const text = scrub(JSON.stringify(record, null, 2), workDir)
+    if (outFile) writeFileSync(outFile, `${text}\n`)
+    process.stdout.write(`${text}\n`)
+  } finally {
+    rmSync(workDir, { recursive: true, force: true })
+  }
+}
+
+const argValue = (flag) => {
+  const index = process.argv.indexOf(flag)
+  return index > 0 ? (process.argv[index + 1] ?? null) : null
+}
+
 if (process.argv.includes('--probe')) await probe()
+else if (argValue('--exe')) runPackaged(argValue('--exe'), argValue('--out'))
 else await buildAndRun()
