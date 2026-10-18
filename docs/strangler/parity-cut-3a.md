@@ -96,25 +96,29 @@ complete in time (`07` machine 5B S5.19).
 Rows of `src/ui-main/ipc/routes.ts` this step changes (ids of `14-ipc-contract.md` §2), as ISSUE-001 lists them. Every
 other row keeps its cut-2 route. The Claude qualifier is the catalog id from `CATALOG_PROVIDER_IDS` (R12).
 
-| Row                                                                            | Qualifier                                     | Route before                                   | Route after                                                                    | Shape    |
-| ------------------------------------------------------------------------------ | --------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------ | -------- |
-| A-35 `launchAgent` (and its Retry), A-23 `sendDwarfText`, A-13 `activateDwarf` | `provider: claude`                            | `legacy`, today's shape                        | `host`, `since: 'cut-3a'` (B-M33, B-M24, B-M29)                                | `target` |
-| A-35, A-23, A-13                                                               | every other provider                          | `legacy`, today's shape                        | `legacy` through `PerProviderShapeAdapter`                                     | `target` |
-| A-36 `listAgentProviders`                                                      | none                                          | `legacy`, today's shape                        | Claude's entry from the Host (B-M37), the others through `CatalogMergeAdapter` | `target` |
-| A-N29 `stopDwarf` (NEW)                                                        | `provider: claude`; a legacy-launched session | unrouted (`unrouted.ts`, step `cut-3a`)        | `host` (B-M21), through `LegacyEndFirstAdapter` for a legacy-launched session  | `target` |
-| A-25 `describeDwarfAttachments`                                                | none (every provider)                         | `legacy`                                       | `host` (B-M28)                                                                 | `target` |
-| A-48, A-49 (Jev key set and clear)                                             | none                                          | `legacy`                                       | `host` (B-M10, B-M11), behind the one-time key migration                       | `target` |
-| A-50 `jev:route`                                                               | none                                          | `legacy`                                       | `host` (B-M38 `jev.suggest`)                                                   | `target` |
-| A-47 `jev:settings:get`                                                        | none                                          | `legacy`                                       | `legacy` through `JevSettingsShapeAdapter`                                     | `target` |
-| A-N06 retry message, A-N10 and A-N11 recovery report (NEW)                     | none                                          | unrouted (`unrouted.ts`, step `cut-3a`)        | `host` (B-M25, B-M35, B-M36)                                                   | `target` |
-| A-N08, A-N09 rename and reset a name (NEW)                                     | none                                          | `host`                                         | `host` (unchanged; born by 3a)                                                 | `target` |
-| A-27, A-P3, A-P4                                                               | each provider not yet moved                   | `legacy`                                       | `legacy`, qualified to Codex, Antigravity and OpenCode                         | `today`  |
-| A-N26 Stop everything and quit                                                 | none                                          | its cut-0 route, `LegacyEndFirstAdapter` first | unchanged; the Host now also ends its own Owned sessions                       | `target` |
+| Row                                                                            | Qualifier                              | Route before                            | Route after                                                                                           | Shape    |
+| ------------------------------------------------------------------------------ | -------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------- |
+| A-35 `launchAgent` (and its Retry), A-23 `sendDwarfText`, A-13 `activateDwarf` | `provider: claude`                     | `legacy`, today's shape                 | `host`, `since: 'cut-3a'` (B-M33, B-M24, B-M29)                                                       | `target` |
+| A-35, A-23, A-13                                                               | every other provider                   | `legacy`, today's shape                 | `legacy` through `PerProviderShapeAdapter`                                                            | `target` |
+| A-36 `listAgentProviders`                                                      | `provider: claude`                     | `legacy`, today's shape                 | `host` (B-M37), read by `CatalogMergeAdapter` for Claude's entry                                      | `target` |
+| A-36                                                                           | none (the renderer's one catalog call) | `legacy`, today's shape                 | `legacy` through `CatalogMergeAdapter`: Claude's entry from the Host, the others from today's runtime | `target` |
+| A-N29 `stopDwarf` (NEW)                                                        | none (every dwarf)                     | unrouted (`unrouted.ts`, step `cut-3a`) | `host` (B-M21), through `LegacyEndFirstAdapter` for a legacy-launched session                         | `target` |
+| A-25 `describeDwarfAttachments`                                                | none (every provider)                  | `legacy`                                | `host` (B-M28)                                                                                        | `target` |
+| A-48, A-49 (Jev key set and clear)                                             | none                                   | `legacy`                                | `host` (B-M10, B-M11), behind the one-time key migration                                              | `target` |
+| A-50 `jev:route`                                                               | none                                   | `legacy`                                | `host` (B-M38 `jev.suggest`)                                                                          | `target` |
+| A-47 `jev:settings:get`                                                        | none                                   | `legacy`                                | `legacy` through `JevSettingsShapeAdapter`                                                            | `target` |
+| A-N06 retry message, A-N10 and A-N11 recovery report (NEW)                     | none                                   | unrouted (`unrouted.ts`, step `cut-3a`) | `host` (B-M25, B-M35, B-M36)                                                                          | `target` |
+| A-27, A-P3, A-P4                                                               | each provider not yet moved            | `legacy`                                | `legacy`, qualified to Codex, Antigravity and OpenCode                                                | `today`  |
+
+A-N08 and A-N09 keep the `host` routes they were born with in cut 2 (the ISSUE-172 lead decision), and A-N26 keeps its
+cut-0 route (`LegacyEndFirstAdapter` first); the Host now also ends its own Owned sessions behind it. None of these
+rows changes in this step.
 
 Each `host` route uses only seam-B members born by 3a (`21` §2 "Seam B members", row 3a) and reaches
-`parity: 'passed'` only with the evidence above (TC-001-02). Rollback (`21` §2.1) flips the Claude-qualified rows back to
-`legacy` in a new internal build, only before the step's deletion commit merges; `docs/strangler/rollback.md` records
-the per-row decision.
+`parity: 'passed'` only with the evidence above (TC-001-02). Rollback (`21` §2.1) is a new internal build, only before
+the step's deletion commit merges: A-13, A-23, A-35 and A-36 fold into their unqualified shape-adapter rows, A-25, A-27,
+A-P3 and A-P4 and the retired rows go back to today's runtime, and A-47…A-50 keep their 3a routes because the Jev key
+was migrated into the Host; `docs/strangler/rollback.md` "Step 3a note" records the per-row decision.
 
 ## Retired rows
 
