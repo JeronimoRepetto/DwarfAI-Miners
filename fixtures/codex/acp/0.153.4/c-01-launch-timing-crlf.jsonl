@@ -1,0 +1,15 @@
+{"at":1735689600335,"event":"spawned","pid":"adapter"}
+{"at":1735689600335,"stream":"sent","bytes":102}
+{"at":1735689600449,"stream":"received","bytes":987}
+{"at":1735689600450,"stream":"sent","bytes":90}
+{"at":1735689600461,"stream":"received","bytes":159}
+{"at":1735689600622,"stream":"received","bytes":6959}
+{"at":1735689600938,"stream":"sent","bytes":221}
+{"at":1735689600938,"stream":"received","bytes":4142}
+{"at":1735689601034,"stream":"received","bytes":225}
+{"at":1735689604465,"stream":"received","bytes":290}
+{"at":1735689604542,"stream":"received","bytes":175}
+{"at":1735689604546,"stream":"received","bytes":206}
+{"at":1735689604547,"stream":"received","bytes":237}
+{"at":1735689604547,"stream":"received","bytes":477}
+{"at":1735689606869,"event":"exit","code":0,"signal":null}

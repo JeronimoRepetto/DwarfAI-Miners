@@ -679,6 +679,18 @@ describe('scrub rules (17 §1.4)', () => {
     expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
   })
 
+  it('[ADR-008, ADR-026] a store hash redacted inside a stack-trace path leaves no new absolute path, so a scrubbed text has no survivor', () => {
+    // codex-acp 1.13.1 prints a JSON-RPC error with its stack: file URLs under a pnpm store link
+    // whose 64-hex segment is a secret pattern (ISSUE-153 recording).
+    const frame = `    at Connection.handleResponse (file:///C:/Users/canary.user/AppData/Local/pnpm/store/v11/links/a/1.0.0/${'c56ee65d'.repeat(8)}/node_modules/a/dist/index.js:25815:32)\n`
+
+    const [scrubbed] = scrubFixtureSet([{ name: 'deny-stderr.jsonl', text: frame }], IDENTITY)
+
+    expect(scrubbed.text).not.toContain('canary.user')
+    expect(findSurvivors(scrubbed.text, IDENTITY)).toEqual([])
+    expect(scrubFixtureSet([scrubbed], IDENTITY)).toEqual([scrubbed])
+  })
+
   it('[ADR-008, ADR-026] the survivor check names each personal value or secret left in a text, and nothing in a scrubbed one', () => {
     const leaky = [
       '{"cwd":"C:\\\\Users\\\\canary.user\\\\work"}',
@@ -799,6 +811,71 @@ describe('scrub rules (17 §1.4)', () => {
     ])
     expect(lines[2].params.update._meta).toEqual({ '_claude/model': 'm' })
     expect(lines[3].result._meta.quota).toEqual({ model_usage: [{ model: 'm' }] })
+  })
+
+  it('[ADR-008] codex-acp built-in commands and session modes stay, so ACP update names such as agent_message_chunk are never rewritten', () => {
+    const raw = jsonl('c-01-launch.jsonl', [
+      {
+        id: 0,
+        result: { agentCapabilities: { auth: { logout: {} } }, _meta: { goal: { version: 1 } } }
+      },
+      {
+        id: 1,
+        result: {
+          modes: { currentModeId: 'read-only' },
+          configOptions: [
+            {
+              id: 'mode',
+              category: 'mode',
+              options: ['read-only', 'agent', 'agent-full-access'].map((value) => ({ value }))
+            }
+          ]
+        }
+      },
+      {
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'available_commands_update',
+            availableCommands: [
+              'skills',
+              'review-branch',
+              'review-commit',
+              'goal',
+              'rename',
+              'logout',
+              '$canary-deploy'
+            ].map((name) => ({ name, description: name, input: null }))
+          }
+        }
+      },
+      {
+        method: 'session/update',
+        params: { update: { sessionUpdate: 'agent_message_chunk', content: { text: 'hi' } } }
+      }
+    ])
+
+    const [scrubbed] = scrubFixtureSet([raw], IDENTITY)
+    const lines = records(scrubbed)
+
+    expect(lines[0].result.agentCapabilities).toEqual({ auth: { logout: {} } })
+    expect(lines[0].result._meta).toEqual({ goal: { version: 1 } })
+    expect(lines[1].result.modes.currentModeId).toBe('read-only')
+    expect(lines[1].result.configOptions[0].options.map((o) => o.value)).toEqual([
+      'read-only',
+      'agent',
+      'agent-full-access'
+    ])
+    expect(lines[2].params.update.availableCommands.map((c) => c.name)).toEqual([
+      'skills',
+      'review-branch',
+      'review-commit',
+      'goal',
+      'rename',
+      'logout',
+      '<command-1>'
+    ])
+    expect(lines[3].params.update.sessionUpdate).toBe('agent_message_chunk')
   })
 
   it('[C-04, C-19] the timing stream counts the bytes of the scrubbed streams, so each received line still completes after the same sent frames', () => {
