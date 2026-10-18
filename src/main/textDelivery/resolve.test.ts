@@ -623,8 +623,7 @@ describe('stampTextDelivery', () => {
 
   it.each([
     ['a relay', { kind: 'claude-relay', sessionName: 'sample-project-70' } as const],
-    ['a Codex queue', { kind: 'codex-queue', threadId: 't1' } as const],
-    ['a hosted stdin', { kind: 'hosted-stdin', hostedId: 'claude:s1' } as const]
+    ['a Codex queue', { kind: 'codex-queue', threadId: 't1' } as const]
   ])('stamps no attach channel for %s, beside a sendText that still works', (_name, target) => {
     const [stamped] = stampTextDelivery([mine([dwarf()])], targetsFrom({ 'claude:s1': target }))
     expect(stamped?.dwarfs[0]?.capabilities?.sendText).not.toBeNull()

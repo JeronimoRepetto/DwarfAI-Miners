@@ -134,6 +134,10 @@ soak); after it, 3d rolls forward. `rollbackOf(table, 'cut-3d')` gives back exac
 "Other…" sessions the faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3
 "Rollback (each step)"); a new "Other…" launch is today's hosted process again, which dies with the window.
 
+**Step-3d deletion (ISSUE-187): no rollback past this point.** From the ISSUE-187 commit today's hosted-process launch
+(`hostedProcesses.ts` and its composition in `runtime.ts`) and the legacy A-39 handlers are gone, so a table that routes
+A-39 `legacy` again reaches no handler: 3d rolls forward only (`21` §2.1 item 4).
+
 **Step 3e note (ISSUE-188).** A 3e rollback build exists only before the 3e deletion commit merges (ISSUE-189, after the
 soak); after it, 3e rolls forward. 3e moves Antigravity beside the shape-adapter routes 3a created, its launch row in
 development builds only (`DEVELOPMENT_BUILD_ROUTES`, `routesForBuild`), so `rollbackOf(table, 'cut-3e')` gives back

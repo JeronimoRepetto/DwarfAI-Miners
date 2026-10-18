@@ -336,13 +336,6 @@ function canInterrupt(endpoint: TextDeliveryEndpoint): boolean {
  * duplicating the rule is how the panel and the runtime start disagreeing
  * about the same dwarf (#97).
  *
- * 'hosted-stdin' ends a whole process too (#194) and gets no matching guard,
- * because it cannot reach one: the hop rule above exists for a launched CLI
- * whose own transcript reports subagents, and nothing observes children for a
- * hosted process — no provider reads it, so no worker of its can be on the
- * board to relay through it. A guard here would be an unreachable branch
- * claiming a case exists.
- *
  * A 'terminal' endpoint is NOT degraded here, and that is #366: this act needs
  * no console input, only a pid, so every platform can perform it. A port with
  * no end tier says so itself (NO_TERMINAL_END_TIER) and the relay behind it

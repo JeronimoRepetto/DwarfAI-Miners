@@ -39,8 +39,6 @@ import type {
   ExternalLinkResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
-  HostedLaunchRequest,
-  HostedLaunchResult,
   MaterialTotals,
   MetricsResetResult,
   Mine,
@@ -394,15 +392,6 @@ function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
     ...permission,
     ...(record.routedByJev === true ? { routedByJev: true } : {})
   }
-}
-
-/** Boundary check of `launchHostedProcess` (#194): the command is only checked for being a string. */
-function parseHostedLaunchRequest(payload: unknown): HostedLaunchRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
-  if (typeof record.command !== 'string') return null
-  return { mineId: record.mineId, command: record.command, prompt: record.prompt }
 }
 
 function parseKickRequest(payload: unknown): DwarfKickRequest | null {
@@ -1183,16 +1172,6 @@ export function composeLegacyRuntime(
       const request = parsePermissionRequest(payload)
       if (request === null) return notAnswered
       return runtime?.answerDwarfPermission(request) ?? notAnswered
-    })
-
-    const notHostedLaunched: HostedLaunchResult = {
-      launched: false,
-      error: 'That command could not be started.'
-    }
-    handle(IPC_CHANNELS.launchHostedProcess, (payload) => {
-      const request = parseHostedLaunchRequest(payload)
-      if (request === null) return notHostedLaunched
-      return runtime?.launchHostedProcess(request) ?? notHostedLaunched
     })
 
     handle(IPC_CHANNELS.retireDwarf, (dwarfId) => {
