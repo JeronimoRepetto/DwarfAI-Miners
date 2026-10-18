@@ -45,14 +45,27 @@ criterion and its named evidence (TC-001-06). Every issue that produces this evi
   legacy file → Host status `set`, legacy file gone; a key cleared before the step → the Host has nothing; values
   never in a log) and `src/host/wiring/flows/secretNeverEchoed.test.ts`.
 
-| Suite                                                  | Command                                                                                                                                 | Internal build                               | OS      | Result  | Date |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ------- | ------- | ---- |
-| Router, launch parity, flows (local, before the build) | `pnpm vitest run src/ui-main/ipc/ipc-routing.contract.test.ts src/legacy-bridge/parity src/host/wiring/flows`                           | branch `feat/issue-001-route-switch` (local) | Windows | pending |      |
-| Claude driver conformance (local, before the build)    | `pnpm vitest run src/host/modules/suppliers/adapters/drivers/claude-stream-json src/host/modules/suppliers/adapters/drivers/acp-claude` | branch `feat/issue-001-route-switch` (local) | Windows | pending |      |
-| Step-3a L9 (local, before the build)                   | `pnpm build:native && pnpm build && pnpm exec playwright test -c playwright.config.ts e2e/cut-3a e2e/stop-all`                          | branch `feat/issue-001-route-switch` (local) | Windows | pending |      |
-| Release lanes of the 3a internal build (TC-001-05)     |                                                                                                                                         |                                              | Windows |         |      |
-| Release lanes of the 3a internal build (TC-001-05)     |                                                                                                                                         |                                              | macOS   |         |      |
-| Release lanes of the 3a internal build (TC-001-05)     |                                                                                                                                         |                                              | Linux   |         |      |
+| Suite                                                  | Command                                                                                                                                 | Internal build                               | OS      | Result                       | Date       |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ------- | ---------------------------- | ---------- |
+| Router, launch parity, flows (local, before the build) | `pnpm vitest run src/ui-main/ipc/ipc-routing.contract.test.ts src/legacy-bridge/parity src/host/wiring/flows`                           | branch `feat/issue-001-route-switch` (local) | Windows | passed (54 files, 478 tests) | 2026-10-18 |
+| Claude driver conformance (local, before the build)    | `pnpm vitest run src/host/modules/suppliers/adapters/drivers/claude-stream-json src/host/modules/suppliers/adapters/drivers/acp-claude` | branch `feat/issue-001-route-switch` (local) | Windows | passed (3 files, 117 tests)  | 2026-10-18 |
+| Step-3a L9 (local, before the build)                   | `pnpm build:native && pnpm build && pnpm exec playwright test -c playwright.config.ts e2e/cut-3a e2e/stop-all`                          | branch `feat/issue-001-route-switch` (local) | Windows | passed (4 of 4)              | 2026-10-18 |
+| Release lanes of the 3a internal build (TC-001-05)     |                                                                                                                                         |                                              | Windows |                              |            |
+| Release lanes of the 3a internal build (TC-001-05)     |                                                                                                                                         |                                              | macOS   |                              |            |
+| Release lanes of the 3a internal build (TC-001-05)     |                                                                                                                                         |                                              | Linux   |                              |            |
+
+Two product defects the step-3a L9 cases found, fixed in this step (RED first):
+
+- **A Windows npm `claude` could not start** (`could-not-start`, `spawn EFTYPE`): an npm install resolves to its script
+  entry, which the stream-json driver spawned as a program. Its launch, resume and help probe now start the entry with
+  the person's `node` through `adapterLaunch` (#1360), as the ACP drivers do; no `node` resolves → `not-installed`,
+  nothing spawned, never a shell (R17). Case: `ClaudeStreamJsonDriver.conformance.test.ts` "[C-02, ADR-029] on
+  Windows an npm-installed claude that resolves to a script entry …".
+- **Stop dwarf… skipped the legacy end of a legacy-launched Claude session**: the 3a feed switched Claude's legacy
+  discovery off, so `LegacyDwarfIdBridge` had no legacy side to join and `LegacyEndFirstAdapter` relayed `crew.stop`
+  straight. A moved provider now keeps only the sessions today's launched register names (`legacy-launched`, `21` §3:
+  the feed shrinks, the adapter needs the join). Cases: `LegacyAgentRegistryFeed.test.ts` "[ADR-001] in 3a Claude keeps
+  only the sessions today’s runtime launched …" and `e2e/cut-3a/stop-legacy-launched.e2e.ts`.
 
 ## Launch-cause mapping
 
