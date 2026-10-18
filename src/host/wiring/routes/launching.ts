@@ -76,7 +76,7 @@ import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { HostInvariantError } from '../../kernel/domain/errors'
-import type { ConversationCommands } from '../../modules/conversation'
+import { launchPromptEntry, type ConversationCommands } from '../../modules/conversation'
 import {
   departureCause,
   type CrewCommands,
@@ -151,18 +151,8 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
     events.subscribe('LaunchRequested', (event) => changed(event.payload.launchId)),
     events.subscribe('DwarfLaunched', (event) => {
       const { launchId, dwarfId, prompt } = event.payload
-      conversation.ingest(
-        dwarfId,
-        [
-          {
-            sourceKey: `dwarfai:launch:${launchId}:prompt`,
-            role: 'person',
-            text: prompt,
-            providerTime: null
-          }
-        ],
-        'live-stream'
-      )
+      // The driver's echo of the prompt merges into this row (INV-60; GitHub #1430).
+      conversation.ingest(dwarfId, [launchPromptEntry(launchId, prompt)], 'live-stream')
       changed(launchId)
     }),
     events.subscribe('LaunchHandedBack', (event) => changed(event.payload.launchId)),

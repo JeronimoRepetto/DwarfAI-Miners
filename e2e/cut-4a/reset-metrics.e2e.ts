@@ -1,9 +1,11 @@
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import {
+  chooseTrayItem,
   createIsolatedProfile,
   disposeProfile,
   launchApp,
+  TRAY_ITEMS,
   waitForHostAttached,
   type IsolatedProfile,
   type LaunchedApp
@@ -48,10 +50,15 @@ test.describe('step 4a: Reset metrics through the Host saga (ISSUE-235)', () => 
     launched = await launchApp({
       profile: owned,
       stubs: path.join(STUB_BIN, 'claude'),
+      trayProbe: true,
       tracePath: test.info().outputPath('trace.zip')
     })
     await waitForHostAttached(owned)
-    const { window } = launched
+    const { app, window } = launched
+    // The Panel is built hidden at start (the tray state): a person opens it from the tray, which fits it to the screen
+    // (zoom, then bounds). Driving the never-shown window instead left its page unzoomed in a window sized for the
+    // zoomed page, so on a screen whose UI scale is below 1 (the Windows runner) Settings drew its tabs off-screen.
+    await chooseTrayItem(app, TRAY_ITEMS.open)
     await answerFirstRunStep(window)
 
     // A Host-owned preference changed before the reset (A-43, routed host in 4a).
