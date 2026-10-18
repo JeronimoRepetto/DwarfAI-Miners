@@ -1,5 +1,15 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  HostFrame,
+  HostFrames,
+  IpcResult,
+  LaunchFailure,
+  LaunchId,
+  LaunchWire,
+  MineId,
+  SnapshotPage
+} from '@dwarfai/contracts'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import {
   COMPOSER_ENABLED_PLACEHOLDER,
@@ -635,6 +645,195 @@ describe('routing a launch to the channel its provider can actually use', () => 
 
     expect(launch.phase.value).toBe('prompt-ready')
     expect(launch.state.value.error).toBeTruthy()
+  })
+})
+
+/*
+ * APPENDED for ISSUE-179 (read side, ISSUE-001 part C): the launches as a read model of the snapshot `launches` section
+ * and the `launch.changed` / `launch.failed` frames (14 §4.1, §4.3 rule 7; ADR-020 D1; ADR-033 item 3). The call side
+ * (A-35 with `LaunchParams`, A-36) lands with the step-3a switch, ISSUE-001. Placed here, not at the end of the file,
+ * so concurrent appends to this file merge as a union.
+ */
+describe('useAgentLaunch read model', () => {
+  type Api = Window['api']
+  type SnapshotAnswer = IpcResult<SnapshotPage>
+
+  const EPOCH = 'epoch-1'
+  const ALPHA = '01920000-0000-7000-8000-00000000a001' as MineId
+  const BRAVO = '01920000-0000-7000-8000-00000000a002' as MineId
+  const FIRST = '01920000-0000-7000-8000-00000000f001' as LaunchId
+  const SECOND = '01920000-0000-7000-8000-00000000f002' as LaunchId
+  const BORIN = '01920000-0000-7000-8000-00000000d001'
+  /** 2026-10-06T09:00:00.000Z, in epoch ms. */
+  const NINE = 1_791_277_200_000
+
+  function launch(launchId: LaunchId, overrides: Partial<LaunchWire> = {}): LaunchWire {
+    return {
+      launchId,
+      mineId: ALPHA,
+      state: 'routing',
+      wayKind: 'supplier',
+      providerId: 'claude',
+      requestedAt: NINE,
+      ...overrides
+    } as LaunchWire
+  }
+
+  const FAILURE: LaunchFailure = {
+    cause: 'exited-at-once',
+    supplierLabel: 'Claude Code',
+    actions: ['retry', 'pick-manually'],
+    toolOutputTail: 'error: unknown option --foo'
+  }
+
+  function page(seq: number, launches: LaunchWire[]): SnapshotAnswer {
+    return {
+      ok: true,
+      value: {
+        snapshotId: `snap-${seq}`,
+        seq,
+        epoch: EPOCH,
+        chunks: [{ section: 'launches', data: launches }]
+      }
+    }
+  }
+
+  function frame<F extends keyof HostFrames>(seq: number, name: F, data: HostFrames[F]): HostFrame {
+    return { type: 'evt', seq, epoch: EPOCH, name, data } as HostFrame
+  }
+
+  /** A-N01 answers each scripted page in turn (the last repeats); A-N02 is pushed by the test. */
+  function installHost(answers: Array<SnapshotAnswer | (() => SnapshotAnswer)>) {
+    let listener: ((frames: HostFrame[]) => void) | null = null
+    let next = 0
+    const getHostSnapshot = vi.fn(() => {
+      const answer = answers[Math.min(next, answers.length - 1)]!
+      next += 1
+      return Promise.resolve(typeof answer === 'function' ? answer() : answer)
+    })
+    stubApi({
+      getHostSnapshot: getHostSnapshot as unknown as Api['getHostSnapshot'],
+      onHostEvent: ((follow: (frames: HostFrame[]) => void) => {
+        listener = follow
+        return () => {
+          listener = null
+        }
+      }) as unknown as Api['onHostEvent']
+    })
+    return {
+      getHostSnapshot,
+      push(frames: HostFrame[]) {
+        if (listener === null) throw new Error('nothing follows onHostEvent')
+        listener(frames)
+      }
+    }
+  }
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 10; i += 1) await Promise.resolve()
+  }
+
+  beforeEach(() => {
+    useAgentLaunch().hostLaunches.stop()
+  })
+
+  it('[NFR-TIM-07] the in-flight state lasts until launch.changed or launch.failed, never a timer', async () => {
+    vi.useFakeTimers()
+    try {
+      const host = installHost([page(5, [launch(FIRST), launch(SECOND, { state: 'spawned' })])])
+      const { hostLaunches } = useAgentLaunch()
+      expect(await hostLaunches.start()).toBe(true)
+      expect(hostLaunches.inFlight(FIRST)).toBe(true)
+
+      // However long the Host takes, nothing in the window ends the launch for it.
+      vi.advanceTimersByTime(DETACHED_TIMEOUT_MS * 10)
+      expect(hostLaunches.inFlight(FIRST)).toBe(true)
+      expect(hostLaunches.inFlight(SECOND)).toBe(true)
+
+      host.push([
+        frame(6, 'launch.changed', {
+          launch: launch(FIRST, { state: 'succeeded', dwarfId: BORIN } as Partial<LaunchWire>)
+        })
+      ])
+      expect(hostLaunches.inFlight(FIRST)).toBe(false)
+      expect(hostLaunches.of(FIRST)?.wire?.dwarfId).toBe(BORIN)
+
+      host.push([frame(7, 'launch.failed', { launchId: SECOND, mineId: ALPHA, failure: FAILURE })])
+      expect(hostLaunches.inFlight(SECOND)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('[ADR-020] a launch.failed frame puts the failure with its cause, label, actions and tail into the state', async () => {
+    const host = installHost([page(5, [launch(FIRST)])])
+    const { hostLaunches } = useAgentLaunch()
+    await hostLaunches.start()
+    host.push([frame(6, 'launch.failed', { launchId: FIRST, mineId: ALPHA, failure: FAILURE })])
+    expect(hostLaunches.of(FIRST)).toEqual({
+      launchId: FIRST,
+      mineId: ALPHA,
+      wire: launch(FIRST),
+      failure: FAILURE
+    })
+    expect(hostLaunches.inMine(ALPHA).map((entry) => entry.failure)).toEqual([FAILURE])
+    expect(hostLaunches.inMine(BRAVO)).toEqual([])
+  })
+
+  it('[ADR-033] frames with seq at or below the snapshot seq are dropped', async () => {
+    let host: ReturnType<typeof installHost> | null = null
+    host = installHost([
+      () => {
+        // Arrives while the snapshot is read: buffered, then dropped, as the snapshot already reflects seq 5.
+        host!.push([
+          frame(5, 'launch.failed', { launchId: FIRST, mineId: ALPHA, failure: FAILURE })
+        ])
+        return page(5, [launch(FIRST)])
+      }
+    ])
+    const { hostLaunches } = useAgentLaunch()
+    await hostLaunches.start()
+    await settle()
+    host.push([frame(4, 'launch.changed', { launch: launch(FIRST, { state: 'lost' }) })])
+    expect(hostLaunches.of(FIRST)).toEqual({
+      launchId: FIRST,
+      mineId: ALPHA,
+      wire: launch(FIRST),
+      failure: null
+    })
+    expect(hostLaunches.inFlight(FIRST)).toBe(true)
+  })
+
+  it('[ADR-033] a launch missing from a re-snapshot is gone, and nothing is inferred from the difference', async () => {
+    const host = installHost([
+      page(5, [launch(FIRST), launch(SECOND, { mineId: BRAVO })]),
+      page(9, [launch(FIRST)])
+    ])
+    const { hostLaunches } = useAgentLaunch()
+    await hostLaunches.start()
+    expect(hostLaunches.inMine(BRAVO).map((entry) => entry.launchId)).toEqual([SECOND])
+    host.push([frame(6, 'resync-required', { reason: 'ring-overrun' })])
+    await settle()
+    expect(host.getHostSnapshot).toHaveBeenCalledTimes(2)
+    expect(hostLaunches.of(SECOND)).toBeUndefined()
+    expect(hostLaunches.inMine(BRAVO)).toEqual([])
+    expect(hostLaunches.inFlight(FIRST)).toBe(true)
+  })
+
+  it('[ADR-033] until the route switch a refused snapshot leaves the launches unfed', async () => {
+    stubApi({
+      getHostSnapshot: vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          error: { code: 'METHOD_NOT_FOUND', message: 'unrouted', retryable: false }
+        })
+      ) as unknown as Api['getHostSnapshot'],
+      onHostEvent: vi.fn(() => () => undefined) as unknown as Api['onHostEvent']
+    })
+    const { hostLaunches } = useAgentLaunch()
+    expect(await hostLaunches.start()).toBe(false)
+    expect(hostLaunches.of(FIRST)).toBeUndefined()
+    expect(hostLaunches.inFlight(FIRST)).toBe(false)
   })
 })
 

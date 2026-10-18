@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive } from 'vue'
 import type {
+  Delivery,
   DwarfId,
   HostFrame,
   HostFrames,
@@ -1534,6 +1535,87 @@ describe('useDwarfMessaging chat from the Host read model', () => {
     expect(chatFeedOf(BORIN)?.messages.map((message) => message.text)).toEqual(['line 1'])
     stopChat()
     expect(chatFeedOf(DAIN)).toBeUndefined()
+  })
+
+  /*
+   * APPENDED for ISSUE-179 (read side, ISSUE-001 part C): the delivery marks join the chat read model, the snapshot
+   * `marks` section and the `message.delivery` frames (14 §4.1; ADR-022 item 1). A mark is the Host's phase of one
+   * message, never a renderer guess from elapsed time or from a send answer.
+   */
+  function delivery(
+    n: number,
+    phase: Delivery['phase'],
+    overrides: Partial<Delivery> = {}
+  ): Delivery {
+    return {
+      messageId: id(n),
+      dwarfId: BORIN,
+      kind: 'message',
+      phase,
+      attempts: 1,
+      phaseAt: NINE + n * 60_000,
+      ...overrides
+    }
+  }
+
+  function marks(...deliveries: Delivery[]): SnapshotPage['chunks'] {
+    return [{ section: 'marks', data: deliveries }]
+  }
+
+  beforeEach(() => {
+    useDwarfMessaging().stopMarks()
+  })
+
+  afterEach(() => {
+    useDwarfMessaging().stopMarks()
+  })
+
+  it("[ADR-022] a mark changes only on message.delivery and the reopened snapshot shows the Host's phase", async () => {
+    vi.useFakeTimers()
+    try {
+      const host = installHost([
+        page(5, marks(delivery(1, 'sending'))),
+        page(9, marks(delivery(1, 'reacted')))
+      ])
+      const { startMarks, hostMarkOf } = useDwarfMessaging()
+      await startMarks()
+      expect(hostMarkOf(id(1))).toEqual(delivery(1, 'sending'))
+
+      // Time alone never moves a mark: no timer decays or promotes the Host's phase.
+      vi.advanceTimersByTime(10 * 60_000)
+      expect(hostMarkOf(id(1))?.phase).toBe('sending')
+
+      // A frame at or below the snapshot seq is already in it.
+      host.push([frame(5, 'message.delivery', { delivery: delivery(1, 'failed') })])
+      expect(hostMarkOf(id(1))?.phase).toBe('sending')
+
+      host.push([
+        frame(6, 'message.delivery', { delivery: delivery(1, 'delivered', { attempts: 2 }) })
+      ])
+      expect(hostMarkOf(id(1))).toEqual(delivery(1, 'delivered', { attempts: 2 }))
+
+      // Reopened: the snapshot replaces the marks whole with the Host's phase.
+      host.push([frame(7, 'resync-required', { reason: 'ring-overrun' })])
+      await settle()
+      expect(hostMarkOf(id(1))).toEqual(delivery(1, 'reacted'))
+      expect(host.requests.at(-1)).toEqual({ sections: ['marks'] })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('[ADR-033] a send answer adds nothing the Host did not state', async () => {
+    const host = installHost([page(5, marks(delivery(1, 'delivered')))])
+    host.api.sendDwarfText = vi.fn(() =>
+      Promise.resolve({ delivered: true, via: 'terminal' } as const)
+    ) as unknown as Window['api']['sendDwarfText']
+    const { startMarks, send, hostMarkOf, hostMarksOf } = useDwarfMessaging()
+    await startMarks()
+    expect(await send(BORIN, 'one more line', true)).toBe(true)
+    // The answer is today's legacy verdict, the panel's echo; the Host's marks hold only what the Host stated.
+    expect(hostMarksOf(BORIN)).toEqual([delivery(1, 'delivered')])
+    expect(hostMarkOf(id(2))).toBeUndefined()
+    useDwarfMessaging().clearAll()
   })
 })
 

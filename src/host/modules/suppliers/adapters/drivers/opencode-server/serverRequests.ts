@@ -18,6 +18,14 @@ export function abortRequest(sessionId: string, directory: string): ServerReques
   }
 }
 
+/**
+ * The session list of a server: `GET /session`, answered `Session[]` (opencode.ai/docs/server;
+ * S-031-3 measured its 401 / 200 against a password-protected server).
+ */
+export function listSessionsRequest(): ServerRequest {
+  return { method: 'GET', path: '/session' }
+}
+
 /** How a session of the server driver ends (15 §4.6 End / kill; ADR-014). */
 export type ClosePlan =
   | { readonly kind: 'abort'; readonly request: ServerRequest }

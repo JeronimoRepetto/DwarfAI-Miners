@@ -43,6 +43,15 @@ export const LEGACY_FEED_PROVIDERS_CUT_1: LegacyFeedModes = {
 }
 
 /**
+ * Step 3a (21 §2 cut 3a): Claude's launch, send, console and stop rows move to the Host, so its legacy discovery is
+ * switched off; every other provider's rows are still `legacy`. Passed by the step's route switch (ISSUE-001).
+ */
+export const LEGACY_FEED_PROVIDERS_CUT_3A: LegacyFeedModes = {
+  ...LEGACY_FEED_PROVIDERS_CUT_1,
+  claude: 'off'
+}
+
+/**
  * Today's runtime as the feed is handed it: its providers' discovery, its in-memory agent registry, and the parts of
  * today's observer the feed must never compose (they are on the surface so that the router test and this bridge's
  * own test can prove nothing reaches them). Bound inside `src/legacy-bridge/**` only (R16).
