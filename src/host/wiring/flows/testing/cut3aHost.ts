@@ -498,6 +498,14 @@ export async function bootHost(w: World, options: BootOptions) {
             bus,
             hostEpoch: epoch,
             simulatedSeed: 'seed-182',
+            // As host/main.ts: "Other…" (ISSUE-165; 15 §4.11), the person's command spawned with no
+            // shell. ADDED for ISSUE-186, so the step-3d flows launch "Other…" through this Host.
+            hostedCommand: {
+              processControl: processes,
+              loginEnv: { PATH: TOOLS },
+              platform: hostRuntime().os as 'win32' | 'darwin' | 'linux',
+              redact: redactSecrets
+            },
             cliDrivers: {
               processControl: processes,
               loginEnv: { PATH: TOOLS },
