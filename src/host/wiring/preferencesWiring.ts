@@ -1,7 +1,7 @@
 // The preferences module's wiring (05 §3.12, §4; 16 §4.12, §8.2), in two parts:
 //
 // - `servePreferences`, run by the composition root before the boot binds the endpoint: the
-//   module's seam-B members (14 §2.3 B-M10, B-M11, B-M12, B-M13, B-M15, B-M09, B-M39, B-M40) on the Host dispatcher and its
+//   module's seam-B members (14 §2.3 B-M10, B-M11, B-M12, B-M13, B-M14, B-M15, B-M09, B-M39, B-M40) on the Host dispatcher and its
 //   snapshot section (14 §4.1). A UI that attaches while the Host is `starting` gets a `hello.ok`
 //   whose capabilities already list them (14 §1.3), so its HostClient never refuses them locally.
 //   They forward to the module boot step 3 constructs; until then (`starting`, `migrating`) the
@@ -17,7 +17,8 @@
 //   ISSUE-222: `welcome` joined to the module's queries, its boot evaluation run by boot step 8,
 //   07 machine 41) over the suppliers installed detection (`installedTools`,
 //   bridges/installedTools.ts) and the config writer's legacy probe, the "Claude Code · instant
-//   updates" toggle (`setClaudeHooks`, ISSUE-221) with the transport's credential minter
+//   updates" toggle (`setClaudeHooks`, ISSUE-221) and the "OpenCode · permission requests" toggle
+//   (`setOpenCodePermissions`, B-M14, ISSUE-228) with the transport's credential minter
 //   (transport/auth/mintCredential.ts; lead decision 2026-09-30, ISSUE-198), the first-run step's
 //   answer (`createWelcomeAnswer`, ISSUE-223: `answerWelcome` joined to the module's commands and
 //   served as B-M40; ISSUE-323), the secrets' configured flags (`createSecrets`, ISSUE-216:
@@ -93,6 +94,7 @@ import { preferencesSection, registerPreferences } from '../transport/methods/pr
 import { ConnectionResetUiFanout, registerResetMetrics } from '../transport/methods/resetMetrics'
 import { registerAnswerWelcome } from '../transport/methods/answerWelcome'
 import { registerSetClaudeHooks } from '../transport/methods/setClaudeHooks'
+import { registerSetOpenCodePermissions } from '../transport/methods/setOpenCodePermissions'
 import { registerSettingsSecret } from '../transport/methods/settingsSecret'
 import type { SectionRegistry } from '../transport/snapshot/sectionRegistry'
 import { ingressChannelTokens } from './bridges/channelTokens'
@@ -230,6 +232,7 @@ export function servePreferences(serve: PreferencesServeDeps): ServedPreferences
     commands: {
       set: (key, value) => current().commands.set(key, value),
       setClaudeHooks: (on, origin) => current().commands.setClaudeHooks(on, origin),
+      setOpenCodePermissions: (on, origin) => current().commands.setOpenCodePermissions(on, origin),
       resetMetrics: (cmd) => current().commands.resetMetrics(cmd),
       answerWelcome: (choice) => current().commands.answerWelcome(choice),
       saveSecret: (name, value) => current().commands.saveSecret(name, value),
@@ -249,6 +252,7 @@ export function servePreferences(serve: PreferencesServeDeps): ServedPreferences
   registerPreferences(serve.dispatcher, { preferences: served })
   registerSettingsSecret(serve.dispatcher, { commands: served.commands })
   registerSetClaudeHooks(serve.dispatcher, { commands: served.commands })
+  registerSetOpenCodePermissions(serve.dispatcher, { commands: served.commands })
   registerAnswerWelcome(serve.dispatcher, { commands: served.commands, queries: served.queries })
   registerResetMetrics(serve.dispatcher, { reset: served.commands, fanout: acks })
   serve.sections.registerSection('preferences', ['ui'], preferencesSection(served))
@@ -343,6 +347,7 @@ function wirePreferences(
     commands: {
       set: (key, value) => module.commands.set(key, value),
       setClaudeHooks: (on, origin) => module.commands.setClaudeHooks(on, origin),
+      setOpenCodePermissions: (on, origin) => module.commands.setOpenCodePermissions(on, origin),
       resetMetrics: (cmd) => saga.resetMetrics(cmd),
       answerWelcome: (choice) => answer.answerWelcome(choice),
       saveSecret: (name, value) => secrets.saveSecret(name, value),

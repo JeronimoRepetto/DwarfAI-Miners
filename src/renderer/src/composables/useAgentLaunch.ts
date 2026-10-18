@@ -221,6 +221,10 @@ const mineId = ref<string | null>(null)
 const providers = ref<AgentProviderOption[]>([])
 /** What each provider can start on, live (#239) — asked once per open, beside `providers`. */
 const catalogs = ref<AgentModelCatalog[]>([])
+/** The integration notice's action (ISSUE-228): idle until used, then running, then settled or failed. */
+const noticeAction = ref<'idle' | 'enabling' | 'failed'>('idle')
+/** Auto-accept paused on a Jev pick of a provider whose permission requests cannot be answered (S5.25). */
+const pausedForNotice = ref(false)
 
 const LOST_BRIDGE = 'The panel lost contact with the app.'
 const NOT_LAUNCHED = 'The agent could not be started.'
@@ -229,6 +233,22 @@ const NOT_LAUNCHED = 'The agent could not be started.'
 const NO_CATALOGUE: IpcResult<readonly SupplierEntryView[]> = {
   ok: false,
   error: { code: 'INTERNAL', message: 'the catalogue could not be asked', retryable: true }
+}
+
+/**
+ * The panel's provider entries of an A-36 answer (`launchSourcesOf`), each with the capability fields of its 14 §3.6
+ * `SupplierEntryView` the integration notice and the Permissions list read (`answerChannel`, `offeredModes`).
+ */
+function providerEntriesOf(answer: IpcResult<readonly SupplierEntryView[]>): ProviderEntry[] {
+  const views = answer.ok ? answer.value : []
+  return launchSourcesOf(answer).providers.map((option) => {
+    const view = views.find((entry) => entry.providerId === option.provider)
+    return {
+      ...option,
+      ...(view?.answerChannel === undefined ? {} : { answerChannel: view.answerChannel }),
+      ...(view?.offeredModes === undefined ? {} : { offeredModes: [...view.offeredModes] })
+    }
+  })
 }
 
 /** A Jev ask that reached nothing: no card, the pickers as they stood (US-LAUNCH-003.AC08). */
@@ -293,7 +313,45 @@ export interface AgentLaunch {
    * calls it on unmount.
    */
   listenFailures: () => () => void
+  /**
+   * The notice over the composer while the chosen provider's permission requests cannot be answered from the app
+   * (ADR-011 item 7; 07 5A S5.02): its entry is `answerChannel: 'gated-off'` until its integration is on. `offered`
+   * shows the action, `enabling` while the action runs (no launch leaves meanwhile), `failed` when the option did not
+   * turn on (the write failed, or the refreshed entry is still gated): the launch still goes out, without an answer
+   * channel. The copy is the view's (ADR-011 O-14).
+   */
+  integrationNotice: ComputedRef<IntegrationNotice>
+  /**
+   * The Permissions list of the chosen provider as its entry offers it (14 §3.6 `offeredModes`, ADR-011 item 1), the
+   * interactive mode ("Ask first") first once its permission requests can be answered; empty when the entry lists none.
+   */
+  offeredModes: ComputedRef<string[]>
+  /**
+   * Auto-accept paused on a Jev pick whose permission requests cannot be answered (PO #108; 07 S5.25): the pick is
+   * shown as a suggestion with the notice, and nothing launches until the person acts.
+   */
+  pausedForNotice: ComputedRef<boolean>
+  /** Whether Jev's card reads as accepted automatically (`jevCardEyebrow`): auto-accept on and not paused. */
+  jevAccepted: ComputedRef<boolean>
+  /**
+   * The notice's action (07 S5.02, S5.26; US-LAUNCH-001.AC13): turns the option on (A-53, consent origin
+   * `add-panel`), then asks the provider list again and redraws the Permissions list from it. Never launches; the
+   * person's Send does, after it settled. A no-op while no notice is shown or the action already runs.
+   */
+  enableIntegration: () => Promise<void>
 }
+
+/** What the Add panel's integration notice shows (see `AgentLaunch.integrationNotice`). */
+export type IntegrationNotice =
+  { shown: false } | { shown: true; state: 'offered' | 'enabling' | 'failed' }
+
+/**
+ * A provider entry as the panel reads it: today's A-36 entry, plus the capability fields of 14 §3.6
+ * `SupplierEntryView` the A-36 answer carries from its switch (`answerChannel`, `offeredModes`). Today's answer has
+ * neither, so its providers show no notice and keep today's Permissions select (hidden until built, 21 §1 item 8).
+ */
+type ProviderEntry = AgentProviderOption &
+  Partial<Pick<SupplierEntryView, 'answerChannel' | 'offeredModes'>>
 
 /**
  * Ask the bridge for one thing, and answer with `fallback` for EITHER way it
@@ -317,6 +375,49 @@ export function useAgentLaunch(): AgentLaunch {
   const phase = computed(() => launchPhase(state.value))
   const refusal = computed(() => launchRefusal(providers.value, state.value.choice))
   const jev = computed(() => state.value.jev)
+  /** The chosen provider's entry, read for its capabilities (R12: never its id). */
+  const chosenEntry = computed((): ProviderEntry | undefined => {
+    const choice = state.value.choice
+    return choice === null
+      ? undefined
+      : (providers.value as ProviderEntry[]).find((entry) => entry.provider === choice)
+  })
+  /** ADR-011 item 7: the chosen provider's permission requests wait for an integration that is off. */
+  const gated = computed(() => chosenEntry.value?.answerChannel === 'gated-off')
+  const integrationNotice = computed((): IntegrationNotice => {
+    if (noticeAction.value === 'enabling') return { shown: true, state: 'enabling' }
+    if (!gated.value) return { shown: false }
+    return { shown: true, state: noticeAction.value === 'failed' ? 'failed' : 'offered' }
+  })
+
+  /** A new choice, an open or a close forgets the notice's last outcome and any pause (07 S5.28). */
+  function resetNotice(): void {
+    if (noticeAction.value !== 'enabling') noticeAction.value = 'idle'
+    pausedForNotice.value = false
+  }
+
+  async function enableIntegration(): Promise<void> {
+    if (!gated.value || noticeAction.value === 'enabling') return
+    noticeAction.value = 'enabling'
+    try {
+      // A-53 (14 §2.1): the option turns on as if from Settings, with the consent origin `add-panel` once the
+      // step-4a switch gives the bridge its target shape (ISSUE-235); until then the bridge takes the boolean.
+      await window.api.setOpenCodePluginEnabled(true)
+    } catch {
+      // The provider list below tells whether the option turned on; the notice states it when it did not.
+    }
+    // A-36 again (07 S5.03; ADR-011 item 7 "re-derives its Permissions list"): the entry says whether its
+    // permission requests can now be answered, and which modes are offered.
+    const answer = await safelyAsk(
+      () => window.api.listAgentProviders({ refresh: true }),
+      NO_CATALOGUE
+    )
+    if (answer.ok) providers.value = providerEntriesOf(answer)
+    const stillGated = gated.value
+    noticeAction.value = stillGated ? 'failed' : 'idle'
+    // S5.26: the pick applies and the form is ready; auto-accept does not resume, the person still sends.
+    if (!stillGated) pausedForNotice.value = false
+  }
 
   /**
    * Open the panel on a mine, and ask what this machine has.
@@ -343,20 +444,21 @@ export function useAgentLaunch(): AgentLaunch {
   async function open(mine: string): Promise<void> {
     mineId.value = mine
     state.value = openLaunch(state.value)
+    resetNotice()
     const [catalogue, jevSettings] = await Promise.all([
       safelyAsk(() => window.api.listAgentProviders({ refresh: true }), NO_CATALOGUE),
       // AMENDED for the #509 follow-up: the fallback carries the documented
       // default's `preferences` too, now that JevSettings always has one.
       safelyAsk<JevSettings>(() => window.api.getJevSettings(), { ...DEFAULT_JEV_SETTINGS })
     ])
-    const sources = launchSourcesOf(catalogue)
-    providers.value = sources.providers
-    catalogs.value = sources.catalogs
+    providers.value = providerEntriesOf(catalogue)
+    catalogs.value = launchSourcesOf(catalogue).catalogs
     state.value = setJevSettings(state.value, jevSettings)
   }
 
   function close(): void {
     state.value = closeLaunch(state.value)
+    resetNotice()
     mineId.value = null
     providers.value = []
     catalogs.value = []
@@ -364,6 +466,7 @@ export function useAgentLaunch(): AgentLaunch {
 
   function choose(choice: LaunchChoice): void {
     state.value = chooseProvider(state.value, choice)
+    resetNotice()
   }
 
   function setCommand(text: string): void {
@@ -468,6 +571,9 @@ export function useAgentLaunch(): AgentLaunch {
     // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves. The prompt stays.
     if (useHostConnection().readOnly.value) return
     if (!canSubmit(state.value) || mineId.value === null) return
+    // The notice's action is running (ADR-011 item 7; 07 S5.02): the enable completes before any launch is sent.
+    if (noticeAction.value === 'enabling') return
+    pausedForNotice.value = false
 
     const refused = refusal.value
     if (refused !== null) {
@@ -608,6 +714,11 @@ export function useAgentLaunch(): AgentLaunch {
     retry,
     pickManually,
     observe,
-    listenFailures
+    listenFailures,
+    integrationNotice,
+    offeredModes: computed(() => [...(chosenEntry.value?.offeredModes ?? [])]),
+    pausedForNotice: computed(() => pausedForNotice.value),
+    jevAccepted: computed(() => state.value.jev.autoAccept && !pausedForNotice.value),
+    enableIntegration
   }
 }

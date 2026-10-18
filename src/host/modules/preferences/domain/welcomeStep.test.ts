@@ -42,8 +42,6 @@ const TRIGGERS: readonly WelcomeTrigger[] = [
 ]
 
 const ANSWERED_AT = 1_750_000_000_000
-const CUT_2: readonly IntegrationId[] = ['claude-hooks']
-const BOTH: readonly IntegrationId[] = ['claude-hooks', 'opencode-permissions']
 
 describe('first-run consent step (07 machine 41)', () => {
   it('[S41.01, S41.02, S41.03, S41.07, S41.09] every machine-41 boot transition reaches its target state and an unlisted one is rejected', () => {
@@ -65,7 +63,7 @@ describe('first-run consent step (07 machine 41)', () => {
 
     // S41.01: never answered (fresh DB or a finished Reset, S41.07) and a tool offered.
     expect(
-      evaluate({ answeredAt: null, installed: ['claude-hooks'], legacyFound: [], cutFilter: CUT_2 })
+      evaluate({ answeredAt: null, installed: ['claude-hooks'], legacyFound: [] })
     ).toStrictEqual({ due: true, reason: 'first-run', legacyFound: [], offered: ['claude-hooks'] })
     // S41.02: an old-app entry of an offered target wins over first-run, answered or not.
     for (const answeredAt of [null, ANSWERED_AT]) {
@@ -73,8 +71,7 @@ describe('first-run consent step (07 machine 41)', () => {
         evaluate({
           answeredAt,
           installed: ['claude-hooks'],
-          legacyFound: ['claude-hooks'],
-          cutFilter: CUT_2
+          legacyFound: ['claude-hooks']
         })
       ).toStrictEqual({
         due: true,
@@ -88,44 +85,40 @@ describe('first-run consent step (07 machine 41)', () => {
       evaluate({
         answeredAt: ANSWERED_AT,
         installed: ['claude-hooks'],
-        legacyFound: [],
-        cutFilter: CUT_2
+        legacyFound: []
       })
     ).toStrictEqual({ due: false, legacyFound: [], offered: ['claude-hooks'] })
-    // S41.09: nothing offered — neither tool installed, or only one the cut does not offer — is a
-    // skip, never due, whatever the answer and the old-app entries.
-    for (const installed of [[], ['opencode-permissions']] as IntegrationId[][]) {
+    // S41.09: nothing offered (neither tool installed) is a skip, never due, whatever the answer
+    // and the old-app entries.
+    for (const installed of [[]] as IntegrationId[][]) {
       for (const answeredAt of [null, ANSWERED_AT]) {
         expect(
           evaluate({
             answeredAt,
             installed,
-            legacyFound: ['opencode-permissions'],
-            cutFilter: CUT_2
+            legacyFound: ['opencode-permissions']
           })
         ).toStrictEqual({ due: false, legacyFound: [], offered: [] })
       }
     }
   })
 
-  it('[US-SET-012.AC07, S41.01] offered holds only the installed tools the cut filter allows, in the step order', () => {
+  it('[US-SET-012.AC07, S41.01] offered holds every installed tool and only those, in the step order', () => {
     expect(
-      evaluate({ answeredAt: null, installed: BOTH, legacyFound: [], cutFilter: CUT_2 }).offered
+      evaluate({ answeredAt: null, installed: ['claude-hooks'], legacyFound: [] }).offered
     ).toStrictEqual(['claude-hooks'])
     expect(
       evaluate({
         answeredAt: null,
         installed: ['opencode-permissions', 'claude-hooks'],
-        legacyFound: [],
-        cutFilter: BOTH
+        legacyFound: []
       }).offered
     ).toStrictEqual(['claude-hooks', 'opencode-permissions'])
     expect(
       evaluate({
         answeredAt: null,
         installed: ['opencode-permissions'],
-        legacyFound: [],
-        cutFilter: BOTH
+        legacyFound: []
       }).offered
     ).toStrictEqual(['opencode-permissions'])
   })
@@ -134,9 +127,8 @@ describe('first-run consent step (07 machine 41)', () => {
     expect(
       evaluate({
         answeredAt: ANSWERED_AT,
-        installed: BOTH,
-        legacyFound: ['opencode-permissions'],
-        cutFilter: CUT_2
+        installed: ['claude-hooks'],
+        legacyFound: ['opencode-permissions']
       })
     ).toStrictEqual({ due: false, legacyFound: [], offered: ['claude-hooks'] })
   })

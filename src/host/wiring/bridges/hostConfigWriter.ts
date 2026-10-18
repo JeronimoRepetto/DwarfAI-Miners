@@ -12,15 +12,18 @@
 //   `config-write-failed` (16 §7.3 Tx B failure, the same outcome). An entry pointing at a port
 //   nothing listens on would be an integration that is never on in fact. Turning it off, the boot
 //   re-verification and the legacy probe need no port and always reach the engine.
-// - `opencode-plugin` → `verify` and `revert` only (lead decision 2026-10-16, ISSUE-233): the Reset
-//   saga's `external-config` step removes the plugin file (16 §7.4; ADR-023 item 1; S13.03), so
-//   host/main.ts passes the config writer engine with the `OpenCodePluginConfigWriter` target
-//   (ISSUE-227), and the boot re-verification reaches it too (16 §7.3). The enable stays with the
-//   legacy installer until ISSUE-228 and ISSUE-232, since a foreign config entry has exactly one
-//   writer per release (21 §1 item 4): `install` is refused and `findLegacy` is never true (S41.02
-//   runs on offered targets only, offeredFilter.ts). With no plugin writer composed (a wiring whose
-//   OpenCode plugin folder is unknown), `verify` answers `absent` and `revert` completes with
-//   nothing to remove.
+// - `opencode-plugin` → the config writer engine with the `OpenCodePluginConfigWriter` target
+//   (ISSUE-227), which host/main.ts passes: the Reset saga's `external-config` step removes the plugin
+//   file (16 §7.4; ADR-023 item 1; S13.03; ISSUE-233), the boot re-verification reaches it (16 §7.3),
+//   and from ISSUE-228 the enable of `preferences.setOpenCodePermissions` (B-M14) does too. The plugin
+//   reports to the hook ingress on that same persisted port (ADR-016 item 3), so its enable fails
+//   closed without one exactly as the Claude hook entry's does. One writer per release (21 §1 item 4)
+//   still holds: B-M14 has no routed caller before the step-4a switch (ISSUE-235), which moves A-53
+//   off today's installer. `findLegacy` is never true here, and `enablableInstalledTools` keeps
+//   OpenCode out of the first-run step: the step-4a switch opens both together with the A-52/A-53
+//   routes (later: ISSUE-235), so the Host never becomes a second writer of the plugin file. With no plugin writer
+//   composed (a wiring whose OpenCode plugin folder is unknown), `install` fails with `io`, `verify`
+//   answers `absent` and `revert` completes with nothing to remove.
 //
 // Neither the token nor its hash reaches a log record (NFR-SEC-12, ADR-026).
 import { HostInvariantError } from '../../kernel/domain/errors'
@@ -36,8 +39,8 @@ import type { IngressPortRecord } from '../../transport/ingress/ingressPort'
 export interface HostConfigWriterDeps {
   /** The config writer engine with the `claude-hooks` target (host/main.ts). */
   claudeHooks: ExternalConfigWriter
-  /** The config writer engine with the `opencode-plugin` target (host/main.ts, ISSUE-233). */
-  openCodePlugin?: Pick<ExternalConfigWriter, 'verify' | 'revert'>
+  /** The config writer engine with the `opencode-plugin` target (host/main.ts, ISSUE-233, ISSUE-228). */
+  openCodePlugin?: Pick<ExternalConfigWriter, 'install' | 'verify' | 'revert'>
   /** `app_meta.ingress_port` as the hook ingress persisted it (bridges/ingressPort.ts). */
   ingressPort: Pick<IngressPortRecord, 'read'>
   log: DiagnosticsLog
@@ -48,7 +51,8 @@ export function hostConfigWriter(deps: HostConfigWriterDeps): ExternalConfigWrit
   const { claudeHooks, openCodePlugin } = deps
   return {
     install: (target, token, origin, tokenSha256) => {
-      if (target !== 'claude-hooks') return Promise.resolve({ ok: false, error: 'io' })
+      const writer = target === 'claude-hooks' ? claudeHooks : openCodePlugin
+      if (writer === undefined) return Promise.resolve({ ok: false, error: 'io' })
       if (deps.ingressPort.read() === null) {
         deps.log.record({
           level: 'warn',
@@ -60,7 +64,7 @@ export function hostConfigWriter(deps: HostConfigWriterDeps): ExternalConfigWrit
         })
         return Promise.resolve({ ok: false, error: 'io' })
       }
-      return claudeHooks.install(target, token, origin, tokenSha256)
+      return writer.install(target, token, origin, tokenSha256)
     },
     verify: (target) => {
       if (target === 'claude-hooks') return claudeHooks.verify(target)
@@ -100,7 +104,7 @@ export function persistedIngressPort(record: Pick<IngressPortRecord, 'read'>): (
  * is not offered, so the step is not due for it. The step has no close and no skip (ISSUE-224), and
  * an "Activate" that can only answer `config-write-failed` would hold the Panel. Claude Code counts
  * once the hook ingress persisted its port (`hostConfigWriter` refuses the enable before that);
- * OpenCode never in cut 2 (no Host writer, see above). Read on every call, so a later boot with the
+ * OpenCode not before its first-run option (later: ISSUE-232). Read on every call, so a later boot with the
  * port persisted offers it. An old-app entry of a tool not offered is not looked for either (07
  * S41.02 runs on offered targets only): it is neither adopted nor shown.
  */

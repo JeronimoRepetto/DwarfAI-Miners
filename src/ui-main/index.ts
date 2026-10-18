@@ -307,6 +307,10 @@ import {
   SET_CLAUDE_HOOKS_ROWS
 } from './ipc/handlers/setClaudeHooks.host'
 import {
+  createOpenCodeSettingsRows,
+  OPENCODE_SETTINGS_ROWS
+} from './ipc/handlers/openCodeSettings.host'
+import {
   ANSWER_WELCOME,
   ANSWER_WELCOME_ROWS,
   createAnswerWelcomeRow
@@ -1113,6 +1117,21 @@ export function composeJevKeyRows(deps: {
 }
 
 /**
+ * A-52 `getOpenCodeSettings` (B-M12) and A-53 `setOpenCodePluginEnabled` (B-M14), ISSUE-228: the part of the `host`
+ * target serving the rows the table routes `host`, which the step-4a switch does (ISSUE-235, 22 §5). `undefined` while
+ * it routes neither (every table before that switch, where today's handlers keep serving them).
+ */
+export function composeOpenCodeSettingsRows(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+}): RouteTargetPart | undefined {
+  const rows = OPENCODE_SETTINGS_ROWS.filter((channel) => routedTo(deps.routes, channel, 'host'))
+  return rows.length === 0
+    ? undefined
+    : { channels: rows, target: createOpenCodeSettingsRows(deps.client) }
+}
+
+/**
  * A-N08 `renameDwarf` (B-M22) and A-N09 `resetDwarfName` (B-M23), ISSUE-172: each a part of the `host` target only
  * where the table routes it `host` (lead decision 2026-10-17: born `host` in cut 2, the renderer's board being the
  * Host's). `undefined` when it routes neither (the cut-1 table).
@@ -1744,6 +1763,9 @@ export async function startUiMain({
       : composeAskStepAndIntegrationRows({ routes, client: host.client })
   const dwarfNameRows =
     host === undefined ? undefined : composeDwarfNameRows({ routes, client: host.client })
+  // A-52/A-53 once the step-4a switch routes them `host` (ISSUE-235; ISSUE-228).
+  const openCodeRows =
+    host === undefined ? undefined : composeOpenCodeSettingsRows({ routes, client: host.client })
   // A-47…A-49 and the one-time Jev-key migration, once the step-3a switch routes them (ISSUE-001; ISSUE-217).
   const jevKey = composeJevKeyRows({
     routes,
@@ -1785,6 +1807,7 @@ export async function startUiMain({
     askAnswers?.part === undefined &&
     cut2Rows === undefined &&
     dwarfNameRows === undefined &&
+    openCodeRows === undefined &&
     jevKey?.part === undefined &&
     jevRouteRow === undefined &&
     conversationRows === undefined &&
@@ -1802,6 +1825,7 @@ export async function startUiMain({
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
           ...(cut2Rows === undefined ? [] : [cut2Rows]),
           ...(dwarfNameRows === undefined ? [] : [dwarfNameRows]),
+          ...(openCodeRows === undefined ? [] : [openCodeRows]),
           ...(jevKey?.part === undefined ? [] : [jevKey.part]),
           ...(jevRouteRow === undefined ? [] : [jevRouteRow]),
           ...(conversationRows === undefined ? [] : [conversationRows]),
