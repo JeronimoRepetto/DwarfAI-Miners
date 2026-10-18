@@ -60,6 +60,8 @@ import {
   secretStatusResultSchema,
   setClaudeHooksParamsSchema,
   setClaudeHooksResultSchema,
+  setOpenCodePermissionsParamsSchema,
+  setOpenCodePermissionsResultSchema,
   type AnswerWelcomeParams,
   type AnswerWelcomeResult,
   type MetricsResetResult,
@@ -68,7 +70,9 @@ import {
   type SecretSetParams,
   type SecretStatusResult,
   type SetClaudeHooksParams,
-  type SetClaudeHooksResult
+  type SetClaudeHooksResult,
+  type SetOpenCodePermissionsParams,
+  type SetOpenCodePermissionsResult
 } from './params/preferences'
 import {
   attachmentPickSchema,
@@ -128,7 +132,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M10, B-M11, B-M12, B-M13, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M35, B-M36, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M10, B-M11, B-M12, B-M13, B-M14, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M35, B-M36, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -150,6 +154,7 @@ export interface HostMethods {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'preferences.get':                 { params: {}; result: PreferencesView }
   'preferences.set':                 { params: PreferenceSetParams; result: HostPreferences }
+  'preferences.setOpenCodePermissions': { params: SetOpenCodePermissionsParams; result: SetOpenCodePermissionsResult }
   'preferences.setClaudeHooks':      { params: SetClaudeHooksParams; result: SetClaudeHooksResult }       // AMENDMENT-7
   'preferences.answerWelcome':       { params: AnswerWelcomeParams; result: AnswerWelcomeResult }         // AMENDMENT-7
   'preferences.resetMetrics':        { params: ResetMetricsParams; result: MetricsResetResult }
@@ -317,6 +322,13 @@ export const HOST_METHOD_SCHEMAS = {
   // B-M09 (14 §2.3): `ui` only; idempotent by its own shape, so it carries no requestId
   // (dedupe/mutatingMethods.ts). B-M15: `confirmed: 'yes'` only (ADR-019; the trimmed,
   // case-insensitive comparison of the typed text is the dialog's, 07 S13.01).
+  // B-M14 (14 §2.3, §3.4; ADR-011 item 7; ADR-016 item 5): `ui` only, mutating (requestId). The origin is the
+  // wire's, `settings` or `add-panel`; `first-run` is INVALID_PARAMS (only B-M40 consents for the first-run step,
+  // AMENDMENT-7). Answered after the write and read-back (14 §1.7; host/transport/methods/setOpenCodePermissions.ts).
+  'preferences.setOpenCodePermissions': {
+    params: setOpenCodePermissionsParamsSchema,
+    result: setOpenCodePermissionsResultSchema
+  },
   // B-M39 (14 §2.3, §3.4; AMENDMENT-7): `ui` only, mutating (requestId). The origin is the Host's
   // (`settings`, host/transport/methods/setClaudeHooks.ts), never the wire's.
   'preferences.setClaudeHooks': {

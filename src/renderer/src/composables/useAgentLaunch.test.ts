@@ -18,6 +18,7 @@ import {
   JEV_NO_CHOICE_REFUSAL,
   OTHER_CHOICE
 } from '../lib/launch/launchState'
+import { jevCardEyebrow } from '../lib/launch/jevCardCopy'
 import { defaultDwarf, defaultMine } from '../testing/factories'
 import type { Dwarf, LaunchFailedPush, Mine } from '../types'
 import { useAgentLaunch } from './useAgentLaunch'
@@ -1802,5 +1803,180 @@ describe('the launch-failure notice (#635)', () => {
     expect(launch.state.value.failure).toBeNull()
     expect(launch.state.value.prompt).toBe('dig the east gallery')
     expect(launch.phase.value).toBe('provider-selection')
+  })
+})
+
+/*
+ * ADDED for ISSUE-228 (ADR-011 item 7; 07 machine 5A S5.02, S5.03, S5.25…S5.28; UC-009, UC-028): the Add panel's
+ * OpenCode notice. A provider whose permission requests the app cannot answer while its integration is off is
+ * listed with `answerChannel: 'gated-off'` (14 §3.6 `SupplierEntryView`, the A-36 answer from its switch); the panel
+ * reads that capability, never a provider id (R12). Its action turns the option on (A-53, origin `add-panel`),
+ * then asks A-36 again and redraws the Permissions list from the refreshed entry; no launch leaves while it is
+ * pending. TC-228-03.
+ */
+describe('the OpenCode permission-requests notice (ISSUE-228)', () => {
+  const GATED = {
+    provider: 'opencode' as const,
+    installed: true,
+    launchable: true,
+    answerChannel: 'gated-off' as const,
+    offeredModes: ['build']
+  }
+  const ANSWERED = { ...GATED, answerChannel: 'available' as const, offeredModes: ['ask', 'build'] }
+  const OPENCODE_PICK = {
+    kind: 'decision' as const,
+    provider: 'opencode' as const,
+    model: 'opencode/sonnet',
+    confidence: 0.9,
+    truncated: false
+  }
+
+  function deferred<T>() {
+    let resolve: (value: T) => void = () => undefined
+    const promise = new Promise<T>((settle) => {
+      resolve = settle
+    })
+    return { promise, resolve }
+  }
+
+  async function openWith(overrides: Record<string, unknown> = {}) {
+    const api = stubApi({
+      listAgentProviders: vi
+        .fn()
+        .mockResolvedValueOnce({ providers: [CLAUDE, GATED] })
+        .mockResolvedValue({ providers: [CLAUDE, ANSWERED] }),
+      setOpenCodePluginEnabled: vi.fn().mockResolvedValue({ pluginEnabled: true }),
+      ...overrides
+    }) as ReturnType<typeof stubApi> & { setOpenCodePluginEnabled: ReturnType<typeof vi.fn> }
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    return { api, launch }
+  }
+
+  it('[US-LAUNCH-001.AC12, S5.02] choosing OpenCode while the option is off shows the notice with its action', async () => {
+    const { launch } = await openWith()
+
+    expect(launch.integrationNotice.value).toEqual({ shown: false })
+
+    launch.choose('opencode')
+    expect(launch.integrationNotice.value).toEqual({ shown: true, state: 'offered' })
+
+    launch.choose('claude')
+    expect(launch.integrationNotice.value).toEqual({ shown: false })
+  })
+
+  it('[US-LAUNCH-001.AC13, S5.03] using the action turns the option on, hides the notice and offers Ask first after the refresh', async () => {
+    const { api, launch } = await openWith()
+    launch.choose('opencode')
+    expect(launch.offeredModes.value).toEqual(['build'])
+
+    await launch.enableIntegration()
+
+    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledOnce()
+    expect(api.listAgentProviders).toHaveBeenCalledTimes(2)
+    expect(launch.integrationNotice.value).toEqual({ shown: false })
+    // The interactive mode ("Ask first") now leads the Permissions list (US-LAUNCH-001 order).
+    expect(launch.offeredModes.value).toEqual(['ask', 'build'])
+    expect(api.launchAgent).not.toHaveBeenCalled()
+  })
+
+  it('[US-LAUNCH-001.AC13, S5.02] no launch is sent while the enable is pending; the person launches once it settled', async () => {
+    const enabling = deferred<unknown>()
+    const { api, launch } = await openWith({
+      setOpenCodePluginEnabled: vi.fn().mockReturnValue(enabling.promise)
+    })
+    launch.choose('opencode')
+    launch.setPrompt('dig the east gallery')
+
+    const action = launch.enableIntegration()
+    expect(launch.integrationNotice.value).toEqual({ shown: true, state: 'enabling' })
+    await launch.submit()
+    expect(api.launchAgent).not.toHaveBeenCalled()
+
+    enabling.resolve({ pluginEnabled: true })
+    await action
+    await launch.submit()
+
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+    expect(api.launchAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'opencode', prompt: 'dig the east gallery' })
+    )
+  })
+
+  it('[ADR-011] a write that fails keeps the notice, states the failure, and the launch still goes out without an answer channel', async () => {
+    const { api, launch } = await openWith({
+      listAgentProviders: vi.fn().mockResolvedValue({ providers: [CLAUDE, GATED] })
+    })
+    launch.choose('opencode')
+    launch.setPrompt('dig the east gallery')
+
+    await launch.enableIntegration()
+
+    expect(launch.integrationNotice.value).toEqual({ shown: true, state: 'failed' })
+    expect(launch.offeredModes.value).toEqual(['build'])
+    await launch.submit()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+  })
+
+  it('[US-LAUNCH-001.AC14] launching without the action writes nothing and sends a launch with no Ask first', async () => {
+    const { api, launch } = await openWith()
+    launch.choose('opencode')
+    launch.setPrompt('dig the east gallery')
+
+    await launch.submit()
+
+    expect(api.setOpenCodePluginEnabled).not.toHaveBeenCalled()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+    const request = api.launchAgent.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(request).toMatchObject({ provider: 'opencode', prompt: 'dig the east gallery' })
+    expect(request).not.toHaveProperty('permissionMode')
+  })
+
+  it('[US-LAUNCH-001.AC15, US-LAUNCH-003.AC14, S5.25] with auto-accept on a Jev pick of OpenCode pauses as JEV SUGGESTS and shows the notice before anything launches', async () => {
+    const { api, launch } = await openWith({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+      routeJevLaunch: vi.fn().mockResolvedValue(OPENCODE_PICK)
+    })
+    launch.toggleJevEnabled()
+    launch.toggleJevAutoAccept()
+    launch.setPrompt('dig the east gallery')
+    expect(jevCardEyebrow(launch.jevAccepted.value)).toBe('JEV · ACCEPTED AUTOMATICALLY')
+
+    await launch.submit()
+
+    expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+    expect(api.launchAgent).not.toHaveBeenCalled()
+    expect(api.launchHeldSession).not.toHaveBeenCalled()
+    expect(api.setOpenCodePluginEnabled).not.toHaveBeenCalled()
+    expect(launch.state.value.choice).toBe('opencode')
+    expect(launch.pausedForNotice.value).toBe(true)
+    expect(jevCardEyebrow(launch.jevAccepted.value)).toBe('JEV SUGGESTS')
+    expect(launch.integrationNotice.value).toEqual({ shown: true, state: 'offered' })
+
+    // Send without the action: OpenCode launches as a provider without an answer channel (S5.27).
+    await launch.submit()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+    expect(api.setOpenCodePluginEnabled).not.toHaveBeenCalled()
+  })
+
+  it('[US-LAUNCH-003.AC14, S5.26] the action from the pause turns the option on and leaves the launch to the person', async () => {
+    const { api, launch } = await openWith({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+      routeJevLaunch: vi.fn().mockResolvedValue(OPENCODE_PICK)
+    })
+    launch.toggleJevEnabled()
+    launch.toggleJevAutoAccept()
+    launch.setPrompt('dig the east gallery')
+    await launch.submit()
+
+    await launch.enableIntegration()
+
+    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledOnce()
+    expect(launch.pausedForNotice.value).toBe(false)
+    expect(launch.integrationNotice.value).toEqual({ shown: false })
+    // Auto-accept does not resume on its own: nothing launched until the person's Send.
+    expect(api.launchAgent).not.toHaveBeenCalled()
+    await launch.submit()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
   })
 })

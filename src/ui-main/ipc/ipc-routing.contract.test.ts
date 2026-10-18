@@ -22,6 +22,7 @@ import {
   composeAskStepAndIntegrationRows,
   composeBoardFacade,
   composeDwarfNameRows,
+  composeOpenCodeSettingsRows,
   composeLegacyAgentRegistryFeed,
   composeLegacyAskRelay,
   composeLegacyDwarfIdBridge,
@@ -3195,5 +3196,77 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
     } finally {
       await rm(userData, { recursive: true, force: true })
     }
+  })
+})
+
+// ADDED for ISSUE-228: A-52 and A-53 are CHANGE rows the step-4a switch routes `host` (ISSUE-235, 22 §5); until then
+// today's handlers serve them. These cases drive a table built here with both rows routed `host`.
+describe('step 4a A-52 and A-53 (21 §2 step 4a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const REQUEST = '01920000-0000-7000-a000-000000000228'
+  const ROWS: ChannelKey[] = ['opencode:settings:get', 'opencode:plugin:set']
+
+  it('[ADR-001, ADR-011] the root composes the A-52/A-53 host handlers only where the table routes them host, relaying preferences.get and preferences.setOpenCodePermissions', async () => {
+    const sent: Array<[string, unknown]> = []
+    const client = {
+      call: (method: string, params: unknown) => {
+        sent.push([method, params])
+        return Promise.resolve(
+          method === 'preferences.get'
+            ? {
+                preferences: { subagentDelegationOn: false, routingProfile: 'balanced' },
+                secrets: [{ name: 'opencode-password', configured: false }],
+                secretBackend: 'os-secret-store',
+                integrations: [{ id: 'opencode-permissions', state: 'off', changedAt: 1 }],
+                welcome: { due: false, legacyFound: [], offered: [] }
+              }
+            : { ok: true, value: { state: 'on-verified' } }
+        )
+      }
+    } as unknown as Parameters<typeof composeOpenCodeSettingsRows>[0]['client']
+
+    // Today's table keeps them `legacy` with today's shape: the root composes nothing for them.
+    for (const key of ROWS) {
+      expect(
+        ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
+        key
+      ).toEqual([['legacy', 'today']])
+    }
+    expect(composeOpenCodeSettingsRows({ routes: ROUTES, client })).toBeUndefined()
+
+    const switched: ChannelRoute[] = ROWS.map((channel) => ({
+      channel,
+      owner: 'host',
+      since: 'cut-4a',
+      parity: 'pending',
+      shape: 'target'
+    }))
+    const rows = composeOpenCodeSettingsRows({ routes: switched, client })
+    expect(rows?.channels).toEqual(ROWS)
+    const router = createRouter({
+      routes: switched,
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(rows === undefined ? {} : { host: rows.target }),
+      senders
+    })
+    const get = await router.dispatch('opencode:settings:get', FROM_PANEL, undefined)
+    expect(CHANNELS['opencode:settings:get'].response.safeParse(get).success).toBe(true)
+    expect(get).toEqual({
+      ok: true,
+      value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+    })
+    const set = await router.dispatch('opencode:plugin:set', FROM_PANEL, {
+      on: true,
+      origin: 'add-panel',
+      requestId: REQUEST
+    })
+    expect(CHANNELS['opencode:plugin:set'].response.safeParse(set).success).toBe(true)
+    expect(set).toEqual({ ok: true, value: { ok: true, value: { state: 'on-verified' } } })
+    expect(sent).toEqual([
+      ['preferences.get', {}],
+      ['preferences.setOpenCodePermissions', { on: true, origin: 'add-panel', requestId: REQUEST }]
+    ])
   })
 })
