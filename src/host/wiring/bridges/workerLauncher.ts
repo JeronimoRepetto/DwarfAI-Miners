@@ -2,9 +2,8 @@
 // it; ISSUE-180; ADR-013 items 1, 4; UC-017): delegation → launching. Jev already picked the
 // worker for the subtask; the bridge sends one delegated launch and answers once it settled.
 //
-// - The structural `WorkerLauncher` type is declared here (lead decision 2026-09-30): the delegation
-//   module has no `ports/workerLauncher.ts` yet. ISSUE-209 binds it to that port and deletes this
-//   local type.
+// - It implements the delegation module's `WorkerLauncher` port (ports/subtaskRouting.ts); ISSUE-209
+//   bound it there and deleted the structural copy of the lead decision of 2026-09-30.
 // - The request (09 D-17; 07 S5.10): the parent's mine, the task as the worker's first message, no
 //   "Let Jev choose" (`jevOn: false`, so `launched_with_let_jev_choose = 0` and no delegation entry
 //   for the worker, INV-81), and `delegation` naming the delegation and its delegating dwarf. A pick
@@ -24,17 +23,8 @@ import type { LaunchFailureCause } from '../../kernel/domain/sharedContracts'
 import type { DwarfId, LaunchId, ProviderId, Result } from '../../kernel/domain/values'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { CrewQueries } from '../../modules/crew'
+import type { WorkerLauncher } from '../../modules/delegation'
 import type { LaunchingCommands, LaunchingEvent, LaunchRequestInput } from '../../modules/launching'
-
-// Amended: 05 §3.8 / 16 §4.8 WorkerLauncher.launchWorker delegationId (AMENDMENT-15 (owner, 2026-10-15))
-export interface WorkerLauncher {
-  launchWorker(
-    delegationId: string,
-    parent: DwarfId,
-    pick: JevSuggestionView,
-    task: string
-  ): Promise<Result<DwarfId, LaunchFailureCause>>
-} // bridge → launching
 
 export interface WorkerLauncherDeps {
   /** The launching module's `launch` (16 §4.5): answers at acceptance. */

@@ -3,7 +3,13 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { CHANNELS, PRELOAD_HELPERS, ROW_IDS, type ChannelKey } from '@dwarfai/contracts'
+import {
+  CHANNELS,
+  MEMBER_REMOVED,
+  PRELOAD_HELPERS,
+  ROW_IDS,
+  type ChannelKey
+} from '@dwarfai/contracts'
 import { createFakeWindowApi } from './fakeWindowApi'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..', '..')
@@ -28,7 +34,13 @@ const catalog14: CatalogRow[] = JSON.parse(
     'utf8'
   )
 ).rows
-const KEYS = Object.keys(CHANNELS) as ChannelKey[]
+/*
+ * AMENDED for ISSUE-183 (was: every registry key): a RETIRE row whose member left with its route (`MEMBER_REMOVED`, A-26
+ * in 3a, the release this fake is generated for) has no member, so the fake carries those of every other row.
+ */
+const KEYS = (Object.keys(CHANNELS) as ChannelKey[]).filter(
+  (key) => MEMBER_REMOVED[key] === undefined
+)
 const helpers: readonly string[] = PRELOAD_HELPERS
 
 /**

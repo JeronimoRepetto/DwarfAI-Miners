@@ -1,0 +1,16 @@
+{
+  "providerVersion": "1.18.32",
+  "capturedAt": "2026-10-17",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §4.6 (row Person-run server), ADR-017 item 3 and the S-031-3 record (spike-results/S-031-3.md: with OPENCODE_SERVER_PASSWORD set, GET /session answers 401 without auth or with a wrong password and 200 with the right one). The scheme is OpenCode's documented server auth (opencode.ai/docs/server: HTTP basic auth, username `opencode` unless OPENCODE_SERVER_USERNAME overrides it). The session objects follow the shape OpenCode 1.18.32 answered in ../1.18.32/s0111-person-run.jsonl, with synthetic ids and folders. No CLI was run.",
+  "capabilities": {
+    "driver": "http-server",
+    "server": "a person-run opencode serve on this machine's loopback, protected by OPENCODE_SERVER_PASSWORD",
+    "authScheme": "basic",
+    "authUsername": "opencode",
+    "passwordDelivery": "authorization-header"
+  }
+}

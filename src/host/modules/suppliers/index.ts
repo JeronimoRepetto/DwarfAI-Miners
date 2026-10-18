@@ -3,9 +3,10 @@
 // `launchable` (installed detection through the one `InstallResolver`, ISSUE-146), `entry` /
 // `capabilities` as the effective values of the capability merge, probe and integration gate
 // (ISSUE-147), `DriverRegistry` with the SimulatedDriver attached in
-// development builds, `SessionChannels` over the sessions the registry's drivers opened. The real
-// drivers come later (ISSUE-148…163); wiring into `host/main.ts` is ISSUE-159.
-import type { HostEpoch, ProviderId } from '../../kernel/domain/values'
+// development builds, `SessionChannels` over the sessions the registry's drivers opened. The
+// drivers of the person's own CLIs join with their process deps (`cliDrivers`, ISSUE-182); wiring
+// into `host/main.ts` is ISSUE-159.
+import type { HostEpoch, LaunchId, ProviderId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { FileSystem } from '../../kernel/ports/fileSystem'
@@ -17,13 +18,17 @@ import {
   SIMULATED_CAPABILITIES,
   SIMULATED_RECORD
 } from './adapters/catalog/profiles'
+import { ClaudeStreamJsonDriver } from './adapters/drivers/claude-stream-json/ClaudeStreamJsonDriver'
+import type { McpConfigFiles } from './adapters/drivers/claude-stream-json/mcpConfigFile'
+import type { PromptToolDeps } from './adapters/drivers/claude-stream-json/promptTool'
+import { CodexAppServerDriver } from './adapters/drivers/codex-app-server/CodexAppServerDriver'
 import { HostedCommandDriver } from './adapters/drivers/hosted-command/HostedCommandDriver'
 import { HOSTED_COMMAND_PROFILE } from './adapters/drivers/hosted-command/profile'
 import type { LoginEnvironment } from './adapters/drivers/shared/childEnv'
 import { SimulatedDriver } from './adapters/drivers/simulated/SimulatedDriver'
 import { CatalogDriverRegistry } from './adapters/registry/CatalogDriverRegistry'
 import { createSupplierCatalogue, type SupplierCatalogueQueries } from './application/catalogue'
-import { createInstallDetection } from './application/detection'
+import { createInstallDetection, type InstallDetection } from './application/detection'
 import { createCapabilityProbing } from './application/probe'
 import {
   trackLiveSessions,
@@ -32,10 +37,10 @@ import {
   type SessionReleases
 } from './application/sessionChannels'
 import type { SuppliersEvent } from './domain/events'
-import { recordsForBuild } from './domain/profile'
+import { recordsForBuild, type CatalogRecord, type DriverTransport } from './domain/profile'
 import type { CapabilityRecordStore } from './ports/capabilityRecordStore'
 import type { DriverRegistry } from './ports/driverRegistry'
-import type { ProviderDriver } from './ports/providerDriver'
+import type { ProviderDriver, SessionRef } from './ports/providerDriver'
 import type { InstallResolver } from './ports/installResolver'
 import type { IntegrationGateReader } from './ports/integrationGateReader'
 import type { SuppliedEventSink } from './ports/suppliedEventSink'
@@ -130,6 +135,41 @@ export interface HostedCommandDeps {
   readonly redact: (text: string) => string
 }
 
+/**
+ * What the drivers of the person's own CLIs spawn with (ISSUE-182), bound by `host/main.ts`: the
+ * Codex app-server driver (15 §4.4) and, once its permission prompt tool is composed, Claude's
+ * stream-json driver (15 §4.2; AMENDMENT-21). Each is attached for the catalog record whose
+ * profile lists its transport (ADR-009 D4), never by a provider id (R12).
+ */
+export interface CliDriverDeps {
+  readonly processControl: ProcessControl
+  /** The person's login environment `childEnv` copies the allowlisted variables from (15 §4). */
+  readonly loginEnv: LoginEnvironment
+  /** The folder a `--help` probe runs in (the person's home). */
+  readonly home: string
+  readonly platform: 'win32' | 'darwin' | 'linux'
+  /** The one redaction rule (`contracts/logging` `redactSecrets`), bound by the root (R9). */
+  readonly redact: (text: string) => string
+  /** `initialize.clientInfo` of the Codex app-server: who DwarfAI is to the server. */
+  readonly clientInfo: { readonly name: string; readonly version: string }
+  /**
+   * What a restarted Host's resume reads of the stored launch record (ISSUE-173): the folder and
+   * the spawn tag of a session this Host's driver did not launch (wiring/bridges/resumeContext.ts).
+   */
+  readonly resumeContext: (
+    ref: SessionRef
+  ) => { cwd: string; spawnTag: string; launchId?: LaunchId } | null
+  /**
+   * Claude's permission prompt tool (AMENDMENT-21): its `--mcp-config` files and the relay. Absent,
+   * the stream-json driver is not attached: a session without the tool would deny every tool use
+   * unseen, so nothing is offered that is not built (21 §1 item 8).
+   */
+  readonly claudeStreamJson?: {
+    readonly mcpConfig: { readonly dir: string; readonly files: McpConfigFiles }
+    readonly promptTool: PromptToolDeps
+  }
+}
+
 export interface SuppliersDeps {
   /** `CATALOG_PROVIDER_IDS`, handed over by `host/main.ts` (R9): every profile id must be in it. */
   readonly catalogIds: readonly ProviderId[]
@@ -158,6 +198,8 @@ export interface SuppliersDeps {
    * custom launch settles `not-installed` (a composition that launches no custom command).
    */
   readonly hostedCommand?: HostedCommandDeps
+  /** The person's own CLIs' drivers (ISSUE-182). Absent, none is attached. */
+  readonly cliDrivers?: CliDriverDeps
 }
 
 export interface Suppliers {
@@ -195,6 +237,15 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
       })
     )
   }
+  // One install detection behind every `detect()`, the catalogue's and each driver's (ADR-009 D5).
+  const detection = createInstallDetection({
+    resolver: deps.installResolver,
+    fs: deps.fs,
+    scheduler: deps.scheduler
+  })
+  if (deps.cliDrivers !== undefined) {
+    drivers.push(...cliDrivers(records, detection, deps, deps.cliDrivers))
+  }
   const registry = new CatalogDriverRegistry({
     catalogIds: deps.catalogIds,
     records,
@@ -206,11 +257,7 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
     catalogue: createSupplierCatalogue({
       records,
       publicBuild: deps.publicBuild,
-      detection: createInstallDetection({
-        resolver: deps.installResolver,
-        fs: deps.fs,
-        scheduler: deps.scheduler
-      }),
+      detection,
       // Probing only detects and probes: it never launches, so it reads the plain registry.
       probing: createCapabilityProbing({
         registry,
@@ -229,4 +276,46 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
     releases: tracked.releases,
     registry: tracked.registry
   }
+}
+
+/** The CLI drivers of this build's records, each for the record whose profile lists its transport. */
+function cliDrivers(
+  records: readonly CatalogRecord[],
+  detection: InstallDetection,
+  deps: SuppliersDeps,
+  cli: CliDriverDeps
+): ProviderDriver[] {
+  const recordOf = (transport: DriverTransport): CatalogRecord | undefined =>
+    records.find((record) => record.profile.drivers.includes(transport))
+  const shared = {
+    detection,
+    processControl: cli.processControl,
+    clock: deps.clock,
+    scheduler: deps.scheduler,
+    loginEnv: cli.loginEnv,
+    home: cli.home,
+    platform: cli.platform,
+    redact: cli.redact,
+    resumeContext: cli.resumeContext
+  }
+  const attached: ProviderDriver[] = []
+  const codex = recordOf('app-server-rpc')
+  if (codex !== undefined) {
+    attached.push(
+      new CodexAppServerDriver({ ...shared, record: codex, clientInfo: cli.clientInfo })
+    )
+  }
+  const claude = recordOf('stream-json')
+  if (claude !== undefined && cli.claudeStreamJson !== undefined) {
+    attached.push(
+      new ClaudeStreamJsonDriver({
+        ...shared,
+        record: claude,
+        ids: deps.ids,
+        mcpConfig: cli.claudeStreamJson.mcpConfig,
+        promptTool: cli.claudeStreamJson.promptTool
+      })
+    )
+  }
+  return attached
 }

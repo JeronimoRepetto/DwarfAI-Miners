@@ -1,5 +1,3 @@
-import type { DwarfActivation } from '../../types'
-
 /**
  * Whether the floating panel should hide itself after a dwarf activation.
  *
@@ -15,6 +13,8 @@ import type { DwarfActivation } from '../../types'
  * settings panel's Hide button — which is the renderer's only caller left, this
  * guard having always answered false.
  */
-export function shouldHidePanelAfterActivation(_result: DwarfActivation): boolean {
+// AMENDED for ISSUE-001 (was: `_result: DwarfActivation`): from 3a A-13 answers the 14 `ConsoleOpenResult`, and the
+// guard reads no field of either, so it takes whichever answer the activation had.
+export function shouldHidePanelAfterActivation(_result: unknown): boolean {
   return false
 }

@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { DEFAULT_JEV_SETTINGS, type JevPreferences, type JevSettings } from '../types'
 import type { AgentModelCatalog, AgentProviderOption } from '../types'
 import { useHostConnection } from './useHostConnection'
+import { launchSourcesOf } from '../lib/launch/supplierEntries'
 
 /**
  * State for Settings' Jev API-key control (#509).
@@ -77,6 +78,12 @@ function acrossTheBridge(preferences: JevPreferences): JevPreferences {
   }
 }
 
+/** A catalogue that could not be asked: no source, as a call error reads (lib/launch/supplierEntries.ts). */
+const NO_CATALOGUE = {
+  ok: false,
+  error: { code: 'INTERNAL', message: 'the catalogue could not be asked', retryable: true }
+} as const
+
 export function useJevSettings() {
   // Matches main's DEFAULT_JEV_SETTINGS so the first paint is almost always
   // right; sync() corrects it from the stored verdict after mount.
@@ -85,14 +92,17 @@ export function useJevSettings() {
   const providers = ref<AgentProviderOption[]>([])
   const catalogs = ref<AgentModelCatalog[]>([])
 
-  /** Ask what this machine can launch, for the default-launch pickers. */
+  /**
+   * Ask what this machine can launch, for the default-launch pickers. AMENDED for ISSUE-001 (was: today's A-36 and A-37,
+   * asked together): from 3a A-36 answers every provider's entry with its models (`SupplierEntryView`, A-37 retired),
+   * read into the pickers' own lists (lib/launch/supplierEntries.ts).
+   */
   async function loadLaunchSources(): Promise<void> {
-    const [providersAnswer, catalogsAnswer] = await Promise.all([
-      safelyAsk(() => window.api.listAgentProviders(), { providers: [] }),
-      safelyAsk(() => window.api.listAgentModels(), { catalogs: [] })
-    ])
-    providers.value = providersAnswer.providers
-    catalogs.value = catalogsAnswer.catalogs
+    const sources = launchSourcesOf(
+      await safelyAsk(() => window.api.listAgentProviders({}), NO_CATALOGUE)
+    )
+    providers.value = sources.providers
+    catalogs.value = sources.catalogs
   }
 
   /** Adopt the stored verdict; on failure keep the last known value. */

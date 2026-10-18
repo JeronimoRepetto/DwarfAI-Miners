@@ -159,7 +159,7 @@ describe('Host boot sequence (16 §8.2, ADR-015 item 3)', () => {
     )
   })
 
-  it('[ADR-015, ADR-016] step 6 starts the hook ingress after recovery and before observation, and names only the MCP endpoint as not built', async () => {
+  it('[ADR-015, ADR-016] step 6 starts the hook ingress and the MCP endpoint after recovery and before observation, with no part left unbuilt', async () => {
     const stepsLoggedAtStart: string[][] = []
     const h = harness({
       startHookIngress: () => {
@@ -184,7 +184,7 @@ describe('Host boot sequence (16 §8.2, ADR-015 item 3)', () => {
     ).toEqual(
       expect.objectContaining({
         outcome: 'ok',
-        msg: 'step start-endpoints done; mcp-endpoint skipped until ISSUE-209'
+        msg: 'step start-endpoints done'
       })
     )
   })

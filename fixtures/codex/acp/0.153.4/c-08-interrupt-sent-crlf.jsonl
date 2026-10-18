@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
+{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"<REPO>","mcpServers":[]}}
+{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"00000000-0000-4000-8000-000000000001","prompt":[{"type":"text","text":"Using a shell command, create an empty file named outside.txt in the parent folder of the current folder (one level up). That folder is outside your writable workspace, so request approval to run the command with escalated permissions. Do not try any other way. Then reply with the single word done."}]}}
+{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"00000000-0000-4000-8000-000000000001"}}
+{"jsonrpc":"2.0","id":0,"result":{"outcome":{"outcome":"cancelled"}}}

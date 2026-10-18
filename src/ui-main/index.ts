@@ -37,6 +37,7 @@ import { createLegacyAskRelay, legacyOpenAsksOf } from '../legacy-bridge/LegacyA
 import {
   createLegacyAgentRegistryFeed,
   LEGACY_FEED_PROVIDERS_CUT_1,
+  LEGACY_FEED_PROVIDERS_CUT_3A,
   type LegacyAgentRegistryFeed,
   type LegacyFeedModes,
   type LegacyFeedTimers,
@@ -56,10 +57,6 @@ import {
   type LegacyLaunchObservation
 } from '../legacy-bridge/LegacyLaunchObservation'
 import type { MirrorHalf } from '../legacy-bridge/settingsMirror/mirrorHalf'
-import {
-  createNotificationsMirrorHalf,
-  reportNotificationsWrites
-} from '../legacy-bridge/settingsMirror/notificationsHalf'
 import {
   createSettingsMirrorBridge,
   type LegacySettingsWrites
@@ -136,7 +133,8 @@ import {
   PROTOCOL_VERSION,
   type ChannelKey,
   type DwarfId,
-  type StepId
+  type StepId,
+  type StopDwarfParams
 } from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
@@ -242,6 +240,44 @@ import {
   CATALOG_MERGE_CHANNELS,
   createCatalogMergeAdapter
 } from '../legacy-bridge/shape/CatalogMergeAdapter'
+import {
+  createLegacySettlementJoin,
+  createSettlementPushMap,
+  type LegacySettlementJoin
+} from '../legacy-bridge/shape/legacySettlementJoin'
+import {
+  reportSettingsMirrorWrites,
+  settingsMirrorHalves
+} from '../legacy-bridge/settingsMirror/settingsMirrorHalves'
+import {
+  createLaunchAgentRow,
+  LAUNCH_AGENT,
+  LAUNCH_AGENT_ROWS
+} from './ipc/handlers/launchAgent.host'
+import {
+  createSendDwarfTextRow,
+  SEND_DWARF_TEXT,
+  SEND_DWARF_TEXT_ROWS
+} from './ipc/handlers/sendDwarfText.host'
+import {
+  createDescribeAttachmentsRow,
+  DESCRIBE_ATTACHMENTS,
+  DESCRIBE_ATTACHMENTS_ROWS
+} from './ipc/handlers/describeAttachments.host'
+import {
+  createRetryDwarfMessageRow,
+  RETRY_DWARF_MESSAGE,
+  RETRY_DWARF_MESSAGE_ROWS
+} from './ipc/handlers/retryDwarfMessage.host'
+import { createRecoveryReportRow, RECOVERY_REPORT_ROWS } from './ipc/handlers/recoveryReport.host'
+import { createStopDwarfRow, STOP_DWARF, STOP_DWARF_ROWS } from './ipc/handlers/stopDwarf.host'
+import {
+  ACTIVATE_DWARF,
+  ACTIVATE_DWARF_ROWS,
+  createActivateDwarfRow
+} from './ipc/splits/activateDwarf'
+import { composeProviderQualifiers, DWARF_PROVIDER_ROWS } from './ipc/providerQualifiers'
+import { createDwarfProviderBoard, type DwarfProviderBoard } from './ipc/dwarfProviderBoard'
 import type { LegacyAskRelay } from '../legacy-bridge/LegacyAskRelay'
 import { ANSWER_DWARF_ROWS, createAnswerDwarfRows } from './ipc/handlers/answerDwarf.host'
 import { createAnswerQualifier } from './ipc/handlers/answerDwarf.dispatch'
@@ -261,10 +297,19 @@ import {
   RESET_DWARF_NAME_ROWS
 } from './ipc/handlers/resetDwarfName.host'
 import {
+  createRouteJevLaunchRow,
+  ROUTE_JEV_LAUNCH,
+  ROUTE_JEV_LAUNCH_ROWS
+} from './ipc/handlers/routeJevLaunch.host'
+import {
   createSetClaudeHooksRow,
   SET_CLAUDE_HOOKS,
   SET_CLAUDE_HOOKS_ROWS
 } from './ipc/handlers/setClaudeHooks.host'
+import {
+  createOpenCodeSettingsRows,
+  OPENCODE_SETTINGS_ROWS
+} from './ipc/handlers/openCodeSettings.host'
 import {
   ANSWER_WELCOME,
   ANSWER_WELCOME_ROWS,
@@ -272,6 +317,8 @@ import {
 } from './ipc/handlers/answerWelcome.host'
 import {
   createSecretMigrationBridge,
+  LEGACY_JEV_KEY,
+  LEGACY_OPENCODE_PASSWORD,
   type MigrationHostClient,
   type SecretMigrationBridge,
   type SecretMigrationBridgeDeps
@@ -291,6 +338,10 @@ import {
   createSystemNotificationsRows,
   SYSTEM_NOTIFICATIONS_ROWS
 } from './ipc/handlers/systemNotifications.host'
+import {
+  createOpenCodePasswordRows,
+  OPENCODE_PASSWORD_ROWS
+} from './ipc/handlers/openCodePassword.host'
 
 /** The 21 §3.1 shape adapter of A-40/A-41's qualified `legacy` routes (cuts 2–4). */
 const LEGACY_ANSWER_SHAPE_ADAPTER = 'LegacyAnswerShapeAdapter'
@@ -680,7 +731,8 @@ function movedProvidersOf(routes: readonly ChannelRoute[]): ReadonlySet<string> 
  * neither is. A route naming one of them for a row it does not convert stops the router, as a route naming an unbound
  * adapter does: the router starts only where the table and the composition agree. The catalog merge takes its moved
  * providers from the table (an A-36 route qualified to a provider and owned by the Host, 21 §1 item 2) and today's
- * model catalog from `models`, never through the A-37 row.
+ * model catalog from `models`, never through the A-37 row. With `settlements` (the step-3a switch, ISSUE-001) the
+ * per-provider adapter records each id it mints against today's receipt or hold (legacySettlementJoin.ts).
  */
 export function composeProviderShapeAdapters(deps: {
   routes: readonly ChannelRoute[]
@@ -689,6 +741,7 @@ export function composeProviderShapeAdapters(deps: {
   models: { read(): Promise<unknown> }
   client: Pick<HostClient, 'call'> | undefined
   mintId: () => string
+  settlements?: LegacySettlementJoin
 }): Readonly<Record<string, RouteTarget>> | undefined {
   const served: ReadonlyArray<readonly [string, readonly string[]]> = [
     [PER_PROVIDER_SHAPE_ADAPTER, PER_PROVIDER_SHAPE_CHANNELS],
@@ -703,7 +756,11 @@ export function composeProviderShapeAdapters(deps: {
       throw new Error(`router: shape adapter ${name} does not serve ${stray.channel}`)
     }
     if (name === PER_PROVIDER_SHAPE_ADAPTER) {
-      bound[name] = createPerProviderShapeAdapter({ legacy: deps.legacy, mintId: deps.mintId })
+      bound[name] = createPerProviderShapeAdapter({
+        legacy: deps.legacy,
+        mintId: deps.mintId,
+        ...(deps.settlements === undefined ? {} : { settlements: deps.settlements })
+      })
     } else {
       bound[name] = createCatalogMergeAdapter({
         legacy: deps.legacy,
@@ -744,6 +801,8 @@ export function composeLegacyAgentRegistryFeed(deps: {
   release: StepId
   legacy: LegacyRuntimeSurface | undefined
   modes?: LegacyFeedModes
+  /** Whether today's runtime launched the legacy dwarf: a moved provider's `legacy-launched` sessions (21 §3). */
+  launched?: (legacyDwarfId: string) => boolean
   timers?: LegacyFeedTimers
 }): LegacyAgentRegistryFeed | undefined {
   if (deps.legacy === undefined || !bridgeLivesIn('LegacyAgentRegistryFeed', deps.release)) {
@@ -752,6 +811,7 @@ export function composeLegacyAgentRegistryFeed(deps: {
   return createLegacyAgentRegistryFeed({
     legacy: deps.legacy,
     modes: deps.modes ?? LEGACY_FEED_PROVIDERS_CUT_1,
+    ...(deps.launched === undefined ? {} : { launched: deps.launched }),
     timers: deps.timers ?? realInterval
   })
 }
@@ -812,7 +872,8 @@ export interface LegacyDwarfIdComposition {
  * identity, or answer their own not-found shape, and A-P4 leaves with the Host id. Composed in the releases it is listed
  * for (cut 1, its rollback build included, to the end of 4b), never in the cut-0 table, and only over the Host attach
  * and a bound legacy registry (the legacy side of the join). Read-only toward the Host: it reads B-M41 only. Deleted at
- * the end of cut 4 with B-M41 (ISSUE-241).
+ * the end of cut 4 with B-M41 (ISSUE-241). With `settlements` (from 3a) the A-P3 / A-P4 mapping also puts the id
+ * `PerProviderShapeAdapter` answered in the push's own field (21 §3.1; legacySettlementJoin.ts).
  */
 export function composeLegacyDwarfIdBridge(deps: {
   release: StepId
@@ -820,6 +881,7 @@ export function composeLegacyDwarfIdBridge(deps: {
   legacy: RouteTarget
   registry: LegacyRuntimeSurface | undefined
   pushes?: LegacyPushTap
+  settlements?: LegacySettlementJoin
 }): LegacyDwarfIdComposition | undefined {
   const { client, registry } = deps
   if (
@@ -835,7 +897,12 @@ export function composeLegacyDwarfIdBridge(deps: {
     bridge,
     legacy: { serve: (channel, payload) => deps.legacy.serve(channel, payload) }
   })
-  const uninstall = deps.pushes?.install(rows)
+  // From 3a A-P3 and A-P4 also leave with the ids `PerProviderShapeAdapter` minted (legacySettlementJoin.ts).
+  const uninstall = deps.pushes?.install(
+    deps.settlements === undefined
+      ? rows
+      : createSettlementPushMap({ join: deps.settlements, inner: rows })
+  )
   return {
     legacy: { serve: (channel, payload) => rows.serve(channel, payload) },
     registry: withRegistry(registry, tap.registry),
@@ -1044,6 +1111,7 @@ export function composeJevKeyRows(deps: {
     bridgeLivesIn('SecretMigrationBridge', release)
       ? createSecretMigrationBridge({
           ...deps.migration,
+          secret: LEGACY_JEV_KEY,
           hostClient: client,
           newRequestId: deps.mintId,
           log: deps.log
@@ -1091,6 +1159,74 @@ export function composeJevKeyRows(deps: {
   }
 }
 
+/** The OpenCode server password rows as the root composes them (ISSUE-231). */
+export interface OpenCodePasswordComposition {
+  /** A-54/A-55's `host` target part. */
+  part: RouteTargetPart
+  /** The one-time password migration, running over the Host attach; disposed at will-quit. */
+  migration: SecretMigrationBridge | undefined
+}
+
+/**
+ * The OpenCode server password rows from step 4a (21 §2 cut 4a, §3, §4 row "OpenCode server password"; ADR-017 items
+ * 3–5, 8; ISSUE-231): A-54 `setOpenCodeServerPassword` and A-55 `clearOpenCodeServerPassword` relayed to B-M10 / B-M11
+ * where the table routes them `host`. There, `SecretMigrationBridge` moves today's `safeStorage` password file into the
+ * Host once (in the releases it is listed for), and both rows are served after the run started so far has settled, so
+ * the password is never stored twice (C-23). `undefined` before the step-4a switch (later: ISSUE-235), which routes
+ * neither so, or without the Host attach.
+ */
+export function composeOpenCodePasswordRows(deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+  client: (MigrationHostClient & Pick<HostClient, 'call'>) | undefined
+  migration: Pick<SecretMigrationBridgeDeps, 'userDataDir' | 'safeStorage'> | undefined
+  log: LegacyLog
+  mintId: () => string
+}): OpenCodePasswordComposition | undefined {
+  const { routes, release, client } = deps
+  const rows = OPENCODE_PASSWORD_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
+  if (client === undefined || rows.length === 0) return undefined
+  const migration =
+    deps.migration !== undefined && bridgeLivesIn('SecretMigrationBridge', release)
+      ? createSecretMigrationBridge({
+          ...deps.migration,
+          secret: LEGACY_OPENCODE_PASSWORD,
+          hostClient: client,
+          newRequestId: deps.mintId,
+          log: deps.log
+        })
+      : undefined
+  const target = createOpenCodePasswordRows({ client, mintId: deps.mintId })
+  return {
+    part: {
+      channels: rows,
+      target:
+        migration === undefined
+          ? target
+          : {
+              serve: (channel, payload, sender) =>
+                migration.idle().then(() => target.serve(channel, payload, sender))
+            }
+    },
+    migration
+  }
+}
+
+/**
+ * A-52 `getOpenCodeSettings` (B-M12) and A-53 `setOpenCodePluginEnabled` (B-M14), ISSUE-228: the part of the `host`
+ * target serving the rows the table routes `host`, which the step-4a switch does (ISSUE-235, 22 §5). `undefined` while
+ * it routes neither (every table before that switch, where today's handlers keep serving them).
+ */
+export function composeOpenCodeSettingsRows(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+}): RouteTargetPart | undefined {
+  const rows = OPENCODE_SETTINGS_ROWS.filter((channel) => routedTo(deps.routes, channel, 'host'))
+  return rows.length === 0
+    ? undefined
+    : { channels: rows, target: createOpenCodeSettingsRows(deps.client) }
+}
+
 /**
  * A-42 `getNotificationsEnabled` and A-43 `setNotificationsEnabled` from step 4a (21 §2 cut 4a; ISSUE-230): a part of
  * the `host` target only where the table routes them `host` (the step-4a switch, ISSUE-235). `undefined` when it routes
@@ -1130,6 +1266,173 @@ export function composeDwarfNameRows(deps: {
   }
   if (parts.length === 0) return undefined
   return { channels: parts.flatMap((part) => part.channels), target: composeRouteTargets(parts) }
+}
+
+/**
+ * A-50 `routeJevLaunch` (14 §2.2 CHANGE; ISSUE-192): relayed to B-M38 `jev.suggest`, a part of the `host` target only
+ * where the table routes it `host`. `undefined` before the step-3a switch (ISSUE-001), which routes it so: until then
+ * today's runtime answers the card.
+ */
+export function composeJevRouteRow(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+}): RouteTargetPart | undefined {
+  if (!routedTo(deps.routes, ROUTE_JEV_LAUNCH, 'host')) return undefined
+  return { channels: ROUTE_JEV_LAUNCH_ROWS, target: createRouteJevLaunchRow(deps.client) }
+}
+
+/**
+ * The step-3a rows the Host serves for launch and conversation (21 §2 cut 3a; ISSUE-001), each a part of the `host`
+ * target only where the table routes it `host`: A-35 `launchAgent` (B-M33), A-23 `sendDwarfText` (B-M24), A-13
+ * `activateDwarf` (B-M29, its window half raising the console UI main holds, ADR-031), A-25
+ * `describeDwarfAttachments` (B-M28), A-N06 `retryDwarfMessage` (B-M25) and A-N10, A-N11 the recovery report (B-M35,
+ * B-M36). A-13 is composed only with the console raiser (`consoles`), never half. `undefined` when the table routes none
+ * of them `host` (before the step-3a switch).
+ */
+export function composeConversationAndLaunchRows(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+  consoles: Pick<ServedNativeActions, 'raiseConsole'> | undefined
+}): RouteTargetPart | undefined {
+  const { routes, client, consoles } = deps
+  const toHost = (channel: ChannelKey): boolean => routedTo(routes, channel, 'host')
+  const parts: RouteTargetPart[] = []
+  if (toHost(LAUNCH_AGENT)) {
+    parts.push({ channels: LAUNCH_AGENT_ROWS, target: createLaunchAgentRow(client) })
+  }
+  if (toHost(SEND_DWARF_TEXT)) {
+    parts.push({ channels: SEND_DWARF_TEXT_ROWS, target: createSendDwarfTextRow(client) })
+  }
+  if (toHost(ACTIVATE_DWARF) && consoles !== undefined) {
+    parts.push({
+      channels: ACTIVATE_DWARF_ROWS,
+      target: createActivateDwarfRow({ client, consoles })
+    })
+  }
+  if (toHost(DESCRIBE_ATTACHMENTS)) {
+    parts.push({
+      channels: DESCRIBE_ATTACHMENTS_ROWS,
+      target: createDescribeAttachmentsRow(client)
+    })
+  }
+  if (toHost(RETRY_DWARF_MESSAGE)) {
+    parts.push({ channels: RETRY_DWARF_MESSAGE_ROWS, target: createRetryDwarfMessageRow(client) })
+  }
+  const recovery = RECOVERY_REPORT_ROWS.filter(toHost)
+  if (recovery.length > 0) {
+    parts.push({ channels: recovery, target: createRecoveryReportRow(client) })
+  }
+  if (parts.length === 0) return undefined
+  return { channels: parts.flatMap((part) => part.channels), target: composeRouteTargets(parts) }
+}
+
+/** A-N29 as the root composes it: its `host` target part, and the stop of its board reading. */
+export interface StopDwarfComposition {
+  part: RouteTargetPart
+  dispose(): void
+}
+
+/**
+ * A-N29 `stopDwarf` (14 §2.2 NEW, B-M21 `crew.stop`; ADR-014; 21 §2 cut 3 common rules), a part of the `host` target
+ * where the table routes it `host` (the step-3a switch). In the releases `LegacyEndFirstAdapter` lives in (cuts 0–4),
+ * the relay goes through its `beforeStopDwarf` (ISSUE-178): a dwarf today's runtime launched — of a provider not yet
+ * moved, or one a provider's legacy path launched before its step — is ended by today's identity-checked kill and its
+ * `dwarf.departed` awaited before `crew.stop` is sent; there the row is composed only over `LegacyDwarfIdBridge` and
+ * today's launched register (`launchIdOfDwarf`), never with a stop that skips the legacy end. After the adapter's last
+ * cut the relay is direct. `undefined` when the table does not route A-N29 `host` or a dependency is missing.
+ */
+export function composeStopDwarf(deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+  client: Pick<HostClient, 'call' | 'subscribe'>
+  legacy: LegacyLaunchedSessions & Partial<LegacyLaunchesByDwarf>
+  bridge: Pick<LegacyDwarfIdBridge, 'toLegacy'> | undefined
+  timers?: EndFirstTimers
+}): StopDwarfComposition | undefined {
+  if (!routedTo(deps.routes, STOP_DWARF, 'host')) return undefined
+  const { client, legacy, bridge } = deps
+  if (!bridgeLivesIn('LegacyEndFirstAdapter', deps.release)) {
+    return {
+      part: { channels: STOP_DWARF_ROWS, target: createStopDwarfRow(client) },
+      dispose: () => {}
+    }
+  }
+  const launchIdOfDwarf = legacy.launchIdOfDwarf?.bind(legacy)
+  if (bridge === undefined || launchIdOfDwarf === undefined) return undefined
+  const endFirst = createLegacyEndFirstAdapter({
+    legacy: {
+      liveLaunches: () => legacy.liveLaunches(),
+      endLaunch: (launchId) => legacy.endLaunch(launchId),
+      launchIdOfDwarf
+    },
+    timers: deps.timers ?? realTimers,
+    host: { client, bridge }
+  })
+  // The handler relays `crew.stop` through this client: the legacy end runs first, and every other method passes.
+  const relay: Pick<HostClient, 'call'> = {
+    call: ((method: string, params: unknown) =>
+      method === 'crew.stop'
+        ? endFirst.beforeStopDwarf(params as StopDwarfParams, (stop) =>
+            client.call('crew.stop', stop)
+          )
+        : client.call(method as never, params as never)) as HostClient['call']
+  }
+  return {
+    part: { channels: STOP_DWARF_ROWS, target: createStopDwarfRow(relay) },
+    dispose: () => endFirst.dispose()
+  }
+}
+
+/** The provider qualifiers of the step-3a rows as the root composes them. */
+export interface ProviderRoutingComposition {
+  qualifiers: Partial<Record<ChannelKey, (payload: unknown) => RouteQualifier>>
+  dispose(): void
+}
+
+/**
+ * The qualifier of each row the table qualifies by provider (21 §1 item 2; 21 §2 cut 3; ISSUE-001): A-35 by its
+ * `LaunchParams.way`, A-13 and A-23 by the provider of the call's dwarf on the Host board UI main reads
+ * (`dwarfProviderBoard.ts`), never a guess (`providerQualifiers.ts`). The board is read only where a row needs it.
+ */
+export function composeProviderRouting(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'subscribe'>
+}): ProviderRoutingComposition {
+  let board: DwarfProviderBoard | undefined
+  const qualifiers = composeProviderQualifiers({
+    routes: deps.routes,
+    board: { providerOf: (dwarfId) => board?.providerOf(dwarfId) }
+  })
+  const byDwarf = DWARF_PROVIDER_ROWS.some((channel) => qualifiers[channel] !== undefined)
+  if (byDwarf) board = createDwarfProviderBoard(deps.client)
+  return { qualifiers, dispose: () => board?.dispose() }
+}
+
+/**
+ * The legacy settlement join (21 §3.1; legacySettlementJoin.ts): shared by `PerProviderShapeAdapter`, which records the
+ * ids it mints, and the push tap, where A-P3 and A-P4 leave with them. Composed only where a route of the table names
+ * the adapter and it lives in the release; `undefined` otherwise.
+ */
+export function composeSettlementJoin(deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+}): LegacySettlementJoin | undefined {
+  const named = deps.routes.some((route) => route.shapeAdapter === PER_PROVIDER_SHAPE_ADAPTER)
+  return named && bridgeLivesIn(PER_PROVIDER_SHAPE_ADAPTER, deps.release)
+    ? createLegacySettlementJoin()
+    : undefined
+}
+
+/**
+ * What `LegacyAgentRegistryFeed` composes per legacy provider for a table (21 §3: it shrinks per provider step). A
+ * table whose A-36 names a moved provider (a `host` route qualified to it, the step-3a switch) is step 3a's: Claude's
+ * discovery keeps only its legacy-launched sessions (`LEGACY_FEED_PROVIDERS_CUT_3A`); a table that moved none (cuts 1 and 2, a 3a rollback build)
+ * composes every discovery. Each later step's switch names its own modes here.
+ */
+export function legacyFeedModesOf(routes: readonly ChannelRoute[]): LegacyFeedModes {
+  return movedProvidersOf(routes).size === 0
+    ? LEGACY_FEED_PROVIDERS_CUT_1
+    : LEGACY_FEED_PROVIDERS_CUT_3A
 }
 
 /**
@@ -1264,6 +1567,8 @@ export interface UiMainDeps {
   nativeRows?: RouteTarget
   /** The folder picker and the file opener of the mines admin rows A-30, A-20 (ISSUE-091). */
   minesNative?: Pick<ServedNativeActions, 'chooseFolder' | 'openPath'>
+  /** A-13's window half (ISSUE-170; ADR-031): the console target the Host resolved, raised in the OS terminal. */
+  consoles?: Pick<ServedNativeActions, 'raiseConsole'>
   /** Electron's `ipcMain`, where the router registers the seam A listeners (ADR-001 item 3). */
   ipc: IpcMainRegistrar
   /** The app's own entry, the only page whose calls the seam A gate accepts (ADR-019 item 8). */
@@ -1305,7 +1610,7 @@ export interface UiMainDeps {
   /**
    * `SecretMigrationBridge` (21 §3, steps 3a and 4a; ADR-017 item 8; ISSUE-217): where today's `safeStorage` files live
    * and Electron's `safeStorage` to decrypt them with. Run over the Host attach only where the table routes A-48 `host`
-   * (`composeJevKeyRows`).
+   * (`composeJevKeyRows`, the Jev key) or A-54/A-55 `host` (`composeOpenCodePasswordRows`, the OpenCode password).
    */
   secretMigration?: Pick<SecretMigrationBridgeDeps, 'userDataDir' | 'safeStorage'>
   /**
@@ -1379,6 +1684,7 @@ export async function startUiMain({
   shortcut,
   nativeRows,
   minesNative,
+  consoles,
   uiPreferences,
   uiLog,
   panelWindow,
@@ -1454,19 +1760,27 @@ export async function startUiMain({
   // From cut 1 to the end of cut 4 (21 §3): a session today's runtime launched is observed by the Host like any other,
   // and today's runtime keeps its launch channel; only the registry-only discovery of today's observer stays composed.
   const launchObservation = composeLegacyLaunchObservation({ release, launches: legacyRuntime })
+  // From 3a the ids `PerProviderShapeAdapter` mints are joined to today's receipts and holds, so today's A-P3 and A-P4
+  // settle them (21 §3.1; ISSUE-001).
+  const settlements = composeSettlementJoin({ routes, release })
   // The legacy rows that carry a dwarf id map Host ids to legacy ones through the registry the feed writes (21 §3).
   const dwarfIds = composeLegacyDwarfIdBridge({
     release,
     client: host?.client,
     legacy: legacyRuntime,
     registry: legacyRegistry,
-    ...(legacyPushes === undefined ? {} : { pushes: legacyPushes })
+    ...(legacyPushes === undefined ? {} : { pushes: legacyPushes }),
+    ...(settlements === undefined ? {} : { settlements })
   })
   // Today's open asks are shown as ask cards through the facade and answered through the bridge (21 §3, cuts 1–4).
   const askRelay = composeLegacyAskRelay({ release, dwarfIds })
+  // Only the providers whose rows are still `legacy` are discovered; from 3a Claude keeps only the sessions today's
+  // runtime launched, so `LegacyEndFirstAdapter` can join them (21 §3; ISSUE-001).
   const registryFeed = composeLegacyAgentRegistryFeed({
     release,
-    legacy: askRelay?.registry ?? dwarfIds?.registry ?? legacyRegistry
+    legacy: askRelay?.registry ?? dwarfIds?.registry ?? legacyRegistry,
+    modes: legacyFeedModesOf(routes),
+    launched: (legacyDwarfId) => legacyRuntime.launchIdOfDwarf?.(legacyDwarfId) !== undefined
   })
 
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
@@ -1523,7 +1837,8 @@ export async function startUiMain({
     legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
     models: { read: () => legacyRuntime.serve(LEGACY_MODEL_CATALOG, undefined) },
     client: host?.client,
-    mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
+    mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) }),
+    ...(settlements === undefined ? {} : { settlements })
   })
 
   // A-12 and A-P2 from the Host board, once the table routes them there (the cut-1 switch, ISSUE-123; 21 §3).
@@ -1566,8 +1881,12 @@ export async function startUiMain({
     host === undefined ? undefined : composeDwarfNameRows({ routes, client: host.client })
   const mintSettingsId = () =>
     mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
+  // A-52/A-53 once the step-4a switch routes them `host` (ISSUE-235; ISSUE-228).
+  const openCodeRows =
+    host === undefined ? undefined : composeOpenCodeSettingsRows({ routes, client: host.client })
   // A-47…A-49 and the one-time Jev-key migration, once the step-3a switch routes them (ISSUE-001; ISSUE-217); A-47 and
   // A-51 from the Host once the step-4a switch routes them `host` (ISSUE-235; ISSUE-230).
+
   const jevKey = composeJevKeyRows({
     routes,
     release,
@@ -1576,6 +1895,38 @@ export async function startUiMain({
     migration: secretMigration,
     log: uiLog ?? { record: () => {} },
     mintId: mintSettingsId
+  })
+  // A-50, once the step-3a switch routes it `host` (ISSUE-001; ISSUE-192).
+  const jevRouteRow =
+    host === undefined ? undefined : composeJevRouteRow({ routes, client: host.client })
+  // Claude's launch, send and console, A-25, A-N06, A-N10 and A-N11 from the step-3a switch (ISSUE-001; 21 §2 cut 3a).
+  const conversationRows =
+    host === undefined
+      ? undefined
+      : composeConversationAndLaunchRows({ routes, client: host.client, consoles })
+  // A-N29, a legacy-launched session ended first through `LegacyEndFirstAdapter` (21 §3; ISSUE-178, ISSUE-001).
+  const stopDwarf =
+    host === undefined
+      ? undefined
+      : composeStopDwarf({
+          routes,
+          release,
+          client: host.client,
+          legacy: legacyRuntime,
+          bridge: dwarfIds?.bridge
+        })
+  // The provider qualifier of A-13, A-23 and A-35: the call's way or its dwarf's provider on the Host board (21 §1
+  // item 2); the router picks the Host's or the shape adapter's route by it.
+  const providerRouting =
+    host === undefined ? undefined : composeProviderRouting({ routes, client: host.client })
+  // A-54/A-55 and the one-time OpenCode password migration, once the step-4a switch routes them (ISSUE-235; ISSUE-231).
+  const openCodePassword = composeOpenCodePasswordRows({
+    routes,
+    release,
+    client: host?.client,
+    migration: secretMigration,
+    log: uiLog ?? { record: () => {} },
+    mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
   })
   // A-42/A-43 from the Host once the step-4a switch routes them `host` (ISSUE-235; ISSUE-230).
   const notificationRows =
@@ -1590,7 +1941,12 @@ export async function startUiMain({
     askAnswers?.part === undefined &&
     cut2Rows === undefined &&
     dwarfNameRows === undefined &&
+    openCodeRows === undefined &&
     jevKey?.part === undefined &&
+    jevRouteRow === undefined &&
+    conversationRows === undefined &&
+    stopDwarf === undefined &&
+    openCodePassword === undefined &&
     notificationRows === undefined
       ? stopRows
       : composeRouteTargets([
@@ -1605,7 +1961,12 @@ export async function startUiMain({
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
           ...(cut2Rows === undefined ? [] : [cut2Rows]),
           ...(dwarfNameRows === undefined ? [] : [dwarfNameRows]),
+          ...(openCodeRows === undefined ? [] : [openCodeRows]),
           ...(jevKey?.part === undefined ? [] : [jevKey.part]),
+          ...(jevRouteRow === undefined ? [] : [jevRouteRow]),
+          ...(conversationRows === undefined ? [] : [conversationRows]),
+          ...(stopDwarf === undefined ? [] : [stopDwarf.part]),
+          ...(openCodePassword === undefined ? [] : [openCodePassword.part]),
           ...(notificationRows === undefined ? [] : [notificationRows])
         ])
   const allShapeAdapters = {
@@ -1695,8 +2056,9 @@ export async function startUiMain({
     legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
     ...(Object.keys(allShapeAdapters).length === 0 ? {} : { shapeAdapters: allShapeAdapters }),
-    // A-40/A-41's qualifier, from the cut-2 switch: the relay's origin of a `legacy:` AskId (21 §1 item 2).
-    ...(askAnswers === undefined ? {} : { qualifiers: askAnswers.qualifiers }),
+    // A-40/A-41's qualifier, from the cut-2 switch: the relay's origin of a `legacy:` AskId; A-13, A-23 and A-35's,
+    // from the step-3a switch: the call's provider (21 §1 item 2).
+    qualifiers: { ...askAnswers?.qualifiers, ...providerRouting?.qualifiers },
     // A-N26, the one `host` row of cut 0: its handler relays `host.shutdown` on the confirmation's `ui` connection.
     ...(hostTarget === undefined ? {} : { host: hostTarget }),
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
@@ -1737,6 +2099,9 @@ export async function startUiMain({
     stopResetListening?.()
     mirror?.dispose()
     jevKey?.migration?.dispose()
+    stopDwarf?.dispose()
+    providerRouting?.dispose()
+    openCodePassword?.migration?.dispose()
     boardFacade?.dispose()
     minesAdmin?.dispose()
     hostReads?.dispose()
@@ -2170,7 +2535,8 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
   // The legacy store's saves of Host-read preferences, for `SettingsMirrorBridge` (21 §3): the notifications half
   // (ISSUE-116, from cut 1) reports today's A-43 saves through the route the router serves the legacy rows with.
   const legacySettingsWrites = createLegacySettingsWriteHub()
-  const legacyRuntime = reportNotificationsWrites(
+  const legacyRuntime = reportSettingsMirrorWrites(
+    ROUTES_RELEASE,
     createLegacyRuntimeRoute(
       composeLegacyRuntime(
         { app, dialog, nativeImage, shell, clipboard, globalShortcut },
@@ -2200,7 +2566,7 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     panelWindow: rebuiltPanel.factory,
     ...(() => {
       const native = electronNativeRows(panelBrowserWindow)
-      return { nativeRows: native.rows, minesNative: native.actions }
+      return { nativeRows: native.rows, minesNative: native.actions, consoles: native.actions }
     })(),
     shortcut: (panel) =>
       createToggleShortcut({
@@ -2239,9 +2605,10 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     // The halves register here with their legacy saves wired to the hub (ISSUE-116 from cut 1, ISSUE-194 from 3a).
     settingsMirror: {
       legacy: legacySettingsWrites,
-      halves: [createNotificationsMirrorHalf(legacyRuntime)]
+      halves: settingsMirrorHalves(ROUTES_RELEASE, legacyRuntime)
     },
-    // Today's Jev-key file lives where today's store wrote it (`src/main/shell/jevApiKey.ts`, under `userData`).
+    // Today's Jev-key and OpenCode password files live where today's stores wrote them (`src/main/shell/jevApiKey.ts`,
+    // `src/main/opencodePermissions/openCodeServerPassword.ts`, under `userData`).
     secretMigration: { userDataDir: app.getPath('userData'), safeStorage }
   })
 }

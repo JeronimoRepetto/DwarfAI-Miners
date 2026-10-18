@@ -1,5 +1,17 @@
+import type {
+  IpcResult,
+  JevSuggestParams,
+  JevSuggestResult,
+  JevSuggestionView,
+  LaunchFailure as HostLaunchFailure,
+  LaunchParams,
+  MineId,
+  ProviderId
+} from '@dwarfai/contracts'
+import type { HostLaunch } from '../readModel/launches'
 import {
   isCodexPermissionMode,
+  isDwarfProvider,
   isHeldPermissionMode,
   type CodexPermissionMode,
   type DwarfProvider,
@@ -544,6 +556,11 @@ export function launchFailed(state: LaunchState, failure: LaunchFailedPush): Lau
   if (state.submitting && state.heldLaunchId !== null && state.heldLaunchId === failure.launchId) {
     return { ...state, submitting: false, heldLaunchId: null, error: null, failure: failed }
   }
+  // AMENDED for ISSUE-001: from 3a a launch of a provider not yet moved is still in flight under the `LaunchId` A-35
+  // answered, which `PerProviderShapeAdapter` minted and today's A-P3 now names (legacySettlementJoin.ts).
+  if (state.submitting && state.launchId !== null && state.launchId === failure.launchId) {
+    return { ...state, submitting: false, error: null, failure: failed }
+  }
   return state
 }
 
@@ -601,8 +618,14 @@ export type JevDecision = Extract<JevRouteLaunchResult, { kind: 'decision' }>
  */
 export type JevRoutingPhase =
   | { phase: 'idle' }
-  | { phase: 'asking' }
+  /**
+   * `request` is the per-request token of an A-50 ask in its 14 shape (ISSUE-195, see `jevSuggestAsked`): only
+   * the answer to that very request may land. Today's Enter-time ask (`jevAsked`) carries none.
+   */
+  | { phase: 'asking'; request?: number }
   | { phase: 'decided'; decision: JevDecision }
+  /** A-50's answer in its 14 shape, applied to the pickers (`jevSuggestAnswered`); held here only (INV-87). */
+  | { phase: 'suggested'; suggestion: JevSuggestionView }
   | {
       phase: 'fellBack'
       reason: JevFallbackReason
@@ -959,7 +982,198 @@ export function pickManually(state: LaunchState): LaunchState {
  * Reaching `'decided'` already implies `jev.enabled` (`jevAsked` only leaves
  * idle through `shouldAskJev`'s own gate), so there is nothing else to check.
  */
+// AMENDED for ISSUE-001 (was: `'decided'` only): from 3a Jev's pick reaches the pickers as A-50's suggestion
+// (ISSUE-195), the 14 phase of the same applied pick.
 export function routedByJev(state: LaunchState): boolean {
-  return state.jev.routing.phase === 'decided'
+  return state.jev.routing.phase === 'decided' || state.jev.routing.phase === 'suggested'
 }
 /* --- end of the #511 block ---------------------------------------------------- */
+
+/* --- A-50 in its 14 shape: the Jev card while typing (ISSUE-195) — one block, appended --- */
+
+/** A-50's answer as UI main returns it (14 §3.8 `routeJevLaunch`): a call error, or the domain outcome. */
+export type JevSuggestAnswer = IpcResult<JevSuggestResult>
+
+/** Whether the prompt as it stands is worth a Jev ask: the option is on and there is a prompt to ask about. */
+export function shouldSuggest(state: LaunchState): boolean {
+  return (
+    state.open &&
+    state.jev.availability === 'ready' &&
+    state.jev.enabled &&
+    launchPrompt(state) !== ''
+  )
+}
+
+/** The A-50 request for the prompt as it stands (14 §3.4 `JevSuggestParams`). */
+export function jevSuggestParams(state: LaunchState, mineId: MineId): JevSuggestParams {
+  return { prompt: launchPrompt(state), mineId }
+}
+
+/** The prompt changed (or was first written): the last card goes, and a new ask leaves under `request`. */
+export function jevSuggestAsked(state: LaunchState, request: number): LaunchState {
+  const cleared = clearJevDecision(state)
+  if (!shouldSuggest(cleared)) return cleared
+  return { ...cleared, jev: { ...cleared.jev, routing: { phase: 'asking', request } } }
+}
+
+/**
+ * A-50 answered `request`. Only the answer to the ask still in flight lands: one that arrives after Dismiss, an
+ * emptied prompt or a newer ask describes a prompt this panel no longer holds, and is dropped (INV-87; 16 §6.5).
+ *
+ * A pick applies through the same paths a person's own click uses, keeping what stood before for Dismiss. Anything
+ * else (a call error, `jev-unreachable`, `jev-could-not-choose`, `not-configured`, or a suggestion that names no
+ * supplier these pickers offer) shows no card: the ask ends and the pickers stay as they stood before it, which the
+ * ask itself never touched (US-LAUNCH-003.AC08).
+ */
+export function jevSuggestAnswered(
+  state: LaunchState,
+  request: number,
+  answer: JevSuggestAnswer
+): LaunchState {
+  const routing = state.jev.routing
+  if (routing.phase !== 'asking' || routing.request !== request) return state
+  const suggestion = answer.ok && answer.value.ok ? answer.value.value : null
+  const provider = suggestion?.providerId
+  if (suggestion === null || !isDwarfProvider(provider)) {
+    return {
+      ...state,
+      jev: {
+        ...state.jev,
+        routing: { phase: 'idle' },
+        previousChoice: null,
+        launchedOnFallback: false
+      }
+    }
+  }
+  const previousChoice: JevPreviousChoice = {
+    choice: state.choice,
+    model: state.model,
+    effort: state.effort
+  }
+  let applied = chooseProvider(state, provider)
+  if (suggestion.model !== undefined) applied = chooseModel(applied, suggestion.model)
+  if (suggestion.effort !== undefined) applied = chooseEffort(applied, suggestion.effort)
+  return {
+    ...applied,
+    jev: { ...applied.jev, routing: { phase: 'suggested', suggestion }, previousChoice }
+  }
+}
+
+/* --- end of the ISSUE-195 block ------------------------------------------------- */
+
+/* --- A-35 in its 14 shape: the launch the Host owns (ISSUE-001, the ISSUE-179 call side) — one block, appended --- */
+
+/** Whether Let Jev choose stands for the way this launch goes (07 5A `ready`: a supplier, a custom command or Jev on). */
+function jevChooses(state: LaunchState): boolean {
+  return state.jev.availability === 'ready' && state.jev.enabled
+}
+
+/**
+ * The A-35 request for the form as it stands (14 §3.4 `LaunchParams`; 07 5A S5.04, S5.08a): with Let Jev choose on
+ * the Host's Jev way (it asks Jev at Send, S5.10), otherwise the chosen supplier; the model, effort and permission mode
+ * only where the person chose them; the person's two Jev switches; `retryOf` for a Retry of a failed launch. Null for
+ * Other… (a custom command is A-39, today's shape until 3d) or a form with no way to run.
+ */
+export function launchParamsOf(
+  state: LaunchState,
+  mineId: MineId,
+  requestId: string,
+  retryOf?: string
+): LaunchParams | null {
+  if (state.choice === OTHER_CHOICE) return null
+  const jev = jevChooses(state)
+  if (!jev && state.choice === null) return null
+  return {
+    mineId,
+    way:
+      jev || state.choice === null
+        ? { kind: 'jev' }
+        : { kind: 'supplier', providerId: state.choice },
+    ...launchTuning(state),
+    ...(state.permissionMode === null ? {} : { permissionMode: state.permissionMode }),
+    prompt: launchPrompt(state),
+    jevOn: jev,
+    jevAutoAccept: state.jev.autoAccept,
+    ...(retryOf === undefined ? {} : { retryOf: retryOf as NonNullable<LaunchParams['retryOf']> }),
+    requestId
+  }
+}
+
+/**
+ * The Host accepted the launch (14 §1.7: `LaunchAccepted` at acceptance): it stays sending — "Sending the dwarf in…" —
+ * under its `LaunchId`, until the Host's start or failure event (07 5A `sending`, no client timer; NFR-TIM-07).
+ */
+export function hostLaunchAccepted(state: LaunchState, launchId: string): LaunchState {
+  if (!state.submitting) return state
+  return { ...state, launchId, heldLaunchId: null, error: null }
+}
+
+/** The Host's failure in the notice's own vocabulary (ADR-020 D1): the cause, the supplier it was for, the tail. */
+function hostFailureOf(failure: HostLaunchFailure, choice: LaunchChoice | null): LaunchFailure {
+  if (failure.cause === 'jev-unreachable') return { cause: 'jev-unreachable' }
+  if (failure.cause === 'jev-could-not-choose') {
+    // The Host names the reason of every Jev cause (launching/application/launch.ts).
+    return { cause: 'jev-could-not-choose', reason: failure.jevReason as JevFallbackReason }
+  }
+  return {
+    cause: failure.cause,
+    choice,
+    ...(failure.toolOutputTail === undefined || failure.toolOutputTail.trim() === ''
+      ? {}
+      : { output: failure.toolOutputTail })
+  }
+}
+
+/**
+ * What the Host stated of this panel's launch (14 §4.1 `launches`; 07 5A S5.05–S5.07), applied while it is still in
+ * flight and only for its own `LaunchId`:
+ *
+ * - failed (`launch.failed`) → the notice with the cause; the launch id stays, for Retry's `retryOf` (S5.06, S5.08a);
+ * - succeeded with its dwarf → the MessagePanel on that dwarf (S5.05);
+ * - handed back → ready again, the picks the Host handed back in the pickers, no notice (S5.07, OQ-38 B);
+ * - anything else (routing, resolving, spawned) → still sending.
+ */
+export function hostLaunchFollowed(
+  state: LaunchState,
+  launch: HostLaunch | undefined
+): LaunchState {
+  if (!state.submitting || launch === undefined || launch.launchId !== state.launchId) return state
+  if (launch.failure !== null) {
+    return {
+      ...state,
+      submitting: false,
+      error: null,
+      failure: hostFailureOf(launch.failure, state.choice)
+    }
+  }
+  const wire = launch.wire
+  if (wire === null) return state
+  if (wire.state === 'succeeded' && wire.dwarfId !== undefined) {
+    return adoptLaunchedDwarf(state, wire.dwarfId)
+  }
+  if (wire.state === 'handed-back') {
+    const provider: ProviderId | undefined = wire.picks?.providerId
+    let back = isDwarfProvider(provider) ? chooseProvider(state, provider) : state
+    if (wire.picks?.model !== undefined) back = chooseModel(back, wire.picks.model)
+    if (wire.picks?.effort !== undefined) back = chooseEffort(back, wire.picks.effort)
+    return { ...back, submitting: false, launchId: null, error: null, failure: null }
+  }
+  return state
+}
+
+/**
+ * A launch the Host never stated within today's bound (ISSUE-001): one A-35 served through `PerProviderShapeAdapter`
+ * for a provider not yet moved (21 §3.1), whose settlement is today's (A-P3 or its dwarf on the board), so it keeps
+ * today's neutral way out (#263). A launch the Host stated is the Host's to settle, never a timer's (NFR-TIM-07).
+ */
+export function unstatedLaunchTimedOut(
+  state: LaunchState,
+  launchId: string,
+  stated: boolean
+): LaunchState {
+  if (stated || !state.submitting || state.launchId !== launchId) return state
+  if (state.launchedDwarfId !== null) return state
+  return { ...state, submitting: false, launchId: null, error: DETACHED_TIMEOUT_MESSAGE }
+}
+
+/* --- end of the ISSUE-001 block ------------------------------------------------ */

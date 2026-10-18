@@ -81,6 +81,8 @@ const SERVED_SINCE_CUT_0 = [
   // AMENDED for ISSUE-216 (appended): B-M10 and B-M11, served by the preferences wiring for step 3a.
   'settings.secret.clear',
   'settings.secret.set',
+  // OpenCode permission requests: B-M14, served from step 4a (ISSUE-228).
+  'preferences.setOpenCodePermissions',
   // The asking module: B-M30…B-M32, the `asks` section and the ask frames, from cut 2 (ISSUE-140).
   'asking.answerPermission',
   'asking.answerQuestion',
@@ -102,6 +104,8 @@ const SERVED_SINCE_CUT_0 = [
   'conversation.send',
   'frame:message.delivery',
   'section:marks',
+  // Retrying a failed message: B-M25, from cut 3 (ISSUE-168).
+  'conversation.retry',
   // Describing attachments: B-M28, from cut 3 (ISSUE-169).
   'conversation.describeAttachments',
   // AMENDED for ISSUE-170 (appended): B-M29, the console target of A-13, from cut 3.
@@ -110,7 +114,9 @@ const SERVED_SINCE_CUT_0 = [
   'frame:host.recovered',
   'launching.dismissRecovery',
   'launching.retryRecovery',
-  'section:recovery'
+  'section:recovery',
+  // AMENDED for ISSUE-196 (appended): B-M38, served by the jev wiring for the step-3a switch.
+  'jev.suggest'
 ]
 const SERVED_SECTIONS = [
   'meta',
@@ -223,10 +229,12 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
           expect(first.next).toBeUndefined()
           expect(first.chunks.map((c) => c.section)).toEqual(SERVED_SECTIONS)
 
-          // A method the Host did not advertise is refused locally (TC-051-02).
+          // A method the Host did not advertise is refused locally (TC-051-02). Every seam-B member
+          // of the catalog is served since step 3a (ISSUE-168 serves B-M25, ISSUE-174 B-M35), so
+          // the example is a name no Host advertises.
           const refused = await client
             .call(
-              'conversation.retry' as never,
+              'launching.notServed' as never,
               { requestId: '01890a5d-ac96-774b-bcce-b302099a8001' } as never
             )
             .catch((error: unknown) => error)

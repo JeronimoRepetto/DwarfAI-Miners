@@ -66,6 +66,11 @@ export interface MessageEcho {
    * same ask replaces a refused record in place rather than adding a second (MESSAGE-QUESTIONS 19).
    */
   readonly ask?: string
+  /**
+   * From 3a (ISSUE-001): the `MessageId` A-23 answered for this message (14 §3.4 `SendMessageResult`), the key of the
+   * Host's delivery mark (`message.delivery`, ADR-022) and of its Retry (A-N06). Absent until the send is answered.
+   */
+  readonly messageId?: string
 }
 
 /**

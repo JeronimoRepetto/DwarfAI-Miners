@@ -13,7 +13,6 @@ import {
   JUMP_TO_TERMINAL_NAME,
   approvalNote,
   buildActionBar,
-  kickBlocked,
   refusalLine,
   SESSION_CLOSED_REASON,
   sessionClosed
@@ -21,7 +20,7 @@ import {
 /* --- Message attachments (#408) — one block, appended -------------------- */
 import { ATTACH_LOST_CONTACT, acceptAttachments, attachHint } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
-import { kickStatusLine, sendMarker, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
+import { sendMarker, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { historyClock, historyMarks, HISTORY_MARK } from '../../lib/history/mineHistory'
 import {
   activityStepsLabel,
@@ -83,7 +82,6 @@ import {
   type DwarfAttachment,
   type DwarfAttachmentPick,
   type DwarfFeedResult,
-  type DwarfKickState,
   type DwarfNameResult,
   type DwarfPermissionDecision,
   type DwarfSendState
@@ -164,7 +162,11 @@ const props = defineProps<{
   echoes?: readonly MessageEcho[]
   /** The files each of those messages was sent with, by echo id (#408). */
   echoAttachments?: Readonly<Record<string, readonly DwarfAttachment[]>>
-  kickState?: DwarfKickState
+  /**
+   * "Stop dwarf…" (A-N29) is unavailable: only while the Host says a stop is already in flight (INV-31; ISSUE-001,
+   * ISSUE-183). The kick (A-26) is retired in 3a and nothing replaces it: Stop dwarf… ends the whole session.
+   */
+  stopDisabled?: boolean
   /**
    * The verdict of the last answer or decision given for this dwarf, whatever prompt it named (see
    * DwarfQuestionCard and DwarfPermissionCard).
@@ -202,7 +204,8 @@ const emit = defineEmits<{
    * exact payload it always did.
    */
   send: [payload: { text: string; pressEnter: boolean; attachments?: readonly DwarfAttachment[] }]
-  kick: []
+  /** Stop dwarf…, confirmed: the host relays A-N29 (ISSUE-001; ISSUE-183 removed the kick). */
+  stop: []
   close: []
   /** One of the agent's own option labels, or one value per question (#443, see AskAnswer). */
   answer: [answer: AskAnswer]
@@ -279,8 +282,9 @@ onUnmounted(() => clearInterval(clock))
 /** The header portrait wears the dwarf's state, as the scene does. */
 const portraitStatus = computed(() => sceneDwarfStatus(props.dwarf))
 
-const transient = computed(() => ({ kicking: isKicking.value }))
-const actions = computed(() => buildActionBar(props.dwarf, transient.value))
+/** No kick is ever in flight from 3a (A-26 retired, ISSUE-183): the action model is read with none. */
+const NO_KICK = { kicking: false } as const
+const actions = computed(() => buildActionBar(props.dwarf, NO_KICK))
 /*
  * Why a disabled composer is disabled, said where the design says it: the composer's own hint
  * (#217). Which sentence it is belongs to lib/delivery/actionBar.
@@ -292,7 +296,7 @@ const refusal = computed(() => refusalLine(props.dwarf))
  * simply has a dialog up somewhere else.
  */
 const approval = computed(() => approvalNote(props.dwarf))
-function action(id: 'kick' | 'boost' | 'chat') {
+function action(id: 'boost' | 'chat') {
   return actions.value.find((entry) => entry.id === id)
 }
 
@@ -330,7 +334,6 @@ const composerTitle = computed(() =>
   props.routeGone === true && !canReceive.value ? SESSION_CLOSED_REASON : action('chat')?.hint
 )
 const isSending = computed(() => props.sendState?.phase === 'sending')
-const isKicking = computed(() => props.kickState?.phase === 'kicking')
 
 /**
  * The composer (#409, #635): the shell window takes the keyboard on the press that selected the
@@ -650,17 +653,13 @@ function activityLines(lines: readonly Row[]) {
  * The success lines say whether the action was merely handed over or actually reacted to (#21);
  * a failure carries its own reason verbatim.
  */
-const sendLine = computed(() => sendStatusLine(props.sendState))
-const kickLine = computed(() => kickStatusLine(props.kickState))
-const statusLine = computed(() => sendLine.value ?? kickLine.value)
+// AMENDED for ISSUE-183 (was: the send's line, else the kick's): the kick is retired, so the send's alone.
+const statusLine = computed(() => sendStatusLine(props.sendState))
 const alertLine = computed(() => {
   // Ahead of both verdicts (#431): the only one about what is in the box RIGHT NOW.
   if (tooLong.value !== null) return tooLong.value
   if (props.sendState?.phase === 'failed') {
     return props.sendState.error ?? 'The message could not be delivered.'
-  }
-  if (props.kickState?.phase === 'failed') {
-    return props.kickState.error ?? 'The kick could not be delivered.'
   }
   // A file the composer just refused speaks in the same ink and the same line (#408).
   return attachRefusal.value
@@ -837,12 +836,13 @@ const { setName, resetName: resetDwarfName } = useDwarfRename()
 
 /*
  * The ⋯ menu: Open console, Mine history, Reset name while the dwarf has a custom name it can lose,
- * and Stop dwarf…, which confirms first, disabled with its reason only while the kick
- * itself is (MESSAGE-QUESTIONS 13).
+ * and Stop dwarf…, which confirms first. AMENDED for ISSUE-183 (was: disabled with its reason while the kick itself
+ * was, MESSAGE-QUESTIONS 13): disabled only while the Host says a stop is already in flight (INV-31); availability
+ * never depends on the turn (OQ-54).
  */
 const offersReset = computed(() => props.dwarf.customName !== undefined)
 const menu = computed(() =>
-  messagePanelMenu(kickBlocked(props.dwarf, transient.value), offersReset.value)
+  messagePanelMenu(props.stopDisabled === true ? 'stopping' : null, offersReset.value)
 )
 const stopAsked = ref(false)
 
@@ -855,16 +855,15 @@ function onMenu(index: number): void {
 }
 
 /**
- * Stop dwarf… is the kick (#293), moved out of the composer into the ⋯ menu and confirmed first
- * (screens/message.md, W4·6). What the kick DOES still varies, and the action model decides it:
- * a session with an interrupt channel has its turn cut short, and one nothing can interrupt has
- * its dwarf dismissed from the board.
+ * Stop dwarf…, confirmed first (screens/message.md, W4·6). AMENDED for ISSUE-183 (was: the kick, #293, whose effect
+ * the action model decided): it is A-N29, which ends the dwarf's whole session, also mid-turn (AMENDMENT-2, OQ-54).
  */
 function onStopAction(index: number): void {
   stopAsked.value = false
   if (index !== 1) return
-  if (action('kick')?.enabled !== true) return
-  emit('kick')
+  // A confirmation already open stops nothing once the Host says a stop is in flight (INV-31).
+  if (props.stopDisabled === true) return
+  emit('stop')
 }
 
 /*
@@ -1240,12 +1239,6 @@ async function resetName(): Promise<void> {
       @cancel="stopAsked = false"
     >
       <p>{{ STOP_DWARF_BODY }}</p>
-      <!--
-        What stopping THIS session actually does, in the capability model's own words (#383): an
-        interrupt channel cuts the turn short, and a session nothing can interrupt has its dwarf
-        dismissed. Said beside the design's sentence rather than instead of it.
-      -->
-      <p v-if="action('kick')?.hint">{{ action('kick')?.hint }}</p>
     </ModalDialog>
   </section>
 </template>

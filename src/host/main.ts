@@ -91,7 +91,11 @@
 // wiring/routes/launching.ts) over the SQLite launch stores and the SessionStarter bridge to the
 // suppliers registry, with B-M33 `launching.launch` and the `launches` section served before the
 // bind, its `launch.changed` / `launch.failed` frames and routes, the spawn tag carrying
-// `app_meta.install_id`; last,
+// `app_meta.install_id`, and the `LaunchAdvisor` bridge to jev (ISSUE-182); then the launched
+// sessions (ISSUE-182: wiring/launchedSessions.ts): every driver event of a bound session routed to
+// conversation, ledger, asking, launching and mines (routes/driverEvents.ts), crew's session links
+// and asking's `driver` answer channel over launching's live records, and the resume lookup of the
+// Codex app-server driver (the person's own CLI, attached to suppliers with its process deps); last,
 // the cut-1 cross-epic routes (ISSUE-120: wiring/routes/cut1Routes.ts), observed turn ends into
 // conversation, `TurnEnded` into crew and attention, the next turn start and the departures
 // withdrawing attention keys and closing activity runs. The others join later. With both halves of the bridge in place its sink is real (ISSUE-108), so step 7
@@ -125,12 +129,18 @@ import { ObservedSessionTurnSender } from './modules/conversation/adapters/obser
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
+import { TypesafeJevRouter } from './modules/jev/adapters/typesafe/TypesafeJevRouter'
 import { ClaudeHooksConfigWriter } from './modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
 import { ConfigWriterEngine } from './modules/preferences/adapters/external-config/configWriterEngine'
 import {
   OPENCODE_PLUGIN_FILE_NAME,
   OpenCodePluginConfigWriter
 } from './modules/preferences/adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
+import { NapiKeyringBinding } from './modules/preferences/adapters/secret-store/napiKeyringBinding'
+import {
+  OsKeyringSecretStore,
+  SECRET_SERVICE
+} from './modules/preferences/adapters/secret-store/OsKeyringSecretStore'
 import { SqliteChannelTokenStore } from './modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from './modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from './modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
@@ -173,16 +183,10 @@ import { migrationsFor } from './platform/sqlite/migrations'
 import { TransportLevel3Sink } from './transport/attention/TransportLevel3Sink'
 import { mintCredential } from './transport/auth/mintCredential'
 import { ConnectionRegistry } from './transport/connectionRegistry'
-import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
-import { BOARD_FRAMES } from './transport/frames/board'
-import { LEDGER_FRAMES } from './transport/frames/ledger'
 import type { HttpIngress } from './transport/ingress/httpIngress'
 import { createUpgradeDrain } from './transport/lifecycle/drain'
-import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
+import { HostStateHolder } from './transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
-import { PREFERENCES_FRAMES } from './transport/methods/preferences'
-import { RESET_FRAMES } from './transport/methods/resetMetrics'
-import { SET_CLAUDE_HOOKS_FRAMES } from './transport/methods/setClaudeHooks'
 import { HostIdentityFile } from './transport/runFiles/hostIdentityFile'
 import { SNAPSHOT_TAIL, type SnapshotMetaSource } from './transport/snapshot/metaSection'
 import { SectionRegistry } from './transport/snapshot/sectionRegistry'
@@ -190,6 +194,7 @@ import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
 import { errorCode, runBoot } from './wiring/boot'
 import { createHostDispatcher } from './wiring/hostDispatcher'
 import {
+  classifyAfterDetection,
   createBootSteps,
   createUiEndpoint,
   evaluateWelcomeAfterDetection,
@@ -210,7 +215,6 @@ import {
   observedSendTargets
 } from './wiring/bridges/turnSender'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
-import { ownedSessionsOver } from './wiring/bridges/sessionTerminator'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
 import { CUT_2_ROLLBACK_CHOICES } from './wiring/cut2Rollback'
 import { createFeatureFlagReader, featureFlagConfigFilePath } from './wiring/featureFlagReader'
@@ -231,20 +235,14 @@ import {
   routeLaunchDrainRechecks
 } from './wiring/hostDrainGate'
 import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
+import { servePreferences, type WiredPreferences } from './wiring/preferencesWiring'
 import {
-  servePreferences,
-  unavailableSecretStore,
-  type WiredPreferences
-} from './wiring/preferencesWiring'
-import {
-  ASKING_FRAMES,
   serveAsking,
   type AskingRouteEvent,
   type AskingWiringDeps,
   type WiredAsking
 } from './wiring/routes/askingRoutes'
 import {
-  ATTENTION_FRAMES,
   onNotifierAttach,
   serveAttention,
   type AttentionRouteEvent,
@@ -255,8 +253,21 @@ import {
   type ConversationRouteEvent,
   type WiredConversation
 } from './wiring/routes/conversation'
-import { CONVERSATION_READ_FRAMES } from './wiring/routes/conversationFrames'
-import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/routes/launching'
+import { serveLaunching, type WiredLaunching } from './wiring/routes/launching'
+import { HOST_FRAMES } from './wiring/hostFrames'
+import { createLaunchedSessions } from './wiring/launchedSessions'
+import { createLaunchAdvisor } from './wiring/bridges/launchAdvisor'
+import { cleanUpHelpers } from './wiring/helperCleanup'
+import {
+  mcpEndpointListener,
+  wireDelegation,
+  type DelegationRouteDeps,
+  type DelegationRouteEvent,
+  type DelegationWiringDeps,
+  type WiredDelegation
+} from './wiring/delegationWiring'
+import type { DelegationLifecycleEvent } from './modules/delegation'
+import { NodeMcpConfigFiles } from './modules/suppliers/adapters/drivers/claude-stream-json/mcpConfigFile'
 import {
   createLaunchDrainGate,
   type LaunchingEvent,
@@ -269,6 +280,8 @@ import { SqliteRecoveryReportStore } from './modules/launching/adapters/sqlite/S
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
+import { serveJev } from './wiring/routes/jev'
+import { routingCatalogSource } from './wiring/bridges/routingCatalogSource'
 import { routeCut1Events } from './wiring/routes/cut1Routes'
 import {
   routeMineBackfillWhenObserving,
@@ -308,6 +321,8 @@ type HostEvent =
   | AttentionRouteEvent
   | AskingRouteEvent
   | LaunchingEvent
+  | DelegationLifecycleEvent
+  | DelegationRouteEvent
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -514,6 +529,10 @@ async function bootHost(base: HostBase): Promise<void> {
     asking?: WiredAsking
     launching?: WiredLaunching
   } = {}
+  // Launching's sessions, for the modules wired before it (ISSUE-182, wiring/launchedSessions.ts):
+  // crew's session links, asking's `driver` answer channel and the CLI drivers' resume lookup answer
+  // "none" until boot step 4 binds them once launching exists.
+  const launched = createLaunchedSessions()
   // What holds the upgrade drain: each module's gate is bound once boot step 4 wired it (#1290).
   const drainGate = createHostDrainGate()
   // Unsubscribed at the clean exit with the module routes: an ask that closes re-checks the drain.
@@ -537,6 +556,11 @@ async function bootHost(base: HostBase): Promise<void> {
   let configWriter: ConfigWriterEngine | undefined
   // Built by boot step 4 over asking's hook route, started by step 6, closed by the clean exit.
   let hookIngress: HttpIngress | undefined
+  // The delegation module (ISSUE-209, wiring/delegationWiring.ts) with Claude's permission prompt
+  // tool (AMENDMENT-21; ISSUE-182): built by boot step 4 before suppliers attaches the stream-json
+  // driver and composed once launching, crew and conversation exist; reconciled and swept at step 5,
+  // listening from step 6 (the MCP endpoint), closed by the clean exit.
+  let delegation: WiredDelegation | undefined
   let resetSteps: WiredModuleResetSteps | undefined
   // No spawn-site table reaches the Host yet: no site is stored, and the map places each marker
   // itself (chooseMapSite's documented fallback). The mines module and its Reset step share it.
@@ -607,6 +631,8 @@ async function bootHost(base: HostBase): Promise<void> {
   const servedLaunching = serveLaunching({ dispatcher, sections })
   // B-M37 `suppliers.launchable` (ISSUE-163), bound when boot step 4 wired suppliers.
   const servedSuppliers = serveSuppliers({ dispatcher })
+  // B-M38 `jev.suggest` (ISSUE-196), bound when boot step 4 wired jev over suppliers.
+  const servedJev = serveJev({ dispatcher })
   const servedAttention = serveAttention({ dispatcher, connections })
   const processControl = new NodeProcessControl({
     scheduler,
@@ -696,21 +722,7 @@ async function bootHost(base: HostBase): Promise<void> {
         state: () => hostState.current(),
         dispatcher,
         connections,
-        frames: [
-          ...LIFECYCLE_FRAMES,
-          ...TRANSPORT_FRAMES,
-          ...PREFERENCES_FRAMES,
-          ...SET_CLAUDE_HOOKS_FRAMES,
-          ...RESET_FRAMES,
-          ...BOARD_FRAMES,
-          ...LEDGER_FRAMES,
-          ...CONVERSATION_READ_FRAMES,
-          // B-F12 `message.delivery`, the send path's marks (ISSUE-166).
-          'message.delivery',
-          ...ATTENTION_FRAMES,
-          ...ASKING_FRAMES,
-          ...LAUNCHING_FRAMES
-        ],
+        frames: HOST_FRAMES,
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
         sections: () => sections.names(),
@@ -736,7 +748,9 @@ async function bootHost(base: HostBase): Promise<void> {
           modules.asking?.stop()
           modules.launching?.stop()
         },
-        closeIngress: () => hookIngress?.close() ?? Promise.resolve(),
+        closeIngress: async () => {
+          await Promise.all([hookIngress?.close(), delegation?.close()])
+        },
         exit
       })
       return createBootSteps({
@@ -782,8 +796,8 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // Cut 2 (ISSUE-323): the one writer of DwarfAI's entries in other tools' configs (16 §7),
           // with the Claude Code hooks target; the hook entry carries the ingress's persisted port.
-          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches only to verify and
-          // revert (the Reset saga's `external-config` step; lead decision 2026-10-16).
+          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches to verify and revert (the
+          // Reset saga's `external-config` step) and, from ISSUE-228, to install (B-M14, the ingress port set).
           const ingressPort = appMetaIngressPort(db)
           const openCodePluginPath = openCodePluginPathHere()
           configWriter = new ConfigWriterEngine({
@@ -820,6 +834,7 @@ async function bootHost(base: HostBase): Promise<void> {
             transactions,
             bus,
             clock,
+            scheduler,
             ids,
             hostEpoch: epoch,
             log,
@@ -836,8 +851,10 @@ async function bootHost(base: HostBase): Promise<void> {
             // `LedgerRepository.setInstallMoment` (16 §4.10) and the cut-1 module steps (ISSUE-121).
             ledger: ledgerRepository,
             moduleSteps: resetSteps.steps,
-            // No OS secret store yet (later: ISSUE-324).
-            secrets: unavailableSecretStore,
+            // The OS secret store (ADR-017 item 2; ISSUE-324): the Jev key and, from 4a, the
+            // OpenCode password live there only. No plain-text fallback (item 5): with no usable
+            // secret service it answers 'unavailable'.
+            secrets: new OsKeyringSecretStore(new NapiKeyringBinding(SECRET_SERVICE), log),
             // A cut-2 rollback build refuses every install: today's installer is the entry's one writer there.
             externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(
               hostConfigWriter({
@@ -889,6 +906,26 @@ async function bootHost(base: HostBase): Promise<void> {
           ) {
             throw new HostInvariantError('boot step 4 runs after step 3 wired preferences')
           }
+          // The delegation module's stores, lifecycle and Claude's permission prompt tool, before
+          // suppliers attaches its driver (ISSUE-182, ISSUE-209). A typed constant, not an inline
+          // literal: TypeScript 6.0.3 crashes checking that call.
+          const delegationDeps: DelegationWiringDeps = {
+            db,
+            transactions,
+            bus,
+            clock,
+            ids,
+            hostEpoch: epoch,
+            log,
+            preferences: modules.preferences.preferences.queries,
+            mintCredential,
+            execPath: dataDir.execPath,
+            hostEntryPath: join(appRoot, 'out', 'host', 'main.js'),
+            hostDataDir: dataDir.userDataDir,
+            mcpConfigFiles: new NodeMcpConfigFiles()
+          }
+          const wiredDelegation = wireDelegation(delegationDeps)
+          delegation = wiredDelegation
           modules.suppliers = wireSuppliers({
             publicBuild: isPublicBuild(buildKindOf(dataDir)),
             clock,
@@ -915,9 +952,32 @@ async function bootHost(base: HostBase): Promise<void> {
               loginEnv: process.env,
               platform: hostRuntime().os as NodeJS.Platform,
               redact: redactSecrets
+            },
+            // The person's own CLIs (ISSUE-182): the Codex app-server driver and Claude's stream-json
+            // driver with its permission prompt tool (AMENDMENT-21), each with the stored launch
+            // record a restarted Host's resume reads (ISSUE-173), which names the launch whose live
+            // relay the Claude resume is served again.
+            cliDrivers: {
+              processControl,
+              loginEnv: process.env,
+              home: homedir(),
+              platform: hostRuntime().os as 'win32' | 'darwin' | 'linux',
+              redact: redactSecrets,
+              clientInfo: { name: 'dwarfai', version: __DWARFAI_APP_VERSION__ },
+              resumeContext: launched.resumeContext,
+              claudeStreamJson: wiredDelegation.driver
             }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))
+          // Jev (ISSUE-196): TypeSafe behind `JevRouter`, the Jev key through the kernel
+          // SecretReader, its candidates exactly what suppliers can launch now (16 §4.9; 21 §2 cut 3).
+          const jev = servedJev.bind({
+            router: new TypesafeJevRouter({ scheduler, log }),
+            secretReader: modules.preferences.secretReader,
+            routingCatalog: routingCatalogSource(modules.suppliers.catalogue),
+            preferences: modules.preferences.preferences.queries,
+            log
+          })
           // The providers' own folders: the environment overrides they honour, else the person's
           // home folder (15 §5; HO-09). Read only, by observation and by the coal backfill.
           const folders = observedProviderFolders(process.env, homedir(), {
@@ -1042,12 +1102,12 @@ async function bootHost(base: HostBase): Promise<void> {
             ids,
             hostEpoch: epoch,
             log,
-            // No launch reaches the Host yet (later: EPIC-10); an observed dwarf has a delivery
-            // route when the observed-session relay has a send path to it (ISSUE-167, INV-33).
-            links: {
-              owned: () => false,
-              hasDeliveryRoute: (dwarfId) => observedRoutes.canDeliverTo(dwarfId)
-            },
+            // Launching's ownership (INV-30): an owned dwarf has a delivery route while its driver
+            // session is live, an observed one when the observed-session relay has a send path to
+            // it (ISSUE-167, INV-33). Bound once launching exists (ISSUE-182).
+            links: launched.links({
+              canDeliverTo: (dwarfId) => observedRoutes.canDeliverTo(dwarfId)
+            }),
             processes: processControl,
             observation: modules.observation.crew,
             // The `dwarfs` section's stored outcome lines (owner amendment E).
@@ -1153,6 +1213,12 @@ async function bootHost(base: HostBase): Promise<void> {
             log,
             frames: connections,
             claudeProviderId: 'claude' as ProviderId,
+            // The OpenCode plugin's asks (ISSUE-229): the password only through the kernel reader.
+            openCodePlugin: {
+              providerId: 'opencode' as ProviderId,
+              secrets: modules.preferences.secretReader,
+              post: (url, init) => globalThis.fetch(url, init)
+            },
             suppliers: modules.suppliers,
             observed: observed.adapters,
             conversation: conversation.conversation,
@@ -1167,6 +1233,8 @@ async function bootHost(base: HostBase): Promise<void> {
               queries: modules.preferences.preferences.queries,
               channelTokens: modules.preferences.channelTokens
             },
+            // A launched session's own driver answers its asks (ISSUE-182).
+            driverAnswers: launched.answers,
             keystrokes: {
               // The observed-session key relay (#1285, the cut-2 slice of ISSUE-167): one key into
               // the terminal of the process observation recorded, identity re-checked just before.
@@ -1220,6 +1288,8 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // Launching (ISSUE-162: wiring/routes/launching.ts), once suppliers, conversation, crew and
           // mines exist: a launched dwarf arrives through crew and its prompt is its first message.
+          // "Let Jev choose" asks the jev module through the LaunchAdvisor bridge (ISSUE-182).
+          const installId = installIdOf(db)
           modules.launching = servedLaunching.wire({
             db,
             transactions,
@@ -1228,13 +1298,16 @@ async function bootHost(base: HostBase): Promise<void> {
             scheduler,
             ids,
             hostEpoch: epoch,
-            installId: installIdOf(db),
+            installId,
             log,
             frames: connections,
             suppliers: modules.suppliers,
             mines: modules.mines.mines.queries,
             crew: modules.crew.crew.commands,
-            conversation: conversation.conversation.commands
+            conversation: conversation.conversation.commands,
+            advisor: createLaunchAdvisor({ advisor: jev.advisor }),
+            // The SessionStarter bridge asks `issueFor` before each driver start (ISSUE-209).
+            delegation: wiredDelegation.starter
           })
           // Its in-flight launches hold the upgrade drain too (ADR-002 D8 item 2); a settled launch
           // asks it again at once.
@@ -1282,14 +1355,55 @@ async function bootHost(base: HostBase): Promise<void> {
           }
           // Its report reaches the window as one grouped message with Retry and Dismiss (ISSUE-174).
           launchingRecovery = modules.launching.recover(recoveryDeps)
-          // Stop dwarf ends an owned session through its driver, then its recorded process tree
-          // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
+          // The launched sessions (ISSUE-182, wiring/launchedSessions.ts): every driver event of a
+          // bound session routed (entries, turn ends, usage, asks, exits, errors; 05 §4), crew's
+          // links and asking's driver channel answered, the resume lookup bound. Stop dwarf ends an
+          // owned session through its driver, then its recorded process tree (ISSUE-171, ADR-014
+          // items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(
-            ownedSessionsOver({
-              launching: modules.launching.launching.owned,
-              channels: modules.suppliers.sessions
+            launched.bind({
+              launching: modules.launching.launching,
+              suppliers: modules.suppliers,
+              installId,
+              hostEpoch: epoch,
+              routes: {
+                conversation: conversation.conversation.commands,
+                asking: modules.asking.broker,
+                ledger: ledger.ledger.commands,
+                mines: modules.mines.mines.commands,
+                log
+              },
+              crew: modules.crew.crew
             })
           )
+          // Delegation (ISSUE-209; 05 §4): the endpoint behind the MCP endpoint, the subtask run over the
+          // `SubtaskRouter` bridge to jev and the `WorkerLauncher` bridge to launching, the handoff
+          // over the `ParentDeliverer` bridge to conversation, and their routes (`SubtaskDelegated`,
+          // a worker's `TurnEnded`, `DelegationSucceeded` → crew `endDelegated`, `DelegationFailed`
+          // → the parent's line). A typed constant: TypeScript 6.0.3 crashes on the inline literal.
+          const delegationRoutes: DelegationRouteDeps = {
+            bus,
+            scheduler,
+            jev: jev.advisor,
+            launching: {
+              commands: modules.launching.launching.commands,
+              queries: modules.launching.launching.queries
+            },
+            crew: {
+              queries: modules.crew.crew.queries,
+              ends: modules.crew.crew.delegatedEnds({
+                terminator: modules.crew.terminator,
+                bus,
+                log
+              })
+            },
+            conversation: {
+              queries: conversation.conversation.queries,
+              commands: conversation.conversation.commands,
+              deliverer: conversation.deliverer
+            }
+          }
+          wiredDelegation.compose(delegationRoutes)
           // The cut-1 cross-epic routes (ISSUE-120), once every cut-1 module exists (16 §8.2 step 4):
           // observed turn ends into conversation, `TurnEnded` into crew and attention, the next turn
           // start and `DwarfDeparted` withdrawing attention keys, `DwarfDeparted` into conversation.
@@ -1303,27 +1417,80 @@ async function bootHost(base: HostBase): Promise<void> {
             attention: modules.attention.attention
           })
         },
-        // Step 5: the Host recovery's classification (ISSUE-173); its resumes go on after `ready`.
+        // Step 5: the Host recovery's classification (ISSUE-173), once the start-up detection and
+        // probes answered (ISSUE-182, `classifyAfterDetection`); its resumes go on after `ready`.
         recoverSessions: () => {
-          if (launchingRecovery === undefined) {
+          const { suppliers } = modules
+          if (launchingRecovery === undefined || suppliers === undefined) {
             throw new HostInvariantError('boot step 5 runs after step 4 wired launching')
           }
-          return launchingRecovery.start().classified
+          const recovery = launchingRecovery
+          return classifyAfterDetection({
+            detection: suppliers.bootDetection,
+            classify: async () => {
+              await recovery.start().classified
+            }
+          })
+        },
+        // Step 5, once classified: the ADR-015 item 6 cleanup pass (ISSUE-209). The helpers a dead
+        // epoch left, ended only on a positive identity match (wiring/helperCleanup.ts), then
+        // delegation's boot pass: a delegation still being routed when the Host stopped fails
+        // `worker-lost` (S8.12), and the sweep of the relay tokens and credential files (a launch
+        // that never reached a dwarf loses its credential; a recovered session keeps it for its
+        // resume, ISSUE-182).
+        cleanUpAfterRecovery: async () => {
+          const { launching } = modules
+          if (launching === undefined || delegation === undefined) {
+            throw new HostInvariantError('the cleanup pass runs after step 4 wired launching')
+          }
+          const { transactions } = opened.connection()
+          await cleanUpHelpers({
+            processes: launching.processes,
+            transactions,
+            processControl,
+            clock,
+            hostEpoch: epoch,
+            log
+          })
+          await delegation.recoverOnBoot()
         },
         // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
-        // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
+        // the bound port (07 S14.10; none in a cut-2 rollback build); then the MCP endpoint
         // (ISSUE-209).
-        startHookIngress: () => {
-          if (hookIngress === undefined || configWriter === undefined) {
+        startHookIngress: async () => {
+          if (hookIngress === undefined || configWriter === undefined || delegation === undefined) {
             throw new HostInvariantError('boot step 6 runs after steps 3 and 4 built its parts')
           }
-          return startHookIngressAtBoot(
+          await startHookIngressAtBoot(
             hookIngress,
             log,
             claudeHookEntryFollower({
               engine: configWriter,
               rolledBack: CUT_2_ROLLBACK_CHOICES.rolledBack,
               mintCredential
+            })
+          )
+          // The MCP endpoint (ADR-013 item 3; ISSUE-182, ISSUE-209): a relay connects here for the
+          // two delegation tools of a gated launch and Claude's permission prompt tool. A failure is
+          // logged; no parent can delegate and the stream-json sessions deny every tool use.
+          await delegation.listen(
+            mcpEndpointListener({
+              facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
+              tokens: delegation.tokens,
+              clock,
+              scheduler,
+              ids,
+              log,
+              identity: {
+                hostVersion: __DWARFAI_APP_VERSION__,
+                buildId: __DWARFAI_BUILD_ID__,
+                protocolVersion: PROTOCOL_VERSION
+              },
+              epoch,
+              state: () => hostState.current(),
+              ownerOnlyPipe: createNativeOwnerOnlyPipe({
+                prebuildsDir: winPipePrebuildsDir(appRoot)
+              })
             })
           )
         },
