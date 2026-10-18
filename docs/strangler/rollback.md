@@ -228,6 +228,13 @@ release table has A-40/A-41's unqualified `host` route only, and the earlier tab
 as they shipped, for the router tests (`src/ui-main/ipc/testing/adaptersAsShipped.ts`, `testing/cut4aRoutes.ts`). Cut 4
 rolls forward only (`21` §2.1 item 4).
 
+**First cut-5 deletion (ISSUE-242): no rollback past this point.** From the ISSUE-242 commits `BoardFacadeAdapter`, A-12
+`getMines` and A-P2 `onMinesUpdated` are gone: no route, no handler in today's runtime or `src/main/index.ts`, and no
+preload member (`RETIRED`, `MEMBER_REMOVED` at the end of the facade's 4b lifetime). The renderer reads the board only
+through A-N01/A-N02 (`useMines`), so no build can hand the Panel today's `MinesSnapshot` again. The tables that routed
+A-12 and A-P2 through the facade are kept only as they shipped, for the router tests (`testing/cut4aRoutes.ts`,
+`testing/adaptersAsShipped.ts`). Cut 1 already rolled forward only since its retirement (ISSUE-124).
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
