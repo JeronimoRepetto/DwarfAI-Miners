@@ -28,8 +28,9 @@ machine (`17` §5.5).
 | S-030-1 | ISSUE-318 | `os-lane`           | Windows, macOS, Linux                                          | `spikes/S-030-1`                                                                             |
 | S-027-4 | ISSUE-318 | `os-lane`           | Windows, macOS, Linux                                          | `spikes/S-027-4` (write, read back, start and remove the login entry)                        |
 
-What the lane cannot answer stays an owner step in each record: the macOS Keychain prompt (a hosted runner has no one
-to answer it, so SP-16's cross-copy read records a timeout or an error instead), a signed and notarized `.app`
+What the lane cannot answer stays an owner step in each record: the macOS Keychain prompt with a person's keychain
+across different builds (a hosted runner has no one to answer it; SP-16's cross-copy read, between two byte-identical
+copies of the runtime, read back with no prompt in run 39136245328), a signed and notarized `.app`
 (SP-03), a real sign-out and sign-in (S-027-4), a real second Windows user or remote machine (SP-05 Windows), and a
 drag from the OS file manager (S-019-1).
 
@@ -62,8 +63,10 @@ Then, per spike:
 
 1. Read each JSON before it goes into a tracked file (`skills/privacy-guard`). The harnesses scrub the workspace,
    temp and home paths and the account name, but check anyway.
-2. Copy it to `spike-results/<ID>/` with an OS-shaped name, as the existing files are named, for example
-   `spike-results/SP-16/linux-ci-secret-service.json` or `spike-results/SP-03/macos-ci-versioned-copy.json`.
+2. Copy it to `spike-results/<ID>/run-<run-id>/` with an OS-shaped name, together with the leg's
+   `environment-<label>.json`, for example `spike-results/SP-16/run-<run-id>/linux-ci-secret-service.json` or
+   `spike-results/SP-03/run-<run-id>/macos-15-ci-versioned-copy.json`. The run folder keeps a later run from
+   overwriting an earlier one.
 3. In `spike-results/<ID>.md`, add the OS and versions from `environment-<label>.json` to the front matter (`os`,
    `versions`, and the run id as `ci-run`), add the command (`gh workflow run spikes.yml -f spikes=<ID>`, run
    `<run-id>`) and the result rows under "Results", and say the run was on a hosted CI runner, not a person's machine.
