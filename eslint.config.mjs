@@ -199,7 +199,34 @@ const legacyOnlyThroughBridge = {
     }
   }
 }
-const archPlugin = { rules: { 'legacy-only-through-bridge': legacyOnlyThroughBridge } }
+/**
+ * TS2590 (macOS CI heap): `Promise.resolve(x as HostResult[M])` makes TypeScript build a union too
+ * complex to check. It is a rule of its own, not a `no-restricted-syntax` selector, because that
+ * rule's list is replaced object by object and the tests it must cover are exempt from most of them.
+ *
+ * @type {import('eslint').Rule.RuleModule}
+ */
+const noHostResultCastInPromiseResolve = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'TS2590: never cast into HostResult inside Promise.resolve' },
+    schema: [],
+    messages: {
+      cast: 'TS2590 (macOS CI heap): write `Promise.resolve(x) as Promise<HostResult[M]>`, never `Promise.resolve(x as HostResult[M])`.'
+    }
+  },
+  create(context) {
+    const selector =
+      "CallExpression[callee.object.name='Promise'][callee.property.name='resolve'] > TSAsExpression:has(Identifier[name='HostResult'])"
+    return { [selector]: (node) => context.report({ node, messageId: 'cast' }) }
+  }
+}
+const archPlugin = {
+  rules: {
+    'legacy-only-through-bridge': legacyOnlyThroughBridge,
+    'no-host-result-cast-in-promise-resolve': noHostResultCastInPromiseResolve
+  }
+}
 
 // ---- disjoint file sets ----
 const ADAPTERS = [
@@ -276,6 +303,13 @@ export function createBoundaryConfigs(providerIds) {
       files: ['src/{host,contracts,renderer,ui-main,preload}/**/*.{ts,vue}'],
       plugins: { arch: archPlugin },
       rules: { 'arch/legacy-only-through-bridge': 'error' }
+    },
+
+    // TS2590: every TypeScript file, tests included
+    {
+      files: ['**/*.ts'],
+      plugins: { arch: archPlugin },
+      rules: { 'arch/no-host-result-cast-in-promise-resolve': 'error' }
     },
 
     // syntax: one object per disjoint file set; each lists every selector that applies to it
