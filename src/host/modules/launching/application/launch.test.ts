@@ -235,12 +235,14 @@ describe('LaunchUseCase: delegated worker', () => {
 // the bind runs, or an early driver ask is read as an observed request and dropped (07 S1.17).
 describe('LaunchUseCase: owning before binding', () => {
   it('[S5.21, ADR-010] the launch record of the dwarf is written before its session is bound, so a held ask meets an owned dwarf', async () => {
-    let db: ReturnType<typeof host>['db'] | undefined
+    const seen: { db?: ReturnType<typeof host>['db'] } = {}
     const ownedAtBind: boolean[] = []
     const h = host((_ref, dwarfId) => {
-      ownedAtBind.push(db?.records.live().some((record) => record.dwarfId === dwarfId) ?? false)
+      ownedAtBind.push(
+        seen.db?.records.live().some((record) => record.dwarfId === dwarfId) ?? false
+      )
     })
-    db = h.db
+    seen.db = h.db
 
     const { launchId } = await h.launching.commands.launch(worker(h.parent))
     await h.run(SETTLE_MS)
