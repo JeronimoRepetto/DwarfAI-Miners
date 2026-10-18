@@ -639,7 +639,7 @@ export class LaunchUseCase {
     return next
   }
 
-  /** S5.21, S4.02: the dwarf arrives, its session is bound, the launch is owned, then published. */
+  /** S5.21, S4.02: the dwarf arrives, the launch is owned, its session is bound, then published. */
   private succeed(
     launch: OwnLaunch,
     session: DriverSession,
@@ -666,8 +666,10 @@ export class LaunchUseCase {
     if (!step.ok) return
     const next = step.value.launch
     try {
-      this.deps.suppliers.bindings.bind(ref, dwarfId)
+      // Owned first: binding delivers the events the driver held until now, an ask among them, and
+      // the ask broker reads the dwarf as owned only from this launch record (07 S1.17, ADR-010).
       this.ownSession(launch, next, ref, dwarfId, transport, process, facts)
+      this.deps.suppliers.bindings.bind(ref, dwarfId)
     } catch (error) {
       // The arrival committed and published on its own (crew's `arrive` publishes after its own
       // commit, so it cannot join this transaction, 16 §2.3): undo it. The session is ended through

@@ -64,6 +64,7 @@ import type {
   DriverLaunchRequest
 } from '../../../ports/providerDriver'
 import { probeEnv } from '../../install/searchDirs'
+import { adapterLaunch, type LaunchTarget } from '../acp/client/adapterLaunch'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
 import {
   JsonRpcStdioClient,
@@ -105,6 +106,8 @@ export const CLOSE_BUDGET_MS = 2_000
 const TAIL_CHARS = 400
 /** A `--help` probe reads at most this much. */
 const HELP_READ_CHARS = 256 * 1024
+/** The program that runs a Windows npm install's script entry (ADR-029 row 8, #1360). */
+const NODE_BINARY = 'node'
 /** The provider family and the provider id of every key (15 §1.5, §4.4 Keys). */
 const FAMILY = 'codex'
 /** Codex's refusal of a thread it has no rollout for (S-015-1 run 2: `no rollout found …`). */
@@ -205,8 +208,9 @@ export class CodexAppServerDriver implements ProviderDriver {
         'the argv or the thread policy was refused (ADR-008 item 3)'
       )
     }
+    const target = await this.startTarget(req.install.binaryPath)
     const spawnedAt = this.deps.clock.now()
-    const child = this.spawn(req.install.binaryPath, argv, req.cwd, req.spawnTag)
+    const child = this.spawn(target, argv, req.cwd, req.spawnTag)
     let identity: ProcessIdentity
     try {
       identity = await child.identity
@@ -248,13 +252,9 @@ export class CodexAppServerDriver implements ProviderDriver {
     }
     const detected = await this.detect()
     if (detected.kind !== 'installed') throw launchError('not-installed', 'codex is not installed')
+    const target = await this.startTarget(detected.install.binaryPath)
     const spawnedAt = this.deps.clock.now()
-    const child = this.spawn(
-      detected.install.binaryPath,
-      buildArgv(null),
-      known.cwd,
-      known.spawnTag
-    )
+    const child = this.spawn(target, buildArgv(null), known.cwd, known.spawnTag)
     let identity: ProcessIdentity
     try {
       identity = await child.identity
@@ -295,8 +295,31 @@ export class CodexAppServerDriver implements ProviderDriver {
     return merge(this.deps.record.ceiling, combineLowest({}, probe))
   }
 
+  /**
+   * How to start the person's codex, resolved like a binary (ADR-009 D5). On Windows an npm
+   * install resolves to its script entry, which the OS cannot start by itself and R17 forbids
+   * running through a shell: the person's `node`, found through the same detection, runs it
+   * (`adapterLaunch`, #1360). Not installed when that `node` does not resolve: no spawn.
+   */
+  private async startTarget(binaryPath: string): Promise<LaunchTarget> {
+    const target = await adapterLaunch(binaryPath, this.deps.platform, async () => {
+      const found = await this.deps.detection.detect({
+        providerId: this.profile.id,
+        binaries: [NODE_BINARY]
+      })
+      return found.kind === 'installed' ? found.install.binaryPath : null
+    })
+    if (target === null) {
+      throw launchError(
+        'not-installed',
+        `${NODE_BINARY}, which runs ${this.profile.label}, is not installed`
+      )
+    }
+    return target
+  }
+
   private spawn(
-    executable: string,
+    target: LaunchTarget,
     args: readonly string[],
     cwd: string,
     spawnTag: string
@@ -308,8 +331,8 @@ export class CodexAppServerDriver implements ProviderDriver {
       platform: this.deps.platform
     })
     return this.deps.processControl.spawn({
-      executable,
-      args,
+      executable: target.program,
+      args: [...target.leadingArgs, ...args],
       cwd,
       env,
       processGroup: 'own',
@@ -323,9 +346,10 @@ export class CodexAppServerDriver implements ProviderDriver {
    */
   private async readHelp(install: InstalledProvider): Promise<string | null> {
     const { processControl, scheduler, loginEnv, platform, home } = this.deps
+    const target = await this.startTarget(install.binaryPath)
     const child = processControl.spawn({
-      executable: install.binaryPath,
-      args: ['--help'],
+      executable: target.program,
+      args: [...target.leadingArgs, '--help'],
       cwd: home,
       env: probeEnv(loginEnv, platform),
       processGroup: 'own',

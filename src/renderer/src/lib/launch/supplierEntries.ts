@@ -7,8 +7,10 @@ import { isDwarfProvider, type AgentModelCatalog, type AgentProviderOption } fro
  * the models of a provider not yet moved merged in by `CatalogMergeAdapter`, 21 §3.1). The chips, the model picker and
  * the effort picker keep reading the provider list and the catalogues they always read, built here from it. Pure.
  *
- * - An entry is a launchable chip while its supplier is installed and its public launch is enabled (R-03 keeps a gated
- *   one off the launchable chips). No reason sentence is made up for one that is not.
+ * - An entry is a launchable chip while its supplier is installed. The Host lists only what it may launch in its build
+ *   (ADR-009 D6: a public build lists no `publicLaunch: 'gated'` entry, R-03; a development build keeps one
+ *   launchable), so the build is never decided here. AMENDED for ISSUE-188 (was: also `publicLaunch === 'enabled'`,
+ *   which left a development build's Antigravity off the chips). No reason sentence is made up for one that is not.
  * - A supplier with no chip of the panel (a development-only one) is left out, as the chips leave it out.
  * - A call error is no source at all: every picker says the provider does not report its models.
  */
@@ -27,7 +29,7 @@ export function launchSourcesOf(answer: IpcResult<readonly SupplierEntryView[]>)
     sources.providers.push({
       provider,
       installed: entry.installed,
-      launchable: entry.installed && entry.publicLaunch === 'enabled'
+      launchable: entry.installed
     })
     const efforts: string[] = []
     for (const model of entry.models) {

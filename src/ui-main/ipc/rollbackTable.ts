@@ -15,6 +15,14 @@
 //   moved reach today's runtime through an UNQUALIFIED `legacy` route with its adapter (A-13, A-23, A-35 through
 //   `PerProviderShapeAdapter`, A-36 through `CatalogMergeAdapter`), so a qualified channel folds into the cut's
 //   `legacy` + `target` adapter route, qualified or not.
+// - AMENDED for ISSUE-002: a later provider step (3b, 3d, 3e, 4b) moves one more provider beside a shape-adapter route
+//   an earlier step created (21 §2 cut 3 "Rollback (each step)": the provider-qualified rows flip back). Its
+//   provider-qualified `host` route is dropped, so that provider reaches the earlier step's unqualified `legacy`
+//   adapter route again, and every channel whose routes are all provider-qualified `legacy` rows of the providers not
+//   yet moved (A-27, A-P3, A-P4) gets that provider's row back, as the earlier step's table had it.
+//   AMENDED for ISSUE-186 (was: every flipped-back provider): only a catalog provider gets those rows back. Step 3d
+//   moves "Other…", which is outside the catalog (INV-43) and never had an A-27, A-P3 or A-P4 row; its A-39 is a row
+//   the step moved, so it becomes the pre-cut row like any other.
 // - A NEW row the cut created keeps its route: no legacy code serves it, and the cut-0 NEW rows are the ones that keep
 //   the rollback build attached to its Host and able to stop it (21 §2.1 item 2a; ADR-002 D7, D8). Except (ISSUE-141
 //   lead decision, 2026-10-14) a NEW row that makes the Host write a foreign entry whose legacy writer the rollback build
@@ -28,7 +36,7 @@
 //   after a retirement or deletion commit only forward fixes exist (21 §2.1 item 4).
 // - A row the cut retired with no route (`RETIRED`, lead resolution H1) is the pre-cut row again: today's runtime
 //   still serves it until the cut's retirement step, so the rollback build's renderer finds it where it was.
-import { CHANNELS, type ChannelKey, type StepId } from '@dwarfai/contracts'
+import { CATALOG_PROVIDER_IDS, CHANNELS, type ChannelKey, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from './channelRoute'
 
 /**
@@ -65,8 +73,14 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
     .map((route) => route.channel)
   const routes: ChannelRoute[] = []
   const folded = new Set<ChannelKey>()
+  const flippedBack = new Set<string>()
   for (const route of table.routes) {
     if (isWithdrawn(route, cut)) continue
+    const provider = route.qualifier?.provider
+    if (provider !== undefined && flipsBackToAnEarlierAdapter(table, route, cut)) {
+      flippedBack.add(provider)
+      continue
+    }
     if (!movedBy(route, cut) || KEPT_WITH_THE_MIGRATED_SECRET[route.channel] === cut) {
       routes.push(route)
       continue
@@ -77,7 +91,7 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
   }
   return {
     ...table,
-    routes: [...routes, ...restored],
+    routes: [...routes, ...notMovedRowsOf(routes, flippedBack), ...restored],
     retired: Object.fromEntries(retired.filter(([, step]) => step !== cut)),
     ...(withdrawn.length === 0
       ? {}
@@ -111,6 +125,54 @@ function foldedRow(table: RouteTable, channel: ChannelKey, cut: StepId): Channel
     shape: 'target',
     shapeAdapter: adapter
   }
+}
+
+/**
+ * Whether a rollback of `cut` drops this route: a provider-qualified `host` route `cut` moved, beside an unqualified
+ * `legacy` + `target` shape-adapter route an earlier step created for the same channel (the provider's way back).
+ */
+function flipsBackToAnEarlierAdapter(table: RouteTable, route: ChannelRoute, cut: StepId): boolean {
+  return (
+    movedBy(route, cut) &&
+    route.owner === 'host' &&
+    table.routes.some(
+      (other) =>
+        other.channel === route.channel &&
+        other.since !== cut &&
+        other.owner === 'legacy' &&
+        other.qualifier === undefined &&
+        other.shape === 'target' &&
+        other.shapeAdapter !== undefined
+    )
+  )
+}
+
+/**
+ * The rows the providers `flippedBack` get again on each channel whose routes are all provider-qualified `legacy`
+ * rows (A-27, A-P3, A-P4 from 3a): a copy of that channel's first row, qualified to the provider. Only a catalog
+ * provider had such a row ("Other…", moved in 3d, never did).
+ */
+function notMovedRowsOf(
+  routes: readonly ChannelRoute[],
+  flippedBack: ReadonlySet<string>
+): ChannelRoute[] {
+  if (flippedBack.size === 0) return []
+  const catalogProviders: ReadonlySet<string> = new Set(CATALOG_PROVIDER_IDS)
+  const byChannel = new Map<ChannelKey, ChannelRoute[]>()
+  for (const route of routes)
+    byChannel.set(route.channel, [...(byChannel.get(route.channel) ?? []), route])
+  const rows: ChannelRoute[] = []
+  for (const [, ofChannel] of byChannel) {
+    const first = ofChannel[0]
+    const perProvider = ofChannel.every(
+      (route) => route.owner === 'legacy' && route.qualifier?.provider !== undefined
+    )
+    if (first === undefined || !perProvider) continue
+    for (const provider of flippedBack) {
+      if (catalogProviders.has(provider)) rows.push({ ...first, qualifier: { provider } })
+    }
+  }
+  return rows
 }
 
 /** A row as every legacy row stood before cut 0: today's runtime, today's shape. */

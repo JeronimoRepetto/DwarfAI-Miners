@@ -3,6 +3,8 @@
 // step's route-switch issue (22 §5); this is that table with the step-3a switch (ISSUE-001) undone: every row 3a moved,
 // qualified or retired one `legacy` route with today's shape, and the NEW rows born `host` in 3a (A-N06, A-N10, A-N11,
 // A-N29) unrouted with the step that routes them. Test-only (R14): production never imports it.
+// AMENDED for ISSUE-186 (was: from the release table `ROUTES`): it starts from the 3a table as it shipped
+// (`cut3aRoutes.ts`), so a later step's switch (3d's A-39) never leaks into it.
 import {
   RETIRED,
   UNROUTED,
@@ -11,7 +13,8 @@ import {
   type StepId
 } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { HOST_ROUTE_MEMBERS, LEGACY_BRIDGE_ADAPTERS, ROUTES } from '../routes'
+import { HOST_ROUTE_MEMBERS, LEGACY_BRIDGE_ADAPTERS } from '../routes'
+import { CUT_3A_ROUTES } from './cut3aRoutes'
 
 /**
  * The today rows the step-3a switch moved, qualified or retired (21 §2 cut 3a): A-13, A-23, A-25, A-26, A-27, A-35…A-38,
@@ -50,7 +53,7 @@ export const CUT_2_RETIRED: Partial<Record<ChannelKey, StepId>> = Object.fromEnt
 )
 
 export const CUT_2_ROUTES: readonly ChannelRoute[] = [
-  ...ROUTES.filter(
+  ...CUT_3A_ROUTES.filter(
     (route) =>
       route.since !== 'cut-3a' &&
       !CUT_3A_TOUCHED.includes(route.channel) &&

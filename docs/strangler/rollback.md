@@ -99,6 +99,53 @@ Known limit of a 3a rollback build: a "Let Jev choose" launch has no `host` rout
 `PerProviderShapeAdapter`, which refuses it (`INVALID_PARAMS`, "a Jev launch is served by the Host only"); the person
 picks a supplier on the pickers. Widening Jev's candidates with an adapter was decided against (`21` §11 OI-21-4).
 
+**Step 3b note (ISSUE-002).** A 3b rollback build exists only before the 3b deletion commit merges (ISSUE-185, after the
+soak); after it, 3b rolls forward. 3b moves one more provider beside the shape-adapter routes 3a created, so
+`rollbackOf(table, 'cut-3b')` gives back exactly the 3a table (`src/ui-main/ipc/rollbackTable.test.ts` and
+`ipc-routing.contract.test.ts`, the 3b rollback cases):
+
+| Rows                                     | In the 3b rollback build                                                                                                                                                                                       |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-13, A-23, A-35, A-36 (Codex-qualified) | The Codex-qualified `host` route goes; Codex reaches the unqualified 3a route again (`PerProviderShapeAdapter`, `CatalogMergeAdapter`), with the 14 shapes the build's renderer sends. Claude's 3a routes stay |
+| A-27, A-P3, A-P4                         | Codex's `legacy` row with today's shape comes back beside Antigravity's and OpenCode's, as 3a had it                                                                                                           |
+| Every other row                          | As the 3b table routes it (3b moved no other row and bore no NEW row)                                                                                                                                          |
+
+With Codex no longer moved, `legacyFeedModesOf` composes Codex's whole discovery again (the 3a modes), a Codex launch
+settles on A-P3/A-P4 through the settlement join, and "Let Jev choose" chooses among Claude only. Codex sessions the
+faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
+
+**Step 3d note (ISSUE-186).** A 3d rollback build exists only before the 3d deletion commit merges (ISSUE-187, after the
+soak); after it, 3d rolls forward. `rollbackOf(table, 'cut-3d')` gives back exactly the 3b table
+(`src/ui-main/ipc/rollbackTable.test.ts` and `ipc-routing.contract.test.ts`, the 3d rollback cases):
+
+| Rows                                  | In the 3d rollback build                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-39                                  | The pre-cut row: today's runtime, today's shape. `21` §3.1 names no shape adapter for A-39 (it switches with its route), so the rollback branch also runs `pnpm ipc:generate`, which gives `launchHostedProcess` today's member again, and reverts the renderer's "Other…" submit of the switch commit (`useAgentLaunch.ts`, `customLaunchParamsOf`) |
+| A-13, A-23, A-35 ("Other…"-qualified) | The "Other…"-qualified `host` route goes; an "Other…" dwarf reaches the unqualified 3a route again (`PerProviderShapeAdapter`)                                                                                                                                                                                                                       |
+| A-27, A-P3, A-P4                      | Unchanged: "Other…" is outside the catalog and never had a row there (`rollbackOf` gives these rows back to catalog providers only)                                                                                                                                                                                                                  |
+| Every other row                       | As the 3d table routes it (3d moved no other row and bore no NEW row)                                                                                                                                                                                                                                                                                |
+
+"Other…" sessions the faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3
+"Rollback (each step)"); a new "Other…" launch is today's hosted process again, which dies with the window.
+
+**Step 3e note (ISSUE-188).** A 3e rollback build exists only before the 3e deletion commit merges (ISSUE-189, after the
+soak); after it, 3e rolls forward. 3e moves Antigravity beside the shape-adapter routes 3a created, its launch row in
+development builds only (`DEVELOPMENT_BUILD_ROUTES`, `routesForBuild`), so `rollbackOf(table, 'cut-3e')` gives back
+exactly the 3d table from the table of either build (`src/ui-main/ipc/rollbackTable.test.ts` and
+`ipc-routing.contract.test.ts`, the 3e rollback cases):
+
+| Rows                                           | In the 3e rollback build                                                                                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A-13, A-23, A-36 (Antigravity-qualified)       | The Antigravity-qualified `host` route goes; Antigravity reaches the unqualified 3a route again (`PerProviderShapeAdapter`, `CatalogMergeAdapter`), with the 14 shapes the build's renderer sends      |
+| A-35 (Antigravity-qualified, development only) | The development build's row goes with the others (`rollbackOf` drops it by the same rule), so a development and a public rollback build route A-35 alike, through `PerProviderShapeAdapter`, as 3d did |
+| A-27, A-P3, A-P4                               | Antigravity's `legacy` row with today's shape comes back beside OpenCode's, as 3d had it                                                                                                               |
+| Every other row                                | As the 3e table routes it (3e moved no other row and bore no NEW row)                                                                                                                                  |
+
+With Antigravity no longer moved, `legacyFeedModesOf` composes Antigravity's whole discovery again (the 3d modes), an
+Antigravity launch is today's held session again and settles on A-P3/A-P4 through the settlement join, and "Let Jev
+choose" chooses among Claude and Codex only. Antigravity sessions the faulty build's Host launched are left running and
+are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
