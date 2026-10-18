@@ -293,7 +293,8 @@ module.exports = {
       comment: 'the Claude Agent SDK is nowhere in the rebuild (05 R11; ADR-004 P11)',
       severity: 'error', // AMENDMENT-2 (OQ-52): not a dependency of the rebuild
       from: { path: '^src/(host|ui-main|preload|renderer)/' },
-      to: { path: '^node_modules/@anthropic-ai/claude-agent-sdk' }
+      // ISSUE-184 removed the package, so a planted import resolves to nothing: the bare module name matches too.
+      to: { path: '^(node_modules/)?@anthropic-ai/claude-agent-sdk' }
     },
     {
       name: 'R11-acp-sdk-containment',

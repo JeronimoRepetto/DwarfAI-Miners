@@ -32,19 +32,11 @@ config layers at all.
 
 ## Packaging dependencies
 
-`@anthropic-ai/claude-agent-sdk` ships its native runtime as one optional package per target
-platform and architecture. `package.json` declares the four this app actually builds for —
-`claude-agent-sdk-darwin-arm64`, `-darwin-x64`, `-linux-x64` and `-win32-x64` — in
-`optionalDependencies`, pinned to the exact version already in `dependencies`. **Bump both
-together**: a mismatch is exactly the drift `scripts/sdkRuntimeVersions.test.mjs` exists to catch.
-Without this, pnpm installs only the runtime matching the machine that ran `pnpm install`, so an
-installer built on the "wrong" architecture for its own target — the x64 macOS build made on an
-Apple Silicon Mac, notably — would ship without the runtime a held Claude session needs.
-
-electron-builder does not prune the other three runtimes out of an artifact on its own (that is a
-v27 feature; this project pins 26.x — see [`docs/signing.md`](docs/signing.md) for why). The
-`build.afterPack` hook `scripts/pruneSdkRuntimes.mjs` removes every `claude-agent-sdk-*` folder
-except the one matching the artifact actually being packaged, before code signing runs.
+The SecretStore's keyring library, `@napi-rs/keyring`, ships its native binding as one optional
+package per target platform and architecture. pnpm installs only the binding matching the machine
+that ran `pnpm install`, so `pnpm-workspace.yaml` widens `supportedArchitectures`: an installer
+built on the "wrong" architecture for its own target — the x64 macOS build made on an Apple Silicon
+Mac, notably — still ships the binding its target needs.
 
 `package.json` also declares a `homepage`, which electron-builder's `.deb` (fpm) target refuses to
 build without.

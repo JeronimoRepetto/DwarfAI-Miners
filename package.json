@@ -146,7 +146,6 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.6.0",
-    "@anthropic-ai/claude-agent-sdk": "0.3.258",
     "@fontsource-variable/pixelify-sans": "^5.3.0",
     "@fontsource/jacquard-12": "^5.3.0",
     "@fontsource/tiny5": "^5.3.0",
@@ -158,12 +157,6 @@
     "motion-v": "^2.4.4",
     "vue": "3.5.42",
     "zod": "3.25.76"
-  },
-  "optionalDependencies": {
-    "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.258",
-    "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.258",
-    "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.258",
-    "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.258"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

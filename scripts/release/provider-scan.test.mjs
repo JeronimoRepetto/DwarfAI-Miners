@@ -6,7 +6,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
-  LEGACY_SDK_PATH,
   checkAllowance,
   loadAllowance,
   loadScanList,
@@ -19,8 +18,9 @@ import { scanArtifact } from './packaged/p03-no-provider-binaries.packaged.mjs'
  * The provider binary scan (`20` §2.3 P-03, R-05; ADR-008 items 1-2; OQ-52; ISSUE-273): one list of provider
  * executables, Agent SDK and provider-CLI packages, checked over every packed app (the asar archive and
  * `app.asar.unpacked`), over the lockfile's production dependencies before packaging, and over production sources for
- * a provider credential store or login. The one legacy allowance lets `@anthropic-ai/claude-agent-sdk*` pass only
- * while the legacy `sdkHeldSession.ts` exists. Every case runs over real temporary trees.
+ * a provider credential store or login. The one legacy allowance let `@anthropic-ai/claude-agent-sdk*` pass while the
+ * legacy `sdkHeldSession.ts` existed; ISSUE-184 deleted it, so the allowance is closed and any entry fails. Every case
+ * runs over real temporary trees.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -274,7 +274,10 @@ describe('provider binary scan (20 P-03)', () => {
     expect(lock).toMatchObject({ findings: [], scannedPackages: 2 })
   })
 
-  it('[ADR-008, R11] an allowance entry lets its package pass only while the legacy sdkHeldSession.ts exists, and a non-empty allowance fails once that file is gone', async () => {
+  // AMENDED for ISSUE-184, the step-3a deletion (was: "an allowance entry lets its package pass only while the legacy
+  // sdkHeldSession.ts exists, and a non-empty allowance fails once that file is gone"): the legacy path is gone for
+  // good, so the half that let the packages pass left with it.
+  it('[ADR-008, R11] since the step-3a deletion a non-empty allowance fails, and the packages it named fail the scan', async () => {
     const artifactDir = packedApp({
       asar: {
         'node_modules/@anthropic-ai/claude-agent-sdk/package.json': manifest(
@@ -285,45 +288,28 @@ describe('provider binary scan (20 P-03)', () => {
         'node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/package.json': manifest(
           '@anthropic-ai/claude-agent-sdk-win32-x64'
         ),
-        // The runtime package carries the Claude Code binary; it passes with its package, and only there.
         'node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe': 'binary'
       }
     })
 
-    const withLegacy = tempDir('p03-tree-')
-    writeFile(withLegacy, LEGACY_SDK_PATH, 'export {}')
-    const legacyPresent = checkAllowance(SDK_ALLOWANCE, { rootDir: withLegacy })
-    expect(legacyPresent.errors).toEqual([])
-    const passing = await scanArtifact({ artifactDir, list, allowance: legacyPresent.entries })
-    expect(passing.findings).toEqual([])
-    expect(names(passing.allowed)).toEqual([
-      '@anthropic-ai/claude-agent-sdk',
-      '@anthropic-ai/claude-agent-sdk-win32-x64'
+    const closed = checkAllowance(SDK_ALLOWANCE)
+    expect(closed.errors).toEqual([
+      'the legacy allowance is closed: ISSUE-184 deleted the Agent SDK path (step 3a), remove @anthropic-ai/claude-agent-sdk* (removedBy step-3a)'
     ])
-
-    const withoutLegacy = tempDir('p03-tree-')
-    const legacyGone = checkAllowance(SDK_ALLOWANCE, { rootDir: withoutLegacy })
-    expect(legacyGone.errors).toEqual([
-      `the legacy allowance is not empty but ${LEGACY_SDK_PATH} is gone: remove @anthropic-ai/claude-agent-sdk* (removedBy step-3a)`
-    ])
-    expect(legacyGone.entries).toEqual([])
+    expect(closed.entries).toEqual([])
     expect(
-      names((await scanArtifact({ artifactDir, list, allowance: legacyGone.entries })).findings)
+      names((await scanArtifact({ artifactDir, list, allowance: closed.entries })).findings)
     ).toEqual([
       '@anthropic-ai/claude-agent-sdk',
       '@anthropic-ai/claude-agent-sdk-win32-x64',
       'claude'
     ])
-    // An empty allowance is the target state and passes with the legacy file gone.
-    expect(checkAllowance({ entries: [] }, { rootDir: withoutLegacy })).toEqual({
-      errors: [],
-      entries: []
-    })
+    // An empty allowance is the target state and passes.
+    expect(checkAllowance({ entries: [] })).toEqual({ errors: [], entries: [] })
   })
 
   it('[ADR-008] an allowance entry for any package other than @anthropic-ai/claude-agent-sdk* fails', () => {
     const rootDir = tempDir('p03-tree-')
-    writeFile(rootDir, LEGACY_SDK_PATH, 'export {}')
     const entry = (pattern) => ({ pattern, reason: 'a reason', removedBy: 'step-3a' })
 
     for (const pattern of [
@@ -394,7 +380,9 @@ describe('provider binary scan (20 P-03)', () => {
     expect(scannedFiles).toBe(3)
   })
 
-  it('[ADR-008, R11] the repository lockfile and sources pass, with only @anthropic-ai/claude-agent-sdk* passing by allowance', async () => {
+  // AMENDED for ISSUE-184, the step-3a deletion (was: "… with only @anthropic-ai/claude-agent-sdk* passing by
+  // allowance"): the SDK left the lockfile and the allowance is empty, so nothing passes by it.
+  it('[ADR-008, R11] the repository lockfile and sources pass, with an empty allowance and nothing passing by it', async () => {
     const allowance = await loadAllowance()
     const { errors } = checkAllowance(allowance, { rootDir: repoRoot })
     expect(errors).toEqual([])
@@ -405,9 +393,8 @@ describe('provider binary scan (20 P-03)', () => {
     })
 
     const allowedLines = output.split('\n').filter((line) => line.startsWith('allowed: '))
-    expect(allowedLines.length).toBeGreaterThan(0)
-    for (const line of allowedLines)
-      expect(line).toMatch(/^allowed: @anthropic-ai\/claude-agent-sdk[\w-]*@/)
+    expect(allowedLines).toEqual([])
+    expect(allowance.entries).toEqual([])
     expect(output).toMatch(
       /^provider scan ok: \d+ production packages, \d+ source files, no provider binary/m
     )

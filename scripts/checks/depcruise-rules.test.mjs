@@ -404,6 +404,23 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
     CRUISE_TIMEOUT_MS
   )
 
+  // ISSUE-184: the package left package.json and the lockfile, so a planted import no longer resolves into
+  // node_modules; the rule still names it by its module name.
+  it(
+    '[R11, NFR-COMP-03] an import of @anthropic-ai/claude-agent-sdk that resolves to no installed package is still reported as R11-no-claude-agent-sdk',
+    async () => {
+      const from = 'src/host/modules/suppliers/adapters/drivers/claude/driver.ts'
+      const result = await cruise({
+        files: {
+          [from]: "import sdk from '@anthropic-ai/claude-agent-sdk'\nexport const driver = sdk\n",
+          'src/host/modules/suppliers/index.ts': TEST_FILE
+        }
+      })
+      expectViolation(result, 'R11-no-claude-agent-sdk', from, '@anthropic-ai/claude-agent-sdk')
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
   it(
     '[R11] node:sqlite outside host/platform/sqlite is reported as R11-sqlite-containment',
     async () => {

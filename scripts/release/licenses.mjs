@@ -306,10 +306,10 @@ export function shippedByAnArtifact(entry) {
  * packages that pass only by the legacy allowance. `installed` may be passed in when the caller already indexed the
  * store.
  *
- * `allowance` is ISSUE-273's provider-scan.allowance.json, checked by its own checkAllowance: while the legacy Agent
- * SDK path exists, a package it names (only `@anthropic-ai/claude-agent-sdk*`) whose licence would fail is listed in
- * `allowed` with verdict `allowance` instead, never hidden. Once that path is gone the allowance is stale: that is a
- * failure, and the packages fail on their licence again.
+ * `allowance` is ISSUE-273's provider-scan.allowance.json, checked by its own checkAllowance. While the legacy Agent
+ * SDK path existed, a package it named (only `@anthropic-ai/claude-agent-sdk*`) whose licence would fail was listed in
+ * `allowed` with verdict `allowance` instead, never hidden. ISSUE-184 deleted that path (step 3a), so the allowance is
+ * closed: any entry is a failure, and the packages it names fail on their licence.
  */
 export function buildLicenceReport({
   rootDir,
