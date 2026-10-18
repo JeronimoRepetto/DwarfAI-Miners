@@ -29,6 +29,14 @@ export const en = {
   'hostState.action.retry': 'Try again',
   'hostState.action.stopEverything': 'Stop everything and quit…',
 
+  // The grouped recovery message (ADR-015 item 5, O-15; US-RES-009; ISSUE-330): owner-approved copy, 2026-10-17. One
+  // plain-language message, no per-reason lines; the body is followed by the dwarfs' display names.
+  'recovery.message.title': 'Some dwarfs could not come back',
+  'recovery.message.body':
+    "DwarfAI restarted in the background and could not resume these dwarfs' sessions:",
+  'recovery.message.retry': 'Try again',
+  'recovery.message.dismiss': 'Dismiss',
+
   // The design's own dialog labels (copy.md, Dialog).
   'dialog.cancel': 'Cancel',
 
