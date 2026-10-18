@@ -40,6 +40,15 @@ export function claudeRecording(): { help: string; allow: FixtureProcess; prompt
   }
 }
 
+/** The spawn double built for each clock, so a launch helper can wait on what it spawned. */
+const spawnsOfClock = new WeakMap<FakeClock, RecordingSpawn>()
+
+/** How many `claude -p` sessions the Host started on `clock` so far (0 for an unknown clock). */
+function sessionSpawnsOn(clock: FakeClock): number {
+  return (spawnsOfClock.get(clock)?.spawns ?? []).filter((spawn) => spawn.args.includes('-p'))
+    .length
+}
+
 /** `claude --help` answers the recorded help; every `claude -p` replays `recorded`. */
 export function claudeSpawn(
   clock: FakeClock,
@@ -47,7 +56,7 @@ export function claudeSpawn(
   recorded: FixtureProcess,
   help: string
 ): RecordingSpawn {
-  return new RecordingSpawn({
+  const spawn = new RecordingSpawn({
     clock,
     scheduler,
     decide: (spec) => {
@@ -65,6 +74,8 @@ export function claudeSpawn(
       return { kind: 'exit', afterMs: 0, code: 1, stdout: '' }
     }
   })
+  spawnsOfClock.set(clock, spawn)
+  return spawn
 }
 
 /** The simulated worker's one launch target, and Claude's for the parent's "Let Jev choose". */
@@ -136,6 +147,7 @@ export async function launchClaudeWithJev(
   letJevChoose = true
 ): Promise<{ launchId: LaunchId; dwarfId: DwarfId }> {
   if (letJevChoose) h.router.queue(jevPicks('claude'))
+  const spawnedBefore = sessionSpawnsOn(h.clock)
   const answered = await h.call(ui, 'launching.launch', {
     mineId,
     way: letJevChoose ? { kind: 'jev' } : { kind: 'supplier', providerId: 'claude' },
@@ -146,14 +158,19 @@ export async function launchClaudeWithJev(
   })
   expect(answered).toMatchObject({ ok: true })
   const launchId = (answered as { result?: { launchId?: LaunchId } }).result?.launchId
-  // The relay's credential and `--mcp-config` files are real files: fake time moves only once each
-  // step's disk work answered, so a slow disk never lets the handshake budget run out first.
   const settledFrame = () =>
     evts<LaunchChanged>(ui, 'launch.changed').find(
       (frame) => frame.launch.launchId === launchId && frame.launch.state === 'succeeded'
     )
+  // The relay's credential and `--mcp-config` files are real files, written before the session is
+  // spawned. Until that spawn happened, each step first gives the disk many settle rounds with the
+  // clock frozen, so a slow disk cannot let a handshake or routing budget run out mid-write. The
+  // clock still advances afterwards on every OS, so a launch that needs fake time is never stuck.
+  const spawned = () => sessionSpawnsOn(h.clock) > spawnedBefore
+  const failed = () => evts(ui, 'launch.failed').length > 0
   for (let step = 0; step < 400 && settledFrame() === undefined; step += 1) {
-    if (evts(ui, 'launch.failed').length > 0) break
+    if (failed()) break
+    for (let round = 0; round < 100 && !spawned() && !failed(); round += 1) await h.settle(ui)
     await h.run(50, ui)
   }
   const settled = settledFrame()?.launch
