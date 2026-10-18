@@ -214,6 +214,8 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // route per qualifier: the Host for Claude, a shape adapter for the others) and A-50 to their target shape, and
     // gives A-47 its target shape through `JevSettingsShapeAdapter` (a KEEP row, unchanged here).
     // AMENDED for ISSUE-186 (was: those thirteen): the step-3d switch moves the CHANGE row A-39 to its target shape.
+    // AMENDED for ISSUE-235 (was: those fourteen): the step-4a switch moves the CHANGE rows A-52…A-55 to their target
+    // shape with their `host` route (21 §3.1: no shape adapter).
     expect(
       [
         ...new Set(
@@ -239,6 +241,10 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       'A-41',
       'A-44',
       'A-50',
+      'A-52',
+      'A-53',
+      'A-54',
+      'A-55',
       'A-P2'
     ])
     const expected = KEYS.map(memberOf)
@@ -369,7 +375,10 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-186 (was: A-39 as the CHANGE row still `today`): the step-3d switch routes A-39 `host` with its
     // target shape (21 §3.1: it switches with its route), so its member now exposes `LaunchCustomParams` →
     // `IpcResult<LaunchAccepted>`; A-52 `getOpenCodeSettings` is the CHANGE row still `today` (until 4a).
-    const today = ['agent:launchFailed', 'notifications:enabled:get', 'opencode:settings:get']
+    // AMENDED for ISSUE-235 (was: A-42 as the KEEP row and A-52 as the CHANGE row still `today`): the step-4a switch
+    // routes both `host` with their target shape; the 14 §8 I-21 rows `dwarf:setName` and `dwarf:resetName` stay
+    // `legacy` with today's shape.
+    const today = ['agent:launchFailed', 'dwarf:setName', 'dwarf:resetName']
     for (const key of today) {
       expect(
         [...new Set(ROUTES.filter((route) => route.channel === key).map((route) => route.shape))],
