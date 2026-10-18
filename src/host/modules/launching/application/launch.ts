@@ -190,6 +190,12 @@ export interface LaunchingDeps {
   /** Calls along the launching → suppliers edge (05 §1.3). */
   suppliers: {
     registry: Pick<DriverRegistry, 'drivers'>
+    /**
+     * The driver a launch of the provider starts through: the one its capability check selected
+     * (ADR-009 D4, "first verified wins"; `Suppliers.launchDriver`). Absent (a composition that
+     * launches nothing, such as a recovery-only lane): every launch settles `not-installed`.
+     */
+    launchDriver?: (id: ProviderId) => Promise<ProviderDriver | undefined>
     catalogue: Pick<SupplierCatalogueQueries, 'entry'>
     bindings: SessionBindings
   }
@@ -477,8 +483,9 @@ export class LaunchUseCase {
   }
 
   /**
-   * The driver a settlement launches through, the first of the registry's (ADR-009 D4), and its
-   * install. A supplier is detected: none, or not installed, is `not-installed` (S5.16). "Other…" is
+   * The driver a settlement launches through, the one the provider's capability check selected
+   * (ADR-009 D4: the first driver, in preference order, whose probe verified `launch`; GitHub
+   * #1431), and its install. A composition without that selection launches nothing (fail closed). A supplier is detected: none, or not installed, is `not-installed` (S5.16). "Other…" is
    * never detected (15 §3 H1): a parser refusal is `could-not-start` before any driver is reached,
    * so nothing spawns (ADR-020 item 3; S5.17); otherwise its own program is the install.
    */
@@ -487,7 +494,7 @@ export class LaunchUseCase {
     if (custom !== undefined && !custom.ok) {
       return { ok: false, failure: this.failure('could-not-start', facts), detail: custom.detail }
     }
-    const driver = this.deps.suppliers.registry.drivers(facts.providerId)[0]
+    const driver = await this.deps.suppliers.launchDriver?.(facts.providerId)
     if (driver !== undefined && custom !== undefined) {
       const { argv } = custom.command
       return { ok: true, driver, install: customInstall(facts.providerId, argv), customArgv: argv }

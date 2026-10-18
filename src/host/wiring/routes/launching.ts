@@ -336,7 +336,10 @@ export interface LaunchingWiringDeps {
   installId: string
   log: DiagnosticsLog
   frames: LaunchFramePublisher
-  suppliers: Pick<Suppliers, 'registry' | 'sessions' | 'catalogue' | 'bindings' | 'releases'>
+  suppliers: Pick<
+    Suppliers,
+    'registry' | 'launchDriver' | 'sessions' | 'catalogue' | 'bindings' | 'releases'
+  >
   mines: Pick<MinesQueries, 'get' | 'folderOf'>
   crew: Pick<CrewCommands, 'arrive' | 'sessionClosed'>
   conversation: Pick<ConversationCommands, 'ingest'>
@@ -437,7 +440,7 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
     records: new SqliteLaunchRecordStore({ db, scope: transactions }),
     transactions,
     starter: createSessionStarter({
-      registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       sessions: suppliers.sessions,
       releases: suppliers.releases,
       clock,
@@ -453,6 +456,7 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
     }),
     suppliers: {
       registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       catalogue: suppliers.catalogue,
       bindings: suppliers.bindings
     },

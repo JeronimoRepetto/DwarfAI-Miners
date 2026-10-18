@@ -89,6 +89,7 @@ function host() {
     starter,
     suppliers: {
       registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       catalogue: { entry: (id) => suppliers.catalogue.entry(id) },
       // The double hands out sessions suppliers never saw: only the bridge's can be bound.
       bindings: { bind: () => undefined }
