@@ -1,0 +1,86 @@
+{
+  "case": "C-16",
+  "description": "15 §4.8 Resume (AMENDMENT-13, OQ-81), ADR-015: after the first process ended, resume spawns agy with the launch argv plus --conversation and the recorded conversation id, writes nothing, and is ready at t0 + 3 s (exit-only); the resumed init names the same conversation, so the id is kept. Its next turn continues the step numbering, so no key of the first process is minted again.",
+  "script": [
+    { "do": "launch", "readyAfterMs": 3000 },
+    { "do": "transportLost" },
+    { "do": "resume" },
+    { "do": "advance", "ms": 3000 },
+    { "do": "sendTurn", "messageId": "m-2", "text": "say two" }
+  ],
+  "outcomes": [
+    { "resolved": true },
+    null,
+    null,
+    null,
+    { "confidence": "unconfirmed", "heldUntilTurnEnd": false, "correlation": "m-2" }
+  ],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:1",
+        "role": "dwarf",
+        "text": "one",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" },
+    { "t": "exited", "code": null },
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:2",
+        "role": "person",
+        "text": "say two",
+        "providerTime": null,
+        "echoOf": "m-2"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:3",
+        "role": "dwarf",
+        "text": "two",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:2",
+        "kind": "concluded",
+        "at": 6000,
+        "reliability": "inferred",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    { "event": "user", "message": { "content": "first prompt" } },
+    { "event": "user", "message": { "content": "say two" } }
+  ]
+}

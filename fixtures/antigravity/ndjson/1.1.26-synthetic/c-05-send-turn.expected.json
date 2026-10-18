@@ -1,0 +1,112 @@
+{
+  "case": "C-05",
+  "description": "15 §1.3 sendTurn, §1.4, §4.8: one more turn is one more user line on stdin (never -p); its user_input step is the echo with echoOf, its reply is published once, its result ends it (inferred), and the status goes working then idle per turn. The receipt is unconfirmed: the stream acknowledges no stdin line.",
+  "script": [
+    { "do": "launch", "readyAfterMs": 3000 },
+    { "do": "sendTurn", "messageId": "m-1", "text": "say ping" }
+  ],
+  "outcomes": [
+    { "resolved": true },
+    { "confidence": "unconfirmed", "heldUntilTurnEnd": false, "correlation": "m-1" }
+  ],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:1",
+        "role": "dwarf",
+        "text": "Checking the parser first.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "antigravity:antigravity:{session}:2",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "run_command",
+        "summary": "echo hello",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "antigravity:antigravity:{session}:2",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "run_command",
+        "summary": "echo hello",
+        "state": "finished",
+        "at": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:3",
+        "role": "dwarf",
+        "text": "pong",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" },
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:4",
+        "role": "person",
+        "text": "say ping",
+        "providerTime": null,
+        "echoOf": "m-1"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:5",
+        "role": "dwarf",
+        "text": "ping",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:2",
+        "kind": "concluded",
+        "at": 3000,
+        "reliability": "inferred",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    { "event": "user", "message": { "content": "first prompt" } },
+    { "event": "user", "message": { "content": "say ping" } }
+  ]
+}
