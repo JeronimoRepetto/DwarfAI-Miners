@@ -58,7 +58,10 @@ const ENTRY: SupplierEntry = {
   answerChannel: 'none'
 }
 
-function host() {
+/** What the suppliers' bindings saw when the launch bound its session's held events. */
+type BindSeen = (ref: unknown, dwarfId: DwarfId) => void
+
+function host(onBind: BindSeen = () => undefined) {
   const db = inMemoryLaunching(T0)
   const clock = db.clock
   const scheduler = new FakeScheduler(clock)
@@ -88,7 +91,7 @@ function host() {
     suppliers: {
       registry: { drivers: (id) => (id === SIMULATED ? [DRIVER] : []) },
       catalogue: { entry: (id) => (id === SIMULATED ? ENTRY : null) },
-      bindings: { bind: () => undefined }
+      bindings: { bind: (ref, dwarfId) => onBind(ref, dwarfId as DwarfId) }
     },
     mines: {
       get: (id) => (id === MINE ? mine : null),
@@ -224,5 +227,25 @@ describe('LaunchUseCase: delegated worker', () => {
       state: 'failed',
       failure: { cause: 'jev-unreachable', jevReason: 'timeout' }
     })
+  })
+})
+
+// ADDED for ISSUE-002: binding a launched session delivers the events its driver held until then (sessionChannels),
+// an ask among them. The ask broker reads the dwarf as owned only from its launch record, so the record must exist when
+// the bind runs, or an early driver ask is read as an observed request and dropped (07 S1.17).
+describe('LaunchUseCase: owning before binding', () => {
+  it('[S5.21, ADR-010] the launch record of the dwarf is written before its session is bound, so a held ask meets an owned dwarf', async () => {
+    let db: ReturnType<typeof host>['db'] | undefined
+    const ownedAtBind: boolean[] = []
+    const h = host((_ref, dwarfId) => {
+      ownedAtBind.push(db?.records.live().some((record) => record.dwarfId === dwarfId) ?? false)
+    })
+    db = h.db
+
+    const { launchId } = await h.launching.commands.launch(worker(h.parent))
+    await h.run(SETTLE_MS)
+
+    expect(h.db.launches.byId(launchId)?.state).toBe('succeeded')
+    expect(ownedAtBind).toEqual([true])
   })
 })
