@@ -119,7 +119,10 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
   // AMENDED for ISSUE-228 (was: install refused while the legacy installer enabled the plugin): the Host is the
   // plugin file's writer from ISSUE-228 on (bridge header); B-M14 has no routed caller before the step-4a switch
   // (ISSUE-235), so there is still one writer per release (21 §1 item 4). The legacy probe joins with ISSUE-232.
-  it('[ADR-023, S13.03, INV-112] with the OpenCode plugin writer composed, its verify, revert and install reach it unchanged while the legacy probe stays refused', async () => {
+  // AMENDED for ISSUE-235 (was: the legacy probe refused): the step-4a switch routes A-52/A-53 to the Host and switches
+  // today's plugin installer off, so the boot legacy check includes the `opencode-plugin` target (21 §2 cut 4a;
+  // AMENDMENT-9, OQ-70; 07 S41.02).
+  it('[ADR-023, S13.03, INV-112] with the OpenCode plugin writer composed, its verify, revert, install and legacy probe reach it unchanged', async () => {
     const claudeHooks = recordingEngine()
     const openCodePlugin = recordingEngine()
     const writer = hostConfigWriter({
@@ -138,11 +141,12 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
       ok: true,
       value: { verified: true, backupPath: '/b' }
     })
-    expect(await writer.findLegacy('opencode-plugin')).toBe(false)
+    expect(await writer.findLegacy('opencode-plugin')).toBe(true)
     expect(openCodePlugin.calls).toStrictEqual([
       ['revert', 'opencode-plugin'],
       ['verify', 'opencode-plugin'],
-      ['install', 'opencode-plugin', TOKEN, 'add-panel', HASH]
+      ['install', 'opencode-plugin', TOKEN, 'add-panel', HASH],
+      ['findLegacy', 'opencode-plugin']
     ])
     expect(claudeHooks.calls).toStrictEqual([])
   })
@@ -192,7 +196,10 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
     expect(() => port()).toThrow(HostInvariantError)
   })
 
-  it('[S41.09, BR-19, ADR-016] the first-run step is offered only the installed tools whose integration this Host can turn on now: Claude Code once the ingress port is persisted, OpenCode never in cut 2', () => {
+  // AMENDED for ISSUE-235 (was: OpenCode never offered): from the step-4a switch the first-run step offers OpenCode
+  // when it is installed (21 §2 cut 4a; OQ-68), on the same persisted-port condition as Claude Code, since the plugin
+  // reports to the same hook ingress (ADR-016 item 3).
+  it('[S41.09, BR-19, ADR-016] the first-run step is offered only the installed tools whose integration this Host can turn on now: each once the ingress port is persisted', () => {
     let port: number | null = null
     const tools = enablableInstalledTools(
       { installed: () => ['claude-hooks', 'opencode-permissions'] },
@@ -201,7 +208,7 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
 
     expect(tools.installed()).toStrictEqual([])
     port = 41_234
-    expect(tools.installed()).toStrictEqual(['claude-hooks'])
+    expect(tools.installed()).toStrictEqual(['claude-hooks', 'opencode-permissions'])
     expect(
       enablableInstalledTools({ installed: () => [] }, { read: () => 41_234 }).installed()
     ).toStrictEqual([])

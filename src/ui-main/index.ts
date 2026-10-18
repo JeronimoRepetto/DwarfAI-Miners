@@ -1253,6 +1253,30 @@ export function composeSystemNotificationRows(deps: {
 }
 
 /**
+ * A-33 `resetMetrics` from step 4a (21 §2 cut 4a, §3 `ResetFanout` ends; ISSUE-233): the Host saga alone (B-M15), a part
+ * of the `host` target only where the table routes it `host` (the step-4a switch, ISSUE-235). `undefined` before, where
+ * `ResetFanout` serves it.
+ */
+export function composeResetMetricsRow(_deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'withUiConnection'>
+}): RouteTargetPart | undefined {
+  return undefined
+}
+
+/**
+ * Whether today's runtime composes its OpenCode plugin half (21 §2 cut 4a; §1 item 4; §4 row "OpenCode plugin file").
+ */
+export function legacyOpenCodePluginComposed(_routes: readonly ChannelRoute[]): boolean {
+  return true
+}
+
+/** Whether the root composes `SettingsMirrorBridge` (21 §3). */
+export function settingsMirrorComposed(_routes: readonly ChannelRoute[]): boolean {
+  return true
+}
+
+/**
  * A-N08 `renameDwarf` (B-M22) and A-N09 `resetDwarfName` (B-M23), ISSUE-172: each a part of the `host` target only
  * where the table routes it `host` (lead decision 2026-10-17: born `host` in cut 2, the renderer's board being the
  * Host's). `undefined` when it routes neither (the cut-1 table).

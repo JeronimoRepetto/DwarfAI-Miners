@@ -39,12 +39,15 @@ import {
   composeProviderRouting,
   composeProviderShapeAdapters,
   composeResetFanout,
+  composeResetMetricsRow,
   composeSettlementJoin,
   composeStopAllRelay,
   composeStopDwarf,
   composeSystemNotificationRows,
   legacyClaudeHooksComposed,
   legacyFeedModesOf,
+  legacyOpenCodePluginComposed,
+  settingsMirrorComposed,
   type LegacyAskRelayComposition,
   type LegacyRuntimeSurface
 } from '../index'
@@ -78,6 +81,7 @@ import {
 import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
+import { CUT_3E_RELEASE, CUT_3E_ROUTES, cut3eRoutesForBuild } from './testing/cut3eRoutes'
 import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import {
   DEVELOPMENT_BUILD_ROUTES,
@@ -4471,6 +4475,293 @@ describe('release 3e (21 §2 cut 3e)', () => {
     expect(world.hostCalls).toEqual([])
     expect(world.legacyServed.map(([channel]) => channel)).toEqual(['agent:launch'])
     world.dispose()
+  })
+})
+
+// ADDED for ISSUE-235: the step-4a switch (21 §2 cut 4a; 14 §2.1 A-33, A-42, A-43, A-47, A-51…A-55, §5; 21 §1 items 1,
+// 2, 2a, 3; §3, §3.1). The release table moves the Settings family to the Host with its target shape and no shape
+// adapter (A-42, A-43, A-47, A-51 KEEP, A-52…A-55 and A-33 CHANGE), ends `ResetFanout`, `SettingsMirrorBridge` and
+// `JevSettingsShapeAdapter`, and switches today's OpenCode plugin half off (the Host is the one writer of the plugin
+// file and the one answerer of its asks), while OpenCode's launch, send, stop and console rows and A-27, A-P3, A-P4 stay
+// `legacy` until 4b. RED is the 3e table (`testing/cut3eRoutes.ts`).
+describe('release 4a (21 §2 cut 4a)', () => {
+  const [, CODEX = '', , OPENCODE = ''] = CATALOG_PROVIDER_IDS
+  const DEVELOPMENT = routesForBuild({ publicBuild: false })
+  const PUBLIC = routesForBuild({ publicBuild: true })
+  const tableOf = (routes: readonly ChannelRoute[]): RouteTable => ({
+    release: ROUTES_RELEASE,
+    routes,
+    unrouted: UNROUTED,
+    retired: RETIRED,
+    adapters: LEGACY_BRIDGE_ADAPTERS
+  })
+  const cut4a = tableOf(DEVELOPMENT)
+  const routeOf = (key: ChannelKey): ChannelRoute[] => DEVELOPMENT.filter((r) => r.channel === key)
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const REQUEST = '01920000-0000-7000-a000-000000000235'
+  /** The rows 4a moves to the Host (21 §2 cut 4a "New core serves" H). */
+  const SETTINGS_ROWS: readonly ChannelKey[] = [
+    'notifications:enabled:get', // A-42
+    'notifications:enabled:set', // A-43
+    'jev:settings:get', // A-47
+    'jev:preferences:set', // A-51
+    'opencode:settings:get', // A-52
+    'opencode:plugin:set', // A-53
+    'opencode:password:set', // A-54
+    'opencode:password:clear', // A-55
+    'metrics:reset' // A-33, the saga only
+  ]
+  const ENDED = ['ResetFanout', 'SettingsMirrorBridge', 'JevSettingsShapeAdapter']
+  const NOT_MOVED_ROWS = ['dwarf:retire', 'agent:launchFailed', 'dwarf:sendText:settled'] as const
+
+  const hostCut4a = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-4a',
+    parity: 'passed',
+    shape: 'target'
+  })
+
+  /** The Host as the Settings rows reach it: B-M12, B-M13, B-M14, B-M15, recording each call. */
+  function settingsHost() {
+    const calls: Array<[string, unknown]> = []
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences: {
+            subagentDelegationOn: false,
+            routingProfile: 'balanced',
+            systemNotificationsOn: true
+          },
+          secrets: [
+            { name: 'jev-key', configured: false },
+            { name: 'opencode-password', configured: false }
+          ],
+          secretBackend: 'os-secret-store',
+          integrations: [{ id: 'opencode-permissions', state: 'off', changedAt: 1 }],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      if (method === 'preferences.resetMetrics') {
+        return Promise.resolve({ outcome: 'reset' })
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      client: client as unknown as NonNullable<Parameters<typeof composeJevKeyRows>[0]['client']>
+    }
+  }
+
+  /** The Settings parts of the `host` target as the root composes them over `routes`. */
+  function settingsParts(routes: readonly ChannelRoute[], release: StepId) {
+    const { client, calls } = settingsHost()
+    const legacy = { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) }
+    const jev = composeJevKeyRows({
+      routes,
+      release,
+      legacy,
+      client,
+      migration: undefined,
+      log: { record: () => {} },
+      mintId: () => REQUEST
+    })
+    const parts = [
+      composeSystemNotificationRows({ routes, client, mintId: () => REQUEST }),
+      jev?.part,
+      composeOpenCodeSettingsRows({ routes, client }),
+      composeOpenCodePasswordRows({
+        routes,
+        release,
+        client,
+        migration: undefined,
+        log: { record: () => {} },
+        mintId: () => REQUEST
+      })?.part,
+      composeResetMetricsRow({ routes, client })
+    ].filter((part) => part !== undefined)
+    return { parts, calls, jev, client }
+  }
+
+  it('[ADR-001] in 4a A-42, A-43, A-47, A-51, A-52, A-53, A-54, A-55 and A-33 route host with no shape adapter', async () => {
+    expect(ROUTES_RELEASE).toBe('cut-4a')
+    expect(checkRouteTable(cut4a, KEYS)).toEqual([])
+    expect(checkRouteTable(tableOf(PUBLIC), KEYS)).toEqual([])
+    for (const key of SETTINGS_ROWS) {
+      expect(routeOf(key), key).toEqual([hostCut4a(key)])
+      expect(
+        PUBLIC.filter((r) => r.channel === key),
+        key
+      ).toEqual([hostCut4a(key)])
+    }
+
+    // Through the root's compositions: every row is a part of the `host` target, and A-33 runs the Host saga alone.
+    const { parts, calls } = settingsParts(DEVELOPMENT, ROUTES_RELEASE)
+    expect(parts.flatMap((part) => part.channels).sort()).toEqual([...SETTINGS_ROWS].sort())
+    const router = createRouter({
+      routes: DEVELOPMENT.filter((r) => SETTINGS_ROWS.includes(r.channel)),
+      legacy: { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) },
+      host: composeRouteTargets(parts),
+      senders
+    })
+    const reset = await router.dispatch('metrics:reset', FROM_PANEL as never, {
+      confirmed: 'yes',
+      requestId: REQUEST
+    })
+    expect(CHANNELS['metrics:reset'].response.parse(reset)).toEqual({ outcome: 'reset' })
+    expect(calls).toEqual([['preferences.resetMetrics', { confirmed: 'yes', requestId: REQUEST }]])
+  })
+
+  it('[ADR-001] in 4a ResetFanout, SettingsMirrorBridge and JevSettingsShapeAdapter are no longer composed', () => {
+    for (const table of [DEVELOPMENT, PUBLIC]) {
+      expect(
+        table.filter((r) => r.shapeAdapter !== undefined && ENDED.includes(r.shapeAdapter))
+      ).toEqual([])
+    }
+    const { client, jev } = settingsParts(DEVELOPMENT, ROUTES_RELEASE)
+    expect(jev?.shapeAdapters).toEqual({})
+    expect(
+      composeResetFanout({
+        routes: DEVELOPMENT,
+        release: ROUTES_RELEASE,
+        legacy: { serve: () => Promise.resolve() },
+        client
+      })
+    ).toBeUndefined()
+    expect(settingsMirrorComposed(DEVELOPMENT)).toBe(false)
+    expect(settingsMirrorComposed(PUBLIC)).toBe(false)
+    // The 3e table composed all three.
+    expect(settingsMirrorComposed(CUT_3E_ROUTES)).toBe(true)
+    expect(
+      Object.keys(
+        composeResetFanout({
+          routes: CUT_3E_ROUTES,
+          release: CUT_3E_RELEASE,
+          legacy: { serve: () => Promise.resolve() },
+          client
+        }) ?? {}
+      )
+    ).toEqual(['ResetFanout'])
+    expect(
+      Object.keys(settingsParts(CUT_3E_ROUTES, CUT_3E_RELEASE).jev?.shapeAdapters ?? {})
+    ).toEqual(['JevSettingsShapeAdapter'])
+  })
+
+  it('[ADR-001] in 4a the OpenCode plugin asks are not under the legacy-ask-channel qualifier, which covers only person-launched Codex questions', () => {
+    // 21 §2 cut 4a: the Host's plugin channel answers the OpenCode plugin asks, of legacy-launched sessions too; today's
+    // plugin installer and the OpenCode route of its loopback listener are not composed, so no OpenCode ask reaches
+    // `LegacyAskRelay`. The `legacy-ask-channel` route stays for the person-launched Codex questions only.
+    expect(legacyOpenCodePluginComposed(DEVELOPMENT)).toBe(false)
+    expect(legacyOpenCodePluginComposed(PUBLIC)).toBe(false)
+    expect(legacyOpenCodePluginComposed(CUT_3E_ROUTES)).toBe(true)
+    for (const key of ['agent:answerQuestion', 'agent:answerPermission'] as const) {
+      expect(
+        routeOf(key).map((r) => r.qualifier?.origin ?? 'host'),
+        key
+      ).toEqual(['host', 'legacy-launch', 'legacy-ask-channel'])
+    }
+    expect(legacyFeedModesOf(DEVELOPMENT)[CODEX]).toBe('legacy-launched-or-pending-questions')
+  })
+
+  it('[ADR-001] in 4a the OpenCode launch, send, stop, console rows and A-27, A-P3, A-P4 still route legacy for OpenCode', () => {
+    expect(ROUTES_RELEASE).toBe('cut-4a')
+    for (const table of [DEVELOPMENT, PUBLIC]) {
+      for (const key of ['dwarf:activate', 'dwarf:sendText', 'agent:launch'] as const) {
+        expect(resolveRoute(table, key, { provider: OPENCODE }), key).toEqual({
+          channel: key,
+          owner: 'legacy',
+          since: 'cut-3a',
+          parity: 'n/a',
+          shape: 'target',
+          shapeAdapter: 'PerProviderShapeAdapter'
+        })
+      }
+      expect(resolveRoute(table, 'agent:providers', { provider: OPENCODE })?.shapeAdapter).toBe(
+        'CatalogMergeAdapter'
+      )
+      for (const key of NOT_MOVED_ROWS) {
+        expect(
+          table.filter((r) => r.channel === key),
+          key
+        ).toEqual([
+          {
+            channel: key,
+            owner: 'legacy',
+            since: 'cut-3a',
+            parity: 'n/a',
+            qualifier: { provider: OPENCODE },
+            shape: 'today'
+          }
+        ])
+      }
+      // A-N29 ends a legacy-launched OpenCode session through `LegacyEndFirstAdapter` (one `host` route since 3a).
+      expect(resolveRoute(table, 'dwarf:stop', { provider: OPENCODE })?.owner).toBe('host')
+      expect(legacyFeedModesOf(table)[OPENCODE]).toBe('discover')
+    }
+  })
+
+  it('[ADR-001] in 4a every host route uses only seam-B members born by 4a and none has parity pending', () => {
+    const at = (step: StepId) => STEP_ORDER.indexOf(step)
+    for (const route of DEVELOPMENT.filter((r) => r.owner === 'host')) {
+      expect(route.parity, route.channel).toBe('passed')
+      const members = HOST_ROUTE_MEMBERS[route.channel]
+      expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
+      for (const member of members ?? []) {
+        const born = SEAM_B_METHODS_BORN[member]
+        expect(born, `${member} has a birth release`).toBeDefined()
+        expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
+          at(ROUTES_RELEASE)
+        )
+      }
+    }
+    const moved = DEVELOPMENT.filter((r) => r.since === 'cut-4a')
+    expect(moved.map((r) => r.channel).sort()).toEqual([...SETTINGS_ROWS].sort())
+    // B-M14 is born in 4a (21 §2 "Seam B members" row 4a); no NEW row is, so the unrouted list is 3e's.
+    expect(
+      Object.entries(SEAM_B_METHODS_BORN)
+        .filter(([, step]) => step === 'cut-4a')
+        .map(([method]) => method)
+    ).toEqual(['preferences.setOpenCodePermissions'])
+    expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
+  })
+
+  it('[ADR-001] a 4a rollback build routes A-33, A-42, A-43, A-47 and A-51 as 3e did and keeps A-52…A-55 on the Host', () => {
+    // 21 §2 cut 4a "Rollback", §2.1: the moved rows flip back while the legacy code is in the tree, except the OpenCode
+    // settings rows, whose view carries the status of the password `SecretMigrationBridge` moved into the Host and
+    // deleted from today's file (`KEPT_WITH_THE_MIGRATED_SECRET`); the Host stays the plugin file's one writer.
+    expect(ROUTES_RELEASE).toBe('cut-4a')
+    const KEPT: readonly ChannelKey[] = [
+      'opencode:settings:get',
+      'opencode:plugin:set',
+      'opencode:password:set',
+      'opencode:password:clear'
+    ]
+    const order = (routes: readonly ChannelRoute[]) =>
+      routes.map((route) => JSON.stringify(route)).sort()
+    for (const [table, before] of [
+      [cut4a, CUT_3E_ROUTES],
+      [tableOf(PUBLIC), cut3eRoutesForBuild({ publicBuild: true })]
+    ] as const) {
+      const rolledBack = rollbackOf(table, 'cut-4a')
+      expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+      expect(order(rolledBack.routes)).toEqual(
+        order([
+          ...before.filter((r) => !KEPT.includes(r.channel)),
+          ...KEPT.map((key) => hostCut4a(key))
+        ])
+      )
+      expect(settingsMirrorComposed(rolledBack.routes)).toBe(true)
+      expect(legacyOpenCodePluginComposed(rolledBack.routes)).toBe(false)
+    }
   })
 })
 
