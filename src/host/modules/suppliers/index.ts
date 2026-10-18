@@ -15,9 +15,11 @@ import type { ProcessControl } from '../../kernel/ports/processControl'
 import type { Scheduler } from '../../kernel/ports/scheduler'
 import {
   CATALOG_RECORDS,
+  OPENCODE_ACP,
   SIMULATED_CAPABILITIES,
   SIMULATED_RECORD
 } from './adapters/catalog/profiles'
+import { AcpDriver } from './adapters/drivers/acp/AcpDriver'
 import { ClaudeStreamJsonDriver } from './adapters/drivers/claude-stream-json/ClaudeStreamJsonDriver'
 import type { McpConfigFiles } from './adapters/drivers/claude-stream-json/mcpConfigFile'
 import type { PromptToolDeps } from './adapters/drivers/claude-stream-json/promptTool'
@@ -312,6 +314,16 @@ function cliDrivers(
   const antigravity = recordOf('ndjson')
   if (antigravity !== undefined) {
     attached.push(new AntigravityNdjsonDriver({ ...shared, record: antigravity }))
+  }
+  // OpenCode (ISSUE-238, step 4b; the driver of ISSUE-155): the generic `AcpDriver` over the person's own
+  // `opencode acp`, configured by `OPENCODE_ACP` alone (15 §4.7; ADR-009 D4 option (c)), for the one record whose
+  // profile lists the `http-server` transport (OpenCode's). S-031-3 failed, so `OpenCodeServerDriver` offers no
+  // launch (its probe reports `launch: false`, FM-084) and is not attached: launching takes the registry's first
+  // driver (ADR-009 D4), which must be the one that launches. The answer-channel gate of the profile applies (15 §2.1,
+  // ADR-011 item 7): a permission request is a card only while `opencode-permissions` is `on-verified`.
+  const opencode = recordOf('http-server')
+  if (opencode !== undefined) {
+    attached.push(new AcpDriver({ ...shared, record: opencode, ...OPENCODE_ACP }))
   }
   const claude = recordOf('stream-json')
   if (claude !== undefined && cli.claudeStreamJson !== undefined) {

@@ -144,8 +144,12 @@ describe('preload dwarf retirement contract', () => {
   it('collapses a non-string id to an empty string before it crosses the bridge', () => {
     // Same discipline as setToggleShortcut: main's boundary check should only
     // ever have to reason about a clean string.
+    // AMENDED for ISSUE-238 (was: the id collapsed to ''): from step 4b A-27 has
+    // no route (`RETIRED`, 21 §2 cut 4b), so the generated member speaks the
+    // registry's shape and passes the payload through; the router refuses the
+    // call like any channel with no route, and nothing reaches today's runtime.
     ;(api.retireDwarf as unknown as (value: unknown) => void)(42)
-    expect(send).toHaveBeenLastCalledWith('dwarf:retire', '')
+    expect(send).toHaveBeenLastCalledWith('dwarf:retire', 42)
   })
 })
 
@@ -1406,10 +1410,17 @@ describe('preload OpenCode settings contract (#588 T6)', () => {
     expect(invoke).toHaveBeenLastCalledWith('opencode:settings:get')
   })
 
-  it('sends the relay switch as a strict boolean', async () => {
-    invoke.mockResolvedValueOnce({ pluginEnabled: false, passwordConfigured: false })
-    await api.setOpenCodePluginEnabled('yes' as unknown as boolean)
-    expect(invoke).toHaveBeenLastCalledWith('opencode:plugin:set', false)
+  // AMENDED for ISSUE-235 (was: today's strict boolean, `request === true`): the step-4a switch routes A-53 `host`
+  // with its 14 target shape, `SetOpenCodePermissionsParams`, which the preload passes on unchanged (main validates it).
+  it('sends the permission request as the target shape, unchanged', async () => {
+    invoke.mockResolvedValueOnce({ ok: true, value: { state: 'on-verified' } })
+    const request = {
+      on: true,
+      origin: 'settings',
+      requestId: '01920000-0000-7000-a000-000000000235'
+    } as const
+    await api.setOpenCodePluginEnabled(request)
+    expect(invoke).toHaveBeenLastCalledWith('opencode:plugin:set', request)
   })
 
   it('carries the password exactly as typed, untrimmed', async () => {

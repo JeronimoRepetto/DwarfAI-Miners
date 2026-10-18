@@ -214,6 +214,8 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // route per qualifier: the Host for Claude, a shape adapter for the others) and A-50 to their target shape, and
     // gives A-47 its target shape through `JevSettingsShapeAdapter` (a KEEP row, unchanged here).
     // AMENDED for ISSUE-186 (was: those thirteen): the step-3d switch moves the CHANGE row A-39 to its target shape.
+    // AMENDED for ISSUE-235 (was: those fourteen): the step-4a switch moves the CHANGE rows A-52…A-55 to their target
+    // shape with their `host` route (21 §3.1: no shape adapter).
     expect(
       [
         ...new Set(
@@ -239,6 +241,10 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       'A-41',
       'A-44',
       'A-50',
+      'A-52',
+      'A-53',
+      'A-54',
+      'A-55',
       'A-P2'
     ])
     const expected = KEYS.map(memberOf)
@@ -369,7 +375,12 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-186 (was: A-39 as the CHANGE row still `today`): the step-3d switch routes A-39 `host` with its
     // target shape (21 §3.1: it switches with its route), so its member now exposes `LaunchCustomParams` →
     // `IpcResult<LaunchAccepted>`; A-52 `getOpenCodeSettings` is the CHANGE row still `today` (until 4a).
-    const today = ['agent:launchFailed', 'notifications:enabled:get', 'opencode:settings:get']
+    // AMENDED for ISSUE-235 (was: A-42 as the KEEP row and A-52 as the CHANGE row still `today`): the step-4a switch
+    // routes both `host` with their target shape; the 14 §8 I-21 rows `dwarf:setName` and `dwarf:resetName` stay
+    // `legacy` with today's shape.
+    // AMENDED for ISSUE-238 (was: A-P3 `agent:launchFailed` too): the step-4b switch retires A-P3 with no route
+    // (`RETIRED`), so the 14 §8 I-21 rows are the ones still `today`.
+    const today = ['dwarf:setName', 'dwarf:resetName']
     for (const key of today) {
       expect(
         [...new Set(ROUTES.filter((route) => route.channel === key).map((route) => route.shape))],
@@ -385,14 +396,16 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       IpcResult<LaunchAccepted>
     >()
     // A request of a row still `today` is accepted as today's types have it (the preload never mutates it).
-    expectTypeOf<TodayRequest<'notifications:enabled:set'>>().toExtend<
-      Parameters<DwarfAiMinersApi['setNotificationsEnabled']>[0]
+    // AMENDED for ISSUE-235 (was: A-43 `setNotificationsEnabled` and A-52 `getOpenCodeSettings`): the step-4a switch
+    // routes both `host` with their target shape, so the rows still `today` are the 14 §8 I-21 legacy rows.
+    expectTypeOf<TodayRequest<'dwarf:setName'>>().toExtend<
+      Parameters<DwarfAiMinersApi['setDwarfName']>[0]
     >()
     expectTypeOf<readonly string[]>().toExtend<
       Parameters<DwarfAiMinersApi['describeDwarfAttachments']>[0]
     >()
-    expectTypeOf<DwarfAiMinersApi['getOpenCodeSettings']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'opencode:settings:get'>
+    expectTypeOf<DwarfAiMinersApi['setDwarfName']>().returns.resolves.toEqualTypeOf<
+      TodayResult<'dwarf:setName'>
     >()
     // RETIRE row and KEEP row. AMENDED for ISSUE-123 (was: A-12 `getMines` as the RETIRE row): A-12's target shape is
     // today's `MinesSnapshot` (H3), so its result type is unchanged; A-P3 stands for a RETIRE row still `today`.

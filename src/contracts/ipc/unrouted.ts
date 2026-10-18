@@ -75,7 +75,12 @@ export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
   // 21 §2 cut 3a
   'dwarf:kick': 'cut-3a',
   'agent:models': 'cut-3a',
-  'agent:launchHeld': 'cut-3a'
+  'agent:launchHeld': 'cut-3a',
+  // A-27 (successor `dwarf.departed` B-F10), A-P3 (`launch.failed` B-F19) and A-P4 (`message.delivery` B-F12): from 3a
+  // `legacy` qualified to the providers not yet moved, none left once OpenCode moves (21 §2 cut 3 common rules, cut 4b)
+  'dwarf:retire': 'cut-4b',
+  'agent:launchFailed': 'cut-4b',
+  'dwarf:sendText:settled': 'cut-4b'
 }
 
 /**

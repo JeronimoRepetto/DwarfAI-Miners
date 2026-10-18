@@ -335,6 +335,13 @@ export interface LegacyCompositionOptions {
    */
   claudeHooks: boolean
   /**
+   * Whether today's OpenCode plugin half is composed: true only while A-53 has no `host` route (the root's
+   * `legacyOpenCodePluginComposed(ROUTES)`; ISSUE-235, 21 §2 cut 4a, §1 item 4): today's plugin installer, its
+   * `restore()` and the OpenCode route of the shared loopback listener. From the step-4a switch the Host writes the
+   * plugin file and answers its asks.
+   */
+  openCodePlugin: boolean
+  /**
    * The UI logger (ADR-026): today's warnings reach it as allowlisted records (legacyDiagnostics.ts) instead of the
    * console, which no file of the new trees writes to (eslint.config.mjs deviation 8).
    */
@@ -804,6 +811,8 @@ export function composeLegacyRuntime(
       runtime?.nudge()
     }
     const onOpenCodePush = (push: OpenCodePermissionPush): void => {
+      // ISSUE-235: no OpenCode push reaches today's registry once the Host answers the plugin's asks (route off).
+      if (!options.openCodePlugin) return
       runtime?.noteOpenCodePush(push)
       runtime?.nudge()
     }
@@ -839,15 +848,20 @@ export function composeLegacyRuntime(
     })
     hooks = claude.hooks
     await hooks?.restore()
-    openCodePlugin = new OpenCodePluginChannel({
-      fs: hookFs,
-      pluginDir: openCodeGlobalPluginDir(home, process.env, currentPlatform()),
-      userDataDir: app.getPath('userData'),
-      listener: hookListener,
-      log: unrouted,
-      warn: warnFrom('opencode-plugin')
-    })
-    openCodePluginError = (await openCodePlugin.restore())?.error
+    // ISSUE-235 (21 §2 cut 4a; §1 item 4): today's plugin installer and its listener route only while A-53 keeps its
+    // pre-4a route (the 3e table, or a rollback build that flips it back); from the step-4a switch the Host is the one
+    // writer of the plugin file, so today's `restore()` never reinstalls the old app's file beside it.
+    if (options.openCodePlugin) {
+      openCodePlugin = new OpenCodePluginChannel({
+        fs: hookFs,
+        pluginDir: openCodeGlobalPluginDir(home, process.env, currentPlatform()),
+        userDataDir: app.getPath('userData'),
+        listener: hookListener,
+        log: unrouted,
+        warn: warnFrom('opencode-plugin')
+      })
+      openCodePluginError = (await openCodePlugin.restore())?.error
+    }
 
     // Which build is running (#79), asked of Electron.
     const appBuild: AppBuild = { version: app.getVersion(), packaged: app.isPackaged }

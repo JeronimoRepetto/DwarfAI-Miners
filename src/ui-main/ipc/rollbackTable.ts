@@ -32,10 +32,21 @@
 //   deleted from today's files (`KEPT_WITH_THE_MIGRATED_SECRET`; ISSUE-001, docs/strangler/rollback.md) keeps its
 //   route: today's runtime no longer holds the secret, and a rollback build never moves it back (ADR-017 items 1, 8;
 //   21 §2 cut 4a "Rollback": after the bridge deletes the legacy file, roll forward).
+// - AMENDED for ISSUE-235: a row the cut moved off a 21 §3.1 shape adapter an earlier cut composed for it
+//   (`BACK_THROUGH_ITS_SHAPE_ADAPTER`: A-33 off `ResetFanout`, A-47 off `JevSettingsShapeAdapter`, both in 4a) goes back
+//   to that adapter's `legacy` + `target` row, because the rollback build keeps this tree's preload and renderer, which
+//   speak the row's target shape. The rollback table lists that adapter as living in the cut again: its code is in the
+//   tree until the cut's retirement step (21 §2.1 item 1), whatever the cuts 21 §3 gives it in a forward release.
 // - The rows of earlier cuts keep their routes: each earlier cut's retirement already deleted their legacy code, so
 //   after a retirement or deletion commit only forward fixes exist (21 §2.1 item 4).
 // - A row the cut retired with no route (`RETIRED`, lead resolution H1) is the pre-cut row again: today's runtime
 //   still serves it until the cut's retirement step, so the rollback build's renderer finds it where it was.
+// - AMENDED for ISSUE-238: the last provider step (4b) also removes the routes an earlier step created for the providers
+//   not yet moved (`REMOVED_BY_THE_LAST_PROVIDER_STEP`: the shape adapters' unqualified routes of A-13, A-23, A-35, A-36
+//   and OpenCode's A-27, A-P3, A-P4), since none is left for them. A rollback of 4b puts them back as 4a shipped them
+//   (21 §2 cut 3 "Rollback (each step)": the provider-qualified rows flip back), and drops the step's `host` routes on
+//   those channels, the unqualified A-36 included, so OpenCode reaches the shape adapters again; the retired A-27, A-P3
+//   and A-P4 come back as those routes, not as the pre-cut row.
 import { CATALOG_PROVIDER_IDS, CHANNELS, type ChannelKey, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from './channelRoute'
 
@@ -51,12 +62,83 @@ export const WRITES_A_FOREIGN_ENTRY: readonly ChannelKey[] = ['claude:hooks:set'
  * `SecretMigrationBridge` run moved the secret they read or write into the Host's `SecretStore` and deleted today's file
  * (ADR-017 item 8): from 3a the Jev key, A-48 `setJevApiKey`, A-49 `clearJevApiKey`, A-50 `routeJevLaunch` (which
  * suggests with that key) and A-47 `getJevSettings` (the key's status from the Host, through `JevSettingsShapeAdapter`).
+ * AMENDED for ISSUE-235: from 4a the OpenCode password (21 §2 cut 4a "Rollback": after the bridge deletes the legacy
+ * file, roll forward), A-54 `setOpenCodeServerPassword`, A-55 `clearOpenCodeServerPassword`, and the two rows whose
+ * `OpenCodeSettingsView` carries its status, A-52 `getOpenCodeSettings` and A-53 `setOpenCodePluginEnabled`; with A-53
+ * kept, the Host stays the plugin file's one writer and today's plugin half stays off (21 §1 item 4).
  */
 export const KEPT_WITH_THE_MIGRATED_SECRET: Partial<Record<ChannelKey, StepId>> = {
   'jev:apiKey:set': 'cut-3a',
   'jev:apiKey:clear': 'cut-3a',
   'jev:route': 'cut-3a',
-  'jev:settings:get': 'cut-3a'
+  'jev:settings:get': 'cut-3a',
+  'opencode:settings:get': 'cut-4a',
+  'opencode:plugin:set': 'cut-4a',
+  'opencode:password:set': 'cut-4a',
+  'opencode:password:clear': 'cut-4a'
+}
+
+/**
+ * The rows a step moved off the 21 §3.1 shape adapter an earlier cut composed for them, with that step and the route
+ * the earlier release shipped (ISSUE-235): a rollback of the step routes them through that adapter again.
+ */
+export const BACK_THROUGH_ITS_SHAPE_ADAPTER: Partial<
+  Record<ChannelKey, { step: StepId; route: ChannelRoute }>
+> = {
+  'metrics:reset': {
+    step: 'cut-4a',
+    route: {
+      channel: 'metrics:reset', // A-33
+      owner: 'legacy',
+      since: 'cut-1',
+      parity: 'n/a',
+      shape: 'target',
+      shapeAdapter: 'ResetFanout'
+    }
+  },
+  'jev:settings:get': {
+    step: 'cut-4a',
+    route: {
+      channel: 'jev:settings:get', // A-47
+      owner: 'legacy',
+      since: 'cut-3a',
+      parity: 'n/a',
+      shape: 'target',
+      shapeAdapter: 'JevSettingsShapeAdapter'
+    }
+  }
+}
+
+const [, , , OPENCODE = ''] = CATALOG_PROVIDER_IDS
+
+/** A route of a provider not yet moved, as 3a created it (21 §2 cut 3 common rules, §3.1). */
+const notYetMoved = (
+  channel: ChannelKey,
+  way: { shapeAdapter: string } | { provider: string }
+): ChannelRoute => ({
+  channel,
+  owner: 'legacy',
+  since: 'cut-3a',
+  parity: 'n/a',
+  ...('provider' in way
+    ? { qualifier: { provider: way.provider }, shape: 'today' as const }
+    : { shape: 'target' as const, shapeAdapter: way.shapeAdapter })
+})
+
+/**
+ * The routes a step removed because no provider was left for them (ISSUE-238), with that step: a rollback of the step
+ * routes them again. Step 4b moves the last provider, OpenCode (21 §2 cut 4b).
+ */
+export const REMOVED_BY_THE_LAST_PROVIDER_STEP: Partial<Record<StepId, readonly ChannelRoute[]>> = {
+  'cut-4b': [
+    notYetMoved('dwarf:activate', { shapeAdapter: 'PerProviderShapeAdapter' }), // A-13
+    notYetMoved('dwarf:sendText', { shapeAdapter: 'PerProviderShapeAdapter' }), // A-23
+    notYetMoved('agent:launch', { shapeAdapter: 'PerProviderShapeAdapter' }), // A-35
+    notYetMoved('agent:providers', { shapeAdapter: 'CatalogMergeAdapter' }), // A-36
+    notYetMoved('dwarf:retire', { provider: OPENCODE }), // A-27
+    notYetMoved('agent:launchFailed', { provider: OPENCODE }), // A-P3
+    notYetMoved('dwarf:sendText:settled', { provider: OPENCODE }) // A-P4
+  ]
 }
 
 /** The table of a rollback build of `cut`, from the table `cut`'s release shipped. */
@@ -67,7 +149,14 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
     )
   }
   const retired = Object.entries(table.retired ?? {}) as [ChannelKey, StepId][]
-  const restored = retired.filter(([, step]) => step === cut).map(([channel]) => preCutRow(channel))
+  const reinstated = REMOVED_BY_THE_LAST_PROVIDER_STEP[cut] ?? []
+  const reinstatedChannels = new Set(reinstated.map((route) => route.channel))
+  const restored = [
+    ...retired
+      .filter(([channel, step]) => step === cut && !reinstatedChannels.has(channel))
+      .map(([channel]) => preCutRow(channel)),
+    ...reinstated
+  ]
   const withdrawn = table.routes
     .filter((route) => isWithdrawn(route, cut))
     .map((route) => route.channel)
@@ -76,6 +165,9 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
   const flippedBack = new Set<string>()
   for (const route of table.routes) {
     if (isWithdrawn(route, cut)) continue
+    // The step's own `host` routes on a channel whose earlier routes come back (4b): they flip back with it.
+    if (movedBy(route, cut) && route.owner === 'host' && reinstatedChannels.has(route.channel))
+      continue
     const provider = route.qualifier?.provider
     if (provider !== undefined && flipsBackToAnEarlierAdapter(table, route, cut)) {
       flippedBack.add(provider)
@@ -89,9 +181,15 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
     folded.add(route.channel)
     routes.push(foldedRow(table, route.channel, cut))
   }
+  const rolledBack = [...routes, ...notMovedRowsOf(routes, flippedBack), ...restored]
   return {
     ...table,
-    routes: [...routes, ...notMovedRowsOf(routes, flippedBack), ...restored],
+    routes: rolledBack,
+    adapters: table.adapters.map((adapter) =>
+      !adapter.cuts.includes(cut) && rolledBack.some((route) => route.shapeAdapter === adapter.name)
+        ? { ...adapter, cuts: [...adapter.cuts, cut] }
+        : adapter
+    ),
     retired: Object.fromEntries(retired.filter(([, step]) => step !== cut)),
     ...(withdrawn.length === 0
       ? {}
@@ -109,6 +207,8 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
  * today's runtime for it through a shape adapter, that adapter's unqualified `legacy` + `target` row.
  */
 function foldedRow(table: RouteTable, channel: ChannelKey, cut: StepId): ChannelRoute {
+  const back = BACK_THROUGH_ITS_SHAPE_ADAPTER[channel]
+  if (back?.step === cut) return back.route
   const ofCut = table.routes.filter((route) => route.channel === channel && route.since === cut)
   const adapter = ofCut.some((route) => route.qualifier !== undefined)
     ? ofCut.find(

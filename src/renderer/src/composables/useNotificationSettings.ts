@@ -1,4 +1,6 @@
 import { ref } from 'vue'
+import type { HostFrame, PreferencesView, SnapshotChunk } from '@dwarfai/contracts'
+import { createReadModel, followHost, type HostFollower } from './readModel'
 import { DEFAULT_NOTIFICATIONS_ENABLED } from '../types'
 import { useHostConnection } from './useHostConnection'
 
@@ -14,6 +16,10 @@ import { useHostConnection } from './useHostConnection'
  *
  * No module-scope singleton: Settings is the only consumer, so per-call refs
  * keep tests independent without a clearAll() ritual.
+ *
+ * ISSUE-234 (14 §6.4 row `useNotificationSettings`; ADR-033 items 2–3): from the step-4a switch (ISSUE-235) A-42/A-43
+ * read and write the Host-owned `systemNotificationsOn`, so the switch is also a read model of the `preferences`
+ * snapshot section and of the `preferences.changed` frames above its seq: a change made in another window shows here.
  */
 export function useNotificationSettings() {
   // Matches main's DEFAULT_NOTIFICATIONS_ENABLED so the first paint is almost
@@ -52,5 +58,45 @@ export function useNotificationSettings() {
     }
   }
 
-  return { enabled, applying, sync, set }
+  const model = createReadModel<{ on: boolean }, HostFrame>({
+    state: { on: DEFAULT_NOTIFICATIONS_ENABLED },
+    replace(data) {
+      enabled.value = data.on
+    },
+    apply(frame) {
+      if (frame.name !== 'preferences.changed') return
+      enabled.value = (frame.data as PreferencesView).preferences.systemNotificationsOn
+    }
+  })
+
+  const follower: HostFollower = followHost(
+    {
+      subscribe: (listener) => window.api.onHostEvent((frames) => listener(frames as HostFrame[])),
+      snapshot: (params) => window.api.getHostSnapshot(params)
+    },
+    {
+      model,
+      sections: ['preferences'],
+      dataOf: (chunks: readonly SnapshotChunk[]) => {
+        const chunk = chunks.find((each) => each.section === 'preferences')
+        return {
+          on:
+            chunk === undefined
+              ? enabled.value
+              : (chunk.data as PreferencesView).preferences.systemNotificationsOn
+        }
+      },
+      settled: () => undefined
+    }
+  )
+
+  return {
+    enabled,
+    applying,
+    sync,
+    set,
+    /** Subscribes, then reads the snapshot (ISSUE-234); answers whether the switch is now fed by the Host. */
+    start: () => follower.start(),
+    stop: () => follower.stop()
+  }
 }

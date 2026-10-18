@@ -347,9 +347,17 @@ export class AcpDriver implements ProviderDriver {
    */
   private async readHelp(install: InstalledProvider): Promise<string | null> {
     const { processControl, scheduler, loginEnv, platform, home } = this.deps
+    // As the launch starts it (`agentTarget`): an npm script entry on Windows runs with the person's `node` (#1360);
+    // with no `node` the help is not read, so `launch` stays closed.
+    let agent: LaunchTarget
+    try {
+      agent = await this.agentTarget(install)
+    } catch {
+      return null
+    }
     const child = processControl.spawn({
-      executable: install.binaryPath,
-      args: ['--help'],
+      executable: agent.program,
+      args: [...agent.leadingArgs, '--help'],
       cwd: home,
       env: probeEnv(loginEnv, platform),
       processGroup: 'own',

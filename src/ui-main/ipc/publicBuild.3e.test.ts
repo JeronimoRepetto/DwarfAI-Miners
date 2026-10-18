@@ -17,11 +17,13 @@ import { describe, expect, it } from 'vitest'
 import { CATALOG_PROVIDER_IDS, type ChannelKey } from '@dwarfai/contracts'
 import { legacyFeedModesOf } from '../index'
 import { resolveRoute } from './routeResolver'
-import { ROUTES_RELEASE, routesForBuild } from './routes'
+// AMENDED for ISSUE-235 (was: the release table `routesForBuild` / `ROUTES_RELEASE`): from the step-4a switch the 3e
+// public build's table as it shipped is `testing/cut3eRoutes.ts`.
+import { CUT_3E_RELEASE, cut3eRoutesForBuild } from './testing/cut3eRoutes'
 import { dwarfWire, hostEntry, providerRowsWorld } from './testing/providerRowsWorld'
 
 const [CLAUDE = '', CODEX = '', ANTIGRAVITY = '', OPENCODE = ''] = CATALOG_PROVIDER_IDS
-const PUBLIC = routesForBuild({ publicBuild: true })
+const PUBLIC = cut3eRoutesForBuild({ publicBuild: true })
 const LAUNCH_ROW: ChannelKey = 'agent:launch' // A-35
 const PROVIDERS: ChannelKey = 'agent:providers' // A-36
 const ACTIVATE: ChannelKey = 'dwarf:activate' // A-13
@@ -33,7 +35,7 @@ const OBSERVED = '01920000-0000-7000-9000-000000000716'
 
 describe('step 3e public build (21 §2 row 3e; ADR-009 D6)', () => {
   it('[ADR-009] a 3e public build offers Antigravity on no launch surface, as no Jev candidate, no default provider and no delegated worker, and still observes it', async () => {
-    expect(ROUTES_RELEASE).toBe('cut-3e')
+    expect(CUT_3E_RELEASE).toBe('cut-3e')
     // A-35: no `host` route for Antigravity in a public build (the launch row is a development build's only).
     expect(resolveRoute(PUBLIC, LAUNCH_ROW, { provider: ANTIGRAVITY })?.owner).not.toBe('host')
     expect(
@@ -56,7 +58,7 @@ describe('step 3e public build (21 §2 row 3e; ADR-009 D6)', () => {
     // "Default provider" list) holds no Antigravity entry although today's runtime offers Antigravity.
     const world = providerRowsWorld({
       table: PUBLIC,
-      release: ROUTES_RELEASE,
+      release: CUT_3E_RELEASE,
       dwarfs: [dwarfWire(OBSERVED, ANTIGRAVITY, false)],
       hostReplies: {
         'suppliers.launchable': [hostEntry(CLAUDE), hostEntry(CODEX)],

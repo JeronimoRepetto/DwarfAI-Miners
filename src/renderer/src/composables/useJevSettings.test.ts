@@ -494,3 +494,89 @@ describe('useJevSettings crossing the context bridge', () => {
   })
   /* --- end of the #511 block ---------------------------------------------------- */
 })
+
+/* --- ISSUE-234: the Host-fed read model (14 §6.4 row `useJevSettings`) — one block, appended --- */
+// From the step-4a switch (ISSUE-235) A-47…A-51 are served from the Host's preferences, so the section also follows the
+// `preferences` snapshot section and the `preferences.changed` frames above its seq (ADR-033 items 2–3): a change made
+// elsewhere (another window, a Reset) shows here. The key is never part of any value it holds (INV-107).
+describe('useJevSettings as a read model of the Host (ISSUE-234)', () => {
+  const EPOCH = 'epoch-0234'
+  const KEY = 'ts-live-0234-0123456789abcdef'
+
+  function preferencesView(configured: boolean, routingProfile = 'balanced') {
+    return {
+      preferences: {
+        subagentDelegationOn: false,
+        routingProfile,
+        systemNotificationsOn: true,
+        openCodePermissionsOn: false,
+        defaultProvider: 'claude'
+      },
+      secrets: [{ name: 'jev-key', configured }],
+      secretBackend: 'os-secret-store',
+      integrations: [],
+      welcome: { due: false, legacyFound: [], offered: [] }
+    }
+  }
+
+  function hostApi(overrides: Record<string, unknown> = {}) {
+    let listener: ((frames: unknown[]) => void) | null = null
+    const api = fakeApi({
+      getHostSnapshot: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: {
+            snapshotId: 'snap-10',
+            seq: 10,
+            epoch: EPOCH,
+            chunks: [{ section: 'preferences', data: preferencesView(false) }]
+          }
+        })
+      ),
+      onHostEvent: vi.fn((follow: (frames: unknown[]) => void) => {
+        listener = follow
+        return () => {
+          listener = null
+        }
+      }),
+      ...overrides
+    })
+    return {
+      api,
+      push(seq: number, data: unknown) {
+        listener?.([{ type: 'evt', seq, epoch: EPOCH, name: 'preferences.changed', data }])
+      }
+    }
+  }
+
+  it('[US-SET-007.AC01, NFR-SEC-04] useJevSettings exposes configured and never a key', async () => {
+    const host = hostApi({
+      setJevApiKey: vi.fn(async () => ({
+        configured: true,
+        preferences: {
+          profile: 'balanced',
+          default: { provider: 'claude' },
+          delegation: false
+        }
+      }))
+    })
+    const jev = useJevSettings()
+    expect(await jev.start()).toBe(true)
+    expect(jev.settings.value.configured).toBe(false)
+    await jev.save(KEY)
+    expect(host.api.setJevApiKey).toHaveBeenCalledWith(KEY)
+    expect(jev.settings.value.configured).toBe(true)
+    // Another window saved a profile: the Host's whole view arrives, the key's status only, never the key.
+    host.push(11, preferencesView(true, 'premium'))
+    expect(jev.settings.value).toEqual({
+      configured: true,
+      preferences: { profile: 'premium', default: { provider: 'claude' }, delegation: false }
+    })
+    // An older frame than the last one applied changes nothing (ADR-033 item 3).
+    host.push(11, preferencesView(false))
+    expect(jev.settings.value.configured).toBe(true)
+    expect(JSON.stringify(jev.settings.value)).not.toContain(KEY)
+    jev.stop()
+  })
+})
+/* --- end of the ISSUE-234 block ----------------------------------------------- */

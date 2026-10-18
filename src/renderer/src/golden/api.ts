@@ -22,7 +22,6 @@ import {
   DEFAULT_JEV_SETTINGS,
   DEFAULT_LAUNCH_VIEW,
   DEFAULT_NOTIFICATIONS_ENABLED,
-  DEFAULT_OPENCODE_SETTINGS,
   DEFAULT_TYPOGRAPHY_PREFERENCES,
   MATERIALS,
   type MaterialTotals,
@@ -193,9 +192,25 @@ export function goldenApi(sample: GoldenSample): Api {
     clearJevApiKey: refuse('clearJevApiKey'),
     routeJevLaunch: refuse('routeJevLaunch'),
     setJevPreferences: (preferences) => Promise.resolve({ ...DEFAULT_JEV_SETTINGS, preferences }),
-    getOpenCodeSettings: () => Promise.resolve({ ...DEFAULT_OPENCODE_SETTINGS }),
-    setOpenCodePluginEnabled: (enabled) =>
-      Promise.resolve({ ...DEFAULT_OPENCODE_SETTINGS, pluginEnabled: enabled }),
+    // AMENDED for ISSUE-234 (was: today's `OpenCodeSettings` and boolean): from the step-4a switch A-52 answers the
+    // Host's `OpenCodeSettingsView` and A-53 takes `SetOpenCodePermissionsParams` (14 §2.1 CHANGE).
+    getOpenCodeSettings: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: {
+          permissions: 'off' as const,
+          passwordConfigured: false,
+          secretBackend: 'os-secret-store' as const
+        }
+      }),
+    setOpenCodePluginEnabled: (request) =>
+      Promise.resolve({
+        ok: true as const,
+        value: {
+          ok: true as const,
+          value: { state: request.on ? ('on-verified' as const) : ('off' as const) }
+        }
+      }),
     setOpenCodeServerPassword: refuse('setOpenCodeServerPassword'),
     clearOpenCodeServerPassword: refuse('clearOpenCodeServerPassword'),
     // The sample's remembered launch (#635, PANEL-QUESTIONS 25): a state with no steps opens where
