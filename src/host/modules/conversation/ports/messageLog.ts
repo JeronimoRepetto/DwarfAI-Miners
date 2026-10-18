@@ -29,6 +29,10 @@
 // out when it replaced `setDelivery`: by message id alone (B-M25 carries no `dwarfId`), it puts the
 // row's delivery back to `sending` and answers the delivery it had before, so the caller decides
 // with machine 7 (S7.09) and rolls its transaction back when the retry is refused.
+//
+// AMENDMENT-23 (owner, 2026-10-18; ISSUE-207): `append` takes optional `opts.issuer`, stored on the
+// batch's inserted `person` row only, so the delegated worker's brief carries its issuer (14 §2.4
+// note; 11 F6 step 5; 09 §4.4 `messages.issuer_dwarf_id`).
 import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
 import type { Delivery, DeliveryFailure, FeedPageRequest, Message } from '../domain/messages'
@@ -41,12 +45,24 @@ export type DeliverySettlement =
   | { phase: 'reacted' }
   | { phase: 'failed'; failure: DeliveryFailure }
 
+/**
+ * AMENDMENT-23 (owner, 2026-10-18): what `append` and `ConversationCommands.ingest` take beside
+ * the batch. `issuer` is the dwarf that delegated the work, set only by the `DwarfLaunched` route of
+ * a delegated launch (its `parentDwarfId`), so the brief shows "from <dwarf>" (US-DLG-003.AC04).
+ */
+export interface AppendOptions {
+  issuer?: DwarfId
+}
+
 export interface MessageLog {
   // natural key → idempotent inserts (ADR-006)
+  // Amended: AMENDMENT-23 (owner, 2026-10-18): `opts.issuer` is stored on the batch's inserted
+  // `person` row only (`messages.issuer_dwarf_id`); absent, no row carries one.
   append(
     dwarfId: DwarfId,
     entries: ConversationEntry[],
-    origin: 'live-stream' | 'transcript'
+    origin: 'live-stream' | 'transcript',
+    opts?: AppendOptions
   ): { inserted: number; appended: Message[] }
   /** Amended: every stored row as a `Message`, newest first by `sort_at DESC, id DESC`, at most `req.limit` (default 50). */
   page(dwarfId: DwarfId, req: FeedPageRequest): Message[]

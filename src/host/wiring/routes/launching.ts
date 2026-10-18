@@ -20,6 +20,8 @@
 // - `LaunchRequested` → `launch.changed` with the launch in flight (14 §2.4 B-F18).
 // - `DwarfLaunched` → conversation `ingest` of the prompt as the dwarf's first message (the
 //   person's own words, US-LAUNCH-005.AC07), then `launch.changed` with the launch `succeeded`.
+//   For a delegated launch the prompt is the subtask brief and its issuer is `parentDwarfId`
+//   (AMENDMENT-23, owner 2026-10-18; 11 F6 step 5; US-DLG-003.AC04): the only route that passes one.
 //   The arrival itself (crew `arrive`, rank from the parent, `working`) runs inside launching,
 //   before `DwarfLaunched` is published, along the launching → crew edge (05 §1.3): the event
 //   carries the dwarf's id, the `launch_records` row references the dwarf row (09 §4.3
@@ -150,9 +152,16 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
   const stops = [
     events.subscribe('LaunchRequested', (event) => changed(event.payload.launchId)),
     events.subscribe('DwarfLaunched', (event) => {
-      const { launchId, dwarfId, prompt } = event.payload
-      // The driver's echo of the prompt merges into this row (INV-60; GitHub #1430).
-      conversation.ingest(dwarfId, [launchPromptEntry(launchId, prompt)], 'live-stream')
+      const { launchId, dwarfId, prompt, delegated, parentDwarfId } = event.payload
+      // The driver's echo of the prompt merges into this row (INV-60; GitHub #1430). A delegated
+      // worker's prompt is its subtask brief, issued by its parent (AMENDMENT-23; PO #53).
+      const issuer = delegated ? parentDwarfId : undefined
+      conversation.ingest(
+        dwarfId,
+        [launchPromptEntry(launchId, prompt)],
+        'live-stream',
+        issuer === undefined ? undefined : { issuer }
+      )
       changed(launchId)
     }),
     events.subscribe('LaunchHandedBack', (event) => changed(event.payload.launchId)),

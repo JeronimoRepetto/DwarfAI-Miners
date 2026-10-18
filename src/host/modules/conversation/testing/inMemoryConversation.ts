@@ -113,8 +113,8 @@ export function inMemoryConversation(options: { guardedBus?: boolean } = {}) {
       hostEpoch
     })
     return {
-      ingest: (dwarfId, entries, origin) =>
-        ingest.ingest(dwarfId, handoffs.recognise(dwarfId, entries), origin),
+      ingest: (dwarfId, entries, origin, opts) =>
+        ingest.ingest(dwarfId, handoffs.recognise(dwarfId, entries), origin, opts),
       noteAsk: (dwarfId, change) => asks.noteAsk(dwarfId, change),
       recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
       recordSessionEnd: (dwarfId, at) => sessionEnds.recordSessionEnd(dwarfId, at),
