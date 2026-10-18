@@ -68,7 +68,7 @@ import {
   type StopEverything
 } from './window/application/stopEverything'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './ipc/router'
-import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE } from './ipc/routes'
+import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE, routesForBuild } from './ipc/routes'
 import type { ChannelRoute, RouteQualifier } from './ipc/channelRoute'
 import type { LegacyLog } from '../legacy-bridge/legacyDiagnostics'
 import type { TrayController } from './window/ports/trayController'
@@ -2424,6 +2424,9 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     lock: new ElectronSingleInstanceLock(app),
     lifecycle: electronLifecycle(),
     legacyRuntime,
+    // The release's table for this build (ISSUE-188; 21 §2 row 3e; ADR-009 D6): a development build adds its
+    // development-only rows (Antigravity's launch), a packaged build is a public one, as the Host's `isPublicBuild`.
+    routes: routesForBuild({ publicBuild: app.isPackaged }),
     // Today's runtime as `LegacyAgentRegistryFeed` is handed it (21 §3, cuts 1–4; ISSUE-123): composed over only in the
     // releases the feed, `LegacyDwarfIdBridge` and `LegacyAskRelay` are listed for, never in the cut-0 table.
     legacyRegistry: legacyRuntime.surface,
