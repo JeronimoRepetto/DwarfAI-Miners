@@ -1,8 +1,8 @@
+import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import { describe, expect, it } from 'vitest'
 import { DWARF_PROVIDERS, MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import {
   ONE_SHOT_STDOUT_IS_TURN_TEXT,
-  buildAntigravityLaunchArgs,
   buildClaudeLaunchArgs,
   buildCodexLaunchArgs,
   buildLaunchArgs,
@@ -62,13 +62,13 @@ describe('buildLaunchArgs', () => {
   })
 
   /*
-   * AMENDED for #237, step 4 (was: asserted `buildLaunchArgs('antigravity')`
-   * THREW "observer only"). The detached launch landed, so this dispatch now
-   * answers instead of refusing — see buildAntigravityLaunchArgs for the
-   * verified argv.
+   * AMENDED for ISSUE-189, the step-3e deletion (was: "answers Antigravity with
+   * Antigravity's own print-mode argv, now that it is launchable", #237 step
+   * 4): today's Antigravity launch left the tree, so the dispatch refuses it
+   * again, as it refused OpenCode before #534.
    */
-  it("answers Antigravity with Antigravity's own print-mode argv, now that it is launchable", () => {
-    expect(buildLaunchArgs('antigravity')).toEqual(buildAntigravityLaunchArgs())
+  it('refuses Antigravity, whose launch left today’s launcher with the step-3e deletion', () => {
+    expect(() => buildLaunchArgs('antigravity')).toThrow(NOT_LAUNCHABLE)
   })
 
   /*
@@ -85,7 +85,7 @@ describe('buildLaunchArgs', () => {
 
 /*
  * #534. A one-shot, DETACHED launch only, on the same terms as Antigravity's
- * (#237, step 4): no held-session engine for OpenCode in this app, so
+ * once were (#237, step 4; deleted with ISSUE-189): no held-session engine for OpenCode in this app, so
  * HELDABLE_PROVIDERS does not grow — see shared/contracts.ts.
  */
 describe('buildOpenCodeLaunchArgs', () => {
@@ -162,116 +162,6 @@ describe('launch argv with a model and an effort, OpenCode (#534)', () => {
 
   it('still carries no positional prompt, whatever is tuned', () => {
     const tuned = buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle', effort: 'high' })
-    expect(tuned).not.toContain('dig the east gallery')
-  })
-})
-
-/*
- * #237, step 4. A one-shot, DETACHED launch only: the CLI's documented
- * bidirectional stream-json protocol is what a HELD session would need, and
- * no round trip through it has been proven by this app (see
- * HELDABLE_PROVIDERS in shared/contracts.ts) — that stays step 5.
- */
-describe('buildAntigravityLaunchArgs', () => {
-  /*
-   * Re-verified against the installed Antigravity CLI on this machine,
-   * 2026-09-07 — `agy --help` (read-only; no conversation was started):
-   *
-   *   -p, --print            Run a single prompt non-interactively and print
-   *                          the response
-   *   --input-format string  Input format for print mode (text, stream-json)
-   *                          (default text)
-   *   --output-format string Output format for print mode (text, json,
-   *                          stream-json) (default text)
-   *
-   * AMENDED for #237 hotfix (was: `['-p', '--input-format', 'text']`, on the
-   * unverified assumption that a bare `-p` reads its prompt from stdin). That
-   * assumption was wrong: `-p` TAKES A VALUE on this same CLI 1.1.26,
-   * measured live the same day — `agy -p --input-format stream-json` exits 2
-   * with `-p took "--input-format" as its prompt`, and a trailing bare `-p`
-   * exits 2 with `flag needs an argument: -p`. `--input-format` alone
-   * enables print mode without it: `echo "…" | agy --input-format text`
-   * printed its reply and exited 0. `--input-format text` is passed
-   * explicitly rather than left to the documented default, for the reason
-   * Claude's and Codex's argv already do: a default can move under us. No
-   * `--output-format` is passed — nothing here ever reads the launched
-   * process's stdout (launchRunner.ts's stdio is `['pipe', 'ignore',
-   * 'ignore']`), so there is nothing for a structured output format to serve.
-   */
-  it('asks for one non-interactive print-mode turn', () => {
-    expect(buildAntigravityLaunchArgs()).toEqual(['--input-format', 'text'])
-  })
-
-  it('never carries -p, which takes a value on this CLI and swallowed --input-format (#237)', () => {
-    expect(buildAntigravityLaunchArgs()).not.toContain('-p')
-  })
-
-  it('carries no positional prompt, whatever the prompt says', () => {
-    // Same argv/stdin split as Claude and Codex: the prompt travels on stdin,
-    // never in argv another process on this machine could read.
-    expect(buildAntigravityLaunchArgs().some((arg) => !arg.startsWith('-') && arg !== 'text')).toBe(
-      false
-    )
-  })
-})
-
-/*
- * #282. Antigravity's own `--model` and `--effort` flags, read out of `agy
- * --help` on CLI 1.1.26, 2026-09-07: `--model  Model for the current CLI
- * session` and `--effort  Reasoning effort for the current CLI session
- * (low|medium|high)`. Both are top-level flags, not `agy models`-specific, so
- * they take the same place in argv every other tuned flag does: after the
- * fixed `--input-format text` head (no `-p` — the #237 hotfix above dropped
- * it, since it takes a value on this CLI and swallowed `--input-format`), in
- * the order the request named them.
- */
-describe('launch argv with a model and an effort, Antigravity (#282)', () => {
-  it('leaves the argv exactly as it was when nothing is tuned', () => {
-    // The same promise #239 made for Claude and Codex: ignoring the row
-    // launches precisely as every launch before this issue did.
-    expect(buildAntigravityLaunchArgs({})).toEqual(['--input-format', 'text'])
-    expect(buildLaunchArgs('antigravity', {})).toEqual(['--input-format', 'text'])
-  })
-
-  it("names the model with the flag Antigravity's own help documents", () => {
-    expect(buildAntigravityLaunchArgs({ model: 'claude-sonnet-4-6' })).toEqual([
-      '--input-format',
-      'text',
-      '--model',
-      'claude-sonnet-4-6'
-    ])
-  })
-
-  it('names the effort with --effort, verified on this build', () => {
-    expect(buildAntigravityLaunchArgs({ effort: 'high' })).toEqual([
-      '--input-format',
-      'text',
-      '--effort',
-      'high'
-    ])
-  })
-
-  it('carries both, model before effort', () => {
-    expect(
-      buildAntigravityLaunchArgs({ model: 'gemini-3.8-flash-high', effort: 'medium' })
-    ).toEqual(['--input-format', 'text', '--model', 'gemini-3.8-flash-high', '--effort', 'medium'])
-  })
-
-  it('never carries -p, whatever is tuned', () => {
-    // The whole reason the #237 hotfix exists: -p takes a value on this CLI
-    // and swallows the next argv element, which used to be --input-format
-    // and would now just as happily swallow --model or --effort.
-    expect(buildAntigravityLaunchArgs({ model: 'agy-model', effort: 'high' })).not.toContain('-p')
-  })
-
-  it('dispatches through buildLaunchArgs like the other two providers', () => {
-    expect(buildLaunchArgs('antigravity', { model: 'agy-model', effort: 'low' })).toEqual(
-      buildAntigravityLaunchArgs({ model: 'agy-model', effort: 'low' })
-    )
-  })
-
-  it('still carries no positional prompt, whatever is tuned', () => {
-    const tuned = buildAntigravityLaunchArgs({ model: 'agy-model', effort: 'high' })
     expect(tuned).not.toContain('dig the east gallery')
   })
 })
@@ -372,7 +262,6 @@ describe('buildLaunchArgs dispatches the Codex output path (#510)', () => {
 
   it('ignores an output path for every other provider, unchanged from before #510', () => {
     expect(buildLaunchArgs('claude', {}, '/tmp/out.log')).toEqual(buildClaudeLaunchArgs())
-    expect(buildLaunchArgs('antigravity', {}, '/tmp/out.log')).toEqual(buildAntigravityLaunchArgs())
     expect(buildLaunchArgs('opencode', {}, '/tmp/out.log')).toEqual(buildOpenCodeLaunchArgs())
   })
 })
@@ -421,9 +310,6 @@ describe('buildLaunchArgs dispatches Codex delegation config args (#511 T4)', ()
   it('ignores a fourth argument for every other provider, unchanged from before #511', () => {
     const args = ['-c', 'mcp_servers.jev.command="node"']
     expect(buildLaunchArgs('claude', {}, undefined, args)).toEqual(buildClaudeLaunchArgs())
-    expect(buildLaunchArgs('antigravity', {}, undefined, args)).toEqual(
-      buildAntigravityLaunchArgs()
-    )
     expect(buildLaunchArgs('opencode', {}, undefined, args)).toEqual(buildOpenCodeLaunchArgs())
   })
 })

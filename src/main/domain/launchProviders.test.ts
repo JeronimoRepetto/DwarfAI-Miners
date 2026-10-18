@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { DWARF_PROVIDERS, type DwarfProvider } from './types'
-import { LAUNCHABLE_PROVIDERS, agentProviderList, type CliPresence } from './launchProviders'
+import {
+  LAUNCHABLE_PROVIDERS,
+  NOT_LAUNCHABLE,
+  agentProviderList,
+  type CliPresence
+} from './launchProviders'
 
 // AMENDED for #237 (was: 'claude' | 'codex'). Widened to the provider table
 // itself so an observer-only identity can be handed in as a detection.
@@ -85,7 +90,10 @@ describe('agentProviderList', () => {
     // one-shot terms Codex and Antigravity already do, while staying out of
     // HELDABLE_PROVIDERS: this list only answers "can a launch be started",
     // never "can it be watched".
-    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex', 'antigravity', 'opencode'])
+    // AMENDED for ISSUE-189, the step-3e deletion (was: ['claude', 'codex',
+    // 'antigravity', 'opencode']): today's Antigravity launch left the tree;
+    // the Host's AntigravityNdjsonDriver is its only launcher.
+    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex', 'opencode'])
   })
 
   /*
@@ -100,11 +108,21 @@ describe('agentProviderList', () => {
    * to what its own comment already says happened once before: unreachable in
    * this build, kept for whichever provider arrives next with a store this
    * app can read but no launch invocation yet.
+   *
+   * AMENDED for ISSUE-189, the step-3e deletion (was: "marks a detected
+   * Antigravity launchable now that #237 gives it a detached launch"):
+   * today's Antigravity launch left the tree, so a detected Antigravity is
+   * installed but not launchable here, with NOT_LAUNCHABLE as its reason.
    */
-  it('marks a detected Antigravity launchable now that #237 gives it a detached launch', () => {
+  it('marks a detected Antigravity installed but not launchable since the step-3e deletion', () => {
     const [, , antigravity] = agentProviderList([found('antigravity')]).providers
 
-    expect(antigravity).toEqual({ provider: 'antigravity', installed: true, launchable: true })
+    expect(antigravity).toEqual({
+      provider: 'antigravity',
+      installed: true,
+      launchable: false,
+      reason: NOT_LAUNCHABLE
+    })
   })
 
   it('offers no refusal copy for an Antigravity nobody has installed', () => {

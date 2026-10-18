@@ -156,6 +156,10 @@ Antigravity launch is today's held session again and settles on A-P3/A-P4 throug
 choose" chooses among Claude and Codex only. Antigravity sessions the faulty build's Host launched are left running and
 are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
 
+**Step-3e deletion (ISSUE-189): no rollback past this point.** From the ISSUE-189 commit today's Antigravity launch (the
+held `antigravityHeldSession.ts` engine and the detached `agy` argv) is gone and today's launcher refuses Antigravity, so a
+table that routes Antigravity's launch `legacy` again starts nothing: 3e rolls forward only (`21` §2.1 item 4).
+
 **Step 4a note (ISSUE-235).** A 4a rollback build exists only before the 4a retirement merges (ISSUE-236, after the
 soak) and, on a machine where an OpenCode server password was stored, only before `SecretMigrationBridge` deleted the
 legacy password file (`21` §2 cut 4a "Rollback"); after either, 4a rolls forward. `rollbackOf(table, 'cut-4a')` gives

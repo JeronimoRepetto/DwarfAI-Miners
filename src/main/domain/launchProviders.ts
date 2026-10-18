@@ -66,13 +66,13 @@ export interface CliPresence {
  * already do: no held-session engine, discovered afterwards by the ordinary
  * poll off `opencode.db`. HELDABLE_PROVIDERS does not grow — no round trip
  * through a bidirectional protocol has been proven for OpenCode either.
+ *
+ * AMENDED for ISSUE-189, the step-3e deletion (was: `['claude', 'codex',
+ * 'antigravity', 'opencode']`): today's Antigravity launch left the tree with
+ * its `agy` argv; the Host's `AntigravityNdjsonDriver` is Antigravity's only
+ * launcher, so today's launcher refuses it before anything is spawned.
  */
-export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = [
-  'claude',
-  'codex',
-  'antigravity',
-  'opencode'
-]
+export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex', 'opencode']
 
 /**
  * What a detected provider with no launch path says for itself.

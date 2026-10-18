@@ -1,0 +1,31 @@
+// layer: L7
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { describe, expect, it } from 'vitest'
+
+/**
+ * The step-3e deletion (ISSUE-189; 21 §2 row 3e "Legacy deleted"; §2.1 item 4): today's Antigravity launch leaves the
+ * tree. Antigravity is launched (in development builds) only by the Host's `AntigravityNdjsonDriver`, which replaced
+ * today's `antigravityHeldSession.ts` (the ISSUE-156 candidate decision). Read as text, because the Host never imports
+ * legacy code (R16): today's runtime composes no Antigravity held session, and today's launcher neither lists
+ * Antigravity as launchable nor builds an `agy` launch argv, so no legacy path starts an Antigravity session.
+ */
+const SRC = resolve(import.meta.dirname, '..')
+const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
+
+describe('step-3e deletion (21 §2 row 3e)', () => {
+  it('[ADR-001] runtime.ts composes no Antigravity held session and no legacy Antigravity launch path remains', () => {
+    const runtime = read('main/runtime/runtime.ts')
+    expect(runtime).not.toMatch(
+      /sessionLaunch\/antigravityHeldSession'|\bcreateAntigravityHeldSession\b/
+    )
+    expect(existsSync(resolve(SRC, 'main/sessionLaunch/antigravityHeldSession.ts'))).toBe(false)
+    // Today's detached launch: no `agy` argv, and Antigravity is no launchable provider of today's launcher.
+    expect(read('main/sessionLaunch/launch.ts')).not.toMatch(/\bbuildAntigravityLaunchArgs\b/)
+    const launchable = /export const LAUNCHABLE_PROVIDERS[^=]*=\s*\[([^\]]*)\]/.exec(
+      read('main/domain/launchProviders.ts')
+    )
+    expect(launchable?.[1]).toBeDefined()
+    expect(launchable?.[1]).not.toMatch(/'antigravity'/)
+  })
+})

@@ -134,7 +134,6 @@ import {
   stampHeldTelemetry,
   stampHeldTuning
 } from '../sessionLaunch/heldSession'
-import { createAntigravityHeldSession } from '../sessionLaunch/antigravityHeldSession'
 import { HeldSessionRegistry, TUNING_NOT_HELD } from '../sessionLaunch/heldSessionRegistry'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
 import { createMemoryDwarfNameStore, type DwarfNameStore } from '../dwarfNames/dwarfNameStore'
@@ -1478,12 +1477,15 @@ export class AgentRuntime {
       options.heldSessions ??
       new HeldSessionRegistry({
         detector: platform.cliDetector,
-        // One engine per provider that has one (#237, step 5). Both are
-        // composed here rather than in platformAdapters for the reason stated
-        // above: starting a session is the same act on all three platforms.
+        // One engine per provider that has one (#237, step 5), composed here
+        // rather than in platformAdapters for the reason stated above:
+        // starting a session is the same act on all three platforms.
+        // Antigravity's engine left with the step-3e deletion (ISSUE-189):
+        // the Host's AntigravityNdjsonDriver is its only launcher, so the
+        // registry refuses an Antigravity launch as it refuses any provider
+        // with no engine.
         start: {
-          claude: createSdkHeldSession(),
-          antigravity: createAntigravityHeldSession()
+          claude: createSdkHeldSession()
         },
         now: this.now,
         log: (message) => console.log(message)

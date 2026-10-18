@@ -1,6 +1,7 @@
 import { codexTuningArgs, type LaunchTuning } from '../domain/launchTuning'
 import { codexPermissionArgs } from '../domain/codexPermissions'
 import type { CodexPermissionMode, DwarfProvider } from '../domain/types'
+import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 
 /**
  * Starting a NEW agent session, as opposed to writing into one that already
@@ -217,80 +218,8 @@ export function buildCodexLaunchArgs(
 }
 
 /**
- * Argv for one non-interactive Antigravity turn — a DETACHED, one-shot launch
- * only (#237, step 4). The CLI documents a bidirectional stream-json protocol
- * that could carry a HELD session, but no round trip through it has been
- * proven by this app yet (see HELDABLE_PROVIDERS in shared/contracts.ts),
- * which is exactly why this stays out of it: this argv starts the process and
- * lets go, the same shape Codex's detached launch already is.
- *
- * Read out of the installed CLI's own help, re-verified on this machine's
- * Antigravity CLI 1.1.26, 2026-09-07 (`agy --help`, read-only — no
- * conversation was started to verify this):
- *
- *     -p, --print             Run a single prompt non-interactively and print
- *                             the response
- *     --input-format string   Input format for print mode (text, stream-json)
- *                             (default text)
- *     --output-format string  Output format for print mode (text, json,
- *                             stream-json) (default text)
- *
- * `--input-format text` is passed explicitly rather than left to the
- * documented default, for the same reason Claude's and Codex's own argv do:
- * a default can move under us. No `--output-format` is passed, and that
- * still holds after #510's correction, for a different reason than it once
- * did: `launchRunner.ts`'s `stdio` is `['pipe', stdoutFd, stderrFd]` now —
- * every provider's stdout IS captured to a file, this one included — so
- * this is no longer "nothing reads it". What holds is that Antigravity's
- * own DEFAULT format (`text`, quoted above) is already the plain response
- * `TurnOutcomeWatch` needs: see `ONE_SHOT_STDOUT_IS_TURN_TEXT` below, where
- * `antigravity` is `true` on the strength of this CLI's own headless docs.
- * Asking for a structured format here would trade a shape this app already
- * reads correctly for one nothing here has measured.
- *
- * `-p` is deliberately ABSENT. The prior slice included it on an unverified
- * assumption — that a bare `-p` with no positional prompt reads its prompt
- * from stdin, taken on faith from the observer slice's own claim ("It can
- * send one prompt through stdin") — and that assumption was wrong. The help
- * text above documents what `-p` prints; it does not say `-p` TAKES A VALUE.
- * Proven live against this same machine's Antigravity CLI 1.1.26,
- * 2026-09-07: `agy -p --input-format stream-json` exits 2 with `-p took
- * "--input-format" as its prompt`, and a trailing bare `-p` exits 2 with
- * `flag needs an argument: -p`. So the argv this function used to return —
- * `['-p', '--input-format', 'text']` — made every detached Antigravity
- * launch exit 2 before the process ever read stdin. Print mode needs no
- * `-p` at all: `--input-format` alone enables it — `echo "…" | agy
- * --input-format text` printed its reply and exited 0, same machine, same
- * day. The stdin write itself (see runLaunchProcess) is unchanged and
- * fully provider-agnostic; only the argv was wrong.
- *
- * AMENDED for #282 (was: no tuning parameter at all — #237 only had to make
- * the CLI launchable, and PROVIDER_EFFORT_LEVELS.antigravity stayed empty
- * because nothing could carry an effort). Both flags are read out of the
- * installed CLI's own help, on the same terms as Claude's argv above —
- * Antigravity CLI 1.1.26, 2026-09-07:
- *
- *     --model    Model for the current CLI session
- *     --effort   Reasoning effort for the current CLI session (low|medium|high)
- *
- * Top-level flags, not `agy models`-specific, so they take the same place in
- * argv every other tuned flag here does — after the fixed `--input-format
- * text` head (no `-p`, per the hotfix above), model then effort. An absent
- * field adds nothing, which is what keeps an untuned launch byte for byte
- * what it was before #282.
- */
-export function buildAntigravityLaunchArgs(tuning: LaunchTuning = {}): string[] {
-  return [
-    '--input-format',
-    'text',
-    ...(tuning.model === undefined ? [] : ['--model', tuning.model]),
-    ...(tuning.effort === undefined ? [] : ['--effort', tuning.effort])
-  ]
-}
-
-/**
  * Argv for one non-interactive OpenCode turn (#534) — a DETACHED, one-shot
- * launch only, on the same terms as Antigravity's above: no held-session
+ * launch only, on the same terms as Codex's above: no held-session
  * engine for OpenCode in this app (see HELDABLE_PROVIDERS in
  * shared/contracts.ts), so this starts the process and lets go, discovered
  * afterwards by the ordinary poll reading `opencode.db`.
@@ -384,13 +313,11 @@ export function buildLaunchArgs(
         codexPermissionMode
       )
     case 'antigravity':
-      // AMENDED for #282 (was: called buildAntigravityLaunchArgs() with no
-      // argument, dropping `tuning` on the floor — #237, step 4 gave
-      // Antigravity a launch path but PROVIDER_EFFORT_LEVELS.antigravity was
-      // still empty and its builder took no tuning parameter at all). #282
-      // gives it its own live model list and effort levels, so it is
-      // dispatched exactly like Claude's and Codex's.
-      return buildAntigravityLaunchArgs(tuning)
+      // AMENDED for ISSUE-189, the step-3e deletion (was: its own `agy` argv,
+      // #237 step 4, #282): today's Antigravity launch left the tree, and
+      // `LAUNCHABLE_PROVIDERS` refuses it before this is reached, so this arm
+      // is the refusal `opencode`'s was before #534.
+      throw new Error(NOT_LAUNCHABLE)
     case 'opencode':
       // AMENDED for #534 (was: `throw new Error(NOT_LAUNCHABLE)` — #444 left
       // OpenCode observed only, with no launch invocation this app had
@@ -426,11 +353,9 @@ export function buildLaunchArgs(
  *   which is also why its own `-o, --output-last-message` file is preferred
  *   over the piped tail only for cleanliness (see `LaunchInvocation.outputFile`),
  *   never because the piped tail is a different SHAPE.
- * - `antigravity`: `true`. Its own default `--output-format` is `text`
- *   (Antigravity CLI 1.1.26's own `--help`, quoted above), and this argv
- *   never overrides it — see the comment just above `buildAntigravityLaunchArgs`'s
- *   return statement for why asking for a structured format here would be a
- *   regression, not an improvement.
+ * - `antigravity`: `true`, unread since the step-3e deletion (ISSUE-189):
+ *   today's launcher no longer starts Antigravity. Its own default
+ *   `--output-format` is `text` (Antigravity CLI 1.1.26's own `--help`).
  * - `opencode`: `false`, the one provider this table refuses. `--format json`
  *   (`buildOpenCodeLaunchArgs` above) is documented as "raw JSON events" and
  *   nothing more specific — `opencode run --help`'s own words — and
