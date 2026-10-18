@@ -9,12 +9,14 @@
 //   among the Host's launchable suppliers only (21 §2 cut 3 "Let Jev choose"). The built request is checked against
 //   today's strict schema, so a provider today's runtime does not know reaches nothing (`INVALID_PARAMS`).
 // - Today's `launched: true` answers `LaunchAccepted` with a fresh `LaunchId` (UUIDv7, 14 §1.6): today's receipt id is
-//   not a UUIDv7. The settlement stays on today's A-P3 push until it retires at the end of 4b (21 §3.1). A launch today
+//   not a UUIDv7. The settlement stays on today's A-P3 push until it retires at the end of 4b (21 §3.1), so today's
+//   receipt is recorded against the minted id in the settlement join (`legacySettlementJoin.ts`). A launch today
 //   refuses at once answers an `INTERNAL` call error naming only today's closed cause, never today's text (ADR-026).
 // - A-23 `SendMessageParams` → today's `DwarfTextRequest` (`pressEnter: true`, today's send); its picked paths are
 //   described first by today's A-25 handler, as the Host's legacy send of a provider not yet moved receives them
 //   (21 §2 cut 3), and any refused pick is `attachment-refused` with nothing sent. Today's delivered or held send
-//   (`holdId`, settled on A-P4) is accepted with a fresh `MessageId`; any other answer is `cannot-receive`.
+//   (`holdId`, settled on A-P4) is accepted with a fresh `MessageId`, and a held one's `holdId` is recorded against it
+//   in the settlement join; any other answer is `cannot-receive`.
 // - A-13 `ActivateDwarfRequest` → today's activation by dwarf id: a focused terminal is `raised`, an opened one
 //   `opened` (`attach`); neither is `failed` in the purpose's own mode. Today's feed fallback is dropped (14 §2.1 A-13).
 // - Dwarf ids reach today's runtime through `LegacyDwarfIdBridge`'s rows (the `legacy` it is handed): an unmatched
@@ -37,6 +39,7 @@ import {
   type LaunchAccepted,
   type SendMessageResult
 } from '@dwarfai/contracts'
+import type { LegacySettlementJoin } from './legacySettlementJoin'
 
 /** The name the route table lists and the rows' `legacy` + `target` routes name (21 §3.1). */
 export const PER_PROVIDER_SHAPE_ADAPTER = 'PerProviderShapeAdapter'
@@ -54,6 +57,11 @@ export interface PerProviderShapeAdapterDeps {
   legacy: { serve(channel: string, payload: unknown): Promise<unknown> }
   /** A fresh UUIDv7, for the `LaunchId` and the `MessageId` today's runtime does not give. */
   mintId(): string
+  /**
+   * Where the minted ids are recorded against today's receipt and `holdId`, so today's A-P3 and A-P4 settlements reach
+   * the renderer under the ids it was answered (lead decision 2026-10-17). Absent: nothing is recorded.
+   */
+  settlements?: Pick<LegacySettlementJoin, 'recordLaunch' | 'recordHold'>
 }
 
 export interface PerProviderShapeAdapter {
@@ -72,6 +80,7 @@ const TODAY_PICKS = CHANNELS[DESCRIBE].response
 interface TodayLaunchResult {
   launched: boolean
   cause?: string
+  launchId?: string
 }
 interface TodayTextResult {
   delivered: boolean
@@ -101,7 +110,7 @@ async function todayAnswer<T>(
 export function createPerProviderShapeAdapter(
   deps: PerProviderShapeAdapterDeps
 ): PerProviderShapeAdapter {
-  const { legacy, mintId } = deps
+  const { legacy, mintId, settlements } = deps
 
   async function launch(payload: unknown): Promise<IpcResult<LaunchAccepted>> {
     const parsed = launchParamsSchema.safeParse(payload)
@@ -134,7 +143,9 @@ export function createPerProviderShapeAdapter(
         `the legacy launch was refused (${result.cause ?? 'unclassified'})`
       )
     }
-    return { ok: true, value: { launchId: mintId() as LaunchAccepted['launchId'] } }
+    const launchId = mintId() as LaunchAccepted['launchId']
+    if (result.launchId !== undefined) settlements?.recordLaunch(result.launchId, launchId)
+    return { ok: true, value: { launchId } }
   }
 
   /** Today's attachments for the picked paths, or `null` when today's runtime refused one of them. */
@@ -173,6 +184,7 @@ export function createPerProviderShapeAdapter(
       return { ok: true, value: { ok: false, error: 'cannot-receive' } }
     }
     const messageId = mintId() as Extract<SendMessageResult, { ok: true }>['value']['messageId']
+    if (result.holdId !== undefined) settlements?.recordHold(result.holdId, messageId)
     return { ok: true, value: { ok: true, value: { messageId } } }
   }
 

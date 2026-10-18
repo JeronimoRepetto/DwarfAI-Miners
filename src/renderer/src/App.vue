@@ -18,6 +18,7 @@ import MinesList from './components/browse/MinesList.vue'
 import ToastHost from './components/overlay/ToastHost.vue'
 import StopEverythingConfirmation from './components/stopEverything/StopEverythingConfirmation.vue'
 import HostStateMessage from './components/hostConnection/HostStateMessage.vue'
+import RecoveryMessage from './components/hostConnection/RecoveryMessage.vue'
 import WelcomeStep from './components/welcome/WelcomeStep.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
@@ -51,6 +52,7 @@ import { useJevSettings } from './composables/useJevSettings'
 import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
 import { useTypography } from './composables/useTypography'
 import { useHostConnection } from './composables/useHostConnection'
+import { useRecoveryReport } from './composables/useRecoveryReport'
 import { useWelcomeStep } from './composables/useWelcomeStep'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import {
@@ -1262,6 +1264,9 @@ onMounted(() => {
   // picks in the UI main session store (A-N17…A-N19). The message panel draws its dwarf's front card from it.
   void startAsks()
   /* --- end of the ISSUE-138 block --------------------------------------------- */
+  /* --- Recovery message (ISSUE-330) — one block, appended --------------------- */
+  void followRecoveryReport()
+  /* --- end of the ISSUE-330 block --------------------------------------------- */
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
@@ -1288,6 +1293,9 @@ onBeforeUnmount(() => {
   /* --- Host asks (ISSUE-138) — one block, appended ---------------------------- */
   stopAsks()
   /* --- end of the ISSUE-138 block --------------------------------------------- */
+  /* --- Recovery message (ISSUE-330) — one block, appended --------------------- */
+  stopFollowingRecoveryReport()
+  /* --- end of the ISSUE-330 block --------------------------------------------- */
 })
 
 /* --- Stop everything and quit (ISSUE-317) — one block, appended ----------- */
@@ -1318,6 +1326,31 @@ const {
   acknowledge: acknowledgeWelcomeStep
 } = useWelcomeStep()
 /* --- end of the ISSUE-224 block --------------------------------------------- */
+
+/* --- Recovery message (ISSUE-330) — one block, appended --------------------- */
+// The one grouped recovery message on the Host-state surface (ADR-015 item 5; 14 §6.4 recovery-message store). App owns
+// the singleton and therefore the IPC (ADR-033 item 2). The listed dwarfs stay on the board while it shows: Dismiss is
+// only A-N11. Each is named as the board names it (customName ?? baseName, PO #88), by its id if it is not there; the
+// board's reactive state is read so a name that arrives after the report still shows.
+const {
+  shown: recoveryShown,
+  unrecovered: recoveryUnrecovered,
+  acting: recoveryActing,
+  start: followRecoveryReport,
+  stop: stopFollowingRecoveryReport,
+  retry: retryRecovery,
+  dismiss: dismissRecovery
+} = useRecoveryReport()
+const { readOnly: hostIsReadOnly } = useHostConnection()
+const recoveryNames = computed(() => {
+  void state.mines
+  const dwarfs = hostDwarfs()
+  return recoveryUnrecovered.value.map(({ dwarfId }) => {
+    const dwarf = dwarfs.find((one) => one.id === dwarfId)
+    return dwarf === undefined ? dwarfId : (dwarf.customName ?? dwarf.baseName)
+  })
+})
+/* --- end of the ISSUE-330 block --------------------------------------------- */
 </script>
 
 <template>
@@ -1627,6 +1660,18 @@ const {
             :on-stop-everything="stopEverythingFromHostMessage"
             :covered="stopEverythingView.kind !== 'closed'"
             @retry="retryHostConnection"
+          />
+          <!--
+            ISSUE-330: the one grouped recovery message, on the same surface. It steps aside while the
+            Host-state message or Stop everything and quit holds the window: one message at a time.
+          -->
+          <RecoveryMessage
+            :shown="recoveryShown"
+            :names="recoveryNames"
+            :acting="recoveryActing"
+            :covered="hostIsReadOnly || stopEverythingView.kind !== 'closed'"
+            @retry="retryRecovery"
+            @dismiss="dismissRecovery"
           />
         </div>
 
