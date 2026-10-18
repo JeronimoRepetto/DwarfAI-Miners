@@ -781,6 +781,8 @@ export function composeLegacyAgentRegistryFeed(deps: {
   release: StepId
   legacy: LegacyRuntimeSurface | undefined
   modes?: LegacyFeedModes
+  /** Whether today's runtime launched the legacy dwarf: a moved provider's `legacy-launched` sessions (21 §3). */
+  launched?: (legacyDwarfId: string) => boolean
   timers?: LegacyFeedTimers
 }): LegacyAgentRegistryFeed | undefined {
   if (deps.legacy === undefined || !bridgeLivesIn('LegacyAgentRegistryFeed', deps.release)) {
@@ -789,6 +791,7 @@ export function composeLegacyAgentRegistryFeed(deps: {
   return createLegacyAgentRegistryFeed({
     legacy: deps.legacy,
     modes: deps.modes ?? LEGACY_FEED_PROVIDERS_CUT_1,
+    ...(deps.launched === undefined ? {} : { launched: deps.launched }),
     timers: deps.timers ?? realInterval
   })
 }
@@ -1288,7 +1291,7 @@ export function composeSettlementJoin(deps: {
 /**
  * What `LegacyAgentRegistryFeed` composes per legacy provider for a table (21 §3: it shrinks per provider step). A
  * table whose A-36 names a moved provider (a `host` route qualified to it, the step-3a switch) is step 3a's: Claude's
- * discovery is off (`LEGACY_FEED_PROVIDERS_CUT_3A`); a table that moved none (cuts 1 and 2, a 3a rollback build)
+ * discovery keeps only its legacy-launched sessions (`LEGACY_FEED_PROVIDERS_CUT_3A`); a table that moved none (cuts 1 and 2, a 3a rollback build)
  * composes every discovery. Each later step's switch names its own modes here.
  */
 export function legacyFeedModesOf(routes: readonly ChannelRoute[]): LegacyFeedModes {
@@ -1636,11 +1639,13 @@ export async function startUiMain({
   })
   // Today's open asks are shown as ask cards through the facade and answered through the bridge (21 §3, cuts 1–4).
   const askRelay = composeLegacyAskRelay({ release, dwarfIds })
-  // Only the providers whose rows are still `legacy` are discovered (21 §3; from 3a Claude's are off, ISSUE-001).
+  // Only the providers whose rows are still `legacy` are discovered; from 3a Claude keeps only the sessions today's
+  // runtime launched, so `LegacyEndFirstAdapter` can join them (21 §3; ISSUE-001).
   const registryFeed = composeLegacyAgentRegistryFeed({
     release,
     legacy: askRelay?.registry ?? dwarfIds?.registry ?? legacyRegistry,
-    modes: legacyFeedModesOf(routes)
+    modes: legacyFeedModesOf(routes),
+    launched: (legacyDwarfId) => legacyRuntime.launchIdOfDwarf?.(legacyDwarfId) !== undefined
   })
 
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).

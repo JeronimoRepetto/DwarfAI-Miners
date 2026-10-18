@@ -3375,11 +3375,13 @@ describe('release 3a (21 §2 cut 3a)', () => {
     expect(root).toMatch(/: composeStopDwarf\(\{\s*routes,\s*release,/)
   })
 
-  it('[ADR-001] in 3a the legacy feed composes no discovery for a moved provider, and the Jev preferences are mirrored', () => {
-    // 21 §3 `LegacyAgentRegistryFeed`: it shrinks per provider step; Claude's rows left today's runtime in 3a. A rollback
-    // build (no provider moved) composes every discovery again.
+  it('[ADR-001] in 3a the legacy feed keeps only the legacy-launched sessions of a moved provider, and the Jev preferences are mirrored', () => {
+    // 21 §3 `LegacyAgentRegistryFeed`: it shrinks per provider step; Claude's rows left today's runtime in 3a, but
+    // `LegacyEndFirstAdapter` ends a session Claude's legacy path launched before the step through the same join, so
+    // those sessions stay listed (the root binds today's launched register). A rollback build (no provider moved)
+    // composes every discovery again.
     expect(legacyFeedModesOf(ROUTES)).toEqual({
-      [CLAUDE]: 'off',
+      [CLAUDE]: 'legacy-launched',
       [CODEX]: 'discover',
       [ANTIGRAVITY]: 'discover',
       [OPENCODE]: 'discover'
@@ -3390,6 +3392,9 @@ describe('release 3a (21 §2 cut 3a)', () => {
     // 21 §3 `SettingsMirrorBridge` from 3a: the Jev half joins the notifications half (ISSUE-194).
     const SRC = resolve(import.meta.dirname, '../..')
     const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
+    expect(root).toMatch(
+      /launched: \(legacyDwarfId\) => legacyRuntime\.launchIdOfDwarf\?\.\(legacyDwarfId\) !== undefined/
+    )
     expect(root).toMatch(/halves: settingsMirrorHalves\(ROUTES_RELEASE, legacyRuntime\)/)
     expect(root).toMatch(/reportSettingsMirrorWrites\(\s*ROUTES_RELEASE,/)
   })

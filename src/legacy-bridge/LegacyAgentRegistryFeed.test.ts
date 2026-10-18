@@ -87,13 +87,34 @@ function fakeInterval() {
 }
 
 describe('LegacyAgentRegistryFeed', () => {
-  it('[ADR-001] in 3a only Claude is switched off: Codex, Antigravity and OpenCode are still discovered', async () => {
+  it('[ADR-001] in 3a Claude keeps only the sessions today’s runtime launched: Codex, Antigravity and OpenCode are still discovered', async () => {
     const legacy = fakeLegacyRuntime({
-      claude: [snapshot('claude', 's1')],
+      claude: [snapshot('claude', 's1'), snapshot('claude', 's2')],
       codex: [snapshot('codex', 't1')],
       antigravity: [snapshot('antigravity', 'a1')],
       opencode: [snapshot('opencode', 'o1')]
     })
+    const feed = createLegacyAgentRegistryFeed({
+      legacy: legacy.surface,
+      modes: LEGACY_FEED_PROVIDERS_CUT_3A,
+      launched: (legacyId) => legacyId === 'claude:s2',
+      timers: fakeInterval()
+    })
+
+    await feed.refresh()
+
+    // Claude's rows move to the Host in 3a (21 §2 cut 3a; 21 §3 the feed shrinks per provider step), but a session its
+    // legacy path launched before the step stays joinable, so A-N29 and A-32 end it first (21 §3 LegacyEndFirstAdapter).
+    expect(legacy.registry.at(-1)?.map((s) => [s.provider, s.sessionId])).toEqual([
+      ['claude', 's2'],
+      ['codex', 't1'],
+      ['antigravity', 'a1'],
+      ['opencode', 'o1']
+    ])
+  })
+
+  it('[ADR-001] a provider narrowed to its legacy-launched sessions lists none when no launch predicate is bound', async () => {
+    const legacy = fakeLegacyRuntime({ claude: [snapshot('claude', 's1')] })
     const feed = createLegacyAgentRegistryFeed({
       legacy: legacy.surface,
       modes: LEGACY_FEED_PROVIDERS_CUT_3A,
@@ -102,13 +123,7 @@ describe('LegacyAgentRegistryFeed', () => {
 
     await feed.refresh()
 
-    // Claude's rows move to the Host in 3a (21 §2 cut 3a; 21 §3 the feed shrinks per provider step).
-    expect(legacy.scanned).toEqual(['codex', 'antigravity', 'opencode'])
-    expect(legacy.registry.at(-1)?.map((s) => s.provider)).toEqual([
-      'codex',
-      'antigravity',
-      'opencode'
-    ])
+    expect(legacy.registry.at(-1)).toEqual([])
   })
 
   it('[ADR-001] discovered sessions reach only the legacy agent registry and nothing is written to the projects store or the ledger', async () => {
