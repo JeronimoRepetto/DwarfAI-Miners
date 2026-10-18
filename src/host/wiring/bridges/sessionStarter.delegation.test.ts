@@ -106,7 +106,7 @@ function arrange(options: {
   }
   const lifecycle = new RecordingLifecycle(options.delegationOn)
   const starter = createSessionStarter({
-    registry,
+    launchDriver: async (id) => registry.drivers(id)[0],
     sessions: scripted.sessions,
     clock,
     scheduler,

@@ -6,12 +6,17 @@ import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnostics
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import type { TurnEnded } from '../../kernel/domain/sharedContracts'
-import type { DwarfId, MineId } from '../../kernel/domain/values'
+import type { DwarfId, LaunchId, MineId } from '../../kernel/domain/values'
 import { SqliteLifecycleFactLog } from '../../platform/sqlite/SqliteLifecycleFactLog'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import type { ConversationEntry } from '../suppliers'
-import { createConversation, type ConversationEvent, type SendEvent } from './index'
+import {
+  createConversation,
+  launchPromptEntry,
+  type ConversationEvent,
+  type SendEvent
+} from './index'
 import { seedConversationDb } from './testing/sqliteConversationDb'
 
 const T0 = 1_790_000_000_000
@@ -66,6 +71,47 @@ describe('createConversation', () => {
     expect(count('messages')).toBe(0)
     expect(count('message_keys')).toBe(2)
     expect(bus.published).toEqual([])
+  })
+
+  // GitHub #1430: a launch has no receipt, so the driver's echo of its prompt names no `echoOf`.
+  it('[INV-60, US-LAUNCH-005.AC07] the driver echo of a launch prompt that comes after the launch merges into the prompt row', () => {
+    const { conversation, bus, dwarf, count } = setUp()
+    const launchId = '00000000-0000-7000-8000-000000001430' as LaunchId
+
+    conversation.commands.ingest(
+      dwarf,
+      [launchPromptEntry(launchId, 'Survey the north seam')],
+      'live-stream'
+    )
+    conversation.commands.ingest(
+      dwarf,
+      [entry(1, { role: 'person', text: 'Survey the north seam', providerTime: null })],
+      'live-stream'
+    )
+
+    expect(count('messages')).toBe(1)
+    expect(count('message_keys')).toBe(2)
+    expect(bus.ofType('MessagesAppended').map((e) => e.payload.messages.length)).toEqual([1])
+  })
+
+  it('[INV-60, US-LAUNCH-005.AC07] a launch prompt whose driver echo came first keeps its key and adds no second row', () => {
+    const { conversation, bus, dwarf, count } = setUp()
+    const launchId = '00000000-0000-7000-8000-000000001430' as LaunchId
+
+    conversation.commands.ingest(
+      dwarf,
+      [entry(1, { role: 'person', text: 'Survey the north seam', providerTime: null })],
+      'live-stream'
+    )
+    conversation.commands.ingest(
+      dwarf,
+      [launchPromptEntry(launchId, 'Survey the north seam')],
+      'live-stream'
+    )
+
+    expect(count('messages')).toBe(1)
+    expect(count('message_keys')).toBe(2)
+    expect(bus.ofType('MessagesAppended').map((e) => e.payload.messages.length)).toEqual([1])
   })
 
   it('[ADR-007] a 65 537-byte text fails the messages CHECK and rolls back the whole batch with nothing published', () => {

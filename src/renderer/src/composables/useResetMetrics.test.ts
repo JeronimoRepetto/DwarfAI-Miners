@@ -135,3 +135,34 @@ describe('useResetMetrics', () => {
     expect(error.value).toBeTruthy()
   })
 })
+
+/* --- ISSUE-234: A-33 served by the Host saga alone (14 §6.4 row `useResetMetrics`) — one block, appended --- */
+// From the step-4a switch (ISSUE-235) A-33 relays `preferences.resetMetrics` alone (`ResetFanout` ended); the call and
+// its answer keep the shape the cut-1 switch gave them, so the composable is kept. App raises "Everything was reset"
+// only when `reset()` resolves true.
+describe('useResetMetrics over the Host saga (ISSUE-234)', () => {
+  it('[US-SET-010.AC05] useResetMetrics raises "Everything was reset" only on an outcome reset', async () => {
+    const answers = [
+      RESET,
+      REFUSED,
+      {
+        ok: true,
+        value: { outcome: 'failed', reason: 'A step failed.', resumesOnNextStart: true }
+      },
+      { ok: false, error: { code: 'TIMEOUT', message: 'no answer in time', retryable: true } }
+    ]
+    const api = stubApi({ resetMetrics: vi.fn(() => Promise.resolve(answers.shift())) })
+    const { reset } = useResetMetrics({
+      newRequestId: () => '01920000-0000-7000-a000-000000000234'
+    })
+    expect(await reset()).toBe(true)
+    expect(await reset()).toBe(false)
+    expect(await reset()).toBe(false)
+    expect(await reset()).toBe(false)
+    expect(api.resetMetrics).toHaveBeenCalledWith({
+      confirmed: 'yes',
+      requestId: '01920000-0000-7000-a000-000000000234'
+    })
+  })
+})
+/* --- end of the ISSUE-234 block ----------------------------------------------- */

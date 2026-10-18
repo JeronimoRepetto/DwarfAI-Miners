@@ -25,6 +25,7 @@ import {
 import { providerChips } from '../../lib/launch/providerChips'
 import type { AgentProviderOption, HeldPermissionMode } from '../../types'
 import AddPanel from './AddPanel.vue'
+import type { IntegrationNotice } from '../../composables/useAgentLaunch'
 // APPENDED for ISSUE-261: the launch model's transitions the story cases below drive the panel with.
 import {
   chooseModel,
@@ -100,6 +101,13 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
       permissionMode: (overrides.permissionMode ?? null) as HeldPermissionMode | null,
       // APPENDED for #635 (MESSAGE-QUESTIONS 14/16/17): the launch-failure notice's cause.
       failure: (overrides.failure ?? null) as LaunchFailure | null,
+      // APPENDED for ISSUE-235: the OpenCode notice and the eyebrow's reading, passed only by the cases that set them.
+      ...(overrides.integrationNotice === undefined
+        ? {}
+        : { integrationNotice: overrides.integrationNotice as IntegrationNotice }),
+      ...(overrides.jevAccepted === undefined
+        ? {}
+        : { jevAccepted: overrides.jevAccepted as boolean }),
       // APPENDED for #635: `onCommit`-style listeners, for the cases that read the ORDER in which
       // the panel reports two gestures, which `emitted()` keeps per event and cannot show.
       ...((overrides.listeners ?? {}) as Record<string, unknown>)
@@ -1386,6 +1394,17 @@ describe('the Jev option', () => {
       expect(wrapper.get('.dm-add__jev .t-meta').text()).toBe('JEV · ACCEPTED AUTOMATICALLY')
     })
 
+    // APPENDED for ISSUE-235 (ISSUE-228 leftover, #1404): auto-accept paused on a pick whose permission requests cannot
+    // be answered reads as a suggestion (PO #108; 07 S5.25): the eyebrow follows the launch model's `jevAccepted`.
+    it('[US-LAUNCH-001.AC13, S5.25] with auto-accept paused for the notice the eyebrow says Jev suggests', () => {
+      const wrapper = withDecision({
+        jev: { ...READY_JEV, enabled: true, autoAccept: true, routing: DECISION },
+        jevAccepted: false
+      })
+
+      expect(wrapper.get('.dm-add__jev .t-meta').text()).toBe('JEV SUGGESTS')
+    })
+
     /*
      * APPENDED for #635 (MESSAGE-QUESTIONS 15; components.md, Add a dwarf, Accessibility): the
      * pick takes keyboard focus and shows its tooltip at once on it, one line per sentence, in
@@ -2583,5 +2602,48 @@ describe('ISSUE-261: the Add panel form and the Jev card', () => {
     expect(body.contains(notice)).toBe(false)
     expect(notice.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(wrapper.get('.dm-add__fail-title').text()).toBe('Claude is not installed')
+  })
+})
+
+/*
+ * APPENDED for ISSUE-235 (ISSUE-228 leftover, #1404; ADR-011 item 7, O-14; 07 S5.02, S5.26; owner-approved copy
+ * 2026-10-18): the Add panel's OpenCode notice. A supplier whose permission requests wait for an integration that is
+ * off shows the notice and its "Turn on" action, which only reports the gesture (the launch model turns the option on,
+ * `useAgentLaunch.enableIntegration`); while it runs the action is disabled, and a failure shows its own line.
+ */
+describe('the OpenCode notice', () => {
+  const NOTICE = '.dm-add__integration'
+
+  it('[US-LAUNCH-001.AC13, S5.02] a gated supplier shows the notice with its Turn on action, which reports the gesture', async () => {
+    const wrapper = panel({ integrationNotice: { shown: true, state: 'offered' } })
+
+    const notice = wrapper.get(NOTICE)
+    expect(notice.get('.dm-add__integration-text').text()).toBe(
+      "OpenCode permission requests are off, so its asks won't show here."
+    )
+    const action = notice.get('button')
+    expect(action.text()).toBe('Turn on')
+    await action.trigger('click')
+    expect(wrapper.emitted('enable-integration')).toEqual([[]])
+    expect(notice.find('.dm-add__integration-failed').exists()).toBe(false)
+  })
+
+  it('[US-LAUNCH-001.AC13, S5.26] the action is disabled while it runs, and a failure shows its own line', async () => {
+    const enabling = panel({ integrationNotice: { shown: true, state: 'enabling' } })
+    expect(enabling.get(`${NOTICE} button`).attributes('disabled')).toBeDefined()
+
+    const failed = panel({ integrationNotice: { shown: true, state: 'failed' } })
+    expect(failed.get('.dm-add__integration-failed').text()).toBe(
+      "Couldn't turn on OpenCode permission requests. Try again from Settings."
+    )
+  })
+
+  it('[US-LAUNCH-001.AC13] no notice is drawn while the chosen supplier needs none', () => {
+    expect(
+      panel({ integrationNotice: { shown: false } })
+        .find(NOTICE)
+        .exists()
+    ).toBe(false)
+    expect(panel().find(NOTICE).exists()).toBe(false)
   })
 })

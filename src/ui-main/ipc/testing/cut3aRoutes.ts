@@ -5,16 +5,13 @@
 // `host` routes 3b added (A-13, A-23, A-35, A-36) removed, so Codex reaches the shape adapters again, and the Codex
 // `legacy` route of A-27, A-P3 and A-P4 back beside the other providers not moved in 3a. Test-only (R14): production
 // never imports it.
-import {
-  CATALOG_PROVIDER_IDS,
-  RETIRED,
-  UNROUTED,
-  type ChannelKey,
-  type StepId
-} from '@dwarfai/contracts'
+import { CATALOG_PROVIDER_IDS, UNROUTED, type ChannelKey, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
 import { LEGACY_BRIDGE_ADAPTERS } from '../routes'
 import { CUT_3B_ROUTES } from './cut3bRoutes'
+// AMENDED for ISSUE-238 (was: `RETIRED`, the release's list): from 4b the release retires A-27, A-P3 and A-P4, which
+// this release still routed, so its table lists the 4a retirements (`cut4aRoutes.ts`).
+import { CUT_4A_RETIRED } from './cut4aRoutes'
 
 const [, CODEX = '', ANTIGRAVITY = ''] = CATALOG_PROVIDER_IDS
 
@@ -55,6 +52,6 @@ export const CUT_3A_TABLE: RouteTable = {
   release: CUT_3A_RELEASE,
   routes: CUT_3A_ROUTES,
   unrouted: UNROUTED,
-  retired: RETIRED,
+  retired: CUT_4A_RETIRED,
   adapters: LEGACY_BRIDGE_ADAPTERS
 }

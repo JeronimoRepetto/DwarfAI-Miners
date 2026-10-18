@@ -18,7 +18,7 @@ import { useHostConnection } from './useHostConnection'
 import { useJevSettings } from './useJevSettings'
 import { useMines } from './useMines'
 import { useNotificationSettings } from './useNotificationSettings'
-import { useOpenCodeSettings } from './useOpenCodeSettings'
+import { DEFAULT_OPENCODE_SETTINGS_VIEW, useOpenCodeSettings } from './useOpenCodeSettings'
 import { useProjectBrowse } from './useProjectBrowse'
 import { useResetMetrics } from './useResetMetrics'
 import { useToasts } from './useToasts'
@@ -296,7 +296,10 @@ describe('useHostConnection', () => {
         listAgentModels: vi.fn(() => Promise.resolve({ catalogs: [] })),
         getJevSettings: vi.fn(() => Promise.resolve(DEFAULT_JEV_SETTINGS)),
         getNotificationsEnabled: vi.fn(() => Promise.resolve(true)),
-        getOpenCodeSettings: vi.fn(() => Promise.resolve(DEFAULT_OPENCODE_SETTINGS)),
+        // AMENDED for ISSUE-234 (was: today's `OpenCodeSettings`): A-52 answers the Host's view from the 4a switch.
+        getOpenCodeSettings: vi.fn(() =>
+          Promise.resolve({ ok: true as const, value: DEFAULT_OPENCODE_SETTINGS_VIEW })
+        ),
         queryProjects: vi.fn(() => Promise.reject(new Error('not asked here')))
       })
       await useHostConnection().start()

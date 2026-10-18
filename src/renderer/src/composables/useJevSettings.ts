@@ -1,4 +1,12 @@
 import { ref } from 'vue'
+import {
+  CHANNELS,
+  type HostFrame,
+  type HostPreferences,
+  type PreferencesView,
+  type SnapshotChunk
+} from '@dwarfai/contracts'
+import { createReadModel, followHost, type HostFollower } from './readModel'
 import { DEFAULT_JEV_SETTINGS, type JevPreferences, type JevSettings } from '../types'
 import type { AgentModelCatalog, AgentProviderOption } from '../types'
 import { useHostConnection } from './useHostConnection'
@@ -79,6 +87,47 @@ function acrossTheBridge(preferences: JevPreferences): JevPreferences {
 }
 
 /** A catalogue that could not be asked: no source, as a call error reads (lib/launch/supplierEntries.ts). */
+/*
+ * ISSUE-234 (14 §6.4 row `useJevSettings`; ADR-033 items 2–3): from the step-4a switch (ISSUE-235) A-47…A-51 are
+ * served from the Host's preferences, so the section is also a read model of the `preferences` snapshot section and of
+ * the `preferences.changed` frames above its seq: a change made elsewhere (another window, a Reset) shows here. The
+ * Host's `PreferencesView` is read as A-47 reads it (`jevSettings.host.ts` `jevSettingsOf`): the key's own status,
+ * never the key (INV-107); no OS secret store is today's `encryption-unavailable`; a stored provider today's rows
+ * cannot carry reads as "None".
+ */
+const TODAY_PROVIDER = CHANNELS['jev:preferences:set'].request.shape.default.shape.provider
+
+function jevSettingsOf(view: PreferencesView): JevSettings {
+  const key = view.secrets.find((secret) => secret.name === 'jev-key')
+  const preferences: HostPreferences = view.preferences
+  const provider = TODAY_PROVIDER.safeParse(preferences.defaultProvider)
+  const launchDefault =
+    !provider.success || provider.data === undefined
+      ? {}
+      : {
+          provider: provider.data,
+          ...(preferences.defaultModel === undefined ? {} : { model: preferences.defaultModel }),
+          ...(preferences.defaultEffort === undefined ? {} : { effort: preferences.defaultEffort })
+        }
+  return {
+    ...(view.secretBackend === 'unavailable'
+      ? { configured: false, unavailableReason: 'encryption-unavailable' as const }
+      : { configured: key?.configured === true }),
+    preferences: {
+      profile: preferences.routingProfile,
+      default: launchDefault,
+      delegation: preferences.subagentDelegationOn
+    }
+  } as JevSettings
+}
+
+function preferencesOf(chunks: readonly SnapshotChunk[]): PreferencesView | undefined {
+  for (const chunk of chunks) {
+    if (chunk.section === 'preferences') return chunk.data as PreferencesView
+  }
+  return undefined
+}
+
 const NO_CATALOGUE = {
   ok: false,
   error: { code: 'INTERNAL', message: 'the catalogue could not be asked', retryable: true }
@@ -197,5 +246,44 @@ export function useJevSettings() {
     }
   }
 
-  return { settings, saving, providers, catalogs, sync, save, clear, setPreferences }
+  const model = createReadModel<JevSettings, HostFrame>({
+    state: { ...DEFAULT_JEV_SETTINGS },
+    replace(data) {
+      settings.value = data
+    },
+    apply(frame) {
+      if (frame.name !== 'preferences.changed') return
+      settings.value = jevSettingsOf(frame.data as PreferencesView)
+    }
+  })
+
+  const follower: HostFollower = followHost(
+    {
+      subscribe: (listener) => window.api.onHostEvent((frames) => listener(frames as HostFrame[])),
+      snapshot: (params) => window.api.getHostSnapshot(params)
+    },
+    {
+      model,
+      sections: ['preferences'],
+      dataOf: (chunks) => {
+        const view = preferencesOf(chunks)
+        return view === undefined ? settings.value : jevSettingsOf(view)
+      },
+      settled: () => undefined
+    }
+  )
+
+  return {
+    settings,
+    saving,
+    providers,
+    catalogs,
+    sync,
+    save,
+    clear,
+    setPreferences,
+    /** Subscribes, then reads the snapshot (ISSUE-234); answers whether the state is now fed by the Host. */
+    start: () => follower.start(),
+    stop: () => follower.stop()
+  }
 }

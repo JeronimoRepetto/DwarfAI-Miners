@@ -255,6 +255,11 @@ import {
   LAUNCH_AGENT_ROWS
 } from './ipc/handlers/launchAgent.host'
 import {
+  createListAgentProvidersRow,
+  LIST_AGENT_PROVIDERS,
+  LIST_AGENT_PROVIDERS_ROWS
+} from './ipc/handlers/listAgentProviders.host'
+import {
   createLaunchCustomRow,
   LAUNCH_CUSTOM,
   LAUNCH_CUSTOM_ROWS
@@ -313,8 +318,10 @@ import {
 } from './ipc/handlers/setClaudeHooks.host'
 import {
   createOpenCodeSettingsRows,
-  OPENCODE_SETTINGS_ROWS
+  OPENCODE_SETTINGS_ROWS,
+  SET_OPENCODE_PLUGIN
 } from './ipc/handlers/openCodeSettings.host'
+import { createResetMetricsRow, RESET_METRICS_ROWS } from './ipc/handlers/resetMetrics.host'
 import {
   ANSWER_WELCOME,
   ANSWER_WELCOME_ROWS,
@@ -1253,6 +1260,42 @@ export function composeSystemNotificationRows(deps: {
 }
 
 /**
+ * A-33 `resetMetrics` from step 4a (21 §2 cut 4a, §3 `ResetFanout` ends; ISSUE-233): the Host saga alone (B-M15), a part
+ * of the `host` target only where the table routes it `host` (the step-4a switch, ISSUE-235). `undefined` before, where
+ * `ResetFanout` serves it.
+ */
+export function composeResetMetricsRow(deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'withUiConnection'>
+}): RouteTargetPart | undefined {
+  const channels = RESET_METRICS_ROWS.filter((channel) => routedTo(deps.routes, channel, 'host'))
+  return channels.length === 0
+    ? undefined
+    : { channels, target: createResetMetricsRow(deps.client) }
+}
+
+/**
+ * Whether today's runtime composes its OpenCode plugin half (21 §2 cut 4a; §1 item 4; §4 row "OpenCode plugin file";
+ * ISSUE-235): today's plugin installer (its `restore()` would reinstall today's file for a person who opted in with the
+ * old app) and the OpenCode route of its loopback listener, whose pushes fed today's OpenCode permission registry and so
+ * `LegacyAskRelay`. Only while A-53 has no `host` route: from the step-4a switch the Host is the one writer of the plugin
+ * file and its plugin channel the one answerer of the plugin's asks, legacy-launched sessions' included. Read from the
+ * route table, so a rollback build that flips A-53 back composes it again.
+ */
+export function legacyOpenCodePluginComposed(routes: readonly ChannelRoute[]): boolean {
+  return !routedTo(routes, SET_OPENCODE_PLUGIN, 'host')
+}
+
+/**
+ * Whether the root composes `SettingsMirrorBridge` (21 §3, cuts 1–3e; ISSUE-214): only while A-42 has no `host` route.
+ * From the step-4a switch the Host's preferences are the source of truth for every Host-read setting and no legacy
+ * write is mirrored (ISSUE-235); read from the route table, so a rollback build that flips A-42 back mirrors again.
+ */
+export function settingsMirrorComposed(routes: readonly ChannelRoute[]): boolean {
+  return !routedTo(routes, 'notifications:enabled:get', 'host')
+}
+
+/**
  * A-N08 `renameDwarf` (B-M22) and A-N09 `resetDwarfName` (B-M23), ISSUE-172: each a part of the `host` target only
  * where the table routes it `host` (lead decision 2026-10-17: born `host` in cut 2, the renderer's board being the
  * Host's). `undefined` when it routes neither (the cut-1 table).
@@ -1292,8 +1335,10 @@ export function composeJevRouteRow(deps: {
  * `activateDwarf` (B-M29, its window half raising the console UI main holds, ADR-031), A-25
  * `describeDwarfAttachments` (B-M28), A-N06 `retryDwarfMessage` (B-M25) and A-N10, A-N11 the recovery report (B-M35,
  * B-M36). A-13 is composed only with the console raiser (`consoles`), never half. From step 3d (ISSUE-186) also A-39
- * `launchHostedProcess` (B-M34, the "Other…" launch). `undefined` when the table routes none of them `host` (before the
- * step-3a switch).
+ * `launchHostedProcess` (B-M34, the "Other…" launch). From step 4b (ISSUE-238) also A-36 `listAgentProviders` (B-M37),
+ * where its unqualified route, the renderer's one catalog call, is `host` (before 4b its provider-qualified `host`
+ * routes are the moved providers of `CatalogMergeAdapter`, which serves that call). `undefined` when the table routes
+ * none of them `host` (before the step-3a switch).
  */
 export function composeConversationAndLaunchRows(deps: {
   routes: readonly ChannelRoute[]
@@ -1308,6 +1353,12 @@ export function composeConversationAndLaunchRows(deps: {
   }
   if (toHost(LAUNCH_CUSTOM)) {
     parts.push({ channels: LAUNCH_CUSTOM_ROWS, target: createLaunchCustomRow(client) })
+  }
+  const catalogCall = routes.find(
+    (route) => route.channel === LIST_AGENT_PROVIDERS && route.qualifier === undefined
+  )
+  if (catalogCall?.owner === 'host') {
+    parts.push({ channels: LIST_AGENT_PROVIDERS_ROWS, target: createListAgentProvidersRow(client) })
   }
   if (toHost(SEND_DWARF_TEXT)) {
     parts.push({ channels: SEND_DWARF_TEXT_ROWS, target: createSendDwarfTextRow(client) })
@@ -1942,6 +1993,9 @@ export async function startUiMain({
     host === undefined
       ? undefined
       : composeSystemNotificationRows({ routes, client: host.client, mintId: mintSettingsId })
+  // A-33, the Host saga alone, once the step-4a switch routes it `host` (ISSUE-235; ISSUE-233).
+  const resetMetricsRow =
+    host === undefined ? undefined : composeResetMetricsRow({ routes, client: host.client })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
     boardFacade === undefined &&
@@ -1956,7 +2010,8 @@ export async function startUiMain({
     conversationRows === undefined &&
     stopDwarf === undefined &&
     openCodePassword === undefined &&
-    notificationRows === undefined
+    notificationRows === undefined &&
+    resetMetricsRow === undefined
       ? stopRows
       : composeRouteTargets([
           ...(stopRows === undefined
@@ -1976,7 +2031,8 @@ export async function startUiMain({
           ...(conversationRows === undefined ? [] : [conversationRows]),
           ...(stopDwarf === undefined ? [] : [stopDwarf.part]),
           ...(openCodePassword === undefined ? [] : [openCodePassword.part]),
-          ...(notificationRows === undefined ? [] : [notificationRows])
+          ...(notificationRows === undefined ? [] : [notificationRows]),
+          ...(resetMetricsRow === undefined ? [] : [resetMetricsRow])
         ])
   const allShapeAdapters = {
     ...shapeAdapters,
@@ -2084,9 +2140,9 @@ export async function startUiMain({
         })
       : undefined
   // The legacy store stays the source of truth for the settings rows until 4a: the mirror keeps the Host's copy of
-  // its halves' preferences equal to it (21 §3).
+  // its halves' preferences equal to it (21 §3). From the step-4a switch it is not composed (ISSUE-235).
   const mirror =
-    host === undefined || settingsMirror === undefined
+    host === undefined || settingsMirror === undefined || !settingsMirrorComposed(routes)
       ? undefined
       : createSettingsMirrorBridge({
           hostClient: host.client,
@@ -2553,6 +2609,8 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
           ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
           // Today's Claude hook half only while A-40/A-41 keep their pre-cut-2 routes (TC-141-06).
           claudeHooks: legacyClaudeHooksComposed(ROUTES),
+          // Today's OpenCode plugin half only while A-53 keeps its pre-4a route (ISSUE-235).
+          openCodePlugin: legacyOpenCodePluginComposed(ROUTES),
           log: uiLog
         }
       )

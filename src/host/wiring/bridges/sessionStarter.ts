@@ -1,11 +1,12 @@
 // The `SessionStarter` bridge (16 §4.5; 05 §3.5, as owner amendment N gives it its gate, AMENDMENT-14
 // A14-02): launching → the suppliers driver's `launch` (ADR-009 D3) + ADR-020 classification. The
 // edge launching → suppliers holds the types; the bridge lives in `host/wiring` because it reads the
-// suppliers registry the composition root handed out (16 §8.3).
+// suppliers module the composition root handed out (16 §8.3).
 //
-// - The driver: the first of `DriverRegistry.drivers(providerId)` (preference order, ADR-009 D4),
-//   the same one launching detected through. None (a provider launch-gated in a public build,
-//   ADR-009 D6) is `not-installed` (07 S5.16).
+// - The driver: the one the provider's capability check selected (`Suppliers.launchDriver`;
+//   ADR-009 D4, "first verified wins"; GitHub #1431), the same one launching detected through,
+//   never merely the first of the provider's drivers. None (a provider launch-gated in a public
+//   build, ADR-009 D6) is `not-installed` (07 S5.16).
 // - `req.onSpawned` is wrapped, never replaced: the spawn instant is `t0` of the early window, and
 //   launching's own `onSpawned` writes the `processes` row before the handshake wait (16 §2.2).
 // - A `DriverLaunchError` settles as its own cause (`launch()` rejects only with that, ADR-009 D3);
@@ -55,16 +56,19 @@ import type { DelegationLifecycle } from '../../modules/delegation'
 import type {
   DriverLaunchError,
   DriverLaunchRequest,
-  DriverRegistry,
   DriverSession,
   ProviderCapabilities,
+  ProviderDriver,
   SessionChannels,
   SessionReleases
 } from '../../modules/suppliers'
 
 export interface SessionStarterBridgeDeps {
-  /** The suppliers registry whose sessions `sessions` tracks (`Suppliers.registry`). */
-  registry: DriverRegistry
+  /**
+   * The driver a launch starts through (`Suppliers.launchDriver`): the selected one, handed out by
+   * the registry whose sessions `sessions` tracks.
+   */
+  launchDriver: (providerId: ProviderId) => Promise<ProviderDriver | undefined>
   /** Whether a session handed out is still live (`Suppliers.sessions`). */
   sessions: Pick<SessionChannels, 'sessionFor'>
   /**
@@ -124,8 +128,8 @@ export function createSessionStarter(deps: SessionStarterBridgeDeps): SessionSta
     }
   }
 
-  function startSession(providerId: ProviderId, req: DriverLaunchRequest): Promise<Started> {
-    const driver = deps.registry.drivers(providerId)[0]
+  async function startSession(providerId: ProviderId, req: DriverLaunchRequest): Promise<Started> {
+    const driver = await deps.launchDriver(providerId)
     const label = driver?.profile.label ?? NO_SUPPLIER_LABEL
     const failed = (cause: ProcessCause, toolOutputTail?: string): Started => ({
       ok: false,
@@ -135,7 +139,7 @@ export function createSessionStarter(deps: SessionStarterBridgeDeps): SessionSta
         ...(toolOutputTail === undefined ? {} : { toolOutputTail })
       })
     })
-    if (driver === undefined) return Promise.resolve(failed('not-installed'))
+    if (driver === undefined) return failed('not-installed')
 
     return new Promise<Started>((resolve) => {
       let settled = false

@@ -112,6 +112,7 @@ import type { AttachmentReader } from './ports/attachmentReader'
 import type { ConsoleResolver, ConsoleTarget } from './ports/consoleResolver'
 import type { TurnSender } from './ports/turnSender'
 import { SentEchoes } from './application/sentEchoes'
+import { launchOfPrompt } from './application/launchPrompt'
 import type { ConversationEntry } from '../suppliers'
 
 export type {
@@ -186,6 +187,7 @@ export { consolePlan }
 export { VIEW_TOKEN_TTL_MS } from './adapters/console/ViewTokenRegistry'
 export { VIEWER_ENTRY_FILE, viewerEntryPath } from './adapters/console/viewer/viewerEntry'
 /** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
+export { launchPromptEntry } from './application/launchPrompt'
 export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
 
 /**
@@ -366,15 +368,33 @@ export function createConversation(deps: ConversationDeps): Conversation {
   // INV-60 (ISSUE-182): a launched session's echo of a sent message, claimed at ingest: its key is
   // kept with no row of its own (INV-68), so it never shows a second bubble. The send path still
   // hears the entry itself, which is its evidence for the delivery marks (ADR-022).
+  //
+  // The launch prompt (GitHub #1430) is the dwarf's first message, and the driver echoes it with no
+  // `echoOf` (a launch has no receipt). The driver's events held until the session was bound reach
+  // ingest before `DwarfLaunched` does (suppliers `bind`), so the echo can come first: then the
+  // dwarf, brand new, already holds that live-stream row and the prompt keeps only its key.
+  // Otherwise the prompt is written and waits for its echo like a sent message.
   const echoes = new SentEchoes()
+  const echoedFirst = (dwarfId: DwarfId, text: string): boolean =>
+    log
+      .page(dwarfId, { limit: MESSAGES_PER_DWARF })
+      .some((m) => m.role === 'person' && m.origin === 'live-stream' && m.text.trim() === text)
   const stored = (
     dwarfId: DwarfId,
     entries: readonly ConversationEntry[],
     origin: 'live-stream' | 'transcript'
   ): ConversationEntry[] =>
-    entries.map((entry) =>
-      echoes.claim(dwarfId, entry, origin) === null ? entry : { ...entry, controlPlane: true }
-    )
+    entries.map((entry) => {
+      const launchId = origin === 'live-stream' ? launchOfPrompt(entry) : null
+      if (launchId !== null) {
+        if (echoedFirst(dwarfId, entry.text.trim())) return { ...entry, controlPlane: true }
+        echoes.trackLaunch(dwarfId, launchId, entry.text)
+        return entry
+      }
+      return echoes.claim(dwarfId, entry, origin) === null
+        ? entry
+        : { ...entry, controlPlane: true }
+    })
   /** The handoffs pushed as turn input, whose echoes ingest drops (ISSUE-205; ADR-013 item 6). */
   const handoffs = new InvisibleHandoffs({ ids: deps.ids })
   /** The batches of joined ingests, handed to the sender after their caller's commit. */
@@ -394,6 +414,7 @@ export function createConversation(deps: ConversationDeps): Conversation {
     // ISSUE-166: the same route ends the dwarf's held deliveries (S7.07) once the run is closed.
     recordSessionEnd: (dwarfId, at) => {
       sessionEnds.recordSessionEnd(dwarfId, at)
+      echoes.forgetLaunches(dwarfId)
       sender?.sessionEnded(dwarfId)
     },
     noteAsk: (dwarfId, change) => asks.noteAsk(dwarfId, change)

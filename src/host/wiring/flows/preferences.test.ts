@@ -1301,11 +1301,18 @@ describe('Claude hooks integration and first-run step wiring (cut 2)', () => {
     )
   })
 
+  // AMENDED for ISSUE-235 (was: offered claude-hooks only, OpenCode held back until 4a): the step-4a switch opens the
+  // OpenCode option of the first-run step (21 §2 cut 4a; OQ-68), so with both stubs installed both are offered.
   it('[S41.01] a fresh profile with the Claude stub installed boots with the step due and offered claude-hooks', async () => {
     const host = await bootHost(machine({ installed: ['claude', 'opencode'] }), {
       ingressBoundAtBoot: true
     })
-    const due = { due: true, reason: 'first-run', legacyFound: [], offered: ['claude-hooks'] }
+    const due = {
+      due: true,
+      reason: 'first-run',
+      legacyFound: [],
+      offered: ['claude-hooks', 'opencode-permissions']
+    }
 
     expect(host.outcome).toEqual({ kind: 'ready' })
     expect(host.readyFacts).toMatchObject([{ welcome: due }])

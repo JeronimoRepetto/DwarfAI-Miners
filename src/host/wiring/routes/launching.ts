@@ -76,7 +76,7 @@ import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { HostInvariantError } from '../../kernel/domain/errors'
-import type { ConversationCommands } from '../../modules/conversation'
+import { launchPromptEntry, type ConversationCommands } from '../../modules/conversation'
 import {
   departureCause,
   type CrewCommands,
@@ -151,18 +151,8 @@ export function routeLaunching(deps: LaunchingRouteDeps): () => void {
     events.subscribe('LaunchRequested', (event) => changed(event.payload.launchId)),
     events.subscribe('DwarfLaunched', (event) => {
       const { launchId, dwarfId, prompt } = event.payload
-      conversation.ingest(
-        dwarfId,
-        [
-          {
-            sourceKey: `dwarfai:launch:${launchId}:prompt`,
-            role: 'person',
-            text: prompt,
-            providerTime: null
-          }
-        ],
-        'live-stream'
-      )
+      // The driver's echo of the prompt merges into this row (INV-60; GitHub #1430).
+      conversation.ingest(dwarfId, [launchPromptEntry(launchId, prompt)], 'live-stream')
       changed(launchId)
     }),
     events.subscribe('LaunchHandedBack', (event) => changed(event.payload.launchId)),
@@ -336,7 +326,10 @@ export interface LaunchingWiringDeps {
   installId: string
   log: DiagnosticsLog
   frames: LaunchFramePublisher
-  suppliers: Pick<Suppliers, 'registry' | 'sessions' | 'catalogue' | 'bindings' | 'releases'>
+  suppliers: Pick<
+    Suppliers,
+    'registry' | 'launchDriver' | 'sessions' | 'catalogue' | 'bindings' | 'releases'
+  >
   mines: Pick<MinesQueries, 'get' | 'folderOf'>
   crew: Pick<CrewCommands, 'arrive' | 'sessionClosed'>
   conversation: Pick<ConversationCommands, 'ingest'>
@@ -437,7 +430,7 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
     records: new SqliteLaunchRecordStore({ db, scope: transactions }),
     transactions,
     starter: createSessionStarter({
-      registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       sessions: suppliers.sessions,
       releases: suppliers.releases,
       clock,
@@ -453,6 +446,7 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
     }),
     suppliers: {
       registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       catalogue: suppliers.catalogue,
       bindings: suppliers.bindings
     },
