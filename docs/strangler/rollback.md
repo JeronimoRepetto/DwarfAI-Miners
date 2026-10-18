@@ -146,6 +146,24 @@ Antigravity launch is today's held session again and settles on A-P3/A-P4 throug
 choose" chooses among Claude and Codex only. Antigravity sessions the faulty build's Host launched are left running and
 are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
 
+**Step 4a note (ISSUE-235).** A 4a rollback build exists only before the 4a retirement merges (ISSUE-236, after the
+soak) and, on a machine where an OpenCode server password was stored, only before `SecretMigrationBridge` deleted the
+legacy password file (`21` §2 cut 4a "Rollback"); after either, 4a rolls forward. `rollbackOf(table, 'cut-4a')` gives
+back the 3e table except the OpenCode settings rows (`src/ui-main/ipc/rollbackTable.ts`; `ipc-routing.contract.test.ts`
+`describe('release 4a')`, the rollback case):
+
+| Rows                    | In the 4a rollback build                                                                                                                                                                                                                                                                                             |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-42, A-43, A-51 (KEEP) | The pre-cut row: today's runtime, today's shape (the same as the target), and `SettingsMirrorBridge` mirrors today's store into the Host again (`settingsMirrorComposed` reads A-42's route)                                                                                                                         |
+| A-47                    | `legacy` through `JevSettingsShapeAdapter` again, as 3e routed it (`BACK_THROUGH_ITS_SHAPE_ADAPTER`); the Jev key stays in the Host (moved in 3a)                                                                                                                                                                    |
+| A-33                    | `legacy` through `ResetFanout` again (`BACK_THROUGH_ITS_SHAPE_ADAPTER`): today's reset, then the Host saga. The rollback table lists `ResetFanout` as living in 4a again: its code is in the tree until ISSUE-236                                                                                                    |
+| A-52, A-53, A-54, A-55  | Kept on the Host (`KEPT_WITH_THE_MIGRATED_SECRET`): the password moved into the Host's `SecretStore` and today's file is gone, and A-52/A-53 answer the view that carries its status. With A-53 kept, the Host stays the plugin file's one writer, so today's plugin half stays off (`legacyOpenCodePluginComposed`) |
+| Every other row         | As the 4a table routes it (4a bore no NEW row)                                                                                                                                                                                                                                                                       |
+
+The renderer of the rollback build is this tree's: its Settings composables speak the 4a shapes, which the kept and the
+shape-adapter rows still answer, so no `pnpm ipc:generate` revert is needed for them. The first-run step keeps offering
+OpenCode (the Host stays its writer).
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
