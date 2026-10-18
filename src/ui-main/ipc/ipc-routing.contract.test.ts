@@ -4210,14 +4210,16 @@ describe('release 3d (21 §2 cut 3d)', () => {
 // path, `DEVELOPMENT_BUILD_ROUTES`): the one build flag decides, never a provider id. A-27, A-P3 and A-P4 shrink to
 // OpenCode. Each case drives the development build's table through the root's own compositions; the public build's
 // table is pinned by `publicBuild.3e.test.ts`.
+// AMENDED for ISSUE-235 (was: the release table `routesForBuild` / `ROUTES_RELEASE`): from the step-4a switch the 3e
+// tables as they shipped are `testing/cut3eRoutes.ts`; `describe('release 4a')` pins the release table.
 describe('release 3e (21 §2 cut 3e)', () => {
   const [CLAUDE = '', CODEX = '', ANTIGRAVITY = '', OPENCODE = ''] = CATALOG_PROVIDER_IDS
   /** The "Other…" driver's provider id (15 §3 H1 `HostedCommandDriver`), outside the catalog (INV-43). */
   const OTHER = 'other'
-  const DEVELOPMENT = routesForBuild({ publicBuild: false })
-  const PUBLIC = routesForBuild({ publicBuild: true })
+  const DEVELOPMENT = CUT_3E_ROUTES
+  const PUBLIC = cut3eRoutesForBuild({ publicBuild: true })
   const tableOf = (routes: readonly ChannelRoute[]): RouteTable => ({
-    release: ROUTES_RELEASE,
+    release: CUT_3E_RELEASE,
     routes,
     unrouted: UNROUTED,
     retired: RETIRED,
@@ -4268,7 +4270,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
   /** The rows as the root composes them over `table`, one Antigravity and one OpenCode dwarf on the Host board. */
   const step3eWorld = (
     table: readonly ChannelRoute[] = DEVELOPMENT,
-    release: StepId = ROUTES_RELEASE
+    release: StepId = CUT_3E_RELEASE
   ) =>
     providerRowsWorld({
       table,
@@ -4324,7 +4326,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
   })
 
   it('[ADR-001] in a 3e development build A-35, A-36, A-23, A-13 and A-N29 route host for the Antigravity qualifier', async () => {
-    expect(ROUTES_RELEASE).toBe('cut-3e')
+    expect(CUT_3E_RELEASE).toBe('cut-3e')
     expect(checkRouteTable(cut3e, KEYS)).toEqual([])
     expect(checkRouteTable(tableOf(PUBLIC), KEYS)).toEqual([])
     // One owner per (channel, qualifier) (21 §1 item 2): the Host for Claude (3a), Codex (3b), "Other…" (3d) and
@@ -4354,7 +4356,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
     expect(resolveRoute(DEVELOPMENT, STOP, { provider: ANTIGRAVITY })?.owner).toBe('host')
     // The launch row is the development build's only (one build flag, ADR-009 D6); the others serve every build.
     expect(DEVELOPMENT_BUILD_ROUTES).toEqual([hostFor(LAUNCH_ROW, ANTIGRAVITY, 'cut-3e')])
-    expect(DEVELOPMENT).toEqual([...ROUTES, ...DEVELOPMENT_BUILD_ROUTES])
+    expect(DEVELOPMENT).toEqual([...PUBLIC, ...DEVELOPMENT_BUILD_ROUTES])
 
     // Through the root's composition: an Antigravity launch (and its Retry), send, console and stop reach the Host with
     // the renderer's payload unchanged; the catalog lists Antigravity's entry from the Host, never today's.
@@ -4426,7 +4428,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
         const born = SEAM_B_METHODS_BORN[member]
         expect(born, `${member} has a birth release`).toBeDefined()
         expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
-          at(ROUTES_RELEASE)
+          at(CUT_3E_RELEASE)
         )
       }
     }
@@ -4546,7 +4548,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
         })
       }
       if (method === 'preferences.resetMetrics') {
-        return Promise.resolve({ outcome: 'reset' })
+        return Promise.resolve({ outcome: 'reset', epoch: 3 })
       }
       return Promise.reject(new Error(`unexpected ${method}`))
     }
@@ -4606,7 +4608,10 @@ describe('release 4a (21 §2 cut 4a)', () => {
 
     // Through the root's compositions: every row is a part of the `host` target, and A-33 runs the Host saga alone.
     const { parts, calls } = settingsParts(DEVELOPMENT, ROUTES_RELEASE)
-    expect(parts.flatMap((part) => part.channels).sort()).toEqual([...SETTINGS_ROWS].sort())
+    const served = parts.flatMap((part) => part.channels)
+    expect(served.filter((key) => SETTINGS_ROWS.includes(key)).sort()).toEqual(
+      [...SETTINGS_ROWS].sort()
+    )
     const router = createRouter({
       routes: DEVELOPMENT.filter((r) => SETTINGS_ROWS.includes(r.channel)),
       legacy: { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) },
@@ -4617,7 +4622,10 @@ describe('release 4a (21 §2 cut 4a)', () => {
       confirmed: 'yes',
       requestId: REQUEST
     })
-    expect(CHANNELS['metrics:reset'].response.parse(reset)).toEqual({ outcome: 'reset' })
+    expect(CHANNELS['metrics:reset'].response.parse(reset)).toEqual({
+      ok: true,
+      value: { outcome: 'reset', epoch: 3 }
+    })
     expect(calls).toEqual([['preferences.resetMetrics', { confirmed: 'yes', requestId: REQUEST }]])
   })
 
@@ -4669,7 +4677,9 @@ describe('release 4a (21 §2 cut 4a)', () => {
         key
       ).toEqual(['host', 'legacy-launch', 'legacy-ask-channel'])
     }
-    expect(legacyFeedModesOf(DEVELOPMENT)[CODEX]).toBe('legacy-launched-or-pending-questions')
+    expect(legacyFeedModesOf(DEVELOPMENT)).toMatchObject({
+      [CODEX]: 'legacy-launched-or-pending-questions'
+    })
   })
 
   it('[ADR-001] in 4a the OpenCode launch, send, stop, console rows and A-27, A-P3, A-P4 still route legacy for OpenCode', () => {
@@ -4705,7 +4715,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
       }
       // A-N29 ends a legacy-launched OpenCode session through `LegacyEndFirstAdapter` (one `host` route since 3a).
       expect(resolveRoute(table, 'dwarf:stop', { provider: OPENCODE })?.owner).toBe('host')
-      expect(legacyFeedModesOf(table)[OPENCODE]).toBe('discover')
+      expect(legacyFeedModesOf(table)).toMatchObject({ [OPENCODE]: 'discover' })
     }
   })
 
@@ -5348,13 +5358,15 @@ describe('step 4a A-52 and A-53 (21 §2 step 4a)', () => {
     } as unknown as Parameters<typeof composeOpenCodeSettingsRows>[0]['client']
 
     // Today's table keeps them `legacy` with today's shape: the root composes nothing for them.
+    // AMENDED for ISSUE-235 (was: the release table `ROUTES`): the step-4a switch routes them `host`, so the table
+    // that keeps them `legacy` is the 3e table as it shipped (`testing/cut3eRoutes.ts`).
     for (const key of ROWS) {
       expect(
-        ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
+        CUT_3E_ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
         key
       ).toEqual([['legacy', 'today']])
     }
-    expect(composeOpenCodeSettingsRows({ routes: ROUTES, client })).toBeUndefined()
+    expect(composeOpenCodeSettingsRows({ routes: CUT_3E_ROUTES, client })).toBeUndefined()
 
     const switched: ChannelRoute[] = ROWS.map((channel) => ({
       channel,
@@ -5484,8 +5496,10 @@ describe('OpenCode server password rows (21 §2 cut 4a)', () => {
         log: { record: () => {} },
         mintId: () => MINTED
       }
+      // AMENDED for ISSUE-235 (was: the release table `ROUTES` / `ROUTES_RELEASE`): the step-4a switch routes
+      // A-54/A-55 `host`, so the table that composes none is the 3e table as it shipped.
       expect(
-        composeOpenCodePasswordRows({ ...base, routes: ROUTES, release: ROUTES_RELEASE })
+        composeOpenCodePasswordRows({ ...base, routes: CUT_3E_ROUTES, release: CUT_3E_RELEASE })
       ).toBeUndefined()
       const late = composeOpenCodePasswordRows({ ...base, routes: PASSWORD_4A, release: 'cut-5' })
       expect(late?.part.channels).toEqual([SET, CLEAR])
@@ -5687,14 +5701,16 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
   /** Today's runtime never answers a Settings row of this table. */
   const legacy = { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) }
 
+  // AMENDED for ISSUE-235 (was: the release table `ROUTES` / `ROUTES_RELEASE`): the step-4a switch routes these rows
+  // `host`, so the table that composes none of them is the 3e table as it shipped (`testing/cut3eRoutes.ts`).
   it('[ADR-001] the release table composes none of A-42, A-43, A-47 and A-51 from the Host', () => {
     const { client } = settingsHost()
     expect(
-      composeSystemNotificationRows({ routes: ROUTES, client, mintId: () => MINTED })
+      composeSystemNotificationRows({ routes: CUT_3E_ROUTES, client, mintId: () => MINTED })
     ).toBeUndefined()
     const jev = composeJevKeyRows({
-      routes: ROUTES,
-      release: ROUTES_RELEASE,
+      routes: CUT_3E_ROUTES,
+      release: CUT_3E_RELEASE,
       legacy,
       client,
       migration: undefined,

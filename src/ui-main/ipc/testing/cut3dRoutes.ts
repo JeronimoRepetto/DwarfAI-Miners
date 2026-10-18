@@ -4,6 +4,9 @@
 // (ISSUE-188) undone: the Antigravity `host` routes 3e added (A-13, A-23, A-35, A-36) removed, so Antigravity reaches
 // the shape adapters again, and the Antigravity `legacy` route of A-27, A-P3 and A-P4 back beside OpenCode's, as 3d had
 // it. Test-only (R14): production never imports it.
+//
+// AMENDED for ISSUE-235 (was: from the release table `routesForBuild`): from the step-4a switch the release table is
+// 4a's, so the 3d table starts from the 3e development build's table as it shipped (`cut3eRoutes.ts`).
 import {
   CATALOG_PROVIDER_IDS,
   RETIRED,
@@ -12,7 +15,8 @@ import {
   type StepId
 } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { LEGACY_BRIDGE_ADAPTERS, routesForBuild } from '../routes'
+import { LEGACY_BRIDGE_ADAPTERS } from '../routes'
+import { CUT_3E_ROUTES } from './cut3eRoutes'
 
 const [, , ANTIGRAVITY = '', OPENCODE = ''] = CATALOG_PROVIDER_IDS
 
@@ -37,7 +41,7 @@ const antigravityNotMoved = (channel: ChannelKey): ChannelRoute => ({
 })
 
 /** The development build's table: 3d had no build-only row, so every 3d row is in it. */
-const RELEASE_ROUTES = routesForBuild({ publicBuild: false })
+const RELEASE_ROUTES = CUT_3E_ROUTES
 
 const hasAntigravityRow = (channel: ChannelKey): boolean =>
   RELEASE_ROUTES.some(

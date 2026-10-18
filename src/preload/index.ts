@@ -168,12 +168,12 @@ export interface DwarfAiMinersApi {
   answerDwarfPermission: (
     request: TargetRequest<'agent:answerPermission'>
   ) => Promise<TargetResult<'agent:answerPermission'>>
-  /** A-42 · `notifications:enabled:get` · invoke · KEEP · today shape */
-  getNotificationsEnabled: () => Promise<TodayResult<'notifications:enabled:get'>>
-  /** A-43 · `notifications:enabled:set` · invoke · KEEP · today shape */
+  /** A-42 · `notifications:enabled:get` · invoke · KEEP · target shape */
+  getNotificationsEnabled: () => Promise<TargetResult<'notifications:enabled:get'>>
+  /** A-43 · `notifications:enabled:set` · invoke · KEEP · target shape */
   setNotificationsEnabled: (
-    request: TodayRequest<'notifications:enabled:set'>
-  ) => Promise<TodayResult<'notifications:enabled:set'>>
+    request: TargetRequest<'notifications:enabled:set'>
+  ) => Promise<TargetResult<'notifications:enabled:set'>>
   /** A-44 · `presence:visibleMines` · send · CHANGE · target shape */
   reportVisibleMines: (request: TargetRequest<'presence:visibleMines'>) => void
   /** A-45 · `typography:preferences:get` · invoke · KEEP · target shape */
@@ -192,22 +192,22 @@ export interface DwarfAiMinersApi {
   clearJevApiKey: () => Promise<TargetResult<'jev:apiKey:clear'>>
   /** A-50 · `jev:route` · invoke · CHANGE · target shape */
   routeJevLaunch: (request: TargetRequest<'jev:route'>) => Promise<TargetResult<'jev:route'>>
-  /** A-51 · `jev:preferences:set` · invoke · KEEP · today shape */
+  /** A-51 · `jev:preferences:set` · invoke · KEEP · target shape */
   setJevPreferences: (
-    request: TodayRequest<'jev:preferences:set'>
-  ) => Promise<TodayResult<'jev:preferences:set'>>
-  /** A-52 · `opencode:settings:get` · invoke · CHANGE · today shape */
-  getOpenCodeSettings: () => Promise<TodayResult<'opencode:settings:get'>>
-  /** A-53 · `opencode:plugin:set` · invoke · CHANGE · today shape */
+    request: TargetRequest<'jev:preferences:set'>
+  ) => Promise<TargetResult<'jev:preferences:set'>>
+  /** A-52 · `opencode:settings:get` · invoke · CHANGE · target shape */
+  getOpenCodeSettings: () => Promise<TargetResult<'opencode:settings:get'>>
+  /** A-53 · `opencode:plugin:set` · invoke · CHANGE · target shape */
   setOpenCodePluginEnabled: (
-    request: TodayRequest<'opencode:plugin:set'>
-  ) => Promise<TodayResult<'opencode:plugin:set'>>
-  /** A-54 · `opencode:password:set` · invoke · CHANGE · today shape */
+    request: TargetRequest<'opencode:plugin:set'>
+  ) => Promise<TargetResult<'opencode:plugin:set'>>
+  /** A-54 · `opencode:password:set` · invoke · CHANGE · target shape */
   setOpenCodeServerPassword: (
-    request: TodayRequest<'opencode:password:set'>
-  ) => Promise<TodayResult<'opencode:password:set'>>
-  /** A-55 · `opencode:password:clear` · invoke · CHANGE · today shape */
-  clearOpenCodeServerPassword: () => Promise<TodayResult<'opencode:password:clear'>>
+    request: TargetRequest<'opencode:password:set'>
+  ) => Promise<TargetResult<'opencode:password:set'>>
+  /** A-55 · `opencode:password:clear` · invoke · CHANGE · target shape */
+  clearOpenCodeServerPassword: () => Promise<TargetResult<'opencode:password:clear'>>
   /** A-56 · `launch-view:get` · invoke · KEEP · target shape */
   getLaunchView: () => Promise<TargetResult<'launch-view:get'>>
   /** A-57 · `launch-view:set` · send · KEEP · target shape */
@@ -419,7 +419,7 @@ const api: DwarfAiMinersApi = {
     invokeOrReject(() => ipcRenderer.invoke('jev:preferences:set', request)),
   getOpenCodeSettings: () => invokeOrReject(() => ipcRenderer.invoke('opencode:settings:get')),
   setOpenCodePluginEnabled: (request) =>
-    invokeOrReject(() => ipcRenderer.invoke('opencode:plugin:set', request === true)),
+    invokeOrReject(() => ipcRenderer.invoke('opencode:plugin:set', request)),
   setOpenCodeServerPassword: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('opencode:password:set', request)),
   clearOpenCodeServerPassword: () =>

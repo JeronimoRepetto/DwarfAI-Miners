@@ -1406,10 +1406,17 @@ describe('preload OpenCode settings contract (#588 T6)', () => {
     expect(invoke).toHaveBeenLastCalledWith('opencode:settings:get')
   })
 
-  it('sends the relay switch as a strict boolean', async () => {
-    invoke.mockResolvedValueOnce({ pluginEnabled: false, passwordConfigured: false })
-    await api.setOpenCodePluginEnabled('yes' as unknown as boolean)
-    expect(invoke).toHaveBeenLastCalledWith('opencode:plugin:set', false)
+  // AMENDED for ISSUE-235 (was: today's strict boolean, `request === true`): the step-4a switch routes A-53 `host`
+  // with its 14 target shape, `SetOpenCodePermissionsParams`, which the preload passes on unchanged (main validates it).
+  it('sends the permission request as the target shape, unchanged', async () => {
+    invoke.mockResolvedValueOnce({ ok: true, value: { state: 'on-verified' } })
+    const request = {
+      on: true,
+      origin: 'settings',
+      requestId: '01920000-0000-7000-a000-000000000235'
+    } as const
+    await api.setOpenCodePluginEnabled(request)
+    expect(invoke).toHaveBeenLastCalledWith('opencode:plugin:set', request)
   })
 
   it('carries the password exactly as typed, untrimmed', async () => {

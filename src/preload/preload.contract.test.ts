@@ -385,14 +385,16 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       IpcResult<LaunchAccepted>
     >()
     // A request of a row still `today` is accepted as today's types have it (the preload never mutates it).
-    expectTypeOf<TodayRequest<'notifications:enabled:set'>>().toExtend<
-      Parameters<DwarfAiMinersApi['setNotificationsEnabled']>[0]
+    // AMENDED for ISSUE-235 (was: A-43 `setNotificationsEnabled` and A-52 `getOpenCodeSettings`): the step-4a switch
+    // routes both `host` with their target shape, so the rows still `today` are the 14 §8 I-21 legacy rows.
+    expectTypeOf<TodayRequest<'dwarf:setName'>>().toExtend<
+      Parameters<DwarfAiMinersApi['setDwarfName']>[0]
     >()
     expectTypeOf<readonly string[]>().toExtend<
       Parameters<DwarfAiMinersApi['describeDwarfAttachments']>[0]
     >()
-    expectTypeOf<DwarfAiMinersApi['getOpenCodeSettings']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'opencode:settings:get'>
+    expectTypeOf<DwarfAiMinersApi['setDwarfName']>().returns.resolves.toEqualTypeOf<
+      TodayResult<'dwarf:setName'>
     >()
     // RETIRE row and KEEP row. AMENDED for ISSUE-123 (was: A-12 `getMines` as the RETIRE row): A-12's target shape is
     // today's `MinesSnapshot` (H3), so its result type is unchanged; A-P3 stands for a RETIRE row still `today`.

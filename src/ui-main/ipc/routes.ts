@@ -1,13 +1,13 @@
 // The router table (ADR-001 item 3; 21 §1 items 1, 2, 2a): exactly one `ChannelRoute` per (channel, qualifier) for
 // the release `ROUTES_RELEASE`, reviewed per cut and checked by `ipc-routing.contract.test.ts`. A hot spot (22 §5):
 // after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1,
-// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
+// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e, ISSUE-235 for step 4a), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
 // it is listed in `src/contracts/ipc/unrouted.ts` with that step.
 import { CATALOG_PROVIDER_IDS, STEP_ORDER, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, IpcChannelName, LegacyBridgeAdapter } from './channelRoute'
 
 /** The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. */
-export const ROUTES_RELEASE: StepId = 'cut-3e'
+export const ROUTES_RELEASE: StepId = 'cut-4a'
 
 /** The steps from `from` to `to`, both included, in `STEP_ORDER`. */
 function span(from: StepId, to: StepId): StepId[] {
@@ -265,6 +265,23 @@ const perProviderCut3e = (channel: IpcChannelName): ChannelRoute[] => [
 ]
 
 /**
+ * A row the step-4a switch serves from the Host (21 §2 cut 4a "New core serves" H: the Settings family, the secrets and
+ * the integrations, A-33 the Reset saga alone) with its target shape and no shape adapter (21 §3.1: A-47's
+ * `JevSettingsShapeAdapter` and A-33's `ResetFanout` end; A-52…A-55 switch shape with their route): `passed` because its
+ * evidence is recorded in `docs/strangler/parity-cut-4a.md` (the settings parity suite, the secret migration test, the
+ * `SecretStore` and `ExternalConfigWriter` contracts, the first-run, plugin-ask and Reset integration suites, its L6
+ * contract suite and the cut-4a E2E cases; 21 §1 item 3, §2 row 4a "Exit criteria"). A-42, A-43, A-47 and A-51 are KEEP
+ * rows whose today shape is the 14 target (ISSUE-007), so they are `target` too (the router rejects `host` + `today`).
+ */
+const hostCut4a = (channel: IpcChannelName): ChannelRoute => ({
+  channel,
+  owner: 'host',
+  since: 'cut-4a',
+  parity: 'passed',
+  shape: 'target'
+})
+
+/**
  * Cut 0 (21 §2 cut 0; ISSUE-056): the window family A-01…A-11, A-21, A-22, A-24, A-28, A-29, A-45, A-46, A-56, A-57,
  * A-P1, A-P6, A-X1 is served `ui-local` by the rebuilt window module; the NEW rows A-N03…A-N05 (Host connection), A-N30
  * (renderer diagnostics), A-N25, A-N27 (the tray's confirmation) and A-N34 (owner-approved amendment 2026-10-01,
@@ -316,6 +333,17 @@ const perProviderCut3e = (channel: IpcChannelName): ChannelRoute[] => [
  * OpenCode, the one provider whose launch, send and stop rows are still `legacy`. No seam B member and no NEW row is
  * born in 3e.
  *
+ * Step 4a (21 §2 cut 4a; ISSUE-235): the Settings family moves to the Host with its target shape and no shape adapter:
+ * A-42, A-43 (`systemNotificationsOn`), A-47, A-51 (`JevSettings` from the Host's preferences and `SecretStatus`),
+ * A-52…A-55 (`OpenCodeSettingsView`: `IntegrationState` + `consentOrigin`, the password set and cleared in the Host's
+ * `SecretStore` after `SecretMigrationBridge` moved it once) and A-33 (`preferences.resetMetrics`, the saga alone).
+ * `ResetFanout`, `SettingsMirrorBridge` and `JevSettingsShapeAdapter` end (the root composes none of them over this
+ * table), and today's OpenCode plugin installer and its listener route are switched off (`legacyOpenCodePluginComposed`,
+ * src/ui-main/index.ts): the Host is the one writer of the plugin file and, through its plugin channel, the one answerer
+ * of its asks, legacy-launched sessions' included, so A-40/A-41's `legacy-ask-channel` route serves only the
+ * person-launched Codex questions `LegacyAskRelay` still reads. OpenCode's launch, send, stop and console rows and A-27,
+ * A-P3, A-P4 stay `legacy` until 4b. B-M14 is born in 4a; no NEW row is.
+ *
  * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape; the rows
  * still `legacy` that carry a dwarf id reach today's runtime through `LegacyDwarfIdBridge` (21 §3). A-N33 stays
  * unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router
@@ -349,14 +377,7 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut1('mine:declare'), // A-30
   hostCut1('mine:declare-main'), // A-31
   hostCut1('mine:undeclare'), // A-32, through LegacyEndFirstAdapter
-  {
-    channel: 'metrics:reset', // A-33, through its shape adapter ResetFanout (21 §3.1)
-    owner: 'legacy',
-    since: 'cut-1',
-    parity: 'n/a',
-    shape: 'target',
-    shapeAdapter: 'ResetFanout'
-  },
+  hostCut4a('metrics:reset'), // A-33, the Host saga alone (`ResetFanout` ended)
   hostCut1('projects:query'), // A-34
   ...perProviderCut3d('agent:launch'), // A-35 and its Retry path (Antigravity's: `DEVELOPMENT_BUILD_ROUTES`)
   hostCut3a('agent:providers', CLAUDE), // A-36, Claude's entry (a moved provider of the catalog merge)
@@ -366,20 +387,20 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut3d('agent:launchHosted'), // A-39, every "Other…" launch and its Retry
   ...askAnswerCut2('agent:answerQuestion'), // A-40
   ...askAnswerCut2('agent:answerPermission'), // A-41
-  legacyToday('notifications:enabled:get'), // A-42
-  legacyToday('notifications:enabled:set'), // A-43
+  hostCut4a('notifications:enabled:get'), // A-42
+  hostCut4a('notifications:enabled:set'), // A-43
   uiLocalCut1Kept('presence:visibleMines'), // A-44
   uiLocalKept('typography:preferences:get'), // A-45
   uiLocalKept('typography:preferences:set'), // A-46
-  legacyThroughCut3a('jev:settings:get', 'JevSettingsShapeAdapter'), // A-47, the key's status from the Host
+  hostCut4a('jev:settings:get'), // A-47, from the Host's preferences and the key's status
   hostCut3a('jev:apiKey:set'), // A-48, after the one-time key migration
   hostCut3a('jev:apiKey:clear'), // A-49, after the one-time key migration
   hostCut3a('jev:route'), // A-50
-  legacyToday('jev:preferences:set'), // A-51
-  legacyToday('opencode:settings:get'), // A-52
-  legacyToday('opencode:plugin:set'), // A-53
-  legacyToday('opencode:password:set'), // A-54
-  legacyToday('opencode:password:clear'), // A-55
+  hostCut4a('jev:preferences:set'), // A-51
+  hostCut4a('opencode:settings:get'), // A-52
+  hostCut4a('opencode:plugin:set'), // A-53, the Host the one writer of the plugin file
+  hostCut4a('opencode:password:set'), // A-54, after the one-time password migration
+  hostCut4a('opencode:password:clear'), // A-55, after the one-time password migration
   uiLocalKept('launch-view:get'), // A-56
   uiLocalKept('launch-view:set'), // A-57
   uiLocalKept('panel:visible:changed'), // A-P1
@@ -476,6 +497,15 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
   'agent:launchHosted': ['launching.launchCustom'], // A-39 → B-M34
   // A-36 → B-M37: Claude's, Codex's and Antigravity's entries, read by `CatalogMergeAdapter` for the one catalog call
   'agent:providers': ['suppliers.launchable'],
+  'notifications:enabled:get': ['preferences.get'], // A-42 → B-M12
+  'notifications:enabled:set': ['preferences.set'], // A-43 → B-M13
+  'jev:settings:get': ['preferences.get'], // A-47 → B-M12
+  'jev:preferences:set': ['preferences.get', 'preferences.set'], // A-51 → B-M13, read and answered with B-M12
+  'opencode:settings:get': ['preferences.get'], // A-52 → B-M12
+  'opencode:plugin:set': ['preferences.setOpenCodePermissions'], // A-53 → B-M14
+  'opencode:password:set': ['settings.secret.set', 'preferences.get'], // A-54 → B-M10, answered with B-M12
+  'opencode:password:clear': ['settings.secret.clear', 'preferences.get'], // A-55 → B-M11, answered with B-M12
+  'metrics:reset': ['preferences.resetMetrics'], // A-33 → B-M15, the saga alone
   'jev:apiKey:set': ['settings.secret.set', 'preferences.get'], // A-48 → B-M10, answered with B-M12
   'jev:apiKey:clear': ['settings.secret.clear', 'preferences.get'], // A-49 → B-M11, answered with B-M12
   'jev:route': ['jev.suggest'], // A-50 → B-M38
@@ -489,7 +519,7 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
  * The release in which each seam B method is born in the Host (21 §2 "Seam B members", B-M02…B-M06 at cut 0; B-M07,
  * B-M08, B-M09, B-M12, B-M13, B-M15, B-M16…B-M20, B-M26, B-M27 and B-M41 at cut 1; B-M30…B-M32, B-M39 and B-M40 at
  * cut 2; B-M22 and B-M23 at cut 2 too, by the ISSUE-172 lead decision, where 21 §2 has them at 3a; B-M10, B-M11,
- * B-M21, B-M24, B-M25, B-M28, B-M29, B-M33 and B-M35…B-M38 at 3a; B-M34 at 3d; none at 3e).
+ * B-M21, B-M24, B-M25, B-M28, B-M29, B-M33 and B-M35…B-M38 at 3a; B-M34 at 3d; none at 3e; B-M14 at 4a).
  */
 export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> = {
   ping: 'cut-0',
@@ -530,5 +560,6 @@ export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> 
   'launching.dismissRecovery': 'cut-3a',
   'suppliers.launchable': 'cut-3a',
   'jev.suggest': 'cut-3a',
-  'launching.launchCustom': 'cut-3d'
+  'launching.launchCustom': 'cut-3d',
+  'preferences.setOpenCodePermissions': 'cut-4a'
 }

@@ -11,10 +11,11 @@ import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRo
 import { rollbackOf } from './rollbackTable'
 // AMENDED for ISSUE-002 (was: the release table `ROUTES` as the 3a table): from the step-3b switch the 3a table as it
 // shipped is `testing/cut3aRoutes.ts`.
-import { LEGACY_BRIDGE_ADAPTERS, ROUTES_RELEASE, routesForBuild } from './routes'
+import { LEGACY_BRIDGE_ADAPTERS } from './routes'
 import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
+import { CUT_3E_RELEASE, cut3eRoutesForBuild } from './testing/cut3eRoutes'
 import { CUT_0_ROUTES as ROUTES, CUT_0_TABLE } from './testing/cut0Routes'
 import { CUT_2_ROUTES, CUT_2_TABLE } from './testing/cut2Routes'
 
@@ -339,13 +340,15 @@ describe('rollbackOf', () => {
 
   // APPENDED for ISSUE-188: step 3e moves Antigravity, its launch row in development builds only (docs/strangler/
   // rollback.md "Step 3e").
+  // AMENDED for ISSUE-235 (was: the release table `routesForBuild` / `ROUTES_RELEASE`): from the step-4a switch the
+  // 3e tables as they shipped are `testing/cut3eRoutes.ts`.
   it('[ADR-001] rolling back 3e sends Antigravity to the 3a shape adapters and gives back its A-27, A-P3 and A-P4 rows, in either build', () => {
-    expect(ROUTES_RELEASE).toBe('cut-3e')
+    expect(CUT_3E_RELEASE).toBe('cut-3e')
     const order = (routes: readonly ChannelRoute[]) => routes.map((r) => JSON.stringify(r)).sort()
     for (const publicBuild of [false, true]) {
       const cut3e: RouteTable = {
-        release: ROUTES_RELEASE,
-        routes: routesForBuild({ publicBuild }),
+        release: CUT_3E_RELEASE,
+        routes: cut3eRoutesForBuild({ publicBuild }),
         unrouted: UNROUTED,
         retired: RETIRED,
         adapters: LEGACY_BRIDGE_ADAPTERS
