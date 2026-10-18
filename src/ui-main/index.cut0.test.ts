@@ -725,9 +725,23 @@ describe('the cut-1 composition of UI main (21 §2 cut 1)', () => {
     'presence',
     'preferences.resetMetrics'
   ]
+  // AMENDED for ISSUE-236, the 4a retirement (was: the cut-1 table as it shipped, A-33 through `ResetFanout`): the
+  // adapter left the tree, so the root of this tree cannot bind it; A-33 keeps its pre-cut row here and the other cut-1
+  // rows run as they shipped.
+  const cut1Routes = RELEASE_ROUTES.map((route): ChannelRoute =>
+    route.channel === 'metrics:reset'
+      ? {
+          channel: 'metrics:reset',
+          owner: 'legacy',
+          since: 'pre-cut-0',
+          parity: 'n/a',
+          shape: 'today'
+        }
+      : route
+  )
   const cut1App = (options: Parameters<typeof cut0App>[0] = {}) =>
     cut0App({
-      routes: RELEASE_ROUTES,
+      routes: cut1Routes,
       release: ROUTES_RELEASE,
       capabilities: CUT_1_METHODS,
       ...options
@@ -777,20 +791,6 @@ describe('the cut-1 composition of UI main (21 §2 cut 1)', () => {
     await settle()
     const sent = host.received.filter((r) => r.method === 'presence').map((r) => r.params)
     expect(sent.at(-1)).toMatchObject({ onScreenMineIds: [MINE], anyWindowVisible: true })
-  })
-
-  it('[ADR-001] in cut 1 A-33 runs today’s reset first and then the Host saga through ResetFanout', async () => {
-    const { ipc, host, legacy } = await cut1App({
-      legacyAnswers: { 'metrics:reset': { outcome: 'reset' } }
-    })
-    host.handle('preferences.resetMetrics', () => ({ outcome: 'reset', epoch: 1 }))
-    const answer = await ipc.handled.get('metrics:reset')?.(FROM_PANEL, {
-      confirmed: 'yes',
-      requestId: REQUEST
-    })
-    expect(answer).toEqual({ ok: true, value: { outcome: 'reset', epoch: 1 } })
-    expect(legacy.events).toContain('legacy serve metrics:reset')
-    expect(host.methods('ui')).toContain('preferences.resetMetrics')
   })
 
   it('[ADR-001] in cut 1 the retired rows reach neither today’s runtime nor the Host', async () => {

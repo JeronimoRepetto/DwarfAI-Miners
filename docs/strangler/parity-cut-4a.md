@@ -84,15 +84,28 @@ by today's runtime until 4b.
 
 The step's retirement work unit (ISSUE-236) merges only after this internal build met the step's exit criteria on the
 three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71; owner 2026-10-18: one soak
-at the end of cuts 3a–4b).
+at the end of cuts 3a–4b, recorded once in [`soak-record.md`](soak-record.md)).
 
-| Field                        | Value                                |
-| ---------------------------- | ------------------------------------ |
-| Exit criteria met on Windows | pending (owner: internal build)      |
-| Exit criteria met on macOS   | pending (owner: CI lanes, SP-16 run) |
-| Exit criteria met on Linux   | pending (owner: CI lanes, SP-16 run) |
-| Soak build                   | pending                              |
-| Soak start                   | pending                              |
-| Soak end                     | pending                              |
-| Blocking problems            | pending                              |
-| Retirement or deletion issue | ISSUE-236                            |
+| Field                        | Value                              |
+| ---------------------------- | ---------------------------------- |
+| Soak record                  | [`soak-record.md`](soak-record.md) |
+| Retirement or deletion issue | ISSUE-236                          |
+
+## Step-4a retirement (ISSUE-236)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 4a parity run above (the settings parity suite, the
+`SecretStore` and `ExternalConfigWriter` contracts, the Reset integration suite, the L6 contract suites of the Settings
+rows), `pnpm vitest run src/ui-main/ipc/ipc-routing.contract.test.ts` (`describe('after the 4a retirement')`),
+`pnpm test:canaries` and the census against the merge base. Deleted: today's handlers of A-33, A-42, A-43 and
+A-47…A-55 in `LegacyRuntimeRoute.ts` and `src/main/index.ts`, `src/legacy-bridge/settingsMirror/**`,
+`src/legacy-bridge/reset/resetFanout*` and `src/legacy-bridge/secrets/jevSettingsShapeAdapter*`, with their composition
+in `src/ui-main/index.ts` and their rows of `LEGACY_BRIDGE_ADAPTERS`; the earlier releases' tables are checked against
+the listing they shipped (`testing/adaptersAsShipped.ts`). The new canary `lint-canaries/R16-deleted-legacy-settings`
+proves an import of a legacy settings path fails lint. 4a rolls forward only (`rollback.md` "Step-4a retirement").
+
+Not deleted here, and why: `shell/jevApiKey.ts` and `opencodePermissions/openCodeServerPassword.ts` (with
+`safeStorageLike.ts` beside them) are still composed by today's runtime, which reads the Jev key for its delegation
+service and its Jev launch router and the password for its OpenCode permission answer port; the legacy loopback
+listener's OpenCode route and today's plugin installer stay composed behind `legacyOpenCodePluginComposed` (off in every
+table from 4a). They leave with those consumers (ISSUE-239…ISSUE-241, the cut-5 deletions). The work unit merges only
+once the single soak record ([`soak-record.md`](soak-record.md)) is filled.

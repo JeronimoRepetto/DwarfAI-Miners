@@ -33,10 +33,15 @@
 //   route: today's runtime no longer holds the secret, and a rollback build never moves it back (ADR-017 items 1, 8;
 //   21 §2 cut 4a "Rollback": after the bridge deletes the legacy file, roll forward).
 // - AMENDED for ISSUE-235: a row the cut moved off a 21 §3.1 shape adapter an earlier cut composed for it
-//   (`BACK_THROUGH_ITS_SHAPE_ADAPTER`: A-33 off `ResetFanout`, A-47 off `JevSettingsShapeAdapter`, both in 4a) goes back
-//   to that adapter's `legacy` + `target` row, because the rollback build keeps this tree's preload and renderer, which
-//   speak the row's target shape. The rollback table lists that adapter as living in the cut again: its code is in the
-//   tree until the cut's retirement step (21 §2.1 item 1), whatever the cuts 21 §3 gives it in a forward release.
+//   (`BACK_THROUGH_ITS_SHAPE_ADAPTER`) goes back to that adapter's `legacy` + `target` row, because the rollback build
+//   keeps this tree's preload and renderer, which speak the row's target shape. The rollback table lists that adapter as
+//   living in the cut again: its code is in the tree until the cut's retirement step (21 §2.1 item 1), whatever the cuts
+//   21 §3 gives it in a forward release. AMENDED for ISSUE-236 (was: A-33 off `ResetFanout` and A-47 off
+//   `JevSettingsShapeAdapter`, both in 4a): the 4a retirement deleted both adapters with today's settings handlers, so a
+//   4a rollback has nothing to route back to and is refused (`ROLLS_FORWARD_ONLY`).
+// - AMENDED for ISSUE-236: a step whose retirement deleted the legacy code its rollback would route to
+//   (`ROLLS_FORWARD_ONLY`) has no rollback build: `rollbackOf` refuses it (21 §2.1 item 4; docs/strangler/rollback.md,
+//   "no rollback past this point").
 // - The rows of earlier cuts keep their routes: each earlier cut's retirement already deleted their legacy code, so
 //   after a retirement or deletion commit only forward fixes exist (21 §2.1 item 4).
 // - A row the cut retired with no route (`RETIRED`, lead resolution H1) is the pre-cut row again: today's runtime
@@ -80,34 +85,20 @@ export const KEPT_WITH_THE_MIGRATED_SECRET: Partial<Record<ChannelKey, StepId>> 
 
 /**
  * The rows a step moved off the 21 §3.1 shape adapter an earlier cut composed for them, with that step and the route
- * the earlier release shipped (ISSUE-235): a rollback of the step routes them through that adapter again.
+ * the earlier release shipped (ISSUE-235): a rollback of the step routes them through that adapter again. AMENDED for
+ * ISSUE-236 (was: A-33 through `ResetFanout` and A-47 through `JevSettingsShapeAdapter`, both for 4a): the 4a
+ * retirement deleted both adapters, and 4a rolls forward only (`ROLLS_FORWARD_ONLY`).
  */
 export const BACK_THROUGH_ITS_SHAPE_ADAPTER: Partial<
   Record<ChannelKey, { step: StepId; route: ChannelRoute }>
-> = {
-  'metrics:reset': {
-    step: 'cut-4a',
-    route: {
-      channel: 'metrics:reset', // A-33
-      owner: 'legacy',
-      since: 'cut-1',
-      parity: 'n/a',
-      shape: 'target',
-      shapeAdapter: 'ResetFanout'
-    }
-  },
-  'jev:settings:get': {
-    step: 'cut-4a',
-    route: {
-      channel: 'jev:settings:get', // A-47
-      owner: 'legacy',
-      since: 'cut-3a',
-      parity: 'n/a',
-      shape: 'target',
-      shapeAdapter: 'JevSettingsShapeAdapter'
-    }
-  }
-}
+> = {}
+
+/**
+ * The steps whose retirement deleted the legacy code a rollback of the step would route to (21 §2.1 item 4): no
+ * rollback build exists for them, they roll forward only (docs/strangler/rollback.md). ISSUE-236 deleted today's
+ * settings, secret and reset handlers and the adapters 4a's rollback routed A-33 and A-47 through.
+ */
+export const ROLLS_FORWARD_ONLY: readonly StepId[] = ['cut-4a']
 
 const [, , , OPENCODE = ''] = CATALOG_PROVIDER_IDS
 
@@ -143,6 +134,11 @@ export const REMOVED_BY_THE_LAST_PROVIDER_STEP: Partial<Record<StepId, readonly 
 
 /** The table of a rollback build of `cut`, from the table `cut`'s release shipped. */
 export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
+  if (ROLLS_FORWARD_ONLY.includes(cut)) {
+    throw new RangeError(
+      `${cut} rolls forward only: its retirement deleted the legacy code a rollback would route to`
+    )
+  }
   if (table.release !== cut) {
     throw new RangeError(
       `a rollback of ${cut} is built from ${cut}'s table, not ${table.release}'s`

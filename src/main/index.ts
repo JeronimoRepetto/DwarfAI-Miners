@@ -36,7 +36,6 @@ import type {
   DwarfSendSettledPush,
   LaunchFailedPush,
   MaterialTotals,
-  MetricsResetResult,
   Mine,
   MineDeclareResult,
   MineHistoryResult,
@@ -47,15 +46,12 @@ import type {
   ProjectQueryResult,
   ProjectSortDirection,
   ProjectSortKey,
-  WatchedFeedPush,
+  WatchedFeedPush
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  JevRouteLaunchResult,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  JevSettings,
   /* --- end of the #509 follow-up block --------------------------------------- */
   /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
-  OpenCodeSettings
   /* --- end of the #588 T6 block --------------------------------------------- */
 } from '../shared/contracts'
 import {
@@ -71,19 +67,15 @@ import {
   DWARF_IMAGE_EXTENSIONS,
   MAX_DWARF_ATTACHMENTS,
   parseDwarfAttachments,
-  parseDwarfText,
+  parseDwarfText
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
-  parseJevApiKeyInput,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  parseJevRouteLaunchRequest,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  parseJevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
   /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
-  parseOpenCodeServerPasswordInput
   /* --- end of the #588 T6 block --------------------------------------------- */
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
@@ -145,11 +137,8 @@ import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
 import { createLaunchViewStore } from './shell/launchViewPreference'
-import { createJevApiKeyStore, type JevKeyVerdict } from './shell/jevApiKey'
-import {
-  createJevPreferenceStore,
-  type JevPreferenceSaveRefusalReason
-} from './shell/jevPreferences'
+import { createJevApiKeyStore } from './shell/jevApiKey'
+import { createJevPreferenceStore } from './shell/jevPreferences'
 import { createJevLaunchRouter } from './jev/routeLaunch'
 import { createTypesafeJevRouter, jevDebugEnabled } from './jev/typesafeJevRouter'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
@@ -191,20 +180,6 @@ let projects: ProjectsStore | null = null
  * observed as "...is not valid JSON undefined"). The caller is obeying the
  * contract; this is the side that was not.
  */
-/**
- * A store refusal, in words the panel can show.
- *
- * The store answers with a CODE, because it is a rule rather than a sentence;
- * the wording belongs on this side, the same split every other
- * fact-here/prose-there pair in this app holds.
- */
-const JEV_PREFERENCE_REFUSALS: Record<JevPreferenceSaveRefusalReason, string> = {
-  'default-provider-not-launchable':
-    'That default launch names a provider this build cannot start, so nothing was saved. Pick another provider under Default launch.',
-  'default-tuning-invalid':
-    'That default launch pairs a model or effort its provider would refuse, so nothing was saved. Clear it under Default launch and try again.'
-}
-
 function warnWithOptionalCause(message: string, error?: unknown): void {
   if (error === undefined) console.warn(message)
   else console.warn(message, error)
@@ -242,7 +217,6 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.declareMine)
   ipcMain.removeHandler(IPC_CHANNELS.declareMainProject)
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
-  ipcMain.removeHandler(IPC_CHANNELS.resetMetrics)
   ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
   ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
   ipcMain.removeHandler(IPC_CHANNELS.listAgentProviders)
@@ -253,27 +227,8 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.describeDwarfAttachments)
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- System notifications (#316) — one block, appended ------------------- */
-  ipcMain.removeHandler(IPC_CHANNELS.getNotificationsEnabled)
-  ipcMain.removeHandler(IPC_CHANNELS.setNotificationsEnabled)
   ipcMain.removeAllListeners(IPC_CHANNELS.setOpenMine)
   /* --- end of the #316 block ---------------------------------------------- */
-  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
-  ipcMain.removeHandler(IPC_CHANNELS.getOpenCodeSettings)
-  ipcMain.removeHandler(IPC_CHANNELS.setOpenCodePluginEnabled)
-  ipcMain.removeHandler(IPC_CHANNELS.setOpenCodeServerPassword)
-  ipcMain.removeHandler(IPC_CHANNELS.clearOpenCodeServerPassword)
-  /* --- end of the #588 T6 block --------------------------------------------- */
-  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
-  ipcMain.removeHandler(IPC_CHANNELS.getJevSettings)
-  ipcMain.removeHandler(IPC_CHANNELS.setJevApiKey)
-  ipcMain.removeHandler(IPC_CHANNELS.clearJevApiKey)
-  /* --- end of the #509 block ------------------------------------------------ */
-  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  ipcMain.removeHandler(IPC_CHANNELS.routeJevLaunch)
-  /* --- end of the #509 block ------------------------------------------------ */
-  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  ipcMain.removeHandler(IPC_CHANNELS.setJevPreferences)
-  /* --- end of the #509 follow-up block --------------------------------------- */
 }
 
 /**
@@ -640,8 +595,6 @@ async function init(): Promise<void> {
     userDataDir: app.getPath('userData')
   })
   await openCodePasswordStore.load()
-  /** Why the OpenCode relay is not on when it was asked to be; see its IPC handlers below. */
-  let openCodePluginError: string | undefined
   /* --- end of the #588 T6 block --------------------------------------------- */
 
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
@@ -729,7 +682,7 @@ async function init(): Promise<void> {
   const notificationStore = createNotificationPreferenceStore({
     filePath: join(app.getPath('userData'), 'notification-preference-v1.json')
   })
-  let notificationsEnabled = await notificationStore.load()
+  const notificationsEnabled = await notificationStore.load()
 
   /**
    * Which mine INTERIOR the shell has open, as the renderer last reported it.
@@ -1115,7 +1068,7 @@ async function init(): Promise<void> {
   // A relay that could not come back keeps its opt-in (see restore()) and
   // draws as off; this is the reason Settings shows beside it until the next
   // press, rather than a console line nobody reads.
-  openCodePluginError = (await openCodePlugin.restore())?.error
+  await openCodePlugin.restore()
 
   // Which build is running (#79). Asked of Electron rather than answered from
   // anything this repo compiles in, so the panel's number is the executable's
@@ -1204,21 +1157,8 @@ async function init(): Promise<void> {
    * instead of on the next launch. A failed WRITE costs the next launch's
    * memory of the choice and nothing about this run.
    */
-  ipcMain.handle(IPC_CHANNELS.getNotificationsEnabled, () => notificationsEnabled)
-  ipcMain.handle(IPC_CHANNELS.setNotificationsEnabled, async (_event, payload: unknown) => {
-    // Boundary discipline as elsewhere: a malformed payload changes nothing and
-    // the caller still gets the real state back.
-    if (typeof payload !== 'boolean') return notificationsEnabled
-    notificationsEnabled = payload
-    try {
-      await notificationStore.save(payload)
-    } catch (error) {
-      // The switch itself already took effect; a persistence hiccup only means
-      // the next launch falls back to whatever the file still says.
-      console.warn('[notifications] Failed to persist the notifications switch:', error)
-    }
-    return notificationsEnabled
-  })
+  // AMENDED for ISSUE-236, the 4a retirement (was: the A-42/A-43 handlers of
+  // the Notifications switch): the Host serves them since the 4a switch.
   // One-way, like setWatchedDwarf. A non-string is null rather than '' because
   // null is a real answer here — "no mine interior is open" — and the map or
   // the browse with nothing open is exactly that state.
@@ -1234,170 +1174,12 @@ async function init(): Promise<void> {
     void launchViewStore.remember(parseLaunchView(payload))
   })
   /* --- end of the #635 launch view block --------------------------------------- */
-  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
   /*
-   * Settings' Jev API-key control (#509).
-   *
-   * None of the three ever answers with the key: `get` re-reads the store,
-   * which is the same "answer with what was STORED" discipline every
-   * preference channel here holds, and `set`/`clear` derive their own answer
-   * from `readKey()` rather than the request, so a refusal this store made
-   * cannot be echoed back as success.
-   *
-   * AMENDED for the #509 follow-up: all three now answer the MERGED shape —
-   * this store's own verdict plus `jevPreferenceStore.load()` — through
-   * `withJevPreferences` below, because `preferences` rides on every
-   * `JevSettings` the wire ever carries, not only on `getJevSettings`.
+   * AMENDED for ISSUE-236, the 4a retirement (was: the Jev key, Jev route, Jev
+   * preferences and OpenCode settings handlers, A-47…A-55): the Host serves the
+   * Settings family since the 4a switch, and today's handlers left after the
+   * soak.
    */
-  async function withJevPreferences(verdict: JevKeyVerdict): Promise<JevSettings> {
-    return { ...verdict, preferences: await jevPreferenceStore.load() }
-  }
-  ipcMain.handle(IPC_CHANNELS.getJevSettings, async () =>
-    withJevPreferences(await jevApiKeyStore.load())
-  )
-  ipcMain.handle(IPC_CHANNELS.setJevApiKey, async (_event, payload: unknown) => {
-    try {
-      const key = parseJevApiKeyInput(payload)
-      const result = await jevApiKeyStore.save(key)
-      if (!result.saved) {
-        console.warn(`[jev] API key not saved: ${result.reason}`)
-        if (result.reason === 'encryption-unavailable') {
-          return withJevPreferences({
-            configured: false,
-            unavailableReason: 'encryption-unavailable'
-          })
-        }
-      }
-    } catch (error) {
-      // A shape the shared parser refuses (not a string, empty once trimmed,
-      // too long, or carrying a character no key uses) never reaches the
-      // store at all — the boundary trusted-but-typed discipline every
-      // request here holds.
-      console.warn('[jev] Refused to save an API key:', error)
-    }
-    return withJevPreferences({ configured: jevApiKeyStore.readKey() !== undefined })
-  })
-  ipcMain.handle(IPC_CHANNELS.clearJevApiKey, async () => {
-    try {
-      await jevApiKeyStore.clear()
-    } catch (error) {
-      // The key is already gone from memory; a persistence hiccup only means
-      // the next launch falls back to whatever the file still says.
-      console.warn('[jev] Failed to clear the stored API key:', error)
-    }
-    return withJevPreferences({ configured: jevApiKeyStore.readKey() !== undefined })
-  })
-  /* --- end of the #509 block ------------------------------------------------ */
-  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  // A payload the shared parser refuses never reaches the router at all — the
-  // same trusted-but-typed discipline every request here holds — and becomes
-  // a typed fallback rather than a thrown IPC error, so the renderer always
-  // has something honest to fall back the launch to.
-  const jevRouteRefused: JevRouteLaunchResult = { kind: 'fallback', reason: 'invalid-response' }
-  ipcMain.handle(
-    IPC_CHANNELS.routeJevLaunch,
-    async (_event, payload: unknown): Promise<JevRouteLaunchResult> => {
-      try {
-        const request = parseJevRouteLaunchRequest(payload)
-        return await jevLaunchRouter.route(request)
-      } catch (error) {
-        console.warn('[jev] Refused a route request:', error)
-        return jevRouteRefused
-      }
-    }
-  )
-  /* --- end of the #509 block ------------------------------------------------ */
-  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  // Parsed through the SHARED parser first — the shape half, degrading a bad
-  // document rather than throwing — then re-validated by the store's own
-  // `save`, which refuses a default the launch gate would reject. Either way
-  // this answers the MERGED shape actually STORED, never the request: a
-  // refused write re-reads whatever preference is really in force, exactly
-  // like `setJevApiKey` does for the key.
-  ipcMain.handle(IPC_CHANNELS.setJevPreferences, async (_event, payload: unknown) => {
-    const preferences = parseJevPreferences(payload)
-    let failure: string | undefined
-    try {
-      const result = await jevPreferenceStore.save(preferences)
-      if (!result.saved) failure = JEV_PREFERENCE_REFUSALS[result.reason]
-    } catch (error) {
-      // The write itself broke — a locked file, a full disk, a rename the OS
-      // refused. It used to escape the handler and reject the renderer's
-      // invoke, which showed up there as a silent revert.
-      failure = `The preference could not be written: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    }
-    // Always the state actually in force, and the reason it is not the state
-    // that was asked for. The console line stays for the terminal; the field
-    // is what reaches the person.
-    if (failure !== undefined) console.warn(`[jev] Preferences not saved: ${failure}`)
-    const stored = await withJevPreferences(await jevApiKeyStore.load())
-    return failure === undefined ? stored : { ...stored, preferencesError: failure }
-  })
-  /* --- end of the #509 follow-up block --------------------------------------- */
-  /* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
-  /**
-   * Settings' OpenCode section. Every channel answers with the state IN FORCE
-   * — whether the relay's route is actually served, and whether a password
-   * is actually stored — never the request, and never the password: it
-   * arrives once on `setOpenCodeServerPassword`, goes into the encrypted
-   * store, and is never logged or answered. A refused relay carries its
-   * reason in `pluginError`, the field `JevSettings.preferencesError` set the
-   * pattern for.
-   */
-  async function openCodeSettings(): Promise<OpenCodeSettings> {
-    const password = await openCodePasswordStore.load()
-    return {
-      pluginEnabled: openCodePlugin?.isActive() ?? false,
-      ...(openCodePluginError === undefined ? {} : { pluginError: openCodePluginError }),
-      passwordConfigured: password.configured,
-      ...(password.unavailableReason === undefined
-        ? {}
-        : { passwordUnavailableReason: password.unavailableReason })
-    }
-  }
-  ipcMain.handle(IPC_CHANNELS.getOpenCodeSettings, () => openCodeSettings())
-  ipcMain.handle(IPC_CHANNELS.setOpenCodePluginEnabled, async (_event, payload: unknown) => {
-    if (typeof payload !== 'boolean' || openCodePlugin === null) return openCodeSettings()
-    try {
-      if (payload) {
-        const result = await openCodePlugin.enable()
-        openCodePluginError = result.enabled ? undefined : result.error
-        if (!result.enabled)
-          console.warn(`[opencode] Permission relay not enabled: ${result.error}`)
-      } else {
-        await openCodePlugin.disable()
-        openCodePluginError = undefined
-      }
-    } catch (error) {
-      openCodePluginError = error instanceof Error ? error.message : String(error)
-      console.warn('[opencode] Permission relay switch failed:', error)
-    }
-    return openCodeSettings()
-  })
-  ipcMain.handle(IPC_CHANNELS.setOpenCodeServerPassword, async (_event, payload: unknown) => {
-    try {
-      const result = await openCodePasswordStore.save(parseOpenCodeServerPasswordInput(payload))
-      if (!result.saved) console.warn(`[opencode] Server password not saved: ${result.reason}`)
-    } catch (error) {
-      // The shared parser's messages name the rule broken, never the value.
-      console.warn(
-        `[opencode] Refused to save a server password: ${error instanceof Error ? error.message : 'unknown'}`
-      )
-    }
-    return openCodeSettings()
-  })
-  ipcMain.handle(IPC_CHANNELS.clearOpenCodeServerPassword, async () => {
-    try {
-      await openCodePasswordStore.clear()
-    } catch (error) {
-      // Already gone from memory; only the next launch could still read it.
-      console.warn('[opencode] Failed to clear the stored server password:', error)
-    }
-    return openCodeSettings()
-  })
-  /* --- end of the #588 T6 block --------------------------------------------- */
   /*
    * REMOVED for #635, stated rather than passing unseen: the message panel's own window's nine
    * channels (#162, #296, #389) — its surface and the push to the other window, its height report,
@@ -1635,15 +1417,8 @@ async function init(): Promise<void> {
     return runtime?.undeclareMine(mineId) ?? notUndeclared
   })
 
-  // Settings' "Reset metrics" action (#138). No payload: the typed
-  // confirmation is validated entirely in the renderer, so this channel only
-  // ever carries an already-confirmed intent. See MetricsResetResult and
-  // AgentRuntime.resetMetrics for exactly what this does and does not wipe.
-  const notReset: MetricsResetResult = {
-    outcome: 'failed',
-    reason: 'The panel is still starting up.'
-  }
-  ipcMain.handle(IPC_CHANNELS.resetMetrics, () => runtime?.resetMetrics() ?? notReset)
+  // AMENDED for ISSUE-236 (was: today's A-33 "Reset metrics" handler, #138):
+  // the Host saga alone serves it since the 4a switch.
 
   // Browsing every remembered project (#92). Both refusals answer with an
   // EMPTY list and `answered: false` rather than no list at all, so the panel

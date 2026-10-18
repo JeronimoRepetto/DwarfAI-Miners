@@ -13,7 +13,8 @@ import {
   type StepId
 } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { LEGACY_BRIDGE_ADAPTERS, routesForBuild } from '../routes'
+import { routesForBuild } from '../routes'
+import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 
 const [CLAUDE = '', , , OPENCODE = ''] = CATALOG_PROVIDER_IDS
 
@@ -109,5 +110,5 @@ export const CUT_4A_TABLE: RouteTable = {
   routes: CUT_4A_ROUTES,
   unrouted: UNROUTED,
   retired: CUT_4A_RETIRED,
-  adapters: LEGACY_BRIDGE_ADAPTERS
+  adapters: ADAPTERS_AS_SHIPPED
 }

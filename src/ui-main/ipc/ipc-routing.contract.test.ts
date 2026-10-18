@@ -38,7 +38,6 @@ import {
   composePresence,
   composeProviderRouting,
   composeProviderShapeAdapters,
-  composeResetFanout,
   composeResetMetricsRow,
   composeSettlementJoin,
   composeStopAllRelay,
@@ -46,7 +45,6 @@ import {
   composeSystemNotificationRows,
   legacyFeedModesOf,
   legacyOpenCodePluginComposed,
-  settingsMirrorComposed,
   type LegacyAskRelayComposition,
   type LegacyRuntimeSurface
 } from '../index'
@@ -88,6 +86,7 @@ import {
   cut4aRoutesForBuild
 } from './testing/cut4aRoutes'
 import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
+import { ADAPTERS_AS_SHIPPED } from './testing/adaptersAsShipped'
 import {
   DEVELOPMENT_BUILD_ROUTES,
   HOST_ROUTE_MEMBERS,
@@ -356,27 +355,21 @@ describe('pre-cut table', () => {
       LegacyDwarfIdBridge: span('cut-1', 'cut-4b'),
       LegacyLaunchObservation: span('cut-1', 'cut-4b'),
       SecretMigrationBridge: ['cut-3a', 'cut-4a'],
-      ResetFanout: span('cut-1', 'cut-3e'),
       LegacyAgentRegistryFeed: span('cut-1', 'cut-4b'),
-      SettingsMirrorBridge: span('cut-1', 'cut-3e'),
       LegacyAskRelay: span('cut-1', 'cut-4b'),
       LegacyEndFirstAdapter: span('cut-0', 'cut-4b'),
       PerProviderShapeAdapter: span('cut-3a', 'cut-4b'),
       CatalogMergeAdapter: span('cut-3a', 'cut-4b'),
-      LegacyAnswerShapeAdapter: span('cut-2', 'cut-4b'),
-      JevSettingsShapeAdapter: span('cut-3a', 'cut-4a')
+      LegacyAnswerShapeAdapter: span('cut-2', 'cut-4b')
     })
+    // AMENDED for ISSUE-236, the 4a retirement (was: also `ResetFanout` and `SettingsMirrorBridge`, cuts 1–3e, and
+    // `JevSettingsShapeAdapter`, 3a–4a): they left the tree with their 4a lifetime (`testing/adaptersAsShipped.ts`
+    // keeps them for the earlier releases' tables).
     expect(
       LEGACY_BRIDGE_ADAPTERS.filter((a) => a.shapeAdapter)
         .map((a) => a.name)
         .sort()
-    ).toEqual([
-      'CatalogMergeAdapter',
-      'JevSettingsShapeAdapter',
-      'LegacyAnswerShapeAdapter',
-      'PerProviderShapeAdapter',
-      'ResetFanout'
-    ])
+    ).toEqual(['CatalogMergeAdapter', 'LegacyAnswerShapeAdapter', 'PerProviderShapeAdapter'])
 
     // A route's shape adapter must be listed as a shape adapter living in the table's release.
     const naming = (release: StepId, shapeAdapter: string): RouteTable => ({
@@ -387,8 +380,12 @@ describe('pre-cut table', () => {
       }),
       release
     })
-    expect(reasons(naming('cut-1', 'ResetFanout'))).toEqual([])
-    expect(reasons(naming('cut-4a', 'ResetFanout'))).toEqual(['adapter-not-listed ResetFanout'])
+    // AMENDED for ISSUE-236 (was: `ResetFanout`, listed for cut 1 and not for 4a): a listed shape adapter outside its cuts.
+    expect(reasons(naming('cut-2', 'LegacyAnswerShapeAdapter'))).toEqual([])
+    expect(reasons(naming('cut-1', 'LegacyAnswerShapeAdapter'))).toEqual([
+      'adapter-not-listed LegacyAnswerShapeAdapter'
+    ])
+    expect(reasons(naming('cut-1', 'ResetFanout'))).toEqual(['adapter-not-listed ResetFanout'])
     expect(reasons(naming('cut-1', 'LegacyDwarfIdBridge'))).toEqual([
       'adapter-not-listed LegacyDwarfIdBridge'
     ])
@@ -1492,7 +1489,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     routes: CUT_1_ROUTES,
     unrouted: CUT_1_UNROUTED,
     retired: CUT_1_TABLE.retired ?? {},
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   /** The one registry key of a 14 id. */
   const keyOf = (id: string): ChannelKey => {
@@ -1741,39 +1738,8 @@ describe('release cut 1 (21 §2 cut 1)', () => {
         shapeAdapter: 'ResetFanout'
       }
     ])
-    const order: string[] = []
-    const legacy = {
-      serve: async (channel: string) => {
-        order.push(`legacy ${channel}`)
-        return { outcome: 'reset' }
-      }
-    }
-    const host = recordingHost()
-    const adapters = composeResetFanout({
-      routes: CUT_1_ROUTES,
-      release: 'cut-1',
-      legacy,
-      client: host.client as unknown as Parameters<typeof composeResetFanout>[0]['client'],
-      now: () => 0
-    })
-    expect(Object.keys(adapters ?? {})).toEqual(['ResetFanout'])
-    // Without it the router does not start: a route naming a shape adapter needs it bound.
-    expect(() =>
-      createRouter({ routes: CUT_1_ROUTES.filter((r) => r.channel === a33), legacy, senders })
-    ).toThrow()
-    const router = createRouter({
-      routes: CUT_1_ROUTES.filter((r) => r.channel === a33),
-      legacy,
-      ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
-      senders
-    })
-    const answer = await router.dispatch(a33, FROM_PANEL, {
-      confirmed: 'yes',
-      requestId: '01890a5d-ac96-774b-bcce-b302099a8002'
-    })
-    expect(CHANNELS[a33].response.safeParse(answer).success).toBe(true)
-    expect(order).toEqual(['legacy metrics:reset'])
-    expect(host.sent).toEqual(['preferences.resetMetrics'])
+    // AMENDED for ISSUE-236, the 4a retirement (was: `composeResetFanout` over the cut-1 table, the router refusing to
+    // start without it, and A-33 running today's reset before the Host saga): `ResetFanout` left the tree.
   })
 
   it('[ADR-001] in cut 1 A-14, A-16, A-17, A-18 and A-P5 have no route and no handler, and A-N16 exists', async () => {
@@ -2171,7 +2137,7 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     routes: CUT_2_ROUTES,
     unrouted: CUT_2_UNROUTED,
     retired: CUT_2_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] => CUT_2_ROUTES.filter((r) => r.channel === key)
   const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
@@ -2756,7 +2722,7 @@ describe('cut-2 retirement (21 §2 cut 2)', () => {
     routes: CUT_2_ROUTES,
     unrouted: CUT_2_UNROUTED,
     retired: CUT_2_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const SRC = resolve(import.meta.dirname, '../..')
   const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
@@ -2784,7 +2750,9 @@ describe('cut-2 retirement (21 §2 cut 2)', () => {
     expect(route).toMatch(/new HookListener\(\{[^}]*onEvent: \(\) => \{\},\s*onOpenCodePush,/s)
     // The OpenCode plugin channel still opens its own route on that listener (until 4a).
     expect(route).toMatch(/new OpenCodePluginChannel\(\{[^}]*listener: hookListener/s)
-    expect(route).toMatch(/openCodePluginError = \(await openCodePlugin\.restore\(\)\)\?\.error/)
+    // AMENDED for ISSUE-236 (was: `openCodePluginError = (await openCodePlugin.restore())?.error`): the error fed only
+    // today's A-52/A-53 handlers, which the 4a retirement deleted.
+    expect(route).toMatch(/await openCodePlugin\.restore\(\)/)
   })
 })
 
@@ -2806,7 +2774,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     routes: CUT_3A_ROUTES,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
     CUT_3A_ROUTES.filter((r) => r.channel === key)
@@ -3212,17 +3180,17 @@ describe('release 3a (21 §2 cut 3a)', () => {
     const client = {
       call: (method: string) => Promise.resolve(HOST_REPLIES[method])
     }
+    // AMENDED for ISSUE-236 (was: also A-47's `JevSettingsShapeAdapter` composed over today's runtime): the adapter
+    // left the tree with the 4a retirement.
     const jev = composeJevKeyRows({
       routes: CUT_3A_ROUTES,
       release: CUT_3A_RELEASE,
-      legacy: { serve: () => Promise.resolve(undefined) },
       client: client as unknown as Parameters<typeof composeJevKeyRows>[0]['client'],
       migration: undefined,
       log: { record: () => {} },
       mintId: () => MINTED
     })
     expect(jev?.part?.channels).toEqual(['jev:apiKey:set', 'jev:apiKey:clear'])
-    expect(Object.keys(jev?.shapeAdapters ?? {})).toEqual(['JevSettingsShapeAdapter'])
     expect(
       composeJevRouteRow({
         routes: CUT_3A_ROUTES,
@@ -3442,14 +3410,13 @@ describe('release 3a (21 §2 cut 3a)', () => {
     for (const mode of Object.values(legacyFeedModesOf(CUT_2_ROUTES))) {
       expect(mode).toBe('discover')
     }
-    // 21 §3 `SettingsMirrorBridge` from 3a: the Jev half joins the notifications half (ISSUE-194).
+    // AMENDED for ISSUE-236 (was: also the root composing `SettingsMirrorBridge`'s halves and its write hub, ISSUE-194):
+    // the mirror left the tree with the 4a retirement.
     const SRC = resolve(import.meta.dirname, '../..')
     const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
     expect(root).toMatch(
       /launched: \(legacyDwarfId\) => legacyRuntime\.launchIdOfDwarf\?\.\(legacyDwarfId\) !== undefined/
     )
-    expect(root).toMatch(/halves: settingsMirrorHalves\(ROUTES_RELEASE, legacyRuntime\)/)
-    expect(root).toMatch(/reportSettingsMirrorWrites\(\s*ROUTES_RELEASE,/)
   })
 })
 
@@ -3470,7 +3437,7 @@ describe('release 3b (21 §2 cut 3b)', () => {
     routes: CUT_3B_ROUTES,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
     CUT_3B_ROUTES.filter((r) => r.channel === key)
@@ -3872,7 +3839,7 @@ describe('release 3d (21 §2 cut 3d)', () => {
     routes: CUT_3D_ROUTES,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
     CUT_3D_ROUTES.filter((r) => r.channel === key)
@@ -4244,7 +4211,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
     routes,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   })
   const cut3e = tableOf(DEVELOPMENT)
   const routeOf = (key: ChannelKey): ChannelRoute[] => DEVELOPMENT.filter((r) => r.channel === key)
@@ -4518,7 +4485,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
     routes,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   })
   const cut4a = tableOf(DEVELOPMENT)
   const routeOf = (key: ChannelKey): ChannelRoute[] => DEVELOPMENT.filter((r) => r.channel === key)
@@ -4590,11 +4557,9 @@ describe('release 4a (21 §2 cut 4a)', () => {
   /** The Settings parts of the `host` target as the root composes them over `routes`. */
   function settingsParts(routes: readonly ChannelRoute[], release: StepId) {
     const { client, calls } = settingsHost()
-    const legacy = { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) }
     const jev = composeJevKeyRows({
       routes,
       release,
-      legacy,
       client,
       migration: undefined,
       log: { record: () => {} },
@@ -4652,39 +4617,15 @@ describe('release 4a (21 §2 cut 4a)', () => {
     expect(calls).toEqual([['preferences.resetMetrics', { confirmed: 'yes', requestId: REQUEST }]])
   })
 
+  // AMENDED for ISSUE-236, the 4a retirement (was: also `composeResetFanout`, `settingsMirrorComposed` and the Jev
+  // composition's shape adapters, over the 4a and the 3e tables): the three bridges left the tree, and
+  // `describe('after the 4a retirement')` pins their absence from the listing.
   it('[ADR-001] in 4a ResetFanout, SettingsMirrorBridge and JevSettingsShapeAdapter are no longer composed', () => {
     for (const table of [DEVELOPMENT, PUBLIC]) {
       expect(
         table.filter((r) => r.shapeAdapter !== undefined && ENDED.includes(r.shapeAdapter))
       ).toEqual([])
     }
-    const { client, jev } = settingsParts(DEVELOPMENT, CUT_4A_RELEASE)
-    expect(jev?.shapeAdapters).toEqual({})
-    expect(
-      composeResetFanout({
-        routes: DEVELOPMENT,
-        release: CUT_4A_RELEASE,
-        legacy: { serve: () => Promise.resolve() },
-        client
-      })
-    ).toBeUndefined()
-    expect(settingsMirrorComposed(DEVELOPMENT)).toBe(false)
-    expect(settingsMirrorComposed(PUBLIC)).toBe(false)
-    // The 3e table composed all three.
-    expect(settingsMirrorComposed(CUT_3E_ROUTES)).toBe(true)
-    expect(
-      Object.keys(
-        composeResetFanout({
-          routes: CUT_3E_ROUTES,
-          release: CUT_3E_RELEASE,
-          legacy: { serve: () => Promise.resolve() },
-          client
-        }) ?? {}
-      )
-    ).toEqual(['ResetFanout'])
-    expect(
-      Object.keys(settingsParts(CUT_3E_ROUTES, CUT_3E_RELEASE).jev?.shapeAdapters ?? {})
-    ).toEqual(['JevSettingsShapeAdapter'])
   })
 
   it('[ADR-001] in 4a the OpenCode plugin asks are not under the legacy-ask-channel qualifier, which covers only person-launched Codex questions', () => {
@@ -4767,33 +4708,13 @@ describe('release 4a (21 §2 cut 4a)', () => {
     expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
   })
 
-  it('[ADR-001] a 4a rollback build routes A-33, A-42, A-43, A-47 and A-51 as 3e did and keeps A-52…A-55 on the Host', () => {
-    // 21 §2 cut 4a "Rollback", §2.1: the moved rows flip back while the legacy code is in the tree, except the OpenCode
-    // settings rows, whose view carries the status of the password `SecretMigrationBridge` moved into the Host and
-    // deleted from today's file (`KEPT_WITH_THE_MIGRATED_SECRET`); the Host stays the plugin file's one writer.
+  // AMENDED for ISSUE-236, the 4a retirement (was: "a 4a rollback build routes A-33, A-42, A-43, A-47 and A-51 as 3e
+  // did and keeps A-52…A-55 on the Host"): today's settings handlers and the adapters that rollback routed A-33 and
+  // A-47 through left the tree, so 4a rolls forward only (21 §2.1 item 4; docs/strangler/rollback.md).
+  it('[ADR-001] a 4a rollback build is refused since the 4a retirement: 4a rolls forward only', () => {
     expect(CUT_4A_RELEASE).toBe('cut-4a')
-    const KEPT: readonly ChannelKey[] = [
-      'opencode:settings:get',
-      'opencode:plugin:set',
-      'opencode:password:set',
-      'opencode:password:clear'
-    ]
-    const order = (routes: readonly ChannelRoute[]) =>
-      routes.map((route) => JSON.stringify(route)).sort()
-    for (const [table, before] of [
-      [cut4a, CUT_3E_ROUTES],
-      [tableOf(PUBLIC), cut3eRoutesForBuild({ publicBuild: true })]
-    ] as const) {
-      const rolledBack = rollbackOf(table, 'cut-4a')
-      expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
-      expect(order(rolledBack.routes)).toEqual(
-        order([
-          ...before.filter((r) => !KEPT.includes(r.channel)),
-          ...KEPT.map((key) => hostCut4a(key))
-        ])
-      )
-      expect(settingsMirrorComposed(rolledBack.routes)).toBe(true)
-      expect(legacyOpenCodePluginComposed(rolledBack.routes)).toBe(false)
+    for (const table of [cut4a, tableOf(PUBLIC)]) {
+      expect(() => rollbackOf(table, 'cut-4a')).toThrow(/cut-4a rolls forward only/)
     }
   })
 })
@@ -5417,12 +5338,7 @@ describe('shape adapters (21 §3.1)', () => {
 // `JevSettingsShapeAdapter`, §4 row "Jev API key"). The route rows are the step-3a switch's (later: ISSUE-001); these
 // cases drive a 3a table built here, over a temp legacy `userData` holding today's encrypted Jev-key file.
 describe('Jev key rows (21 §2 cut 3a)', () => {
-  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
-  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
-  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
-  const KEY = 'ts-live-0123456789abcdef'
   const MINTED = '01920000-0000-7000-a000-000000000217'
-  const PREFERENCES = { profile: 'premium', default: { provider: 'claude' }, delegation: true }
   const GET: ChannelKey = 'jev:settings:get' // A-47
   const SET: ChannelKey = 'jev:apiKey:set' // A-48
   const CLEAR: ChannelKey = 'jev:apiKey:clear' // A-49
@@ -5497,11 +5413,9 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
     }
   }
 
-  /** Today's runtime: its A-47 handler answers today's stored preferences (its key verdict is dropped). */
-  const legacy = {
-    serve: (channel: string) =>
-      Promise.resolve(channel === GET ? { configured: false, preferences: PREFERENCES } : undefined)
-  }
+  // AMENDED for ISSUE-236, the 4a retirement (was: today's runtime answering A-47 through `JevSettingsShapeAdapter`, and
+  // the case "in a 3a table the legacy Jev-key file moves to the Host once before A-47 answers, and A-48/A-49
+  // round-trip through B-M10 and B-M11" over it): the adapter left the tree.
 
   // AMENDED for ISSUE-001 (was: "the release table composes no Jev key row…", over `ROUTES`): from the step-3a switch the
   // release table routes the Jev key rows (`describe('release 3a')`), so the table that composes none is cut 2's.
@@ -5509,7 +5423,6 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
     const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
     try {
       const base = {
-        legacy,
         client: jevHost().client,
         migration: { userDataDir: userData, safeStorage },
         log: { record: () => {} },
@@ -5518,88 +5431,10 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
       expect(composeJevKeyRows({ ...base, routes: CUT_2_ROUTES, release: 'cut-2' })).toBeUndefined()
       const late = composeJevKeyRows({ ...base, routes: JEV_3A, release: 'cut-5' })
       expect(late?.migration).toBeUndefined()
-      expect(late?.shapeAdapters).toEqual({})
       // Without the Host attach nothing is composed.
       expect(
         composeJevKeyRows({ ...base, client: undefined, routes: JEV_3A, release: 'cut-3a' })
       ).toBeUndefined()
-    } finally {
-      await rm(userData, { recursive: true, force: true })
-    }
-  })
-
-  it('[ADR-017, C-23] in a 3a table the legacy Jev-key file moves to the Host once before A-47 answers, and A-48/A-49 round-trip through B-M10 and B-M11', async () => {
-    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
-    try {
-      const encrypted = safeStorage.encryptString(KEY).toString('base64')
-      await writeFile(join(userData, 'jev-api-key-v1.json'), `${JSON.stringify({ encrypted })}\n`)
-      const host = jevHost()
-      const jev = composeJevKeyRows({
-        routes: JEV_3A,
-        release: 'cut-3a',
-        legacy,
-        client: host.client,
-        migration: { userDataDir: userData, safeStorage },
-        log: { record: () => {} },
-        mintId: () => MINTED
-      })
-      expect(jev?.part?.channels).toEqual([SET, CLEAR])
-      expect(Object.keys(jev?.shapeAdapters ?? {})).toEqual(['JevSettingsShapeAdapter'])
-      const router = createRouter({
-        routes: JEV_3A,
-        legacy: { serve: () => Promise.reject(new Error('no legacy Jev row from 3a')) },
-        ...(jev?.part === undefined ? {} : { host: jev.part.target }),
-        shapeAdapters: jev?.shapeAdapters ?? {},
-        senders
-      })
-      const response = CHANNELS[GET].response
-
-      // A-47 waits for the run: the key is in the Host, configured, and today's file is gone.
-      expect(response.parse(await router.dispatch(GET, FROM_PANEL as never, undefined))).toEqual({
-        configured: true,
-        preferences: PREFERENCES
-      })
-      expect(host.key()).toBe(KEY)
-      expect(host.calls[0]).toEqual([
-        'settings.secret.set',
-        { name: 'jev-key', value: KEY, requestId: MINTED, origin: 'migration' }
-      ])
-      expect(await readdir(userData)).toEqual([])
-
-      // A malformed value never crosses: the gate (over the cap) and the handler (blank) answer the state in force.
-      const before = host.calls.length
-      for (const payload of ['a'.repeat(513), '  ']) {
-        expect(response.parse(await router.dispatch(SET, FROM_PANEL as never, payload))).toEqual({
-          configured: true,
-          preferences: PREFERENCES
-        })
-      }
-      expect(host.calls.slice(before).map(([method]) => method)).toEqual([
-        'preferences.get',
-        'preferences.get'
-      ])
-
-      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
-        configured: false,
-        preferences: PREFERENCES
-      })
-      expect(response.parse(await router.dispatch(SET, FROM_PANEL as never, 'ts-new'))).toEqual({
-        configured: true,
-        preferences: PREFERENCES
-      })
-      expect(host.key()).toBe('ts-new')
-      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
-        [
-          'settings.secret.set',
-          { name: 'jev-key', value: KEY, requestId: MINTED, origin: 'migration' }
-        ],
-        ['settings.secret.clear', { name: 'jev-key', requestId: MINTED }],
-        [
-          'settings.secret.set',
-          { name: 'jev-key', value: 'ts-new', requestId: MINTED, origin: 'settings' }
-        ]
-      ])
-      jev?.migration?.dispose()
     } finally {
       await rm(userData, { recursive: true, force: true })
     }
@@ -6055,7 +5890,6 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
     const jev = composeJevKeyRows({
       routes: CUT_3E_ROUTES,
       release: CUT_3E_RELEASE,
-      legacy,
       client,
       migration: undefined,
       log: { record: () => {} },
@@ -6070,7 +5904,6 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
     const jev = composeJevKeyRows({
       routes: SETTINGS_4A,
       release: 'cut-4a',
-      legacy,
       client: host.client,
       migration: undefined,
       log: { record: () => {} },
@@ -6083,7 +5916,6 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
     })
     expect(jev?.part?.channels).toEqual([KEY_SET, KEY_CLEAR, JEV_GET, JEV_SET])
     expect(notifications?.channels).toEqual([NOTIFICATIONS_GET, NOTIFICATIONS_SET])
-    expect(jev?.shapeAdapters).toEqual({})
     const parts = [jev?.part, notifications].filter((part) => part !== undefined)
     const router = createRouter({
       routes: SETTINGS_4A,
@@ -6111,5 +5943,63 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
       ['preferences.set', { key: 'defaultProvider', value: 'claude', requestId: MINTED }],
       ['preferences.set', { key: 'subagentDelegationOn', value: true, requestId: MINTED }]
     ])
+  })
+})
+
+// ADDED for ISSUE-236, the 4a retirement (21 §2 cut 4a "Retired at the end"; §3, §3.1; §1 items 3, 6, 7): after the
+// soak, today's settings, secret and reset handlers and the three bridges whose lifetime ended in 4a leave the tree.
+// Read as text, because this tree never imports legacy code (05 R16).
+describe('after the 4a retirement', () => {
+  const SRC = resolve(import.meta.dirname, '..', '..')
+  /** The rows 4a moved to the Host, with today's preload member (14 §2.1 A-33, A-42, A-43, A-47…A-55). */
+  const RETIRED_HANDLERS: Readonly<Record<string, string>> = {
+    'notifications:enabled:get': 'getNotificationsEnabled', // A-42
+    'notifications:enabled:set': 'setNotificationsEnabled', // A-43
+    'jev:settings:get': 'getJevSettings', // A-47
+    'jev:apiKey:set': 'setJevApiKey', // A-48
+    'jev:apiKey:clear': 'clearJevApiKey', // A-49
+    'jev:route': 'routeJevLaunch', // A-50
+    'jev:preferences:set': 'setJevPreferences', // A-51
+    'opencode:settings:get': 'getOpenCodeSettings', // A-52
+    'opencode:plugin:set': 'setOpenCodePluginEnabled', // A-53
+    'opencode:password:set': 'setOpenCodeServerPassword', // A-54
+    'opencode:password:clear': 'clearOpenCodeServerPassword', // A-55
+    'metrics:reset': 'resetMetrics' // A-33
+  }
+
+  it('[ADR-001] no settings, secret or reset row has a legacy handler', () => {
+    const legacyHandlers = ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts'].flatMap(
+      (file) => {
+        const text = readFileSync(resolve(SRC, file), 'utf8')
+        return Object.values(RETIRED_HANDLERS)
+          .filter((member) =>
+            new RegExp(String.raw`(handle|ipcMain\.handle)\(\s*IPC_CHANNELS\.${member}\b`).test(
+              text
+            )
+          )
+          .map((member) => `${file} ${member}`)
+      }
+    )
+    expect(legacyHandlers).toEqual([])
+    for (const channel of Object.keys(RETIRED_HANDLERS)) {
+      expect(
+        ROUTES.filter((route) => route.channel === channel && route.owner === 'legacy'),
+        channel
+      ).toEqual([])
+    }
+  })
+
+  it('[ADR-001] SettingsMirrorBridge, ResetFanout and JevSettingsShapeAdapter are absent from the adapter listing', () => {
+    const names = LEGACY_BRIDGE_ADAPTERS.map((adapter) => adapter.name)
+    for (const ended of ['SettingsMirrorBridge', 'ResetFanout', 'JevSettingsShapeAdapter']) {
+      expect(names, ended).not.toContain(ended)
+    }
+    for (const path of [
+      'legacy-bridge/settingsMirror',
+      'legacy-bridge/reset/resetFanout.ts',
+      'legacy-bridge/secrets/jevSettingsShapeAdapter.ts'
+    ]) {
+      expect(existsSync(resolve(SRC, path)), path).toBe(false)
+    }
   })
 })

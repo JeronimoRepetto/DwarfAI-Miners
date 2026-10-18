@@ -31,7 +31,6 @@ import {
   type LegacyLaunchedSessions,
   type LegacyLaunchesByDwarf
 } from '../legacy-bridge/LegacyEndFirstAdapter'
-import { createLegacySettingsWriteHub } from '../legacy-bridge/settingsMirror/legacySettingsWrites'
 import { createBoardFacadeAdapter, type LegacyAskFields } from '../legacy-bridge/BoardFacadeAdapter'
 import { createLegacyAskRelay, legacyOpenAsksOf } from '../legacy-bridge/LegacyAskRelay'
 import {
@@ -56,11 +55,6 @@ import {
   createLegacyLaunchObservation,
   type LegacyLaunchObservation
 } from '../legacy-bridge/LegacyLaunchObservation'
-import type { MirrorHalf } from '../legacy-bridge/settingsMirror/mirrorHalf'
-import {
-  createSettingsMirrorBridge,
-  type LegacySettingsWrites
-} from '../legacy-bridge/settingsMirror/settingsMirrorBridge'
 import {
   createStopEverything,
   STOP_EVERYTHING_REQUESTED,
@@ -224,11 +218,6 @@ import {
   createReportVisibleMinesRow,
   REPORT_VISIBLE_MINES
 } from './ipc/handlers/reportVisibleMines'
-import {
-  createResetFanout,
-  RESET_FANOUT_CUTS,
-  RESET_FANOUT_NAME
-} from '../legacy-bridge/reset/resetFanout'
 import { createLegacyAnswerShapeAdapter } from '../legacy-bridge/asks/LegacyAnswerShapeAdapter'
 import {
   createPerProviderShapeAdapter,
@@ -245,10 +234,6 @@ import {
   createSettlementPushMap,
   type LegacySettlementJoin
 } from '../legacy-bridge/shape/legacySettlementJoin'
-import {
-  reportSettingsMirrorWrites,
-  settingsMirrorHalves
-} from '../legacy-bridge/settingsMirror/settingsMirrorHalves'
 import {
   createLaunchAgentRow,
   LAUNCH_AGENT,
@@ -335,15 +320,10 @@ import {
   type SecretMigrationBridge,
   type SecretMigrationBridgeDeps
 } from '../legacy-bridge/secrets/secretMigrationBridge'
-import {
-  createJevSettingsShapeAdapter,
-  JEV_SETTINGS_SHAPE_ADAPTER
-} from '../legacy-bridge/secrets/jevSettingsShapeAdapter'
 import { createJevApiKeyRows, JEV_API_KEY_ROWS } from './ipc/handlers/jevApiKey.host'
 import {
   createHostJevSettings,
   createJevSettingsRows,
-  GET_JEV_SETTINGS,
   JEV_SETTINGS_ROWS
 } from './ipc/handlers/jevSettings.host'
 import {
@@ -696,31 +676,6 @@ export function composePresence(deps: {
   return {
     part: { channels: [REPORT_VISIBLE_MINES], target: createReportVisibleMinesRow(tracker) },
     tracker
-  }
-}
-
-/**
- * A-33's shape adapter `ResetFanout` (21 §3, §3.1, cuts 1–3e; ISSUE-121): today's reset through `LegacyRuntimeRoute`
- * first, then the Host saga (B-M15). Bound under its name only where a route of the table names it and it lives in the
- * release, over the Host attach; `undefined` otherwise, so the router starts only where the table and the composition
- * agree (a route naming an unbound shape adapter stops the router).
- */
-export function composeResetFanout(deps: {
-  routes: readonly ChannelRoute[]
-  release: StepId
-  legacy: RouteTarget
-  client: Pick<HostClient, 'withUiConnection'> | undefined
-  now?: () => number
-}): Readonly<Record<string, RouteTarget>> | undefined {
-  const named = deps.routes.some((route) => route.shapeAdapter === RESET_FANOUT_NAME)
-  const { client } = deps
-  if (!named || client === undefined || !RESET_FANOUT_CUTS.includes(deps.release)) return undefined
-  return {
-    [RESET_FANOUT_NAME]: createResetFanout({
-      legacy: deps.legacy,
-      hostClient: client,
-      now: deps.now ?? (() => Date.now())
-    })
   }
 }
 
@@ -1081,8 +1036,6 @@ export function composeAskStepAndIntegrationRows(deps: {
 export interface JevKeyComposition {
   /** A-48/A-49's and, from 4a, A-47/A-51's `host` target part, where the table routes them `host`. */
   part: RouteTargetPart | undefined
-  /** A-47's `JevSettingsShapeAdapter`, under its name, where a route of the table names it. */
-  shapeAdapters: Readonly<Record<string, RouteTarget>>
   /** The one-time Jev-key migration, running over the Host attach; disposed at will-quit. */
   migration: SecretMigrationBridge | undefined
 }
@@ -1100,21 +1053,22 @@ export interface JevKeyComposition {
  * handler where the table routes them `host` (the step-4a switch, ISSUE-235), from the Host's preferences; A-48/A-49
  * then answer the `JevSettings` the Host holds too, never today's preferences (`JevSettingsShapeAdapter` reads those,
  * up to 4a). They wait for the migration as the other Jev rows do.
+ *
+ * AMENDED for ISSUE-236, the 4a retirement (was: A-47 through `JevSettingsShapeAdapter` where a route named it, over
+ * today's runtime as `legacy`): the adapter left the tree, so A-48/A-49 always answer the `JevSettings` the Host holds.
  */
 export function composeJevKeyRows(deps: {
   routes: readonly ChannelRoute[]
   release: StepId
-  legacy: RouteTarget
   client: (MigrationHostClient & Pick<HostClient, 'call'>) | undefined
   migration: Pick<SecretMigrationBridgeDeps, 'userDataDir' | 'safeStorage'> | undefined
   log: LegacyLog
   mintId: () => string
 }): JevKeyComposition | undefined {
   const { routes, release, client } = deps
-  const named = routes.some((route) => route.shapeAdapter === JEV_SETTINGS_SHAPE_ADAPTER)
   const rows = JEV_API_KEY_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
   const settingsRows = JEV_SETTINGS_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
-  if (client === undefined || (!named && rows.length === 0 && settingsRows.length === 0)) {
+  if (client === undefined || (rows.length === 0 && settingsRows.length === 0)) {
     return undefined
   }
   const migration =
@@ -1136,12 +1090,8 @@ export function composeJevKeyRows(deps: {
           serve: (channel, payload, sender) =>
             migration.idle().then(() => target.serve(channel, payload, sender))
         }
-  const adapter = createJevSettingsShapeAdapter({ legacy: deps.legacy, client })
-  // The `JevSettings` A-48/A-49 answer: the Host's once it serves A-47 (4a), today's preferences through the adapter
-  // before.
-  const settings = routedTo(routes, GET_JEV_SETTINGS, 'host')
-    ? createHostJevSettings(client)
-    : adapter
+  // The `JevSettings` A-48/A-49 answer: the Host's (ISSUE-236: today's preferences through the adapter are gone).
+  const settings = createHostJevSettings(client)
   const parts: RouteTargetPart[] = []
   if (rows.length > 0) {
     parts.push({
@@ -1163,10 +1113,6 @@ export function composeJevKeyRows(deps: {
             channels: parts.flatMap((part) => part.channels),
             target: afterMigration(composeRouteTargets(parts))
           },
-    shapeAdapters:
-      named && bridgeLivesIn(JEV_SETTINGS_SHAPE_ADAPTER, release)
-        ? { [JEV_SETTINGS_SHAPE_ADAPTER]: afterMigration(adapter) }
-        : {},
     migration
   }
 }
@@ -1284,15 +1230,6 @@ export function composeResetMetricsRow(deps: {
  */
 export function legacyOpenCodePluginComposed(routes: readonly ChannelRoute[]): boolean {
   return !routedTo(routes, SET_OPENCODE_PLUGIN, 'host')
-}
-
-/**
- * Whether the root composes `SettingsMirrorBridge` (21 §3, cuts 1–3e; ISSUE-214): only while A-42 has no `host` route.
- * From the step-4a switch the Host's preferences are the source of truth for every Host-read setting and no legacy
- * write is mirrored (ISSUE-235); read from the route table, so a rollback build that flips A-42 back mirrors again.
- */
-export function settingsMirrorComposed(routes: readonly ChannelRoute[]): boolean {
-  return !routedTo(routes, 'notifications:enabled:get', 'host')
 }
 
 /**
@@ -1643,12 +1580,6 @@ export interface UiMainDeps {
    */
   host?: { client: HostClientService }
   /**
-   * `SettingsMirrorBridge` (21 §3, cuts 1–3e; ISSUE-214): the legacy store's write notifications and the halves whose
-   * non-secret Host-read preferences are mirrored into the Host with `preferences.set`. Composed over the Host attach
-   * (`host`) and disposed at will-quit; deleted in 4a, when the direction flips.
-   */
-  settingsMirror?: { legacy: LegacySettingsWrites; halves: readonly MirrorHalf[] }
-  /**
    * `SecretMigrationBridge` (21 §3, steps 3a and 4a; ADR-017 item 8; ISSUE-217): where today's `safeStorage` files live
    * and Electron's `safeStorage` to decrypt them with. Run over the Host attach only where the table routes A-48 `host`
    * (`composeJevKeyRows`, the Jev key) or A-54/A-55 `host` (`composeOpenCodePasswordRows`, the OpenCode password).
@@ -1730,7 +1661,6 @@ export async function startUiMain({
   uiLog,
   panelWindow,
   host,
-  settingsMirror,
   secretMigration,
   notifications,
   launch = { kind: 'normal', tray: true, window: true },
@@ -1863,13 +1793,6 @@ export async function startUiMain({
         })
   const stopHearingVisibility = panel?.onVisibleChanged?.(() => presence?.tracker.windowsChanged())
   windowClosed = (webContentsId) => presence?.tracker.windowClosed(webContentsId)
-  // A-33 through its shape adapter `ResetFanout` (21 §3.1): today's reset first, then the Host saga (ISSUE-121).
-  const shapeAdapters = composeResetFanout({
-    routes,
-    release,
-    legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
-    client: host?.client
-  })
   // A-13, A-23, A-35 and A-36 for the providers not yet moved, once a step switch names their shape adapters (21 §3.1;
   // ISSUE-177): today's runtime behind the dwarf id bridge, and today's model catalog read through its own handler.
   const providerShapes = composeProviderShapeAdapters({
@@ -1931,7 +1854,6 @@ export async function startUiMain({
   const jevKey = composeJevKeyRows({
     routes,
     release,
-    legacy: legacyRuntime,
     client: host?.client,
     migration: secretMigration,
     log: uiLog ?? { record: () => {} },
@@ -2016,10 +1938,8 @@ export async function startUiMain({
           ...(resetMetricsRow === undefined ? [] : [resetMetricsRow])
         ])
   const allShapeAdapters = {
-    ...shapeAdapters,
     ...providerShapes,
-    ...askAnswers?.shapeAdapters,
-    ...jevKey?.shapeAdapters
+    ...askAnswers?.shapeAdapters
   }
 
   // Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the notifier connection's frames, from the start of the
@@ -2120,18 +2040,6 @@ export async function startUiMain({
           for (const window of modeWindowList()) window.send(HOST_CONNECTION_PUSH, view)
         })
       : undefined
-  // The legacy store stays the source of truth for the settings rows until 4a: the mirror keeps the Host's copy of
-  // its halves' preferences equal to it (21 §3). From the step-4a switch it is not composed (ISSUE-235).
-  const mirror =
-    host === undefined || settingsMirror === undefined || !settingsMirrorComposed(routes)
-      ? undefined
-      : createSettingsMirrorBridge({
-          hostClient: host.client,
-          legacy: settingsMirror.legacy,
-          halves: settingsMirror.halves,
-          newRequestId: () =>
-            mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
-        })
   let trayProcess: TrayProcess | null = null
   lifecycle.onResume?.(() => host?.client.wake())
   lifecycle.onBeforeQuit(() => legacyRuntime.beforeQuit())
@@ -2143,7 +2051,6 @@ export async function startUiMain({
     stopConnectionPush?.()
     uiSession?.dispose()
     stopResetListening?.()
-    mirror?.dispose()
     jevKey?.migration?.dispose()
     stopDwarf?.dispose()
     providerRouting?.dispose()
@@ -2578,23 +2485,18 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
         : dialog.showOpenDialog(parent, options)
     }
   }
-  // The legacy store's saves of Host-read preferences, for `SettingsMirrorBridge` (21 §3): the notifications half
-  // (ISSUE-116, from cut 1) reports today's A-43 saves through the route the router serves the legacy rows with.
-  const legacySettingsWrites = createLegacySettingsWriteHub()
-  const legacyRuntime = reportSettingsMirrorWrites(
-    ROUTES_RELEASE,
-    createLegacyRuntimeRoute(
-      composeLegacyRuntime(
-        { app, dialog, nativeImage, shell, clipboard, globalShortcut },
-        {
-          ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
-          // Today's OpenCode plugin half only while A-53 keeps its pre-4a route (ISSUE-235).
-          openCodePlugin: legacyOpenCodePluginComposed(ROUTES),
-          log: uiLog
-        }
-      )
-    ),
-    legacySettingsWrites
+  // AMENDED for ISSUE-236, the 4a retirement (was: wrapped by `reportSettingsMirrorWrites` for `SettingsMirrorBridge`,
+  // which left the tree with its 4a lifetime).
+  const legacyRuntime = createLegacyRuntimeRoute(
+    composeLegacyRuntime(
+      { app, dialog, nativeImage, shell, clipboard, globalShortcut },
+      {
+        ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
+        // Today's OpenCode plugin half only while A-53 keeps its pre-4a route (ISSUE-235).
+        openCodePlugin: legacyOpenCodePluginComposed(ROUTES),
+        log: uiLog
+      }
+    )
   )
   void startUiMain({
     lock: new ElectronSingleInstanceLock(app),
@@ -2651,11 +2553,6 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     },
     launch: uiStartPlanOf(process.argv),
     ...electronStartWithSystem(uiPreferenceStore, uiLog),
-    // The halves register here with their legacy saves wired to the hub (ISSUE-116 from cut 1, ISSUE-194 from 3a).
-    settingsMirror: {
-      legacy: legacySettingsWrites,
-      halves: settingsMirrorHalves(ROUTES_RELEASE, legacyRuntime)
-    },
     // Today's Jev-key and OpenCode password files live where today's stores wrote them (`src/main/shell/jevApiKey.ts`,
     // `src/main/opencodePermissions/openCodeServerPassword.ts`, under `userData`).
     secretMigration: { userDataDir: app.getPath('userData'), safeStorage }

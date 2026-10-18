@@ -18,6 +18,8 @@ function span(from: StepId, to: StepId): StepId[] {
  * The legacy-bridge adapters of 21 §3 and the shape adapters of 21 §3.1, with the steps they live in ("1–4" is cut 1
  * up to the end of cut 4, that is 4b). A `legacy` + `target` route names one of the shape adapters living in the
  * table's release; none lives past cut 5. Each is built by the cut that needs it (21 §3.1), in `src/legacy-bridge/**`.
+ * AMENDED for ISSUE-236, the 4a retirement (was: also `ResetFanout` and `SettingsMirrorBridge`, cuts 1–3e, and
+ * `JevSettingsShapeAdapter`, 3a–4a): their lifetime ended in 4a and they left the tree after the soak (21 §3).
  */
 export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
   { name: 'LegacyRuntimeRoute', cuts: span('cut-0', 'cut-5'), shapeAdapter: false },
@@ -25,15 +27,12 @@ export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
   { name: 'LegacyDwarfIdBridge', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyLaunchObservation', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false },
-  { name: 'ResetFanout', cuts: span('cut-1', 'cut-3e'), shapeAdapter: true },
   { name: 'LegacyAgentRegistryFeed', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'SettingsMirrorBridge', cuts: span('cut-1', 'cut-3e'), shapeAdapter: false },
   { name: 'LegacyAskRelay', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyEndFirstAdapter', cuts: span('cut-0', 'cut-4b'), shapeAdapter: false },
   { name: 'PerProviderShapeAdapter', cuts: span('cut-3a', 'cut-4b'), shapeAdapter: true },
   { name: 'CatalogMergeAdapter', cuts: span('cut-3a', 'cut-4b'), shapeAdapter: true },
-  { name: 'LegacyAnswerShapeAdapter', cuts: span('cut-2', 'cut-4b'), shapeAdapter: true },
-  { name: 'JevSettingsShapeAdapter', cuts: span('cut-3a', 'cut-4a'), shapeAdapter: true }
+  { name: 'LegacyAnswerShapeAdapter', cuts: span('cut-2', 'cut-4b'), shapeAdapter: true }
 ]
 
 /** A row served by today's runtime through `LegacyRuntimeRoute` with today's shape, unmoved since before cut 0. */

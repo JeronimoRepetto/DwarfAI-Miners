@@ -8,7 +8,8 @@
 // the release table is 3a's, so the cut-1 table is derived from the cut-2 table as it shipped (`cut2Routes.ts`).
 import { type ChannelKey, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { HOST_ROUTE_MEMBERS, LEGACY_BRIDGE_ADAPTERS } from '../routes'
+import { HOST_ROUTE_MEMBERS } from '../routes'
+import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 import { CUT_2_RETIRED, CUT_2_ROUTES, CUT_2_UNROUTED } from './cut2Routes'
 
 /** The rows the cut-2 switch moved off today's runtime: A-40 and A-41, served by today's runtime in cut 1. */
@@ -40,7 +41,7 @@ export const CUT_1_TABLE: RouteTable = {
   routes: CUT_1_ROUTES,
   unrouted: CUT_1_UNROUTED,
   retired: CUT_2_RETIRED,
-  adapters: LEGACY_BRIDGE_ADAPTERS
+  adapters: ADAPTERS_AS_SHIPPED
 }
 
 /** The seam B members of the cut-1 table's `host` routes. */

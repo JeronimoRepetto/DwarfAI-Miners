@@ -188,6 +188,12 @@ The renderer of the rollback build is this tree's: its Settings composables spea
 shape-adapter rows still answer, so no `pnpm ipc:generate` revert is needed for them. The first-run step keeps offering
 OpenCode (the Host stays its writer).
 
+**Step-4a retirement (ISSUE-236): no rollback past this point.** From the ISSUE-236 commit today's settings, secret and
+reset handlers (A-33, A-42, A-43, A-47…A-55) and the three bridges whose lifetime ended in 4a (`ResetFanout`,
+`SettingsMirrorBridge`, `JevSettingsShapeAdapter`) are gone, so the table above routes A-33 and A-47 through adapters
+that no longer exist and the other rows to handlers that no longer exist: `rollbackOf(table, 'cut-4a')` refuses
+(`ROLLS_FORWARD_ONLY`, `src/ui-main/ipc/rollbackTable.ts`), and 4a rolls forward only (`21` §2.1 item 4).
+
 **Step 4b note (ISSUE-238).** A 4b rollback build exists only before the 4b deletions merge (ISSUE-239…ISSUE-241, after
 the one soak at the end of cuts 3a–4b, OQ-71); after the first of them, 4b rolls forward (`21` §2 cut 4b "Rollback", §2.1
 item 1). 4b is the last provider step: besides moving OpenCode's rows it removed the routes no provider was left for, so

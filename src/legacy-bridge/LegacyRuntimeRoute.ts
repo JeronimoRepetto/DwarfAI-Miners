@@ -36,7 +36,6 @@ import type {
   CopyTextResult,
   ExternalLinkResult,
   MaterialTotals,
-  MetricsResetResult,
   Mine,
   MineDeclareResult,
   MineHistoryResult,
@@ -47,10 +46,7 @@ import type {
   ProjectQueryResult,
   ProjectSortDirection,
   ProjectSortKey,
-  WatchedFeedPush,
-  JevRouteLaunchResult,
-  JevSettings,
-  OpenCodeSettings
+  WatchedFeedPush
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -62,11 +58,7 @@ import {
   DWARF_IMAGE_EXTENSIONS,
   MAX_DWARF_ATTACHMENTS,
   parseDwarfAttachments,
-  parseDwarfText,
-  parseJevApiKeyInput,
-  parseJevRouteLaunchRequest,
-  parseJevPreferences,
-  parseOpenCodeServerPasswordInput
+  parseDwarfText
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from '../main/textDelivery/attachmentFiles'
 import type { AttachmentReader } from '../main/textDelivery/attachmentDelivery'
@@ -124,18 +116,14 @@ import { TUNING_NOT_HELD } from '../main/sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from '../main/projects/projectsStore'
 import { createAudioPreferenceStore } from '../main/shell/audioPreference'
 import { createLaunchViewStore } from '../main/shell/launchViewPreference'
-import { createJevApiKeyStore, type JevKeyVerdict } from '../main/shell/jevApiKey'
-import {
-  createJevPreferenceStore,
-  type JevPreferenceSaveRefusalReason
-} from '../main/shell/jevPreferences'
+import { createJevApiKeyStore } from '../main/shell/jevApiKey'
+import { createJevPreferenceStore } from '../main/shell/jevPreferences'
 import { createJevLaunchRouter } from '../main/jev/routeLaunch'
 import { createTypesafeJevRouter } from '../main/jev/typesafeJevRouter'
 import { AgentRuntime, type RuntimeOptions } from '../main/runtime/runtime'
 import type { GlobalShortcutLike } from '../main/shell/shortcuts'
 import { createTypographyPreferenceStore } from '../main/shell/typographyPreference'
 import { parseAnswerRequest } from '../main/shell/answerRequest'
-import { createNotificationPreferenceStore } from '../main/notifications/notificationPreference'
 
 /** Today's handler of one seam A row: the body `src/main/index.ts` registers for that wire name. */
 export type LegacyHandler = (payload: unknown) => unknown
@@ -335,14 +323,6 @@ export interface LegacyCompositionOptions {
 
 /** Twice the design's 40px chip, so the preview is sharp on a 2× display (#408). */
 const ATTACHMENT_THUMBNAIL_PX = 80
-
-/** A store refusal, in words the panel can show (#509 follow-up). */
-const JEV_PREFERENCE_REFUSALS: Record<JevPreferenceSaveRefusalReason, string> = {
-  'default-provider-not-launchable':
-    'That default launch names a provider this build cannot start, so nothing was saved. Pick another provider under Default launch.',
-  'default-tuning-invalid':
-    'That default launch pairs a model or effort its provider would refuse, so nothing was saved. Clear it under Default launch and try again.'
-}
 
 const PERMISSION_DECISIONS: readonly DwarfPermissionDecision[] = ['allow', 'deny']
 const PROJECT_SORT_KEYS: readonly ProjectSortKey[] = ['addedAt', 'lastOpenedAt']
@@ -581,8 +561,6 @@ export function composeLegacyRuntime(
       userDataDir: app.getPath('userData')
     })
     await openCodePasswordStore.load()
-    /** Why the OpenCode relay is not on when it was asked to be. */
-    let openCodePluginError: string | undefined
 
     const jevPreferenceStore = createJevPreferenceStore({ userDataDir: app.getPath('userData') })
 
@@ -608,11 +586,6 @@ export function composeLegacyRuntime(
       filePath: join(app.getPath('userData'), 'launch-view-v1.json')
     })
 
-    // System notifications (#316).
-    const notificationStore = createNotificationPreferenceStore({
-      filePath: join(app.getPath('userData'), 'notification-preference-v1.json')
-    })
-    let notificationsEnabled = await notificationStore.load()
     // The app's own database (#93), one handle for its tenants, deliberately never closed on quit.
     const appDatabase = createAppDatabase({
       filePath: join(app.getPath('userData'), APP_DB_FILENAME)
@@ -787,7 +760,7 @@ export function composeLegacyRuntime(
         log: unrouted,
         warn: warnFrom('opencode-plugin')
       })
-      openCodePluginError = (await openCodePlugin.restore())?.error
+      await openCodePlugin.restore()
     }
 
     // Which build is running (#79), asked of Electron.
@@ -822,126 +795,13 @@ export function composeLegacyRuntime(
       // No push: A-P6 is `ui-local` and the rebuilt window module sends it (the push went to today's window only).
       return preferences
     })
-    handle(IPC_CHANNELS.getNotificationsEnabled, () => notificationsEnabled)
-    handle(IPC_CHANNELS.setNotificationsEnabled, async (payload) => {
-      if (typeof payload !== 'boolean') return notificationsEnabled
-      notificationsEnabled = payload
-      try {
-        await notificationStore.save(payload)
-      } catch (error) {
-        diagnostics.preferenceWriteFailed('notifications', error)
-      }
-      return notificationsEnabled
-    })
     handle(IPC_CHANNELS.getLaunchView, () => launchViewStore.load())
     handle(IPC_CHANNELS.setLaunchView, (payload) => {
       void launchViewStore.remember(parseLaunchView(payload))
     })
 
-    // Jev API key (#509): never answered with the key; the merged shape with the preferences.
-    async function withJevPreferences(verdict: JevKeyVerdict): Promise<JevSettings> {
-      return { ...verdict, preferences: await jevPreferenceStore.load() }
-    }
-    handle(IPC_CHANNELS.getJevSettings, async () => withJevPreferences(await jevApiKeyStore.load()))
-    handle(IPC_CHANNELS.setJevApiKey, async (payload) => {
-      try {
-        const key = parseJevApiKeyInput(payload)
-        const result = await jevApiKeyStore.save(key)
-        if (!result.saved) {
-          diagnostics.warning('jev-key')
-          if (result.reason === 'encryption-unavailable') {
-            return withJevPreferences({
-              configured: false,
-              unavailableReason: 'encryption-unavailable'
-            })
-          }
-        }
-      } catch (error) {
-        diagnostics.warning('jev-key', error)
-      }
-      return withJevPreferences({ configured: jevApiKeyStore.readKey() !== undefined })
-    })
-    handle(IPC_CHANNELS.clearJevApiKey, async () => {
-      try {
-        await jevApiKeyStore.clear()
-      } catch (error) {
-        diagnostics.warning('jev-key', error)
-      }
-      return withJevPreferences({ configured: jevApiKeyStore.readKey() !== undefined })
-    })
-    const jevRouteRefused: JevRouteLaunchResult = { kind: 'fallback', reason: 'invalid-response' }
-    handle(IPC_CHANNELS.routeJevLaunch, async (payload): Promise<JevRouteLaunchResult> => {
-      try {
-        const request = parseJevRouteLaunchRequest(payload)
-        return await jevLaunchRouter.route(request)
-      } catch (error) {
-        diagnostics.warning('jev-route', error)
-        return jevRouteRefused
-      }
-    })
-    handle(IPC_CHANNELS.setJevPreferences, async (payload) => {
-      const preferences = parseJevPreferences(payload)
-      let failure: string | undefined
-      try {
-        const result = await jevPreferenceStore.save(preferences)
-        if (!result.saved) failure = JEV_PREFERENCE_REFUSALS[result.reason]
-      } catch (error) {
-        failure = `The preference could not be written: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      }
-      if (failure !== undefined) diagnostics.warning('jev-preferences')
-      const stored = await withJevPreferences(await jevApiKeyStore.load())
-      return failure === undefined ? stored : { ...stored, preferencesError: failure }
-    })
-
-    // OpenCode permission relay (#588 T6): the state in force, never the password.
-    async function openCodeSettings(): Promise<OpenCodeSettings> {
-      const password = await openCodePasswordStore.load()
-      return {
-        pluginEnabled: openCodePlugin?.isActive() ?? false,
-        ...(openCodePluginError === undefined ? {} : { pluginError: openCodePluginError }),
-        passwordConfigured: password.configured,
-        ...(password.unavailableReason === undefined
-          ? {}
-          : { passwordUnavailableReason: password.unavailableReason })
-      }
-    }
-    handle(IPC_CHANNELS.getOpenCodeSettings, () => openCodeSettings())
-    handle(IPC_CHANNELS.setOpenCodePluginEnabled, async (payload) => {
-      if (typeof payload !== 'boolean' || openCodePlugin === null) return openCodeSettings()
-      try {
-        if (payload) {
-          const result = await openCodePlugin.enable()
-          openCodePluginError = result.enabled ? undefined : result.error
-          if (!result.enabled) diagnostics.warning('opencode-plugin')
-        } else {
-          await openCodePlugin.disable()
-          openCodePluginError = undefined
-        }
-      } catch (error) {
-        openCodePluginError = error instanceof Error ? error.message : String(error)
-        diagnostics.warning('opencode-plugin', error)
-      }
-      return openCodeSettings()
-    })
-    handle(IPC_CHANNELS.setOpenCodeServerPassword, async (payload) => {
-      try {
-        const result = await openCodePasswordStore.save(parseOpenCodeServerPasswordInput(payload))
-        if (!result.saved) diagnostics.warning('opencode-password')
-      } catch (error) {
-        diagnostics.warning('opencode-password', error)
-      }
-      return openCodeSettings()
-    })
-    handle(IPC_CHANNELS.clearOpenCodeServerPassword, async () => {
-      try {
-        await openCodePasswordStore.clear()
-      } catch (error) {
-        diagnostics.warning('opencode-password', error)
-      }
-      return openCodeSettings()
-    })
+    // AMENDED for ISSUE-236, the 4a retirement (was: today's handlers of A-42, A-43, A-47…A-55): the Host serves the
+    // Settings family since the 4a switch (ISSUE-235), and today's handlers left after the soak.
 
     handle(IPC_CHANNELS.getMines, () =>
       toMinesSnapshot(runtime?.getMines() ?? [], runtime?.materialTotals())
@@ -1084,11 +944,7 @@ export function composeLegacyRuntime(
       return runtime?.undeclareMine(mineId) ?? notUndeclared
     })
 
-    const notReset: MetricsResetResult = {
-      outcome: 'failed',
-      reason: 'The panel is still starting up.'
-    }
-    handle(IPC_CHANNELS.resetMetrics, () => runtime?.resetMetrics() ?? notReset)
+    // AMENDED for ISSUE-236 (was: today's A-33 `resetMetrics` handler): the Host saga alone serves it since 4a.
 
     const notQueried: ProjectQueryResult = {
       answered: false,
