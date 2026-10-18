@@ -55,6 +55,21 @@ const SCRIPTS_DIR = path.join(STUB_BIN, '_kit', 'scripts')
 /** The variable a stub reads its script path from (`fixtures/bin/_kit/stubCli.mjs`). */
 const scriptEnvVar = (name: StubName): string => `DWARFAI_STUB_${name.toUpperCase()}_SCRIPT`
 
+/**
+ * The app's whole `PATH` for a case that must not see this machine's own CLIs: the given stub folders, the folder of
+ * the node that runs the stubs, and the OS tools the Host and today's runtime use. Pass it as
+ * `launchApp({ stubs: isolatedStubPath(...), pathOnly: true })`.
+ */
+export function isolatedStubPath(...stubDirs: readonly string[]): string {
+  const node = path.dirname(process.execPath)
+  if (process.platform === 'win32') {
+    const system = path.join(process.env.SystemRoot ?? String.raw`C:\Windows`, 'System32')
+    const powershell = path.join(system, 'WindowsPowerShell', 'v1.0')
+    return [...stubDirs, node, system, powershell].join(path.delimiter)
+  }
+  return [...stubDirs, node, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(path.delimiter)
+}
+
 export function withStubs(names: readonly StubName[], scenario: StubScenario = {}): StubSetup {
   if (names.length === 0) throw new Error('withStubs needs at least one stub name')
   for (const name of names) {
