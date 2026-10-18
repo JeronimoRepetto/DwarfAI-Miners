@@ -211,13 +211,16 @@ export async function seedMine(
 
 /**
  * Launches a Claude dwarf into `mineId` through A-35 (`launchAgent`, the `14` `LaunchParams`) and waits until the Host
- * reports the launch `succeeded` with its dwarf, and that dwarf idle after its first turn.
+ * settles the launch with its dwarf, and that dwarf idle after its first turn. The snapshot's `launches` section lists
+ * only in-flight and failed launches (`14` §3.7, `launchesSection.ts`), so a succeeded launch is one that left it while
+ * a new Claude dwarf of the mine arrived in the `dwarfs` section.
  */
 export async function launchClaude(
   window: Page,
   mineId: string,
   prompt = 'Say hello.'
 ): Promise<{ launchId: string; dwarfId: string }> {
+  const before = new Set((await dwarfsOf(window)).map((d) => d.id))
   const accepted = (await window.evaluate(
     `window.api.launchAgent(${JSON.stringify({
       mineId,
@@ -237,9 +240,14 @@ export async function launchClaude(
     .poll(
       async () => {
         const launch = (await launchesOf(window)).find((row) => row.launchId === launchId)
-        dwarfId = launch?.dwarfId
         // A failed launch names its ADR-020 cause, so a failure says why.
-        return launch?.state === 'failed' ? `failed ${JSON.stringify(launch)}` : launch?.state
+        if (launch !== undefined) {
+          return launch.state === 'failed' ? `failed ${JSON.stringify(launch)}` : launch.state
+        }
+        dwarfId = (await dwarfsOf(window)).find(
+          (d) => d.mineId === mineId && d.providerId === CLAUDE && !before.has(d.id)
+        )?.id
+        return dwarfId === undefined ? 'left the launches with no dwarf' : 'succeeded'
       },
       { timeout: 60_000, message: 'the Host settles the launch' }
     )

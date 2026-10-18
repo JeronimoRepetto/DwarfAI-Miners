@@ -67,8 +67,8 @@ test.describe('step 3a: a Claude dwarf through the Host (ISSUE-001)', () => {
 
     // Launch (A-35): the Host's launch, an Owned Claude dwarf, the stub's first turn in its chat.
     const { launchId, dwarfId } = await launchClaude(window, mineId)
-    const launch = (await launchesOf(window)).find((row) => row.launchId === launchId)
-    expect(launch).toMatchObject({ wayKind: 'supplier', providerId: CLAUDE, dwarfId })
+    // A succeeded launch leaves the snapshot's `launches` section (14 §3.7: in-flight and failed only).
+    expect((await launchesOf(window)).find((row) => row.launchId === launchId)).toBeUndefined()
     expect((await dwarfsOf(window)).find((d) => d.id === dwarfId)).toMatchObject({
       providerId: CLAUDE,
       owned: true,
