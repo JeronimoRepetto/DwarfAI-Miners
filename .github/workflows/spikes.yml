@@ -1,0 +1,420 @@
+name: Spikes
+
+# The spike lane (testing strategy 17 §4; docs/spikes-lane.md): GitHub's hosted runners run the existing spike
+# harnesses, so the macOS and Linux rows of spike-results/<ID>.md (and the Windows rows still missing) come from CI
+# instead of the owner's machines. It runs only when dispatched by hand, names the spikes to run, and uploads each
+# job's raw evidence as a workflow artifact kept seven days. The owner turns that evidence into the records.
+#
+#   gh workflow run spikes.yml --ref main -f spikes=all
+#   gh workflow run spikes.yml --ref main -f spikes="SP-16,S-019-1"
+#
+# It never needs a person's machine or account: no provider CLI, no login, no secret, no Environment. The keyring
+# legs touch only entries under a service unique to the run, which the harnesses delete; the packaged legs package
+# unsigned and publish nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      spikes:
+        description: 'Spikes to run: all, or ids separated by commas (SP-16, SP-04, SP-03, SP-05, S-019-1, S-030-1, S-027-4)'
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # As ci.yml: @electron/get caches the Electron download here, restored by the cache steps below.
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  # As ci.yml's test lanes (17 §5.3).
+  TZ: UTC
+  LANG: C.UTF-8
+  # Where every harness writes its raw output; each job uploads this folder.
+  SPIKE_REPORT_DIR: coverage/spike-reports
+
+jobs:
+  # Validates the dispatch input and turns it into one boolean per spike id (scripts/ci/spike-lane.mjs). The input
+  # reaches the script through env, never interpolated into it.
+  plan:
+    name: Plan the spikes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Plan
+        id: plan
+        env:
+          SPIKES: ${{ inputs.spikes }}
+        run: node scripts/ci/spike-lane.mjs plan
+
+  # SP-16 (ISSUE-322; ADR-017 item 2): @napi-rs/keyring under ELECTRON_RUN_AS_NODE, set, read, list and delete, from
+  # the Electron runtime and from a copy of it (spikes/SP-16), plus the adapter's own OS tests under Node. Linux runs
+  # twice: with a Secret Service (gnome-keyring on a session bus from dbus-launch) and with none, where the pinned
+  # entry must be refused as unavailable. macOS uses the runner's login keychain; a Keychain prompt cannot be
+  # answered here, so the cross-copy read records a timeout or an error instead.
+  keyring:
+    name: SP-16 keyring (${{ matrix.os }}, ${{ matrix.leg }})
+    needs: plan
+    if: fromJSON(needs.plan.outputs.run)['SP-16']
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            leg: default
+          - os: macos-latest
+            leg: default
+          - os: ubuntu-latest
+            leg: secret-service
+          - os: ubuntu-latest
+            leg: no-secret-service
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      SP16_LEG: ${{ matrix.leg }}
+      SP16_COPY: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the Electron binary
+        run: pnpm exec install-electron
+
+      - name: Install gnome-keyring and dbus-launch (Linux, Secret Service leg)
+        if: matrix.leg == 'secret-service'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnome-keyring dbus-x11
+
+      # The Secret Service leg starts a session bus and unlocks (creating) a login keyring with a throwaway password
+      # that guards nothing but this runner's empty test keyring. The no-Secret-Service leg drops the bus address, so
+      # nothing can answer.
+      - name: Run SP-16 and the secret-store OS tests
+        shell: bash
+        run: |
+          paths=(spikes/SP-16 src/host/modules/preferences/adapters/secret-store)
+          case "$SP16_LEG" in
+            secret-service)
+              eval "$(dbus-launch --sh-syntax)"
+              printf 'spike-lane-throwaway' | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+              SP16_REQUIRE_SECRET_SERVICE=1 pnpm vitest run --config vitest.os.config.ts "${paths[@]}"
+              ;;
+            no-secret-service)
+              env -u DBUS_SESSION_BUS_ADDRESS pnpm vitest run --config vitest.os.config.ts "${paths[@]}"
+              ;;
+            *)
+              pnpm vitest run --config vitest.os.config.ts "${paths[@]}"
+              ;;
+          esac
+
+      - name: Write the environment of the evidence
+        if: always()
+        run: node scripts/ci/spike-lane.mjs environment sp16-${{ matrix.os }}-${{ matrix.leg }} coverage/spike-reports SP-16
+
+      - name: Upload the evidence (kept seven days)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-sp16-${{ matrix.os }}-${{ matrix.leg }}
+          path: coverage/spike-reports/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # SP-04 (ISSUE-314) and SP-03 (ISSUE-315) over the real app, packaged the way ci.yml's `package` job packages it
+  # (same build, notices, lockfile scan and macos-15 pin), with nothing signed and nothing published. Windows and macOS
+  # build only the unpacked app (`--dir`); Linux builds its AppImage and deb, which SP-03 measures too.
+  # - SP-04: spikes/SP-04/packagedHost.mjs, once building its own throw-away app and once (`--exe`) with the real app's
+  #   executable: node:sqlite, process.resourcesPath and CLI resolution under ELECTRON_RUN_AS_NODE.
+  # - SP-03: spikes/SP-03 over the Electron runtime, the unpacked app, and on Linux the AppImage and the installed deb.
+  packaged:
+    name: SP-04 and SP-03 packaged (${{ matrix.os }})
+    needs: plan
+    if: fromJSON(needs.plan.outputs.run)['SP-04'] || fromJSON(needs.plan.outputs.run)['SP-03']
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            package_args: '--dir'
+          # As ci.yml `package`: macos-15 is the image electron-builder 26.15.3 is known to package on.
+          - os: macos-15
+            package_args: '--dir -c.mac.identity=null'
+          - os: ubuntu-latest
+            package_args: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      RUN_SP04: ${{ fromJSON(needs.plan.outputs.run)['SP-04'] }}
+      RUN_SP03: ${{ fromJSON(needs.plan.outputs.run)['SP-03'] }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the Electron binary
+        run: pnpm exec install-electron
+
+      - name: Build the owner-only pipe helper (Windows x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
+
+      - name: Build
+        run: pnpm build
+
+      - name: Write the third-party notices
+        run: node scripts/release/third-party-notices.mjs
+
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK
+        run: node scripts/release/lockfile-provider-scan.mjs
+
+      - name: Package (unsigned, publishes nothing)
+        run: pnpm package ${{ matrix.package_args }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Locate the packaged app
+        id: layout
+        run: node scripts/ci/spike-lane.mjs layout release
+
+      - name: Run SP-04
+        if: env.RUN_SP04 == 'true'
+        shell: bash
+        env:
+          EXE: ${{ steps.layout.outputs.exe }}
+        run: |
+          mkdir -p "$SPIKE_REPORT_DIR"
+          node spikes/SP-04/packagedHost.mjs --out "$SPIKE_REPORT_DIR/SP-04-$RUNNER_OS-throwaway.json"
+          node spikes/SP-04/packagedHost.mjs --exe "$EXE" --out "$SPIKE_REPORT_DIR/SP-04-$RUNNER_OS-app.json"
+
+      - name: Install FUSE and the deb (Linux, SP-03)
+        if: env.RUN_SP03 == 'true' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfuse2t64
+          sudo apt-get install -y ./release/*.deb
+
+      - name: Run SP-03
+        if: env.RUN_SP03 == 'true'
+        shell: bash
+        env:
+          LAYOUT_DIR: ${{ steps.layout.outputs.dir }}
+          APPIMAGE: ${{ steps.layout.outputs.appimage }}
+        run: |
+          mkdir -p "$SPIKE_REPORT_DIR"
+          layouts="app-unpacked=$LAYOUT_DIR"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            [ -d /opt/DwarfAI-Miners ] && layouts="$layouts;deb=/opt/DwarfAI-Miners"
+            [ -n "$APPIMAGE" ] && export SP03_APPIMAGE="$APPIMAGE"
+          fi
+          export SP03_LAYOUTS="$layouts"
+          # GITHUB_WORKSPACE is a native path on every OS; bash's $PWD is POSIX-shaped on Windows.
+          export SP03_REPORT="$GITHUB_WORKSPACE/$SPIKE_REPORT_DIR/SP-03-$RUNNER_OS.json"
+          pnpm vitest run --config vitest.os.config.ts spikes/SP-03
+
+      - name: Write the environment of the evidence
+        if: always()
+        run: node scripts/ci/spike-lane.mjs environment packaged-${{ matrix.os }} coverage/spike-reports SP-04 SP-03
+
+      - name: Upload the evidence (kept seven days)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-packaged-${{ matrix.os }}
+          path: coverage/spike-reports/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # S-019-1 (ISSUE-315), the Linux leg the record lacks: the sandboxed-preload case under Xvfb, over `pnpm build`.
+  sandboxed-preload:
+    name: S-019-1 sandboxed preload (ubuntu-latest)
+    needs: plan
+    if: fromJSON(needs.plan.outputs.run)['S-019-1']
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the Electron binary
+        run: pnpm exec install-electron
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run S-019-1 (under Xvfb)
+        run: |
+          mkdir -p "$SPIKE_REPORT_DIR"
+          S0191_REPORT="$GITHUB_WORKSPACE/$SPIKE_REPORT_DIR/S-019-1-linux.json" xvfb-run --auto-servernum pnpm exec playwright test spikes/S-019-1 --retries=0
+
+      - name: Write the environment of the evidence
+        if: always()
+        run: node scripts/ci/spike-lane.mjs environment s0191-ubuntu-latest coverage/spike-reports S-019-1
+
+      - name: Upload the evidence (kept seven days)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-s0191-ubuntu-latest
+          path: coverage/spike-reports/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # The OS-lane spike harnesses, on demand: S-030-1 (case-insensitive volumes) and the write/remove half of S-027-4
+  # (login entry) of ISSUE-318 on the three OSes, and the macOS/Linux half of SP-05 (ISSUE-314: what another local
+  # account gets on the Host's socket and run files). As in ci.yml's OS lane, Linux runs under Xvfb and Windows as the
+  # non-elevated test user (scripts/ci/run-unelevated.mjs).
+  os-lane:
+    name: S-030-1, S-027-4, SP-05 OS lane (${{ matrix.os }})
+    needs: plan
+    if: fromJSON(needs.plan.outputs.run)['S-030-1'] || fromJSON(needs.plan.outputs.run)['S-027-4'] || fromJSON(needs.plan.outputs.run)['SP-05']
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      RUN_S0301: ${{ fromJSON(needs.plan.outputs.run)['S-030-1'] }}
+      RUN_S0274: ${{ fromJSON(needs.plan.outputs.run)['S-027-4'] }}
+      RUN_SP05: ${{ fromJSON(needs.plan.outputs.run)['SP-05'] }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the Electron binary
+        run: pnpm exec install-electron
+
+      - name: Non-elevated test user (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs --probe
+
+      - name: Run the selected OS-lane spikes
+        shell: bash
+        run: |
+          files=()
+          [ "$RUN_S0301" = "true" ] && files+=(spikes/S-030-1)
+          [ "$RUN_S0274" = "true" ] && files+=(spikes/S-027-4)
+          [ "$RUN_SP05" = "true" ] && [ "$RUNNER_OS" != "Windows" ] && files+=(spikes/SP-05/posixAccess)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::notice::No selected spike runs on $RUNNER_OS."
+            exit 0
+          fi
+          mkdir -p "$SPIKE_REPORT_DIR"
+          case "$RUNNER_OS" in
+            Linux) xvfb-run --auto-servernum pnpm vitest run --config vitest.os.config.ts "${files[@]}" ;;
+            Windows) node scripts/ci/run-unelevated.mjs -- pnpm vitest run --config vitest.os.config.ts "${files[@]}" ;;
+            *) pnpm vitest run --config vitest.os.config.ts "${files[@]}" ;;
+          esac
+
+      - name: Write the environment of the evidence
+        if: always()
+        run: node scripts/ci/spike-lane.mjs environment oslane-${{ matrix.os }} coverage/spike-reports S-030-1 S-027-4 SP-05
+
+      - name: Upload the evidence (kept seven days)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-oslane-${{ matrix.os }}
+          path: coverage/spike-reports/
+          retention-days: 7
+          if-no-files-found: warn

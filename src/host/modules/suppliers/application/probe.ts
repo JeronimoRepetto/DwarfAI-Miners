@@ -49,9 +49,12 @@ export interface CapabilityProbing {
   refresh(id: ProviderId): Promise<void>
   /** The selected driver's last measurement, or null when no driver of the provider is probed. */
   selected(id: ProviderId): ProviderCapabilities | null
+  /** The selected driver itself (the one `selected` measured), or null when none is probed. */
+  selectedDriver(id: ProviderId): ProviderDriver | null
 }
 
 interface Measured {
+  readonly driver: ProviderDriver
   readonly key: string
   readonly install: InstalledProvider
   readonly caps: ProviderCapabilities
@@ -105,7 +108,7 @@ export function createCapabilityProbing(deps: CapabilityProbingDeps): Capability
       const key = JSON.stringify([install.binaryPath, install.version, install.statMtimeMs])
       if (measured.get(driver)?.key === key) continue
       const caps = structuredClone(await probeWithin(driver, install))
-      measured.set(driver, { key, install, caps })
+      measured.set(driver, { driver, key, install, caps })
       probedNow = true
     }
     const chosen = probedNow ? selectedOf(id) : null
@@ -137,6 +140,9 @@ export function createCapabilityProbing(deps: CapabilityProbingDeps): Capability
     selected(id) {
       const chosen = selectedOf(id)
       return chosen === null ? null : structuredClone(chosen.caps)
+    },
+    selectedDriver(id) {
+      return selectedOf(id)?.driver ?? null
     }
   }
 }

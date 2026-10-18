@@ -268,6 +268,7 @@ import {
 } from './wiring/delegationWiring'
 import type { DelegationLifecycleEvent } from './modules/delegation'
 import { NodeMcpConfigFiles } from './modules/suppliers/adapters/drivers/claude-stream-json/mcpConfigFile'
+import { fetchTransport } from './modules/suppliers/adapters/drivers/opencode-server/personRunServer'
 import {
   createLaunchDrainGate,
   type LaunchingEvent,
@@ -965,7 +966,14 @@ async function bootHost(base: HostBase): Promise<void> {
               redact: redactSecrets,
               clientInfo: { name: 'dwarfai', version: __DWARFAI_APP_VERSION__ },
               resumeContext: launched.resumeContext,
-              claudeStreamJson: wiredDelegation.driver
+              claudeStreamJson: wiredDelegation.driver,
+              // OpenCode's server driver (ISSUE-237; 15 §4.6): a person-run `opencode serve` is reached
+              // with the stored password through the kernel SecretReader, over plain loopback HTTP.
+              openCodeServer: {
+                secretReader: modules.preferences.secretReader,
+                http: fetchTransport,
+                log
+              }
             }
           })
           servedSuppliers.bind(launchableSource(modules.suppliers))

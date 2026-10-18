@@ -46,6 +46,7 @@ function host(advisor: AbortableLaunchAdvisor) {
     advisor,
     suppliers: {
       registry: { drivers: () => [] },
+      launchDriver: async () => undefined,
       catalogue: { entry: () => null },
       bindings: { bind: () => undefined }
     },

@@ -28,7 +28,7 @@ runSessionStarterContract('the SessionStarter bridge', () => {
   const scripted = new ScriptedDriver({ providerId, label: 'Contract tool', clock, scheduler })
   return {
     starter: createSessionStarter({
-      registry: scripted.registry,
+      launchDriver: async (id) => scripted.registry.drivers(id)[0],
       sessions: scripted.sessions,
       clock,
       scheduler
@@ -95,7 +95,7 @@ describe('the SessionStarter bridge, with timers that run ahead of the clock', (
     const scripted = new ScriptedDriver({ providerId, label: 'Contract tool', clock, scheduler })
     const driver = driverOf?.(scripted)
     const starter = createSessionStarter({
-      registry: driver === undefined ? scripted.registry : { drivers: () => [driver] },
+      launchDriver: async (id) => driver ?? scripted.registry.drivers(id)[0],
       sessions: scripted.sessions,
       clock,
       scheduler: runningAhead(scheduler)

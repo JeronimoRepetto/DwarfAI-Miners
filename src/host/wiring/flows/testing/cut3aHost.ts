@@ -519,7 +519,14 @@ export async function bootHost(w: World, options: BootOptions) {
               clientInfo: { name: 'dwarfai', version: '0.0.0' },
               resumeContext: launched.resumeContext,
               // As host/main.ts: Claude's stream-json driver with its permission prompt tool.
-              claudeStreamJson: wiredDelegation.driver
+              claudeStreamJson: wiredDelegation.driver,
+              // As host/main.ts: OpenCode's server driver, attached ahead of its acp driver (GitHub
+              // #1431). No flow reaches a person-run server: the transport refuses every call.
+              openCodeServer: {
+                secretReader: preferences.secretReader,
+                http: () => Promise.reject(new Error('no network in a flow')),
+                log
+              }
             }
           })
           host.suppliers = suppliers
