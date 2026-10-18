@@ -81,8 +81,6 @@ export {
 } from './domain/status'
 export { StatusTimer, type StatusTimerDeps } from './application/statusTimer'
 export type { CrewCommands, CrewQueries, SessionLinks }
-// Strangler-only (05 §3.2; AMENDMENT-8): the B-M41 record, deleted with B-M41 at the end of cut 4.
-export type { PresentIdentity } from './application/crewQueries'
 export type { EndOutcome, SessionTerminator } from './ports/sessionTerminator'
 // ISSUE-205: `endDelegated`, the route of `DelegationSucceeded` (16 §4.2).
 export {
@@ -177,8 +175,7 @@ export function createCrew(deps: CrewDeps): Crew {
   const queries = new CrewReadModel({
     repository,
     clock: deps.clock,
-    links: deps.links,
-    presentDwarfs: stored
+    links: deps.links
   })
   const ends: Crew['ends'] = ({ terminator, bus }) =>
     new CrewEndAllIn({

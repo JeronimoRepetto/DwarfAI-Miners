@@ -8,7 +8,6 @@ import type {
   Instant,
   MineId,
   PreferencesView,
-  StranglerDwarfIdentity,
   WelcomeStepState
 } from '../wire'
 import {
@@ -470,38 +469,6 @@ describe('preferences.answerWelcome params and result (14 §3.4, B-M40)', () => 
     ).toBe(false)
     expect(result.safeParse({ integrations }).success).toBe(false)
     expect(result.safeParse({ integrations, welcome: SETTLED, extra: 1 }).success).toBe(false)
-  })
-})
-
-// The B-M41 entry of 14 §3.4 and its strict() schemas (14 §1.4; AMENDMENT-8, OQ-69): strangler-only,
-// deleted with LegacyDwarfIdBridge at the end of cut 4.
-
-describe('strangler.dwarfIdentities params and result (14 §3.4, B-M41)', () => {
-  it('[ADR-015] the strangler.dwarfIdentities schemas infer exactly the 14 §3.4 entry and refuse any other key', () => {
-    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
-    expectTypeOf<HostMethods['strangler.dwarfIdentities']['params']>().toEqualTypeOf<{}>()
-    expectTypeOf<HostMethods['strangler.dwarfIdentities']['result']>().toEqualTypeOf<
-      StranglerDwarfIdentity[]
-    >()
-    expectTypeOf<
-      z.infer<(typeof HOST_METHOD_SCHEMAS)['strangler.dwarfIdentities']['params']>
-    >().toEqualTypeOf<HostMethods['strangler.dwarfIdentities']['params']>()
-    expectTypeOf<
-      z.infer<(typeof HOST_METHOD_SCHEMAS)['strangler.dwarfIdentities']['result']>
-    >().toEqualTypeOf<StranglerDwarfIdentity[]>()
-
-    const { params, result } = HOST_METHOD_SCHEMAS['strangler.dwarfIdentities']
-    const record = {
-      dwarfId: '01890a5d-ac96-774b-bcce-b302099a8058',
-      providerId: 'claude',
-      identity: { providerId: 'claude', providerSessionId: 'session-1', providerAgentId: 'agent-1' }
-    }
-    expect(params.safeParse({}).success).toBe(true)
-    expect(params.safeParse({ mineId: 'm' }).success).toBe(false)
-    expect(result.safeParse([]).success).toBe(true)
-    expect(result.safeParse([record]).success).toBe(true)
-    expect(result.safeParse([{ ...record, legacyId: 'd-1' }]).success).toBe(false)
-    expect(result.safeParse([{ ...record, dwarfId: 'session-1' }]).success).toBe(false)
   })
 })
 

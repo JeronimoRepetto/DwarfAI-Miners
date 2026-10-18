@@ -42,6 +42,7 @@ import type { DiagnosticEntry } from '../../kernel/ports/diagnosticsLog'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import { FsSourceWeightScanner } from '../../modules/mines/adapters/FsSourceWeightScanner'
 import {
+  CODEX_OBSERVED_CAPABILITIES,
   OBSERVATION_POLL_MS,
   createSqliteObservationStores,
   type ObservedBatchSink
@@ -603,6 +604,29 @@ describe('observation wired into the Host (ISSUE-095)', () => {
     second.stop()
 
     expect(changedTables(before, dumpTables(w.db))).toEqual([])
+  })
+
+  // ADDED for ISSUE-241 (TC-241-03; 21 §2 4b "Legacy deleted"; ADR-011 item 4): with `LegacyAskRelay` deleted, nothing
+  // relays today's pending Codex questions any more. A person-launched Codex session is observed, with no answer
+  // channel: its observer reads no question (`question: 'none'`), so the Host opens no card for it and its dwarf keeps
+  // the status its observed turns give it. Characterization: the Host never depended on the relay, so there is no RED.
+  it("[ADR-011] a question of a person-launched Codex session opens no card and leaves the dwarf's status as the observation reports it", async () => {
+    const w = world()
+    const host = await bootHost({ ...w, startAt: T0 })
+    await host.poll()
+    await host.poll()
+    const codex = dwarfRows(w.db).find(
+      (d) => d.providerSessionId === SESSIONS.codex.providerSessionId
+    )
+    if (codex === undefined) throw new Error('the Codex fixture session made no dwarf')
+    const status = host.crew.crew.statusTimer.statusOf(codex.id)
+    host.stop()
+
+    expect(CODEX_OBSERVED_CAPABILITIES.question).toBe('none')
+    expect(CODEX_OBSERVED_CAPABILITIES.permission).toBe('none')
+    expect(w.db.all(`SELECT id FROM asks WHERE dwarf_id = ?`, [codex.id])).toEqual([])
+    expect(status).not.toBe('asking')
+    expect(codex.departed).toBe(false)
   })
 
   it('[ADR-002] catchUp runs after recovery and before start, and hello answers ready only after the classification', async () => {

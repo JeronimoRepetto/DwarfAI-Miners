@@ -69,8 +69,7 @@ export function inMemoryCrew() {
   const queries = new CrewReadModel({
     repository: remembered,
     clock,
-    links,
-    presentDwarfs: repository
+    links
   })
   return {
     commands,

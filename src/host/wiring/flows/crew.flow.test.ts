@@ -567,21 +567,23 @@ describe('the crew module wired into the Host (ISSUE-094)', () => {
     expect(h.mines.mines.queries.get(mineId)).toBeNull()
   })
 
-  it('[ADR-015] strangler.dwarfIdentities on the composed Host returns the present dwarfs', async () => {
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-015] strangler.dwarfIdentities on the composed Host returns
+  // the present dwarfs"): B-M41 was deleted with `LegacyDwarfIdBridge` (14 §2.3 AMENDMENT-8, §6.5; 21 §3). TC-241-01.
+  it('[ADR-001] after cut 4 strangler.dwarfIdentities answers METHOD_NOT_FOUND and hello.ok.capabilities no longer lists it', async () => {
     const h = await bootHost()
     await h.declare(h.folder('south-stope'))
     await h.observed(session('s-south'), h.folder('south-stope'))
-    const dwarfId = h.dwarfOf(session('s-south'))
+    const helloOk = h.ui.frames[0] as { capabilities: string[] }
 
     const res = await h.call('strangler.dwarfIdentities', {})
 
-    expect(res).toMatchObject({
-      ok: true,
-      result: [{ dwarfId, providerId: 'simulated', identity: session('s-south') }]
-    })
+    expect(res).toMatchObject({ ok: false, error: { code: 'METHOD_NOT_FOUND' } })
+    expect(helloOk.capabilities).not.toContain(methodCapability('strangler.dwarfIdentities'))
+    expect(Object.keys(HOST_METHOD_SCHEMAS)).not.toContain('strangler.dwarfIdentities')
   })
 
-  it('[ADR-015] the composed Host advertises section:dwarfs, the dwarf frames and B-M41 in hello.ok and serves the present crew in the section', async () => {
+  // AMENDED for ISSUE-241 (was: "… the dwarf frames and B-M41 in hello.ok …", with B-M41's capability): B-M41 ended.
+  it('[ADR-015] the composed Host advertises section:dwarfs and the dwarf frames in hello.ok and serves the present crew in the section', async () => {
     const h = await bootHost()
     const mineId = await h.declare(h.folder('high-gallery'))
     await h.observed(session('s-high'), h.folder('high-gallery'))
@@ -592,8 +594,7 @@ describe('the crew module wired into the Host (ISSUE-094)', () => {
         sectionCapability('dwarfs'),
         frameCapability('dwarf.arrived'),
         frameCapability('dwarf.changed'),
-        frameCapability('dwarf.departed'),
-        methodCapability('strangler.dwarfIdentities')
+        frameCapability('dwarf.departed')
       ])
     )
     expect(h.sections.get('dwarfs')?.provider()).toEqual([

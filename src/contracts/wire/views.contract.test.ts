@@ -45,7 +45,6 @@ import {
   secretStatusSchema,
   sessionProfileSchema,
   stopUnavailableReasonSchema,
-  stranglerDwarfIdentitySchema,
   supplierEntrySchema,
   supplierEntryViewSchema,
   welcomeStepStateSchema,
@@ -95,7 +94,6 @@ import {
   type SecretStatus,
   type SessionProfile,
   type StopUnavailableReason,
-  type StranglerDwarfIdentity,
   type TurnOutcomeKind,
   type SupplierEntry,
   type SupplierEntryView,
@@ -293,11 +291,6 @@ const providerIdentity = {
   providerSessionId: 'session-1',
   providerAgentId: 'agent-1'
 } satisfies ProviderIdentity
-const stranglerDwarfIdentity = {
-  dwarfId: DWARF,
-  providerId: 'claude',
-  identity: providerIdentity
-} satisfies StranglerDwarfIdentity
 
 const questionStep = {
   text: 'Which one?',
@@ -412,7 +405,6 @@ const objectCases: Array<[string, z.ZodTypeAny, Record<string, unknown>]> = [
     dwarfNameWireSchema,
     { id: DWARF, mineId: MINE, displayName: 'Borin' } satisfies DwarfNameWire
   ],
-  ['StranglerDwarfIdentity', stranglerDwarfIdentitySchema, stranglerDwarfIdentity],
   // imported types (14 §3 intro)
   ['MaterialAmount', materialAmountSchema, totals.coal],
   ['Delivery', deliverySchema, delivery],
@@ -464,11 +456,6 @@ const nestedExtraKeyCases: Array<[string, z.ZodTypeAny, unknown]> = [
     'HostRecoveryReportView.unrecovered[]',
     hostRecoveryReportViewSchema,
     { ...hostRecoveryReportView, unrecovered: [{ dwarfId: DWARF, reason: 'no-resume', x: 1 }] }
-  ],
-  [
-    'StranglerDwarfIdentity.identity',
-    stranglerDwarfIdentitySchema,
-    { ...stranglerDwarfIdentity, identity: { ...providerIdentity, pid: 1 } }
   ],
   [
     'AskRecord.payload',
@@ -584,44 +571,6 @@ describe('wire view types (14 §3.6)', () => {
     expectTypeOf<keyof MineWire['totals']>().toEqualTypeOf<Material>()
     expectTypeOf<(typeof MATERIALS)[number]>().toEqualTypeOf<Material>()
     expectTypeOf<MineWire['totals'][Material]>().toEqualTypeOf<MaterialAmount>()
-  })
-
-  it('[ADR-015] StranglerDwarfIdentity is built only from DwarfId, ProviderId and ProviderIdentity', () => {
-    const parsed = stranglerDwarfIdentitySchema.safeParse(stranglerDwarfIdentity)
-    expect(parsed.success).toBe(true)
-    expect(Object.keys(parsed.data ?? {}).sort()).toEqual(['dwarfId', 'identity', 'providerId'])
-
-    // No new field (AMENDMENT-8): no process id, no name, nothing beside the three imported names.
-    for (const extra of [{ pid: 1234 }, { customName: 'Borin' }, { mineId: MINE }]) {
-      expect(
-        stranglerDwarfIdentitySchema.safeParse({ ...stranglerDwarfIdentity, ...extra }).success
-      ).toBe(false)
-    }
-    // dwarfId is the DwarfAI UUID, never the provider's session id (ADR-015 item 7).
-    expect(
-      stranglerDwarfIdentitySchema.safeParse({ ...stranglerDwarfIdentity, dwarfId: 'session-1' })
-        .success
-    ).toBe(false)
-    // identity is ProviderIdentity: providerSessionId required, providerAgentId optional.
-    const { providerAgentId, ...withoutAgent } = providerIdentity
-    expect(providerAgentId).toBe('agent-1')
-    expect(
-      stranglerDwarfIdentitySchema.safeParse({ ...stranglerDwarfIdentity, identity: withoutAgent })
-        .success
-    ).toBe(true)
-    expect(
-      stranglerDwarfIdentitySchema.safeParse({
-        ...stranglerDwarfIdentity,
-        identity: { providerId: 'claude' }
-      }).success
-    ).toBe(false)
-
-    expectTypeOf<keyof StranglerDwarfIdentity>().toEqualTypeOf<
-      'dwarfId' | 'providerId' | 'identity'
-    >()
-    expectTypeOf<StranglerDwarfIdentity['dwarfId']>().toEqualTypeOf<DwarfId>()
-    expectTypeOf<StranglerDwarfIdentity['providerId']>().toEqualTypeOf<ProviderId>()
-    expectTypeOf<StranglerDwarfIdentity['identity']>().toEqualTypeOf<ProviderIdentity>()
   })
 
   it('[ADR-032] DwarfWire carries no StatusFacts and no process ids', () => {
@@ -800,9 +749,6 @@ describe('wire view types (14 §3.6)', () => {
     expectTypeOf<z.infer<typeof preferencesViewSchema>>().toEqualTypeOf<PreferencesView>()
     expectTypeOf<z.infer<typeof mineNameWireSchema>>().toEqualTypeOf<MineNameWire>()
     expectTypeOf<z.infer<typeof dwarfNameWireSchema>>().toEqualTypeOf<DwarfNameWire>()
-    expectTypeOf<
-      z.infer<typeof stranglerDwarfIdentitySchema>
-    >().toEqualTypeOf<StranglerDwarfIdentity>()
     // imported types
     expectTypeOf<z.infer<typeof materialAmountSchema>>().toEqualTypeOf<MaterialAmount>()
     expectTypeOf<z.infer<typeof deliverySchema>>().toEqualTypeOf<Delivery>()
