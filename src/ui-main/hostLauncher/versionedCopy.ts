@@ -18,7 +18,10 @@
 //
 // The copy source is the directory holding the executable (Windows, Linux) or the whole `.app`
 // bundle (macOS), copied with symbolic links kept as links (SP-03: the bundle keeps its signature
-// state as a byte copy). On macOS the bundle keeps its name inside the version folder, so the
+// state as a byte copy). That directory may itself be reached through a link: Scoop starts the app
+// through its `current` junction, a Homebrew-style install through a symbolic link (GitHub #1439).
+// The copy is made from its real path, so the copy is a real tree and only the links inside it stay
+// links, as the manifest lists them. On macOS the bundle keeps its name inside the version folder, so the
 // executable's path inside the copy is `host/<version>/<Name>.app/Contents/MacOS/<Name>`.
 //
 // Each outcome is logged as `versioned-copy` (19 §9.1, proc `ui`): outcome, cause class (`copy`,
@@ -38,7 +41,8 @@ import type { CopyPlatform } from './copySource'
 import type { LauncherClock } from './ports'
 
 // Without Electron's asar layer: the copied folder holds an `.asar` archive (plainFs.ts).
-const { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } = plainFs.promises
+const { cp, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, writeFile } =
+  plainFs.promises
 
 export {
   copySourceOf,
@@ -52,7 +56,8 @@ export { versionedCopyRoot } from '@dwarfai/contracts'
 /** The file operations that change the copy root; the Node ones in production, faulty ones in tests. */
 export interface CopyOps {
   /**
-   * Copies the directory `from` to `to` (which must not exist), links kept as links. With `include`,
+   * Copies the directory `from` to `to` (which must not exist), links kept as links. A `from` reached
+   * through a link (a junction, a symbolic link) is copied from its real path, never as a link. With `include`,
    * only the entries whose relative path (with `/`) it accepts are copied, and a folder is entered
    * only when it accepts the folder's path.
    */
@@ -69,8 +74,11 @@ export interface CopyOps {
 }
 
 export const nodeCopyOps: CopyOps = {
-  copyTree: (from, to, include) =>
-    cp(from, to, {
+  async copyTree(from, to, include) {
+    // fs.cp copies a root that is a link as that link (verbatimSymlinks), so the root is resolved
+    // first; the links inside the tree are kept as they are.
+    const root = await realpath(from)
+    await cp(root, to, {
       recursive: true,
       verbatimSymlinks: true,
       preserveTimestamps: true,
@@ -80,11 +88,12 @@ export const nodeCopyOps: CopyOps = {
         ? {}
         : {
             filter: (source: string) => {
-              const relative = path.relative(from, source)
+              const relative = path.relative(root, source)
               return relative === '' || include(relative.split(path.sep).join('/'))
             }
           })
-    }),
+    })
+  },
   rename: (from, to) => rename(from, to),
   removeTree: (target) => rm(target, { recursive: true, force: true, maxRetries: 2 }),
   async busyFile(dir) {
