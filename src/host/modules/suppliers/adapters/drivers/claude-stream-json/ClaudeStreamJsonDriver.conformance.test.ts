@@ -518,6 +518,72 @@ describe('ClaudeStreamJsonDriver', () => {
     expect(capabilitiesFromHelp(HELP_2_1_301, { ...SPIKE_RECORDS, sp08: false }).launch).toBe(false)
   })
 
+  it('[C-02, ADR-029] on Windows an npm-installed claude that resolves to a script entry is probed and launched by the person node with the entry as its first argument, never through a shell', async () => {
+    // A Windows npm `claude.cmd` resolves to its quoted script entry (#1360), which the OS cannot
+    // start by itself (spawn EFTYPE) and R17 forbids running through a shell.
+    const entry = 'C:\\Users\\j\\AppData\\Roaming\\npm\\node_modules\\claude-code\\cli.js'
+    const node = 'C:\\Program Files\\nodejs\\node.exe'
+    const windowsFactory =
+      (withNode: boolean): DriverFactory =>
+      (rig) => {
+        const resolver = new FakeInstallResolver()
+        resolver.install('claude', { path: entry, version: '2.1.x' })
+        if (withNode) resolver.install('node', { path: node })
+        return new ClaudeStreamJsonDriver({
+          record: CLAUDE,
+          detection: createInstallDetection({
+            resolver,
+            fs: { stat: async () => ({ mtimeMs: 0, size: 1, isDirectory: false }) },
+            scheduler: rig.scheduler
+          }),
+          processControl: rig.processControl,
+          clock: rig.clock,
+          scheduler: rig.scheduler,
+          ids: new SequenceIdGenerator(),
+          loginEnv: rig.loginEnv,
+          home: 'C:\\Users\\j',
+          platform: 'win32',
+          mcpConfig: { dir: MCP_DIR, files: new RecordingMcpConfigFiles() },
+          promptTool: { sessions: new RecordingPromptTools(), relay: new RecordingPromptTools() },
+          redact: (text) => text
+        })
+      }
+    const install = { ...INSTALL, binaryPath: entry }
+    const options = { ...OPTIONS, install }
+    const script = [{ do: 'launch' as const }, { do: 'transportLost' as const }]
+    const variant = variantOf('s0201-readiness')
+    const run = await runScript(windowsFactory(true), script, { variant }, options)
+    expect(run.spawn.spawns.map((s) => s.executable)).toEqual([node])
+    expect(run.spawn.spawns[0]?.args[0]).toBe(entry)
+    expect(run.spawn.spawns[0]?.args).toContain('--mcp-config')
+    // The help probe starts the same way.
+    const clock = new FakeClock(0)
+    const scheduler = new FakeScheduler(clock)
+    const spawn = new RecordingSpawn({
+      clock,
+      scheduler,
+      decide: () => ({ kind: 'exit', afterMs: 0, code: 0, stdout: HELP_2_1_301 })
+    })
+    const probing = windowsFactory(true)({
+      clock,
+      scheduler,
+      processControl: spawn,
+      loginEnv: LOGIN_ENV
+    }).probe(install)
+    for (let round = 0; round < 20; round++) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      clock.advance(0)
+    }
+    expect((await probing).launch).toBe(true)
+    expect(spawn.spawns.map((s) => [s.executable, ...s.args])).toEqual([[node, entry, '--help']])
+    // No node the resolver can find: not installed, and nothing is spawned (no shell fallback).
+    const noNode = await runScript(windowsFactory(false), script, { variant }, options)
+    expect(noNode.outcomes[0]).toEqual({
+      rejected: { cause: 'not-installed', detail: 'node, which runs Claude Code, is not installed' }
+    })
+    expect(noNode.spawn.spawns).toEqual([])
+  })
+
   it('[C-26, SP-08] the 2.1.301 help, which names --permission-prompt-tool only inside --permission-prompts, probes launch true', async () => {
     // SP-08 Decision: the flag is hidden from the option list but accepted and routing; the probe
     // must not rely on an option line of its own.

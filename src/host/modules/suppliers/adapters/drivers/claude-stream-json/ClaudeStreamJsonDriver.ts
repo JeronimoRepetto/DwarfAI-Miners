@@ -68,6 +68,7 @@ import type {
   TurnInput
 } from '../../../ports/providerDriver'
 import { probeEnv } from '../../install/searchDirs'
+import { adapterLaunch, type LaunchTarget } from '../acp/client/adapterLaunch'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
 import { relayEntry } from '../shared/relayEntry'
 import { buildArgv } from './argv'
@@ -94,6 +95,8 @@ const TAIL_CHARS = 400
 const SYNTHETIC_MODEL = '<synthetic>'
 /** The assistant `error` Claude Code sets when it is not logged in (ADR-008 item 2). */
 const NOT_LOGGED_IN = 'authentication_failed'
+/** The program that runs a Windows npm install's script entry (ADR-029 row 8, #1360). */
+const NODE_BINARY = 'node'
 /** A `--help` probe reads at most this much. */
 const HELP_READ_CHARS = 256 * 1024
 
@@ -203,6 +206,8 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       throw launchError('could-not-start', 'launch id already used')
     }
     this.launchIds.add(req.launchId)
+    // Before any relay credential is issued: no node for a script entry means nothing starts.
+    const target = await this.startTarget(req.install.binaryPath)
     const sessionId = this.deps.ids.uuidv7()
     const relay = await this.relayOf(req)
     if (relay === null) {
@@ -242,7 +247,7 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       throw launchError('could-not-start', 'the argv was refused (ADR-008 item 3)')
     }
     const spawnedAt = this.deps.clock.now()
-    const child = this.spawn(req.install.binaryPath, argv, req.cwd, req.spawnTag)
+    const child = this.spawn(target, argv, req.cwd, req.spawnTag)
     let identity: ProcessIdentity
     try {
       identity = await child.identity
@@ -305,6 +310,7 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     }
     const detected = await this.detect()
     if (detected.kind !== 'installed') throw launchError('not-installed', 'claude is not installed')
+    const target = await this.startTarget(detected.install.binaryPath)
     // The launch's relay again (AMENDMENT-21), in a file of its own; no pre-approval on a resume.
     // A stored record (a restarted Host) asks its launch's live relay again (ISSUE-182).
     const relayed = isRemembered(known) ? known : await this.reissuedRelay(known)
@@ -332,7 +338,7 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       policyArgv: []
     })
     const spawnedAt = this.deps.clock.now()
-    const child = this.spawn(detected.install.binaryPath, argv, known.cwd, known.spawnTag)
+    const child = this.spawn(target, argv, known.cwd, known.spawnTag)
     let identity: ProcessIdentity
     try {
       identity = await child.identity
@@ -403,8 +409,31 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
     return merge(this.deps.record.ceiling, combineLowest({}, probe))
   }
 
+  /**
+   * How to start the person's claude, resolved like a binary (ADR-009 D5). On Windows an npm
+   * install resolves to its script entry, which the OS cannot start by itself and R17 forbids
+   * running through a shell: the person's `node`, found through the same detection, runs it
+   * (`adapterLaunch`, #1360). Not installed when that `node` does not resolve: no spawn.
+   */
+  private async startTarget(binaryPath: string): Promise<LaunchTarget> {
+    const target = await adapterLaunch(binaryPath, this.deps.platform, async () => {
+      const found = await this.deps.detection.detect({
+        providerId: this.profile.id,
+        binaries: [NODE_BINARY]
+      })
+      return found.kind === 'installed' ? found.install.binaryPath : null
+    })
+    if (target === null) {
+      throw launchError(
+        'not-installed',
+        `${NODE_BINARY}, which runs ${this.profile.label}, is not installed`
+      )
+    }
+    return target
+  }
+
   private spawn(
-    executable: string,
+    target: LaunchTarget,
     args: readonly string[],
     cwd: string,
     spawnTag: string
@@ -416,8 +445,8 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
       platform: this.deps.platform
     })
     return this.deps.processControl.spawn({
-      executable,
-      args,
+      executable: target.program,
+      args: [...target.leadingArgs, ...args],
       cwd,
       env,
       processGroup: 'own',
@@ -516,9 +545,10 @@ export class ClaudeStreamJsonDriver implements ProviderDriver {
    */
   private async readHelp(install: InstalledProvider): Promise<string | null> {
     const { processControl, scheduler, loginEnv, platform, home } = this.deps
+    const target = await this.startTarget(install.binaryPath)
     const child = processControl.spawn({
-      executable: install.binaryPath,
-      args: ['--help'],
+      executable: target.program,
+      args: [...target.leadingArgs, '--help'],
       cwd: home,
       env: probeEnv(loginEnv, platform),
       processGroup: 'own',
