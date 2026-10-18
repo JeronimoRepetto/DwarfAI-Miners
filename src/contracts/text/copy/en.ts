@@ -113,5 +113,13 @@ export const en = {
   'welcome.step.activate': 'Activate',
   'welcome.result.failure':
     'Could not change {names}. You can try again in Settings › Integrations.',
-  'welcome.result.dismiss': 'Close'
+  'welcome.result.dismiss': 'Close',
+
+  // The Add panel's OpenCode notice (ADR-011 item 7, O-14; 07 S5.02, S5.26; US-LAUNCH-001.AC13; ISSUE-228, ISSUE-235):
+  // owner-approved copy, 2026-10-18.
+  'addPanel.openCodeNotice.text':
+    "OpenCode permission requests are off, so its asks won't show here.",
+  'addPanel.openCodeNotice.action': 'Turn on',
+  'addPanel.openCodeNotice.failure':
+    "Couldn't turn on OpenCode permission requests. Try again from Settings."
 } as const satisfies CopyCatalog

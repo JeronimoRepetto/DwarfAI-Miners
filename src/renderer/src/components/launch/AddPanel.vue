@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { t } from '@dwarfai/contracts'
+import type { IntegrationNotice } from '../../composables/useAgentLaunch'
 import { belongsToComposition } from '../../lib/controls/input'
 import { useHoverTip } from '../../composables/useHoverTip'
 import { addPanelSelects, addPanelWhy, supplierLabel } from '../../lib/launch/addPanelCopy'
@@ -55,39 +57,53 @@ import LaunchFailureOutput from './LaunchFailureOutput.vue'
  * on a Mac) does, as the design's accessibility row says, beside the button.
  */
 
-const props = defineProps<{
-  /** The mine the panel adds a dwarf to, as its title and its Ready line name it. */
-  mineName: string
-  chips: ProviderChip[]
-  phase: LaunchPhase
-  /** Whether the gate in front of the launch is open: a valid supplier, or Jev standing in. */
-  enabled: boolean
-  command: string
-  prompt: string
-  /** Why the chosen chip cannot start a session, or null. */
-  refusal: string | null
-  /** The reason main gave for refusing the last launch, or null. */
-  error: string | null
-  /** The tuning row (#239): what the model select should draw. */
-  modelPicker: ModelPicker
-  /** What the effort select should draw — hidden when the chosen provider has none. */
-  effortPicker: EffortPicker
-  /** Whether the Permissions select holds values — held Claude and, since #635, Codex. */
-  permissionsVisible: boolean
-  /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
-  jev: JevState
-  /**
-   * What the launch model holds for the three selects, which they show (#635). Vue sets a bound
-   * value again on every render, so a select drawn without these snapped each pick back to its
-   * first option (the PO's report, 2026-09-28), and Jev's pick, which sets them without touching
-   * the controls, never showed at all (MESSAGE-QUESTIONS 2). Absent, a select shows its first.
-   */
-  model?: string | null
-  effort?: string | null
-  permissionMode?: LaunchPermissionMode | null
-  /** Why the last launch failed, for the launch-failure notice (#635), or null. */
-  failure?: LaunchFailure | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** The mine the panel adds a dwarf to, as its title and its Ready line name it. */
+    mineName: string
+    chips: ProviderChip[]
+    phase: LaunchPhase
+    /** Whether the gate in front of the launch is open: a valid supplier, or Jev standing in. */
+    enabled: boolean
+    command: string
+    prompt: string
+    /** Why the chosen chip cannot start a session, or null. */
+    refusal: string | null
+    /** The reason main gave for refusing the last launch, or null. */
+    error: string | null
+    /** The tuning row (#239): what the model select should draw. */
+    modelPicker: ModelPicker
+    /** What the effort select should draw — hidden when the chosen provider has none. */
+    effortPicker: EffortPicker
+    /** Whether the Permissions select holds values — held Claude and, since #635, Codex. */
+    permissionsVisible: boolean
+    /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
+    jev: JevState
+    /**
+     * What the launch model holds for the three selects, which they show (#635). Vue sets a bound
+     * value again on every render, so a select drawn without these snapped each pick back to its
+     * first option (the PO's report, 2026-09-28), and Jev's pick, which sets them without touching
+     * the controls, never showed at all (MESSAGE-QUESTIONS 2). Absent, a select shows its first.
+     */
+    model?: string | null
+    effort?: string | null
+    permissionMode?: LaunchPermissionMode | null
+    /** Why the last launch failed, for the launch-failure notice (#635), or null. */
+    failure?: LaunchFailure | null
+    /**
+     * The OpenCode notice (ISSUE-235, from ISSUE-228; ADR-011 item 7, O-14; 07 S5.02, S5.26): shown while the chosen
+     * supplier's permission requests wait for an integration that is off. Absent, none.
+     */
+    integrationNotice?: IntegrationNotice
+    /**
+     * Whether Jev's card reads as accepted automatically (the launch model's `jevAccepted`: auto-accept on and not
+     * paused for the notice, PO #108; 07 S5.25). Absent, the toggle's own `jev.autoAccept`.
+     */
+    jevAccepted?: boolean
+  }>(),
+  // Absent means "not given", never false: Vue would cast a missing boolean prop to false (ISSUE-235).
+  { jevAccepted: undefined }
+)
 
 const emit = defineEmits<{
   choose: [choice: LaunchChoice]
@@ -108,6 +124,8 @@ const emit = defineEmits<{
   /** The decision card's own Dismiss control (#509). */
   'dismiss-jev': []
   submit: []
+  /** The OpenCode notice's "Turn on" (ISSUE-235): the launch model turns the option on. */
+  'enable-integration': []
   /** The launch-failure notice's Retry (#635): the same launch, again. */
   retry: []
   /** Its Pick manually (#635): Let Jev choose off, so the chips and selects choose. */
@@ -356,7 +374,7 @@ const jevModelLabel = computed(() => {
  * same lines describes the paragraph for a screen reader. The #509 closing note is gone: the
  * pickers show the pick themselves.
  */
-const jevEyebrow = computed(() => jevCardEyebrow(props.jev.autoAccept))
+const jevEyebrow = computed(() => jevCardEyebrow(props.jevAccepted ?? props.jev.autoAccept))
 const jevPick = computed(() => {
   const decision = jevDecision.value
   if (decision === null) return ''
@@ -594,6 +612,29 @@ let cards = 0
         <p v-if="modelPicker.visible && modelPicker.note" class="dm-add__note">
           {{ modelPicker.note }}
         </p>
+      </div>
+
+      <!--
+        The OpenCode notice (ISSUE-235; ADR-011 item 7, O-14; owner-approved copy 2026-10-18): the chosen supplier's
+        permission requests wait for an integration that is off. "Turn on" turns it on as if from Settings (consent
+        origin `add-panel`); the launch still goes out only on the person's Send.
+      -->
+      <div v-if="integrationNotice?.shown" class="dm-add__sec dm-add__integration" role="status">
+        <p class="dm-add__note dm-add__integration-text">{{ t('addPanel.openCodeNotice.text') }}</p>
+        <p
+          v-if="integrationNotice.state === 'failed'"
+          class="dm-add__note dm-add__integration-failed"
+          role="alert"
+        >
+          {{ t('addPanel.openCodeNotice.failure') }}
+        </p>
+        <ActionButton
+          class="dm-add__integration-action"
+          :label="t('addPanel.openCodeNotice.action')"
+          size="sm"
+          :disabled="integrationNotice.state === 'enabling'"
+          @click="emit('enable-integration')"
+        />
       </div>
 
       <!--
