@@ -1,9 +1,5 @@
 import { computed, ref } from 'vue'
-import {
-  DEFAULT_TOGGLE_ACCELERATOR,
-  buildAccelerator,
-  isModifierKey
-} from '../../../shared/accelerator'
+import { DEFAULT_TOGGLE_ACCELERATOR, buildAccelerator, isModifierKey } from '@dwarfai/contracts'
 import type { ShortcutState } from '../types'
 
 /**

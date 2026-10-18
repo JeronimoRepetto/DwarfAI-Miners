@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HELD_IMAGE_PLACEHOLDER } from '../../../../shared/heldSessionText'
+import { HELD_IMAGE_PLACEHOLDER } from '@dwarfai/contracts'
 import { RELAY_PROVENANCE_LINE, type DwarfAttachment, type FeedMessage } from '../../types'
 import { groupActivity } from './activityGroup'
 import type { PanelMessage } from './conversation'
