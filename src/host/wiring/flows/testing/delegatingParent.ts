@@ -40,6 +40,15 @@ export function claudeRecording(): { help: string; allow: FixtureProcess; prompt
   }
 }
 
+/** The spawn double built for each clock, so a launch helper can wait on what it spawned. */
+const spawnsOfClock = new WeakMap<FakeClock, RecordingSpawn>()
+
+/** How many `claude -p` sessions the Host started on `clock` so far (0 for an unknown clock). */
+function sessionSpawnsOn(clock: FakeClock): number {
+  return (spawnsOfClock.get(clock)?.spawns ?? []).filter((spawn) => spawn.args.includes('-p'))
+    .length
+}
+
 /** `claude --help` answers the recorded help; every `claude -p` replays `recorded`. */
 export function claudeSpawn(
   clock: FakeClock,
@@ -47,7 +56,7 @@ export function claudeSpawn(
   recorded: FixtureProcess,
   help: string
 ): RecordingSpawn {
-  return new RecordingSpawn({
+  const spawn = new RecordingSpawn({
     clock,
     scheduler,
     decide: (spec) => {
@@ -65,6 +74,8 @@ export function claudeSpawn(
       return { kind: 'exit', afterMs: 0, code: 1, stdout: '' }
     }
   })
+  spawnsOfClock.set(clock, spawn)
+  return spawn
 }
 
 /** The simulated worker's one launch target, and Claude's for the parent's "Let Jev choose". */
@@ -136,6 +147,7 @@ export async function launchClaudeWithJev(
   letJevChoose = true
 ): Promise<{ launchId: LaunchId; dwarfId: DwarfId }> {
   if (letJevChoose) h.router.queue(jevPicks('claude'))
+  const spawnedBefore = sessionSpawnsOn(h.clock)
   const answered = await h.call(ui, 'launching.launch', {
     mineId,
     way: letJevChoose ? { kind: 'jev' } : { kind: 'supplier', providerId: 'claude' },
@@ -146,8 +158,18 @@ export async function launchClaudeWithJev(
   })
   expect(answered).toMatchObject({ ok: true })
   const launchId = (answered as { result?: { launchId?: LaunchId } }).result?.launchId
-  // The relay's credential and `--mcp-config` files are real files: fake time moves only once each
-  // step's disk work answered, so a slow disk never lets the handshake budget run out first.
+  // The relay's credential and `--mcp-config` files are real files, written before the session is
+  // spawned. Fake time stays frozen until that spawn happened (or the launch failed), so a slow
+  // disk can never let a handshake or routing budget run out while a file is still being written.
+  for (
+    let round = 0;
+    round < 5_000 &&
+    sessionSpawnsOn(h.clock) === spawnedBefore &&
+    evts(ui, 'launch.failed').length === 0;
+    round += 1
+  ) {
+    await h.settle(ui)
+  }
   const settledFrame = () =>
     evts<LaunchChanged>(ui, 'launch.changed').find(
       (frame) => frame.launch.launchId === launchId && frame.launch.state === 'succeeded'
