@@ -1,8 +1,9 @@
 // layer: L1
 import { describe, expect, it } from 'vitest'
-import { CHANNELS, type ChannelKey } from '@dwarfai/contracts'
+import { CHANNELS, RETIRED, UNROUTED, type ChannelKey } from '@dwarfai/contracts'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { rollbackOf } from './rollbackTable'
+import { LEGACY_BRIDGE_ADAPTERS, ROUTES as CUT_3A_ROUTES, ROUTES_RELEASE } from './routes'
 import { CUT_0_ROUTES as ROUTES, CUT_0_TABLE } from './testing/cut0Routes'
 import { CUT_2_ROUTES, CUT_2_TABLE } from './testing/cut2Routes'
 
@@ -164,5 +165,86 @@ describe('rollbackOf', () => {
     expect(
       checkRouteTable({ ...cut2, withdrawn: { 'ask:step:set': 'cut-2' } }, KEYS)
     ).toContainEqual({ reason: 'routed-and-withdrawn', channel: 'ask:step:set' })
+  })
+
+  // APPENDED for ISSUE-001: the first provider step, with provider-qualified rows that reach today's runtime through an
+  // unqualified shape-adapter route, and the one-time Jev-key migration (docs/strangler/rollback.md "Step 3a").
+  it('[ADR-001, ADR-017] rolling back 3a folds each provider-qualified row into its unqualified shape-adapter row, keeps the Jev key rows on the Host and keeps the NEW rows', () => {
+    const cut3a: RouteTable = {
+      release: ROUTES_RELEASE,
+      routes: CUT_3A_ROUTES,
+      unrouted: UNROUTED,
+      retired: RETIRED,
+      adapters: LEGACY_BRIDGE_ADAPTERS
+    }
+    expect(cut3a.release).toBe('cut-3a')
+    expect(checkRouteTable(cut3a, KEYS)).toEqual([])
+    const rolledBack = rollbackOf(cut3a, 'cut-3a')
+    const routesOf = (channel: ChannelKey): ChannelRoute[] =>
+      rolledBack.routes.filter((r) => r.channel === channel)
+    // A-13, A-23, A-35 and A-36: the rollback build keeps this tree's renderer, which calls them with the 14 shapes, so
+    // the Host route for Claude goes and every provider reaches today's runtime through the row's shape adapter.
+    const throughAdapter = {
+      'dwarf:activate': 'PerProviderShapeAdapter',
+      'dwarf:sendText': 'PerProviderShapeAdapter',
+      'agent:launch': 'PerProviderShapeAdapter',
+      'agent:providers': 'CatalogMergeAdapter'
+    } as const
+    for (const [channel, shapeAdapter] of Object.entries(throughAdapter) as [
+      ChannelKey,
+      string
+    ][]) {
+      expect(CUT_3A_ROUTES.filter((r) => r.channel === channel && r.owner === 'host')).toHaveLength(
+        1
+      )
+      expect(routesOf(channel), channel).toEqual([
+        { channel, owner: 'legacy', since: 'cut-3a', parity: 'n/a', shape: 'target', shapeAdapter }
+      ])
+    }
+    // A KEEP row moved for every provider (A-25) and the rows qualified to the providers not yet moved (A-27, A-P3,
+    // A-P4) are the pre-cut row again: today's runtime serves every provider, in today's shape.
+    for (const channel of [
+      'dwarf:attachments:describe',
+      'dwarf:retire',
+      'agent:launchFailed',
+      'dwarf:sendText:settled'
+    ] as ChannelKey[]) {
+      expect(routesOf(channel), channel).toEqual([legacyToday(channel)])
+    }
+    // The rows 3a retired (A-26, A-37, A-38) are today's again (lead resolution H1).
+    for (const channel of ['dwarf:kick', 'agent:models', 'agent:launchHeld'] as ChannelKey[]) {
+      expect(RETIRED[channel]).toBe('cut-3a')
+      expect(routesOf(channel), channel).toEqual([legacyToday(channel)])
+    }
+    expect(Object.values(rolledBack.retired ?? {})).not.toContain('cut-3a')
+    // A-48, A-49 (the key the one-time migration moved into the Host's SecretStore and deleted from today's file;
+    // ADR-017 item 8) and A-50 (which reads that key) keep their Host routes, and A-47 keeps reading the key's status
+    // from the Host through its shape adapter: today's runtime no longer holds the key (21 §2 cut 4a "Rollback" rule).
+    for (const channel of [
+      'jev:apiKey:set',
+      'jev:apiKey:clear',
+      'jev:route',
+      'jev:settings:get'
+    ] as ChannelKey[]) {
+      expect(routesOf(channel), channel).toEqual(CUT_3A_ROUTES.filter((r) => r.channel === channel))
+    }
+    // The NEW rows born in 3a have no legacy code to go back to: A-N06, A-N10, A-N11, and A-N29, which ends a
+    // legacy-launched session through LegacyEndFirstAdapter.
+    for (const channel of [
+      'dwarf:message:retry',
+      'host:recovery:retry',
+      'host:recovery:dismiss',
+      'dwarf:stop'
+    ] as ChannelKey[]) {
+      expect(routesOf(channel), channel).toEqual(CUT_3A_ROUTES.filter((r) => r.channel === channel))
+    }
+    // Nothing is withdrawn, and the earlier cuts' rows keep their routes.
+    expect(rolledBack.withdrawn).toBeUndefined()
+    const earlier = CUT_3A_ROUTES.filter((r) => r.since !== 'cut-3a')
+    for (const route of earlier) expect(rolledBack.routes, route.channel).toContainEqual(route)
+    expect(rolledBack.routes.some((r) => r.owner === 'host' && r.qualifier !== undefined)).toBe(
+      false
+    )
+    expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
   })
 })
