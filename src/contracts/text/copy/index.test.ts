@@ -46,4 +46,13 @@ describe('the app copy dictionary', () => {
       'Durin finished the turn'
     )
   })
+
+  // AMENDMENT-22: the Jev card tooltip's flag lines are the story's own AC text (approved copy).
+  it("[US-LAUNCH-008.AC04] serves the Jev card tooltip's three flag lines as the story words them", () => {
+    expect(en['jevCard.tip.trivial']).toBe('Treated as a trivial prompt.')
+    expect(en['jevCard.tip.largeContext']).toBe('Large-context model preferred.')
+    expect(en['jevCard.tip.trimmed']).toBe(
+      'The prompt sent to Jev was trimmed to fit its request budget.'
+    )
+  })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { jevCardEyebrow, jevCardTip, jevPickText } from './jevCardCopy'
+import { jevCardEyebrow, jevCardTip, jevPickText, jevSuggestionTip } from './jevCardCopy'
+import type { JevSuggestionView } from '@dwarfai/contracts'
 import type { JevDecision } from './launchState'
 
 /*
@@ -120,5 +121,95 @@ describe('jevCardTip', () => {
     expect(parts).toContain(
       'Jev could not pick the model (Jev took too long); the closest local choice was used.'
     )
+  })
+})
+
+/*
+ * APPENDED for AMENDMENT-22 (owner-approved 2026-10-18): the card of an A-50 suggestion in its 14 shape
+ * (`JevSuggestionView`, ISSUE-195) gets the same tooltip: the reasoning sentence(s), Jev's least certain answer when
+ * a part was answered, then each flag that applies, in the fixed order of US-LAUNCH-008.AC04.
+ */
+describe('jevSuggestionTip', () => {
+  // The design's worked example in the 14 shape: frontier at 88%, Claude at 91%, the model at 74%.
+  const SUGGESTION: JevSuggestionView = {
+    providerId: 'claude',
+    model: 'opus',
+    effort: 'high',
+    tier: 'frontier',
+    confidence: { providerId: 0.91, model: 0.74, tier: 0.88 },
+    truncated: false,
+    parts: { providerId: 'answered', model: 'answered', effort: 'answered', tier: 'answered' },
+    flags: { trivial: false, largeContext: false }
+  }
+  const FLAGS = [
+    'Treated as a trivial prompt.',
+    'Large-context model preferred.',
+    'The prompt sent to Jev was trimmed to fit its request budget.'
+  ]
+
+  it('[US-LAUNCH-008.AC04] reads the reasoning, then the least certain answer, then each flag in the fixed order', () => {
+    const lines = jevSuggestionTip(
+      { ...SUGGESTION, truncated: true, flags: { trivial: true, largeContext: true } },
+      'Claude'
+    )
+
+    expect(lines).toEqual([
+      'Jev chose the frontier tier (88% sure) and Claude (91% sure). Jev picked the model (74% fit).',
+      "Jev's least certain answer was 74%.",
+      ...FLAGS
+    ])
+  })
+
+  it('[US-LAUNCH-008.AC04] carries only the flags that apply, still in their order', () => {
+    const tip = (flags: JevSuggestionView['flags'], truncated: boolean) =>
+      jevSuggestionTip({ ...SUGGESTION, flags, truncated }, 'Claude').slice(2)
+
+    expect(tip({ trivial: false, largeContext: true }, true)).toEqual([FLAGS[1], FLAGS[2]])
+    expect(tip({ trivial: true, largeContext: false }, false)).toEqual([FLAGS[0]])
+  })
+
+  it('[US-LAUNCH-008.AC05] a suggestion that carries no flag shows no flag line at all', () => {
+    const withoutFlags: JevSuggestionView = { ...SUGGESTION }
+    delete withoutFlags.flags
+    for (const suggestion of [SUGGESTION, withoutFlags]) {
+      const lines = jevSuggestionTip(suggestion, 'Claude')
+      expect(lines).toHaveLength(2)
+      for (const flag of FLAGS) expect(lines).not.toContain(flag)
+    }
+  })
+
+  it('[US-LAUNCH-008.AC04] names the parts that fell to a safe value, and gives no least certain answer with none answered', () => {
+    const lines = jevSuggestionTip(
+      {
+        providerId: 'claude',
+        tier: 'balanced',
+        confidence: {},
+        truncated: false,
+        parts: { providerId: 'safe-default', tier: 'safe-default' }
+      },
+      'Claude'
+    )
+
+    expect(lines).toEqual([
+      'Jev was unsure about the tier and the provider; the safe values balanced and Claude were used.'
+    ])
+  })
+
+  it('[US-LAUNCH-008.AC04] says how the model was picked when no second question was asked, or when Jev could not pick it', () => {
+    const [onlyOne] = jevSuggestionTip(
+      { ...SUGGESTION, confidence: { providerId: 0.91, tier: 0.88 } },
+      'Claude'
+    )
+    expect(onlyOne).toContain('Only one model fits that tier, so no second question was asked.')
+
+    const [fellBack] = jevSuggestionTip(
+      {
+        ...SUGGESTION,
+        confidence: { providerId: 0.91, tier: 0.88 },
+        parts: { ...SUGGESTION.parts, model: 'safe-default' }
+      },
+      'Claude'
+    )
+    expect(fellBack).toContain('Jev could not pick the model; the closest local choice was used.')
   })
 })

@@ -762,6 +762,38 @@ describe('wire view types (14 §3.6)', () => {
     expectTypeOf<keyof JevSuggestion['confidence']>().toEqualTypeOf<keyof JevSuggestion['parts']>()
   })
 
+  // AMENDMENT-22 (owner-approved 2026-10-18; 06 §12, 14 §3.6 note, 14 §6.5 case): the suggestion carries Jev's
+  // trivial and large-context flags for the tooltip, optional (absent when Jev answered no part), and stays strict.
+  it('[US-LAUNCH-008.AC04] a JevSuggestionView with the trivial and large-context flags round-trips; an unknown key is still refused', () => {
+    const flagged = { ...jevSuggestion, flags: { trivial: true, largeContext: false } }
+
+    for (const schema of [jevSuggestionViewSchema, jevSuggestionSchema]) {
+      const roundTripped = schema.safeParse(JSON.parse(JSON.stringify(flagged)))
+      expect(roundTripped.success).toBe(true)
+      expect(roundTripped.data).toStrictEqual(flagged)
+      // Absent flags: a fallback card, or a suggestion where Jev answered no part.
+      expect(schema.safeParse(jevSuggestion).success).toBe(true)
+      // Both flags are booleans and both are present when the object is.
+      expect(schema.safeParse({ ...jevSuggestion, flags: { trivial: true } }).success).toBe(false)
+      expect(
+        schema.safeParse({ ...jevSuggestion, flags: { trivial: 'yes', largeContext: false } })
+          .success
+      ).toBe(false)
+      // Still `.strict()`: an unknown key, at the top or inside `flags`, is refused.
+      expect(schema.safeParse({ ...flagged, truncatedPrompt: true }).success).toBe(false)
+      expect(
+        schema.safeParse({
+          ...jevSuggestion,
+          flags: { trivial: false, largeContext: true, reasoning: true }
+        }).success
+      ).toBe(false)
+    }
+
+    expectTypeOf<JevSuggestion['flags']>().toEqualTypeOf<
+      { trivial: boolean; largeContext: boolean } | undefined
+    >()
+  })
+
   it('[ADR-019] each zod-inferred view type equals its 14 §3.6 TypeScript type', () => {
     // Enforced by `pnpm typecheck`: a drift between a schema and its 14 / owner type fails compilation here.
     // ids and scalars as 06 §0.1 defines them: branded only where the owner says "branded".

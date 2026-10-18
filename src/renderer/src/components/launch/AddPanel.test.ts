@@ -45,6 +45,9 @@ import {
 } from '../../lib/launch/launchState'
 import { jevCardTip } from '../../lib/launch/jevCardCopy'
 import { DEFAULT_JEV_PREFERENCES } from '../../types'
+// APPENDED for AMENDMENT-22: the A-50 suggestion's transitions (ISSUE-195) the suggestion card cases drive.
+import type { JevSuggestionView } from '@dwarfai/contracts'
+import { jevSuggestAnswered, jevSuggestAsked } from '../../lib/launch/launchState'
 
 const HIDDEN_MODEL_PICKER: ModelPicker = { visible: false, models: [], disabled: true, note: null }
 const HIDDEN_EFFORT_PICKER: EffortPicker = { visible: false, efforts: [] }
@@ -2645,5 +2648,118 @@ describe('the OpenCode notice', () => {
         .exists()
     ).toBe(false)
     expect(panel().find(NOTICE).exists()).toBe(false)
+  })
+})
+
+/*
+ * APPENDED for AMENDMENT-22 (owner-approved 2026-10-18; ISSUE-195's "Remaining": the card for the `suggested`
+ * phase): from step 3a Jev's pick arrives as A-50's suggestion in its 14 shape, so the card draws it the same way as
+ * a decision — the eyebrow, the bold pick and Dismiss — and its tooltip reads the reasoning, Jev's least certain
+ * answer, then each flag the suggestion carries in the fixed order of US-LAUNCH-008.AC04.
+ */
+describe('the Jev card of an A-50 suggestion', () => {
+  const CATALOG: AgentProviderOption[] = (['claude', 'codex'] as const).map((provider) => ({
+    provider,
+    installed: true,
+    launchable: true
+  }))
+  const MODELS: ModelPicker = {
+    visible: true,
+    models: [
+      { value: 'sonnet', label: 'sonnet' },
+      { value: 'opus', label: 'opus' }
+    ],
+    disabled: false,
+    note: null
+  }
+  const EFFORTS: EffortPicker = { visible: true, efforts: ['low', 'high'] }
+  const FLAGS = [
+    'Treated as a trivial prompt.',
+    'Large-context model preferred.',
+    'The prompt sent to Jev was trimmed to fit its request budget.'
+  ]
+
+  function suggested(view: Partial<JevSuggestionView> = {}): LaunchState {
+    const opened = toggleJev(
+      setJevSettings(openLaunch(closedLaunch()), {
+        configured: true,
+        preferences: DEFAULT_JEV_PREFERENCES
+      })
+    )
+    const asking = jevSuggestAsked(typePrompt(opened, 'dig'), 1)
+    return jevSuggestAnswered(asking, 1, {
+      ok: true,
+      value: {
+        ok: true,
+        value: {
+          providerId: 'claude',
+          model: 'opus',
+          effort: 'high',
+          tier: 'frontier',
+          confidence: { providerId: 0.91, model: 0.74, tier: 0.88 },
+          truncated: false,
+          parts: {
+            providerId: 'answered',
+            model: 'answered',
+            effort: 'answered',
+            tier: 'answered'
+          },
+          ...view
+        }
+      }
+    })
+  }
+
+  function drawn(state: LaunchState) {
+    return mount(AddPanel, {
+      props: {
+        mineName: 'DwarfAI-Miners',
+        chips: providerChips(CATALOG, state.choice),
+        phase: launchPhase(state),
+        enabled: composerEnabled(state),
+        command: state.command,
+        prompt: state.prompt,
+        refusal: null,
+        error: state.error,
+        modelPicker: MODELS,
+        effortPicker: EFFORTS,
+        permissionsVisible: true,
+        jev: state.jev,
+        model: state.model,
+        effort: state.effort,
+        permissionMode: state.permissionMode,
+        failure: state.failure
+      }
+    })
+  }
+
+  const described = (wrapper: ReturnType<typeof drawn>) =>
+    wrapper.get(`#${wrapper.get('.dm-add__jev-pick').attributes('aria-describedby') ?? ''}`).text()
+
+  it('[US-LAUNCH-008.AC04, US-LAUNCH-008.AC06] the card shows the pick, and its tooltip reads the reasoning, the least certain answer, then each flag in the fixed order', () => {
+    const state = suggested({ truncated: true, flags: { trivial: true, largeContext: true } })
+    expect(state.jev.routing.phase).toBe('suggested')
+    const wrapper = drawn(state)
+
+    expect(wrapper.find('.dm-add__jev-pick').exists()).toBe(true)
+    const bold = wrapper.get('.dm-add__jev-pick b').text()
+    expect(bold).toBe('Claude · opus · high')
+    expect(described(wrapper)).toBe(
+      [
+        'Jev chose the frontier tier (88% sure) and Claude (91% sure). Jev picked the model (74% fit).',
+        "Jev's least certain answer was 74%.",
+        ...FLAGS
+      ].join(' ')
+    )
+    expect(described(wrapper)).not.toContain(bold)
+    expect(wrapper.find('.jev-dismiss').exists()).toBe(true)
+  })
+
+  it('[US-LAUNCH-008.AC05] a suggestion that carries no flag shows no flag line at all', () => {
+    for (const view of [{}, { flags: { trivial: false, largeContext: false } }]) {
+      const wrapper = drawn(suggested(view))
+      expect(wrapper.find('.dm-add__jev-pick').exists()).toBe(true)
+      for (const flag of FLAGS) expect(described(wrapper)).not.toContain(flag)
+    }
   })
 })
