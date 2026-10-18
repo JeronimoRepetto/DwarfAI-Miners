@@ -26,8 +26,11 @@ The harnesses then run against what it wrote:
 
 Some of these steps build extra packages that are not release targets:
 
-- **S-019-2** builds the same targets a second time into `release-fused/`, with the ADR-019 item 5 fuse set requested
-  through electron-builder's `electronFuses` (`spikes/S-019-2/electron-builder.fused.cjs`). It then reads the fuse wire
+- **S-019-2** builds the same targets a second time into `release-fused/`, with the ADR-019 item 5 fuse set
+  (`spikes/S-019-2/electron-builder.fused.cjs`). Its afterPack hook (`spikes/S-019-2/afterPack.fused.mjs`) flips the
+  fuses through electron-builder's `addElectronFuses` before the product's afterPack writes `host-manifest.json`:
+  electron-builder's `electronFuses` option flips them after afterPack, which left the manifest naming the unfused
+  binary on macOS and Linux (run 39134423991). The step checks the fused build's manifest, then reads the fuse wire
   and the asar integrity of every unpacked app and every extracted artifact (`spikes/_packaged/extract.mjs`) in both
   builds, then starts the fused build once with the SP-03 harness to see whether its Host still comes up
   (`S-019-2/start/`). Flipping the fuses in the real release build is ISSUE-269's work.

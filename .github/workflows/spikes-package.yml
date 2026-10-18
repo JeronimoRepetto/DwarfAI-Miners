@@ -153,11 +153,15 @@ jobs:
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: node scripts/release/lockfile-provider-scan.mjs
 
-      # The same targets with the ADR-019 item 5 fuse set asked of electron-builder (electronFuses), into release-fused.
+      # The same targets with the ADR-019 item 5 fuse set, into release-fused. The spike's afterPack hook flips the fuses
+      # before the Host manifest is written (electronFuses flips them after it, run 39134423991), and the manifest is
+      # checked as ci.yml checks release/.
       - name: Package with the ADR-019 fuse set
         id: fused
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
-        run: pnpm exec electron-builder --publish never --config spikes/S-019-2/electron-builder.fused.cjs ${{ matrix.package_args }}
+        run: |
+          pnpm exec electron-builder --publish never --config spikes/S-019-2/electron-builder.fused.cjs ${{ matrix.package_args }}
+          node scripts/build/verify-packaged-host-manifest.mjs release-fused
 
       - name: S-019-2 fuses of the build with the ADR-019 set
         id: fused-read

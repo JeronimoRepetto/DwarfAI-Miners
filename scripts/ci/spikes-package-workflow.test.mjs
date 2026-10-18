@@ -65,6 +65,15 @@ describe('packaging spike lane (ISSUE-328)', () => {
     expect(traffic).not.toContain('linux-unpacked')
   })
 
+  // Run 39134423991: the fused build's manifest listed the unfused binary on macOS and Linux, and only the Host's
+  // MANIFEST_MISMATCH at start showed it. The package step now checks the manifest as ci.yml checks release/.
+  it('[S-019-2] checks the Host manifest of the build with the ADR-019 set right after packaging it', () => {
+    const fused = steps.find((step) => step.startsWith('name: Package with the ADR-019 fuse set'))
+    expect(fused, 'the fused package step').toBeDefined()
+    expect(fused).toContain('--config spikes/S-019-2/electron-builder.fused.cjs')
+    expect(fused).toContain('node scripts/build/verify-packaged-host-manifest.mjs release-fused')
+  })
+
   it('[S-019-2, SP-03] starts the build with the ADR-019 fuse set on every OS and records whether its Host comes up', () => {
     const start = steps.find((step) =>
       step.startsWith('name: S-019-2 the build with the ADR-019 set')
