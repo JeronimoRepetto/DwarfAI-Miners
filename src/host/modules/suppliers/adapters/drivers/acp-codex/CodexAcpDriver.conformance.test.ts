@@ -531,3 +531,45 @@ describe('CodexAcpDriver', () => {
     }
   })
 })
+
+// ---------- the delegation entry (ISSUE-202 "Tests to write FIRST" item 2) ----------
+
+describe('CodexAcpDriver conformance', () => {
+  it('[C-23] the codex-acp launch injects no delegation entry and carries no credential while SP-12 does not cover it', async () => {
+    // SP-12 (`spike-results/SP-12.md`) probed codex app-server, opencode and kimi, not codex-acp:
+    // row X2 keeps `mcpInjection: 'none'` (15 §4.5), so even an offered entry is not injected.
+    expect(X2_ROW.mcpInjection).toBe('none')
+    const run = await runScript(
+      factoryWith(),
+      [{ do: 'launch', delegation: true }],
+      { variant: variantOf('c-01-launch') },
+      OPTIONS
+    )
+    expect(run.outcomes[0]).toEqual({ resolved: true })
+    // The launch was offered a ticket-file entry with its relay and credential file path.
+    const offered = run.launches[0]?.request.delegation
+    expect(offered).toMatchObject({ mechanism: 'ticket-file' })
+    const relay = offered?.relay?.program as string
+    const credentialFile = offered?.credentialFilePath as string
+    expect([relay, credentialFile].every((value) => value.length > 0)).toBe(true)
+    // None of it reaches the adapter's argv or env, or any frame; session/new has no MCP server.
+    const opened = run.sent.find((frame) => (frame as { method?: string }).method === 'session/new')
+    expect(opened).toMatchObject({ params: { mcpServers: [] } })
+    const [adapter] = run.spawn.spawns
+    const captured = JSON.stringify([run.spawn.spawns.map((s) => [s.args, s.env]), run.sent])
+    for (const absent of [
+      relay,
+      'dwarfai-mcp-relay',
+      credentialFile,
+      CANARY_TOKEN,
+      'DWARFAI_DELEGATION_TOKEN',
+      'DWARFAI_MCP_CREDENTIAL_FILE',
+      'ELECTRON_RUN_AS_NODE'
+    ]) {
+      expect(captured, absent).not.toContain(absent)
+    }
+    expect(adapter?.env.DWARFAI_SPAWN).toBe(run.launches[0]?.request.spawnTag)
+    // The session reports the row's value, not an injection it never made.
+    expect(run.session?.capabilities.mcpInjection).toBe('none')
+  })
+})
