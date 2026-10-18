@@ -7,8 +7,8 @@
 // AMENDED for ISSUE-001 (was: derived from the release's `ROUTES`, `UNROUTED` and `RETIRED`): from the step-3a switch
 // the release table is 3a's, so the cut-1 table is derived from the cut-2 table as it shipped (`cut2Routes.ts`).
 import { type ChannelKey, type HostMethod, type StepId } from '@dwarfai/contracts'
+import { HOST_ROUTE_MEMBERS_AS_SHIPPED } from './cut4aRoutes'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { HOST_ROUTE_MEMBERS } from '../routes'
 import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 import { CUT_2_RETIRED, CUT_2_ROUTES, CUT_2_UNROUTED } from './cut2Routes'
 
@@ -49,6 +49,6 @@ export const CUT_1_HOST_ROUTE_MEMBERS: Partial<Record<ChannelKey, readonly HostM
   Object.fromEntries(
     CUT_1_ROUTES.filter((route) => route.owner === 'host').map((route) => [
       route.channel,
-      HOST_ROUTE_MEMBERS[route.channel]
+      HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
     ])
   )

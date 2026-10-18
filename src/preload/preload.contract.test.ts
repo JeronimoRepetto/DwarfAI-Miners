@@ -216,6 +216,7 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-186 (was: those thirteen): the step-3d switch moves the CHANGE row A-39 to its target shape.
     // AMENDED for ISSUE-235 (was: those fourteen): the step-4a switch moves the CHANGE rows A-52…A-55 to their target
     // shape with their `host` route (21 §3.1: no shape adapter).
+    // AMENDED for ISSUE-242 (was: those eighteen): A-12 and A-P2 left with `BoardFacadeAdapter` at cut 5, with no route.
     expect(
       [
         ...new Set(
@@ -228,7 +229,6 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
         )
       ].sort()
     ).toEqual([
-      'A-12',
       'A-13',
       'A-15',
       'A-19',
@@ -244,8 +244,7 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       'A-52',
       'A-53',
       'A-54',
-      'A-55',
-      'A-P2'
+      'A-55'
     ])
     const expected = KEYS.map(memberOf)
     expect(
@@ -407,12 +406,8 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     expectTypeOf<DwarfAiMinersApi['setDwarfName']>().returns.resolves.toEqualTypeOf<
       TodayResult<'dwarf:setName'>
     >()
-    // RETIRE row and KEEP row. AMENDED for ISSUE-123 (was: A-12 `getMines` as the RETIRE row): A-12's target shape is
-    // today's `MinesSnapshot` (H3), so its result type is unchanged. AMENDED for ISSUE-239 (was: A-P3 `onLaunchFailed`
-    // standing for a RETIRE row still `today`): A-P3 left the facade with the 4b deletion (`MEMBER_REMOVED`).
-    expectTypeOf<DwarfAiMinersApi['getMines']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'mines:get'>
-    >()
+    // KEEP row. AMENDED for ISSUE-242 (was: also A-12 `getMines` as the RETIRE row, its target shape today's
+    // `MinesSnapshot`): A-12 left the facade with `BoardFacadeAdapter` (`MEMBER_REMOVED`).
     expectTypeOf<DwarfAiMinersApi['getAlwaysOnTop']>().returns.resolves.toEqualTypeOf<boolean>()
     // A-44 keeps today's member name and today's request while its route is today. AMENDED for ISSUE-123 (was: the
     // `setOpenMine` member): from cut 1 its route is `target`, so it is `reportVisibleMines` with its 14 request.
@@ -420,10 +415,11 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       Parameters<DwarfAiMinersApi['reportVisibleMines']>[0]
     >()
     // A push hands its listener today's payload; the helper answers synchronously.
-    expectTypeOf<DwarfAiMinersApi['onMinesUpdated']>()
+    // AMENDED for ISSUE-242 (was: A-P2 `onMinesUpdated`, which left the facade at cut 5): A-P1.
+    expectTypeOf<DwarfAiMinersApi['onPanelVisibility']>()
       .parameter(0)
       .parameter(0)
-      .toEqualTypeOf<TodayResult<'mines:update'>>()
+      .toEqualTypeOf<TodayResult<'panel:visible:changed'>>()
     expectTypeOf<DwarfAiMinersApi['pathForDroppedFile']>().returns.toEqualTypeOf<string>()
   })
 })

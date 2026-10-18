@@ -17,18 +17,14 @@ import type {
   DwarfTuningResult,
   CopyTextResult,
   ExternalLinkResult,
-  MaterialTotals,
-  Mine,
   MineDeclareResult,
   MineHistoryResult,
   MineOpenPathResult,
-  MinesSnapshot,
   MineUndeclareResult,
   ProjectQuery,
   ProjectQueryResult,
   ProjectSortDirection,
-  ProjectSortKey,
-  WatchedFeedPush
+  ProjectSortKey
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -57,7 +53,6 @@ import {
   createConfigFileStore,
   withConfigFileFallback
 } from '../main/config/configFile'
-import { sumTokensObserved } from '../main/domain/aggregate'
 import { NodeFs } from '../main/adapters/fsLike'
 import { createPlatformAdapters } from '../main/platform/platformAdapters'
 import {
@@ -304,23 +299,10 @@ const readAttachment: AttachmentReader = async (path) => {
   }
 }
 
-/** A mines list with its vault totals, for `getMines` and the push. */
-function toMinesSnapshot(
-  mines: Mine[],
-  materials: MaterialTotals | undefined,
-  watchedFeed?: WatchedFeedPush
-): MinesSnapshot {
-  return {
-    mines,
-    tokensObserved: sumTokensObserved(mines),
-    ...(materials === undefined ? {} : { materials }),
-    ...(watchedFeed === undefined ? {} : { watchedFeed })
-  }
-}
-
 /**
  * The pushes of today's runtime as the route composes them. After the cut-1 retirement (21 §2 cut 1 "Retired at the
- * end"; ISSUE-124, ISSUE-125) a board change reaches nothing: A-P2 is `BoardFacadeAdapter`'s push from the Host board,
+ * end"; ISSUE-124, ISSUE-125) a board change reaches nothing: A-P2 was `BoardFacadeAdapter`'s push from the Host board
+ * until cut 5 (ISSUE-242 deleted both),
  * and the Host's attention policy is the only way to an OS notification (ADR-018 items 1, 7). AMENDED for ISSUE-239,
  * the 4b deletion (was: a failed launch and a settled send still reached the Panel, A-P3 and A-P4): both rows are
  * retired since the 4b switch (successors B-F19 `launch.failed`, B-F12 `message.delivery`), so nothing reaches it.
@@ -563,9 +545,8 @@ export function composeLegacyRuntime(
     // AMENDED for ISSUE-236, the 4a retirement (was: today's handlers of A-42, A-43, A-47…A-55): the Host serves the
     // Settings family since the 4a switch (ISSUE-235), and today's handlers left after the soak.
 
-    handle(IPC_CHANNELS.getMines, () =>
-      toMinesSnapshot(runtime?.getMines() ?? [], runtime?.materialTotals())
-    )
+    // AMENDED for ISSUE-242, cut 5 (was: today's A-12 `getMines`): deleted with `BoardFacadeAdapter`, which served the row
+    // from the Host board since the cut-1 switch.
     handle(IPC_CHANNELS.activateDwarf, (dwarfId) => {
       if (typeof dwarfId !== 'string') return noActivation
       return runtime?.activateDwarf(dwarfId) ?? noActivation

@@ -27,10 +27,11 @@ function span(from: StepId, to: StepId): StepId[] {
  * `LegacyAskRelay`, cuts 1–4b, `LegacyEndFirstAdapter`, cuts 0–4b, and the shape adapter `LegacyAnswerShapeAdapter`,
  * 2–4b): the bridges that joined Host and legacy dwarfs end together in one work unit (21 §2 4b "Legacy deleted"; 14
  * §5, §6.5 AMENDMENT-8).
+ * AMENDED for ISSUE-242, the first cut-5 deletion (was: also `BoardFacadeAdapter`, cuts 1–4b): a test proved it had no
+ * consumer, so it left the tree with A-12 and A-P2 (21 §2 cut 5 entry, §3).
  */
 export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
   { name: 'LegacyRuntimeRoute', cuts: span('cut-0', 'cut-5'), shapeAdapter: false },
-  { name: 'BoardFacadeAdapter', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false }
 ]
 
@@ -338,6 +339,9 @@ const perProviderCut4b = (channel: IpcChannelName): ChannelRoute[] => [
  * their unqualified `host` route (a person-launched Codex question opens no card, ADR-011 item 4) and A-N26, A-32 and
  * A-N29 reach the Host alone (a session the old app launched has no identity to end, 15 §5 `no-identity`).
  *
+ * First cut-5 deletion (21 §2 cut 5 entry; ISSUE-242): A-12 and A-P2 leave with `BoardFacadeAdapter`, retired at the
+ * end of its 4b lifetime (`RETIRED`, `MEMBER_REMOVED`); the renderer reads the board through A-N01/A-N02 alone.
+ *
  * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape. A-N33 stays
  * unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router
  * registers no listener for a push or for the A-X1 preload helper.
@@ -354,7 +358,6 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('panel:layout:set'), // A-09
   uiLocalKept('shortcut:get'), // A-10
   uiLocalKept('shortcut:set'), // A-11
-  hostCut1('mines:get'), // A-12, through BoardFacadeAdapter
   ...perProviderCut4b('dwarf:activate'), // A-13, every provider's through splits/activateDwarf.ts
   hostCut1('dwarf:feed:page'), // A-15
   hostCut1('mine:history'), // A-19
@@ -399,7 +402,6 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('launch-view:get'), // A-56
   uiLocalKept('launch-view:set'), // A-57
   uiLocalKept('panel:visible:changed'), // A-P1
-  hostCut1('mines:update'), // A-P2, through BoardFacadeAdapter
   uiLocalKept('typography:preferences:changed'), // A-P6
   uiLocalKept('pathForDroppedFile'), // A-X1
   legacyToday('dwarf:setName'), // 14 §8 I-21 (no §2 id)
@@ -458,16 +460,14 @@ export function routesForBuild(build: { publicBuild: boolean }): readonly Channe
 
 /**
  * The seam B members each `host` route relays (14 §6.3), for the router test's rule that a `host` route uses only
- * members born by its release (21 §2 "Seam B members: the cut in which each is born"). A-12 and A-P2 are the facade's
- * reading of the Host board (the snapshot, then the frames); A-32's `LegacyEndFirstAdapter` reads the Host board too
- * and relays only `mines.remove`.
+ * members born by its release (21 §2 "Seam B members: the cut in which each is born"). AMENDED for ISSUE-242 (was:
+ * also A-12 and A-P2, the facade's reading of the Host board, and A-32 through `LegacyEndFirstAdapter`): the rows a
+ * cut-5 deletion removed keep their members in the tables of the releases that shipped them (`testing/cut4aRoutes.ts`).
  */
 export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMethod[]>> = {
   'tray:stopEverything:confirm': ['host.shutdown'], // A-N26 → B-M05 `host.shutdown {mode:'stop-all'}`
   'host:snapshot': ['session.snapshot'], // A-N01 → B-M04
   'host:event': ['events.subscribe'], // A-N02 → B-M03's frames
-  'mines:get': ['session.snapshot', 'events.subscribe'], // A-12 through BoardFacadeAdapter
-  'mines:update': ['session.snapshot', 'events.subscribe'], // A-P2 through BoardFacadeAdapter
   'dwarf:feed:page': ['conversation.feed'], // A-15 → B-M26
   'mine:history': ['conversation.mineHistory'], // A-19 → B-M27
   'mine:openPath': ['mines.resolveFile'], // A-20 → B-M20

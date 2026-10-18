@@ -84,8 +84,6 @@ export interface DwarfAiMinersApi {
   setToggleShortcut: (
     request: TargetRequest<'shortcut:set'>
   ) => Promise<TargetResult<'shortcut:set'>>
-  /** A-12 · `mines:get` · invoke · RETIRE · target shape */
-  getMines: () => Promise<TargetResult<'mines:get'>>
   /** A-13 · `dwarf:activate` · invoke · CHANGE · target shape */
   activateDwarf: (
     request: TargetRequest<'dwarf:activate'>
@@ -214,8 +212,6 @@ export interface DwarfAiMinersApi {
   onPanelVisibility: (
     listener: (payload: TargetResult<'panel:visible:changed'>) => void
   ) => () => void
-  /** A-P2 · `mines:update` · push · RETIRE · target shape */
-  onMinesUpdated: (listener: (payload: TargetResult<'mines:update'>) => void) => () => void
   /** A-P5 · `panel:mine:show` · push · RETIRE · target shape */
   onShowMine: (listener: (payload: TargetResult<'panel:mine:show'>) => void) => () => void
   /** A-P6 · `typography:preferences:changed` · push · KEEP · target shape */
@@ -340,7 +336,6 @@ const api: DwarfAiMinersApi = {
   getToggleShortcut: () => invokeOrReject(() => ipcRenderer.invoke('shortcut:get')),
   setToggleShortcut: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('shortcut:set', textOf(request))),
-  getMines: () => invokeOrReject(() => ipcRenderer.invoke('mines:get')),
   activateDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:activate', request)),
   getDwarfFeed: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:feed', request)),
   getDwarfFeedPage: (request) =>
@@ -423,13 +418,6 @@ const api: DwarfAiMinersApi = {
     }
     ipcRenderer.on('panel:visible:changed', wrapped)
     return () => ipcRenderer.removeListener('panel:visible:changed', wrapped)
-  },
-  onMinesUpdated: (listener) => {
-    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
-      listener(payload as TargetResult<'mines:update'>)
-    }
-    ipcRenderer.on('mines:update', wrapped)
-    return () => ipcRenderer.removeListener('mines:update', wrapped)
   },
   onShowMine: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {

@@ -8,6 +8,9 @@
 // AMENDED for ISSUE-241, the end of cut 4: the release table no longer has A-40/A-41's `legacy` routes through
 // `LegacyAnswerShapeAdapter`, one per origin of the relay's `legacy:` AskIds, which cut 2 created and 4a still shipped,
 // so they are back after each row's `host` route too (`LEGACY_ANSWER_ROUTES`).
+// AMENDED for ISSUE-242, the first cut-5 deletion: the release table no longer has A-12 and A-P2, which every release
+// from cut 1 to 4b routed `host` through `BoardFacadeAdapter`, so they are back where 4a routed them
+// (`REMOVED_BY_BOARD_FACADE_DELETION`), with their seam B members (`HOST_ROUTE_MEMBERS_AS_SHIPPED`).
 import {
   CATALOG_PROVIDER_IDS,
   RETIRED,
@@ -16,7 +19,8 @@ import {
   type StepId
 } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { routesForBuild } from '../routes'
+import type { HostMethod } from '@dwarfai/contracts'
+import { HOST_ROUTE_MEMBERS, routesForBuild } from '../routes'
 import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 
 const [CLAUDE = '', , , OPENCODE = ''] = CATALOG_PROVIDER_IDS
@@ -73,6 +77,37 @@ const LEGACY_ANSWER_ROUTES = (['agent:answerQuestion', 'agent:answerPermission']
     }))
 )
 
+/** A-12 or A-P2 as the cut-1 switch routed it and 4a still shipped it, through `BoardFacadeAdapter` (21 §3). */
+const throughBoardFacade = (channel: ChannelKey): ChannelRoute => ({
+  channel,
+  owner: 'host',
+  since: 'cut-1',
+  parity: 'passed',
+  shape: 'target'
+})
+
+/** The routes the ISSUE-242 deletion removed: A-12 after A-11, A-P2 after A-P1. */
+const REMOVED_BY_BOARD_FACADE_DELETION = [
+  {
+    after: (route: ChannelRoute) => route.channel === 'shortcut:set',
+    route: throughBoardFacade('mines:get') // A-12
+  },
+  {
+    after: (route: ChannelRoute) => route.channel === 'panel:visible:changed',
+    route: throughBoardFacade('mines:update') // A-P2
+  }
+]
+
+/**
+ * The seam B members of every `host` route the releases up to 4b shipped: the release's, and A-12 and A-P2's, the
+ * facade's reading of the Host board (the snapshot, then the frames).
+ */
+export const HOST_ROUTE_MEMBERS_AS_SHIPPED: Partial<Record<ChannelKey, readonly HostMethod[]>> = {
+  ...HOST_ROUTE_MEMBERS,
+  'mines:get': ['session.snapshot', 'events.subscribe'],
+  'mines:update': ['session.snapshot', 'events.subscribe']
+}
+
 /**
  * Each route the step-4b switch removed, placed after the route it followed in 4a: the shape adapters' route after
  * Claude's (the first `host` route of its channel since 3a), A-27 after A-25, A-P3 and A-P4 after A-P2.
@@ -103,7 +138,8 @@ const REMOVED_BY_4B: ReadonlyArray<{
     after: (route: ChannelRoute) => route.channel === 'agent:launchFailed',
     route: openCodeNotMoved('dwarf:sendText:settled') // A-P4
   },
-  ...LEGACY_ANSWER_ROUTES
+  ...LEGACY_ANSWER_ROUTES,
+  ...REMOVED_BY_BOARD_FACADE_DELETION
 ]
 
 const sameRoute = (a: ChannelRoute, b: ChannelRoute): boolean =>

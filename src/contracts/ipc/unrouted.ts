@@ -80,7 +80,11 @@ export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
   // `legacy` qualified to the providers not yet moved, none left once OpenCode moves (21 §2 cut 3 common rules, cut 4b)
   'dwarf:retire': 'cut-4b',
   'agent:launchFailed': 'cut-4b',
-  'dwarf:sendText:settled': 'cut-4b'
+  'dwarf:sendText:settled': 'cut-4b',
+  // A-12 and A-P2 (successors A-N01/A-N02): served from the Host board by `BoardFacadeAdapter`, whose lifetime ended
+  // with 4b (21 §3, cuts 1–4b), until the first cut-5 deletion proved it had no consumer (ISSUE-242)
+  'mines:get': 'cut-4b',
+  'mines:update': 'cut-4b'
 }
 
 /**
@@ -92,10 +96,15 @@ export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
  * AMENDED for ISSUE-239, the 4b deletion: A-27 `retireDwarf`, A-P3 `onLaunchFailed` and A-P4 `onDwarfSendSettled`
  * leave with their handlers and pushes (21 §2 cut 4b "Legacy deleted"); their successors are the Host frames B-F10
  * `dwarf.departed`, B-F19 `launch.failed` and B-F12 `message.delivery`.
+ *
+ * AMENDED for ISSUE-242, the first cut-5 deletion: A-12 `getMines` and A-P2 `onMinesUpdated` leave with
+ * `BoardFacadeAdapter` (21 §2 cut 5 entry); the renderer reads the board through A-N01/A-N02 alone.
  */
 export const MEMBER_REMOVED: Partial<Record<ChannelKey, StepId>> = {
   'dwarf:kick': 'cut-3a',
   'dwarf:retire': 'cut-4b',
   'agent:launchFailed': 'cut-4b',
-  'dwarf:sendText:settled': 'cut-4b'
+  'dwarf:sendText:settled': 'cut-4b',
+  'mines:get': 'cut-4b',
+  'mines:update': 'cut-4b'
 }

@@ -138,8 +138,6 @@ export function goldenApi(sample: GoldenSample): Api {
     },
     getToggleShortcut: () => Promise.resolve({ ...shortcut }),
     setToggleShortcut: refuse('setToggleShortcut'),
-    getMines: refuse('getMines'),
-    onMinesUpdated: unsubscribe,
     activateDwarf: refuse('activateDwarf'),
     // The open dwarf's conversation (#635, the MessagePanel slice), as the sample carries it.
     getDwarfFeed: (dwarfId) => {

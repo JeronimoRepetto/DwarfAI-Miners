@@ -25,7 +25,6 @@ import {
   type LegacyPanelSurface,
   type LegacyRuntimeRoute
 } from '../legacy-bridge/LegacyRuntimeRoute'
-import { createBoardFacadeAdapter } from '../legacy-bridge/BoardFacadeAdapter'
 import {
   createStopEverything,
   STOP_EVERYTHING_REQUESTED,
@@ -448,51 +447,6 @@ export function composeMinesAdmin(deps: {
       })
     },
     dispose: () => {}
-  }
-}
-
-/** A-12 `getMines` (invoke) and A-P2 `onMinesUpdated` (push): RETIRE rows of the Host (14 §2.1). */
-const BOARD_READ = 'mines:get' satisfies ChannelKey
-const BOARD_PUSH = 'mines:update' satisfies ChannelKey
-
-export interface BoardFacadeComposition {
-  /** The `host` target part serving A-12. */
-  part: RouteTargetPart
-  dispose(): void
-}
-
-/**
- * `BoardFacadeAdapter` (21 §3, cuts 1–4; 14 §5): A-12 and A-P2 from the Host board in today's `MinesSnapshot`, for the
- * composables not yet switched to A-N01/A-N02. Composed once the table routes A-12 to the Host (the cut-1 switch,
- * ISSUE-123), as a part of the `host` target; A-P2 reaches the mode windows only while the table routes it to the Host
- * too, so today's runtime and the facade never push the board together (21 §1 item 4). `undefined` in a table that
- * serves A-12 `legacy`. AMENDED for ISSUE-241, the end of cut 4 (was: in cuts 1–4 its dwarfs carried today's board
- * fields from `LegacyAskRelay`, `askFields`, and `refresh` pushed the board again when they changed, 21 §3): the relay
- * left the tree, so the facade reads the Host board alone. Deleted at cut 5 after a test proves no consumer (ISSUE-242).
- */
-export function composeBoardFacade(deps: {
-  routes: readonly ChannelRoute[]
-  client: Pick<HostClient, 'subscribe'>
-  windows: () => readonly WindowContents[]
-  defer?: (run: () => void) => void
-}): BoardFacadeComposition | undefined {
-  const toHost = (channel: ChannelKey): boolean =>
-    deps.routes.some((r) => r.channel === channel && r.owner === 'host')
-  if (!toHost(BOARD_READ)) return undefined
-  const pushes = toHost(BOARD_PUSH)
-  const facade = createBoardFacadeAdapter({
-    client: deps.client,
-    push: (board) => {
-      if (pushes) for (const window of deps.windows()) window.send(BOARD_PUSH, board)
-    },
-    ...(deps.defer === undefined ? {} : { defer: deps.defer })
-  })
-  return {
-    part: {
-      channels: [BOARD_READ],
-      target: { serve: () => Promise.resolve(facade.getMines()) }
-    },
-    dispose: () => facade.dispose()
   }
 }
 
@@ -1298,15 +1252,8 @@ export async function startUiMain({
   // AMENDED for ISSUE-240, the 4b deletion (was: `PerProviderShapeAdapter` and `CatalogMergeAdapter` for A-13, A-23,
   // A-35 and A-36 of the providers not yet moved, 21 §3.1): from 4b every provider's rows are the Host's.
 
-  // A-12 and A-P2 from the Host board, once the table routes them there (the cut-1 switch, ISSUE-123; 21 §3).
-  const boardFacade =
-    host === undefined
-      ? undefined
-      : composeBoardFacade({
-          routes,
-          client: host.client,
-          windows: modeWindowList
-        })
+  // AMENDED for ISSUE-242, the first cut-5 deletion (was: `BoardFacadeAdapter` serving A-12 and A-P2 from the Host
+  // board, 21 §3): both rows left with it, and the renderer reads the board through A-N01/A-N02 alone.
   // The mines admin rows, once the table routes them to the Host (the cut-1 switch, ISSUE-123; 21 §2 cut 1).
   const minesAdmin =
     host === undefined
@@ -1375,7 +1322,6 @@ export async function startUiMain({
     host === undefined ? undefined : composeResetMetricsRow({ routes, client: host.client })
   const stopRows = stop === undefined ? undefined : createStopEverythingRows(stop)
   const hostTarget =
-    boardFacade === undefined &&
     minesAdmin === undefined &&
     hostReads === undefined &&
     askAnswers?.part === undefined &&
@@ -1396,7 +1342,6 @@ export async function startUiMain({
             : [
                 { channels: [STOP_EVERYTHING_CONFIRM], target: stopRows } satisfies RouteTargetPart
               ]),
-          ...(boardFacade === undefined ? [] : [boardFacade.part]),
           ...(minesAdmin === undefined ? [] : [minesAdmin.part]),
           ...(hostReads === undefined ? [] : [hostReads.part]),
           ...(askAnswers?.part === undefined ? [] : [askAnswers.part]),
@@ -1524,7 +1469,6 @@ export async function startUiMain({
     stopDwarf?.dispose()
     providerRouting?.dispose()
     openCodePassword?.migration?.dispose()
-    boardFacade?.dispose()
     minesAdmin?.dispose()
     hostReads?.dispose()
     stopHearingVisibility?.()

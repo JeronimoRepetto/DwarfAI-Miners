@@ -6,8 +6,8 @@
 // AMENDED for ISSUE-186 (was: from the release table `ROUTES`): it starts from the 3a table as it shipped
 // (`cut3aRoutes.ts`), so a later step's switch (3d's A-39) never leaks into it.
 import { UNROUTED, type ChannelKey, type HostMethod, type StepId } from '@dwarfai/contracts'
+import { HOST_ROUTE_MEMBERS_AS_SHIPPED } from './cut4aRoutes'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { HOST_ROUTE_MEMBERS } from '../routes'
 import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 import { CUT_3A_ROUTES } from './cut3aRoutes'
 // AMENDED for ISSUE-238 (was: `RETIRED`): the 4a retirements, `cut4aRoutes.ts`.
@@ -78,6 +78,6 @@ export const CUT_2_HOST_ROUTE_MEMBERS: Partial<Record<ChannelKey, readonly HostM
   Object.fromEntries(
     CUT_2_ROUTES.filter((route) => route.owner === 'host').map((route) => [
       route.channel,
-      HOST_ROUTE_MEMBERS[route.channel]
+      HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
     ])
   )

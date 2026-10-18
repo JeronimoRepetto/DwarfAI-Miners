@@ -50,8 +50,9 @@ describe('preload always-on-top contract', () => {
     // Guard against an accidental surface rewrite: the pre-existing members
     // must still be there.
     expect(typeof api.hidePanel).toBe('function')
-    expect(typeof api.getMines).toBe('function')
-    expect(typeof api.onMinesUpdated).toBe('function')
+    // AMENDED for ISSUE-242 (was: `getMines` and `onMinesUpdated` present): A-12 and A-P2 left the facade at cut 5.
+    expect('getMines' in api).toBe(false)
+    expect('onMinesUpdated' in api).toBe(false)
     expect(typeof api.activateDwarf).toBe('function')
     expect(typeof api.sendDwarfText).toBe('function')
     // AMENDED for ISSUE-183 (was: `kickDwarf` present): A-26 left the facade in 3a; "Stop dwarf…" is A-N29.

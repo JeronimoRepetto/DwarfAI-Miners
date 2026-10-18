@@ -11,14 +11,11 @@ import {
   TODAY_SHAPES,
   UNROUTED,
   type ChannelKey,
-  type FolderPath,
-  type MineId,
   type SnapshotPage,
   type StepId
 } from '@dwarfai/contracts'
 import {
   composeAskStepAndIntegrationRows,
-  composeBoardFacade,
   composeConversationAndLaunchRows,
   composeDwarfNameRows,
   composeOpenCodeSettingsRows,
@@ -63,7 +60,12 @@ import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
 import { CUT_3E_RELEASE, CUT_3E_ROUTES, cut3eRoutesForBuild } from './testing/cut3eRoutes'
-import { CUT_4A_RELEASE, CUT_4A_RETIRED, cut4aRoutesForBuild } from './testing/cut4aRoutes'
+import {
+  CUT_4A_RELEASE,
+  CUT_4A_RETIRED,
+  cut4aRoutesForBuild,
+  HOST_ROUTE_MEMBERS_AS_SHIPPED
+} from './testing/cut4aRoutes'
 import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import { ADAPTERS_AS_SHIPPED } from './testing/adaptersAsShipped'
 import {
@@ -324,7 +326,6 @@ describe('pre-cut table', () => {
       STEP_ORDER.slice(STEP_ORDER.indexOf(from), STEP_ORDER.indexOf(to) + 1)
     expect(cuts).toEqual({
       LegacyRuntimeRoute: span('cut-0', 'cut-5'),
-      BoardFacadeAdapter: span('cut-1', 'cut-4b'),
       SecretMigrationBridge: ['cut-3a', 'cut-4a']
     })
     // AMENDED for ISSUE-236, the 4a retirement (was: also `ResetFanout` and `SettingsMirrorBridge`, cuts 1–3e, and
@@ -333,7 +334,8 @@ describe('pre-cut table', () => {
     // `LegacyLaunchObservation`, cuts 1–4b, and `PerProviderShapeAdapter` and `CatalogMergeAdapter`, 3a–4b): the same.
     // AMENDED for ISSUE-241, the end of cut 4 (was: also `LegacyDwarfIdBridge`, `LegacyAgentRegistryFeed`,
     // `LegacyAskRelay`, cuts 1–4b, `LegacyEndFirstAdapter`, cuts 0–4b, and `LegacyAnswerShapeAdapter`, 2–4b, the last
-    // shape adapter): the same.
+    // shape adapter): the same. AMENDED for ISSUE-242, the first cut-5 deletion (was: also `BoardFacadeAdapter`, cuts
+    // 1–4b): the same.
     expect(LEGACY_BRIDGE_ADAPTERS.filter((a) => a.shapeAdapter)).toEqual([])
 
     // A route's shape adapter must be listed as a shape adapter living in the table's release.
@@ -367,9 +369,12 @@ describe('pre-cut table', () => {
     ).toEqual(['adapter-after-cut-5 Late'])
   })
 
-  it('[ADR-001] BoardFacadeAdapter is listed for cuts 1 to 4', async () => {
-    // TC-086-03 (21 §3, 14 §5): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
-    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'BoardFacadeAdapter')).toEqual({
+  it('[ADR-001] BoardFacadeAdapter is listed for cuts 1 to 4', () => {
+    // TC-086-03 (21 §3, 14 §5): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on. AMENDED for ISSUE-242
+    // (was: today's listing, and the root composing the facade as A-12's `host` handler and A-P2's pusher once a table
+    // routes them to the Host): the facade left the tree after a test proved it had no consumer, so the listing is the
+    // one the releases up to 4b shipped (`describe('release 5 (21 §2 cut 5)')` pins its absence).
+    expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'BoardFacadeAdapter')).toEqual({
       name: 'BoardFacadeAdapter',
       cuts: ['cut-1', 'cut-2', 'cut-3a', 'cut-3b', 'cut-3d', 'cut-3e', 'cut-4a', 'cut-4b'],
       shapeAdapter: false
@@ -385,82 +390,6 @@ describe('pre-cut table', () => {
         key
       ).toEqual(['legacy'])
     }
-
-    // The root composes the facade only once the table routes A-12 to the Host: not in the cut-0 table.
-    let handler: ((event: HostEvent) => void) | null = null
-    const client = {
-      subscribe: (h: (event: HostEvent) => void) => {
-        handler = h
-        return () => (handler = null)
-      }
-    }
-    const sent: Array<[string, unknown]> = []
-    const windows = () => [
-      { webContentsId: 1, send: (push: string, p: unknown) => void sent.push([push, p]) }
-    ]
-    const macrotasks: Array<() => void> = []
-    const defer = (run: () => void) => void macrotasks.push(run)
-    expect(composeBoardFacade({ routes: CUT_0_ROUTES, client, windows, defer })).toBeUndefined()
-    expect(handler).toBeNull()
-
-    // In a table that routes A-12 and A-P2 to the Host (as the cut-1 switch will), the facade is A-12's `host` handler
-    // and pushes A-P2 to the mode windows, both in today's shape.
-    const hostRoute = (channel: ChannelKey): ChannelRoute => ({
-      channel,
-      owner: 'host',
-      since: 'cut-1',
-      parity: 'passed',
-      shape: 'target'
-    })
-    const cut1Routes = [
-      ...CUT_0_ROUTES.filter((r) => !BOARD_ROWS.includes(r.channel)),
-      ...BOARD_ROWS.map(hostRoute)
-    ]
-    const facade = composeBoardFacade({ routes: cut1Routes, client, windows, defer })
-    expect(facade?.part.channels).toEqual(['mines:get'])
-    const MINE = '01920000-0000-7000-9000-0000000c0001'
-    const ore = { tokens: 5 }
-    ;(handler as ((event: HostEvent) => void) | null)?.({
-      kind: 'snapshot',
-      snapshot: {
-        snapshotId: 's-1',
-        seq: 1,
-        epoch: 'epoch-1',
-        chunks: [
-          {
-            section: 'mines',
-            data: [
-              {
-                id: MINE as MineId,
-                path: '/work/gamma' as FolderPath,
-                name: 'gamma',
-                state: 'active',
-                tier: 'silver',
-                hasBeenMeasured: true,
-                lastUsedAt: 1,
-                totals: {
-                  coal: ore,
-                  bronze: ore,
-                  copper: ore,
-                  silver: ore,
-                  gold: ore,
-                  uranium: ore
-                }
-              }
-            ]
-          }
-        ]
-      }
-    })
-    for (const run of macrotasks.splice(0)) run()
-    const answer = await facade?.part.target.serve('mines:get', undefined)
-    expect(CHANNELS['mines:get'].response.safeParse(answer).success).toBe(true)
-    expect((answer as { mines: Array<{ id: string }> }).mines.map((m) => m.id)).toEqual([MINE])
-    expect(sent.map(([push]) => push)).toEqual(['mines:update'])
-    expect(CHANNELS['mines:update'].response.safeParse(sent[0]?.[1]).success).toBe(true)
-    expect(sent[0]?.[1]).toEqual(answer)
-    facade?.dispose()
-    expect(handler).toBeNull()
   })
 })
 
@@ -570,7 +499,7 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_0_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).not.toBe('pending')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -1167,7 +1096,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     )
   })
 
-  it('[ADR-001] in cut 1 A-12 and A-P2 go through BoardFacadeAdapter and A-33 through ResetFanout', async () => {
+  it('[ADR-001] in cut 1 A-12 and A-P2 go through BoardFacadeAdapter and A-33 through ResetFanout', () => {
     // Lead resolution H3: A-12 and A-P2 are RETIRE rows routed `host` with the target shape, and a RETIRE row's
     // registry entry is today's shape (14 §2.1), so the generated preload keeps today's `MinesSnapshot` for both.
     for (const id of ['A-12', 'A-P2']) {
@@ -1176,20 +1105,9 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       expect(CHANNELS[key].status, id).toBe('retired')
       expect(CHANNELS[key].response, id).toBe(TODAY_SHAPES[key]?.response)
     }
-    const preload = readFileSync(resolve(import.meta.dirname, '../../preload/index.ts'), 'utf8')
-    expect(preload).toContain('/** A-12 · `mines:get` · invoke · RETIRE · target shape */')
-    expect(preload).toContain('/** A-P2 · `mines:update` · push · RETIRE · target shape */')
-
-    // The root composes the facade as A-12's `host` handler, and it pushes A-P2.
-    const { client } = recordingHost()
-    const facade = composeBoardFacade({
-      routes: CUT_1_ROUTES,
-      client,
-      windows: () => [],
-      defer: (run) => run()
-    })
-    expect(facade?.part.channels).toEqual(['mines:get'])
-    facade?.dispose()
+    // AMENDED for ISSUE-242, the first cut-5 deletion (was: the generated preload's A-12 and A-P2 members, and the root
+    // composing the facade as A-12's `host` handler over the cut-1 table): both members and the facade left the tree
+    // (`describe('release 5 (21 §2 cut 5)')`).
 
     // A-33 is `legacy` + `target` through its shape adapter ResetFanout: the legacy reset first, then the Host saga.
     const a33 = keyOf('A-33')
@@ -1467,7 +1385,7 @@ describe('cut-1 retirement (21 §2 cut 1)', () => {
     const source = legacyRoute()
     // No poll timer (until ISSUE-241 today's runtime ticked only through LegacyAgentRegistryFeed's cycles).
     expect(source).not.toMatch(/\bruntime\??\.start\(/)
-    // No publish gate → board path: A-P2 is BoardFacadeAdapter's push from the Host board.
+    // No publish gate → board path: A-P2 was BoardFacadeAdapter's push from the Host board, deleted at cut 5 (ISSUE-242).
     expect(source).not.toMatch(/IPC_CHANNELS\.minesUpdated\b/)
     // No ledger crediting: no vault store and no coal backfill; today's ledger is a vault that remembers nothing.
     expect(source).not.toMatch(/openLedgerStore|runCoalBackfill/)
@@ -1728,7 +1646,7 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_2_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -1805,7 +1723,7 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       table.routes.some(
         (r) =>
           r.owner === 'host' &&
-          (HOST_ROUTE_MEMBERS[r.channel] ?? []).some((member) =>
+          (HOST_ROUTE_MEMBERS_AS_SHIPPED[r.channel] ?? []).some((member) =>
             ['preferences.setClaudeHooks', 'preferences.answerWelcome'].includes(member)
           )
       )
@@ -2282,7 +2200,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_3A_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -2612,7 +2530,7 @@ describe('release 3b (21 §2 cut 3b)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_3B_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -2946,7 +2864,7 @@ describe('release 3d (21 §2 cut 3d)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_3D_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -3189,7 +3107,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of DEVELOPMENT.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -3444,7 +3362,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of DEVELOPMENT.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -3725,7 +3643,7 @@ describe('release 4b (21 §2 cut 4b)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of DEVELOPMENT.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -4653,6 +4571,68 @@ describe('after the 4b retirement', () => {
       'legacy-bridge/LegacyAgentRegistryFeed.ts',
       'legacy-bridge/LegacyAskRelay.ts',
       'legacy-bridge/asks/LegacyAnswerShapeAdapter.ts'
+    ]) {
+      expect(existsSync(resolve(SRC, path)), path).toBe(false)
+    }
+  })
+})
+
+// ADDED for ISSUE-242, the first cut-5 deletion (21 §2 cut 5 entry; 21 §3 row `BoardFacadeAdapter`; 14 §2.1 A-12, A-P2
+// RETIRE, successors A-N01/A-N02; 14 §6.5 "Router", "Registry completeness"): once nothing reads the facade
+// (`ui-main/boardFacadeConsumers.test.ts`), the adapter and its two rows leave the tree. The facade's lifetime ended
+// with 4b (cuts 1–4b), so the rows are retired at that step, as the other rows the 4b soak let go of. Read as text where
+// the tree never imports legacy code (05 R16).
+describe('release 5 (21 §2 cut 5)', () => {
+  const SRC = resolve(import.meta.dirname, '..', '..')
+  /** A-12 and A-P2, with today's member of each. */
+  const FACADE_ROWS: Readonly<Record<string, string>> = {
+    'mines:get': 'getMines', // A-12
+    'mines:update': 'minesUpdated' // A-P2
+  }
+  const registered = (member: string) =>
+    new RegExp(
+      String.raw`(handle|ipcMain\.handle|ipcMain\.on)\(\s*IPC_CHANNELS\.${member}\b|send\(\s*IPC_CHANNELS\.${member}\b`
+    )
+
+  it('[ADR-001] A-12 and A-P2 have no route and no handler', () => {
+    for (const file of ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']) {
+      const text = readFileSync(resolve(SRC, file), 'utf8')
+      for (const member of Object.values(FACADE_ROWS)) {
+        expect(registered(member).test(text), `${file} ${member}`).toBe(false)
+      }
+    }
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      for (const channel of Object.keys(FACADE_ROWS) as ChannelKey[]) {
+        expect(
+          routesForBuild(build).filter((route) => route.channel === channel),
+          channel
+        ).toEqual([])
+        expect(RETIRED[channel], channel).toBe('cut-4b')
+        // The generated facade and the fake `window.api` drop the member with its route (`MEMBER_REMOVED`).
+        expect(MEMBER_REMOVED[channel], channel).toBe('cut-4b')
+        expect(HOST_ROUTE_MEMBERS[channel], channel).toBeUndefined()
+      }
+    }
+    const preload = readFileSync(resolve(SRC, 'preload/index.ts'), 'utf8')
+    for (const member of ['getMines', 'onMinesUpdated']) {
+      expect(preload, member).not.toMatch(new RegExp(String.raw`\b${member}\b`))
+    }
+    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
+    expect(root).not.toMatch(/'mines:get'|'mines:update'/)
+  })
+
+  it('[ADR-001] the adapter list of the router test no longer names BoardFacadeAdapter', () => {
+    expect(LEGACY_BRIDGE_ADAPTERS.map((adapter) => adapter.name)).not.toContain(
+      'BoardFacadeAdapter'
+    )
+    // The releases that shipped it are still checked with it in their listing (`testing/adaptersAsShipped.ts`).
+    expect(
+      ADAPTERS_AS_SHIPPED.find((adapter) => adapter.name === 'BoardFacadeAdapter')?.cuts
+    ).toEqual(STEP_ORDER.slice(STEP_ORDER.indexOf('cut-1'), STEP_ORDER.indexOf('cut-4b') + 1))
+    for (const path of [
+      'legacy-bridge/BoardFacadeAdapter.ts',
+      'legacy-bridge/BoardFacadeAdapter.test.ts',
+      'legacy-bridge/BoardFacadeAdapter.contract.test.ts'
     ]) {
       expect(existsSync(resolve(SRC, path)), path).toBe(false)
     }

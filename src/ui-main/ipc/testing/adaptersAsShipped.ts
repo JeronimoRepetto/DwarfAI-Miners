@@ -10,6 +10,8 @@
 //
 // AMENDED for ISSUE-241, the end of cut 4: `LegacyDwarfIdBridge`, `LegacyAgentRegistryFeed`, `LegacyAskRelay` (cuts
 // 1–4b), `LegacyEndFirstAdapter` (cuts 0–4b) and `LegacyAnswerShapeAdapter` (2–4b) left with the same rule.
+//
+// AMENDED for ISSUE-242, the first cut-5 deletion: `BoardFacadeAdapter` (cuts 1–4b) left with the same rule.
 import type { StepId } from '@dwarfai/contracts'
 import { STEP_ORDER } from '@dwarfai/contracts'
 import type { LegacyBridgeAdapter } from '../channelRoute'
@@ -30,7 +32,8 @@ export const RETIRED_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
   { name: 'LegacyAgentRegistryFeed', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyAskRelay', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyEndFirstAdapter', cuts: span('cut-0', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyAnswerShapeAdapter', cuts: span('cut-2', 'cut-4b'), shapeAdapter: true }
+  { name: 'LegacyAnswerShapeAdapter', cuts: span('cut-2', 'cut-4b'), shapeAdapter: true },
+  { name: 'BoardFacadeAdapter', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false }
 ]
 
 /** The listing as the releases up to 4b shipped it: today's listing plus the retired bridges. */

@@ -29,18 +29,15 @@ import type {
   DwarfTuningResult,
   CopyTextResult,
   ExternalLinkResult,
-  MaterialTotals,
   Mine,
   MineDeclareResult,
   MineHistoryResult,
   MineOpenPathResult,
-  MinesSnapshot,
   MineUndeclareResult,
   ProjectQuery,
   ProjectQueryResult,
   ProjectSortDirection,
-  ProjectSortKey,
-  WatchedFeedPush
+  ProjectSortKey
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
@@ -87,7 +84,6 @@ import {
   createConfigFileStore,
   withConfigFileFallback
 } from './config/configFile'
-import { sumTokensObserved } from './domain/aggregate'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { DelegationService } from './mcp/delegationService'
@@ -185,7 +181,6 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getTypographyPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.setTypographyPreferences)
   /* --- end of the #370 block ----------------------------------------------- */
-  ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeed)
   ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeedPage)
@@ -394,29 +389,6 @@ const readAttachment: AttachmentReader = async (path) => {
 
 /** Twice the design's 40px chip, so the preview is sharp on a 2× display. */
 const ATTACHMENT_THUMBNAIL_PX = 80
-
-/**
- * Wraps a mines list with its vault totals for both getMines() and the push.
- *
- * The two numbers answer different questions and both travel: tokensObserved
- * is the LIVE gauge over the crews visible this instant, while `materials` is
- * the cumulative, persisted vault — which is why it is passed in rather than
- * derived from `mines`. Summing the mines would silently drop every project
- * with no dwarf running right now, and that is exactly where backfilled coal
- * lives.
- */
-function toMinesSnapshot(
-  mines: Mine[],
-  materials: MaterialTotals | undefined,
-  watchedFeed?: WatchedFeedPush
-): MinesSnapshot {
-  return {
-    mines,
-    tokensObserved: sumTokensObserved(mines),
-    ...(materials === undefined ? {} : { materials }),
-    ...(watchedFeed === undefined ? {} : { watchedFeed })
-  }
-}
 
 /**
  * Every window of this app whose page is still alive (#162).
@@ -806,16 +778,9 @@ async function init(): Promise<void> {
     answerOpenCodePermission: createOpenCodePermissionAnswerPort(globalThis.fetch, {
       readPassword: openCodePasswordStore.readPassword
     }),
-    onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
-      // Both windows (#162). The panel window reads the board for the same
-      // reasons the shell does — the open dwarf's own status and words, the
-      // proof a session reacted to a delivery, and the arrival of a dwarf a
-      // launch is waiting for — so one poll feeds two surfaces rather than
-      // the panel asking main for a snapshot main just published.
-      const snapshot = toMinesSnapshot(mines, materials, watchedFeed)
-      for (const contents of appWebContents()) {
-        contents.send(IPC_CHANNELS.minesUpdated, snapshot)
-      }
+    // AMENDED for ISSUE-242, cut 5 (was: the A-P2 `minesUpdated` push of the board to both windows): A-P2 left
+    // with `BoardFacadeAdapter`, and the renderer reads the Host board alone.
+    onMinesUpdated: (mines: Mine[]) => {
       /* --- System notifications (#316) — one block, appended --------------- */
       // Folded here and nowhere else: this is already the one place a board is
       // published, and the PublishGate above it means an unchanged poll never
@@ -1089,9 +1054,7 @@ async function init(): Promise<void> {
    * its deferred hide waited on, and the delivery report relayed to the shell. The panel is in the
    * shell's dock slot, so none of them had two windows to join any more.
    */
-  ipcMain.handle(IPC_CHANNELS.getMines, () =>
-    toMinesSnapshot(runtime?.getMines() ?? [], runtime?.materialTotals())
-  )
+  // AMENDED for ISSUE-242, cut 5 (was: A-12 `getMines`, the board): deleted with `BoardFacadeAdapter`.
   ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noActivation
     return runtime?.activateDwarf(dwarfId) ?? noActivation
