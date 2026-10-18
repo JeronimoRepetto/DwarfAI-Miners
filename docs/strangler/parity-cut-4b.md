@@ -145,3 +145,29 @@ user, the A-P3/A-P4 push tap, lost its pushes with ISSUE-239), with their tests,
 listing they shipped (`testing/adaptersAsShipped.ts`), and the router cases that served a provider not yet moved
 through the adapters lost those statements (`docs/test-removals.md`). The new canary
 `lint-canaries/R16-deleted-shape-adapters` proves an import of a deleted adapter's path fails lint (TC-240-03).
+
+## End of cut 4: the id bridge, the end-first adapter, the registry feed and the ask relay (ISSUE-241)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 4b parity run above, `pnpm vitest run
+src/ui-main/ipc/ipc-routing.contract.test.ts` (`describe('after the 4b retirement')`, TC-241-02),
+`src/host/wiring/flows/crew.flow.test.ts` (B-M41 answers `METHOD_NOT_FOUND`, TC-241-01), the two L2 flow cases below
+(TC-241-03), `pnpm test:canaries` and the census against the merge base. Deleted in one work unit (`21` §2 4b "Legacy
+deleted"): `LegacyDwarfIdBridge`, `LegacyEndFirstAdapter`, `LegacyAgentRegistryFeed`, `LegacyAskRelay` and
+`LegacyAnswerShapeAdapter` with `LegacyRuntimeSurface`, the row-shape helpers and their tests; their composition in
+`src/ui-main/index.ts` and their rows of `LEGACY_BRIDGE_ADAPTERS` (the earlier releases' tables keep them as they
+shipped, `testing/adaptersAsShipped.ts`); A-40 and A-41's `legacy` routes (foreman decision D2) and the root's answer
+qualifier `answerDwarf.dispatch.ts`; B-M41 `strangler.dwarfIdentities` (its `methods.ts` entry, `contracts/wire/strangler.ts`,
+the handler, its role and the crew's strangler-only `presentIdentities()`), whose documented lifetime ended with the
+bridge (`14` §2.3 AMENDMENT-8, §6.5), so no contract changed; the renderer's legacy ask overlay (`useDwarfQuestion`
+reads the Host source only); today's delegation service, Jev stores and router, OpenCode password store and answer
+port, loopback hook listener and OpenCode plugin channel in `LegacyRuntimeRoute.ts`, which no route reached any more;
+and the three e2e cases that proved the legacy end first (cut-0 `stop-all-legacy-first`, cut-1
+`remove-mine-legacy-first`, cut-3a `stop-legacy-launched`). The new canary `lint-canaries/R16-deleted-dwarf-id-bridge`
+proves an import of a deleted bridge fails lint. No rollback past this point (`rollback.md`).
+
+The two consequences recorded above for this issue, now in the tree:
+
+| Behaviour                                          | Until this issue                                                                                  | From this issue                                                                                                                                               | Evidence                                                                                                                                                                                                   |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A question of a person-launched Codex session      | a card through `LegacyAskRelay`'s `legacy:` id, answered by today's runtime                       | no card, and the dwarf's status stays as the observation reports it (ADR-011 item 4)                                                                          | `src/host/wiring/flows/observation.flow.test.ts` "[ADR-011] a question of a person-launched Codex session opens no card …"; `useDwarfQuestion.test.ts` "… a legacy: ask on the facade board opens no card" |
+| A session the old app launched that is still alive | ended by today's identity-checked kill before Stop dwarf, Remove mine and Stop everything relayed | DwarfAI can no longer end it: Stop dwarf answers `could-not-end` with the `no-identity` cause (`15` §5), and Stop everything and Remove mine leave it running | `src/host/wiring/flows/stopDwarf.test.ts` "[ADR-014] Stop dwarf on a still-running session the old app launched reports could-not-end with the no-identity cause"; `e2e/cut-0/tray-stop-everything.e2e.ts` |

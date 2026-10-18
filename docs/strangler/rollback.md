@@ -221,6 +221,13 @@ launcher that refuses it and A-27, A-P3, A-P4 to handlers that no longer exist: 
 (`ROLLS_FORWARD_ONLY`, `src/ui-main/ipc/rollbackTable.ts`; `REMOVED_BY_THE_LAST_PROVIDER_STEP` is deleted), and 4b
 rolls forward only (`21` §2.1 item 4).
 
+**End of cut 4 (ISSUE-241): no rollback past this point.** From the ISSUE-241 commits `LegacyDwarfIdBridge`,
+`LegacyEndFirstAdapter`, `LegacyAgentRegistryFeed`, `LegacyAskRelay`, `LegacyAnswerShapeAdapter` and B-M41 are gone, so
+no build can route A-40/A-41 to today's runtime again or end a session the old app launched before the Host acts: the
+release table has A-40/A-41's unqualified `host` route only, and the earlier tables that named the bridges are kept only
+as they shipped, for the router tests (`src/ui-main/ipc/testing/adaptersAsShipped.ts`, `testing/cut4aRoutes.ts`). Cut 4
+rolls forward only (`21` §2.1 item 4).
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
