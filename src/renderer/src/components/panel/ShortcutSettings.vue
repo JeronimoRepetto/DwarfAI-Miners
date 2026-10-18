@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, useId } from 'vue'
-import { DEFAULT_TOGGLE_ACCELERATOR, formatAccelerator } from '../../../../shared/accelerator'
+import { DEFAULT_TOGGLE_ACCELERATOR, formatAccelerator } from '@dwarfai/contracts'
 import type { ShortcutState } from '../../types'
 import ActionButton from '../controls/ActionButton.vue'
 import KeyCap from './KeyCap.vue'

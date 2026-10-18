@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
+import { DEFAULT_TOGGLE_ACCELERATOR } from '@dwarfai/contracts'
 import type { ShortcutState } from '../types'
 import { useToggleShortcut } from './useToggleShortcut'
 
