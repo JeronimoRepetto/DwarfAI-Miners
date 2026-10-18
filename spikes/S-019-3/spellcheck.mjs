@@ -130,7 +130,10 @@ async function packaged(args, app) {
     hostStarted: Boolean(identity),
     cleared,
     netLog: summary,
-    clearedAfter: await clearState({ appDirs })
+    clearedAfter: await clearState({
+      appDirs,
+      logsTo: { outDir: args.out, label: 'S-019-3-packaged' }
+    })
   })
   rmSync(work, { recursive: true, force: true })
   console.log(

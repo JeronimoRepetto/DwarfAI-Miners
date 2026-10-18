@@ -180,7 +180,13 @@ jobs:
           case "$RUNNER_OS" in
             Windows) node scripts/ci/run-unelevated.mjs -- node spikes/S-019-3/spellcheck.mjs packaged --find "$(ls -d spike-work/extracted/*-win-x64.zip)" --out spike-evidence/S-019-3 ;;
             macOS) node spikes/S-019-3/spellcheck.mjs packaged --find "$(ls -d spike-work/extracted/*-arm64.zip)" --out spike-evidence/S-019-3 ;;
-            Linux) xvfb-run --auto-servernum node spikes/S-019-3/spellcheck.mjs packaged --find release/linux-unpacked --out spike-evidence/S-019-3 ;;
+            # The AppImage, not linux-unpacked: run 39130693732 showed linux-unpacked's chrome-sandbox is not root-owned
+            # with mode 4755, so Chromium aborts there; the AppImage and the deb install start (SP-03).
+            Linux)
+              appimage=$(ls release/*.AppImage)
+              chmod +x "$appimage"
+              xvfb-run --auto-servernum node spikes/S-019-3/spellcheck.mjs packaged --app "$appimage" --out spike-evidence/S-019-3
+              ;;
           esac
 
       - name: SP-03 versioned copy per layout

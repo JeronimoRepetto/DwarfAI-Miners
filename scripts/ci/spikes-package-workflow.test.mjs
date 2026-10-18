@@ -55,6 +55,16 @@ describe('packaging spike lane (ISSUE-328)', () => {
     }
   })
 
+  // Run 39130693732: Chromium aborted in linux-unpacked, whose chrome-sandbox is not root-owned with mode 4755; the
+  // AppImage and the installed deb started on the same image.
+  it('[S-019-3] starts the packaged Linux app for the traffic capture from the AppImage, not linux-unpacked', () => {
+    const traffic = steps.find((step) => step.startsWith('name: S-019-3 network traffic'))
+    expect(traffic, 'the S-019-3 packaged step').toBeDefined()
+    const linux = traffic?.slice(traffic.indexOf('Linux)')) ?? ''
+    expect(linux).toMatch(/spellcheck\.mjs packaged --app "\$appimage"/)
+    expect(traffic).not.toContain('linux-unpacked')
+  })
+
   it('[S-019-3, SP-03] uploads only the evidence folder, kept at most seven days, and publishes nothing', () => {
     const uploads = steps.filter((step) => step.includes('actions/upload-artifact@'))
     expect(uploads).toHaveLength(1)

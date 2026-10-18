@@ -255,18 +255,86 @@ export function killTree(pid) {
 }
 
 /**
- * Ends every DwarfAI process (the Host by its identity file, then any process running from `appDirs` or the copy
- * root), then deletes the app data folders and the Host copy root. Returns what it removed.
+ * Whether a process runs from under one of `roots` (lower-cased, resolved). The command line is read too: on macOS
+ * `ps` gives no separate executable path, and the one taken from the command line stops at the first space
+ * (`~/Library/Application Support/...`).
  */
-export async function clearState({ appDirs = [] } = {}) {
+function runsUnder(p, roots) {
+  const candidates = [p.executable, (p.commandLine || '').replace(/^"/, '')].map((value) =>
+    (value || '').toLowerCase()
+  )
+  return roots.some((root) => candidates.some((value) => value.startsWith(root)))
+}
+
+/**
+ * Ends every process running from under `dirs`, each one alone (never its tree): the UI and its helpers of an
+ * installed app, while the Host, which runs from the copy root, lives on. Returns the pids it ended.
+ */
+export function endProcessesUnder(dirs) {
+  const roots = dirs.map((dir) => path.resolve(dir).toLowerCase())
+  const ended = []
+  for (const p of processes()) {
+    if (p.pid === process.pid || !runsUnder(p, roots)) continue
+    try {
+      if (PLATFORM === 'win32') {
+        execFileSync('taskkill', ['/PID', String(p.pid), '/F'], { stdio: 'ignore' })
+      } else process.kill(p.pid, 'SIGKILL')
+      ended.push(p.pid)
+    } catch {
+      // Already gone.
+    }
+  }
+  return ended
+}
+
+/**
+ * Copies the last `maxLines` lines of every product log file (ADR-026: `<app data>/logs/`, written by the UI and
+ * the Host, allowlisted fields only) into `<outDir>/product-logs/<label>/`, scrubbed, so a run that ends before the
+ * Host starts still shows why. Returns the files written (relative to `outDir`).
+ */
+export function saveProductLogs(outDir, label, maxLines = 400) {
+  const written = []
+  // `logs/` sits in the UI's data folder, or one level down (`<userData>/host/logs`): look up to three levels deep.
+  const logDirs = []
+  const walk = (root, dir, depth) => {
+    if (depth > 3 || !existsSync(dir)) return
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const full = path.join(dir, entry.name)
+      if (entry.name === 'logs') logDirs.push({ root, logs: full })
+      else walk(root, full, depth + 1)
+    }
+  }
+  for (const dir of [...dwarfaiDataDirs(), path.dirname(copyRoot())]) walk(dir, dir, 0)
+  for (const { root, logs } of logDirs) {
+    const prefix = path.relative(path.dirname(root), logs).split(path.sep).join('_')
+    for (const name of readdirSync(logs).sort()) {
+      const file = path.join(logs, name)
+      if (!statSync(file).isFile()) continue
+      const lines = readFileSync(file, 'utf8').split(/\r?\n/)
+      const target = path.join(outDir, 'product-logs', label, `${prefix}_${name}`)
+      mkdirSync(path.dirname(target), { recursive: true })
+      writeFileSync(target, scrub(lines.slice(-maxLines).join('\n')))
+      written.push(path.relative(outDir, target).split(path.sep).join('/'))
+    }
+  }
+  return written
+}
+
+/**
+ * Ends every DwarfAI process (the Host by its identity file, then any process running from `appDirs` or the copy
+ * root), then deletes the app data folders and the Host copy root. With `logsTo: { outDir, label }` it first saves
+ * the product logs (`saveProductLogs`). Returns what it removed.
+ */
+export async function clearState({ appDirs = [], logsTo = null } = {}) {
   const identity = readHostIdentity()
   if (identity) killTree(identity.pid)
   const roots = [...appDirs, copyRoot()].map((dir) => path.resolve(dir).toLowerCase())
   for (const p of processes()) {
-    const exe = (p.executable || '').toLowerCase()
-    if (p.pid !== process.pid && roots.some((root) => exe.startsWith(root))) killTree(p.pid)
+    if (p.pid !== process.pid && runsUnder(p, roots)) killTree(p.pid)
   }
   await sleep(1000)
+  if (logsTo) saveProductLogs(logsTo.outDir, logsTo.label)
   const removed = []
   for (const dir of [...dwarfaiDataDirs(), path.dirname(copyRoot())]) {
     if (!existsSync(dir)) continue
@@ -329,11 +397,14 @@ export function launch(executable, args, { logFile, env = process.env } = {}) {
 export function scrub(text) {
   const user = userInfo().username
   return scrubText(text, [
+    // Windows keeps TEMP in its 8.3 short form (`C:\Users\DWARFA~1\...`), which the home folder does not match.
+    [process.env.TEMP, '<temp>'],
+    [process.env.TMP, '<temp>'],
     [homedir(), '<home>'],
     [process.env.LOCALAPPDATA, '<localappdata>'],
     [process.env.APPDATA, '<appdata>'],
-    [hostname(), '<host>'],
-    [user.length >= 4 ? user : '', '<user>']
+    [hostname(), '<host>', { word: true }],
+    [user.length >= 4 ? user : '', '<user>', { word: true }]
   ])
 }
 
