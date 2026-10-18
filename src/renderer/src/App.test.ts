@@ -22,7 +22,7 @@ import { panelLeaveBoundMs } from './lib/shell/panelMotion'
 import { dockReplaceMotion, dockWindowMotion } from './lib/shell/dockMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { useAgentLaunch } from './composables/useAgentLaunch'
-import { useDwarfKicking } from './composables/useDwarfKicking'
+import { useDwarfStopping } from './composables/useDwarfStopping'
 import { RESULT_VISIBLE_MS, useDwarfMessaging } from './composables/useDwarfMessaging'
 import { REACTION_WINDOW_MS } from './lib/delivery/reaction'
 import { restoreLaunchView, useView } from './composables/useView'
@@ -186,7 +186,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       ok: true,
       value: { ok: true, value: { messageId: '01920000-0000-7000-8000-0000000005a1' } }
     }),
-    kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    // AMENDED for ISSUE-183 (was: A-26 `kickDwarf`, which left the facade in 3a): "Stop dwarf…" is A-N29.
+    stopDwarf: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } }),
     // A promoted kick retires its dwarf through this (#46). Stubbed rather
     // than made optional in the composable: a missing member should fail a
     // test loudly, not be swallowed at every call site.
@@ -2143,7 +2144,7 @@ describe('App exclusive selection (#165)', () => {
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
   })
 
   async function openCrewedMine() {
@@ -2302,7 +2303,7 @@ describe('App mine history', () => {
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
   })
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
@@ -4164,7 +4165,7 @@ describe('App message dock (#635)', () => {
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
     useAgentLaunch().close()
   })
 

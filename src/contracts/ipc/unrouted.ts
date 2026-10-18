@@ -77,3 +77,13 @@ export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
   'agent:models': 'cut-3a',
   'agent:launchHeld': 'cut-3a'
 }
+
+/**
+ * The RETIRE rows whose preload member leaves with their route, with that step (ISSUE-183): the action itself is removed
+ * for every provider and nothing replaces it (14 §2.1 A-26 "RETIRE: the action is removed; not a rename"; "Stop
+ * dwarf…" is the different, NEW A-N29), so the generated facade and the fake `window.api` drop the member from that
+ * step on. Every other retired row keeps its member until its step's deletion issue (21 §2 "Retired rows").
+ */
+export const MEMBER_REMOVED: Partial<Record<ChannelKey, StepId>> = {
+  'dwarf:kick': 'cut-3a'
+}

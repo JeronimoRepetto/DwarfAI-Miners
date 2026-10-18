@@ -82,7 +82,7 @@ function installHost(answers: Answers): Host {
   const retried: RecoveryActionParams[] = []
   const dismissed: RecoveryActionParams[] = []
   const stopDwarf = vi.fn(() => Promise.reject(new Error('Dismiss never ends a dwarf')))
-  const kickDwarf = vi.fn(() => Promise.reject(new Error('Dismiss never ends a dwarf')))
+  // AMENDED for ISSUE-183 (was: also `kickDwarf`): A-26 left the facade in 3a, so it cannot be called at all.
   const retireDwarf = vi.fn()
   const requestStopEverything = vi.fn()
   const api = createFakeWindowApi({
@@ -106,7 +106,6 @@ function installHost(answers: Answers): Host {
       return answers.dismiss?.() ?? Promise.reject(new Error('no dismiss answer'))
     }) as unknown as Api['dismissRecovery'],
     stopDwarf: stopDwarf as unknown as Api['stopDwarf'],
-    kickDwarf: kickDwarf as unknown as Api['kickDwarf'],
     retireDwarf: retireDwarf as unknown as Api['retireDwarf'],
     requestStopEverything: requestStopEverything as unknown as Api['requestStopEverything']
   })
@@ -119,7 +118,7 @@ function installHost(answers: Answers): Host {
     requests,
     retried,
     dismissed,
-    enders: [stopDwarf, kickDwarf, retireDwarf, requestStopEverything]
+    enders: [stopDwarf, retireDwarf, requestStopEverything]
   }
 }
 

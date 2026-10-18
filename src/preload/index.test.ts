@@ -54,7 +54,8 @@ describe('preload always-on-top contract', () => {
     expect(typeof api.onMinesUpdated).toBe('function')
     expect(typeof api.activateDwarf).toBe('function')
     expect(typeof api.sendDwarfText).toBe('function')
-    expect(typeof api.kickDwarf).toBe('function')
+    // AMENDED for ISSUE-183 (was: `kickDwarf` present): A-26 left the facade in 3a; "Stop dwarf…" is A-N29.
+    expect('kickDwarf' in api).toBe(false)
     expect(typeof api.retireDwarf).toBe('function')
     expect(typeof api.getToggleShortcut).toBe('function')
     expect(typeof api.setToggleShortcut).toBe('function')

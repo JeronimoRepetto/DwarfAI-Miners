@@ -124,8 +124,6 @@ export interface DwarfAiMinersApi {
   describeDwarfAttachments: (
     request: TargetRequest<'dwarf:attachments:describe'>
   ) => Promise<TargetResult<'dwarf:attachments:describe'>>
-  /** A-26 · `dwarf:kick` · invoke · RETIRE · target shape */
-  kickDwarf: (request: TargetRequest<'dwarf:kick'>) => Promise<TargetResult<'dwarf:kick'>>
   /** A-27 · `dwarf:retire` · send · RETIRE · today shape */
   retireDwarf: (request: TodayRequest<'dwarf:retire'>) => void
   /** A-28 · `app:build` · invoke · KEEP · target shape */
@@ -382,7 +380,6 @@ const api: DwarfAiMinersApi = {
         (Array.isArray(request) ? request : []).map((path: unknown) => textOf(path))
       )
     ),
-  kickDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:kick', request)),
   retireDwarf: (request) => sendOrDrop(() => ipcRenderer.send('dwarf:retire', textOf(request))),
   getAppBuild: () => invokeOrReject(() => ipcRenderer.invoke('app:build')),
   getFeatureFlags: () => invokeOrReject(() => ipcRenderer.invoke('app:features')),

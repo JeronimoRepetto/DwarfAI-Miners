@@ -10,7 +10,7 @@ import MenuButton from './components/overlay/MenuButton.vue'
 import ModalDialog from './components/overlay/ModalDialog.vue'
 import { MENU_STOP } from './lib/message/panelChrome'
 import { useAgentLaunch } from './composables/useAgentLaunch'
-import { useDwarfKicking } from './composables/useDwarfKicking'
+import { useDwarfStopping } from './composables/useDwarfStopping'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
@@ -146,7 +146,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     sendDwarfText: vi.fn(() => Promise.resolve(accepted())),
     // The verdict of a message main HELD (#457), subscribed unconditionally on mount.
     onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
-    kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    // AMENDED for ISSUE-183 (was: A-26 `kickDwarf`, which left the facade in 3a): "Stop dwarf…" is A-N29.
+    stopDwarf: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } }),
     retireDwarf: vi.fn(),
     // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): A-40/A-41 answer the 14 `IpcResult<AnswerOutcome>`.
     answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
@@ -495,7 +496,7 @@ beforeEach(() => {
   // left standing would be drawn under the next test's dwarf.
   useDwarfPaging().clear()
   useDwarfMessaging().clearAll()
-  useDwarfKicking().clearAll()
+  useDwarfStopping().clearAll()
   useDwarfQuestion().clearAll()
   useAgentLaunch().close()
 })
@@ -600,14 +601,10 @@ describe('the docked message panel', () => {
     )
   })
 
-  it('kicks through the panel, and the verdict lands where it was asked for', async () => {
-    // AMENDED for #383 (was: relying on the default kickDwarf stub's
-    // `via: 'terminal'`, asserting the status contained 'Kick handed over via
-    // terminal' — true before #329/#383 made the terminal tier end the
-    // session outright, which now reports "Ended the session…" instead. This
-    // test's point is that a click lands its verdict on this exact panel, not
-    // the terminal tier's own wording, so a channel that still only asks,
-    // claude-relay, keeps that point covered.)
+  // AMENDED for ISSUE-183 (was: "kicks through the panel, and the verdict lands where it was asked for", A-26 and its
+  // two-phase verdict): Stop dwarf… is A-N29, and its request claims nothing about the dwarf, which leaves only on the
+  // Host's `dwarf.departed` (ADR-033; 14 §4.3 rule 6).
+  it('stops through the panel with Stop dwarf…, and the request claims nothing the Host did not say', async () => {
     const { wrapper, api } = await openOn(
       [
         {
@@ -620,21 +617,19 @@ describe('the docked message panel', () => {
           }
         }
       ],
-      'claude:s1',
-      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
+      'claude:s1'
     )
 
     // AMENDED for #635 (was: one click since #293): Stop dwarf… in the ⋯ menu, confirmed first.
     await stopDwarf(wrapper)
 
-    expect(api.kickDwarf).toHaveBeenCalledWith({ dwarfId: 'claude:s1' })
-    // Handed over, never "reacted": only a session SEEN stopping earns that.
-    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).toContain(
-      'Kick handed over via claude-relay'
-    )
-    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).not.toContain(
-      'the session reacted'
-    )
+    expect(api.stopDwarf).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      requestId: expect.any(String)
+    })
+    // The answer says nothing of the dwarf: it is still drawn until the Host says it departed.
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
+    expect(wrapper.find('button.dm-dwarf').exists()).toBe(true)
   })
 
   /*
@@ -795,44 +790,10 @@ describe('handing the delivery verdicts to the mine', () => {
    */
 
   /*
-   * MOVED from MineScene.test.ts's 'MineScene reaction feed' block (#162),
-   * whole: the two stores are fed here now, and a scene that folded the poll
-   * in from the other window could never resolve a watch this one opened.
+   * REMOVED for ISSUE-183, stated rather than passing unseen (docs/test-removals.md): "promotes a delivered kick when
+   * the next poll shows the session stopped" (#162, #383). A-26 and its two-phase verdict are retired in 3a; "Stop
+   * dwarf…" (A-N29) claims nothing, and its dwarf leaves only on the Host's `dwarf.departed`.
    */
-  it('promotes a delivered kick when the next poll shows the session stopped', async () => {
-    // AMENDED for #383 (was: relying on the default kickDwarf stub's
-    // `via: 'terminal'` to promote to 'reacted' on the next poll — true
-    // before #329/#383 made the terminal tier end the session outright,
-    // which now stays 'delivered' forever with nothing watched. This test's
-    // point is the promotion mechanism itself, so it keeps that covered
-    // through a channel that still only asks, claude-relay.)
-    const { wrapper, api } = await openOn(
-      [
-        {
-          ...OBSERVED_DWARF,
-          capabilities: {
-            sendText: 'terminal',
-            cancel: 'terminal',
-            adjustEffort: null,
-            attach: 'terminal'
-          }
-        }
-      ],
-      'claude:s1',
-      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
-    )
-    // AMENDED for #635: the kick is Stop dwarf… in the ⋯ menu, confirmed first.
-    await stopDwarf(wrapper)
-    expect(useDwarfKicking().stateFor('claude:s1')?.phase).toBe('delivered')
-
-    pushSnapshot(api, {
-      mines: [{ ...MINE, dwarfs: [{ ...OBSERVED_DWARF, status: 'waiting' }] }],
-      tokensObserved: 0
-    })
-    await flushPromises()
-
-    expect(useDwarfKicking().stateFor('claude:s1')?.phase).toBe('reacted')
-  })
 
   it('promotes a delivered message when the next poll shows new output', async () => {
     const { wrapper, api } = await openOn(
@@ -853,37 +814,18 @@ describe('handing the delivery verdicts to the mine', () => {
     expect(useDwarfMessaging().stateFor('claude:s1')?.phase).toBe('reacted')
   })
 
+  // AMENDED for ISSUE-183 (was: a kick's verdict left at delivered while nothing about the session changed): "Stop
+  // dwarf…" (A-N29) is a request, never a verdict of its own; with the session unchanged nothing about it changes.
   it('leaves a delivery alone while nothing about the session changed', async () => {
-    // AMENDED for #383 (was: relying on the default kickDwarf stub's
-    // `via: 'terminal'`. Since the terminal tier now ends the session
-    // outright it opens no reaction watch at all, so this assertion would
-    // hold trivially — nothing was ever being watched — rather than
-    // exercising the "watched, but nothing changed" path this test is
-    // actually about. A channel that still only asks, claude-relay, keeps
-    // that path genuinely covered.)
-    const { wrapper, api } = await openOn(
-      [
-        {
-          ...OBSERVED_DWARF,
-          capabilities: {
-            sendText: 'terminal',
-            cancel: 'terminal',
-            adjustEffort: null,
-            attach: 'terminal'
-          }
-        }
-      ],
-      'claude:s1',
-      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
-    )
-    // AMENDED for #635: the kick is Stop dwarf… in the ⋯ menu, confirmed first.
+    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
     await stopDwarf(wrapper)
 
     pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
     await flushPromises()
 
-    // Delivered is what happened; 'reacted' would be a claim nothing supports.
-    expect(useDwarfKicking().stateFor('claude:s1')?.phase).toBe('delivered')
+    // Idle is what the Host said once the stop was answered; nothing else is claimed.
+    expect(useDwarfStopping().viewOf('claude:s1')).toEqual({ kind: 'idle' })
+    expect(wrapper.find('button.dm-dwarf').exists()).toBe(true)
   })
 })
 

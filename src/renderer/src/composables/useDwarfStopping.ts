@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import type { DwarfId, StopUnavailableReason } from '@dwarfai/contracts'
 import { mintRequestId } from './requestIds'
+import { useHostConnection } from './useHostConnection'
 import { useMines } from './useMines'
 
 /*
@@ -61,6 +62,8 @@ export function useDwarfStopping(deps: DwarfStoppingDeps = {}) {
   }
 
   async function stop(dwarfId: string): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves (ISSUE-183, as the kick did).
+    if (useHostConnection().readOnly.value) return
     if (viewOf(dwarfId).kind === 'request-sent') return
     requests.set(dwarfId, { kind: 'request-sent' })
     let next: DwarfStopView = { kind: 'unanswered' }

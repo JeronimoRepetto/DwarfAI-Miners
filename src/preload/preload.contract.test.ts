@@ -12,13 +12,15 @@ import { beforeAll, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import type { z } from 'zod'
 import {
   CHANNELS,
+  MEMBER_REMOVED,
   PRELOAD_HELPERS,
   ROW_IDS,
+  STEP_ORDER,
   TODAY_SHAPES,
   type ChannelKey
 } from '@dwarfai/contracts'
 import type { TODAY } from '../contracts/ipc/todayShapes'
-import { ROUTES } from '../ui-main/ipc/routes'
+import { ROUTES, ROUTES_RELEASE } from '../ui-main/ipc/routes'
 import type { DwarfAiMinersApi } from './index'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..')
@@ -96,7 +98,14 @@ const catalog14: CatalogRow[] = JSON.parse(
     'utf8'
   )
 ).rows
-const KEYS = Object.keys(CHANNELS) as ChannelKey[]
+/*
+ * AMENDED for ISSUE-183 (was: every registry key): a RETIRE row whose member left with its route (`MEMBER_REMOVED`, A-26
+ * in 3a) has no member from that step on, so the members are those of every other row.
+ */
+const KEYS = (Object.keys(CHANNELS) as ChannelKey[]).filter((key) => {
+  const step = MEMBER_REMOVED[key]
+  return step === undefined || STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf(ROUTES_RELEASE)
+})
 const helpers: readonly string[] = PRELOAD_HELPERS
 
 /** Whether this release's routes of a row keep today's shape (21 §1 item 2a). */
@@ -144,7 +153,11 @@ const REGISTRY = {
   todayShapes: TODAY_SHAPES,
   rowIds: ROW_IDS,
   helpers: PRELOAD_HELPERS,
-  routes: ROUTES
+  routes: ROUTES,
+  // AMENDED for ISSUE-183: the generator drops a member that left with its route (`MEMBER_REMOVED`).
+  release: ROUTES_RELEASE,
+  stepOrder: STEP_ORDER,
+  memberRemoved: MEMBER_REMOVED
 }
 const lf = (text: string): string => text.replace(/\r\n/g, '\n')
 

@@ -56,6 +56,7 @@ import { CHANNELS, PRELOAD_HELPERS, todayShapeOf } from './channels'
 import type { ChannelSpec } from './channelSpec'
 import { ROW_IDS } from './rowIds'
 import { TODAY_SHAPES } from './todayShapes'
+import { MEMBER_REMOVED, RETIRED } from './unrouted'
 import type {
   ActivateDwarfRequest,
   ConsoleOpenResult,
@@ -970,5 +971,24 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     const answer = registry['tray:stopEverything:confirm']?.response
     expect(answer?.safeParse({ ok: true, value: { ended: [U1], failed: [U2] } }).success).toBe(true)
     expect(answer?.safeParse({ ok: true, value: { ended: [U1] } }).success).toBe(false)
+  })
+})
+
+// ADDED for ISSUE-183: A-26 `kickDwarf` (14 §2.1 RETIRE: "the action is removed; not a rename"; "Stop dwarf…" is the
+// different, NEW A-N29) leaves the generated facade with its route in 3a, for every provider.
+describe('A-26 retired in 3a (ISSUE-183)', () => {
+  const ROOT = resolve(import.meta.dirname, '..', '..', '..')
+  const generated = (file: string): string => readFileSync(resolve(ROOT, file), 'utf8')
+
+  it('[ADR-019] A-26 is retired in 3a and the generated preload has no kickDwarf member', () => {
+    expect(CHANNELS['dwarf:kick'].status).toBe('retired')
+    expect(RETIRED['dwarf:kick']).toBe('cut-3a')
+    expect(MEMBER_REMOVED).toEqual({ 'dwarf:kick': 'cut-3a' })
+    for (const file of ['src/preload/index.ts', 'src/contracts/ipc/testing/fakeWindowApi.ts']) {
+      expect(generated(file), file).not.toMatch(/\bkickDwarf\b/)
+      expect(generated(file), file).not.toMatch(/'dwarf:kick'/)
+    }
+    // A-N29 is the one stop, and it stays.
+    expect(generated('src/preload/index.ts')).toMatch(/\bstopDwarf\b/)
   })
 })

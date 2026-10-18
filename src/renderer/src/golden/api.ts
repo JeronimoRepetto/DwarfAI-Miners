@@ -157,7 +157,6 @@ export function goldenApi(sample: GoldenSample): Api {
     pathForDroppedFile: () => '',
     chooseDwarfAttachments: refuse('chooseDwarfAttachments'),
     describeDwarfAttachments: refuse('describeDwarfAttachments'),
-    kickDwarf: refuse('kickDwarf'),
     launchAgent: refuse('launchAgent'),
     onLaunchFailed: unsubscribe,
     // A-36 in its 14 shape from the step-3a switch (ISSUE-001).

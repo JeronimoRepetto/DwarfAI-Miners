@@ -32,7 +32,6 @@ export const WINDOW_API_MEMBERS = {
   sendDwarfText: 'invoke',
   chooseDwarfAttachments: 'invoke',
   describeDwarfAttachments: 'invoke',
-  kickDwarf: 'invoke',
   retireDwarf: 'send',
   getAppBuild: 'invoke',
   getFeatureFlags: 'invoke',

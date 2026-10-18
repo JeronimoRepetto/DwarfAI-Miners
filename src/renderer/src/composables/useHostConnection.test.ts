@@ -11,7 +11,7 @@ import {
   type DwarfQuestion
 } from '../types'
 import { useAgentLaunch } from './useAgentLaunch'
-import { useDwarfKicking } from './useDwarfKicking'
+import { useDwarfStopping } from './useDwarfStopping'
 import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
 import { useHostConnection } from './useHostConnection'
@@ -97,7 +97,8 @@ beforeEach(() => {
   useHostConnection().stop()
   useDwarfMessaging().clearAll()
   useDwarfQuestion().clearAll()
-  useDwarfKicking().clearAll()
+  // AMENDED for ISSUE-183 (was: the kick store): Stop dwarf… is A-N29's store.
+  useDwarfStopping().clearAll()
 })
 
 afterEach(() => {
@@ -182,9 +183,10 @@ describe('useHostConnection', () => {
     },
     {
       name: 'a stop',
-      member: 'kickDwarf',
-      answer: { delivered: true, via: 'terminal' },
-      act: () => useDwarfKicking().kick('dwarf-1')
+      // AMENDED for ISSUE-183 (was: today's A-26 kick): "Stop dwarf…" is A-N29, the only stop.
+      member: 'stopDwarf',
+      answer: { ok: true, value: { ok: true, value: {} } },
+      act: () => useDwarfStopping().stop('dwarf-1')
     },
     {
       name: 'a launch',

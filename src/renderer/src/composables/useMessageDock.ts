@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { DwarfId } from '@dwarfai/contracts'
 import { useAgentLaunch } from './useAgentLaunch'
-import { useDwarfKicking } from './useDwarfKicking'
+import { useDwarfStopping } from './useDwarfStopping'
 import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfPaging } from './useDwarfPaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
@@ -18,7 +18,6 @@ import type {
   DwarfAttachment,
   DwarfDeliveryReport,
   DwarfFeedResult,
-  DwarfKickState,
   DwarfPermissionDecision,
   DwarfSendState,
   FeedMessage,
@@ -82,7 +81,11 @@ export function useMessageDock() {
    * dwarf the pages belong to.
    */
   const { state: paging, note: pagingNote, hold: holdOlderPages, olderFromHost } = useDwarfPaging()
-  const { state: kickingState, kick, observe: observeKicks } = useDwarfKicking()
+  /*
+   * "Stop dwarf…" (A-N29; ISSUE-179, ISSUE-183): it replaces the kick (A-26, retired in 3a for every provider), ends
+   * the dwarf's whole session and is unavailable only while the Host says a stop is already in flight (INV-31).
+   */
+  const stopping = useDwarfStopping()
   const {
     state: questionState,
     answer: answerDwarfQuestion,
@@ -236,7 +239,6 @@ export function useMessageDock() {
     (board) => {
       const dwarfs = board.flatMap((mine) => mine.dwarfs)
       observeSends(dwarfs)
-      observeKicks(dwarfs)
     },
     { immediate: true }
   )
@@ -329,7 +331,6 @@ export function useMessageDock() {
     const failed = failedSends()
     return {
       send: messagingState.byDwarfId as Record<string, DwarfSendState>,
-      kick: kickingState.byDwarfId as Record<string, DwarfKickState>,
       ...(Object.keys(failed).length === 0 ? {} : { failed })
     }
   })
@@ -385,9 +386,17 @@ export function useMessageDock() {
     }
   }
 
-  /** Same reasoning as sendText: fire-and-observe, the verdict lands on the dwarf itself. */
-  function kickDwarf(dwarf: Dwarf): void {
-    void kick(dwarf.id)
+  /**
+   * Stop dwarf… (A-N29): the request is sent, and the dwarf walks out only on the Host's `dwarf.departed` (ADR-033;
+   * 14 §4.3 rule 6). AMENDED for ISSUE-183 (was: `kickDwarf`, A-26's interrupt, retired in 3a).
+   */
+  function stopDwarf(dwarf: Dwarf): void {
+    void stopping.stop(dwarf.id)
+  }
+
+  /** Whether Stop dwarf… is unavailable for this dwarf: only while a stop is already in flight (INV-31). */
+  function stopDisabled(dwarfId: string): boolean {
+    return stopping.disabled(dwarfId)
   }
 
   /**
@@ -544,7 +553,6 @@ export function useMessageDock() {
      * verdict is its bubble's and the dwarf's marker's (MESSAGE-QUESTIONS 20, 21).
      */
     messageStateFor,
-    kickingState,
     questionState,
     sentEchoes,
     sentEchoAttachments,
@@ -556,7 +564,8 @@ export function useMessageDock() {
     sendText,
     retryMessage,
     copyMessage,
-    kickDwarf,
+    stopDwarf,
+    stopDisabled,
     answerQuestion,
     answerQuestionInWords,
     decidePermission,
