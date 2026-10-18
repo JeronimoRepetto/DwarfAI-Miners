@@ -10,10 +10,14 @@
 //    `<hostDataDir>/run/mcp/<launchId>.cred` (RunDirCredentialFileStore's layout): the launchId is
 //    the file's name and nothing else, and hostDataDir is the folder three levels up. Any other path
 //    is refused before anything is read or connected.
-// 2. It reads at most MAX_CREDENTIAL_FILE_BYTES of the file, which must hold exactly the credential
-//    (32 bytes as 64 lower-case hex), computes the MCP endpoint's path from hostDataDir (ADR-013
-//    item 3 through `mcpEndpointFor`, the ADR-002 D2 rule of contracts/host-protocol/endpoint.ts),
-//    connects, and writes `McpHello {type:'hello', endpointGeneration:1, protocolVersion,
+// 2. It reads at most MAX_CREDENTIAL_FILE_BYTES of the file, which must hold exactly one layout of
+//    credentialFileLayout.ts: the credential (32 bytes as 64 lower-case hex) and the MCP endpoint's
+//    path the Host bound (foreman decision 2026-10-18), or, from a Host of the previous build, the
+//    credential alone. A named endpoint is used only when it is one the Host's own rule yields for
+//    this hostDataDir on this OS (`endpointAllowed`: ADR-013 item 3 through `mcpEndpointFor`, the
+//    ADR-002 D2 rule of contracts/host-protocol/endpoint.ts); anything else is refused before any
+//    connection. For the credential alone it computes the path from hostDataDir by the same rule.
+//    It connects and writes `McpHello {type:'hello', endpointGeneration:1, protocolVersion,
 //    role:'mcp', launchId, credential}` as its first bytes. It waits HELLO_OK_WAIT_MS for
 //    `hello.ok`; nothing from stdin is read before it.
 // 3. After `hello.ok` it moves newline-delimited JSON-RPC between its stdio and the endpoint: one
@@ -25,7 +29,7 @@
 //    over the 8 MiB frame cap (ADR-003 item 4) ends the relay.
 // 4. It exits when either side closes: 0 for a close (stdin's end first flushes the connection),
 //    non-zero for a failure (FM-039: AUTH_FAILED, a missing or unreadable file, an endpoint it cannot
-//    resolve or reach or that fails, no `hello.ok` in time, a malformed or oversize message, a
+//    resolve, accept or reach or that fails, no `hello.ok` in time, a malformed or oversize message, a
 //    stdout that fails). A failure writes one `shim-` segment line (19 §2: on error only,
 //    `proc: 'shim'`, subsystem `mcp-relay`) through contracts/logging's pure rules, into
 //    `<hostDataDir>/../logs` (ADR-026 item 1); never the credential, never a message (ADR-013
@@ -39,13 +43,15 @@
 // with the contracts caps), because the contracts codec turns a frame into a parsed value and back,
 // which would change a message's bytes.
 //
-// Linux risk (lead decision 2026-10-15, spike item): a provider that does not pass XDG_RUNTIME_DIR
-// to its stdio MCP servers makes the relay name the fallback socket while the Host bound the XDG
-// one; the relay then fails closed with `endpoint-unreachable`.
+// Linux (lead decision 2026-10-15, closed by the foreman decision of 2026-10-18): a provider does
+// not pass XDG_RUNTIME_DIR to its stdio MCP servers (15 §4 gives the relay entry two variables
+// only), so a relay that derived the endpoint named the fallback socket while the Host bound the
+// XDG one (CI run 39109490095). The relay now reads the endpoint from the credential file on every
+// OS and depends on no variable but DWARFAI_MCP_CREDENTIAL_FILE.
 import { createHash } from 'node:crypto'
 import { mkdir, open, readdir, rm, stat } from 'node:fs/promises'
 import { createConnection } from 'node:net'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, join, posix, win32 } from 'node:path'
 import type { Duplex, Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import type { McpHello } from '../../../../../../contracts/host-protocol/adr-003'
@@ -73,18 +79,20 @@ import { createNativeUserSid } from '../../../../../platform/endpoint/win-pipe/n
 import { createNodeEndpointFacts } from '../../../../../platform/endpoint/nodeEndpointEnv'
 import type { ReadOutcome } from '../../../../../platform/process/probe/types'
 import { mcpEndpointFor } from '../../../../../transport/mcpEndpoint/mcpEndpointPath'
+import { MAX_CREDENTIAL_FILE_BYTES, parseCredentialFile } from './credentialFileLayout'
 import { CREDENTIAL_FILE_VARIABLE, RELAY_ENTRY_FILE } from './relayEntry'
+
+export { MAX_CREDENTIAL_FILE_BYTES }
 
 /**
  * How long the relay waits for `hello.ok` after its McpHello: the ADR-003 item 5 hello budget (5 s,
  * the Host's own HELLO_TIMEOUT_MS). A Host that does not answer in it ends the relay.
  */
 export const HELLO_OK_WAIT_MS = 5_000
-/** The most of the credential file the relay reads: a credential is 64 bytes, nothing else fits. */
-export const MAX_CREDENTIAL_FILE_BYTES = 256
-
 const CREDENTIAL_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.cred$/
-const CREDENTIAL = /^[0-9a-f]{64}$/
+const PIPE_PREFIX = '\\\\.\\pipe\\dwarfai-mcp-'
+const PIPE_SUFFIX = /^[0-9a-f]{16}-([0-9a-f]{12})$/
+const MAC_RUN_DIR = '/Library/Application Support/'
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const ERRNO = /^E[A-Z0-9_]+$/
 const NEWLINE = 0x0a
@@ -94,6 +102,8 @@ const PREFIX_BYTES = 4
 
 export interface RelayDeps {
   env: Readonly<Record<string, string | undefined>>
+  /** Whose path and endpoint rules apply: the OS the relay runs on. */
+  platform: RelayPlatform
   /** Reads at most `maxBytes` (plus one, to tell a longer file) of the credential file as UTF-8. */
   readCredential(path: string, maxBytes: number): Promise<string>
   /** The MCP endpoint's path for a Host data dir (ADR-013 item 3). */
@@ -111,6 +121,8 @@ export interface RelayDeps {
   scheduler: Scheduler
 }
 
+export type RelayPlatform = 'win32' | 'darwin' | 'linux'
+
 /** How a relay ended: null for a close, else a fixed cause class (ADR-026 item 3) and an errno. */
 type Ending = { cause: string; errCode?: string } | null
 
@@ -121,7 +133,11 @@ interface CredentialPath {
 }
 
 /** The launchId and the Host data dir of `<hostDataDir>/run/mcp/<launchId>.cred`, or null. */
-function parseCredentialPath(path: string | undefined): CredentialPath | null {
+function parseCredentialPath(
+  path: string | undefined,
+  platform: RelayPlatform
+): CredentialPath | null {
+  const { basename, dirname, isAbsolute } = platform === 'win32' ? win32 : posix
   if (path === undefined || path === '' || !isAbsolute(path)) return null
   const name = CREDENTIAL_FILE.exec(basename(path))
   const mcpDir = dirname(path)
@@ -133,8 +149,9 @@ function parseCredentialPath(path: string | undefined): CredentialPath | null {
 /** Runs one relay to its end and answers its exit code. */
 export async function runRelay(deps: RelayDeps): Promise<number> {
   // No valid path: no folder to log into either, and nothing is read or connected.
-  const file = parseCredentialPath(deps.env[CREDENTIAL_FILE_VARIABLE])
+  const file = parseCredentialPath(deps.env[CREDENTIAL_FILE_VARIABLE], deps.platform)
   if (file === null) return 1
+  const paths = deps.platform === 'win32' ? win32 : posix
 
   const fail = async (cause: string, errCode?: string): Promise<number> => {
     const record: LogRecord = {
@@ -153,26 +170,36 @@ export async function runRelay(deps: RelayDeps): Promise<number> {
     }
     const line = toLogLine(record)
     if (typeof line === 'string') {
-      await deps.writeLog(join(dirname(file.hostDataDir), 'logs'), line)
+      await deps.writeLog(paths.join(paths.dirname(file.hostDataDir), 'logs'), line)
     }
     return 1
   }
 
-  let credential: string
+  let text: string
   try {
-    credential = await deps.readCredential(file.path, MAX_CREDENTIAL_FILE_BYTES)
+    text = await deps.readCredential(file.path, MAX_CREDENTIAL_FILE_BYTES)
   } catch {
     return fail('credential-unreadable')
   }
-  if (credential.length > MAX_CREDENTIAL_FILE_BYTES || !CREDENTIAL.test(credential)) {
-    return fail('credential-invalid')
-  }
+  const content = parseCredentialFile(text)
+  if (content === null) return fail('credential-invalid')
+  const { credential } = content
 
-  const endpoint = await deps.resolveEndpoint(file.hostDataDir)
-  if (!endpoint.ok) return fail('endpoint-unresolved')
+  let endpoint: string
+  if (content.endpoint === null) {
+    // A file a Host of the previous build wrote: the endpoint is derived as that build did.
+    const resolved = await deps.resolveEndpoint(file.hostDataDir)
+    if (!resolved.ok) return fail('endpoint-unresolved')
+    endpoint = resolved.value
+  } else {
+    if (!endpointAllowed(content.endpoint, file.hostDataDir, deps.platform)) {
+      return fail('endpoint-refused')
+    }
+    endpoint = content.endpoint
+  }
   let socket: Duplex
   try {
-    socket = await deps.connect(endpoint.value)
+    socket = await deps.connect(endpoint)
   } catch (error) {
     return fail('endpoint-unreachable', errnoOf(error))
   }
@@ -190,6 +217,48 @@ export async function runRelay(deps: RelayDeps): Promise<number> {
   socket.destroy()
   deps.stdin.pause()
   return ending === null ? 0 : fail(ending.cause, ending.errCode)
+}
+
+/**
+ * Whether `endpoint` is one the Host binds for `hostDataDir` on `platform`: the path `mcpEndpointFor`
+ * (the one ADR-002 D2 rule) yields for it, with the only input the relay cannot know taken from the
+ * endpoint itself (XDG_RUNTIME_DIR on Linux, the home folder and the volume's case rule on macOS,
+ * the user hash of the SID on Windows). A path another rule yields, one not written in the rule's
+ * normal form, or another user's or profile's endpoint, is refused.
+ */
+export function endpointAllowed(
+  endpoint: string,
+  hostDataDir: string,
+  platform: RelayPlatform
+): boolean {
+  if (platform === 'win32') {
+    if (!endpoint.startsWith(PIPE_PREFIX)) return false
+    const key = PIPE_SUFFIX.exec(endpoint.slice(PIPE_PREFIX.length))?.[1]
+    const own = mcpEndpointFor({ platform, hostDataDir, userSid: 'S-1-0-0', sha256 })
+    return key !== undefined && own.ok && own.value.path.endsWith(`-${key}`)
+  }
+  if (!posix.isAbsolute(endpoint)) return false
+  const candidates: Array<Parameters<typeof mcpEndpointFor>[0]> = []
+  if (platform === 'linux') {
+    candidates.push({ platform, hostDataDir, sha256 })
+    candidates.push({
+      platform,
+      hostDataDir,
+      xdgRuntimeDir: posix.dirname(posix.dirname(endpoint)),
+      sha256
+    })
+  } else {
+    const at = endpoint.lastIndexOf(MAC_RUN_DIR)
+    if (at <= 0) return false
+    const home = endpoint.slice(0, at)
+    for (const caseInsensitiveVolume of [false, true]) {
+      candidates.push({ platform, hostDataDir, home, caseInsensitiveVolume, sha256 })
+    }
+  }
+  return candidates.some((input) => {
+    const own = mcpEndpointFor(input)
+    return own.ok && own.value.path === endpoint
+  })
 }
 
 /** Relays until either side closes or fails. */
@@ -444,6 +513,8 @@ async function startRelay(): Promise<void> {
   try {
     code = await runRelay({
       env: process.env,
+      platform:
+        process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
       readCredential: readHead,
       resolveEndpoint: (hostDataDir) => resolveEndpoint(hostDataDir, appRoot),
       connect: connectTo,

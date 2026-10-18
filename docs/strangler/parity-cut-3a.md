@@ -105,6 +105,24 @@ complete in time (`07` machine 5B S5.19).
 | The Jev key status                          | A-47, and every Jev row that answers the state in force (A-51 on a refused payload), read today's key file through `safeStorage` | A-47 answers the Host's `SecretStatus('jev-key')` through `JevSettingsShapeAdapter`, so a refused A-51 (answered with A-47, `LEGACY_REFUSALS`) does too: with no usable OS secret store for the Host (`secretBackend: 'unavailable'`) it reads `encryption-unavailable` even where Electron's `safeStorage` could encrypt (seen on the macOS CI runner). The seam-A replay leaves such a row out by reading `ROUTES` | ADR-017 items 1, 5; `21` §3.1                                                     |
 | The Host's `toast` frame (B-F28)            | —                                                                                                                                | named, not routed: `14` §2 gives the frame (`HostToast`, for example `dwarf-stop-failed`, `session-crashed`) no seam-A member of its own, and this step adds no row for it (a channel `14` does not list is an amendment, never a silent addition)                                                                                                                                                                   | `14` §2; `21` §2 pre-cut 0 P-3                                                    |
 
+## Foreman decision: the credential file names the MCP endpoint (2026-10-18)
+
+Owner-approved in place of the rejected AMENDMENT-24; ADR-013 (not frozen) is the only document whose reading changes,
+and no frozen contract moves: `15` §4 still gives the relay entry `ELECTRON_RUN_AS_NODE` and
+`DWARFAI_MCP_CREDENTIAL_FILE` only, and neither the relay entry nor the provider child gains a variable.
+
+- **Problem.** On Linux the Host binds `$XDG_RUNTIME_DIR/dwarfai/mcp-<profileKey>.sock`, but a relay started by a
+  provider never sees `XDG_RUNTIME_DIR`, derived the fallback `<hostDataDir>/run/mcp-<profileKey>.sock` and failed
+  `ENOENT` (CI run 39109490095, `e2e/cut-3a/claude-launch.e2e.ts`, "the stub's permission request opens an ask").
+- **Decision.** The per-launch credential file `<hostDataDir>/run/mcp/<launchId>.cred` (same path, `0600` in a `0700`
+  directory, owner-only ACL on Windows) holds `{"v":1,"credential":"<64 hex>","endpoint":"<path the Host bound>"}`,
+  byte for byte as `JSON.stringify` writes it (`relay/credentialFileLayout.ts`, written through
+  `EndpointNamingCredentialFiles`). The relay reads the endpoint from it on every OS and connects only when the path is
+  one the Host's own rule (`mcpEndpointFor`) yields for that data dir on that OS; any other path is refused
+  (`endpoint-refused`) before a connection. The byte cap rises from 256 to 512.
+- **Upgrade.** A file holding the credential alone (a Host of the previous build, or no bound endpoint yet) still makes
+  the relay derive the endpoint as before, so a running session survives the upgrade.
+
 ## Routes moved in this step
 
 Rows of `src/ui-main/ipc/routes.ts` this step changes (ids of `14-ipc-contract.md` §2), as ISSUE-001 lists them. Every
