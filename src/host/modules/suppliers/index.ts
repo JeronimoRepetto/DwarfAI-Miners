@@ -26,6 +26,8 @@ import type { PromptToolDeps } from './adapters/drivers/claude-stream-json/promp
 import { AntigravityNdjsonDriver } from './adapters/drivers/antigravity-ndjson/AntigravityNdjsonDriver'
 import { CodexAppServerDriver } from './adapters/drivers/codex-app-server/CodexAppServerDriver'
 import { HostedCommandDriver } from './adapters/drivers/hosted-command/HostedCommandDriver'
+import { OpenCodeServerDriver } from './adapters/drivers/opencode-server/OpenCodeServerDriver'
+import type { OpenCodeServerClientDeps } from './adapters/drivers/opencode-server/personRunServer'
 import { HOSTED_COMMAND_PROFILE } from './adapters/drivers/hosted-command/profile'
 import type { LoginEnvironment } from './adapters/drivers/shared/childEnv'
 import { SimulatedDriver } from './adapters/drivers/simulated/SimulatedDriver'
@@ -171,6 +173,12 @@ export interface CliDriverDeps {
     readonly mcpConfig: { readonly dir: string; readonly files: McpConfigFiles }
     readonly promptTool: PromptToolDeps
   }
+  /**
+   * How `OpenCodeServerDriver` reaches a person-run `opencode serve` (ISSUE-237; 15 §4.6): the
+   * kernel `SecretReader` for the stored password, the HTTP transport and the log (the scheduler is
+   * the module's). Absent, the driver is still attached, with no person-run attach.
+   */
+  readonly openCodeServer?: Omit<OpenCodeServerClientDeps, 'scheduler'>
 }
 
 export interface SuppliersDeps {
@@ -214,6 +222,14 @@ export interface Suppliers {
   readonly releases: SessionReleases
   /** The registry launching uses; every session its drivers open is reachable through `sessions`. */
   readonly registry: DriverRegistry
+  /**
+   * The driver a launch of the provider starts through (ADR-009 D4, "first verified wins"; GitHub
+   * #1431): the provider's drivers are detected and probed again when new or changed, then the
+   * driver the capability check selected, the same one `catalogue.capabilities` reads, is answered
+   * as `registry` hands it out (tracked). No driver probed (none installed): the first, whose own
+   * detection then says `not-installed`. Undefined when the provider has no driver in this build.
+   */
+  readonly launchDriver: (id: ProviderId) => Promise<ProviderDriver | undefined>
 }
 
 export function createSuppliers(deps: SuppliersDeps): Suppliers {
@@ -256,28 +272,37 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
     publicBuild: deps.publicBuild
   })
   const tracked = trackLiveSessions(registry, { sink: deps.sink, clock: deps.clock })
+  // Probing only detects and probes: it never launches, so it reads the plain registry.
+  const probing = createCapabilityProbing({
+    registry,
+    store: deps.capabilityRecords,
+    clock: deps.clock,
+    scheduler: deps.scheduler,
+    bus: deps.bus,
+    ids: deps.ids,
+    hostEpoch: deps.hostEpoch
+  })
   return {
     catalogue: createSupplierCatalogue({
       records,
       publicBuild: deps.publicBuild,
       detection,
-      // Probing only detects and probes: it never launches, so it reads the plain registry.
-      probing: createCapabilityProbing({
-        registry,
-        store: deps.capabilityRecords,
-        clock: deps.clock,
-        scheduler: deps.scheduler,
-        bus: deps.bus,
-        ids: deps.ids,
-        hostEpoch: deps.hostEpoch
-      }),
+      probing,
       gate: deps.integrationGate,
       scheduler: deps.scheduler
     }),
     sessions: tracked.channels,
     bindings: tracked.bindings,
     releases: tracked.releases,
-    registry: tracked.registry
+    registry: tracked.registry,
+    launchDriver: async (id) => {
+      // A round that failed leaves the last measurement standing; `refresh` never runs twice at once.
+      await probing.refresh(id).catch(() => undefined)
+      const chosen = probing.selectedDriver(id)
+      const at = chosen === null ? 0 : registry.drivers(id).indexOf(chosen)
+      // The tracked registry wraps the plain one driver for driver, in the same order.
+      return tracked.registry.drivers(id)[Math.max(at, 0)]
+    }
   }
 }
 
@@ -315,15 +340,25 @@ function cliDrivers(
   if (antigravity !== undefined) {
     attached.push(new AntigravityNdjsonDriver({ ...shared, record: antigravity }))
   }
-  // OpenCode (ISSUE-238, step 4b; the driver of ISSUE-155): the generic `AcpDriver` over the person's own
-  // `opencode acp`, configured by `OPENCODE_ACP` alone (15 §4.7; ADR-009 D4 option (c)), for the one record whose
-  // profile lists the `http-server` transport (OpenCode's). S-031-3 failed, so `OpenCodeServerDriver` offers no
-  // launch (its probe reports `launch: false`, FM-084) and is not attached: launching takes the registry's first
-  // driver (ADR-009 D4), which must be the one that launches. The answer-channel gate of the profile applies (15 §2.1,
-  // ADR-011 item 7): a permission request is a card only while `opencode-permissions` is `on-verified`.
+  // OpenCode (ISSUE-238, step 4b; the drivers of ISSUE-155 and ISSUE-237), for the one record whose profile lists the
+  // `http-server` transport (OpenCode's), both in its preference order (ADR-009 D4): `OpenCodeServerDriver` first, then
+  // the generic `AcpDriver` over the person's own `opencode acp`, configured by `OPENCODE_ACP` alone (15 §4.7). S-031-3
+  // failed, so the server driver offers no launch (its probe reports `launch: false`, FM-084) and selection falls to
+  // the `acp` driver (option (c)), the one a launch starts through (`launchDriver`, GitHub #1431). The server driver
+  // carries the person-run attach (`personRunServer`, ISSUE-237), which no v1 surface calls yet. The answer-channel
+  // gate of the profile applies (15 §2.1, ADR-011 item 7): a permission request is a card only while
+  // `opencode-permissions` is `on-verified`.
   const opencode = recordOf('http-server')
   if (opencode !== undefined) {
-    attached.push(new AcpDriver({ ...shared, record: opencode, ...OPENCODE_ACP }))
+    const server = cli.openCodeServer
+    attached.push(
+      new OpenCodeServerDriver({
+        ...shared,
+        record: opencode,
+        ...(server === undefined ? {} : { server: { ...server, scheduler: deps.scheduler } })
+      }),
+      new AcpDriver({ ...shared, record: opencode, ...OPENCODE_ACP })
+    )
   }
   const claude = recordOf('stream-json')
   if (claude !== undefined && cli.claudeStreamJson !== undefined) {

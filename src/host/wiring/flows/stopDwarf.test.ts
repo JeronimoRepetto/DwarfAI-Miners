@@ -218,13 +218,14 @@ function host() {
     records: db.records,
     transactions: { inTransaction: (work) => db.inTransaction(work) },
     starter: createSessionStarter({
-      registry: sessions.registry,
+      launchDriver: suppliers.launchDriver,
       sessions: sessions.channels,
       clock,
       scheduler
     }),
     suppliers: {
       registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       catalogue: suppliers.catalogue,
       bindings: suppliers.bindings
     },

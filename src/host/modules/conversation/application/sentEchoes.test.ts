@@ -3,7 +3,7 @@
 // 2026-10-15). A live-stream echo claims its message once: by the receipt's correlation once known,
 // and while the hand-over is still in flight by the text sent. Nothing else is claimed.
 import { describe, expect, it } from 'vitest'
-import type { DwarfId, MessageId } from '../../../kernel/domain/values'
+import type { DwarfId, LaunchId, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
 import { SentEchoes } from './sentEchoes'
 
@@ -11,6 +11,7 @@ const DWARF = '00000000-0000-7000-8000-0000000182c1' as DwarfId
 const OTHER = '00000000-0000-7000-8000-0000000182c2' as DwarfId
 const SENT = '00000000-0000-7000-8000-0000000182c3' as MessageId
 const SECOND = '00000000-0000-7000-8000-0000000182c4' as MessageId
+const LAUNCH = '00000000-0000-7000-8000-000000001430' as LaunchId
 
 function person(text: string, echoOf?: string): ConversationEntry {
   return {
@@ -67,5 +68,24 @@ describe('SentEchoes', () => {
     expect(echoes.claim(DWARF, person('Something else'), 'live-stream')).toBe(null)
     echoes.forget(SENT)
     expect(echoes.claim(DWARF, person('Mark the face with chalk'), 'live-stream')).toBe(null)
+  })
+
+  // GitHub #1430: a launch has no receipt, so a driver echoes its prompt with no `echoOf`.
+  it('[INV-60] the echo of a launch prompt, which names no correlation, claims the launch once, by its text', () => {
+    const echoes = new SentEchoes()
+    echoes.trackLaunch(DWARF, LAUNCH, 'Survey the north seam ')
+
+    expect(echoes.claim(OTHER, person('Survey the north seam'), 'live-stream')).toBe(null)
+    expect(echoes.claim(DWARF, person('Survey the north seam'), 'live-stream')).toBe(LAUNCH)
+    expect(echoes.claim(DWARF, person('Survey the north seam'), 'live-stream')).toBe(null)
+  })
+
+  it('[INV-60] an echo naming a correlation never claims a launch prompt, and a forgotten launch claims nothing', () => {
+    const echoes = new SentEchoes()
+    echoes.trackLaunch(DWARF, LAUNCH, 'Survey the north seam')
+
+    expect(echoes.claim(DWARF, person('Survey the north seam', 'corr-1'), 'live-stream')).toBe(null)
+    echoes.forgetLaunches(DWARF)
+    expect(echoes.claim(DWARF, person('Survey the north seam'), 'live-stream')).toBe(null)
   })
 })

@@ -83,4 +83,40 @@ describe('step 3d Other… flow (21 §2 cut 3d)', () => {
     expect(dwarf).toMatchObject({ id: dwarfId, mineId, presence: 'present', owned: true })
     expect(spawn?.spawns.filter((s) => s.executable === PROGRAM)).toHaveLength(1)
   })
+
+  it('[INV-60, US-LAUNCH-005.AC07] an Other launch through the Host shows its first prompt once', async () => {
+    // GitHub #1430: the hosted command's first turn goes to stdin with no echo of its own, so the
+    // launch's row is the prompt's only bubble.
+    const w = world()
+    const h = await bootHost(w, {
+      epoch: 'epoch-1430-d',
+      processes: ({ clock, scheduler }) =>
+        new RecordingSpawn({
+          clock,
+          scheduler,
+          decide: (spec) =>
+            spec.executable === PROGRAM
+              ? { kind: 'exit', afterMs: RUNS_FOR_MS, code: 0 }
+              : { kind: 'exit', afterMs: 0, code: 1, stdout: '' }
+        })
+    })
+    const mineId = await h.mine()
+    const window = await h.attach()
+    await h.call(window, 'launching.launchCustom', {
+      mineId,
+      command: COMMAND,
+      prompt: 'Survey the north seam',
+      requestId: h.rid()
+    })
+    await h.run(4_000, window)
+    const dwarfId = evts<LaunchChanged>(window, 'launch.changed').find(
+      (frame) => frame.launch.state === 'succeeded'
+    )?.launch.dwarfId
+    if (dwarfId === undefined) throw new Error('the Other… command did not launch')
+
+    const feed = h.conversation.conversation.queries.feed(dwarfId, { limit: 50 }).messages
+    expect(feed.filter((m) => m.role === 'person').map((m) => m.text)).toEqual([
+      'Survey the north seam'
+    ])
+  })
 })
