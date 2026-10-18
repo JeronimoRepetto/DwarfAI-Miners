@@ -137,6 +137,8 @@ export function runSessionStarterContract(name: string, make: () => SessionStart
       const subject = make()
       subject.arrange({ kind: 'exits-in-window' })
       const started = startOne(subject)
+      // The window runs from the spawn (t0): a start may resolve its driver first (GitHub #1431).
+      await settle()
       await advance(subject, EARLY_FAILURE_WINDOW_MS)
       expect(started.result()).toMatchObject({ ok: false, error: { cause: 'exited-at-once' } })
     })

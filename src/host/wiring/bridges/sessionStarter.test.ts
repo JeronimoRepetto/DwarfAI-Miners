@@ -61,7 +61,7 @@ async function arrange(handshakeMs: number) {
   const scheduler = new FakeScheduler(clock)
   const tracked = stagedSessions({ clock, scheduler, handshakeMs })
   const starter = createSessionStarter({
-    registry: tracked.registry,
+    launchDriver: async (id) => tracked.registry.drivers(id)[0],
     sessions: tracked.channels,
     releases: tracked.releases,
     clock,

@@ -83,6 +83,7 @@ function host() {
     advisor,
     suppliers: {
       registry: { drivers: (id) => (id === SIMULATED ? [DRIVER] : []) },
+      launchDriver: async (id) => (id === SIMULATED ? DRIVER : undefined),
       catalogue: { entry: (id) => (id === SIMULATED ? ENTRY : null) },
       bindings: { bind: () => undefined }
     },
