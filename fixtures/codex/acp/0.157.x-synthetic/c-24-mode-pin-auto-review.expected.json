@@ -1,6 +1,6 @@
 {
   "case": "C-24",
-  "description": "AMENDMENT-19 (owner, 2026-10-17), ADR-008 item 3: synthetic, hand-written (no adapter was run). The adapter reports the session in agent (Auto review: approvalsReviewer auto_review, cxacp@bf37821 src/AgentMode.ts), its own default mode, at session/new. The driver sends session/set_mode workspace-write (confirmed by current_mode_update workspace-write before its answer), and only then the first prompt; the first tool use still reaches the DwarfAI permission channel as an ask.",
+  "description": "AMENDMENT-19 (owner, 2026-10-17), ADR-008 item 3: synthetic, hand-written. The adapter reports the session in agent (Approve for me: approvalsReviewer auto_review, the default of codex-acp 1.13.1 as recorded in ../0.153.4/ and of cxacp@bf37821), at session/new. The driver sends session/set_mode read-only (confirmed by current_mode_update read-only before its answer), and only then the first prompt; the first tool use still reaches the DwarfAI permission channel as an ask.",
   "script": [
     {
       "do": "launch"
@@ -123,7 +123,7 @@
       "method": "session/set_mode",
       "params": {
         "sessionId": "{session}",
-        "modeId": "workspace-write"
+        "modeId": "read-only"
       }
     },
     {

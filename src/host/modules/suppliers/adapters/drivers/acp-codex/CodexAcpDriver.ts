@@ -10,11 +10,14 @@
 // README "Configuration"):
 // - `CODEX_PATH` = the person's resolved `codex` (18 C-18): without it the adapter runs its own
 //   bundled `@openai/codex` (`src/CodexJsonRpcConnection.ts:19-26`).
-// - `INITIAL_AGENT_MODE` = `workspace-write` (AMENDMENT-19, ADR-008 item 3). The adapter's default
-//   mode `agent` lets Codex's own reviewer approve actions (`approvalsReviewer: auto_review`) and
-//   `agent-full-access` asks nothing (`approvalPolicy: never`); `workspace-write` and `read-only`
-//   are `on-request` with the person as reviewer (`src/AgentMode.ts`). `workspace-write` is the one
-//   that matches the app-server driver's `approvalPolicy: on-request` with no sandbox lift. The
+// - `INITIAL_AGENT_MODE` = `read-only` (AMENDMENT-19, ADR-008 item 3). The adapter's default mode
+//   `agent` lets Codex's own reviewer approve actions (`approvalsReviewer: auto_review`) and
+//   `agent-full-access` asks nothing (`approvalPolicy: never`). `read-only` is `on-request` with the
+//   person as reviewer in every version: in codex-acp 1.13.1 (recorded, `fixtures/codex/acp/0.153.4/`)
+//   it is "Ask for approval" with the `workspace-write` sandbox, which matches the app-server driver's
+//   `approvalPolicy: on-request` with no sandbox lift, and 1.13.1 has no `workspace-write` mode id
+//   (an unknown id falls back to `agent`; `session/set_mode` to it is refused -32602). At
+//   cxacp@bf37821 it is the same reviewer with a read-only sandbox, stricter and still asking. The
 //   session must then report it, else the client sends `session/set_mode`, else the launch fails
 //   closed (`pinnedMode`, AMENDMENT-19 item 2).
 //
@@ -57,6 +60,7 @@ import {
 } from '../acp/client/capabilities'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
 import { codexDecline } from './denyMapping'
+import { codexAcpUsage } from './usage'
 
 /** The adapter's binary name: the person's own install (15 §2.4 row Codex `acp`). */
 export const ADAPTER_BINARY = 'codex-acp'
@@ -67,7 +71,7 @@ export const CODEX_PATH = 'CODEX_PATH'
 /** The adapter's documented initial-mode variable (AMENDMENT-19). */
 export const MODE_PIN = 'INITIAL_AGENT_MODE'
 /** The mode a session must report before it is ready: Codex asks the person (on-request). */
-export const PINNED_MODE = 'workspace-write'
+export const PINNED_MODE = 'read-only'
 /** JSON-RPC "resource not found": the adapter does not know the session id (ADR-015 stale ref). */
 const RESOURCE_NOT_FOUND = -32002
 const NO_SHELL_ON_WINDOWS = 'codex-acp starts codex through a shell on Windows'
@@ -267,6 +271,8 @@ export class CodexAcpDriver implements ProviderDriver {
       elicitation: 'none',
       // 15 §2.7: a Deny prefers the native decline (denyMapping.ts).
       permissionReply: codexDecline,
+      // ADR-006 item 4: outputTokens include thoughtTokens in codex-acp (usage.ts).
+      usageTokens: codexAcpUsage,
       capabilitiesFor: (init) =>
         merge(this.deps.record.ceiling, combineLowest(protocolSource(init), probe)),
       onExit: (ref) => this.live.delete(ref.providerSessionId)

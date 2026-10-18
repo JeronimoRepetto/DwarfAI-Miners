@@ -1,8 +1,9 @@
 // L4 conformance of the Codex `acp` driver over a user-installed `codex-acp` (15 §4.5, §4.10, §6;
-// 17 §1.4, §2.3): the harness run over the hand-written cases of `fixtures/codex/acp/0.157.x-synthetic/`
-// (`ci-synthetic`: codex-acp is not installed on any machine that wrote them; recorded fixtures
-// stay a merge-gate item for the owner, TC-153-01), then the driver's own cases of ISSUE-153.
-// Every `*.expected.json` is written by hand from the contract.
+// 17 §1.4, §2.3): the harness run over the scrubbed maintainer recordings of
+// `fixtures/codex/acp/0.153.4/` (the person's own codex-acp 1.13.1 with CODEX_PATH pinned to their
+// codex 0.153.4, recorded on Windows with the adapter run outside this driver; macOS and Linux
+// pending) plus the hand-written cases of `0.157.x-synthetic/` that no recording covers, then the
+// driver's own cases of ISSUE-153. Every `*.expected.json` is written by hand from the contract.
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { FakeClock } from '../../../../../kernel/fakes/FakeClock'
@@ -27,7 +28,12 @@ import {
   type DriverFactory
 } from '../../../testing/driverConformance'
 import { bind, compareEvents, differences, sourceKeysOf } from '../../../testing/expected'
-import { readFixtureSet, type FixtureCase, type FixtureVariant } from '../../../testing/fixtureSet'
+import {
+  readFixtureSet,
+  type FixtureCase,
+  type FixtureSet,
+  type FixtureVariant
+} from '../../../testing/fixtureSet'
 import { FixtureTransport } from '../../../testing/fixtureTransport'
 import { RecordingSpawn } from '../../../testing/recordingSpawn'
 import { CATALOG_RECORDS } from '../../catalog/profiles'
@@ -42,10 +48,11 @@ import {
   type Platform
 } from './CodexAcpDriver'
 
-const FIXTURES = fileURLToPath(
-  new URL('../../../../../../../fixtures/codex/acp/0.157.x-synthetic/', import.meta.url)
-)
-const fixtures = readFixtureSet(FIXTURES)
+const FIXTURE_ROOT = new URL('../../../../../../../fixtures/codex/acp/', import.meta.url)
+const recorded = readFixtureSet(fileURLToPath(new URL('0.153.4/', FIXTURE_ROOT)))
+const synthetic = readFixtureSet(fileURLToPath(new URL('0.157.x-synthetic/', FIXTURE_ROOT)))
+/** One set for the harness: the recorded set's location and meta, with both folders' cases. */
+const fixtures: FixtureSet = { ...recorded, cases: [...recorded.cases, ...synthetic.cases] }
 
 const CODEX = CATALOG_RECORDS.find((record) => record.profile.id === 'codex') as CatalogRecord
 const ADAPTER_PATH = '/home/j/.npm-global/bin/codex-acp'
@@ -415,6 +422,13 @@ describe('CodexAcpDriver', () => {
     expect(await againstExpected('c-07-deny-prefers-decline')).toEqual([])
   })
 
+  it('[C-07] recorded provider gap: codex 0.153.4 through codex-acp 1.13.1 offers only cancel to reject an escalated command, so a Deny sends cancel and the turn ends interrupted, not by the app', async () => {
+    // Not a pass of C-07 (a Deny continues the turn, 15 §2.7): the recording shows no option
+    // that rejects without interrupting. Reported to the lead; the harness C-07 case runs over the
+    // synthetic decline set only until a Codex version offers decline here.
+    expect(await againstExpected('deny-cancel-only')).toEqual([])
+  })
+
   it('[C-19, ADR-009] a session/update kind the pinned protocol does not have is drift, once per kind, and the session continues', async () => {
     expect(await againstExpected('protocol-drift')).toEqual([])
   })
@@ -451,12 +465,12 @@ describe('CodexAcpDriver', () => {
 
   // ---------- AMENDMENT-19 (owner, 2026-10-17): the permission mode is pinned ----------
 
-  it('[C-24, ADR-008] a launch whose adapter reports an auto-approving mode is pinned to workspace-write before its first prompt, and its first tool use still opens a DwarfAI permission ask', async () => {
+  it('[C-24, ADR-008] a launch whose adapter reports an auto-approving mode is pinned to read-only before its first prompt, and its first tool use still opens a DwarfAI permission ask', async () => {
     expect(await againstExpected('c-24-mode-pin-auto-review')).toEqual([])
     expect(await againstExpected('c-24-mode-pin-full-access')).toEqual([])
   })
 
-  it('[C-24, ADR-008, ADR-020] a session that cannot be put in workspace-write fails the launch closed as could-not-start and sends no prompt', async () => {
+  it('[C-24, ADR-008, ADR-020] a session that cannot be put in read-only fails the launch closed as could-not-start and sends no prompt', async () => {
     expect(await againstExpected('c-24-mode-pin-refused')).toEqual([])
     const session = '00000000-0000-4000-8000-0000000c0d01'
     const init = { jsonrpc: '2.0', id: 0, result: { protocolVersion: 1, agentCapabilities: {} } }
@@ -474,7 +488,7 @@ describe('CodexAcpDriver', () => {
         replay([init, { jsonrpc: '2.0', id: 1, result: { sessionId: session } }], [1, 2])
       ],
       [
-        'the agent kept permission mode agent-full-access after set_mode workspace-write',
+        'the agent kept permission mode agent-full-access after set_mode read-only',
         replay(
           [
             init,
@@ -485,7 +499,7 @@ describe('CodexAcpDriver', () => {
                 sessionId: session,
                 modes: {
                   currentModeId: 'agent-full-access',
-                  availableModes: [{ id: 'workspace-write' }]
+                  availableModes: [{ id: 'read-only' }]
                 }
               }
             },

@@ -1,6 +1,6 @@
 {
   "case": "C-21",
-  "description": "ADR-006 items 4 and 6, 15 §4.10 (fidelity 1): each session/prompt response reports the usage of its own turn (the shared ACP client counts usage per turn; no codex-acp recording exists yet); each turn is one sealed observation of it, keyed by the turn.",
+  "description": "ADR-006 items 4 and 6, 15 §4.10 (fidelity 1): each session/prompt response reports the usage of its own turn (the shared ACP client counts usage per turn, as the codex-acp 1.13.1 recordings of ../0.153.4/ show); each turn is one sealed observation of it, keyed by the turn. codex-acp counts thoughtTokens inside outputTokens (recorded: totalTokens = inputTokens + cachedReadTokens + outputTokens), so the driver reports output 7 − 2 and reasoning 2, disjoint as the app-server driver does.",
   "script": [
     {
       "do": "launch"
@@ -107,7 +107,7 @@
         "fidelity": 1,
         "tokens": {
           "inputNet": 20,
-          "output": 7,
+          "output": 5,
           "cacheRead": 100,
           "cacheWrite": 0,
           "reasoning": 2
