@@ -1,0 +1,12 @@
+{"event":"spawned","step":0,"kind":"launch"}
+{"stream":"sent","bytes":1}
+{"stream":"received","bytes":173}
+{"stream":"received","bytes":152}
+{"stream":"received","bytes":177}
+{"stream":"received","bytes":268}
+{"event":"spawned","step":1,"kind":"resume"}
+{"stream":"sent","bytes":1}
+{"stream":"received","bytes":173}
+{"stream":"received","bytes":152}
+{"stream":"received","bytes":177}
+{"stream":"received","bytes":268}
