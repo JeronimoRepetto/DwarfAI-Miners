@@ -128,6 +128,24 @@ soak); after it, 3d rolls forward. `rollbackOf(table, 'cut-3d')` gives back exac
 "Other…" sessions the faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3
 "Rollback (each step)"); a new "Other…" launch is today's hosted process again, which dies with the window.
 
+**Step 3e note (ISSUE-188).** A 3e rollback build exists only before the 3e deletion commit merges (ISSUE-189, after the
+soak); after it, 3e rolls forward. 3e moves Antigravity beside the shape-adapter routes 3a created, its launch row in
+development builds only (`DEVELOPMENT_BUILD_ROUTES`, `routesForBuild`), so `rollbackOf(table, 'cut-3e')` gives back
+exactly the 3d table from the table of either build (`src/ui-main/ipc/rollbackTable.test.ts` and
+`ipc-routing.contract.test.ts`, the 3e rollback cases):
+
+| Rows                                           | In the 3e rollback build                                                                                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A-13, A-23, A-36 (Antigravity-qualified)       | The Antigravity-qualified `host` route goes; Antigravity reaches the unqualified 3a route again (`PerProviderShapeAdapter`, `CatalogMergeAdapter`), with the 14 shapes the build's renderer sends      |
+| A-35 (Antigravity-qualified, development only) | The development build's row goes with the others (`rollbackOf` drops it by the same rule), so a development and a public rollback build route A-35 alike, through `PerProviderShapeAdapter`, as 3d did |
+| A-27, A-P3, A-P4                               | Antigravity's `legacy` row with today's shape comes back beside OpenCode's, as 3d had it                                                                                                               |
+| Every other row                                | As the 3e table routes it (3e moved no other row and bore no NEW row)                                                                                                                                  |
+
+With Antigravity no longer moved, `legacyFeedModesOf` composes Antigravity's whole discovery again (the 3d modes), an
+Antigravity launch is today's held session again and settles on A-P3/A-P4 through the settlement join, and "Let Jev
+choose" chooses among Claude and Codex only. Antigravity sessions the faulty build's Host launched are left running and
+are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
