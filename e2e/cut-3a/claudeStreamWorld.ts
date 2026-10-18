@@ -191,18 +191,21 @@ export async function seedMine(
 ): Promise<{ mineId: string; world: ClaudeStubWorld }> {
   const world = seedClaudeStubSession(profile)
   let mineId: string | undefined
+  // A launch enters only a mine the Host measures or holds active (07 machine 5A; `launch.ts` ENTERABLE).
   await expect
     .poll(
       async () => {
-        const mines = (await hostSection<Array<{ id: string; name: string }>>(window, 'mines'))
+        const mines = (
+          await hostSection<Array<{ id: string; name: string; state: string }>>(window, 'mines')
+        )
           .flat()
           .filter((mine) => mine.name === STUB_MINE_NAME)
         mineId = mines[0]?.id
-        return mineId !== undefined
+        return mines[0]?.state
       },
-      { timeout: 60_000, message: 'the Host knows the mine of the seeded session' }
+      { timeout: 60_000, message: 'the Host knows the mine of the seeded session, enterable' }
     )
-    .toBe(true)
+    .toMatch(/^(measuring|active)$/)
   return { mineId: mineId!, world }
 }
 
@@ -225,7 +228,9 @@ export async function launchClaude(
       requestId: uuidv7()
     })})`
   )) as { ok: boolean; value?: { launchId: string } }
-  expect(accepted, 'A-35 accepts the Claude launch').toMatchObject({ ok: true })
+  expect(accepted, 'A-35 accepts the Claude launch: ' + JSON.stringify(accepted)).toMatchObject({
+    ok: true
+  })
   const launchId = accepted.value!.launchId
   let dwarfId: string | undefined
   await expect
@@ -233,7 +238,8 @@ export async function launchClaude(
       async () => {
         const launch = (await launchesOf(window)).find((row) => row.launchId === launchId)
         dwarfId = launch?.dwarfId
-        return launch?.state
+        // A failed launch names its ADR-020 cause, so a failure says why.
+        return launch?.state === 'failed' ? `failed ${JSON.stringify(launch)}` : launch?.state
       },
       { timeout: 60_000, message: 'the Host settles the launch' }
     )
