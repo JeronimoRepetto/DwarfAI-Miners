@@ -412,6 +412,60 @@ describe('the delegated worker as the UI sees it (ISSUE-207)', () => {
     })
     expect(same(toWorker, worker)).toStrictEqual(same(toOrdinary, ordinary))
   })
+
+  // AMENDMENT-23 (owner, 2026-10-18): the `DwarfLaunched` route passes the parent as the brief's
+  // issuer (11 F6 step 5; 14 §2.4 note; PO #53). TC-207-02.
+  it("[US-DLG-003.AC04] only the worker's first message, the subtask brief, carries the issuer; every later message has none", async () => {
+    const h = delegationHost()
+    const chat = delegatedChat(h)
+    const { parent, worker } = await delegated(h)
+    const ordinary = await launchedOrdinary(h, 'Survey the east gallery')
+    linkLaunched(h, [worker, ordinary])
+
+    chat.ingest(worker, 1)
+    chat.ingest(worker, 2, 'person')
+    await chat.send(worker, 'Check the pumps too', '01890a5d-ac96-774b-bcce-000000000209')
+    await h.run(10)
+
+    const issuers = (dwarfId: DwarfId) =>
+      chat
+        .feed(dwarfId)
+        .messages.reverse()
+        .map((m) => [m.text, m.issuer])
+    expect(issuers(worker)).toStrictEqual([
+      [TASK, { dwarfId: parent }],
+      ['later 1', undefined],
+      ['later 2', undefined],
+      ['Check the pumps too', undefined]
+    ])
+    // An ordinary launch's first message is the person's own: no issuer.
+    expect(issuers(ordinary)).toStrictEqual([['Survey the east gallery', undefined]])
+    // The frame the UI gets carries it on the brief alone (14 §2.4 `conversation.appended`).
+    const appended = chat.bus
+      .ofType('MessagesAppended')
+      .filter((e) => e.payload.dwarfId === worker)
+      .flatMap((e) => e.payload.messages)
+    expect(appended.filter((m) => m.issuer !== undefined).map((m) => m.text)).toStrictEqual([TASK])
+  })
+
+  it("[US-DLG-003.AC03] the issuer resolves to the launcher's custom name when one is set, else its base name", async () => {
+    const h = delegationHost()
+    const chat = delegatedChat(h)
+    const { parent, worker } = await delegated(h)
+    const issuer = chat.feed(worker).messages.find((m) => m.issuer !== undefined)?.issuer
+    expect(issuer).toStrictEqual({ dwarfId: parent })
+    if (issuer === undefined) throw new Error('the brief carries no issuer')
+
+    // The issuer is the launcher's id, so its label reads the launcher as the board has it now.
+    const label = () => {
+      const launcher = wireOf(h, issuer.dwarfId)
+      return launcher.customName ?? launcher.baseName
+    }
+    const base = wireOf(h, parent).baseName
+    expect(label()).toBe(base)
+    expect(h.crew.commands.rename(parent, 'Borin')).toMatchObject({ ok: true })
+    expect(label()).toBe('Borin')
+  })
 })
 
 // ISSUE-205 (11 F6 steps 7 and 10; UC-017 main flow and "Turn-input handoff"; 16 §5.4 "Handoff";

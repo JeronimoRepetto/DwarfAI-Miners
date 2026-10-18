@@ -277,6 +277,39 @@ export function runMessageLogContract(
       expect(s.log.page(dwarf, { before: waiting }).map((m) => m.id)).toEqual([older?.id])
     })
 
+    // AMENDMENT-23 (owner, 2026-10-18; ISSUE-207): the delegated worker's brief carries its issuer.
+    // TC-207-02: only the batch's inserted person row stores it (`messages.issuer_dwarf_id`).
+    it('[US-DLG-003.AC04] an issuer given to append is stored on the batch person row only and page returns it', async () => {
+      const s = await setUp()
+      const [worker, parent] = s.dwarfIds
+      const brief = entry(1, { role: 'person', text: 'the subtask brief' })
+      const reply = entry(2, { role: 'dwarf', text: 'on it' })
+
+      const { appended } = s.inTransaction(() =>
+        s.log.append(worker, [brief, reply], 'live-stream', { issuer: parent })
+      )
+
+      expect(appended.map((m) => [m.role, m.issuer])).toEqual([
+        ['person', { dwarfId: parent }],
+        ['dwarf', undefined]
+      ])
+      const stored = s.log.page(worker, {})
+      expect(stored.find((m) => m.role === 'person')?.issuer).toEqual({ dwarfId: parent })
+      expect(stored.find((m) => m.role === 'dwarf')).not.toHaveProperty('issuer')
+    })
+
+    it('[US-DLG-003.AC04] append with no issuer stores none: every row of the batch reads back without issuer', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const person = entry(1, { role: 'person', text: 'a later message' })
+
+      const { appended } = s.inTransaction(() => s.log.append(dwarf, [person], 'live-stream', {}))
+      s.inTransaction(() => s.log.append(dwarf, [entry(2, { role: 'person' })], 'transcript'))
+
+      expect(appended[0]).not.toHaveProperty('issuer')
+      expect(s.log.page(dwarf, {}).map((m) => 'issuer' in m)).toEqual([false, false])
+    })
+
     it('[ADR-007] append outside an open transaction throws HostInvariantError', async () => {
       const s = await setUp()
       const [dwarf] = s.dwarfIds

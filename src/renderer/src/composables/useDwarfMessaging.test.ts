@@ -16,9 +16,10 @@ import type {
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { REACTION_WINDOW_MS } from '../lib/delivery/reaction'
 import { ECHO_LIMIT } from '../lib/message/echo'
-import { defaultDwarf } from '../testing/factories'
+import { defaultDwarf, defaultMine } from '../testing/factories'
 import type { Dwarf, DwarfAttachment, FeedMessage } from '../types'
 import { RESULT_VISIBLE_MS, feedMessageOf, useDwarfMessaging } from './useDwarfMessaging'
+import { useMines } from './useMines'
 
 function stubApi(sendDwarfText: (...args: never[]) => Promise<unknown>): void {
   // AMENDED for ISSUE-250 (was: hand-built objects as `window.api` in this file's stubs): installed through the generated
@@ -1430,6 +1431,47 @@ describe('useDwarfMessaging chat from the Host read model', () => {
       { role: 'user', text: 'line 3', timestamp: '2026-10-06T09:03:00.000Z' },
       { role: 'assistant', text: 'line 4', timestamp: '2026-10-06T09:04:00.000Z' }
     ])
+  })
+
+  // AMENDMENT-23 (owner, 2026-10-18; ISSUE-207): a delegated worker's brief carries its launcher's
+  // id, and the chat names that launcher as the board holds it, so a rename follows (PO #53).
+  it('[US-DLG-003.AC03, US-DLG-003.AC04] a brief names its launcher as the board does, custom name first, and only the brief carries it', async () => {
+    const board = (customName?: string) =>
+      useMines().setMines({
+        mines: [
+          defaultMine({
+            dwarfs: [
+              defaultDwarf({
+                id: DAIN,
+                role: 'foreman',
+                name: 'dwarfai-7',
+                ...(customName === undefined ? {} : { customName })
+              })
+            ]
+          })
+        ],
+        tokensObserved: 0
+      })
+    board()
+    try {
+      installHost([
+        page(
+          5,
+          tails({ dwarfId: BORIN, messages: [view(1, { issuer: { dwarfId: DAIN } }), view(2)] })
+        )
+      ])
+      await useDwarfMessaging().startChat()
+      const issuers = () => chatOf(BORIN)?.messages.map((message) => message.issuer)
+      expect(issuers()).toEqual([
+        { role: 'foreman', name: 'dwarfai-7', launcherId: DAIN },
+        undefined
+      ])
+
+      board('Borin')
+      expect(issuers()).toEqual([{ role: 'foreman', name: 'Borin', launcherId: DAIN }, undefined])
+    } finally {
+      useMines().clear()
+    }
   })
 
   // AMENDED for ISSUE-123 (appended): the dock reads the chat from the Host only (A-14 and A-16 are retired), so a dwarf
