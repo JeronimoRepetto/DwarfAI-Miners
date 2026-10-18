@@ -1,4 +1,5 @@
 // layer: L2
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { FakePanelWindowController } from '../ui-main/window/ports/fakes/FakePanelWindowController'
 import type { LegacyLaunchedSessions, LegacyLaunchesByDwarf } from './LegacyEndFirstAdapter'
@@ -208,5 +209,17 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
       ['claude', 's-1']
     ])
     expect(codex).toEqual([])
+  })
+})
+
+describe('today’s composition hands its start work to UI main (21 §2 cut 5)', () => {
+  // ISSUE-243 preparation: the Dock, the `.env` file and the candidate login entry are UI main's shell start
+  // (ui-main/window/application/shellStart.ts), so deleting this composition changes no start behaviour.
+  const source = readFileSync(new URL('./LegacyRuntimeRoute.ts', import.meta.url), 'utf8')
+
+  it('[ADR-001] today’s composition hides no Dock tile, reads no .env file and writes no login entry', () => {
+    expect(source).not.toMatch(/\bdock\b/)
+    expect(source).not.toMatch(/from 'dotenv'/)
+    expect(source).not.toMatch(/main\/shell\/autostart/)
   })
 })

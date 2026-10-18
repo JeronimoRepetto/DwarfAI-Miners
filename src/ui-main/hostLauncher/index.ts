@@ -43,6 +43,8 @@ export {
 } from './upgradeFlow'
 export { HOST_SPAWN_GATE_STALE_MS } from './spawnGate'
 export { winLaunchPrebuildsDir } from './win-launch/nativeWinLaunch'
+// `reg.exe` for the candidate login entry's Windows Run value (regExe.ts; 21 §2 cut 1), handed to the window module.
+export { runRegExe } from './regExe'
 export {
   LOSER_POLL_MS,
   MIGRATING_EXTENSION_MS,
