@@ -1,6 +1,7 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
 import { createLegacyDwarfIdRows, type LegacyDwarfIdBridge } from '../LegacyDwarfIdBridge'
+import { createLegacySettlementJoin } from './legacySettlementJoin'
 import { createPerProviderShapeAdapter } from './PerProviderShapeAdapter'
 
 const MINE = '01920000-0000-7000-8000-000000000001'
@@ -278,5 +279,78 @@ describe('PerProviderShapeAdapter (21 §3.1)', () => {
       ok: false,
       error: expect.objectContaining({ code: 'METHOD_NOT_FOUND' })
     })
+  })
+})
+
+describe('PerProviderShapeAdapter records the ids it mints (21 §3.1, lead decision 2026-10-17)', () => {
+  it("[ADR-001] an accepted launch records today's receipt against the minted launch id", async () => {
+    const legacy = recordingLegacy({ 'agent:launch': LAUNCHED })
+    const settlements = createLegacySettlementJoin()
+    const adapter = createPerProviderShapeAdapter({ legacy, mintId: () => MINTED, settlements })
+
+    await adapter.serve('agent:launch', LAUNCH)
+
+    expect(settlements.settleLaunch('receipt:1')).toBe(MINTED)
+  })
+
+  it("[ADR-001] a held send records today's holdId against the minted message id", async () => {
+    const legacy = recordingLegacy({
+      'dwarf:sendText': { delivered: false, via: 'held-session', holdId: 'hold-1' }
+    })
+    const settlements = createLegacySettlementJoin()
+    const adapter = createPerProviderShapeAdapter({
+      legacy: createLegacyDwarfIdRows({ bridge, legacy }),
+      mintId: () => MINTED,
+      settlements
+    })
+
+    await adapter.serve('dwarf:sendText', {
+      dwarfId: HOST_DWARF,
+      text: 'Go on',
+      attachments: [],
+      requestId: REQUEST
+    })
+
+    expect(settlements.settleHold('hold-1')).toBe(MINTED)
+  })
+
+  it('[ADR-001] a launch with no receipt, a refused launch and a send delivered at once record nothing', async () => {
+    const recorded: string[] = []
+    const settlements = {
+      recordLaunch: (receipt: string) => void recorded.push(receipt),
+      recordHold: (hold: string) => void recorded.push(hold)
+    }
+    const legacy = recordingLegacy({
+      'agent:launch': { launched: true, provider: 'codex' },
+      'dwarf:sendText': { delivered: true, via: 'codex-queue' }
+    })
+    const adapter = createPerProviderShapeAdapter({
+      legacy: createLegacyDwarfIdRows({ bridge, legacy }),
+      mintId: () => MINTED,
+      settlements
+    })
+    const refusing = createPerProviderShapeAdapter({
+      legacy: recordingLegacy({
+        'agent:launch': {
+          launched: false,
+          provider: 'none',
+          cause: 'could-not-start',
+          launchId: 'receipt:2'
+        }
+      }),
+      mintId: () => MINTED,
+      settlements
+    })
+
+    await adapter.serve('agent:launch', LAUNCH)
+    await refusing.serve('agent:launch', LAUNCH)
+    await adapter.serve('dwarf:sendText', {
+      dwarfId: HOST_DWARF,
+      text: 'Run',
+      attachments: [],
+      requestId: REQUEST
+    })
+
+    expect(recorded).toEqual([])
   })
 })

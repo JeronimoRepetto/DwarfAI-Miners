@@ -631,4 +631,28 @@ describe('useMines from the Host read model', () => {
       { scene: 'working', tip: 'working' }
     ])
   })
+
+  /*
+   * APPENDED for ISSUE-179 (read side, ISSUE-001 part C): "Stop dwarf…" reads its availability off the Host's
+   * `DwarfWire.stopUnavailableReason` (14 §3.6; 14 §4.1 `dwarfs` consumer `useDwarfStopping`), never derived here.
+   */
+  it("[INV-31, ADR-033] a dwarf's stop availability is the Host's stopUnavailableReason, kept current by dwarf.changed", async () => {
+    const host = installHost([
+      page(3, [mineWire()], [dwarfWire(BORIN, { stopUnavailableReason: 'already-stopping' })])
+    ])
+    const { start, stopUnavailableReason } = useMines()
+    await start()
+    await settle()
+    expect(stopUnavailableReason(BORIN)).toBe('already-stopping')
+    host.push([frame(4, 'dwarf.changed', { dwarf: dwarfWire(BORIN) })])
+    expect(stopUnavailableReason(BORIN)).toBeNull()
+    host.push([
+      frame(5, 'dwarf.changed', {
+        dwarf: dwarfWire(BORIN, { stopInFlight: true, stopUnavailableReason: 'already-stopping' })
+      })
+    ])
+    expect(stopUnavailableReason(BORIN)).toBe('already-stopping')
+    // A dwarf the Host does not hold has no reason of its own: nothing is assumed about it.
+    expect(stopUnavailableReason(DAIN)).toBeNull()
+  })
 })

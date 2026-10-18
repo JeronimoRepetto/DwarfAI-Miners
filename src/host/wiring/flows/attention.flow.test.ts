@@ -214,6 +214,7 @@ async function bootHost() {
             transactions,
             bus,
             clock,
+            scheduler,
             ids,
             hostEpoch: epoch as HostEpoch,
             log,
