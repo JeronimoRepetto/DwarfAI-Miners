@@ -232,9 +232,14 @@ describe('A-N03…A-N05 Host connection rows (14 §2.2; ADR-002 D9)', () => {
       host: { serve: () => Promise.resolve(undefined) },
       // AMENDED for ISSUE-123: the cut-1 table routes A-33 through its shape adapter, so the router needs it bound.
       // AMENDED for ISSUE-141: the cut-2 table routes A-40/A-41's `legacy:` AskIds through LegacyAnswerShapeAdapter.
+      // AMENDED for ISSUE-001: the 3a table routes the providers not yet moved through the per-provider adapters and
+      // A-47 through JevSettingsShapeAdapter.
       shapeAdapters: {
         ResetFanout: { serve: () => Promise.resolve(undefined) },
-        LegacyAnswerShapeAdapter: { serve: () => Promise.resolve(undefined) }
+        LegacyAnswerShapeAdapter: { serve: () => Promise.resolve(undefined) },
+        PerProviderShapeAdapter: { serve: () => Promise.resolve(undefined) },
+        CatalogMergeAdapter: { serve: () => Promise.resolve(undefined) },
+        JevSettingsShapeAdapter: { serve: () => Promise.resolve(undefined) }
       },
       senders
     })

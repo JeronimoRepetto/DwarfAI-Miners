@@ -194,6 +194,9 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-141 (was: those six, one route each): the cut-2 switch moves the CHANGE rows A-40 and A-41 to
     // their target shape, one route per qualifier (the Host, and each origin of `LegacyAskRelay`), so each row is read
     // once here.
+    // AMENDED for ISSUE-001 (was: those eight): the step-3a switch moves the CHANGE rows A-13, A-23, A-35, A-36 (one
+    // route per qualifier: the Host for Claude, a shape adapter for the others) and A-50 to their target shape, and
+    // gives A-47 its target shape through `JevSettingsShapeAdapter` (a KEEP row, unchanged here).
     expect(
       [
         ...new Set(
@@ -205,7 +208,21 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
           ).map((route) => ROW_IDS[route.channel])
         )
       ].sort()
-    ).toEqual(['A-12', 'A-15', 'A-19', 'A-33', 'A-40', 'A-41', 'A-44', 'A-P2'])
+    ).toEqual([
+      'A-12',
+      'A-13',
+      'A-15',
+      'A-19',
+      'A-23',
+      'A-33',
+      'A-35',
+      'A-36',
+      'A-40',
+      'A-41',
+      'A-44',
+      'A-50',
+      'A-P2'
+    ])
     const expected = KEYS.map(memberOf)
     expect(
       KEYS.filter((key) => memberOf(key) === undefined),
@@ -328,34 +345,37 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // A-42, a KEEP row still served `legacy`, stands for it.
     // AMENDED for ISSUE-123 (was: with 'mines:get'): the cut-1 switch routes A-12 `host` with its target shape, which for
     // a RETIRE row is today's `MinesSnapshot`; the RETIRE row still `today` is A-P3.
+    // AMENDED for ISSUE-001 (was: A-13 and A-23 as the CHANGE rows still `today`, A-P3 with one route): the step-3a
+    // switch gives A-13 and A-23 their target shape for every provider; A-39 (`launchHostedProcess`, moved in 3d) is
+    // the CHANGE row still `today`, and A-P3 keeps today's shape on each of its provider-qualified routes.
     const today = [
-      'dwarf:activate',
+      'agent:launchHosted',
       'agent:launchFailed',
       'notifications:enabled:get',
-      'dwarf:sendText'
+      'opencode:settings:get'
     ]
     for (const key of today) {
       expect(
-        ROUTES.filter((route) => route.channel === key).map((route) => route.shape),
+        [...new Set(ROUTES.filter((route) => route.channel === key).map((route) => route.shape))],
         key
       ).toEqual(['today'])
     }
-    // CHANGE row: today's DwarfActivation, not the target IpcResult<ConsoleOpenResult>.
-    expectTypeOf<DwarfAiMinersApi['activateDwarf']>()
+    // CHANGE row: today's `AgentLaunchResult`, not the target IpcResult<LaunchAccepted>.
+    expectTypeOf<DwarfAiMinersApi['launchHostedProcess']>()
       .parameter(0)
-      .toEqualTypeOf<TodayRequest<'dwarf:activate'>>()
-    expectTypeOf<DwarfAiMinersApi['activateDwarf']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'dwarf:activate'>
+      .toEqualTypeOf<TodayRequest<'agent:launchHosted'>>()
+    expectTypeOf<DwarfAiMinersApi['launchHostedProcess']>().returns.resolves.toEqualTypeOf<
+      TodayResult<'agent:launchHosted'>
     >()
-    // A request is accepted with readonly arrays, as today's types have them (the preload never mutates it).
-    expectTypeOf<TodayRequest<'dwarf:sendText'>>().toExtend<
-      Parameters<DwarfAiMinersApi['sendDwarfText']>[0]
+    // A request is accepted as today's types have it (the preload never mutates it).
+    expectTypeOf<TodayRequest<'agent:launchHosted'>>().toExtend<
+      Parameters<DwarfAiMinersApi['launchHostedProcess']>[0]
     >()
     expectTypeOf<readonly string[]>().toExtend<
       Parameters<DwarfAiMinersApi['describeDwarfAttachments']>[0]
     >()
-    expectTypeOf<DwarfAiMinersApi['sendDwarfText']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'dwarf:sendText'>
+    expectTypeOf<DwarfAiMinersApi['getOpenCodeSettings']>().returns.resolves.toEqualTypeOf<
+      TodayResult<'opencode:settings:get'>
     >()
     // RETIRE row and KEEP row. AMENDED for ISSUE-123 (was: A-12 `getMines` as the RETIRE row): A-12's target shape is
     // today's `MinesSnapshot` (H3), so its result type is unchanged; A-P3 stands for a RETIRE row still `today`.

@@ -1,10 +1,10 @@
 // layer: L1
 import { describe, expect, it } from 'vitest'
-import { CHANNELS, RETIRED, UNROUTED, type ChannelKey } from '@dwarfai/contracts'
+import { CHANNELS, type ChannelKey } from '@dwarfai/contracts'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { rollbackOf } from './rollbackTable'
-import { LEGACY_BRIDGE_ADAPTERS, ROUTES as RELEASE_ROUTES } from './routes'
 import { CUT_0_ROUTES as ROUTES, CUT_0_TABLE } from './testing/cut0Routes'
+import { CUT_2_ROUTES, CUT_2_TABLE } from './testing/cut2Routes'
 
 /**
  * The rollback table of a cut (21 §2.1 item 1): the cut's rows that replaced legacy code are flipped back to the
@@ -126,19 +126,15 @@ describe('rollbackOf', () => {
   // `legacyToday`): the rollback build keeps this tree's preload and renderer, which send A-40/A-41 in the 14 target
   // shape, so the folded row keeps that shape through `LegacyAnswerShapeAdapter` (a today-shape row refused every answer).
   it('[ADR-001, ADR-016] rolling back cut 2 folds each qualified row into one unqualified legacy row through its shape adapter and withdraws the NEW rows that turn the Host’s Claude hook entry on', () => {
-    const cut2: RouteTable = {
-      release: 'cut-2',
-      routes: RELEASE_ROUTES,
-      unrouted: UNROUTED,
-      retired: RETIRED,
-      adapters: LEGACY_BRIDGE_ADAPTERS
-    }
+    // AMENDED for ISSUE-001 (was: the release table `ROUTES`, `UNROUTED` and `RETIRED` under release 'cut-2'): from the
+    // step-3a switch the release table is 3a's, so cut 2's rollback is built from the cut-2 table as it shipped.
+    const cut2: RouteTable = CUT_2_TABLE
     expect(checkRouteTable(cut2, KEYS)).toEqual([])
     const rolledBack = rollbackOf(cut2, 'cut-2')
     // A-40 and A-41: three routes in cut 2 (the Host, and each origin of the relay through its shape adapter), one
     // unqualified legacy row through the adapter in the rollback build (21 §2.1 item 1: the rows flipped back to `legacy`).
     for (const channel of ['agent:answerQuestion', 'agent:answerPermission'] as ChannelKey[]) {
-      expect(RELEASE_ROUTES.filter((r) => r.channel === channel)).toHaveLength(3)
+      expect(CUT_2_ROUTES.filter((r) => r.channel === channel)).toHaveLength(3)
       expect(rolledBack.routes.filter((r) => r.channel === channel)).toEqual([
         {
           channel,
@@ -157,7 +153,7 @@ describe('rollbackOf', () => {
     }
     expect(rolledBack.withdrawn).toEqual({ 'claude:hooks:set': 'cut-2', 'welcome:answer': 'cut-2' })
     expect(rolledBack.routes.filter((r) => r.channel === 'ask:step:set')).toEqual(
-      RELEASE_ROUTES.filter((r) => r.channel === 'ask:step:set')
+      CUT_2_ROUTES.filter((r) => r.channel === 'ask:step:set')
     )
     expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
     // A withdrawn entry is accepted only in the release that withdrew it, and never beside a route.

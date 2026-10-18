@@ -48,21 +48,12 @@ export const STEP_ORDER: readonly StepId[] = [
 export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // The cut-0 entries (A-N03…A-N05, A-N25…A-N27, A-N30, A-N34) were routed by the cut-0 switch (ISSUE-056), the
   // cut-1 entries (A-N01, A-N02, A-N12, A-N16…A-N21) by the cut-1 switch (ISSUE-123), and the cut-2 entries (A-N07,
-  // A-N31, A-N32) by the cut-2 switch (ISSUE-141). A-N08 and A-N09 are routed `host` in cut 2 by the ISSUE-172 lead
-  // decision (2026-10-17), never listed here.
+  // A-N31, A-N32) by the cut-2 switch (ISSUE-141), and the 3a entries (A-N06, A-N10, A-N11, A-N29) by the step-3a
+  // switch (ISSUE-001). A-N08 and A-N09 are routed `host` in cut 2 by the ISSUE-172 lead decision (2026-10-17), never
+  // listed here.
   // A-N33, born with the first release that bumps `endpointGeneration` (AMENDMENT-11; 21 "Different-generation
   // restart"); no handler in v1 (review R8B-06)
-  'host:connection:confirm-restart': 'generation-2',
-  // A-N29, born `host` in 3a (21 §2 step 3a, through `LegacyEndFirstAdapter` for a legacy-launched session); routed
-  // by the step-3a switch (ISSUE-001), never by its handler issue (ISSUE-171)
-  'dwarf:stop': 'cut-3a',
-  // A-N06, born `host` in 3a (14 §5.1 "Send, stop, console"); routed by the step-3a switch (ISSUE-001), never by
-  // its handler issue (ISSUE-168)
-  'dwarf:message:retry': 'cut-3a',
-  // A-N10, A-N11, born `host` in 3a (21 §2 step 3a: the Host recovery report); routed by the step-3a switch
-  // (ISSUE-001), never by their handler issue (ISSUE-174)
-  'host:recovery:retry': 'cut-3a',
-  'host:recovery:dismiss': 'cut-3a'
+  'host:connection:confirm-restart': 'generation-2'
 }
 
 /**
@@ -79,5 +70,10 @@ export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
   'panel:watchDwarfFeed': 'cut-1',
   'dwarf:refreshTelemetry': 'cut-1',
   'dwarf:setTuning': 'cut-1',
-  'panel:mine:show': 'cut-1'
+  'panel:mine:show': 'cut-1',
+  // A-26 (kick: the action is removed, "Stop dwarf…" A-N29 is the only stop), A-37 and A-38 (merged into A-35/A-36):
+  // 21 §2 cut 3a
+  'dwarf:kick': 'cut-3a',
+  'agent:models': 'cut-3a',
+  'agent:launchHeld': 'cut-3a'
 }
