@@ -396,6 +396,28 @@ describe('launching and conversation write side wired', () => {
     ).toEqual([{ revoked: 1 }])
   })
 
+  it('[INV-60, US-LAUNCH-005.AC07] a Claude launch through the wired Host shows its first prompt once, though the driver echoes it', async () => {
+    // GitHub #1430: the stream-json driver echoes the launch prompt with no `echoOf` (it has no
+    // receipt), and the launch writes the prompt as the dwarf's first message: one bubble.
+    const w = world()
+    const recorded = claudeRecording()
+    const h = await bootHost(w, {
+      epoch: 'epoch-1430-a',
+      processes: ({ clock, scheduler }) =>
+        claudeSpawn(clock, scheduler, recorded.allow, recorded.help),
+      installed: ['claude']
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+    const launched = await launchClaude(h, ui, mineId, recorded.allowPrompt)
+    await h.run(2_000, ui)
+
+    const feed = h.conversation.conversation.queries.feed(launched.dwarfId, { limit: 50 }).messages
+    expect(feed.filter((m) => m.role === 'person').map((m) => m.text)).toEqual([
+      recorded.allowPrompt
+    ])
+  })
+
   it('[S4.18, SP-15, CH-01] a Host rebuilt after a crash resumes the Claude session with its prompt tool served again', async () => {
     const w = world()
     const recorded = claudeRecording()

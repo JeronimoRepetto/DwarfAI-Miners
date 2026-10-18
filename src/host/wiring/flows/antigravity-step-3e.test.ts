@@ -44,6 +44,34 @@ interface LaunchChanged {
   launch: { launchId: LaunchId; state: string; dwarfId?: DwarfId }
 }
 
+/** `agy --help` answers the option lines; a stream-json `agy` replays `recorded`; nothing else runs. */
+function agySpawn(
+  clock: Parameters<Parameters<typeof bootHost>[1]['processes']>[0]['clock'],
+  scheduler: Parameters<Parameters<typeof bootHost>[1]['processes']>[0]['scheduler'],
+  recorded: FixtureProcess,
+  transports: FixtureTransport[]
+): RecordingSpawn {
+  return new RecordingSpawn({
+    clock,
+    scheduler,
+    decide: (spec) => {
+      if (spec.args.includes('--help')) {
+        return { kind: 'exit', afterMs: 0, code: 0, stdout: HELP }
+      }
+      if (spec.args.includes('stream-json')) {
+        const transport = new FixtureTransport({
+          received: recorded.received,
+          format: 'jsonl',
+          gates: recorded.gates
+        })
+        transports.push(transport)
+        return { kind: 'fixture', transport }
+      }
+      return { kind: 'exit', afterMs: 0, code: 1, stdout: '' }
+    }
+  })
+}
+
 describe('step 3e Antigravity flow (21 §2 cut 3e)', () => {
   it('[ADR-001, C-01, C-05] in a development build an Antigravity launch through the wired Host runs a turn, takes a sent message and stops', async () => {
     const w = world()
@@ -53,25 +81,7 @@ describe('step 3e Antigravity flow (21 §2 cut 3e)', () => {
     const h = await bootHost(w, {
       epoch: 'epoch-188-a',
       processes: ({ clock, scheduler }) => {
-        spawn = new RecordingSpawn({
-          clock,
-          scheduler,
-          decide: (spec) => {
-            if (spec.args.includes('--help')) {
-              return { kind: 'exit', afterMs: 0, code: 0, stdout: HELP }
-            }
-            if (spec.args.includes('stream-json')) {
-              const transport = new FixtureTransport({
-                received: recorded.received,
-                format: 'jsonl',
-                gates: recorded.gates
-              })
-              transports.push(transport)
-              return { kind: 'fixture', transport }
-            }
-            return { kind: 'exit', afterMs: 0, code: 1, stdout: '' }
-          }
-        })
+        spawn = agySpawn(clock, scheduler, recorded, transports)
         return spawn
       },
       installed: ['agy']
@@ -126,5 +136,35 @@ describe('step 3e Antigravity flow (21 §2 cut 3e)', () => {
         .events<{ dwarfId: DwarfId; cause: string }>('DwarfDeparted')
         .filter((e) => e.dwarfId === dwarfId)
     ).toMatchObject([{ dwarfId, cause: 'stopped' }])
+  })
+
+  it('[INV-60, US-LAUNCH-005.AC07] an Antigravity launch through the wired Host shows its first prompt once, though the driver echoes it', async () => {
+    // GitHub #1430: agy's own user step of the first turn is echoed as the launch prompt with no
+    // `echoOf` (the launch has no receipt): it merges into the launch's own row.
+    const w = world()
+    const recorded = sendTurnRecording()
+    const h = await bootHost(w, {
+      epoch: 'epoch-1430-e',
+      processes: ({ clock, scheduler }) => agySpawn(clock, scheduler, recorded, []),
+      installed: ['agy']
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+    await h.call(ui, 'launching.launch', {
+      mineId,
+      way: { kind: 'supplier', providerId: 'antigravity' },
+      prompt: 'first prompt',
+      jevOn: false,
+      jevAutoAccept: false,
+      requestId: h.rid()
+    })
+    await h.run(6_000, ui)
+    const dwarfId = evts<LaunchChanged>(ui, 'launch.changed').find(
+      (frame) => frame.launch.state === 'succeeded'
+    )?.launch.dwarfId
+    if (dwarfId === undefined) throw new Error('agy did not launch')
+
+    const feed = h.conversation.conversation.queries.feed(dwarfId, { limit: 50 }).messages
+    expect(feed.filter((m) => m.role === 'person').map((m) => m.text)).toEqual(['first prompt'])
   })
 })
