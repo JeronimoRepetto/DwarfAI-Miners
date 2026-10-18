@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { HostConnectionView } from '@dwarfai/contracts'
+import type { HostConnectionView, MessageId } from '@dwarfai/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { defaultDwarf, defaultMine } from '../testing/factories'
@@ -106,8 +106,15 @@ afterEach(() => {
 
 describe('useHostConnection', () => {
   it('[FM-146, ADR-002] while reconnecting the read model is read-only and a Host-owned action is not sent', async () => {
+    // AMENDED for ISSUE-001 (was: today's `{ delivered, via }`): A-23's 14 answer, accepted.
     const sendDwarfText = vi.fn(() =>
-      Promise.resolve({ delivered: true, via: 'terminal' as const })
+      Promise.resolve({
+        ok: true as const,
+        value: {
+          ok: true as const,
+          value: { messageId: '01920000-0000-7000-8000-0000000006a1' as MessageId }
+        }
+      })
     )
     const { push } = install(connected, { sendDwarfText })
     const host = useHostConnection()
@@ -161,7 +168,8 @@ describe('useHostConnection', () => {
     {
       name: 'a retry of a failed message',
       member: 'sendDwarfText',
-      answer: { delivered: false, via: 'none', error: 'refused' },
+      // AMENDED for ISSUE-001 (was: today's refusal): A-23's 14 refusal.
+      answer: { ok: true, value: { ok: false, error: 'cannot-receive' } },
       // The message failed while the Host was connected; its Retry is pressed while it is not.
       arrange: async () => {
         await useDwarfMessaging().send('dwarf-1', 'dig', true)
@@ -180,8 +188,9 @@ describe('useHostConnection', () => {
     },
     {
       name: 'a launch',
-      member: 'launchHeldSession',
-      answer: { launched: true },
+      // AMENDED for ISSUE-001 (was: today's A-38 held launch): A-35 in its 14 shape for every provider.
+      member: 'launchAgent',
+      answer: { ok: true, value: { launchId: '01920000-0000-7000-8000-0000000006b1' } },
       act: async () => {
         const launch = useAgentLaunch()
         await launch.open('mine-1')
@@ -264,9 +273,22 @@ describe('useHostConnection', () => {
       const call = vi.fn(() => Promise.resolve(answer))
       const { push } = install(connected, {
         [member]: call,
+        // AMENDED for ISSUE-001 (was: today's `{ providers }`): A-36's 14 entries.
         listAgentProviders: vi.fn(() =>
           Promise.resolve({
-            providers: [{ provider: 'claude' as const, installed: true, launchable: true }]
+            ok: true as const,
+            value: [
+              {
+                providerId: 'claude',
+                label: 'Claude Code',
+                models: [],
+                permissionModes: [],
+                offeredModes: [],
+                installed: true,
+                publicLaunch: 'enabled' as const,
+                answerChannel: 'available' as const
+              }
+            ]
           })
         ),
         listAgentModels: vi.fn(() => Promise.resolve({ catalogs: [] })),

@@ -71,7 +71,9 @@ export function useMessageDock() {
     hostOldestMessageId,
     chatFeedOf,
     startChat,
-    stopChat
+    stopChat,
+    startMarks,
+    stopMarks
   } = useDwarfMessaging()
   /**
    * The pages of conversation older than the newest feed (#364) — held beside `selectedFeed`
@@ -422,16 +424,28 @@ export function useMessageDock() {
     void decideDwarfPermission(dwarf.id, shown.permission, decision)
   }
 
-  /** Bring the session's own console forward, and say so when it could not be (#159). */
+  /**
+   * Bring the session's own console forward, and say so when it could not be (#159). AMENDED for ISSUE-001 (was:
+   * today's `activateDwarf(dwarfId)` answered by `DwarfActivation`): from 3a A-13 has its 14 shape for every provider,
+   * `ActivateDwarfRequest` → `IpcResult<ConsoleOpenResult>` (ADR-031): raised or opened is the console on screen, a
+   * `failed` outcome or a call error is a console that could not be opened.
+   */
   async function activate(dwarf: Dwarf): Promise<void> {
     error.value = null
     try {
-      const result = await window.api.activateDwarf(dwarf.id)
-      if (shouldHidePanelAfterActivation(result)) {
+      const answer = await window.api.activateDwarf({
+        dwarfId: dwarf.id as DwarfId,
+        purpose: 'open-console'
+      })
+      if (!answer.ok) {
+        error.value = 'The agent terminal could not be opened.'
+        return
+      }
+      if (shouldHidePanelAfterActivation(answer.value)) {
         window.api.hidePanel()
         return
       }
-      if (result.focused || result.openedTerminal) return
+      if (answer.value.outcome !== 'failed') return
       error.value = 'The agent terminal could not be opened; its latest activity is above.'
     } catch {
       error.value = 'The agent terminal could not be opened.'
@@ -499,12 +513,17 @@ export function useMessageDock() {
     unlistenWalks = onWalk(followDeparture)
     // The chats from the Host (ISSUE-123): followed for as long as the dock lives.
     void startChat()
+    // From 3a (ISSUE-001; 14 §4.1): the delivery marks and the launches the Host states, each its own read model.
+    void startMarks()
+    void launch.hostLaunches.start()
   })
   onBeforeUnmount(() => {
     unlistenLaunchFailures?.()
     unlistenHeldMessages?.()
     unlistenWalks?.()
     stopChat()
+    stopMarks()
+    launch.hostLaunches.stop()
   })
 
   return {

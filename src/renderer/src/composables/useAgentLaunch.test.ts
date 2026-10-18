@@ -8,16 +8,17 @@ import type {
   LaunchId,
   LaunchWire,
   MineId,
-  SnapshotPage
+  SnapshotPage,
+  SupplierEntryView
 } from '@dwarfai/contracts'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import {
   COMPOSER_ENABLED_PLACEHOLDER,
   DETACHED_TIMEOUT_MESSAGE,
   DETACHED_TIMEOUT_MS,
-  JEV_NO_CHOICE_REFUSAL,
   OTHER_CHOICE
 } from '../lib/launch/launchState'
+import { NOT_DETECTED } from '../lib/launch/providerChips'
 import { defaultDwarf, defaultMine } from '../testing/factories'
 import type { Dwarf, LaunchFailedPush, Mine } from '../types'
 import { useAgentLaunch } from './useAgentLaunch'
@@ -25,16 +26,37 @@ import { useAgentLaunch } from './useAgentLaunch'
 const MINE = 'mine-1'
 const CLAUDE = { provider: 'claude' as const, installed: true, launchable: true }
 /*
- * Codex became launchable in #168 — as a DETACHED session, not a held one, and
- * that difference is the whole of what the routing below has to get right.
+ * Codex became launchable in #168 — as a DETACHED session, not a held one. AMENDED for ISSUE-001: from 3a every
+ * provider launches through A-35 in its 14 shape; Codex's is served by today's runtime behind `PerProviderShapeAdapter`
+ * until 3b, the panel never tells the two apart.
  */
 const CODEX = { provider: 'codex' as const, installed: true, launchable: true }
-/** A provider a future build detects but has no launch path for. */
-const UNBUILT = {
-  provider: 'codex' as const,
-  installed: true,
-  launchable: false,
-  reason: 'That agent cannot be started from the panel yet.'
+/** The `LaunchId` A-35 answers in these cases (14 §1.6: a UUIDv7). */
+const LAUNCH = '01920000-0000-7000-8000-0000000003c1' as LaunchId
+/** The mine and the dwarf as the Host names them in its frames (UUIDv7, 14 §1.6). */
+const HOST_MINE = '01920000-0000-7000-8000-0000000003d1' as MineId
+const HOST_DWARF = '01920000-0000-7000-8000-0000000003e1'
+
+/*
+ * AMENDED for ISSUE-001 (was: today's A-36 `{ providers }` and A-37 `{ catalogs }`): from 3a A-36 answers every
+ * provider's `SupplierEntryView`, its models included (A-37 retired).
+ */
+function entry(provider: string, overrides: Partial<SupplierEntryView> = {}): SupplierEntryView {
+  return {
+    providerId: provider as SupplierEntryView['providerId'],
+    label: provider,
+    models: [],
+    permissionModes: [],
+    offeredModes: [],
+    installed: true,
+    publicLaunch: 'enabled',
+    answerChannel: 'available',
+    ...overrides
+  }
+}
+
+function catalogue(...entries: SupplierEntryView[]): IpcResult<SupplierEntryView[]> {
+  return { ok: true, value: entries }
 }
 
 /**
@@ -42,22 +64,15 @@ const UNBUILT = {
  * `vi.fn()` resolves undefined, and a fire-and-forget call that then throws
  * outside the narrow try becomes an unhandled rejection only the full suite
  * catches — the trap this branch's base already fell into once.
+ *
+ * AMENDED for ISSUE-001 (was: today's A-36, A-37, A-38 and A-35 answers, and today's A-50): the 14 shapes of A-35
+ * (`IpcResult<LaunchAccepted>`), A-36 (`IpcResult<SupplierEntryView[]>`) and A-50 (`IpcResult<JevSuggestResult>`).
  */
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
-    listAgentProviders: vi.fn().mockResolvedValue({ providers: [CLAUDE, CODEX] }),
-    // #239. Same reason listAgentProviders is named here rather than per
-    // test: an awaited member resolving undefined becomes an unhandled
-    // rejection only the full suite catches.
-    listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
-    launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
-    // The detached channel answers with the receipt main opened for this
-    // launch (#191) — never a dwarf id, which is not known at that moment.
-    launchAgent: vi.fn().mockResolvedValue({
-      launched: true,
-      provider: 'codex',
-      launchId: 'receipt:1'
-    }),
+    listAgentProviders: vi.fn().mockResolvedValue(catalogue(entry('claude'), entry('codex'))),
+    // The Host accepts a launch with its `LaunchId` and states the rest as frames (14 §1.7).
+    launchAgent: vi.fn().mockResolvedValue({ ok: true, value: { launchId: LAUNCH } }),
     // The third launch channel (#194). Named here rather than per test for the
     // reason this whole stub exists: an awaited member resolving undefined
     // becomes an unhandled rejection only the full suite catches.
@@ -67,13 +82,12 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // function to call, and a bare `undefined` would throw before any test
     // that exercises it got the chance to say why.
     onLaunchFailed: vi.fn().mockReturnValue(() => {}),
-    // Jev (#509). Same reason listAgentProviders is named here: an awaited
-    // member resolving undefined becomes an unhandled rejection only the
-    // full suite catches. `configured: false` is the honest default before
-    // any test asks for `ready` — a test that never touches Jev exercises
-    // the ordinary launch path exactly as it did before this option existed.
+    // Jev (#509). `configured: false` is the honest default before any test asks for `ready` — a test that never
+    // touches Jev exercises the ordinary launch path exactly as it did before this option existed.
     getJevSettings: vi.fn().mockResolvedValue({ configured: false }),
-    routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', reason: 'no-key' }),
+    routeJevLaunch: vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { ok: false, error: 'not-configured' } }),
     ...overrides
   }
   Object.defineProperty(window, 'api', {
@@ -82,6 +96,53 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     value: createFakeWindowApi(api)
   })
   return api
+}
+
+/*
+ * ADDED for ISSUE-001: the Host's launches as the panel reads them (A-N01 `launches`, A-N02 `launch.changed` /
+ * `launch.failed`, 14 §4.1). `stubApi` with the two read members; `push` hands frames to the panel.
+ */
+function hostWorld(overrides: Record<string, unknown> = {}, launches: LaunchWire[] = []) {
+  let listener: ((frames: HostFrame[]) => void) | null = null
+  let seq = 5
+  const api = stubApi({
+    getHostSnapshot: vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        value: {
+          snapshotId: 'snap-5',
+          seq: 5,
+          epoch: 'epoch-1',
+          chunks: [{ section: 'launches', data: launches }]
+        }
+      })
+    ),
+    onHostEvent: (follow: (frames: HostFrame[]) => void) => {
+      listener = follow
+      return () => {
+        listener = null
+      }
+    },
+    ...overrides
+  })
+  function push<F extends keyof HostFrames>(name: F, data: HostFrames[F]): void {
+    seq += 1
+    if (listener === null) throw new Error('nothing follows onHostEvent')
+    listener([{ type: 'evt', seq, epoch: 'epoch-1', name, data } as HostFrame])
+  }
+  return { api, push }
+}
+
+/** One launch as the Host states it (14 §3.6 `LaunchWire`). */
+function launchWire(state: LaunchWire['state'], extra: Partial<LaunchWire> = {}): LaunchWire {
+  return {
+    launchId: LAUNCH,
+    mineId: HOST_MINE,
+    state,
+    wayKind: 'supplier',
+    requestedAt: 1,
+    ...extra
+  } as LaunchWire
 }
 
 function mineWith(dwarfs: Dwarf[]): Mine {
@@ -100,17 +161,30 @@ function heldDwarf(id: string, first: string): Dwarf {
 }
 
 /**
- * A dwarf main has PROVED to be one of this panel's own detached launches
- * (#191) — no conversation, because a detached session hands the panel none,
- * and the receipt instead.
+ * A dwarf main has PROVED to be one of this panel's own launches (#191) — no
+ * conversation, and the receipt instead.
  */
 function launchedDwarf(id: string, launchId: string): Dwarf {
   return defaultDwarf({ id, name: id, sessionId: id, launchId })
 }
 
+/** The 14 `LaunchParams` the panel sends for a supplier launch (14 §3.4). */
+function supplierParams(providerId: string, extra: Record<string, unknown> = {}) {
+  return {
+    mineId: MINE,
+    way: { kind: 'supplier', providerId },
+    prompt: 'dig the east gallery',
+    jevOn: false,
+    jevAutoAccept: false,
+    requestId: expect.any(String),
+    ...extra
+  }
+}
+
 /** The store is a module-scope singleton, so each test starts from closed. */
 beforeEach(() => {
   useAgentLaunch().close()
+  useAgentLaunch().hostLaunches.stop()
 })
 
 describe('opening the Add Panel', () => {
@@ -120,7 +194,8 @@ describe('opening the Add Panel', () => {
 
     await open(MINE)
 
-    expect(api.listAgentProviders).toHaveBeenCalledOnce()
+    // AMENDED for ISSUE-001: A-36's 14 request, refreshed on every open (14 §2.1 A-36).
+    expect(api.listAgentProviders).toHaveBeenCalledWith({ refresh: true })
     expect(providers.value).toEqual([CLAUDE, CODEX])
   })
 
@@ -162,35 +237,35 @@ describe('opening the Add Panel', () => {
   })
 
   /*
-   * #239. Asked alongside listAgentProviders, on the same per-open cadence —
-   * see the composable's own note on why that beats asking per keystroke.
+   * #239. AMENDED for ISSUE-001 (was: today's A-37 asked beside A-36): from 3a each provider's models ride on its own
+   * A-36 entry, so the one catalogue answers both.
    */
   it('asks main for each provider’s own model catalogue too', async () => {
-    const catalogs = [
-      {
-        provider: 'claude' as const,
-        models: [{ value: 'claude-sonnet-5', label: 'Sonnet' }],
-        efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-        source: 'provider' as const
-      }
-    ]
-    const api = stubApi({ listAgentModels: vi.fn().mockResolvedValue({ catalogs }) })
+    const api = stubApi({
+      listAgentProviders: vi.fn().mockResolvedValue(
+        catalogue(
+          entry('claude', {
+            models: [{ value: 'claude-sonnet-5', label: 'Sonnet', efforts: ['low', 'high'] }]
+          })
+        )
+      )
+    })
     const { open, choose, modelPicker } = useAgentLaunch()
 
     await open(MINE)
     choose('claude')
 
-    expect(api.listAgentModels).toHaveBeenCalledOnce()
+    expect(api.listAgentProviders).toHaveBeenCalledOnce()
     expect(modelPicker.value).toEqual({
       visible: true,
-      models: catalogs[0]!.models,
+      models: [{ value: 'claude-sonnet-5', label: 'Sonnet', effortLevels: ['low', 'high'] }],
       disabled: false,
       note: null
     })
   })
 
   it('opens with no catalogues when the bridge cannot answer, rather than failing to open', async () => {
-    stubApi({ listAgentModels: vi.fn().mockRejectedValue(new Error('bridge down')) })
+    stubApi({ listAgentProviders: vi.fn().mockRejectedValue(new Error('bridge down')) })
     const { open, choose, modelPicker } = useAgentLaunch()
 
     await open(MINE)
@@ -202,11 +277,9 @@ describe('opening the Add Panel', () => {
 
   it('forgets the model catalogues when it closes', async () => {
     stubApi({
-      listAgentModels: vi.fn().mockResolvedValue({
-        catalogs: [
-          { provider: 'claude' as const, models: [], efforts: [], source: 'provider' as const }
-        ]
-      })
+      listAgentProviders: vi
+        .fn()
+        .mockResolvedValue(catalogue(entry('claude', { models: [{ value: 'opus', efforts: [] }] })))
     })
     const { open, close, choose, modelPicker } = useAgentLaunch()
     await open(MINE)
@@ -232,7 +305,9 @@ describe('submitting a launch', () => {
     return { api, launch }
   }
 
-  it('starts a HELD session, naming the mine, the provider and the trimmed prompt', async () => {
+  // AMENDED for ISSUE-001 (was: "starts a HELD session, …" on today's A-38): from 3a every provider launches through
+  // A-35 in its 14 shape, the Host's launcher for Claude (21 §2 cut 3a).
+  it('starts the launch through A-35, naming the mine, the provider and the trimmed prompt', async () => {
     const { api, launch } = await ready()
 
     await launch.submit()
@@ -240,11 +315,7 @@ describe('submitting a launch', () => {
     // The provider is what #168 added: before it, the chip the user pressed
     // reached no process, and every launch was a Claude one whatever the panel
     // had drawn as selected.
-    expect(api.launchHeldSession).toHaveBeenCalledWith({
-      mineId: MINE,
-      provider: 'claude',
-      prompt: 'dig the east gallery'
-    })
+    expect(api.launchAgent).toHaveBeenCalledWith(supplierParams('claude'))
   })
 
   /*
@@ -252,7 +323,7 @@ describe('submitting a launch', () => {
    * absent when untouched (already pinned above, since the object there
    * carries no `model`/`effort` key at all), present when chosen.
    */
-  it('carries a chosen model, effort and permission mode to a held launch', async () => {
+  it('carries a chosen model, effort and permission mode to a Claude launch', async () => {
     const { api, launch } = await ready()
     launch.setModel('claude-sonnet-5')
     launch.setEffort('xhigh')
@@ -260,14 +331,13 @@ describe('submitting a launch', () => {
 
     await launch.submit()
 
-    expect(api.launchHeldSession).toHaveBeenCalledWith({
-      mineId: MINE,
-      provider: 'claude',
-      prompt: 'dig the east gallery',
-      model: 'claude-sonnet-5',
-      effort: 'xhigh',
-      permissionMode: 'plan'
-    })
+    expect(api.launchAgent).toHaveBeenCalledWith(
+      supplierParams('claude', {
+        model: 'claude-sonnet-5',
+        effort: 'xhigh',
+        permissionMode: 'plan'
+      })
+    )
   })
 
   it('waits for the dwarf rather than claiming one from the verdict', async () => {
@@ -278,22 +348,25 @@ describe('submitting a launch', () => {
     expect(launch.phase.value).toBe('submitted-spawning')
   })
 
-  it('carries main’s own reason back into the Add state when the launch fails', async () => {
+  // AMENDED for ISSUE-001 (was: "carries main’s own reason back …", today's `{ launched: false, error }`): A-35 refuses
+  // at acceptance only with a call error, which has no words to show; the panel says its own sentence.
+  it('returns to the Add state with the panel’s sentence when the launch is refused', async () => {
     const { launch } = await ready({
-      launchHeldSession: vi
-        .fn()
-        .mockResolvedValue({ launched: false, error: 'Claude Code is not installed.' })
+      launchAgent: vi.fn().mockResolvedValue({
+        ok: false,
+        error: { code: 'INVALID_PARAMS', message: 'refused', retryable: false }
+      })
     })
 
     await launch.submit()
 
     expect(launch.phase.value).toBe('prompt-ready')
-    expect(launch.state.value.error).toBe('Claude Code is not installed.')
+    expect(launch.state.value.error).toBe('The agent could not be started.')
   })
 
   it('says the bridge is down rather than failing silently', async () => {
     const { launch } = await ready({
-      launchHeldSession: vi.fn().mockRejectedValue(new Error('bridge down'))
+      launchAgent: vi.fn().mockRejectedValue(new Error('bridge down'))
     })
 
     await launch.submit()
@@ -307,7 +380,7 @@ describe('submitting a launch', () => {
 
     await Promise.all([launch.submit(), launch.submit()])
 
-    expect(api.launchHeldSession).toHaveBeenCalledOnce()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
   })
 
   /*
@@ -321,8 +394,8 @@ describe('submitting a launch', () => {
    * providerChips.ts with its whole argument.
    *
    * The case it covered is still covered, on the other side: Enter on Other
-   * reaches the bridge now, and what it must NOT do is reach either of the
-   * other two channels. Starting a Claude session for a command somebody typed
+   * reaches the bridge now, and what it must NOT do is reach the supplier
+   * launch. Starting a Claude session for a command somebody typed
    * instead of Claude was the worse outcome the refusal existed to prevent, and
    * it still is.
    */
@@ -344,7 +417,6 @@ describe('submitting a launch', () => {
       command: 'lalolanda --once',
       prompt: 'dig the east gallery'
     })
-    expect(api.launchHeldSession).not.toHaveBeenCalled()
     expect(api.launchAgent).not.toHaveBeenCalled()
     expect(launch.state.value.error).toBeNull()
   })
@@ -402,8 +474,14 @@ describe('submitting a launch', () => {
     expect(launch.state.value.detached).toBe(false)
   })
 
-  it('refuses a detected provider it cannot start, repeating main’s reason', async () => {
-    const api = stubApi({ listAgentProviders: vi.fn().mockResolvedValue({ providers: [UNBUILT] }) })
+  // AMENDED for ISSUE-001 (was: "…, repeating main’s reason", today's `AgentProviderOption.reason`): a 14 entry carries
+  // no reason sentence, so a gated supplier is refused with the panel's own.
+  it('refuses a detected provider it cannot start, with the panel’s own sentence', async () => {
+    const api = stubApi({
+      listAgentProviders: vi
+        .fn()
+        .mockResolvedValue(catalogue(entry('codex', { publicLaunch: 'gated' })))
+    })
     const launch = useAgentLaunch()
     await launch.open(MINE)
     launch.choose('codex')
@@ -411,24 +489,18 @@ describe('submitting a launch', () => {
 
     await launch.submit()
 
-    expect(api.launchHeldSession).not.toHaveBeenCalled()
     expect(api.launchAgent).not.toHaveBeenCalled()
-    expect(launch.state.value.error).toBe(UNBUILT.reason)
+    expect(launch.state.value.error).toBe(NOT_DETECTED)
   })
 })
 
 /*
  * Which channel a chip goes down (#168).
  *
- * Two launch modes exist and they are not interchangeable. The HELD one keeps
- * an Agent SDK stream, which is the only thing that gives the panel words, so
- * it is the one the design's MessagePanel hand-over needs. The DETACHED one
- * starts a process and lets go. Claude can be either; Codex has no
- * held-session engine in this app, so it can only ever be detached.
- *
- * Routing by what the provider can honestly do is the point. Sending Codex
- * down the held channel would earn a refusal from main — correct, but it would
- * mean the panel offering a chip whose only outcome is an error.
+ * AMENDED for ISSUE-001 (was: the HELD channel, A-38, for Claude and the DETACHED one, A-35 in today's shape, for
+ * Codex): from 3a every supplier launch is A-35 with the 14 `LaunchParams`, qualified by its provider in UI main — the
+ * Host for Claude, today's runtime behind `PerProviderShapeAdapter` for a provider not yet moved (21 §2 cut 3; §3.1).
+ * The panel names the supplier in the launch's way and never chooses a channel.
  */
 describe('routing a launch to the channel its provider can actually use', () => {
   async function ready(provider: 'claude' | 'codex', overrides: Record<string, unknown> = {}) {
@@ -440,32 +512,21 @@ describe('routing a launch to the channel its provider can actually use', () => 
     return { api, launch }
   }
 
-  it('holds a Claude session, because only a held one can be watched', async () => {
-    const { api } = await ready('claude')
-    await useAgentLaunch().submit()
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "holds a Claude session, because
+  // only a held one can be watched" (#168). A-38 is retired in 3a (21 §2 cut 3a): Claude launches on the Host.
 
-    expect(api.launchHeldSession).toHaveBeenCalledOnce()
-    expect(api.launchAgent).not.toHaveBeenCalled()
-  })
-
-  it('starts Codex detached, naming the provider on the wire', async () => {
+  // AMENDED for ISSUE-001 (was: "starts Codex detached, naming the provider on the wire", today's request).
+  it('starts Codex through A-35, naming the provider in its way', async () => {
     const { api, launch } = await ready('codex')
 
     await launch.submit()
 
-    expect(api.launchAgent).toHaveBeenCalledWith({
-      mineId: MINE,
-      provider: 'codex',
-      prompt: 'dig the east gallery'
-    })
-    expect(api.launchHeldSession).not.toHaveBeenCalled()
+    expect(api.launchAgent).toHaveBeenCalledWith(supplierParams('codex'))
   })
 
   /*
    * #239. Model and effort travel to the detached channel too — Codex's own
-   * launch args carry them (buildCodexLaunchArgs, main-side). Permission mode
-   * does not: the row hides it for Codex in the first place (permissionsVisible
-   * is held-Claude-only), so there is nothing here to forward.
+   * launch args carry them (buildCodexLaunchArgs, main-side).
    */
   it('carries a chosen model and effort to a detached launch', async () => {
     const { api, launch } = await ready('codex')
@@ -474,13 +535,9 @@ describe('routing a launch to the channel its provider can actually use', () => 
 
     await launch.submit()
 
-    expect(api.launchAgent).toHaveBeenCalledWith({
-      mineId: MINE,
-      provider: 'codex',
-      prompt: 'dig the east gallery',
-      model: 'gpt-5.6-sol',
-      effort: 'high'
-    })
+    expect(api.launchAgent).toHaveBeenCalledWith(
+      supplierParams('codex', { model: 'gpt-5.6-sol', effort: 'high' })
+    )
   })
 
   /*
@@ -494,63 +551,58 @@ describe('routing a launch to the channel its provider can actually use', () => 
 
     await launch.submit()
 
-    expect(api.launchAgent).toHaveBeenCalledWith({
-      mineId: MINE,
-      provider: 'codex',
-      prompt: 'dig the east gallery',
-      permissionMode: 'read-only'
-    })
+    expect(api.launchAgent).toHaveBeenCalledWith(
+      supplierParams('codex', { permissionMode: 'read-only' })
+    )
   })
 
+  // AMENDED for ISSUE-001 (was: today's refusal at once): a Codex launch fails on today's A-P3, under the `LaunchId`
+  // A-35 answered (legacySettlementJoin.ts); its Retry is the same launch, naming the failed one (`retryOf`).
   it('sends the same Codex permission mode again on Retry', async () => {
-    const { api, launch } = await ready('codex', {
-      launchAgent: vi
-        .fn()
-        .mockResolvedValue({ launched: false, provider: 'codex', cause: 'not-installed' })
-    })
+    const { api, launch } = await ready('codex')
+    launch.listenFailures()
     launch.setPermissionMode('workspace-write')
     await launch.submit()
+    const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
+    listener({
+      launchId: LAUNCH,
+      provider: 'codex',
+      mineId: MINE,
+      exitCode: 1,
+      stderrTail: '',
+      cause: 'not-installed'
+    })
 
     await launch.retry()
 
     expect(api.launchAgent).toHaveBeenCalledTimes(2)
-    expect(api.launchAgent.mock.calls[1]![0]).toEqual(api.launchAgent.mock.calls[0]![0])
+    expect(api.launchAgent.mock.calls[1]![0]).toEqual({
+      ...api.launchAgent.mock.calls[0]![0],
+      requestId: expect.any(String),
+      retryOf: LAUNCH
+    })
     expect(api.launchAgent.mock.calls[1]![0].permissionMode).toBe('workspace-write')
   })
 
-  it('never hands a held launch a Codex permission mode left over from a switch', async () => {
+  // AMENDED for ISSUE-001 (was: "never hands a held launch …", today's A-38): the Claude launch is A-35 too.
+  it('never hands a Claude launch a Codex permission mode left over from a switch', async () => {
     const { api, launch } = await ready('codex')
     launch.setPermissionMode('read-only')
     launch.choose('claude')
 
     await launch.submit()
 
-    expect('permissionMode' in api.launchHeldSession.mock.calls[0]![0]).toBe(false)
+    expect('permissionMode' in api.launchAgent.mock.calls[0]![0]).toBe(false)
   })
 
-  /*
-   * AMENDED for #191 (was: "stops on started-detached instead of waiting for a
-   * dwarf it cannot recognise"). The state it lands in is unchanged and so is
-   * every assertion; what the old name claimed — that this is where a detached
-   * launch ends — is what #191 reversed. It now WAITS here, for main's receipt
-   * rather than for words it could never read.
-   */
-  it('lands on started-detached with main’s receipt and no dwarf claimed', async () => {
-    const { launch } = await ready('codex')
-
-    await launch.submit()
-
-    expect(launch.phase.value).toBe('started-detached')
-    expect(launch.state.value.launchedDwarfId).toBeNull()
-    expect(launch.state.value.error).toBeNull()
-    expect(launch.state.value.launchId).toBe('receipt:1')
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "lands on started-detached with
+  // main’s receipt and no dwarf claimed" (#191). An accepted launch stays "Sending the dwarf in…" under its `LaunchId`
+  // until it settles (07 5A `sending`): no launch is detached from the panel any more.
 
   /*
-   * The distinction the receipt exists to keep. A detached session's own words
-   * are not on the wire at all, so a dwarf whose conversation happens to match
-   * proves nothing — only main, which read that session's transcript against
-   * the prompt it sent, can say which dwarf this launch became.
+   * The distinction the receipt exists to keep. A launch's own words prove
+   * nothing — only main, or from 3a the Host, can say which dwarf this launch
+   * became. AMENDED for ISSUE-001: it waits in `submitted-spawning`.
    */
   it('never adopts a dwarf for a detached launch, however well its words match', async () => {
     const { launch } = await ready('codex')
@@ -558,7 +610,7 @@ describe('routing a launch to the channel its provider can actually use', () => 
 
     launch.observe([mineWith([heldDwarf('codex:sess-9', 'dig the east gallery')])])
 
-    expect(launch.phase.value).toBe('started-detached')
+    expect(launch.phase.value).toBe('submitted-spawning')
     expect(launch.state.value.launchedDwarfId).toBeNull()
   })
 
@@ -571,7 +623,7 @@ describe('routing a launch to the channel its provider can actually use', () => 
     const { launch } = await ready('codex')
     await launch.submit()
 
-    launch.observe([mineWith([launchedDwarf('codex:sess-9', 'receipt:1')])])
+    launch.observe([mineWith([launchedDwarf('codex:sess-9', LAUNCH)])])
 
     expect(launch.phase.value).toBe('message-panel')
     expect(launch.state.value.launchedDwarfId).toBe('codex:sess-9')
@@ -580,16 +632,13 @@ describe('routing a launch to the channel its provider can actually use', () => 
   /*
    * The session that finished before the poll first drew it — the case the
    * issue reports, where the reply had already landed. The panel opens on the
-   * ended dwarf all the same, and the MessagePanel draws the ended state with
-   * the transcript it reads on its own channel.
+   * ended dwarf all the same.
    */
   it('hands over to a dwarf whose session had already ended', async () => {
     const { launch } = await ready('codex')
     await launch.submit()
 
-    launch.observe([
-      mineWith([{ ...launchedDwarf('codex:sess-9', 'receipt:1'), status: 'leaving' }])
-    ])
+    launch.observe([mineWith([{ ...launchedDwarf('codex:sess-9', LAUNCH), status: 'leaving' }])])
 
     expect(launch.phase.value).toBe('message-panel')
     expect(launch.state.value.launchedDwarfId).toBe('codex:sess-9')
@@ -601,39 +650,26 @@ describe('routing a launch to the channel its provider can actually use', () => 
 
     launch.observe([mineWith([launchedDwarf('codex:sess-8', 'receipt:2')])])
 
-    expect(launch.phase.value).toBe('started-detached')
+    expect(launch.phase.value).toBe('submitted-spawning')
   })
 
-  /*
-   * A launch main opened no receipt for is where #168's original reading still
-   * holds: the session started and nothing can prove which dwarf it became, so
-   * the panel says that and adopts nobody.
-   */
-  it('waits without adopting when main opened no receipt', async () => {
-    const { launch } = await ready('codex', {
-      launchAgent: vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
-    })
-    await launch.submit()
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "waits without adopting when main
+  // opened no receipt" (#168). Every accepted A-35 answers its `LaunchId` (14 §3.4 `LaunchAccepted`).
 
-    launch.observe([mineWith([launchedDwarf('codex:sess-9', 'receipt:1')])])
-
-    expect(launch.state.value.launchId).toBeNull()
-    expect(launch.phase.value).toBe('started-detached')
-  })
-
-  it('carries a refused detached launch back with main’s own reason', async () => {
+  // AMENDED for ISSUE-001 (was: "carries a refused detached launch back with main’s own reason"): a refusal at
+  // acceptance is a call error with no words to show, so the panel's own sentence.
+  it('carries a refused detached launch back with the panel’s sentence', async () => {
     const { launch } = await ready('codex', {
       launchAgent: vi.fn().mockResolvedValue({
-        launched: false,
-        provider: 'codex',
-        error: 'Codex CLI is not installed on this machine.'
+        ok: false,
+        error: { code: 'INVALID_PARAMS', message: 'unknown supplier', retryable: false }
       })
     })
 
     await launch.submit()
 
     expect(launch.phase.value).toBe('prompt-ready')
-    expect(launch.state.value.error).toBe('Codex CLI is not installed on this machine.')
+    expect(launch.state.value.error).toBe('The agent could not be started.')
   })
 
   it('says the bridge is down for a detached launch too', async () => {
@@ -838,22 +874,29 @@ describe('useAgentLaunch read model', () => {
 })
 
 /*
- * Jev (#509): the composable's own two jobs — reading main's settings
- * verdict on open, and, on submit, asking before an enabled/ready launch
- * goes out. Everything about what a decision or a fallback actually DOES to
- * the pickers is `launchState`'s, tested there; this describes only the IPC
- * orchestration around it.
+ * Jev (#509): the composable's own jobs — reading main's settings verdict on open, and its card while typing.
+ * AMENDED for ISSUE-001 (was: today's Enter-time ask, A-50 `{ prompt }` answered by `JevRouteLaunchResult`): from 3a
+ * the card is A-50 in its 14 shape while the prompt is written (ISSUE-195, `useAgentLaunch.jev.test.ts`), and Enter
+ * with Let Jev choose on is the Host's Jev way (07 5B S5.10). Everything about what a suggestion does to the pickers
+ * is `launchState`'s, tested there; this describes only the IPC orchestration around it.
  */
 describe('Jev launch routing (#509)', () => {
-  const DECISION = {
-    kind: 'decision' as const,
-    provider: 'codex' as const,
-    model: 'gpt-5.6-sol',
-    effort: 'high',
-    confidence: 0.87,
-    truncated: false
+  /** A-50's 14 answer: Jev suggests Codex, a model and an effort (14 §3.8 `JevSuggestResult`). */
+  const SUGGESTION = {
+    ok: true as const,
+    value: {
+      ok: true as const,
+      value: {
+        providerId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+        tier: 'balanced',
+        confidence: { providerId: 0.87 },
+        truncated: false,
+        parts: { providerId: 'answered', model: 'answered', tier: 'answered' }
+      }
+    }
   }
-  const FALLBACK = { kind: 'fallback' as const, reason: 'timeout' as const }
 
   describe('opening the panel', () => {
     it('reads the Jev settings verdict alongside providers and models', async () => {
@@ -897,167 +940,42 @@ describe('Jev launch routing (#509)', () => {
       expect(jev.value.enabled).toBe(true)
     })
 
+    // AMENDED for ISSUE-001 (was: a decision from today's Enter-time ask): the card comes from A-50 while typing.
     it('dismiss puts the pickers back to what they were before a decision', async () => {
       const api = stubApi({
         getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-        routeJevLaunch: vi.fn().mockResolvedValue(DECISION)
+        routeJevLaunch: vi.fn().mockResolvedValue(SUGGESTION)
       })
-      const { open, choose, setPrompt, toggleJevEnabled, submit, dismissJevDecision, state } =
+      const { open, choose, setPrompt, toggleJevEnabled, dismissJevDecision, state } =
         useAgentLaunch()
       await open(MINE)
       choose('claude')
       toggleJevEnabled()
       setPrompt('dig the east gallery')
-
-      await submit()
-      expect(state.value.choice).toBe('codex')
+      await vi.waitFor(() => expect(state.value.choice).toBe('codex'))
 
       dismissJevDecision()
 
       expect(state.value.choice).toBe('claude')
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
       expect(api.launchAgent).not.toHaveBeenCalled()
     })
   })
 
-  describe('submitting with Jev enabled and ready', () => {
-    async function readyWithJev(overrides: Record<string, unknown> = {}) {
-      const api = stubApi({
-        getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-        routeJevLaunch: vi.fn().mockResolvedValue(DECISION),
-        ...overrides
-      })
-      const launch = useAgentLaunch()
-      await launch.open(MINE)
-      launch.choose('claude')
-      launch.toggleJevEnabled()
-      launch.setPrompt('dig the east gallery')
-      return { api, launch }
-    }
-
-    it('asks Jev instead of launching straight off the pickers', async () => {
-      const { api, launch } = await readyWithJev()
-
-      await launch.submit()
-
-      expect(api.routeJevLaunch).toHaveBeenCalledWith({ prompt: 'dig the east gallery' })
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
-      expect(api.launchAgent).not.toHaveBeenCalled()
-    })
-
-    it('shows the decision and applies it to the pickers, without launching', async () => {
-      const { launch } = await readyWithJev()
-
-      await launch.submit()
-
-      expect(launch.jev.value.routing).toEqual({ phase: 'decided', decision: DECISION })
-      expect(launch.state.value.choice).toBe('codex')
-      expect(launch.state.value.model).toBe('gpt-5.6-sol')
-      expect(launch.state.value.effort).toBe('high')
-      expect(launch.phase.value).toBe('prompt-ready')
-    })
-
-    it('launches on a second submit, down the channel the applied provider actually uses', async () => {
-      const { api, launch } = await readyWithJev()
-      await launch.submit()
-
-      await launch.submit()
-
-      // Codex has no held-session engine (#168) — the whole point of applying
-      // the decision through chooseProvider is that submit reads it exactly
-      // as it would a person's own click.
-      expect(api.launchAgent).toHaveBeenCalledWith({
-        mineId: MINE,
-        provider: 'codex',
-        prompt: 'dig the east gallery',
-        model: 'gpt-5.6-sol',
-        effort: 'high',
-        routedByJev: true
-      })
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
-    })
-
-    it('never asks Jev again for a decision already held', async () => {
-      const { api, launch } = await readyWithJev()
-      await launch.submit()
-
-      await launch.submit()
-
-      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
-    })
-
-    it('ignores a second submit while Jev is still being asked, in state and not only in the view', async () => {
-      // The view already refuses a second Enter during `asking`, but the
-      // model has to hold the same line: a second submit that slipped past
-      // the view would find `shouldAskJev` false (the ask is in flight) and
-      // launch on the UNAPPLIED pickers, and the late decision would then
-      // rewrite them behind a launch already started. Same shape as the
-      // ordinary "one launch in flight" guard above it.
-      const { api, launch } = await readyWithJev()
-
-      await Promise.all([launch.submit(), launch.submit()])
-
-      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
-      expect(api.launchAgent).not.toHaveBeenCalled()
-      expect(launch.jev.value.routing).toEqual({ phase: 'decided', decision: DECISION })
-    })
-
-    it('launches immediately on a fallback, and keeps it visible', async () => {
-      const { api, launch } = await readyWithJev({
-        routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK)
-      })
-
-      await launch.submit()
-
-      expect(api.launchHeldSession).toHaveBeenCalledWith({
-        mineId: MINE,
-        provider: 'claude',
-        prompt: 'dig the east gallery'
-      })
-      expect(launch.jev.value.routing).toEqual({
-        phase: 'fellBack',
-        reason: 'timeout',
-        confidence: undefined
-      })
-    })
-
-    it('falls back with invalid-response when the bridge itself rejects', async () => {
-      const { api, launch } = await readyWithJev({
-        routeJevLaunch: vi.fn().mockRejectedValue(new Error('bridge down'))
-      })
-
-      await launch.submit()
-
-      expect(launch.jev.value.routing).toEqual({
-        phase: 'fellBack',
-        reason: 'invalid-response',
-        confidence: undefined
-      })
-      expect(api.launchHeldSession).toHaveBeenCalledOnce()
-    })
-
-    it('drops a stale decision and re-asks once the prompt is edited', async () => {
-      const { api, launch } = await readyWithJev()
-      await launch.submit()
-      expect(launch.jev.value.routing.phase).toBe('decided')
-
-      launch.setPrompt('shore the north wall instead')
-      expect(launch.jev.value.routing).toEqual({ phase: 'idle' })
-
-      await launch.submit()
-
-      expect(api.routeJevLaunch).toHaveBeenLastCalledWith({
-        prompt: 'shore the north wall instead'
-      })
-    })
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): the 'submitting with Jev enabled
+  // and ready' block (8): "asks Jev instead of launching straight off the pickers", "shows the decision and applies it
+  // to the pickers, without launching", "launches on a second submit, down the channel the applied provider actually
+  // uses", "never asks Jev again for a decision already held", "ignores a second submit while Jev is still being
+  // asked, in state and not only in the view", "launches immediately on a fallback, and keeps it visible", "falls back
+  // with invalid-response when the bridge itself rejects" and "drops a stale decision and re-asks once the prompt is
+  // edited". Their subject, today's Enter-time A-50 ask, left with A-50's 14 shape: the card is asked while typing
+  // (ISSUE-195) and Enter with Let Jev choose on is the Host's Jev way.
 
   describe('submitting with Jev off, unavailable, or hidden', () => {
+    // AMENDED for ISSUE-001: the ask that never happens is the typing-time one; the launch is A-35's supplier way.
     it('never asks when the toggle is off', async () => {
       const api = stubApi({
         getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-        routeJevLaunch: vi.fn().mockResolvedValue(DECISION)
+        routeJevLaunch: vi.fn().mockResolvedValue(SUGGESTION)
       })
       const launch = useAgentLaunch()
       await launch.open(MINE)
@@ -1067,13 +985,13 @@ describe('Jev launch routing (#509)', () => {
       await launch.submit()
 
       expect(api.routeJevLaunch).not.toHaveBeenCalled()
-      expect(api.launchHeldSession).toHaveBeenCalledOnce()
+      expect(api.launchAgent).toHaveBeenCalledWith(supplierParams('claude'))
     })
 
     it('never asks with no key configured', async () => {
       const api = stubApi({
         getJevSettings: vi.fn().mockResolvedValue({ configured: false }),
-        routeJevLaunch: vi.fn().mockResolvedValue(DECISION)
+        routeJevLaunch: vi.fn().mockResolvedValue(SUGGESTION)
       })
       const launch = useAgentLaunch()
       await launch.open(MINE)
@@ -1083,33 +1001,40 @@ describe('Jev launch routing (#509)', () => {
       await launch.submit()
 
       expect(api.routeJevLaunch).not.toHaveBeenCalled()
-      expect(api.launchHeldSession).toHaveBeenCalledOnce()
+      expect(api.launchAgent).toHaveBeenCalledOnce()
     })
   })
 })
 
+/*
+ * AMENDED for ISSUE-001 (was: today's held launch, adopted by the prompt main seeded): from 3a the launch the Host owns
+ * hands over on the Host's word — `launch.changed` with its dwarf (07 5A S5.05) — never on a dwarf whose words match.
+ */
 describe('watching for the dwarf the launch started', () => {
   async function launched() {
-    stubApi()
+    const host = hostWorld()
     const launch = useAgentLaunch()
+    await launch.hostLaunches.start()
     await launch.open(MINE)
     launch.choose('claude')
     launch.setPrompt('dig the east gallery')
     await launch.submit()
-    return launch
+    return { launch, host }
   }
 
   it('hands over to the MessagePanel on the dwarf carrying its own prompt', async () => {
-    const launch = await launched()
+    const { launch, host } = await launched()
 
-    launch.observe([mineWith([heldDwarf('claude:sess-9', 'dig the east gallery')])])
+    host.push('launch.changed', {
+      launch: launchWire('succeeded', { dwarfId: HOST_DWARF as never })
+    })
 
     expect(launch.phase.value).toBe('message-panel')
-    expect(launch.state.value.launchedDwarfId).toBe('claude:sess-9')
+    expect(launch.state.value.launchedDwarfId).toBe(HOST_DWARF)
   })
 
   it('keeps waiting while only unrelated sessions turn up', async () => {
-    const launch = await launched()
+    const { launch } = await launched()
 
     launch.observe([mineWith([heldDwarf('claude:sess-8', 'shore the north wall')])])
 
@@ -1117,9 +1042,9 @@ describe('watching for the dwarf the launch started', () => {
   })
 
   it('looks only in the mine the launch was made from', async () => {
-    const launch = await launched()
+    const { launch } = await launched()
     const elsewhere: Mine = {
-      ...mineWith([heldDwarf('claude:sess-9', 'dig the east gallery')]),
+      ...mineWith([launchedDwarf('claude:sess-9', LAUNCH)]),
       id: 'mine-2'
     }
 
@@ -1140,10 +1065,9 @@ describe('watching for the dwarf the launch started', () => {
 })
 
 /*
- * Issue #263. `started-detached` used to be a dead end: main answering
- * `launched: true` was the last word this panel ever heard, whatever
- * happened to the process next. These are the two ways back — main's own
- * failure push, and the generous timeout for when nothing arrives at all.
+ * Issue #263. AMENDED for ISSUE-001: from 3a a launch of a provider not yet moved (Codex here) is still "Sending the
+ * dwarf in…" under the `LaunchId` A-35 answered, which today's A-P3 now names (legacySettlementJoin.ts); the Host
+ * never states it, so today's bound still ends it. A launch the Host states is never ended by a timer (NFR-TIM-07).
  */
 describe('a detached launch that fails after it started (#263)', () => {
   async function detachedLaunch(overrides: Record<string, unknown> = {}) {
@@ -1160,7 +1084,7 @@ describe('a detached launch that fails after it started (#263)', () => {
   // `cause`). The push now always names one; no assertion here reads it.
   function failure(overrides: Partial<LaunchFailedPush> = {}): LaunchFailedPush {
     return {
-      launchId: 'receipt:1',
+      launchId: LAUNCH,
       provider: 'codex',
       mineId: MINE,
       exitCode: 1,
@@ -1186,7 +1110,7 @@ describe('a detached launch that fails after it started (#263)', () => {
   it('returns the composer with the push’s cause when it names this launch', async () => {
     const { api, launch } = await detachedLaunch()
     launch.listenFailures()
-    expect(launch.phase.value).toBe('started-detached')
+    expect(launch.phase.value).toBe('submitted-spawning')
 
     const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
     listener(failure())
@@ -1211,14 +1135,14 @@ describe('a detached launch that fails after it started (#263)', () => {
     const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
     listener(failure({ launchId: 'receipt:9' }))
 
-    expect(launch.phase.value).toBe('started-detached')
+    expect(launch.phase.value).toBe('submitted-spawning')
   })
 
   it('times out to a neutral sentence when neither a receipt nor a failure ever arrives', async () => {
     vi.useFakeTimers()
     try {
       const { launch } = await detachedLaunch()
-      expect(launch.phase.value).toBe('started-detached')
+      expect(launch.phase.value).toBe('submitted-spawning')
 
       vi.advanceTimersByTime(DETACHED_TIMEOUT_MS)
 
@@ -1234,7 +1158,7 @@ describe('a detached launch that fails after it started (#263)', () => {
     vi.useFakeTimers()
     try {
       const { launch } = await detachedLaunch()
-      launch.observe([mineWith([launchedDwarf('codex:sess-9', 'receipt:1')])])
+      launch.observe([mineWith([launchedDwarf('codex:sess-9', LAUNCH)])])
       expect(launch.phase.value).toBe('message-panel')
 
       vi.advanceTimersByTime(DETACHED_TIMEOUT_MS)
@@ -1246,22 +1170,23 @@ describe('a detached launch that fails after it started (#263)', () => {
     }
   })
 
-  /*
-   * The #168 terminal reading is unchanged by this issue: a launch main
-   * opened no receipt for has nothing for a timeout to correlate against, so
-   * none is ever scheduled for one.
-   */
-  it('never schedules a timeout for a launch main opened no receipt for', async () => {
+  // AMENDED for ISSUE-001 (was: "never schedules a timeout for a launch main opened no receipt for", today's #168
+  // reading): every A-35 answers a `LaunchId`; what no timer ends is a launch the Host states (07 5A `sending`).
+  it('[NFR-TIM-07] never times out a launch the Host states, which only its own event ends', async () => {
     vi.useFakeTimers()
     try {
-      const { launch } = await detachedLaunch({
-        launchAgent: vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
-      })
-      expect(launch.state.value.launchId).toBeNull()
+      const host = hostWorld()
+      const launch = useAgentLaunch()
+      await launch.hostLaunches.start()
+      await launch.open(MINE)
+      launch.choose('claude')
+      launch.setPrompt('dig the east gallery')
+      await launch.submit()
+      host.push('launch.changed', { launch: launchWire('routing') })
 
-      vi.advanceTimersByTime(DETACHED_TIMEOUT_MS)
+      vi.advanceTimersByTime(DETACHED_TIMEOUT_MS * 10)
 
-      expect(launch.phase.value).toBe('started-detached')
+      expect(launch.phase.value).toBe('submitted-spawning')
       expect(launch.state.value.error).toBeNull()
     } finally {
       vi.useRealTimers()
@@ -1270,28 +1195,13 @@ describe('a detached launch that fails after it started (#263)', () => {
 })
 
 /*
- * Issue #523. The toggle as an entry path: the composer opens on it alone, the
- * #509 detour then runs without a chip having ever been pressed, and every way
- * that detour can end without a launch has to SAY so rather than swallow the
- * Enter. The pure gates are pinned in launchState.test.ts; the two-Enter flow
- * itself was #509's and is re-pinned here only to prove it survives the no-chip
- * case it never had to carry before.
+ * Issue #523. The toggle as an entry path: the composer opens on it alone. AMENDED for ISSUE-001: Enter with Let Jev
+ * choose on is the Host's Jev way (07 5B S5.10: the Host asks Jev at Send), so no Enter stops at a decision any more.
  */
 describe('the Jev entry path (#523)', () => {
-  const DECISION = {
-    kind: 'decision' as const,
-    provider: 'codex' as const,
-    model: 'gpt-5.6-sol',
-    effort: 'high',
-    confidence: 0.87,
-    truncated: false
-  }
-  const FALLBACK = { kind: 'fallback' as const, reason: 'timeout' as const }
-
   function jevApi(overrides: Record<string, unknown> = {}) {
     return stubApi({
       getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-      routeJevLaunch: vi.fn().mockResolvedValue(DECISION),
       ...overrides
     })
   }
@@ -1323,32 +1233,24 @@ describe('the Jev entry path (#523)', () => {
   })
 
   describe('the two-Enter flow, carried with no chip', () => {
-    it('asks on the first Enter, stops at the decision, and launches on the second', async () => {
+    // AMENDED for ISSUE-001 (was: "asks on the first Enter, stops at the decision, and launches on the second"): one
+    // Enter, the Host's Jev way, the person's Jev switches carried (14 §3.4 `LaunchParams`).
+    it('launches on one Enter as the Host’s Jev way, with no chip and no ask of its own', async () => {
       const { api, launch } = await readyOnJev()
+      api.routeJevLaunch.mockClear()
 
       await launch.submit()
 
-      expect(api.routeJevLaunch).toHaveBeenCalledWith({ prompt: 'dig the east gallery' })
-      expect(api.launchAgent).not.toHaveBeenCalled()
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
-      expect(launch.jev.value.routing).toEqual({ phase: 'decided', decision: DECISION })
-      expect(launch.state.value.choice).toBe('codex')
-
-      await launch.submit()
-
-      // The applied provider routes exactly as a clicked one would — Codex
-      // detached, carrying the model and effort Jev named (#168's channel rule
-      // unchanged; this is #509's, re-pinned without a chip in front of it) —
-      // plus routedByJev (#511): a decision really was applied to this launch.
       expect(api.launchAgent).toHaveBeenCalledWith({
         mineId: MINE,
-        provider: 'codex',
+        way: { kind: 'jev' },
         prompt: 'dig the east gallery',
-        model: 'gpt-5.6-sol',
-        effort: 'high',
-        routedByJev: true
+        jevOn: true,
+        jevAutoAccept: false,
+        requestId: expect.any(String)
       })
-      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+      expect(api.routeJevLaunch).not.toHaveBeenCalled()
+      expect(launch.phase.value).toBe('submitted-spawning')
     })
   })
 
@@ -1363,236 +1265,71 @@ describe('the Jev entry path (#523)', () => {
       expect(jev.value.autoAccept).toBe(true)
     })
 
-    it('applies the decision and launches on the same Enter', async () => {
+    // AMENDED for ISSUE-001 (was: "applies the decision and launches on the same Enter"): auto-accept is the person's
+    // switch the Host's Jev way reads (`jevAutoAccept`).
+    it('carries auto-accept on the same Enter, for the Host to apply Jev’s pick', async () => {
       const { api, launch } = await readyOnJev()
       launch.toggleJevAutoAccept()
 
       await launch.submit()
 
-      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
-      expect(launch.state.value.choice).toBe('codex')
-      expect(api.launchAgent).toHaveBeenCalledWith({
-        mineId: MINE,
-        provider: 'codex',
-        prompt: 'dig the east gallery',
-        model: 'gpt-5.6-sol',
-        effort: 'high',
-        routedByJev: true
-      })
-      expect(launch.phase.value).toBe('started-detached')
-    })
-
-    it('never auto-accepts a fallback: with no chip it launches nothing, and the fallback line owns the refusal', async () => {
-      const { api, launch } = await readyOnJev({
-        routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK)
-      })
-      launch.toggleJevAutoAccept()
-
-      await launch.submit()
-
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
-      expect(api.launchAgent).not.toHaveBeenCalled()
-      expect(launch.state.value.prompt).toBe('dig the east gallery')
-      expect(launch.jev.value.routing).toEqual({
-        phase: 'fellBack',
-        reason: 'timeout',
-        confidence: undefined
-      })
-      // The refusal is the reworded fallback line, not a second error line —
-      // `launchedOnFallback: false` is what tells AddPanel the launch it used
-      // to promise did not happen. So `error` stays empty, and the prompt
-      // stands. A second Enter changes nothing: no re-ask, no launch, no
-      // swallowed silence — the line is already on screen, still true.
-      expect(launch.state.value.error).toBeNull()
-      expect(launch.jev.value.launchedOnFallback).toBe(false)
-
-      await launch.submit()
-
-      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
-      expect(api.launchAgent).not.toHaveBeenCalled()
-      expect(launch.state.value.prompt).toBe('dig the east gallery')
-    })
-
-    it('leaves a fallback onto a chosen chip launching, exactly as #509 had it', async () => {
-      const api = jevApi({ routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK) })
-      const launch = useAgentLaunch()
-      await launch.open(MINE)
-      launch.choose('claude')
-      launch.toggleJevEnabled()
-      launch.toggleJevAutoAccept()
-      launch.setPrompt('dig the east gallery')
-
-      await launch.submit()
-
-      expect(api.launchHeldSession).toHaveBeenCalledWith({
-        mineId: MINE,
-        provider: 'claude',
-        prompt: 'dig the east gallery'
-      })
-      expect(launch.jev.value.launchedOnFallback).toBe(true)
-      // #511's own honesty rule: a fallback launch, even one that started
-      // successfully, never carries routedByJev — the same reason
-      // launchedOnFallback exists as a SEPARATE fact from "launched".
-      expect(api.launchHeldSession).toHaveBeenCalledWith(
-        expect.not.objectContaining({ routedByJev: expect.anything() })
+      expect(api.launchAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ way: { kind: 'jev' }, jevOn: true, jevAutoAccept: true })
       )
     })
+
+    // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "never auto-accepts a fallback:
+    // with no chip it launches nothing, and the fallback line owns the refusal" and "leaves a fallback onto a chosen chip
+    // launching, exactly as #509 had it" (#523). A Jev fallback is the Host's at Send: a Jev cause on `launch.failed`,
+    // or a hand-back with the configured default (07 5B S5.13–S5.15; 'the launch-failure notice' below).
   })
 
-  /* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
-  describe('routedByJev on the held channel', () => {
-    const HELD_DECISION = {
-      kind: 'decision' as const,
-      provider: 'claude' as const,
-      model: 'sonnet',
-      confidence: 0.9,
-      truncated: false
-    }
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "carries routedByJev once a
+  // decision routes to a heldable provider" (#511). A-38 is retired and the 14 launch states a Jev launch by its way.
 
-    it('carries routedByJev once a decision routes to a heldable provider', async () => {
-      const { api, launch } = await readyOnJev({
-        routeJevLaunch: vi.fn().mockResolvedValue(HELD_DECISION)
-      })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): the 'a fallback with a configured
+  // default (jev-routing-profiles T4)' block (2): "applies the default and stops for the second Enter, same as a
+  // decision" and "launches at once with auto-accept on, instead of waiting for a second Enter". The Host hands a
+  // launch back with the default in the pickers (07 5B S5.13, 5A S5.07; 'the launch-failure notice' below).
 
-      await launch.submit()
-      await launch.submit()
-
-      expect(api.launchHeldSession).toHaveBeenCalledWith({
-        mineId: MINE,
-        provider: 'claude',
-        prompt: 'dig the east gallery',
-        model: 'sonnet',
-        routedByJev: true
-      })
-      expect(api.launchAgent).not.toHaveBeenCalled()
-    })
-  })
-  /* --- end of the #511 block ---------------------------------------------------- */
-
-  /*
-   * jev-routing-profiles T4. A fallback that carries the person's own
-   * configured default (Settings' Jev section) applies it to the pickers
-   * exactly like a decision — `launchState.jevAnswered`'s own detour — so
-   * this Enter shares that phase's own "stop unless autoAccept" guard rather
-   * than the #509/#523 fall-straight-through ending a plain fallback (no
-   * default) still gets, pinned above.
-   */
-  describe('a fallback with a configured default (jev-routing-profiles T4)', () => {
-    const FALLBACK_WITH_DEFAULT = {
-      kind: 'fallback' as const,
-      reason: 'timeout' as const,
-      fallbackTo: { provider: 'codex' as const, model: 'gpt-5.6-sol', effort: 'high' }
-    }
-
-    it('applies the default and stops for the second Enter, same as a decision', async () => {
-      const { api, launch } = await readyOnJev({
-        routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK_WITH_DEFAULT)
-      })
-
-      await launch.submit()
-
-      expect(api.launchAgent).not.toHaveBeenCalled()
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
-      expect(launch.state.value.choice).toBe('codex')
-      expect(launch.state.value.model).toBe('gpt-5.6-sol')
-      expect(launch.state.value.effort).toBe('high')
-      expect(launch.jev.value.routing).toEqual({
-        phase: 'fellBack',
-        reason: 'timeout',
-        confidence: undefined,
-        appliedDefault: FALLBACK_WITH_DEFAULT.fallbackTo
-      })
-
-      await launch.submit()
-
-      // The applied default routes exactly as a clicked chip would — the
-      // same rule the plain-decision two-Enter flow above already pins.
-      expect(api.launchAgent).toHaveBeenCalledWith({
-        mineId: MINE,
-        provider: 'codex',
-        prompt: 'dig the east gallery',
-        model: 'gpt-5.6-sol',
-        effort: 'high'
-      })
-      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
-    })
-
-    it('launches at once with auto-accept on, instead of waiting for a second Enter', async () => {
-      const { api, launch } = await readyOnJev({
-        routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK_WITH_DEFAULT)
-      })
-      launch.toggleJevAutoAccept()
-
-      await launch.submit()
-
-      expect(api.launchAgent).toHaveBeenCalledWith({
-        mineId: MINE,
-        provider: 'codex',
-        prompt: 'dig the east gallery',
-        model: 'gpt-5.6-sol',
-        effort: 'high'
-      })
-      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
-    })
-  })
-
-  describe('an Enter with nothing behind it', () => {
-    it('refuses out loud when a late answer reaches a no-chip panel, and keeps the prompt', async () => {
-      let resolveAsk: (result: unknown) => void = () => {}
-      const api = jevApi({
-        routeJevLaunch: vi.fn().mockImplementation(
-          () =>
-            new Promise((resolve) => {
-              resolveAsk = resolve
-            })
-        )
-      })
-      const launch = useAgentLaunch()
-      await launch.open(MINE)
-      launch.toggleJevEnabled()
-      launch.setPrompt('dig the east gallery')
-
-      const inFlight = launch.submit()
-      // The prompt moves on while the ask is still out — the answer that
-      // arrives after that is about a prompt nobody is writing, and with no
-      // chip to fall back onto this Enter has nothing left to launch. The old
-      // code swallowed it; #523 makes it say so.
-      launch.setPrompt('shore the north wall')
-      resolveAsk(DECISION)
-      await inFlight
-
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
-      expect(api.launchAgent).not.toHaveBeenCalled()
-      expect(launch.state.value.error).toBe(JEV_NO_CHOICE_REFUSAL)
-      expect(launch.state.value.prompt).toBe('shore the north wall')
-      expect(launch.jev.value.routing).toEqual({ phase: 'idle' })
-    })
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "refuses out loud when a late
+  // answer reaches a no-chip panel, and keeps the prompt" (#523). Enter never waits on a Jev answer any more.
 })
 
 /*
- * #635 (MESSAGE-QUESTIONS 14/16/17): the Add panel's launch-failure notice. Each channel's verdict
- * carries main's cause; the panel keeps it as the notice, keeps a failure main named no cause for
- * as its own words, and gives Retry and Pick manually their launches.
+ * #635 (MESSAGE-QUESTIONS 14/16/17): the Add panel's launch-failure notice. AMENDED for ISSUE-001: a launch the Host
+ * owns fails on its `launch.failed` frame with one of the five causes (ADR-020 D1); one of a provider not yet moved on
+ * today's A-P3; a custom command (A-39, today's shape until 3d) on its own verdict.
  */
 describe('the launch-failure notice (#635)', () => {
   async function ready(choice: 'claude' | 'codex', overrides: Record<string, unknown> = {}) {
-    const api = stubApi(overrides)
+    const host = hostWorld(overrides)
     const launch = useAgentLaunch()
+    await launch.hostLaunches.start()
     await launch.open(MINE)
     launch.choose(choice)
     launch.setPrompt('dig the east gallery')
-    return { api, launch }
+    return { api: host.api, host, launch }
+  }
+
+  function failed(failure: Partial<LaunchFailure>): HostFrames['launch.failed'] {
+    return {
+      launchId: LAUNCH,
+      mineId: HOST_MINE,
+      failure: {
+        cause: 'not-installed',
+        supplierLabel: 'Claude Code',
+        actions: ['retry'],
+        ...failure
+      }
+    } as HostFrames['launch.failed']
   }
 
   it('names a held supplier that is not installed', async () => {
-    const { launch } = await ready('claude', {
-      launchHeldSession: vi
-        .fn()
-        .mockResolvedValue({ launched: false, error: 'claude is missing', cause: 'not-installed' })
-    })
-
+    const { host, launch } = await ready('claude')
     await launch.submit()
+
+    host.push('launch.failed', failed({ cause: 'not-installed' }))
 
     expect(launch.state.value.failure).toEqual({ cause: 'not-installed', choice: 'claude' })
     expect(launch.state.value.error).toBeNull()
@@ -1600,13 +1337,19 @@ describe('the launch-failure notice (#635)', () => {
   })
 
   it('names a detached supplier that could not be started', async () => {
-    const { launch } = await ready('codex', {
-      launchAgent: vi
-        .fn()
-        .mockResolvedValue({ launched: false, provider: 'codex', cause: 'could-not-start' })
-    })
-
+    const { api, launch } = await ready('codex')
+    launch.listenFailures()
     await launch.submit()
+    const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
+
+    listener({
+      launchId: LAUNCH,
+      provider: 'codex',
+      mineId: MINE,
+      exitCode: null,
+      stderrTail: '',
+      cause: 'could-not-start'
+    })
 
     expect(launch.state.value.failure).toEqual({ cause: 'could-not-start', choice: 'codex' })
   })
@@ -1628,12 +1371,19 @@ describe('the launch-failure notice (#635)', () => {
     expect(launch.state.value.failure).toEqual({ cause: 'could-not-start', choice: OTHER_CHOICE })
   })
 
+  // AMENDED for ISSUE-001 (was: today's held channel): the one channel still answering in today's words is A-39's.
   it('keeps main’s own words for a failure it named no cause for', async () => {
-    const { launch } = await ready('claude', {
-      launchHeldSession: vi
+    stubApi({
+      launchHostedProcess: vi
         .fn()
         .mockResolvedValue({ launched: false, error: 'The demo cannot launch agents.' })
     })
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.choose(OTHER_CHOICE)
+    launch.setCommand('lalolanda')
+    launch.commit()
+    launch.setPrompt('dig')
 
     await launch.submit()
 
@@ -1641,160 +1391,119 @@ describe('the launch-failure notice (#635)', () => {
     expect(launch.state.value.error).toBe('The demo cannot launch agents.')
   })
 
-  describe('a held session that stopped as soon as it started (MESSAGE-QUESTIONS 16)', () => {
-    async function heldInFlight() {
-      const setup = await ready('claude', {
-        launchHeldSession: vi.fn().mockResolvedValue({ launched: true, launchId: 'held:1' })
-      })
-      setup.launch.listenFailures()
-      await setup.launch.submit()
-      const listener = setup.api.onLaunchFailed.mock.calls[0]![0] as (
-        push: LaunchFailedPush
-      ) => void
-      return { ...setup, listener }
-    }
-
-    const heldPush = (launchId = 'held:1'): LaunchFailedPush => ({
-      launchId,
-      provider: 'claude',
-      mineId: MINE,
-      exitCode: null,
-      stderrTail: '',
-      cause: 'exited-at-once'
-    })
-
-    it('reaches the notice when the push names this held launch', async () => {
-      const { launch, listener } = await heldInFlight()
-      expect(launch.phase.value).toBe('submitted-spawning')
-
-      listener(heldPush())
-
-      expect(launch.phase.value).toBe('prompt-ready')
-      expect(launch.state.value.failure).toEqual({ cause: 'exited-at-once', choice: 'claude' })
-    })
-
-    it('ignores a push for a launch it did not make', async () => {
-      const { launch, listener } = await heldInFlight()
-
-      listener(heldPush('held:9'))
-
-      expect(launch.phase.value).toBe('submitted-spawning')
-      expect(launch.state.value.failure).toBeNull()
-    })
-
-    it('still adopts the held dwarf by its seeded conversation, not by the correlation id', async () => {
-      const { launch } = await heldInFlight()
-
-      launch.observe([mineWith([heldDwarf('claude:sess-9', 'dig the east gallery')])])
-
-      expect(launch.phase.value).toBe('message-panel')
-      expect(launch.state.value.launchedDwarfId).toBe('claude:sess-9')
-    })
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): the 'a held session that stopped
+  // as soon as it started (MESSAGE-QUESTIONS 16)' block (3): "reaches the notice when the push names this held launch",
+  // "ignores a push for a launch it did not make" and "still adopts the held dwarf by its seeded conversation, not by the
+  // correlation id". A-38 is retired: a Claude launch that stops at once is the Host's `exited-at-once` on its
+  // `launch.failed` (ADR-020 D1, D4; launchState.host.test.ts).
 
   describe('Retry', () => {
+    // AMENDED for ISSUE-001 (was: today's held channel twice): the Retry is A-35 again, naming the failed launch
+    // (`retryOf`, 07 5A S5.08a), with its own requestId.
     it('sends the same launch again, once per press', async () => {
-      const { api, launch } = await ready('claude', {
-        launchHeldSession: vi.fn().mockResolvedValue({ launched: false, cause: 'not-installed' })
-      })
+      const { api, host, launch } = await ready('claude')
       await launch.submit()
-      expect(api.launchHeldSession).toHaveBeenCalledTimes(1)
+      host.push('launch.failed', failed({ cause: 'not-installed' }))
+      expect(api.launchAgent).toHaveBeenCalledTimes(1)
 
       await launch.retry()
 
-      expect(api.launchHeldSession).toHaveBeenCalledTimes(2)
-      expect(api.launchHeldSession.mock.calls[1]![0]).toEqual(
-        api.launchHeldSession.mock.calls[0]![0]
+      expect(api.launchAgent).toHaveBeenCalledTimes(2)
+      expect(api.launchAgent.mock.calls[1]![0]).toEqual({
+        ...api.launchAgent.mock.calls[0]![0],
+        requestId: expect.any(String),
+        retryOf: LAUNCH
+      })
+      expect(api.launchAgent.mock.calls[1]![0].requestId).not.toBe(
+        api.launchAgent.mock.calls[0]![0].requestId
       )
     })
 
     it('does nothing by itself: no launch goes again without a press', async () => {
       vi.useFakeTimers()
       try {
-        const { api, launch } = await ready('claude', {
-          launchHeldSession: vi.fn().mockResolvedValue({ launched: false, cause: 'not-installed' })
-        })
+        const { api, host, launch } = await ready('claude')
         await launch.submit()
+        host.push('launch.failed', failed({ cause: 'not-installed' }))
 
         await vi.advanceTimersByTimeAsync(DETACHED_TIMEOUT_MS * 2)
 
-        expect(api.launchHeldSession).toHaveBeenCalledTimes(1)
+        expect(api.launchAgent).toHaveBeenCalledTimes(1)
       } finally {
         vi.useRealTimers()
       }
     })
 
+    // AMENDED for ISSUE-001 (was: today's Enter-time ask again): the Host asks Jev again for the same Jev launch.
     it('asks Jev again after Jev could not be reached', async () => {
-      const api = stubApi({
-        getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-        routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', reason: 'unreachable' })
+      const { api, host, launch } = await ready('claude', {
+        getJevSettings: vi.fn().mockResolvedValue({ configured: true })
       })
-      const launch = useAgentLaunch()
-      await launch.open(MINE)
       launch.toggleJevEnabled()
-      launch.setPrompt('dig the east gallery')
       await launch.submit()
+      host.push('launch.failed', failed({ cause: 'jev-unreachable', jevReason: 'unreachable' }))
       expect(launch.state.value.failure).toEqual({ cause: 'jev-unreachable' })
 
       await launch.retry()
 
-      expect(api.routeJevLaunch).toHaveBeenCalledTimes(2)
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
-      expect(api.launchAgent).not.toHaveBeenCalled()
+      expect(api.launchAgent).toHaveBeenCalledTimes(2)
+      expect(api.launchAgent.mock.calls[1]![0]).toMatchObject({
+        way: { kind: 'jev' },
+        retryOf: LAUNCH
+      })
     })
   })
 
   describe('the Jev causes — only when nothing went out', () => {
-    async function onJev(fallback: Record<string, unknown>, chip?: 'claude') {
-      const api = stubApi({
-        getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-        routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', ...fallback })
+    async function onJev() {
+      const setup = await ready('claude', {
+        getJevSettings: vi.fn().mockResolvedValue({ configured: true })
       })
-      const launch = useAgentLaunch()
-      await launch.open(MINE)
-      if (chip !== undefined) launch.choose(chip)
-      launch.toggleJevEnabled()
-      launch.setPrompt('dig the east gallery')
-      await launch.submit()
-      return { api, launch }
+      setup.launch.toggleJevEnabled()
+      await setup.launch.submit()
+      return setup
     }
 
+    // AMENDED for ISSUE-001 (was: today's fallback at Enter): the Host's `jev-could-not-choose` with its reason.
     it('names "Jev could not choose" with its reason when no chip stood under it', async () => {
-      const { api, launch } = await onJev({ reason: 'no-key' })
+      const { host, launch } = await onJev()
+
+      host.push('launch.failed', failed({ cause: 'jev-could-not-choose', jevReason: 'no-key' }))
 
       expect(launch.state.value.failure).toEqual({
         cause: 'jev-could-not-choose',
         reason: 'no-key'
       })
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
     })
 
-    it('raises no notice for a fallback that launched on the pickers', async () => {
-      const { api, launch } = await onJev({ reason: 'timeout' }, 'claude')
+    // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "raises no notice for a
+    // fallback that launched on the pickers" (#635). A Jev fallback that launched is the Host's launch on its way:
+    // nothing reaches the panel but its `launch.changed` frames.
 
-      expect(api.launchHeldSession).toHaveBeenCalledOnce()
-      expect(launch.state.value.failure).toBeNull()
-    })
-
+    // AMENDED for ISSUE-001 (was: today's fallback carrying the default): the Host's hand-back (07 5A S5.07).
     it('raises no notice for a fallback that put the configured default into the pickers', async () => {
-      const { api, launch } = await onJev({ reason: 'timeout', fallbackTo: { provider: 'claude' } })
+      const { host, launch } = await onJev()
 
-      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      host.push('launch.changed', {
+        launch: launchWire('handed-back', { picks: { providerId: 'codex' as never } })
+      })
+
       expect(launch.state.value.failure).toBeNull()
-      expect(launch.state.value.choice).toBe('claude')
+      expect(launch.state.value.choice).toBe('codex')
+      expect(launch.phase.value).toBe('prompt-ready')
     })
   })
 
+  // AMENDED for ISSUE-001 (was: today's Enter-time fallback): the Host's `jev-unreachable`.
   it('Pick manually turns Let Jev choose off and takes the notice away, prompt kept', async () => {
-    stubApi({
-      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-      routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', reason: 'unreachable' })
-    })
+    const host = hostWorld({ getJevSettings: vi.fn().mockResolvedValue({ configured: true }) })
     const launch = useAgentLaunch()
+    await launch.hostLaunches.start()
     await launch.open(MINE)
     launch.toggleJevEnabled()
     launch.setPrompt('dig the east gallery')
     await launch.submit()
+    host.push('launch.failed', failed({ cause: 'jev-unreachable', jevReason: 'timeout' }))
 
     launch.pickManually()
 

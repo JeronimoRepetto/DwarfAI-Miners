@@ -30,6 +30,7 @@ import {
   type ProjectQuery,
   type ProjectSummary
 } from '../types'
+import type { ProviderId, SupplierEntryView } from '@dwarfai/contracts'
 import type { GoldenSample } from './sample'
 
 type Api = Window['api']
@@ -51,6 +52,30 @@ function vault(sample: GoldenSample): MaterialTotals {
       sample.mines.reduce((sum, mine) => sum + (mine.materials?.[m] ?? 0), 0)
     ])
   ) as MaterialTotals
+}
+
+/*
+ * The sample's providers as A-36 answers them from the step-3a switch (ISSUE-001; 14 §3.6 `SupplierEntryView`): one entry
+ * per provider, its catalogue's models each carrying the catalogue's efforts, launchable as the sample says.
+ */
+function supplierEntries(sample: GoldenSample): SupplierEntryView[] {
+  return sample.providers.map((option) => {
+    const catalog = sample.catalogs.find((entry) => entry.provider === option.provider)
+    return {
+      providerId: option.provider as ProviderId,
+      label: option.provider,
+      models: (catalog?.models ?? []).map((model) => ({
+        value: model.value,
+        ...(model.label === undefined ? {} : { label: model.label }),
+        efforts: [...(model.effortLevels ?? catalog?.efforts ?? [])]
+      })),
+      permissionModes: [],
+      offeredModes: [],
+      installed: option.installed,
+      publicLaunch: option.launchable ? 'enabled' : 'gated',
+      answerChannel: 'available'
+    }
+  })
 }
 
 // The browse's one order (browseQuery.ts): last opened first, and the never opened after them.
@@ -135,7 +160,8 @@ export function goldenApi(sample: GoldenSample): Api {
     kickDwarf: refuse('kickDwarf'),
     launchAgent: refuse('launchAgent'),
     onLaunchFailed: unsubscribe,
-    listAgentProviders: () => Promise.resolve({ providers: sample.providers }),
+    // A-36 in its 14 shape from the step-3a switch (ISSUE-001).
+    listAgentProviders: () => Promise.resolve({ ok: true, value: supplierEntries(sample) }),
     listAgentModels: () => Promise.resolve({ catalogs: sample.catalogs }),
     retireDwarf: none,
     getAppBuild: () => Promise.resolve({ version: sample.version ?? '', packaged: true }),
