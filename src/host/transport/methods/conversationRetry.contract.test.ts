@@ -95,8 +95,9 @@ describe('conversation.retry params and result (14 §3.4, B-M25)', () => {
     expect(
       row.response.safeParse({ ok: true, value: { ok: false, error: 'refused' } }).success
     ).toBe(false)
-    // 22 §5: its route is the 3a switch's (ISSUE-001), never this handler issue's.
-    expect(UNROUTED['dwarf:message:retry']).toBe('cut-3a')
+    // 22 §5: its route is the 3a switch's (ISSUE-001), never this handler issue's. The 3a switch
+    // routes A-N06 `host` in src/ui-main/ipc/routes.ts, so the row is no longer listed as unrouted.
+    expect(UNROUTED['dwarf:message:retry']).toBeUndefined()
   })
 
   it('[US-MSG-003.AC01, S7.12] a dwarf that cannot receive and a message that is not failed answer outcomes, not errors', async () => {
