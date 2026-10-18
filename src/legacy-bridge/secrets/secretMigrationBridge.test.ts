@@ -3,7 +3,7 @@
 // `userData`, today's `fakeSafeStorage` double, a recording HostClient over an in-memory secret store (the Host's B-M10
 // semantics: a configured flag back, never the value) and a recording UI log.
 //
-// TC-217-01, TC-217-02.
+// TC-217-01, TC-217-02; the OpenCode password run of step 4a (ISSUE-231): TC-231-01, TC-231-03.
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,7 +21,11 @@ import type { HostClient, HostConnection } from '../../ui-main/window/ports/host
 import type { LegacyLogEntry } from '../legacyDiagnostics'
 import {
   createSecretMigrationBridge,
+  LEGACY_JEV_KEY,
   LEGACY_JEV_KEY_FILE,
+  LEGACY_OPENCODE_PASSWORD,
+  LEGACY_OPENCODE_PASSWORD_FILE,
+  type LegacySecret,
   type MigrationHostClient
 } from './secretMigrationBridge'
 
@@ -95,9 +99,10 @@ async function seed(key: string = KEY): Promise<void> {
 
 const onDisk = (): Promise<string[]> => readdir(userData)
 
-function bridgeOver(host: RecordingSecretHost) {
+function bridgeOver(host: RecordingSecretHost, secret: LegacySecret = LEGACY_JEV_KEY) {
   return createSecretMigrationBridge({
     userDataDir: userData,
+    secret,
     safeStorage,
     hostClient: host,
     newRequestId: () => REQUEST,
@@ -208,6 +213,7 @@ describe('SecretMigrationBridge, the Jev key (ADR-017 item 8; 21 §3 step 3a)', 
     const host = new RecordingSecretHost()
     const bridge = createSecretMigrationBridge({
       userDataDir: userData,
+      secret: LEGACY_JEV_KEY,
       safeStorage: fakeSafeStorage({ available: false }),
       hostClient: host,
       newRequestId: () => REQUEST,
@@ -265,5 +271,118 @@ describe('SecretMigrationBridge, the Jev key (ADR-017 item 8; 21 §3 step 3a)', 
       expect(JSON.stringify(entry)).not.toContain(KEY)
       expect(JSON.stringify(entry)).not.toContain('ts-other-key')
     }
+  })
+})
+
+// ADDED for ISSUE-231: the OpenCode server password run of step 4a (21 §3 `SecretMigrationBridge`, §4 row "OpenCode
+// server password"; ADR-017 item 8). Same rules as the Jev key; today's store never trimmed the password, so neither
+// does the run (spaces are part of it).
+describe('SecretMigrationBridge, the OpenCode server password (ADR-017 item 8; 21 §3 step 4a)', () => {
+  const PASSWORD = ' pw with spaces 0123 '
+
+  /** Today's file as `openCodeServerPassword.ts` writes it: `{ encrypted: base64(ciphertext) }`. */
+  async function seedPassword(password: string = PASSWORD): Promise<void> {
+    const encrypted = safeStorage.encryptString(password).toString('base64')
+    await writeFile(
+      join(userData, LEGACY_OPENCODE_PASSWORD_FILE),
+      `${JSON.stringify({ encrypted })}
+`
+    )
+  }
+
+  it('[ADR-017, C-23] a seeded legacy password file ends with passwordConfigured true in the Host and the file gone', async () => {
+    // TC-231-01
+    await seedPassword()
+    // The Jev-key file is another run's: this one leaves it alone.
+    await seed()
+    const host = new RecordingSecretHost()
+    const seenAtAnswer: string[][] = []
+    host.onSet = async () => {
+      seenAtAnswer.push(await onDisk())
+    }
+    const bridge = bridgeOver(host, LEGACY_OPENCODE_PASSWORD)
+
+    host.connect()
+    await bridge.idle()
+
+    expect(host.status('opencode-password')).toBe(true)
+    expect(host.stored.get('opencode-password')).toBe(PASSWORD)
+    expect(host.sets).toEqual([
+      { name: 'opencode-password', value: PASSWORD, requestId: REQUEST, origin: 'migration' }
+    ])
+    // Deleted only after the Host confirmed: the file was still there when it answered.
+    expect(seenAtAnswer).toEqual([[LEGACY_JEV_KEY_FILE, LEGACY_OPENCODE_PASSWORD_FILE].sort()])
+    expect(await onDisk()).toEqual([LEGACY_JEV_KEY_FILE])
+    expect(log).toEqual([
+      { level: 'info', event: 'secret.migration', subsystem: 'preferences', outcome: 'ok' }
+    ])
+
+    // Once per file.
+    host.disconnect()
+    host.connect()
+    await bridge.idle()
+    bridge.dispose()
+    expect(host.sets).toHaveLength(1)
+  })
+
+  it('[ADR-017] the legacy password file is kept when the Host does not confirm, and moved by the next start', async () => {
+    await seedPassword()
+    const host = new RecordingSecretHost()
+    host.backend = 'unavailable'
+    const first = bridgeOver(host, LEGACY_OPENCODE_PASSWORD)
+    host.connect()
+    await first.idle()
+    first.dispose()
+    expect(host.status('opencode-password')).toBe(false)
+    expect(await onDisk()).toEqual([LEGACY_OPENCODE_PASSWORD_FILE])
+
+    host.backend = 'os-secret-store'
+    const next = bridgeOver(host, LEGACY_OPENCODE_PASSWORD)
+    await next.idle()
+    next.dispose()
+    expect(host.stored.get('opencode-password')).toBe(PASSWORD)
+    expect(await onDisk()).toEqual([])
+  })
+
+  it('[FM-118] an undecryptable password file is deleted and the password reads not stored', async () => {
+    // TC-231-03
+    for (const content of [
+      `${JSON.stringify({ encrypted: Buffer.from('not ciphertext').toString('base64') })}
+`,
+      '{ not json',
+      `${JSON.stringify({ encrypted: safeStorage.encryptString('').toString('base64') })}
+`
+    ]) {
+      await writeFile(join(userData, LEGACY_OPENCODE_PASSWORD_FILE), content)
+      await writeFile(join(userData, `${LEGACY_OPENCODE_PASSWORD_FILE}.tmp`), content)
+      log.length = 0
+      const host = new RecordingSecretHost()
+      const bridge = bridgeOver(host, LEGACY_OPENCODE_PASSWORD)
+      host.connect()
+      await bridge.idle()
+      bridge.dispose()
+
+      expect(host.sets).toEqual([])
+      expect(host.status('opencode-password')).toBe(false)
+      expect(await onDisk()).toEqual([])
+      expect(log).toEqual([
+        { level: 'warn', event: 'secret.migration', subsystem: 'preferences', outcome: 'failed' }
+      ])
+    }
+  })
+
+  it('[ADR-017] a password cleared before 4a leaves the Host with nothing', async () => {
+    // TC-231-03: today's `clear` rewrites the file as `{}`.
+    await writeFile(join(userData, LEGACY_OPENCODE_PASSWORD_FILE), '{}\n')
+    const host = new RecordingSecretHost()
+    const bridge = bridgeOver(host, LEGACY_OPENCODE_PASSWORD)
+    host.connect()
+    await bridge.idle()
+    bridge.dispose()
+
+    expect(host.sets).toEqual([])
+    expect(host.status('opencode-password')).toBe(false)
+    expect(await onDisk()).toEqual([])
+    expect(log).toEqual([])
   })
 })

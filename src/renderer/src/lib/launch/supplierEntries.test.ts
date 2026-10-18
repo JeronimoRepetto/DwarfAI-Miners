@@ -57,10 +57,20 @@ describe('launchSourcesOf', () => {
     ])
   })
 
-  it('[ADR-033] a gated entry is no launchable chip, and a call error is no source at all', () => {
+  // AMENDED for ISSUE-188 (was: "a gated entry is no launchable chip, …", `launchable: false`): A-36 answers the Host's
+  // `suppliers.launchable`, which a public build already gives no gated entry (ADR-009 D6), while "development builds
+  // keep it launchable" (ADR-009 D6; 21 §2 row 3e: Antigravity in development builds). Every entry the Host lists is
+  // offered, so a gated entry here is a development build's and a launchable chip; an entry not installed is not.
+  it('[ADR-033] a listed entry is a launchable chip while installed, gated or not, and a call error is no source at all', () => {
     expect(
-      launchSourcesOf({ ok: true, value: [entry(CLAUDE, { publicLaunch: 'gated' })] }).providers
-    ).toEqual([{ provider: CLAUDE, installed: true, launchable: false }])
+      launchSourcesOf({
+        ok: true,
+        value: [entry(CLAUDE, { publicLaunch: 'gated' }), entry(CODEX, { installed: false })]
+      }).providers
+    ).toEqual([
+      { provider: CLAUDE, installed: true, launchable: true },
+      { provider: CODEX, installed: false, launchable: false }
+    ])
     expect(
       launchSourcesOf({
         ok: false,

@@ -11,9 +11,10 @@ import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRo
 import { rollbackOf } from './rollbackTable'
 // AMENDED for ISSUE-002 (was: the release table `ROUTES` as the 3a table): from the step-3b switch the 3a table as it
 // shipped is `testing/cut3aRoutes.ts`.
-import { LEGACY_BRIDGE_ADAPTERS, ROUTES as RELEASE_ROUTES, ROUTES_RELEASE } from './routes'
+import { LEGACY_BRIDGE_ADAPTERS, ROUTES_RELEASE, routesForBuild } from './routes'
 import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
+import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
 import { CUT_0_ROUTES as ROUTES, CUT_0_TABLE } from './testing/cut0Routes'
 import { CUT_2_ROUTES, CUT_2_TABLE } from './testing/cut2Routes'
 
@@ -296,9 +297,11 @@ describe('rollbackOf', () => {
 
   // APPENDED for ISSUE-186: step 3d moves "Other…", outside the catalog (docs/strangler/rollback.md "Step 3d").
   it("[ADR-001] rolling back 3d gives A-39 back to today's runtime, sends Other… dwarfs to the 3a shape adapters and gives Other… no A-27, A-P3 or A-P4 row", () => {
+    // AMENDED for ISSUE-188 (was: the release table `ROUTES` / `ROUTES_RELEASE`): from the step-3e switch the 3d table
+    // as it shipped is `testing/cut3dRoutes.ts`.
     const cut3d: RouteTable = {
-      release: ROUTES_RELEASE,
-      routes: RELEASE_ROUTES,
+      release: CUT_3D_RELEASE,
+      routes: CUT_3D_ROUTES,
       unrouted: UNROUTED,
       retired: RETIRED,
       adapters: LEGACY_BRIDGE_ADAPTERS
@@ -332,5 +335,36 @@ describe('rollbackOf', () => {
     expect(order(rolledBack.routes)).toEqual(order(CUT_3B_ROUTES))
     expect(rolledBack.withdrawn).toBeUndefined()
     expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+  })
+
+  // APPENDED for ISSUE-188: step 3e moves Antigravity, its launch row in development builds only (docs/strangler/
+  // rollback.md "Step 3e").
+  it('[ADR-001] rolling back 3e sends Antigravity to the 3a shape adapters and gives back its A-27, A-P3 and A-P4 rows, in either build', () => {
+    expect(ROUTES_RELEASE).toBe('cut-3e')
+    const order = (routes: readonly ChannelRoute[]) => routes.map((r) => JSON.stringify(r)).sort()
+    for (const publicBuild of [false, true]) {
+      const cut3e: RouteTable = {
+        release: ROUTES_RELEASE,
+        routes: routesForBuild({ publicBuild }),
+        unrouted: UNROUTED,
+        retired: RETIRED,
+        adapters: LEGACY_BRIDGE_ADAPTERS
+      }
+      const rolledBack = rollbackOf(cut3e, 'cut-3e')
+      expect(rolledBack.routes.some((r) => r.since === 'cut-3e')).toBe(false)
+      for (const channel of [
+        'dwarf:retire',
+        'agent:launchFailed',
+        'dwarf:sendText:settled'
+      ] as const) {
+        expect(
+          rolledBack.routes.filter((r) => r.channel === channel).map((r) => r.qualifier?.provider),
+          channel
+        ).toEqual([CATALOG_PROVIDER_IDS[3], CATALOG_PROVIDER_IDS[2]])
+      }
+      expect(order(rolledBack.routes)).toEqual(order(CUT_3D_ROUTES))
+      expect(rolledBack.withdrawn).toBeUndefined()
+      expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+    }
   })
 })

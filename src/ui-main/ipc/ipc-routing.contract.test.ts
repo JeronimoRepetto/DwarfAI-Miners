@@ -1,5 +1,5 @@
 // layer: L6
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   CATALOG_PROVIDER_IDS,
   CHANNELS,
@@ -34,6 +34,7 @@ import {
   composeJevRouteRow,
   composeJevKeyRows,
   composeMinesAdmin,
+  composeOpenCodePasswordRows,
   composePresence,
   composeProviderRouting,
   composeProviderShapeAdapters,
@@ -41,6 +42,7 @@ import {
   composeSettlementJoin,
   composeStopAllRelay,
   composeStopDwarf,
+  composeSystemNotificationRows,
   legacyClaudeHooksComposed,
   legacyFeedModesOf,
   type LegacyAskRelayComposition,
@@ -75,14 +77,24 @@ import {
 } from './testing/cut2Routes'
 import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
+import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
 import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import {
+  DEVELOPMENT_BUILD_ROUTES,
   HOST_ROUTE_MEMBERS,
   LEGACY_BRIDGE_ADAPTERS,
   ROUTES,
   ROUTES_RELEASE,
+  routesForBuild,
   SEAM_B_METHODS_BORN
 } from './routes'
+import {
+  dwarfWire,
+  hostEntry,
+  providerRowsWorld,
+  WORLD_MINE,
+  WORLD_MINTED
+} from './testing/providerRowsWorld'
 
 /**
  * The router's contract (ADR-001 item 3; 21 §1 items 1, 2, 2a; 14 §6.5 "Router"): every registry row has exactly one
@@ -3822,6 +3834,8 @@ describe('release 3b (21 §2 cut 3b)', () => {
 // "Other…" dwarfs' send, console and launch rows (A-23, A-13, A-35 with its Retry path) to the Host, qualified by the
 // "Other…" driver's provider id; A-N29's one `host` route already serves every dwarf. Each case drives the release table
 // (`ROUTES`) through the root's own compositions.
+// AMENDED for ISSUE-188 (was: the release table `ROUTES` / `ROUTES_RELEASE`): from the step-3e switch the 3d table as it
+// shipped is `testing/cut3dRoutes.ts`; `describe('release 3e')` pins the release table.
 describe('release 3d (21 §2 cut 3d)', () => {
   const [CLAUDE = '', CODEX = '', ANTIGRAVITY = '', OPENCODE = ''] = CATALOG_PROVIDER_IDS
   /** The providers whose launcher has not moved to the Host by 3d (21 §2 cut 3 rows 3e, 4b). */
@@ -3829,13 +3843,14 @@ describe('release 3d (21 §2 cut 3d)', () => {
   /** The "Other…" driver's provider id (15 §3 H1 `HostedCommandDriver`), outside the catalog (INV-43). */
   const OTHER = 'other'
   const cut3d: RouteTable = {
-    release: ROUTES_RELEASE,
-    routes: ROUTES,
+    release: CUT_3D_RELEASE,
+    routes: CUT_3D_ROUTES,
     unrouted: UNROUTED,
     retired: RETIRED,
     adapters: LEGACY_BRIDGE_ADAPTERS
   }
-  const routeOf = (key: ChannelKey): ChannelRoute[] => ROUTES.filter((r) => r.channel === key)
+  const routeOf = (key: ChannelKey): ChannelRoute[] =>
+    CUT_3D_ROUTES.filter((r) => r.channel === key)
   const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
   const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
   const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
@@ -3922,7 +3937,10 @@ describe('release 3d (21 §2 cut 3d)', () => {
    * dwarf and one OpenCode dwarf on the Host board): the Host's handlers over a recording HostClient, the shape
    * adapters over a recording today's runtime, the provider qualifiers, and the router on an `ipcMain` stand-in.
    */
-  function step3dWorld(table: readonly ChannelRoute[] = ROUTES, release: StepId = ROUTES_RELEASE) {
+  function step3dWorld(
+    table: readonly ChannelRoute[] = CUT_3D_ROUTES,
+    release: StepId = CUT_3D_RELEASE
+  ) {
     const hostCalls: Array<[string, unknown]> = []
     const legacyServed: Array<[string, unknown]> = []
     const client = {
@@ -4036,7 +4054,7 @@ describe('release 3d (21 §2 cut 3d)', () => {
   })
 
   it('[ADR-001] in 3d A-39 routes host to launching.launchCustom with shape target', async () => {
-    expect(ROUTES_RELEASE).toBe('cut-3d')
+    expect(CUT_3D_RELEASE).toBe('cut-3d')
     expect(checkRouteTable(cut3d, KEYS)).toEqual([])
     // One unqualified route: "Other…" is a channel of its own, no provider to qualify (21 §3.1: no shape adapter).
     expect(routeOf(LAUNCH_HOSTED)).toEqual([
@@ -4076,17 +4094,17 @@ describe('release 3d (21 §2 cut 3d)', () => {
         hostFor(key, CODEX, 'cut-3b'),
         hostFor(key, OTHER, 'cut-3d')
       ])
-      expect(resolveRoute(ROUTES, key, { provider: OTHER }), key).toEqual(
+      expect(resolveRoute(CUT_3D_ROUTES, key, { provider: OTHER }), key).toEqual(
         hostFor(key, OTHER, 'cut-3d')
       )
       for (const provider of NOT_MOVED) {
-        expect(resolveRoute(ROUTES, key, { provider }), `${key} ${provider}`).toEqual(
+        expect(resolveRoute(CUT_3D_ROUTES, key, { provider }), `${key} ${provider}`).toEqual(
           legacyThrough(key, PER_PROVIDER)
         )
       }
     }
     // A-N29 is one `host` route for every dwarf since 3a; "Other…" is not in the catalog, so A-36 names no route for it.
-    expect(resolveRoute(ROUTES, STOP, { provider: OTHER })?.owner).toBe('host')
+    expect(resolveRoute(CUT_3D_ROUTES, STOP, { provider: OTHER })?.owner).toBe('host')
     expect(routeOf('agent:providers').some((r) => r.qualifier?.provider === OTHER)).toBe(false)
 
     // Through the root's composition: an "Other…" dwarf's send, console and stop reach the Host, an OpenCode dwarf's
@@ -4120,17 +4138,19 @@ describe('release 3d (21 §2 cut 3d)', () => {
       // A moved provider has no route, and neither has "Other…" (no 3d build holds a legacy-launched "Other…"
       // session: today's hosted process dies with the window that launched it); B-F10, B-F19, B-F12 succeed them.
       for (const provider of [CLAUDE, CODEX, OTHER]) {
-        expect(resolveRoute(ROUTES, key, { provider }), `${key} ${provider}`).toBeUndefined()
+        expect(resolveRoute(CUT_3D_ROUTES, key, { provider }), `${key} ${provider}`).toBeUndefined()
       }
       for (const provider of NOT_MOVED) {
-        expect(resolveRoute(ROUTES, key, { provider })?.owner, `${key} ${provider}`).toBe('legacy')
+        expect(resolveRoute(CUT_3D_ROUTES, key, { provider })?.owner, `${key} ${provider}`).toBe(
+          'legacy'
+        )
       }
     }
   })
 
   it('[ADR-001] in 3d every host route uses only seam-B members born by 3d and none has parity pending', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
-    for (const route of ROUTES.filter((r) => r.owner === 'host')) {
+    for (const route of CUT_3D_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
       const members = HOST_ROUTE_MEMBERS[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
@@ -4138,12 +4158,12 @@ describe('release 3d (21 §2 cut 3d)', () => {
         const born = SEAM_B_METHODS_BORN[member]
         expect(born, `${member} has a birth release`).toBeDefined()
         expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
-          at(ROUTES_RELEASE)
+          at(CUT_3D_RELEASE)
         )
       }
     }
     // The routes 3d moved: A-39, and "Other…"'s A-13, A-23 and A-35.
-    const moved = ROUTES.filter((r) => r.owner === 'host' && r.since === 'cut-3d')
+    const moved = CUT_3D_ROUTES.filter((r) => r.owner === 'host' && r.since === 'cut-3d')
     expect(moved.map((r) => `${r.channel} ${r.qualifier?.provider ?? '*'}`).sort()).toEqual(
       [`${LAUNCH_HOSTED} *`, ...OTHER_ROWS.map((key) => `${key} ${OTHER}`)].sort()
     )
@@ -4176,6 +4196,280 @@ describe('release 3d (21 §2 cut 3d)', () => {
       'dwarf:sendText',
       'agent:launchHosted'
     ])
+    world.dispose()
+  })
+})
+
+// ADDED for ISSUE-188: the step-3e switch (21 §2 cut 3e; 14 §2.1 A-13, A-23, A-27, A-35, A-36, A-P3, A-P4, §5; 21 §1
+// items 1, 2, 2a, 3; ADR-009 D6). The release table moves Antigravity's send, console and catalog rows to the Host,
+// qualified by provider as 3a and 3b did, and a development build adds Antigravity's launch row (A-35 with its Retry
+// path, `DEVELOPMENT_BUILD_ROUTES`): the one build flag decides, never a provider id. A-27, A-P3 and A-P4 shrink to
+// OpenCode. Each case drives the development build's table through the root's own compositions; the public build's
+// table is pinned by `publicBuild.3e.test.ts`.
+describe('release 3e (21 §2 cut 3e)', () => {
+  const [CLAUDE = '', CODEX = '', ANTIGRAVITY = '', OPENCODE = ''] = CATALOG_PROVIDER_IDS
+  /** The "Other…" driver's provider id (15 §3 H1 `HostedCommandDriver`), outside the catalog (INV-43). */
+  const OTHER = 'other'
+  const DEVELOPMENT = routesForBuild({ publicBuild: false })
+  const PUBLIC = routesForBuild({ publicBuild: true })
+  const tableOf = (routes: readonly ChannelRoute[]): RouteTable => ({
+    release: ROUTES_RELEASE,
+    routes,
+    unrouted: UNROUTED,
+    retired: RETIRED,
+    adapters: LEGACY_BRIDGE_ADAPTERS
+  })
+  const cut3e = tableOf(DEVELOPMENT)
+  const routeOf = (key: ChannelKey): ChannelRoute[] => DEVELOPMENT.filter((r) => r.channel === key)
+  const REQUEST = '01920000-0000-7000-a000-000000000601'
+  const MESSAGE = '01920000-0000-7000-8000-0000000006b1'
+  const LAUNCH = '01920000-0000-7000-8000-0000000006c1'
+  const FAILED_LAUNCH = '01920000-0000-7000-8000-0000000006c2'
+  const ANTIGRAVITY_DWARF = '01920000-0000-7000-9000-000000000616'
+  const OPENCODE_DWARF = '01920000-0000-7000-9000-000000000614'
+  const PER_PROVIDER = 'PerProviderShapeAdapter'
+  const CATALOG_MERGE = 'CatalogMergeAdapter'
+  const ACTIVATE: ChannelKey = 'dwarf:activate' // A-13
+  const SEND: ChannelKey = 'dwarf:sendText' // A-23
+  const LAUNCH_ROW: ChannelKey = 'agent:launch' // A-35
+  const PROVIDERS: ChannelKey = 'agent:providers' // A-36
+  const STOP: ChannelKey = 'dwarf:stop' // A-N29
+  const NOT_MOVED_ROWS = ['dwarf:retire', 'agent:launchFailed', 'dwarf:sendText:settled'] as const
+
+  const hostFor = (channel: ChannelKey, provider: string, since: StepId): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since,
+    parity: 'passed',
+    qualifier: { provider },
+    shape: 'target'
+  })
+  const legacyThrough = (channel: ChannelKey, adapter: string): ChannelRoute => ({
+    channel,
+    owner: 'legacy',
+    since: 'cut-3a',
+    parity: 'n/a',
+    shape: 'target',
+    shapeAdapter: adapter
+  })
+  const legacyFor = (channel: ChannelKey, provider: string): ChannelRoute => ({
+    channel,
+    owner: 'legacy',
+    since: 'cut-3a',
+    parity: 'n/a',
+    qualifier: { provider },
+    shape: 'today'
+  })
+
+  /** The rows as the root composes them over `table`, one Antigravity and one OpenCode dwarf on the Host board. */
+  const step3eWorld = (
+    table: readonly ChannelRoute[] = DEVELOPMENT,
+    release: StepId = ROUTES_RELEASE
+  ) =>
+    providerRowsWorld({
+      table,
+      release,
+      dwarfs: [
+        dwarfWire(ANTIGRAVITY_DWARF, ANTIGRAVITY, true),
+        dwarfWire(OPENCODE_DWARF, OPENCODE, false)
+      ],
+      hostReplies: {
+        'launching.launch': { launchId: LAUNCH },
+        'conversation.send': { ok: true, value: { messageId: MESSAGE } },
+        'conversation.resolveConsole': {
+          mode: 'log',
+          command: { program: 'tail', args: [], cwd: '/w' }
+        },
+        // A development build's Host lists its gated provider as launchable (ADR-009 D6: development builds keep it).
+        'suppliers.launchable': [
+          hostEntry(CLAUDE),
+          hostEntry(CODEX),
+          hostEntry(ANTIGRAVITY, 'gated')
+        ],
+        'crew.stop': { ok: true, value: {} }
+      },
+      today: {
+        'agent:launch': { launched: true, provider: OPENCODE, launchId: 'receipt:1' },
+        'agent:providers': {
+          providers: [
+            { provider: CLAUDE, installed: true, launchable: true },
+            { provider: CODEX, installed: true, launchable: true },
+            { provider: ANTIGRAVITY, installed: true, launchable: true },
+            { provider: OPENCODE, installed: true, launchable: true }
+          ]
+        },
+        'dwarf:sendText': { delivered: true, via: 'terminal' },
+        'dwarf:activate': { focused: true, openedTerminal: false }
+      }
+    })
+
+  const launchParams = (providerId: string, extra: Record<string, unknown> = {}) => ({
+    mineId: WORLD_MINE,
+    way: { kind: 'supplier', providerId },
+    prompt: 'Map the build',
+    jevOn: false,
+    jevAutoAccept: false,
+    requestId: REQUEST,
+    ...extra
+  })
+  const sendParams = (dwarfId: string) => ({
+    dwarfId,
+    text: 'go on',
+    attachments: [],
+    requestId: REQUEST
+  })
+
+  it('[ADR-001] in a 3e development build A-35, A-36, A-23, A-13 and A-N29 route host for the Antigravity qualifier', async () => {
+    expect(ROUTES_RELEASE).toBe('cut-3e')
+    expect(checkRouteTable(cut3e, KEYS)).toEqual([])
+    expect(checkRouteTable(tableOf(PUBLIC), KEYS)).toEqual([])
+    // One owner per (channel, qualifier) (21 §1 item 2): the Host for Claude (3a), Codex (3b), "Other…" (3d) and
+    // Antigravity (3e); OpenCode is the one provider still reaching `PerProviderShapeAdapter`.
+    for (const key of [ACTIVATE, SEND, LAUNCH_ROW]) {
+      expect(routeOf(key), key).toEqual([
+        hostFor(key, CLAUDE, 'cut-3a'),
+        legacyThrough(key, PER_PROVIDER),
+        hostFor(key, CODEX, 'cut-3b'),
+        hostFor(key, OTHER, 'cut-3d'),
+        hostFor(key, ANTIGRAVITY, 'cut-3e')
+      ])
+      expect(resolveRoute(DEVELOPMENT, key, { provider: ANTIGRAVITY }), key).toEqual(
+        hostFor(key, ANTIGRAVITY, 'cut-3e')
+      )
+      expect(resolveRoute(DEVELOPMENT, key, { provider: OPENCODE }), key).toEqual(
+        legacyThrough(key, PER_PROVIDER)
+      )
+    }
+    expect(routeOf(PROVIDERS)).toEqual([
+      hostFor(PROVIDERS, CLAUDE, 'cut-3a'),
+      legacyThrough(PROVIDERS, CATALOG_MERGE),
+      hostFor(PROVIDERS, CODEX, 'cut-3b'),
+      hostFor(PROVIDERS, ANTIGRAVITY, 'cut-3e')
+    ])
+    // A-N29 is one `host` route for every dwarf since 3a.
+    expect(resolveRoute(DEVELOPMENT, STOP, { provider: ANTIGRAVITY })?.owner).toBe('host')
+    // The launch row is the development build's only (one build flag, ADR-009 D6); the others serve every build.
+    expect(DEVELOPMENT_BUILD_ROUTES).toEqual([hostFor(LAUNCH_ROW, ANTIGRAVITY, 'cut-3e')])
+    expect(DEVELOPMENT).toEqual([...ROUTES, ...DEVELOPMENT_BUILD_ROUTES])
+
+    // Through the root's composition: an Antigravity launch (and its Retry), send, console and stop reach the Host with
+    // the renderer's payload unchanged; the catalog lists Antigravity's entry from the Host, never today's.
+    const world = step3eWorld()
+    expect(await world.invoke(LAUNCH_ROW, launchParams(ANTIGRAVITY))).toEqual({
+      ok: true,
+      value: { launchId: LAUNCH }
+    })
+    expect(
+      await world.invoke(LAUNCH_ROW, launchParams(ANTIGRAVITY, { retryOf: FAILED_LAUNCH }))
+    ).toEqual({ ok: true, value: { launchId: LAUNCH } })
+    expect(await world.invoke(SEND, sendParams(ANTIGRAVITY_DWARF))).toEqual({
+      ok: true,
+      value: { ok: true, value: { messageId: MESSAGE } }
+    })
+    expect(
+      await world.invoke(ACTIVATE, { dwarfId: ANTIGRAVITY_DWARF, purpose: 'open-console' })
+    ).toEqual({ ok: true, value: { outcome: 'opened', mode: 'log' } })
+    expect(await world.invoke(STOP, { dwarfId: ANTIGRAVITY_DWARF, requestId: REQUEST })).toEqual({
+      ok: true,
+      value: { ok: true, value: {} }
+    })
+    const catalog = (await world.invoke(PROVIDERS, {})) as {
+      ok: boolean
+      value: Array<{ providerId: string }>
+    }
+    expect(catalog.value.map((entry) => entry.providerId)).toEqual([
+      CLAUDE,
+      CODEX,
+      ANTIGRAVITY,
+      OPENCODE
+    ])
+    expect(catalog.value[2]).toEqual(hostEntry(ANTIGRAVITY, 'gated'))
+    expect(world.hostCalls.map(([method]) => method)).toEqual([
+      'launching.launch',
+      'launching.launch',
+      'conversation.send',
+      'conversation.resolveConsole',
+      'crew.stop',
+      'suppliers.launchable'
+    ])
+    expect(world.hostCalls[0]?.[1]).toEqual(launchParams(ANTIGRAVITY))
+    expect(world.legacyServed.map(([channel]) => channel)).toEqual(['agent:providers'])
+    world.dispose()
+  })
+
+  it('[ADR-001] in 3e A-27, A-P3 and A-P4 route legacy qualified to OpenCode only', () => {
+    for (const table of [DEVELOPMENT, PUBLIC]) {
+      for (const key of NOT_MOVED_ROWS) {
+        expect(
+          table.filter((r) => r.channel === key),
+          key
+        ).toEqual([legacyFor(key, OPENCODE)])
+        // A moved provider has no route: its successors are B-F10, B-F19 and B-F12 (21 §2 cut 3 common rules).
+        for (const provider of [CLAUDE, CODEX, ANTIGRAVITY, OTHER]) {
+          expect(resolveRoute(table, key, { provider }), `${key} ${provider}`).toBeUndefined()
+        }
+      }
+    }
+  })
+
+  it('[ADR-001] in 3e every host route uses only seam-B members born by 3e and none has parity pending', () => {
+    const at = (step: StepId) => STEP_ORDER.indexOf(step)
+    for (const route of DEVELOPMENT.filter((r) => r.owner === 'host')) {
+      expect(route.parity, route.channel).toBe('passed')
+      const members = HOST_ROUTE_MEMBERS[route.channel]
+      expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
+      for (const member of members ?? []) {
+        const born = SEAM_B_METHODS_BORN[member]
+        expect(born, `${member} has a birth release`).toBeDefined()
+        expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
+          at(ROUTES_RELEASE)
+        )
+      }
+    }
+    // The routes 3e moved: Antigravity's A-13, A-23, A-35 and A-36.
+    const moved = DEVELOPMENT.filter((r) => r.owner === 'host' && r.since === 'cut-3e')
+    expect(moved.map((r) => `${r.channel} ${r.qualifier?.provider ?? '*'}`).sort()).toEqual(
+      [ACTIVATE, SEND, LAUNCH_ROW, PROVIDERS].map((key) => `${key} ${ANTIGRAVITY}`).sort()
+    )
+    // No seam B member and no NEW row is born in 3e (21 §2 row 3e), so the unrouted list is 3d's (ISSUE-043 rule).
+    expect(Object.values(SEAM_B_METHODS_BORN).filter((step) => step === 'cut-3e')).toEqual([])
+    expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
+  })
+
+  it('[ADR-001] in 3e the legacy feed keeps only the legacy-launched Antigravity sessions, in either build', () => {
+    // 21 §3 `LegacyAgentRegistryFeed` shrinks per provider step; A-36 is the Host's for Antigravity in both builds, so
+    // the Host observes every Antigravity session and today's runtime keeps only the ones it launched (for
+    // `LegacyEndFirstAdapter`). A 3e rollback build composes Antigravity's whole discovery again.
+    const expected = {
+      [CLAUDE]: 'legacy-launched',
+      [CODEX]: 'legacy-launched-or-pending-questions',
+      [ANTIGRAVITY]: 'legacy-launched',
+      [OPENCODE]: 'discover'
+    }
+    expect(legacyFeedModesOf(DEVELOPMENT)).toEqual(expected)
+    expect(legacyFeedModesOf(PUBLIC)).toEqual(expected)
+    expect(legacyFeedModesOf(rollbackOf(cut3e, 'cut-3e').routes)).toEqual(
+      legacyFeedModesOf(CUT_3D_ROUTES)
+    )
+  })
+
+  it('[ADR-001] a 3e rollback build routes every Antigravity row as the 3d table did', async () => {
+    // 21 §2.1 item 1, §2 cut 3 "Rollback (each step)": before the 3e deletion commit (ISSUE-189) the rows flip back to
+    // `legacy`, in either build: Antigravity reaches the shape adapters again and gets its A-27, A-P3, A-P4 rows back.
+    const order = (routes: readonly ChannelRoute[]) =>
+      routes.map((route) => JSON.stringify(route)).sort()
+    for (const table of [cut3e, tableOf(PUBLIC)]) {
+      const rolledBack = rollbackOf(table, 'cut-3e')
+      expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+      expect(order(rolledBack.routes)).toEqual(order(CUT_3D_ROUTES))
+    }
+    const world = step3eWorld(rollbackOf(cut3e, 'cut-3e').routes, 'cut-3e')
+    expect(await world.invoke(LAUNCH_ROW, launchParams(ANTIGRAVITY))).toEqual({
+      ok: true,
+      value: { launchId: WORLD_MINTED }
+    })
+    expect(world.hostCalls).toEqual([])
+    expect(world.legacyServed.map(([channel]) => channel)).toEqual(['agent:launch'])
     world.dispose()
   })
 })
@@ -4802,6 +5096,369 @@ describe('step 4a A-52 and A-53 (21 §2 step 4a)', () => {
     expect(sent).toEqual([
       ['preferences.get', {}],
       ['preferences.setOpenCodePermissions', { on: true, origin: 'add-panel', requestId: REQUEST }]
+    ])
+  })
+})
+
+// ADDED for ISSUE-231: the OpenCode server password rows of step 4a (21 §2 cut 4a, §3 `SecretMigrationBridge`, §4 row
+// "OpenCode server password"). The route rows are the step-4a switch's (later: ISSUE-235); these cases drive a 4a table
+// built here, over a temp legacy `userData` holding today's encrypted password file.
+describe('OpenCode server password rows (21 §2 cut 4a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const PASSWORD = ' migrated pass 0231 '
+  const TYPED = 'typed-pass-4a-0231'
+  const MINTED = '01920000-0000-7000-a000-000000000231'
+  const PASSWORD_FILE = 'opencode-server-password-v1.json'
+  const SET: ChannelKey = 'opencode:password:set' // A-54
+  const CLEAR: ChannelKey = 'opencode:password:clear' // A-55
+
+  const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-4a',
+    parity: 'passed',
+    shape: 'target'
+  })
+  /** A-54/A-55 `host`, as ISSUE-235's 4a rows will read. */
+  const PASSWORD_4A: ChannelRoute[] = [hostRoute(SET), hostRoute(CLEAR)]
+
+  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
+    decryptString: (data: Buffer) => {
+      const text = data.toString('utf8')
+      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
+      return text.slice('enc:'.length)
+    }
+  }
+
+  /** The Host over an in-memory password: B-M10, B-M11 and B-M12, recording each call. */
+  function passwordHost(backend: 'os-secret-store' | 'unavailable' = 'os-secret-store') {
+    const calls: Array<[string, unknown]> = []
+    let password: string | undefined
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'settings.secret.set') {
+        if (backend === 'unavailable') {
+          return Promise.resolve({ ok: false, error: 'backend-unavailable' })
+        }
+        password = (params as { value: string }).value
+        return Promise.resolve({ ok: true, value: { name: 'opencode-password', configured: true } })
+      }
+      if (method === 'settings.secret.clear') {
+        password = undefined
+        return Promise.resolve({
+          ok: true,
+          value: { name: 'opencode-password', configured: false }
+        })
+      }
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences: {},
+          secrets: [{ name: 'opencode-password', configured: password !== undefined }],
+          secretBackend: backend,
+          integrations: [],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      password: () => password,
+      client: client as unknown as Parameters<typeof composeOpenCodePasswordRows>[0]['client']
+    }
+  }
+
+  async function seedPassword(userData: string): Promise<void> {
+    const encrypted = safeStorage.encryptString(PASSWORD).toString('base64')
+    await writeFile(join(userData, PASSWORD_FILE), `${JSON.stringify({ encrypted })}\n`)
+  }
+
+  it('[ADR-001] the release table composes no password row and no migration; a release the bridge does not live in runs none', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+    try {
+      const base = {
+        client: passwordHost().client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      }
+      expect(
+        composeOpenCodePasswordRows({ ...base, routes: ROUTES, release: ROUTES_RELEASE })
+      ).toBeUndefined()
+      const late = composeOpenCodePasswordRows({ ...base, routes: PASSWORD_4A, release: 'cut-5' })
+      expect(late?.part.channels).toEqual([SET, CLEAR])
+      expect(late?.migration).toBeUndefined()
+      // Without the Host attach nothing is composed.
+      expect(
+        composeOpenCodePasswordRows({
+          ...base,
+          client: undefined,
+          routes: PASSWORD_4A,
+          release: 'cut-4a'
+        })
+      ).toBeUndefined()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('[ADR-017, C-23] in a 4a table the legacy password file moves to the Host once before A-54/A-55 answer, and they round-trip through B-M10 and B-M11', async () => {
+    // TC-231-01, TC-231-02
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+    try {
+      await seedPassword(userData)
+      const host = passwordHost()
+      const rows = composeOpenCodePasswordRows({
+        routes: PASSWORD_4A,
+        release: 'cut-4a',
+        client: host.client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      })
+      expect(rows?.part.channels).toEqual([SET, CLEAR])
+      const router = createRouter({
+        routes: PASSWORD_4A,
+        legacy: { serve: () => Promise.reject(new Error('no legacy password row from 4a')) },
+        ...(rows === undefined ? {} : { host: rows.part.target }),
+        senders
+      })
+      const response = CHANNELS[SET].response
+
+      // A-55 waits for the run: the migrated password was in the Host before the clear, and today's file is gone.
+      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
+        ok: true,
+        value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+      })
+      expect(await readdir(userData)).toEqual([])
+
+      // Over the cap: refused in main, it never crosses.
+      const refused = await router.dispatch(SET, FROM_PANEL as never, 'a'.repeat(1025))
+      expect(JSON.stringify(refused)).not.toContain('a'.repeat(1025))
+
+      const saved = response.parse(await router.dispatch(SET, FROM_PANEL as never, TYPED))
+      expect(saved).toEqual({
+        ok: true,
+        value: { permissions: 'off', passwordConfigured: true, secretBackend: 'os-secret-store' }
+      })
+      expect(JSON.stringify(saved)).not.toContain(TYPED)
+      expect(host.password()).toBe(TYPED)
+      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
+        [
+          'settings.secret.set',
+          { name: 'opencode-password', value: PASSWORD, requestId: MINTED, origin: 'migration' }
+        ],
+        ['settings.secret.clear', { name: 'opencode-password', requestId: MINTED }],
+        [
+          'settings.secret.set',
+          { name: 'opencode-password', value: TYPED, requestId: MINTED, origin: 'settings' }
+        ]
+      ])
+      rows?.migration?.dispose()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('[NFR-SEC-12] the migrated or typed password never reaches a log line', async () => {
+    // L7 (17 §1.7 log redaction): the UI log and every console method, over a migration that succeeds, one the Host
+    // refuses, and a typed save.
+    const consoleLines: unknown[][] = []
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        consoleLines.push(args)
+      })
+    )
+    const logged: unknown[] = []
+    try {
+      for (const backend of ['os-secret-store', 'unavailable'] as const) {
+        const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
+        try {
+          await seedPassword(userData)
+          const host = passwordHost(backend)
+          const rows = composeOpenCodePasswordRows({
+            routes: PASSWORD_4A,
+            release: 'cut-4a',
+            client: host.client,
+            migration: { userDataDir: userData, safeStorage },
+            log: { record: (entry) => logged.push(entry) },
+            mintId: () => MINTED
+          })
+          await rows?.part.target.serve(SET, TYPED, FROM_PANEL as never)
+          rows?.migration?.dispose()
+        } finally {
+          await rm(userData, { recursive: true, force: true })
+        }
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
+
+    expect(logged.length).toBeGreaterThan(0)
+    for (const line of [...logged, ...consoleLines]) {
+      expect(JSON.stringify(line)).not.toContain(PASSWORD.trim())
+      expect(JSON.stringify(line)).not.toContain(TYPED)
+    }
+  })
+})
+
+// ADDED for ISSUE-230: the Settings rows of step 4a (21 §2 cut 4a "New core serves"; 14 §2.1 A-42, A-43, A-47, A-51).
+// The route rows are the step-4a switch's (later: ISSUE-235); these cases drive a 4a table built here. The handlers'
+// own cases are in handlers/settingsParity.contract.test.ts.
+describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const MINTED = '01920000-0000-7000-a000-000000000230'
+  const NOTIFICATIONS_GET: ChannelKey = 'notifications:enabled:get' // A-42
+  const NOTIFICATIONS_SET: ChannelKey = 'notifications:enabled:set' // A-43
+  const JEV_GET: ChannelKey = 'jev:settings:get' // A-47
+  const KEY_SET: ChannelKey = 'jev:apiKey:set' // A-48
+  const KEY_CLEAR: ChannelKey = 'jev:apiKey:clear' // A-49
+  const JEV_SET: ChannelKey = 'jev:preferences:set' // A-51
+
+  const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-4a',
+    parity: 'passed',
+    shape: 'target'
+  })
+  /** Every Settings row of this issue and the Jev key rows `host`, as ISSUE-235's 4a rows will read. */
+  const SETTINGS_4A: ChannelRoute[] = [
+    NOTIFICATIONS_GET,
+    NOTIFICATIONS_SET,
+    JEV_GET,
+    KEY_SET,
+    KEY_CLEAR,
+    JEV_SET
+  ].map(hostRoute)
+
+  /** The Host over in-memory preferences and Jev key: B-M10…B-M13, recording each call. */
+  function settingsHost() {
+    const calls: Array<[string, unknown]> = []
+    let key: string | undefined
+    let preferences: Record<string, unknown> = {
+      subagentDelegationOn: false,
+      routingProfile: 'balanced',
+      systemNotificationsOn: true,
+      openCodePermissionsOn: false
+    }
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'settings.secret.set') {
+        key = (params as { value: string }).value
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: true } })
+      }
+      if (method === 'settings.secret.clear') {
+        key = undefined
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: false } })
+      }
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences,
+          secrets: [{ name: 'jev-key', configured: key !== undefined }],
+          secretBackend: 'os-secret-store',
+          integrations: [],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      if (method === 'preferences.set') {
+        const { key: name, value } = params as { key: string; value: unknown }
+        preferences = { ...preferences, [name]: value }
+        return Promise.resolve(preferences)
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      client: client as unknown as NonNullable<Parameters<typeof composeJevKeyRows>[0]['client']>
+    }
+  }
+
+  /** Today's runtime never answers a Settings row of this table. */
+  const legacy = { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) }
+
+  it('[ADR-001] the release table composes none of A-42, A-43, A-47 and A-51 from the Host', () => {
+    const { client } = settingsHost()
+    expect(
+      composeSystemNotificationRows({ routes: ROUTES, client, mintId: () => MINTED })
+    ).toBeUndefined()
+    const jev = composeJevKeyRows({
+      routes: ROUTES,
+      release: ROUTES_RELEASE,
+      legacy,
+      client,
+      migration: undefined,
+      log: { record: () => {} },
+      mintId: () => MINTED
+    })
+    expect(jev?.part?.channels ?? []).not.toContain(JEV_GET)
+    expect(jev?.part?.channels ?? []).not.toContain(JEV_SET)
+  })
+
+  it("[ADR-001] in a 4a table A-42, A-43, A-47 and A-51 are served by the Host, and A-48/A-49 answer the Host's Jev preferences", async () => {
+    const host = settingsHost()
+    const jev = composeJevKeyRows({
+      routes: SETTINGS_4A,
+      release: 'cut-4a',
+      legacy,
+      client: host.client,
+      migration: undefined,
+      log: { record: () => {} },
+      mintId: () => MINTED
+    })
+    const notifications = composeSystemNotificationRows({
+      routes: SETTINGS_4A,
+      client: host.client,
+      mintId: () => MINTED
+    })
+    expect(jev?.part?.channels).toEqual([KEY_SET, KEY_CLEAR, JEV_GET, JEV_SET])
+    expect(notifications?.channels).toEqual([NOTIFICATIONS_GET, NOTIFICATIONS_SET])
+    expect(jev?.shapeAdapters).toEqual({})
+    const parts = [jev?.part, notifications].filter((part) => part !== undefined)
+    const router = createRouter({
+      routes: SETTINGS_4A,
+      legacy,
+      host: composeRouteTargets(parts),
+      senders
+    })
+    const dispatch = async (channel: ChannelKey, payload?: unknown) =>
+      CHANNELS[channel].response.parse(await router.dispatch(channel, FROM_PANEL as never, payload))
+
+    expect(await dispatch(NOTIFICATIONS_GET)).toBe(true)
+    expect(await dispatch(NOTIFICATIONS_SET, false)).toBe(false)
+    expect(await dispatch(NOTIFICATIONS_GET)).toBe(false)
+    const premium = { profile: 'premium', default: { provider: 'claude' }, delegation: true }
+    expect(await dispatch(JEV_SET, premium)).toEqual({ configured: false, preferences: premium })
+    // A-48 answers the preferences the Host holds, never today's (JevSettingsShapeAdapter is not composed).
+    expect(await dispatch(KEY_SET, 'ts-live-0123456789abcdef')).toEqual({
+      configured: true,
+      preferences: premium
+    })
+    expect(await dispatch(JEV_GET)).toEqual({ configured: true, preferences: premium })
+    expect(host.calls.filter(([method]) => method === 'preferences.set')).toEqual([
+      ['preferences.set', { key: 'systemNotificationsOn', value: false, requestId: MINTED }],
+      ['preferences.set', { key: 'routingProfile', value: 'premium', requestId: MINTED }],
+      ['preferences.set', { key: 'defaultProvider', value: 'claude', requestId: MINTED }],
+      ['preferences.set', { key: 'subagentDelegationOn', value: true, requestId: MINTED }]
     ])
   })
 })

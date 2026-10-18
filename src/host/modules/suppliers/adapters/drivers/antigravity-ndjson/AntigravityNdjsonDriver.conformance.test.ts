@@ -523,3 +523,73 @@ describe('the AntigravityNdjsonDriver probe', () => {
     })
   })
 })
+
+// ADDED for ISSUE-188 (the step-3e E2E stub, ADR-029 row 8, #1360): the one resolver may answer a Windows script entry.
+describe('the AntigravityNdjsonDriver on a Windows script entry', () => {
+  it('[C-02, ADR-029] on Windows an agy that resolves to a script entry is probed and launched by the person node with the entry as its first argument, never through a shell', async () => {
+    // A Windows `agy.cmd` shim resolves to its quoted script entry, which the OS cannot start by itself (spawn
+    // EFTYPE) and R17 forbids running through a shell. agy's own install is an `agy.exe`, started as it is.
+    const entry = String.raw`C:\Users\j\AppData\Local\agy\bin\agy.mjs`
+    const node = String.raw`C:\Program Files\nodejs\node.exe`
+    const windowsFactory =
+      (withNode: boolean): DriverFactory =>
+      (rig) => {
+        const resolver = new FakeInstallResolver()
+        resolver.install('agy', { path: entry, version: '1.1.26' })
+        if (withNode) resolver.install('node', { path: node })
+        return new AntigravityNdjsonDriver({
+          record: ANTIGRAVITY,
+          detection: createInstallDetection({
+            resolver,
+            fs: { stat: async () => ({ mtimeMs: 0, size: 1, isDirectory: false }) },
+            scheduler: rig.scheduler
+          }),
+          processControl: rig.processControl,
+          clock: rig.clock,
+          scheduler: rig.scheduler,
+          loginEnv: rig.loginEnv,
+          home: String.raw`C:\Users\j`,
+          platform: 'win32',
+          redact: (text) => text
+        })
+      }
+    const install = { ...INSTALL, binaryPath: entry }
+    const options = { ...OPTIONS, install }
+    const run = await runScript(
+      windowsFactory(true),
+      fixture('c-01-launch').expected.script,
+      { variant: variantOf('c-01-launch') },
+      options
+    )
+    expect(run.spawn.spawns.map((s) => [s.executable, ...s.args])).toEqual([
+      [node, entry, ...LAUNCH_ARGV]
+    ])
+    // The help probe starts the same way.
+    const clock = new FakeClock(0)
+    const scheduler = new FakeScheduler(clock)
+    const spawn = new RecordingSpawn({
+      clock,
+      scheduler,
+      decide: () => ({ kind: 'exit', afterMs: 0, code: 0, stdout: HELP_1_4_2 })
+    })
+    const probing = track(
+      windowsFactory(true)({ clock, scheduler, processControl: spawn, loginEnv: LOGIN_ENV }).probe(
+        install
+      )
+    )
+    await advance(clock, scheduler, 10)
+    expect(probing.value).toMatchObject({ launch: true })
+    expect(spawn.spawns.map((s) => [s.executable, ...s.args])).toEqual([[node, entry, '--help']])
+    // No node the resolver can find: not installed, and nothing is spawned (no shell fallback).
+    const noNode = await runScript(
+      windowsFactory(false),
+      fixture('c-01-launch').expected.script,
+      { variant: variantOf('c-01-launch') },
+      options
+    )
+    expect(noNode.outcomes[0]).toEqual({
+      rejected: { cause: 'not-installed', detail: 'node, which runs Antigravity, is not installed' }
+    })
+    expect(noNode.spawn.spawns).toEqual([])
+  })
+})

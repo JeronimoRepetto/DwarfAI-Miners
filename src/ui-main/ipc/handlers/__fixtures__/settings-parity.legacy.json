@@ -1,0 +1,132 @@
+{
+  "source": "Today's answers of A-42, A-43, A-47 and A-51 (src/main/index.ts handlers over notificationPreference.ts, jevApiKey.ts and jevPreferences.ts; the same code LegacyRuntimeRoute composes), written by hand from that code for each input sequence (17 §1.4). 'payload' absent means the row takes none.",
+  "scenarios": [
+    {
+      "name": "a fresh install with no Jev key",
+      "key": "unset",
+      "steps": [
+        { "row": "A-42", "channel": "notifications:enabled:get", "answer": true },
+        {
+          "row": "A-43",
+          "channel": "notifications:enabled:set",
+          "payload": false,
+          "answer": false
+        },
+        { "row": "A-42", "channel": "notifications:enabled:get", "answer": false },
+        {
+          "row": "A-43",
+          "channel": "notifications:enabled:set",
+          "payload": true,
+          "answer": true
+        },
+        {
+          "row": "A-47",
+          "channel": "jev:settings:get",
+          "answer": {
+            "configured": false,
+            "preferences": { "profile": "balanced", "default": {}, "delegation": false }
+          }
+        },
+        {
+          "row": "A-51",
+          "channel": "jev:preferences:set",
+          "payload": { "profile": "premium", "default": {}, "delegation": false },
+          "answer": {
+            "configured": false,
+            "preferences": { "profile": "premium", "default": {}, "delegation": false }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a configured Jev key, the default launch and the delegation toggle",
+      "key": "set",
+      "steps": [
+        {
+          "row": "A-47",
+          "channel": "jev:settings:get",
+          "answer": {
+            "configured": true,
+            "preferences": { "profile": "balanced", "default": {}, "delegation": false }
+          }
+        },
+        {
+          "row": "A-51",
+          "channel": "jev:preferences:set",
+          "payload": {
+            "profile": "economy",
+            "default": { "provider": "claude", "model": "opus", "effort": "high" },
+            "delegation": true
+          },
+          "answer": {
+            "configured": true,
+            "preferences": {
+              "profile": "economy",
+              "default": { "provider": "claude", "model": "opus", "effort": "high" },
+              "delegation": true
+            }
+          }
+        },
+        {
+          "row": "A-51",
+          "channel": "jev:preferences:set",
+          "payload": {
+            "profile": "economy",
+            "default": { "provider": "codex" },
+            "delegation": true
+          },
+          "answer": {
+            "configured": true,
+            "preferences": {
+              "profile": "economy",
+              "default": { "provider": "codex" },
+              "delegation": true
+            }
+          }
+        },
+        {
+          "row": "A-51",
+          "channel": "jev:preferences:set",
+          "payload": { "profile": "economy", "default": {}, "delegation": false },
+          "answer": {
+            "configured": true,
+            "preferences": { "profile": "economy", "default": {}, "delegation": false }
+          }
+        },
+        {
+          "row": "A-47",
+          "channel": "jev:settings:get",
+          "answer": {
+            "configured": true,
+            "preferences": { "profile": "economy", "default": {}, "delegation": false }
+          }
+        }
+      ]
+    },
+    {
+      "name": "no OS secret store on this machine",
+      "key": "unavailable",
+      "steps": [
+        {
+          "row": "A-47",
+          "channel": "jev:settings:get",
+          "answer": {
+            "configured": false,
+            "unavailableReason": "encryption-unavailable",
+            "preferences": { "profile": "balanced", "default": {}, "delegation": false }
+          }
+        },
+        {
+          "row": "A-51",
+          "channel": "jev:preferences:set",
+          "payload": { "profile": "balanced", "default": {}, "delegation": true },
+          "answer": {
+            "configured": false,
+            "unavailableReason": "encryption-unavailable",
+            "preferences": { "profile": "balanced", "default": {}, "delegation": true }
+          }
+        }
+      ]
+    }
+  ]
+}

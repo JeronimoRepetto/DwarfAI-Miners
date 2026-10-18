@@ -21,6 +21,7 @@ import {
 import { ClaudeStreamJsonDriver } from './adapters/drivers/claude-stream-json/ClaudeStreamJsonDriver'
 import type { McpConfigFiles } from './adapters/drivers/claude-stream-json/mcpConfigFile'
 import type { PromptToolDeps } from './adapters/drivers/claude-stream-json/promptTool'
+import { AntigravityNdjsonDriver } from './adapters/drivers/antigravity-ndjson/AntigravityNdjsonDriver'
 import { CodexAppServerDriver } from './adapters/drivers/codex-app-server/CodexAppServerDriver'
 import { HostedCommandDriver } from './adapters/drivers/hosted-command/HostedCommandDriver'
 import { HOSTED_COMMAND_PROFILE } from './adapters/drivers/hosted-command/profile'
@@ -304,6 +305,13 @@ function cliDrivers(
     attached.push(
       new CodexAppServerDriver({ ...shared, record: codex, clientInfo: cli.clientInfo })
     )
+  }
+  // Antigravity (ISSUE-188, step 3e; the driver of ISSUE-156): attached in every build, as the
+  // registry and the catalogue apply its `publicLaunch: 'gated'` from the one build flag (ADR-009 D6):
+  // a public build launches nothing through it, a development build launches the person's own agy.
+  const antigravity = recordOf('ndjson')
+  if (antigravity !== undefined) {
+    attached.push(new AntigravityNdjsonDriver({ ...shared, record: antigravity }))
   }
   const claude = recordOf('stream-json')
   if (claude !== undefined && cli.claudeStreamJson !== undefined) {
