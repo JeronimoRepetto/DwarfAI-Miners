@@ -145,6 +145,26 @@ function leftovers(installLocation) {
   }
 }
 
+/** The command lines (cut to 200 characters) of the processes whose executable is under `dir`. */
+function processesUnder(dir) {
+  const root = path.resolve(dir).toLowerCase()
+  return processes()
+    .filter(
+      (p) =>
+        p.executable &&
+        path
+          .resolve(p.executable)
+          .toLowerCase()
+          .startsWith(root + path.sep)
+    )
+    .map((p) => (p.commandLine ?? p.executable).slice(0, 200))
+}
+
+/** The launched process's exit (`{ code, signal }`) when it has already exited, else null. */
+function exitOf(run) {
+  return Promise.race([run.exited, new Promise((resolve) => setTimeout(() => resolve(null), 0))])
+}
+
 async function startHost(exe, out, label, previousPid = null) {
   const started = Date.now()
   const run = launch(exe, ['--background'], {
@@ -199,6 +219,7 @@ async function main() {
     // ended first, as the tray's Quit would.
     evidence.uiEndedBeforeUpgrade = endProcessesUnder([installLocation]).length
     await new Promise((resolve) => setTimeout(resolve, 2000))
+    evidence.installedProcessesBeforeUpgrade = processesUnder(installLocation)
     evidence.hostBeforeUpgrade = hostFacts(first.identity)
     evidence.upgrade = await runWatched(path.resolve(args.next), ['/S'])
     evidence.upgrade.hostAfter = hostFacts(first.identity)
@@ -215,7 +236,11 @@ async function main() {
         newHost: hostFacts(second.identity),
         oldHostAlive: isAlive(first.identity.pid),
         identityNow: hostFacts(readHostIdentity()),
-        copyRoot: listing(copyRoot())
+        copyRoot: listing(copyRoot()),
+        // Run 39134423991 saw no new Host and no product log of the upgraded UI: whether it had already exited, and
+        // what still ran from the install folder at the deadline.
+        upgradedUiExit: await exitOf(second.run),
+        installedProcesses: processesUnder(installLocation)
       }
     }
 
