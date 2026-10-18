@@ -496,12 +496,12 @@ describe('submitting a launch', () => {
   })
 
   // AMENDED for ISSUE-001 (was: "…, repeating main’s reason", today's `AgentProviderOption.reason`): a 14 entry carries
-  // no reason sentence, so a gated supplier is refused with the panel's own.
+  // no reason sentence, so a supplier it cannot start is refused with the panel's own.
+  // AMENDED for ISSUE-188 (was: a `publicLaunch: 'gated'` entry): every entry the Host lists is launchable in its build
+  // (ADR-009 D6, development builds keep a gated one), so the supplier it cannot start is one not installed.
   it('refuses a detected provider it cannot start, with the panel’s own sentence', async () => {
     const api = stubApi({
-      listAgentProviders: vi
-        .fn()
-        .mockResolvedValue(catalogue(entry('codex', { publicLaunch: 'gated' })))
+      listAgentProviders: vi.fn().mockResolvedValue(catalogue(entry('codex', { installed: false })))
     })
     const launch = useAgentLaunch()
     await launch.open(MINE)
