@@ -79,12 +79,8 @@ describe('step 3e public build (21 §2 row 3e; ADR-009 D6)', () => {
         }
       }
     })
-    const catalog = (await world.invoke(PROVIDERS, {})) as {
-      ok: boolean
-      value: Array<{ providerId: string }>
-    }
-    expect(catalog.ok).toBe(true)
-    expect(catalog.value.map((entry) => entry.providerId)).toEqual([CLAUDE, CODEX, OPENCODE])
+    // AMENDED for ISSUE-240, the 4b deletion (was: the catalog through `CatalogMergeAdapter` listing Claude, Codex and
+    // OpenCode, never Antigravity): the adapter left the tree.
     // The observed Antigravity dwarf's send and console reach the Host.
     expect(
       await world.invoke(SEND, {
@@ -99,11 +95,10 @@ describe('step 3e public build (21 §2 row 3e; ADR-009 D6)', () => {
       value: { outcome: 'opened', mode: 'log' }
     })
     expect(world.hostCalls.map(([method]) => method)).toEqual([
-      'suppliers.launchable',
       'conversation.send',
       'conversation.resolveConsole'
     ])
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual([PROVIDERS])
+    expect(world.legacyServed).toEqual([])
     world.dispose()
   })
 })

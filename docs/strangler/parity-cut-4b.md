@@ -131,3 +131,17 @@ Not deleted here, and why: today's detached launch engine (`launchRunner.ts`, `l
 (`opencodeHold.ts`) and the runtime's continuation path are still composed by today's runtime, which reaches them no
 more; they go with `runtime.ts` (ISSUE-243, foreman decision D3). The legacy `.dependency-cruiser.cjs` exclusion is the
 whole `^src/(main|shared)/` tree and shrinks only when those trees go (cut 5).
+
+## Step-4b deletion: the launch observation and the per-provider shape adapters (ISSUE-240)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 4b parity run above (every provider's A-13, A-23, A-35
+and A-36 through the Host, the drivers' conformance), `pnpm vitest run src/ui-main/ipc/ipc-routing.contract.test.ts`
+(`describe('after the 4b retirement')`, TC-240-01, TC-240-02), `pnpm test:canaries` and the census against the merge
+base. Deleted: `src/legacy-bridge/LegacyLaunchObservation.ts` (Stop everything relays to today's launched register
+directly until `LegacyEndFirstAdapter` ends with ISSUE-241), `src/legacy-bridge/shape/PerProviderShapeAdapter.ts`,
+`src/legacy-bridge/shape/CatalogMergeAdapter.ts` and their settlement join `legacySettlementJoin.ts` (its only other
+user, the A-P3/A-P4 push tap, lost its pushes with ISSUE-239), with their tests, their composition in
+`src/ui-main/index.ts` and their rows of `LEGACY_BRIDGE_ADAPTERS`; the earlier releases' tables are checked against the
+listing they shipped (`testing/adaptersAsShipped.ts`), and the router cases that served a provider not yet moved
+through the adapters lost those statements (`docs/test-removals.md`). The new canary
+`lint-canaries/R16-deleted-shape-adapters` proves an import of a deleted adapter's path fails lint (TC-240-03).

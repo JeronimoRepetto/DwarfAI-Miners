@@ -52,10 +52,6 @@ import {
   type LegacyRegistry
 } from '../legacy-bridge/LegacyDwarfIdBridge'
 import {
-  createLegacyLaunchObservation,
-  type LegacyLaunchObservation
-} from '../legacy-bridge/LegacyLaunchObservation'
-import {
   createStopEverything,
   STOP_EVERYTHING_REQUESTED,
   type StopAllRelay,
@@ -220,21 +216,6 @@ import {
 } from './ipc/handlers/reportVisibleMines'
 import { createLegacyAnswerShapeAdapter } from '../legacy-bridge/asks/LegacyAnswerShapeAdapter'
 import {
-  createPerProviderShapeAdapter,
-  PER_PROVIDER_SHAPE_ADAPTER,
-  PER_PROVIDER_SHAPE_CHANNELS
-} from '../legacy-bridge/shape/PerProviderShapeAdapter'
-import {
-  CATALOG_MERGE_ADAPTER,
-  CATALOG_MERGE_CHANNELS,
-  createCatalogMergeAdapter
-} from '../legacy-bridge/shape/CatalogMergeAdapter'
-import {
-  createLegacySettlementJoin,
-  createSettlementPushMap,
-  type LegacySettlementJoin
-} from '../legacy-bridge/shape/legacySettlementJoin'
-import {
   createLaunchAgentRow,
   LAUNCH_AGENT,
   LAUNCH_AGENT_ROWS
@@ -337,9 +318,6 @@ import {
 
 /** The 21 §3.1 shape adapter of A-40/A-41's qualified `legacy` routes (cuts 2–4). */
 const LEGACY_ANSWER_SHAPE_ADAPTER = 'LegacyAnswerShapeAdapter'
-
-/** Today's model catalog handler (A-37's), the one door to it (21 §3 `LegacyRuntimeRoute`); no route reaches it from 3a. */
-const LEGACY_MODEL_CATALOG = 'agent:models'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -691,55 +669,6 @@ function movedProvidersOf(routes: readonly ChannelRoute[]): ReadonlySet<string> 
   return moved
 }
 
-/**
- * The per-provider shape adapters of steps 3a–4b (21 §3.1; ISSUE-177): `PerProviderShapeAdapter` (A-13, A-23, A-35 and
- * its Retry path) and `CatalogMergeAdapter` (A-36), each over today's runtime behind `LegacyDwarfIdBridge`'s rows.
- * Each is bound under its name only where a route of the table names it and it lives in the release; `undefined` when
- * neither is. A route naming one of them for a row it does not convert stops the router, as a route naming an unbound
- * adapter does: the router starts only where the table and the composition agree. The catalog merge takes its moved
- * providers from the table (an A-36 route qualified to a provider and owned by the Host, 21 §1 item 2) and today's
- * model catalog from `models`, never through the A-37 row. With `settlements` (the step-3a switch, ISSUE-001) the
- * per-provider adapter records each id it mints against today's receipt or hold (legacySettlementJoin.ts).
- */
-export function composeProviderShapeAdapters(deps: {
-  routes: readonly ChannelRoute[]
-  release: StepId
-  legacy: RouteTarget
-  models: { read(): Promise<unknown> }
-  client: Pick<HostClient, 'call'> | undefined
-  mintId: () => string
-  settlements?: LegacySettlementJoin
-}): Readonly<Record<string, RouteTarget>> | undefined {
-  const served: ReadonlyArray<readonly [string, readonly string[]]> = [
-    [PER_PROVIDER_SHAPE_ADAPTER, PER_PROVIDER_SHAPE_CHANNELS],
-    [CATALOG_MERGE_ADAPTER, CATALOG_MERGE_CHANNELS]
-  ]
-  const bound: Record<string, RouteTarget> = {}
-  for (const [name, channels] of served) {
-    const naming = deps.routes.filter((route) => route.shapeAdapter === name)
-    if (naming.length === 0 || !bridgeLivesIn(name, deps.release)) continue
-    const stray = naming.find((route) => !channels.includes(route.channel))
-    if (stray !== undefined) {
-      throw new Error(`router: shape adapter ${name} does not serve ${stray.channel}`)
-    }
-    if (name === PER_PROVIDER_SHAPE_ADAPTER) {
-      bound[name] = createPerProviderShapeAdapter({
-        legacy: deps.legacy,
-        mintId: deps.mintId,
-        ...(deps.settlements === undefined ? {} : { settlements: deps.settlements })
-      })
-    } else {
-      bound[name] = createCatalogMergeAdapter({
-        legacy: deps.legacy,
-        models: deps.models,
-        client: deps.client,
-        movedProviders: movedProvidersOf(deps.routes)
-      })
-    }
-  }
-  return Object.keys(bound).length === 0 ? undefined : bound
-}
-
 /** Whether the legacy-bridge adapter `name` lives in `release`: composed exactly in the steps 21 §3 lists it for. */
 function bridgeLivesIn(name: string, release: StepId): boolean {
   return LEGACY_BRIDGE_ADAPTERS.some(
@@ -784,20 +713,6 @@ export function composeLegacyAgentRegistryFeed(deps: {
 }
 
 /**
- * `LegacyLaunchObservation` (21 §3, cuts 1–4b; 14 §5): a session today's runtime launched is an observed session for the
- * Host, found in its provider's files like any other; the legacy runtime keeps its launch channel, which from cut 1 is
- * reached through this bridge (the A-N26 end-first relay). Composed in the releases it is listed for, never in the
- * cut-0 table; deleted at the end of 4b (ISSUE-240).
- */
-export function composeLegacyLaunchObservation(deps: {
-  release: StepId
-  launches: LegacyLaunchedSessions
-}): LegacyLaunchObservation | undefined {
-  if (!bridgeLivesIn('LegacyLaunchObservation', deps.release)) return undefined
-  return createLegacyLaunchObservation({ launches: deps.launches })
-}
-
-/**
  * `surface` with its registry replaced and every other member read through it, its poll interval only when asked:
  * today's runtime answers it only once it is composed, which the root does after the bridges (`LegacyRuntimeRoute`).
  */
@@ -839,8 +754,9 @@ export interface LegacyDwarfIdComposition {
  * identity, or answer their own not-found shape, and A-P4 leaves with the Host id. Composed in the releases it is listed
  * for (cut 1, its rollback build included, to the end of 4b), never in the cut-0 table, and only over the Host attach
  * and a bound legacy registry (the legacy side of the join). Read-only toward the Host: it reads B-M41 only. Deleted at
- * the end of cut 4 with B-M41 (ISSUE-241). With `settlements` (from 3a) the A-P3 / A-P4 mapping also puts the id
- * `PerProviderShapeAdapter` answered in the push's own field (21 §3.1; legacySettlementJoin.ts).
+ * the end of cut 4 with B-M41 (ISSUE-241). AMENDED for ISSUE-240 (was: with `settlements`, from 3a, the A-P3 / A-P4
+ * mapping also put the id `PerProviderShapeAdapter` answered in the push's own field): the adapter and its settlement
+ * join left the tree with the 4b deletion.
  */
 export function composeLegacyDwarfIdBridge(deps: {
   release: StepId
@@ -848,7 +764,6 @@ export function composeLegacyDwarfIdBridge(deps: {
   legacy: RouteTarget
   registry: LegacyRuntimeSurface | undefined
   pushes?: LegacyPushTap
-  settlements?: LegacySettlementJoin
 }): LegacyDwarfIdComposition | undefined {
   const { client, registry } = deps
   if (
@@ -864,12 +779,7 @@ export function composeLegacyDwarfIdBridge(deps: {
     bridge,
     legacy: { serve: (channel, payload) => deps.legacy.serve(channel, payload) }
   })
-  // From 3a A-P3 and A-P4 also leave with the ids `PerProviderShapeAdapter` minted (legacySettlementJoin.ts).
-  const uninstall = deps.pushes?.install(
-    deps.settlements === undefined
-      ? rows
-      : createSettlementPushMap({ join: deps.settlements, inner: rows })
-  )
+  const uninstall = deps.pushes?.install(rows)
   return {
     legacy: { serve: (channel, payload) => rows.serve(channel, payload) },
     registry: withRegistry(registry, tap.registry),
@@ -1406,21 +1316,6 @@ export function composeProviderRouting(deps: {
 }
 
 /**
- * The legacy settlement join (21 §3.1; legacySettlementJoin.ts): shared by `PerProviderShapeAdapter`, which records the
- * ids it mints, and the push tap, where A-P3 and A-P4 leave with them. Composed only where a route of the table names
- * the adapter and it lives in the release; `undefined` otherwise.
- */
-export function composeSettlementJoin(deps: {
-  routes: readonly ChannelRoute[]
-  release: StepId
-}): LegacySettlementJoin | undefined {
-  const named = deps.routes.some((route) => route.shapeAdapter === PER_PROVIDER_SHAPE_ADAPTER)
-  return named && bridgeLivesIn(PER_PROVIDER_SHAPE_ADAPTER, deps.release)
-    ? createLegacySettlementJoin()
-    : undefined
-}
-
-/**
  * What `LegacyAgentRegistryFeed` composes per legacy provider for a table (21 §3: it shrinks per provider step). A
  * provider whose A-36 entry the table routes `host` (moved: Claude from 3a, Codex from 3b) keeps only what its
  * moved mode lists (`legacyFeedModesFor`: its legacy-launched sessions, and Codex's pending questions); a table that
@@ -1728,20 +1623,16 @@ export async function startUiMain({
         })
   const stopResetListening = uiPreferencesReset?.listen()
 
-  // From cut 1 to the end of cut 4 (21 §3): a session today's runtime launched is observed by the Host like any other,
-  // and today's runtime keeps its launch channel; only the registry-only discovery of today's observer stays composed.
-  const launchObservation = composeLegacyLaunchObservation({ release, launches: legacyRuntime })
-  // From 3a the ids `PerProviderShapeAdapter` mints are joined to today's receipts and holds, so today's A-P3 and A-P4
-  // settle them (21 §3.1; ISSUE-001).
-  const settlements = composeSettlementJoin({ routes, release })
+  // AMENDED for ISSUE-240, the 4b deletion (was: `LegacyLaunchObservation`, today's launch channel for a session today's
+  // runtime launched, and the settlement join of the ids `PerProviderShapeAdapter` minted): both left the tree; Stop
+  // everything relays to today's launched register directly until `LegacyEndFirstAdapter` ends (ISSUE-241).
   // The legacy rows that carry a dwarf id map Host ids to legacy ones through the registry the feed writes (21 §3).
   const dwarfIds = composeLegacyDwarfIdBridge({
     release,
     client: host?.client,
     legacy: legacyRuntime,
     registry: legacyRegistry,
-    ...(legacyPushes === undefined ? {} : { pushes: legacyPushes }),
-    ...(settlements === undefined ? {} : { settlements })
+    ...(legacyPushes === undefined ? {} : { pushes: legacyPushes })
   })
   // Today's open asks are shown as ask cards through the facade and answered through the bridge (21 §3, cuts 1–4).
   const askRelay = composeLegacyAskRelay({ release, dwarfIds })
@@ -1769,7 +1660,7 @@ export async function startUiMain({
             }
           },
           newConfirmationId: () => tray.newConfirmationId(),
-          relay: composeStopAllRelay(launchObservation?.channel ?? legacyRuntime)
+          relay: composeStopAllRelay(legacyRuntime)
         })
       : undefined
 
@@ -1793,17 +1684,8 @@ export async function startUiMain({
         })
   const stopHearingVisibility = panel?.onVisibleChanged?.(() => presence?.tracker.windowsChanged())
   windowClosed = (webContentsId) => presence?.tracker.windowClosed(webContentsId)
-  // A-13, A-23, A-35 and A-36 for the providers not yet moved, once a step switch names their shape adapters (21 §3.1;
-  // ISSUE-177): today's runtime behind the dwarf id bridge, and today's model catalog read through its own handler.
-  const providerShapes = composeProviderShapeAdapters({
-    routes,
-    release,
-    legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
-    models: { read: () => legacyRuntime.serve(LEGACY_MODEL_CATALOG, undefined) },
-    client: host?.client,
-    mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) }),
-    ...(settlements === undefined ? {} : { settlements })
-  })
+  // AMENDED for ISSUE-240, the 4b deletion (was: `PerProviderShapeAdapter` and `CatalogMergeAdapter` for A-13, A-23,
+  // A-35 and A-36 of the providers not yet moved, 21 §3.1): from 4b every provider's rows are the Host's.
 
   // A-12 and A-P2 from the Host board, once the table routes them there (the cut-1 switch, ISSUE-123; 21 §3).
   const boardFacade =
@@ -1938,7 +1820,6 @@ export async function startUiMain({
           ...(resetMetricsRow === undefined ? [] : [resetMetricsRow])
         ])
   const allShapeAdapters = {
-    ...providerShapes,
     ...askAnswers?.shapeAdapters
   }
 

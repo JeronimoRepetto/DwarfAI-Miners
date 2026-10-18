@@ -20,18 +20,18 @@ function span(from: StepId, to: StepId): StepId[] {
  * table's release; none lives past cut 5. Each is built by the cut that needs it (21 §3.1), in `src/legacy-bridge/**`.
  * AMENDED for ISSUE-236, the 4a retirement (was: also `ResetFanout` and `SettingsMirrorBridge`, cuts 1–3e, and
  * `JevSettingsShapeAdapter`, 3a–4a): their lifetime ended in 4a and they left the tree after the soak (21 §3).
+ * AMENDED for ISSUE-240, the 4b deletion (was: also `LegacyLaunchObservation`, cuts 1–4b, and the shape adapters
+ * `PerProviderShapeAdapter` and `CatalogMergeAdapter`, 3a–4b): no provider is launched by today's runtime any more, so
+ * they left the tree (21 §3, §3.1).
  */
 export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
   { name: 'LegacyRuntimeRoute', cuts: span('cut-0', 'cut-5'), shapeAdapter: false },
   { name: 'BoardFacadeAdapter', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyDwarfIdBridge', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyLaunchObservation', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false },
   { name: 'LegacyAgentRegistryFeed', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyAskRelay', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyEndFirstAdapter', cuts: span('cut-0', 'cut-4b'), shapeAdapter: false },
-  { name: 'PerProviderShapeAdapter', cuts: span('cut-3a', 'cut-4b'), shapeAdapter: true },
-  { name: 'CatalogMergeAdapter', cuts: span('cut-3a', 'cut-4b'), shapeAdapter: true },
   { name: 'LegacyAnswerShapeAdapter', cuts: span('cut-2', 'cut-4b'), shapeAdapter: true }
 ]
 
