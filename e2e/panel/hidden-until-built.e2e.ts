@@ -12,6 +12,9 @@ import {
 } from '../_harness/launchApp.ts'
 import { answerFirstRunStep } from '../_harness/firstRunStep.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
+// The renderer's own filter of A-36 (`launchSourcesOf` in src/renderer/src/lib/launch/supplierEntries.ts, through
+// src/renderer/src/types.ts): an entry it does not recognise draws no chip.
+import { isDwarfProvider } from '../../src/shared/contracts.ts'
 import { seedClaudeStubSession } from '../cut-1/claudeStubWorld.ts'
 
 /**
@@ -101,7 +104,11 @@ test.describe('the Panel build hides what is not built (ISSUE-267)', () => {
               .map((entry) => entry.providerId)
           : []
       })) as string[]
-    const expected = [...(await offered()), 'other']
+    // AMENDED for ISSUE-238 (was: every offered entry): from the step-4b switch A-36 is the Host's
+    // `suppliers.launchable` whole, which in a development build also lists the dev-only simulated catalog entry
+    // (15 §4.12) that `CatalogMergeAdapter` used to leave out. The renderer draws a chip only for a provider
+    // `isDwarfProvider` recognises, so the expected row applies the same filter.
+    const expected = [...(await offered()).filter((id) => isDwarfProvider(id)), 'other']
     await expect
       .poll(
         () => chips.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-value'))),
