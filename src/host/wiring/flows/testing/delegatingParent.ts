@@ -158,24 +158,19 @@ export async function launchClaudeWithJev(
   })
   expect(answered).toMatchObject({ ok: true })
   const launchId = (answered as { result?: { launchId?: LaunchId } }).result?.launchId
-  // The relay's credential and `--mcp-config` files are real files, written before the session is
-  // spawned. Fake time stays frozen until that spawn happened (or the launch failed), so a slow
-  // disk can never let a handshake or routing budget run out while a file is still being written.
-  for (
-    let round = 0;
-    round < 5_000 &&
-    sessionSpawnsOn(h.clock) === spawnedBefore &&
-    evts(ui, 'launch.failed').length === 0;
-    round += 1
-  ) {
-    await h.settle(ui)
-  }
   const settledFrame = () =>
     evts<LaunchChanged>(ui, 'launch.changed').find(
       (frame) => frame.launch.launchId === launchId && frame.launch.state === 'succeeded'
     )
+  // The relay's credential and `--mcp-config` files are real files, written before the session is
+  // spawned. Until that spawn happened, each step first gives the disk many settle rounds with the
+  // clock frozen, so a slow disk cannot let a handshake or routing budget run out mid-write. The
+  // clock still advances afterwards on every OS, so a launch that needs fake time is never stuck.
+  const spawned = () => sessionSpawnsOn(h.clock) > spawnedBefore
+  const failed = () => evts(ui, 'launch.failed').length > 0
   for (let step = 0; step < 400 && settledFrame() === undefined; step += 1) {
-    if (evts(ui, 'launch.failed').length > 0) break
+    if (failed()) break
+    for (let round = 0; round < 100 && !spawned() && !failed(); round += 1) await h.settle(ui)
     await h.run(50, ui)
   }
   const settled = settledFrame()?.launch
