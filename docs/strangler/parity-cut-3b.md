@@ -35,7 +35,7 @@ delegation entry) and ISSUE-001 (the 3a switch).
   (`fixtures/codex/app-server-rpc/0.153.4/`, S-015-1 run 3 and SP-12) hold no launch failure, so every row is a
   situation both sides are driven through.
 - **L2 flow launch → turn → ask → answer → turn end** (`15` §9.2): `src/host/wiring/flows/codex-step-3b.test.ts` over
-  the C-06 recording (a command approval inside the first turn). **Pending**: the case fails on the current tree, see
+  the C-06 recording (a command approval inside the first turn). It found the defect fixed by this switch, see
   "Defect found by the step-3b flow" below. Crash recovery of a Codex session (ADR-015) is
   `src/host/wiring/flows/cut3aHost.test.ts` "[S4.18, CH-01] a Host rebuilt over the same DB resumes the owned session
   silently" (the C-16 recording); stop (ADR-014) is the provider-neutral `stopDwarf.test.ts`, `stopEverything.test.ts`
@@ -48,12 +48,12 @@ delegation entry) and ISSUE-001 (the 3a switch).
 - **Router cases** (TC-002-01): `src/ui-main/ipc/ipc-routing.contract.test.ts` `describe('release 3b (21 §2 cut 3b)')`
   and the 3b rollback case of `src/ui-main/ipc/rollbackTable.test.ts`.
 
-| Suite                                     | Command                                                                                         | Internal build                   | OS                    | Result                | Date       |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------- | --------------------- | --------------------- | ---------- |
-| Router cases, launch parity, Codex driver | `pnpm vitest run src/ui-main/ipc src/legacy-bridge src/host/modules/suppliers/adapters/drivers` | `feat/issue-002-route-switch-3b` | Windows               | passed                | 2026-10-18 |
-| L9 E2E (Codex stub)                       | `pnpm exec playwright test -c playwright.config.ts e2e/cut-3b`                                  | `feat/issue-002-route-switch-3b` | Windows               | passed                | 2026-10-18 |
-| L2 Codex flow                             | `pnpm vitest run src/host/wiring/flows/codex-step-3b.test.ts`                                   | `feat/issue-002-route-switch-3b` | Windows               | failed (defect below) | 2026-10-18 |
-| The release lanes (TC-002-05)             | `pnpm test:e2e`, `pnpm test:os`                                                                 | the 3b internal build            | Windows, macOS, Linux | pending (owner)       |            |
+| Suite                                     | Command                                                                                         | Internal build                   | OS                    | Result                       | Date       |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------- | --------------------- | ---------------------------- | ---------- |
+| Router cases, launch parity, Codex driver | `pnpm vitest run src/ui-main/ipc src/legacy-bridge src/host/modules/suppliers/adapters/drivers` | `feat/issue-002-route-switch-3b` | Windows               | passed                       | 2026-10-18 |
+| L9 E2E (Codex stub)                       | `pnpm exec playwright test -c playwright.config.ts e2e/cut-3b`                                  | `feat/issue-002-route-switch-3b` | Windows               | passed                       | 2026-10-18 |
+| L2 Codex flow                             | `pnpm vitest run src/host/wiring/flows/codex-step-3b.test.ts`                                   | `feat/issue-002-route-switch-3b` | Windows               | passed (after the fix below) | 2026-10-18 |
+| The release lanes (TC-002-05)             | `pnpm test:e2e`, `pnpm test:os`                                                                 | the 3b internal build            | Windows, macOS, Linux | pending (owner)              |            |
 
 ## Launch-cause mapping
 
@@ -120,15 +120,17 @@ through `CodexAcpDriver` where it has not and a user-installed `codex-acp` resol
 
 ## Defect found by the step-3b flow
 
-`src/host/wiring/flows/codex-step-3b.test.ts` fails on the current tree: when a Codex launch's first turn raises an
-approval request in the same read as the turn's first notifications (the C-06 recording), the ask is lost. The launch
-binds the session's event channel, which flushes the buffered events, before it records the session as owned
-(`src/host/modules/launching/application/launch.ts`, `succeed()`: `bindings.bind(ref, dwarfId)` runs before
-`ownSession(…)`). The buffered `ask.opened` then meets a dwarf that is not owned yet, is classified as an observed
-request the provider cannot detect (`asking/application/askBroker.ts` `open`, 07 S1.17) and is dropped with an
-`uncaught` log line, so the provider waits on an answer nobody can give. Binding after `ownSession` makes the flow pass
-and keeps the launching suites green (checked locally, not committed: the file is outside this issue's lane). The E2E
-case does not meet it, because its ask comes on a later turn. Until it is fixed the flow evidence above is pending.
+`src/host/wiring/flows/codex-step-3b.test.ts` failed before this switch fixed it: when a Codex launch's first turn
+raised an approval request in the same read as the turn's first notifications (the C-06 recording), the ask was lost.
+The launch bound the session's event channel, which delivers the events the driver held, before it wrote the launch
+record that makes the dwarf owned (`src/host/modules/launching/application/launch.ts`, `succeed()`). The held
+`ask.opened` met a dwarf the ask broker did not yet read as owned, was classified as an observed request the provider
+cannot detect (07 S1.17) and was dropped with an `uncaught` log line, so the provider waited on an answer nobody could
+give. The fix (`fix(launching): own the dwarf before its held session events are delivered`, ISSUE-002, approved by
+the foreman) writes the record first, then binds; `launch.test.ts` "[S5.21, ADR-010] the launch record of the dwarf
+is written before its session is bound, …" pins it. The same path serves every launched provider, so Claude's 3a
+launches were exposed too (an ask held before the bind, for example a permission prompt-tool call during a fast first
+turn). The E2E case never met it, because its ask comes on a later turn.
 
 ## Pending, owner-only
 
