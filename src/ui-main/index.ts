@@ -253,8 +253,7 @@ import {
 } from './ipc/handlers/setClaudeHooks.host'
 import {
   createOpenCodeSettingsRows,
-  OPENCODE_SETTINGS_ROWS,
-  SET_OPENCODE_PLUGIN
+  OPENCODE_SETTINGS_ROWS
 } from './ipc/handlers/openCodeSettings.host'
 import { createResetMetricsRow, RESET_METRICS_ROWS } from './ipc/handlers/resetMetrics.host'
 import {
@@ -826,18 +825,6 @@ export function composeResetMetricsRow(deps: {
   return channels.length === 0
     ? undefined
     : { channels, target: createResetMetricsRow(deps.client) }
-}
-
-/**
- * Whether today's runtime composes its OpenCode plugin half (21 §2 cut 4a; §1 item 4; §4 row "OpenCode plugin file";
- * ISSUE-235): today's plugin installer (its `restore()` would reinstall today's file for a person who opted in with the
- * old app) and the OpenCode route of its loopback listener, whose pushes fed today's OpenCode permission registry and so
- * `LegacyAskRelay`. Only while A-53 has no `host` route: from the step-4a switch the Host is the one writer of the plugin
- * file and its plugin channel the one answerer of the plugin's asks, legacy-launched sessions' included. Read from the
- * route table, so a rollback build that flips A-53 back composes it again.
- */
-export function legacyOpenCodePluginComposed(routes: readonly ChannelRoute[]): boolean {
-  return !routedTo(routes, SET_OPENCODE_PLUGIN, 'host')
 }
 
 /**
@@ -1966,8 +1953,8 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
       { app, dialog, nativeImage, shell, clipboard, globalShortcut },
       {
         ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
-        // Today's OpenCode plugin half only while A-53 keeps its pre-4a route (ISSUE-235).
-        openCodePlugin: legacyOpenCodePluginComposed(ROUTES),
+        // AMENDED for ISSUE-241 (was: today's OpenCode plugin half while A-53 kept its pre-4a route, ISSUE-235): no
+        // release left composes it.
         log: uiLog
       }
     )

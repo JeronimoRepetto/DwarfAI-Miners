@@ -31,8 +31,7 @@ import {
   composeProviderRouting,
   composeResetMetricsRow,
   composeStopDwarf,
-  composeSystemNotificationRows,
-  legacyOpenCodePluginComposed
+  composeSystemNotificationRows
 } from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -1882,16 +1881,17 @@ describe('cut-2 retirement (21 §2 cut 2)', () => {
     expect(read('ui-main/index.ts')).not.toMatch(/legacyClaudeHooks(Composed|Composition)\b/)
   })
 
-  it('[ADR-016] after the cut-2 retirement the legacy loopback listener serves only the OpenCode plugin route', () => {
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-016] after the cut-2 retirement the legacy loopback listener
+  // serves only the OpenCode plugin route", one listener with the OpenCode plugin channel on it until 4a): no route of
+  // any release left to compose reaches today's plugin half, so neither the listener nor the channel is composed, and
+  // neither is today's delegation service (the Host owns delegation, ADR-013).
+  it('[ADR-016] after the end of cut 4 today’s runtime composes no loopback hook listener, OpenCode plugin channel or delegation service', () => {
     const route = read('legacy-bridge/LegacyRuntimeRoute.ts')
-    // One listener, whose Claude sink reaches nothing: only today's hook channel (the installer's) opened its Claude route.
-    expect(route.match(/new HookListener\(/g)).toHaveLength(1)
-    expect(route).toMatch(/new HookListener\(\{[^}]*onEvent: \(\) => \{\},\s*onOpenCodePush,/s)
-    // The OpenCode plugin channel still opens its own route on that listener (until 4a).
-    expect(route).toMatch(/new OpenCodePluginChannel\(\{[^}]*listener: hookListener/s)
-    // AMENDED for ISSUE-236 (was: `openCodePluginError = (await openCodePlugin.restore())?.error`): the error fed only
-    // today's A-52/A-53 handlers, which the 4a retirement deleted.
-    expect(route).toMatch(/await openCodePlugin\.restore\(\)/)
+    expect(route).not.toMatch(
+      /new HookListener\(|new OpenCodePluginChannel\(|new DelegationService\(/
+    )
+    expect(route).not.toMatch(/main\/hooks\/hookListener'|main\/mcp\/delegationService'/)
+    expect(read('ui-main/index.ts')).not.toMatch(/legacyOpenCodePluginComposed/)
   })
 })
 
@@ -3390,10 +3390,9 @@ describe('release 4a (21 §2 cut 4a)', () => {
   it('[ADR-001] in 4a the OpenCode plugin asks are not under the legacy-ask-channel qualifier, which covers only person-launched Codex questions', () => {
     // 21 §2 cut 4a: the Host's plugin channel answers the OpenCode plugin asks, of legacy-launched sessions too; today's
     // plugin installer and the OpenCode route of its loopback listener are not composed, so no OpenCode ask reaches
-    // `LegacyAskRelay`. The `legacy-ask-channel` route stays for the person-launched Codex questions only.
-    expect(legacyOpenCodePluginComposed(DEVELOPMENT)).toBe(false)
-    expect(legacyOpenCodePluginComposed(PUBLIC)).toBe(false)
-    expect(legacyOpenCodePluginComposed(CUT_3E_ROUTES)).toBe(true)
+    // `LegacyAskRelay`. The `legacy-ask-channel` route stays for the person-launched Codex questions only. AMENDED for
+    // ISSUE-241 (was: also the root's `legacyOpenCodePluginComposed` over the 4a, 4a public and 3e tables): the root no
+    // longer composes today's plugin half in any release.
     for (const key of ['agent:answerQuestion', 'agent:answerPermission'] as const) {
       expect(
         routeOf(key).map((r) => r.qualifier?.origin ?? 'host'),
@@ -3705,8 +3704,8 @@ describe('release 4b (21 §2 cut 4b)', () => {
       }
       // AMENDED for ISSUE-241 (was: the legacy feed keeping only the sessions today's runtime launched, for
       // `LegacyEndFirstAdapter`, `legacyFeedModesOf`): the feed and the adapter left the tree with cut 4.
-      // The Host is the one answerer of the OpenCode asks since 4a; today's plugin half stays off.
-      expect(legacyOpenCodePluginComposed(table)).toBe(false)
+      // The Host is the one answerer of the OpenCode asks since 4a (AMENDED for ISSUE-241, was: today's plugin half
+      // stays off, `legacyOpenCodePluginComposed`: the root composes it in no release any more).
     }
     // AMENDED for ISSUE-240, the 4b deletion (was: the root composing neither shape adapter nor their settlement join
     // over the 4b table): both adapters and the join left the tree (`describe('after the 4b retirement')`).

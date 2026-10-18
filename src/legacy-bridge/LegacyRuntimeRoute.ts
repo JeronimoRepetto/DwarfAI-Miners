@@ -12,9 +12,6 @@ import type {
   FeatureFlags,
   DwarfFeedPage,
   DwarfFeedResult,
-  DwarfPermissionAnswerRequest,
-  DwarfPermissionDecision,
-  DwarfQuestionAnswerResult,
   DwarfTuningRequest,
   DwarfNameResult,
   DwarfTuningResult,
@@ -61,15 +58,6 @@ import {
   withConfigFileFallback
 } from '../main/config/configFile'
 import { sumTokensObserved } from '../main/domain/aggregate'
-import { NodeHookFs } from '../main/hooks/hookFs'
-import { DelegationService } from '../main/mcp/delegationService'
-import { delegationFailure } from '../main/mcp/delegationServerProtocol'
-import { HookListener } from '../main/hooks/hookListener'
-import { OpenCodePluginChannel } from '../main/opencodePermissions/openCodePluginChannel'
-import { openCodeGlobalPluginDir } from '../main/opencodePermissions/openCodePluginInstaller'
-import { createOpenCodeServerPasswordStore } from '../main/opencodePermissions/openCodeServerPassword'
-import { createOpenCodePermissionAnswerPort } from '../main/opencodePermissions/answerOpenCodePermission'
-import type { OpenCodePermissionPush } from '../main/opencodePermissions/permissionPushPayload'
 import { NodeFs } from '../main/adapters/fsLike'
 import { createPlatformAdapters } from '../main/platform/platformAdapters'
 import {
@@ -96,14 +84,9 @@ import { TUNING_NOT_HELD } from '../main/sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from '../main/projects/projectsStore'
 import { createAudioPreferenceStore } from '../main/shell/audioPreference'
 import { createLaunchViewStore } from '../main/shell/launchViewPreference'
-import { createJevApiKeyStore } from '../main/shell/jevApiKey'
-import { createJevPreferenceStore } from '../main/shell/jevPreferences'
-import { createJevLaunchRouter } from '../main/jev/routeLaunch'
-import { createTypesafeJevRouter } from '../main/jev/typesafeJevRouter'
 import { AgentRuntime, type RuntimeOptions } from '../main/runtime/runtime'
 import type { GlobalShortcutLike } from '../main/shell/shortcuts'
 import { createTypographyPreferenceStore } from '../main/shell/typographyPreference'
-import { parseAnswerRequest } from '../main/shell/answerRequest'
 
 /** Today's handler of one seam A row: the body `src/main/index.ts` registers for that wire name. */
 export type LegacyHandler = (payload: unknown) => unknown
@@ -251,13 +234,9 @@ export interface LegacyPanelSurface {
 export interface LegacyCompositionOptions {
   /** The rebuilt Panel; absent while the route table serves the window family `legacy`. */
   panel?: LegacyPanelSurface
-  /**
-   * Whether today's OpenCode plugin half is composed: true only while A-53 has no `host` route (the root's
-   * `legacyOpenCodePluginComposed(ROUTES)`; ISSUE-235, 21 §2 cut 4a, §1 item 4): today's plugin installer, its
-   * `restore()` and the OpenCode route of the shared loopback listener. From the step-4a switch the Host writes the
-   * plugin file and answers its asks.
-   */
-  openCodePlugin: boolean
+  // AMENDED for ISSUE-241, the end of cut 4 (was: `openCodePlugin`, whether today's OpenCode plugin half was composed,
+  // true only while A-53 had no `host` route, ISSUE-235): today's plugin installer and the loopback listener its route
+  // shared left the composition, since no route of any release left to compose reaches them.
   /**
    * The UI logger (ADR-026): today's warnings reach it as allowlisted records (legacyDiagnostics.ts) instead of the
    * console, which no file of the new trees writes to (eslint.config.mjs deviation 8).
@@ -268,7 +247,6 @@ export interface LegacyCompositionOptions {
 /** Twice the design's 40px chip, so the preview is sharp on a 2× display (#408). */
 const ATTACHMENT_THUMBNAIL_PX = 80
 
-const PERMISSION_DECISIONS: readonly DwarfPermissionDecision[] = ['allow', 'deny']
 const PROJECT_SORT_KEYS: readonly ProjectSortKey[] = ['addedAt', 'lastOpenedAt']
 const PROJECT_SORT_DIRECTIONS: readonly ProjectSortDirection[] = ['asc', 'desc']
 
@@ -291,15 +269,6 @@ function parseTuningRequest(payload: unknown): DwarfTuningRequest | null {
     return { dwarfId: record.dwarfId, change: { kind: 'effort', effort: named.effort } }
   }
   return null
-}
-
-/** Boundary check of `answerDwarfPermission`: the decision is one of the closed list. */
-function parsePermissionRequest(payload: unknown): DwarfPermissionAnswerRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.dwarfId !== 'string' || typeof record.toolUseId !== 'string') return null
-  if (!isOneOf(record.decision, PERMISSION_DECISIONS)) return null
-  return { dwarfId: record.dwarfId, toolUseId: record.toolUseId, decision: record.decision }
 }
 
 /** Boundary check of `queryProjects` (#92): the sort key and direction name parts of a statement. */
@@ -381,14 +350,9 @@ export function composeLegacyRuntime(
     (area: LegacyArea) =>
     (_message: string, error?: unknown): void =>
       diagnostics.warning(area, error)
-  /** Today's informational lines carry paths and content and have no event (legacyDiagnostics.ts): not routed. */
-  const unrouted = (): void => {}
 
   // Today's module-level singletons: the quit teardown reads them, null-safe, at any time.
   let runtime: AgentRuntime | null = null
-  let delegationService: DelegationService | null = null
-  let hookListener: HookListener | null = null
-  let openCodePlugin: OpenCodePluginChannel | null = null
   let projects: ProjectsStore | null = null
 
   /** The OS folder picker, owned by the panel window (#85): today's window, or the rebuilt Panel's. */
@@ -458,28 +422,9 @@ export function composeLegacyRuntime(
       filePath: join(app.getPath('userData'), 'audio-preferences-v1.json')
     })
 
-    // Jev API key (#509): primed here, the launch router reads it synchronously.
-    const jevApiKeyStore = createJevApiKeyStore({ userDataDir: app.getPath('userData') })
-    await jevApiKeyStore.load()
-
-    // OpenCode server password (#588 T6, F1): primed for the same reason; never from the environment.
-    const openCodePasswordStore = createOpenCodeServerPasswordStore({
-      userDataDir: app.getPath('userData')
-    })
-    await openCodePasswordStore.load()
-
-    const jevPreferenceStore = createJevPreferenceStore({ userDataDir: app.getPath('userData') })
-
-    // Jev launch routing (#509, #525/T4). Its JEV_DEBUG console sink is not composed: its lines carry route content,
-    // which the log never holds (ADR-026 item 4).
-    const jevRouterPort = createTypesafeJevRouter({ readKey: jevApiKeyStore.readKey })
-    const jevLaunchRouter = createJevLaunchRouter({
-      router: jevRouterPort,
-      listProviders: async () => (await runtime?.listAgentProviders())?.providers ?? [],
-      listModels: async () => (await runtime?.listAgentModels())?.catalogs ?? [],
-      readPreferences: jevPreferenceStore.load,
-      readOpenCodeCatalogue: async () => (await runtime?.readOpenCodeCatalogue()) ?? []
-    })
+    // AMENDED for ISSUE-241, the end of cut 4 (was: today's Jev API key, Jev preference and OpenCode server password
+    // stores and its Jev launch router, read only by today's delegation service and OpenCode answer port): no launch of
+    // today's runtime is left to delegate from or answer for (21 §2 cut 4b), so none of them is composed.
 
     // Typography (#370, v2 presets #635): the v1 document is read once to migrate it.
     const typographyStore = createTypographyPreferenceStore({
@@ -567,99 +512,16 @@ export function composeLegacyRuntime(
       platformAdapters,
       chooseDirectory: () => chooseProjectDirectory(panel),
       readAttachment,
-      // MCP subtask delegation (#511 T4, M1a, #601): the service is read lazily, it starts later.
-      delegation: {
-        keyConfigured: () => jevApiKeyStore.readKey() !== undefined,
-        delegationAllowed: async () => (await jevPreferenceStore.load()).delegation,
-        issueLaunchToken: (context) => delegationService?.issueLaunchToken(context),
-        revoke: (token) => delegationService?.revoke(token),
-        delegate: async (token, task, context) =>
-          delegationService === null
-            ? {
-                failure: delegationFailure(
-                  'link-unconfigured',
-                  'The delegation service is not running.'
-                )
-              }
-            : delegationService.delegateDirect(token, task, context),
-        result: (token, ticket) =>
-          delegationService === null
-            ? {
-                status: 'failed',
-                failure: delegationFailure(
-                  'link-unconfigured',
-                  'The delegation service is not running.'
-                )
-              }
-            : delegationService.resultDirect(token, ticket),
-        waitEnded: (ticket) => delegationService?.waitEnded(ticket)
-      },
-      // #588 T6 (F1): the answer port reads the Settings password on every answer.
-      answerOpenCodePermission: createOpenCodePermissionAnswerPort(globalThis.fetch, {
-        readPassword: openCodePasswordStore.readPassword
-      }),
       ...legacyRuntimePushes(panel)
     })
     await runtime.loadDeclared()
     await runtime.restoreLaunchedSessions()
-    // Today's poll timer is retired (ISSUE-124): `LegacyAgentRegistryFeed`'s cycles are the ticks that keep today's
-    // board, and so the rows still `legacy`, current (./LegacyRuntimeSurface.ts).
-
-    // MCP subtask delegation: the loopback service (#511 T3, #601), always started.
-    delegationService = new DelegationService({
-      port: 0,
-      launch: (request, delegationHooks) =>
-        runtime?.launchAgent(request, delegationHooks) ??
-        Promise.resolve({
-          launched: false,
-          provider: 'none',
-          error: 'The panel is still starting up.'
-        }),
-      route: jevLaunchRouter.route,
-      keyConfigured: () => jevApiKeyStore.readKey() !== undefined,
-      delegationAllowed: async () => (await jevPreferenceStore.load()).delegation,
-      deliverToHeldParent: (token, text) => runtime?.pushToHeldParent(token, text) ?? false
-    })
-    await delegationService.start()
-
-    // The OpenCode plugin's push channel (#588 T6 F5) over the shared loopback listener, composed until 4a.
-    // ISSUE-142 (21 §2 cut 2 "Retired at the end"; §1 item 4; §4 row "Claude hook entry"): today's hook installer, the
-    // Claude route of this listener, the observed-Claude permission registry it fed and its keystroke path are no
-    // longer composed, whatever the route table; the Host is the only writer of the Claude hook entry and its ingress
-    // the only reader. Only today's hook channel (the installer's) opened the listener's Claude route, so the listener serves the
-    // OpenCode plugin route alone and its Claude sink is never reached (a call from an old-app Claude hook entry finds
-    // a closed route, 404, or no bound port).
-    const hookFs = new NodeHookFs()
-    const onOpenCodePush = (push: OpenCodePermissionPush): void => {
-      // ISSUE-235: no OpenCode push reaches today's registry once the Host answers the plugin's asks (route off).
-      if (!options.openCodePlugin) return
-      runtime?.noteOpenCodePush(push)
-      runtime?.nudge()
-    }
-    const listener = new HookListener({
-      fs: hookFs,
-      userDataDir: app.getPath('userData'),
-      port: config.hooksPort,
-      onEvent: () => {},
-      onOpenCodePush,
-      log: unrouted,
-      warn: warnFrom('hooks')
-    })
-    hookListener = listener
-    // ISSUE-235 (21 §2 cut 4a; §1 item 4): today's plugin installer and its listener route only while A-53 keeps its
-    // pre-4a route (the 3e table, or a rollback build that flips it back); from the step-4a switch the Host is the one
-    // writer of the plugin file, so today's `restore()` never reinstalls the old app's file beside it.
-    if (options.openCodePlugin) {
-      openCodePlugin = new OpenCodePluginChannel({
-        fs: hookFs,
-        pluginDir: openCodeGlobalPluginDir(home, process.env, currentPlatform()),
-        userDataDir: app.getPath('userData'),
-        listener: hookListener,
-        log: unrouted,
-        warn: warnFrom('opencode-plugin')
-      })
-      await openCodePlugin.restore()
-    }
+    // Today's poll timer is retired (ISSUE-124). AMENDED for ISSUE-241 (was: `LegacyAgentRegistryFeed`'s cycles were
+    // the ticks that kept today's board current): the feed left the tree, so nothing ticks it.
+    // AMENDED for ISSUE-241, the end of cut 4 (was: today's MCP delegation loopback service, #511, and the OpenCode
+    // plugin's push channel over the shared loopback hook listener, #588, composed until 4a): the Host owns delegation
+    // (ADR-013) and the OpenCode plugin channel (ISSUE-229), and no launch of today's runtime is left, so neither is
+    // composed or bound.
 
     // Which build is running (#79), asked of Electron.
     const appBuild: AppBuild = { version: app.getVersion(), packaged: app.isPackaged }
@@ -846,20 +708,9 @@ export function composeLegacyRuntime(
 
     // AMENDED for ISSUE-184, the step-3a deletion (was: also the A-38
     // `launchHeldSession` and A-26 `kickDwarf` handlers, both rows retired in 3a).
-    const notAnswered: DwarfQuestionAnswerResult = {
-      answered: false,
-      error: 'That answer could not be delivered.'
-    }
-    handle(IPC_CHANNELS.answerDwarfQuestion, (payload) => {
-      const request = parseAnswerRequest(payload)
-      if (request === null) return notAnswered
-      return runtime?.answerDwarfQuestion(request) ?? notAnswered
-    })
-    handle(IPC_CHANNELS.answerDwarfPermission, (payload) => {
-      const request = parsePermissionRequest(payload)
-      if (request === null) return notAnswered
-      return runtime?.answerDwarfPermission(request) ?? notAnswered
-    })
+    // AMENDED for ISSUE-241, the end of cut 4 (was: today's A-40 `answerDwarfQuestion` and A-41 `answerDwarfPermission`
+    // handlers, reached through `LegacyAnswerShapeAdapter` for `LegacyAskRelay`'s `legacy:` AskIds): both rows route
+    // only to the Host since the deletion.
 
     // AMENDED for ISSUE-239, the 4b deletion (was: today's A-27 `retireDwarf` handler): A-27 is retired with no route
     // since the 4b switch (successor B-F10 `dwarf.departed`).
@@ -875,13 +726,6 @@ export function composeLegacyRuntime(
     beforeQuit() {
       runtime?.stop()
       runtime = null
-      // Releases the ports only: the installed opt-ins bring the channels back next launch.
-      void delegationService?.stop()
-      delegationService = null
-      void openCodePlugin?.shutdown()
-      openCodePlugin = null
-      void hookListener?.shutdown()
-      hookListener = null
       // Drops the store's reference; the shared database is never closed here (see the vault).
       void projects?.close()
       projects = null
