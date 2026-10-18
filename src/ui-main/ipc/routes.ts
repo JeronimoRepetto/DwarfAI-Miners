@@ -387,6 +387,14 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut3a('host:recovery:dismiss') // A-N11
 ]
 
+/** The rows only a development build adds to `ROUTES` (21 §2 cut 3e; ADR-009 D6). */
+export const DEVELOPMENT_BUILD_ROUTES: readonly ChannelRoute[] = []
+
+/** The table a build of this release serves: `ROUTES`, plus `DEVELOPMENT_BUILD_ROUTES` in a development build. */
+export function routesForBuild(build: { publicBuild: boolean }): readonly ChannelRoute[] {
+  return build.publicBuild ? ROUTES : [...ROUTES, ...DEVELOPMENT_BUILD_ROUTES]
+}
+
 /**
  * The seam B members each `host` route relays (14 §6.3), for the router test's rule that a `host` route uses only
  * members born by its release (21 §2 "Seam B members: the cut in which each is born"). A-12 and A-P2 are the facade's
