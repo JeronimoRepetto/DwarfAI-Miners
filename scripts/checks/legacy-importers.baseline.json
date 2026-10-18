@@ -1,0 +1,7 @@
+[
+  {
+    "file": "src/renderer/src/types.ts",
+    "removedBy": "ISSUE-246",
+    "why": "re-exports about 190 shared/contracts.ts wire types and values that have no src/contracts owner yet; ISSUE-246 regenerates the barrel from src/contracts/wire (ADR-033 item 6, 22 §5: never hand-edited)"
+  }
+]
