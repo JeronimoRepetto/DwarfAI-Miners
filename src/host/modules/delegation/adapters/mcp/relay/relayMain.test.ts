@@ -5,6 +5,7 @@
 // frame (ADR-013). TC-200-03: a revoked credential or a missing file makes it exit non-zero and the
 // provider sees the tool fail (FM-039). The credential travels only in McpHello: never on stdout,
 // never in a log line (C-16); the launchId is the credential file's name (C-15).
+import { createHash } from 'node:crypto'
 import { join, sep } from 'node:path'
 import { duplexPair, PassThrough, Writable, type Duplex } from 'node:stream'
 import { describe, expect, it } from 'vitest'
@@ -16,8 +17,15 @@ import {
 import { PROTOCOL_VERSION } from '../../../../../../contracts/host-protocol/protocolVersion'
 import { FakeClock } from '../../../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../../../kernel/fakes/FakeScheduler'
+import { mcpEndpointFor } from '../../../../../transport/mcpEndpoint/mcpEndpointPath'
 import { CREDENTIAL_FILE_VARIABLE } from './relayEntry'
-import { HELLO_OK_WAIT_MS, MAX_CREDENTIAL_FILE_BYTES, runRelay, type RelayDeps } from './relayMain'
+import {
+  HELLO_OK_WAIT_MS,
+  MAX_CREDENTIAL_FILE_BYTES,
+  runRelay,
+  type RelayDeps,
+  type RelayPlatform
+} from './relayMain'
 
 const LAUNCH = '01890a5d-ac96-774b-bcce-b302099a8a01'
 const CREDENTIAL = '3f'.repeat(32)
@@ -67,7 +75,12 @@ interface Harness {
 }
 
 function harness(
-  options: { files?: Map<string, string>; env?: RelayDeps['env']; stdout?: Writable } = {}
+  options: {
+    files?: Map<string, string>
+    env?: RelayDeps['env']
+    stdout?: Writable
+    platform?: RelayPlatform
+  } = {}
 ): Harness {
   const files = options.files ?? new Map([[CREDENTIAL_PATH, CREDENTIAL]])
   const [relaySide, hostSide]: [Duplex, Duplex] = duplexPair()
@@ -101,6 +114,7 @@ function harness(
   const logs: Array<{ dir: string; line: string }> = []
   const deps: RelayDeps = {
     env: options.env ?? { [CREDENTIAL_FILE_VARIABLE]: CREDENTIAL_PATH },
+    platform: options.platform ?? (sep === '\\' ? 'win32' : 'linux'),
     readCredential: (path, maxBytes) => {
       readLimits.push(maxBytes)
       const text = files.get(path)
@@ -457,14 +471,176 @@ describe('runRelay (ADR-013 item 3)', () => {
   })
 
   it('[C-16] the credential file is read with a byte cap, and a file that is not exactly one credential is refused before any connection', async () => {
-    expect(MAX_CREDENTIAL_FILE_BYTES).toBe(256)
+    // 512 since the file also names the endpoint (credentialFileLayout.ts, foreman decision
+    // 2026-10-18); it was 256 when the file held the credential alone.
+    expect(MAX_CREDENTIAL_FILE_BYTES).toBe(512)
     const h = harness({
-      files: new Map([[CREDENTIAL_PATH, `${CREDENTIAL}${'0'.repeat(300)}`]])
+      files: new Map([[CREDENTIAL_PATH, `${CREDENTIAL}${'0'.repeat(500)}`]])
     })
     expect(await runRelay(h.deps)).not.toBe(0)
     expect(h.readLimits).toEqual([MAX_CREDENTIAL_FILE_BYTES])
     expect(h.connects).toEqual([])
     expect(h.logs.map((log) => JSON.parse(log.line).causeClass)).toEqual(['credential-invalid'])
+  })
+})
+
+// Foreman decision 2026-10-18 (in place of the rejected AMENDMENT-24; ADR-013 items 2–3, 15 §4
+// unchanged): the Host names the MCP endpoint it bound in the credential file, so the relay never
+// derives it from an environment the provider may have trimmed (CI run 39109490095: Linux, no
+// XDG_RUNTIME_DIR in the relay, the fallback socket named, ENOENT).
+describe('runRelay: the endpoint named in the credential file (ADR-013 item 3)', () => {
+  const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
+  const LINUX_DATA = '/home/ana/.config/DwarfAI-Miners/host'
+  const LINUX_FILE = `${LINUX_DATA}/run/mcp/${LAUNCH}.cred`
+  const MAC_DATA = '/Users/ana/Library/Application Support/DwarfAI-Miners/host'
+  const MAC_FILE = `${MAC_DATA}/run/mcp/${LAUNCH}.cred`
+  const WIN_DATA = 'C:\\Users\\ana\\AppData\\Roaming\\DwarfAI-Miners\\host'
+  const WIN_FILE = `${WIN_DATA}\\run\\mcp\\${LAUNCH}.cred`
+  const pathOf = (input: Parameters<typeof mcpEndpointFor>[0]): string => {
+    const endpoint = mcpEndpointFor(input)
+    if (!endpoint.ok) throw new Error(endpoint.error.kind)
+    return endpoint.value.path
+  }
+  const XDG_ENDPOINT = pathOf({
+    platform: 'linux',
+    hostDataDir: LINUX_DATA,
+    xdgRuntimeDir: '/run/user/1000',
+    sha256
+  })
+  const LINUX_FALLBACK = pathOf({ platform: 'linux', hostDataDir: LINUX_DATA, sha256 })
+  const MAC_ENDPOINT = pathOf({
+    platform: 'darwin',
+    hostDataDir: MAC_DATA,
+    home: '/Users/ana',
+    sha256
+  })
+  const PIPE = pathOf({ platform: 'win32', hostDataDir: WIN_DATA, userSid: 'S-1-5-21-7', sha256 })
+  const layout = (endpoint: unknown, credential: unknown = CREDENTIAL): string =>
+    JSON.stringify({ v: 1, credential, endpoint })
+  const run = async (
+    platform: RelayPlatform,
+    file: string,
+    content: string
+  ): Promise<{ h: Harness; code: number }> => {
+    // The relay entry's env of 15 §4 and nothing else: no XDG_RUNTIME_DIR, no HOME.
+    const h = harness({
+      platform,
+      env: { ELECTRON_RUN_AS_NODE: '1', [CREDENTIAL_FILE_VARIABLE]: file },
+      files: new Map([[file, content]])
+    })
+    const exited = runRelay(h.deps)
+    await flush()
+    h.hostWrite(encodeFrame(HELLO_OK))
+    await flush()
+    h.stdin.end()
+    return { h, code: await exited }
+  }
+
+  it('[ADR-013] on Linux with no XDG_RUNTIME_DIR in its env the relay connects to the XDG endpoint the file names', async () => {
+    expect(XDG_ENDPOINT).toMatch(/^\/run\/user\/1000\/dwarfai\/mcp-[0-9a-f]{12}\.sock$/)
+    const { h, code } = await run('linux', LINUX_FILE, layout(XDG_ENDPOINT))
+
+    expect(h.connects).toEqual([XDG_ENDPOINT])
+    expect(h.resolved).toEqual([])
+    expect(h.frames[0]).toEqual({
+      type: 'hello',
+      endpointGeneration: 1,
+      protocolVersion: PROTOCOL_VERSION,
+      role: 'mcp',
+      launchId: LAUNCH,
+      credential: CREDENTIAL
+    })
+    expect(code).toBe(0)
+  })
+
+  it('[ADR-013] the Linux fallback socket, the macOS socket and the Windows pipe the file names are each connected to', async () => {
+    const cases: Array<[RelayPlatform, string, string]> = [
+      ['linux', LINUX_FILE, LINUX_FALLBACK],
+      ['darwin', MAC_FILE, MAC_ENDPOINT],
+      ['win32', WIN_FILE, PIPE]
+    ]
+    for (const [platform, file, endpoint] of cases) {
+      const { h, code } = await run(platform, file, layout(endpoint))
+      expect(h.connects, platform).toEqual([endpoint])
+      expect(h.resolved, platform).toEqual([])
+      expect(code, platform).toBe(0)
+    }
+  })
+
+  it('[ADR-013] a file holding the credential alone (a Host of the previous build) still derives the endpoint, so a running session survives an upgrade', async () => {
+    const { h, code } = await run('linux', LINUX_FILE, CREDENTIAL)
+    expect(h.resolved).toEqual([LINUX_DATA])
+    expect(h.connects).toEqual([ENDPOINT])
+    expect(code).toBe(0)
+  })
+
+  it('[C-16] an endpoint that is not one the Host binds for this data dir is refused before any connection, and the log never holds the credential', async () => {
+    const pk = LINUX_FALLBACK.slice(-17, -5)
+    const pipeKey = PIPE.slice(-12)
+    const forged: Array<[RelayPlatform, string, string]> = [
+      ['linux', LINUX_FILE, '/tmp/evil.sock'],
+      ['linux', LINUX_FILE, '/run/user/1000/dwarfai/mcp-000000000000.sock'],
+      ['linux', LINUX_FILE, `/run/user/1000/dwarfai/host-${pk}.sock`],
+      ['linux', LINUX_FILE, `/run/user/1000/x/../dwarfai/mcp-${pk}.sock`],
+      ['linux', LINUX_FILE, `/run/user//1000/dwarfai/mcp-${pk}.sock`],
+      ['linux', LINUX_FILE, `run/user/1000/dwarfai/mcp-${pk}.sock`],
+      ['linux', LINUX_FILE, `/tmp/dwarfai/mcp-${pk}.sock/../../evil/dwarfai/mcp-${pk}.sock`],
+      ['linux', LINUX_FILE, PIPE],
+      ['darwin', MAC_FILE, `/Users/eve/Library/Application Support/Other/run/mcp-${pk}.sock`],
+      ['darwin', MAC_FILE, XDG_ENDPOINT],
+      ['win32', WIN_FILE, '\\\\.\\pipe\\evil'],
+      ['win32', WIN_FILE, PIPE.replace('dwarfai-mcp-', 'dwarfai-host-')],
+      ['win32', WIN_FILE, `${PIPE.slice(0, -12)}000000000000`],
+      ['win32', WIN_FILE, PIPE.replace('\\\\.\\', '\\\\server\\')],
+      ['win32', WIN_FILE, `${PIPE}-x`],
+      ['win32', WIN_FILE, `\\\\.\\pipe\\dwarfai-mcp-0123456789ABCDEF-${pipeKey}`],
+      ['win32', WIN_FILE, XDG_ENDPOINT]
+    ]
+    for (const [platform, file, endpoint] of forged) {
+      const label = `${platform} ${endpoint}`
+      const { h, code } = await run(platform, file, layout(endpoint))
+      expect(code, label).not.toBe(0)
+      expect(h.connects, label).toEqual([])
+      expect(h.resolved, label).toEqual([])
+      expect(h.stdout(), label).toBe('')
+      expect(
+        h.logs.map((log) => JSON.parse(log.line).causeClass),
+        label
+      ).toEqual(['endpoint-refused'])
+      for (const log of h.logs) expect(log.line, label).not.toContain(CREDENTIAL)
+    }
+  })
+
+  it('[C-16] a file that is not exactly the layout, or longer than the byte cap, is refused before any connection', async () => {
+    const invalid = [
+      JSON.stringify({ v: 1, credential: CREDENTIAL, endpoint: XDG_ENDPOINT, extra: 1 }),
+      JSON.stringify({ v: 2, credential: CREDENTIAL, endpoint: XDG_ENDPOINT }),
+      JSON.stringify({ credential: CREDENTIAL, endpoint: XDG_ENDPOINT, v: 1 }),
+      JSON.stringify({ v: 1, credential: CREDENTIAL, endpoint: XDG_ENDPOINT }, null, 1),
+      `${layout(XDG_ENDPOINT)}\n`,
+      `${CREDENTIAL}\n`,
+      layout(XDG_ENDPOINT, CREDENTIAL.toUpperCase()),
+      layout(XDG_ENDPOINT, 'ab'),
+      layout(42),
+      layout(''),
+      layout(null),
+      `[${layout(XDG_ENDPOINT)}]`,
+      // One byte over the 512-byte cap, well-formed otherwise.
+      layout(`/${'d'.repeat(513 - layout('/').length)}`)
+    ]
+    expect(Buffer.byteLength(invalid.at(-1) ?? '', 'utf8')).toBe(513)
+    for (const content of invalid) {
+      const { h, code } = await run('linux', LINUX_FILE, content)
+      expect(code, content).not.toBe(0)
+      expect(h.readLimits, content).toEqual([MAX_CREDENTIAL_FILE_BYTES])
+      expect(h.connects, content).toEqual([])
+      expect(h.resolved, content).toEqual([])
+      expect(
+        h.logs.map((log) => JSON.parse(log.line).causeClass),
+        content
+      ).toEqual(['credential-invalid'])
+      for (const log of h.logs) expect(log.line, content).not.toContain(CREDENTIAL)
+    }
   })
 })
 
