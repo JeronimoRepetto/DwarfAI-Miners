@@ -4,7 +4,7 @@
  * decides what the two are called, the one hint the field shows at a time, whether a save changes
  * anything, and what is announced once main has answered. The panel draws; this decides.
  *
- * What a name may hold, and what a save keeps, is shared/dwarfName's: main cleans every write with
+ * What a name may hold, and what a save keeps, is contracts/text/dwarfName's: main cleans every write with
  * the same rules, so nothing here second-guesses what main will save.
  */
 import {
@@ -13,7 +13,7 @@ import {
   customNameFor,
   nameChars,
   type DwarfNameRefusal
-} from '../../../../shared/dwarfName'
+} from '@dwarfai/contracts'
 import type { Dwarf, DwarfNameResult } from '../../types'
 
 /** The name button's title; its accessible name is `renameLabel`. */

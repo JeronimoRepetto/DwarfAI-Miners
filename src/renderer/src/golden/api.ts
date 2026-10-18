@@ -16,7 +16,7 @@
  * picker) is refused with its name, never answered with a guess: a recipe that reaches it is one
  * this fake does not model yet, and the page's error list says so.
  */
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
+import { DEFAULT_TOGGLE_ACCELERATOR } from '@dwarfai/contracts'
 import {
   DEFAULT_AUDIO_PREFERENCES,
   DEFAULT_JEV_SETTINGS,
