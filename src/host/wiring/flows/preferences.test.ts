@@ -21,9 +21,9 @@
 // over an inline install resolver, and the first-run evaluation in step 8 over its installed
 // detection (bridges/installedTools.ts). TC-323-01 … TC-323-03.
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { z } from 'zod'
 import {
@@ -45,7 +45,7 @@ import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { InProcessEventBus } from '../../kernel/InProcessEventBus'
 import type { FileSystem } from '../../kernel/ports/fileSystem'
-import type { SecretName } from '../../kernel/ports/secretReader'
+import { SECRET_READ_TIMEOUT_MS, type SecretName } from '../../kernel/ports/secretReader'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { ExternalConfigWriter, PreferencesEvent, SecretStore } from '../../modules/preferences'
 import { ClaudeHooksConfigWriter } from '../../modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter'
@@ -116,6 +116,8 @@ const OPENCODE_PLUGIN_DIR = '/home/person/.config/opencode/plugin'
 const OPENCODE_PLUGIN = `${OPENCODE_PLUGIN_DIR}/${OPENCODE_PLUGIN_FILE_NAME}`
 /** The port the hook ingress persisted when it first bound (ADR-016 item 3; wiring/hookIngress.ts, ISSUE-140). */
 const INGRESS_PORT = 41_234
+/** The jev module's sources (R4: it reads the Jev key through the kernel SecretReader only). */
+const JEV_MODULE = resolve(import.meta.dirname, '../../modules/jev')
 
 const NO_FILE_PROTECTION = {
   dataDir: () => Promise.resolve(),
@@ -467,6 +469,7 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
             transactions: connection.transactions,
             bus,
             clock: m.clock,
+            scheduler: m.scheduler,
             ids: m.ids,
             hostEpoch: epoch as HostEpoch,
             log,
@@ -1049,6 +1052,7 @@ describe('first-run consent step wiring (07 machine 41)', () => {
         }
       }),
       clock,
+      scheduler,
       ids,
       hostEpoch: 'epoch-0222' as HostEpoch,
       log,
@@ -1422,5 +1426,153 @@ describe('Claude hooks integration and first-run step wiring (cut 2)', () => {
     expect(wiredOf(host).channelTokens.active('opencode-plugin')).toBeNull()
     expect(host.database.connection().db.all('SELECT id FROM config_writes')).toStrictEqual([])
     expect(wiredOf(host).preferences.queries.integrationState('opencode-permissions')).toBe('off')
+  })
+})
+
+// Added for ISSUE-324 (step 3a): the Host holds DwarfAI's secrets. The composition root passes the
+// OS secret store to preferences (host/main.ts `OsKeyringSecretStore`; `FakeSecretStore` here, which
+// runs the same contract), the kernel `SecretReader` bridge reads through it with its
+// SECRET_READ_TIMEOUT_MS deadline (bridges/secretReader.ts `storeSecretReader`), and
+// `SecretStatusChanged` reaches every `ui` client as B-F24 with the flags only (ADR-017 items 1–5,
+// 8; 16 §3 row `SecretReader`). TC-324-01 … TC-324-03.
+describe('OS secret store wiring (step 3a)', () => {
+  /** A value seeded through the wired Host: anything that carries it out of the store is a leak. */
+  const SEEDED = 'sk-seeded-324-flow-7e57ab1e'
+
+  /** A store whose reads block once `blocking` is on: a keychain waiting on an unlock prompt (FM-116). */
+  class BlockableSecretStore extends FakeSecretStore {
+    blocking = false
+    override get(name: SecretName): Promise<string | null> {
+      return this.blocking ? new Promise(() => undefined) : super.get(name)
+    }
+  }
+
+  /** Every place a value could leak to on the wired Host: log, frames, database rows, data files. */
+  function leaksOf(
+    host: Awaited<ReturnType<typeof bootHost>>,
+    m: Machine,
+    clients: readonly FrameClient[]
+  ): Record<string, string> {
+    const { db } = host.database.connection()
+    const tables = db
+      .all(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+      .map((row) => String(row['name']))
+    const files = readdirSync(m.dataDir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => readFileSync(join(entry.parentPath, entry.name)).toString('latin1'))
+    return {
+      log: JSON.stringify(host.log.entries),
+      frames: JSON.stringify(clients.map((client) => client.frames)),
+      rows: JSON.stringify(tables.map((table) => db.all(`SELECT * FROM "${table}"`))),
+      files: files.join('\n')
+    }
+  }
+
+  async function saveJevKey(client: FrameClient, origin: 'settings' | 'migration'): Promise<Res> {
+    const id = request(client, 'settings.secret.set', {
+      name: 'jev-key',
+      value: SEEDED,
+      requestId: RID_1,
+      origin
+    })
+    return response(client, id)
+  }
+
+  it('[ADR-017, NFR-SEC-12] a secret saved over the wired Host is readable through SecretReader and never logged', async () => {
+    const m = machine()
+    const store = new FakeSecretStore()
+    const host = await bootHost(m, { secrets: store })
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    const ui = await host.attach()
+
+    expect((await saveJevKey(ui, 'settings')).ok).toBe(true)
+    const snapshot = request(ui, 'session.snapshot', { sections: ['meta', 'preferences'] })
+    expect((await response(ui, snapshot)).ok).toBe(true)
+
+    expect(await store.get('jev-key')).toBe(SEEDED)
+    expect(await wiredOf(host).secretReader.read('jev-key')).toBe(SEEDED)
+    expect(await wiredOf(host).secretReader.read('opencode-password')).toBeNull()
+    for (const [place, text] of Object.entries(leaksOf(host, m, [ui]))) {
+      expect(text, place).not.toContain(SEEDED)
+    }
+  })
+
+  it('[ADR-017, FM-116, CH-09] a secret store slower than 10 000 ms makes SecretReader answer timeout and the caller fails closed', async () => {
+    const m = machine()
+    const store = new BlockableSecretStore()
+    await store.set('jev-key', SEEDED)
+    const host = await bootHost(m, { secrets: store })
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    store.blocking = true
+
+    let answer: unknown = 'pending'
+    void wiredOf(host)
+      .secretReader.read('jev-key')
+      .then((value) => (answer = value))
+    m.clock.advance(SECRET_READ_TIMEOUT_MS - 1)
+    await tick()
+    expect(answer).toBe('pending')
+    m.clock.advance(1)
+    await tick()
+
+    // The caller gets no value: 'timeout' is what it maps to jev-unreachable (16 §2.6).
+    expect(answer).toBe('timeout')
+  })
+
+  it('[ADR-017] a secret status change reaches every ui client as preferences.changed without the value', async () => {
+    const host = await bootHost(machine(), { secrets: new FakeSecretStore() })
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    const a = await host.attach()
+    const b = await host.attach()
+    const changed = (client: FrameClient) =>
+      wire(client).filter((item) => item.name === 'preferences.changed')
+
+    expect((await saveJevKey(a, 'settings')).ok).toBe(true)
+    await until(() => changed(b).length === 1)
+
+    for (const client of [a, b]) {
+      expect(changed(client)).toHaveLength(1)
+      expect(changed(client)[0]?.data).toMatchObject({
+        secrets: [
+          { name: 'jev-key', configured: true },
+          { name: 'opencode-password', configured: false }
+        ]
+      })
+      expect(JSON.stringify(client.frames)).not.toContain(SEEDED)
+    }
+  })
+
+  it('[ADR-017] the Jev key migrated once is read by jev through SecretReader and no second copy exists at rest', async () => {
+    const m = machine()
+    const store = new FakeSecretStore()
+    const host = await bootHost(m, { secrets: store })
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    const ui = await host.attach()
+
+    // The one-time move of ISSUE-217: UI main sends B-M10 with origin 'migration'; a retry of the
+    // same request is de-duplicated (14 §1.6).
+    expect((await saveJevKey(ui, 'migration')).ok).toBe(true)
+    expect((await saveJevKey(ui, 'migration')).ok).toBe(true)
+
+    expect(await wiredOf(host).secretReader.read('jev-key')).toBe(SEEDED)
+    // The one copy at rest is the OS secret store's (21 §4 row "Jev API key").
+    expect([await store.get('jev-key'), await store.get('opencode-password')]).toEqual([
+      SEEDED,
+      null
+    ])
+    for (const [place, text] of Object.entries(leaksOf(host, m, [ui]))) {
+      expect(text, place).not.toContain(SEEDED)
+    }
+    // jev reads it through the kernel port, never through preferences' store (R4). The jev → preferences
+    // edge of 05 §5.2 allows type imports from the module's index only (ISSUE-192 reads PreferencesQueries).
+    const jevSources = readdirSync(JEV_MODULE, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+      .map((entry) => readFileSync(join(entry.parentPath, entry.name), 'utf8'))
+    expect(jevSources.length).toBeGreaterThan(0)
+    for (const source of jevSources) {
+      expect(source).not.toMatch(/from '[^']*\/preferences\//)
+      expect(source).not.toMatch(/^import (?!type )[^\n]*from '[^']*\/preferences'/m)
+      expect(source).not.toMatch(/SecretStore/)
+    }
   })
 })

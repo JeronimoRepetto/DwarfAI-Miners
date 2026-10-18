@@ -1,4 +1,4 @@
-import { reactive, type InjectionKey } from 'vue'
+import { reactive, shallowRef, type InjectionKey } from 'vue'
 import {
   HOST_FRAME_SCHEMAS,
   type DepartureCause,
@@ -9,7 +9,8 @@ import {
   type MaterialAmount,
   type MineId,
   type MineWire,
-  type SnapshotChunk
+  type SnapshotChunk,
+  type StopUnavailableReason
 } from '@dwarfai/contracts'
 import {
   defaultMinesState,
@@ -124,6 +125,12 @@ const leaving = new Map<DwarfId, { dwarf: DwarfWire; timer: ReturnType<typeof se
 let arrivals = new Set<string>()
 /** Whether the Host feeds the board: set by the first Host snapshot, cleared by `stop`. */
 let hostFed = false
+/**
+ * Each Host dwarf's `stopUnavailableReason` (14 §3.6 `DwarfWire`) as the board last published it: the one fact
+ * "Stop dwarf…" reads its availability from (INV-31; 14 §4.1 `dwarfs` consumer `useDwarfStopping`). Reactive, so a
+ * control reading it follows every snapshot and `dwarf.changed`; never derived in the renderer.
+ */
+const stopReasons = shallowRef<ReadonlyMap<string, StopUnavailableReason | null>>(new Map())
 
 /** Today's board fields of a dwarf, the only part of A-P2 a Host-fed board takes (see `setMines`). */
 type LegacyAsks = Partial<
@@ -255,6 +262,9 @@ function publish(asksOnly = false): void {
   state.mines = mines
   state.tokensObserved = mines.reduce((sum, mine) => sum + mine.tokensObserved, 0)
   state.materials = vault
+  stopReasons.value = new Map(
+    [...board.dwarfs.values()].map((dwarf) => [dwarf.id, dwarf.stopUnavailableReason])
+  )
   if (asksOnly) return
   state.arrived = arrivals
   arrivals = new Set()
@@ -364,6 +374,7 @@ function stop(): void {
   arrivals = new Set()
   hostFed = false
   legacyAsks = new Map()
+  stopReasons.value = new Map()
 }
 
 /**
@@ -439,6 +450,12 @@ export function useMines() {
       dropLeaver(dwarfId)
     },
     /** The Host read model's dwarfs (snapshot `dwarfs` with live frames), e.g. for Stop everything's count. */
-    hostDwarfs: (): readonly DwarfWire[] => [...board.dwarfs.values()]
+    hostDwarfs: (): readonly DwarfWire[] => [...board.dwarfs.values()],
+    /**
+     * Why "Stop dwarf…" is unavailable for this dwarf as the Host said it (INV-31: only `already-stopping`), or null
+     * when it is available or the Host holds no such dwarf. Reactive.
+     */
+    stopUnavailableReason: (dwarfId: string): StopUnavailableReason | null =>
+      stopReasons.value.get(dwarfId) ?? null
   }
 }

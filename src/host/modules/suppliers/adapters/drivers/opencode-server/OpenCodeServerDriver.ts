@@ -6,8 +6,11 @@
 // (`OPENCODE_ACP`, the generic AcpDriver), is the driver probing selects (FM-084). A loopback
 // listener without a password is never started (ADR-009 D4, NFR-SEC-06).
 //
-// What stays here, for the day S-031-3 records (a) or (b) and for the person-run attach of
-// ISSUE-237: the probe (`opencode --help` for `serve`, ADR-009 D4), the reply vocabulary
+// The person-run attach (ISSUE-237, `./personRunServer`): `personRunServer(url)` talks to the
+// person's own loopback `opencode serve` with their stored password, in the `Authorization` header
+// only (ADR-017 item 3); the Host's own servers never use it.
+//
+// What stays here, for the day S-031-3 records (a) or (b): the probe (`opencode --help` for `serve`, ADR-009 D4), the reply vocabulary
 // (`./permissionMapping`: `once` / `reject`, never `always`), the SP-14 close (`./serverRequests`),
 // the `OPENCODE_CONFIG_CONTENT` relay entry and the event stream parser (`./serverEvents`). The
 // answer-channel gate is the profile's (`answerChannelGate`), applied with the capability data
@@ -47,6 +50,7 @@ import { probeEnv } from '../../install/searchDirs'
 import { helpOffers } from '../acp/AcpDriver'
 import type { LoginEnvironment } from '../shared/childEnv'
 import { O1_ROW, SERVER_PROTECTION } from './capabilities'
+import { OpenCodeServerClient, type OpenCodeServerClientDeps } from './personRunServer'
 
 /** The subcommand that starts the server (15 §2.3 OpenCode row). */
 const SERVE_ARGS: readonly string[] = ['serve']
@@ -65,6 +69,11 @@ export interface OpenCodeServerDriverDeps {
   /** The folder a `--help` probe runs in (the person's home). */
   readonly home: string
   readonly platform: 'win32' | 'darwin' | 'linux'
+  /**
+   * How the driver reaches a person-run `opencode serve` (ISSUE-237): the kernel `SecretReader`
+   * for the stored password, the HTTP transport, the scheduler and the log. Absent: no attach.
+   */
+  readonly server?: OpenCodeServerClientDeps
 }
 
 export class OpenCodeServerDriver implements ProviderDriver {
@@ -111,11 +120,21 @@ export class OpenCodeServerDriver implements ProviderDriver {
   /**
    * 15 §4.6: `adopt` re-attaches a Host-launched server that survived a Host restart, by
    * `serverUrl` + session id. No such server is ever started (S-031-3), so there is none to
-   * re-attach; a person-run server is ISSUE-237's attach, with the person's stored password.
+   * re-attach; a person-run server is `personRunServer` (ISSUE-237), with the stored password.
    */
   async adopt(ref: SessionRef): Promise<DriverSession | null> {
     void ref
     throw resumeError('no Host-launched opencode serve to re-attach (S-031-3)')
+  }
+
+  /**
+   * 15 §4.6 row "Person-run server", 21 §2 4b: the client of the person's own `opencode serve` at
+   * `url` (loopback only), which carries the stored password in the `Authorization` header and
+   * nowhere else (ADR-017 item 3). Null when no server access is wired.
+   */
+  personRunServer(url: string): OpenCodeServerClient | null {
+    const { server } = this.deps
+    return server === undefined ? null : new OpenCodeServerClient({ owner: 'person', url }, server)
   }
 
   /**

@@ -1,5 +1,14 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, shallowRef, type ComputedRef, type Ref } from 'vue'
 import { launchedDwarfIn } from '../lib/launch/launchArrival'
+import {
+  applyLaunchFrame,
+  hostLaunchesOf,
+  launchInFlight,
+  type HostFrame,
+  type HostLaunch,
+  type HostLaunches
+} from '../lib/readModel/launches'
+import { createReadModel, followHost, type HostFollower } from './readModel'
 import {
   DETACHED_TIMEOUT_MS,
   adoptLaunchedDwarf,
@@ -68,6 +77,83 @@ import type {
   LaunchFailureCause,
   Mine
 } from '../types'
+
+/*
+ * THE LAUNCHES FROM THE HOST (ISSUE-179 read side, ISSUE-001 part C; ADR-020 D1; ADR-033 item 3; 14 §4.1, §4.3).
+ *
+ * A read model of the snapshot `launches` section and the `launch.changed` / `launch.failed` frames, driven by
+ * `followHost` like the board and the chat (A-N02 first, then A-N01; frames at or below the snapshot seq dropped).
+ * - "Sending the dwarf in…" lasts until the Host's event: a launch leaves "in flight" only on `launch.changed` or
+ *   `launch.failed`, never on a timer (NFR-TIM-07).
+ * - A failure is the Host's `LaunchFailure` as it came (cause, supplier label, actions, tool output tail); the words
+ *   are the view's.
+ * - A snapshot replaces every launch whole; a launch missing from it is simply gone (14 §4.3 rules 2, 7).
+ *
+ * Kept beside today's push path (`listenFailures`, the detached timeout) until the step-3a switch (ISSUE-001) sends
+ * A-35 with `LaunchParams` and reads the launch it answered from here; until then nothing starts this model.
+ */
+
+/** The Host's launches as this composable reads them. Every read is reactive. */
+export interface HostLaunchesReader {
+  /** Follows the Host's launches; answers whether the Host now feeds them. */
+  start(): Promise<boolean>
+  /** Stops following and forgets what it held. */
+  stop(): void
+  of(launchId: string): HostLaunch | undefined
+  /** Whether the Host last said this launch is on its way. */
+  inFlight(launchId: string): boolean
+  /** The launches of one mine, in-flight and failed, as the Host stated them. */
+  inMine(mineId: string): HostLaunch[]
+}
+
+const launches: HostLaunches = new Map()
+/** The launches in a reactive mirror, rewritten whenever a snapshot or a batch of frames settled. */
+const shownLaunches = shallowRef<ReadonlyMap<string, HostLaunch>>(new Map())
+
+const launchesModel = createReadModel<HostLaunches, HostFrame>({
+  state: launches,
+  replace(data) {
+    launches.clear()
+    for (const [launchId, entry] of data) launches.set(launchId, entry)
+  },
+  apply: (frame) => applyLaunchFrame(launches, frame)
+})
+
+let launchesFollower: HostFollower | null = null
+
+const hostLaunches: HostLaunchesReader = {
+  start() {
+    launchesFollower ??= followHost(
+      {
+        subscribe: (listener) =>
+          window.api.onHostEvent((frames) => listener(frames as HostFrame[])),
+        snapshot: (params) => window.api.getHostSnapshot(params)
+      },
+      {
+        model: launchesModel,
+        sections: ['launches'],
+        dataOf: hostLaunchesOf,
+        settled: () => {
+          shownLaunches.value = new Map(launches)
+        }
+      }
+    )
+    return launchesFollower.start()
+  },
+  stop() {
+    launchesFollower?.stop()
+    launchesFollower = null
+    launchesModel.seq = 0
+    launches.clear()
+    shownLaunches.value = new Map()
+  },
+  of: (launchId) => shownLaunches.value.get(launchId),
+  inFlight(launchId) {
+    const entry = shownLaunches.value.get(launchId)
+    return entry !== undefined && launchInFlight(entry)
+  },
+  inMine: (mineId) => [...shownLaunches.value.values()].filter((entry) => entry.mineId === mineId)
+}
 
 /**
  * Launching an agent from inside a mine (#86, #194): the IPC, and the state the
@@ -140,6 +226,8 @@ const NOT_LAUNCHED = 'The agent could not be started.'
 
 export interface AgentLaunch {
   state: Ref<LaunchState>
+  /** The Host's launches read model (14 §4.1 `launches`; ISSUE-179 read side). */
+  hostLaunches: HostLaunchesReader
   /** The mine the panel was opened from; every launch starts in its folder. */
   mineId: Ref<string | null>
   providers: Ref<AgentProviderOption[]>
@@ -653,6 +741,7 @@ export function useAgentLaunch(): AgentLaunch {
 
   return {
     state,
+    hostLaunches,
     mineId,
     providers,
     chips,

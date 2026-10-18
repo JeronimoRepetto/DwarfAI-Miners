@@ -108,6 +108,7 @@ async function host() {
       }
     }),
     clock,
+    scheduler,
     ids,
     hostEpoch: 'epoch-0221' as HostEpoch,
     log,

@@ -4,6 +4,7 @@ import type { Dwarf, DwarfProvider, ProviderSnapshot } from '../main/domain/type
 import {
   createLegacyAgentRegistryFeed,
   LEGACY_FEED_PROVIDERS_CUT_1,
+  LEGACY_FEED_PROVIDERS_CUT_3A,
   type LegacyFeedModes,
   type LegacyRuntimeSurface
 } from './LegacyAgentRegistryFeed'
@@ -86,6 +87,30 @@ function fakeInterval() {
 }
 
 describe('LegacyAgentRegistryFeed', () => {
+  it('[ADR-001] in 3a only Claude is switched off: Codex, Antigravity and OpenCode are still discovered', async () => {
+    const legacy = fakeLegacyRuntime({
+      claude: [snapshot('claude', 's1')],
+      codex: [snapshot('codex', 't1')],
+      antigravity: [snapshot('antigravity', 'a1')],
+      opencode: [snapshot('opencode', 'o1')]
+    })
+    const feed = createLegacyAgentRegistryFeed({
+      legacy: legacy.surface,
+      modes: LEGACY_FEED_PROVIDERS_CUT_3A,
+      timers: fakeInterval()
+    })
+
+    await feed.refresh()
+
+    // Claude's rows move to the Host in 3a (21 §2 cut 3a; 21 §3 the feed shrinks per provider step).
+    expect(legacy.scanned).toEqual(['codex', 'antigravity', 'opencode'])
+    expect(legacy.registry.at(-1)?.map((s) => s.provider)).toEqual([
+      'codex',
+      'antigravity',
+      'opencode'
+    ])
+  })
+
   it('[ADR-001] discovered sessions reach only the legacy agent registry and nothing is written to the projects store or the ledger', async () => {
     const legacy = fakeLegacyRuntime({
       claude: [snapshot('claude', 's1')],
