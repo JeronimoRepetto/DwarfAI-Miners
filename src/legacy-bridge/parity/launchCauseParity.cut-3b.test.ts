@@ -186,7 +186,7 @@ async function legacyReason(situation: Situation): Promise<LegacyReason> {
   })
   if (!verdict.launched) return verdict.cause ?? 'launched'
   const failures: LegacyReason[] = []
-  verdict.retained?.onEarlyFailure(() => void failures.push('exited-at-once'))
+  verdict.retained?.onEarlyFailure?.(() => void failures.push('exited-at-once'))
   if (situation.kind === 'ends') {
     vi.advanceTimersByTime(situation.afterMs)
     double.child().emit('exit', situation.code, null)
