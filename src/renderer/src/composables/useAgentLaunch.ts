@@ -32,16 +32,15 @@ import {
   jevSuggestAsked,
   jevSuggestParams,
   JEV_NO_CHOICE_REFUSAL,
-  launchCommand,
   launchFailed,
   launchParamsOf,
+  customLaunchParamsOf,
   launchPhase,
   launchPrompt,
   openLaunch,
   pickManually as pickManuallyInstead,
   retryLaunch,
   setJevSettings,
-  submitFailed,
   submitRefused,
   submitStarted,
   toggleJev,
@@ -49,7 +48,6 @@ import {
   typeCommand,
   typePrompt,
   unstatedLaunchTimedOut,
-  OTHER_CHOICE,
   type JevState,
   type JevSuggestAnswer,
   type LaunchChoice,
@@ -72,7 +70,6 @@ import type {
   AgentProviderOption,
   JevSettings,
   LaunchFailedPush,
-  LaunchFailureCause,
   Mine
 } from '../types'
 
@@ -534,18 +531,6 @@ export function useAgentLaunch(): AgentLaunch {
   }
 
   /**
-   * A launch main did not start: the notice when main named its cause (#635), main's own words —
-   * or the panel's fallback sentence — when it named none, which a refusal, the demo and an
-   * unclassified throw all do.
-   */
-  function notLaunched(verdict: { error?: string; cause?: LaunchFailureCause }): void {
-    state.value =
-      verdict.cause === undefined
-        ? submitRefused(state.value, verdict.error ?? NOT_LAUNCHED)
-        : submitFailed(state.value, verdict.cause)
-  }
-
-  /**
    * Enter on a ready composer.
    *
    * A choice with no engine behind it is refused HERE and never sent. Sending
@@ -564,8 +549,15 @@ export function useAgentLaunch(): AgentLaunch {
    * (`hostLaunchFollowed`; 07 5A `sending`, no client timer, NFR-TIM-07). A
    * launch the Host never states — a provider not yet moved, served by
    * `PerProviderShapeAdapter` — settles on today's A-P3 under the same id, or on
-   * today's bound (`unstatedLaunchTimedOut`). Other… stays A-39 in today's shape
-   * until 3d. A Retry names the failed launch (`retryOf`, 07 5A S5.08a).
+   * today's bound (`unstatedLaunchTimedOut`). A Retry names the failed launch
+   * (`retryOf`, 07 5A S5.08a).
+   *
+   * AMENDED for ISSUE-186 (was: Other… on A-39 in today's shape, answered by
+   * today's `{ launched }` verdict): from 3d A-39 has its 14 shape too,
+   * `LaunchCustomParams` → `IpcResult<LaunchAccepted>` (`customLaunchParamsOf`),
+   * so an "Other…" launch is accepted and followed exactly like A-35's: its
+   * start, its failure (a refused command included, `could-not-start`) and its
+   * Retry are the Host's (21 §2 cut 3d).
    */
   async function submit(retryOf?: string): Promise<void> {
     // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves. The prompt stays.
@@ -581,11 +573,22 @@ export function useAgentLaunch(): AgentLaunch {
       return
     }
 
-    const choice = state.value.choice
-    const mine = mineId.value
-    const prompt = launchPrompt(state.value)
-    const params = launchParamsOf(state.value, mine as MineId, mintRequestId(), retryOf)
-    if (choice !== OTHER_CHOICE && params === null) {
+    const mine = mineId.value as MineId
+    const requestId = mintRequestId()
+    const params = launchParamsOf(state.value, mine, requestId, retryOf)
+    const custom = customLaunchParamsOf(state.value, mine, requestId, retryOf)
+    // A command of the person's own (#194) goes on A-39: it names no provider
+    // because there is none — the whole reason it is a channel of its own
+    // rather than a nullable field on the launch request — and the Host parses
+    // the string into a program plus an argv array, with no shell anywhere
+    // (ISSUE-186). Every other launch goes on A-35.
+    const send: (() => Promise<IpcResult<LaunchAccepted>>) | null =
+      custom !== null
+        ? () => window.api.launchHostedProcess(custom)
+        : params !== null
+          ? () => window.api.launchAgent(params)
+          : null
+    if (send === null) {
       // #523: only Jev's unlocked composer opens a submit with no chip, and Jev
       // is off by now — the honest refusal, prompt intact, manual path open.
       state.value = submitRefused(state.value, JEV_NO_CHOICE_REFUSAL)
@@ -593,26 +596,9 @@ export function useAgentLaunch(): AgentLaunch {
     }
     state.value = submitStarted(state.value)
     try {
-      // A command of the person's own (#194). It names no provider because
-      // there is none — the whole reason it is a channel of its own rather than
-      // a nullable field on the launch request — and main parses the string
-      // into a program plus an argv array, with no shell anywhere.
-      if (choice === OTHER_CHOICE || params === null) {
-        const hostedResult = await window.api.launchHostedProcess({
-          mineId: mine,
-          command: launchCommand(state.value),
-          prompt
-        })
-        // No `startedDetached` branch, because this panel IS holding that
-        // process: its dwarf arrives carrying the prompt sent here, which is
-        // the same receipt `observe` already recognises for a held session.
-        if (!hostedResult.launched) notLaunched(hostedResult)
-        return
-      }
-
       let answer: IpcResult<LaunchAccepted>
       try {
-        answer = await window.api.launchAgent(params)
+        answer = await send()
       } catch {
         state.value = submitRefused(state.value, LOST_BRIDGE)
         return

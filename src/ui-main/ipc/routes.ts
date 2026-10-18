@@ -1,13 +1,13 @@
 // The router table (ADR-001 item 3; 21 §1 items 1, 2, 2a): exactly one `ChannelRoute` per (channel, qualifier) for
 // the release `ROUTES_RELEASE`, reviewed per cut and checked by `ipc-routing.contract.test.ts`. A hot spot (22 §5):
 // after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1,
-// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
+// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
 // it is listed in `src/contracts/ipc/unrouted.ts` with that step.
 import { CATALOG_PROVIDER_IDS, STEP_ORDER, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, IpcChannelName, LegacyBridgeAdapter } from './channelRoute'
 
 /** The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. */
-export const ROUTES_RELEASE: StepId = 'cut-3b'
+export const ROUTES_RELEASE: StepId = 'cut-3d'
 
 /** The steps from `from` to `to`, both included, in `STEP_ORDER`. */
 function span(from: StepId, to: StepId): StepId[] {
@@ -137,6 +137,12 @@ const askAnswerCut2 = (channel: IpcChannelName): ChannelRoute[] => [
 const [CLAUDE = '', CODEX = '', ANTIGRAVITY = '', OPENCODE = ''] = CATALOG_PROVIDER_IDS
 /** The providers whose launch, send and stop rows are still served by today's runtime in 3b. */
 const NOT_MOVED_IN_3B: readonly string[] = [ANTIGRAVITY, OPENCODE]
+/**
+ * The "Other…" driver's provider id (15 §3 H1: `HostedCommandDriver`'s profile, `hosted-command/profile.ts`), which the
+ * Host board names for an "Other…" dwarf. Outside the catalog (INV-43: never a Jev candidate, no A-36 entry); step 3d
+ * moves its rows to the Host (21 §2 cut 3d).
+ */
+const OTHER_COMMAND = 'other'
 
 /**
  * A row the step-3a switch serves from the Host (21 §2 cut 3a "Rows born or moved") with its target shape, for every
@@ -207,6 +213,31 @@ const perProviderCut3b = (channel: IpcChannelName): ChannelRoute[] => [
 ]
 
 /**
+ * A row the step-3d switch serves from the Host (21 §2 cut 3d "Rows born or moved": A-39, B-M34; the "Other…" dwarfs'
+ * A-13, A-23 and A-35) with its target shape, for every caller or for the "Other…" qualifier (`provider`): `passed`
+ * because its evidence is recorded in `docs/strangler/parity-cut-3d.md` (the L4 conformance of `HostedCommandDriver`,
+ * C-01…C-05, C-18, C-28, C-29, `hostedCommand.test.ts` unchanged, the L2 "Other…" flows, its L6 contract suite and the
+ * cut-3d E2E case; 21 §1 item 3, §2 row 3d "Parity / exit").
+ */
+const hostCut3d = (channel: IpcChannelName, provider?: string): ChannelRoute => ({
+  channel,
+  owner: 'host',
+  since: 'cut-3d',
+  parity: 'passed',
+  ...(provider === undefined ? {} : { qualifier: { provider } }),
+  shape: 'target'
+})
+
+/**
+ * A-13, A-23 or A-35 from 3d: the Host for Claude (3a), Codex (3b) and "Other…" dwarfs (3d), `PerProviderShapeAdapter`
+ * for every other provider (21 §3.1).
+ */
+const perProviderCut3d = (channel: IpcChannelName): ChannelRoute[] => [
+  ...perProviderCut3b(channel),
+  hostCut3d(channel, OTHER_COMMAND)
+]
+
+/**
  * Cut 0 (21 §2 cut 0; ISSUE-056): the window family A-01…A-11, A-21, A-22, A-24, A-28, A-29, A-45, A-46, A-56, A-57,
  * A-P1, A-P6, A-X1 is served `ui-local` by the rebuilt window module; the NEW rows A-N03…A-N05 (Host connection), A-N30
  * (renderer diagnostics), A-N25, A-N27 (the tray's confirmation) and A-N34 (owner-approved amendment 2026-10-01,
@@ -243,6 +274,12 @@ const perProviderCut3b = (channel: IpcChannelName): ChannelRoute[] => [
  * "Other…", which no qualified route names), and A-27, A-P3 and A-P4 shrink to Antigravity and OpenCode. No seam B
  * member and no NEW row is born in 3b.
  *
+ * Step 3d (21 §2 cut 3d; ISSUE-186): A-39 moves to the Host (`launching.launchCustom`, B-M34) with its target shape (no
+ * shape adapter, 21 §3.1), so an "Other…" command runs as a Host-owned session that no longer dies with the window; the
+ * "Other…" dwarfs' A-35 (its Retry path), A-23 and A-13 move to the Host, qualified by the "Other…" driver's provider id
+ * (A-N29's one `host` route already serves them). "Other…" has no A-36 entry and no A-27, A-P3, A-P4 row (a legacy
+ * hosted process died with the window, so none outlives the update). B-M34 is born in 3d; no NEW row is.
+ *
  * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape; the rows
  * still `legacy` that carry a dwarf id reach today's runtime through `LegacyDwarfIdBridge` (21 §3). A-N33 stays
  * unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router
@@ -261,13 +298,13 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('shortcut:get'), // A-10
   uiLocalKept('shortcut:set'), // A-11
   hostCut1('mines:get'), // A-12, through BoardFacadeAdapter
-  ...perProviderCut3b('dwarf:activate'), // A-13, Claude's through splits/activateDwarf.ts
+  ...perProviderCut3d('dwarf:activate'), // A-13, the moved providers' through splits/activateDwarf.ts
   hostCut1('dwarf:feed:page'), // A-15
   hostCut1('mine:history'), // A-19
   hostCut1('mine:openPath'), // A-20
   uiLocalKept('shell:openExternalLink'), // A-21
   uiLocalKept('shell:copyText'), // A-22
-  ...perProviderCut3b('dwarf:sendText'), // A-23
+  ...perProviderCut3d('dwarf:sendText'), // A-23
   uiLocalKept('dwarf:attachments:choose'), // A-24
   hostCut3a('dwarf:attachments:describe'), // A-25, every provider
   ...legacyNotMovedCut3a('dwarf:retire'), // A-27
@@ -285,11 +322,11 @@ export const ROUTES: readonly ChannelRoute[] = [
     shapeAdapter: 'ResetFanout'
   },
   hostCut1('projects:query'), // A-34
-  ...perProviderCut3b('agent:launch'), // A-35 and its Retry path
+  ...perProviderCut3d('agent:launch'), // A-35 and its Retry path
   hostCut3a('agent:providers', CLAUDE), // A-36, Claude's entry (a moved provider of the catalog merge)
   legacyThroughCut3a('agent:providers', 'CatalogMergeAdapter'), // A-36, the renderer's one catalog call
   hostCut3b('agent:providers', CODEX), // A-36, Codex's entry (a moved provider of the catalog merge)
-  legacyToday('agent:launchHosted'), // A-39
+  hostCut3d('agent:launchHosted'), // A-39, every "Other…" launch and its Retry
   ...askAnswerCut2('agent:answerQuestion'), // A-40
   ...askAnswerCut2('agent:answerPermission'), // A-41
   legacyToday('notifications:enabled:get'), // A-42
@@ -376,10 +413,11 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
   'welcome:answer': ['preferences.answerWelcome'], // A-N32 → B-M40
   'dwarf:rename': ['crew.rename'], // A-N08 → B-M22
   'dwarf:name:reset': ['crew.resetName'], // A-N09 → B-M23
-  'dwarf:activate': ['conversation.resolveConsole'], // A-13 → B-M29, Claude and Codex (splits/activateDwarf.ts)
-  'dwarf:sendText': ['conversation.send'], // A-23 → B-M24, Claude and Codex
+  'dwarf:activate': ['conversation.resolveConsole'], // A-13 → B-M29, Claude, Codex, Other… (splits/activateDwarf.ts)
+  'dwarf:sendText': ['conversation.send'], // A-23 → B-M24, Claude, Codex and Other…
   'dwarf:attachments:describe': ['conversation.describeAttachments'], // A-25 → B-M28
-  'agent:launch': ['launching.launch'], // A-35 → B-M33, Claude and Codex
+  'agent:launch': ['launching.launch'], // A-35 → B-M33, Claude, Codex and Other…
+  'agent:launchHosted': ['launching.launchCustom'], // A-39 → B-M34
   // A-36 → B-M37: Claude's and Codex's entries, read by `CatalogMergeAdapter` for the renderer's one catalog call
   'agent:providers': ['suppliers.launchable'],
   'jev:apiKey:set': ['settings.secret.set', 'preferences.get'], // A-48 → B-M10, answered with B-M12
@@ -395,7 +433,7 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
  * The release in which each seam B method is born in the Host (21 §2 "Seam B members", B-M02…B-M06 at cut 0; B-M07,
  * B-M08, B-M09, B-M12, B-M13, B-M15, B-M16…B-M20, B-M26, B-M27 and B-M41 at cut 1; B-M30…B-M32, B-M39 and B-M40 at
  * cut 2; B-M22 and B-M23 at cut 2 too, by the ISSUE-172 lead decision, where 21 §2 has them at 3a; B-M10, B-M11,
- * B-M21, B-M24, B-M25, B-M28, B-M29, B-M33 and B-M35…B-M38 at 3a).
+ * B-M21, B-M24, B-M25, B-M28, B-M29, B-M33 and B-M35…B-M38 at 3a; B-M34 at 3d).
  */
 export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> = {
   ping: 'cut-0',
@@ -435,5 +473,6 @@ export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> 
   'launching.retryRecovery': 'cut-3a',
   'launching.dismissRecovery': 'cut-3a',
   'suppliers.launchable': 'cut-3a',
-  'jev.suggest': 'cut-3a'
+  'jev.suggest': 'cut-3a',
+  'launching.launchCustom': 'cut-3d'
 }

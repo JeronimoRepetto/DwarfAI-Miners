@@ -1,6 +1,7 @@
 // The step-3a release table (ISSUE-001; 21 §2 cut 3a) as it shipped, for the suites that prove what 3a composed and
-// for the rollback cases that start from it. From 3b the release table is `ROUTES` (`../routes.ts`), changed only by
-// each step's route-switch issue (22 §5); this is that table with the step-3b switch (ISSUE-002) undone: the Codex
+// for the rollback cases that start from it. AMENDED for ISSUE-186 (was: from the release table `ROUTES`): it starts
+// from the 3b table as it shipped (`cut3bRoutes.ts`, the release table with the step-3d switch undone) and undoes the
+// step-3b switch (ISSUE-002): the Codex
 // `host` routes 3b added (A-13, A-23, A-35, A-36) removed, so Codex reaches the shape adapters again, and the Codex
 // `legacy` route of A-27, A-P3 and A-P4 back beside the other providers not moved in 3a. Test-only (R14): production
 // never imports it.
@@ -12,7 +13,8 @@ import {
   type StepId
 } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { LEGACY_BRIDGE_ADAPTERS, ROUTES } from '../routes'
+import { LEGACY_BRIDGE_ADAPTERS } from '../routes'
+import { CUT_3B_ROUTES } from './cut3bRoutes'
 
 const [, CODEX = '', ANTIGRAVITY = ''] = CATALOG_PROVIDER_IDS
 
@@ -37,9 +39,9 @@ const codexNotMoved = (channel: ChannelKey): ChannelRoute => ({
 })
 
 const hasCodexRow = (channel: ChannelKey): boolean =>
-  ROUTES.some((route) => route.channel === channel && route.qualifier?.provider === CODEX)
+  CUT_3B_ROUTES.some((route) => route.channel === channel && route.qualifier?.provider === CODEX)
 
-export const CUT_3A_ROUTES: readonly ChannelRoute[] = ROUTES.filter(
+export const CUT_3A_ROUTES: readonly ChannelRoute[] = CUT_3B_ROUTES.filter(
   (route) => route.since !== 'cut-3b'
 ).flatMap((route) =>
   NOT_MOVED_ROWS.includes(route.channel) &&

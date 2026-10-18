@@ -255,6 +255,11 @@ import {
   LAUNCH_AGENT_ROWS
 } from './ipc/handlers/launchAgent.host'
 import {
+  createLaunchCustomRow,
+  LAUNCH_CUSTOM,
+  LAUNCH_CUSTOM_ROWS
+} from './ipc/handlers/launchCustom.host'
+import {
   createSendDwarfTextRow,
   SEND_DWARF_TEXT,
   SEND_DWARF_TEXT_ROWS
@@ -1170,8 +1175,9 @@ export function composeJevRouteRow(deps: {
  * target only where the table routes it `host`: A-35 `launchAgent` (B-M33), A-23 `sendDwarfText` (B-M24), A-13
  * `activateDwarf` (B-M29, its window half raising the console UI main holds, ADR-031), A-25
  * `describeDwarfAttachments` (B-M28), A-N06 `retryDwarfMessage` (B-M25) and A-N10, A-N11 the recovery report (B-M35,
- * B-M36). A-13 is composed only with the console raiser (`consoles`), never half. `undefined` when the table routes none
- * of them `host` (before the step-3a switch).
+ * B-M36). A-13 is composed only with the console raiser (`consoles`), never half. From step 3d (ISSUE-186) also A-39
+ * `launchHostedProcess` (B-M34, the "Other…" launch). `undefined` when the table routes none of them `host` (before the
+ * step-3a switch).
  */
 export function composeConversationAndLaunchRows(deps: {
   routes: readonly ChannelRoute[]
@@ -1183,6 +1189,9 @@ export function composeConversationAndLaunchRows(deps: {
   const parts: RouteTargetPart[] = []
   if (toHost(LAUNCH_AGENT)) {
     parts.push({ channels: LAUNCH_AGENT_ROWS, target: createLaunchAgentRow(client) })
+  }
+  if (toHost(LAUNCH_CUSTOM)) {
+    parts.push({ channels: LAUNCH_CUSTOM_ROWS, target: createLaunchCustomRow(client) })
   }
   if (toHost(SEND_DWARF_TEXT)) {
     parts.push({ channels: SEND_DWARF_TEXT_ROWS, target: createSendDwarfTextRow(client) })

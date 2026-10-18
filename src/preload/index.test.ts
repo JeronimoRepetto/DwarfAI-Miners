@@ -828,8 +828,14 @@ describe('preload launch-failure contract (#263)', () => {
       cause: 'could-not-start'
     }
     invoke.mockResolvedValueOnce(hosted)
+    // AMENDED for ISSUE-186 (was: today's request): A-39's 14 request from 3d; its answer still crosses as main gave it.
     await expect(
-      api.launchHostedProcess({ mineId: 'mine:1', command: 'my-agent', prompt: 'dig' })
+      api.launchHostedProcess({
+        mineId: '01890a5d-ac96-774b-bcce-b302099a8101' as MineId,
+        command: 'my-agent',
+        prompt: 'dig',
+        requestId: '01890a5d-ac96-774b-bcce-b302099a8103'
+      })
     ).resolves.toEqual(hosted)
   })
 })
