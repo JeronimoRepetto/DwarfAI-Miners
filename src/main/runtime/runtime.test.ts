@@ -6454,7 +6454,8 @@ describe('AgentRuntime.launchAgent (#86)', () => {
    * `resolveProgram`/`run` are ever reached, on the same terms every other
    * "not installed" case in this file already relies on.
    */
-  it('reaches its own detector for OpenCode now, refusing only because it is not installed', async () => {
+  // AMENDED for ISSUE-239 (was: "reaches its own detector for OpenCode now, refusing only because it is not installed").
+  it('refuses OpenCode before its detector since the step-4b deletion', async () => {
     const cliDetector = {
       detect: vi.fn().mockResolvedValue({ cli: 'opencode', installed: false }),
       peek: vi.fn().mockReturnValue('unprobed')
@@ -6490,16 +6491,18 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     const mineId = runtime.getMines()[0]!.id
 
     // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact
-    // verdict without `cause`).
+    // verdict without `cause`). AMENDED for ISSUE-239, the step-4b deletion
+    // (was: "OpenCode is not installed on this machine." with `cause:
+    // 'not-installed'`, after asking the detector): today's OpenCode launch
+    // left the tree, so the launcher refuses it before detection.
     await expect(
       runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
     ).resolves.toEqual({
       launched: false,
       provider: 'opencode',
-      error: 'OpenCode is not installed on this machine.',
-      cause: 'not-installed'
+      error: 'That agent cannot be started from the panel yet.'
     })
-    expect(cliDetector.detect).toHaveBeenCalledWith('opencode')
+    expect(cliDetector.detect).not.toHaveBeenCalledWith('opencode')
   })
 })
 

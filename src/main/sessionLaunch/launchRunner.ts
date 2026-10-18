@@ -21,10 +21,7 @@ import {
 } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
-import {
-  mergeOpenCodeConfigContent,
-  type DelegationInjectionContext
-} from '../mcp/delegationInjection'
+import type { DelegationInjectionContext } from '../mcp/delegationInjection'
 import { ONE_SHOT_STDOUT_IS_TURN_TEXT, buildLaunchArgs, prepareLaunchPrompt } from './launch'
 import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
 import { oneShotTurnOutcome } from './oneShotTurnOutcome'
@@ -470,8 +467,10 @@ export type SessionLauncher = (
     /**
      * The MCP delegation server this launch's own gate check
      * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
-     * absent when it declined (#511 T4) — read only by `launchClaudeSession`
-     * for `opencode`; no other provider's builder sees it.
+     * absent when it declined (#511 T4). AMENDED for ISSUE-239, the step-4b
+     * deletion (was: read only by `launchClaudeSession` for `opencode`, its
+     * `OPENCODE_CONFIG_CONTENT`): no launch reads it any more; the field stays
+     * for today's runtime, which goes whole with ISSUE-243 (foreman D3).
      */
     delegation?: DelegationInjectionContext
   } & LaunchTuning
@@ -795,67 +794,6 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
   /** Reads a batch shim for the program it points at (#193); the same fs detection probes with. */
   fs: FsLike
   run: LaunchRunner
-  /**
-   * The MCP delegation server this launch's own gate check
-   * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
-   * absent when it declined (#511 T4) — read only for `opencode`
-   * (`OPENCODE_CONFIG_CONTENT`); no other provider's builder sees it, on the
-   * same exhaustive-dispatch discipline `buildLaunchArgs` already holds for
-   * argv. AMENDED for ISSUE-185 (was: also Codex's `-o` output path, its
-   * permission mode and its delegation argv) and ISSUE-184 (was: also
-   * Claude's `--mcp-config` temp file and its `delegationConfigFile` port):
-   * today's Codex and Claude launches left the tree.
-   */
-  delegation?: DelegationInjectionContext
-}
-
-/**
- * What one detached provider's own per-invocation MCP mechanism needs,
- * given the gate's own approved injection context (#511 T4) — the ONE place
- * this function's caller (`launchClaudeSession`) has to branch on provider
- * for delegation, mirroring the exhaustive-dispatch discipline
- * `buildLaunchArgs` (launch.ts) already holds for argv. `antigravity` is
- * never reached with a `delegation` context at all (`delegationGate.ts`'s
- * own `DELEGATION_CAPABLE_PROVIDERS` excludes it outright) and simply falls
- * through unchanged if it ever were. AMENDED for ISSUE-185, the step-3b
- * deletion (was: a `codex` branch returning the `-c` TOML overrides whose
- * `env` table carried this launch's token in argv, ADR-013 items 2, 8):
- * today's Codex launch left the tree. AMENDED for ISSUE-184, the step-3a
- * deletion (was: a `claude` branch writing a `--mcp-config` temp file and
- * appending `--mcp-config`/`--allowedTools`): today's Claude launch left the
- * tree.
- */
-function delegationInjectionFor(
-  provider: DwarfProvider,
-  delegation: DelegationInjectionContext | undefined,
-  env: NodeJS.ProcessEnv
-): {
-  extraArgs: string[]
-  env: NodeJS.ProcessEnv
-} {
-  if (delegation === undefined) return { extraArgs: [], env }
-  if (provider === 'opencode') {
-    // #511 L3: this env is inherited by the CLI process itself (never only
-    // the server this app spawns from it), so `DWARFAI_DELEGATION_TOKEN`
-    // sits in OpenCode's own process environment for the life of that
-    // launch — readable by anything OpenCode itself spawns as a subprocess,
-    // which this app has no visibility into. Left as a documented, deferred
-    // risk (T5's own privacy doc covers it) rather than fixed here: unlike
-    // the held-Claude argv exposure (#511 M1a) or the detached-Claude temp
-    // file (#511 M1b), both gone with ISSUE-184, there is no narrower per-invocation mechanism
-    // OpenCode's own docs expose that would keep this env off the CLI's own
-    // process without also keeping it off the SERVER process that needs it.
-    const merged = mergeOpenCodeConfigContent(env.OPENCODE_CONFIG_CONTENT, delegation)
-    // #511 L4: `merged` is `undefined` only when this launch's OWN
-    // `OPENCODE_CONFIG_CONTENT` was already present and this app could not
-    // parse it as a JSON object — see `mergeOpenCodeConfigContent`'s own
-    // comment. Skipping injection here (the launch proceeds exactly as an
-    // ungated one would) is the safe default: REPLACING content this app
-    // cannot see the reason for would silently discard it.
-    if (merged === undefined) return { extraArgs: [], env }
-    return { extraArgs: [], env: { ...env, OPENCODE_CONFIG_CONTENT: merged } }
-  }
-  return { extraArgs: [], env }
 }
 
 /**
@@ -867,7 +805,11 @@ function delegationInjectionFor(
  * discovering the session afterwards. AMENDED for ISSUE-185 (was: Codex's
  * detached launch, which left the tree with the step-3b deletion) and
  * ISSUE-184 (was: Claude's detached `claude -p` launch, which left the tree
- * with the step-3a deletion): OpenCode is the one provider this launches.
+ * with the step-3a deletion). AMENDED for ISSUE-239, the step-4b deletion
+ * (was: "OpenCode is the one provider this launches"): today's OpenCode
+ * launch left the tree, `LAUNCHABLE_PROVIDERS` is empty, and this refuses
+ * every provider before anything is detected or spawned. The engine goes
+ * with today's runtime (ISSUE-243, foreman decision D3).
  *
  * Every failure becomes a `launched: false` verdict with a reason, never a
  * silent no-op — the discipline deliverViaRelay already holds. "Not installed"
@@ -922,35 +864,25 @@ export async function launchClaudeSession(
         cause: 'could-not-start'
       }
     }
-    // #511 T4: the gate's own approved injection, or a no-op for an ordinary
-    // launch — see `delegationInjectionFor`'s own comment.
-    const injection = delegationInjectionFor(
-      options.provider,
-      options.delegation,
-      buildRelayEnv(options.env, detection.path, options.platform)
-    )
     const started = await options.run({
       command: program.command,
       // The tuning belongs to the CLI's own argv, so it lands AFTER a shim's
       // node entry (#239): in front of it, `--model` would be an argument to
-      // node rather than to the program node is about to run. Delegation's
-      // own extra argv (#511 T4) lands LAST, so nothing here narrows what the
-      // CLI's OWN config already grants this session.
+      // node rather than to the program node is about to run.
       args: [
         ...program.args,
         ...buildLaunchArgs(options.provider, {
           ...(options.model === undefined ? {} : { model: options.model }),
           ...(options.effort === undefined ? {} : { effort: options.effort })
-        }),
-        ...injection.extraArgs
+        })
       ],
       // The relay's env rule, for the relay's reason: a re-exec of the CLI
       // inside the child must reach the install detection found rather than
       // one that happens to sit earlier on PATH. The detected path, so a shim
-      // launch still leads with the shim's own directory. `injection.env`
-      // (#511 T4) is that SAME env, merged with `OPENCODE_CONFIG_CONTENT`
-      // for a delegating OpenCode launch — see `delegationInjectionFor`.
-      env: injection.env,
+      // launch still leads with the shim's own directory. AMENDED for
+      // ISSUE-239 (was: that env merged with `OPENCODE_CONFIG_CONTENT` for a
+      // delegating OpenCode launch): today's OpenCode launch left the tree.
+      env: buildRelayEnv(options.env, detection.path, options.platform),
       cwd: options.minePath,
       stdin: prompt,
       viaNodeEntry: program.viaNodeEntry,

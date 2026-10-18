@@ -408,14 +408,11 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       TodayResult<'dwarf:setName'>
     >()
     // RETIRE row and KEEP row. AMENDED for ISSUE-123 (was: A-12 `getMines` as the RETIRE row): A-12's target shape is
-    // today's `MinesSnapshot` (H3), so its result type is unchanged; A-P3 stands for a RETIRE row still `today`.
+    // today's `MinesSnapshot` (H3), so its result type is unchanged. AMENDED for ISSUE-239 (was: A-P3 `onLaunchFailed`
+    // standing for a RETIRE row still `today`): A-P3 left the facade with the 4b deletion (`MEMBER_REMOVED`).
     expectTypeOf<DwarfAiMinersApi['getMines']>().returns.resolves.toEqualTypeOf<
       TodayResult<'mines:get'>
     >()
-    expectTypeOf<DwarfAiMinersApi['onLaunchFailed']>()
-      .parameter(0)
-      .parameter(0)
-      .toEqualTypeOf<TodayResult<'agent:launchFailed'>>()
     expectTypeOf<DwarfAiMinersApi['getAlwaysOnTop']>().returns.resolves.toEqualTypeOf<boolean>()
     // A-44 keeps today's member name and today's request while its route is today. AMENDED for ISSUE-123 (was: the
     // `setOpenMine` member): from cut 1 its route is `target`, so it is `reportVisibleMines` with its 14 request.

@@ -80,8 +80,14 @@ export interface CliPresence {
  * AMENDED for ISSUE-184, the step-3a deletion (was: `['claude', 'opencode']`):
  * today's Claude launch left the tree with its `claude -p` argv and the Agent
  * SDK held session; the Host's Claude drivers are Claude's only launcher.
+ *
+ * AMENDED for ISSUE-239, the step-4b deletion (was: `['opencode']`): today's
+ * OpenCode launch left the tree with its `opencode run` argv, its
+ * `OPENCODE_CONFIG_CONTENT` delegation builder and its `opencodeContinue.ts`
+ * relaunch; the Host's OpenCode drivers are OpenCode's only launcher, so
+ * today's launcher refuses every provider before anything is spawned.
  */
-export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['opencode']
+export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = []
 
 /**
  * What a detected provider with no launch path says for itself.

@@ -18,7 +18,6 @@ import { createTmuxConsoleInput } from '../textDelivery/tmuxConsoleInput'
 import type { TextDeliveryPort } from '../textDelivery/port'
 import { PosixTextDelivery } from '../textDelivery/posixTextDelivery'
 import type { CodexQueueRunner } from '../textDelivery/codexQueue'
-import type { OpenCodeContinueRunner } from '../textDelivery/opencodeContinue'
 import type { RelayRunner } from '../textDelivery/relayRunner'
 import { WindowsTextDelivery } from '../textDelivery/windowsTextDelivery'
 import {
@@ -171,8 +170,6 @@ export interface PlatformAdapterOptions {
   runRelay?: RelayRunner
   /** Injected for tests; defaults to a real codex spawn (#97). */
   runCodexQueue?: CodexQueueRunner
-  /** Injected for tests; defaults to a real opencode spawn (#534). */
-  runOpenCodeContinue?: OpenCodeContinueRunner
   /** Explicit binary paths that override CLI detection; blank means "detect it" (#91). */
   cliOverrides?: Partial<Record<AgentCli, string>>
   /** Injected for tests; defaults to the real filesystem, used by CLI detection. */
@@ -238,12 +235,6 @@ function createTextDelivery(
       const detection = await cliDetector.detect('codex')
       return detection.installed ? detection.path : undefined
     },
-    // The OpenCode twin of the codex detection above (#534), same reasoning:
-    // asked per delivery so an install after startup is still found.
-    opencodeBinary: async (): Promise<string | undefined> => {
-      const detection = await cliDetector.detect('opencode')
-      return detection.installed ? detection.path : undefined
-    },
     // The same FsLike instance cliDetector was built with (#413): a shim the
     // detector found is a shim this tier must be able to read too, and two
     // separate instances would still agree on every real read — sharing one is
@@ -251,10 +242,7 @@ function createTextDelivery(
     fs,
     ...(options.env === undefined ? {} : { env: options.env }),
     ...(options.runRelay === undefined ? {} : { runRelay: options.runRelay }),
-    ...(options.runCodexQueue === undefined ? {} : { runCodexQueue: options.runCodexQueue }),
-    ...(options.runOpenCodeContinue === undefined
-      ? {}
-      : { runOpenCodeContinue: options.runOpenCodeContinue })
+    ...(options.runCodexQueue === undefined ? {} : { runCodexQueue: options.runCodexQueue })
   }
   if (platform === 'win32') {
     // The SCOPED focus, and the one place the two part company (#329): every

@@ -214,6 +214,13 @@ An OpenCode session the 4b build launched is left running; the rolled-back build
 so A-27, A-P3 and A-P4 speak today's shape again (the 4b switch generated them with the registry's shape because they had
 no route).
 
+**Step-4b deletion (ISSUE-239): no rollback past this point.** From the ISSUE-239 commit today's OpenCode launch (the
+detached `opencode run` argv with its `OPENCODE_CONFIG_CONTENT` delegation entry, and the `opencodeContinue.ts`
+relaunch) and the legacy A-27, A-P3 and A-P4 handlers and pushes are gone, so the table above routes OpenCode to a
+launcher that refuses it and A-27, A-P3, A-P4 to handlers that no longer exist: `rollbackOf(table, 'cut-4b')` refuses
+(`ROLLS_FORWARD_ONLY`, `src/ui-main/ipc/rollbackTable.ts`; `REMOVED_BY_THE_LAST_PROVIDER_STEP` is deleted), and 4b
+rolls forward only (`21` §2.1 item 4).
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").

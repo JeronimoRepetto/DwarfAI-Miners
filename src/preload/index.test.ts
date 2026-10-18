@@ -56,7 +56,8 @@ describe('preload always-on-top contract', () => {
     expect(typeof api.sendDwarfText).toBe('function')
     // AMENDED for ISSUE-183 (was: `kickDwarf` present): A-26 left the facade in 3a; "Stop dwarf…" is A-N29.
     expect('kickDwarf' in api).toBe(false)
-    expect(typeof api.retireDwarf).toBe('function')
+    // AMENDED for ISSUE-239 (was: `retireDwarf` present): A-27 left the facade with the 4b deletion.
+    expect('retireDwarf' in api).toBe(false)
     expect(typeof api.getToggleShortcut).toBe('function')
     expect(typeof api.setToggleShortcut).toBe('function')
     expect(typeof api.getAppBuild).toBe('function')
@@ -127,29 +128,6 @@ describe('preload panel-toggle shortcut contract', () => {
     })
     await (api.setToggleShortcut as unknown as (value: unknown) => Promise<unknown>)(42)
     expect(invoke).toHaveBeenLastCalledWith('shortcut:set', '')
-  })
-})
-
-/**
- * Retirement (#46) is one-way on purpose: the renderer reports an observation
- * and main decides. The departure comes back through the ordinary poll, so
- * there is no verdict here to wait for.
- */
-describe('preload dwarf retirement contract', () => {
-  it('reports a retirement on the dwarf:retire channel without asking for an answer', () => {
-    expect(api.retireDwarf('claude:s1')).toBeUndefined()
-    expect(send).toHaveBeenLastCalledWith('dwarf:retire', 'claude:s1')
-  })
-
-  it('collapses a non-string id to an empty string before it crosses the bridge', () => {
-    // Same discipline as setToggleShortcut: main's boundary check should only
-    // ever have to reason about a clean string.
-    // AMENDED for ISSUE-238 (was: the id collapsed to ''): from step 4b A-27 has
-    // no route (`RETIRED`, 21 §2 cut 4b), so the generated member speaks the
-    // registry's shape and passes the payload through; the router refuses the
-    // call like any channel with no route, and nothing reaches today's runtime.
-    ;(api.retireDwarf as unknown as (value: unknown) => void)(42)
-    expect(send).toHaveBeenLastCalledWith('dwarf:retire', 42)
   })
 })
 
@@ -753,49 +731,13 @@ describe('preload launch contract (#168)', () => {
  * moment later rather than leaving the panel to find out never. One-way,
  * exactly like `onShowMine` and `onDwarfSendSettled`: there is no
  * request the panel makes for this, since main learns of it asynchronously.
+ *
+ * AMENDED for ISSUE-239, the 4b deletion (was: also the A-P3 `onLaunchFailed`
+ * subscription and its cause): A-P3 left the facade, and a launch failure
+ * reaches the Panel as the Host's `launch.failed` frame. The cause still
+ * crosses on each launch verdict.
  */
 describe('preload launch-failure contract (#263)', () => {
-  const FAILURE = {
-    launchId: 'receipt:1',
-    provider: 'codex',
-    mineId: 'mine:c:\\x\\anvil',
-    exitCode: 1,
-    stderrTail: 'codex: another instance is already running'
-  }
-
-  it('exposes the subscription beside the other launch members', () => {
-    expect(typeof api.onLaunchFailed).toBe('function')
-  })
-
-  it('subscribes to main’s push on agent:launchFailed, and unsubscribes', () => {
-    const listener = vi.fn()
-    const stop = api.onLaunchFailed(listener)
-    expect(on).toHaveBeenLastCalledWith('agent:launchFailed', expect.any(Function))
-    const wrapped = on.mock.lastCall?.[1] as (event: unknown, push: unknown) => void
-    wrapped(null, FAILURE)
-    // The renderer never sees the IpcRendererEvent: it is the push itself
-    // that is the message, exactly as every other subscription here reads.
-    expect(listener).toHaveBeenCalledWith(FAILURE)
-    stop()
-    expect(removeListener).toHaveBeenLastCalledWith('agent:launchFailed', wrapped)
-  })
-
-  /*
-   * #635 (MESSAGE-QUESTIONS 16/17). The launch-failure notice branches on
-   * `cause`, and a field this bridge drops never reaches it — the exact way a
-   * held answer's own words were lost in #671, where a request was rebuilt
-   * field by field and the new field was not among them. These pin that the
-   * cause crosses on the push and on all three launch verdicts, as main
-   * answered them.
-   */
-  it('hands the cause on the push to the renderer (#635)', () => {
-    const listener = vi.fn()
-    api.onLaunchFailed(listener)
-    const wrapped = on.mock.lastCall?.[1] as (event: unknown, push: unknown) => void
-    wrapped(null, { ...FAILURE, cause: 'exited-at-once' })
-    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ cause: 'exited-at-once' }))
-  })
-
   it('hands the cause on each launch verdict back as main answered it (#635)', async () => {
     const detached = {
       launched: false,

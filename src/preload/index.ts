@@ -124,8 +124,6 @@ export interface DwarfAiMinersApi {
   describeDwarfAttachments: (
     request: TargetRequest<'dwarf:attachments:describe'>
   ) => Promise<TargetResult<'dwarf:attachments:describe'>>
-  /** A-27 · `dwarf:retire` · send · RETIRE · target shape */
-  retireDwarf: (request: TargetRequest<'dwarf:retire'>) => void
   /** A-28 · `app:build` · invoke · KEEP · target shape */
   getAppBuild: () => Promise<TargetResult<'app:build'>>
   /** A-29 · `app:features` · invoke · KEEP · target shape */
@@ -218,12 +216,6 @@ export interface DwarfAiMinersApi {
   ) => () => void
   /** A-P2 · `mines:update` · push · RETIRE · target shape */
   onMinesUpdated: (listener: (payload: TargetResult<'mines:update'>) => void) => () => void
-  /** A-P3 · `agent:launchFailed` · push · RETIRE · target shape */
-  onLaunchFailed: (listener: (payload: TargetResult<'agent:launchFailed'>) => void) => () => void
-  /** A-P4 · `dwarf:sendText:settled` · push · RETIRE · target shape */
-  onDwarfSendSettled: (
-    listener: (payload: TargetResult<'dwarf:sendText:settled'>) => void
-  ) => () => void
   /** A-P5 · `panel:mine:show` · push · RETIRE · target shape */
   onShowMine: (listener: (payload: TargetResult<'panel:mine:show'>) => void) => () => void
   /** A-P6 · `typography:preferences:changed` · push · KEEP · target shape */
@@ -380,7 +372,6 @@ const api: DwarfAiMinersApi = {
         (Array.isArray(request) ? request : []).map((path: unknown) => textOf(path))
       )
     ),
-  retireDwarf: (request) => sendOrDrop(() => ipcRenderer.send('dwarf:retire', request)),
   getAppBuild: () => invokeOrReject(() => ipcRenderer.invoke('app:build')),
   getFeatureFlags: () => invokeOrReject(() => ipcRenderer.invoke('app:features')),
   declareMine: () => invokeOrReject(() => ipcRenderer.invoke('mine:declare')),
@@ -439,20 +430,6 @@ const api: DwarfAiMinersApi = {
     }
     ipcRenderer.on('mines:update', wrapped)
     return () => ipcRenderer.removeListener('mines:update', wrapped)
-  },
-  onLaunchFailed: (listener) => {
-    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
-      listener(payload as TargetResult<'agent:launchFailed'>)
-    }
-    ipcRenderer.on('agent:launchFailed', wrapped)
-    return () => ipcRenderer.removeListener('agent:launchFailed', wrapped)
-  },
-  onDwarfSendSettled: (listener) => {
-    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
-      listener(payload as TargetResult<'dwarf:sendText:settled'>)
-    }
-    ipcRenderer.on('dwarf:sendText:settled', wrapped)
-    return () => ipcRenderer.removeListener('dwarf:sendText:settled', wrapped)
   },
   onShowMine: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {

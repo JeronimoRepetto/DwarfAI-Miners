@@ -66,54 +66,6 @@ export function prepareLaunchPrompt(text: string): string {
 }
 
 /**
- * Argv for one non-interactive OpenCode turn (#534) — a DETACHED, one-shot
- * launch only, on the same terms as Codex's was: no held-session
- * engine for OpenCode in this app (see HELDABLE_PROVIDERS in
- * shared/contracts.ts), so this starts the process and lets go, discovered
- * afterwards by the ordinary poll reading `opencode.db`.
- *
- * Read out of the measurement report's own live runs (M1, M3, M9,
- * docs/opencode-format.md): `opencode run --help` documents `-m <string>`
- * for the model and `--variant <string>` for the reasoning-effort key
- * (`session.model.variant` echoes the chosen one back, M1) — not
- * `--model`/`--effort` the way Claude's and Antigravity's own argv spell
- * theirs, and not Codex's `-c model_reasoning_effort=`. `--format json` is
- * what every measured invocation ran with. `launchRunner.ts`'s `stdio` is
- * `['pipe', stdoutFd, stderrFd]` now (#510's own correction) — every
- * provider's stdout is captured to a file the same way, this one included —
- * but that capture is still never read as OpenCode's own answer: `--format
- * json` is a stream of raw JSON EVENTS (`opencode run --help` documents only
- * that much; `docs/opencode-format.md` covers the `opencode.db` store this
- * app actually reads OpenCode's transcript from, never this stream), so
- * `ONE_SHOT_STDOUT_IS_TURN_TEXT.opencode` below is `false` and
- * `oneShotTurnOutcome` never turns this capture into `text`. `json` stays
- * because it is the flag every measurement in `docs/opencode-format.md` ran
- * with, not because anything here parses it — switching format on a guess
- * would be trading one unmeasured shape for another.
- *
- * An absent `model`/`effort` adds nothing, on the same terms as the three
- * builders above: whatever `opencode run` does with no `-m` at all is the
- * CLI's own default, and this app never invents one it has not measured.
- *
- * The prompt is never here (M9): `run` reads its message from stdin
- * whenever argv carries no positional one, for a fresh run and for
- * `--session` continuation alike — this argv carries no prompt at all, on
- * the same argv/stdin split the module header states. Positional and stdin
- * CONCATENATE rather than one overriding the other (M9d), which is exactly
- * why this builder must never add one: a stray positional here would ride
- * along with whatever the caller also puts on stdin.
- */
-export function buildOpenCodeLaunchArgs(tuning: LaunchTuning = {}): string[] {
-  return [
-    'run',
-    ...(tuning.model === undefined ? [] : ['-m', tuning.model]),
-    ...(tuning.effort === undefined ? [] : ['--variant', tuning.effort]),
-    '--format',
-    'json'
-  ]
-}
-
-/**
  * The argv for one provider (#168).
  *
  * Until #168 there was nothing to dispatch on: the engine called
@@ -137,7 +89,7 @@ export function buildOpenCodeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * permission mode, dispatched to `buildCodexLaunchArgs`): today's Codex launch
  * left the tree, and the Host's Codex drivers are Codex's only launcher.
  */
-export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = {}): string[] {
+export function buildLaunchArgs(provider: DwarfProvider, _tuning: LaunchTuning = {}): string[] {
   switch (provider) {
     case 'claude':
       // AMENDED for ISSUE-184, the step-3a deletion (was: `buildClaudeLaunchArgs`,
@@ -157,12 +109,12 @@ export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = 
       // is the refusal `opencode`'s was before #534.
       throw new Error(NOT_LAUNCHABLE)
     case 'opencode':
-      // AMENDED for #534 (was: `throw new Error(NOT_LAUNCHABLE)` — #444 left
-      // OpenCode observed only, with no launch invocation this app had
-      // measured). #534 measured `run` (docs/opencode-format.md), so this
-      // arm is dispatched exactly like Claude's, Codex's and Antigravity's
-      // above.
-      return buildOpenCodeLaunchArgs(tuning)
+      // AMENDED for ISSUE-239, the step-4b deletion (was: `buildOpenCodeLaunchArgs`,
+      // its `opencode run -m … --variant … --format json` argv, #534): today's
+      // OpenCode launch left the tree, and `LAUNCHABLE_PROVIDERS` refuses it
+      // before this is reached; the Host's OpenCode drivers are its only
+      // launcher.
+      throw new Error(NOT_LAUNCHABLE)
   }
 }
 
@@ -192,8 +144,9 @@ export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = 
  * - `antigravity`: `true`, unread since the step-3e deletion (ISSUE-189):
  *   today's launcher no longer starts Antigravity. Its own default
  *   `--output-format` is `text` (Antigravity CLI 1.1.26's own `--help`).
- * - `opencode`: `false`, the one provider this table refuses. `--format json`
- *   (`buildOpenCodeLaunchArgs` above) is documented as "raw JSON events" and
+ * - `opencode`: `false`, unread since the step-4b deletion (ISSUE-239):
+ *   today's launcher no longer starts OpenCode. `--format json` (its deleted
+ *   `buildOpenCodeLaunchArgs`) is documented as "raw JSON events" and
  *   nothing more specific — `opencode run --help`'s own words — and
  *   `docs/opencode-format.md` covers the `opencode.db` store this app
  *   already reads OpenCode's transcript from, never this stream. Nothing

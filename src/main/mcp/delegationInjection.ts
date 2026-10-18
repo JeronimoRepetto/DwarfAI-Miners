@@ -1,47 +1,16 @@
-// Runtime values come from the main-only twin, never `./delegationProtocol`
-// directly (#511 T4) — see `delegationServerProtocol.ts`'s own top comment
-// for why: THIS module is a runtime dependency of `index.js`'s build graph
-// (via `launchRunner.ts`), and `delegationProtocol.ts` is
-// ALSO a runtime dependency of `jevMcpServer.js`'s own graph — importing a
-// runtime value from it here reproduced the exact regression that file's
-// comment describes: a fresh `out/main/chunks/delegationProtocol-*.js` that
-// `jevMcpServer.js` then imported, breaking the single self-contained script
-// `electron.vite.config.ts` promises. `DelegationInjectionContext` needs no
-// such import at all — it is this module's own type.
-import {
-  DELEGATION_ENDPOINT_ENV,
-  DELEGATION_TOKEN_ENV,
-  DELEGATION_WAIT_MS_ENV
-} from './delegationServerProtocol'
-
 /**
- * Per-provider pure injection builders (#511 T4) — argv fragments, env maps
- * and config-file bodies only. Nothing here spawns a process, writes a file,
- * evaluates the gate (`delegationGate.ts`) or issues a token
- * (`delegationService.ts`); it only says what bytes a provider's own
- * per-invocation MCP mechanism needs, given a token already issued and a
- * resolved server command already in hand. Wired into the launch path in
- * `sessionLaunch/launchRunner.ts` (OpenCode) and `runtime.ts` (the gate check
- * and token lifecycle) — see each for how a `DelegationInjectionContext` is
- * built and when it is revoked.
- *
- * AMENDED for ISSUE-184, the step-3a deletion (was: also Claude's builders,
- * `claudeHeldMcpServers`, `claudeMcpConfigJson`, `claudeDetachedExtraArgs` and
- * `DELEGATION_ALLOWED_TOOLS`, read by the Agent SDK held session and the
- * detached `claude -p` launch): today's Claude launch left the tree.
- *
- * AMENDED for ISSUE-185, the step-3b deletion (was: also Codex's
- * `codexDelegationConfigArgs`, the `-c` TOML overrides whose `env` table put
- * this launch's token on a command line, ADR-013 items 2, 8): today's
- * Codex launch left the tree, and the Host's Codex drivers carry only the
- * credential file path in their `jev` entry (15 §4.4, C-23).
- */
-
-/**
- * What one launch needs to hand its own MCP config builder: the resolved
+ * What one launch handed its own MCP config builder (#511 T4): the resolved
  * server command (`delegationServerCommand.ts`) and the token this launch's
- * own `issueLaunchToken` call minted (`delegationService.ts`). Everything
- * else here is a pure function of this one shape.
+ * own `issueLaunchToken` call minted (`delegationService.ts`).
+ *
+ * AMENDED for ISSUE-239, the step-4b deletion (was: also the per-provider
+ * pure injection builders, the last of them `mergeOpenCodeConfigContent`,
+ * which merged a delegation server entry, token included, into the launched
+ * OpenCode CLI's `OPENCODE_CONFIG_CONTENT`; 21 §8 blocker, C-23): today's
+ * OpenCode launch left the tree, and with it every builder. Only this type
+ * stays, because today's runtime still names it until it goes whole with
+ * ISSUE-243 (foreman decision D3). ISSUE-184 and ISSUE-185 had deleted
+ * Claude's and Codex's builders.
  */
 export interface DelegationInjectionContext {
   /** `process.execPath` in production — see `delegationServerCommand.ts`. */
@@ -54,106 +23,4 @@ export interface DelegationInjectionContext {
   token: string
   /** Overrides `DEFAULT_DELEGATION_WAIT_MS` for this launch; absent leaves the server's own default. */
   waitMs?: number
-}
-
-/**
- * The one MCP server name every provider registers the delegation tools
- * under — `mcp__jev__<tool>` is the wire spelling every CLI's own tool-name
- * convention (`mcp__<server>__<tool>`) produces from it.
- */
-export const DELEGATION_SERVER_NAME = 'jev'
-
-/**
- * The env every provider's own MCP server entry carries (#511 T4) — the
- * three loopback vars `delegationProtocol.ts` (T2) already fixed, PLUS
- * `ELECTRON_RUN_AS_NODE`, which belongs here rather than on the launched
- * session's own environment: it has to apply to the SPAWNED SERVER process
- * the CLI starts from this entry's own `command`/`args`, never to the CLI
- * itself, which needs no such thing and must not be handed an env var that
- * changes how ITS OWN process behaves if it too happens to be the Electron
- * binary (see `delegationServerCommand.ts` on why `command` is
- * `process.execPath`).
- */
-function delegationEnv(context: DelegationInjectionContext): Record<string, string> {
-  return {
-    ELECTRON_RUN_AS_NODE: '1',
-    [DELEGATION_ENDPOINT_ENV]: context.endpoint,
-    [DELEGATION_TOKEN_ENV]: context.token,
-    ...(context.waitMs === undefined ? {} : { [DELEGATION_WAIT_MS_ENV]: String(context.waitMs) })
-  }
-}
-
-/** One `mcp.<name>` entry OpenCode's own docs shape (`type: 'local'`, an argv array, `environment`, `enabled`). */
-interface OpenCodeLocalMcpEntry {
-  type: 'local'
-  command: string[]
-  environment: Record<string, string>
-  enabled: true
-}
-
-function openCodeDelegationEntry(context: DelegationInjectionContext): OpenCodeLocalMcpEntry {
-  return {
-    type: 'local',
-    command: [context.serverCommand, ...context.serverArgs],
-    environment: delegationEnv(context),
-    enabled: true
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-/**
- * Parses an existing `OPENCODE_CONFIG_CONTENT` value: `{}` for one this app
- * may safely start fresh under — absent or empty, nothing to preserve — and
- * `undefined` for one that is PRESENT but this app cannot trust as a JSON
- * object (#511 L4) — not JSON at all, or JSON that is not an object (an
- * array, a string, a number). The two cases used to collapse into the same
- * `{}`, which meant `mergeOpenCodeConfigContent` REPLACED a launch's own
- * existing, malformed content with just `{mcp:{jev:...}}` — discarding
- * whatever was there for a reason this app cannot see. Distinguishing them
- * is what lets that caller skip injection instead (see its own comment).
- */
-function parseExistingOpenCodeConfig(
-  existing: string | undefined
-): Record<string, unknown> | undefined {
-  if (existing === undefined || existing === '') return {}
-  try {
-    const parsed: unknown = JSON.parse(existing)
-    return isRecord(parsed) ? parsed : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Merges the delegation server into an existing `OPENCODE_CONFIG_CONTENT`
- * env value (#511 T4) — never clobbers it: every other top-level key and
- * every other `mcp.<name>` entry survives untouched, and only `mcp.jev`
- * itself is replaced outright if one was already there (a stale prior
- * registration this app itself left behind, never a name a person would
- * pick for their own server).
- *
- * Answers `undefined` (#511 L4) when `existing` is PRESENT but this app
- * cannot parse it as a JSON object — never silently replaces it with just
- * `{mcp:{jev:...}}`, which would discard content this app cannot see the
- * reason for. `launchRunner.ts`'s own `delegationInjectionFor` reads
- * `undefined` as "skip delegation injection for this one launch" (the
- * launch proceeds exactly as an ungated one would; the token minted for it
- * simply goes unused and is revoked on the ordinary end-of-launch path,
- * same as any launch that never reaches its engine) — never as a reason to
- * refuse the launch itself.
- */
-export function mergeOpenCodeConfigContent(
-  existing: string | undefined,
-  context: DelegationInjectionContext
-): string | undefined {
-  const parsed = parseExistingOpenCodeConfig(existing)
-  if (parsed === undefined) return undefined
-  const existingMcp = isRecord(parsed.mcp) ? parsed.mcp : {}
-  return JSON.stringify({
-    ...parsed,
-    mcp: { ...existingMcp, [DELEGATION_SERVER_NAME]: openCodeDelegationEntry(context) }
-  })
 }

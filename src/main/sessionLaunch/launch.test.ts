@@ -4,7 +4,6 @@ import { DWARF_PROVIDERS, MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import {
   ONE_SHOT_STDOUT_IS_TURN_TEXT,
   buildLaunchArgs,
-  buildOpenCodeLaunchArgs,
   isShellShim,
   prepareLaunchPrompt
 } from './launch'
@@ -71,92 +70,14 @@ describe('buildLaunchArgs', () => {
    * invocation this app had measured). #534 measured `run`
    * (docs/opencode-format.md), so this dispatch now answers instead of
    * refusing — see buildOpenCodeLaunchArgs for the argv.
+   *
+   * AMENDED for ISSUE-239, the step-4b deletion (was: "answers OpenCode with
+   * OpenCode's own run argv, now that it is launchable"): today's OpenCode
+   * launch left the tree with `buildOpenCodeLaunchArgs`, so the dispatch
+   * refuses it again, as it refuses every provider.
    */
-  it("answers OpenCode with OpenCode's own run argv, now that it is launchable", () => {
-    expect(buildLaunchArgs('opencode')).toEqual(buildOpenCodeLaunchArgs())
-  })
-})
-
-/*
- * #534. A one-shot, DETACHED launch only, on the same terms as Antigravity's
- * once were (#237, step 4; deleted with ISSUE-189): no held-session engine for OpenCode in this app, so
- * HELDABLE_PROVIDERS does not grow — see shared/contracts.ts.
- */
-describe('buildOpenCodeLaunchArgs', () => {
-  it('asks for one run, reading its prompt from stdin, with structured output', () => {
-    // `--format json` is what every measurement in the report ran with
-    // (M3/M4/M5/M9); `run`'s own stdout is never read by this app
-    // (launchRunner.ts's stdio is `['pipe', 'ignore', stderrFd]`), so there is
-    // nothing here for a different output format to serve.
-    expect(buildOpenCodeLaunchArgs()).toEqual(['run', '--format', 'json'])
-  })
-
-  it('carries no positional prompt, whatever the prompt says', () => {
-    // M9: `run` reads the prompt from stdin whenever argv carries no
-    // positional one, for a fresh run and for `--session` continuation alike
-    // — so this argv never carries one at all. 'run' and 'json' are the fixed
-    // subcommand and its output-format value, never a prompt.
-    const fixed = new Set(['run', 'json'])
-    expect(buildOpenCodeLaunchArgs().some((arg) => !arg.startsWith('-') && !fixed.has(arg))).toBe(
-      false
-    )
-  })
-})
-
-/*
- * M1: `opencode run --help` documents `-m <string>` for the model and
- * `--variant <string>` for the reasoning-effort key — not `--model`/`--effort`
- * the way Claude and Antigravity spell theirs, and not Codex's `-c
- * model_reasoning_effort=`. `session.model.variant` echoes the chosen key back
- * (M1), confirming `--variant` is the flag that actually took.
- */
-describe('launch argv with a model and an effort, OpenCode (#534)', () => {
-  it('leaves the argv exactly as it was when nothing is tuned', () => {
-    expect(buildOpenCodeLaunchArgs({})).toEqual(['run', '--format', 'json'])
-    expect(buildLaunchArgs('opencode', {})).toEqual(['run', '--format', 'json'])
-  })
-
-  it('names the model with -m, verified against M3’s own invocation', () => {
-    expect(buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle' })).toEqual([
-      'run',
-      '-m',
-      'opencode/big-pickle',
-      '--format',
-      'json'
-    ])
-  })
-
-  it('names the effort with --variant, not --effort', () => {
-    expect(buildOpenCodeLaunchArgs({ effort: 'high' })).toEqual([
-      'run',
-      '--variant',
-      'high',
-      '--format',
-      'json'
-    ])
-  })
-
-  it('carries both, model before effort, before the trailing --format json', () => {
-    expect(buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle', effort: 'high' })).toEqual([
-      'run',
-      '-m',
-      'opencode/big-pickle',
-      '--variant',
-      'high',
-      '--format',
-      'json'
-    ])
-  })
-
-  it('dispatches through buildLaunchArgs like the other three providers', () => {
-    expect(buildLaunchArgs('opencode', { model: 'opencode/big-pickle', effort: 'low' })).toEqual(
-      buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle', effort: 'low' })
-    )
-  })
-
-  it('still carries no positional prompt, whatever is tuned', () => {
-    const tuned = buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle', effort: 'high' })
-    expect(tuned).not.toContain('dig the east gallery')
+  it('refuses OpenCode, whose launch left today’s launcher with the step-4b deletion', () => {
+    expect(() => buildLaunchArgs('opencode')).toThrow(NOT_LAUNCHABLE)
   })
 })
 

@@ -60,7 +60,6 @@ function stubApi() {
     }),
     getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
     launchAgent: vi.fn().mockResolvedValue({ ok: true, value: { launchId: MINE } }),
-    onLaunchFailed: vi.fn().mockReturnValue(() => {}),
     routeJevLaunch
   }
   Object.defineProperty(window, 'api', {

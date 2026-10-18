@@ -20,7 +20,7 @@ import {
 } from '../lib/launch/launchState'
 import { NOT_DETECTED } from '../lib/launch/providerChips'
 import { defaultDwarf, defaultMine } from '../testing/factories'
-import type { Dwarf, LaunchFailedPush, Mine } from '../types'
+import type { Dwarf, Mine } from '../types'
 import { useAgentLaunch } from './useAgentLaunch'
 
 const MINE = 'mine-1'
@@ -78,11 +78,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // becomes an unhandled rejection only the full suite catches.
     // AMENDED for ISSUE-186 (was: today's `{ launched: true }`): from 3d A-39 answers the 14 `IpcResult<LaunchAccepted>`.
     launchHostedProcess: vi.fn().mockResolvedValue({ ok: true, value: { launchId: LAUNCH } }),
-    // #263. Not awaited, so it carries no unhandled-rejection risk, but
-    // still named here rather than per test: `listenFailures()` needs a real
-    // function to call, and a bare `undefined` would throw before any test
-    // that exercises it got the chance to say why.
-    onLaunchFailed: vi.fn().mockReturnValue(() => {}),
     // Jev (#509). `configured: false` is the honest default before any test asks for `ready` — a test that never
     // touches Jev exercises the ordinary launch path exactly as it did before this option existed.
     getJevSettings: vi.fn().mockResolvedValue({ configured: false }),
@@ -575,34 +570,6 @@ describe('routing a launch to the channel its provider can actually use', () => 
     expect(api.launchAgent).toHaveBeenCalledWith(
       supplierParams('codex', { permissionMode: 'read-only' })
     )
-  })
-
-  // AMENDED for ISSUE-001 (was: today's refusal at once): a Codex launch fails on today's A-P3, under the `LaunchId`
-  // A-35 answered (legacySettlementJoin.ts); its Retry is the same launch, naming the failed one (`retryOf`).
-  it('sends the same Codex permission mode again on Retry', async () => {
-    const { api, launch } = await ready('codex')
-    launch.listenFailures()
-    launch.setPermissionMode('workspace-write')
-    await launch.submit()
-    const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
-    listener({
-      launchId: LAUNCH,
-      provider: 'codex',
-      mineId: MINE,
-      exitCode: 1,
-      stderrTail: '',
-      cause: 'not-installed'
-    })
-
-    await launch.retry()
-
-    expect(api.launchAgent).toHaveBeenCalledTimes(2)
-    expect(api.launchAgent.mock.calls[1]![0]).toEqual({
-      ...api.launchAgent.mock.calls[0]![0],
-      requestId: expect.any(String),
-      retryOf: LAUNCH
-    })
-    expect(api.launchAgent.mock.calls[1]![0].permissionMode).toBe('workspace-write')
   })
 
   // AMENDED for ISSUE-001 (was: "never hands a held launch …", today's A-38): the Claude launch is A-35 too.
@@ -1101,64 +1068,6 @@ describe('a detached launch that fails after it started (#263)', () => {
     return { api, launch }
   }
 
-  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same push without
-  // `cause`). The push now always names one; no assertion here reads it.
-  function failure(overrides: Partial<LaunchFailedPush> = {}): LaunchFailedPush {
-    return {
-      launchId: LAUNCH,
-      provider: 'codex',
-      mineId: MINE,
-      exitCode: 1,
-      stderrTail: 'codex: another instance is already running',
-      cause: 'exited-at-once',
-      ...overrides
-    }
-  }
-
-  it('subscribes on the agent:launchFailed channel and hands back the unsubscribe', () => {
-    const api = stubApi()
-    const launch = useAgentLaunch()
-
-    const stop = launch.listenFailures()
-
-    expect(api.onLaunchFailed).toHaveBeenCalledOnce()
-    expect(typeof stop).toBe('function')
-  })
-
-  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: "with main’s own
-  // words", the error line set to the push's stderr). The push names its
-  // cause, which the launch-failure notice says instead of a prose line.
-  it('returns the composer with the push’s cause when it names this launch', async () => {
-    const { api, launch } = await detachedLaunch()
-    launch.listenFailures()
-    expect(launch.phase.value).toBe('submitted-spawning')
-
-    const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
-    listener(failure())
-
-    expect(launch.phase.value).toBe('prompt-ready')
-    // AMENDED for #635 (MESSAGE-QUESTIONS 23; was: { cause, choice } alone): the push's own
-    // stderr lines ride along, for the notice title's tooltip.
-    expect(launch.state.value.failure).toEqual({
-      cause: 'exited-at-once',
-      choice: 'codex',
-      output: 'codex: another instance is already running'
-    })
-    expect(launch.state.value.error).toBeNull()
-    // The typed prompt survives, so a retry costs one Enter.
-    expect(launch.state.value.prompt).toBe('dig the east gallery')
-  })
-
-  it('ignores a push naming a launch this panel has already left', async () => {
-    const { api, launch } = await detachedLaunch()
-    launch.listenFailures()
-
-    const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
-    listener(failure({ launchId: 'receipt:9' }))
-
-    expect(launch.phase.value).toBe('submitted-spawning')
-  })
-
   it('times out to a neutral sentence when neither a receipt nor a failure ever arrives', async () => {
     vi.useFakeTimers()
     try {
@@ -1355,24 +1264,6 @@ describe('the launch-failure notice (#635)', () => {
     expect(launch.state.value.failure).toEqual({ cause: 'not-installed', choice: 'claude' })
     expect(launch.state.value.error).toBeNull()
     expect(launch.phase.value).toBe('prompt-ready')
-  })
-
-  it('names a detached supplier that could not be started', async () => {
-    const { api, launch } = await ready('codex')
-    launch.listenFailures()
-    await launch.submit()
-    const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
-
-    listener({
-      launchId: LAUNCH,
-      provider: 'codex',
-      mineId: MINE,
-      exitCode: null,
-      stderrTail: '',
-      cause: 'could-not-start'
-    })
-
-    expect(launch.state.value.failure).toEqual({ cause: 'could-not-start', choice: 'codex' })
   })
 
   // AMENDED for ISSUE-186 (was: today's `{ launched: false, cause }` verdict): from 3d the cause arrives on the Host's

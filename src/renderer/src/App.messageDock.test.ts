@@ -129,7 +129,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
     onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
     // The launch-failure push (#263), subscribed unconditionally on mount.
-    onLaunchFailed: vi.fn().mockReturnValue(() => undefined),
     // Answers "a window was focused", the verdict that leaves the panel alone. AMENDED for ISSUE-001 (was: today's
     // `DwarfActivation`): A-13's 14 answer, `IpcResult<ConsoleOpenResult>`.
     activateDwarf: vi
@@ -145,10 +144,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // AMENDED for ISSUE-001 (was: today's `{ delivered, via }`): A-23's 14 answer.
     sendDwarfText: vi.fn(() => Promise.resolve(accepted())),
     // The verdict of a message main HELD (#457), subscribed unconditionally on mount.
-    onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-183 (was: A-26 `kickDwarf`, which left the facade in 3a): "Stop dwarf…" is A-N29.
     stopDwarf: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } }),
-    retireDwarf: vi.fn(),
     // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): A-40/A-41 answer the 14 `IpcResult<AnswerOutcome>`.
     answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
     answerDwarfPermission: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
@@ -1410,48 +1407,6 @@ describe('the add panel', () => {
 
     expect(wrapper.find(ADD).exists()).toBe(true)
     expect(wrapper.find('.dm-add__why.is-alert').text()).toBe('The agent could not be started.')
-  })
-
-  /*
-   * The failure channel (#263), end to end: main pushes what it learned
-   * AFTER `agent:launch` already answered `launched: true`, and the panel
-   * returns to the composer with the CLI's own words rather than staying
-   * parked on "the session started" forever.
-   *
-   * AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: a push with no
-   * `cause`, and the CLI's stderr on the line as an alert). The push always
-   * names its cause now, and the panel says it as the launch-failure notice.
-   */
-  it('returns to the composer with the notice naming the cause when the launch fails after it started', async () => {
-    // AMENDED for ISSUE-001 (was: today's A-36 and A-35 answers, the receipt `receipt:1`): Codex is served by today's
-    // runtime behind `PerProviderShapeAdapter`, accepted under the `LaunchId` today's A-P3 then names.
-    const { wrapper, api } = await openAddPanel({
-      listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [supplier('codex')] })
-    })
-
-    await submitPrompt(wrapper, 'dig the east gallery')
-    // The wait, before anything failed. AMENDED for ISSUE-001 (was: "The session started."): the launch is still
-    // being sent in, and the line is not an alert yet.
-    expect(wrapper.find('.dm-add__why').text()).toBe('Sending the dwarf in…')
-    expect(wrapper.find('.dm-add__why.is-alert').exists()).toBe(false)
-
-    const fail = api.onLaunchFailed.mock.calls[0]![0] as (push: unknown) => void
-    fail({
-      launchId: LAUNCH_ID,
-      provider: 'codex',
-      mineId: MINE.id,
-      exitCode: 1,
-      stderrTail: 'codex: another instance is already running',
-      cause: 'exited-at-once'
-    })
-    await flushPromises()
-
-    expect(wrapper.get('.dm-add__fail[role="alert"] .dm-add__fail-title').text()).toBe(
-      'Codex stopped as soon as it started'
-    )
-    expect(wrapper.find('.dm-add__why').text()).toBe('The dwarf did not go in.')
-    // The composer is back, prompt intact, so a retry costs one click.
-    expect(wrapper.find<HTMLTextAreaElement>(PROMPT).element.value).toBe('dig the east gallery')
   })
 
   /*

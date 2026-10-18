@@ -33,12 +33,19 @@ describe('agentProviderList', () => {
     expect(list.providers.map((entry) => entry.installed)).toEqual([true, false, false, false])
   })
 
-  // AMENDED for ISSUE-184, the step-3a deletion (was: on a detected Claude):
-  // OpenCode is the one provider today's launcher still starts.
-  it('marks a detected provider the engine can start as launchable, with no reason', () => {
+  // AMENDED for ISSUE-184, the step-3a deletion (was: on a detected Claude).
+  // AMENDED for ISSUE-239, the step-4b deletion (was: "marks a detected
+  // provider the engine can start as launchable, with no reason", on a
+  // detected OpenCode): today's launcher starts no provider any more.
+  it('marks a detected provider installed but not launchable since the step-4b deletion', () => {
     const [, , , opencode] = agentProviderList([found('opencode')]).providers
 
-    expect(opencode).toEqual({ provider: 'opencode', installed: true, launchable: true })
+    expect(opencode).toEqual({
+      provider: 'opencode',
+      installed: true,
+      launchable: false,
+      reason: NOT_LAUNCHABLE
+    })
   })
 
   /*
@@ -111,7 +118,10 @@ describe('agentProviderList', () => {
     // AMENDED for ISSUE-184, the step-3a deletion (was: ['claude',
     // 'opencode']): today's Claude launch left the tree; the Host's Claude
     // drivers are its only launcher.
-    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['opencode'])
+    // AMENDED for ISSUE-239, the step-4b deletion (was: ['opencode']): today's
+    // OpenCode launch left the tree; the Host's OpenCode drivers are its only
+    // launcher, so the list is empty.
+    expect([...LAUNCHABLE_PROVIDERS]).toEqual([])
   })
 
   /*
@@ -178,11 +188,21 @@ describe('agentProviderList', () => {
    * LAUNCHABLE_PROVIDERS above, so a detected OpenCode is launchable exactly
    * as Claude, Codex and Antigravity are, with no refusal to explain — the
    * same conclusion #237's own amendment reached for Antigravity.
+   *
+   * AMENDED for ISSUE-239, the step-4b deletion (was: "marks a detected
+   * OpenCode launchable now that #534 gives it a detached launch"): today's
+   * OpenCode launch left the tree, so a detected OpenCode is installed but not
+   * launchable here, with NOT_LAUNCHABLE as its reason.
    */
-  it('marks a detected OpenCode launchable now that #534 gives it a detached launch', () => {
+  it('marks a detected OpenCode installed but not launchable since the step-4b deletion', () => {
     const [, , , opencode] = agentProviderList([found('opencode')]).providers
 
-    expect(opencode).toEqual({ provider: 'opencode', installed: true, launchable: true })
+    expect(opencode).toEqual({
+      provider: 'opencode',
+      installed: true,
+      launchable: false,
+      reason: NOT_LAUNCHABLE
+    })
   })
 
   it('offers no refusal copy for an OpenCode nobody has installed', () => {

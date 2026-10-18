@@ -79,12 +79,7 @@ import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
 import { CUT_3E_RELEASE, CUT_3E_ROUTES, cut3eRoutesForBuild } from './testing/cut3eRoutes'
-import {
-  CUT_4A_RELEASE,
-  CUT_4A_RETIRED,
-  CUT_4A_ROUTES,
-  cut4aRoutesForBuild
-} from './testing/cut4aRoutes'
+import { CUT_4A_RELEASE, CUT_4A_RETIRED, cut4aRoutesForBuild } from './testing/cut4aRoutes'
 import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import { ADAPTERS_AS_SHIPPED } from './testing/adaptersAsShipped'
 import {
@@ -5012,31 +5007,14 @@ describe('release 4b (21 §2 cut 4b)', () => {
     expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
   })
 
-  it('[ADR-001] a 4b rollback build routes every OpenCode row as the 4a table did', async () => {
-    // 21 §2 cut 4b "Rollback", §2.1 item 1: before the 4b deletion commits (ISSUE-239…ISSUE-241) the OpenCode rows flip
-    // back to `legacy`, in either build: OpenCode reaches the shape adapters again and gets its A-27, A-P3, A-P4 rows
-    // back. The rows 4a moved keep their routes (only forward fixes after 4a's own deletion).
-    const order = (routes: readonly ChannelRoute[]) =>
-      routes.map((route) => JSON.stringify(route)).sort()
-    for (const [table, before] of [
-      [cut4b, CUT_4A_ROUTES],
-      [tableOf(PUBLIC), cut4aRoutesForBuild({ publicBuild: true })]
-    ] as const) {
-      const rolledBack = rollbackOf(table, 'cut-4b')
-      expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
-      expect(order(rolledBack.routes)).toEqual(order(before))
-      expect(rolledBack.retired).toEqual(CUT_4A_RETIRED)
+  // AMENDED for ISSUE-239, the 4b deletion (was: "a 4b rollback build routes every OpenCode row as the 4a table did":
+  // the OpenCode rows flipped back to `legacy` through the shape adapters, with A-27, A-P3 and A-P4 back): today's
+  // OpenCode launch and the A-27, A-P3, A-P4 handlers left the tree, so 4b rolls forward only (21 §2 cut 4b "Rollback",
+  // §2.1 item 4; docs/strangler/rollback.md).
+  it('[ADR-001] a 4b rollback build is refused since the 4b deletion: 4b rolls forward only', () => {
+    for (const table of [cut4b, tableOf(PUBLIC)]) {
+      expect(() => rollbackOf(table, 'cut-4b')).toThrow(/cut-4b rolls forward only/)
     }
-    const world = step4bWorld(rollbackOf(cut4b, 'cut-4b').routes, 'cut-4b')
-    expect(
-      await world.invoke(LAUNCH_ROW, launchParams({ kind: 'supplier', providerId: OPENCODE }))
-    ).toEqual({
-      ok: true,
-      value: { launchId: WORLD_MINTED }
-    })
-    expect(world.hostCalls).toEqual([])
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual(['agent:launch'])
-    world.dispose()
   })
 })
 
@@ -6001,5 +5979,79 @@ describe('after the 4a retirement', () => {
     ]) {
       expect(existsSync(resolve(SRC, path)), path).toBe(false)
     }
+  })
+})
+
+// ADDED for ISSUE-239, the 4b deletion (21 §2 cut 4b "Legacy deleted"; cut 3 common rules; §1 items 3, 6, 7; 14 §6.5
+// "Registry completeness"): after the soak, today's OpenCode launch and the handlers and pushes of the RETIRE rows A-27,
+// A-P3 and A-P4 leave the tree. Read as text, because this tree never imports legacy code (05 R16).
+describe('after the 4b retirement', () => {
+  const SRC = resolve(import.meta.dirname, '..', '..')
+  const LEGACY_ROOTS = ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']
+  /** Today's member of each retired row (14 §2.1 A-27, A-P3, A-P4). */
+  const RETIRED_IN_4B: Readonly<Record<string, string>> = {
+    'dwarf:retire': 'retireDwarf', // A-27, successor B-F10 `dwarf.departed`
+    'agent:launchFailed': 'launchFailed', // A-P3, successor B-F19 `launch.failed`
+    'dwarf:sendText:settled': 'dwarfSendSettled' // A-P4, successor B-F12 `message.delivery`
+  }
+  /** Today's launch, send and stop handlers (14 §2.1 A-35, A-23, A-27). */
+  const LAUNCH_SEND_STOP = ['launchAgent', 'sendDwarfText', 'retireDwarf']
+  const registered = (member: string) =>
+    new RegExp(
+      String.raw`(handle|ipcMain\.handle|ipcMain\.on)\(\s*IPC_CHANNELS\.${member}\b|send\(\s*IPC_CHANNELS\.${member}\b`
+    )
+  const legacyUses = (members: readonly string[]) =>
+    LEGACY_ROOTS.flatMap((file) => {
+      const text = readFileSync(resolve(SRC, file), 'utf8')
+      return members
+        .filter((member) => registered(member).test(text))
+        .map((member) => `${file} ${member}`)
+    })
+
+  it('[ADR-001] after 4b A-27, A-P3 and A-P4 have no handler and no route', () => {
+    expect(legacyUses(Object.values(RETIRED_IN_4B))).toEqual([])
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      for (const channel of Object.keys(RETIRED_IN_4B) as ChannelKey[]) {
+        expect(
+          routesForBuild(build).filter((route) => route.channel === channel),
+          channel
+        ).toEqual([])
+        expect(RETIRED[channel], channel).toBe('cut-4b')
+        // The generated facade drops the member with its handler (ISSUE-045 generator, `MEMBER_REMOVED`).
+        expect(MEMBER_REMOVED[channel], channel).toBe('cut-4b')
+      }
+    }
+    const preload = readFileSync(resolve(SRC, 'preload/index.ts'), 'utf8')
+    for (const member of ['retireDwarf', 'onLaunchFailed', 'onDwarfSendSettled']) {
+      expect(preload, member).not.toContain(member)
+    }
+  })
+
+  it('[ADR-001] no legacy launch, send or stop handler is composed for any provider', () => {
+    expect(legacyUses(LAUNCH_SEND_STOP)).toEqual([])
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      const legacy = routesForBuild(build).filter((route) =>
+        (
+          [
+            'agent:launch',
+            'agent:launchHosted',
+            'dwarf:sendText',
+            'dwarf:activate',
+            'dwarf:stop',
+            'dwarf:retire'
+          ] as ChannelKey[]
+        ).includes(route.channel)
+      )
+      expect(legacy.filter((route) => route.owner === 'legacy')).toEqual([])
+    }
+    // 4b rolls forward only: a rollback build would route OpenCode back to code that is gone (21 §2.1 item 4).
+    const cut4b: RouteTable = {
+      release: ROUTES_RELEASE,
+      routes: ROUTES,
+      unrouted: UNROUTED,
+      retired: RETIRED,
+      adapters: LEGACY_BRIDGE_ADAPTERS
+    }
+    expect(() => rollbackOf(cut4b, 'cut-4b')).toThrow(/cut-4b rolls forward only/)
   })
 })

@@ -62,7 +62,6 @@ export function useMessageDock() {
     retry: retryDwarfText,
     observe: observeSends,
     reconcile: reconcileEchoes,
-    listenHeld: listenHeldMessages,
     keepEchoesFor,
     failedSends,
     routeGone,
@@ -512,13 +511,8 @@ export function useMessageDock() {
     if (surface.value.surface === 'message' && openDwarfId.value === walk.dwarfId) close()
   }
 
-  let unlistenLaunchFailures: (() => void) | undefined
-  /** Main's verdict for a message it HELD (#457): the bubble waiting on it is drawn here. */
-  let unlistenHeldMessages: (() => void) | undefined
   let unlistenWalks: (() => void) | undefined
   onMounted(() => {
-    unlistenLaunchFailures = launch.listenFailures()
-    unlistenHeldMessages = listenHeldMessages()
     unlistenWalks = onWalk(followDeparture)
     // The chats from the Host (ISSUE-123): followed for as long as the dock lives.
     void startChat()
@@ -527,8 +521,6 @@ export function useMessageDock() {
     void launch.hostLaunches.start()
   })
   onBeforeUnmount(() => {
-    unlistenLaunchFailures?.()
-    unlistenHeldMessages?.()
     unlistenWalks?.()
     stopChat()
     stopMarks()

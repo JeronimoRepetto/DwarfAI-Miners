@@ -983,7 +983,9 @@ describe('A-26 retired in 3a (ISSUE-183)', () => {
   it('[ADR-019] A-26 is retired in 3a and the generated preload has no kickDwarf member', () => {
     expect(CHANNELS['dwarf:kick'].status).toBe('retired')
     expect(RETIRED['dwarf:kick']).toBe('cut-3a')
-    expect(MEMBER_REMOVED).toEqual({ 'dwarf:kick': 'cut-3a' })
+    // AMENDED for ISSUE-239 (was: `MEMBER_REMOVED` holding A-26 alone): the 4b deletion removed A-27, A-P3 and A-P4's
+    // members too (`ipc-routing.contract.test.ts`, `describe('after the 4b retirement')`).
+    expect(MEMBER_REMOVED['dwarf:kick']).toBe('cut-3a')
     for (const file of ['src/preload/index.ts', 'src/contracts/ipc/testing/fakeWindowApi.ts']) {
       expect(generated(file), file).not.toMatch(/\bkickDwarf\b/)
       expect(generated(file), file).not.toMatch(/'dwarf:kick'/)

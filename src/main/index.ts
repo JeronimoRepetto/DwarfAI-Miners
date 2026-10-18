@@ -13,10 +13,8 @@ import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
-  AgentLaunchRequest,
   AgentModelCatalogList,
   AgentProviderList,
-  AgentLaunchResult,
   AppBuild,
   FeatureFlags,
   DwarfFeedPage,
@@ -26,15 +24,11 @@ import type {
   DwarfPermissionAnswerRequest,
   DwarfPermissionDecision,
   DwarfQuestionAnswerResult,
-  DwarfTextRequest,
-  DwarfTextResult,
   DwarfTuningRequest,
   DwarfNameResult,
   DwarfTuningResult,
   CopyTextResult,
   ExternalLinkResult,
-  DwarfSendSettledPush,
-  LaunchFailedPush,
   MaterialTotals,
   Mine,
   MineDeclareResult,
@@ -56,7 +50,6 @@ import type {
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
-  isDwarfProvider,
   isMineTier,
   parseAudioPreferences,
   parseLaunchView,
@@ -65,9 +58,7 @@ import {
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Message attachments (#408) — one block, appended -------------------- */
   DWARF_IMAGE_EXTENSIONS,
-  MAX_DWARF_ATTACHMENTS,
-  parseDwarfAttachments,
-  parseDwarfText
+  MAX_DWARF_ATTACHMENTS
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
   /* --- end of the #509 block ------------------------------------------------ */
@@ -97,8 +88,6 @@ import {
   withConfigFileFallback
 } from './config/configFile'
 import { sumTokensObserved } from './domain/aggregate'
-import { parseLaunchTuning } from './domain/launchTuning'
-import { parseLaunchPermissionMode } from './domain/codexPermissions'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { DelegationService } from './mcp/delegationService'
@@ -209,16 +198,13 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.openMinePath)
   ipcMain.removeHandler(IPC_CHANNELS.openExternalLink)
   ipcMain.removeHandler(IPC_CHANNELS.copyText)
-  ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
-  ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
   ipcMain.removeHandler(IPC_CHANNELS.getFeatureFlags)
   ipcMain.removeHandler(IPC_CHANNELS.declareMine)
   ipcMain.removeHandler(IPC_CHANNELS.declareMainProject)
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
   ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
-  ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
   ipcMain.removeHandler(IPC_CHANNELS.listAgentProviders)
   ipcMain.removeHandler(IPC_CHANNELS.listAgentModels)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
@@ -229,76 +215,6 @@ function removeIpcHandlers(): void {
   /* --- System notifications (#316) — one block, appended ------------------- */
   ipcMain.removeAllListeners(IPC_CHANNELS.setOpenMine)
   /* --- end of the #316 block ---------------------------------------------- */
-}
-
-/**
- * The renderer is trusted-but-typed: validate the shape at the boundary so a
- * malformed payload becomes an explained refusal instead of a main-process
- * throw. The message itself is never logged.
- */
-function parseTextRequest(payload: unknown): DwarfTextRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.dwarfId !== 'string') return null
-  // The one field that can refuse a well-formed request on its CONTENT (#431):
-  // a message past the wire ceiling is one no channel could carry, so the
-  // whole request goes down rather than arriving cut. See parseDwarfText for
-  // why the handler's generic sentence is the honest one here.
-  const text = parseDwarfText(record.text)
-  if (text === null) return null
-  // All-or-nothing, and the one field here that can refuse the whole request
-  // (#408): a list trimmed to what fits would deliver some of somebody's files
-  // and report success. The limits it reads are the wire's own, so this cannot
-  // come to disagree with the composer about which message was too big.
-  const attachments = parseDwarfAttachments(record.attachments)
-  if (attachments === null) return null
-  return {
-    dwarfId: record.dwarfId,
-    text,
-    pressEnter: record.pressEnter === true,
-    ...(attachments.length === 0 ? {} : { attachments })
-  }
-}
-
-/**
- * Same boundary discipline as parseTextRequest, and the prompt is never logged
- * here either. Note what is NOT accepted: a directory. The renderer names a
- * mine and the runtime decides which folder that is, so this channel cannot be
- * talked into starting a process somewhere the panel is not showing.
- */
-function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
-  // A provider this build does not have takes the whole request down (#168).
-  // Not defaulted, for the reason the preload does not default it either: a
-  // launch starts a real process, and picking one for a name nobody sent would
-  // be starting the wrong agent rather than refusing an unreadable request.
-  if (!isDwarfProvider(record.provider)) return null
-  // The model and effort this launch asked for (#239), checked against this
-  // provider's own boundary rule before either is kept: an absent field
-  // degrades to the CLI's own default, and a present-but-unusable one takes
-  // the whole request down rather than being silently dropped — see
-  // parseLaunchTuning for why.
-  const tuning = parseLaunchTuning(record.provider, record)
-  if (tuning === null) return null
-  // The Codex permission mode this launch asked for (#635), on the same
-  // "present and unusable takes the whole request down" terms as the tuning:
-  // an unknown mode, or a mode named for any provider but Codex, is refused
-  // rather than dropped — see parseLaunchPermissionMode.
-  const permission = parseLaunchPermissionMode(record.provider, record)
-  if (permission === null) return null
-  return {
-    mineId: record.mineId,
-    provider: record.provider,
-    prompt: record.prompt,
-    ...tuning,
-    ...permission,
-    // Whether a Jev DECISION was applied to this launch (#511) — trusted only
-    // as `true`; anything else (absent, junk) reads as not routed, the same
-    // "say nothing" boundary discipline model/effort hold above.
-    ...(record.routedByJev === true ? { routedByJev: true } : {})
-  }
 }
 
 /** Same boundary discipline as parseTextRequest: kick carries no user text at all. */
@@ -912,24 +828,10 @@ async function init(): Promise<void> {
       // in front of it.
       notifier.update(mines)
       /* --- end of the #316 block ------------------------------------------ */
-    },
-    // #263. Both windows, for the same reason `onMinesUpdated` reaches both:
-    // the Add Panel that made the launch lives in whichever window opened it,
-    // and main does not track which one that was.
-    onLaunchFailed: (push: LaunchFailedPush) => {
-      for (const contents of appWebContents()) {
-        contents.send(IPC_CHANNELS.launchFailed, push)
-      }
-    },
-    // #457. Both windows, for the reason above: the composer that held this
-    // message lives in whichever window has that dwarf open, and main does
-    // not track which one that was. One-way — the verdict of a message
-    // already answered for has no verdict of its own.
-    onSendSettled: (push: DwarfSendSettledPush) => {
-      for (const contents of appWebContents()) {
-        contents.send(IPC_CHANNELS.dwarfSendSettled, push)
-      }
     }
+    // AMENDED for ISSUE-239, the 4b deletion (was: `onLaunchFailed` and
+    // `onSendSettled`, the A-P3 and A-P4 pushes to both windows): both rows
+    // are retired since the 4b switch.
   })
   // Before the loop starts, exactly as the ledger is loaded before the runtime
   // exists: the first published poll then already carries the user's own mines
@@ -1323,16 +1225,8 @@ async function init(): Promise<void> {
     copyTextToClipboard(payload, clipboard)
   )
 
-  const notDelivered: DwarfTextResult = {
-    delivered: false,
-    via: 'none',
-    error: 'The message could not be delivered.'
-  }
-  ipcMain.handle(IPC_CHANNELS.sendDwarfText, (_event, payload: unknown) => {
-    const request = parseTextRequest(payload)
-    if (request === null) return notDelivered
-    return runtime?.sendDwarfText(request) ?? notDelivered
-  })
+  // AMENDED for ISSUE-239, the 4b deletion (was: today's A-23 `sendDwarfText`
+  // handler): every provider's send is the Host's since the 4b switch.
 
   ipcMain.handle(IPC_CHANNELS.describeDwarfAttachments, (_event, payload: unknown) => {
     // A path is a string and nothing here defaults one: a payload that is not a
@@ -1355,16 +1249,8 @@ async function init(): Promise<void> {
     return runtime?.kickDwarf(request) ?? notKicked
   })
 
-  const notLaunched: AgentLaunchResult = {
-    launched: false,
-    provider: 'none',
-    error: 'The agent could not be started.'
-  }
-  ipcMain.handle(IPC_CHANNELS.launchAgent, (_event, payload: unknown) => {
-    const request = parseLaunchRequest(payload)
-    if (request === null) return notLaunched
-    return runtime?.launchAgent(request) ?? notLaunched
-  })
+  // AMENDED for ISSUE-239, the 4b deletion (was: today's A-35 `launchAgent`
+  // handler): every provider's launch is the Host's since the 4b switch.
 
   // Which providers the Add Panel may offer (#86). No payload to validate: the
   // question is about this machine. A runtime that never came up answers with
@@ -1459,13 +1345,8 @@ async function init(): Promise<void> {
     return runtime?.answerDwarfPermission(request) ?? notAnswered
   })
 
-  // The panel watched a kicked agent stop (#46). One-way: main decides what
-  // that costs the dwarf, and the answer travels back on the next poll.
-  ipcMain.on(IPC_CHANNELS.retireDwarf, (_event, dwarfId: unknown) => {
-    // Boundary discipline as elsewhere: a malformed payload changes nothing.
-    if (typeof dwarfId !== 'string' || dwarfId === '') return
-    runtime?.retireDwarf(dwarfId)
-  })
+  // AMENDED for ISSUE-239, the 4b deletion (was: today's A-27 `retireDwarf`
+  // listener): A-27 is retired with no route since the 4b switch.
 }
 
 // Single instance. Today's window is retired (ISSUE-058), so a second launch has no panel of this entry to show.

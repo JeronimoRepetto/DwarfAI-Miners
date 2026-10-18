@@ -188,7 +188,9 @@ describe('registry re-inventory (14 §6.5, P-3)', () => {
         continue
       }
       const [row] = matching
-      const said = `${row.member} ${row.kind} ${row.files.join(',')}`
+      // ISSUE-239: a row whose handler and preload member are gone keeps only its `IPC_CHANNELS` constant, with no
+      // kind; its table row says so with `—`.
+      const said = `${row.member} ${row.kind ?? ''} ${row.files.join(',')}`
       const found = `${channel.member} ${channel.kind} ${channel.files.join(',')}`
       if (said !== found)
         problems.push(`${channel.key}: the row says ${said}, the tree has ${found}`)
@@ -223,8 +225,11 @@ describe('registry re-inventory (14 §6.5, P-3)', () => {
       if (entry.status !== row.status) {
         problems.push(`${key}: ${row.id} is ${entry.status} in 14, the row says ${row.status}`)
       }
-      const said = `${row.wire} ${row.member} ${row.kind}`
-      const listed = `${entry.wire} ${entry.member} ${entry.kind}`
+      // ISSUE-239: a RETIRE row whose handler and preload member left with its deletion issue keeps only its
+      // `IPC_CHANNELS` constant (no kind), so only its wire is compared with 14.
+      const memberGone = row.kind === null && entry.status === 'RETIRE'
+      const said = memberGone ? `${row.wire}` : `${row.wire} ${row.member} ${row.kind}`
+      const listed = memberGone ? `${entry.wire}` : `${entry.wire} ${entry.member} ${entry.kind}`
       if (said !== listed)
         problems.push(`${key}: ${row.id} is ${listed} in 14, the row says ${said}`)
       const reference = row.id === I21 || RENAMED_14[row.id] ? `${row.id} ${row.wire}` : row.id

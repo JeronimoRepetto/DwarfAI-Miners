@@ -66,33 +66,6 @@ describe('createJevPreferenceStore — saving a valid default', () => {
     expect(await rebooted.load()).toEqual({ profile: 'premium', default: {}, delegation: false })
   })
 
-  it('saves a default that only pins a provider, leaving model and effort to the CLI', async () => {
-    const { fs } = fakeFs()
-    const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    const preferences = {
-      profile: 'balanced' as const,
-      // ISSUE-184: Claude is no longer launchable by today's launcher, so the
-      // saved default pins OpenCode (was: 'claude').
-      default: { provider: 'opencode' as const },
-      delegation: false
-    }
-    expect(await store.save(preferences)).toEqual({ saved: true })
-    expect(await store.load()).toEqual(preferences)
-  })
-
-  it('saves a full default — provider, model and effort — once the gate accepts it', async () => {
-    const { fs } = fakeFs()
-    const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    const preferences = {
-      profile: 'economy' as const,
-      // ISSUE-184 (was: Claude, `sonnet`, `low`).
-      default: { provider: 'opencode' as const, model: 'opencode/big-pickle', effort: 'low' },
-      delegation: false
-    }
-    expect(await store.save(preferences)).toEqual({ saved: true })
-    expect(await store.load()).toEqual(preferences)
-  })
-
   it('writes atomically: a sibling temp file first, then a rename onto the final path', async () => {
     const { fs, events } = fakeFs()
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
@@ -144,18 +117,6 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
     expect(events).toHaveLength(0)
   })
 
-  it('refuses an effort level that provider does not accept, and never touches the file', async () => {
-    const { fs, events } = fakeFs()
-    const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    const result = await store.save({
-      profile: 'balanced',
-      default: { provider: 'opencode', effort: 'ultra' }, // ISSUE-184 (was: 'claude')
-      delegation: false
-    })
-    expect(result).toEqual({ saved: false, reason: 'default-tuning-invalid' })
-    expect(events).toHaveLength(0)
-  })
-
   it('refuses a model or effort with no provider to validate it against', async () => {
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs: fakeFs().fs })
     expect(
@@ -170,26 +131,6 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
       saved: false,
       reason: 'default-tuning-invalid'
     })
-  })
-
-  it('leaves a previously saved default in place when a later save is refused', async () => {
-    const { fs } = fakeFs()
-    const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    const good = {
-      profile: 'balanced' as const,
-      default: { provider: 'opencode' as const }, // ISSUE-184 (was: 'claude')
-      delegation: false
-    }
-    await store.save(good)
-
-    await store.save({
-      profile: 'premium',
-      default: { provider: NEVER_LAUNCHED },
-      delegation: false
-    })
-
-    const rebooted = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    expect(await rebooted.load()).toEqual(good)
   })
 })
 

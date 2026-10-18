@@ -191,7 +191,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // A promoted kick retires its dwarf through this (#46). Stubbed rather
     // than made optional in the composable: a missing member should fail a
     // test loudly, not be swallowed at every call site.
-    retireDwarf: vi.fn(),
     answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
     answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
@@ -205,8 +204,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * message main HELD (#457). Both hear nothing by default. One page of scrollback (#364) is a
      * readable answer with nothing older, the quiet default.
      */
-    onLaunchFailed: vi.fn().mockReturnValue(() => undefined),
-    onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
     getDwarfFeedPage: vi
       .fn()
       .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),

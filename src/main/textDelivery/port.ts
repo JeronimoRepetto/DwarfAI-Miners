@@ -560,15 +560,12 @@ export interface TextDeliveryPort {
    * Continue an OpenCode session that was started with `opencode run`, by
    * starting its next turn with this message as the prompt (#534).
    *
-   * Optional on the same terms `queueToCodexThread` is, and both shipped
-   * ports implement it for the same reason: it spawns a CLI, so it is
-   * platform-neutral like the relay.
-   *
-   * The one tier that does not wait for its own act to finish, exactly like
-   * its Codex sibling: an implementation reports the hand-over once the
-   * process has taken the message on stdin and survived a short bounded
-   * start window, and reports a failure for one that died inside it. See
-   * opencodeContinue.ts.
+   * Optional on the same terms `queueToCodexThread` is. AMENDED for ISSUE-239,
+   * the step-4b deletion (was: implemented by both shipped ports through
+   * `opencodeContinue.ts`): today's OpenCode relaunch left the tree, so no
+   * shipped port implements it and the runtime answers its own "no
+   * continuation tier" refusal. The Host's OpenCode drivers send to a session
+   * they own (21 §2 row 4b).
    */
   continueOpenCodeSession?(request: OpenCodeContinueRequest): Promise<TextDeliveryOutcome>
   /**

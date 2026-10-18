@@ -114,8 +114,6 @@ function windowsPort(): WindowsTextDelivery {
     runRelay: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
     codexBinary: async () => 'C:\\Users\\j\\.local\\bin\\codex.exe',
     runCodexQueue: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
-    opencodeBinary: async () => 'C:\\Users\\j\\.local\\bin\\opencode.exe',
-    runOpenCodeContinue: vi.fn().mockResolvedValue({ running: true }),
     fs: new FakeFs(),
     processEnd: {
       endProcessTree: vi.fn().mockResolvedValue(true),
@@ -156,8 +154,6 @@ function posixPort(
     runRelay: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
     codexBinary: async () => '/usr/local/bin/codex',
     runCodexQueue: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
-    opencodeBinary: async () => '/usr/local/bin/opencode',
-    runOpenCodeContinue: vi.fn().mockResolvedValue({ running: true }),
     fs: new FakeFs(),
     processEnd: {
       endProcessTree: vi.fn().mockResolvedValue(true),
@@ -209,7 +205,8 @@ const EXPECTED_PRESENCE: Record<
     queueToCodexThread: 'present',
     // ISSUE-185, the step-3b deletion: today's Codex resume left the tree.
     resumeCodexThread: 'absent',
-    continueOpenCodeSession: 'present',
+    // ISSUE-239, the step-4b deletion: today's OpenCode relaunch left the tree.
+    continueOpenCodeSession: 'absent',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'
   },
@@ -218,7 +215,8 @@ const EXPECTED_PRESENCE: Record<
     queueToCodexThread: 'present',
     // ISSUE-185, the step-3b deletion: today's Codex resume left the tree.
     resumeCodexThread: 'absent',
-    continueOpenCodeSession: 'present',
+    // ISSUE-239, the step-4b deletion: today's OpenCode relaunch left the tree.
+    continueOpenCodeSession: 'absent',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'
   },
@@ -227,7 +225,8 @@ const EXPECTED_PRESENCE: Record<
     queueToCodexThread: 'present',
     // ISSUE-185, the step-3b deletion: today's Codex resume left the tree.
     resumeCodexThread: 'absent',
-    continueOpenCodeSession: 'present',
+    // ISSUE-239, the step-4b deletion: today's OpenCode relaunch left the tree.
+    continueOpenCodeSession: 'absent',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'
   }

@@ -17,10 +17,8 @@ import {
   type LegacyBoardSource
 } from './LegacyRuntimeSurface'
 import type {
-  AgentLaunchRequest,
   AgentModelCatalogList,
   AgentProviderList,
-  AgentLaunchResult,
   AppBuild,
   FeatureFlags,
   DwarfFeedPage,
@@ -28,8 +26,6 @@ import type {
   DwarfPermissionAnswerRequest,
   DwarfPermissionDecision,
   DwarfQuestionAnswerResult,
-  DwarfTextRequest,
-  DwarfTextResult,
   DwarfTuningRequest,
   DwarfNameResult,
   DwarfTuningResult,
@@ -50,15 +46,12 @@ import type {
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
-  isDwarfProvider,
   isMineTier,
   parseAudioPreferences,
   parseLaunchView,
   parseTypographyPreferences,
   DWARF_IMAGE_EXTENSIONS,
-  MAX_DWARF_ATTACHMENTS,
-  parseDwarfAttachments,
-  parseDwarfText
+  MAX_DWARF_ATTACHMENTS
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from '../main/textDelivery/attachmentFiles'
 import type { AttachmentReader } from '../main/textDelivery/attachmentDelivery'
@@ -79,8 +72,6 @@ import {
   withConfigFileFallback
 } from '../main/config/configFile'
 import { sumTokensObserved } from '../main/domain/aggregate'
-import { parseLaunchTuning } from '../main/domain/launchTuning'
-import { parseLaunchPermissionMode } from '../main/domain/codexPermissions'
 import { NodeHookFs } from '../main/hooks/hookFs'
 import { DelegationService } from '../main/mcp/delegationService'
 import { delegationFailure } from '../main/mcp/delegationServerProtocol'
@@ -332,43 +323,6 @@ function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value
   return typeof value === 'string' && (allowed as readonly string[]).includes(value)
 }
 
-/** Boundary check of `sendDwarfText`; the message itself is never logged (#431, #408). */
-function parseTextRequest(payload: unknown): DwarfTextRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.dwarfId !== 'string') return null
-  const text = parseDwarfText(record.text)
-  if (text === null) return null
-  const attachments = parseDwarfAttachments(record.attachments)
-  if (attachments === null) return null
-  return {
-    dwarfId: record.dwarfId,
-    text,
-    pressEnter: record.pressEnter === true,
-    ...(attachments.length === 0 ? {} : { attachments })
-  }
-}
-
-/** Boundary check of `launchAgent`: never a directory, never a defaulted provider (#168, #239, #635, #511). */
-function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
-  if (!isDwarfProvider(record.provider)) return null
-  const tuning = parseLaunchTuning(record.provider, record)
-  if (tuning === null) return null
-  const permission = parseLaunchPermissionMode(record.provider, record)
-  if (permission === null) return null
-  return {
-    mineId: record.mineId,
-    provider: record.provider,
-    prompt: record.prompt,
-    ...tuning,
-    ...permission,
-    ...(record.routedByJev === true ? { routedByJev: true } : {})
-  }
-}
-
 /** Boundary check of `setDwarfTuning` (#96): a `kind` this build cannot read takes the request down. */
 function parseTuningRequest(payload: unknown): DwarfTuningRequest | null {
   if (typeof payload !== 'object' || payload === null) return null
@@ -445,16 +399,15 @@ function toMinesSnapshot(
 /**
  * The pushes of today's runtime as the route composes them. After the cut-1 retirement (21 §2 cut 1 "Retired at the
  * end"; ISSUE-124, ISSUE-125) a board change reaches nothing: A-P2 is `BoardFacadeAdapter`'s push from the Host board,
- * and the Host's attention policy is the only way to an OS notification (ADR-018 items 1, 7). A failed launch and a
- * settled send still reach the Panel (A-P3, A-P4).
+ * and the Host's attention policy is the only way to an OS notification (ADR-018 items 1, 7). AMENDED for ISSUE-239,
+ * the 4b deletion (was: a failed launch and a settled send still reached the Panel, A-P3 and A-P4): both rows are
+ * retired since the 4b switch (successors B-F19 `launch.failed`, B-F12 `message.delivery`), so nothing reaches it.
  */
 export function legacyRuntimePushes(
-  panel: LegacyPanelSurface
-): Pick<RuntimeOptions, 'onMinesUpdated' | 'onLaunchFailed' | 'onSendSettled'> {
+  _panel: LegacyPanelSurface
+): Pick<RuntimeOptions, 'onMinesUpdated'> {
   return {
-    onMinesUpdated: () => {},
-    onLaunchFailed: (push) => panel.send(IPC_CHANNELS.launchFailed, push),
-    onSendSettled: (push) => panel.send(IPC_CHANNELS.dwarfSendSettled, push)
+    onMinesUpdated: () => {}
   }
 }
 
@@ -890,16 +843,8 @@ export function composeLegacyRuntime(
       copyTextToClipboard(payload, clipboard)
     )
 
-    const notDelivered: DwarfTextResult = {
-      delivered: false,
-      via: 'none',
-      error: 'The message could not be delivered.'
-    }
-    handle(IPC_CHANNELS.sendDwarfText, (payload) => {
-      const request = parseTextRequest(payload)
-      if (request === null) return notDelivered
-      return runtime?.sendDwarfText(request) ?? notDelivered
-    })
+    // AMENDED for ISSUE-239, the 4b deletion (was: today's A-23 `sendDwarfText` handler): every provider's send is the
+    // Host's since the 4b switch.
 
     handle(IPC_CHANNELS.describeDwarfAttachments, (payload) => {
       if (!Array.isArray(payload)) return []
@@ -910,16 +855,8 @@ export function composeLegacyRuntime(
       return describeAttachments(paths.slice(0, MAX_DWARF_ATTACHMENTS), attachmentFiles)
     })
 
-    const notLaunched: AgentLaunchResult = {
-      launched: false,
-      provider: 'none',
-      error: 'The agent could not be started.'
-    }
-    handle(IPC_CHANNELS.launchAgent, (payload) => {
-      const request = parseLaunchRequest(payload)
-      if (request === null) return notLaunched
-      return runtime?.launchAgent(request) ?? notLaunched
-    })
+    // AMENDED for ISSUE-239, the 4b deletion (was: today's A-35 `launchAgent` handler): every provider's launch is the
+    // Host's since the 4b switch, and today's launcher starts none.
 
     const noProviders: AgentProviderList = { providers: [] }
     handle(IPC_CHANNELS.listAgentProviders, () => runtime?.listAgentProviders() ?? noProviders)
@@ -979,10 +916,8 @@ export function composeLegacyRuntime(
       return runtime?.answerDwarfPermission(request) ?? notAnswered
     })
 
-    handle(IPC_CHANNELS.retireDwarf, (dwarfId) => {
-      if (typeof dwarfId !== 'string' || dwarfId === '') return
-      runtime?.retireDwarf(dwarfId)
-    })
+    // AMENDED for ISSUE-239, the 4b deletion (was: today's A-27 `retireDwarf` handler): A-27 is retired with no route
+    // since the 4b switch (successor B-F10 `dwarf.departed`).
 
     // Today's board for the production `LegacyRuntimeSurface`: read through the module-level `runtime`, so a tick after
     // the quit teardown released it does nothing (./LegacyRuntimeSurface.ts).
