@@ -50,7 +50,7 @@ describe('step 3e public build (21 §2 row 3e; ADR-009 D6)', () => {
     }
     expect(resolveRoute(PUBLIC, JEV_ROUTE)?.owner).toBe('host')
     // Observed: today's feed keeps only what today's runtime launched; the Host observes the rest.
-    expect(legacyFeedModesOf(PUBLIC)[ANTIGRAVITY]).toBe('legacy-launched')
+    expect(legacyFeedModesOf(PUBLIC)).toMatchObject({ [ANTIGRAVITY]: 'legacy-launched' })
 
     // Through the root's composition: the public Host lists no gated entry, and the merged catalog (the chips and the
     // "Default provider" list) holds no Antigravity entry although today's runtime offers Antigravity.

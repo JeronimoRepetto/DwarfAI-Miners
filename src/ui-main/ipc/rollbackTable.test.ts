@@ -11,12 +11,7 @@ import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRo
 import { rollbackOf } from './rollbackTable'
 // AMENDED for ISSUE-002 (was: the release table `ROUTES` as the 3a table): from the step-3b switch the 3a table as it
 // shipped is `testing/cut3aRoutes.ts`.
-import {
-  LEGACY_BRIDGE_ADAPTERS,
-  ROUTES as RELEASE_ROUTES,
-  ROUTES_RELEASE,
-  routesForBuild
-} from './routes'
+import { LEGACY_BRIDGE_ADAPTERS, ROUTES_RELEASE, routesForBuild } from './routes'
 import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'

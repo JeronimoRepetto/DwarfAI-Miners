@@ -216,7 +216,7 @@ test.describe('step 3e: an Antigravity dwarf through the Host in a development b
     try {
       const row = db
         .prepare('SELECT departure_cause AS cause FROM dwarfs WHERE id = ?')
-        .get(dwarfId) as { cause: string | null } | undefined
+        .get(dwarfId!) as { cause: string | null } | undefined
       expect(row?.cause, 'the stopped dwarf departed stopped').toBe('stopped')
     } finally {
       db.close()
