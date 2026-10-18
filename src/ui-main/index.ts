@@ -255,6 +255,11 @@ import {
   LAUNCH_AGENT_ROWS
 } from './ipc/handlers/launchAgent.host'
 import {
+  createListAgentProvidersRow,
+  LIST_AGENT_PROVIDERS,
+  LIST_AGENT_PROVIDERS_ROWS
+} from './ipc/handlers/listAgentProviders.host'
+import {
   createLaunchCustomRow,
   LAUNCH_CUSTOM,
   LAUNCH_CUSTOM_ROWS
@@ -1330,8 +1335,10 @@ export function composeJevRouteRow(deps: {
  * `activateDwarf` (B-M29, its window half raising the console UI main holds, ADR-031), A-25
  * `describeDwarfAttachments` (B-M28), A-N06 `retryDwarfMessage` (B-M25) and A-N10, A-N11 the recovery report (B-M35,
  * B-M36). A-13 is composed only with the console raiser (`consoles`), never half. From step 3d (ISSUE-186) also A-39
- * `launchHostedProcess` (B-M34, the "Other…" launch). `undefined` when the table routes none of them `host` (before the
- * step-3a switch).
+ * `launchHostedProcess` (B-M34, the "Other…" launch). From step 4b (ISSUE-238) also A-36 `listAgentProviders` (B-M37),
+ * where its unqualified route, the renderer's one catalog call, is `host` (before 4b its provider-qualified `host`
+ * routes are the moved providers of `CatalogMergeAdapter`, which serves that call). `undefined` when the table routes
+ * none of them `host` (before the step-3a switch).
  */
 export function composeConversationAndLaunchRows(deps: {
   routes: readonly ChannelRoute[]
@@ -1346,6 +1353,12 @@ export function composeConversationAndLaunchRows(deps: {
   }
   if (toHost(LAUNCH_CUSTOM)) {
     parts.push({ channels: LAUNCH_CUSTOM_ROWS, target: createLaunchCustomRow(client) })
+  }
+  const catalogCall = routes.find(
+    (route) => route.channel === LIST_AGENT_PROVIDERS && route.qualifier === undefined
+  )
+  if (catalogCall?.owner === 'host') {
+    parts.push({ channels: LIST_AGENT_PROVIDERS_ROWS, target: createListAgentProvidersRow(client) })
   }
   if (toHost(SEND_DWARF_TEXT)) {
     parts.push({ channels: SEND_DWARF_TEXT_ROWS, target: createSendDwarfTextRow(client) })

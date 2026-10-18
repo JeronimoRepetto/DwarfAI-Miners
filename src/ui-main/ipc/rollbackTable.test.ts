@@ -16,6 +16,9 @@ import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
 import { CUT_3E_RELEASE, cut3eRoutesForBuild } from './testing/cut3eRoutes'
+// AMENDED for ISSUE-238 (was: `RETIRED` in the tables of 3a…4a): from 4b the release retires A-27, A-P3 and A-P4,
+// which those releases still routed, so their tables list the 4a retirements.
+import { CUT_4A_RETIRED } from './testing/cut4aRoutes'
 import { CUT_0_ROUTES as ROUTES, CUT_0_TABLE } from './testing/cut0Routes'
 import { CUT_2_ROUTES, CUT_2_TABLE } from './testing/cut2Routes'
 
@@ -186,7 +189,7 @@ describe('rollbackOf', () => {
       release: CUT_3A_RELEASE,
       routes: CUT_3A_ROUTES,
       unrouted: UNROUTED,
-      retired: RETIRED,
+      retired: CUT_4A_RETIRED,
       adapters: LEGACY_BRIDGE_ADAPTERS
     }
     expect(cut3a.release).toBe('cut-3a')
@@ -270,7 +273,7 @@ describe('rollbackOf', () => {
       release: CUT_3B_RELEASE,
       routes: CUT_3B_ROUTES,
       unrouted: UNROUTED,
-      retired: RETIRED,
+      retired: CUT_4A_RETIRED,
       adapters: LEGACY_BRIDGE_ADAPTERS
     }
     expect(cut3b.release).toBe('cut-3b')
@@ -304,7 +307,7 @@ describe('rollbackOf', () => {
       release: CUT_3D_RELEASE,
       routes: CUT_3D_ROUTES,
       unrouted: UNROUTED,
-      retired: RETIRED,
+      retired: CUT_4A_RETIRED,
       adapters: LEGACY_BRIDGE_ADAPTERS
     }
     expect(cut3d.release).toBe('cut-3d')
@@ -350,7 +353,7 @@ describe('rollbackOf', () => {
         release: CUT_3E_RELEASE,
         routes: cut3eRoutesForBuild({ publicBuild }),
         unrouted: UNROUTED,
-        retired: RETIRED,
+        retired: CUT_4A_RETIRED,
         adapters: LEGACY_BRIDGE_ADAPTERS
       }
       const rolledBack = rollbackOf(cut3e, 'cut-3e')

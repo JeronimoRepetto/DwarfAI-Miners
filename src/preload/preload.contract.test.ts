@@ -378,7 +378,9 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-235 (was: A-42 as the KEEP row and A-52 as the CHANGE row still `today`): the step-4a switch
     // routes both `host` with their target shape; the 14 §8 I-21 rows `dwarf:setName` and `dwarf:resetName` stay
     // `legacy` with today's shape.
-    const today = ['agent:launchFailed', 'dwarf:setName', 'dwarf:resetName']
+    // AMENDED for ISSUE-238 (was: A-P3 `agent:launchFailed` too): the step-4b switch retires A-P3 with no route
+    // (`RETIRED`), so the 14 §8 I-21 rows are the ones still `today`.
+    const today = ['dwarf:setName', 'dwarf:resetName']
     for (const key of today) {
       expect(
         [...new Set(ROUTES.filter((route) => route.channel === key).map((route) => route.shape))],

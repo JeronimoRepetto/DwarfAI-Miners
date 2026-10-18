@@ -4,9 +4,12 @@
 // (ISSUE-235) undone: every row 4a moved to the Host (A-33, A-42, A-43, A-47, A-51…A-55) back where 3e routed it, A-33
 // through `ResetFanout`, A-47 through `JevSettingsShapeAdapter`, the others `legacy` with today's shape. Test-only
 // (R14): production never imports it.
-import { RETIRED, UNROUTED, type ChannelKey, type StepId } from '@dwarfai/contracts'
+import { UNROUTED, type ChannelKey, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { LEGACY_BRIDGE_ADAPTERS, routesForBuild } from '../routes'
+import { LEGACY_BRIDGE_ADAPTERS } from '../routes'
+// AMENDED for ISSUE-238 (was: from the release table `routesForBuild` and `RETIRED`): from the step-4b switch the
+// release table is 4b's, so the 3e table starts from the 4a build's table as it shipped (`cut4aRoutes.ts`).
+import { CUT_4A_RETIRED, cut4aRoutesForBuild } from './cut4aRoutes'
 
 /** The release step of this table. */
 export const CUT_3E_RELEASE: StepId = 'cut-3e'
@@ -48,7 +51,7 @@ const AS_3E_ROUTED: Partial<Record<ChannelKey, ChannelRoute>> = {
 
 /** A 3e build's table: `DEVELOPMENT_BUILD_ROUTES` added in a development build, as `routesForBuild` does. */
 export function cut3eRoutesForBuild(build: { publicBuild: boolean }): readonly ChannelRoute[] {
-  return routesForBuild(build).map((route) => {
+  return cut4aRoutesForBuild(build).map((route) => {
     if (route.since !== 'cut-4a') return route
     const before = AS_3E_ROUTED[route.channel]
     if (before === undefined) throw new RangeError(`no 3e route for ${route.channel}`)
@@ -63,6 +66,6 @@ export const CUT_3E_TABLE: RouteTable = {
   release: CUT_3E_RELEASE,
   routes: CUT_3E_ROUTES,
   unrouted: UNROUTED,
-  retired: RETIRED,
+  retired: CUT_4A_RETIRED,
   adapters: LEGACY_BRIDGE_ADAPTERS
 }

@@ -1,13 +1,13 @@
 // The router table (ADR-001 item 3; 21 §1 items 1, 2, 2a): exactly one `ChannelRoute` per (channel, qualifier) for
 // the release `ROUTES_RELEASE`, reviewed per cut and checked by `ipc-routing.contract.test.ts`. A hot spot (22 §5):
 // after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1,
-// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e, ISSUE-235 for step 4a), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
+// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e, ISSUE-235 for step 4a, ISSUE-238 for step 4b), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
 // it is listed in `src/contracts/ipc/unrouted.ts` with that step.
 import { CATALOG_PROVIDER_IDS, STEP_ORDER, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, IpcChannelName, LegacyBridgeAdapter } from './channelRoute'
 
 /** The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. */
-export const ROUTES_RELEASE: StepId = 'cut-4a'
+export const ROUTES_RELEASE: StepId = 'cut-4b'
 
 /** The steps from `from` to `to`, both included, in `STEP_ORDER`. */
 function span(from: StepId, to: StepId): StepId[] {
@@ -132,12 +132,10 @@ const askAnswerCut2 = (channel: IpcChannelName): ChannelRoute[] => [
 
 /**
  * The catalog ids (ISSUE-009; R12: never a hand-typed provider literal here). Step 3a moves Claude's launcher to the
- * Host (21 §2 cut 3a), step 3b Codex's (21 §2 cut 3b), step 3e Antigravity's (21 §2 cut 3e, development builds only);
- * OpenCode moves in 4b.
+ * Host (21 §2 cut 3a), step 3b Codex's (21 §2 cut 3b), step 3e Antigravity's (21 §2 cut 3e, development builds only)
+ * and step 4b OpenCode's (21 §2 cut 4b), the last: from 4b no provider's launch, send or stop row is `legacy`.
  */
 const [CLAUDE = '', CODEX = '', ANTIGRAVITY = '', OPENCODE = ''] = CATALOG_PROVIDER_IDS
-/** The providers whose launch, send and stop rows are still served by today's runtime in 3e. */
-const NOT_MOVED_IN_3E: readonly string[] = [OPENCODE]
 /**
  * The "Other…" driver's provider id (15 §3 H1: `HostedCommandDriver`'s profile, `hosted-command/profile.ts`), which the
  * Host board names for an "Other…" dwarf. Outside the catalog (INV-43: never a Jev candidate, no A-36 entry); step 3d
@@ -176,40 +174,13 @@ const hostCut3b = (channel: IpcChannelName, provider: string): ChannelRoute => (
 })
 
 /**
- * A row of a provider not yet moved from 3a (21 §2 cut 3 common rules, §3.1): today's runtime behind the named shape
- * adapter, with the renderer's target shape; unqualified, so every provider without a qualified route reaches it.
- */
-const legacyThroughCut3a = (channel: IpcChannelName, shapeAdapter: string): ChannelRoute => ({
-  channel,
-  owner: 'legacy',
-  since: 'cut-3a',
-  parity: 'n/a',
-  shape: 'target',
-  shapeAdapter
-})
-
-/**
- * A-27, A-P3 or A-P4 from 3a (21 §2 cut 3 common rules): today's runtime with today's shape, qualified to each provider
- * not yet moved; a moved provider has no route (its successors are B-F10, B-F19 and B-F12). Retired at the end of 4b.
- * The step-3b switch removed Codex's route and the step-3e switch Antigravity's; OpenCode's is unchanged since 3a.
- */
-const legacyNotMovedCut3a = (channel: IpcChannelName): ChannelRoute[] =>
-  NOT_MOVED_IN_3E.map((provider) => ({
-    channel,
-    owner: 'legacy',
-    since: 'cut-3a',
-    parity: 'n/a',
-    qualifier: { provider },
-    shape: 'today'
-  }))
-
-/**
- * A-13, A-23 or A-35 from 3b: the Host for Claude (3a) and Codex (3b), `PerProviderShapeAdapter` for every other
- * provider (21 §3.1).
+ * A-13, A-23 or A-35 from 3b: the Host for Claude (3a) and Codex (3b). AMENDED for ISSUE-238 (was: and
+ * `PerProviderShapeAdapter` for every other provider, an unqualified `legacy` route from 3a to 4a, 21 §3.1): from 4b
+ * every provider has its qualified `host` route, so none is left for the adapter and its route is gone (the A-27, A-P3
+ * and A-P4 routes qualified to the providers not yet moved went with it: retired, `RETIRED`).
  */
 const perProviderCut3b = (channel: IpcChannelName): ChannelRoute[] => [
   hostCut3a(channel, CLAUDE),
-  legacyThroughCut3a(channel, 'PerProviderShapeAdapter'),
   hostCut3b(channel, CODEX)
 ]
 
@@ -229,10 +200,7 @@ const hostCut3d = (channel: IpcChannelName, provider?: string): ChannelRoute => 
   shape: 'target'
 })
 
-/**
- * A-13, A-23 or A-35 from 3d: the Host for Claude (3a), Codex (3b) and "Other…" dwarfs (3d), `PerProviderShapeAdapter`
- * for every other provider (21 §3.1).
- */
+/** A-13, A-23 or A-35 from 3d: the Host for Claude (3a), Codex (3b) and "Other…" dwarfs (3d). */
 const perProviderCut3d = (channel: IpcChannelName): ChannelRoute[] => [
   ...perProviderCut3b(channel),
   hostCut3d(channel, OTHER_COMMAND)
@@ -255,9 +223,8 @@ const hostCut3e = (channel: IpcChannelName, provider: string): ChannelRoute => (
 })
 
 /**
- * A-13 or A-23 from 3e: the Host for Claude (3a), Codex (3b), "Other…" dwarfs (3d) and Antigravity (3e),
- * `PerProviderShapeAdapter` for OpenCode (21 §3.1). A-35 is `perProviderCut3d` in every build, and a development build
- * adds Antigravity's (`DEVELOPMENT_BUILD_ROUTES`).
+ * A-13 or A-23 from 3e: the Host for Claude (3a), Codex (3b), "Other…" dwarfs (3d) and Antigravity (3e). A-35 is
+ * `perProviderCut3d` in every build, and a development build adds Antigravity's (`DEVELOPMENT_BUILD_ROUTES`).
  */
 const perProviderCut3e = (channel: IpcChannelName): ChannelRoute[] => [
   ...perProviderCut3d(channel),
@@ -280,6 +247,35 @@ const hostCut4a = (channel: IpcChannelName): ChannelRoute => ({
   parity: 'passed',
   shape: 'target'
 })
+
+/**
+ * A row the step-4b switch serves from the Host (21 §2 cut 4b "Rows moved": the provider-qualified rows for OpenCode;
+ * unqualified, the route of A-13, A-23, A-35 and A-36 for every provider, which no provider is left to reach the shape
+ * adapters through) with its target shape: `passed` because its evidence is recorded in `docs/strangler/parity-cut-4b.md` (the launch-cause parity suite,
+ * the L4 conformance of OpenCode's `acp` entry, C-01…C-29 with C-27 for every gate value and C-23, the L2 OpenCode flow,
+ * its L6 contract suites and the cut-4b E2E cases; 21 §1 item 3, §2 row 4b "Parity / exit").
+ */
+const hostCut4b = (channel: IpcChannelName, provider?: string): ChannelRoute => ({
+  channel,
+  owner: 'host',
+  since: 'cut-4b',
+  parity: 'passed',
+  ...(provider === undefined ? {} : { qualifier: { provider } }),
+  shape: 'target'
+})
+
+/**
+ * A-13 or A-23 from 4b: the Host for every provider, OpenCode's qualified route and the unqualified one born in 4b (21
+ * §2 cut 4b): with every provider moved, the route of a call naming no provider the table qualifies is the Host's too
+ * (where 3a…4a had `PerProviderShapeAdapter`), so the Host, which owns the catalog and its build gate (ADR-009 D5, D6),
+ * answers it. A-35 is `perProviderCut3d` plus the same two in every build, and a development build adds Antigravity's
+ * qualified route (`DEVELOPMENT_BUILD_ROUTES`).
+ */
+const perProviderCut4b = (channel: IpcChannelName): ChannelRoute[] => [
+  ...perProviderCut3e(channel),
+  hostCut4b(channel, OPENCODE),
+  hostCut4b(channel)
+]
 
 /**
  * Cut 0 (21 §2 cut 0; ISSUE-056): the window family A-01…A-11, A-21, A-22, A-24, A-28, A-29, A-45, A-46, A-56, A-57,
@@ -344,6 +340,20 @@ const hostCut4a = (channel: IpcChannelName): ChannelRoute => ({
  * person-launched Codex questions `LegacyAskRelay` still reads. OpenCode's launch, send, stop and console rows and A-27,
  * A-P3, A-P4 stay `legacy` until 4b. B-M14 is born in 4a; no NEW row is.
  *
+ * Step 4b (21 §2 cut 4b; ISSUE-238), the last provider step: OpenCode's launch, catalog, send and console rows move to
+ * the Host, qualified by provider as every provider step did (A-35 with its Retry path, A-36, A-23, A-13; A-N29's one
+ * `host` route already serves every dwarf), so the Host launches OpenCode through its `acp` entry (S-031-3 failed:
+ * `OpenCodeServerDriver` only attaches to a person-run server) and reads its own `opencode-permissions` state for each
+ * of its asks (a card while `on-verified`, auto-denied with one chat line otherwise; one answerer, ADR-011 items 3, 7).
+ * No provider is left for the shape adapters, so the unqualified route of A-13, A-23, A-35 and A-36 is the Host's too:
+ * a dwarf or a launch of a provider no qualified route names (the development build's simulated provider; a public
+ * build's gated one, which its Host refuses, ADR-009 D6) and a "Let Jev choose" launch reach the Host, and the
+ * renderer's one A-36 call, which names no provider, reaches the Host's `suppliers.launchable` whole
+ * (`listAgentProviders.host.ts`). A-27, A-P3 and A-P4 have no provider qualifier left and
+ * are retired with no route (`RETIRED`; their successors B-F10, B-F19, B-F12); their handlers and the legacy OpenCode
+ * launch are deleted after the soak (ISSUE-239…ISSUE-241). "Let Jev choose" reaches the Host, whose candidates are every
+ * launchable provider: the narrowing of 3a…4a ends. No seam B member and no NEW row is born in 4b.
+ *
  * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape; the rows
  * still `legacy` that carry a dwarf id reach today's runtime through `LegacyDwarfIdBridge` (21 §3). A-N33 stays
  * unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router
@@ -362,16 +372,15 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('shortcut:get'), // A-10
   uiLocalKept('shortcut:set'), // A-11
   hostCut1('mines:get'), // A-12, through BoardFacadeAdapter
-  ...perProviderCut3e('dwarf:activate'), // A-13, the moved providers' through splits/activateDwarf.ts
+  ...perProviderCut4b('dwarf:activate'), // A-13, every provider's through splits/activateDwarf.ts
   hostCut1('dwarf:feed:page'), // A-15
   hostCut1('mine:history'), // A-19
   hostCut1('mine:openPath'), // A-20
   uiLocalKept('shell:openExternalLink'), // A-21
   uiLocalKept('shell:copyText'), // A-22
-  ...perProviderCut3e('dwarf:sendText'), // A-23
+  ...perProviderCut4b('dwarf:sendText'), // A-23
   uiLocalKept('dwarf:attachments:choose'), // A-24
   hostCut3a('dwarf:attachments:describe'), // A-25, every provider
-  ...legacyNotMovedCut3a('dwarf:retire'), // A-27
   uiLocalKept('app:build'), // A-28
   uiLocalKept('app:features'), // A-29
   hostCut1('mine:declare'), // A-30
@@ -380,10 +389,13 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut4a('metrics:reset'), // A-33, the Host saga alone (`ResetFanout` ended)
   hostCut1('projects:query'), // A-34
   ...perProviderCut3d('agent:launch'), // A-35 and its Retry path (Antigravity's: `DEVELOPMENT_BUILD_ROUTES`)
-  hostCut3a('agent:providers', CLAUDE), // A-36, Claude's entry (a moved provider of the catalog merge)
-  legacyThroughCut3a('agent:providers', 'CatalogMergeAdapter'), // A-36, the renderer's one catalog call
-  hostCut3b('agent:providers', CODEX), // A-36, Codex's entry (a moved provider of the catalog merge)
+  hostCut4b('agent:launch', OPENCODE), // A-35 and its Retry path, OpenCode's
+  hostCut4b('agent:launch'), // A-35 and its Retry path, every other provider and "Let Jev choose"
+  hostCut3a('agent:providers', CLAUDE), // A-36, Claude's entry
+  hostCut3b('agent:providers', CODEX), // A-36, Codex's entry
   hostCut3e('agent:providers', ANTIGRAVITY), // A-36, Antigravity's entry (the Host lists it where it may launch it)
+  hostCut4b('agent:providers', OPENCODE), // A-36, OpenCode's entry
+  hostCut4b('agent:providers'), // A-36, the renderer's one catalog call: the Host's entries whole
   hostCut3d('agent:launchHosted'), // A-39, every "Other…" launch and its Retry
   ...askAnswerCut2('agent:answerQuestion'), // A-40
   ...askAnswerCut2('agent:answerPermission'), // A-41
@@ -405,8 +417,6 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('launch-view:set'), // A-57
   uiLocalKept('panel:visible:changed'), // A-P1
   hostCut1('mines:update'), // A-P2, through BoardFacadeAdapter
-  ...legacyNotMovedCut3a('agent:launchFailed'), // A-P3
-  ...legacyNotMovedCut3a('dwarf:sendText:settled'), // A-P4
   uiLocalKept('typography:preferences:changed'), // A-P6
   uiLocalKept('pathForDroppedFile'), // A-X1
   legacyToday('dwarf:setName'), // 14 §8 I-21 (no §2 id)
@@ -489,14 +499,13 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
   'welcome:answer': ['preferences.answerWelcome'], // A-N32 → B-M40
   'dwarf:rename': ['crew.rename'], // A-N08 → B-M22
   'dwarf:name:reset': ['crew.resetName'], // A-N09 → B-M23
-  // A-13 → B-M29, Claude, Codex, Other… and Antigravity (splits/activateDwarf.ts)
-  'dwarf:activate': ['conversation.resolveConsole'],
-  'dwarf:sendText': ['conversation.send'], // A-23 → B-M24, Claude, Codex, Other… and Antigravity
+  'dwarf:activate': ['conversation.resolveConsole'], // A-13 → B-M29, every provider (splits/activateDwarf.ts)
+  'dwarf:sendText': ['conversation.send'], // A-23 → B-M24, every provider
   'dwarf:attachments:describe': ['conversation.describeAttachments'], // A-25 → B-M28
-  'agent:launch': ['launching.launch'], // A-35 → B-M33, Claude, Codex, Other…, Antigravity (development builds)
+  // A-35 → B-M33, every provider (Antigravity in development builds only)
+  'agent:launch': ['launching.launch'],
   'agent:launchHosted': ['launching.launchCustom'], // A-39 → B-M34
-  // A-36 → B-M37: Claude's, Codex's and Antigravity's entries, read by `CatalogMergeAdapter` for the one catalog call
-  'agent:providers': ['suppliers.launchable'],
+  'agent:providers': ['suppliers.launchable'], // A-36 → B-M37, the Host's entries whole from 4b
   'notifications:enabled:get': ['preferences.get'], // A-42 → B-M12
   'notifications:enabled:set': ['preferences.set'], // A-43 → B-M13
   'jev:settings:get': ['preferences.get'], // A-47 → B-M12
@@ -519,7 +528,8 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
  * The release in which each seam B method is born in the Host (21 §2 "Seam B members", B-M02…B-M06 at cut 0; B-M07,
  * B-M08, B-M09, B-M12, B-M13, B-M15, B-M16…B-M20, B-M26, B-M27 and B-M41 at cut 1; B-M30…B-M32, B-M39 and B-M40 at
  * cut 2; B-M22 and B-M23 at cut 2 too, by the ISSUE-172 lead decision, where 21 §2 has them at 3a; B-M10, B-M11,
- * B-M21, B-M24, B-M25, B-M28, B-M29, B-M33 and B-M35…B-M38 at 3a; B-M34 at 3d; none at 3e; B-M14 at 4a).
+ * B-M21, B-M24, B-M25, B-M28, B-M29, B-M33 and B-M35…B-M38 at 3a; B-M34 at 3d; none at 3e; B-M14 at 4a; none at
+ * 4b).
  */
 export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> = {
   ping: 'cut-0',

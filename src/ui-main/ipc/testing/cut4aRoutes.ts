@@ -78,7 +78,9 @@ const REMOVED_BY_4B: ReadonlyArray<{
 ]
 
 const sameRoute = (a: ChannelRoute, b: ChannelRoute): boolean =>
-  a.channel === b.channel && a.qualifier?.provider === b.qualifier?.provider && a.owner === b.owner
+  a.channel === b.channel &&
+  JSON.stringify(a.qualifier ?? {}) === JSON.stringify(b.qualifier ?? {}) &&
+  a.owner === b.owner
 
 /** A 4a build's table: `DEVELOPMENT_BUILD_ROUTES` added in a development build, as `routesForBuild` does. */
 export function cut4aRoutesForBuild(build: { publicBuild: boolean }): readonly ChannelRoute[] {

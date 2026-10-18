@@ -82,7 +82,12 @@ import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
 import { CUT_3E_RELEASE, CUT_3E_ROUTES, cut3eRoutesForBuild } from './testing/cut3eRoutes'
-import { CUT_4A_RETIRED, CUT_4A_ROUTES, cut4aRoutesForBuild } from './testing/cut4aRoutes'
+import {
+  CUT_4A_RELEASE,
+  CUT_4A_RETIRED,
+  CUT_4A_ROUTES,
+  cut4aRoutesForBuild
+} from './testing/cut4aRoutes'
 import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import {
   DEVELOPMENT_BUILD_ROUTES,
@@ -2785,7 +2790,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     release: CUT_3A_RELEASE,
     routes: CUT_3A_ROUTES,
     unrouted: UNROUTED,
-    retired: RETIRED,
+    retired: CUT_4A_RETIRED,
     adapters: LEGACY_BRIDGE_ADAPTERS
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
@@ -3449,7 +3454,7 @@ describe('release 3b (21 §2 cut 3b)', () => {
     release: CUT_3B_RELEASE,
     routes: CUT_3B_ROUTES,
     unrouted: UNROUTED,
-    retired: RETIRED,
+    retired: CUT_4A_RETIRED,
     adapters: LEGACY_BRIDGE_ADAPTERS
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
@@ -3851,7 +3856,7 @@ describe('release 3d (21 §2 cut 3d)', () => {
     release: CUT_3D_RELEASE,
     routes: CUT_3D_ROUTES,
     unrouted: UNROUTED,
-    retired: RETIRED,
+    retired: CUT_4A_RETIRED,
     adapters: LEGACY_BRIDGE_ADAPTERS
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
@@ -4223,7 +4228,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
     release: CUT_3E_RELEASE,
     routes,
     unrouted: UNROUTED,
-    retired: RETIRED,
+    retired: CUT_4A_RETIRED,
     adapters: LEGACY_BRIDGE_ADAPTERS
   })
   const cut3e = tableOf(DEVELOPMENT)
@@ -4486,16 +4491,18 @@ describe('release 3e (21 §2 cut 3e)', () => {
 // adapter (A-42, A-43, A-47, A-51 KEEP, A-52…A-55 and A-33 CHANGE), ends `ResetFanout`, `SettingsMirrorBridge` and
 // `JevSettingsShapeAdapter`, and switches today's OpenCode plugin half off (the Host is the one writer of the plugin
 // file and the one answerer of its asks), while OpenCode's launch, send, stop and console rows and A-27, A-P3, A-P4 stay
-// `legacy` until 4b. RED is the 3e table (`testing/cut3eRoutes.ts`).
+// `legacy` until 4b. RED is the 3e table (`testing/cut3eRoutes.ts`). AMENDED for ISSUE-238 (was: the release table
+// `routesForBuild`, `ROUTES_RELEASE` and `RETIRED`): from the step-4b switch the 4a table as it shipped is
+// `testing/cut4aRoutes.ts`.
 describe('release 4a (21 §2 cut 4a)', () => {
   const [, CODEX = '', , OPENCODE = ''] = CATALOG_PROVIDER_IDS
-  const DEVELOPMENT = routesForBuild({ publicBuild: false })
-  const PUBLIC = routesForBuild({ publicBuild: true })
+  const DEVELOPMENT = cut4aRoutesForBuild({ publicBuild: false })
+  const PUBLIC = cut4aRoutesForBuild({ publicBuild: true })
   const tableOf = (routes: readonly ChannelRoute[]): RouteTable => ({
-    release: ROUTES_RELEASE,
+    release: CUT_4A_RELEASE,
     routes,
     unrouted: UNROUTED,
-    retired: RETIRED,
+    retired: CUT_4A_RETIRED,
     adapters: LEGACY_BRIDGE_ADAPTERS
   })
   const cut4a = tableOf(DEVELOPMENT)
@@ -4596,7 +4603,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
   }
 
   it('[ADR-001] in 4a A-42, A-43, A-47, A-51, A-52, A-53, A-54, A-55 and A-33 route host with no shape adapter', async () => {
-    expect(ROUTES_RELEASE).toBe('cut-4a')
+    expect(CUT_4A_RELEASE).toBe('cut-4a')
     expect(checkRouteTable(cut4a, KEYS)).toEqual([])
     expect(checkRouteTable(tableOf(PUBLIC), KEYS)).toEqual([])
     for (const key of SETTINGS_ROWS) {
@@ -4608,7 +4615,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
     }
 
     // Through the root's compositions: every row is a part of the `host` target, and A-33 runs the Host saga alone.
-    const { parts, calls } = settingsParts(DEVELOPMENT, ROUTES_RELEASE)
+    const { parts, calls } = settingsParts(DEVELOPMENT, CUT_4A_RELEASE)
     const served = parts.flatMap((part) => part.channels)
     expect(served.filter((key) => SETTINGS_ROWS.includes(key)).sort()).toEqual(
       [...SETTINGS_ROWS].sort()
@@ -4636,12 +4643,12 @@ describe('release 4a (21 §2 cut 4a)', () => {
         table.filter((r) => r.shapeAdapter !== undefined && ENDED.includes(r.shapeAdapter))
       ).toEqual([])
     }
-    const { client, jev } = settingsParts(DEVELOPMENT, ROUTES_RELEASE)
+    const { client, jev } = settingsParts(DEVELOPMENT, CUT_4A_RELEASE)
     expect(jev?.shapeAdapters).toEqual({})
     expect(
       composeResetFanout({
         routes: DEVELOPMENT,
-        release: ROUTES_RELEASE,
+        release: CUT_4A_RELEASE,
         legacy: { serve: () => Promise.resolve() },
         client
       })
@@ -4684,7 +4691,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
   })
 
   it('[ADR-001] in 4a the OpenCode launch, send, stop, console rows and A-27, A-P3, A-P4 still route legacy for OpenCode', () => {
-    expect(ROUTES_RELEASE).toBe('cut-4a')
+    expect(CUT_4A_RELEASE).toBe('cut-4a')
     for (const table of [DEVELOPMENT, PUBLIC]) {
       for (const key of ['dwarf:activate', 'dwarf:sendText', 'agent:launch'] as const) {
         expect(resolveRoute(table, key, { provider: OPENCODE }), key).toEqual({
@@ -4730,7 +4737,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
         const born = SEAM_B_METHODS_BORN[member]
         expect(born, `${member} has a birth release`).toBeDefined()
         expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
-          at(ROUTES_RELEASE)
+          at(CUT_4A_RELEASE)
         )
       }
     }
@@ -4749,7 +4756,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
     // 21 §2 cut 4a "Rollback", §2.1: the moved rows flip back while the legacy code is in the tree, except the OpenCode
     // settings rows, whose view carries the status of the password `SecretMigrationBridge` moved into the Host and
     // deleted from today's file (`KEPT_WITH_THE_MIGRATED_SECRET`); the Host stays the plugin file's one writer.
-    expect(ROUTES_RELEASE).toBe('cut-4a')
+    expect(CUT_4A_RELEASE).toBe('cut-4a')
     const KEPT: readonly ChannelKey[] = [
       'opencode:settings:get',
       'opencode:plugin:set',
@@ -4882,7 +4889,8 @@ describe('release 4b (21 §2 cut 4b)', () => {
         hostFor(key, CODEX, 'cut-3b'),
         hostFor(key, OTHER, 'cut-3d'),
         hostFor(key, ANTIGRAVITY, 'cut-3e'),
-        hostFor(key, OPENCODE, 'cut-4b')
+        hostFor(key, OPENCODE, 'cut-4b'),
+        hostCut4b(key)
       ])
     }
     expect(routeOf(LAUNCH_ROW)).toEqual([
@@ -4890,9 +4898,11 @@ describe('release 4b (21 §2 cut 4b)', () => {
       hostFor(LAUNCH_ROW, CODEX, 'cut-3b'),
       hostFor(LAUNCH_ROW, OTHER, 'cut-3d'),
       hostFor(LAUNCH_ROW, OPENCODE, 'cut-4b'),
+      hostCut4b(LAUNCH_ROW),
       hostFor(LAUNCH_ROW, ANTIGRAVITY, 'cut-3e') // `DEVELOPMENT_BUILD_ROUTES`
     ])
-    // A-36: each provider's entry is the Host's, and the renderer's one (unqualified) catalog call reaches the Host.
+    // A-36: each provider's entry is the Host's, and the renderer's one (unqualified) catalog call reaches the Host; the
+    // unqualified routes of A-13, A-23, A-35 are the Host's too (no provider is left for the shape adapters).
     expect(routeOf(PROVIDERS)).toEqual([
       hostFor(PROVIDERS, CLAUDE, 'cut-3a'),
       hostFor(PROVIDERS, CODEX, 'cut-3b'),
@@ -4907,7 +4917,9 @@ describe('release 4b (21 §2 cut 4b)', () => {
           : hostFor(key, OPENCODE, 'cut-4b')
       )
     }
-    expect(resolveRoute(DEVELOPMENT, PROVIDERS)).toEqual(hostCut4b(PROVIDERS))
+    for (const key of [ACTIVATE, SEND, LAUNCH_ROW, PROVIDERS]) {
+      expect(resolveRoute(DEVELOPMENT, key), key).toEqual(hostCut4b(key))
+    }
     expect(resolveRoute(DEVELOPMENT, STOP, { provider: OPENCODE })?.owner).toBe('host')
 
     // Through the root's composition: an OpenCode launch (and its Retry), send, console and stop reach the Host with the
@@ -4982,15 +4994,12 @@ describe('release 4b (21 §2 cut 4b)', () => {
           expect(route.owner, `${key} ${route.qualifier?.provider ?? '*'}`).toBe('host')
           expect(route.shape, key).toBe('target')
         }
-        for (const provider of [...CATALOG_PROVIDER_IDS, OTHER]) {
-          const route = resolveRoute(table, key, { provider })
-          // A public build has no route that launches its gated provider (ADR-009 D6; 21 §2 row 3e).
-          if (route === undefined) {
-            expect([table === PUBLIC, key, provider]).toEqual([true, LAUNCH_ROW, ANTIGRAVITY])
-            continue
-          }
-          expect(route.owner, `${key} ${provider}`).toBe('host')
+        // Every provider, one no route names and none at all: the Host (a public build's gated provider included,
+        // whose launch its Host refuses, ADR-009 D6: no gated driver in a public build).
+        for (const provider of [...CATALOG_PROVIDER_IDS, OTHER, 'not-a-provider']) {
+          expect(resolveRoute(table, key, { provider })?.owner, `${key} ${provider}`).toBe('host')
         }
+        expect(resolveRoute(table, key)?.owner, key).toBe('host')
       }
       // No route names a per-provider shape adapter: no provider is left for it (21 §3.1).
       expect(
@@ -5055,13 +5064,12 @@ describe('release 4b (21 §2 cut 4b)', () => {
         )
       }
     }
-    // The routes 4b moved: OpenCode's A-13, A-23, A-35, A-36, and the renderer's one A-36 call.
+    // The routes 4b moved: OpenCode's A-13, A-23, A-35, A-36, and their unqualified routes.
     const moved = DEVELOPMENT.filter((r) => r.since === 'cut-4b')
     expect(moved.map((r) => `${r.channel} ${r.qualifier?.provider ?? '*'}`).sort()).toEqual(
-      [
-        ...[ACTIVATE, SEND, LAUNCH_ROW, PROVIDERS].map((key) => `${key} ${OPENCODE}`),
-        `${PROVIDERS} *`
-      ].sort()
+      [ACTIVATE, SEND, LAUNCH_ROW, PROVIDERS]
+        .flatMap((key) => [`${key} ${OPENCODE}`, `${key} *`])
+        .sort()
     )
     // No seam B member and no NEW row is born in 4b (21 §2 seam-B table row 4b), so the unrouted list is 4a's.
     expect(Object.values(SEAM_B_METHODS_BORN).filter((step) => step === 'cut-4b')).toEqual([])

@@ -41,6 +41,12 @@
 //   after a retirement or deletion commit only forward fixes exist (21 §2.1 item 4).
 // - A row the cut retired with no route (`RETIRED`, lead resolution H1) is the pre-cut row again: today's runtime
 //   still serves it until the cut's retirement step, so the rollback build's renderer finds it where it was.
+// - AMENDED for ISSUE-238: the last provider step (4b) also removes the routes an earlier step created for the providers
+//   not yet moved (`REMOVED_BY_THE_LAST_PROVIDER_STEP`: the shape adapters' unqualified routes of A-13, A-23, A-35, A-36
+//   and OpenCode's A-27, A-P3, A-P4), since none is left for them. A rollback of 4b puts them back as 4a shipped them
+//   (21 §2 cut 3 "Rollback (each step)": the provider-qualified rows flip back), and drops the step's `host` routes on
+//   those channels, the unqualified A-36 included, so OpenCode reaches the shape adapters again; the retired A-27, A-P3
+//   and A-P4 come back as those routes, not as the pre-cut row.
 import { CATALOG_PROVIDER_IDS, CHANNELS, type ChannelKey, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from './channelRoute'
 
@@ -103,6 +109,38 @@ export const BACK_THROUGH_ITS_SHAPE_ADAPTER: Partial<
   }
 }
 
+const [, , , OPENCODE = ''] = CATALOG_PROVIDER_IDS
+
+/** A route of a provider not yet moved, as 3a created it (21 §2 cut 3 common rules, §3.1). */
+const notYetMoved = (
+  channel: ChannelKey,
+  way: { shapeAdapter: string } | { provider: string }
+): ChannelRoute => ({
+  channel,
+  owner: 'legacy',
+  since: 'cut-3a',
+  parity: 'n/a',
+  ...('provider' in way
+    ? { qualifier: { provider: way.provider }, shape: 'today' as const }
+    : { shape: 'target' as const, shapeAdapter: way.shapeAdapter })
+})
+
+/**
+ * The routes a step removed because no provider was left for them (ISSUE-238), with that step: a rollback of the step
+ * routes them again. Step 4b moves the last provider, OpenCode (21 §2 cut 4b).
+ */
+export const REMOVED_BY_THE_LAST_PROVIDER_STEP: Partial<Record<StepId, readonly ChannelRoute[]>> = {
+  'cut-4b': [
+    notYetMoved('dwarf:activate', { shapeAdapter: 'PerProviderShapeAdapter' }), // A-13
+    notYetMoved('dwarf:sendText', { shapeAdapter: 'PerProviderShapeAdapter' }), // A-23
+    notYetMoved('agent:launch', { shapeAdapter: 'PerProviderShapeAdapter' }), // A-35
+    notYetMoved('agent:providers', { shapeAdapter: 'CatalogMergeAdapter' }), // A-36
+    notYetMoved('dwarf:retire', { provider: OPENCODE }), // A-27
+    notYetMoved('agent:launchFailed', { provider: OPENCODE }), // A-P3
+    notYetMoved('dwarf:sendText:settled', { provider: OPENCODE }) // A-P4
+  ]
+}
+
 /** The table of a rollback build of `cut`, from the table `cut`'s release shipped. */
 export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
   if (table.release !== cut) {
@@ -111,7 +149,14 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
     )
   }
   const retired = Object.entries(table.retired ?? {}) as [ChannelKey, StepId][]
-  const restored = retired.filter(([, step]) => step === cut).map(([channel]) => preCutRow(channel))
+  const reinstated = REMOVED_BY_THE_LAST_PROVIDER_STEP[cut] ?? []
+  const reinstatedChannels = new Set(reinstated.map((route) => route.channel))
+  const restored = [
+    ...retired
+      .filter(([channel, step]) => step === cut && !reinstatedChannels.has(channel))
+      .map(([channel]) => preCutRow(channel)),
+    ...reinstated
+  ]
   const withdrawn = table.routes
     .filter((route) => isWithdrawn(route, cut))
     .map((route) => route.channel)
@@ -120,6 +165,9 @@ export function rollbackOf(table: RouteTable, cut: StepId): RouteTable {
   const flippedBack = new Set<string>()
   for (const route of table.routes) {
     if (isWithdrawn(route, cut)) continue
+    // The step's own `host` routes on a channel whose earlier routes come back (4b): they flip back with it.
+    if (movedBy(route, cut) && route.owner === 'host' && reinstatedChannels.has(route.channel))
+      continue
     const provider = route.qualifier?.provider
     if (provider !== undefined && flipsBackToAnEarlierAdapter(table, route, cut)) {
       flippedBack.add(provider)

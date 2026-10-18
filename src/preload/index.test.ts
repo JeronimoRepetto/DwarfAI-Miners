@@ -144,8 +144,12 @@ describe('preload dwarf retirement contract', () => {
   it('collapses a non-string id to an empty string before it crosses the bridge', () => {
     // Same discipline as setToggleShortcut: main's boundary check should only
     // ever have to reason about a clean string.
+    // AMENDED for ISSUE-238 (was: the id collapsed to ''): from step 4b A-27 has
+    // no route (`RETIRED`, 21 §2 cut 4b), so the generated member speaks the
+    // registry's shape and passes the payload through; the router refuses the
+    // call like any channel with no route, and nothing reaches today's runtime.
     ;(api.retireDwarf as unknown as (value: unknown) => void)(42)
-    expect(send).toHaveBeenLastCalledWith('dwarf:retire', '')
+    expect(send).toHaveBeenLastCalledWith('dwarf:retire', 42)
   })
 })
 
