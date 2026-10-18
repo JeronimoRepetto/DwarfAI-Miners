@@ -1,0 +1,6 @@
+{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
+{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"<REPO>","mcpServers":[]}}
+{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"00000000-0000-4000-8000-000000000001","prompt":[{"type":"text","text":"Reply with the single word one and nothing else. Do not use any tool."}]}}
+{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
+{"jsonrpc":"2.0","id":1,"method":"session/load","params":{"sessionId":"00000000-0000-4000-8000-000000000001","cwd":"<REPO>","mcpServers":[]}}
+{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"00000000-0000-4000-8000-000000000001","prompt":[{"type":"text","text":"Reply with the single word two and nothing else. Do not use any tool."}]}}
