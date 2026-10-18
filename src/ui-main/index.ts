@@ -242,6 +242,7 @@ import {
   CATALOG_MERGE_CHANNELS,
   createCatalogMergeAdapter
 } from '../legacy-bridge/shape/CatalogMergeAdapter'
+import type { LegacySettlementJoin } from '../legacy-bridge/shape/legacySettlementJoin'
 import type { LegacyAskRelay } from '../legacy-bridge/LegacyAskRelay'
 import { ANSWER_DWARF_ROWS, createAnswerDwarfRows } from './ipc/handlers/answerDwarf.host'
 import { createAnswerQualifier } from './ipc/handlers/answerDwarf.dispatch'
@@ -684,6 +685,7 @@ export function composeProviderShapeAdapters(deps: {
   models: { read(): Promise<unknown> }
   client: Pick<HostClient, 'call'> | undefined
   mintId: () => string
+  settlements?: LegacySettlementJoin
 }): Readonly<Record<string, RouteTarget>> | undefined {
   const served: ReadonlyArray<readonly [string, readonly string[]]> = [
     [PER_PROVIDER_SHAPE_ADAPTER, PER_PROVIDER_SHAPE_CHANNELS],
@@ -815,6 +817,7 @@ export function composeLegacyDwarfIdBridge(deps: {
   legacy: RouteTarget
   registry: LegacyRuntimeSurface | undefined
   pushes?: LegacyPushTap
+  settlements?: LegacySettlementJoin
 }): LegacyDwarfIdComposition | undefined {
   const { client, registry } = deps
   if (
@@ -1092,6 +1095,60 @@ export function composeJevRouteRow(deps: {
 }): RouteTargetPart | undefined {
   if (!routedTo(deps.routes, ROUTE_JEV_LAUNCH, 'host')) return undefined
   return { channels: ROUTE_JEV_LAUNCH_ROWS, target: createRouteJevLaunchRow(deps.client) }
+}
+
+/** The step-3a rows of launch and conversation served by the Host (ISSUE-001); stub until the switch. */
+export function composeConversationAndLaunchRows(_deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'call'>
+  consoles: Pick<ServedNativeActions, 'raiseConsole'> | undefined
+}): RouteTargetPart | undefined {
+  return undefined
+}
+
+/** A-N29 as the root composes it: its `host` target part, and the stop of its board reading. */
+export interface StopDwarfComposition {
+  part: RouteTargetPart
+  dispose(): void
+}
+
+/** A-N29 through `LegacyEndFirstAdapter` (ISSUE-001); stub until the switch. */
+export function composeStopDwarf(_deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+  client: Pick<HostClient, 'call' | 'subscribe'>
+  legacy: LegacyLaunchedSessions & Partial<LegacyLaunchesByDwarf>
+  bridge: Pick<LegacyDwarfIdBridge, 'toLegacy'> | undefined
+  timers?: EndFirstTimers
+}): StopDwarfComposition | undefined {
+  return undefined
+}
+
+/** The provider qualifiers of the step-3a rows as the root composes them. */
+export interface ProviderRoutingComposition {
+  qualifiers: Partial<Record<ChannelKey, (payload: unknown) => RouteQualifier>>
+  dispose(): void
+}
+
+/** The provider qualifiers of the rows cut 3 moves (ISSUE-001); stub until the switch. */
+export function composeProviderRouting(_deps: {
+  routes: readonly ChannelRoute[]
+  client: Pick<HostClient, 'subscribe'>
+}): ProviderRoutingComposition {
+  return { qualifiers: {}, dispose: () => {} }
+}
+
+/** The legacy settlement join shared by `PerProviderShapeAdapter` and the push tap (ISSUE-001); stub. */
+export function composeSettlementJoin(_deps: {
+  routes: readonly ChannelRoute[]
+  release: StepId
+}): LegacySettlementJoin | undefined {
+  return undefined
+}
+
+/** The legacy feed's per-provider modes for a table (ISSUE-001); stub until the switch. */
+export function legacyFeedModesOf(_routes: readonly ChannelRoute[]): LegacyFeedModes {
+  return LEGACY_FEED_PROVIDERS_CUT_1
 }
 
 /**
