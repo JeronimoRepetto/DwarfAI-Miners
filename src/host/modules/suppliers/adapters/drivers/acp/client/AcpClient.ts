@@ -150,6 +150,12 @@ export interface AcpStart {
    * outside the decision's own kind falls back to the default mapping. Absent: the default.
    */
   readonly permissionReply?: PermissionReplyHook
+  /**
+   * ADR-006 item 4: the driver's normalisation of one `session/prompt` usage report into disjoint
+   * token amounts (`inputNet` without cache reads, `output` without reasoning), documented per
+   * adapter. Absent: `acpUsageTokens`, each field as reported.
+   */
+  readonly usageTokens?: (usage: AcpUsage) => UsageObservation['tokens']
   /** A launch opens a new session and sends its first prompt; a resume reopens `sessionId`. */
   readonly mode:
     | { readonly kind: 'new'; readonly prompt: string }
@@ -212,6 +218,20 @@ interface Tool {
 }
 
 type Tokens = UsageObservation['tokens']
+
+/** One `session/prompt` usage report (pinned schema `Usage`). */
+export type AcpUsage = NonNullable<PromptResponse['usage']>
+
+/** The default usage normalisation: each reported field as it is, a missing one as 0. */
+export function acpUsageTokens(usage: AcpUsage): Tokens {
+  return {
+    inputNet: count(usage.inputTokens),
+    output: count(usage.outputTokens),
+    cacheRead: count(usage.cachedReadTokens),
+    cacheWrite: count(usage.cachedWriteTokens),
+    reasoning: count(usage.thoughtTokens)
+  }
+}
 
 export class AcpSession implements DriverSession {
   ref: SessionRef
@@ -603,13 +623,7 @@ export class AcpSession implements DriverSession {
    */
   private reportUsage(turn: OpenTurn, usage: PromptResponse['usage']): void {
     if (usage === null || usage === undefined) return
-    const tokens: Tokens = {
-      inputNet: count(usage.inputTokens),
-      output: count(usage.outputTokens),
-      cacheRead: count(usage.cachedReadTokens),
-      cacheWrite: count(usage.cachedWriteTokens),
-      reasoning: count(usage.thoughtTokens)
-    }
+    const tokens = (this.start.usageTokens ?? acpUsageTokens)(usage)
     this.emit({
       t: 'usage',
       observation: {

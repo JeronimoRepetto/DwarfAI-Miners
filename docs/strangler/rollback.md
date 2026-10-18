@@ -78,6 +78,27 @@ rollback build's Host boots, but no route answers a Host `AskId` in that build (
 as a request the Host no longer holds: it closes answered elsewhere (`07` S6.11, S6.20), its card disappears with no
 notice, and the person answers in the provider's own terminal (#1293).
 
+**Step 3a note (ISSUE-001).** A 3a rollback build exists only before the 3a deletion commit merges (ISSUE-184, after the
+soak); after it, 3a rolls forward (`21` §2 cut 3 "Rollback (each step)"). `rollbackOf(table, 'cut-3a')` decides each
+row as follows (`src/ui-main/ipc/rollbackTable.test.ts`, the 3a case):
+
+| Rows                                                                       | In the 3a rollback build                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-13, A-23, A-35 (`PerProviderShapeAdapter`), A-36 (`CatalogMergeAdapter`) | The Claude-qualified `host` route goes; the one unqualified `legacy` row with `shape: 'target'` and the row's shape adapter serves every provider, Claude included, because the build keeps this tree's preload and renderer, which send the 14 shapes. `CatalogMergeAdapter` asks the Host nothing when no provider moved                                                                                                                |
+| A-25 (a KEEP row, every provider), A-27, A-P3, A-P4                        | The pre-cut row: today's runtime, today's shape, every provider                                                                                                                                                                                                                                                                                                                                                                           |
+| A-26, A-37, A-38 (retired in 3a)                                           | The pre-cut row again (lead resolution H1). This tree's renderer no longer calls them (A-26 has no preload member from 3a, `MEMBER_REMOVED`), so the routes serve nothing                                                                                                                                                                                                                                                                 |
+| A-48, A-49, A-50, A-47                                                     | Kept as 3a routed them (`KEPT_WITH_THE_MIGRATED_SECRET`): `SecretMigrationBridge` moved the Jev key into the Host's `SecretStore` on the first attach and deleted today's file, so today's runtime no longer holds it and a rollback build never moves a secret back (ADR-017 items 1, 8; the same rule as `21` §2 cut 4a "Rollback"). A-50 suggests with that key; A-47 reads its status from the Host through `JevSettingsShapeAdapter` |
+| A-N06, A-N10, A-N11, A-N29 (NEW in 3a)                                     | Kept: no legacy code serves them. A-N29 still ends a legacy-launched session through `LegacyEndFirstAdapter`                                                                                                                                                                                                                                                                                                                              |
+
+With no provider-qualified `host` route left, the root composes no provider qualifier, today's agent discovery runs for
+Claude again (`legacyFeedModesOf` answers the cut-1 modes) and Claude's launches settle on A-P3/A-P4 under their
+`LaunchId`/`MessageId` through the settlement join, as every other provider's do in 3a. Sessions the faulty build's Host
+launched are left running and are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
+
+Known limit of a 3a rollback build: a "Let Jev choose" launch has no `host` route, so it reaches
+`PerProviderShapeAdapter`, which refuses it (`INVALID_PARAMS`, "a Jev launch is served by the Host only"); the person
+picks a supplier on the pickers. Widening Jev's candidates with an adapter was decided against (`21` §11 OI-21-4).
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
@@ -121,12 +142,13 @@ retirement once a later cut ships.
 
 ## 5. Where it is tested
 
-| Check                                                                                    | Test                                                                        |
-| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| The cut-0 rollback table flips every cut-0 row that replaced legacy code and stays valid | `src/ui-main/ipc/rollbackTable.test.ts` (L1)                                |
-| The rollback table passes the router test and never reaches deleted legacy code          | `src/ui-main/ipc/ipc-routing.contract.test.ts`, `describe('rollback')` (L6) |
-| The D8 handshake between two builds, and the older-UI rule, over real processes          | `src/ui-main/hostLauncher/upgrade.os.test.ts` (L8, ISSUE-032)               |
-| The cut-0 rollback rehearsed with the built app                                          | `e2e/cut-0/rollback-rehearsal.e2e.ts` (L9, release lane)                    |
+| Check                                                                                          | Test                                                                        |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| The cut-0 rollback table flips every cut-0 row that replaced legacy code and stays valid       | `src/ui-main/ipc/rollbackTable.test.ts` (L1)                                |
+| The 3a rollback table folds the provider-qualified rows and keeps the Jev key rows (ISSUE-001) | `src/ui-main/ipc/rollbackTable.test.ts` (L1)                                |
+| The rollback table passes the router test and never reaches deleted legacy code                | `src/ui-main/ipc/ipc-routing.contract.test.ts`, `describe('rollback')` (L6) |
+| The D8 handshake between two builds, and the older-UI rule, over real processes                | `src/ui-main/hostLauncher/upgrade.os.test.ts` (L8, ISSUE-032)               |
+| The cut-0 rollback rehearsed with the built app                                                | `e2e/cut-0/rollback-rehearsal.e2e.ts` (L9, release lane)                    |
 
 The rehearsal (TC-057-02, TC-057-03) runs two builds of the tree against one profile: the repository's own `pnpm build`
 as the faulty (or older) build, and a rollback build made for the run by `scripts/e2e/build-rehearsal-app.mjs`, one

@@ -4,9 +4,11 @@ import {
   type Delivery,
   type DwarfId,
   type HostFrame,
+  type IpcResult,
   type MessageId,
   type MessageRole,
   type MessageView,
+  type SendMessageResult,
   type SnapshotChunk
 } from '@dwarfai/contracts'
 import {
@@ -20,8 +22,10 @@ import { rememberRoutes, routeWentAway } from '../lib/delivery/deliveryRoute'
 import {
   applyDeliveryFrame,
   deliveryMarksOf,
+  sendStateOfDelivery,
   type DeliveryMarks
 } from '../lib/readModel/deliveryMarks'
+import { mintRequestId } from './requestIds'
 import { createReadModel, followHost, type HostFollower } from './readModel'
 import { useHostConnection } from './useHostConnection'
 import { boundEchoes, reconcileEchoes, type MessageEcho } from '../lib/message/echo'
@@ -267,7 +271,10 @@ function restartEcho(dwarfId: string, echoId: string): void {
   const list = echoes[dwarfId]
   const index = list?.findIndex((echo) => echo.id === echoId) ?? -1
   if (list === undefined || index === -1) return
-  list[index] = { ...list[index]!, sentAt: Date.now(), state: { phase: 'sending' } }
+  // A resend is a new message for its channel: the id the last attempt was answered with goes (ISSUE-001).
+  const echo: MessageEcho = { ...list[index]!, sentAt: Date.now(), state: { phase: 'sending' } }
+  delete (echo as { messageId?: string }).messageId
+  list[index] = echo
 }
 
 /**
@@ -340,11 +347,16 @@ function plainAttachment(attachment: DwarfAttachment): DwarfAttachment {
  *
  * `again` names an echo already held, for a retry (#635): that echo walks back
  * to sending in its own place instead of a new one being minted — see `retry`.
+ *
+ * AMENDED for ISSUE-001 (was: today's `DwarfTextRequest` `{ dwarfId, text, pressEnter, attachments? }` answered by
+ * today's `DwarfTextResult`): from 3a A-23 has its 14 shape for every provider (21 §2 cut 3 common rules),
+ * `SendMessageParams` → `IpcResult<SendMessageResult>`, the picked files crossing as their paths, which the Host
+ * describes again (B-M28). Every A-23 hands its words over with the session's own Enter: the 14 request has no field
+ * for it, so the caller's `pressEnter` is not sent. What the answer means is `recordSendAnswer`'s.
  */
 async function deliver(
   dwarfId: string,
   text: string,
-  pressEnter: boolean,
   attachments: readonly DwarfAttachment[] = [],
   again?: string
 ): Promise<boolean> {
@@ -373,43 +385,101 @@ async function deliver(
     restartEcho(dwarfId, echoId)
   }
 
-  // Plain objects, never the reactive ones the composer happens to be
-  // holding (#417) — see plainAttachment.
-  const wireAttachments = attachments.map(plainAttachment)
+  // Plain strings, never the reactive objects the composer happens to be holding (#417) — see plainAttachment.
+  const paths = attachments.map((attachment) => plainAttachment(attachment).path)
 
-  let result: DwarfTextResult
+  let answer: IpcResult<SendMessageResult> | null
   try {
-    result = await window.api.sendDwarfText({
-      dwarfId,
+    answer = await window.api.sendDwarfText({
+      dwarfId: dwarfId as DwarfId,
       text,
-      pressEnter,
-      // Omitted rather than sent empty, so a text-only message is the exact
-      // payload every caller sent before #408.
-      ...(wireAttachments.length === 0 ? {} : { attachments: wireAttachments })
+      attachments: paths,
+      requestId: mintRequestId()
     })
   } catch {
-    result = { delivered: false, via: 'none', error: 'The panel lost contact with the app.' }
+    answer = null
   }
+  return recordSendAnswer(dwarfId, echoId, answer)
+}
 
-  // Main is HOLDING this one for a busy Codex thread (#457): it answered at
-  // once, and what it answered is that nothing has been sent. So the verdict
-  // below is not taken at all — the marker says waiting, the bubble is
-  // remembered under main's own hold id, and the real verdict arrives on
-  // `settle` when the turn the message is waiting for ends.
-  //
-  // Neither `startWatch` nor `scheduleClear` runs here, and both absences are
-  // deliberate: there is no hand-over for a session to be seen reacting to,
-  // and a marker that cleared itself after four seconds would leave the person
-  // believing the message had gone.
-  const holdId = result.holdId
-  if (holdId !== undefined) {
-    const waiting: DwarfSendState = { phase: 'held', via: result.via }
-    writeMessage(dwarfId, echoId, waiting)
-    heldMessages.set(holdId, { dwarfId, echoId })
+/** The panel's sentence for a send that reached nothing on this side (no answer, or a call error). */
+const LOST_CONTACT = 'The panel lost contact with the app.'
+
+/**
+ * What A-23 answered, onto the message's records (ISSUE-001; ADR-022; ADR-033 item 3: a send answer adds nothing the
+ * Host did not state).
+ *
+ * - No answer or a call error: nothing is known to have left, so the message fails with the panel's own sentence.
+ * - `cannot-receive` or `attachment-refused`: the message fails; the outcome is a closed reason with no words of its
+ *   own to show, so the marker carries none.
+ * - Accepted: the message is that `MessageId` from now on (its Retry, A-N06, and its mark key). Where the Host states
+ *   a mark for it the marker is the Host's, and stays so (`applyHostMarks`); the answer adds no phase. A message the
+ *   Host states no mark for was served by today's runtime through `PerProviderShapeAdapter` (a provider not yet
+ *   moved, 21 §3.1), whose acceptance is today's delivered-or-held verdict: it reads as today's delivered, watched for
+ *   a reaction, and a held one settles on today's A-P4 push under this same id (legacySettlementJoin.ts).
+ */
+function recordSendAnswer(
+  dwarfId: string,
+  echoId: string,
+  answer: IpcResult<SendMessageResult> | null
+): boolean {
+  if (answer === null || !answer.ok) {
+    return recordVerdict(dwarfId, echoId, { delivered: false, via: 'none', error: LOST_CONTACT })
+  }
+  if (!answer.value.ok) {
+    writeMessage(dwarfId, echoId, { phase: 'failed' })
+    scheduleClear(dwarfId)
     return false
   }
+  const { messageId } = answer.value.value
+  nameEcho(dwarfId, echoId, messageId)
+  heldMessages.set(messageId, { dwarfId, echoId })
+  const mark = hostMarks.value.get(messageId)
+  if (mark !== undefined) {
+    applyHostMark(dwarfId, echoId, mark)
+    return true
+  }
+  writeMessage(dwarfId, echoId, { phase: 'delivered', awaitingReaction: true })
+  startWatch(dwarfId, echoId)
+  return true
+}
 
-  return recordVerdict(dwarfId, echoId, result)
+/** The `MessageId` A-23 answered, on the echo it names (silent once the echo is gone). */
+function nameEcho(dwarfId: string, echoId: string, messageId: string): void {
+  const list = echoes[dwarfId]
+  const index = list?.findIndex((echo) => echo.id === echoId) ?? -1
+  if (list === undefined || index === -1) return
+  list[index] = { ...list[index]!, messageId }
+}
+
+/** Whether a marker phase is one the marker clears itself after: nothing is left to wait for. */
+function settledPhase(next: DwarfSendState): boolean {
+  return next.phase === 'reacted' || next.phase === 'failed'
+}
+
+/**
+ * The Host's mark of one message, on its bubble and, while the message holds it, on the dwarf's marker (ADR-022 item
+ * 1): the Host watches for the reaction itself, so a watch of the panel's own on that message stops.
+ */
+function applyHostMark(dwarfId: string, echoId: string, mark: Delivery): void {
+  const next = sendStateOfDelivery(mark)
+  if (watchedEchoId.get(dwarfId) === echoId) stopWatch(dwarfId)
+  heldMessages.delete(mark.messageId)
+  if (writeVerdict(dwarfId, echoId, next) && settledPhase(next)) scheduleClear(dwarfId)
+}
+
+/** Every message the panel holds whose mark the Host stated, after each settled batch of marks. */
+function applyHostMarks(): void {
+  for (const [dwarfId, list] of Object.entries(echoes)) {
+    for (const echo of [...list]) {
+      if (echo.messageId === undefined) continue
+      const mark = hostMarks.value.get(echo.messageId as MessageId)
+      if (mark === undefined) continue
+      const next = sendStateOfDelivery(mark)
+      if (JSON.stringify(next) === JSON.stringify(echo.state)) continue
+      applyHostMark(dwarfId, echo.id, mark)
+    }
+  }
 }
 
 /**
@@ -597,9 +667,9 @@ function hostOldestMessageId(dwarfId: string): MessageId | null {
  * chat's. A mark is the Host's phase of one message and changes only on `message.delivery`: no timer, no send answer and
  * no reaction watch writes it (ADR-033 "never invent a fact"). A snapshot replaces every mark whole.
  *
- * Its own follower, so the chat's read path (`startChat`, sections `tails`) stays as the dock calls it. Until A-23 is the
- * Host's (the step-3a switch, ISSUE-001) the send is today's and the marker is the panel's own verdict above; the switch
- * starts this model with the chat and draws the marker from it.
+ * Its own follower, so the chat's read path (`startChat`, sections `tails`) stays as the dock calls it. From the step-3a
+ * switch (ISSUE-001) the dock starts it with the chat, and every message the panel holds draws its marker from it
+ * (`applyHostMarks`).
  */
 
 const marks: DeliveryMarks = new Map()
@@ -630,6 +700,7 @@ async function startMarks(): Promise<boolean> {
       dataOf: deliveryMarksOf,
       settled: () => {
         hostMarks.value = new Map(marks)
+        applyHostMarks()
       }
     }
   )
@@ -705,13 +776,14 @@ export function useDwarfMessaging() {
    * dwarf id for the panel to render, not a channel for a caller to learn the
    * verdict of the one call it just made.
    */
+  // AMENDED for ISSUE-001: `_pressEnter` is the composer's, kept so its callers are unchanged; A-23 carries none.
   async function send(
     dwarfId: string,
     text: string,
-    pressEnter: boolean,
+    _pressEnter: boolean,
     attachments: readonly DwarfAttachment[] = []
   ): Promise<boolean> {
-    return deliver(dwarfId, text, pressEnter, attachments)
+    return deliver(dwarfId, text, attachments)
   }
 
   /**
@@ -886,11 +958,24 @@ export function useDwarfMessaging() {
     if (echo === undefined || echo.state.phase !== 'failed') return false
     // The record of an answer is never sent, again or at all: the card answers the ask again.
     if (echo.answers === true) return false
+    // AMENDED for ISSUE-001: a message the Host failed is retried by the Host, as the same message in place (A-N06
+    // `retryDwarfMessage`, ADR-022 item 5); its marks walk on the Host's `message.delivery` frames.
+    if (echo.messageId !== undefined && hostMarks.value.has(echo.messageId as MessageId)) {
+      try {
+        const answer = await window.api.retryDwarfMessage({
+          messageId: echo.messageId as MessageId,
+          requestId: mintRequestId()
+        })
+        return answer.ok && answer.value.ok
+      } catch {
+        return false
+      }
+    }
     // Always with the session's own Enter, exactly as the composer sends: the
     // retry is the same message, not a different kind of delivery — which since
     // #408 includes its files.
     const attachments = echoAttachments[dwarfId]?.[echoId] ?? []
-    return deliver(dwarfId, echo.text, true, attachments, echoId)
+    return deliver(dwarfId, echo.text, attachments, echoId)
   }
 
   /**

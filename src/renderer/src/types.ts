@@ -387,8 +387,8 @@ export interface FailedSend {
 export interface DwarfDeliveryReport {
   /** Send verdicts, keyed by dwarf id. */
   send: Record<string, DwarfSendState>
-  /** Kick verdicts, keyed by dwarf id. */
-  kick: Record<string, DwarfKickState>
+  // REMOVED for ISSUE-183 (was: `kick`, the kick verdicts keyed by dwarf id): A-26 is retired in 3a for every
+  // provider and nothing replaces it, so the dock holds no kick verdict to hand the mine.
   /**
    * The messages the panel sent that never reached their session, per dwarf, oldest first
    * (PANEL-QUESTIONS 16): the app's own record of the send, which the mine history draws because

@@ -34,12 +34,6 @@ function textOf(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-/** Today's provider names (the today launch request's enum); an unknown one crosses as '', never a default. */
-const PROVIDERS: readonly unknown[] = ['claude', 'codex', 'antigravity', 'opencode']
-function providerOf(value: unknown): string {
-  return typeof value === 'string' && PROVIDERS.includes(value) ? value : ''
-}
-
 /** A one-way message that cannot cross (structured clone refuses it) is dropped, never thrown (14 §1.4). */
 function sendOrDrop(send: () => void): void {
   try {
@@ -92,8 +86,10 @@ export interface DwarfAiMinersApi {
   ) => Promise<TargetResult<'shortcut:set'>>
   /** A-12 · `mines:get` · invoke · RETIRE · target shape */
   getMines: () => Promise<TargetResult<'mines:get'>>
-  /** A-13 · `dwarf:activate` · invoke · CHANGE · today shape */
-  activateDwarf: (request: TodayRequest<'dwarf:activate'>) => Promise<TodayResult<'dwarf:activate'>>
+  /** A-13 · `dwarf:activate` · invoke · CHANGE · target shape */
+  activateDwarf: (
+    request: TargetRequest<'dwarf:activate'>
+  ) => Promise<TargetResult<'dwarf:activate'>>
   /** A-14 · `dwarf:feed` · invoke · RETIRE · target shape */
   getDwarfFeed: (request: TargetRequest<'dwarf:feed'>) => Promise<TargetResult<'dwarf:feed'>>
   /** A-15 · `dwarf:feed:page` · invoke · CHANGE · target shape */
@@ -118,16 +114,16 @@ export interface DwarfAiMinersApi {
   ) => Promise<TargetResult<'shell:openExternalLink'>>
   /** A-22 · `shell:copyText` · invoke · KEEP · target shape */
   copyText: (request: TargetRequest<'shell:copyText'>) => Promise<TargetResult<'shell:copyText'>>
-  /** A-23 · `dwarf:sendText` · invoke · CHANGE · today shape */
-  sendDwarfText: (request: TodayRequest<'dwarf:sendText'>) => Promise<TodayResult<'dwarf:sendText'>>
+  /** A-23 · `dwarf:sendText` · invoke · CHANGE · target shape */
+  sendDwarfText: (
+    request: TargetRequest<'dwarf:sendText'>
+  ) => Promise<TargetResult<'dwarf:sendText'>>
   /** A-24 · `dwarf:attachments:choose` · invoke · KEEP · target shape */
   chooseDwarfAttachments: () => Promise<TargetResult<'dwarf:attachments:choose'>>
-  /** A-25 · `dwarf:attachments:describe` · invoke · KEEP · today shape */
+  /** A-25 · `dwarf:attachments:describe` · invoke · KEEP · target shape */
   describeDwarfAttachments: (
-    request: TodayRequest<'dwarf:attachments:describe'>
-  ) => Promise<TodayResult<'dwarf:attachments:describe'>>
-  /** A-26 · `dwarf:kick` · invoke · RETIRE · today shape */
-  kickDwarf: (request: TodayRequest<'dwarf:kick'>) => Promise<TodayResult<'dwarf:kick'>>
+    request: TargetRequest<'dwarf:attachments:describe'>
+  ) => Promise<TargetResult<'dwarf:attachments:describe'>>
   /** A-27 · `dwarf:retire` · send · RETIRE · today shape */
   retireDwarf: (request: TodayRequest<'dwarf:retire'>) => void
   /** A-28 · `app:build` · invoke · KEEP · target shape */
@@ -148,16 +144,18 @@ export interface DwarfAiMinersApi {
   queryProjects: (
     request: TargetRequest<'projects:query'>
   ) => Promise<TargetResult<'projects:query'>>
-  /** A-35 · `agent:launch` · invoke · CHANGE · today shape */
-  launchAgent: (request: TodayRequest<'agent:launch'>) => Promise<TodayResult<'agent:launch'>>
-  /** A-36 · `agent:providers` · invoke · CHANGE · today shape */
-  listAgentProviders: () => Promise<TodayResult<'agent:providers'>>
-  /** A-37 · `agent:models` · invoke · RETIRE · today shape */
-  listAgentModels: () => Promise<TodayResult<'agent:models'>>
-  /** A-38 · `agent:launchHeld` · invoke · RETIRE · today shape */
+  /** A-35 · `agent:launch` · invoke · CHANGE · target shape */
+  launchAgent: (request: TargetRequest<'agent:launch'>) => Promise<TargetResult<'agent:launch'>>
+  /** A-36 · `agent:providers` · invoke · CHANGE · target shape */
+  listAgentProviders: (
+    request: TargetRequest<'agent:providers'>
+  ) => Promise<TargetResult<'agent:providers'>>
+  /** A-37 · `agent:models` · invoke · RETIRE · target shape */
+  listAgentModels: () => Promise<TargetResult<'agent:models'>>
+  /** A-38 · `agent:launchHeld` · invoke · RETIRE · target shape */
   launchHeldSession: (
-    request: TodayRequest<'agent:launchHeld'>
-  ) => Promise<TodayResult<'agent:launchHeld'>>
+    request: TargetRequest<'agent:launchHeld'>
+  ) => Promise<TargetResult<'agent:launchHeld'>>
   /** A-39 · `agent:launchHosted` · invoke · CHANGE · today shape */
   launchHostedProcess: (
     request: TodayRequest<'agent:launchHosted'>
@@ -184,14 +182,16 @@ export interface DwarfAiMinersApi {
   setTypographyPreferences: (
     request: TargetRequest<'typography:preferences:set'>
   ) => Promise<TargetResult<'typography:preferences:set'>>
-  /** A-47 · `jev:settings:get` · invoke · KEEP · today shape */
-  getJevSettings: () => Promise<TodayResult<'jev:settings:get'>>
-  /** A-48 · `jev:apiKey:set` · invoke · KEEP · today shape */
-  setJevApiKey: (request: TodayRequest<'jev:apiKey:set'>) => Promise<TodayResult<'jev:apiKey:set'>>
-  /** A-49 · `jev:apiKey:clear` · invoke · KEEP · today shape */
-  clearJevApiKey: () => Promise<TodayResult<'jev:apiKey:clear'>>
-  /** A-50 · `jev:route` · invoke · CHANGE · today shape */
-  routeJevLaunch: (request: TodayRequest<'jev:route'>) => Promise<TodayResult<'jev:route'>>
+  /** A-47 · `jev:settings:get` · invoke · KEEP · target shape */
+  getJevSettings: () => Promise<TargetResult<'jev:settings:get'>>
+  /** A-48 · `jev:apiKey:set` · invoke · KEEP · target shape */
+  setJevApiKey: (
+    request: TargetRequest<'jev:apiKey:set'>
+  ) => Promise<TargetResult<'jev:apiKey:set'>>
+  /** A-49 · `jev:apiKey:clear` · invoke · KEEP · target shape */
+  clearJevApiKey: () => Promise<TargetResult<'jev:apiKey:clear'>>
+  /** A-50 · `jev:route` · invoke · CHANGE · target shape */
+  routeJevLaunch: (request: TargetRequest<'jev:route'>) => Promise<TargetResult<'jev:route'>>
   /** A-51 · `jev:preferences:set` · invoke · KEEP · today shape */
   setJevPreferences: (
     request: TodayRequest<'jev:preferences:set'>
@@ -306,6 +306,10 @@ export interface DwarfAiMinersApi {
   ) => Promise<TargetResult<'welcome:answer'>>
   /** A-N29 · `dwarf:stop` · invoke · NEW · target shape */
   stopDwarf: (request: TargetRequest<'dwarf:stop'>) => Promise<TargetResult<'dwarf:stop'>>
+  /** A-N06 · `dwarf:message:retry` · invoke · NEW · target shape */
+  retryDwarfMessage: (
+    request: TargetRequest<'dwarf:message:retry'>
+  ) => Promise<TargetResult<'dwarf:message:retry'>>
   /** A-N08 · `dwarf:rename` · invoke · NEW · target shape */
   renameDwarf: (request: TargetRequest<'dwarf:rename'>) => Promise<TargetResult<'dwarf:rename'>>
   /** A-N09 · `dwarf:name:reset` · invoke · NEW · target shape */
@@ -376,7 +380,6 @@ const api: DwarfAiMinersApi = {
         (Array.isArray(request) ? request : []).map((path: unknown) => textOf(path))
       )
     ),
-  kickDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:kick', request)),
   retireDwarf: (request) => sendOrDrop(() => ipcRenderer.send('dwarf:retire', textOf(request))),
   getAppBuild: () => invokeOrReject(() => ipcRenderer.invoke('app:build')),
   getFeatureFlags: () => invokeOrReject(() => ipcRenderer.invoke('app:features')),
@@ -386,36 +389,12 @@ const api: DwarfAiMinersApi = {
     invokeOrReject(() => ipcRenderer.invoke('mine:undeclare', textOf(request))),
   resetMetrics: (request) => invokeOrReject(() => ipcRenderer.invoke('metrics:reset', request)),
   queryProjects: (request) => invokeOrReject(() => ipcRenderer.invoke('projects:query', request)),
-  launchAgent: (request) =>
-    invokeOrReject(() =>
-      ipcRenderer.invoke('agent:launch', {
-        mineId: textOf(request?.mineId),
-        provider: providerOf(request?.provider),
-        prompt: textOf(request?.prompt),
-        ...(typeof request?.model === 'string' ? { model: request.model } : {}),
-        ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
-        ...(typeof request?.permissionMode === 'string'
-          ? { permissionMode: request.permissionMode }
-          : {}),
-        ...(request?.routedByJev === true ? { routedByJev: true } : {})
-      })
-    ),
-  listAgentProviders: () => invokeOrReject(() => ipcRenderer.invoke('agent:providers')),
+  launchAgent: (request) => invokeOrReject(() => ipcRenderer.invoke('agent:launch', request)),
+  listAgentProviders: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('agent:providers', request)),
   listAgentModels: () => invokeOrReject(() => ipcRenderer.invoke('agent:models')),
   launchHeldSession: (request) =>
-    invokeOrReject(() =>
-      ipcRenderer.invoke('agent:launchHeld', {
-        mineId: textOf(request?.mineId),
-        provider: providerOf(request?.provider),
-        prompt: textOf(request?.prompt),
-        ...(typeof request?.model === 'string' ? { model: request.model } : {}),
-        ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
-        ...(typeof request?.permissionMode === 'string'
-          ? { permissionMode: request.permissionMode }
-          : {}),
-        ...(request?.routedByJev === true ? { routedByJev: true } : {})
-      })
-    ),
+    invokeOrReject(() => ipcRenderer.invoke('agent:launchHeld', request)),
   launchHostedProcess: (request) =>
     invokeOrReject(() =>
       ipcRenderer.invoke('agent:launchHosted', {
@@ -576,6 +555,8 @@ const api: DwarfAiMinersApi = {
   setAskStep: (request) => invokeOrReject(() => ipcRenderer.invoke('ask:step:set', request)),
   answerWelcome: (request) => invokeOrReject(() => ipcRenderer.invoke('welcome:answer', request)),
   stopDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:stop', request)),
+  retryDwarfMessage: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:message:retry', request)),
   renameDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:rename', request)),
   resetDwarfName: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('dwarf:name:reset', request)),

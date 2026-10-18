@@ -1,0 +1,286 @@
+{
+  "method": "requestPermission",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "toolCall": {
+        "toolCallId": "permissions-snapshot",
+        "kind": "other",
+        "status": "pending",
+        "title": "Need extra access",
+        "rawInput": {
+          "threadId": "test-session-id",
+          "turnId": "turn-1",
+          "itemId": "permissions-snapshot",
+          "environmentId": null,
+          "startedAtMs": 0,
+          "cwd": "/home/user/project",
+          "reason": "Need extra access",
+          "permissions": {
+            "network": {
+              "enabled": true,
+              "dwarfaiUnknownField": "extra"
+            },
+            "fileSystem": {
+              "read": ["/home/user/project"],
+              "write": ["/home/user/project/tmp"],
+              "entries": [],
+              "dwarfaiUnknownField": "extra"
+            },
+            "dwarfaiUnknownField": "extra"
+          },
+          "dwarfaiUnknownField": "extra"
+        },
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "Need extra access\n\nNetwork Access: true\n\nFile System Read Access: /home/user/project\n\nFile System Write Access: /home/user/project/tmp",
+              "dwarfaiUnknownField": "extra"
+            },
+            "dwarfaiUnknownField": "extra"
+          }
+        ],
+        "dwarfaiUnknownField": "extra"
+      },
+      "options": [
+        {
+          "optionId": "allow_permissions_session",
+          "name": "Allow for Session",
+          "kind": "allow_always",
+          "_meta": {
+            "permission": {
+              "version": 1,
+              "changes": [
+                {
+                  "type": "grant",
+                  "operation": "grant",
+                  "description": "Allow network access for this session",
+                  "lifetime": {
+                    "scope": "session",
+                    "dwarfaiUnknownField": "extra"
+                  },
+                  "targets": [
+                    {
+                      "type": "network",
+                      "matcher": {
+                        "type": "any",
+                        "dwarfaiUnknownField": "extra"
+                      },
+                      "dwarfaiUnknownField": "extra"
+                    }
+                  ],
+                  "dwarfaiUnknownField": "extra"
+                },
+                {
+                  "type": "grant",
+                  "operation": "grant",
+                  "description": "Allow read access to /home/user/project for this session",
+                  "lifetime": {
+                    "scope": "session",
+                    "dwarfaiUnknownField": "extra"
+                  },
+                  "targets": [
+                    {
+                      "type": "filesystem",
+                      "access": ["read"],
+                      "matcher": {
+                        "type": "exact_path",
+                        "path": "/home/user/project",
+                        "dwarfaiUnknownField": "extra"
+                      },
+                      "dwarfaiUnknownField": "extra"
+                    }
+                  ],
+                  "dwarfaiUnknownField": "extra"
+                },
+                {
+                  "type": "grant",
+                  "operation": "grant",
+                  "description": "Allow write access to /home/user/project/tmp for this session",
+                  "lifetime": {
+                    "scope": "session",
+                    "dwarfaiUnknownField": "extra"
+                  },
+                  "targets": [
+                    {
+                      "type": "filesystem",
+                      "access": ["write"],
+                      "matcher": {
+                        "type": "exact_path",
+                        "path": "/home/user/project/tmp",
+                        "dwarfaiUnknownField": "extra"
+                      },
+                      "dwarfaiUnknownField": "extra"
+                    }
+                  ],
+                  "dwarfaiUnknownField": "extra"
+                }
+              ],
+              "dwarfaiUnknownField": "extra"
+            },
+            "codex": {
+              "decision": "allowPermissionsForSession",
+              "permissions": {
+                "network": {
+                  "enabled": true,
+                  "dwarfaiUnknownField": "extra"
+                },
+                "fileSystem": {
+                  "read": ["/home/user/project"],
+                  "write": ["/home/user/project/tmp"],
+                  "entries": [],
+                  "dwarfaiUnknownField": "extra"
+                },
+                "dwarfaiUnknownField": "extra"
+              },
+              "dwarfaiUnknownField": "extra"
+            },
+            "dwarfaiUnknownField": "extra"
+          },
+          "dwarfaiUnknownField": "extra"
+        },
+        {
+          "optionId": "allow_permissions_turn",
+          "name": "Allow Once",
+          "kind": "allow_once",
+          "_meta": {
+            "permission": {
+              "version": 1,
+              "changes": [
+                {
+                  "type": "grant",
+                  "operation": "grant",
+                  "description": "Allow network access for this turn",
+                  "lifetime": {
+                    "scope": "turn",
+                    "dwarfaiUnknownField": "extra"
+                  },
+                  "targets": [
+                    {
+                      "type": "network",
+                      "matcher": {
+                        "type": "any",
+                        "dwarfaiUnknownField": "extra"
+                      },
+                      "dwarfaiUnknownField": "extra"
+                    }
+                  ],
+                  "dwarfaiUnknownField": "extra"
+                },
+                {
+                  "type": "grant",
+                  "operation": "grant",
+                  "description": "Allow read access to /home/user/project for this turn",
+                  "lifetime": {
+                    "scope": "turn",
+                    "dwarfaiUnknownField": "extra"
+                  },
+                  "targets": [
+                    {
+                      "type": "filesystem",
+                      "access": ["read"],
+                      "matcher": {
+                        "type": "exact_path",
+                        "path": "/home/user/project",
+                        "dwarfaiUnknownField": "extra"
+                      },
+                      "dwarfaiUnknownField": "extra"
+                    }
+                  ],
+                  "dwarfaiUnknownField": "extra"
+                },
+                {
+                  "type": "grant",
+                  "operation": "grant",
+                  "description": "Allow write access to /home/user/project/tmp for this turn",
+                  "lifetime": {
+                    "scope": "turn",
+                    "dwarfaiUnknownField": "extra"
+                  },
+                  "targets": [
+                    {
+                      "type": "filesystem",
+                      "access": ["write"],
+                      "matcher": {
+                        "type": "exact_path",
+                        "path": "/home/user/project/tmp",
+                        "dwarfaiUnknownField": "extra"
+                      },
+                      "dwarfaiUnknownField": "extra"
+                    }
+                  ],
+                  "dwarfaiUnknownField": "extra"
+                }
+              ],
+              "dwarfaiUnknownField": "extra"
+            },
+            "codex": {
+              "decision": "allowPermissionsForTurn",
+              "permissions": {
+                "network": {
+                  "enabled": true,
+                  "dwarfaiUnknownField": "extra"
+                },
+                "fileSystem": {
+                  "read": ["/home/user/project"],
+                  "write": ["/home/user/project/tmp"],
+                  "entries": [],
+                  "dwarfaiUnknownField": "extra"
+                },
+                "dwarfaiUnknownField": "extra"
+              },
+              "dwarfaiUnknownField": "extra"
+            },
+            "dwarfaiUnknownField": "extra"
+          },
+          "dwarfaiUnknownField": "extra"
+        },
+        {
+          "optionId": "reject_permissions",
+          "name": "Reject",
+          "kind": "reject_once",
+          "_meta": {
+            "codex": {
+              "decision": "rejectPermissions",
+              "dwarfaiUnknownField": "extra"
+            },
+            "dwarfaiUnknownField": "extra"
+          },
+          "dwarfaiUnknownField": "extra"
+        }
+      ],
+      "_meta": {
+        "codex": {
+          "params": {
+            "threadId": "test-session-id",
+            "turnId": "turn-1",
+            "itemId": "permissions-snapshot",
+            "environmentId": null,
+            "startedAtMs": 0,
+            "cwd": "/home/user/project",
+            "reason": "Need extra access",
+            "permissions": {
+              "network": {
+                "enabled": true,
+                "dwarfaiUnknownField": "extra"
+              },
+              "fileSystem": {
+                "read": ["/home/user/project"],
+                "write": ["/home/user/project/tmp"],
+                "entries": [],
+                "dwarfaiUnknownField": "extra"
+              },
+              "dwarfaiUnknownField": "extra"
+            },
+            "dwarfaiUnknownField": "extra"
+          },
+          "dwarfaiUnknownField": "extra"
+        },
+        "dwarfaiUnknownField": "extra"
+      },
+      "dwarfaiUnknownField": "extra"
+    }
+  ]
+}

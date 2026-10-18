@@ -79,6 +79,8 @@ import {
   describeAttachmentsParamsSchema,
   consoleTargetSchema,
   feedParamsSchema,
+  retryMessageParamsSchema,
+  retryMessageResultSchema,
   resolveConsoleParamsSchema,
   sendMessageParamsSchema,
   sendMessageResultSchema,
@@ -86,6 +88,8 @@ import {
   type AttachmentPick,
   type ConsoleTarget,
   type FeedParams,
+  type RetryMessageParams,
+  type RetryMessageResult,
   type SendMessageParams,
   type SendMessageResult
 } from './params/conversation'
@@ -122,6 +126,12 @@ import {
   type RecoveryActionParams
 } from './params/launching'
 import { suppliersLaunchableParamsSchema } from './params/suppliers'
+import {
+  jevSuggestParamsSchema,
+  jevSuggestResultSchema,
+  type JevSuggestParams,
+  type JevSuggestResult
+} from './params/jev'
 import { outcomeSchema, type Outcome } from './errors'
 import { requestIdSchema } from './requestId'
 import {
@@ -171,6 +181,7 @@ export interface HostMethods {
   'crew.resetName':                  { params: ResetDwarfNameParams; result: {} }
   // conversation
   'conversation.send':               { params: SendMessageParams; result: SendMessageResult }
+  'conversation.retry':              { params: RetryMessageParams; result: RetryMessageResult }
   'conversation.feed':               { params: FeedParams; result: FeedPage }
   'conversation.mineHistory':        { params: { mineId: MineId }; result: MineHistoryView }
   'conversation.describeAttachments': { params: { paths: AttachmentPath[] }; result: AttachmentPick[] }
@@ -187,6 +198,7 @@ export interface HostMethods {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty value as {}
   'launching.dismissRecovery':       { params: RecoveryActionParams; result: Outcome<{}, 'no-report'> }
   'suppliers.launchable':            { params: { refresh?: boolean }; result: SupplierEntryView[] }
+  'jev.suggest':                     { params: JevSuggestParams; result: JevSuggestResult }
   // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
@@ -404,6 +416,13 @@ export const HOST_METHOD_SCHEMAS = {
     params: sendMessageParamsSchema,
     result: sendMessageResultSchema
   },
+  // B-M25 (14 §2.3, §1.7; ADR-022 item 5): `ui` only, mutating (requestId, deduped at the transport,
+  // 14 §1.6); answered at acceptance once the same message's delivery is `sending` again
+  // (host/transport/methods/conversationRetry.ts), the settlement arriving only as `message.delivery`.
+  'conversation.retry': {
+    params: retryMessageParamsSchema,
+    result: retryMessageResultSchema
+  },
   // B-M26 (14 §2.3, §3.6): `ui` and `viewer` (its own dwarf only, host/transport/methods/conversationFeed.ts);
   // a query, so no requestId (14 §1.6). Its result is sensitive (14 §3.5 SENSITIVE_METHODS).
   'conversation.feed': {
@@ -483,6 +502,10 @@ export const HOST_METHOD_SCHEMAS = {
   'suppliers.launchable': {
     params: suppliersLaunchableParamsSchema,
     result: z.array(supplierEntryViewSchema)
+  },
+  'jev.suggest': {
+    params: jevSuggestParamsSchema,
+    result: jevSuggestResultSchema
   },
   'strangler.dwarfIdentities': {
     params: z.object({}).strict(),

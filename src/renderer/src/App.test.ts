@@ -22,7 +22,7 @@ import { panelLeaveBoundMs } from './lib/shell/panelMotion'
 import { dockReplaceMotion, dockWindowMotion } from './lib/shell/dockMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { useAgentLaunch } from './composables/useAgentLaunch'
-import { useDwarfKicking } from './composables/useDwarfKicking'
+import { useDwarfStopping } from './composables/useDwarfStopping'
 import { RESULT_VISIBLE_MS, useDwarfMessaging } from './composables/useDwarfMessaging'
 import { REACTION_WINDOW_MS } from './lib/delivery/reaction'
 import { restoreLaunchView, useView } from './composables/useView'
@@ -162,8 +162,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     raisePanel: vi.fn(),
     getMines: vi.fn().mockResolvedValue({ mines: [], tokensObserved: 0 }),
     onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
-    // Answers "a window was focused", the verdict that leaves the panel alone.
-    activateDwarf: vi.fn().mockResolvedValue({ focused: true, openedTerminal: false, feed: [] }),
+    // Answers "a window was focused", the verdict that leaves the panel alone. AMENDED for ISSUE-001 (was: today's
+    // `DwarfActivation`): A-13's 14 answer from the step-3a switch, `IpcResult<ConsoleOpenResult>`.
+    activateDwarf: vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { outcome: 'raised', mode: 'focus-terminal' } }),
     // The message panel reads an observed session's transcript on selection
     // (#159); a readable-but-empty answer is the quiet default.
     getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
@@ -178,8 +181,13 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       ok: true,
       value: { mineId: HISTORY_MINE_ID, speakers: [] }
     }),
-    sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
-    kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    // AMENDED for ISSUE-001 (was: today's `{ delivered, via }`): A-23's 14 answer, accepted under a MessageId.
+    sendDwarfText: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { ok: true, value: { messageId: '01920000-0000-7000-8000-0000000005a1' } }
+    }),
+    // AMENDED for ISSUE-183 (was: A-26 `kickDwarf`, which left the facade in 3a): "Stop dwarf…" is A-N29.
+    stopDwarf: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } }),
     // A promoted kick retires its dwarf through this (#46). Stubbed rather
     // than made optional in the composable: a missing member should fail a
     // test loudly, not be swallowed at every call site.
@@ -230,10 +238,31 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // shape for the reason stated at length above. Claude detected and
     // launchable is the ordinary machine; a launch answers "started", the
     // verdict that says a session began and claims no dwarf.
+    // AMENDED for ISSUE-001 (was: today's `{ providers }`, and today's A-37 catalogue below): from the step-3a switch
+    // A-36 answers each provider's `SupplierEntryView` with its models; the Claude entry carries the catalogue
+    // A-37 used to (each model with the efforts it takes).
     listAgentProviders: vi.fn().mockResolvedValue({
-      providers: [{ provider: 'claude', installed: true, launchable: true }]
+      ok: true,
+      value: [
+        {
+          providerId: 'claude',
+          label: 'Claude Code',
+          models: [
+            { value: 'claude-haiku-4-5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+            { value: 'claude-sonnet-5', efforts: ['low', 'high'] }
+          ],
+          permissionModes: [],
+          offeredModes: [],
+          installed: true,
+          publicLaunch: 'enabled',
+          answerChannel: 'available'
+        }
+      ]
     }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
+    launchAgent: vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { launchId: '01920000-0000-7000-8000-0000000005b1' } }),
     /*
      * AMENDED for #96 (was: absent). The mine's session strip asks a held
      * session for its own context reading when the strip's subject changes,
@@ -2115,7 +2144,7 @@ describe('App exclusive selection (#165)', () => {
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
   })
 
   async function openCrewedMine() {
@@ -2274,7 +2303,7 @@ describe('App mine history', () => {
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
   })
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
@@ -2448,7 +2477,10 @@ describe('App mine history', () => {
   it("draws a failed message from the app's own record of the send", async () => {
     const { wrapper } = await openMineWith([], {
       getMineHistory: vi.fn().mockResolvedValue(historyOf([SPEAKER])),
-      sendDwarfText: vi.fn().mockResolvedValue({ delivered: false, error: 'no session' })
+      // AMENDED for ISSUE-001 (was: today's `{ delivered: false, error }`): A-23's 14 refusal.
+      sendDwarfText: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { ok: false, error: 'cannot-receive' } })
     })
     await useDwarfMessaging().send(OLDER, 'Never got there.', true, [])
     await flushPromises()
@@ -4133,7 +4165,7 @@ describe('App message dock (#635)', () => {
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
     useAgentLaunch().close()
   })
 
@@ -4193,10 +4225,12 @@ describe('App message dock (#635)', () => {
     wrapper.findComponent(DwarfMessagePanel).vm.$emit('send', { text: 'dig', pressEnter: true })
     await flushPromises()
 
+    // AMENDED for ISSUE-001 (was: today's `{ dwarfId, text, pressEnter }`): A-23's 14 request.
     expect(api.sendDwarfText).toHaveBeenCalledWith({
       dwarfId: 'claude:s1',
       text: 'dig',
-      pressEnter: true
+      attachments: [],
+      requestId: expect.any(String)
     })
     expect(wrapper.find('button.dm-dwarf').attributes('data-mark')).toBe('delivered')
   })
@@ -4691,16 +4725,19 @@ describe('App, hidden until built (ISSUE-267)', () => {
       getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
       // Detected, and not offered: what main answers for Antigravity in a public build (R-03) or
       // for any provider whose driver is not built.
+      // AMENDED for ISSUE-001 (was: today's `{ providers }`): A-36's 14 entries, Antigravity's launch gated.
       listAgentProviders: vi.fn().mockResolvedValue({
-        providers: [
-          { provider: 'claude', installed: true, launchable: true },
-          {
-            provider: 'antigravity',
-            installed: true,
-            launchable: false,
-            reason: 'That agent cannot be started from the panel yet.'
-          }
-        ]
+        ok: true,
+        value: (['claude', 'antigravity'] as const).map((providerId) => ({
+          providerId,
+          label: providerId,
+          models: [],
+          permissionModes: [],
+          offeredModes: [],
+          installed: true,
+          publicLaunch: providerId === 'claude' ? 'enabled' : 'gated',
+          answerChannel: 'available'
+        }))
       })
     })
 
