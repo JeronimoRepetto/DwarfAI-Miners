@@ -195,6 +195,8 @@ const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 const {
   enabled: notificationsEnabled,
   sync: syncNotifications,
+  start: followNotificationSettings,
+  stop: stopFollowingNotificationSettings,
   set: setNotificationsEnabled
 } = useNotificationSettings()
 /* --- end of the #316 block ------------------------------------------------- */
@@ -238,6 +240,8 @@ const {
   providers: jevProviders,
   catalogs: jevCatalogs,
   sync: syncJevSettings,
+  start: followJevSettings,
+  stop: stopFollowingJevSettings,
   save: saveJevApiKey,
   clear: clearJevApiKey,
   setPreferences: setJevPreferences
@@ -251,10 +255,14 @@ const {
  * what main answered with — the password is handed to the preload and never
  * kept here.
  */
+// AMENDED for ISSUE-234 (was: today's `OpenCodeSettings` as the state): the state is the Host's `OpenCodeSettingsView`
+// read model; Settings › Integrations draws its `view`, unchanged for the person.
 const {
-  settings: openCodeSettings,
+  view: openCodeSettings,
   applying: openCodeApplying,
   sync: syncOpenCodeSettings,
+  start: followOpenCodeSettings,
+  stop: stopFollowingOpenCodeSettings,
   setPluginEnabled: setOpenCodePluginEnabled,
   savePassword: saveOpenCodeServerPassword,
   clearPassword: clearOpenCodeServerPassword
@@ -1230,6 +1238,8 @@ onMounted(() => {
   // raised. Subscribed rather than pulled, like the message panel above: a
   // click can land at any moment and there is no state to poll for.
   void syncNotifications()
+  // ISSUE-234: and follows the Host's `preferences.changed` frames, so a change in another window shows here.
+  void followNotificationSettings()
   // AMENDED for ISSUE-123 (was: `onShowMine`, A-P5): A-P5 is retired by the cut-1 switch; a notification click reaches
   // this window as A-N16 `onRevealDwarfChat` below.
   /* --- end of the #316 block ---------------------------------------------- */
@@ -1247,11 +1257,17 @@ onMounted(() => {
   // outside this window ever changes it — the message panel never draws this
   // section — so there is no push to hear and nothing to release on unmount.
   void syncJevSettings()
+  // ISSUE-234: AMENDED (was: no subscription): from the step-4a switch the Host owns these preferences and another
+  // window or a Reset can change them, so the section follows the `preferences.changed` frames too.
+  void followJevSettings()
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
   // Adopts the stored verdict, for the reason syncJevSettings gives: nothing
   // outside this window changes it, so there is no push to hear.
   void syncOpenCodeSettings()
+  // ISSUE-234: AMENDED (was: no push to hear): the Add panel and the first-run step change it too (US-SET-009.AC08), so
+  // the section follows the Host's `integration.changed` and `preferences.changed` frames.
+  void followOpenCodeSettings()
   /* --- end of the #588 T6 block --------------------------------------------- */
   /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
   void followHostConnection()
@@ -1284,6 +1300,11 @@ onBeforeUnmount(() => {
   // Every sound released with the window: a clip left decoding would outlive
   // the surface that asked for it.
   disposeAudio()
+  /* --- Settings read models (ISSUE-234) — one block, appended ------------------- */
+  stopFollowingNotificationSettings()
+  stopFollowingJevSettings()
+  stopFollowingOpenCodeSettings()
+  /* --- end of the ISSUE-234 block ----------------------------------------------- */
   /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
   stopFollowingHostConnection()
   /* --- end of the ISSUE-316 block --------------------------------------------- */

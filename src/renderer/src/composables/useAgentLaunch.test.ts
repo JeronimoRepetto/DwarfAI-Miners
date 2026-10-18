@@ -1604,6 +1604,10 @@ describe('the OpenCode permission-requests notice (ISSUE-228)', () => {
     await launch.enableIntegration()
 
     expect(api.setOpenCodePluginEnabled).toHaveBeenCalledOnce()
+    // ADDED for ISSUE-234: from the step-4a switch the Add panel records its own consent origin (16 §7.2; C-21).
+    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledWith(
+      expect.objectContaining({ on: true, origin: 'add-panel' })
+    )
     expect(api.listAgentProviders).toHaveBeenCalledTimes(2)
     expect(launch.integrationNotice.value).toEqual({ shown: false })
     // The interactive mode ("Ask first") now leads the Permissions list (US-LAUNCH-001 order).
