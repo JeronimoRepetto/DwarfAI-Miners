@@ -121,5 +121,11 @@ export const en = {
     "OpenCode permission requests are off, so its asks won't show here.",
   'addPanel.openCodeNotice.action': 'Turn on',
   'addPanel.openCodeNotice.failure':
-    "Couldn't turn on OpenCode permission requests. Try again from Settings."
+    "Couldn't turn on OpenCode permission requests. Try again from Settings.",
+
+  // The Add panel's Jev card tooltip flag lines, in their fixed order (US-LAUNCH-008.AC04, the story's own text;
+  // AMENDMENT-22 carries the trivial and large-context flags to the card).
+  'jevCard.tip.trivial': 'Treated as a trivial prompt.',
+  'jevCard.tip.largeContext': 'Large-context model preferred.',
+  'jevCard.tip.trimmed': 'The prompt sent to Jev was trimmed to fit its request budget.'
 } as const satisfies CopyCatalog
