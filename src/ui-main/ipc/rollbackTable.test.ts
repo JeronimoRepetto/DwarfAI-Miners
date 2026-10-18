@@ -1,9 +1,19 @@
 // layer: L1
 import { describe, expect, it } from 'vitest'
-import { CHANNELS, RETIRED, UNROUTED, type ChannelKey } from '@dwarfai/contracts'
+import {
+  CATALOG_PROVIDER_IDS,
+  CHANNELS,
+  RETIRED,
+  UNROUTED,
+  type ChannelKey
+} from '@dwarfai/contracts'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { rollbackOf } from './rollbackTable'
-import { LEGACY_BRIDGE_ADAPTERS, ROUTES as CUT_3A_ROUTES, ROUTES_RELEASE } from './routes'
+// AMENDED for ISSUE-002 (was: the release table `ROUTES` as the 3a table): from the step-3b switch the 3a table as it
+// shipped is `testing/cut3aRoutes.ts`.
+import { LEGACY_BRIDGE_ADAPTERS, ROUTES as RELEASE_ROUTES, ROUTES_RELEASE } from './routes'
+import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
+import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_0_ROUTES as ROUTES, CUT_0_TABLE } from './testing/cut0Routes'
 import { CUT_2_ROUTES, CUT_2_TABLE } from './testing/cut2Routes'
 
@@ -171,7 +181,7 @@ describe('rollbackOf', () => {
   // unqualified shape-adapter route, and the one-time Jev-key migration (docs/strangler/rollback.md "Step 3a").
   it('[ADR-001, ADR-017] rolling back 3a folds each provider-qualified row into its unqualified shape-adapter row, keeps the Jev key rows on the Host and keeps the NEW rows', () => {
     const cut3a: RouteTable = {
-      release: ROUTES_RELEASE,
+      release: CUT_3A_RELEASE,
       routes: CUT_3A_ROUTES,
       unrouted: UNROUTED,
       retired: RETIRED,
@@ -245,6 +255,82 @@ describe('rollbackOf', () => {
     expect(rolledBack.routes.some((r) => r.owner === 'host' && r.qualifier !== undefined)).toBe(
       false
     )
+    expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+  })
+
+  // APPENDED for ISSUE-002: a later provider step beside the shape-adapter routes 3a created (docs/strangler/rollback.md
+  // "Step 3b").
+  it('[ADR-001] rolling back 3b drops the Codex host rows so Codex reaches the 3a shape adapters again, and gives Codex its A-27, A-P3 and A-P4 rows back', () => {
+    const [, CODEX = ''] = CATALOG_PROVIDER_IDS
+    // AMENDED for ISSUE-186 (was: the release table `ROUTES` / `ROUTES_RELEASE`): from the step-3d switch the 3b table
+    // as it shipped is `testing/cut3bRoutes.ts`.
+    const cut3b: RouteTable = {
+      release: CUT_3B_RELEASE,
+      routes: CUT_3B_ROUTES,
+      unrouted: UNROUTED,
+      retired: RETIRED,
+      adapters: LEGACY_BRIDGE_ADAPTERS
+    }
+    expect(cut3b.release).toBe('cut-3b')
+    const rolledBack = rollbackOf(cut3b, 'cut-3b')
+    expect(rolledBack.routes.some((r) => r.since === 'cut-3b')).toBe(false)
+    for (const channel of [
+      'dwarf:retire',
+      'agent:launchFailed',
+      'dwarf:sendText:settled'
+    ] as const) {
+      expect(rolledBack.routes, channel).toContainEqual({
+        channel,
+        owner: 'legacy',
+        since: 'cut-3a',
+        parity: 'n/a',
+        qualifier: { provider: CODEX },
+        shape: 'today'
+      })
+    }
+    const order = (routes: readonly ChannelRoute[]) => routes.map((r) => JSON.stringify(r)).sort()
+    expect(order(rolledBack.routes)).toEqual(order(CUT_3A_ROUTES))
+    expect(rolledBack.withdrawn).toBeUndefined()
+    expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+  })
+
+  // APPENDED for ISSUE-186: step 3d moves "Other…", outside the catalog (docs/strangler/rollback.md "Step 3d").
+  it("[ADR-001] rolling back 3d gives A-39 back to today's runtime, sends Other… dwarfs to the 3a shape adapters and gives Other… no A-27, A-P3 or A-P4 row", () => {
+    const cut3d: RouteTable = {
+      release: ROUTES_RELEASE,
+      routes: RELEASE_ROUTES,
+      unrouted: UNROUTED,
+      retired: RETIRED,
+      adapters: LEGACY_BRIDGE_ADAPTERS
+    }
+    expect(cut3d.release).toBe('cut-3d')
+    const rolledBack = rollbackOf(cut3d, 'cut-3d')
+    expect(rolledBack.routes.some((r) => r.since === 'cut-3d')).toBe(false)
+    expect(rolledBack.routes.filter((r) => r.channel === 'agent:launchHosted')).toEqual([
+      {
+        channel: 'agent:launchHosted',
+        owner: 'legacy',
+        since: 'pre-cut-0',
+        parity: 'n/a',
+        shape: 'today'
+      }
+    ])
+    for (const channel of [
+      'dwarf:retire',
+      'agent:launchFailed',
+      'dwarf:sendText:settled'
+    ] as const) {
+      const providers = rolledBack.routes
+        .filter((r) => r.channel === channel)
+        .map((r) => r.qualifier?.provider)
+      expect(
+        providers.every((provider) => CATALOG_PROVIDER_IDS.some((id) => id === provider)),
+        channel
+      ).toBe(true)
+    }
+    const order = (routes: readonly ChannelRoute[]) => routes.map((r) => JSON.stringify(r)).sort()
+    expect(order(rolledBack.routes)).toEqual(order(CUT_3B_ROUTES))
+    expect(rolledBack.withdrawn).toBeUndefined()
     expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
   })
 })

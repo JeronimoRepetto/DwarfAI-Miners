@@ -3,6 +3,7 @@ import type {
   JevSuggestParams,
   JevSuggestResult,
   JevSuggestionView,
+  LaunchCustomParams,
   LaunchFailure as HostLaunchFailure,
   LaunchParams,
   MineId,
@@ -1072,7 +1073,7 @@ function jevChooses(state: LaunchState): boolean {
  * The A-35 request for the form as it stands (14 §3.4 `LaunchParams`; 07 5A S5.04, S5.08a): with Let Jev choose on
  * the Host's Jev way (it asks Jev at Send, S5.10), otherwise the chosen supplier; the model, effort and permission mode
  * only where the person chose them; the person's two Jev switches; `retryOf` for a Retry of a failed launch. Null for
- * Other… (a custom command is A-39, today's shape until 3d) or a form with no way to run.
+ * Other… (a custom command is A-39, `customLaunchParamsOf`, ISSUE-186) or a form with no way to run.
  */
 export function launchParamsOf(
   state: LaunchState,
@@ -1177,3 +1178,30 @@ export function unstatedLaunchTimedOut(
 }
 
 /* --- end of the ISSUE-001 block ------------------------------------------------ */
+
+/* --- A-39 in its 14 shape: the "Other…" launch the Host owns (ISSUE-186) — one block, appended --- */
+
+/**
+ * The A-39 request for an "Other…" form (14 §3.4 `LaunchCustomParams`; 07 5A S5.04, S5.08a; 21 §2 cut 3d): the
+ * committed command as typed (the Host parses it, with no shell), the prompt, and `retryOf` for a Retry of a failed
+ * launch. Null for any other choice (its request is A-35's, `launchParamsOf`).
+ */
+export function customLaunchParamsOf(
+  state: LaunchState,
+  mineId: MineId,
+  requestId: string,
+  retryOf?: string
+): LaunchCustomParams | null {
+  if (state.choice !== OTHER_CHOICE) return null
+  return {
+    mineId,
+    command: launchCommand(state),
+    prompt: launchPrompt(state),
+    ...(retryOf === undefined
+      ? {}
+      : { retryOf: retryOf as NonNullable<LaunchCustomParams['retryOf']> }),
+    requestId
+  }
+}
+
+/* --- end of the ISSUE-186 block ------------------------------------------------ */

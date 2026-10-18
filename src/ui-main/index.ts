@@ -37,7 +37,7 @@ import { createLegacyAskRelay, legacyOpenAsksOf } from '../legacy-bridge/LegacyA
 import {
   createLegacyAgentRegistryFeed,
   LEGACY_FEED_PROVIDERS_CUT_1,
-  LEGACY_FEED_PROVIDERS_CUT_3A,
+  legacyFeedModesFor,
   type LegacyAgentRegistryFeed,
   type LegacyFeedModes,
   type LegacyFeedTimers,
@@ -254,6 +254,11 @@ import {
   LAUNCH_AGENT,
   LAUNCH_AGENT_ROWS
 } from './ipc/handlers/launchAgent.host'
+import {
+  createLaunchCustomRow,
+  LAUNCH_CUSTOM,
+  LAUNCH_CUSTOM_ROWS
+} from './ipc/handlers/launchCustom.host'
 import {
   createSendDwarfTextRow,
   SEND_DWARF_TEXT,
@@ -1170,8 +1175,9 @@ export function composeJevRouteRow(deps: {
  * target only where the table routes it `host`: A-35 `launchAgent` (B-M33), A-23 `sendDwarfText` (B-M24), A-13
  * `activateDwarf` (B-M29, its window half raising the console UI main holds, ADR-031), A-25
  * `describeDwarfAttachments` (B-M28), A-N06 `retryDwarfMessage` (B-M25) and A-N10, A-N11 the recovery report (B-M35,
- * B-M36). A-13 is composed only with the console raiser (`consoles`), never half. `undefined` when the table routes none
- * of them `host` (before the step-3a switch).
+ * B-M36). A-13 is composed only with the console raiser (`consoles`), never half. From step 3d (ISSUE-186) also A-39
+ * `launchHostedProcess` (B-M34, the "Other…" launch). `undefined` when the table routes none of them `host` (before the
+ * step-3a switch).
  */
 export function composeConversationAndLaunchRows(deps: {
   routes: readonly ChannelRoute[]
@@ -1183,6 +1189,9 @@ export function composeConversationAndLaunchRows(deps: {
   const parts: RouteTargetPart[] = []
   if (toHost(LAUNCH_AGENT)) {
     parts.push({ channels: LAUNCH_AGENT_ROWS, target: createLaunchAgentRow(client) })
+  }
+  if (toHost(LAUNCH_CUSTOM)) {
+    parts.push({ channels: LAUNCH_CUSTOM_ROWS, target: createLaunchCustomRow(client) })
   }
   if (toHost(SEND_DWARF_TEXT)) {
     parts.push({ channels: SEND_DWARF_TEXT_ROWS, target: createSendDwarfTextRow(client) })
@@ -1309,14 +1318,14 @@ export function composeSettlementJoin(deps: {
 
 /**
  * What `LegacyAgentRegistryFeed` composes per legacy provider for a table (21 §3: it shrinks per provider step). A
- * table whose A-36 names a moved provider (a `host` route qualified to it, the step-3a switch) is step 3a's: Claude's
- * discovery keeps only its legacy-launched sessions (`LEGACY_FEED_PROVIDERS_CUT_3A`); a table that moved none (cuts 1 and 2, a 3a rollback build)
- * composes every discovery. Each later step's switch names its own modes here.
+ * provider whose A-36 entry the table routes `host` (moved: Claude from 3a, Codex from 3b) keeps only what its
+ * moved mode lists (`legacyFeedModesFor`: its legacy-launched sessions, and Codex's pending questions); a table that
+ * moved none (cuts 1 and 2, a 3a rollback build) composes every discovery. AMENDED for ISSUE-002 (was: the 3a modes
+ * for any table that moved a provider): derived per moved provider, so each step's switch and its rollback compose
+ * their own modes.
  */
 export function legacyFeedModesOf(routes: readonly ChannelRoute[]): LegacyFeedModes {
-  return movedProvidersOf(routes).size === 0
-    ? LEGACY_FEED_PROVIDERS_CUT_1
-    : LEGACY_FEED_PROVIDERS_CUT_3A
+  return legacyFeedModesFor(movedProvidersOf(routes))
 }
 
 /**

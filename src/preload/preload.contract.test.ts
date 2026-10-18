@@ -17,7 +17,10 @@ import {
   ROW_IDS,
   STEP_ORDER,
   TODAY_SHAPES,
-  type ChannelKey
+  type ChannelKey,
+  type IpcResult,
+  type LaunchAccepted,
+  type LaunchCustomParams
 } from '@dwarfai/contracts'
 import type { TODAY } from '../contracts/ipc/todayShapes'
 import { ROUTES, ROUTES_RELEASE } from '../ui-main/ipc/routes'
@@ -210,6 +213,7 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-001 (was: those eight): the step-3a switch moves the CHANGE rows A-13, A-23, A-35, A-36 (one
     // route per qualifier: the Host for Claude, a shape adapter for the others) and A-50 to their target shape, and
     // gives A-47 its target shape through `JevSettingsShapeAdapter` (a KEEP row, unchanged here).
+    // AMENDED for ISSUE-186 (was: those thirteen): the step-3d switch moves the CHANGE row A-39 to its target shape.
     expect(
       [
         ...new Set(
@@ -230,6 +234,7 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       'A-33',
       'A-35',
       'A-36',
+      'A-39',
       'A-40',
       'A-41',
       'A-44',
@@ -361,28 +366,27 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-001 (was: A-13 and A-23 as the CHANGE rows still `today`, A-P3 with one route): the step-3a
     // switch gives A-13 and A-23 their target shape for every provider; A-39 (`launchHostedProcess`, moved in 3d) is
     // the CHANGE row still `today`, and A-P3 keeps today's shape on each of its provider-qualified routes.
-    const today = [
-      'agent:launchHosted',
-      'agent:launchFailed',
-      'notifications:enabled:get',
-      'opencode:settings:get'
-    ]
+    // AMENDED for ISSUE-186 (was: A-39 as the CHANGE row still `today`): the step-3d switch routes A-39 `host` with its
+    // target shape (21 §3.1: it switches with its route), so its member now exposes `LaunchCustomParams` →
+    // `IpcResult<LaunchAccepted>`; A-52 `getOpenCodeSettings` is the CHANGE row still `today` (until 4a).
+    const today = ['agent:launchFailed', 'notifications:enabled:get', 'opencode:settings:get']
     for (const key of today) {
       expect(
         [...new Set(ROUTES.filter((route) => route.channel === key).map((route) => route.shape))],
         key
       ).toEqual(['today'])
     }
-    // CHANGE row: today's `AgentLaunchResult`, not the target IpcResult<LaunchAccepted>.
-    expectTypeOf<DwarfAiMinersApi['launchHostedProcess']>()
-      .parameter(0)
-      .toEqualTypeOf<TodayRequest<'agent:launchHosted'>>()
-    expectTypeOf<DwarfAiMinersApi['launchHostedProcess']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'agent:launchHosted'>
-    >()
-    // A request is accepted as today's types have it (the preload never mutates it).
-    expectTypeOf<TodayRequest<'agent:launchHosted'>>().toExtend<
+    // A-39 from 3d: the target `LaunchCustomParams` → `IpcResult<LaunchAccepted>`, no longer today's
+    // `AgentLaunchResult`.
+    expectTypeOf<LaunchCustomParams>().toExtend<
       Parameters<DwarfAiMinersApi['launchHostedProcess']>[0]
+    >()
+    expectTypeOf<DwarfAiMinersApi['launchHostedProcess']>().returns.resolves.toEqualTypeOf<
+      IpcResult<LaunchAccepted>
+    >()
+    // A request of a row still `today` is accepted as today's types have it (the preload never mutates it).
+    expectTypeOf<TodayRequest<'notifications:enabled:set'>>().toExtend<
+      Parameters<DwarfAiMinersApi['setNotificationsEnabled']>[0]
     >()
     expectTypeOf<readonly string[]>().toExtend<
       Parameters<DwarfAiMinersApi['describeDwarfAttachments']>[0]

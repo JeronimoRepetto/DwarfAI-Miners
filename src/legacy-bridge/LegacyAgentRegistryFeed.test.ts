@@ -5,6 +5,8 @@ import {
   createLegacyAgentRegistryFeed,
   LEGACY_FEED_PROVIDERS_CUT_1,
   LEGACY_FEED_PROVIDERS_CUT_3A,
+  LEGACY_FEED_PROVIDERS_CUT_3B,
+  legacyFeedModesFor,
   type LegacyFeedModes,
   type LegacyRuntimeSurface
 } from './LegacyAgentRegistryFeed'
@@ -111,6 +113,41 @@ describe('LegacyAgentRegistryFeed', () => {
       ['antigravity', 'a1'],
       ['opencode', 'o1']
     ])
+  })
+
+  it('[ADR-001] in 3b Codex keeps the sessions today’s runtime launched and the sessions blocked on a pending question', async () => {
+    const legacy = fakeLegacyRuntime({
+      claude: [snapshot('claude', 's1')],
+      codex: [
+        snapshot('codex', 't1'),
+        snapshot('codex', 't2'),
+        snapshot('codex', 't3', { pendingQuestion: QUESTION })
+      ],
+      opencode: [snapshot('opencode', 'o1')]
+    })
+    const feed = createLegacyAgentRegistryFeed({
+      legacy: legacy.surface,
+      modes: LEGACY_FEED_PROVIDERS_CUT_3B,
+      launched: (legacyId) => legacyId === 'codex:t2',
+      timers: fakeInterval()
+    })
+
+    await feed.refresh()
+
+    // Codex's rows move to the Host in 3b (21 §2 cut 3b): a session its legacy path launched stays joinable for
+    // LegacyEndFirstAdapter, and a person-launched session's question is still answered through LegacyAskRelay until
+    // the end of cut 4 (21 §2 cut 2 "Qualified routes"); any other Codex session is the Host observer's alone.
+    expect(legacy.registry.at(-1)?.map((s) => [s.provider, s.sessionId])).toEqual([
+      ['codex', 't2'],
+      ['codex', 't3'],
+      ['opencode', 'o1']
+    ])
+  })
+
+  it('[ADR-001] the modes of a release follow the providers its table moved', () => {
+    expect(legacyFeedModesFor(new Set())).toEqual(LEGACY_FEED_PROVIDERS_CUT_1)
+    expect(legacyFeedModesFor(new Set(['claude']))).toEqual(LEGACY_FEED_PROVIDERS_CUT_3A)
+    expect(legacyFeedModesFor(new Set(['claude', 'codex']))).toEqual(LEGACY_FEED_PROVIDERS_CUT_3B)
   })
 
   it('[ADR-001] a provider narrowed to its legacy-launched sessions lists none when no launch predicate is bound', async () => {
