@@ -1,4 +1,4 @@
-import { reactive, watch } from 'vue'
+import { reactive } from 'vue'
 import {
   HOST_FRAME_SCHEMAS,
   type AnswerOutcome,
@@ -22,15 +22,13 @@ import {
   type DwarfAnswerState,
   type DwarfPermissionDecision,
   type DwarfPermissionRequest,
-  type DwarfQuestion,
-  type Mine
+  type DwarfQuestion
 } from '../types'
 import { mintRequestId } from './requestIds'
 import { createReadModel, followHost, type HostFollower } from './readModel'
 import { useAttentionCues } from './useAttentionCues'
 import { useDwarfMessaging } from './useDwarfMessaging'
 import { useHostConnection } from './useHostConnection'
-import { useMines } from './useMines'
 
 /**
  * The verdict of an answer the panel gave to an agent's question (#94, #125),
@@ -68,8 +66,8 @@ const NOT_ANSWERED = 'That answer could not be delivered.'
 
 /**
  * What one answer came to (AMENDED for ISSUE-141, was: today's `DwarfQuestionAnswerResult`): from the cut-2 switch A-40
- * and A-41 answer in the 14 shape, `IpcResult<AnswerOutcome>` (ADR-010 item 5), for a Host card and a `legacy:` card
- * alike (main routes each by its AskId, 21 §2 cut 2 "Qualified routes"). `accepted` is handed over; `not-open` is a
+ * and A-41 answer in the 14 shape, `IpcResult<AnswerOutcome>` (ADR-010 item 5), for every card (from ISSUE-241 each a
+ * Host ask). `accepted` is handed over; `not-open` is a
  * stale submit, which renders nothing (US-ASK-006.AC09): the card stays as the Host reports it; a refusal, a call
  * error or a lost bridge is not handed over, with today's own words (the outcome carries a reason code, never a
  * sentence to show).
@@ -105,63 +103,41 @@ function questionAnswersOf(question: DwarfQuestion, answer: AskAnswer): Question
 }
 
 /*
- * THE DUAL-SOURCE ASK READ MODEL (ISSUE-138; 21 §2 cut 2 "Legacy-bridge adapters", §3 `LegacyAskRelay`; 14 §6.4 row
- * `useDwarfQuestion`; ADR-033 items 3, 4).
+ * THE ASK READ MODEL (ISSUE-138; 14 §6.4 row `useDwarfQuestion`; ADR-033 items 3, 4).
  *
- * From cut 2 every ask has exactly one answerer, and the store reads both:
- * - The Host source: the snapshot's `asks` section and the frames `ask.opened`, `ask.closed`, `ask.step` (B-F15…B-F17)
- *   over A-N01/A-N02, applied only above the last seq (`followHost`). A re-snapshot replaces the Host asks whole.
- * - The legacy overlay: today's open asks as the facade's board (A-12/A-P2, `BoardFacadeAdapter`) carries them on its
- *   dwarfs, ids in `LegacyAskRelay`'s namespace `legacy:<legacyAskId>`. It has no seq: each board replaces it whole.
- * A card's source is its id namespace: a `legacy:` id is never a UUIDv7, so it can never pass for a Host AskId, and a
- * Host ask never enters the overlay.
+ * Every ask has exactly one answerer, the Host, and the store reads its source: the snapshot's `asks` section and the
+ * frames `ask.opened`, `ask.closed`, `ask.step` (B-F15…B-F17) over A-N01/A-N02, applied only above the last seq
+ * (`followHost`). A re-snapshot replaces the Host asks whole.
  *
- * The front card of a dwarf is its oldest open Host ask, else its legacy card (a permission before a question, as the
- * panel draws them). `ask.closed` drops the card with no notice, so the composer comes back; an `ask.opened` re-sent
+ * AMENDED for ISSUE-241, the end of cut 4 (was: a dual-source read model, 21 §2 cut 2 "Legacy-bridge adapters", with a
+ * legacy overlay of today's open asks as the facade's board carried them, ids in `LegacyAskRelay`'s namespace
+ * `legacy:<legacyAskId>`): the relay left the tree, so a person-launched Codex question opens no card (ADR-011 item 4)
+ * and the Host is the one source.
+ *
+ * The front card of a dwarf is its oldest open Host ask. `ask.closed` drops the card with no notice, so the composer comes back; an `ask.opened` re-sent
  * for the same id brings it back and drops the last verdict of that ask, so no earlier refusal is shown (ADR-010).
  * Each `ask.opened` frame also reaches the attention cues' `askOpened` intake, which judges it once per ask; a
  * snapshot's asks are state, never an arrival. `App.vue` starts the model at mount, and the message panel draws its
  * dwarf's front card from it (lib/message/askCard.ts).
  *
  * Partial picks live in the UI main session store (`ask-picks`, A-N17…A-N19; ADR-033 item 4), mirrored here and never
- * sent to the Host. Only Host AskIds cross: the store's `ask-picks` key is an AskId (14 §3.9), which a `legacy:` id is
- * not, so a legacy card keeps today's own picks.
+ * sent to the Host. The store's `ask-picks` key is an AskId (14 §3.9).
  *
  * Not built here (21 §1 item 8, hidden until built): reporting the current step (A-N07, later: ISSUE-129).
  *
  * AMENDED for ISSUE-141 (lead decision 2026-10-14: the answer half of ISSUE-138 is folded into the cut-2 switch, was:
  * answers leave in today's shape until the switch): A-40/A-41 have their target shape from the cut-2 switch, so every
  * answer leaves as `{ askId, answers, requestId }` / `{ askId, decision, requestId }` with one UUIDv7 per submit (14
- * §1.6), its AskId the card's own (a Host AskId or a `legacy:` id); main picks the route by that id.
+ * §1.6), its AskId the card's own.
  */
 
-/** One card of the read model; its source is its id namespace. */
-export type AskCard =
-  { source: 'host'; id: string; dwarfId: string; ask: AskRecord } | LegacyAskCard
-
-/** A card of the legacy overlay, in today's shape. */
-export type LegacyAskCard =
-  | { source: 'legacy'; id: string; dwarfId: string; kind: 'question'; question: DwarfQuestion }
-  | {
-      source: 'legacy'
-      id: string
-      dwarfId: string
-      kind: 'permission'
-      permission: DwarfPermissionRequest
-    }
-
-/** `LegacyAskRelay`'s AskId namespace (21 §3). */
-const LEGACY_ASK_NAMESPACE = 'legacy:'
-
-function isLegacyAskId(id: string): boolean {
-  return id.startsWith(LEGACY_ASK_NAMESPACE) && id.length > LEGACY_ASK_NAMESPACE.length
-}
+/** One card of the read model: a Host ask. */
+export type AskCard = { source: 'host'; id: string; dwarfId: string; ask: AskRecord }
 
 type HostAsks = Record<string, AskRecord>
 
 const asks = reactive({
-  host: {} as HostAsks,
-  legacy: {} as Record<string, LegacyAskCard>
+  host: {} as HostAsks
 })
 
 /** Partial picks per Host AskId, as the UI main session store holds them. */
@@ -229,23 +205,6 @@ function hostAsksOf(chunks: readonly SnapshotChunk[]): HostAsks {
   return next
 }
 
-/** Replaces the legacy overlay whole with the asks the facade's board carries now (never sequence-filtered). */
-function replaceLegacyOverlay(mines: readonly Mine[]): void {
-  const next: Record<string, LegacyAskCard> = {}
-  for (const dwarf of mines.flatMap((mine) => mine.dwarfs)) {
-    const { pendingPermission: permission, pendingQuestion: question } = dwarf
-    if (permission !== undefined && isLegacyAskId(permission.toolUseId)) {
-      const id = permission.toolUseId
-      next[id] = { source: 'legacy', id, dwarfId: dwarf.id, kind: 'permission', permission }
-    }
-    if (question !== undefined && isLegacyAskId(question.toolUseId)) {
-      const id = question.toolUseId
-      next[id] = { source: 'legacy', id, dwarfId: dwarf.id, kind: 'question', question }
-    }
-  }
-  replaceWhole(asks.legacy, next)
-}
-
 function applySessionChange(change: UiSessionChange): void {
   if (change.kind !== 'ask-picks') return
   if (change.picks === null) delete picks[change.askId]
@@ -255,10 +214,7 @@ function applySessionChange(change: UiSessionChange): void {
 let follower: HostFollower | null = null
 let stopFollowing: Array<() => void> = []
 
-/**
- * Follows both sources and the session store's picks; answers whether the Host now feeds its asks (a table that
- * refuses A-N01 leaves only the legacy overlay).
- */
+/** Follows the Host's asks and the session store's picks; answers whether the Host now feeds its asks. */
 async function startAsks(): Promise<boolean> {
   if (follower !== null) return follower.start()
   follower = followHost(
@@ -269,7 +225,6 @@ async function startAsks(): Promise<boolean> {
     { model: hostModel, sections: ['asks'], dataOf: hostAsksOf, settled: () => undefined }
   )
   stopFollowing = [
-    watch(() => useMines().state.mines, replaceLegacyOverlay, { immediate: true, flush: 'sync' }),
     // Subscribe first, then read (ADR-033 item 3): a change between the two is never missed.
     window.api.onUiSessionChanged((change) => applySessionChange(change as UiSessionChange))
   ]
@@ -287,25 +242,22 @@ async function loadPicks(): Promise<void> {
   replaceWhole(picks, { ...(session?.askPicks ?? {}) })
 }
 
-/** Stops following both sources and forgets what they held. */
+/** Stops following the Host's asks and forgets what they held. */
 function stopAsks(): void {
   follower?.stop()
   follower = null
   for (const stop of stopFollowing.splice(0)) stop()
   hostModel.seq = 0
   replaceWhole(asks.host, {})
-  replaceWhole(asks.legacy, {})
   replaceWhole(picks, {})
 }
 
-/** The card a dwarf shows now: its oldest open Host ask, else its legacy card (a permission first). */
+/** The card a dwarf shows now: its oldest open Host ask. */
 function frontAsk(dwarfId: string): AskCard | undefined {
   const host = Object.values(asks.host)
     .filter((ask) => ask.dwarfId === dwarfId)
     .sort((a, b) => a.openedAt - b.openedAt)[0]
-  if (host !== undefined) return { source: 'host', id: host.id, dwarfId, ask: host }
-  const legacy = Object.values(asks.legacy).filter((card) => card.dwarfId === dwarfId)
-  return legacy.find((card) => card.kind === 'permission') ?? legacy[0]
+  return host === undefined ? undefined : { source: 'host', id: host.id, dwarfId, ask: host }
 }
 
 /** The step a Host ask is on, as the Host reports it. */
@@ -320,7 +272,6 @@ function picksFor(askId: string): QuestionAnswers {
 
 /** Stores the partial picks of a Host ask in the UI main session store (`null` drops them); never sent to the Host. */
 function pick(askId: string, next: QuestionAnswers | null): void {
-  if (isLegacyAskId(askId)) return
   if (next === null) delete picks[askId]
   else picks[askId] = next
   window.api.patchUiSession({ kind: 'ask-picks', askId: askId as AskId, picks: next })

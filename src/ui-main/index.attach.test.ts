@@ -105,10 +105,9 @@ describe('UI main start: launch view and Host attach together (US-RES-003.AC07)'
       },
       serve: async () => undefined,
       beforeQuit: () => {},
-      willQuit: () => {},
-      // AMENDED for ISSUE-056 (was: absent): the root reaches today's launched register for the A-N26 relay.
-      liveLaunches: async () => [],
-      endLaunch: async () => 'already-ended'
+      willQuit: () => {}
+      // AMENDED for ISSUE-241 (was: also today's launched register, for the A-N26 relay through
+      // `LegacyEndFirstAdapter`): A-N26 reaches the Host alone since the end of cut 4.
     }
     const ipc: IpcMainRegistrar = { handle: () => {}, on: () => {} }
 

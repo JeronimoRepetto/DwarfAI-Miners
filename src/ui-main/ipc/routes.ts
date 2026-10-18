@@ -23,16 +23,15 @@ function span(from: StepId, to: StepId): StepId[] {
  * AMENDED for ISSUE-240, the 4b deletion (was: also `LegacyLaunchObservation`, cuts 1–4b, and the shape adapters
  * `PerProviderShapeAdapter` and `CatalogMergeAdapter`, 3a–4b): no provider is launched by today's runtime any more, so
  * they left the tree (21 §3, §3.1).
+ * AMENDED for ISSUE-241, the end of cut 4 (was: also `LegacyDwarfIdBridge`, `LegacyAgentRegistryFeed` and
+ * `LegacyAskRelay`, cuts 1–4b, `LegacyEndFirstAdapter`, cuts 0–4b, and the shape adapter `LegacyAnswerShapeAdapter`,
+ * 2–4b): the bridges that joined Host and legacy dwarfs end together in one work unit (21 §2 4b "Legacy deleted"; 14
+ * §5, §6.5 AMENDMENT-8).
  */
 export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
   { name: 'LegacyRuntimeRoute', cuts: span('cut-0', 'cut-5'), shapeAdapter: false },
   { name: 'BoardFacadeAdapter', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyDwarfIdBridge', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false },
-  { name: 'LegacyAgentRegistryFeed', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyAskRelay', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyEndFirstAdapter', cuts: span('cut-0', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyAnswerShapeAdapter', cuts: span('cut-2', 'cut-4b'), shapeAdapter: true }
+  { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false }
 ]
 
 /** A row served by today's runtime through `LegacyRuntimeRoute` with today's shape, unmoved since before cut 0. */
@@ -109,25 +108,6 @@ const hostCut2 = (channel: IpcChannelName): ChannelRoute => ({
   parity: 'passed',
   shape: 'target'
 })
-
-/**
- * A-40 or A-41 in cut 2 (21 §2 cut 2 "Qualified routes"; §1 items 2, 2a; 14 §8 I-11): the Host answers its own AskIds
- * (the unqualified route), and each origin of `LegacyAskRelay`'s `legacy:` namespace stays today's runtime's, reached
- * through the shape adapter `LegacyAnswerShapeAdapter` (21 §3.1). One owner per (channel, qualifier); the qualifier
- * is the relay's, read from the answer's AskId by the root (never a guess).
- */
-const askAnswerCut2 = (channel: IpcChannelName): ChannelRoute[] => [
-  hostCut2(channel),
-  ...(['legacy-launch', 'legacy-ask-channel'] as const).map((origin): ChannelRoute => ({
-    channel,
-    owner: 'legacy',
-    since: 'cut-2',
-    parity: 'n/a',
-    qualifier: { origin },
-    shape: 'target',
-    shapeAdapter: 'LegacyAnswerShapeAdapter'
-  }))
-]
 
 /**
  * The catalog ids (ISSUE-009; R12: never a hand-typed provider literal here). Step 3a moves Claude's launcher to the
@@ -353,8 +333,12 @@ const perProviderCut4b = (channel: IpcChannelName): ChannelRoute[] => [
  * launch are deleted after the soak (ISSUE-239…ISSUE-241). "Let Jev choose" reaches the Host, whose candidates are every
  * launchable provider: the narrowing of 3a…4a ends. No seam B member and no NEW row is born in 4b.
  *
- * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape; the rows
- * still `legacy` that carry a dwarf id reach today's runtime through `LegacyDwarfIdBridge` (21 §3). A-N33 stays
+ * End of cut 4 (21 §2 4b "Legacy deleted"; ISSUE-241): `LegacyDwarfIdBridge`, `LegacyEndFirstAdapter`,
+ * `LegacyAgentRegistryFeed`, `LegacyAskRelay` and `LegacyAnswerShapeAdapter` end together, so A-40 and A-41 keep only
+ * their unqualified `host` route (a person-launched Codex question opens no card, ADR-011 item 4) and A-N26, A-32 and
+ * A-N29 reach the Host alone (a session the old app launched has no identity to end, 15 §5 `no-identity`).
+ *
+ * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape. A-N33 stays
  * unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router
  * registers no listener for a push or for the A-X1 preload helper.
  */
@@ -384,7 +368,7 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('app:features'), // A-29
   hostCut1('mine:declare'), // A-30
   hostCut1('mine:declare-main'), // A-31
-  hostCut1('mine:undeclare'), // A-32, through LegacyEndFirstAdapter
+  hostCut1('mine:undeclare'), // A-32
   hostCut4a('metrics:reset'), // A-33, the Host saga alone (`ResetFanout` ended)
   hostCut1('projects:query'), // A-34
   ...perProviderCut3d('agent:launch'), // A-35 and its Retry path (Antigravity's: `DEVELOPMENT_BUILD_ROUTES`)
@@ -396,8 +380,8 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut4b('agent:providers', OPENCODE), // A-36, OpenCode's entry
   hostCut4b('agent:providers'), // A-36, the renderer's one catalog call: the Host's entries whole
   hostCut3d('agent:launchHosted'), // A-39, every "Other…" launch and its Retry
-  ...askAnswerCut2('agent:answerQuestion'), // A-40
-  ...askAnswerCut2('agent:answerPermission'), // A-41
+  hostCut2('agent:answerQuestion'), // A-40, Host AskIds only since ISSUE-241
+  hostCut2('agent:answerPermission'), // A-41, Host AskIds only since ISSUE-241
   hostCut4a('notifications:enabled:get'), // A-42
   hostCut4a('notifications:enabled:set'), // A-43
   uiLocalCut1Kept('presence:visibleMines'), // A-44
@@ -426,7 +410,7 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalNew('diag:renderer:report'), // A-N30
   uiLocalNew('tray:stopEverything:requested'), // A-N25
   {
-    channel: 'tray:stopEverything:confirm', // A-N26, through LegacyEndFirstAdapter (21 §3)
+    channel: 'tray:stopEverything:confirm', // A-N26
     owner: 'host',
     since: 'cut-0',
     parity: 'passed',
@@ -448,7 +432,7 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut2('welcome:answer'), // A-N32 (AMENDMENT-7)
   hostCut2('dwarf:rename'), // A-N08 (ISSUE-172 lead decision)
   hostCut2('dwarf:name:reset'), // A-N09 (ISSUE-172 lead decision)
-  hostCut3a('dwarf:stop'), // A-N29, through LegacyEndFirstAdapter for a legacy-launched session
+  hostCut3a('dwarf:stop'), // A-N29
   hostCut3a('dwarf:message:retry'), // A-N06
   hostCut3a('host:recovery:retry'), // A-N10
   hostCut3a('host:recovery:dismiss') // A-N11
@@ -549,7 +533,6 @@ export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> 
   'mines.resolveFile': 'cut-1',
   'conversation.feed': 'cut-1',
   'conversation.mineHistory': 'cut-1',
-  'strangler.dwarfIdentities': 'cut-1',
   'asking.answerQuestion': 'cut-2',
   'asking.answerPermission': 'cut-2',
   'asking.setStep': 'cut-2',

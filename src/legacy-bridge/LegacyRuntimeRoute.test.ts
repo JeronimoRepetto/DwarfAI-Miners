@@ -1,8 +1,6 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
 import { FakePanelWindowController } from '../ui-main/window/ports/fakes/FakePanelWindowController'
-import type { LegacyLaunchedSessions, LegacyLaunchesByDwarf } from './LegacyEndFirstAdapter'
-import type { LegacyBoardSource } from './LegacyRuntimeSurface'
 import {
   createLegacyRuntimeRoute,
   type LegacyHandler,
@@ -15,30 +13,18 @@ import {
  * with today's handler result, unchanged.
  */
 describe('LegacyRuntimeRoute (21 §3)', () => {
-  /** A stand-in for today's composition that counts how many times it was composed. */
-  function countingComposer(
-    handlers: Record<string, LegacyHandler>,
-    // AMENDED for ISSUE-091 (was: `LegacyLaunchedSessions` only): the register also answers which launch started a
-    // legacy dwarf (`LegacyLaunchesByDwarf`, the A-32 half of LegacyEndFirstAdapter, ISSUE-090).
-    launches: LegacyLaunchedSessions & LegacyLaunchesByDwarf = {
-      liveLaunches: async () => [],
-      endLaunch: async () => 'already-ended',
-      launchIdOfDwarf: () => undefined
-    },
-    // AMENDED for ISSUE-123 stage (a) (was: no board): the composition also hands over today's board as one tick of
-    // today's poll leaves it, for the production `LegacyRuntimeSurface`; none of the cases above reads it.
-    board: LegacyBoardSource = {
-      pollIntervalMs: 2_000,
-      refresh: async () => {},
-      current: () => []
-    }
-  ) {
+  /**
+   * A stand-in for today's composition that counts how many times it was composed. AMENDED for ISSUE-241, the end of
+   * cut 4 (was: also today's launched register, for `LegacyEndFirstAdapter`, and today's board, for
+   * `LegacyAgentRegistryFeed`): both bridges left the tree, so the composition hands over neither.
+   */
+  function countingComposer(handlers: Record<string, LegacyHandler>) {
     const counts = { composed: 0, beforeQuit: 0, willQuit: 0 }
     const panelWindow = new FakePanelWindowController({ visible: false })
     const composer: LegacyRuntimeComposer = {
       async compose() {
         counts.composed += 1
-        return { handlers: new Map(Object.entries(handlers)), panelWindow, launches, board }
+        return { handlers: new Map(Object.entries(handlers)), panelWindow }
       },
       beforeQuit() {
         counts.beforeQuit += 1
@@ -114,99 +100,5 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
     route.willQuit()
 
     expect(counts).toEqual({ composed: 1, beforeQuit: 2, willQuit: 2 })
-  })
-
-  it('[ADR-001] LegacyRuntimeRoute reaches today’s launched register for LegacyEndFirstAdapter, composing the runtime once first', async () => {
-    const ended: string[] = []
-    const { composer, counts } = countingComposer(
-      {},
-      {
-        liveLaunches: async () => [{ launchId: 'launch:1' }],
-        endLaunch: async (launchId) => {
-          ended.push(launchId)
-          return 'ended'
-        },
-        // AMENDED for ISSUE-091: the widened register (see `countingComposer`).
-        launchIdOfDwarf: () => undefined
-      }
-    )
-    const route = createLegacyRuntimeRoute(composer)
-
-    const live = await route.liveLaunches()
-    const verdict = await route.endLaunch('launch:1')
-
-    expect(counts.composed).toBe(1)
-    expect(live).toEqual([{ launchId: 'launch:1' }])
-    expect(verdict).toBe('ended')
-    expect(ended).toEqual(['launch:1'])
-  })
-
-  it('[ADR-001] LegacyRuntimeRoute answers which launch started a legacy dwarf from today’s register, and none before the runtime is composed', async () => {
-    const { composer, counts } = countingComposer(
-      {},
-      {
-        liveLaunches: async () => [{ launchId: 'launch:7' }],
-        endLaunch: async () => 'ended',
-        launchIdOfDwarf: (dwarfId) => (dwarfId === 'codex:thread-7' ? 'launch:7' : undefined)
-      }
-    )
-    const route = createLegacyRuntimeRoute(composer)
-
-    // Nothing composed: today's runtime launched nothing yet, so no dwarf has a launch, and asking composes nothing.
-    expect(route.launchIdOfDwarf('codex:thread-7')).toBeUndefined()
-    expect(counts.composed).toBe(0)
-
-    await route.compose()
-
-    expect(route.launchIdOfDwarf('codex:thread-7')).toBe('launch:7')
-    expect(route.launchIdOfDwarf('codex:someone-else')).toBeUndefined()
-    expect(counts.composed).toBe(1)
-  })
-
-  it('[ADR-001] LegacyRuntimeRoute hands LegacyAgentRegistryFeed today’s composed board: a discovery cycle composes the runtime once and runs one tick of it', async () => {
-    // ISSUE-123 stage (a) (21 §3 `LegacyAgentRegistryFeed`; lead resolution H2): the production `LegacyRuntimeSurface`.
-    let ticks = 0
-    const { composer, counts } = countingComposer({}, undefined, {
-      pollIntervalMs: 1_500,
-      refresh: async () => {
-        ticks += 1
-      },
-      current: () => [
-        {
-          id: 'mine-1',
-          path: '/work/moria',
-          name: 'moria',
-          tier: 'bronze',
-          tokensObserved: 0,
-          updatedAt: 3,
-          dwarfs: [
-            {
-              id: 'claude:s-1',
-              provider: 'claude',
-              role: 'foreman',
-              name: 'Thorin',
-              status: 'working',
-              sessionId: 's-1'
-            }
-          ]
-        }
-      ]
-    })
-    const route = createLegacyRuntimeRoute(composer)
-
-    // Nothing composed yet: the feed starts only after today's runtime is composed, so its interval is not known.
-    expect(() => route.surface.pollIntervalMs).toThrow(/before today’s runtime is composed/)
-    const [claude, codex] = await Promise.all([
-      route.surface.discovery.find((p) => p.kind === 'claude')?.scan(),
-      route.surface.discovery.find((p) => p.kind === 'codex')?.scan()
-    ])
-
-    expect(counts.composed).toBe(1)
-    expect(ticks).toBe(1)
-    expect(route.surface.pollIntervalMs).toBe(1_500)
-    expect(claude?.map((session) => [session.provider, session.sessionId])).toEqual([
-      ['claude', 's-1']
-    ])
-    expect(codex).toEqual([])
   })
 })

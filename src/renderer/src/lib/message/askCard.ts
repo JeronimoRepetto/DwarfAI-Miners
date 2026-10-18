@@ -4,24 +4,22 @@ import type { Dwarf, DwarfPermissionRequest, DwarfQuestion } from '../../types'
 /*
  * THE ASK THE MESSAGE PANEL DRAWS (ISSUE-138, the read half; 14 §6.4 row `useDwarfQuestion`; ADR-033 item 3).
  *
- * The panel draws its dwarf's front card of the dual-source ask read model, in the card components' own shape (they
+ * The panel draws its dwarf's front card of the ask read model, in the card components' own shape (they
  * are transplanted unchanged, EPIC-16):
  * - A Host ask (an `AskRecord`, ADR-010 item 5) keyed by its AskId. Its card channel is `'held'`: the card channel says
  *   where the ask is answered, and a Host ask is answered in the app, through the broker (ADR-010 item 1), whatever its
  *   provider channel; `'held'` also gives "Other thing…" the ordinary-message route ADR-010 item 2 asks for. Each
  *   question step is one question of the card, single-choice, its options by label. An ask with no answer channel
  *   (`channel: 'none'`) draws no card (ADR-010 item 3, ADR-011 item 4).
- * - Else the legacy card, by its `legacy:` id, in today's shape.
  * - Else the board's own asks exactly as the panel drew them before the read model existed: a permission ahead of a
- *   question. That covers a window whose read model is not started and a board whose ids are outside the relay's
- *   namespace, so today's legacy asks draw as they always did.
+ *   question. That covers a window whose read model is not started.
+ *
+ * AMENDED for ISSUE-241, the end of cut 4 (was: also the legacy card, by its `legacy:` id, in today's shape, between
+ * the Host ask and the board's own): `LegacyAskRelay` left the tree, so no front card is a legacy one.
  */
 
-/** The front card of the dual-source ask read model (`useDwarfQuestion().frontAsk`), as this reads it. */
-export type FrontCard =
-  | { source: 'host'; ask: AskRecord }
-  | { source: 'legacy'; kind: 'permission'; permission: DwarfPermissionRequest }
-  | { source: 'legacy'; kind: 'question'; question: DwarfQuestion }
+/** The front card of the ask read model (`useDwarfQuestion().frontAsk`), as this reads it. */
+export type FrontCard = { source: 'host'; ask: AskRecord }
 
 /** The ask card the panel draws, in the card components' own shape; `at` is the step a question opens on. */
 export type ShownAsk =
@@ -33,11 +31,6 @@ export function shownAskOf(
   board: Partial<Pick<Dwarf, 'pendingPermission' | 'pendingQuestion'>>
 ): ShownAsk | null {
   if (front?.source === 'host') return hostAskCard(front.ask)
-  if (front?.source === 'legacy') {
-    return front.kind === 'permission'
-      ? permissionCard(front.permission)
-      : questionCard(front.question, 0)
-  }
   if (board.pendingPermission !== undefined) return permissionCard(board.pendingPermission)
   if (board.pendingQuestion !== undefined) return questionCard(board.pendingQuestion, 0)
   return null

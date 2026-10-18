@@ -75,9 +75,7 @@ describe('UI main start: the Reset metrics UI step on the Host attach (ADR-024 i
       compose: async () => new FakePanelWindowController({ visible: false }),
       serve: async () => undefined,
       beforeQuit: () => {},
-      willQuit: () => {},
-      liveLaunches: async () => [],
-      endLaunch: async () => 'already-ended'
+      willQuit: () => {}
     }
     const ipc: IpcMainRegistrar = { handle: () => {}, on: () => {} }
 

@@ -3,19 +3,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PanelWindowController } from '../ui-main/window/ports/panelWindowController'
-import {
-  LegacyLaunchRegister,
-  type LegacyLaunchedSessions,
-  type LegacyLaunchesByDwarf
-} from './LegacyEndFirstAdapter'
 import { createLegacyDiagnostics, type LegacyArea, type LegacyLog } from './legacyDiagnostics'
 import { withoutObserverWrites } from './legacyObserverSwitch'
-import type { LegacyRuntimeSurface } from './LegacyAgentRegistryFeed'
-import {
-  createLegacyRuntimeSurface,
-  legacyBoardOf,
-  type LegacyBoardSource
-} from './LegacyRuntimeSurface'
 import type {
   AgentModelCatalogList,
   AgentProviderList,
@@ -128,16 +117,9 @@ export interface LegacyRuntimeComposition {
    * Panel (`LegacyPanelSurface`) because the route table serves the window family `ui-local` (21 §2 cut 0).
    */
   readonly panelWindow: PanelWindowController | null
-  /**
-   * Today's launched register, for `LegacyEndFirstAdapter` (21 §3, cuts 0–4): its live launches and kill (A-N26), and
-   * which launch started a legacy dwarf (the A-32 half, ISSUE-090).
-   */
-  readonly launches: LegacyLaunchedSessions & LegacyLaunchesByDwarf
-  /**
-   * Today's board as one tick of today's poll leaves it, for the production `LegacyRuntimeSurface` (21 §3
-   * `LegacyAgentRegistryFeed`, cuts 1–4; ./LegacyRuntimeSurface.ts).
-   */
-  readonly board: LegacyBoardSource
+  // AMENDED for ISSUE-241, the end of cut 4 (was: also today's launched register, for `LegacyEndFirstAdapter`, and
+  // today's board, for the production `LegacyRuntimeSurface` that `LegacyAgentRegistryFeed` read): both bridges left
+  // the tree, and today's runtime builds its own register again.
 }
 
 /**
@@ -155,29 +137,22 @@ export interface LegacyRuntimeComposer {
 /**
  * The one door from the new Electron root to today's runtime (21 §3 `LegacyRuntimeRoute`, cuts
  * 0–5; ADR-001 item 3; lint R16). It composes the legacy runtime once and serves a `legacy` row
- * with today's handler, unchanged. Through cut 4 it is also the way `LegacyEndFirstAdapter`
- * reaches today's launched register (ISSUE-054), composing the runtime first when needed.
+ * with today's handler, unchanged. AMENDED for ISSUE-241 (was: through cut 4 also the way
+ * `LegacyEndFirstAdapter` reached today's launched register, and `LegacyAgentRegistryFeed` today's board): both
+ * bridges left the tree at the end of cut 4.
  */
-export interface LegacyRuntimeRoute extends LegacyLaunchedSessions, LegacyLaunchesByDwarf {
+export interface LegacyRuntimeRoute {
   /** Composes the legacy runtime (once) and answers its Panel window, `null` when it composed none. */
   compose(): Promise<PanelWindowController | null>
   /** Serves a `legacy` row by today's wire name with today's handler result. */
   serve(channel: string, payload: unknown): Promise<unknown>
   beforeQuit(): void
   willQuit(): void
-  /**
-   * Today's runtime as `LegacyAgentRegistryFeed` is handed it (21 §3, cuts 1–4): its discovery runs one tick of the
-   * composed runtime per feed cycle, composing it first when needed (./LegacyRuntimeSurface.ts).
-   */
-  readonly surface: LegacyRuntimeSurface
 }
 
 export function createLegacyRuntimeRoute(composer: LegacyRuntimeComposer): LegacyRuntimeRoute {
   let composing: Promise<LegacyRuntimeComposition> | null = null
-  /** The runtime once composed: until then today's runtime launched nothing, so no dwarf has a launch. */
-  let composed: LegacyRuntimeComposition | null = null
-  const composition = (): Promise<LegacyRuntimeComposition> =>
-    (composing ??= composer.compose().then((done) => (composed = done)))
+  const composition = (): Promise<LegacyRuntimeComposition> => (composing ??= composer.compose())
 
   return {
     async compose() {
@@ -195,29 +170,7 @@ export function createLegacyRuntimeRoute(composer: LegacyRuntimeComposer): Legac
     },
     willQuit() {
       composer.willQuit()
-    },
-    async liveLaunches() {
-      return (await composition()).launches.liveLaunches()
-    },
-    async endLaunch(launchId) {
-      return (await composition()).launches.endLaunch(launchId)
-    },
-    launchIdOfDwarf(dwarfId) {
-      return composed?.launches.launchIdOfDwarf(dwarfId)
-    },
-    surface: createLegacyRuntimeSurface({
-      // Read when the feed starts, which the root does only once today's runtime is composed (index.ts).
-      get pollIntervalMs() {
-        if (composed === null) {
-          throw new Error(
-            'LegacyRuntimeRoute: the poll interval is read before today’s runtime is composed'
-          )
-        }
-        return composed.board.pollIntervalMs
-      },
-      refresh: async () => (await composition()).board.refresh(),
-      current: () => composed?.board.current() ?? []
-    })
+    }
   }
 }
 
@@ -598,19 +551,11 @@ export function composeLegacyRuntime(
         : {})
     })
 
-    // Today's launched register (#217, #231), built with exactly the arguments the runtime's own default uses, so
-    // that LegacyEndFirstAdapter can end what it launched before Stop everything relays (21 §3, ISSUE-054).
-    const launches = new LegacyLaunchRegister({
-      endProcessTree: (pid) => platformAdapters.processEnd.endProcessTree(pid),
-      processStartTimeMs: (pid) => platformAdapters.processProbe.processStartTimeMs(pid),
-      ...(launchedSessionStore == null ? {} : { store: launchedSessionStore }),
-      log: unrouted,
-      now: Date.now
-    })
-
+    // AMENDED for ISSUE-241 (was: today's launched register built here as `LegacyLaunchRegister`, so that
+    // `LegacyEndFirstAdapter` could end what it launched first, 21 §3): the adapter left the tree, so today's runtime
+    // builds its own register, with the same arguments.
     runtime = new AgentRuntime({
       config,
-      launchedSessions: launches,
       ledger,
       projects,
       projectsRefusal,
@@ -919,11 +864,8 @@ export function composeLegacyRuntime(
     // AMENDED for ISSUE-239, the 4b deletion (was: today's A-27 `retireDwarf` handler): A-27 is retired with no route
     // since the 4b switch (successor B-F10 `dwarf.departed`).
 
-    // Today's board for the production `LegacyRuntimeSurface`: read through the module-level `runtime`, so a tick after
-    // the quit teardown released it does nothing (./LegacyRuntimeSurface.ts).
-    const board = legacyBoardOf(() => runtime, config.pollIntervalMs)
     // The rebuilt window module owns the Panel; today's composition has no window controller to hand over.
-    return { handlers, panelWindow: null, launches, board }
+    return { handlers, panelWindow: null }
   }
 
   return {

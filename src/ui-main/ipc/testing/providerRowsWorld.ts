@@ -3,7 +3,7 @@
 // qualifiers, and the router on an `ipcMain` stand-in. Test-only (R14): production never imports it. AMENDED for
 // ISSUE-240, the 4b deletion (was: also the shape adapters over a recording today's runtime): `PerProviderShapeAdapter`
 // and `CatalogMergeAdapter` left the tree, so a route that names a shape adapter is not composed here.
-import type { SnapshotPage, StepId } from '@dwarfai/contracts'
+import type { SnapshotPage } from '@dwarfai/contracts'
 import {
   composeConversationAndLaunchRows,
   composeProviderRouting,
@@ -61,7 +61,6 @@ export function hostEntry(providerId: string, publicLaunch: 'enabled' | 'gated' 
 
 export interface ProviderRowsWorldOptions {
   table: readonly ChannelRoute[]
-  release: StepId
   /** The dwarfs on the Host board (`dwarfWire`). */
   dwarfs: readonly unknown[]
   /** The Host's answer to each method the rows relay. */
@@ -71,13 +70,13 @@ export interface ProviderRowsWorldOptions {
 }
 
 export function providerRowsWorld(options: ProviderRowsWorldOptions) {
-  const { table, release, dwarfs, hostReplies, today } = options
+  const { table, dwarfs, hostReplies, today } = options
   const hostCalls: Array<[string, unknown]> = []
   const legacyServed: Array<[string, unknown]> = []
   const client = {
     call: (method: string, params: unknown) => {
-      if (method !== 'strangler.dwarfIdentities') hostCalls.push([method, params])
-      return Promise.resolve(method === 'strangler.dwarfIdentities' ? [] : hostReplies[method])
+      hostCalls.push([method, params])
+      return Promise.resolve(hostReplies[method])
     },
     subscribe: (handler: (event: HostEvent) => void) => {
       handler({
@@ -106,14 +105,7 @@ export function providerRowsWorld(options: ProviderRowsWorldOptions) {
   })
   const stop = composeStopDwarf({
     routes: table,
-    release,
-    client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client'],
-    legacy: {
-      liveLaunches: () => Promise.resolve([]),
-      endLaunch: () => Promise.resolve('ended'),
-      launchIdOfDwarf: () => undefined
-    },
-    bridge: { toLegacy: () => Promise.resolve(null) }
+    client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client']
   })
   const routing = composeProviderRouting({
     routes: table,

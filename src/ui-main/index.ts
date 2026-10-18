@@ -25,36 +25,10 @@ import {
   type LegacyPanelSurface,
   type LegacyRuntimeRoute
 } from '../legacy-bridge/LegacyRuntimeRoute'
-import {
-  createLegacyEndFirstAdapter,
-  type EndFirstTimers,
-  type LegacyLaunchedSessions,
-  type LegacyLaunchesByDwarf
-} from '../legacy-bridge/LegacyEndFirstAdapter'
-import { createBoardFacadeAdapter, type LegacyAskFields } from '../legacy-bridge/BoardFacadeAdapter'
-import { createLegacyAskRelay, legacyOpenAsksOf } from '../legacy-bridge/LegacyAskRelay'
-import {
-  createLegacyAgentRegistryFeed,
-  LEGACY_FEED_PROVIDERS_CUT_1,
-  legacyFeedModesFor,
-  type LegacyAgentRegistryFeed,
-  type LegacyFeedModes,
-  type LegacyFeedTimers,
-  type LegacyRuntimeSurface
-} from '../legacy-bridge/LegacyAgentRegistryFeed'
-import {
-  createLegacyDwarfIdBridge,
-  createLegacyDwarfIdRows,
-  createLegacyPushTap,
-  createLegacyRegistryTap,
-  type LegacyDwarfIdBridge,
-  type LegacyPushTap,
-  type LegacyRegistry
-} from '../legacy-bridge/LegacyDwarfIdBridge'
+import { createBoardFacadeAdapter } from '../legacy-bridge/BoardFacadeAdapter'
 import {
   createStopEverything,
   STOP_EVERYTHING_REQUESTED,
-  type StopAllRelay,
   type StopEverything
 } from './window/application/stopEverything'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './ipc/router'
@@ -122,9 +96,7 @@ import {
   DEFAULT_TOGGLE_ACCELERATOR,
   PROTOCOL_VERSION,
   type ChannelKey,
-  type DwarfId,
-  type StepId,
-  type StopDwarfParams
+  type StepId
 } from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
@@ -214,7 +186,6 @@ import {
   createReportVisibleMinesRow,
   REPORT_VISIBLE_MINES
 } from './ipc/handlers/reportVisibleMines'
-import { createLegacyAnswerShapeAdapter } from '../legacy-bridge/asks/LegacyAnswerShapeAdapter'
 import {
   createLaunchAgentRow,
   LAUNCH_AGENT,
@@ -254,9 +225,7 @@ import {
 } from './ipc/splits/activateDwarf'
 import { composeProviderQualifiers, DWARF_PROVIDER_ROWS } from './ipc/providerQualifiers'
 import { createDwarfProviderBoard, type DwarfProviderBoard } from './ipc/dwarfProviderBoard'
-import type { LegacyAskRelay } from '../legacy-bridge/LegacyAskRelay'
 import { ANSWER_DWARF_ROWS, createAnswerDwarfRows } from './ipc/handlers/answerDwarf.host'
-import { createAnswerQualifier } from './ipc/handlers/answerDwarf.dispatch'
 import {
   createSetAskStepRow,
   SET_ASK_STEP,
@@ -315,9 +284,6 @@ import {
   createOpenCodePasswordRows,
   OPENCODE_PASSWORD_ROWS
 } from './ipc/handlers/openCodePassword.host'
-
-/** The 21 §3.1 shape adapter of A-40/A-41's qualified `legacy` routes (cuts 2–4). */
-const LEGACY_ANSWER_SHAPE_ADAPTER = 'LegacyAnswerShapeAdapter'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -437,29 +403,15 @@ export function composeUiLocal({
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
 
-/** Real timers for the legacy end bound. */
-const realTimers: EndFirstTimers = {
+/** Real timers for UI main's presence tracker. */
+const realTimers: PresenceTimers = {
   after: (ms, run) => {
     const timer = setTimeout(run, ms)
     return () => clearTimeout(timer)
   }
 }
 
-/**
- * The A-N26 relay of Stop everything and quit through cut 4 (21 §3; ADR-002 D7): `LegacyEndFirstAdapter` ends every
- * session today's runtime launched, reached through `LegacyRuntimeRoute`, before `host.shutdown {mode:'stop-all'}` is
- * relayed, and relays nothing when one cannot be ended. The cut-0 switch (ISSUE-056) composes it as the `relay` of the
- * Stop everything use case, so it is the only path of A-N26 to the Host; it goes with the adapter at the end of cut 4.
- */
-export function composeStopAllRelay(
-  legacy: LegacyLaunchedSessions,
-  timers: EndFirstTimers = realTimers
-): StopAllRelay {
-  const adapter = createLegacyEndFirstAdapter({ legacy, timers })
-  return (requestId, shutdown) => adapter.beforeStopAll(requestId, shutdown)
-}
-
-/** The mines admin rows as the root composes them: their `host` target part, and the release of what they hold. */
+/** The mines admin rows as the root composes them: their `host` target part. */
 export interface MinesAdminComposition {
   part: RouteTargetPart
   dispose(): void
@@ -468,45 +420,22 @@ export interface MinesAdminComposition {
 /**
  * The Mines page's admin rows A-20, A-30, A-31, A-32, A-34 (ISSUE-091; 14 §2.1; 21 §2 cut 1 "New core serves"), a part
  * of the `host` target, composed only for a table that routes one of them `host` (the cut-1 switch, ISSUE-123): in a
- * table that serves them `legacy` nothing new is composed. A-32 is relayed through `LegacyEndFirstAdapter`'s
- * `beforeRemoveMine` (ISSUE-090; 21 §3) in the releases the adapter lives in, so a mine's legacy-launched sessions end
- * before `mines.remove` is sent; there the rows are composed only over `LegacyDwarfIdBridge` and today's launched
- * register (`launchIdOfDwarf`), never with a removal that skips the legacy end. After the adapter's last cut the hook is
- * a pass-through. `undefined` when the table routes none of the rows `host` or a dependency is missing.
+ * table that serves them `legacy` nothing new is composed. AMENDED for ISSUE-241, the end of cut 4 (was: A-32 relayed
+ * through `LegacyEndFirstAdapter`'s `beforeRemoveMine` in the releases the adapter lived in, ISSUE-090; 21 §3): the
+ * adapter left the tree, so `mines.remove` is sent at once and a session the old app launched is the Host's observed
+ * session to end. `undefined` when the table routes none of the rows `host` or a dependency is missing.
  */
 export function composeMinesAdmin(deps: {
   routes: readonly ChannelRoute[]
-  release: StepId
   client: Pick<HostClient, 'call' | 'state' | 'subscribe'>
   native: Pick<ServedNativeActions, 'chooseFolder' | 'openPath'> | undefined
-  legacy: LegacyLaunchedSessions & Partial<LegacyLaunchesByDwarf>
-  bridge: Pick<LegacyDwarfIdBridge, 'toLegacy'> | undefined
   newRequestId?: () => string
-  timers?: EndFirstTimers
 }): MinesAdminComposition | undefined {
   const rows: readonly ChannelKey[] = MINES_ADMIN_ROWS
   const toHost = deps.routes.some((r) => rows.includes(r.channel) && r.owner === 'host')
   if (!toHost || deps.native === undefined) return undefined
-  let beforeRemoveMine: MinesAdminDeps['beforeRemoveMine'] = (mineId, requestId, remove) =>
+  const beforeRemoveMine: MinesAdminDeps['beforeRemoveMine'] = (mineId, requestId, remove) =>
     remove(mineId, requestId)
-  let dispose = (): void => {}
-  if (bridgeLivesIn('LegacyEndFirstAdapter', deps.release)) {
-    const { legacy, bridge } = deps
-    const launchIdOfDwarf = legacy.launchIdOfDwarf?.bind(legacy)
-    if (bridge === undefined || launchIdOfDwarf === undefined) return undefined
-    const endFirst = createLegacyEndFirstAdapter({
-      legacy: {
-        liveLaunches: () => legacy.liveLaunches(),
-        endLaunch: (launchId) => legacy.endLaunch(launchId),
-        launchIdOfDwarf
-      },
-      timers: deps.timers ?? realTimers,
-      host: { client: deps.client, bridge }
-    })
-    beforeRemoveMine = (mineId, requestId, remove) =>
-      endFirst.beforeRemoveMine(mineId, requestId, remove)
-    dispose = () => endFirst.dispose()
-  }
   return {
     part: {
       channels: rows,
@@ -519,7 +448,7 @@ export function composeMinesAdmin(deps: {
         beforeRemoveMine
       })
     },
-    dispose
+    dispose: () => {}
   }
 }
 
@@ -530,8 +459,6 @@ const BOARD_PUSH = 'mines:update' satisfies ChannelKey
 export interface BoardFacadeComposition {
   /** The `host` target part serving A-12. */
   part: RouteTargetPart
-  /** Pushes the board again (the relayed ask fields changed, `LegacyAskRelay`). */
-  refresh(): void
   dispose(): void
 }
 
@@ -540,16 +467,15 @@ export interface BoardFacadeComposition {
  * composables not yet switched to A-N01/A-N02. Composed once the table routes A-12 to the Host (the cut-1 switch,
  * ISSUE-123), as a part of the `host` target; A-P2 reaches the mode windows only while the table routes it to the Host
  * too, so today's runtime and the facade never push the board together (21 §1 item 4). `undefined` in a table that
- * serves A-12 `legacy`. In cuts 1–4 its dwarfs carry today's board fields from `LegacyAskRelay` (`askFields`, 21 §3):
- * the open asks, and the text delivery route and capabilities of the rows still `legacy` (A-23, A-26).
- * Deleted at cut 5 after a test proves no consumer (ISSUE-242).
+ * serves A-12 `legacy`. AMENDED for ISSUE-241, the end of cut 4 (was: in cuts 1–4 its dwarfs carried today's board
+ * fields from `LegacyAskRelay`, `askFields`, and `refresh` pushed the board again when they changed, 21 §3): the relay
+ * left the tree, so the facade reads the Host board alone. Deleted at cut 5 after a test proves no consumer (ISSUE-242).
  */
 export function composeBoardFacade(deps: {
   routes: readonly ChannelRoute[]
   client: Pick<HostClient, 'subscribe'>
   windows: () => readonly WindowContents[]
   defer?: (run: () => void) => void
-  askFields?: (dwarfId: DwarfId) => LegacyAskFields
 }): BoardFacadeComposition | undefined {
   const toHost = (channel: ChannelKey): boolean =>
     deps.routes.some((r) => r.channel === channel && r.owner === 'host')
@@ -560,15 +486,13 @@ export function composeBoardFacade(deps: {
     push: (board) => {
       if (pushes) for (const window of deps.windows()) window.send(BOARD_PUSH, board)
     },
-    ...(deps.defer === undefined ? {} : { defer: deps.defer }),
-    ...(deps.askFields === undefined ? {} : { askFields: deps.askFields })
+    ...(deps.defer === undefined ? {} : { defer: deps.defer })
   })
   return {
     part: {
       channels: [BOARD_READ],
       target: { serve: () => Promise.resolve(facade.getMines()) }
     },
-    refresh: () => facade.refresh(),
     dispose: () => facade.dispose()
   }
 }
@@ -657,18 +581,6 @@ export function composePresence(deps: {
   }
 }
 
-/** The providers whose A-36 route is qualified to them and owned by the Host: moved (21 §1 item 2, §2 cut 3). */
-function movedProvidersOf(routes: readonly ChannelRoute[]): ReadonlySet<string> {
-  const moved = new Set<string>()
-  for (const route of routes) {
-    const provider = route.qualifier?.provider
-    if (route.channel === 'agent:providers' && route.owner === 'host' && provider !== undefined) {
-      moved.add(provider)
-    }
-  }
-  return moved
-}
-
 /** Whether the legacy-bridge adapter `name` lives in `release`: composed exactly in the steps 21 §3 lists it for. */
 function bridgeLivesIn(name: string, release: StepId): boolean {
   return LEGACY_BRIDGE_ADAPTERS.some(
@@ -676,245 +588,31 @@ function bridgeLivesIn(name: string, release: StepId): boolean {
   )
 }
 
-/** Runs `run` every `ms` on Node's timers. */
-const realInterval: LegacyFeedTimers = {
-  every: (ms, run) => {
-    const timer = setInterval(run, ms)
-    return () => clearInterval(timer)
-  }
-}
-
-export type { LegacyRuntimeSurface }
-
-/**
- * `LegacyAgentRegistryFeed` (21 §3, cuts 1–4; ADR-001 Consequences): from cut 1 the Host observer is the only observer,
- * and only the legacy providers' session discovery stays composed, into the legacy runtime's in-memory agent registry,
- * so the rows still `legacy` (send, console, stop, asks) find their dwarf and the Codex pending questions. Composed in
- * the releases it is listed for (cut 1, its rollback build included, to the end of cut 4), never in the cut-0 table,
- * and only over a bound legacy surface. The cut-1 switch (ISSUE-123) turns the rest of today's observer off.
- */
-export function composeLegacyAgentRegistryFeed(deps: {
-  release: StepId
-  legacy: LegacyRuntimeSurface | undefined
-  modes?: LegacyFeedModes
-  /** Whether today's runtime launched the legacy dwarf: a moved provider's `legacy-launched` sessions (21 §3). */
-  launched?: (legacyDwarfId: string) => boolean
-  timers?: LegacyFeedTimers
-}): LegacyAgentRegistryFeed | undefined {
-  if (deps.legacy === undefined || !bridgeLivesIn('LegacyAgentRegistryFeed', deps.release)) {
-    return undefined
-  }
-  return createLegacyAgentRegistryFeed({
-    legacy: deps.legacy,
-    modes: deps.modes ?? LEGACY_FEED_PROVIDERS_CUT_1,
-    ...(deps.launched === undefined ? {} : { launched: deps.launched }),
-    timers: deps.timers ?? realInterval
-  })
-}
-
-/**
- * `surface` with its registry replaced and every other member read through it, its poll interval only when asked:
- * today's runtime answers it only once it is composed, which the root does after the bridges (`LegacyRuntimeRoute`).
- */
-function withRegistry(
-  surface: LegacyRuntimeSurface,
-  registry: LegacyRegistry
-): LegacyRuntimeSurface & { registry: LegacyRegistry } {
-  return {
-    get pollIntervalMs() {
-      return surface.pollIntervalMs
-    },
-    discovery: surface.discovery,
-    board: surface.board,
-    ledger: surface.ledger,
-    projects: surface.projects,
-    notifier: surface.notifier,
-    registry
-  }
-}
-
-/** `LegacyDwarfIdBridge` as the root composes it on today's runtime (21 §3, cuts 1–4). */
-export interface LegacyDwarfIdComposition {
-  /** Today's runtime as the router's `legacy` target, the bridged rows' dwarf ids mapped. */
-  legacy: RouteTarget
-  /** Today's runtime as `LegacyAgentRegistryFeed` is handed it: what the feed writes is the bridge's legacy side. */
-  registry: LegacyRuntimeSurface & { registry: LegacyRegistry }
-  /** The today wires of the rows the bridge is composed on (A-13, A-23, A-26, A-27, A-P3, A-P4). */
-  channels: readonly string[]
-  /** The join itself, for `LegacyAskRelay` (A-40, A-41 under their qualifier, 21 §3). */
-  bridge: LegacyDwarfIdBridge
-  /** Today's sessions as the feed last wrote them through `registry` (the legacy side of the join). */
-  sessions(): Parameters<LegacyRegistry['replace']>[0]
-  dispose(): void
-}
-
-/**
- * `LegacyDwarfIdBridge` (21 §3, cuts 1–4; 14 §5; AMENDMENT-8, OQ-69): from cut 1 the renderer knows only Host ids, so
- * the legacy rows that carry a dwarf id reach today's runtime with the legacy id of the dwarf with the same provider
- * identity, or answer their own not-found shape, and A-P4 leaves with the Host id. Composed in the releases it is listed
- * for (cut 1, its rollback build included, to the end of 4b), never in the cut-0 table, and only over the Host attach
- * and a bound legacy registry (the legacy side of the join). Read-only toward the Host: it reads B-M41 only. Deleted at
- * the end of cut 4 with B-M41 (ISSUE-241). AMENDED for ISSUE-240 (was: with `settlements`, from 3a, the A-P3 / A-P4
- * mapping also put the id `PerProviderShapeAdapter` answered in the push's own field): the adapter and its settlement
- * join left the tree with the 4b deletion.
- */
-export function composeLegacyDwarfIdBridge(deps: {
-  release: StepId
-  client: Pick<HostClient, 'call' | 'subscribe'> | undefined
-  legacy: RouteTarget
-  registry: LegacyRuntimeSurface | undefined
-  pushes?: LegacyPushTap
-}): LegacyDwarfIdComposition | undefined {
-  const { client, registry } = deps
-  if (
-    client === undefined ||
-    registry === undefined ||
-    !bridgeLivesIn('LegacyDwarfIdBridge', deps.release)
-  ) {
-    return undefined
-  }
-  const tap = createLegacyRegistryTap(registry.registry)
-  const bridge = createLegacyDwarfIdBridge({ client, legacy: { sessions: tap.sessions } })
-  const rows = createLegacyDwarfIdRows({
-    bridge,
-    legacy: { serve: (channel, payload) => deps.legacy.serve(channel, payload) }
-  })
-  const uninstall = deps.pushes?.install(rows)
-  return {
-    legacy: { serve: (channel, payload) => rows.serve(channel, payload) },
-    registry: withRegistry(registry, tap.registry),
-    channels: [...rows.requestChannels, ...rows.pushChannels],
-    bridge,
-    sessions: tap.sessions,
-    dispose() {
-      uninstall?.()
-      bridge.dispose()
-    }
-  }
-}
-
-/** `LegacyAskRelay` as the root composes it on `LegacyDwarfIdBridge` (21 §3, cuts 1–4). */
-export interface LegacyAskRelayComposition {
-  /** Today's runtime as the router's `legacy` target, A-40 / A-41 answers to `legacy:` asks translated. */
-  legacy: RouteTarget
-  /** Today's runtime as `LegacyAgentRegistryFeed` is handed it: after each registry write the open asks are re-read. */
-  registry: LegacyRuntimeSurface & { registry: LegacyRegistry }
-  /** The today wires of the rows the relay is composed on (A-40, A-41). */
-  channels: readonly string[]
-  /** Today's board fields of a Host dwarf (asks, text delivery, capabilities), for `BoardFacadeAdapter`. */
-  askFields(dwarfId: DwarfId): LegacyAskFields
-  /** The relay's cut-2 answer half, for `LegacyAnswerShapeAdapter` and the A-40/A-41 qualifier (21 §3, §3.1). */
-  answers: Pick<LegacyAskRelay, 'asks' | 'answer'>
-  /** Runs `h` when a card opened, changed or closed (the root refreshes the facade's board). */
-  onChanged(h: () => void): void
-  /** Settles once the read started by the last registry write is applied. */
-  whenIdle(): Promise<void>
-  dispose(): void
-}
-
-/**
- * `LegacyAskRelay` (21 §3, cuts 1–4; 14 §8 I-11), cut-1 half: today's runtime's open asks, read from the registry the
- * feed writes, are shown as ask cards in `legacy:<legacyAskId>` ids on the Host dwarf through `BoardFacadeAdapter`, and
- * an A-40 / A-41 answer to one reaches today's runtime with the legacy ids. The text delivery route and capabilities
- * today's runtime resolved travel the same way, so the composer and the kick read the route A-23 / A-26 take. A-40 and A-41 keep their `legacy` route
- * (21 §2 cut 1); the relay is composed in front of the bridged legacy target, in the releases it is listed for (cut 1,
- * its rollback build included, to the end of 4b), never in the cut-0 table, and only over a composed
- * `LegacyDwarfIdBridge` (whose join it uses). No Host command path. Deleted at the end of cut 4 (ISSUE-241).
- */
-export function composeLegacyAskRelay(deps: {
-  release: StepId
-  dwarfIds: LegacyDwarfIdComposition | undefined
-}): LegacyAskRelayComposition | undefined {
-  const { dwarfIds } = deps
-  if (dwarfIds === undefined || !bridgeLivesIn('LegacyAskRelay', deps.release)) return undefined
-  let changed: () => void = () => {}
-  const relay = createLegacyAskRelay({
-    bridge: dwarfIds.bridge,
-    asks: { openAsks: () => legacyOpenAsksOf(dwarfIds.sessions()) },
-    legacy: dwarfIds.legacy,
-    changed: () => changed()
-  })
-  let reading: Promise<void> = Promise.resolve()
-  const written = dwarfIds.registry
-  return {
-    legacy: { serve: (channel, payload) => relay.serve(channel, payload) },
-    registry: withRegistry(written, {
-      replace(sessions) {
-        written.registry.replace(sessions)
-        reading = relay.update()
-      }
-    }),
-    channels: relay.requestChannels,
-    askFields: (dwarfId) => relay.askFields(dwarfId),
-    answers: { asks: () => relay.asks(), answer: (askId, body) => relay.answer(askId, body) },
-    onChanged(h) {
-      changed = h
-    },
-    whenIdle: () => reading,
-    dispose: () => relay.dispose()
-  }
-}
-
-/** No relay composed: it holds no ask, so every `legacy:` answer is stale and today's runtime is never called. */
-const NO_RELAYED_ASKS: LegacyAskRelayComposition['answers'] = {
-  asks: () => [],
-  answer: () => Promise.reject(new Error('no relayed ask'))
-}
-
 /** The A-40/A-41 answer path as the root composes it from the cut-2 switch (ISSUE-141). */
 export interface AskAnswersComposition {
   /** The A-40/A-41 `host` handlers, for the Host's own AskIds (ISSUE-128); none where no row routes `host`. */
   part: RouteTargetPart | undefined
-  /** `LegacyAnswerShapeAdapter` under its name, where the table's qualified `legacy` routes name it (21 §3.1). */
-  shapeAdapters: Readonly<Record<string, RouteTarget>>
-  /** A-40's and A-41's qualifier: the relay's origin for a `legacy:` AskId, none for a Host AskId (21 §1 item 2). */
-  qualifiers: Partial<Record<ChannelKey, (payload: unknown) => RouteQualifier>>
 }
 
 /**
- * A-40 `answerDwarfQuestion` and A-41 `answerDwarfPermission` from the cut-2 switch (21 §2 cut 2 "New core serves",
- * "Qualified routes"; ISSUE-141): where the table routes them `host`, their `host` handlers relay a Host AskId's answer to
- * `asking.answerQuestion` / `asking.answerPermission` (ADR-010); where it also routes the relay's origins `legacy`
- * through `LegacyAnswerShapeAdapter`, that adapter is bound over `LegacyAskRelay` (21 §3.1, cuts 2–4) and the router
- * reads each call's qualifier from its AskId (`createAnswerQualifier`). A cut-2 rollback build routes neither row
- * `host` but routes both, unqualified, through the adapter (`rollbackOf`): the adapter is bound all the same. Wherever
- * the table names the adapter it is bound, over the relay or, with no relay composed, over none (every `legacy:`
- * answer is then stale, `not-open`), so the router never starts without it. `undefined` when the table neither routes
- * a row `host` nor names the adapter (before cut 2): today's runtime answers through the relay's today shape.
+ * A-40 `answerDwarfQuestion` and A-41 `answerDwarfPermission` from the cut-2 switch (21 §2 cut 2 "New core serves";
+ * ISSUE-141): where the table routes them `host`, their `host` handlers relay a Host AskId's answer to
+ * `asking.answerQuestion` / `asking.answerPermission` (ADR-010). AMENDED for ISSUE-241, the end of cut 4 (was: also
+ * `LegacyAnswerShapeAdapter` over `LegacyAskRelay` for the relay's `legacy:` AskIds, with the qualifier read from each
+ * call's AskId, 21 §3.1, cuts 2–4): both left the tree, so every ask answered is the Host's. `undefined` when the table
+ * routes neither row `host` (before cut 2).
  */
 export function composeAskAnswers(deps: {
   routes: readonly ChannelRoute[]
-  release: StepId
   client: Pick<HostClient, 'call'> | undefined
-  relay: LegacyAskRelayComposition | undefined
-  log: LegacyLog
 }): AskAnswersComposition | undefined {
-  const { routes, client, relay } = deps
+  const { routes, client } = deps
   const rows =
     client === undefined
       ? []
       : ANSWER_DWARF_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
-  const named = routes.some((route) => route.shapeAdapter === LEGACY_ANSWER_SHAPE_ADAPTER)
-  if (rows.length === 0 && !named) return undefined
-  const adapter =
-    named && bridgeLivesIn(LEGACY_ANSWER_SHAPE_ADAPTER, deps.release)
-      ? createLegacyAnswerShapeAdapter({ relay: relay?.answers ?? NO_RELAYED_ASKS, log: deps.log })
-      : undefined
-  const qualifier = createAnswerQualifier({
-    originOf: (askId) => relay?.answers.asks().find((ask) => ask.askId === askId)?.origin
-  })
-  // A-40's and A-41's qualifier only where the table has qualified rows for them (the release table, not a rollback).
-  const qualified = ANSWER_DWARF_ROWS.filter((channel) =>
-    routes.some((route) => route.channel === channel && route.qualifier !== undefined)
-  )
-  return {
-    part:
-      client === undefined || rows.length === 0
-        ? undefined
-        : { channels: rows, target: createAnswerDwarfRows(client) },
-    shapeAdapters: adapter === undefined ? {} : { [LEGACY_ANSWER_SHAPE_ADAPTER]: adapter },
-    qualifiers: Object.fromEntries(qualified.map((channel) => [channel, qualifier]))
-  }
+  if (client === undefined || rows.length === 0) return undefined
+  return { part: { channels: rows, target: createAnswerDwarfRows(client) } }
 }
 
 /**
@@ -1241,52 +939,20 @@ export interface StopDwarfComposition {
 
 /**
  * A-N29 `stopDwarf` (14 §2.2 NEW, B-M21 `crew.stop`; ADR-014; 21 §2 cut 3 common rules), a part of the `host` target
- * where the table routes it `host` (the step-3a switch). In the releases `LegacyEndFirstAdapter` lives in (cuts 0–4),
- * the relay goes through its `beforeStopDwarf` (ISSUE-178): a dwarf today's runtime launched — of a provider not yet
- * moved, or one a provider's legacy path launched before its step — is ended by today's identity-checked kill and its
- * `dwarf.departed` awaited before `crew.stop` is sent; there the row is composed only over `LegacyDwarfIdBridge` and
- * today's launched register (`launchIdOfDwarf`), never with a stop that skips the legacy end. After the adapter's last
- * cut the relay is direct. `undefined` when the table does not route A-N29 `host` or a dependency is missing.
+ * where the table routes it `host` (the step-3a switch). AMENDED for ISSUE-241, the end of cut 4 (was: in the releases
+ * `LegacyEndFirstAdapter` lived in, cuts 0–4, the relay went through its `beforeStopDwarf`, ISSUE-178, ending a dwarf
+ * today's runtime launched by today's identity-checked kill first): the adapter left the tree, so the relay is direct
+ * and a still-running session the old app launched answers could-not-end with the `no-identity` cause (15 §5;
+ * docs/strangler/parity-cut-4b.md). `undefined` when the table does not route A-N29 `host`.
  */
 export function composeStopDwarf(deps: {
   routes: readonly ChannelRoute[]
-  release: StepId
   client: Pick<HostClient, 'call' | 'subscribe'>
-  legacy: LegacyLaunchedSessions & Partial<LegacyLaunchesByDwarf>
-  bridge: Pick<LegacyDwarfIdBridge, 'toLegacy'> | undefined
-  timers?: EndFirstTimers
 }): StopDwarfComposition | undefined {
   if (!routedTo(deps.routes, STOP_DWARF, 'host')) return undefined
-  const { client, legacy, bridge } = deps
-  if (!bridgeLivesIn('LegacyEndFirstAdapter', deps.release)) {
-    return {
-      part: { channels: STOP_DWARF_ROWS, target: createStopDwarfRow(client) },
-      dispose: () => {}
-    }
-  }
-  const launchIdOfDwarf = legacy.launchIdOfDwarf?.bind(legacy)
-  if (bridge === undefined || launchIdOfDwarf === undefined) return undefined
-  const endFirst = createLegacyEndFirstAdapter({
-    legacy: {
-      liveLaunches: () => legacy.liveLaunches(),
-      endLaunch: (launchId) => legacy.endLaunch(launchId),
-      launchIdOfDwarf
-    },
-    timers: deps.timers ?? realTimers,
-    host: { client, bridge }
-  })
-  // The handler relays `crew.stop` through this client: the legacy end runs first, and every other method passes.
-  const relay: Pick<HostClient, 'call'> = {
-    call: ((method: string, params: unknown) =>
-      method === 'crew.stop'
-        ? endFirst.beforeStopDwarf(params as StopDwarfParams, (stop) =>
-            client.call('crew.stop', stop)
-          )
-        : client.call(method as never, params as never)) as HostClient['call']
-  }
   return {
-    part: { channels: STOP_DWARF_ROWS, target: createStopDwarfRow(relay) },
-    dispose: () => endFirst.dispose()
+    part: { channels: STOP_DWARF_ROWS, target: createStopDwarfRow(deps.client) },
+    dispose: () => {}
   }
 }
 
@@ -1313,18 +979,6 @@ export function composeProviderRouting(deps: {
   const byDwarf = DWARF_PROVIDER_ROWS.some((channel) => qualifiers[channel] !== undefined)
   if (byDwarf) board = createDwarfProviderBoard(deps.client)
   return { qualifiers, dispose: () => board?.dispose() }
-}
-
-/**
- * What `LegacyAgentRegistryFeed` composes per legacy provider for a table (21 §3: it shrinks per provider step). A
- * provider whose A-36 entry the table routes `host` (moved: Claude from 3a, Codex from 3b) keeps only what its
- * moved mode lists (`legacyFeedModesFor`: its legacy-launched sessions, and Codex's pending questions); a table that
- * moved none (cuts 1 and 2, a 3a rollback build) composes every discovery. AMENDED for ISSUE-002 (was: the 3a modes
- * for any table that moved a provider): derived per moved provider, so each step's switch and its rollback compose
- * their own modes.
- */
-export function legacyFeedModesOf(routes: readonly ChannelRoute[]): LegacyFeedModes {
-  return legacyFeedModesFor(movedProvidersOf(routes))
 }
 
 /** An open window of the app, as the pushes reach it. */
@@ -1410,26 +1064,13 @@ export interface UiMainLifecycle {
 export interface UiMainDeps {
   lock: SingleInstanceLock
   lifecycle: UiMainLifecycle
-  legacyRuntime: Pick<
-    LegacyRuntimeRoute,
-    'compose' | 'serve' | 'beforeQuit' | 'willQuit' | 'liveLaunches' | 'endLaunch'
-  > &
-    // Which launch started a legacy dwarf, for A-32's end-first relay (ISSUE-091); the root's route always has it.
-    Partial<Pick<LegacyRuntimeRoute, 'launchIdOfDwarf'>>
+  // AMENDED for ISSUE-241 (was: also `liveLaunches`, `endLaunch` and `launchIdOfDwarf`, today's launched register for
+  // `LegacyEndFirstAdapter`): the adapter left the tree at the end of cut 4.
+  legacyRuntime: Pick<LegacyRuntimeRoute, 'compose' | 'serve' | 'beforeQuit' | 'willQuit'>
   /** The route table (default `ROUTES`, the release's own); a test or a rollback table is passed here. */
   routes?: readonly ChannelRoute[]
   /** The release the table is for (default `ROUTES_RELEASE`): which legacy-bridge adapters live (21 §3). */
   release?: StepId
-  /**
-   * Today's runtime as `LegacyAgentRegistryFeed` is handed it (21 §3, cuts 1–4): its providers' discovery and its
-   * in-memory agent registry. Without it, or in a release the feed is not listed for, no feed is composed.
-   */
-  legacyRegistry?: LegacyRuntimeSurface
-  /**
-   * Where today's runtime sends its pushes (built before it composes): `LegacyDwarfIdBridge` installs its A-P4 mapping
-   * there in the releases it is listed for (21 §3, cuts 1–4).
-   */
-  legacyPushes?: LegacyPushTap
   /** Every open window of the app (A-N04, A-N25 pushes; the tray's Quit closes them). */
   appWindows?: () => readonly AppWindow[]
   /** The rebuilt tray (ISSUE-053): its icon and the id of each new confirmation. */
@@ -1527,7 +1168,7 @@ export interface UiMainStarted {
  * - The window family served `ui-local` (cut 0 on): once Electron is ready the rebuilt Panel is
  *   built hidden with its page loading, as today's start did; the rebuilt shortcut is claimed, the
  *   rebuilt tray shows Open, Quit and Stop everything and quit (ADR-018 item 5; ADR-002 D7), and
- *   A-N26 reaches the Host through `LegacyEndFirstAdapter` (21 §3); A-N04 is pushed on every Host
+ *   A-N26 reaches the Host (through `LegacyEndFirstAdapter` until ISSUE-241, 21 §3); A-N04 is pushed on every Host
  *   connection change. Today's runtime is composed through `LegacyRuntimeRoute` without its window,
  *   tray or shortcut, and a second launch shows the rebuilt Panel.
  * - The window family served `legacy` (before cut 0, or a rollback build, 21 §2.1): today's runtime
@@ -1544,8 +1185,6 @@ export async function startUiMain({
   appEntry,
   routes = ROUTES,
   release = ROUTES_RELEASE,
-  legacyRegistry,
-  legacyPushes,
   appWindows = () => [],
   tray,
   shortcut,
@@ -1624,26 +1263,10 @@ export async function startUiMain({
   const stopResetListening = uiPreferencesReset?.listen()
 
   // AMENDED for ISSUE-240, the 4b deletion (was: `LegacyLaunchObservation`, today's launch channel for a session today's
-  // runtime launched, and the settlement join of the ids `PerProviderShapeAdapter` minted): both left the tree; Stop
-  // everything relays to today's launched register directly until `LegacyEndFirstAdapter` ends (ISSUE-241).
-  // The legacy rows that carry a dwarf id map Host ids to legacy ones through the registry the feed writes (21 §3).
-  const dwarfIds = composeLegacyDwarfIdBridge({
-    release,
-    client: host?.client,
-    legacy: legacyRuntime,
-    registry: legacyRegistry,
-    ...(legacyPushes === undefined ? {} : { pushes: legacyPushes })
-  })
-  // Today's open asks are shown as ask cards through the facade and answered through the bridge (21 §3, cuts 1–4).
-  const askRelay = composeLegacyAskRelay({ release, dwarfIds })
-  // Only the providers whose rows are still `legacy` are discovered; from 3a Claude keeps only the sessions today's
-  // runtime launched, so `LegacyEndFirstAdapter` can join them (21 §3; ISSUE-001).
-  const registryFeed = composeLegacyAgentRegistryFeed({
-    release,
-    legacy: askRelay?.registry ?? dwarfIds?.registry ?? legacyRegistry,
-    modes: legacyFeedModesOf(routes),
-    launched: (legacyDwarfId) => legacyRuntime.launchIdOfDwarf?.(legacyDwarfId) !== undefined
-  })
+  // runtime launched, and the settlement join of the ids `PerProviderShapeAdapter` minted): both left the tree.
+  // AMENDED for ISSUE-241, the end of cut 4 (was: `LegacyDwarfIdBridge` over B-M41, `LegacyAskRelay` and
+  // `LegacyAgentRegistryFeed` over today's runtime, 21 §3, cuts 1–4): the bridges that joined Host and legacy dwarfs
+  // left the tree together; every row that carries a dwarf id is the Host's.
 
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
   const toggle = rebuilt && panel !== undefined ? shortcut?.(panel) : undefined
@@ -1659,8 +1282,9 @@ export async function startUiMain({
               for (const window of modeWindowList()) window.send(channel, payload)
             }
           },
-          newConfirmationId: () => tray.newConfirmationId(),
-          relay: composeStopAllRelay(legacyRuntime)
+          // AMENDED for ISSUE-241 (was: `relay: composeStopAllRelay(...)`, `LegacyEndFirstAdapter` ending every session
+          // today's runtime launched first, 21 §3): the adapter left the tree, so A-N26 relays `host.shutdown` at once.
+          newConfirmationId: () => tray.newConfirmationId()
         })
       : undefined
 
@@ -1694,31 +1318,20 @@ export async function startUiMain({
       : composeBoardFacade({
           routes,
           client: host.client,
-          windows: modeWindowList,
-          ...(askRelay === undefined ? {} : { askFields: askRelay.askFields })
+          windows: modeWindowList
         })
-  askRelay?.onChanged(() => boardFacade?.refresh())
   // The mines admin rows, once the table routes them to the Host (the cut-1 switch, ISSUE-123; 21 §2 cut 1).
   const minesAdmin =
     host === undefined
       ? undefined
       : composeMinesAdmin({
           routes,
-          release,
           client: host.client,
-          native: minesNative,
-          legacy: legacyRuntime,
-          bridge: dwarfIds?.bridge
+          native: minesNative
         })
   // A-40/A-41 and the NEW rows born `host` in cut 2, once the table routes them there (the cut-2 switch, ISSUE-141): the
-  // Host's AskIds through the broker, the relay's `legacy:` AskIds through `LegacyAnswerShapeAdapter` (21 §3.1).
-  const askAnswers = composeAskAnswers({
-    routes,
-    release,
-    client: host?.client,
-    relay: askRelay,
-    log: uiLog ?? { record: () => {} }
-  })
+  // Host's AskIds through the broker (from ISSUE-241 the only AskIds there are).
+  const askAnswers = composeAskAnswers({ routes, client: host?.client })
   const cut2Rows =
     host === undefined
       ? undefined
@@ -1749,17 +1362,9 @@ export async function startUiMain({
     host === undefined
       ? undefined
       : composeConversationAndLaunchRows({ routes, client: host.client, consoles })
-  // A-N29, a legacy-launched session ended first through `LegacyEndFirstAdapter` (21 §3; ISSUE-178, ISSUE-001).
+  // A-N29 (ISSUE-001), relayed at once since `LegacyEndFirstAdapter` left the tree (ISSUE-241).
   const stopDwarf =
-    host === undefined
-      ? undefined
-      : composeStopDwarf({
-          routes,
-          release,
-          client: host.client,
-          legacy: legacyRuntime,
-          bridge: dwarfIds?.bridge
-        })
+    host === undefined ? undefined : composeStopDwarf({ routes, client: host.client })
   // The provider qualifier of A-13, A-23 and A-35: the call's way or its dwarf's provider on the Host board (21 §1
   // item 2); the router picks the Host's or the shape adapter's route by it.
   const providerRouting =
@@ -1819,9 +1424,6 @@ export async function startUiMain({
           ...(notificationRows === undefined ? [] : [notificationRows]),
           ...(resetMetricsRow === undefined ? [] : [resetMetricsRow])
         ])
-  const allShapeAdapters = {
-    ...askAnswers?.shapeAdapters
-  }
 
   // Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the notifier connection's frames, from the start of the
   // attach, are drawn once Electron is ready (a notification cannot be built before), in arrival order; where S-018-1
@@ -1900,12 +1502,11 @@ export async function startUiMain({
   })
   createRouter({
     routes,
-    legacy: askRelay?.legacy ?? dwarfIds?.legacy ?? legacyRuntime,
+    legacy: legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
-    ...(Object.keys(allShapeAdapters).length === 0 ? {} : { shapeAdapters: allShapeAdapters }),
-    // A-40/A-41's qualifier, from the cut-2 switch: the relay's origin of a `legacy:` AskId; A-13, A-23 and A-35's,
-    // from the step-3a switch: the call's provider (21 §1 item 2).
-    qualifiers: { ...askAnswers?.qualifiers, ...providerRouting?.qualifiers },
+    // A-13, A-23 and A-35's qualifier, from the step-3a switch: the call's provider (21 §1 item 2). AMENDED for
+    // ISSUE-241 (was: also A-40/A-41's, the relay's origin of a `legacy:` AskId): the relay left the tree.
+    qualifiers: { ...providerRouting?.qualifiers },
     // A-N26, the one `host` row of cut 0: its handler relays `host.shutdown` on the confirmation's `ui` connection.
     ...(hostTarget === undefined ? {} : { host: hostTarget }),
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
@@ -1940,9 +1541,6 @@ export async function startUiMain({
     minesAdmin?.dispose()
     hostReads?.dispose()
     stopHearingVisibility?.()
-    registryFeed?.stop()
-    askRelay?.dispose()
-    dwarfIds?.dispose()
     host?.client.dispose()
     legacyRuntime.willQuit()
   })
@@ -1995,8 +1593,6 @@ export async function startUiMain({
       // Today's Panel window answers a second launch (before cut 0, or a rollback build).
       secondLaunch.attach(legacyPanel)
     }
-    // The registry-only discovery runs over today's composed runtime (21 §3 `LegacyAgentRegistryFeed`).
-    registryFeed?.start()
   } catch (error) {
     // The start cannot go on. The UI log says which step failed and the error's class or code, never its message
     // (ADR-026 items 3-4), and is written out before the process ends; today's composition also reports its own
@@ -2350,14 +1946,11 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
   const rebuiltPanel = electronPanelWindow(uiPreferenceStore)
   // Today's runtime, without its window, tray and shortcut once the table serves the window family `ui-local`: its
-  // pushes and pickers reach the rebuilt Panel (21 §2 cut 0; LegacyRuntimeRoute). Its pushes pass
-  // through the tap where `LegacyDwarfIdBridge` maps A-P4 in the releases it is listed for (21 §3, cuts 1–4).
-  const legacyPushes = createLegacyPushTap()
+  // pushes and pickers reach the rebuilt Panel (21 §2 cut 0; LegacyRuntimeRoute). AMENDED for ISSUE-241 (was: its
+  // pushes passed through the tap where `LegacyDwarfIdBridge` mapped A-P4): the bridge left the tree.
   const legacyPanel: LegacyPanelSurface = {
     send: (channel, payload) => {
-      legacyPushes.send(channel, payload, (push, mapped) => {
-        for (const window of appWindows()) window.send(push, mapped)
-      })
+      for (const window of appWindows()) window.send(channel, payload)
     },
     showOpenDialog: (options) => {
       const parent = panelBrowserWindow()
@@ -2386,10 +1979,6 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     // The release's table for this build (ISSUE-188; 21 §2 row 3e; ADR-009 D6): a development build adds its
     // development-only rows (Antigravity's launch), a packaged build is a public one, as the Host's `isPublicBuild`.
     routes: routesForBuild({ publicBuild: app.isPackaged }),
-    // Today's runtime as `LegacyAgentRegistryFeed` is handed it (21 §3, cuts 1–4; ISSUE-123): composed over only in the
-    // releases the feed, `LegacyDwarfIdBridge` and `LegacyAskRelay` are listed for, never in the cut-0 table.
-    legacyRegistry: legacyRuntime.surface,
-    legacyPushes,
     ipc: electronIpcMain(),
     appEntry: appEntryUrl(),
     appWindows,

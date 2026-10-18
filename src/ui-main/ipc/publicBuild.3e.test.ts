@@ -11,11 +11,11 @@
 //   for it in a public build;
 // - Jev's candidates are the Host's `suppliers.launchable()` (A-50 `host`), and a delegated worker is launched only by
 //   a Host driver (ADR-013), whose registry attaches no gated driver in a public build;
-// - its sessions stay observed: A-13 and A-23 are the Host's for Antigravity, and today's feed keeps only the sessions
-//   today's runtime launched (the Host observer reads the rest).
+// - its sessions stay observed: A-13 and A-23 are the Host's for Antigravity. AMENDED for ISSUE-241 (was: also
+//   "today's feed keeps only the sessions today's runtime launched", `legacyFeedModesOf`): `LegacyAgentRegistryFeed`
+//   ended with cut 4, so the Host observer reads every session.
 import { describe, expect, it } from 'vitest'
 import { CATALOG_PROVIDER_IDS, type ChannelKey } from '@dwarfai/contracts'
-import { legacyFeedModesOf } from '../index'
 import { resolveRoute } from './routeResolver'
 // AMENDED for ISSUE-235 (was: the release table `routesForBuild` / `ROUTES_RELEASE`): from the step-4a switch the 3e
 // public build's table as it shipped is `testing/cut3eRoutes.ts`.
@@ -51,14 +51,11 @@ describe('step 3e public build (21 §2 row 3e; ADR-009 D6)', () => {
       expect(resolveRoute(PUBLIC, key, { provider: ANTIGRAVITY })?.owner, key).toBe('host')
     }
     expect(resolveRoute(PUBLIC, JEV_ROUTE)?.owner).toBe('host')
-    // Observed: today's feed keeps only what today's runtime launched; the Host observes the rest.
-    expect(legacyFeedModesOf(PUBLIC)).toMatchObject({ [ANTIGRAVITY]: 'legacy-launched' })
 
     // Through the root's composition: the public Host lists no gated entry, and the merged catalog (the chips and the
     // "Default provider" list) holds no Antigravity entry although today's runtime offers Antigravity.
     const world = providerRowsWorld({
       table: PUBLIC,
-      release: CUT_3E_RELEASE,
       dwarfs: [dwarfWire(OBSERVED, ANTIGRAVITY, false)],
       hostReplies: {
         'suppliers.launchable': [hostEntry(CLAUDE), hostEntry(CODEX)],

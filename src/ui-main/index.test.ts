@@ -152,10 +152,9 @@ describe('ui-main composition root (05 §2.3)', () => {
       },
       willQuit() {
         counts.willQuit += 1
-      },
-      // AMENDED for ISSUE-056 (was: absent): the root reaches today's launched register for the A-N26 relay.
-      liveLaunches: async () => [],
-      endLaunch: async () => 'already-ended'
+      }
+      // AMENDED for ISSUE-241 (was: also today's launched register, for the A-N26 relay through
+      // `LegacyEndFirstAdapter`): A-N26 reaches the Host alone since the end of cut 4.
     }
     return { legacyRuntime, counts, panel, served }
   }

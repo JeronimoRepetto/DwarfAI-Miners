@@ -48,7 +48,8 @@ import { uiStartPlanOf } from './window/domain/uiStart'
 /**
  * The cut-0 composition of UI main (ISSUE-056; 21 §2 cut 0; ADR-001 item 3): the route table serves the window
  * family, the Host connection rows, renderer diagnostics and the tray's confirmation rows `ui-local` and A-N26 `host`
- * through `LegacyEndFirstAdapter`, so the root composes their owners — the rebuilt Panel loaded at start, the rebuilt
+ * (AMENDED for ISSUE-241: through `LegacyEndFirstAdapter` until the end of cut 4, straight to the Host since), so the
+ * root composes their owners — the rebuilt Panel loaded at start, the rebuilt
  * tray and its Stop everything and quit, the A-N04 push, the rebuilt shortcut — and today's runtime without its window.
  */
 
@@ -124,11 +125,10 @@ class RecordingIpcMain implements IpcMainRegistrar {
 }
 
 /**
- * Today's runtime as the root reaches it: no window of its own in cut 0, one live legacy launch. AMENDED for ISSUE-123
+ * Today's runtime as the root reaches it: no window of its own in cut 0. AMENDED for ISSUE-123
  * (was: every row answered `undefined`): a row named in `answers` answers that, so a case can pin a legacy answer.
  */
 function legacyWithoutWindow(
-  endVerdict: 'ended' | 'refused' = 'ended',
   composeFails = false,
   answers: Readonly<Record<string, unknown>> = {}
 ) {
@@ -145,12 +145,9 @@ function legacyWithoutWindow(
       return answers[channel]
     },
     beforeQuit() {},
-    willQuit() {},
-    liveLaunches: async () => [{ launchId: 'launch:1' }],
-    async endLaunch(launchId) {
-      events.push(`legacy end ${launchId}`)
-      return endVerdict
-    }
+    willQuit() {}
+    // AMENDED for ISSUE-241 (was: also one live legacy launch in today's launched register, for the A-N26 relay
+    // through `LegacyEndFirstAdapter`): the bridge ended with cut 4.
   }
   return { legacyRuntime, events, counts }
 }
@@ -231,7 +228,6 @@ async function connectedClient(host: FakeHost): Promise<HostClientService> {
 /** UI main started on the cut-0 table with every owner of a cut-0 row composed. */
 async function cut0App(
   options: {
-    endVerdict?: 'ended' | 'refused'
     routes?: readonly ChannelRoute[]
     composeFails?: boolean
     /** The level-3 notification display and the S-018-1 gate (ISSUE-113); absent, no presenter is composed. */
@@ -239,10 +235,6 @@ async function cut0App(
     launch?: UiMainDeps['launch']
     startWithSystem?: UiMainDeps['startWithSystem']
     onPanelBuilt?: () => void
-    // AMENDED for ISSUE-123 stage (a) (was: neither): today's runtime as the feed is handed it, and the tap its pushes
-    // pass through, as the production root passes both; absent, the start is the one every case above pins.
-    legacyRegistry?: UiMainDeps['legacyRegistry']
-    legacyPushes?: UiMainDeps['legacyPushes']
     // AMENDED for ISSUE-123 (was: none of the three): the release the table is for (default the cut-0 table's), the
     // Host methods advertised beyond the cut-0 ones, and the answers of today's rows.
     release?: StepId
@@ -253,11 +245,7 @@ async function cut0App(
   const lifecycle = new RecordingLifecycle()
   const ipc = new RecordingIpcMain()
   const lock = new FakeSingleInstanceLock(true)
-  const legacy = legacyWithoutWindow(
-    options.endVerdict,
-    options.composeFails === true,
-    options.legacyAnswers
-  )
+  const legacy = legacyWithoutWindow(options.composeFails === true, options.legacyAnswers)
   // The UI log, in the lifecycle's own order: a record made before an exit shows before it.
   const log: UiLogEntry[] = []
   const uiLog = {
@@ -325,9 +313,7 @@ async function cut0App(
         platform: 'win32'
       }),
     ...(options.launch === undefined ? {} : { launch: options.launch }),
-    ...(options.startWithSystem === undefined ? {} : { startWithSystem: options.startWithSystem }),
-    ...(options.legacyRegistry === undefined ? {} : { legacyRegistry: options.legacyRegistry }),
-    ...(options.legacyPushes === undefined ? {} : { legacyPushes: options.legacyPushes })
+    ...(options.startWithSystem === undefined ? {} : { startWithSystem: options.startWithSystem })
   })
   lifecycle.becomeReady()
   await started
@@ -349,67 +335,6 @@ async function cut0App(
 }
 
 describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
-  it('[ADR-001] in cut 0 the legacy runtime surface composes no cut-1 bridge: no discovery, no B-M41 read, A-13 and A-40 reach today’s runtime unchanged and A-P4 leaves unmapped', async () => {
-    // ISSUE-123 stage (a): the production root now passes today's runtime as the feed is handed it and the push tap.
-    // In this release's table none of the adapters 21 §3 lists from cut 1 is composed over them
-    // (`LEGACY_BRIDGE_ADAPTERS`), so the start is today's: nothing new runs and no row or push changes.
-    const scans: string[] = []
-    const written: unknown[] = []
-    const reached: string[] = []
-    const surface: NonNullable<UiMainDeps['legacyRegistry']> = {
-      pollIntervalMs: 2_000,
-      discovery: (['claude', 'codex', 'antigravity', 'opencode'] as const).map((kind) => ({
-        kind,
-        scan: async () => {
-          scans.push(kind)
-          return []
-        }
-      })),
-      registry: { replace: (sessions) => written.push(sessions) },
-      board: { publish: () => reached.push('board') },
-      ledger: { credit: () => reached.push('ledger') },
-      projects: { record: () => reached.push('projects') },
-      notifier: { update: () => reached.push('notifier') }
-    }
-    // The tap today's pushes pass through: a mapping installed on it is `LegacyDwarfIdBridge`'s A-P4 mapping.
-    let installed = 0
-    const pushes: NonNullable<UiMainDeps['legacyPushes']> = {
-      send: (channel, payload, deliver) => deliver(channel, payload),
-      install: () => {
-        installed += 1
-        return () => {}
-      }
-    }
-    const { ipc, host, legacy } = await cut0App({ legacyRegistry: surface, legacyPushes: pushes })
-    const call = (channel: string, payload: unknown) =>
-      (ipc.handled.get(channel) ?? ipc.listened.get(channel))?.(FROM_PANEL, payload)
-
-    await call('dwarf:activate', 'claude:s-1')
-    await call('agent:answerQuestion', {
-      dwarfId: 'claude:s-1',
-      toolUseId: 'legacy:toolu_1',
-      answers: { 'Which one?': 'The first' }
-    })
-    const delivered: Array<[string, unknown]> = []
-    const settled = { dwarfId: 'claude:s-1', holdId: 'hold-1', delivered: true }
-    pushes.send('dwarf:sendText:settled', settled, (push, payload) =>
-      delivered.push([push, payload])
-    )
-    await settle()
-
-    expect(scans).toEqual([])
-    expect(written).toEqual([])
-    expect(reached).toEqual([])
-    expect(host.received.map((request) => request.method)).not.toContain(
-      'strangler.dwarfIdentities'
-    )
-    expect(legacy.events).toEqual(
-      expect.arrayContaining(['legacy serve dwarf:activate', 'legacy serve agent:answerQuestion'])
-    )
-    expect(installed).toBe(0)
-    expect(delivered).toEqual([['dwarf:sendText:settled', settled]])
-  })
-
   it('[ADR-001] in cut 0 the root loads the rebuilt Panel hidden once the app is ready, a second launch shows it, and today’s runtime is composed without a window', async () => {
     const { factory, panel, lock, legacy, lifecycle } = await cut0App()
 
@@ -421,7 +346,9 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     expect(lifecycle.calls.filter((call) => call.startsWith('exit'))).toEqual([])
   })
 
-  it('[ADR-002] in cut 0 the rebuilt tray’s Stop everything and quit ends a legacy-launched session before host.shutdown stop-all is relayed', async () => {
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "… ends a legacy-launched session before host.shutdown stop-all is
+  // relayed", through `LegacyEndFirstAdapter`): A-N26 reaches the Host alone, and today's runtime is not asked.
+  it('[ADR-002] in cut 0 the rebuilt tray’s Stop everything and quit relays host.shutdown stop-all to the Host alone', async () => {
     const { tray, host, ipc, legacy, appWindows } = await cut0App()
     expect(tray.entries).toEqual(['open', 'quit', '—', 'stop-everything'])
     const outcome: StopAllOutcome = { ended: [HOST_DWARF], failed: [] }
@@ -437,25 +364,10 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     const answer = await confirm?.(FROM_PANEL, { confirmationId: CONFIRMATION, requestId: REQUEST })
 
     expect(answer).toEqual({ ok: true, value: outcome })
-    expect(legacy.events).toEqual(['legacy end launch:1'])
+    expect(legacy.events).toEqual([])
     expect(host.received.filter((r) => r.method === 'host.shutdown').map((r) => r.params)).toEqual([
       { mode: 'stop-all', requestId: REQUEST }
     ])
-  })
-
-  it('[ADR-002] in cut 0 a legacy-launched session that cannot be ended relays nothing and A-N26 answers INTERNAL', async () => {
-    const { tray, host, ipc } = await cut0App({ endVerdict: 'refused' })
-
-    tray.choose('stop-everything')
-    await settle()
-    const answer = await ipc.handled.get('tray:stopEverything:confirm')?.(FROM_PANEL, {
-      confirmationId: CONFIRMATION,
-      requestId: REQUEST
-    })
-
-    expect(answer).toMatchObject({ ok: false, error: { code: 'INTERNAL', retryable: false } })
-    expect(host.received.filter((r) => r.method === 'host.shutdown')).toEqual([])
-    expect(tray.iconShown).toBe(true)
   })
 
   it('[ADR-001] in cut 0 A-N03 answers the Host connection view and A-N04 pushes it to the mode windows on every state change', async () => {
@@ -506,9 +418,7 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
         compose: async () => legacyPanel,
         serve: async () => undefined,
         beforeQuit() {},
-        willQuit() {},
-        liveLaunches: async () => [],
-        endLaunch: async () => 'already-ended'
+        willQuit() {}
       },
       ipc: new RecordingIpcMain(),
       appEntry: APP_ENTRY,
