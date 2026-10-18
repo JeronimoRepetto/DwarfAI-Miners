@@ -946,6 +946,25 @@ describe('DwarfMessagePanel input', () => {
     expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('ended')
   })
 
+  /*
+   * APPENDED: a Host board dwarf's composer is enabled from the Host's `canReceiveMessages`
+   * (14 §3.6 `DwarfWire`, "composer enabled", INV-33), with no `textDelivery`, which only the
+   * legacy board overlay carries and cut 5 removes.
+   */
+  it('[US-MSG-001.AC11, INV-33] enables the box of a Host dwarf that can receive messages, and disables it, with its reason, when the Host says it cannot', () => {
+    const hostDwarf = (canReceiveMessages: boolean) => ({
+      ...defaultDwarf({ textDelivery: undefined }),
+      canReceiveMessages,
+      owned: true
+    })
+    const open = panel({ dwarf: hostDwarf(true) })
+    expect(open.find('.dm-composer textarea').attributes('disabled')).toBeUndefined()
+    expect(open.find('.dm-composer__send').exists()).toBe(true)
+    const shut = panel({ dwarf: hostDwarf(false) })
+    expect(shut.find('.dm-composer textarea').attributes('disabled')).toBeDefined()
+    expect(shut.find('.dm-composer__hint').text()).toContain("can't receive messages yet")
+  })
+
   it('names the channel a message would travel through', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'foreman-relay' }) })
     expect(panel().find('.dm-composer .dm-field').attributes('title')).toContain('console')

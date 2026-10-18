@@ -336,10 +336,13 @@ watch(
 /*
  * The box's tooltip: the capability model's reason, except where the route went away — the
  * model sees only a dwarf with no channel and would say the no-channel sentence, which is never
- * said of a closed session. An ended session keeps saying it has ended.
+ * said of a closed session. An ended session keeps saying it has ended. An empty hint (a Host
+ * route the board names no channel for) is no tooltip at all.
  */
 const composerTitle = computed(() =>
-  props.routeGone === true && !canReceive.value ? SESSION_CLOSED_REASON : action('chat')?.hint
+  props.routeGone === true && !canReceive.value
+    ? SESSION_CLOSED_REASON
+    : action('chat')?.hint || undefined
 )
 const isSending = computed(() => props.sendState?.phase === 'sending')
 
