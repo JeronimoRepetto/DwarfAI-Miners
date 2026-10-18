@@ -36,6 +36,8 @@ import {
   type RecoveryActionParams,
   type StopDwarfParams,
   type StopDwarfResult,
+  type RetryMessageParams,
+  type RetryMessageResult,
   type RenameDwarfParams,
   type RenameDwarfResult,
   type ResetDwarfNameParams
@@ -54,6 +56,7 @@ import { CHANNELS, PRELOAD_HELPERS, todayShapeOf } from './channels'
 import type { ChannelSpec } from './channelSpec'
 import { ROW_IDS } from './rowIds'
 import { TODAY_SHAPES } from './todayShapes'
+import { MEMBER_REMOVED, RETIRED } from './unrouted'
 import type {
   ActivateDwarfRequest,
   ConsoleOpenResult,
@@ -288,6 +291,16 @@ const NEW_ROWS = [
     placement: 'host',
     sensitive: false
   },
+  // ISSUE-168: Retry of a message that failed to deliver, as the same message (US-MSG-003, ADR-022 item 5), born
+  // `host` in 3a; a message id and a requestId
+  {
+    id: 'A-N06',
+    wire: 'dwarf:message:retry',
+    member: 'retryDwarfMessage',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
   // ISSUE-172: a person-set name for a dwarf (SC-AR-05, INV-29), born `host` in 3a; a dwarf id, the typed name and a
   // requestId
   {
@@ -509,6 +522,8 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'welcome:answer': { claudeHooks: true, openCodePermissions: false, requestId: U1 },
   // A-N29 (ISSUE-171): B-M21's params, a dwarf id and a requestId
   'dwarf:stop': { dwarfId: U1, requestId: U1 },
+  // A-N06 (ISSUE-168): B-M25's params, a message id and a requestId
+  'dwarf:message:retry': { messageId: U1, requestId: U1 },
   // A-N08 (ISSUE-172): B-M22's params, a dwarf id, the typed name and a requestId
   'dwarf:rename': { dwarfId: U1, name: 'Watcher of seals', requestId: U1 },
   // A-N09 (ISSUE-172): B-M23's params, a dwarf id and a requestId
@@ -918,6 +933,9 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     // A-N29 (ISSUE-171): relays B-M21 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:stop'>>().toEqualTypeOf<StopDwarfParams>()
     expectTypeOf<Res<'dwarf:stop'>>().toEqualTypeOf<IpcResult<StopDwarfResult>>()
+    // A-N06 (ISSUE-168): relays B-M25 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
+    expectTypeOf<Req<'dwarf:message:retry'>>().toEqualTypeOf<RetryMessageParams>()
+    expectTypeOf<Res<'dwarf:message:retry'>>().toEqualTypeOf<IpcResult<RetryMessageResult>>()
     // A-N08 (ISSUE-172): relays B-M22 unchanged, as 14 §2.2 and §3.4 write it (14 §1.2).
     expectTypeOf<Req<'dwarf:rename'>>().toEqualTypeOf<RenameDwarfParams>()
     expectTypeOf<Res<'dwarf:rename'>>().toEqualTypeOf<IpcResult<RenameDwarfResult>>()
@@ -953,5 +971,24 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     const answer = registry['tray:stopEverything:confirm']?.response
     expect(answer?.safeParse({ ok: true, value: { ended: [U1], failed: [U2] } }).success).toBe(true)
     expect(answer?.safeParse({ ok: true, value: { ended: [U1] } }).success).toBe(false)
+  })
+})
+
+// ADDED for ISSUE-183: A-26 `kickDwarf` (14 §2.1 RETIRE: "the action is removed; not a rename"; "Stop dwarf…" is the
+// different, NEW A-N29) leaves the generated facade with its route in 3a, for every provider.
+describe('A-26 retired in 3a (ISSUE-183)', () => {
+  const ROOT = resolve(import.meta.dirname, '..', '..', '..')
+  const generated = (file: string): string => readFileSync(resolve(ROOT, file), 'utf8')
+
+  it('[ADR-019] A-26 is retired in 3a and the generated preload has no kickDwarf member', () => {
+    expect(CHANNELS['dwarf:kick'].status).toBe('retired')
+    expect(RETIRED['dwarf:kick']).toBe('cut-3a')
+    expect(MEMBER_REMOVED).toEqual({ 'dwarf:kick': 'cut-3a' })
+    for (const file of ['src/preload/index.ts', 'src/contracts/ipc/testing/fakeWindowApi.ts']) {
+      expect(generated(file), file).not.toMatch(/\bkickDwarf\b/)
+      expect(generated(file), file).not.toMatch(/'dwarf:kick'/)
+    }
+    // A-N29 is the one stop, and it stays.
+    expect(generated('src/preload/index.ts')).toMatch(/\bstopDwarf\b/)
   })
 })

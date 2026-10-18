@@ -22,7 +22,9 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     // that never touch the default-launch pickers. Answered empty by
     // default, the same "only the tests that care see any effect" idiom
     // every other stub in this suite holds.
-    listAgentProviders: vi.fn().mockResolvedValue({ providers: [] }),
+    // AMENDED for ISSUE-001 (was: today's A-36 `{ providers }` and A-37 `{ catalogs }`): from 3a A-36 answers every
+    // provider's `SupplierEntryView` with its models; A-37 is retired and never asked.
+    listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [] }),
     listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
     setJevPreferences: vi.fn(async () => ({ configured: true })),
     ...overrides
@@ -38,6 +40,20 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
 afterEach(() => {
   delete (globalThis as { window?: unknown }).window
 })
+
+/** One A-36 entry (14 §3.6 `SupplierEntryView`): installed, launchable, one model. */
+function entry(providerId: string) {
+  return {
+    providerId,
+    label: providerId,
+    models: [{ value: 'opus', efforts: ['high'] }],
+    permissionModes: [],
+    offeredModes: [],
+    installed: true,
+    publicLaunch: 'enabled',
+    answerChannel: 'available'
+  }
+}
 
 describe('useJevSettings', () => {
   it('starts on the documented default, so the first paint is almost always right', () => {
@@ -172,20 +188,21 @@ describe('useJevSettings — loading the default-launch sources', () => {
   it('loads providers and catalogues on sync once the section is configured', async () => {
     const api = fakeApi({
       getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-      listAgentProviders: vi.fn().mockResolvedValue({
-        providers: [{ provider: 'claude', installed: true, launchable: true }]
-      }),
-      listAgentModels: vi.fn().mockResolvedValue({
-        catalogs: [{ provider: 'claude', models: [], efforts: [], source: 'provider' }]
-      })
+      listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [entry('claude')] })
     })
     const { providers, catalogs, sync } = useJevSettings()
     await sync()
-    expect(api.listAgentProviders).toHaveBeenCalled()
-    expect(api.listAgentModels).toHaveBeenCalled()
+    expect(api.listAgentProviders).toHaveBeenCalledWith({})
+    // AMENDED for ISSUE-001: the catalogue rides on the provider's own entry (A-37 is never asked).
+    expect(api.listAgentModels).not.toHaveBeenCalled()
     expect(providers.value).toEqual([{ provider: 'claude', installed: true, launchable: true }])
     expect(catalogs.value).toEqual([
-      { provider: 'claude', models: [], efforts: [], source: 'provider' }
+      {
+        provider: 'claude',
+        models: [{ value: 'opus', effortLevels: ['high'] }],
+        efforts: ['high'],
+        source: 'provider'
+      }
     ])
   })
 
@@ -200,9 +217,7 @@ describe('useJevSettings — loading the default-launch sources', () => {
   it('loads providers and catalogues once a save turns the section configured', async () => {
     const api = fakeApi({
       setJevApiKey: vi.fn().mockResolvedValue({ configured: true }),
-      listAgentProviders: vi.fn().mockResolvedValue({
-        providers: [{ provider: 'codex', installed: true, launchable: true }]
-      })
+      listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [entry('codex')] })
     })
     const { providers, save } = useJevSettings()
     await save('sk-typesafe-abc123')

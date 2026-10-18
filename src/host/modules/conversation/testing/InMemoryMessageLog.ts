@@ -16,7 +16,8 @@
 // records the confidence and moves only a `delivered` delivery to `reacted`. Owner
 // amendment K (2026-10-09): `writeAnswersRecord` keeps one "Answers:" record per ask (the UNIQUE
 // `messages_one_record_per_ask`) and updates it in place given `existing`; `settleDelivery` settles a
-// `sending` delivery.
+// `sending` delivery. AMENDMENT-20 (owner, 2026-10-17): `resend` puts a row's delivery back to
+// `sending` (attempts + 1, restamped) and answers the delivery it had before.
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
@@ -304,6 +305,21 @@ export class InMemoryMessageLog implements MessageLog {
       }
     })
     return { messageId: message.id, existing: false }
+  }
+
+  resend(
+    id: MessageId,
+    at: Instant
+  ): { dwarfId: DwarfId; text: string; delivery: Delivery } | null {
+    this.requireTransaction('resend')
+    const row = this.rows.find((r) => r.message.id === id)
+    if (row === undefined || row.delivery === null) return null
+    const before = structuredClone(row.delivery)
+    const { failure, confidence, heldUntilTurnEnd, ...rest } = row.delivery
+    void [failure, confidence, heldUntilTurnEnd]
+    row.message = { ...row.message, createdAt: at }
+    row.delivery = { ...rest, phase: 'sending', attempts: rest.attempts + 1, phaseAt: at }
+    return { dwarfId: row.message.dwarfId, text: row.message.text, delivery: before }
   }
 
   private requireTransaction(method: string): void {

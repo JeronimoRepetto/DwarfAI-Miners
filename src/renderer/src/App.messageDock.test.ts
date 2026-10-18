@@ -10,7 +10,7 @@ import MenuButton from './components/overlay/MenuButton.vue'
 import ModalDialog from './components/overlay/ModalDialog.vue'
 import { MENU_STOP } from './lib/message/panelChrome'
 import { useAgentLaunch } from './composables/useAgentLaunch'
-import { useDwarfKicking } from './composables/useDwarfKicking'
+import { useDwarfStopping } from './composables/useDwarfStopping'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
@@ -76,6 +76,45 @@ const HOST_CONNECTION_UNROUTED = {
   error: { code: 'METHOD_NOT_FOUND', message: 'no route', retryable: false }
 }
 
+/** The `LaunchId` A-35 answers in these cases (ADDED for ISSUE-001; 14 §1.6: a UUIDv7). */
+const LAUNCH_ID = '01890a5d-ac96-774b-bcce-b302099a0c01'
+
+/** A-23's 14 answer: accepted under a fresh `MessageId` (ADDED for ISSUE-001). */
+let messages = 0
+function accepted() {
+  messages += 1
+  return {
+    ok: true,
+    value: {
+      ok: true,
+      value: { messageId: `01890a5d-ac96-774b-bcce-${String(messages).padStart(12, '0')}` }
+    }
+  }
+}
+
+/** A-23's 14 answer that reached nothing on this side: a call error (ADDED for ISSUE-001). */
+const SEND_UNANSWERED = {
+  ok: false,
+  error: { code: 'INTERNAL', message: 'no Host', retryable: true }
+}
+
+/** A-23's 14 refusal (ADDED for ISSUE-001): the dwarf cannot receive the message. */
+const SEND_REFUSED = { ok: true, value: { ok: false, error: 'cannot-receive' } }
+
+/** One A-36 entry (ADDED for ISSUE-001; 14 §3.6 `SupplierEntryView`): installed, launchable, no models. */
+function supplier(providerId: string) {
+  return {
+    providerId,
+    label: providerId,
+    models: [],
+    permissionModes: [],
+    offeredModes: [],
+    installed: true,
+    publicLaunch: 'enabled',
+    answerChannel: 'available'
+  }
+}
+
 /** A Host snapshot of the `tails` section with nothing said in it (ADDED for ISSUE-123). */
 const EMPTY_HOST_TAILS = {
   ok: true,
@@ -91,8 +130,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
     // The launch-failure push (#263), subscribed unconditionally on mount.
     onLaunchFailed: vi.fn().mockReturnValue(() => undefined),
-    // Answers "a window was focused", the verdict that leaves the panel alone.
-    activateDwarf: vi.fn().mockResolvedValue({ focused: true, openedTerminal: false, feed: [] }),
+    // Answers "a window was focused", the verdict that leaves the panel alone. AMENDED for ISSUE-001 (was: today's
+    // `DwarfActivation`): A-13's 14 answer, `IpcResult<ConsoleOpenResult>`.
+    activateDwarf: vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { outcome: 'raised', mode: 'focus-terminal' } }),
     // An observed session's transcript, read on selection (#159): readable and empty.
     getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
     // One page of scrollback (#364): readable, with nothing older.
@@ -100,20 +142,22 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),
     setWatchedDwarf: vi.fn(),
-    sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    // AMENDED for ISSUE-001 (was: today's `{ delivered, via }`): A-23's 14 answer.
+    sendDwarfText: vi.fn(() => Promise.resolve(accepted())),
     // The verdict of a message main HELD (#457), subscribed unconditionally on mount.
     onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
-    kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    // AMENDED for ISSUE-183 (was: A-26 `kickDwarf`, which left the facade in 3a): "Stop dwarf…" is A-N29.
+    stopDwarf: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } }),
     retireDwarf: vi.fn(),
     // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): A-40/A-41 answer the 14 `IpcResult<AnswerOutcome>`.
     answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
     answerDwarfPermission: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
-    // The launch surface (#86): Claude detected and launchable; a launch answers "started".
-    listAgentProviders: vi.fn().mockResolvedValue({
-      providers: [{ provider: 'claude', installed: true, launchable: true }]
-    }),
+    // The launch surface (#86): Claude detected and launchable; a launch answers "started". AMENDED for ISSUE-001
+    // (was: today's A-36 and A-38): A-36's 14 entries, and A-35 accepted under its `LaunchId`.
+    listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [supplier('claude')] }),
     listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
+    launchAgent: vi.fn().mockResolvedValue({ ok: true, value: { launchId: LAUNCH_ID } }),
     openMinePath: vi.fn().mockResolvedValue({ opened: true }),
     openExternalLink: vi.fn().mockResolvedValue({ opened: true }),
     getTypographyPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_TYPOGRAPHY_PREFERENCES }),
@@ -169,9 +213,14 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * test says otherwise, and refuses any other section, so the board stays on A-12/A-P2 in these tests.
      */
     onHostEvent: vi.fn().mockReturnValue(() => undefined),
+    // AMENDED for ISSUE-001: from 3a the dock also follows the Host's `marks` and `launches`, empty here.
     getHostSnapshot: vi.fn((params: { sections?: string[] } | undefined) =>
       Promise.resolve(
-        params?.sections?.includes('tails') === true ? EMPTY_HOST_TAILS : HOST_CONNECTION_UNROUTED
+        ['tails', 'marks', 'launches'].some(
+          (section) => params?.sections?.includes(section) === true
+        )
+          ? EMPTY_HOST_TAILS
+          : HOST_CONNECTION_UNROUTED
       )
     ),
     /*
@@ -385,26 +434,30 @@ function hostChats(rows: Record<string, ReturnType<typeof hostRow>[]>) {
   const overrides = {
     getHostSnapshot: vi.fn((params: { sections?: string[] } | undefined) =>
       Promise.resolve(
-        params?.sections?.includes('tails') === true
-          ? {
-              ok: true,
-              value: {
-                snapshotId: 'snap-1',
-                seq: 1,
-                epoch: 'epoch-1',
-                chunks: [
-                  {
-                    section: 'tails',
-                    data: Object.entries(rows).map(([dwarfId, messages]) => ({
-                      dwarfId,
-                      messages,
-                      reachedStart: false
-                    }))
-                  }
-                ]
+        // AMENDED for ISSUE-001: the `marks` and `launches` sections are read too, from 3a.
+        params?.sections?.includes('marks') === true ||
+          params?.sections?.includes('launches') === true
+          ? EMPTY_HOST_TAILS
+          : params?.sections?.includes('tails') === true
+            ? {
+                ok: true,
+                value: {
+                  snapshotId: 'snap-1',
+                  seq: 1,
+                  epoch: 'epoch-1',
+                  chunks: [
+                    {
+                      section: 'tails',
+                      data: Object.entries(rows).map(([dwarfId, messages]) => ({
+                        dwarfId,
+                        messages,
+                        reachedStart: false
+                      }))
+                    }
+                  ]
+                }
               }
-            }
-          : HOST_CONNECTION_UNROUTED
+            : HOST_CONNECTION_UNROUTED
       )
     ),
     onHostEvent: vi.fn((listener: (frames: unknown[]) => void) => {
@@ -424,7 +477,13 @@ function hostChats(rows: Record<string, ReturnType<typeof hostRow>[]>) {
     for (const listener of listeners) listener([frame])
     await flushPromises()
   }
-  return { overrides, append }
+  /** ADDED for ISSUE-001: one Host frame of any name, to every follower (the launches, the marks). */
+  async function emit(name: string, data: unknown) {
+    seq += 1
+    for (const listener of listeners) listener([{ type: 'evt', seq, epoch: 'epoch-1', name, data }])
+    await flushPromises()
+  }
+  return { overrides, append, emit }
 }
 
 beforeEach(() => {
@@ -437,7 +496,7 @@ beforeEach(() => {
   // left standing would be drawn under the next test's dwarf.
   useDwarfPaging().clear()
   useDwarfMessaging().clearAll()
-  useDwarfKicking().clearAll()
+  useDwarfStopping().clearAll()
   useDwarfQuestion().clearAll()
   useAgentLaunch().close()
 })
@@ -525,28 +584,27 @@ describe('the docked message panel', () => {
     await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
+    // AMENDED for ISSUE-001 (was: today's `{ dwarfId, text, pressEnter }` and "Handed over via terminal"): A-23's 14
+    // request, and an acceptance that names no channel.
     expect(api.sendDwarfText).toHaveBeenCalledWith({
       dwarfId: 'claude:s1',
       text: 'dig deeper',
-      pressEnter: true
+      attachments: [],
+      requestId: expect.any(String)
     })
     // The verdict has to LAND, not just be asked for. Asserting it is what
     // makes a stub that resolves the wrong shape fail this test outright,
     // instead of rejecting into the void after it has already passed: the send
     // is fire-and-forget, so nothing else in the app would ever notice.
     expect(wrapper.find('.dm-composer__hint[role="status"]').text()).toContain(
-      'Handed over via terminal'
+      'Handed over via the session'
     )
   })
 
-  it('kicks through the panel, and the verdict lands where it was asked for', async () => {
-    // AMENDED for #383 (was: relying on the default kickDwarf stub's
-    // `via: 'terminal'`, asserting the status contained 'Kick handed over via
-    // terminal' — true before #329/#383 made the terminal tier end the
-    // session outright, which now reports "Ended the session…" instead. This
-    // test's point is that a click lands its verdict on this exact panel, not
-    // the terminal tier's own wording, so a channel that still only asks,
-    // claude-relay, keeps that point covered.)
+  // AMENDED for ISSUE-183 (was: "kicks through the panel, and the verdict lands where it was asked for", A-26 and its
+  // two-phase verdict): Stop dwarf… is A-N29, and its request claims nothing about the dwarf, which leaves only on the
+  // Host's `dwarf.departed` (ADR-033; 14 §4.3 rule 6).
+  it('stops through the panel with Stop dwarf…, and the request claims nothing the Host did not say', async () => {
     const { wrapper, api } = await openOn(
       [
         {
@@ -559,21 +617,19 @@ describe('the docked message panel', () => {
           }
         }
       ],
-      'claude:s1',
-      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
+      'claude:s1'
     )
 
     // AMENDED for #635 (was: one click since #293): Stop dwarf… in the ⋯ menu, confirmed first.
     await stopDwarf(wrapper)
 
-    expect(api.kickDwarf).toHaveBeenCalledWith({ dwarfId: 'claude:s1' })
-    // Handed over, never "reacted": only a session SEEN stopping earns that.
-    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).toContain(
-      'Kick handed over via claude-relay'
-    )
-    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).not.toContain(
-      'the session reacted'
-    )
+    expect(api.stopDwarf).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      requestId: expect.any(String)
+    })
+    // The answer says nothing of the dwarf: it is still drawn until the Host says it departed.
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
+    expect(wrapper.find('button.dm-dwarf').exists()).toBe(true)
   })
 
   /*
@@ -653,8 +709,11 @@ describe('the docked message panel', () => {
     // The sentence used to be the shell's, beside the mine. The click that
     // raises a console is here now, so the answer to it is too — including the
     // failure, which is the only part of it anybody has to read.
+    // AMENDED for ISSUE-001 (was: today's `{ focused: false, openedTerminal: false }`): A-13's 14 `failed` outcome.
     const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1', {
-      activateDwarf: vi.fn().mockResolvedValue({ focused: false, openedTerminal: false, feed: [] })
+      activateDwarf: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { outcome: 'failed', mode: 'focus-terminal' } })
     })
 
     // AMENDED for #635 (was: the dwarf's name): the header's Console tool.
@@ -713,7 +772,8 @@ describe('handing the delivery verdicts to the mine', () => {
     const { wrapper } = await openOn(
       [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
       'claude:s1',
-      { sendDwarfText: vi.fn().mockResolvedValue({ delivered: false, via: 'none', error: 'gone' }) }
+      // AMENDED for ISSUE-001 (was: today's refusal): A-23's 14 refusal.
+      { sendDwarfText: vi.fn().mockResolvedValue(SEND_REFUSED) }
     )
     await wrapper.find('.dm-composer textarea').setValue('dig deeper')
     await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
@@ -730,44 +790,10 @@ describe('handing the delivery verdicts to the mine', () => {
    */
 
   /*
-   * MOVED from MineScene.test.ts's 'MineScene reaction feed' block (#162),
-   * whole: the two stores are fed here now, and a scene that folded the poll
-   * in from the other window could never resolve a watch this one opened.
+   * REMOVED for ISSUE-183, stated rather than passing unseen (docs/test-removals.md): "promotes a delivered kick when
+   * the next poll shows the session stopped" (#162, #383). A-26 and its two-phase verdict are retired in 3a; "Stop
+   * dwarf…" (A-N29) claims nothing, and its dwarf leaves only on the Host's `dwarf.departed`.
    */
-  it('promotes a delivered kick when the next poll shows the session stopped', async () => {
-    // AMENDED for #383 (was: relying on the default kickDwarf stub's
-    // `via: 'terminal'` to promote to 'reacted' on the next poll — true
-    // before #329/#383 made the terminal tier end the session outright,
-    // which now stays 'delivered' forever with nothing watched. This test's
-    // point is the promotion mechanism itself, so it keeps that covered
-    // through a channel that still only asks, claude-relay.)
-    const { wrapper, api } = await openOn(
-      [
-        {
-          ...OBSERVED_DWARF,
-          capabilities: {
-            sendText: 'terminal',
-            cancel: 'terminal',
-            adjustEffort: null,
-            attach: 'terminal'
-          }
-        }
-      ],
-      'claude:s1',
-      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
-    )
-    // AMENDED for #635: the kick is Stop dwarf… in the ⋯ menu, confirmed first.
-    await stopDwarf(wrapper)
-    expect(useDwarfKicking().stateFor('claude:s1')?.phase).toBe('delivered')
-
-    pushSnapshot(api, {
-      mines: [{ ...MINE, dwarfs: [{ ...OBSERVED_DWARF, status: 'waiting' }] }],
-      tokensObserved: 0
-    })
-    await flushPromises()
-
-    expect(useDwarfKicking().stateFor('claude:s1')?.phase).toBe('reacted')
-  })
 
   it('promotes a delivered message when the next poll shows new output', async () => {
     const { wrapper, api } = await openOn(
@@ -788,37 +814,18 @@ describe('handing the delivery verdicts to the mine', () => {
     expect(useDwarfMessaging().stateFor('claude:s1')?.phase).toBe('reacted')
   })
 
+  // AMENDED for ISSUE-183 (was: a kick's verdict left at delivered while nothing about the session changed): "Stop
+  // dwarf…" (A-N29) is a request, never a verdict of its own; with the session unchanged nothing about it changes.
   it('leaves a delivery alone while nothing about the session changed', async () => {
-    // AMENDED for #383 (was: relying on the default kickDwarf stub's
-    // `via: 'terminal'`. Since the terminal tier now ends the session
-    // outright it opens no reaction watch at all, so this assertion would
-    // hold trivially — nothing was ever being watched — rather than
-    // exercising the "watched, but nothing changed" path this test is
-    // actually about. A channel that still only asks, claude-relay, keeps
-    // that path genuinely covered.)
-    const { wrapper, api } = await openOn(
-      [
-        {
-          ...OBSERVED_DWARF,
-          capabilities: {
-            sendText: 'terminal',
-            cancel: 'terminal',
-            adjustEffort: null,
-            attach: 'terminal'
-          }
-        }
-      ],
-      'claude:s1',
-      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
-    )
-    // AMENDED for #635: the kick is Stop dwarf… in the ⋯ menu, confirmed first.
+    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
     await stopDwarf(wrapper)
 
     pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
     await flushPromises()
 
-    // Delivered is what happened; 'reacted' would be a claim nothing supports.
-    expect(useDwarfKicking().stateFor('claude:s1')?.phase).toBe('delivered')
+    // Idle is what the Host said once the stop was answered; nothing else is claimed.
+    expect(useDwarfStopping().viewOf('claude:s1')).toEqual({ kind: 'idle' })
+    expect(wrapper.find('button.dm-dwarf').exists()).toBe(true)
   })
 })
 
@@ -1247,15 +1254,19 @@ describe('the add panel', () => {
     expect(wrapper.find<HTMLTextAreaElement>(PROMPT).element.value).toBe('dig the east gallery')
   })
 
-  it('starts a held session in the mine it was opened from', async () => {
+  // AMENDED for ISSUE-001 (was: "starts a held session …", today's A-38): A-35 in its 14 shape.
+  it('starts the launch in the mine it was opened from', async () => {
     const { wrapper, api } = await openAddPanel()
 
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    expect(api.launchHeldSession).toHaveBeenCalledWith({
+    expect(api.launchAgent).toHaveBeenCalledWith({
       mineId: MINE.id,
-      provider: 'claude',
-      prompt: 'dig the east gallery'
+      way: { kind: 'supplier', providerId: 'claude' },
+      prompt: 'dig the east gallery',
+      jevOn: false,
+      jevAutoAccept: false,
+      requestId: expect.any(String)
     })
   })
 
@@ -1276,16 +1287,40 @@ describe('the add panel', () => {
     expect(wrapper.find('.dm-add__why').text()).toBe('Sending the dwarf in…')
   })
 
+  /** ADDED for ISSUE-001: the Host states the launch succeeded as its dwarf (07 5A S5.05; 14 §3.6 `LaunchWire`). */
+  async function hostLaunched(chats: ReturnType<typeof hostChats>) {
+    await chats.emit('launch.changed', {
+      launch: {
+        launchId: LAUNCH_ID,
+        mineId: '01890a5d-ac96-774b-bcce-b302099a0001',
+        state: 'succeeded',
+        wayKind: 'supplier',
+        providerId: 'claude',
+        dwarfId: HOST_DWARF_ID,
+        requestedAt: NINE
+      }
+    })
+  }
+
+  /** The dwarf the launch became, on the board, as the Host names it. */
+  const HOST_LAUNCHED = {
+    ...launchedDwarf('dig the east gallery'),
+    id: HOST_DWARF_ID,
+    sessionId: HOST_DWARF_ID
+  }
+
+  // AMENDED for ISSUE-001 (was: adopted by the prompt today's held launch seeded): the Host's `launch.changed`
+  // names the dwarf the launch became.
   it('hands over to the MessagePanel when the launched dwarf arrives', async () => {
+    const chats = hostChats({})
     const { wrapper, api } = await openAddPanel({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      ...chats.overrides
     })
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    pushSnapshot(api, {
-      mines: [{ ...MINE, dwarfs: [launchedDwarf('dig the east gallery')] }],
-      tokensObserved: 0
-    })
+    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
+    await hostLaunched(chats)
     await flushPromises()
 
     expect(wrapper.find(ADD).exists()).toBe(false)
@@ -1302,15 +1337,16 @@ describe('the add panel', () => {
     // The handover is decided by the launch's own arrival rules, from the
     // board: a handover the halo missed is a dwarf that starts work with no
     // mark on it.
+    // AMENDED for ISSUE-001: the Host names the dwarf the launch became (07 5A S5.05).
+    const chats = hostChats({})
     const { wrapper, api } = await openAddPanel({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      ...chats.overrides
     })
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    pushSnapshot(api, {
-      mines: [{ ...MINE, dwarfs: [launchedDwarf('dig the east gallery')] }],
-      tokensObserved: 0
-    })
+    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
+    await hostLaunched(chats)
     await flushPromises()
 
     expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('true')
@@ -1336,21 +1372,9 @@ describe('the add panel', () => {
     })
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    pushSnapshot(api, {
-      mines: [
-        {
-          ...MINE,
-          dwarfs: [
-            {
-              ...launchedDwarf('dig the east gallery'),
-              id: HOST_DWARF_ID,
-              sessionId: HOST_DWARF_ID
-            }
-          ]
-        }
-      ],
-      tokensObserved: 0
-    })
+    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
+    // AMENDED for ISSUE-001: the Host names the dwarf the launch became (07 5A S5.05).
+    await hostLaunched(chats)
     await flushPromises()
 
     const said = wrapper
@@ -1372,17 +1396,20 @@ describe('the add panel', () => {
     expect(wrapper.find('.dm-msg').exists()).toBe(false)
   })
 
-  it('stays open with main own reason when the launch is refused', async () => {
+  // AMENDED for ISSUE-001 (was: "… with main own reason …", today's held refusal): A-35 refuses at acceptance with a
+  // call error, which has no words of its own; the panel says its own sentence.
+  it('stays open with the panel’s sentence when the launch is refused', async () => {
     const { wrapper } = await openAddPanel({
-      launchHeldSession: vi
-        .fn()
-        .mockResolvedValue({ launched: false, error: 'Claude Code is not installed.' })
+      launchAgent: vi.fn().mockResolvedValue({
+        ok: false,
+        error: { code: 'INVALID_PARAMS', message: 'refused', retryable: false }
+      })
     })
 
     await submitPrompt(wrapper, 'dig the east gallery')
 
     expect(wrapper.find(ADD).exists()).toBe(true)
-    expect(wrapper.find('.dm-add__why.is-alert').text()).toBe('Claude Code is not installed.')
+    expect(wrapper.find('.dm-add__why.is-alert').text()).toBe('The agent could not be started.')
   })
 
   /*
@@ -1396,24 +1423,21 @@ describe('the add panel', () => {
    * names its cause now, and the panel says it as the launch-failure notice.
    */
   it('returns to the composer with the notice naming the cause when the launch fails after it started', async () => {
+    // AMENDED for ISSUE-001 (was: today's A-36 and A-35 answers, the receipt `receipt:1`): Codex is served by today's
+    // runtime behind `PerProviderShapeAdapter`, accepted under the `LaunchId` today's A-P3 then names.
     const { wrapper, api } = await openAddPanel({
-      listAgentProviders: vi.fn().mockResolvedValue({
-        providers: [{ provider: 'codex', installed: true, launchable: true }]
-      }),
-      launchAgent: vi
-        .fn()
-        .mockResolvedValue({ launched: true, provider: 'codex', launchId: 'receipt:1' })
+      listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [supplier('codex')] })
     })
 
     await submitPrompt(wrapper, 'dig the east gallery')
-    // The detached wait, before anything failed. AMENDED for #635 (was: `.launch-note` present
-    // and `.launch-alert` absent): the line says it, and is not an alert yet.
-    expect(wrapper.find('.dm-add__why').text()).toContain('The session started.')
+    // The wait, before anything failed. AMENDED for ISSUE-001 (was: "The session started."): the launch is still
+    // being sent in, and the line is not an alert yet.
+    expect(wrapper.find('.dm-add__why').text()).toBe('Sending the dwarf in…')
     expect(wrapper.find('.dm-add__why.is-alert').exists()).toBe(false)
 
     const fail = api.onLaunchFailed.mock.calls[0]![0] as (push: unknown) => void
     fail({
-      launchId: 'receipt:1',
+      launchId: LAUNCH_ID,
       provider: 'codex',
       mineId: MINE.id,
       exitCode: 1,
@@ -1434,18 +1458,24 @@ describe('the add panel', () => {
    * #635: the notice's Retry reaches the launch again through this window, once per press — the
    * panel emits, and App is what hands the press to the launch composable.
    */
+  // AMENDED for ISSUE-001 (was: today's held refusal at once): the Host's `launch.failed`, and a Retry naming it.
   it('sends the same launch again when the notice’s Retry is pressed', async () => {
-    const { wrapper, api } = await openAddPanel({
-      launchHeldSession: vi.fn().mockResolvedValue({ launched: false, cause: 'not-installed' })
-    })
+    const chats = hostChats({})
+    const { wrapper, api } = await openAddPanel(chats.overrides)
 
     await submitPrompt(wrapper, 'dig the east gallery')
+    await chats.emit('launch.failed', {
+      launchId: LAUNCH_ID,
+      mineId: '01890a5d-ac96-774b-bcce-b302099a0001',
+      failure: { cause: 'not-installed', supplierLabel: 'Claude Code', actions: ['retry'] }
+    })
     expect(wrapper.get('.dm-add__fail-title').text()).toBe('Claude is not installed')
 
     await wrapper.get('.dm-add__fail-retry').trigger('click')
     await flushPromises()
 
-    expect(api.launchHeldSession).toHaveBeenCalledTimes(2)
+    expect(api.launchAgent).toHaveBeenCalledTimes(2)
+    expect(api.launchAgent.mock.calls[1]![0]).toMatchObject({ retryOf: LAUNCH_ID })
   })
 
   /*
@@ -1455,30 +1485,14 @@ describe('the add panel', () => {
    * from a dead rule — the Add Panel emits, this window decides where the
    * press goes, and the decision is exactly what this pins.
    */
-  it('launches an auto-accepted Jev decision in one Enter, with no chip chosen', async () => {
-    // Local spies for the two members this file's stub does not carry by
-    // default — asked is exactly what the no-chip Enter must now do, and the
-    // assertion has to reach it even though the base stub answers "hidden".
-    // AMENDED for #635 (MESSAGE-QUESTIONS Q1; was: no `tier` or `parts`): the decision card now
-    // stays on screen while the launch it confirmed is in flight, so it reads the whole answer
-    // the wire carries since jev-routing-profiles T3, and this answer gives it one.
-    const askJev = vi.fn().mockResolvedValue({
-      kind: 'decision',
-      provider: 'claude',
-      confidence: 0.9,
-      truncated: false,
-      tier: 'balanced',
-      parts: {
-        provider: { value: 'claude', confidence: 0.9, applied: 'answered' },
-        tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
-        trivial: { value: false, probability: 0.1 },
-        largeContext: { value: false, probability: 0.1 },
-        model: { applied: 'safe-default', reason: 'no-live-model' }
-      }
-    })
+  // AMENDED for ISSUE-001 (was: "launches an auto-accepted Jev decision in one Enter …", today's Enter-time A-50 ask
+  // and A-38): with Let Jev choose on the Enter is the Host's Jev way, auto-accept carried (07 5B S5.10).
+  it('launches with Let Jev choose and auto-accept in one Enter, with no chip chosen', async () => {
     const { api, wrapper } = await openAddPanel({
       getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-      routeJevLaunch: askJev
+      routeJevLaunch: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { ok: false, error: 'not-configured' } })
     })
 
     await wrapper.get('button[aria-label="Let Jev choose"]').trigger('click')
@@ -1487,14 +1501,13 @@ describe('the add panel', () => {
     await wrapper.find(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
     await flushPromises()
 
-    expect(askJev).toHaveBeenCalledWith({ prompt: 'dig the east gallery' })
-    // The decision's own provider, applied to the pickers and launched on the
-    // same Enter — the second press the card used to demand is gone.
-    expect(api.launchHeldSession).toHaveBeenCalledWith({
+    expect(api.launchAgent).toHaveBeenCalledWith({
       mineId: MINE.id,
-      provider: 'claude',
+      way: { kind: 'jev' },
       prompt: 'dig the east gallery',
-      routedByJev: true
+      jevOn: true,
+      jevAutoAccept: true,
+      requestId: expect.any(String)
     })
   })
 })
@@ -1543,11 +1556,8 @@ describe('the sent message, drawn at once (#309)', () => {
 
   it('marks the bubble with a ✕ and its reason, keeping the words on screen', async () => {
     const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', {
-      sendDwarfText: vi.fn().mockResolvedValue({
-        delivered: false,
-        via: 'terminal',
-        error: 'The terminal would not come forward.'
-      })
+      // AMENDED for ISSUE-001 (was: today's refusal with main's words): A-23 reached nothing, the panel's sentence.
+      sendDwarfText: vi.fn().mockResolvedValue(SEND_UNANSWERED)
     })
 
     await sendFrom(wrapper, 'dig deeper')
@@ -1556,7 +1566,7 @@ describe('the sent message, drawn at once (#309)', () => {
     // AMENDED for #635 (was: '✕'): spelled as the design writes it.
     expect(wrapper.find('.dm-bubble__mark').text()).toBe('✕ not delivered')
     expect(wrapper.find('.dm-bubble__mark').attributes('title')).toBe(
-      'The terminal would not come forward.'
+      'The panel lost contact with the app.'
     )
     expect(wrapper.find('.dm-bubble--user .dm-bubble__text').text()).toBe('dig deeper')
   })
@@ -1567,10 +1577,11 @@ describe('the sent message, drawn at once (#309)', () => {
    * bubbles, #309). Retry re-sends the same text in place: one bubble, now ✓, and its buttons gone.
    */
   it('sends a failed message again from its own bubble, in place, with no second bubble', async () => {
+    // AMENDED for ISSUE-001 (was: today's verdicts): A-23's 14 refusal, then its acceptance.
     const sendDwarfText = vi
       .fn()
-      .mockResolvedValueOnce({ delivered: false, via: 'terminal', error: 'nope' })
-      .mockResolvedValue({ delivered: true, via: 'claude-relay' })
+      .mockResolvedValueOnce(SEND_REFUSED)
+      .mockImplementation(() => Promise.resolve(accepted()))
     const { wrapper, api } = await openOn([ECHO_DWARF], 'claude:s1', { sendDwarfText })
 
     await sendFrom(wrapper, 'dig deeper')
@@ -1583,7 +1594,8 @@ describe('the sent message, drawn at once (#309)', () => {
     expect(api.sendDwarfText).toHaveBeenLastCalledWith({
       dwarfId: 'claude:s1',
       text: 'dig deeper',
-      pressEnter: true
+      attachments: [],
+      requestId: expect.any(String)
     })
     const markers = wrapper.findAll('.dm-bubble__mark')
     expect(markers.map((marker) => marker.text())).toEqual(['✓'])
@@ -1593,9 +1605,7 @@ describe('the sent message, drawn at once (#309)', () => {
 
   /* #635, decision log, Failed delivery — APPENDED: a second failure brings ✕ and both back. */
   it('brings the ✕ and its two buttons back on the same bubble when the retry fails too', async () => {
-    const sendDwarfText = vi
-      .fn()
-      .mockResolvedValue({ delivered: false, via: 'terminal', error: 'nope' })
+    const sendDwarfText = vi.fn().mockResolvedValue(SEND_REFUSED)
     const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', { sendDwarfText })
 
     await sendFrom(wrapper, 'dig deeper')
@@ -1620,9 +1630,7 @@ describe('the sent message, drawn at once (#309)', () => {
   it('copies a failed message through main and says so in a toast', async () => {
     const copyText = vi.fn().mockResolvedValue({ copied: true })
     const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', {
-      sendDwarfText: vi
-        .fn()
-        .mockResolvedValue({ delivered: false, via: 'terminal', error: 'nope' }),
+      sendDwarfText: vi.fn().mockResolvedValue(SEND_REFUSED),
       copyText
     })
 
@@ -1637,9 +1645,7 @@ describe('the sent message, drawn at once (#309)', () => {
 
   it('claims no copy main did not make', async () => {
     const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', {
-      sendDwarfText: vi
-        .fn()
-        .mockResolvedValue({ delivered: false, via: 'terminal', error: 'nope' }),
+      sendDwarfText: vi.fn().mockResolvedValue(SEND_REFUSED),
       copyText: vi.fn().mockResolvedValue({ copied: false })
     })
 
@@ -1739,8 +1745,9 @@ describe('the sent message, drawn at once (#309)', () => {
     await flushPromises()
 
     const column = wrapper.findComponent(MineColumn)
+    // AMENDED for ISSUE-001 (was: with today's `via: 'terminal'`): A-23's acceptance names no channel.
     expect(column.props('sendStates')).toEqual({
-      'claude:s1': { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+      'claude:s1': { phase: 'delivered', awaitingReaction: true }
     })
     expect(column.props('kickStates')).toEqual({})
   })

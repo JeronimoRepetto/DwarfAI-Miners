@@ -40,6 +40,7 @@ import { mcpEndpointFor } from '../../../../../transport/mcpEndpoint/mcpEndpoint
 import type { DelegationEndpoint } from '../../../ports/delegationServer'
 import { hashOf } from '../../../testing/drawCredential'
 import { RunDirCredentialFileStore } from '../../fs/RunDirCredentialFileStore'
+import { EndpointNamingCredentialFiles } from '../EndpointNamingCredentialFiles'
 import { McpDelegationServer } from '../McpDelegationServer'
 import { relayEntryArgs, relayServerEntry } from './relayEntry'
 
@@ -251,6 +252,51 @@ describe('the dwarfai-mcp relay process (ADR-013 item 3)', () => {
     }
     expect(relay.stdout()).not.toContain(credential)
 
+    relay.child.stdin?.end()
+    expect((await relay.child.exited).code).toBe(0)
+  }, 120_000)
+
+  // Foreman decision 2026-10-18 (in place of the rejected AMENDMENT-24): the Host names the endpoint
+  // it bound in the credential file (EndpointNamingCredentialFiles.ts), so a provider that passes
+  // its MCP servers neither XDG_RUNTIME_DIR nor the home the endpoint was placed under still
+  // reaches it (CI run 39109490095).
+  it('[ADR-013] a relay whose provider env lacks XDG_RUNTIME_DIR and the endpoint’s home completes tools/list at the endpoint the credential file names', async () => {
+    const { root, hostDataDir, providerEnv } = freshRoot()
+    const credential = randomBytes(32).toString('hex')
+    const path = await endpointPath(hostDataDir, root)
+    await serveEndpoint(path, credential)
+    const files = new EndpointNamingCredentialFiles(
+      new RunDirCredentialFileStore({ hostDataDir }),
+      () => path
+    )
+    const written = await files.write(LAUNCH, credential)
+    if (!written.ok) throw new Error(`no credential file: ${String(written.error)}`)
+    const trimmed = { ...providerEnv }
+    delete trimmed['XDG_RUNTIME_DIR']
+    if (PLATFORM === 'darwin' && process.env['HOME'] !== undefined) {
+      trimmed['HOME'] = process.env['HOME']
+    }
+
+    const relay = startRelay(written.value.path, trimmed, root)
+    send(relay.child, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'provider', version: '1.0.0' }
+      }
+    })
+    await relay.answer(1)
+    send(relay.child, { jsonrpc: '2.0', method: 'notifications/initialized' })
+    send(relay.child, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    const tools = (await relay.answer(2))['result'] as { tools: Array<{ name: string }> }
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      'delegate_subtask',
+      'subtask_result'
+    ])
+    expect(relay.stdout()).not.toContain(credential)
     relay.child.stdin?.end()
     expect((await relay.child.exited).code).toBe(0)
   }, 120_000)

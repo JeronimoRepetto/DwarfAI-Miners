@@ -80,6 +80,7 @@ import {
   type MineCrew
 } from './application/queries'
 import { SessionEndRecorder } from './application/recordSessionEnd'
+import { ConversationRetry } from './application/retry'
 import {
   describeAttachments,
   type ConversationAttachmentCommand
@@ -94,6 +95,7 @@ import {
   type ResolveConsole
 } from './application/resolveConsole'
 import { ConversationSender, type MessageRecipients, type SendEvent } from './application/send'
+import { InvisibleHandoffs, type ConversationDeliverCommand } from './application/deliverInvisibly'
 import { TurnEndRecorder } from './application/recordTurnEnd'
 import {
   reconcileDelivery,
@@ -109,6 +111,8 @@ import type { OutcomeLine } from './domain/outcomeLine'
 import type { AttachmentReader } from './ports/attachmentReader'
 import type { ConsoleResolver, ConsoleTarget } from './ports/consoleResolver'
 import type { TurnSender } from './ports/turnSender'
+import { SentEchoes } from './application/sentEchoes'
+import type { ConversationEntry } from '../suppliers'
 
 export type {
   ActivityChanged,
@@ -260,7 +264,9 @@ export interface Conversation {
    * `ConversationCommands.send` (ISSUE-166), built once by host/wiring when crew and suppliers are
    * wired; a second call is a wiring defect.
    */
-  sending(deps: ConversationSendingDeps): ConversationSendCommand & ConversationAttachmentCommand
+  sending(
+    deps: ConversationSendingDeps
+  ): ConversationSendCommand & ConversationAttachmentCommand & ConversationDeliverCommand
   /** The feed (ISSUE-103) and the stored outcome line (owner amendment E, ISSUE-108). */
   queries: Pick<ConversationQueries, 'feed' | 'outcomeOf'>
   /**
@@ -357,12 +363,27 @@ export function createConversation(deps: ConversationDeps): Conversation {
     for (const listener of [...reconciling]) listener(dwarfId, entries)
   }
   let sender: ConversationSender | null = null
+  // INV-60 (ISSUE-182): a launched session's echo of a sent message, claimed at ingest: its key is
+  // kept with no row of its own (INV-68), so it never shows a second bubble. The send path still
+  // hears the entry itself, which is its evidence for the delivery marks (ADR-022).
+  const echoes = new SentEchoes()
+  const stored = (
+    dwarfId: DwarfId,
+    entries: readonly ConversationEntry[],
+    origin: 'live-stream' | 'transcript'
+  ): ConversationEntry[] =>
+    entries.map((entry) =>
+      echoes.claim(dwarfId, entry, origin) === null ? entry : { ...entry, controlPlane: true }
+    )
+  /** The handoffs pushed as turn input, whose echoes ingest drops (ISSUE-205; ADR-013 item 6). */
+  const handoffs = new InvisibleHandoffs({ ids: deps.ids })
   /** The batches of joined ingests, handed to the sender after their caller's commit. */
   const joinedBatches: Array<Parameters<IngestCommands['ingest']>> = []
   const commands: IngestCommands = {
-    ingest: (dwarfId, entries, origin) => {
+    ingest: (dwarfId, received, origin) => {
       const joined = deps.transactions.isInTransaction()
-      ingest.ingest(dwarfId, entries, origin)
+      const entries = handoffs.recognise(dwarfId, received)
+      ingest.ingest(dwarfId, stored(dwarfId, entries, origin), origin)
       if (joined) joinedBatches.push([dwarfId, entries, origin])
       else {
         heard(dwarfId, entries)
@@ -400,11 +421,22 @@ export function createConversation(deps: ConversationDeps): Conversation {
         clock: deps.clock,
         ids: deps.ids,
         hostEpoch: deps.hostEpoch,
-        diagnostics
+        diagnostics,
+        echoes
+      })
+      const retrier = new ConversationRetry({
+        log,
+        transactions: deps.transactions,
+        recipients,
+        clock: deps.clock,
+        sender
       })
       return {
         send: (...args) => (sender as ConversationSender).send(...args),
-        describeAttachments: (paths) => describeAttachments(paths, attachments)
+        retry: (messageId, requestId) => retrier.retry(messageId, requestId),
+        describeAttachments: (paths) => describeAttachments(paths, attachments),
+        deliverInvisibly: (parent, text) =>
+          handoffs.deliverInvisibly(parent, text, { turns, recipients })
       }
     },
     joinedEvents: {
@@ -554,3 +586,8 @@ async function reconcileSendingRows(
   for (const [messageId, row] of [...rows]) settle(messageId, row, { found: false })
   return interrupted
 }
+
+// ISSUE-205: the DwarfAI handoff marker a delegation result pushed as turn input carries (ADR-013
+// item 6; 18 T-25: it names the delegation).
+export { handoffMarkOf, markHandoff } from './domain/handoffMarker'
+export type { ConversationDeliverCommand } from './application/deliverInvisibly'

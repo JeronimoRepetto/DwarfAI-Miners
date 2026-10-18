@@ -124,6 +124,7 @@ const MEMBERS = {
   'ask:step:set': 'setAskStep', // A-N07 (unrouted until cut 2)
   'welcome:answer': 'answerWelcome', // A-N32 (unrouted until cut 2)
   'dwarf:stop': 'stopDwarf', // A-N29 (unrouted until cut 3a)
+  'dwarf:message:retry': 'retryDwarfMessage', // A-N06 (unrouted until cut 3a)
   'dwarf:rename': 'renameDwarf', // A-N08
   'dwarf:name:reset': 'resetDwarfName', // A-N09
   'host:recovery:retry': 'retryRecovery', // A-N10 (unrouted until cut 3a)
@@ -260,9 +261,26 @@ const isNoPayload = (schema) => schema?._def?.typeName === 'ZodUndefined'
 /**
  * One entry per registry row: its 14 id, member, kind, wire, shape and schemas for this release.
  *
- * @param {{ channels: Record<string, any>, todayShapes: Record<string, any>, rowIds: Record<string, string>, helpers: readonly string[], routes: readonly { channel: string, shape: string }[] }} registry
+ * A row whose member left with its route (`MEMBER_REMOVED` at or before the table's `release`, ISSUE-183) has no
+ * entry: the facade and the fake `window.api` lose the member from that step on.
+ *
+ * @param {{ channels: Record<string, any>, todayShapes: Record<string, any>, rowIds: Record<string, string>, helpers: readonly string[], routes: readonly { channel: string, shape: string }[], release?: string, stepOrder?: readonly string[], memberRemoved?: Record<string, string> }} registry
  */
-export function windowApiRows({ channels, todayShapes, rowIds, helpers, routes }) {
+export function windowApiRows({
+  channels,
+  todayShapes,
+  rowIds,
+  helpers,
+  routes,
+  release,
+  stepOrder = [],
+  memberRemoved = {}
+}) {
+  const at = (step) => stepOrder.indexOf(step)
+  const removed = (key) =>
+    memberRemoved[key] !== undefined &&
+    release !== undefined &&
+    at(memberRemoved[key]) <= at(release)
   const problems = []
   for (const key of Object.keys(MEMBERS)) {
     if (!(key in channels)) problems.push(`MEMBERS names ${key}, which is not a registry row`)
@@ -271,41 +289,43 @@ export function windowApiRows({ channels, todayShapes, rowIds, helpers, routes }
     if (!(key in channels))
       problems.push(`a coercion or helper body names ${key}, not a registry row`)
   }
-  const rows = Object.keys(channels).map((key) => {
-    const spec = channels[key]
-    const id = rowIds[key]
-    const own = routes.filter((route) => route.channel === key)
-    const shapes = [...new Set(own.map((route) => route.shape))]
-    if (shapes.length > 1) problems.push(`${key}: its routes use two shapes (21 §1 item 2a)`)
-    // A NEW row with no route yet (unrouted.ts) is born with its target shape.
-    const shape = shapes.length === 1 && shapes[0] === 'today' ? 'today' : 'target'
-    const named = MEMBERS[key]
-    const member = typeof named === 'string' ? named : named?.[shape]
-    if (member === undefined) {
-      problems.push(`${key} (${id ?? 'no 14 id'}): no window.api member name; add it to MEMBERS`)
-    }
-    const kind = helpers.includes(key) ? 'helper' : spec.kind
-    if (kind === 'helper' && HELPER_BODIES[key] === undefined) {
-      problems.push(`${key}: a preload helper with no body in HELPER_BODIES`)
-    }
-    const todayWire = Object.keys(rowIds).find(
-      (wire) => wire !== key && rowIds[wire] === id && !(wire in channels)
-    )
-    const schemas =
-      shape === 'today' ? (todayShapes[key] ?? (spec.status === 'kept' ? spec : undefined)) : spec
-    if (schemas === undefined) problems.push(`${key}: no today shape (TODAY_SHAPES)`)
-    return {
-      key,
-      id: id ?? null,
-      member: member ?? '',
-      kind,
-      wire: kind === 'helper' ? null : shape === 'today' ? (todayWire ?? key) : key,
-      shape,
-      status: STATUS_14[spec.status] ?? spec.status,
-      noPayload: isNoPayload(schemas?.request),
-      coercion: shape === 'today' || spec.status === 'kept' ? TODAY_COERCIONS[key] : undefined
-    }
-  })
+  const rows = Object.keys(channels)
+    .filter((key) => !removed(key))
+    .map((key) => {
+      const spec = channels[key]
+      const id = rowIds[key]
+      const own = routes.filter((route) => route.channel === key)
+      const shapes = [...new Set(own.map((route) => route.shape))]
+      if (shapes.length > 1) problems.push(`${key}: its routes use two shapes (21 §1 item 2a)`)
+      // A NEW row with no route yet (unrouted.ts) is born with its target shape.
+      const shape = shapes.length === 1 && shapes[0] === 'today' ? 'today' : 'target'
+      const named = MEMBERS[key]
+      const member = typeof named === 'string' ? named : named?.[shape]
+      if (member === undefined) {
+        problems.push(`${key} (${id ?? 'no 14 id'}): no window.api member name; add it to MEMBERS`)
+      }
+      const kind = helpers.includes(key) ? 'helper' : spec.kind
+      if (kind === 'helper' && HELPER_BODIES[key] === undefined) {
+        problems.push(`${key}: a preload helper with no body in HELPER_BODIES`)
+      }
+      const todayWire = Object.keys(rowIds).find(
+        (wire) => wire !== key && rowIds[wire] === id && !(wire in channels)
+      )
+      const schemas =
+        shape === 'today' ? (todayShapes[key] ?? (spec.status === 'kept' ? spec : undefined)) : spec
+      if (schemas === undefined) problems.push(`${key}: no today shape (TODAY_SHAPES)`)
+      return {
+        key,
+        id: id ?? null,
+        member: member ?? '',
+        kind,
+        wire: kind === 'helper' ? null : shape === 'today' ? (todayWire ?? key) : key,
+        shape,
+        status: STATUS_14[spec.status] ?? spec.status,
+        noPayload: isNoPayload(schemas?.request),
+        coercion: shape === 'today' || spec.status === 'kept' ? TODAY_COERCIONS[key] : undefined
+      }
+    })
   const members = rows.map((row) => row.member)
   for (const member of new Set(members)) {
     if (members.filter((m) => m === member).length > 1)
@@ -564,13 +584,16 @@ async function loadRegistry() {
   }
   const load = async (file) => (await runnerImport(path.join(ROOT, file), config)).module
   const contracts = await load('src/contracts/index.ts')
-  const { ROUTES } = await load('src/ui-main/ipc/routes.ts')
+  const { ROUTES, ROUTES_RELEASE } = await load('src/ui-main/ipc/routes.ts')
   return {
     channels: contracts.CHANNELS,
     todayShapes: contracts.TODAY_SHAPES,
     rowIds: contracts.ROW_IDS,
     helpers: contracts.PRELOAD_HELPERS,
-    routes: ROUTES
+    routes: ROUTES,
+    release: ROUTES_RELEASE,
+    stepOrder: contracts.STEP_ORDER,
+    memberRemoved: contracts.MEMBER_REMOVED
   }
 }
 

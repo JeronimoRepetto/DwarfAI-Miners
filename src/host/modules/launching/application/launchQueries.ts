@@ -17,6 +17,7 @@
 //   is one launch's current view, for its frames.
 import type { LaunchFailure } from '../../../kernel/domain/sharedContracts'
 import type { DwarfId, Instant, LaunchId, MineId, ProviderId } from '../../../kernel/domain/values'
+import type { JevPicks } from '../domain/jevFallback'
 import type { Launch, LaunchState } from '../domain/launch'
 import type { LaunchRecordStore } from '../ports/launchRecordStore'
 
@@ -31,6 +32,7 @@ export interface LaunchView {
   effort?: string
   dwarfId?: DwarfId
   retryOf?: LaunchId
+  picks?: JevPicks // state 'handed-back' (LaunchHandedBack, OQ-38 B)
   failure?: LaunchFailure // state 'failed'; its toolOutputTail is Host memory only
   requestedAt: Instant
 }
@@ -58,11 +60,16 @@ export function viewOf(launch: Launch<unknown>, requestedAt: Instant): LaunchVie
     wayKind: request.way.kind,
     requestedAt
   }
-  if (request.way.kind === 'supplier') view.providerId = request.way.providerId
-  if (request.model !== undefined) view.model = request.model
-  if (request.effort !== undefined) view.effort = request.effort
+  // A Jev pick is the way the launch runs (S5.12; UC-009): its provider, model and capped effort.
+  const { pick } = launch
+  if (pick !== undefined) view.providerId = pick.providerId
+  else if (request.way.kind === 'supplier') view.providerId = request.way.providerId
+  const { model, effort } = pick ?? request
+  if (model !== undefined) view.model = model
+  if (effort !== undefined) view.effort = effort
   if (launch.dwarfId !== undefined) view.dwarfId = launch.dwarfId
   if (launch.retryOf !== undefined) view.retryOf = launch.retryOf
+  if (launch.picks !== undefined) view.picks = launch.picks
   if (launch.failure !== undefined) view.failure = launch.failure
   return view
 }

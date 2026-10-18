@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Delivery, DwarfId, HostFrame, MessageId } from '@dwarfai/contracts'
-import { applyDeliveryFrame, deliveryMarksOf } from './deliveryMarks'
+import { applyDeliveryFrame, deliveryMarksOf, sendStateOfDelivery } from './deliveryMarks'
 
 const BORIN = '01920000-0000-7000-8000-00000000d001' as DwarfId
 const id = (n: number) =>
@@ -34,5 +34,26 @@ describe('delivery marks folds', () => {
     expect(marks.get(id(1))).toEqual(delivery(1, 'sending'))
     applyDeliveryFrame(marks, frame('message.delivery', { delivery: delivery(1, 'failed') }))
     expect(marks.get(id(1))).toEqual(delivery(1, 'failed'))
+  })
+})
+
+// ADDED for ISSUE-001: from 3a the bubble's and the sprite's marker of a message the Host owns is the Host's mark.
+describe('the marker of a Host mark', () => {
+  it('[ADR-022] each Host phase is drawn as the same phase, held and unconfirmed as the Host states them, nothing more', () => {
+    expect(sendStateOfDelivery(delivery(1, 'sending'))).toEqual({ phase: 'sending' })
+    expect(sendStateOfDelivery({ ...delivery(1, 'sending'), heldUntilTurnEnd: true })).toEqual({
+      phase: 'held'
+    })
+    expect(sendStateOfDelivery(delivery(1, 'delivered'))).toEqual({
+      phase: 'delivered',
+      awaitingReaction: true
+    })
+    expect(sendStateOfDelivery({ ...delivery(1, 'delivered'), confidence: 'unconfirmed' })).toEqual(
+      { phase: 'delivered', awaitingReaction: true, unconfirmed: true }
+    )
+    expect(sendStateOfDelivery(delivery(1, 'reacted'))).toEqual({ phase: 'reacted' })
+    expect(
+      sendStateOfDelivery({ ...delivery(1, 'failed'), failure: { kind: 'session-closed' } })
+    ).toEqual({ phase: 'failed' })
   })
 })

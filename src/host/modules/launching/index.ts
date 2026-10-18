@@ -45,7 +45,11 @@
 //   (application/recoveryActions.ts). Both actions resume through the same `SessionResumer` as the
 //   boot pass (application/sessionResumer.ts).
 //
-// The other members join with their issues: the Jev path (later: ISSUE-164).
+// - The Jev path (ISSUE-164): with `advisor` (16 §4.5 `LaunchAdvisor`, the bridge → jev; later:
+//   ISSUE-182) composed, a "Let Jev choose" launch asks Jev in `routing` and settles with Jev's pick
+//   (S5.12), `LaunchHandedBack` with the configured default (S5.13), or one of the two Jev causes
+//   when nothing went out (S5.14, S5.15; ADR-020 item 2; domain/jevFallback.ts). Without it the
+//   path stays hidden until built: the launch is refused `jev-not-built`.
 import { LaunchUseCase, type LaunchAccepted, type LaunchingDeps } from './application/launch'
 import { MarkStoppedByPerson } from './application/markStoppedByPerson'
 import { createLaunchDrainGate } from './application/launchDrain'
@@ -86,6 +90,12 @@ import type { LaunchingEvent } from './application/events'
 import type { CrewOwnedEnds } from '../crew'
 
 export type { SessionStarter, StartResult } from './ports/sessionStarter'
+export type {
+  AbortableLaunchAdvisor,
+  LaunchAdviceOptions,
+  LaunchAdvisor
+} from './ports/launchAdvisor'
+export type { JevPicks } from './domain/jevFallback'
 export type { LaunchStore } from './ports/launchStore'
 export type { LaunchRecord, LaunchRecordStore } from './ports/launchRecordStore'
 export type { ProcessPurpose, ProcessRecord, ProcessRecordStore } from './ports/processRecordStore'
@@ -95,6 +105,7 @@ export type {
   HostRecovered,
   LaunchedSessionCrashed,
   LaunchFailed,
+  LaunchHandedBack,
   LaunchingEvent,
   LaunchRequested,
   RecoveryDismissed,
@@ -216,7 +227,11 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
       try {
         deps.bus.publish(event)
       } finally {
-        if (event.type === 'DwarfLaunched' || event.type === 'LaunchFailed') {
+        if (
+          event.type === 'DwarfLaunched' ||
+          event.type === 'LaunchFailed' ||
+          event.type === 'LaunchHandedBack'
+        ) {
           for (const listener of [...settledListeners]) listener()
         }
       }

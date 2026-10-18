@@ -2,7 +2,7 @@
 // two parts, as routes/crew.ts:
 //
 // - `serveConversation`, run by the composition root before the boot binds the endpoint: B-M24
-//   `conversation.send` (ISSUE-166), B-M26 `conversation.feed` and B-M27 `conversation.mineHistory`
+//   `conversation.send` (ISSUE-166), B-M25 `conversation.retry` (ISSUE-168), B-M26 `conversation.feed` and B-M27 `conversation.mineHistory`
 //   (14 §2.3), and the `tails` and `marks` snapshot sections (14 §3.7, §4.1), so every `hello.ok`
 //   lists them (14 §1.3). They forward to the one instance boot step 4 constructs; until then the
 //   dispatcher answers HOST_NOT_READY before any handler runs (14 §3.3), and the sections are never
@@ -39,7 +39,7 @@
 //   `DwarfDeparted` → `recordSessionEnd` (05 §4): the cut-1 routes (routes/cut1Routes.ts,
 //   ISSUE-120). The ask routes → `noteAsk`: routes/askingRoutes.ts (ISSUE-140).
 // - The Reset saga's conversation step (`createConversationResetStep`): ISSUE-121.
-// - `retry` (ISSUE-168); driver events → `ingest` and
+// - Driver events → `ingest` and
 //   `recordTurnEnd` (ISSUE-182), which brings the echo merge and the turn ends ✓✓ waits for.
 import { HostInvariantError } from '../../kernel/domain/errors'
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
@@ -58,6 +58,7 @@ import {
   type ConversationEvent,
   type AttachmentReader,
   type ConversationAttachmentCommand,
+  type ConversationDeliverCommand,
   type ConversationQueries,
   type ConsoleResolver,
   type ResolveConsole,
@@ -74,6 +75,7 @@ import { registerConversationDescribeAttachments } from '../../transport/methods
 import { registerConversationFeed } from '../../transport/methods/conversationFeed'
 import { registerConversationMineHistory } from '../../transport/methods/conversationMineHistory'
 import { registerConversationResolveConsole } from '../../transport/methods/conversationResolveConsole'
+import { registerConversationRetry } from '../../transport/methods/conversationRetry'
 import { registerConversationSend } from '../../transport/methods/conversationSend'
 import { registerMarksSection } from '../../transport/snapshot/marksSection'
 import type { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
@@ -86,7 +88,7 @@ import { publishConversationReadFrames } from './conversationFrames'
 export type ConversationRouteEvent = ConversationEvent | SendEvent
 
 export interface ConversationServeDeps {
-  /** The Host dispatcher (hostDispatcher.ts), where B-M24, B-M26, B-M27 and B-M28 join. */
+  /** The Host dispatcher (hostDispatcher.ts), where B-M24, B-M25, B-M26, B-M27 and B-M28 join. */
   dispatcher: Dispatcher
   /** The snapshot sections, where `tails` and `marks` join (after the board's, 14 §4.2). */
   sections: SectionRegistry
@@ -146,6 +148,11 @@ export interface WiredConversation {
   batchHalf: ObservedBatchHalf
   /** Boot step 4, once crew and mines are wired: the history, the tails, the send path, the frames. */
   route(deps: ConversationCrewRoute): void
+  /**
+   * `deliverInvisibly` over the routed send path (ISSUE-205): the `ParentDeliverer` bridge's door
+   * (ISSUE-209). Called before `route`, it is a Host invariant failure.
+   */
+  readonly deliverer: Pick<ConversationDeliverCommand, 'deliverInvisibly'>
 }
 
 export interface ServedConversation {
@@ -156,7 +163,7 @@ export interface ServedConversation {
 /** The members the served methods and sections forward to. */
 type ServedMembers = {
   conversation: Pick<ConversationQueries, 'feed' | 'mineHistory'> &
-    Pick<ConversationCommands, 'send'> &
+    Pick<ConversationCommands, 'send' | 'retry'> &
     ConversationAttachmentCommand
   crew: Pick<CrewQueries, 'crewOf'>
   mines: Pick<MinesQueries, 'list'>
@@ -176,6 +183,11 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
     conversation: {
       send: (dwarfId, text, attachments, requestId) =>
         current().conversation.send(dwarfId, text, attachments, requestId)
+    }
+  })
+  registerConversationRetry(serve.dispatcher, {
+    conversation: {
+      retry: (messageId, requestId) => current().conversation.retry(messageId, requestId)
     }
   })
   registerConversationDescribeAttachments(serve.dispatcher, {
@@ -217,9 +229,18 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
       if (wired) throw new HostInvariantError('conversation is wired once')
       wired = true
       const conversation = createConversation(deps)
+      let routedDeliverer: Pick<ConversationDeliverCommand, 'deliverInvisibly'> | undefined
       return {
         conversation,
         batchHalf: conversationBatchHalf(conversation),
+        deliverer: {
+          deliverInvisibly: (parent, text) => {
+            if (routedDeliverer === undefined) {
+              throw new HostInvariantError('conversation delivers once it is routed')
+            }
+            return routedDeliverer.deliverInvisibly(parent, text)
+          }
+        },
         route: ({
           crew,
           mines,
@@ -246,12 +267,14 @@ export function serveConversation(serve: ConversationServeDeps): ServedConversat
             diagnostics: diagnostics ?? NO_DIAGNOSTICS,
             ...(attachments === undefined ? {} : { attachments })
           })
+          routedDeliverer = sending
           served = {
             conversation: {
               feed: (dwarfId, page) => conversation.queries.feed(dwarfId, page),
               mineHistory: (mineId) => history.mineHistory(mineId),
               send: (dwarfId, text, paths, requestId) =>
                 sending.send(dwarfId, text, paths, requestId),
+              retry: (messageId, requestId) => sending.retry(messageId, requestId),
               describeAttachments: (paths) => sending.describeAttachments(paths)
             },
             crew,

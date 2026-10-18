@@ -5,9 +5,12 @@
 //   read `contracts` (R9; ISSUE-143 gap 2);
 // - the answer-channel gate is the `IntegrationGateReader` bridge to preferences
 //   (bridges/integrationGateReader.ts), which boot step 3 wired (ISSUE-226);
-// - driver events leave through the `SuppliedEventSink`. Their routes to conversation, asking, crew
-//   and ledger are added by those consumers' wiring issues (05 §4); no session can be launched
-//   before the SessionStarter bridge (later: ISSUE-162), so until then nothing reaches the sink;
+// - driver events leave through the `SuppliedEventSink`, which `routeEvents` binds once, at boot
+//   step 4, after launching and the modules its routes reach are wired (routes/driverEvents.ts,
+//   ISSUE-182). No session exists before that: launching is the only opener, and the Host
+//   recovery's resumes run at step 5. A delivery before the routes are bound is a wiring defect,
+//   logged and dropped (`uncaught`);
+// - the drivers of the person's own CLIs (`cliDrivers`, ISSUE-182) are handed over as given;
 // - one installed detection runs at start, unawaited (ADR-009 D5): a first `--version` can take
 //   longer than the 500 ms budget (a cold Windows start), and without it every CLI would read "not
 //   installed" at the first Add-panel open. Its answers only land in the detection cache; nothing
@@ -16,6 +19,7 @@
 //   (ISSUE-222): the first-run step is evaluated right after it (07 S41.09), so a check slower than
 //   the budget is waited for there, and only there.
 import { CATALOG_PROVIDER_IDS } from '@dwarfai/contracts'
+import { HostInvariantError } from '../kernel/domain/errors'
 import type { HostEpoch } from '../kernel/domain/values'
 import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
@@ -26,6 +30,7 @@ import type { Scheduler } from '../kernel/ports/scheduler'
 import {
   createSuppliers,
   type CapabilityRecordStore,
+  type CliDriverDeps,
   type HostedCommandDeps,
   type InstallResolver,
   type IntegrationGateReader,
@@ -56,6 +61,8 @@ export interface SuppliersWiringDeps {
   simulatedSeed: string
   /** The "Other…" driver's process deps (ISSUE-165; 15 §4.11), handed on to the module as given. */
   hostedCommand?: HostedCommandDeps
+  /** The person's own CLIs' drivers (ISSUE-182), handed on to the module as given. */
+  cliDrivers?: CliDriverDeps
 }
 
 /**
@@ -67,9 +74,6 @@ export function isPublicBuild(kind: 'release' | 'dev' | 'test'): boolean {
   return kind === 'release'
 }
 
-/** No consumer routes a driver event yet (05 §4: each route arrives with its consumer's wiring). */
-const unroutedSuppliedEvents: SuppliedEventSink = { deliver: () => undefined }
-
 export interface WiredSuppliers extends Suppliers {
   /**
    * The start-up detection's completion (07 S41.09: the first-run step is evaluated right after
@@ -78,6 +82,8 @@ export interface WiredSuppliers extends Suppliers {
    * failed (logged). Never rejects. Nothing else in the boot waits for it.
    */
   readonly bootDetection: Promise<'detected' | 'failed'>
+  /** Boot step 4, once: where every driver event goes from now on (routes/driverEvents.ts). */
+  routeEvents(sink: SuppliedEventSink): void
 }
 
 /**
@@ -108,13 +114,28 @@ function trackResolves(resolver: InstallResolver): {
 
 export function wireSuppliers(deps: SuppliersWiringDeps): WiredSuppliers {
   const resolves = trackResolves(deps.installResolver)
+  let routed: SuppliedEventSink | undefined
+  const events: SuppliedEventSink = {
+    deliver: (delivery) => {
+      if (routed !== undefined) {
+        routed.deliver(delivery)
+        return
+      }
+      deps.log.record({
+        level: 'error',
+        event: 'uncaught',
+        subsystem: 'suppliers',
+        errCode: errorCode(new HostInvariantError('a driver event before its routes were bound'))
+      })
+    }
+  }
   const suppliers = createSuppliers({
     catalogIds: CATALOG_PROVIDER_IDS,
     publicBuild: deps.publicBuild,
     clock: deps.clock,
     scheduler: deps.scheduler,
     simulatedSeed: deps.simulatedSeed,
-    sink: unroutedSuppliedEvents,
+    sink: events,
     installResolver: resolves.resolver,
     fs: deps.fs,
     capabilityRecords: deps.capabilityRecords,
@@ -122,7 +143,8 @@ export function wireSuppliers(deps: SuppliersWiringDeps): WiredSuppliers {
     bus: deps.bus,
     ids: deps.ids,
     hostEpoch: deps.hostEpoch,
-    ...(deps.hostedCommand === undefined ? {} : { hostedCommand: deps.hostedCommand })
+    ...(deps.hostedCommand === undefined ? {} : { hostedCommand: deps.hostedCommand }),
+    ...(deps.cliDrivers === undefined ? {} : { cliDrivers: deps.cliDrivers })
   })
   // The start-up pass, then every check it left running, then one more pass over the filled cache
   // (a check that answered late is read from the cache; an installed one is not resolved again).
@@ -142,5 +164,12 @@ export function wireSuppliers(deps: SuppliersWiringDeps): WiredSuppliers {
         return 'failed' as const
       }
     )
-  return { ...suppliers, bootDetection }
+  return {
+    ...suppliers,
+    bootDetection,
+    routeEvents: (sink) => {
+      if (routed !== undefined) throw new HostInvariantError('driver events are routed once')
+      routed = sink
+    }
+  }
 }

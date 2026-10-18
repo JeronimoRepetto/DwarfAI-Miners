@@ -17,6 +17,7 @@ import type { MessageLog } from '../ports/messageLog'
 import type { TurnHandOver, TurnSender, TurnSendResult } from '../ports/turnSender'
 import { InMemoryMessageLog } from '../testing/InMemoryMessageLog'
 import { ConversationSender, type SendEvent } from './send'
+import { SentEchoes } from './sentEchoes'
 
 const T0 = 1_790_000_000_000
 const DWARF = '00000000-0000-7000-8000-0000000166d1' as DwarfId
@@ -85,6 +86,7 @@ function harness() {
     trim: (...args) => memory.trim(...args),
     writeAnswersRecord: (...args) => memory.writeAnswersRecord(...args),
     writeSent: (...args) => memory.writeSent(...args),
+    resend: (...args) => memory.resend(...args),
     settleDelivery: (...args) => {
       if (failSettle !== null) throw failSettle()
       memory.settleDelivery(...args)
@@ -123,7 +125,8 @@ function harness() {
     clock,
     ids: new SequenceIdGenerator(),
     hostEpoch: 'epoch-166',
-    diagnostics
+    diagnostics,
+    echoes: new SentEchoes()
   })
   return {
     sender,

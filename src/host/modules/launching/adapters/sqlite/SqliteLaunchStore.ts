@@ -15,6 +15,13 @@
 //   (09 D-16), `jevOn` = `launched_with_let_jev_choose`, the delegation's parent through
 //   `delegations` (09 D-17), and the failure rebuilt by the domain from its cause and Jev reason
 //   with the generic supplier label (no column holds the chip label; package gap).
+// - A "Let Jev choose" launch keeps Jev's answer in the columns 10 §`launches` gives it:
+//   `provider_id` is the chosen or Jev-picked provider, `model` and `effort` the ones picked. Jev's
+//   pick (S5.12) and the picks a `handed-back` launch put into the pickers (S5.13) are written over
+//   the request's pickers values when the launch moves, and read back as `pick` and `picks`: on a
+//   `jev` launch a stored provider is the pick, or the picks once it is `handed-back`. Such a launch
+//   then reads back no pickers model or effort (no column keeps both; no reader needs them: a Retry
+//   carries its own request, INV-54).
 import { HostInvariantError } from '../../../../kernel/domain/errors'
 import type {
   JevFallbackReason,
@@ -39,6 +46,7 @@ import type {
   LaunchState,
   LaunchWay
 } from '../../domain/launch'
+import type { JevPicks } from '../../domain/jevFallback'
 import { buildLaunchFailure } from '../../domain/launchFailure'
 import { CUSTOM_COMMAND_LABEL, NO_SUPPLIER_LABEL } from '../../domain/supplierLabel'
 import type { LaunchStore } from '../../ports/launchStore'
@@ -82,6 +90,9 @@ const ADVANCE = `UPDATE launches SET state = ?, failure_cause = ?, jev_reason = 
     spawned_at = ?, settled_at = coalesce(settled_at, ?)
   WHERE id = ?`
 
+const JEV_ANSWER = `UPDATE launches SET provider_id = ?, model = ?, effort = ?
+  WHERE id = ? AND way_kind = 'jev'`
+
 const MARK_SEEN = `UPDATE launches SET seen_at = coalesce(seen_at, ?)
   WHERE id = ? AND state = 'failed'`
 
@@ -114,6 +125,15 @@ export class SqliteLaunchStore implements LaunchStore {
       settledAt,
       l.id
     ])
+    const answer = l.pick ?? l.picks
+    if (answer !== undefined) {
+      this.deps.db.run(JEV_ANSWER, [
+        answer.providerId ?? null,
+        answer.model ?? null,
+        answer.effort ?? null,
+        l.id
+      ])
+    }
   }
 
   byId(id: LaunchId): Launch | null {
@@ -232,8 +252,11 @@ function toLaunch(row: SqliteRow): Launch {
     jevOn: letJevChoose,
     jevAutoAccept: row['jev_auto_accept'] === 1
   }
-  if (row['model'] !== null) request.model = String(row['model'])
-  if (row['effort'] !== null) request.effort = String(row['effort'])
+  const answer = jevAnswerOf(row)
+  if (answer === null) {
+    if (row['model'] !== null) request.model = String(row['model'])
+    if (row['effort'] !== null) request.effort = String(row['effort'])
+  }
   if (row['permission_mode'] !== null) request.permissionMode = String(row['permission_mode'])
   if (row['delegation_id'] !== null && row['parent_dwarf_id'] !== null) {
     request.delegation = {
@@ -258,5 +281,19 @@ function toLaunch(row: SqliteRow): Launch {
   if (row['spawned_at'] !== null) launch.spawnedAt = Number(row['spawned_at'])
   if (row['dwarf_id'] !== null) launch.dwarfId = String(row['dwarf_id']) as DwarfId
   if (row['retry_of'] !== null) launch.retryOf = String(row['retry_of']) as LaunchId
+  if (answer !== null) {
+    if (launch.state === 'handed-back') launch.picks = answer.picks
+    else launch.pick = { ...answer.picks, providerId: answer.providerId }
+  }
   return launch
+}
+
+/** A `jev` launch's stored answer: a provider is stored only once Jev picked or handed back. */
+function jevAnswerOf(row: SqliteRow): { providerId: ProviderId; picks: JevPicks } | null {
+  if (row['way_kind'] !== 'jev' || row['provider_id'] === null) return null
+  const providerId = String(row['provider_id']) as ProviderId
+  const picks: Mutable<JevPicks> = { providerId }
+  if (row['model'] !== null) picks.model = String(row['model'])
+  if (row['effort'] !== null) picks.effort = String(row['effort'])
+  return { providerId, picks }
 }

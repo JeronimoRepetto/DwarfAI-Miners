@@ -10,6 +10,7 @@ import type {
   ProviderId,
   Result
 } from '../../../kernel/domain/values'
+import type { JevPick, JevPicks } from './jevFallback'
 
 /** ADR-020 D1 `LaunchState` (transitions: 07 5B). */
 export type LaunchState =
@@ -58,6 +59,8 @@ export interface Launch<PermissionMode = unknown, Delegation = unknown> {
   readonly failure?: LaunchFailure // set exactly when `state` is `failed`
   readonly spawnedAt?: Instant // t0 of the early-failure window
   readonly dwarfId?: DwarfId // set on `succeeded`
+  readonly pick?: JevPick // S5.12: Jev's pick, the way the launch runs (UC-009)
+  readonly picks?: JevPicks // S5.13: what `handed-back` put into the pickers (08 §0 LaunchHandedBack)
   readonly retryOf?: LaunchId // the attempt this Retry repeats
   readonly hostEpoch: HostEpoch
   readonly launchedWithLetJevChoose: boolean // ADR-013 items 4–5; false for a delegated worker
@@ -83,8 +86,8 @@ export type LaunchTransitionId =
 
 /** The 07 5B triggers after `LaunchRequested`. */
 export type LaunchEvent =
-  | { t: 'jev-picked' } // S5.12: Jev picked, or its fallback launched on the pickers' values
-  | { t: 'handed-back' } // S5.13: Jev's fallback put the configured default into the pickers
+  | { t: 'jev-picked'; pick?: JevPick } // S5.12: Jev picked (`pick`), or its fallback launched on the pickers' values
+  | { t: 'handed-back'; picks?: JevPicks } // S5.13: Jev's fallback put the configured default into the pickers
   | { t: 'failed'; failure: LaunchFailure } // S5.14–S5.17, S5.19, S5.20
   | { t: 'spawned'; at: Instant } // S5.18: process started at t0
   | { t: 'succeeded'; dwarfId: DwarfId } // S5.21: handshake ready and early window survived
@@ -166,10 +169,18 @@ export function applyLaunchEvent<P, D>(
     }
     case 'jev-picked':
       if (state !== 'routing') return refused()
-      return step('S5.12', { ...launch, state: 'resolving' })
+      return step('S5.12', {
+        ...launch,
+        state: 'resolving',
+        ...(event.pick === undefined ? {} : { pick: event.pick })
+      })
     case 'handed-back':
       if (state !== 'routing' || launch.request.delegation !== undefined) return refused()
-      return step('S5.13', { ...launch, state: 'handed-back' })
+      return step('S5.13', {
+        ...launch,
+        state: 'handed-back',
+        ...(event.picks === undefined ? {} : { picks: event.picks })
+      })
     case 'spawned':
       if (state !== 'resolving') return refused()
       return step('S5.18', { ...launch, state: 'spawned', spawnedAt: event.at })

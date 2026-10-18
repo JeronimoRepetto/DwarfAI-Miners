@@ -48,6 +48,13 @@ export interface PromptToolRelay {
    * and file never outlive a launch that never ran. Never called for a gated request's own entry.
    */
   release(launchId: LaunchId): Promise<void>
+  /**
+   * The relay entry of a launch whose credential is still live, for a restarted Host's resume of
+   * its session (ISSUE-182): the same relay program and credential FILE PATH the launch carried,
+   * never a new credential. `null` when the launch has no live relay: the resume then runs without
+   * the prompt tool.
+   */
+  reissue(launchId: LaunchId): Promise<DelegationInjection | null>
 }
 
 /** The driver's dependency: both halves, bound by the composition root. */
