@@ -2,12 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive } from 'vue'
 import type {
+  Delivery,
   DwarfId,
   HostFrame,
   HostFrames,
   IpcResult,
   MessageId,
   MessageView,
+  SendMessageResult,
   SnapshotPage,
   SnapshotParams
 } from '@dwarfai/contracts'
@@ -15,10 +17,10 @@ import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowAp
 import { REACTION_WINDOW_MS } from '../lib/delivery/reaction'
 import { ECHO_LIMIT } from '../lib/message/echo'
 import { defaultDwarf } from '../testing/factories'
-import type { Dwarf, DwarfAttachment, DwarfTextResult, FeedMessage } from '../types'
+import type { Dwarf, DwarfAttachment, FeedMessage } from '../types'
 import { RESULT_VISIBLE_MS, feedMessageOf, useDwarfMessaging } from './useDwarfMessaging'
 
-function stubApi(sendDwarfText: (...args: never[]) => Promise<DwarfTextResult>): void {
+function stubApi(sendDwarfText: (...args: never[]) => Promise<unknown>): void {
   // AMENDED for ISSUE-250 (was: hand-built objects as `window.api` in this file's stubs): installed through the generated
   // fake (ADR-033 item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than
   // the contract.
@@ -27,6 +29,27 @@ function stubApi(sendDwarfText: (...args: never[]) => Promise<DwarfTextResult>):
     writable: true,
     value: createFakeWindowApi({ sendDwarfText } as unknown as Partial<Window['api']>)
   })
+}
+
+/*
+ * AMENDED for ISSUE-001 (was: today's `DwarfTextResult` answers, `{ delivered, via, holdId?, unconfirmed?, error? }`,
+ * as each case's stub): from 3a A-23 answers `IpcResult<SendMessageResult>` for every provider (21 §2 cut 3 common
+ * rules). An accepted message the Host states no mark for was served by today's runtime through
+ * `PerProviderShapeAdapter` and reads as today's delivered, watched for a reaction; a message the Host marks is drawn
+ * from its marks ('the marker from the Host' below). A refusal carries no words; only a send that reached nothing has
+ * the panel's own sentence.
+ */
+let answered = 0
+
+/** A-23 accepted the message under `messageId` (a fresh one when none is named). */
+function accepted(messageId?: string): IpcResult<SendMessageResult> {
+  const id = messageId ?? `01920000-0000-7000-8000-${String(++answered).padStart(12, '0')}`
+  return { ok: true, value: { ok: true, value: { messageId: id as MessageId } } }
+}
+
+/** A-23 answered that the dwarf cannot receive the message. */
+function refused(): IpcResult<SendMessageResult> {
+  return { ok: true, value: { ok: false, error: 'cannot-receive' } }
 }
 
 /** Resolves only when `release()` is called, so a pending state can be observed. */
@@ -49,30 +72,30 @@ describe('useDwarfMessaging', () => {
   })
 
   it('marks the dwarf as sending until the delivery verdict arrives', async () => {
-    const pending = deferred<DwarfTextResult>()
+    const pending = deferred<IpcResult<SendMessageResult>>()
     stubApi(() => pending.promise)
     const { send, stateFor } = useDwarfMessaging()
 
     const sending = send('claude:s1', 'run the tests', true)
     expect(stateFor('claude:s1')).toEqual({ phase: 'sending' })
 
-    pending.release({ delivered: true, via: 'terminal' })
+    pending.release(accepted())
     await sending
     // Delivered means handed to the session's queue — the store immediately
-    // starts watching for proof the session actually read it.
+    // starts watching for proof the session actually read it. AMENDED for ISSUE-001: no channel is named.
     expect(stateFor('claude:s1')).toEqual({
       phase: 'delivered',
-      via: 'terminal',
       awaitingReaction: true
     })
   })
 
+  // AMENDED for ISSUE-001 (was: main's own words of a refused send): a send that reached nothing carries the panel's
+  // own sentence; an A-23 refusal is a closed reason with no words (the next cases).
   it('keeps the failure reason so the panel can explain itself', async () => {
     stubApi(() =>
       Promise.resolve({
-        delivered: false,
-        via: 'terminal',
-        error: 'The terminal would not come forward.'
+        ok: false,
+        error: { code: 'INTERNAL', message: 'no Host', retryable: true }
       })
     )
     const { send, stateFor } = useDwarfMessaging()
@@ -80,41 +103,14 @@ describe('useDwarfMessaging', () => {
     await send('claude:s1', 'hi', true)
     expect(stateFor('claude:s1')).toEqual({
       phase: 'failed',
-      via: 'terminal',
-      error: 'The terminal would not come forward.'
+      via: 'none',
+      error: 'The panel lost contact with the app.'
     })
   })
 
-  /*
-   * #439. A relay courier killed by its own timeout may already have called
-   * SendMessage before the kill landed, so `unconfirmed: true` must NOT draw
-   * as an ordinary failure — a ✕ with `Send again` risks handing the same
-   * words to the session twice. It takes the 'delivered' phase instead,
-   * carrying the flag through so the marker can draw its own honest sentence
-   * (see deliveryVerdict.test.ts), and it starts the same reaction watch a
-   * confirmed delivery does — awaitingReaction: true, not left unset the way
-   * a genuine failure is.
-   */
-  it('treats an unconfirmed relay as delivered, not failed, and watches for a reaction', async () => {
-    stubApi(() =>
-      Promise.resolve({
-        delivered: false,
-        via: 'claude-relay',
-        unconfirmed: true,
-        error: 'The relay did not confirm in time; the message may have arrived.'
-      })
-    )
-    const { send, stateFor } = useDwarfMessaging()
-
-    await send('claude:s1', 'a very long message', true)
-    expect(stateFor('claude:s1')).toEqual({
-      phase: 'delivered',
-      via: 'claude-relay',
-      error: 'The relay did not confirm in time; the message may have arrived.',
-      awaitingReaction: true,
-      unconfirmed: true
-    })
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "treats an unconfirmed relay as
+  // delivered, not failed, and watches for a reaction" (#439). A-23's 14 answer carries no relay verdict: a hand-over
+  // the Host could not confirm is the Host's mark (`Delivery.confidence: 'unconfirmed'`), drawn as it states it.
 
   it('turns a broken IPC call into a failed state rather than an unhandled rejection', async () => {
     stubApi(() => Promise.reject(new Error('bridge is gone')))
@@ -126,7 +122,7 @@ describe('useDwarfMessaging', () => {
   })
 
   it('clears a failed verdict after it has been on screen long enough to read', async () => {
-    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+    stubApi(() => Promise.resolve(refused()))
     const { send, stateFor } = useDwarfMessaging()
 
     await send('claude:s1', 'hi', true)
@@ -137,7 +133,7 @@ describe('useDwarfMessaging', () => {
   })
 
   it('ignores a second send while the first is still in flight', async () => {
-    const pending = deferred<DwarfTextResult>()
+    const pending = deferred<IpcResult<SendMessageResult>>()
     const api = vi.fn().mockReturnValue(pending.promise)
     stubApi(api as never)
     const { send } = useDwarfMessaging()
@@ -146,12 +142,12 @@ describe('useDwarfMessaging', () => {
     await send('claude:s1', 'two', true)
     expect(api).toHaveBeenCalledTimes(1)
 
-    pending.release({ delivered: true, via: 'terminal' })
+    pending.release(accepted())
     await first
   })
 
   it('tracks each dwarf separately', async () => {
-    stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+    stubApi(() => Promise.resolve(accepted()))
     const { send, stateFor } = useDwarfMessaging()
 
     await send('claude:s1', 'hi', true)
@@ -159,13 +155,21 @@ describe('useDwarfMessaging', () => {
     expect(stateFor('claude:s2')).toBeUndefined()
   })
 
-  it('passes the Enter preference straight through to the main process', async () => {
-    const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+  // AMENDED for ISSUE-001 (was: "passes the Enter preference straight through to the main process", today's
+  // `{ dwarfId, text, pressEnter }`): the 14 `SendMessageParams` carry no Enter preference, and every send is one intent
+  // with its own requestId (14 §1.6).
+  it('sends the 14 SendMessageParams, with no Enter preference to pass through', async () => {
+    const api = vi.fn().mockImplementation(() => Promise.resolve(accepted()))
     stubApi(api as never)
     const { send } = useDwarfMessaging()
 
     await send('claude:s1', 'hi', false)
-    expect(api).toHaveBeenCalledWith({ dwarfId: 'claude:s1', text: 'hi', pressEnter: false })
+    expect(api).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      text: 'hi',
+      attachments: [],
+      requestId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-7/)
+    })
   })
 
   /*
@@ -179,7 +183,7 @@ describe('useDwarfMessaging', () => {
    * ones the composer happens to be holding.
    */
   it('hands the bridge plain attachment objects, never Vue reactive proxies (#417)', async () => {
-    const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+    const api = vi.fn().mockImplementation(() => Promise.resolve(accepted()))
     stubApi(api as never)
     const { send } = useDwarfMessaging()
 
@@ -190,15 +194,12 @@ describe('useDwarfMessaging', () => {
 
     await send('claude:s1', 'hi', true, reactiveAttachments)
 
-    const sent = api.mock.calls[0]?.[0] as { attachments: readonly DwarfAttachment[] }
+    const sent = api.mock.calls[0]?.[0] as { attachments: readonly string[] }
     // Node's structuredClone throws a DataCloneError on a Proxy exactly as
     // Electron's IPC does — a payload that survives it carries no reactive
-    // object at all.
+    // object at all. AMENDED for ISSUE-001: the 14 request carries the picks' paths, which the Host describes again.
     expect(() => structuredClone(sent.attachments)).not.toThrow()
-    expect(sent.attachments).toEqual([
-      { path: 'C:\\work\\a.png', name: 'a.png', kind: 'image', bytes: 10 },
-      { path: 'C:\\work\\b.txt', name: 'b.txt', kind: 'file', bytes: 20 }
-    ])
+    expect(sent.attachments).toEqual(['C:\\work\\a.png', 'C:\\work\\b.txt'])
   })
 
   /*
@@ -208,7 +209,7 @@ describe('useDwarfMessaging', () => {
    * through it to learn the verdict of the call it just made.
    */
   it('resolves true when the delivery landed, so a caller can react to it (#183)', async () => {
-    stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+    stubApi(() => Promise.resolve(accepted()))
     const { send } = useDwarfMessaging()
     await expect(send('claude:s1', 'hi', true)).resolves.toBe(true)
   })
@@ -226,14 +227,14 @@ describe('useDwarfMessaging', () => {
   })
 
   it('resolves false for a second send ignored while the first is in flight', async () => {
-    const pending = deferred<DwarfTextResult>()
+    const pending = deferred<IpcResult<SendMessageResult>>()
     stubApi(() => pending.promise)
     const { send } = useDwarfMessaging()
 
     const first = send('claude:s1', 'one', true)
     await expect(send('claude:s1', 'two', true)).resolves.toBe(false)
 
-    pending.release({ delivered: true, via: 'terminal' })
+    pending.release(accepted())
     await first
   })
 })
@@ -246,7 +247,7 @@ describe('useDwarfMessaging reaction tracking', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     useDwarfMessaging().clearAll()
-    stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
+    stubApi(() => Promise.resolve(accepted()))
   })
 
   afterEach(() => {
@@ -272,7 +273,7 @@ describe('useDwarfMessaging reaction tracking', () => {
     await send('claude:s1', 'hi', true)
 
     observe([dwarf({ status: 'working', lastMessage: 'on it' })])
-    expect(stateFor('claude:s1')).toMatchObject({ phase: 'reacted', via: 'claude-relay' })
+    expect(stateFor('claude:s1')).toMatchObject({ phase: 'reacted' })
   })
 
   it('promotes when an idle session picks the message up', async () => {
@@ -317,50 +318,9 @@ describe('useDwarfMessaging reaction tracking', () => {
     expect(stateFor('claude:s1')).toBeUndefined()
   })
 
-  /*
-   * #439. An unconfirmed relay decays exactly like an ordinary delivered
-   * message this store never saw reacted to — the whole point of carrying it
-   * through the SAME reaction watch rather than a separate mechanism.
-   */
-  it('decays an unconfirmed relay the same way, keeping the flag through the decay', async () => {
-    stubApi(() =>
-      Promise.resolve({
-        delivered: false,
-        via: 'claude-relay',
-        unconfirmed: true,
-        error: 'The relay did not confirm in time; the message may have arrived.'
-      })
-    )
-    const { send, observe, stateFor } = useDwarfMessaging()
-    observe([dwarf({ status: 'working', lastMessage: 'a' })])
-    await send('claude:s1', 'a very long message', true)
-
-    vi.advanceTimersByTime(REACTION_WINDOW_MS)
-    expect(stateFor('claude:s1')).toMatchObject({
-      phase: 'delivered',
-      awaitingReaction: false,
-      unconfirmed: true
-    })
-  })
-
-  it('still promotes an unconfirmed relay to reacted once the session is seen acting', async () => {
-    stubApi(() =>
-      Promise.resolve({
-        delivered: false,
-        via: 'claude-relay',
-        unconfirmed: true,
-        error: 'The relay did not confirm in time; the message may have arrived.'
-      })
-    )
-    const { send, observe, stateFor } = useDwarfMessaging()
-    observe([dwarf({ status: 'working', lastMessage: 'a' })])
-    await send('claude:s1', 'a very long message', true)
-
-    // Proof the words DID arrive, settling exactly what 'unconfirmed' could not.
-    observe([dwarf({ status: 'working', lastMessage: 'on it' })])
-    expect(stateFor('claude:s1')).toMatchObject({ phase: 'reacted', via: 'claude-relay' })
-    expect(stateFor('claude:s1')?.unconfirmed).toBeUndefined()
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "decays an unconfirmed relay the
+  // same way, keeping the flag through the decay" and "still promotes an unconfirmed relay to reacted once the session
+  // is seen acting" (#439). A-23's 14 answer carries no relay verdict; the Host's mark says it (`confidence`).
 
   it('never promotes after the window has closed', async () => {
     const { send, observe, stateFor } = useDwarfMessaging()
@@ -385,7 +345,7 @@ describe('useDwarfMessaging reaction tracking', () => {
   })
 
   it('never promotes a delivery that failed', async () => {
-    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+    stubApi(() => Promise.resolve(refused()))
     const { send, observe, stateFor } = useDwarfMessaging()
     observe([dwarf({ status: 'working', lastMessage: 'a' })])
     await send('claude:s1', 'hi', true)
@@ -430,7 +390,7 @@ describe('useDwarfMessaging echoes', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     useDwarfMessaging().clearAll()
-    stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
+    stubApi(() => Promise.resolve(accepted()))
   })
 
   afterEach(() => {
@@ -447,7 +407,7 @@ describe('useDwarfMessaging echoes', () => {
   }
 
   it('draws the message the instant it is sent, before any channel has answered', async () => {
-    const pending = deferred<DwarfTextResult>()
+    const pending = deferred<IpcResult<SendMessageResult>>()
     stubApi(() => pending.promise)
     const { send, echoesFor } = useDwarfMessaging()
 
@@ -456,7 +416,7 @@ describe('useDwarfMessaging echoes', () => {
       { text: 'dig deeper', state: { phase: 'sending' } }
     ])
 
-    pending.release({ delivered: true, via: 'terminal' })
+    pending.release(accepted())
     await sending
   })
 
@@ -465,23 +425,18 @@ describe('useDwarfMessaging echoes', () => {
     await send('claude:s1', 'dig deeper', true)
     expect(echoesFor('claude:s1')[0]?.state).toEqual({
       phase: 'delivered',
-      via: 'claude-relay',
       awaitingReaction: true
     })
   })
 
-  it('marks the message that failed, with its reason, and keeps it on screen', async () => {
-    stubApi(() =>
-      Promise.resolve({ delivered: false, via: 'terminal', error: 'The relay never started.' })
-    )
+  // AMENDED for ISSUE-001 (was: "…, with its reason, …", main's own words): an A-23 refusal is a closed reason with
+  // no words of its own.
+  it('marks the message that failed and keeps it on screen', async () => {
+    stubApi(() => Promise.resolve(refused()))
     const { send, echoesFor, stateFor } = useDwarfMessaging()
     await send('claude:s1', 'dig deeper', true)
 
-    expect(echoesFor('claude:s1')[0]?.state).toEqual({
-      phase: 'failed',
-      via: 'terminal',
-      error: 'The relay never started.'
-    })
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({ phase: 'failed' })
 
     // The sprite's marker is a four-second badge and clears itself. The bubble
     // is the person's own message: it stays, marked, so it can be read and
@@ -497,7 +452,7 @@ describe('useDwarfMessaging echoes', () => {
     await send('claude:s1', 'dig deeper', true)
 
     observe([dwarf({ status: 'working', lastMessage: 'on it' })])
-    expect(echoesFor('claude:s1')[0]?.state).toEqual({ phase: 'reacted', via: 'claude-relay' })
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({ phase: 'reacted' })
 
     vi.advanceTimersByTime(RESULT_VISIBLE_MS)
     expect(echoesFor('claude:s1')[0]?.state.phase).toBe('reacted')
@@ -535,12 +490,12 @@ describe('useDwarfMessaging echoes', () => {
    * same text IN PLACE: the same bubble walks the marks again, and no second one is added.
    */
   it('re-sends a failed message in place: the same message, no second one', async () => {
-    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+    stubApi(() => Promise.resolve(refused()))
     const { send, retry, echoesFor } = useDwarfMessaging()
     await send('claude:s1', 'dig deeper', true)
     const failed = echoesFor('claude:s1')[0]!
 
-    stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
+    stubApi(() => Promise.resolve(accepted()))
     await retry('claude:s1', failed.id)
 
     const echoes = echoesFor('claude:s1')
@@ -550,23 +505,24 @@ describe('useDwarfMessaging echoes', () => {
   })
 
   it("sends the failed message's own words, over the same channel a send uses", async () => {
-    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+    stubApi(() => Promise.resolve(refused()))
     const { send, retry, echoesFor } = useDwarfMessaging()
     await send('claude:s1', 'dig deeper', true)
 
-    const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+    const api = vi.fn().mockImplementation(() => Promise.resolve(accepted()))
     stubApi(api as never)
     await retry('claude:s1', echoesFor('claude:s1')[0]!.id)
 
     expect(api).toHaveBeenCalledWith({
       dwarfId: 'claude:s1',
       text: 'dig deeper',
-      pressEnter: true
+      attachments: [],
+      requestId: expect.any(String)
     })
   })
 
   it('refuses to send again a message it is not holding', async () => {
-    const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+    const api = vi.fn().mockImplementation(() => Promise.resolve(accepted()))
     stubApi(api as never)
     const { retry } = useDwarfMessaging()
 
@@ -581,14 +537,14 @@ describe('useDwarfMessaging echoes', () => {
    */
   describe('retrying in place (#635)', () => {
     async function failedOnce(text = 'dig deeper'): Promise<string> {
-      stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+      stubApi(() => Promise.resolve(refused()))
       await useDwarfMessaging().send('claude:s1', text, true)
       return useDwarfMessaging().echoesFor('claude:s1').at(-1)!.id
     }
 
     it('walks the same message back to sending while the retry is in flight', async () => {
       const id = await failedOnce()
-      const pending = deferred<DwarfTextResult>()
+      const pending = deferred<IpcResult<SendMessageResult>>()
       stubApi(() => pending.promise)
       const { retry, echoesFor, stateFor } = useDwarfMessaging()
 
@@ -599,22 +555,19 @@ describe('useDwarfMessaging echoes', () => {
       // The sprite carries the same mark: the dwarf's own verdict is the retry's too.
       expect(stateFor('claude:s1')).toEqual({ phase: 'sending' })
 
-      pending.release({ delivered: true, via: 'terminal' })
+      pending.release(accepted())
       await retrying
       expect(echoesFor('claude:s1')[0]?.state.phase).toBe('delivered')
     })
 
     it('marks the same message failed again when the retry fails too', async () => {
       const id = await failedOnce()
-      stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'still nope' }))
+      stubApi(() => Promise.resolve(refused()))
       const { retry, echoesFor } = useDwarfMessaging()
 
       await expect(retry('claude:s1', id)).resolves.toBe(false)
       expect(echoesFor('claude:s1')).toEqual([
-        expect.objectContaining({
-          id,
-          state: { phase: 'failed', via: 'terminal', error: 'still nope' }
-        })
+        expect.objectContaining({ id, state: { phase: 'failed' } })
       ])
     })
 
@@ -622,7 +575,7 @@ describe('useDwarfMessaging echoes', () => {
       const { observe, retry, echoesFor } = useDwarfMessaging()
       observe([dwarf({ status: 'working', lastMessage: 'a' })])
       const id = await failedOnce()
-      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      stubApi(() => Promise.resolve(accepted()))
       await retry('claude:s1', id)
 
       observe([dwarf({ status: 'working', lastMessage: 'on it' })])
@@ -633,7 +586,7 @@ describe('useDwarfMessaging echoes', () => {
 
     it('stays where it was among the messages sent after it', async () => {
       const id = await failedOnce('first')
-      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      stubApi(() => Promise.resolve(accepted()))
       const { send, retry, echoesFor } = useDwarfMessaging()
       await send('claude:s1', 'second', true)
 
@@ -653,7 +606,7 @@ describe('useDwarfMessaging echoes', () => {
       vi.setSystemTime(1_000)
       const id = await failedOnce()
       vi.setSystemTime(1_000 + REACTION_WINDOW_MS * 3)
-      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      stubApi(() => Promise.resolve(accepted()))
       const { retry, reconcile, echoesFor } = useDwarfMessaging()
       await retry('claude:s1', id)
 
@@ -671,29 +624,29 @@ describe('useDwarfMessaging echoes', () => {
       const attachments: DwarfAttachment[] = [
         { path: 'C:/work/shot.png', name: 'shot.png', kind: 'image', bytes: 10 }
       ]
-      stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+      stubApi(() => Promise.resolve(refused()))
       const { send, retry, echoesFor, attachmentsFor } = useDwarfMessaging()
       await send('claude:s1', 'look', true, attachments)
       const id = echoesFor('claude:s1')[0]!.id
 
-      const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+      const api = vi.fn().mockImplementation(() => Promise.resolve(accepted()))
       stubApi(api as never)
       await retry('claude:s1', id)
 
       expect(api).toHaveBeenCalledWith({
         dwarfId: 'claude:s1',
         text: 'look',
-        pressEnter: true,
-        attachments
+        attachments: ['C:/work/shot.png'],
+        requestId: expect.any(String)
       })
       expect(attachmentsFor('claude:s1', id)).toEqual(attachments)
     })
 
     it('refuses to re-send a message that did not fail, so a stale press never sends it twice', async () => {
-      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      stubApi(() => Promise.resolve(accepted()))
       const { send, retry, echoesFor } = useDwarfMessaging()
       await send('claude:s1', 'arrived', true)
-      const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+      const api = vi.fn().mockImplementation(() => Promise.resolve(accepted()))
       stubApi(api as never)
 
       await expect(retry('claude:s1', echoesFor('claude:s1')[0]!.id)).resolves.toBe(false)
@@ -702,7 +655,7 @@ describe('useDwarfMessaging echoes', () => {
 
     it('drops the message from the failed sends once the retry leaves ✕', async () => {
       const id = await failedOnce()
-      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      stubApi(() => Promise.resolve(accepted()))
       const { retry, failedSends } = useDwarfMessaging()
       expect(Object.keys(failedSends())).toEqual(['claude:s1'])
 
@@ -797,43 +750,11 @@ describe('useDwarfMessaging echoes', () => {
     expect(attachmentsFor('claude:s1', echoId)).toEqual(attachments)
   })
 
-  /*
-   * #424. A session held over the Agent SDK writes a user turn nothing like
-   * the console's, and `echo.ts`'s `expectedTokensFor` picks the right shape
-   * off the echo's own `state.via` — the same field `deliver` already writes
-   * from the delivery result (see `useDwarfMessaging.ts`'s `next.via`). These
-   * two prove that field actually reaches `reconcileEchoes` through this
-   * composable's own `reconcile`, not just inside echo.ts's unit tests.
-   */
-  it('drops a held-delivered message once its own "Attached file:" row accounts for it', async () => {
-    stubApi(() => Promise.resolve({ delivered: true, via: 'held-session' }))
-    const { send, reconcile, echoesFor } = useDwarfMessaging()
-    const attachments: DwarfAttachment[] = [
-      { path: 'C:\\work\\notes.pdf', name: 'notes.pdf', kind: 'file', bytes: 20 }
-    ]
-    await send('claude:s1', 'dig deeper', true, attachments)
-    const sentAt = echoesFor('claude:s1')[0]!.sentAt
-
-    reconcile('claude:s1', [turn('Attached file: C:\\work\\notes.pdf\ndig deeper', sentAt)])
-
-    expect(echoesFor('claude:s1')).toEqual([])
-  })
-
-  it('keeps a held-delivered message against the console-shaped row a different channel would have written', async () => {
-    stubApi(() => Promise.resolve({ delivered: true, via: 'held-session' }))
-    const { send, reconcile, echoesFor } = useDwarfMessaging()
-    const attachments: DwarfAttachment[] = [
-      { path: 'C:\\work\\notes.pdf', name: 'notes.pdf', kind: 'file', bytes: 20 }
-    ]
-    await send('claude:s1', 'dig deeper', true, attachments)
-    const sentAt = echoesFor('claude:s1')[0]!.sentAt
-
-    // The console's own shape (#419) — a bare path, never this channel's own
-    // "Attached file:" line — must not account for a held delivery.
-    reconcile('claude:s1', [turn('C:\\work\\notes.pdfdig deeper', sentAt)])
-
-    expect(echoesFor('claude:s1')).toHaveLength(1)
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "drops a held-delivered message
+  // once its own \"Attached file:\" row accounts for it" and "keeps a held-delivered message against the console-shaped
+  // row a different channel would have written" (#424). Their subject, the channel today's verdict named (`via:
+  // 'held-session'`), is not in A-23's 14 answer; from 3a the Host merges its own echo of a message by `source_key`
+  // (INV-60) and the held SDK channel is not used.
 
   it('never brings a dropped message back when the transcript tail forgets it', async () => {
     // The tail is bounded, so the row that accounted for a message rolls off
@@ -882,7 +803,6 @@ describe('useDwarfMessaging echoes', () => {
 
     expect(stateFor('claude:s1')).toEqual({
       phase: 'delivered',
-      via: 'claude-relay',
       awaitingReaction: true
     })
   })
@@ -907,32 +827,19 @@ describe('useDwarfMessaging holding a message for a busy thread', () => {
     vi.useRealTimers()
   })
 
-  function heldResult(holdId: string): DwarfTextResult {
-    return { delivered: false, via: 'codex-exec-resume', holdId }
+  /*
+   * AMENDED for ISSUE-001 (was: today's `{ delivered: false, via, holdId }` at send time): a provider not yet moved is
+   * served by `PerProviderShapeAdapter`, which accepts a held message under the `MessageId` it minted; today's A-P4
+   * settles it later under that same id (legacySettlementJoin.ts).
+   */
+  function heldResult(holdId: string): IpcResult<SendMessageResult> {
+    return accepted(holdId)
   }
 
-  it('marks the message held rather than sending, delivered or failed', async () => {
-    stubApi(() => Promise.resolve(heldResult('hold:1')))
-    const { send, stateFor, echoesFor } = useDwarfMessaging()
-
-    await send('codex:t1', 'run the tests', true)
-
-    expect(stateFor('codex:t1')).toEqual({ phase: 'held', via: 'codex-exec-resume' })
-    expect(echoesFor('codex:t1')[0]?.state.phase).toBe('held')
-  })
-
-  it('keeps that marker on screen instead of clearing it after four seconds', async () => {
-    // Every other verdict is a moment; this one lasts as long as the turn it
-    // is waiting for, and a marker that vanished would leave the person
-    // believing the message had gone.
-    stubApi(() => Promise.resolve(heldResult('hold:1')))
-    const { send, stateFor } = useDwarfMessaging()
-
-    await send('codex:t1', 'run the tests', true)
-    vi.advanceTimersByTime(RESULT_VISIBLE_MS * 3)
-
-    expect(stateFor('codex:t1')?.phase).toBe('held')
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "marks the message held rather
+  // than sending, delivered or failed" and "keeps that marker on screen instead of clearing it after four seconds"
+  // (#457). A-23's 14 answer is acceptance only: a message the Host holds for a turn is its mark
+  // (`heldUntilTurnEnd`), drawn as held for as long as the Host says so.
 
   it('lets the person type again while the first message is still waiting', async () => {
     // The 'sending' guard refuses a second send for the same dwarf, and must
@@ -966,8 +873,9 @@ describe('useDwarfMessaging holding a message for a busy thread', () => {
       via: 'codex-exec-resume',
       awaitingReaction: true
     })
-    // The second is still waiting, and untouched by the first one's verdict.
-    expect(echoes[1]?.state.phase).toBe('held')
+    // The second is untouched by the first one's verdict. AMENDED for ISSUE-001 (was: still `held`): its acceptance is
+    // today's delivered-or-held verdict, which reads as delivered until its own A-P4 says more.
+    expect(echoes[1]?.state.phase).toBe('delivered')
     expect(stateFor('codex:t1')?.phase).toBe('delivered')
   })
 
@@ -1006,7 +914,8 @@ describe('useDwarfMessaging holding a message for a busy thread', () => {
       result: { delivered: true, via: 'codex-exec-resume' }
     })
 
-    expect(stateFor('codex:t1')?.phase).toBe('held')
+    // AMENDED for ISSUE-001 (was: `held`): the acceptance reads as delivered, and the stray push changes nothing.
+    expect(stateFor('codex:t1')).toEqual({ phase: 'delivered', awaitingReaction: true })
   })
 })
 
@@ -1026,9 +935,9 @@ describe('useDwarfMessaging failed sends', () => {
 
   it('lists each failed message with its words and send time, and no other', async () => {
     const { send, failedSends } = useDwarfMessaging()
-    stubApi(async () => ({ delivered: true, via: 'terminal' }))
+    stubApi(async () => accepted())
     await send('claude:s1', 'arrived', true)
-    stubApi(async () => ({ delivered: false, via: 'none', error: 'gone' }))
+    stubApi(async () => refused())
     vi.setSystemTime(5_000)
     await send('claude:s1', 'never arrived', true)
     expect(failedSends()).toEqual({ 'claude:s1': [{ text: 'never arrived', sentAt: 5_000 }] })
@@ -1046,7 +955,7 @@ describe('useDwarfMessaging failed sends', () => {
  */
 describe('useDwarfMessaging: the "Answers:" record', () => {
   const RECORD = 'Answers:\n\n- Which store: **Redis**'
-  const sendDwarfText = vi.fn(() => Promise.resolve({ delivered: true, via: 'terminal' } as const))
+  const sendDwarfText = vi.fn(() => Promise.resolve(accepted()))
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -1160,7 +1069,7 @@ describe('useDwarfMessaging: the "Answers:" record', () => {
 describe('useDwarfMessaging: the "Answers:" record, rulings 19, 20 and 22', () => {
   const RECORD = 'Answers:\n\n- Which store: **Redis**'
   const AGAIN = 'Answers:\n\n- Which store: **Memory**'
-  const sendDwarfText = vi.fn(() => Promise.resolve({ delivered: true, via: 'terminal' } as const))
+  const sendDwarfText = vi.fn(() => Promise.resolve(accepted()))
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -1254,14 +1163,14 @@ describe('useDwarfMessaging: the "Answers:" record, rulings 19, 20 and 22', () =
     observe([dwarf({ status: 'waiting', lastMessage: 'a' })])
     const id = recordAnswer('claude:s1', RECORD, 'toolu_01')
     settleAnswer('claude:s1', id, { answered: true })
-    const pending = deferred<DwarfTextResult>()
+    const pending = deferred<IpcResult<SendMessageResult>>()
     stubApi(() => pending.promise)
     const sending = send('claude:s1', 'and this', true)
 
     observe([dwarf({ status: 'working', lastMessage: 'a' })])
     expect(echoesFor('claude:s1')[0]?.state).toEqual({ phase: 'reacted' })
     expect(stateFor('claude:s1')).toEqual({ phase: 'sending' })
-    pending.release({ delivered: true, via: 'terminal' })
+    pending.release(accepted())
     await sending
   })
 
@@ -1297,7 +1206,7 @@ describe('useDwarfMessaging: the composer reads messages only', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     useDwarfMessaging().clearAll()
-    stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+    stubApi(() => Promise.resolve(accepted()))
   })
 
   afterEach(() => {
@@ -1535,6 +1444,143 @@ describe('useDwarfMessaging chat from the Host read model', () => {
     stopChat()
     expect(chatFeedOf(DAIN)).toBeUndefined()
   })
+
+  /*
+   * APPENDED for ISSUE-179 (read side, ISSUE-001 part C): the delivery marks join the chat read model, the snapshot
+   * `marks` section and the `message.delivery` frames (14 §4.1; ADR-022 item 1). A mark is the Host's phase of one
+   * message, never a renderer guess from elapsed time or from a send answer.
+   */
+  function delivery(
+    n: number,
+    phase: Delivery['phase'],
+    overrides: Partial<Delivery> = {}
+  ): Delivery {
+    return {
+      messageId: id(n),
+      dwarfId: BORIN,
+      kind: 'message',
+      phase,
+      attempts: 1,
+      phaseAt: NINE + n * 60_000,
+      ...overrides
+    }
+  }
+
+  function marks(...deliveries: Delivery[]): SnapshotPage['chunks'] {
+    return [{ section: 'marks', data: deliveries }]
+  }
+
+  beforeEach(() => {
+    useDwarfMessaging().stopMarks()
+  })
+
+  afterEach(() => {
+    useDwarfMessaging().stopMarks()
+  })
+
+  it("[ADR-022] a mark changes only on message.delivery and the reopened snapshot shows the Host's phase", async () => {
+    vi.useFakeTimers()
+    try {
+      const host = installHost([
+        page(5, marks(delivery(1, 'sending'))),
+        page(9, marks(delivery(1, 'reacted')))
+      ])
+      const { startMarks, hostMarkOf } = useDwarfMessaging()
+      await startMarks()
+      expect(hostMarkOf(id(1))).toEqual(delivery(1, 'sending'))
+
+      // Time alone never moves a mark: no timer decays or promotes the Host's phase.
+      vi.advanceTimersByTime(10 * 60_000)
+      expect(hostMarkOf(id(1))?.phase).toBe('sending')
+
+      // A frame at or below the snapshot seq is already in it.
+      host.push([frame(5, 'message.delivery', { delivery: delivery(1, 'failed') })])
+      expect(hostMarkOf(id(1))?.phase).toBe('sending')
+
+      host.push([
+        frame(6, 'message.delivery', { delivery: delivery(1, 'delivered', { attempts: 2 }) })
+      ])
+      expect(hostMarkOf(id(1))).toEqual(delivery(1, 'delivered', { attempts: 2 }))
+
+      // Reopened: the snapshot replaces the marks whole with the Host's phase.
+      host.push([frame(7, 'resync-required', { reason: 'ring-overrun' })])
+      await settle()
+      expect(hostMarkOf(id(1))).toEqual(delivery(1, 'reacted'))
+      expect(host.requests.at(-1)).toEqual({ sections: ['marks'] })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // AMENDED for ISSUE-001 (was: today's legacy verdict as the answer, its echo the panel's own): from 3a the send answer
+  // is the acceptance only, and the message's marker is the Host's mark of its MessageId.
+  it('[ADR-033] a send answer adds nothing the Host did not state', async () => {
+    const host = installHost([page(5, marks(delivery(1, 'delivered'), delivery(2, 'sending')))])
+    host.api.sendDwarfText = vi.fn(() =>
+      Promise.resolve(accepted(id(2)))
+    ) as unknown as Window['api']['sendDwarfText']
+    const { startMarks, send, hostMarkOf, hostMarksOf, echoesFor, stateFor } = useDwarfMessaging()
+    await startMarks()
+    expect(await send(BORIN, 'one more line', true)).toBe(true)
+    // The Host's marks hold only what the Host stated, and the message reads as its mark: still sending.
+    expect(hostMarksOf(BORIN)).toEqual([delivery(1, 'delivered'), delivery(2, 'sending')])
+    expect(hostMarkOf(id(3))).toBeUndefined()
+    expect(echoesFor(BORIN)[0]).toMatchObject({ messageId: id(2), state: { phase: 'sending' } })
+    expect(stateFor(BORIN)).toEqual({ phase: 'sending' })
+    useDwarfMessaging().clearAll()
+  })
+
+  // ADDED for ISSUE-001: the marker of a message the Host owns walks only on its `message.delivery` frames.
+  it("[ADR-022] a message's marker walks with the Host's marks, never with time", async () => {
+    vi.useFakeTimers()
+    try {
+      const host = installHost([page(5, marks(delivery(2, 'sending')))])
+      host.api.sendDwarfText = vi.fn(() =>
+        Promise.resolve(accepted(id(2)))
+      ) as unknown as Window['api']['sendDwarfText']
+      const { startMarks, send, echoesFor, stateFor } = useDwarfMessaging()
+      await startMarks()
+      await send(BORIN, 'one more line', true)
+
+      vi.advanceTimersByTime(10 * 60_000)
+      expect(echoesFor(BORIN)[0]?.state).toEqual({ phase: 'sending' })
+
+      host.push([frame(6, 'message.delivery', { delivery: delivery(2, 'delivered') })])
+      expect(echoesFor(BORIN)[0]?.state).toEqual({ phase: 'delivered', awaitingReaction: true })
+      vi.advanceTimersByTime(10 * 60_000)
+      expect(stateFor(BORIN)).toEqual({ phase: 'delivered', awaitingReaction: true })
+
+      host.push([frame(7, 'message.delivery', { delivery: delivery(2, 'reacted') })])
+      expect(echoesFor(BORIN)[0]?.state).toEqual({ phase: 'reacted' })
+      useDwarfMessaging().clearAll()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // ADDED for ISSUE-001: Retry of a message the Host failed is the Host's, in place (A-N06; ADR-022 item 5).
+  it('[ADR-022] Retry of a message the Host failed asks the Host to retry that MessageId and sends nothing again', async () => {
+    const host = installHost([page(5, marks(delivery(2, 'failed')))])
+    const sendDwarfText = vi.fn(() => Promise.resolve(accepted(id(2))))
+    const retryDwarfMessage = vi.fn(() =>
+      Promise.resolve({ ok: true, value: { ok: true, value: {} } })
+    )
+    host.api.sendDwarfText = sendDwarfText as unknown as Window['api']['sendDwarfText']
+    host.api.retryDwarfMessage = retryDwarfMessage as unknown as Window['api']['retryDwarfMessage']
+    const { startMarks, send, retry, echoesFor } = useDwarfMessaging()
+    await startMarks()
+    await send(BORIN, 'one more line', true)
+    const echo = echoesFor(BORIN)[0]!
+    expect(echo.state).toEqual({ phase: 'failed' })
+
+    await expect(retry(BORIN, echo.id)).resolves.toBe(true)
+    expect(retryDwarfMessage).toHaveBeenCalledWith({
+      messageId: id(2),
+      requestId: expect.any(String)
+    })
+    expect(sendDwarfText).toHaveBeenCalledOnce()
+    useDwarfMessaging().clearAll()
+  })
 })
 
 // ADDED for ISSUE-141 (lead decision 2026-10-14): an answer that found its ask no longer open is a stale submit, dropped
@@ -1542,7 +1588,7 @@ describe('useDwarfMessaging chat from the Host read model', () => {
 describe('useDwarfMessaging: withdrawing an "Answers:" record', () => {
   const RECORD = 'Answers:\n\n- Which store: **Redis**'
   const AGAIN = 'Answers:\n\n- Which store: **SQLite**'
-  const sendDwarfText = vi.fn(() => Promise.resolve({ delivered: true, via: 'terminal' } as const))
+  const sendDwarfText = vi.fn(() => Promise.resolve(accepted()))
 
   beforeEach(() => {
     vi.useFakeTimers()

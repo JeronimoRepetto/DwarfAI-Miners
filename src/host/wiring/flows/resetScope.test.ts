@@ -612,13 +612,13 @@ describe('Reset metrics as the Host saga with every participant (ADR-023; 09 §7
     })
     const state = await step.evaluateWelcomeAtBoot()
 
-    // Offered: every installed tool whose foreign entry this build writes; OpenCode joins with
-    // its enable (later: ISSUE-232 removes the step-4a offered filter, offeredFilter.ts).
+    // Offered: every installed tool (ADR-016 item 5); from step 4a the Host writes both foreign
+    // entries, so the per-cut offered filter is gone (21 §2 4a; ISSUE-232).
     expect(state).toStrictEqual({
       due: true,
       reason: 'first-run',
       legacyFound: [],
-      offered: ['claude-hooks']
+      offered: ['claude-hooks', 'opencode-permissions']
     })
     expect(setting(h.db, 'claude-hooks')).toBe('off')
     expect(setting(h.db, 'opencode-permissions')).toBe('off')

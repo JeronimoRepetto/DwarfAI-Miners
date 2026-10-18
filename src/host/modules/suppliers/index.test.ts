@@ -210,3 +210,82 @@ describe('createSuppliers and "Other…" (ISSUE-165)', () => {
     expect(launchable.map((entry) => entry.providerId)).not.toContain(HOSTED_COMMAND_PROVIDER_ID)
   })
 })
+
+// Added for ISSUE-182 (forward note of #1375): the person's own CLIs get their drivers in the
+// registry once the composition root hands their process deps over, each in the profile's D4
+// order, with the resume-context lookup a restarted Host reads (ISSUE-173). Claude's stream-json
+// driver joins only with its permission prompt tool (AMENDMENT-21): without the tool's relay it
+// is not attached (hidden until built).
+describe('createSuppliers with the CLI drivers (ISSUE-182)', () => {
+  function withCli(claudeStreamJson: boolean) {
+    const clock = new FakeClock()
+    const lookups: string[] = []
+    const suppliers = createSuppliers({
+      catalogIds: CATALOG_PROVIDER_IDS,
+      publicBuild: true,
+      clock,
+      scheduler: new FakeScheduler(clock),
+      simulatedSeed: 'seed',
+      sink: new RecordingSuppliedEventSink(),
+      installResolver: new FakeInstallResolver(),
+      fs: new FakeFs(),
+      capabilityRecords: new InMemoryCapabilityRecordStore(),
+      integrationGate: new FakeIntegrationGateReader(),
+      bus: new RecordingEventBus<SuppliersEvent>(),
+      ids: new SequenceIdGenerator(),
+      hostEpoch: 'epoch-1' as HostEpoch,
+      cliDrivers: {
+        processControl: new FakeProcessControl({ clock }),
+        loginEnv: { PATH: '/usr/bin' },
+        home: '/home/canary.user',
+        platform: 'linux',
+        redact: (text) => text,
+        clientInfo: { name: 'dwarfai', version: '0.0.0' },
+        resumeContext: (ref) => {
+          lookups.push(ref.providerSessionId)
+          return null
+        },
+        ...(claudeStreamJson
+          ? {
+              claudeStreamJson: {
+                mcpConfig: {
+                  dir: '/data/run/mcp',
+                  files: { write: async () => undefined, remove: async () => undefined }
+                },
+                promptTool: {
+                  sessions: { register: () => () => undefined },
+                  relay: {
+                    issue: async () => null,
+                    release: async () => undefined,
+                    reissue: async () => null
+                  }
+                }
+              }
+            }
+          : {})
+      }
+    })
+    return { suppliers, lookups }
+  }
+
+  it('[ADR-009] Codex gets its app-server driver and Claude its stream-json driver once its prompt tool is composed', () => {
+    const { suppliers } = withCli(true)
+    expect(suppliers.registry.drivers('codex').map((d) => d.transport)).toEqual(['app-server-rpc'])
+    expect(suppliers.registry.drivers('claude').map((d) => d.transport)).toEqual(['stream-json'])
+  })
+
+  it('[ADR-009] without the permission prompt tool Claude has no stream-json driver', () => {
+    const { suppliers } = withCli(false)
+    expect(suppliers.registry.drivers('claude')).toEqual([])
+    expect(suppliers.registry.drivers('codex').map((d) => d.transport)).toEqual(['app-server-rpc'])
+  })
+
+  it('[ADR-015, S4.18] a restarted Host resume of a session the driver never launched reads the stored launch record', async () => {
+    const { suppliers, lookups } = withCli(true)
+    const [codex] = suppliers.registry.drivers('codex')
+    await expect(
+      codex?.resume?.({ providerId: 'codex', providerSessionId: 'thread-182' })
+    ).rejects.toMatchObject({ reason: 'resume-error' })
+    expect(lookups).toEqual(['thread-182'])
+  })
+})

@@ -42,6 +42,7 @@ import type { PreferencesQueries } from '../../preferences'
 import { admitDelegation, type Delegation, type DelegationId } from '../domain/delegation'
 import type { DelegationFailed } from '../domain/events'
 import type { DelegationLimitRefusal } from '../domain/limits'
+import type { ToolResultHandoff } from './handoff'
 import { parseSubtask, type SubtaskTextRefusal } from '../domain/subtaskText'
 import { NATIVE_SUBAGENT_FALLBACK_SENTENCE, toolFailure } from '../domain/toolFailure'
 import type {
@@ -82,6 +83,11 @@ export interface DelegationEndpointDeps {
   hostEpoch: HostEpoch
   /** The `result` wait (16 §5.5). */
   scheduler: Scheduler
+  /**
+   * The finished results a running delegation hands over as its `done` answer (ISSUE-205,
+   * application/handoff.ts). Absent, a running delegation is always `pending`.
+   */
+  handoff?: ToolResultHandoff
 }
 
 /** The launch of a relay was revoked while a call waited for its parent. */
@@ -168,6 +174,8 @@ export class DelegationEndpointService implements DelegationEndpoint {
     const deadline = this.deps.clock.now() + Math.max(0, wait.maxMs)
     let current = this.read(ticket, parent)
     while (current !== null && isInFlight(current)) {
+      const done = this.deps.handoff?.answer(current) ?? null
+      if (done !== null) return done
       const remaining = deadline - this.deps.clock.now()
       if (remaining <= 0) break
       await new Promise<void>((resolve) => {

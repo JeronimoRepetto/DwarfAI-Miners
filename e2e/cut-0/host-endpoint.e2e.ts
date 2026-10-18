@@ -155,9 +155,15 @@ test.describe('cut 0: the Host endpoint of the test profile (TC-051-05)', () => 
   test.afterEach(async () => {
     // Whatever happened, the case's Host does not outlive it.
     if (hostPid !== null && isAlive(hostPid)) process.kill(hostPid)
-    await launched?.teardown()
-    launched = undefined
-    if (away !== '') rmSync(away, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    try {
+      await launched?.teardown()
+    } finally {
+      // A failed teardown still removes the case's own folder, so the run's temp sweep reports only that failure.
+      launched = undefined
+      if (away !== '')
+        rmSync(away, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+      away = ''
+    }
   })
 
   test("[ADR-002] the built app's Host binds an endpoint of the test profile only and the UI attaches to it", async () => {

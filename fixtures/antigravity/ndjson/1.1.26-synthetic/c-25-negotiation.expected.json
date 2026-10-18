@@ -1,0 +1,13 @@
+{
+  "case": "C-25",
+  "description": "ADR-009 D2, 15 §2.1–§2.3: the ndjson stream negotiates nothing on its protocol and the probe is agy --help; a probe that does not answer within PROBE_TIMEOUT_MS gives the fail-closed values of the probed fields (launch false, resume none), so the capabilities of the session are the catalog ceiling merged with the in-force A1 row.",
+  "script": [
+    { "do": "launch", "readyAfterMs": 3000 },
+    { "do": "probe" },
+    { "do": "advance", "ms": 5000 }
+  ],
+  "outcomes": [{ "resolved": true }, null, null],
+  "negotiated": { "protocol": {} },
+  "events": [{ "t": "status", "value": "working" }],
+  "sent": [{ "event": "user", "message": { "content": "first prompt" } }]
+}

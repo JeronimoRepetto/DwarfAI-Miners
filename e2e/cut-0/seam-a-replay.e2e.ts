@@ -2,7 +2,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 import { launchApp, type LaunchedApp } from '../_harness/launchApp.ts'
 import { withStubs, type StubSetup } from '../_harness/stubs.ts'
+import type { ChannelKey } from '@dwarfai/contracts'
+import type { ChannelRoute } from '../../src/ui-main/ipc/channelRoute.ts'
 import { ROUTES } from '../../src/ui-main/ipc/routes.ts'
+import { LEGACY_REFUSALS } from '../../src/ui-main/ipc/validate.ts'
 import {
   canonicalJson,
   comparable,
@@ -38,12 +41,33 @@ import {
  * own `legacy:` namespace (21 §3), so the recording's ask id, a today id, is stale and dropped before today's runtime
  * with today's "no longer open" answer (ADR-010 item 5). That is an intended difference of parity-cut-1; the relayed
  * answers reaching today's runtime unchanged are the legacy-row parity of `boardParity.cut-1.test.ts`.
+ *
+ * A row whose refused payload is answered with "the state as it is" (`LEGACY_REFUSALS` `{unchanged: reader}`) leaves it
+ * too when the table no longer serves its reader `legacy` with today's shape: the router answers such a call by serving
+ * the reader through the reader's own route (`router.ts`), so the answer is no longer today's. From 3a that is A-51: the
+ * scenario's `{}` is refused, and A-47, its reader, goes through `JevSettingsShapeAdapter`, whose key status is the
+ * Host's `SecretStore` (`parity-cut-3a.md`, "The Jev key status").
  */
 
 const RELEASE = 'cut-0'
 
 /** The rows whose ask ids `LegacyAskRelay` namespaces from cut 1 (21 §3): not comparable with today's ids. */
 const RELAYED_ASK_ROWS: readonly string[] = ['agent:answerQuestion', 'agent:answerPermission']
+
+/** Served by today's runtime with today's shape, by the table alone (no shape adapter between). */
+const servedLegacyToday = (route: ChannelRoute | undefined): boolean =>
+  route !== undefined &&
+  route.owner === 'legacy' &&
+  route.shape === 'today' &&
+  route.shapeAdapter === undefined
+
+/** A row whose refusal reads another row the table no longer serves `legacy` with today's shape. */
+function readsAMovedRow(route: ChannelRoute): boolean {
+  const refusal = LEGACY_REFUSALS[route.channel as ChannelKey]
+  if (refusal === undefined || !('unchanged' in refusal)) return false
+  const readers = ROUTES.filter((reader) => reader.channel === refusal.unchanged)
+  return readers.length === 0 || !readers.every(servedLegacyToday)
+}
 
 test.describe.configure({ timeout: 180_000 })
 
@@ -75,7 +99,7 @@ test.describe('cut 0: the legacy seam-A replay (TC-056-02)', () => {
     const { scenario, recorded } = legacyTodayPart(
       readScenario(RELEASE),
       recording,
-      ROUTES.filter((route) => !RELAYED_ASK_ROWS.includes(route.channel))
+      ROUTES.filter((route) => !RELAYED_ASK_ROWS.includes(route.channel) && !readsAMovedRow(route))
     )
     expect(scenario.calls.length, 'the table still routes some rows legacy').toBeGreaterThan(0)
     stubs = withStubs(REPLAY_STUBS)

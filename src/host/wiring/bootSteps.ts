@@ -74,11 +74,18 @@ export interface BootPorts {
    */
   recoverSessions?: () => Promise<void>
   /**
-   * Step 6, the hook ingress half (16 §8.2; ADR-016 items 2–3): listens on 127.0.0.1 on the
-   * persisted `app_meta.ingress_port` (a new one when none is persisted or it is taken), after
-   * recovery (step 5) and before observation and `ready` (steps 7–8). The composition root passes
-   * `startHookIngressAtBoot` over the ingress step 4 built (wiring/hookIngress.ts, ISSUE-140). The
-   * MCP endpoint half is the delegation module's (later: ISSUE-209).
+   * Step 5, once the recovery classified: the ADR-015 item 6 cleanup pass (ISSUE-209): the leftover
+   * helpers of a dead epoch (wiring/helperCleanup.ts), then delegation's boot pass (S8.12, and the
+   * sweep of the relay tokens and credential files). Before step 6, so no stale credential is
+   * accepted (16 §8.2). A failure is logged and never fails the boot.
+   */
+  cleanUpAfterRecovery?: () => Promise<void>
+  /**
+   * Step 6 (16 §8.2; ADR-016 items 2–3; ADR-013 item 3): the hook ingress listens on 127.0.0.1 on
+   * the persisted `app_meta.ingress_port` (a new one when none is persisted or it is taken), then
+   * the MCP endpoint (`DelegationServer.listen`, ISSUE-209), after recovery (step 5) and before
+   * observation and `ready` (steps 7–8). The composition root passes both over what step 4 built
+   * (wiring/hookIngress.ts, ISSUE-140; wiring/delegationWiring.ts).
    */
   startHookIngress?: () => Promise<void>
   /**
@@ -102,6 +109,22 @@ export interface BootPorts {
    * evaluated.
    */
   evaluateWelcome?: () => Promise<void>
+}
+
+/**
+ * Boot step 5's classification (16 §8.2; ADR-015 item 3; ISSUE-182): the Host recovery reads each
+ * provider's effective capabilities (`resume`, `adopt`), which a fresh Host knows once the start-up
+ * installed detection and its probes answered (ADR-009 D5; suppliersWiring.ts `bootDetection`).
+ * So the classification waits for that pass first: the same pass step 8 waits for before `ready`,
+ * so `ready` comes no later. A failed pass still classifies (fail closed: a provider with no known
+ * `resume` is `no-resume`, which the report's Retry resumes later, ISSUE-174).
+ */
+export async function classifyAfterDetection(deps: {
+  detection: Promise<'detected' | 'failed'>
+  classify: () => Promise<void>
+}): Promise<void> {
+  await deps.detection
+  await deps.classify()
 }
 
 /**
@@ -131,6 +154,19 @@ export async function evaluateWelcomeAfterDetection(deps: {
       subsystem: 'preferences',
       errCode: errorCode(error)
     })
+  }
+}
+
+/** A step-5 pass: a failure is logged under `subsystem`, never thrown (ADR-002 D1, D7). */
+async function loggedBootPass(
+  pass: () => Promise<void>,
+  subsystem: 'launching' | 'host',
+  log: DiagnosticsLog
+): Promise<void> {
+  try {
+    await pass()
+  } catch (error) {
+    log.record({ level: 'error', event: 'uncaught', subsystem, errCode: errorCode(error) })
   }
 }
 
@@ -171,6 +207,7 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     reverifyConfigWrites,
     constructModules,
     recoverSessions,
+    cleanUpAfterRecovery,
     startHookIngress,
     startObservation,
     startModules,
@@ -226,37 +263,32 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
           }
         },
     // 5. launching.recoverAfterHostStart(): reconcile, verify, classify, report (ISSUE-173). The
-    //    step waits for the classification only; the resumes are spaced after it. The helper
-    //    cleanup pass of ADR-015 item 6 is the MCP relay issues' (FM-025).
+    //    step waits for the classification only; the resumes are spaced after it. Then the cleanup
+    //    pass of ADR-015 item 6 (FM-025; ISSUE-209): orphan helpers, delegation's reconcile and the
+    //    credential sweep. Each failure is logged; the boot goes on.
     recoverSessions === undefined
       ? placeholder('recover-sessions', 'ISSUE-173')
       : {
           name: 'recover-sessions',
           run: async () => {
-            try {
-              await recoverSessions()
-            } catch (error) {
-              ports.log.record({
-                level: 'error',
-                event: 'uncaught',
-                subsystem: 'launching',
-                errCode: errorCode(error)
-              })
+            await loggedBootPass(recoverSessions, 'launching', ports.log)
+            if (cleanUpAfterRecovery !== undefined) {
+              await loggedBootPass(cleanUpAfterRecovery, 'host', ports.log)
             }
             return { kind: 'done' }
           }
         },
     // 6. The hook ingress (ISSUE-140; wiring/hookIngress.ts): its listener on the stable port
-    //    (ADR-016 item 3), serving the route step 4 built, after recovery's classification so no
-    //    stale credential is accepted and before `ready` (16 §8.2). Its other half, the MCP
-    //    endpoint (DelegationServer.listen), is not built: the step names it as pending.
+    //    (ADR-016 item 3), serving the route step 4 built; then the MCP endpoint
+    //    (DelegationServer.listen, ISSUE-209). After recovery's cleanup pass so no stale credential
+    //    is accepted, and before `ready` so a resumed session can reconnect its relay (16 §8.2).
     startHookIngress === undefined
       ? placeholder('start-endpoints', 'ISSUE-209')
       : {
           name: 'start-endpoints',
           run: async () => {
             await startHookIngress()
-            return { kind: 'done', pending: { part: 'mcp-endpoint', owner: 'ISSUE-209' } }
+            return { kind: 'done' }
           }
         },
     // 7. observation.catchUp(), then start() (ISSUE-095). The catch-up pass of what providers

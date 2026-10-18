@@ -54,7 +54,7 @@ import { join } from 'node:path'
 import MenuButton from '../overlay/MenuButton.vue'
 import DialogCard from '../overlay/DialogCard.vue'
 import ModalDialog from '../overlay/ModalDialog.vue'
-import type { MenuItem } from '../../lib/overlay/menu'
+import type { MenuEntry, MenuItem } from '../../lib/overlay/menu'
 import {
   COMPOSER_HINT as COMPOSER_HINT_TEXT,
   MENU_CONSOLE,
@@ -967,7 +967,10 @@ describe('DwarfMessagePanel input', () => {
     // AMENDED for #635 (was: no `.panel-refusal` row, and the kick's title): the hint is the
     // keyboard's, and what the kick does is what Stop dwarf… says before it stops.
     expect(wrapper.find('.dm-composer__hint').text()).toBe(COMPOSER_HINT_TEXT)
-    expect(await stopHint(wrapper)).toContain('off the rock')
+    // AMENDED for ISSUE-183 (was: the kick's "off the rock" hint in the confirmation): A-26 is retired in 3a, and Stop
+    // dwarf… (A-N29) ends the session whatever the channel, so the confirmation says the design's sentence alone.
+    expect(stopItem(wrapper).disabled).toBe(false)
+    expect(await stopHint(wrapper)).toBeUndefined()
   })
 
   it('draws no refusal row at all when both controls work', () => {
@@ -1031,8 +1034,8 @@ function pickStop(wrapper: ReturnType<typeof panel>): void {
 }
 
 /**
- * What stopping THIS session does, as the confirmation says it beside the design's sentence: the
- * kick's own hint from the capability model (#383), read off the panel's own action model.
+ * A second line of the confirmation beside the design's sentence, if any. AMENDED for ISSUE-183 (was: the kick's own
+ * hint from the capability model, #383): Stop dwarf… is A-N29, so the confirmation carries no per-channel line.
  */
 async function stopHint(wrapper: ReturnType<typeof panel>): Promise<string | undefined> {
   pickStop(wrapper)
@@ -1066,16 +1069,17 @@ describe('DwarfMessagePanel controls', () => {
    * confirmation is the design's, which is also what took #293's one click away: the design asks
    * first for anything destructive.
    */
+  // AMENDED for ISSUE-183 throughout this block (was: the `kick` event, A-26): Stop dwarf… emits `stop` (A-N29).
   it('stops on the confirmation, and never before it', async () => {
     const wrapper = panel({ dwarf: kickable })
     pickStop(wrapper)
     await wrapper.vm.$nextTick()
-    expect(wrapper.emitted('kick')).toBeUndefined()
+    expect(wrapper.emitted('stop')).toBeUndefined()
     expect(stopDialog(wrapper).props('open')).toBe(true)
 
     stopDialog(wrapper).vm.$emit('action', 1)
     await wrapper.vm.$nextTick()
-    expect(wrapper.emitted('kick')).toHaveLength(1)
+    expect(wrapper.emitted('stop')).toHaveLength(1)
     expect(stopDialog(wrapper).props('open')).toBe(false)
   })
 
@@ -1085,7 +1089,7 @@ describe('DwarfMessagePanel controls', () => {
     await wrapper.vm.$nextTick()
     stopDialog(wrapper).vm.$emit('action', 0)
     await wrapper.vm.$nextTick()
-    expect(wrapper.emitted('kick')).toBeUndefined()
+    expect(wrapper.emitted('stop')).toBeUndefined()
     expect(stopDialog(wrapper).props('open')).toBe(false)
   })
 
@@ -1112,7 +1116,8 @@ describe('DwarfMessagePanel controls', () => {
     // ADDED for #635 (MESSAGE-QUESTIONS 13): an idle observed session can still be stopped, so the
     // item carries no reason.
     expect(stopItem(wrapper).title).toBeUndefined()
-    expect(await stopHint(wrapper)).toContain('off the rock')
+    // AMENDED for ISSUE-183 (was: the kick's "off the rock" hint): A-N29 ends the session, one sentence for all.
+    expect(await stopHint(wrapper)).toBeUndefined()
   })
 
   /* AMENDED for #293, same reason (was: 'disables kick when the dwarf ...'). */
@@ -1126,19 +1131,21 @@ describe('DwarfMessagePanel controls', () => {
    * the DOM: a dismissal on a dwarf mid-turn is undone by the next poll, so the
    * control is genuinely disabled rather than merely re-worded.
    */
-  it('disables kick while a turn nothing can interrupt is open, with the reason', async () => {
+  /*
+   * AMENDED for ISSUE-183 (was: "disables kick while a turn nothing can interrupt is open, with the reason"): the kick
+   * (A-26) is retired in 3a. Stop dwarf… is A-N29, which ends the whole session also mid-turn (AMENDMENT-2, OQ-54), so
+   * its availability never depends on the turn: it is disabled only while the Host says a stop is in flight (INV-31).
+   */
+  it('keeps Stop dwarf… live while a turn nothing can interrupt is open', async () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         status: 'working',
         capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       })
     })
-    expect(stopItem(wrapper).disabled).toBe(true)
-    // ADDED for #635 (MESSAGE-QUESTIONS 13): the disabled item says why, in the house form.
-    expect(stopItem(wrapper).title).toBe(
-      'Stop dwarf · this turn can only be stopped where its session runs'
-    )
-    expect(await stopHint(wrapper)).toContain('cannot be stopped from')
+    expect(stopItem(wrapper).disabled).toBe(false)
+    expect(stopItem(wrapper).title).toBeUndefined()
+    expect(await stopHint(wrapper)).toBeUndefined()
   })
 
   /*
@@ -1150,29 +1157,24 @@ describe('DwarfMessagePanel controls', () => {
   it('offers kick on a session that has ended, to end its walk', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ status: 'leaving' }) })
     expect(stopItem(wrapper).disabled).toBe(false)
-    expect(await stopHint(wrapper)).toContain('has ended')
+    // AMENDED for ISSUE-183 (was: the kick's "has ended" hint in the confirmation): the design's sentence alone.
+    expect(await stopHint(wrapper)).toBeUndefined()
     pickStop(wrapper)
     await wrapper.vm.$nextTick()
     stopDialog(wrapper).vm.$emit('action', 1)
-    expect(wrapper.emitted('kick')).toHaveLength(1)
+    expect(wrapper.emitted('stop')).toHaveLength(1)
   })
 
-  it('names what kicking THIS channel actually does, rather than one generic promise', async () => {
-    const relay = panel({
-      dwarf: defaultDwarf({
-        capabilities: {
-          sendText: 'claude-relay',
-          cancel: 'claude-relay',
-          adjustEffort: null,
-          attach: null
-        }
-      })
-    })
-    expect(await stopHint(relay)).toBe('Asks the agent to stop — it decides how.')
-  })
+  /*
+   * REMOVED for ISSUE-183, stated rather than passing unseen (docs/test-removals.md): "names what kicking THIS channel
+   * actually does, rather than one generic promise". A-26 and its per-channel effect are retired in 3a; Stop dwarf…
+   * (A-N29) ends the session whatever the channel.
+   */
 
-  it('locks the kick control while a kick is in flight', async () => {
-    const wrapper = panel({ dwarf: kickable, kickState: { phase: 'kicking' } })
+  // AMENDED for ISSUE-183 (was: "locks the kick control while a kick is in flight", the kick's own `kicking` phase):
+  // Stop dwarf… is locked while the Host says a stop is already in flight (INV-31), handed in as `stopDisabled`.
+  it('locks Stop dwarf… while a stop is already in flight', async () => {
+    const wrapper = panel({ dwarf: kickable, stopDisabled: true })
     expect(stopItem(wrapper).disabled).toBe(true)
     // ADDED for #635 (MESSAGE-QUESTIONS 13): the disabled item says why, in the house form.
     expect(stopItem(wrapper).title).toBe('Stop dwarf · already stopping')
@@ -1180,63 +1182,15 @@ describe('DwarfMessagePanel controls', () => {
     pickStop(wrapper)
     await wrapper.vm.$nextTick()
     stopDialog(wrapper).vm.$emit('action', 1)
-    expect(wrapper.emitted('kick')).toBeUndefined()
-  })
-
-  it('shows the kick verdict, keeping handed over apart from reacted', () => {
-    // AMENDED for #383 (was: via: 'terminal', asserting the status contained
-    // 'Kick handed over' — true before #329/#383 made the terminal tier end
-    // the session outright, which now shows "Ended the session…" instead
-    // (see 'says a kick ENDED the session via the terminal tier' below).
-    // This test's point is the generic handed-over wording, not the
-    // terminal tier's own, so a channel that still only asks, claude-relay,
-    // keeps that point covered.)
-    const wrapper = panel({
-      dwarf: kickable,
-      kickState: { phase: 'delivered', via: 'claude-relay', awaitingReaction: true }
-    })
-    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).toContain('Kick handed over')
+    expect(wrapper.emitted('stop')).toBeUndefined()
   })
 
   /*
-   * Ending a session and interrupting a turn are different acts, and the person
-   * must not be told the wrong one (#217).
+   * REMOVED for ISSUE-183, stated rather than passing unseen (docs/test-removals.md): "shows the kick verdict, keeping
+   * handed over apart from reacted", "says a kick ENDED the session where that is what it did" and "says a kick ENDED
+   * the session via the terminal tier, and names its own terminal detail". A-26 and its verdict lines are retired in
+   * 3a; Stop dwarf… (A-N29) claims nothing, and its dwarf leaves only on the Host's `dwarf.departed`.
    */
-  it('says a kick ENDED the session where that is what it did', () => {
-    const wrapper = panel({
-      dwarf: defaultDwarf({
-        provider: 'codex',
-        capabilities: {
-          sendText: null,
-          cancel: 'launched-process',
-          adjustEffort: null,
-          attach: null
-        }
-      }),
-      kickState: { phase: 'delivered', via: 'launched-process' }
-    })
-    const line = wrapper.find('.dm-composer__hint[role="status"]').text()
-    expect(line).toContain('Ended the session')
-    expect(line).not.toContain('handed over')
-  })
-
-  /*
-   * The terminal tier's own case (#383, #329): it ends the session same as
-   * launched-process, but the panel never launched it, so the sentence says
-   * the one further fact worth saying instead — the terminal is left at its
-   * prompt — rather than repeating a claim that would be false here.
-   */
-  it('says a kick ENDED the session via the terminal tier, and names its own terminal detail', () => {
-    const wrapper = panel({
-      dwarf: kickable,
-      kickState: { phase: 'delivered', via: 'terminal' }
-    })
-    const line = wrapper.find('.dm-composer__hint[role="status"]').text()
-    expect(line).toContain('Ended the session')
-    expect(line).toContain('its terminal is left at its prompt')
-    expect(line).not.toContain('handed over')
-    expect(line).not.toContain('watching')
-  })
 
   /*
    * REMOVED for #635, stated rather than passing unseen: 'draws Boost where the design puts it and
@@ -1834,22 +1788,11 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
  * app ended, and a dwarf taken off the board without the session being asked
  * anything at all.
  */
-describe('DwarfMessagePanel on a dismissed dwarf', () => {
-  it('says the dwarf was sent off, and never that anything was handed over', () => {
-    const wrapper = panel({
-      dwarf: defaultDwarf({
-        provider: 'codex',
-        textDelivery: 'codex-queue',
-        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
-      }),
-      kickState: { phase: 'delivered', via: 'dismiss' }
-    })
-    const line = wrapper.find('.dm-composer__hint[role="status"]').text()
-    expect(line).toContain('off the rock')
-    expect(line).not.toContain('handed over')
-    expect(line).not.toContain('Ended the session')
-  })
-})
+/*
+ * REMOVED for ISSUE-183, stated rather than passing unseen (docs/test-removals.md): 'DwarfMessagePanel on a dismissed
+ * dwarf' "says the dwarf was sent off, and never that anything was handed over". The kick's dismiss verdict (A-26) is
+ * retired in 3a with the kick.
+ */
 
 /**
  * The message the person just sent, drawn before any channel answered (#309).
@@ -4565,7 +4508,8 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
   })
 
   it('[US-MSG-016.AC03, US-MSG-016.AC05, NFR-A11Y-14] a disabled Stop dwarf… keeps its label and place without the danger red, arrow keys skip it, and its reason from the title is its accessible description', async () => {
-    const wrapper = attached({ kickState: { phase: 'kicking' } })
+    // AMENDED for ISSUE-183 (was: a kick in flight): a stop the Host says is already in flight (INV-31).
+    const wrapper = attached({ stopDisabled: true })
     const rows = await openMenu(wrapper)
     const stop = rows.at(-1)!
     expect(rows).toHaveLength(3)
@@ -4632,18 +4576,12 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
     const rows = await openMenu(wrapper)
     rows.at(-1)!.click()
     await flushPromises()
-    console.log(
-      'DBG',
-      rows.length,
-      rows.map((r) => r.textContent),
-      wrapper.findComponent(ModalDialog).props('open'),
-      document.querySelectorAll('.dm-menu').length
-    )
     const cancel = document.querySelector<HTMLButtonElement>('.dm-dialog__actions button')!
     expect(cancel.textContent?.trim()).toBe('Cancel')
     cancel.click()
     await flushPromises()
-    expect(wrapper.emitted('kick')).toBeUndefined()
+    // AMENDED for ISSUE-183 (was: no `kick`): Stop dwarf… emits `stop` (A-N29).
+    expect(wrapper.emitted('stop')).toBeUndefined()
     expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
   })
 })
@@ -4790,5 +4728,36 @@ describe('DwarfMessagePanel focus on opening, composer dead (ISSUE-266)', () => 
     await drawn.vm.$nextTick()
     await drawn.vm.$nextTick()
     expect(document.activeElement).not.toBe(drawn.get('.dm-msg__rename').element)
+  })
+})
+
+/* --- ISSUE-183: A-26 retired in 3a, Stop dwarf… the only stop (TC-183-02) — one block, appended --- */
+
+/*
+ * The kick (A-26, "interrupt the running turn") leaves the app for every provider in 3a (14 §2.1 RETIRE; 21 §2 cut 3
+ * common rules): the ⋯ menu offers "Stop dwarf…" (A-N29), which ends the whole session, and no control that only
+ * interrupts the turn. Its availability never depends on the turn (07 §15, OQ-54): it is disabled only while the Host
+ * says a stop is already in flight (INV-31).
+ */
+describe('DwarfMessagePanel stop after the kick (ISSUE-183)', () => {
+  it('[INV-31] the dwarf menu offers Stop dwarf and no interrupt-only action', async () => {
+    for (const status of ['working', 'waiting', 'leaving'] as const) {
+      const wrapper = panel({
+        dwarf: defaultDwarf({
+          status,
+          capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
+        })
+      })
+      const entries = wrapper.findComponent(MenuButton).props('items') as MenuEntry[]
+      const labels = entries.flatMap((entry) => ('label' in entry ? [entry.label] : []))
+      expect(labels, status).toEqual(['Open console', 'Mine history', 'Stop dwarf…'])
+      expect(stopItem(wrapper).disabled, status).toBe(false)
+      expect(wrapper.text(), status).not.toMatch(/\bkick/i)
+      pickStop(wrapper)
+      await wrapper.vm.$nextTick()
+      stopDialog(wrapper).vm.$emit('action', 1)
+      expect(wrapper.emitted('stop'), status).toHaveLength(1)
+      expect(Object.keys(wrapper.emitted())).not.toContain('kick')
+    }
   })
 })

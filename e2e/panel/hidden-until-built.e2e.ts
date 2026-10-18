@@ -86,14 +86,20 @@ test.describe('the Panel build hides what is not built (ISSUE-267)', () => {
     // and launchable) and Other, in main's order, is the rule; polled, so the row is read once the list arrived.
     const offered = async (): Promise<string[]> =>
       (await window.evaluate(async () => {
-        type Option = { provider: string; installed: boolean; launchable: boolean }
+        // From step 3a A-36 answers the 14 shape: IpcResult<SupplierEntryView[]>.
+        type Entry = { providerId: string; installed: boolean; publicLaunch: string }
+        type Answer = { ok: true; value: Entry[] } | { ok: false }
         const api = (
-          window as unknown as { api: { listAgentProviders(): Promise<{ providers: Option[] }> } }
+          window as unknown as {
+            api: { listAgentProviders(params: { refresh: boolean }): Promise<Answer> }
+          }
         ).api
-        const answer = await api.listAgentProviders()
-        return answer.providers
-          .filter((option) => option.installed && option.launchable)
-          .map((option) => option.provider)
+        const answer = await api.listAgentProviders({ refresh: true })
+        return answer.ok
+          ? answer.value
+              .filter((entry) => entry.installed && entry.publicLaunch === 'enabled')
+              .map((entry) => entry.providerId)
+          : []
       })) as string[]
     const expected = [...(await offered()), 'other']
     await expect

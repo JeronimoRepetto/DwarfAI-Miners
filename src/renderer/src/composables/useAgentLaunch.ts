@@ -1,5 +1,17 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, shallowRef, type ComputedRef, type Ref } from 'vue'
+import type { IpcResult, LaunchAccepted, MineId, SupplierEntryView } from '@dwarfai/contracts'
 import { launchedDwarfIn } from '../lib/launch/launchArrival'
+import {
+  applyLaunchFrame,
+  hostLaunchesOf,
+  launchInFlight,
+  type HostFrame,
+  type HostLaunch,
+  type HostLaunches
+} from '../lib/readModel/launches'
+import { createReadModel, followHost, type HostFollower } from './readModel'
+import { mintRequestId } from './requestIds'
+import { launchSourcesOf } from '../lib/launch/supplierEntries'
 import {
   DETACHED_TIMEOUT_MS,
   adoptLaunchedDwarf,
@@ -14,26 +26,21 @@ import {
   commitCommand,
   composerEnabled,
   composerPlaceholder,
-  detachedTimedOut,
-  heldStarted,
-  jevAnswered,
-  jevAsked,
-  jevLaunchedNothing,
+  hostLaunchAccepted,
+  hostLaunchFollowed,
+  jevSuggestAnswered,
+  jevSuggestAsked,
+  jevSuggestParams,
   JEV_NO_CHOICE_REFUSAL,
   launchCommand,
   launchFailed,
-  launchCodexPermissionMode,
-  launchPermissionMode,
+  launchParamsOf,
   launchPhase,
   launchPrompt,
-  launchTuning,
   openLaunch,
   pickManually as pickManuallyInstead,
   retryLaunch,
-  routedByJev,
   setJevSettings,
-  shouldAskJev,
-  startedDetached,
   submitFailed,
   submitRefused,
   submitStarted,
@@ -41,8 +48,10 @@ import {
   toggleJevAutoAccept,
   typeCommand,
   typePrompt,
+  unstatedLaunchTimedOut,
   OTHER_CHOICE,
   type JevState,
+  type JevSuggestAnswer,
   type LaunchChoice,
   type LaunchPermissionMode,
   type LaunchPhase,
@@ -56,17 +65,105 @@ import {
   type ModelPicker
 } from '../lib/launch/modelTuning'
 import { launchRefusal, providerChips, type ProviderChip } from '../lib/launch/providerChips'
-import { DEFAULT_JEV_SETTINGS, HELDABLE_PROVIDERS } from '../types'
+import { DEFAULT_JEV_SETTINGS } from '../types'
 import { useHostConnection } from './useHostConnection'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
-  JevRouteLaunchResult,
   JevSettings,
   LaunchFailedPush,
   LaunchFailureCause,
   Mine
 } from '../types'
+
+/*
+ * THE LAUNCHES FROM THE HOST (ISSUE-179 read side, ISSUE-001 part C; ADR-020 D1; ADR-033 item 3; 14 §4.1, §4.3).
+ *
+ * A read model of the snapshot `launches` section and the `launch.changed` / `launch.failed` frames, driven by
+ * `followHost` like the board and the chat (A-N02 first, then A-N01; frames at or below the snapshot seq dropped).
+ * - "Sending the dwarf in…" lasts until the Host's event: a launch leaves "in flight" only on `launch.changed` or
+ *   `launch.failed`, never on a timer (NFR-TIM-07).
+ * - A failure is the Host's `LaunchFailure` as it came (cause, supplier label, actions, tool output tail); the words
+ *   are the view's.
+ * - A snapshot replaces every launch whole; a launch missing from it is simply gone (14 §4.3 rules 2, 7).
+ *
+ * From the step-3a switch (ISSUE-001) A-35 goes out with `LaunchParams` for every provider, and the launch it answered
+ * settles from here (`hostLaunchFollowed`, after each settled batch); the dock starts this model on mount. Today's A-P3
+ * push (`listenFailures`) still settles a launch of a provider not yet moved, served by `PerProviderShapeAdapter`
+ * under the `LaunchId` it minted (21 §3.1; legacySettlementJoin.ts).
+ */
+
+/** The Host's launches as this composable reads them. Every read is reactive. */
+export interface HostLaunchesReader {
+  /** Follows the Host's launches; answers whether the Host now feeds them. */
+  start(): Promise<boolean>
+  /** Stops following and forgets what it held. */
+  stop(): void
+  of(launchId: string): HostLaunch | undefined
+  /** Whether the Host last said this launch is on its way. */
+  inFlight(launchId: string): boolean
+  /** The launches of one mine, in-flight and failed, as the Host stated them. */
+  inMine(mineId: string): HostLaunch[]
+}
+
+// Singleton store: module-scope state shared by every useAgentLaunch() caller,
+// exactly as the mines, messaging and question stores are. At most one
+// Add Panel exists — it shares the MessagePanel's one dock — so there is one
+// launch in flight at a time and one place to hold it.
+const state = ref<LaunchState>(closedLaunch())
+
+const launches: HostLaunches = new Map()
+/** The launches in a reactive mirror, rewritten whenever a snapshot or a batch of frames settled. */
+const shownLaunches = shallowRef<ReadonlyMap<string, HostLaunch>>(new Map())
+
+const launchesModel = createReadModel<HostLaunches, HostFrame>({
+  state: launches,
+  replace(data) {
+    launches.clear()
+    for (const [launchId, entry] of data) launches.set(launchId, entry)
+  },
+  apply: (frame) => applyLaunchFrame(launches, frame)
+})
+
+let launchesFollower: HostFollower | null = null
+
+const hostLaunches: HostLaunchesReader = {
+  start() {
+    launchesFollower ??= followHost(
+      {
+        subscribe: (listener) =>
+          window.api.onHostEvent((frames) => listener(frames as HostFrame[])),
+        snapshot: (params) => window.api.getHostSnapshot(params)
+      },
+      {
+        model: launchesModel,
+        sections: ['launches'],
+        dataOf: hostLaunchesOf,
+        settled: () => {
+          shownLaunches.value = new Map(launches)
+          // The panel's own launch, as the Host now states it (07 5A S5.05–S5.07).
+          const own = state.value.launchId
+          if (own !== null)
+            state.value = hostLaunchFollowed(state.value, launches.get(own as never))
+        }
+      }
+    )
+    return launchesFollower.start()
+  },
+  stop() {
+    launchesFollower?.stop()
+    launchesFollower = null
+    launchesModel.seq = 0
+    launches.clear()
+    shownLaunches.value = new Map()
+  },
+  of: (launchId) => shownLaunches.value.get(launchId),
+  inFlight(launchId) {
+    const entry = shownLaunches.value.get(launchId)
+    return entry !== undefined && launchInFlight(entry)
+  },
+  inMine: (mineId) => [...shownLaunches.value.values()].filter((entry) => entry.mineId === mineId)
+}
 
 /**
  * Launching an agent from inside a mine (#86, #194): the IPC, and the state the
@@ -120,21 +217,53 @@ import type {
  * on, which is the window in which it exists nowhere else.
  */
 
-// Singleton store: module-scope state shared by every useAgentLaunch() caller,
-// exactly as the mines, messaging, kicking and question stores are. At most one
-// Add Panel exists — it shares the MessagePanel's one dock — so there is one
-// launch in flight at a time and one place to hold it.
-const state = ref<LaunchState>(closedLaunch())
 const mineId = ref<string | null>(null)
 const providers = ref<AgentProviderOption[]>([])
 /** What each provider can start on, live (#239) — asked once per open, beside `providers`. */
 const catalogs = ref<AgentModelCatalog[]>([])
+/** The integration notice's action (ISSUE-228): idle until used, then running, then settled or failed. */
+const noticeAction = ref<'idle' | 'enabling' | 'failed'>('idle')
+/** Auto-accept paused on a Jev pick of a provider whose permission requests cannot be answered (S5.25). */
+const pausedForNotice = ref(false)
 
 const LOST_BRIDGE = 'The panel lost contact with the app.'
 const NOT_LAUNCHED = 'The agent could not be started.'
 
+/** A catalogue that could not be asked: no source, as a call error reads (lib/launch/supplierEntries.ts). */
+const NO_CATALOGUE: IpcResult<readonly SupplierEntryView[]> = {
+  ok: false,
+  error: { code: 'INTERNAL', message: 'the catalogue could not be asked', retryable: true }
+}
+
+/**
+ * The panel's provider entries of an A-36 answer (`launchSourcesOf`), each with the capability fields of its 14 §3.6
+ * `SupplierEntryView` the integration notice and the Permissions list read (`answerChannel`, `offeredModes`).
+ */
+function providerEntriesOf(answer: IpcResult<readonly SupplierEntryView[]>): ProviderEntry[] {
+  const views = answer.ok ? answer.value : []
+  return launchSourcesOf(answer).providers.map((option) => {
+    const view = views.find((entry) => entry.providerId === option.provider)
+    return {
+      ...option,
+      ...(view?.answerChannel === undefined ? {} : { answerChannel: view.answerChannel }),
+      ...(view?.offeredModes === undefined ? {} : { offeredModes: [...view.offeredModes] })
+    }
+  })
+}
+
+/** A Jev ask that reached nothing: no card, the pickers as they stood (US-LAUNCH-003.AC08). */
+const NO_SUGGESTION: JevSuggestAnswer = {
+  ok: false,
+  error: { code: 'INTERNAL', message: 'the Jev ask reached nothing', retryable: true }
+}
+
+/** Each A-50 ask is numbered; only the answer to the last one may land (INV-87; ISSUE-195). */
+let suggestions = 0
+
 export interface AgentLaunch {
   state: Ref<LaunchState>
+  /** The Host's launches read model (14 §4.1 `launches`; ISSUE-179 read side). */
+  hostLaunches: HostLaunchesReader
   /** The mine the panel was opened from; every launch starts in its folder. */
   mineId: Ref<string | null>
   providers: Ref<AgentProviderOption[]>
@@ -184,7 +313,45 @@ export interface AgentLaunch {
    * calls it on unmount.
    */
   listenFailures: () => () => void
+  /**
+   * The notice over the composer while the chosen provider's permission requests cannot be answered from the app
+   * (ADR-011 item 7; 07 5A S5.02): its entry is `answerChannel: 'gated-off'` until its integration is on. `offered`
+   * shows the action, `enabling` while the action runs (no launch leaves meanwhile), `failed` when the option did not
+   * turn on (the write failed, or the refreshed entry is still gated): the launch still goes out, without an answer
+   * channel. The copy is the view's (ADR-011 O-14).
+   */
+  integrationNotice: ComputedRef<IntegrationNotice>
+  /**
+   * The Permissions list of the chosen provider as its entry offers it (14 §3.6 `offeredModes`, ADR-011 item 1), the
+   * interactive mode ("Ask first") first once its permission requests can be answered; empty when the entry lists none.
+   */
+  offeredModes: ComputedRef<string[]>
+  /**
+   * Auto-accept paused on a Jev pick whose permission requests cannot be answered (PO #108; 07 S5.25): the pick is
+   * shown as a suggestion with the notice, and nothing launches until the person acts.
+   */
+  pausedForNotice: ComputedRef<boolean>
+  /** Whether Jev's card reads as accepted automatically (`jevCardEyebrow`): auto-accept on and not paused. */
+  jevAccepted: ComputedRef<boolean>
+  /**
+   * The notice's action (07 S5.02, S5.26; US-LAUNCH-001.AC13): turns the option on (A-53, consent origin
+   * `add-panel`), then asks the provider list again and redraws the Permissions list from it. Never launches; the
+   * person's Send does, after it settled. A no-op while no notice is shown or the action already runs.
+   */
+  enableIntegration: () => Promise<void>
 }
+
+/** What the Add panel's integration notice shows (see `AgentLaunch.integrationNotice`). */
+export type IntegrationNotice =
+  { shown: false } | { shown: true; state: 'offered' | 'enabling' | 'failed' }
+
+/**
+ * A provider entry as the panel reads it: today's A-36 entry, plus the capability fields of 14 §3.6
+ * `SupplierEntryView` the A-36 answer carries from its switch (`answerChannel`, `offeredModes`). Today's answer has
+ * neither, so its providers show no notice and keep today's Permissions select (hidden until built, 21 §1 item 8).
+ */
+type ProviderEntry = AgentProviderOption &
+  Partial<Pick<SupplierEntryView, 'answerChannel' | 'offeredModes'>>
 
 /**
  * Ask the bridge for one thing, and answer with `fallback` for EITHER way it
@@ -208,6 +375,49 @@ export function useAgentLaunch(): AgentLaunch {
   const phase = computed(() => launchPhase(state.value))
   const refusal = computed(() => launchRefusal(providers.value, state.value.choice))
   const jev = computed(() => state.value.jev)
+  /** The chosen provider's entry, read for its capabilities (R12: never its id). */
+  const chosenEntry = computed((): ProviderEntry | undefined => {
+    const choice = state.value.choice
+    return choice === null
+      ? undefined
+      : (providers.value as ProviderEntry[]).find((entry) => entry.provider === choice)
+  })
+  /** ADR-011 item 7: the chosen provider's permission requests wait for an integration that is off. */
+  const gated = computed(() => chosenEntry.value?.answerChannel === 'gated-off')
+  const integrationNotice = computed((): IntegrationNotice => {
+    if (noticeAction.value === 'enabling') return { shown: true, state: 'enabling' }
+    if (!gated.value) return { shown: false }
+    return { shown: true, state: noticeAction.value === 'failed' ? 'failed' : 'offered' }
+  })
+
+  /** A new choice, an open or a close forgets the notice's last outcome and any pause (07 S5.28). */
+  function resetNotice(): void {
+    if (noticeAction.value !== 'enabling') noticeAction.value = 'idle'
+    pausedForNotice.value = false
+  }
+
+  async function enableIntegration(): Promise<void> {
+    if (!gated.value || noticeAction.value === 'enabling') return
+    noticeAction.value = 'enabling'
+    try {
+      // A-53 (14 §2.1): the option turns on as if from Settings, with the consent origin `add-panel` once the
+      // step-4a switch gives the bridge its target shape (ISSUE-235); until then the bridge takes the boolean.
+      await window.api.setOpenCodePluginEnabled(true)
+    } catch {
+      // The provider list below tells whether the option turned on; the notice states it when it did not.
+    }
+    // A-36 again (07 S5.03; ADR-011 item 7 "re-derives its Permissions list"): the entry says whether its
+    // permission requests can now be answered, and which modes are offered.
+    const answer = await safelyAsk(
+      () => window.api.listAgentProviders({ refresh: true }),
+      NO_CATALOGUE
+    )
+    if (answer.ok) providers.value = providerEntriesOf(answer)
+    const stillGated = gated.value
+    noticeAction.value = stillGated ? 'failed' : 'idle'
+    // S5.26: the pick applies and the form is ready; auto-accept does not resume, the person still sends.
+    if (!stillGated) pausedForNotice.value = false
+  }
 
   /**
    * Open the panel on a mine, and ask what this machine has.
@@ -216,37 +426,39 @@ export function useAgentLaunch(): AgentLaunch {
    * panel was running would otherwise never appear, and detection's own TTL
    * makes reopening cost a map lookup rather than a disk walk.
    *
-   * The model catalogue is asked alongside the provider list (#239), on the
-   * same per-open cadence rather than per keystroke — see
-   * createSdkModelCatalog's own note on what a live ask costs. A bridge that
-   * cannot answer degrades to no catalogues, which reads as every model
-   * picker showing 'This provider does not report its models.' rather than
-   * the panel failing to open at all.
+   * AMENDED for ISSUE-001 (was: today's A-36 and A-37, asked together): from 3a
+   * A-36 is the one catalogue (14 §2.1: `{ refresh }` on Add-panel open), every
+   * provider's entry with its models (A-37 retired; a provider not yet moved
+   * merged in by `CatalogMergeAdapter`, 21 §3.1), read into the chips' and the
+   * pickers' own lists (lib/launch/supplierEntries.ts). A bridge that cannot
+   * answer degrades to no catalogues, which reads as every model picker showing
+   * 'This provider does not report its models.' rather than the panel failing
+   * to open at all.
    *
-   * Jev's settings verdict (#509) is asked the same way, alongside the other
-   * two rather than after them — all three fire together through
-   * `safelyAsk`, so a slow or unreachable Jev answer never holds up
-   * providers or models reaching the panel, and a bridge that cannot answer
-   * it degrades to `configured: false`, which reads as the option simply not
-   * being offered yet — never a reason to fail the open itself.
+   * Jev's settings verdict (#509) is asked the same way, alongside rather than
+   * after — both fire together through `safelyAsk`, so a slow or unreachable Jev
+   * answer never holds up the catalogue, and a bridge that cannot answer it
+   * degrades to `configured: false`, which reads as the option simply not being
+   * offered yet — never a reason to fail the open itself.
    */
   async function open(mine: string): Promise<void> {
     mineId.value = mine
     state.value = openLaunch(state.value)
-    const [providersAnswer, catalogsAnswer, jevSettings] = await Promise.all([
-      safelyAsk(() => window.api.listAgentProviders(), { providers: [] }),
-      safelyAsk(() => window.api.listAgentModels(), { catalogs: [] }),
+    resetNotice()
+    const [catalogue, jevSettings] = await Promise.all([
+      safelyAsk(() => window.api.listAgentProviders({ refresh: true }), NO_CATALOGUE),
       // AMENDED for the #509 follow-up: the fallback carries the documented
       // default's `preferences` too, now that JevSettings always has one.
       safelyAsk<JevSettings>(() => window.api.getJevSettings(), { ...DEFAULT_JEV_SETTINGS })
     ])
-    providers.value = providersAnswer.providers
-    catalogs.value = catalogsAnswer.catalogs
+    providers.value = providerEntriesOf(catalogue)
+    catalogs.value = launchSourcesOf(catalogue).catalogs
     state.value = setJevSettings(state.value, jevSettings)
   }
 
   function close(): void {
     state.value = closeLaunch(state.value)
+    resetNotice()
     mineId.value = null
     providers.value = []
     catalogs.value = []
@@ -254,6 +466,7 @@ export function useAgentLaunch(): AgentLaunch {
 
   function choose(choice: LaunchChoice): void {
     state.value = chooseProvider(state.value, choice)
+    resetNotice()
   }
 
   function setCommand(text: string): void {
@@ -266,12 +479,29 @@ export function useAgentLaunch(): AgentLaunch {
 
   function setPrompt(text: string): void {
     state.value = typePrompt(state.value, text)
-    // A Jev card or fallback line describes the PROMPT that produced it
-    // (#509) — see clearJevDecision's own comment — so editing it here drops
-    // whatever the last ask left standing, and puts back any picker values a
-    // decision had overwritten, rather than let a stale answer outlive the
-    // request it was about.
-    state.value = clearJevDecision(state.value)
+    // A Jev card describes the PROMPT that produced it (#509) — see
+    // clearJevDecision's own comment — so editing it drops whatever the last
+    // ask left standing and puts back the pickers it overwrote; with Let Jev
+    // choose on, the changed prompt is asked about again (ISSUE-195; UC-009 a).
+    void suggest()
+  }
+
+  /**
+   * A-50 in its 14 shape (ISSUE-195; 14 §2.2 `routeJevLaunch(JevSuggestParams)`): the card while typing. The last
+   * card goes, and with Let Jev choose on and a prompt written a new ask leaves under its own number; only the answer
+   * to the last ask lands (INV-87), so one that arrives after Dismiss, an emptied prompt or a newer ask is dropped. The
+   * suggestion lives in this panel's memory only, never a frame and never persisted (11 §6 O-11-11).
+   */
+  async function suggest(): Promise<void> {
+    const request = ++suggestions
+    state.value = jevSuggestAsked(state.value, request)
+    const mine = mineId.value
+    if (state.value.jev.routing.phase !== 'asking' || mine === null) return
+    const answer = await safelyAsk(
+      () => window.api.routeJevLaunch(jevSuggestParams(state.value, mine as MineId)),
+      NO_SUGGESTION
+    )
+    state.value = jevSuggestAnswered(state.value, request, answer)
   }
 
   function setModel(value: string): void {
@@ -298,6 +528,8 @@ export function useAgentLaunch(): AgentLaunch {
   }
 
   function dismissJevDecision(): void {
+    // A late answer to the ask Dismiss ends is dropped too (US-LAUNCH-004.AC01): its number is spent.
+    suggestions += 1
     state.value = clearJevDecision(state.value)
   }
 
@@ -317,83 +549,31 @@ export function useAgentLaunch(): AgentLaunch {
    * Enter on a ready composer.
    *
    * A choice with no engine behind it is refused HERE and never sent. Sending
-   * it anyway would start a Claude session for a command the user picked
-   * instead of Claude — a launch nobody asked for is worse than a refusal that
-   * says why, and it would be a real process in a real folder.
+   * it anyway would start a session for a command the user picked instead —
+   * a launch nobody asked for is worse than a refusal that says why, and it
+   * would be a real process in a real folder.
    *
-   * Which of the three channels a submit goes down is decided by what the
-   * choice IS, and each is the only honest route for its own case: a command of
-   * the person's own has no provider to name, a Claude session can be held, and
-   * anything else is started detached.
-   *
-   * ## Jev's one detour (#509)
-   *
-   * When Jev is enabled and ready and nothing has asked it yet, this Enter
-   * asks Jev FIRST rather than launching straight off the pickers. A decision
-   * stops here — it is SHOWN, never acted on by itself, so the person presses
-   * Launch again on the pickers it just applied, or changes them first. A
-   * fallback falls straight through into the ordinary launch below, on
-   * whatever the pickers already show, which is issue #509's own acceptance
-   * criterion: every way Jev can fail still launches and says that it did.
-   * The refusal check and everything after it therefore reads state AFTER
-   * this detour, never before — a decision may have just changed `choice`.
-   *
-   * ## AMENDED for #523: the detour without a chip, and what it ends in
-   *
-   * The composer now opens on the toggle alone, so this detour is the whole
-   * entry path, not a detour across a pickers' launch. Two rules moved with
-   * that: a decision stops the Enter only while auto-accept is off — with it
-   * on, the same Enter applies the decision and falls through to launch it —
-   * and a fallback that falls through onto NO chip launches nothing and must
-   * say so rather than swallow the press. It does not need the error line to
-   * say it: `jevAnswered` has already left a `fellBack` routing with
-   * `launchedOnFallback` false, and AddPanel words that line into the refusal
-   * the moment the answer lands. The error line is for the one no-chip case
-   * with no line of its own — the answer that arrived after the prompt moved
-   * on, which leaves the routing idle and the screen otherwise silent.
+   * AMENDED for ISSUE-001 (was: today's three channels, the held A-38, the
+   * detached A-35 in today's shape and the hosted A-39, and Jev asked at Enter
+   * through today's A-50): from 3a A-35 has its 14 shape for every provider
+   * (21 §2 cut 3 common rules), `LaunchParams` → `IpcResult<LaunchAccepted>`
+   * (`launchParamsOf`), with Let Jev choose on as the Host's Jev way — the Host
+   * asks Jev at Send (07 5B S5.10), the card while typing is A-50's (`suggest`).
+   * The answer is only the acceptance: the launch stays "Sending the dwarf in…"
+   * until the Host states its start, its failure or a hand-back
+   * (`hostLaunchFollowed`; 07 5A `sending`, no client timer, NFR-TIM-07). A
+   * launch the Host never states — a provider not yet moved, served by
+   * `PerProviderShapeAdapter` — settles on today's A-P3 under the same id, or on
+   * today's bound (`unstatedLaunchTimedOut`). Other… stays A-39 in today's shape
+   * until 3d. A Retry names the failed launch (`retryOf`, 07 5A S5.08a).
    */
-  async function submit(): Promise<void> {
+  async function submit(retryOf?: string): Promise<void> {
     // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves. The prompt stays.
     if (useHostConnection().readOnly.value) return
     if (!canSubmit(state.value) || mineId.value === null) return
-    // An ask in flight is this panel's one launch in flight, held by the model
-    // and not only by the view's Enter guard: a second submit here would find
-    // `shouldAskJev` false (the ask already left) and launch on the pickers
-    // the decision has not reached yet, and the late answer would then
-    // rewrite them behind a session already started.
-    if (state.value.jev.routing.phase === 'asking') return
-
-    if (shouldAskJev(state.value)) {
-      state.value = jevAsked(state.value)
-      let result: JevRouteLaunchResult
-      try {
-        result = await window.api.routeJevLaunch({ prompt: launchPrompt(state.value) })
-      } catch {
-        // The bridge refused or threw outright — 'invalid-response' names
-        // exactly this: an answer that cannot be turned into something this
-        // panel can act on, never a reason to hang on a promise that will
-        // not resolve into a usable shape.
-        result = { kind: 'fallback', reason: 'invalid-response' }
-      }
-      state.value = jevAnswered(state.value, result)
-      // Read off `state`, not `result`: a prompt edited during the ask
-      // already dropped this back to idle (clearJevDecision, via setPrompt),
-      // and an answer that arrived too late to apply must not silently
-      // swallow this Enter either.
-      // #523: unless the person asked for exactly this — auto-accept collapses
-      // the confirm, and the decision just applied IS the launch they pressed
-      // for. A fallback was never up for auto-accepting UNLESS it applied a
-      // configured default (jev-routing-profiles T4): that default was just
-      // set on the pickers exactly like a decision (`jevAnswered`'s own
-      // detour), so it shares the same stop-for-confirmation guard — a plain
-      // fallback with no default carries no `appliedDefault` and keeps
-      // falling straight through below, #509's own acceptance criterion.
-      const routing = state.value.jev.routing
-      const awaitingConfirmation =
-        routing.phase === 'decided' ||
-        (routing.phase === 'fellBack' && routing.appliedDefault !== undefined)
-      if (awaitingConfirmation && !state.value.jev.autoAccept) return
-    }
+    // The notice's action is running (ADR-011 item 7; 07 S5.02): the enable completes before any launch is sent.
+    if (noticeAction.value === 'enabling') return
+    pausedForNotice.value = false
 
     const refused = refusal.value
     if (refused !== null) {
@@ -402,32 +582,24 @@ export function useAgentLaunch(): AgentLaunch {
     }
 
     const choice = state.value.choice
-    if (choice === null) {
-      // #523. Silent until this line existed, because nothing could reach it:
-      // only Jev's unlocked composer opens a submit with no chip. A fallback
-      // owns its own reworded line (see the doc above) and this Enter has
-      // already been answered by it; everything else that lands here — today,
-      // the answer that arrived after the prompt moved on — gets the honest
-      // refusal, prompt intact, manual path still open.
-      // AMENDED for #635 (MESSAGE-QUESTIONS 14/17; was: the fallback's own line and nothing else):
-      // Jev fell back and nothing went out, which is the one case its causes are a failed launch,
-      // so the launch-failure notice names which of the two it was.
-      state.value =
-        state.value.jev.routing.phase === 'fellBack'
-          ? jevLaunchedNothing(state.value)
-          : submitRefused(state.value, JEV_NO_CHOICE_REFUSAL)
+    const mine = mineId.value
+    const prompt = launchPrompt(state.value)
+    const params = launchParamsOf(state.value, mine as MineId, mintRequestId(), retryOf)
+    if (choice !== OTHER_CHOICE && params === null) {
+      // #523: only Jev's unlocked composer opens a submit with no chip, and Jev
+      // is off by now — the honest refusal, prompt intact, manual path open.
+      state.value = submitRefused(state.value, JEV_NO_CHOICE_REFUSAL)
       return
     }
-    const prompt = launchPrompt(state.value)
     state.value = submitStarted(state.value)
     try {
       // A command of the person's own (#194). It names no provider because
       // there is none — the whole reason it is a channel of its own rather than
       // a nullable field on the launch request — and main parses the string
       // into a program plus an argv array, with no shell anywhere.
-      if (choice === OTHER_CHOICE) {
+      if (choice === OTHER_CHOICE || params === null) {
         const hostedResult = await window.api.launchHostedProcess({
-          mineId: mineId.value,
+          mineId: mine,
           command: launchCommand(state.value),
           prompt
         })
@@ -438,71 +610,28 @@ export function useAgentLaunch(): AgentLaunch {
         return
       }
 
-      // Kept as two calls rather than one verdict of a union type, because
-      // the two verdicts differ in what they carry: only the detached one
-      // opens a receipt (#191), and a branch that narrowed on a boolean would
-      // have to assert its way to that field.
-      if (HELDABLE_PROVIDERS.includes(choice)) {
-        const permissionMode = launchPermissionMode(state.value)
-        const heldResult = await window.api.launchHeldSession({
-          mineId: mineId.value,
-          provider: choice,
-          prompt,
-          ...launchTuning(state.value),
-          ...(permissionMode === undefined ? {} : { permissionMode }),
-          // #511: true only once a Jev DECISION was applied to this launch —
-          // never on a fallback, whatever its own pickers ended up showing.
-          ...(routedByJev(state.value) ? { routedByJev: true } : {})
-        })
-        // A verdict of `launched: true` says a session STARTED and nothing
-        // more, on every channel. What differs is what can be done with it: a
-        // held launch's dwarf arrives carrying the prompt this panel sent,
-        // seeded into its conversation by main, so it needs nothing else here.
-        if (!heldResult.launched) {
-          notLaunched(heldResult)
-          return
-        }
-        // #635 (MESSAGE-QUESTIONS 16): a held session that stops as soon as it started is told on
-        // the failure push, correlated by this id — kept apart from the board receipt, see
-        // `heldStarted`.
-        if (heldResult.launchId !== undefined) {
-          state.value = heldStarted(state.value, heldResult.launchId)
-        }
+      let answer: IpcResult<LaunchAccepted>
+      try {
+        answer = await window.api.launchAgent(params)
+      } catch {
+        state.value = submitRefused(state.value, LOST_BRIDGE)
         return
       }
-
-      const codexPermissionMode = launchCodexPermissionMode(state.value)
-      const result = await window.api.launchAgent({
-        mineId: mineId.value,
-        provider: choice,
-        prompt,
-        ...launchTuning(state.value),
-        // #635: Codex's own permission mode, when one was picked; main turns it into `--sandbox`.
-        ...(codexPermissionMode === undefined ? {} : { permissionMode: codexPermissionMode }),
-        // Same rule and same reason as the held channel's own (#511).
-        ...(routedByJev(state.value) ? { routedByJev: true } : {})
-      })
-      if (!result.launched) {
-        notLaunched(result)
+      if (!answer.ok) {
+        state.value = submitRefused(state.value, NOT_LAUNCHED)
         return
       }
-      // A detached session carries no conversation at all — that belongs to a
-      // stream this panel holds — so it is recognised by the receipt main
-      // opened here instead, which main stamps on the dwarf it proves from the
-      // session's own opening prompt (#191).
-      const launchId = result.launchId ?? null
-      state.value = startedDetached(state.value, launchId)
-      // #263. Only a receipted launch gets a timer. A launch main opened no
-      // receipt for is already the terminal `started-detached` #168 gives
-      // it — "the session started, and nothing can prove which dwarf it
-      // became" — and that reading is not reopened here: there is nothing
-      // for a later receipt or failure to correlate against, so there is
-      // nothing a timeout would honestly add.
-      if (launchId !== null) {
-        setTimeout(() => {
-          state.value = detachedTimedOut(state.value, launchId)
-        }, DETACHED_TIMEOUT_MS)
-      }
+      const { launchId } = answer.value
+      state.value = hostLaunchAccepted(state.value, launchId)
+      // The Host may have stated it already (its `launch.changed` can arrive before the answer).
+      state.value = hostLaunchFollowed(state.value, hostLaunches.of(launchId))
+      setTimeout(() => {
+        state.value = unstatedLaunchTimedOut(
+          state.value,
+          launchId,
+          hostLaunches.of(launchId) !== undefined
+        )
+      }, DETACHED_TIMEOUT_MS)
     } catch {
       state.value = submitRefused(state.value, LOST_BRIDGE)
     }
@@ -510,8 +639,9 @@ export function useAgentLaunch(): AgentLaunch {
 
   async function retry(): Promise<void> {
     if (state.value.failure === null) return
+    const failed = state.value.launchId ?? undefined
     state.value = retryLaunch(state.value)
-    await submit()
+    await submit(failed)
   }
 
   function pickManually(): void {
@@ -556,6 +686,7 @@ export function useAgentLaunch(): AgentLaunch {
 
   return {
     state,
+    hostLaunches,
     mineId,
     providers,
     chips,
@@ -579,10 +710,15 @@ export function useAgentLaunch(): AgentLaunch {
     toggleJevEnabled,
     toggleJevAutoAccept: toggleJevAutoAcceptChoice,
     dismissJevDecision,
-    submit,
+    submit: () => submit(),
     retry,
     pickManually,
     observe,
-    listenFailures
+    listenFailures,
+    integrationNotice,
+    offeredModes: computed(() => [...(chosenEntry.value?.offeredModes ?? [])]),
+    pausedForNotice: computed(() => pausedForNotice.value),
+    jevAccepted: computed(() => state.value.jev.autoAccept && !pausedForNotice.value),
+    enableIntegration
   }
 }

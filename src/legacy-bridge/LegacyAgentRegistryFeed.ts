@@ -19,17 +19,21 @@
 // decided by today's runtime composition (`LegacyRuntimeRoute.ts`), which since the cut-1 retirement composes none of
 // them but a rollback table's notifier (until ISSUE-125).
 //
-// The per-provider switch shrinks the feed step by step (21 §3): a provider whose rows moved to the Host is `off`;
-// Codex keeps `pending-questions` (its pending questions only) for `LegacyAskRelay` until the end of cut 4, when the
-// bridge is deleted with `LegacyDwarfIdBridge` (21 §2 cut 4b).
+// The per-provider switch shrinks the feed step by step (21 §3): a provider whose rows moved to the Host keeps only
+// `legacy-launched` (the sessions today's runtime launched before the step and that are still alive), because
+// `LegacyEndFirstAdapter` ends those first for A-N29 and A-32 through this same join (21 §3; package gap: the feed row
+// says only "shrinks", the adapter row needs the join for exactly these sessions); Codex keeps `pending-questions` (its
+// pending questions only) for `LegacyAskRelay` until the end of cut 4, when the bridge is deleted with
+// `LegacyDwarfIdBridge` (21 §2 cut 4b). `off` composes nothing.
 import type { DwarfProvider, ProviderSnapshot } from '../main/domain/types'
 import type { Provider } from '../main/providers/provider'
 
 /**
  * What the feed composes of one legacy provider: its whole discovery, only the sessions blocked on a pending question
- * (Codex, for `LegacyAskRelay`, 21 §2 cut 4a), or nothing once its rows left the legacy runtime.
+ * (Codex, for `LegacyAskRelay`, 21 §2 cut 4a), only the sessions today's runtime launched (a moved provider, for
+ * `LegacyEndFirstAdapter`), or nothing.
  */
-export type LegacyFeedMode = 'discover' | 'pending-questions' | 'off'
+export type LegacyFeedMode = 'discover' | 'pending-questions' | 'legacy-launched' | 'off'
 
 /** The feed's per-provider switch: every legacy provider has a mode, so a new one cannot be left out by omission. */
 export type LegacyFeedModes = Readonly<Record<DwarfProvider, LegacyFeedMode>>
@@ -40,6 +44,16 @@ export const LEGACY_FEED_PROVIDERS_CUT_1: LegacyFeedModes = {
   codex: 'discover',
   antigravity: 'discover',
   opencode: 'discover'
+}
+
+/**
+ * Step 3a (21 §2 cut 3a): Claude's launch, send, console and stop rows move to the Host, so its legacy discovery keeps
+ * only the sessions today's runtime launched, for `LegacyEndFirstAdapter`'s join (21 §3); every other provider's rows
+ * are still `legacy`. Passed by the step's route switch (ISSUE-001).
+ */
+export const LEGACY_FEED_PROVIDERS_CUT_3A: LegacyFeedModes = {
+  ...LEGACY_FEED_PROVIDERS_CUT_1,
+  claude: 'legacy-launched'
 }
 
 /**
@@ -80,19 +94,29 @@ export interface LegacyAgentRegistryFeed {
   stop(): void
 }
 
-/** What one provider's sessions put in the registry under `mode`. */
-function composed(mode: LegacyFeedMode, sessions: readonly ProviderSnapshot[]): ProviderSnapshot[] {
+/** What one provider's sessions put in the registry under `mode`; `launched` names today's launched dwarfs. */
+function composed(
+  mode: LegacyFeedMode,
+  sessions: readonly ProviderSnapshot[],
+  launched: (legacyDwarfId: string) => boolean
+): ProviderSnapshot[] {
   if (mode === 'off') return []
   if (mode === 'discover') return [...sessions]
+  if (mode === 'legacy-launched') {
+    return sessions.filter((session) => session.dwarfs.some((d) => launched(d.id)))
+  }
   return sessions.filter((session) => session.dwarfs.some((d) => d.pendingQuestion !== undefined))
 }
 
 export function createLegacyAgentRegistryFeed(deps: {
   legacy: LegacyRuntimeSurface
   modes: LegacyFeedModes
+  /** Whether today's runtime launched the legacy dwarf (its launched register); absent, none did. */
+  launched?: (legacyDwarfId: string) => boolean
   timers: LegacyFeedTimers
 }): LegacyAgentRegistryFeed {
   const { legacy, modes, timers } = deps
+  const launched = deps.launched ?? (() => false)
   const composedDiscovery = legacy.discovery.filter((provider) => modes[provider.kind] !== 'off')
   // What each provider last listed: a provider whose scan fails keeps its sessions for that cycle, so a transient
   // read error never makes a live dwarf unreachable for the rows still `legacy` (today's poller: one provider failing
@@ -106,7 +130,7 @@ export function createLegacyAgentRegistryFeed(deps: {
     results.forEach((result, index) => {
       const provider = composedDiscovery[index]
       if (provider === undefined || result.status === 'rejected') return
-      lastListed.set(provider.kind, composed(modes[provider.kind], result.value))
+      lastListed.set(provider.kind, composed(modes[provider.kind], result.value, launched))
     })
     legacy.registry.replace(composedDiscovery.flatMap((p) => lastListed.get(p.kind) ?? []))
   }

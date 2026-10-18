@@ -54,7 +54,8 @@ describe('preload always-on-top contract', () => {
     expect(typeof api.onMinesUpdated).toBe('function')
     expect(typeof api.activateDwarf).toBe('function')
     expect(typeof api.sendDwarfText).toBe('function')
-    expect(typeof api.kickDwarf).toBe('function')
+    // AMENDED for ISSUE-183 (was: `kickDwarf` present): A-26 left the facade in 3a; "Stop dwarf…" is A-N29.
+    expect('kickDwarf' in api).toBe(false)
     expect(typeof api.retireDwarf).toBe('function')
     expect(typeof api.getToggleShortcut).toBe('function')
     expect(typeof api.setToggleShortcut).toBe('function')
@@ -453,29 +454,39 @@ describe('preload metrics-reset contract (#138)', () => {
   })
 })
 
+// AMENDED for ISSUE-001 (was: no payload, today's `{ providers }` answer): from 3a A-36 has its 14 shape for every
+// provider (21 §2 cut 3 common rules), `{ refresh? }` → `IpcResult<SupplierEntryView[]>`, the providers not yet moved
+// merged in by `CatalogMergeAdapter` (21 §3.1).
 describe('preload provider-availability contract (#86)', () => {
-  it('asks on the agent:providers channel with no payload at all', async () => {
-    // Nothing to send: the question is about this machine, and main is the
+  it('asks on the agent:providers channel with the refresh flag as given', async () => {
+    // Nothing else to send: the question is about this machine, and main is the
     // only side that can answer it.
-    invoke.mockResolvedValueOnce({ providers: [] })
-    await expect(api.listAgentProviders()).resolves.toEqual({ providers: [] })
-    expect(invoke).toHaveBeenLastCalledWith('agent:providers')
+    invoke.mockResolvedValueOnce({ ok: true, value: [] })
+    await expect(api.listAgentProviders({ refresh: true })).resolves.toEqual({
+      ok: true,
+      value: []
+    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:providers', { refresh: true })
   })
 
   it("hands back main's verdict untouched, refusals and reasons included", async () => {
     const answered = {
-      providers: [
-        { provider: 'claude', installed: true, launchable: true },
+      ok: true,
+      value: [
         {
-          provider: 'codex',
+          providerId: 'claude',
+          label: 'Claude Code',
+          models: [{ value: 'opus', efforts: ['high'] }],
+          permissionModes: ['default'],
+          offeredModes: ['default'],
           installed: true,
-          launchable: false,
-          reason: 'Only Claude can be started from the panel today.'
+          publicLaunch: 'enabled',
+          answerChannel: 'available'
         }
       ]
     }
     invoke.mockResolvedValueOnce(answered)
-    await expect(api.listAgentProviders()).resolves.toEqual(answered)
+    await expect(api.listAgentProviders({})).resolves.toEqual(answered)
   })
 })
 
@@ -509,41 +520,41 @@ describe('preload model-catalogue contract (#239)', () => {
   })
 })
 
+/*
+ * AMENDED for ISSUE-001 (was: today's `AgentLaunchRequest` rebuilt field by field, `{ mineId, provider, prompt, model?,
+ * effort?, permissionMode?, routedByJev? }`, answered `{ launched, provider, error?, cause?, launchId? }`): from 3a A-35
+ * has its 14 shape for every provider (21 §2 cut 3 common rules), `LaunchParams` → `IpcResult<LaunchAccepted>`, so
+ * the generated member hands the request across unchanged and main's seam A gate parses it strictly (14 §1.4).
+ */
 describe('preload launch contract (#168)', () => {
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a8101' as MineId
+  const REQUEST = '01890a5d-ac96-774b-bcce-b302099a8102'
+  const launch = (
+    providerId: string,
+    extra: Partial<Parameters<typeof api.launchAgent>[0]> = {}
+  ): Parameters<typeof api.launchAgent>[0] => ({
+    mineId: MINE,
+    way: { kind: 'supplier', providerId },
+    prompt: 'dig',
+    jevOn: false,
+    jevAutoAccept: false,
+    requestId: REQUEST,
+    ...extra
+  })
+
   it('carries the chosen provider alongside the mine and the prompt', async () => {
     // Before #168 this channel took a mine and a prompt only, so the engine had
     // nothing to read and started `claude` whatever chip the user pressed.
-    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
-    await api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
+    invoke.mockResolvedValueOnce({ ok: true, value: { launchId: REQUEST } })
+    await api.launchAgent(launch('codex'))
 
-    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
-      mineId: 'mine-1',
-      provider: 'codex',
-      prompt: 'dig'
-    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', launch('codex'))
   })
 
-  /*
-   * The one coercion that must NOT be a fallback. Every other field here
-   * collapses to a safe empty string, but a provider collapsed to a default
-   * would start SOME agent for a name this build does not have — the exact
-   * laundering #168 exists to stop. An unrecognised name crosses as '' and main
-   * refuses the whole request, which is the only honest end for it.
-   */
-  it('collapses a provider this build does not know to nothing, never to a default', async () => {
-    invoke.mockResolvedValueOnce({ launched: false, provider: 'none' })
-    await api.launchAgent({
-      mineId: 'mine-1',
-      prompt: 'dig',
-      ...({ provider: 'gemini' } as object)
-    } as Parameters<typeof api.launchAgent>[0])
-
-    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
-      mineId: 'mine-1',
-      provider: '',
-      prompt: 'dig'
-    })
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "collapses a provider this build
+  // does not know to nothing, never to a default" (A-35). The generated member no longer rebuilds today's request: the
+  // 14 `LaunchParams` cross unchanged, and an unknown supplier reaches nothing (main's seam A gate, then
+  // `PerProviderShapeAdapter`'s check against today's strict schema answers INVALID_PARAMS).
 
   it('carries the chosen provider on the held channel too', async () => {
     invoke.mockResolvedValueOnce({ launched: true })
@@ -557,15 +568,14 @@ describe('preload launch contract (#168)', () => {
   })
 
   it("hands back main's verdict untouched, provider and reason included", async () => {
+    // AMENDED for ISSUE-001 (was: today's `{ launched: false, provider, error }`): a refusal at acceptance is the
+    // call error branch; the five causes arrive as `launch.failed` frames (ADR-020).
     const refused = {
-      launched: false,
-      provider: 'codex',
-      error: 'Codex CLI is not installed on this machine.'
+      ok: false,
+      error: { code: 'INTERNAL', message: 'the legacy launch was refused', retryable: false }
     }
     invoke.mockResolvedValueOnce(refused)
-    await expect(
-      api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
-    ).resolves.toEqual(refused)
+    await expect(api.launchAgent(launch('codex'))).resolves.toEqual(refused)
   })
 
   /*
@@ -577,27 +587,18 @@ describe('preload launch contract (#168)', () => {
    * when it is missing.
    */
   it('carries a model and an effort when the caller named them', async () => {
-    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
-    await api.launchAgent({
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      model: 'sonnet',
-      effort: 'xhigh'
-    })
+    invoke.mockResolvedValueOnce({ ok: true, value: { launchId: REQUEST } })
+    await api.launchAgent(launch('claude', { model: 'sonnet', effort: 'xhigh' }))
 
-    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      model: 'sonnet',
-      effort: 'xhigh'
-    })
+    expect(invoke).toHaveBeenLastCalledWith(
+      'agent:launch',
+      launch('claude', { model: 'sonnet', effort: 'xhigh' })
+    )
   })
 
   it('crosses no model or effort at all when the caller named neither, rather than empty strings', async () => {
-    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
-    await api.launchAgent({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+    invoke.mockResolvedValueOnce({ ok: true, value: { launchId: REQUEST } })
+    await api.launchAgent(launch('claude'))
 
     const sent = invoke.mock.calls.at(-1)![1] as object
     expect('model' in sent).toBe(false)
@@ -674,67 +675,45 @@ describe('preload launch contract (#168)', () => {
    * found on another field.
    */
   it('carries a Codex permission mode on the launch channel when the caller named one', async () => {
-    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
-    await api.launchAgent({
-      mineId: 'mine-1',
-      provider: 'codex',
-      prompt: 'dig',
-      permissionMode: 'read-only'
-    })
+    invoke.mockResolvedValueOnce({ ok: true, value: { launchId: REQUEST } })
+    await api.launchAgent(launch('codex', { permissionMode: 'read-only' }))
 
-    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
-      mineId: 'mine-1',
-      provider: 'codex',
-      prompt: 'dig',
-      permissionMode: 'read-only'
-    })
+    expect(invoke).toHaveBeenLastCalledWith(
+      'agent:launch',
+      launch('codex', { permissionMode: 'read-only' })
+    )
   })
 
   it('crosses no permission mode on the launch channel when the caller named none', async () => {
-    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
-    await api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
+    invoke.mockResolvedValueOnce({ ok: true, value: { launchId: REQUEST } })
+    await api.launchAgent(launch('codex'))
 
     const sent = invoke.mock.calls.at(-1)![1] as object
     expect('permissionMode' in sent).toBe(false)
   })
 
-  it('drops a non-string permission mode rather than forwarding it', async () => {
-    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
-    await api.launchAgent({
-      mineId: 'mine-1',
-      provider: 'codex',
-      prompt: 'dig',
-      ...({ permissionMode: { sandbox: 'danger-full-access' } } as object)
-    } as Parameters<typeof api.launchAgent>[0])
-
-    const sent = invoke.mock.calls.at(-1)![1] as object
-    expect('permissionMode' in sent).toBe(false)
-  })
+  // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): "drops a non-string permission
+  // mode rather than forwarding it" (A-35). The 14 `LaunchParams` cross unchanged; main's seam A gate refuses a
+  // non-string `permissionMode` (a `wireTokenSchema`) before anything is served.
 
   /* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
+  // AMENDED for ISSUE-001 (was: today's `routedByJev` marker on the launch request): the 14 launch states a Jev
+  // launch by its way and carries the person's Jev switches as `jevOn` / `jevAutoAccept` (14 §3.4 `LaunchParams`).
   it('carries routedByJev on the launch channel when a Jev decision was applied', async () => {
-    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
-    await api.launchAgent({
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      routedByJev: true
-    })
+    invoke.mockResolvedValueOnce({ ok: true, value: { launchId: REQUEST } })
+    const jev = { ...launch('claude'), way: { kind: 'jev' as const }, jevOn: true }
+    await api.launchAgent(jev)
 
-    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      routedByJev: true
-    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', jev)
   })
 
   it('crosses no routedByJev when the caller did not name it, rather than false', async () => {
-    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
-    await api.launchAgent({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+    invoke.mockResolvedValueOnce({ ok: true, value: { launchId: REQUEST } })
+    await api.launchAgent(launch('claude'))
 
     const sent = invoke.mock.calls.at(-1)![1] as object
     expect('routedByJev' in sent).toBe(false)
+    expect('retryOf' in sent).toBe(false)
   })
 
   it('carries routedByJev on the held channel too', async () => {
@@ -821,8 +800,16 @@ describe('preload launch-failure contract (#263)', () => {
       cause: 'not-installed'
     }
     invoke.mockResolvedValueOnce(detached)
+    // AMENDED for ISSUE-001 (was: today's request): A-35's 14 request; its answer still crosses as main gave it.
     await expect(
-      api.launchAgent({ mineId: 'mine:1', provider: 'codex', prompt: 'dig' })
+      api.launchAgent({
+        mineId: '01890a5d-ac96-774b-bcce-b302099a8101' as MineId,
+        way: { kind: 'supplier', providerId: 'codex' },
+        prompt: 'dig',
+        jevOn: false,
+        jevAutoAccept: false,
+        requestId: '01890a5d-ac96-774b-bcce-b302099a8102'
+      })
     ).resolves.toEqual(detached)
 
     const held = {
@@ -1294,29 +1281,50 @@ describe('preload Jev route contract (#509)', () => {
    * never throws and main is the validator (14 §1.4, frozen). Main parses every request and answers a refused one
    * with a typed fallback (src/main/index.ts routeJevLaunch, `invalid-response`).
    */
+  // AMENDED for ISSUE-001 (was: today's `{ prompt }` → `JevRouteLaunchResult`): from 3a A-50 has its 14 shape
+  // (`JevSuggestParams` → `IpcResult<JevSuggestResult>`, 21 §3.1 last row: it switches with its route).
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a8101' as MineId
+
   it('carries the prompt as typed, for main to parse and trim', async () => {
-    const decision = {
-      kind: 'decision',
-      provider: 'claude',
-      confidence: 0.9,
-      truncated: false
+    const suggestion = {
+      ok: true,
+      value: {
+        ok: true,
+        value: {
+          providerId: 'claude',
+          tier: 'balanced',
+          confidence: { providerId: 0.9 },
+          truncated: false,
+          parts: { providerId: 'answered', model: 'answered', tier: 'answered' }
+        }
+      }
     }
-    invoke.mockResolvedValueOnce(decision)
-    await expect(api.routeJevLaunch({ prompt: '  fix the bug  ' })).resolves.toEqual(decision)
-    expect(invoke).toHaveBeenLastCalledWith('jev:route', { prompt: '  fix the bug  ' })
+    invoke.mockResolvedValueOnce(suggestion)
+    await expect(api.routeJevLaunch({ prompt: '  fix the bug  ', mineId: MINE })).resolves.toEqual(
+      suggestion
+    )
+    expect(invoke).toHaveBeenLastCalledWith('jev:route', {
+      prompt: '  fix the bug  ',
+      mineId: MINE
+    })
   })
 
   it('passes a request the shared parser would refuse on to main, and never rejects', async () => {
-    const refused = { kind: 'fallback', reason: 'invalid-response' }
+    const refused = {
+      ok: false,
+      error: { code: 'INVALID_PARAMS', message: 'the params do not match', retryable: false }
+    }
     invoke.mockResolvedValueOnce(refused)
-    await expect(api.routeJevLaunch({ prompt: '   ' })).resolves.toEqual(refused)
-    expect(invoke).toHaveBeenLastCalledWith('jev:route', { prompt: '   ' })
+    await expect(api.routeJevLaunch({ prompt: '   ', mineId: MINE })).resolves.toEqual(refused)
+    expect(invoke).toHaveBeenLastCalledWith('jev:route', { prompt: '   ', mineId: MINE })
   })
 
   it('hands back a fallback verdict untouched, including its reason', async () => {
-    const fallback = { kind: 'fallback', reason: 'no-key' }
+    const fallback = { ok: true, value: { ok: false, error: 'not-configured' } }
     invoke.mockResolvedValueOnce(fallback)
-    await expect(api.routeJevLaunch({ prompt: 'anything' })).resolves.toEqual(fallback)
+    await expect(api.routeJevLaunch({ prompt: 'anything', mineId: MINE })).resolves.toEqual(
+      fallback
+    )
   })
 })
 

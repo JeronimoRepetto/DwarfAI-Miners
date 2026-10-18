@@ -24,9 +24,14 @@
 // first row's id, `messages.request_id` UNIQUE, 14 §1.6), and `settleDelivery` also records the
 // delivery `confidence` (06 §9.3, ADR-022 item 1) and the `reacted` phase, so ✓✓ is stored only with
 // correlated evidence. It replaces the never-built `setDelivery`.
+//
+// AMENDMENT-20 (owner, 2026-10-17; ISSUE-168): `resend` is Retry's write, which AMENDMENT-16 left
+// out when it replaced `setDelivery`: by message id alone (B-M25 carries no `dwarfId`), it puts the
+// row's delivery back to `sending` and answers the delivery it had before, so the caller decides
+// with machine 7 (S7.09) and rolls its transaction back when the retry is refused.
 import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
-import type { DeliveryFailure, FeedPageRequest, Message } from '../domain/messages'
+import type { Delivery, DeliveryFailure, FeedPageRequest, Message } from '../domain/messages'
 
 /** What `settleDelivery` records (owner amendment K; AMENDMENT-16, owner, 2026-10-15). */
 export type DeliverySettlement =
@@ -73,4 +78,9 @@ export interface MessageLog {
     requestId: string,
     at: Instant
   ): { messageId: MessageId; existing: boolean }
+  // Amended: AMENDMENT-20 (owner, 2026-10-17): inside the caller's transaction, the row's delivery
+  // back to `sending` (no failure, no confidence, no hold, attempts + 1, sent_at and phase_at = `at`)
+  // and the message restamped (`created_at` = `at`, US-MSG-003.AC06); answers the row with the
+  // delivery it had BEFORE this write, or null for an unknown id or a row with no delivery.
+  resend(id: MessageId, at: Instant): { dwarfId: DwarfId; text: string; delivery: Delivery } | null
 }

@@ -78,6 +78,13 @@ export interface ConversationSendCommand {
     attachments: AttachmentPath[],
     requestId: string
   ): Promise<Result<MessageId, 'cannot-receive' | 'attachment-refused'>>
+  // ISSUE-168: only failed{channel-error | host-interrupted} while the dwarf can receive; the same
+  // MessageId, attempts + 1, restamped (INV-64, S7.09); a message already sending is not-failed.
+  // The requestId dedupes at the transport (14 §1.6), never in the module.
+  retry(
+    messageId: MessageId,
+    requestId: string
+  ): Promise<Result<void, 'cannot-receive' | 'not-failed'>>
 }
 
 /**

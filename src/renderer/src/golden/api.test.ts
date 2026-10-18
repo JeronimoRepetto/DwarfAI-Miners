@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { MineId } from '@dwarfai/contracts'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
+import { launchSourcesOf } from '../lib/launch/supplierEntries'
 import { goldenApi } from './api'
 import { adaptSample } from './sample'
 
@@ -135,7 +136,13 @@ describe('goldenApi — the window and the app', () => {
     const provider = { id: 'codex', label: 'Codex', models: ['m-large'], efforts: ['low'] }
     const sample = sampleOf({ providers: [provider] })
     const api = goldenApi(sample)
-    expect(await api.listAgentProviders()).toEqual({ providers: sample.providers })
+    // AMENDED for ISSUE-001 (was: today's `{ providers }`): from 3a A-36 answers `SupplierEntryView[]`, which the
+    // Add panel reads back into the sample's providers and models (lib/launch/supplierEntries.ts).
+    const sources = launchSourcesOf(await api.listAgentProviders({}))
+    expect(sources.providers).toEqual(sample.providers)
+    expect(sources.catalogs.map((entry) => entry.models.map((model) => model.value))).toEqual(
+      sample.catalogs.map((entry) => entry.models.map((model) => model.value))
+    )
     expect(await api.listAgentModels()).toEqual({ catalogs: sample.catalogs })
   })
 })

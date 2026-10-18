@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { LaunchFailureCause } from '../../../kernel/domain/sharedContracts'
-import type { DwarfId, HostEpoch, LaunchId, MineId } from '../../../kernel/domain/values'
+import type {
+  DwarfId,
+  HostEpoch,
+  LaunchId,
+  MineId,
+  ProviderId
+} from '../../../kernel/domain/values'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import {
   applyLaunchEvent,
@@ -164,6 +170,17 @@ describe('Host launch machine 5B', () => {
       ok: false,
       error: 'transition-refused'
     })
+  })
+
+  it('[S5.12, S5.13] a Jev pick is recorded on resolving and the handed-back picks on handed-back', () => {
+    const pick = { providerId: 'simulated' as ProviderId, model: 'sim-small', effort: 'low' }
+    const picked = applyLaunchEvent(launchIn('routing'), { t: 'jev-picked', pick })
+    expect(picked.ok && picked.value.launch).toMatchObject({ state: 'resolving', pick })
+
+    const picks = { providerId: 'simulated' as ProviderId, model: 'sim-small' }
+    const back = applyLaunchEvent(launchIn('routing'), { t: 'handed-back', picks })
+    expect(back.ok && back.value.launch).toMatchObject({ state: 'handed-back', picks })
+    expect(back.ok && back.value.launch.failure).toBeUndefined()
   })
 
   it('[S5.18, S5.21, S5.23] spawning records t0 and succeeding records the dwarf', () => {

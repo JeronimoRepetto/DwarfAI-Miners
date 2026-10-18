@@ -12,7 +12,8 @@ import { cruiseTree } from './depcruise-fixture.mjs'
  * repository, `src/…`) and a one-line `expect.json` `{ "rule": "<exact rule name>", "tool":
  * "depcruise" | "eslint" }`. `<name>` starts with the architecture rule id it proves (`R1` …
  * `R19`, optionally followed by `-<suffix>`, e.g. `R11-no-claude-agent-sdk`), or, for a static rule
- * outside 05 §5.1 that 17 §1.7 still gives a lint, with the ADR that owns it (`ADR-026-no-console`:
+ * outside 05 §5.1 that 17 §1.7 still gives a lint, with the ADR that owns it (or `TS2590`, the
+ * macOS CI heap rule on `Promise.resolve(x as HostResult[M])`) (`ADR-026-no-console`:
  * `console.*` only in the logger, ADR-026 Verification).
  *
  * For each canary the runner writes the tree into a fresh scratch directory and runs both tools
@@ -47,8 +48,8 @@ const UNTAGGED_ESLINT_RULES = {
   'no-console': ['ADR-026']
 }
 
-const RULE_ID = /^(?:R(?:[1-9]|1[0-9])|ADR-\d{3})(?=$|-)/
-const MESSAGE_TAG = /\b(R\d{1,2}(?:\/R\d{1,2})*) \(/
+const RULE_ID = /^(?:R(?:[1-9]|1[0-9])|ADR-\d{3}|TS2590)(?=$|-)/
+const MESSAGE_TAG = /\b((?:R\d{1,2}|TS2590)(?:\/R\d{1,2})*) \(/
 
 /** Node core modules and the packages dependency-cruiser treats as built-ins (`electron`). */
 const BUILT_INS = new Set([...builtinModules, 'electron'])

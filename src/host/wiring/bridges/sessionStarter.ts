@@ -29,9 +29,13 @@
 //   its deadline finds the outcome `pending` and is armed again for the time left (at least 1 ms):
 //   the scheduler's timers and the clock need not agree to the millisecond (a monotonic timer can
 //   fire before the wall clock reaches the deadline).
-// - `gate.launchedWithLetJevChoose` is for `DelegationLifecycle.issueFor`, whose call (and its
-//   `revokeLaunch` on a failed start) is EPIC-12's (later: ISSUE-201…ISSUE-203). Until then every
-//   session starts with the `delegation` launching built: `null`.
+// - The delegation gate (16 §5.3 as AMENDMENT-14 A14-02 gives it; ADR-013 items 3-4; ISSUE-209):
+//   before the driver starts, `DelegationLifecycle.issueFor` is asked with the launch id, the
+//   driver's declared `mcpInjection` (suppliers' catalogue) and `gate.launchedWithLetJevChoose`.
+//   Only a non-null entry goes into `req.delegation` (INV-80); a lifecycle that throws gives none,
+//   so the launch proceeds without delegation. A start that fails after an issue revokes it
+//   (`revokeLaunch`; launching cannot import delegation: the edge is delegation → launching).
+//   Without `delegation` every session starts with the `delegation` launching built: `null`.
 //
 // Nothing here logs: a failure's tail is tool output (INV-55), and launching logs the cause.
 import type { Instant, ProviderId } from '../../kernel/domain/values'
@@ -47,11 +51,13 @@ import {
   type SessionStarter,
   type StartResult
 } from '../../modules/launching'
+import type { DelegationLifecycle } from '../../modules/delegation'
 import type {
   DriverLaunchError,
   DriverLaunchRequest,
   DriverRegistry,
   DriverSession,
+  ProviderCapabilities,
   SessionChannels,
   SessionReleases
 } from '../../modules/suppliers'
@@ -69,6 +75,18 @@ export interface SessionStarterBridgeDeps {
   clock: Clock
   /** Runs the handshake budget and the early window. */
   scheduler: Scheduler
+  /**
+   * The delegation gate (16 §5.3; AMENDMENT-14 A14-02): `issueFor` before the driver starts,
+   * `revokeLaunch` when a start fails after an issue. Absent: every launch starts with none.
+   */
+  delegation?: SessionStarterDelegation
+}
+
+/** What the bridge needs to give a launch its relay entry (ISSUE-209). */
+export interface SessionStarterDelegation {
+  lifecycle: Pick<DelegationLifecycle, 'issueFor' | 'revokeLaunch'>
+  /** The driver's declared `mcpInjection` (15 §3 Table B), read through suppliers' catalogue. */
+  mechanismOf(providerId: ProviderId): ProviderCapabilities['mcpInjection']
 }
 
 type Started = StartResult
@@ -86,9 +104,23 @@ function isDriverLaunchError(error: unknown): error is DriverLaunchError {
 export function createSessionStarter(deps: SessionStarterBridgeDeps): SessionStarter {
   const { clock, scheduler } = deps
   return {
-    start: (providerId, req, gate) => {
-      void gate // the delegation gate of issueFor (later: ISSUE-201…ISSUE-203)
-      return startSession(providerId, req)
+    start: async (providerId, req, gate) => {
+      const { delegation } = deps
+      if (delegation === undefined) return startSession(providerId, req)
+      // Before the driver starts (16 §5.3): the row and the credential file exist when it resolves.
+      // A lifecycle that throws gives no entry: the launch proceeds without delegation (fail closed).
+      const entry = await delegation.lifecycle
+        .issueFor({
+          launchId: req.launchId,
+          mechanism: delegation.mechanismOf(providerId),
+          launchedWithLetJevChoose: gate.launchedWithLetJevChoose
+        })
+        .catch(() => null)
+      if (entry === null) return startSession(providerId, req)
+      const started = await startSession(providerId, { ...req, delegation: entry })
+      // A launch that never ran keeps no credential (INV-83); a delete that fails is the boot sweep's.
+      if (!started.ok) await delegation.lifecycle.revokeLaunch(req.launchId).catch(() => undefined)
+      return started
     }
   }
 

@@ -1,9 +1,10 @@
 // The hook ingress as the Host composes it (16 §8.2 step 6; ADR-016 items 2–3; 13 FM-038;
 // ISSUE-140): the loopback HTTP listener of transport/ingress/httpIngress.ts (ISSUE-133) serving
-// the `/hooks/claude/*` route boot step 4 wires (routes/askingRoutes.ts), on the stable port in
-// `app_meta.ingress_port` (bridges/ingressPort.ts). Boot step 6 starts it after recovery and before
-// observation and `ready`; the Host's composed end of life closes it (hostLifecycle.ts). The
-// delegation MCP endpoint, step 6's other half, is not here (later: ISSUE-209).
+// the `/hooks/claude/*` and `/opencode/*` routes boot step 4 wires (routes/askingRoutes.ts), on the
+// stable port in `app_meta.ingress_port` (bridges/ingressPort.ts). Boot step 6 starts it after
+// recovery and before observation and `ready`; the Host's composed end of life closes it
+// (hostLifecycle.ts). The delegation MCP endpoint, step 6's other half, is delegationWiring.ts's
+// (ISSUE-209).
 //
 // Package gap (ISSUE-140, recorded in the PR): ADR-016 item 3 has the port "chosen when the first
 // HTTP integration is enabled", while 16 §8.2 step 6 starts the ingress at every boot. The ingress
@@ -41,7 +42,7 @@ import type { IngressPortRecord } from '../transport/ingress/ingressPort'
 import { errorCode } from './boot'
 
 export interface HostHookIngressDeps {
-  /** The ingress routes boot step 4 wired: `/hooks/claude/*` (WiredAsking.hookRoutes). */
+  /** The ingress routes boot step 4 wired: `/hooks/claude/*`, `/opencode/*` (WiredAsking.hookRoutes). */
   routes: readonly IngressRoute[]
   /** `app_meta.ingress_port` (bridges/ingressPort.ts). */
   portRecord: IngressPortRecord

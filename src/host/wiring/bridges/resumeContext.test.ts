@@ -23,7 +23,7 @@ const RECORD: LaunchRecord = {
 }
 
 describe('the resume-context bridge (ISSUE-173; ADR-015 items 2, 5)', () => {
-  it('[S4.16, ADR-015] a stored owned session resumes in its launch folder with a spawn tag of its launch and this Host epoch', () => {
+  it('[S4.16, ADR-015] a stored owned session resumes in its launch folder with a spawn tag of its launch and this Host epoch, naming its launch', () => {
     const asked: unknown[] = []
     const lookup = createResumeContextLookup({
       owned: {
@@ -40,7 +40,9 @@ describe('the resume-context bridge (ISSUE-173; ADR-015 items 2, 5)', () => {
       lookup({ providerId: 'claude' as ProviderId, providerSessionId: 'session-1', pid: 7 })
     ).toEqual({
       cwd: '/work/deep-seam',
-      spawnTag: `v1:install-173:${RECORD.launchId}:epoch-now`
+      spawnTag: `v1:install-173:${RECORD.launchId}:epoch-now`,
+      // ISSUE-182: the launch, whose live relay a restarted Host's Claude resume asks again.
+      launchId: RECORD.launchId
     })
     expect(asked).toEqual([{ providerId: 'claude', providerSessionId: 'session-1' }])
     // A session launching does not own is unknown: the driver answers resume-error.

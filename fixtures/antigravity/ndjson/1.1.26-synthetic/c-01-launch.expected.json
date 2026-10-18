@@ -1,0 +1,72 @@
+{
+  "case": "C-01",
+  "description": "15 §4.8, §1.3, ADR-020 D4 (row A1 earlyFailure exit-only): the prompt goes on stdin as one user line, never in argv; the launch resolves at t0 + 3 s with no exit, once the init line named the conversation, which is the providerSessionId. The first turn: the user_input step echoes the prompt as the person's line, the agent_response deltas of one step are published once at DONE, the tool step is activity started then finished, and the result line ends the turn (inferred: row A1 turnEnd is none).",
+  "script": [{ "do": "launch", "readyAfterMs": 3000 }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:1",
+        "role": "dwarf",
+        "text": "Checking the parser first.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "antigravity:antigravity:{session}:2",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "run_command",
+        "summary": "echo hello",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "antigravity:antigravity:{session}:2",
+        "turnKey": null,
+        "kind": "tool",
+        "toolName": "run_command",
+        "summary": "echo hello",
+        "state": "finished",
+        "at": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "antigravity:antigravity:{session}:3",
+        "role": "dwarf",
+        "text": "pong",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [{ "event": "user", "message": { "content": "first prompt" } }]
+}
