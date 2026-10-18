@@ -10,7 +10,6 @@ import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { PreferencesEvent } from '../domain/events'
-import { OFFERED_FILTER } from '../domain/offeredFilter'
 import type { ConfigTarget } from '../ports/externalConfigWriter'
 import { FakeExternalConfigWriter } from '../ports/fakes/FakeExternalConfigWriter'
 import { FakeInstalledToolsReader } from '../ports/fakes/FakeInstalledToolsReader'
@@ -54,7 +53,6 @@ function boot(w: World): WelcomeStepService {
     answers: w.answers,
     installed: w.installed,
     legacy: w.writer,
-    cutFilter: OFFERED_FILTER.offered,
     bus: w.bus,
     clock: new FakeClock(T0),
     ids: new SequenceIdGenerator(),
@@ -85,13 +83,13 @@ describe('first-run consent step at boot (07 machine 41)', () => {
     expect(await boot(w).evaluateWelcomeAtBoot()).toStrictEqual({
       due: false,
       legacyFound: [],
-      offered: ['claude-hooks']
+      offered: BOTH
     })
 
     // The Reset saga's `db` step (SqliteResetJournal, 07 S13.01) clears the answer with the epoch bump.
     answers.restore(null)
     const next = boot(w)
-    const due = { due: true, reason: 'first-run', legacyFound: [], offered: ['claude-hooks'] }
+    const due = { due: true, reason: 'first-run', legacyFound: [], offered: BOTH }
     expect(await next.evaluateWelcomeAtBoot()).toStrictEqual(due)
     expect(next.welcome()).toStrictEqual(due)
     expect(changes(w).at(-1)).toStrictEqual(due)
@@ -112,6 +110,42 @@ describe('first-run consent step at boot (07 machine 41)', () => {
       offered: ['claude-hooks']
     })
     expect(service.welcome()).toStrictEqual(state)
+    expect(w.answers.answeredAt()).toBeNull()
+    expectNothingTouched(w)
+  })
+
+  it('[US-SET-012.AC01, S41.01] with both tools installed the step is due and offers both options', async () => {
+    const w = world()
+    w.installed.script(BOTH)
+
+    const service = boot(w)
+    const state = await service.evaluateWelcomeAtBoot()
+
+    const due = {
+      due: true,
+      reason: 'first-run',
+      legacyFound: [],
+      offered: ['claude-hooks', 'opencode-permissions']
+    }
+    expect(state).toStrictEqual(due)
+    expect(service.welcome()).toStrictEqual(due)
+    expect(changes(w)).toStrictEqual([due])
+    expect(w.writer.legacyChecks).toStrictEqual(['claude-hooks', 'opencode-plugin'])
+    expect(w.answers.answeredAt()).toBeNull()
+    expectNothingTouched(w)
+  })
+
+  it('[ADR-016] with only OpenCode installed offered is opencode-permissions only', async () => {
+    const w = world()
+    w.installed.script(['opencode-permissions'])
+
+    expect(await boot(w).evaluateWelcomeAtBoot()).toStrictEqual({
+      due: true,
+      reason: 'first-run',
+      legacyFound: [],
+      offered: ['opencode-permissions']
+    })
+    expect(w.writer.legacyChecks).toStrictEqual(['opencode-plugin'])
     expect(w.answers.answeredAt()).toBeNull()
     expectNothingTouched(w)
   })
@@ -190,10 +224,30 @@ describe('first-run consent step at boot (07 machine 41)', () => {
       expectNothingTouched(w)
     })
 
-    it('[ADR-016] in cuts 2 to 3e OpenCode is never offered and an old-app OpenCode plugin file alone does not make the step due', async () => {
+    it('[S41.02, ADR-016] an old-app OpenCode plugin file makes the step due with reason legacy-entries and lists it', async () => {
       const w = world()
       w.answers.setAnsweredAt(T0)
       w.installed.script(BOTH)
+      w.writer.plantLegacy('opencode-plugin')
+
+      expect(await boot(w).evaluateWelcomeAtBoot()).toStrictEqual({
+        due: true,
+        reason: 'legacy-entries',
+        legacyFound: ['opencode-permissions'],
+        offered: ['claude-hooks', 'opencode-permissions']
+      })
+      // The boot legacy check runs on both offered targets, in the step order (21 §2 4a).
+      expect(w.writer.legacyChecks).toStrictEqual(['claude-hooks', 'opencode-plugin'])
+      // Never adopted silently: the old file is still the old app's, DwarfAI owns nothing.
+      expect(await w.writer.findLegacy('opencode-plugin')).toBe(true)
+      expect(w.answers.answeredAt()).toBe(T0)
+      expectNothingTouched(w)
+    })
+
+    it('[ADR-016] an old-app entry of a tool that is not installed is neither checked nor listed', async () => {
+      const w = world()
+      w.answers.setAnsweredAt(T0)
+      w.installed.script(['claude-hooks'])
       w.writer.plantLegacy('opencode-plugin')
 
       expect(await boot(w).evaluateWelcomeAtBoot()).toStrictEqual({
@@ -202,18 +256,7 @@ describe('first-run consent step at boot (07 machine 41)', () => {
         offered: ['claude-hooks']
       })
       expect(w.writer.legacyChecks).toStrictEqual(['claude-hooks'])
-
-      // Only OpenCode installed, never answered: nothing is offered, so nothing is checked either.
-      const onlyOpenCode = world()
-      onlyOpenCode.installed.script(['opencode-permissions'])
-      onlyOpenCode.writer.plantLegacy('opencode-plugin')
-      expect(await boot(onlyOpenCode).evaluateWelcomeAtBoot()).toStrictEqual({
-        due: false,
-        legacyFound: [],
-        offered: []
-      })
-      expect(onlyOpenCode.writer.legacyChecks).toStrictEqual([])
-      expect(onlyOpenCode.answers.answeredAt()).toBeNull()
+      expect(w.answers.answeredAt()).toBe(T0)
     })
 
     it('[ADR-016] evaluating the step writes and reverts nothing in any tool', async () => {

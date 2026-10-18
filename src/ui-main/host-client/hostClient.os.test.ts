@@ -81,6 +81,8 @@ const SERVED_SINCE_CUT_0 = [
   // AMENDED for ISSUE-216 (appended): B-M10 and B-M11, served by the preferences wiring for step 3a.
   'settings.secret.clear',
   'settings.secret.set',
+  // OpenCode permission requests: B-M14, served from step 4a (ISSUE-228).
+  'preferences.setOpenCodePermissions',
   // The asking module: B-M30…B-M32, the `asks` section and the ask frames, from cut 2 (ISSUE-140).
   'asking.answerPermission',
   'asking.answerQuestion',

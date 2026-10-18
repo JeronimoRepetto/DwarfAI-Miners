@@ -4,8 +4,10 @@
 // entries of the offered targets (`ExternalConfigWriter.findLegacy`) — and `evaluate` decides the
 // step from them:
 //
-// - `offered` = the installed tools the cut filter allows (AMENDMENT-9, OQ-70; offeredFilter.ts), in
-//   the step's order (`claude-hooks`, then `opencode-permissions`, 16 §4.12 `answerWelcome`);
+// - `offered` = the installed tools (AMENDMENT-9, OQ-70; ADR-016 item 5), in the step's order
+//   (`claude-hooks`, then `opencode-permissions`, 16 §4.12 `answerWelcome`). From step 4a the Host
+//   writes both foreign entries, so the strangler-only per-cut filter of cuts 2–3e is gone (21 §2
+//   4a; ISSUE-232). Which tools count as installed is the composition's (host/wiring);
 // - nothing offered → skipped (S41.09): not due, nothing listed, and not an answer, so the next boot
 //   with a tool installed evaluates again;
 // - an old-app entry of an offered target → due with `legacy-entries` (S41.02), which wins; an entry
@@ -62,8 +64,6 @@ export interface WelcomeFacts {
   installed: readonly IntegrationId[]
   /** The integrations of the offered targets whose old-app entry the legacy check found. */
   legacyFound: readonly IntegrationId[]
-  /** The integrations this cut offers (offeredFilter.ts). */
-  cutFilter: readonly IntegrationId[]
 }
 
 /** The order the step shows and answers its options in (16 §4.12 `answerWelcome`). */
@@ -71,9 +71,7 @@ const STEP_ORDER: readonly IntegrationId[] = ['claude-hooks', 'opencode-permissi
 
 /** The step at this boot (S41.01, S41.02, S41.03, S41.09). */
 export function evaluate(facts: WelcomeFacts): WelcomeStepState {
-  const offered = STEP_ORDER.filter(
-    (id) => facts.installed.includes(id) && facts.cutFilter.includes(id)
-  )
+  const offered = STEP_ORDER.filter((id) => facts.installed.includes(id))
   if (offered.length === 0) return { due: false, legacyFound: [], offered: [] }
   const legacyFound = offered.filter((id) => facts.legacyFound.includes(id))
   if (legacyFound.length > 0) return { due: true, reason: 'legacy-entries', legacyFound, offered }

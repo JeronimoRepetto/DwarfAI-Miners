@@ -1,7 +1,7 @@
 // The preferences module's wiring (05 §3.12, §4; 16 §4.12, §8.2), in two parts:
 //
 // - `servePreferences`, run by the composition root before the boot binds the endpoint: the
-//   module's seam-B members (14 §2.3 B-M10, B-M11, B-M12, B-M13, B-M15, B-M09, B-M39, B-M40) on the Host dispatcher and its
+//   module's seam-B members (14 §2.3 B-M10, B-M11, B-M12, B-M13, B-M14, B-M15, B-M09, B-M39, B-M40) on the Host dispatcher and its
 //   snapshot section (14 §4.1). A UI that attaches while the Host is `starting` gets a `hello.ok`
 //   whose capabilities already list them (14 §1.3), so its HostClient never refuses them locally.
 //   They forward to the module boot step 3 constructs; until then (`starting`, `migrating`) the
@@ -17,7 +17,8 @@
 //   ISSUE-222: `welcome` joined to the module's queries, its boot evaluation run by boot step 8,
 //   07 machine 41) over the suppliers installed detection (`installedTools`,
 //   bridges/installedTools.ts) and the config writer's legacy probe, the "Claude Code · instant
-//   updates" toggle (`setClaudeHooks`, ISSUE-221) with the transport's credential minter
+//   updates" toggle (`setClaudeHooks`, ISSUE-221) and the "OpenCode · permission requests" toggle
+//   (`setOpenCodePermissions`, B-M14, ISSUE-228) with the transport's credential minter
 //   (transport/auth/mintCredential.ts; lead decision 2026-09-30, ISSUE-198), the first-run step's
 //   answer (`createWelcomeAnswer`, ISSUE-223: `answerWelcome` joined to the module's commands and
 //   served as B-M40; ISSUE-323), the secrets' configured flags (`createSecrets`, ISSUE-216:
@@ -25,8 +26,10 @@
 //   the view's reads joined to the queries; their boot read, `loadSecretStatuses`, runs in boot
 //   step 3 after the saga resume, so a resumed `secrets` step is already reflected), its event routes (routes/preferencesRoutes.ts: B-F24, B-F25, B-F03,
 //   B-F26, B-F27), and the bridges other modules read it through, never by a module import (R4): the
-//   kernel `SecretReader`, the suppliers `IntegrationGateReader` and the channel-token lookup the
-//   hook ingress reads (bridges/). The Reset saga deletes the secrets through the module's
+//   kernel `SecretReader` (bridges/secretReader.ts `storeSecretReader`: the store host/main.ts
+//   built, `OsKeyringSecretStore` since step 3a, read with its SECRET_READ_TIMEOUT_MS deadline on
+//   the Host scheduler; ISSUE-324), the suppliers `IntegrationGateReader` and the channel-token
+//   lookup the hook ingress reads (bridges/). The Reset saga deletes the secrets through the module's
 //   `clearSecret` (`sagaSecretStore` below), so the flags and every UI follow its `secrets` step
 //   (14 §6.3: `preferences.changed` with the secrets cleared).
 //
@@ -35,11 +38,10 @@
 // re-verification, which boot step 3 runs right after `resumeOnBoot` (bootSteps.ts
 // `reverifyConfigWrites`; 16 §7.3, 07 S14.11).
 //
-// Until a later step wires it, one binding of cut 1 stands in, the true value while nothing exists
-// to read or write (fail closed):
-// - `unavailableSecretStore`: the Host has no OS secret store yet (`OsKeyringSecretStore`, later:
-//   ISSUE-324). Nothing can have been stored, so the saga's `secrets` step completes as a no-op
-//   (`delete` resolves `'unavailable'`, ADR-017 items 5, 7; AMENDMENT-2), and `set` refuses.
+// `unavailableSecretStore` stays for a wiring with no OS secret store to compose (L2 cases of other
+// modules; host/main.ts composes `OsKeyringSecretStore` since ISSUE-324): nothing can have been
+// stored, so the saga's `secrets` step completes as a no-op (`delete` resolves `'unavailable'`,
+// ADR-017 items 5, 7; AMENDMENT-2), `set` refuses, and the `SecretReader` reads "not set".
 // `noOwnedConfigWriter` stays for a wiring with no config writer to compose (L2 cases of other
 // modules): DwarfAI owns no entry, so the `external-config` step is a no-op and nothing is
 // installed.
@@ -49,6 +51,7 @@ import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../kernel/ports/idGenerator'
+import type { Scheduler } from '../kernel/ports/scheduler'
 import type { SecretReader } from '../kernel/ports/secretReader'
 import type { SqliteDatabase } from '../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../kernel/ports/transactionRunner'
@@ -91,11 +94,12 @@ import { preferencesSection, registerPreferences } from '../transport/methods/pr
 import { ConnectionResetUiFanout, registerResetMetrics } from '../transport/methods/resetMetrics'
 import { registerAnswerWelcome } from '../transport/methods/answerWelcome'
 import { registerSetClaudeHooks } from '../transport/methods/setClaudeHooks'
+import { registerSetOpenCodePermissions } from '../transport/methods/setOpenCodePermissions'
 import { registerSettingsSecret } from '../transport/methods/settingsSecret'
 import type { SectionRegistry } from '../transport/snapshot/sectionRegistry'
 import { ingressChannelTokens } from './bridges/channelTokens'
 import { preferencesIntegrationGate } from './bridges/integrationGateReader'
-import { failClosedSecretReader } from './bridges/secretReader'
+import { storeSecretReader } from './bridges/secretReader'
 import {
   resetParticipants,
   type LedgerInstallMoment,
@@ -103,7 +107,7 @@ import {
 } from './resetParticipants'
 import { routePreferences } from './routes/preferencesRoutes'
 
-/** No OS secret store is wired (later: ISSUE-324): nothing is stored, nothing can be. */
+/** A wiring with no OS secret store (host/main.ts composes the real one): nothing is stored, nothing can be. */
 export const unavailableSecretStore: SecretStore = {
   backend: () => Promise.resolve('unavailable'),
   get: () => Promise.resolve(null),
@@ -138,6 +142,8 @@ export interface PreferencesWiringDeps {
   /** The Host's one event bus (16 §2.3). */
   bus: DomainEventBus<PreferencesEvent>
   clock: Clock
+  /** The Host scheduler: where each `SecretReader` read waits for its 10 000 ms deadline (16 §2.6). */
+  scheduler: Scheduler
   ids: IdGenerator
   hostEpoch: HostEpoch
   log: DiagnosticsLog
@@ -149,7 +155,7 @@ export interface PreferencesWiringDeps {
   ledger: LedgerInstallMoment
   /** The cut-1 module steps (`createModuleResetSteps(...).steps`, moduleResetSteps.ts). */
   moduleSteps: ModuleResetSteps
-  /** `unavailableSecretStore` until ISSUE-324. */
+  /** The OS secret store (host/main.ts: `OsKeyringSecretStore`, ISSUE-324; ADR-017 item 2). */
   secrets: SecretStore
   /** The one config writer (host/main.ts: bridges/hostConfigWriter.ts over the engine, cut 2). */
   externalConfig: ExternalConfigWriter
@@ -206,7 +212,7 @@ export interface WiredPreferences {
   evaluateWelcomeAtBoot(): Promise<WelcomeStepState>
   /** The suppliers bridge (16 §4.4). */
   integrationGate: IntegrationGateReader
-  /** The kernel bridge (16 §3), fail closed until ISSUE-324. */
+  /** The kernel bridge (16 §3): reads through `secrets` with SECRET_READ_TIMEOUT_MS (ISSUE-324). */
   secretReader: SecretReader
   /** The channel-token lookup the hook ingress reads (bridges/channelTokens.ts; ISSUE-140). */
   channelTokens: Pick<ChannelTokenStore, 'active'>
@@ -226,6 +232,7 @@ export function servePreferences(serve: PreferencesServeDeps): ServedPreferences
     commands: {
       set: (key, value) => current().commands.set(key, value),
       setClaudeHooks: (on, origin) => current().commands.setClaudeHooks(on, origin),
+      setOpenCodePermissions: (on, origin) => current().commands.setOpenCodePermissions(on, origin),
       resetMetrics: (cmd) => current().commands.resetMetrics(cmd),
       answerWelcome: (choice) => current().commands.answerWelcome(choice),
       saveSecret: (name, value) => current().commands.saveSecret(name, value),
@@ -245,6 +252,7 @@ export function servePreferences(serve: PreferencesServeDeps): ServedPreferences
   registerPreferences(serve.dispatcher, { preferences: served })
   registerSettingsSecret(serve.dispatcher, { commands: served.commands })
   registerSetClaudeHooks(serve.dispatcher, { commands: served.commands })
+  registerSetOpenCodePermissions(serve.dispatcher, { commands: served.commands })
   registerAnswerWelcome(serve.dispatcher, { commands: served.commands, queries: served.queries })
   registerResetMetrics(serve.dispatcher, { reset: served.commands, fanout: acks })
   serve.sections.registerSection('preferences', ['ui'], preferencesSection(served))
@@ -339,6 +347,7 @@ function wirePreferences(
     commands: {
       set: (key, value) => module.commands.set(key, value),
       setClaudeHooks: (on, origin) => module.commands.setClaudeHooks(on, origin),
+      setOpenCodePermissions: (on, origin) => module.commands.setOpenCodePermissions(on, origin),
       resetMetrics: (cmd) => saga.resetMetrics(cmd),
       answerWelcome: (choice) => answer.answerWelcome(choice),
       saveSecret: (name, value) => secrets.saveSecret(name, value),
@@ -352,7 +361,7 @@ function wirePreferences(
     loadSecretStatuses: () => secrets.loadSecretStatuses(),
     evaluateWelcomeAtBoot: () => welcome.evaluateWelcomeAtBoot(),
     integrationGate: preferencesIntegrationGate(module.queries),
-    secretReader: failClosedSecretReader,
+    secretReader: storeSecretReader({ store: deps.secrets, scheduler: deps.scheduler }),
     channelTokens: ingressChannelTokens(deps.channelTokens ?? noActiveChannelTokens)
   }
 }

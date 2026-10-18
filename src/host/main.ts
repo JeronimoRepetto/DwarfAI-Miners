@@ -131,6 +131,11 @@ import {
   OPENCODE_PLUGIN_FILE_NAME,
   OpenCodePluginConfigWriter
 } from './modules/preferences/adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
+import { NapiKeyringBinding } from './modules/preferences/adapters/secret-store/napiKeyringBinding'
+import {
+  OsKeyringSecretStore,
+  SECRET_SERVICE
+} from './modules/preferences/adapters/secret-store/OsKeyringSecretStore'
 import { SqliteChannelTokenStore } from './modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from './modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from './modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
@@ -231,11 +236,7 @@ import {
   routeLaunchDrainRechecks
 } from './wiring/hostDrainGate'
 import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
-import {
-  servePreferences,
-  unavailableSecretStore,
-  type WiredPreferences
-} from './wiring/preferencesWiring'
+import { servePreferences, type WiredPreferences } from './wiring/preferencesWiring'
 import {
   ASKING_FRAMES,
   serveAsking,
@@ -782,8 +783,8 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // Cut 2 (ISSUE-323): the one writer of DwarfAI's entries in other tools' configs (16 §7),
           // with the Claude Code hooks target; the hook entry carries the ingress's persisted port.
-          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches only to verify and
-          // revert (the Reset saga's `external-config` step; lead decision 2026-10-16).
+          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches to verify and revert (the
+          // Reset saga's `external-config` step) and, from ISSUE-228, to install (B-M14, the ingress port set).
           const ingressPort = appMetaIngressPort(db)
           const openCodePluginPath = openCodePluginPathHere()
           configWriter = new ConfigWriterEngine({
@@ -820,6 +821,7 @@ async function bootHost(base: HostBase): Promise<void> {
             transactions,
             bus,
             clock,
+            scheduler,
             ids,
             hostEpoch: epoch,
             log,
@@ -836,8 +838,10 @@ async function bootHost(base: HostBase): Promise<void> {
             // `LedgerRepository.setInstallMoment` (16 §4.10) and the cut-1 module steps (ISSUE-121).
             ledger: ledgerRepository,
             moduleSteps: resetSteps.steps,
-            // No OS secret store yet (later: ISSUE-324).
-            secrets: unavailableSecretStore,
+            // The OS secret store (ADR-017 item 2; ISSUE-324): the Jev key and, from 4a, the
+            // OpenCode password live there only. No plain-text fallback (item 5): with no usable
+            // secret service it answers 'unavailable'.
+            secrets: new OsKeyringSecretStore(new NapiKeyringBinding(SECRET_SERVICE), log),
             // A cut-2 rollback build refuses every install: today's installer is the entry's one writer there.
             externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(
               hostConfigWriter({

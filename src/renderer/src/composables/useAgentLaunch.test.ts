@@ -1,5 +1,15 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  HostFrame,
+  HostFrames,
+  IpcResult,
+  LaunchFailure,
+  LaunchId,
+  LaunchWire,
+  MineId,
+  SnapshotPage
+} from '@dwarfai/contracts'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import {
   COMPOSER_ENABLED_PLACEHOLDER,
@@ -8,6 +18,7 @@ import {
   JEV_NO_CHOICE_REFUSAL,
   OTHER_CHOICE
 } from '../lib/launch/launchState'
+import { jevCardEyebrow } from '../lib/launch/jevCardCopy'
 import { defaultDwarf, defaultMine } from '../testing/factories'
 import type { Dwarf, LaunchFailedPush, Mine } from '../types'
 import { useAgentLaunch } from './useAgentLaunch'
@@ -635,6 +646,195 @@ describe('routing a launch to the channel its provider can actually use', () => 
 
     expect(launch.phase.value).toBe('prompt-ready')
     expect(launch.state.value.error).toBeTruthy()
+  })
+})
+
+/*
+ * APPENDED for ISSUE-179 (read side, ISSUE-001 part C): the launches as a read model of the snapshot `launches` section
+ * and the `launch.changed` / `launch.failed` frames (14 §4.1, §4.3 rule 7; ADR-020 D1; ADR-033 item 3). The call side
+ * (A-35 with `LaunchParams`, A-36) lands with the step-3a switch, ISSUE-001. Placed here, not at the end of the file,
+ * so concurrent appends to this file merge as a union.
+ */
+describe('useAgentLaunch read model', () => {
+  type Api = Window['api']
+  type SnapshotAnswer = IpcResult<SnapshotPage>
+
+  const EPOCH = 'epoch-1'
+  const ALPHA = '01920000-0000-7000-8000-00000000a001' as MineId
+  const BRAVO = '01920000-0000-7000-8000-00000000a002' as MineId
+  const FIRST = '01920000-0000-7000-8000-00000000f001' as LaunchId
+  const SECOND = '01920000-0000-7000-8000-00000000f002' as LaunchId
+  const BORIN = '01920000-0000-7000-8000-00000000d001'
+  /** 2026-10-06T09:00:00.000Z, in epoch ms. */
+  const NINE = 1_791_277_200_000
+
+  function launch(launchId: LaunchId, overrides: Partial<LaunchWire> = {}): LaunchWire {
+    return {
+      launchId,
+      mineId: ALPHA,
+      state: 'routing',
+      wayKind: 'supplier',
+      providerId: 'claude',
+      requestedAt: NINE,
+      ...overrides
+    } as LaunchWire
+  }
+
+  const FAILURE: LaunchFailure = {
+    cause: 'exited-at-once',
+    supplierLabel: 'Claude Code',
+    actions: ['retry', 'pick-manually'],
+    toolOutputTail: 'error: unknown option --foo'
+  }
+
+  function page(seq: number, launches: LaunchWire[]): SnapshotAnswer {
+    return {
+      ok: true,
+      value: {
+        snapshotId: `snap-${seq}`,
+        seq,
+        epoch: EPOCH,
+        chunks: [{ section: 'launches', data: launches }]
+      }
+    }
+  }
+
+  function frame<F extends keyof HostFrames>(seq: number, name: F, data: HostFrames[F]): HostFrame {
+    return { type: 'evt', seq, epoch: EPOCH, name, data } as HostFrame
+  }
+
+  /** A-N01 answers each scripted page in turn (the last repeats); A-N02 is pushed by the test. */
+  function installHost(answers: Array<SnapshotAnswer | (() => SnapshotAnswer)>) {
+    let listener: ((frames: HostFrame[]) => void) | null = null
+    let next = 0
+    const getHostSnapshot = vi.fn(() => {
+      const answer = answers[Math.min(next, answers.length - 1)]!
+      next += 1
+      return Promise.resolve(typeof answer === 'function' ? answer() : answer)
+    })
+    stubApi({
+      getHostSnapshot: getHostSnapshot as unknown as Api['getHostSnapshot'],
+      onHostEvent: ((follow: (frames: HostFrame[]) => void) => {
+        listener = follow
+        return () => {
+          listener = null
+        }
+      }) as unknown as Api['onHostEvent']
+    })
+    return {
+      getHostSnapshot,
+      push(frames: HostFrame[]) {
+        if (listener === null) throw new Error('nothing follows onHostEvent')
+        listener(frames)
+      }
+    }
+  }
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 10; i += 1) await Promise.resolve()
+  }
+
+  beforeEach(() => {
+    useAgentLaunch().hostLaunches.stop()
+  })
+
+  it('[NFR-TIM-07] the in-flight state lasts until launch.changed or launch.failed, never a timer', async () => {
+    vi.useFakeTimers()
+    try {
+      const host = installHost([page(5, [launch(FIRST), launch(SECOND, { state: 'spawned' })])])
+      const { hostLaunches } = useAgentLaunch()
+      expect(await hostLaunches.start()).toBe(true)
+      expect(hostLaunches.inFlight(FIRST)).toBe(true)
+
+      // However long the Host takes, nothing in the window ends the launch for it.
+      vi.advanceTimersByTime(DETACHED_TIMEOUT_MS * 10)
+      expect(hostLaunches.inFlight(FIRST)).toBe(true)
+      expect(hostLaunches.inFlight(SECOND)).toBe(true)
+
+      host.push([
+        frame(6, 'launch.changed', {
+          launch: launch(FIRST, { state: 'succeeded', dwarfId: BORIN } as Partial<LaunchWire>)
+        })
+      ])
+      expect(hostLaunches.inFlight(FIRST)).toBe(false)
+      expect(hostLaunches.of(FIRST)?.wire?.dwarfId).toBe(BORIN)
+
+      host.push([frame(7, 'launch.failed', { launchId: SECOND, mineId: ALPHA, failure: FAILURE })])
+      expect(hostLaunches.inFlight(SECOND)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('[ADR-020] a launch.failed frame puts the failure with its cause, label, actions and tail into the state', async () => {
+    const host = installHost([page(5, [launch(FIRST)])])
+    const { hostLaunches } = useAgentLaunch()
+    await hostLaunches.start()
+    host.push([frame(6, 'launch.failed', { launchId: FIRST, mineId: ALPHA, failure: FAILURE })])
+    expect(hostLaunches.of(FIRST)).toEqual({
+      launchId: FIRST,
+      mineId: ALPHA,
+      wire: launch(FIRST),
+      failure: FAILURE
+    })
+    expect(hostLaunches.inMine(ALPHA).map((entry) => entry.failure)).toEqual([FAILURE])
+    expect(hostLaunches.inMine(BRAVO)).toEqual([])
+  })
+
+  it('[ADR-033] frames with seq at or below the snapshot seq are dropped', async () => {
+    let host: ReturnType<typeof installHost> | null = null
+    host = installHost([
+      () => {
+        // Arrives while the snapshot is read: buffered, then dropped, as the snapshot already reflects seq 5.
+        host!.push([
+          frame(5, 'launch.failed', { launchId: FIRST, mineId: ALPHA, failure: FAILURE })
+        ])
+        return page(5, [launch(FIRST)])
+      }
+    ])
+    const { hostLaunches } = useAgentLaunch()
+    await hostLaunches.start()
+    await settle()
+    host.push([frame(4, 'launch.changed', { launch: launch(FIRST, { state: 'lost' }) })])
+    expect(hostLaunches.of(FIRST)).toEqual({
+      launchId: FIRST,
+      mineId: ALPHA,
+      wire: launch(FIRST),
+      failure: null
+    })
+    expect(hostLaunches.inFlight(FIRST)).toBe(true)
+  })
+
+  it('[ADR-033] a launch missing from a re-snapshot is gone, and nothing is inferred from the difference', async () => {
+    const host = installHost([
+      page(5, [launch(FIRST), launch(SECOND, { mineId: BRAVO })]),
+      page(9, [launch(FIRST)])
+    ])
+    const { hostLaunches } = useAgentLaunch()
+    await hostLaunches.start()
+    expect(hostLaunches.inMine(BRAVO).map((entry) => entry.launchId)).toEqual([SECOND])
+    host.push([frame(6, 'resync-required', { reason: 'ring-overrun' })])
+    await settle()
+    expect(host.getHostSnapshot).toHaveBeenCalledTimes(2)
+    expect(hostLaunches.of(SECOND)).toBeUndefined()
+    expect(hostLaunches.inMine(BRAVO)).toEqual([])
+    expect(hostLaunches.inFlight(FIRST)).toBe(true)
+  })
+
+  it('[ADR-033] until the route switch a refused snapshot leaves the launches unfed', async () => {
+    stubApi({
+      getHostSnapshot: vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          error: { code: 'METHOD_NOT_FOUND', message: 'unrouted', retryable: false }
+        })
+      ) as unknown as Api['getHostSnapshot'],
+      onHostEvent: vi.fn(() => () => undefined) as unknown as Api['onHostEvent']
+    })
+    const { hostLaunches } = useAgentLaunch()
+    expect(await hostLaunches.start()).toBe(false)
+    expect(hostLaunches.of(FIRST)).toBeUndefined()
+    expect(hostLaunches.inFlight(FIRST)).toBe(false)
   })
 })
 
@@ -1603,5 +1803,180 @@ describe('the launch-failure notice (#635)', () => {
     expect(launch.state.value.failure).toBeNull()
     expect(launch.state.value.prompt).toBe('dig the east gallery')
     expect(launch.phase.value).toBe('provider-selection')
+  })
+})
+
+/*
+ * ADDED for ISSUE-228 (ADR-011 item 7; 07 machine 5A S5.02, S5.03, S5.25…S5.28; UC-009, UC-028): the Add panel's
+ * OpenCode notice. A provider whose permission requests the app cannot answer while its integration is off is
+ * listed with `answerChannel: 'gated-off'` (14 §3.6 `SupplierEntryView`, the A-36 answer from its switch); the panel
+ * reads that capability, never a provider id (R12). Its action turns the option on (A-53, origin `add-panel`),
+ * then asks A-36 again and redraws the Permissions list from the refreshed entry; no launch leaves while it is
+ * pending. TC-228-03.
+ */
+describe('the OpenCode permission-requests notice (ISSUE-228)', () => {
+  const GATED = {
+    provider: 'opencode' as const,
+    installed: true,
+    launchable: true,
+    answerChannel: 'gated-off' as const,
+    offeredModes: ['build']
+  }
+  const ANSWERED = { ...GATED, answerChannel: 'available' as const, offeredModes: ['ask', 'build'] }
+  const OPENCODE_PICK = {
+    kind: 'decision' as const,
+    provider: 'opencode' as const,
+    model: 'opencode/sonnet',
+    confidence: 0.9,
+    truncated: false
+  }
+
+  function deferred<T>() {
+    let resolve: (value: T) => void = () => undefined
+    const promise = new Promise<T>((settle) => {
+      resolve = settle
+    })
+    return { promise, resolve }
+  }
+
+  async function openWith(overrides: Record<string, unknown> = {}) {
+    const api = stubApi({
+      listAgentProviders: vi
+        .fn()
+        .mockResolvedValueOnce({ providers: [CLAUDE, GATED] })
+        .mockResolvedValue({ providers: [CLAUDE, ANSWERED] }),
+      setOpenCodePluginEnabled: vi.fn().mockResolvedValue({ pluginEnabled: true }),
+      ...overrides
+    }) as ReturnType<typeof stubApi> & { setOpenCodePluginEnabled: ReturnType<typeof vi.fn> }
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    return { api, launch }
+  }
+
+  it('[US-LAUNCH-001.AC12, S5.02] choosing OpenCode while the option is off shows the notice with its action', async () => {
+    const { launch } = await openWith()
+
+    expect(launch.integrationNotice.value).toEqual({ shown: false })
+
+    launch.choose('opencode')
+    expect(launch.integrationNotice.value).toEqual({ shown: true, state: 'offered' })
+
+    launch.choose('claude')
+    expect(launch.integrationNotice.value).toEqual({ shown: false })
+  })
+
+  it('[US-LAUNCH-001.AC13, S5.03] using the action turns the option on, hides the notice and offers Ask first after the refresh', async () => {
+    const { api, launch } = await openWith()
+    launch.choose('opencode')
+    expect(launch.offeredModes.value).toEqual(['build'])
+
+    await launch.enableIntegration()
+
+    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledOnce()
+    expect(api.listAgentProviders).toHaveBeenCalledTimes(2)
+    expect(launch.integrationNotice.value).toEqual({ shown: false })
+    // The interactive mode ("Ask first") now leads the Permissions list (US-LAUNCH-001 order).
+    expect(launch.offeredModes.value).toEqual(['ask', 'build'])
+    expect(api.launchAgent).not.toHaveBeenCalled()
+  })
+
+  it('[US-LAUNCH-001.AC13, S5.02] no launch is sent while the enable is pending; the person launches once it settled', async () => {
+    const enabling = deferred<unknown>()
+    const { api, launch } = await openWith({
+      setOpenCodePluginEnabled: vi.fn().mockReturnValue(enabling.promise)
+    })
+    launch.choose('opencode')
+    launch.setPrompt('dig the east gallery')
+
+    const action = launch.enableIntegration()
+    expect(launch.integrationNotice.value).toEqual({ shown: true, state: 'enabling' })
+    await launch.submit()
+    expect(api.launchAgent).not.toHaveBeenCalled()
+
+    enabling.resolve({ pluginEnabled: true })
+    await action
+    await launch.submit()
+
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+    expect(api.launchAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'opencode', prompt: 'dig the east gallery' })
+    )
+  })
+
+  it('[ADR-011] a write that fails keeps the notice, states the failure, and the launch still goes out without an answer channel', async () => {
+    const { api, launch } = await openWith({
+      listAgentProviders: vi.fn().mockResolvedValue({ providers: [CLAUDE, GATED] })
+    })
+    launch.choose('opencode')
+    launch.setPrompt('dig the east gallery')
+
+    await launch.enableIntegration()
+
+    expect(launch.integrationNotice.value).toEqual({ shown: true, state: 'failed' })
+    expect(launch.offeredModes.value).toEqual(['build'])
+    await launch.submit()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+  })
+
+  it('[US-LAUNCH-001.AC14] launching without the action writes nothing and sends a launch with no Ask first', async () => {
+    const { api, launch } = await openWith()
+    launch.choose('opencode')
+    launch.setPrompt('dig the east gallery')
+
+    await launch.submit()
+
+    expect(api.setOpenCodePluginEnabled).not.toHaveBeenCalled()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+    const request = api.launchAgent.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(request).toMatchObject({ provider: 'opencode', prompt: 'dig the east gallery' })
+    expect(request).not.toHaveProperty('permissionMode')
+  })
+
+  it('[US-LAUNCH-001.AC15, US-LAUNCH-003.AC14, S5.25] with auto-accept on a Jev pick of OpenCode pauses as JEV SUGGESTS and shows the notice before anything launches', async () => {
+    const { api, launch } = await openWith({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+      routeJevLaunch: vi.fn().mockResolvedValue(OPENCODE_PICK)
+    })
+    launch.toggleJevEnabled()
+    launch.toggleJevAutoAccept()
+    launch.setPrompt('dig the east gallery')
+    expect(jevCardEyebrow(launch.jevAccepted.value)).toBe('JEV · ACCEPTED AUTOMATICALLY')
+
+    await launch.submit()
+
+    expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+    expect(api.launchAgent).not.toHaveBeenCalled()
+    expect(api.launchHeldSession).not.toHaveBeenCalled()
+    expect(api.setOpenCodePluginEnabled).not.toHaveBeenCalled()
+    expect(launch.state.value.choice).toBe('opencode')
+    expect(launch.pausedForNotice.value).toBe(true)
+    expect(jevCardEyebrow(launch.jevAccepted.value)).toBe('JEV SUGGESTS')
+    expect(launch.integrationNotice.value).toEqual({ shown: true, state: 'offered' })
+
+    // Send without the action: OpenCode launches as a provider without an answer channel (S5.27).
+    await launch.submit()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+    expect(api.setOpenCodePluginEnabled).not.toHaveBeenCalled()
+  })
+
+  it('[US-LAUNCH-003.AC14, S5.26] the action from the pause turns the option on and leaves the launch to the person', async () => {
+    const { api, launch } = await openWith({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+      routeJevLaunch: vi.fn().mockResolvedValue(OPENCODE_PICK)
+    })
+    launch.toggleJevEnabled()
+    launch.toggleJevAutoAccept()
+    launch.setPrompt('dig the east gallery')
+    await launch.submit()
+
+    await launch.enableIntegration()
+
+    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledOnce()
+    expect(launch.pausedForNotice.value).toBe(false)
+    expect(launch.integrationNotice.value).toEqual({ shown: false })
+    // Auto-accept does not resume on its own: nothing launched until the person's Send.
+    expect(api.launchAgent).not.toHaveBeenCalled()
+    await launch.submit()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
   })
 })
