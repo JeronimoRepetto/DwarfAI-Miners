@@ -25,6 +25,7 @@ const EXPECTED_MODULES = [
   './copy/catalog.ts',
   './copy/en.ts',
   './copy/index.ts',
+  './dwarfName.ts',
   './externalLink.ts',
   './heldSessionText.ts',
   './index.ts',

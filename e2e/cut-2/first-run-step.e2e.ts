@@ -1,9 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
-import { buildHookCommand } from '../../src/main/hooks/hookCommand.ts'
-import { NodeHookFs } from '../../src/main/hooks/hookFs.ts'
-import { installClaudeHooks } from '../../src/main/hooks/hookInstaller.ts'
 import {
   createIsolatedProfile,
   disposeProfile,
@@ -12,6 +9,7 @@ import {
   type IsolatedProfile,
   type LaunchedApp
 } from '../_harness/launchApp.ts'
+import { installOldAppClaudeHooks } from '../_harness/oldAppClaudeHooks.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
 import {
   claudeSettings,
@@ -31,8 +29,8 @@ import {
  * (removed); the person's own hook keeps its bytes either way. Until the answer, a call carrying the old entry's token
  * is refused `401` at the Host's ingress, whose channel tokens never hold it.
  *
- * The old entry is written by the old app's own installer (`src/main/hooks/hookInstaller.ts`), byte for byte what a
- * person upgrading has on disk. Its call target is the old app's loopback route, which from cut 2 no build composes
+ * The old entry is written as the old app's own installer (`src/main/hooks/hookInstaller.ts`) wrote it, byte for byte
+ * what a person upgrading has on disk (`e2e/_harness/oldAppClaudeHooks.ts`). Its call target is the old app's loopback route, which from cut 2 no build composes
  * (TC-141-06); the token is also posted to the Host's ingress, the one listener of this build, whose port the first
  * start persisted (`app_meta.ingress_port`, read after that Host exited).
  */
@@ -82,12 +80,12 @@ test.describe('T-46 old-app entries (18 §4.5)', () => {
     const port = persistedIngressPort(owned)
     expect(port, 'the first start persisted the ingress port').not.toBeNull()
 
-    const reports = await installClaudeHooks({
-      fs: new NodeHookFs(),
-      roots: [owned.claudeConfigDir],
-      command: buildHookCommand({ port: OLD_PORT, token: OLD_TOKEN, platform: process.platform })
+    const written = installOldAppClaudeHooks(owned.claudeConfigDir, {
+      port: OLD_PORT,
+      token: OLD_TOKEN,
+      platform: process.platform
     })
-    expect(reports.map((report) => report.error)).toEqual([undefined])
+    expect(written, 'the old installer wrote its entries').toBe(true)
     const before = claudeSettings(owned) ?? ''
     expect(hookCommands(before).filter(isOldAppEntry).length).toBeGreaterThan(0)
     return { owned, port: port as number, before }

@@ -1,0 +1,23 @@
+{
+  "label": "packaged-windows-latest",
+  "date": "2026-10-18",
+  "spikes": ["SP-04", "SP-03"],
+  "runner": {
+    "os": "Windows",
+    "arch": "X64",
+    "image": "win25-vs2026",
+    "imageVersion": "20261007.264.1"
+  },
+  "osRelease": "10.0.26100",
+  "versions": {
+    "node": "v24.22.0",
+    "electron": "44.0.0",
+    "electronBuilder": "26.15.3",
+    "napiRsKeyring": "2.1.0"
+  },
+  "commit": "8113b6a7e7c0de85c96b81989aebac8bee2e06a5",
+  "run": {
+    "id": "39136245328",
+    "attempt": "1"
+  }
+}

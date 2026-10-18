@@ -9,7 +9,7 @@ import {
   type IsolatedProfile,
   type LaunchedApp
 } from '../_harness/launchApp.ts'
-import { STUB_BIN } from '../_harness/stubs.ts'
+import { isolatedStubPath, STUB_BIN } from '../_harness/stubs.ts'
 import {
   claudeSettings,
   foreignLine,
@@ -49,7 +49,10 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
     const before = claudeSettings(owned)
     launched = await launchApp({
       profile: owned,
-      stubs: path.join(STUB_BIN, 'claude'),
+      // The app's PATH is the Claude stub, node and the OS tools, nothing of this machine's: a developer's own
+      // installed CLIs (OpenCode among them) never decide which options the step offers.
+      stubs: isolatedStubPath(path.join(STUB_BIN, 'claude')),
+      pathOnly: true,
       tracePath: test.info().outputPath('trace.zip')
     })
     await waitForHostAttached(owned)
@@ -83,7 +86,10 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
     const before = claudeSettings(owned)
     launched = await launchApp({
       profile: owned,
-      stubs: path.join(STUB_BIN, 'claude'),
+      // The app's PATH is the Claude stub, node and the OS tools, nothing of this machine's: a developer's own
+      // installed CLIs (OpenCode among them) never decide which options the step offers.
+      stubs: isolatedStubPath(path.join(STUB_BIN, 'claude')),
+      pathOnly: true,
       tracePath: test.info().outputPath('trace.zip')
     })
     await waitForHostAttached(owned)
@@ -110,7 +116,10 @@ test.describe('cut 2: the first-run consent step (ISSUE-141)', () => {
     const before = claudeSettings(owned)
     launched = await launchApp({
       profile: owned,
-      stubs: path.join(STUB_BIN, 'claude'),
+      // The app's PATH is the Claude stub, node and the OS tools, nothing of this machine's: a developer's own
+      // installed CLIs (OpenCode among them) never decide which options the step offers.
+      stubs: isolatedStubPath(path.join(STUB_BIN, 'claude')),
+      pathOnly: true,
       tracePath: test.info().outputPath('trace.zip')
     })
     const { app, window } = launched
