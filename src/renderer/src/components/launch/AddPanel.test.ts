@@ -14,7 +14,7 @@ import {
   type LaunchPhase
 } from '../../lib/launch/launchState'
 import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
-import { truncateTail } from '../../../../shared/truncate'
+import { truncateTail } from '@dwarfai/contracts'
 import type { JevState, LaunchFailure } from '../../lib/launch/launchState'
 import {
   MODEL_HISTORY_SOURCE,

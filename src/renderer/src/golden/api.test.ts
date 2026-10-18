@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MineId } from '@dwarfai/contracts'
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
+import { DEFAULT_TOGGLE_ACCELERATOR } from '@dwarfai/contracts'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
 import { launchSourcesOf } from '../lib/launch/supplierEntries'
 import { goldenApi } from './api'

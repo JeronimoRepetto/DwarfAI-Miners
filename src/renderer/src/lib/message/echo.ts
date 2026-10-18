@@ -1,6 +1,9 @@
 import { REACTION_WINDOW_MS } from '../delivery/reaction'
-import { normalizeConsoleText } from '../../../../shared/consoleText'
-import { ATTACHED_FILE_PREFIX, HELD_IMAGE_PLACEHOLDER } from '../../../../shared/heldSessionText'
+import {
+  ATTACHED_FILE_PREFIX,
+  HELD_IMAGE_PLACEHOLDER,
+  normalizeConsoleText
+} from '@dwarfai/contracts'
 import {
   stripRelayProvenance,
   type DwarfAttachment,

@@ -5,8 +5,8 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { expect, type Page } from '@playwright/test'
 import { CATALOG_PROVIDER_IDS } from '../../src/contracts/catalog/ids.ts'
-import { createProcessProbe } from '../../src/main/platform/processProbe.ts'
 import { isProcessAlive, profileHostPid, type IsolatedProfile } from '../_harness/launchApp.ts'
+import { processStartTimeMs } from '../_harness/processStart.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
 import {
   seedClaudeStubSession,
@@ -325,7 +325,7 @@ export async function startOutsideSession(
   child.once('exit', () => (exited = true))
   const pid = child.pid
   if (pid === undefined) throw new Error('the outside session did not start')
-  const started = await createProcessProbe().processStartTimeMs(pid)
+  const started = await processStartTimeMs(pid)
   if (started === null) {
     child.kill()
     throw new Error('the outside session has no creation time to write down')
