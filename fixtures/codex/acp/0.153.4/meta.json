@@ -1,0 +1,50 @@
+{
+  "providerVersion": "0.153.4",
+  "capturedAt": "2026-10-18",
+  "capturedBy": "maintainer",
+  "os": "win32",
+  "scrubbed": true,
+  "source": "Recorded on the maintainer's Windows machine (real-CLI lane, 17 §5.5) through scripts/fixtures/record.mjs (runRecord with a scratch recording adapter, not registered) and scrub.mjs, against the person's own user-installed @agentclientprotocol/codex-acp 1.13.1 (Apache-2.0, pnpm global install; never bundled or shipped by DwarfAI) started as node <adapter entry> with shell: false, with the childEnv allowlist plus CODEX_PATH = the person's own codex-cli 0.153.4 (native codex.exe, C-18; never the adapter's bundled @openai/codex 0.156.1) and INITIAL_AGENT_MODE=read-only. The adapter ran outside CodexAcpDriver: on Windows codex-acp 1.13.1 starts CODEX_PATH with spawn(`\"<path>\" app-server`, { shell: true }) (dist/index.js, startCodexConnection), which 18 C-17 forbids for DwarfAI, so the driver still refuses Windows; the recording only captures the ACP traffic. The recorder framed what CodexAcpDriver sends (initialize with no client capability, session/new and session/load {cwd, mcpServers: []}, session/prompt, session/cancel, session/close; permission requests answered allow_once, the first reject_once, or cancelled), with the recorded prompts of the -sent streams. Codex read the person's own config (model, MCP servers, skills): the skills listed in available_commands_update are numbered placeholders. In c-06 the command's output (the maintainer's PowerShell profile messages, printed by every command Codex runs) was replaced by <PROFILE-OUTPUT> in the raw capture before scrubbing, with the timing bytes adjusted. macOS and Linux recordings are pending (maintainer machines). Cases no recording covers stay in ../0.157.x-synthetic/.",
+  "capabilities": {
+    "driver": "acp",
+    "adapter": "@agentclientprotocol/codex-acp",
+    "adapterVersion": "1.13.1",
+    "adapterLicense": "Apache-2.0",
+    "measuredVersion": "0.153.4",
+    "protocolVersion": 1,
+    "loadSession": true,
+    "sessionCapabilities": [
+      "additionalDirectories",
+      "close",
+      "delete",
+      "fork",
+      "list",
+      "resume",
+      "subagents"
+    ],
+    "authMethods": ["api-key", "chat-gpt"],
+    "modes": "read-only (Ask for approval: on-request, approvalsReviewer user, workspace-write sandbox), agent (Approve for me: approvalsReviewer auto_review, the adapter's default), agent-full-access (approvalPolicy never); 1.13.1 has no workspace-write mode id, an unknown INITIAL_AGENT_MODE falls back to agent, and session/set_mode with an unknown id is refused -32602",
+    "permissionOptionKinds": ["allow_once", "allow_always", "reject_once"],
+    "permissionOptionCodexDecision": false,
+    "denyOption": "cancel (reject_once): Codex fails the command and ends the turn with stopReason cancelled",
+    "permissionRequestTitle": "Run command (the command is in rawInput.command and in the preceding tool_call title)",
+    "questionChannel": "none observed",
+    "promptUsage": "per turn; inputTokens exclude cachedReadTokens, outputTokens include thoughtTokens",
+    "loadReplaysBeforeResponse": true,
+    "cancelStopReason": "cancelled",
+    "extraNotifications": ["_auth/status_update"],
+    "extraUpdates": ["session_info_update", "usage_update", "agent_thought_chunk"],
+    "windows": "recorded on Windows (adapter run outside the driver); the driver still refuses Windows (C-17)",
+    "macos": "pending",
+    "linux": "pending"
+  },
+  "recordedCases": [
+    "c-01-launch",
+    "c-05-send-turn",
+    "c-06-permission-allow",
+    "c-07-permission-deny",
+    "c-08-interrupt",
+    "c-16-resume",
+    "c-28-close"
+  ]
+}

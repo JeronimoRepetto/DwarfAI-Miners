@@ -1,0 +1,162 @@
+{
+  "case": "C-06",
+  "description": "Recorded against the user-installed @agentclientprotocol/codex-acp 1.13.1 with CODEX_PATH pinned to the person’s codex-cli 0.153.4 (scrubbed). 15 §2.7 ACP row: a command outside the writable workspace makes codex-acp send session/request_permission (options allow_once, allow_always accept_execpolicy_amendment, reject_once cancel; no _meta.codex.decision in 1.13.1); it opens one permission ask whose providerRequestId is the toolCallId and whose card names the kind (execute) and the request title. Allow is sent as the allow_once optionId, never allow_always; the command runs (its output, the maintainer’s shell profile noise, is replaced by <PROFILE-OUTPUT>) and the turn concludes. Usage follows the Codex normalisation of the app-server driver: codex-acp’s outputTokens include thoughtTokens, so output is 35 − 28 and reasoning 28.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "00000000-0000-4000-8000-000000000003",
+      "decision": "allow"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "kind": "accepted"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000003",
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "execute",
+        "summary": "New-Item -ItemType File -Path '..\\outside.txt' -Force | Out-Null",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "00000000-0000-4000-8000-000000000003",
+        "channel": "driver",
+        "payload": {
+          "toolName": "execute",
+          "requestText": "Run command"
+        },
+        "options": {
+          "hasAllowOnce": true,
+          "hasRejectOnce": true
+        },
+        "turnKey": "codex:codex:{session}:turn:1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000003",
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "execute",
+        "summary": "New-Item -ItemType File -Path '..\\outside.txt' -Force | Out-Null",
+        "state": "finished",
+        "at": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:1",
+        "role": "dwarf",
+        "text": "done",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "codex:codex:{session}:turn:1",
+        "unitKey": "{session}:turn:1",
+        "fidelity": 1,
+        "tokens": {
+          "inputNet": 809,
+          "output": 7,
+          "cacheRead": 38912,
+          "cacheWrite": 0,
+          "reasoning": 28
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "result": {
+        "outcome": {
+          "outcome": "selected",
+          "optionId": "allow_once"
+        }
+      }
+    }
+  ]
+}

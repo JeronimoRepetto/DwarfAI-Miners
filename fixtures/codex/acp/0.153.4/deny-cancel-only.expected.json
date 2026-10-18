@@ -1,0 +1,153 @@
+{
+  "case": "codex:deny-cancel-only",
+  "description": "Recorded against the user-installed @agentclientprotocol/codex-acp 1.13.1 with CODEX_PATH pinned to the person’s codex-cli 0.153.4 (scrubbed). Provider gap against 15 §2.7 (C-07, reported to the lead): for a command outside the writable workspace, codex 0.153.4 offers only accept, an exec-policy amendment and cancel (codex-acp 1.13.1 maps them to allow_once, allow_always accept_execpolicy_amendment and reject_once cancel, with no _meta.codex.decision), so no option rejects without interrupting. The Deny hook finds no decline and the default mapping sends the only reject_once, cancel; Codex fails the command and ends the turn with stopReason cancelled, so the turn ends interrupted, not by the app (cancelledFromApp false). A JSON-RPC error reply instead (HR A3) was also recorded on the same machine and ended the turn cancelled the same way; a file change outside the workspace offered the same reject option (cancel only). Usage: output 388 − 201 thought tokens.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "answerPermission",
+      "providerRequestId": "00000000-0000-4000-8000-000000000003",
+      "decision": "deny"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    {
+      "kind": "accepted"
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000003",
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "execute",
+        "summary": "$parent = Split-Path -Parent (Get-Location).Path; New-Item -ItemType File -Path (Join-Path $parent 'outside.txt') -Force | Out-Null",
+        "state": "started",
+        "at": null
+      }
+    },
+    {
+      "t": "ask.opened",
+      "ask": {
+        "kind": "permission",
+        "providerRequestId": "00000000-0000-4000-8000-000000000003",
+        "channel": "driver",
+        "payload": {
+          "toolName": "execute",
+          "requestText": "Run command"
+        },
+        "options": {
+          "hasAllowOnce": true,
+          "hasRejectOnce": true
+        },
+        "turnKey": "codex:codex:{session}:turn:1"
+      }
+    },
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "codex:codex:{session}:00000000-0000-4000-8000-000000000003",
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "tool",
+        "toolName": "execute",
+        "summary": "$parent = Split-Path -Parent (Get-Location).Path; New-Item -ItemType File -Path (Join-Path $parent 'outside.txt') -Force | Out-Null",
+        "state": "failed",
+        "at": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "codex:codex:{session}:turn:1",
+        "unitKey": "{session}:turn:1",
+        "fidelity": 1,
+        "tokens": {
+          "inputNet": 238,
+          "output": 187,
+          "cacheRead": 38912,
+          "cacheWrite": 0,
+          "reasoning": 201
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "interrupted",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "result": {
+        "outcome": {
+          "outcome": "selected",
+          "optionId": "cancel"
+        }
+      }
+    }
+  ]
+}
