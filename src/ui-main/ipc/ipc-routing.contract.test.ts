@@ -3297,9 +3297,15 @@ describe('release 3a (21 §2 cut 3a)', () => {
       'suppliers.launchable': 'cut-3a', // B-M37
       'jev.suggest': 'cut-3a' // B-M38
     })
+    // AMENDED for ISSUE-186 (was: every release member not in cut 2's): only the rows the 3a table routes `host`, since
+    // the step-3d switch adds A-39's member to the release map.
+    const hostIn3a = (key: string) =>
+      CUT_3A_ROUTES.some((route) => route.channel === key && route.owner === 'host')
     expect(
       Object.fromEntries(
-        Object.entries(HOST_ROUTE_MEMBERS).filter(([key]) => !(key in CUT_2_HOST_ROUTE_MEMBERS))
+        Object.entries(HOST_ROUTE_MEMBERS).filter(
+          ([key]) => !(key in CUT_2_HOST_ROUTE_MEMBERS) && hostIn3a(key)
+        )
       )
     ).toEqual({
       'dwarf:activate': ['conversation.resolveConsole'], // A-13 → B-M29, Claude

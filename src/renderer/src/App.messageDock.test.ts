@@ -2088,7 +2088,10 @@ describe('the rebuilt Add panel, as a person drives it (#635)', () => {
   }
 
   it('launches a custom command typed under Other…, with no Enter in its box', async () => {
-    const launchHostedProcess = vi.fn().mockResolvedValue({ launched: true })
+    // AMENDED for ISSUE-186 (was: today's `{ launched: true }` and request): from 3d A-39 speaks its 14 shape.
+    const launchHostedProcess = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { launchId: LAUNCH_ID } })
     const { wrapper } = await mountAttached({ launchHostedProcess })
     await pressAddDwarf(wrapper)
 
@@ -2105,7 +2108,8 @@ describe('the rebuilt Add panel, as a person drives it (#635)', () => {
     expect(launchHostedProcess).toHaveBeenCalledWith({
       mineId: MINE.id,
       command: 'my-agent --yes',
-      prompt: 'dig the east gallery'
+      prompt: 'dig the east gallery',
+      requestId: expect.any(String)
     })
   })
 

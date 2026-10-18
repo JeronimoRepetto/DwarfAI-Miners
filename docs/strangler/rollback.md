@@ -114,6 +114,20 @@ With Codex no longer moved, `legacyFeedModesOf` composes Codex's whole discovery
 settles on A-P3/A-P4 through the settlement join, and "Let Jev choose" chooses among Claude only. Codex sessions the
 faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
 
+**Step 3d note (ISSUE-186).** A 3d rollback build exists only before the 3d deletion commit merges (ISSUE-187, after the
+soak); after it, 3d rolls forward. `rollbackOf(table, 'cut-3d')` gives back exactly the 3b table
+(`src/ui-main/ipc/rollbackTable.test.ts` and `ipc-routing.contract.test.ts`, the 3d rollback cases):
+
+| Rows                                  | In the 3d rollback build                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-39                                  | The pre-cut row: today's runtime, today's shape. `21` §3.1 names no shape adapter for A-39 (it switches with its route), so the rollback branch also runs `pnpm ipc:generate`, which gives `launchHostedProcess` today's member again, and reverts the renderer's "Other…" submit of the switch commit (`useAgentLaunch.ts`, `customLaunchParamsOf`) |
+| A-13, A-23, A-35 ("Other…"-qualified) | The "Other…"-qualified `host` route goes; an "Other…" dwarf reaches the unqualified 3a route again (`PerProviderShapeAdapter`)                                                                                                                                                                                                                       |
+| A-27, A-P3, A-P4                      | Unchanged: "Other…" is outside the catalog and never had a row there (`rollbackOf` gives these rows back to catalog providers only)                                                                                                                                                                                                                  |
+| Every other row                       | As the 3d table routes it (3d moved no other row and bore no NEW row)                                                                                                                                                                                                                                                                                |
+
+"Other…" sessions the faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3
+"Rollback (each step)"); a new "Other…" launch is today's hosted process again, which dies with the window.
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").

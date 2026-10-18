@@ -76,7 +76,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // The third launch channel (#194). Named here rather than per test for the
     // reason this whole stub exists: an awaited member resolving undefined
     // becomes an unhandled rejection only the full suite catches.
-    launchHostedProcess: vi.fn().mockResolvedValue({ launched: true }),
+    // AMENDED for ISSUE-186 (was: today's `{ launched: true }`): from 3d A-39 answers the 14 `IpcResult<LaunchAccepted>`.
+    launchHostedProcess: vi.fn().mockResolvedValue({ ok: true, value: { launchId: LAUNCH } }),
     // #263. Not awaited, so it carries no unhandled-rejection risk, but
     // still named here rather than per test: `listenFailures()` needs a real
     // function to call, and a bare `undefined` would throw before any test
@@ -415,15 +416,19 @@ describe('submitting a launch', () => {
 
     await launch.submit()
 
+    // AMENDED for ISSUE-186 (was: today's request, and no launch id): A-39's 14 request from 3d, and the panel
+    // follows the Host's launch under the LaunchId it was answered, as for A-35.
     expect(api.launchHostedProcess).toHaveBeenCalledWith({
       mineId: MINE,
       // The committed command, trimmed exactly as commitCommand left it — the
-      // panel sends the string and main decides what program that is.
+      // panel sends the string and the Host decides what program that is.
       command: 'lalolanda --once',
-      prompt: 'dig the east gallery'
+      prompt: 'dig the east gallery',
+      requestId: expect.any(String)
     })
     expect(api.launchAgent).not.toHaveBeenCalled()
     expect(launch.state.value.error).toBeNull()
+    expect(launch.state.value.launchId).toBe(LAUNCH)
   })
 
   /*
@@ -431,13 +436,13 @@ describe('submitting a launch', () => {
    * the answer. #194 was reported as "it froze", which was a refusal nobody
    * could see, so main's own reason has to reach the panel intact.
    */
-  it('shows main’s own reason when the command could not be started', async () => {
-    const api = stubApi({
-      launchHostedProcess: vi
-        .fn()
-        .mockResolvedValue({ launched: false, error: 'That command has no shell to run in.' })
-    })
+  // AMENDED for ISSUE-186 (was: "shows main’s own reason when the command could not be started", today's
+  // `{ launched: false, error }`): from 3d the Host parses the command and settles a refusal as `launch.failed
+  // {could-not-start}` (14 §2.1 A-39 Notes), so the refusal everybody must see is the launch-failure notice.
+  it('shows the Host’s could-not-start when the command could not be started', async () => {
+    const host = hostWorld()
     const launch = useAgentLaunch()
+    await launch.hostLaunches.start()
     await launch.open(MINE)
     launch.choose(OTHER_CHOICE)
     launch.setCommand('lalolanda | tee log')
@@ -445,9 +450,14 @@ describe('submitting a launch', () => {
     launch.setPrompt('dig')
 
     await launch.submit()
+    host.push('launch.failed', {
+      launchId: LAUNCH,
+      mineId: HOST_MINE,
+      failure: { cause: 'could-not-start', supplierLabel: 'The custom command', actions: ['retry'] }
+    } as HostFrames['launch.failed'])
 
-    expect(api.launchHostedProcess).toHaveBeenCalledOnce()
-    expect(launch.state.value.error).toBe('That command has no shell to run in.')
+    expect(host.api.launchHostedProcess).toHaveBeenCalledOnce()
+    expect(launch.state.value.failure).toEqual({ cause: 'could-not-start', choice: OTHER_CHOICE })
     // Back in the Add state with the typing intact, so a retry costs nothing.
     expect(launch.state.value.prompt).toBe('dig')
   })
@@ -457,8 +467,12 @@ describe('submitting a launch', () => {
    * (#194): main seeds a hosted process's conversation with the prompt exactly
    * as the held registry seeds a session's, so the SAME receipt adopts it and
    * the panel reaches the MessagePanel through the path it already had.
+   *
+   * AMENDED for ISSUE-186 (was: "…by the receipt a held launch uses", the
+   * opening prompt): from 3d the Host answers A-39 with a LaunchId, so the
+   * receipt is the one every Host launch leaves on its dwarf (`launchId`).
    */
-  it('waits for its dwarf and adopts it by the receipt a held launch uses', async () => {
+  it('waits for its dwarf and adopts it by the LaunchId the Host answered', async () => {
     stubApi()
     const launch = useAgentLaunch()
     await launch.open(MINE)
@@ -470,7 +484,9 @@ describe('submitting a launch', () => {
     await launch.submit()
     expect(launch.phase.value).toBe('submitted-spawning')
 
-    launch.observe([mineWith([heldDwarf('hosted:1', 'dig the east gallery')])])
+    launch.observe([
+      mineWith([{ ...heldDwarf('hosted:1', 'dig the east gallery'), launchId: LAUNCH }])
+    ])
 
     expect(launch.state.value.launchedDwarfId).toBe('hosted:1')
     expect(launch.phase.value).toBe('message-panel')
@@ -1359,29 +1375,42 @@ describe('the launch-failure notice (#635)', () => {
     expect(launch.state.value.failure).toEqual({ cause: 'could-not-start', choice: 'codex' })
   })
 
+  // AMENDED for ISSUE-186 (was: today's `{ launched: false, cause }` verdict): from 3d the cause arrives on the Host's
+  // `launch.failed` frame of the launch A-39 was answered (21 §2 cut 3d), and a Retry names that launch.
   it('names a custom command that could not be started', async () => {
-    const api = stubApi({
-      launchHostedProcess: vi.fn().mockResolvedValue({ launched: false, cause: 'could-not-start' })
-    })
-    const launch = useAgentLaunch()
-    await launch.open(MINE)
+    const { host, launch } = await ready('codex')
     launch.choose(OTHER_CHOICE)
     launch.setCommand('lalolanda')
     launch.commit()
     launch.setPrompt('dig')
 
     await launch.submit()
+    host.push(
+      'launch.failed',
+      failed({ cause: 'not-installed', supplierLabel: 'The custom command' })
+    )
 
-    expect(api.launchHostedProcess).toHaveBeenCalledOnce()
-    expect(launch.state.value.failure).toEqual({ cause: 'could-not-start', choice: OTHER_CHOICE })
+    expect(host.api.launchHostedProcess).toHaveBeenCalledOnce()
+    expect(launch.state.value.failure).toEqual({ cause: 'not-installed', choice: OTHER_CHOICE })
+
+    await launch.retry()
+    expect(host.api.launchHostedProcess).toHaveBeenCalledTimes(2)
+    expect(host.api.launchHostedProcess.mock.calls[1]![0]).toMatchObject({
+      command: 'lalolanda',
+      retryOf: LAUNCH
+    })
   })
 
   // AMENDED for ISSUE-001 (was: today's held channel): the one channel still answering in today's words is A-39's.
-  it('keeps main’s own words for a failure it named no cause for', async () => {
+  // AMENDED for ISSUE-186 (was: "keeps main’s own words for a failure it named no cause for", today's A-39 verdict):
+  // from 3d no launch channel answers in today's words; a refused A-39 call (14 §1.5 error branch) is a refusal with
+  // no notice, the prompt kept, exactly as a refused A-35 call.
+  it('refuses a custom launch the Host refused with no notice, the prompt kept', async () => {
     stubApi({
-      launchHostedProcess: vi
-        .fn()
-        .mockResolvedValue({ launched: false, error: 'The demo cannot launch agents.' })
+      launchHostedProcess: vi.fn().mockResolvedValue({
+        ok: false,
+        error: { code: 'HOST_NOT_READY', message: 'starting', retryable: true }
+      })
     })
     const launch = useAgentLaunch()
     await launch.open(MINE)
@@ -1393,7 +1422,8 @@ describe('the launch-failure notice (#635)', () => {
     await launch.submit()
 
     expect(launch.state.value.failure).toBeNull()
-    expect(launch.state.value.error).toBe('The demo cannot launch agents.')
+    expect(launch.state.value.error).toBe('The agent could not be started.')
+    expect(launch.state.value.prompt).toBe('dig')
   })
 
   // REMOVED for ISSUE-001, stated rather than passing unseen (docs/test-removals.md): the 'a held session that stopped
