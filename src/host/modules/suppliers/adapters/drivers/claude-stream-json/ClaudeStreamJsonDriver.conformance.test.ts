@@ -43,6 +43,14 @@ import { buildArgv } from './argv'
 import { capabilitiesFromHelp, SPIKE_RECORDS } from './capabilities'
 import { ClaudeStreamJsonDriver } from './ClaudeStreamJsonDriver'
 import type { McpConfigFiles } from './mcpConfigFile'
+import type {
+  PromptToolCall,
+  PromptToolHandler,
+  PromptToolRelay,
+  PromptToolScope,
+  PromptToolSessions
+} from './promptTool'
+import type { DelegationInjection } from '../../../ports/providerDriver'
 
 const FIXTURE_ROOT = new URL('../../../../../../../fixtures/claude/stream-json/', import.meta.url)
 const RECORDED = fileURLToPath(new URL('2.1.x/', FIXTURE_ROOT))
@@ -81,6 +89,53 @@ class RecordingMcpConfigFiles implements McpConfigFiles {
   }
 }
 
+/**
+ * Both halves of the prompt tool as a test drives them (AMENDMENT-21): the relay entry every
+ * launch is issued (`fail`: none can be), and the handler each session registers, called as the
+ * relay's `permission` tool would.
+ */
+class RecordingPromptTools implements PromptToolSessions, PromptToolRelay {
+  readonly handlers = new Map<string, PromptToolHandler>()
+  /** Every registration's scope, in order: `[launchId, delegationGated]`. */
+  readonly scopes: Array<[string, boolean]> = []
+  readonly issued: string[] = []
+  readonly released: string[] = []
+  fail = false
+
+  register(launchId: string, scope: PromptToolScope, handler: PromptToolHandler): () => void {
+    this.scopes.push([launchId, scope.delegationGated])
+    this.handlers.set(launchId, handler)
+    return () => {
+      if (this.handlers.get(launchId) === handler) this.handlers.delete(launchId)
+    }
+  }
+
+  async issue(launchId: string): Promise<DelegationInjection | null> {
+    this.issued.push(launchId)
+    if (this.fail) return null
+    return {
+      mechanism: 'ticket-file',
+      relay: { program: '/opt/dwarfai/host/dwarfai', args: ['dwarfai-mcp-relay'] },
+      credentialFilePath: `/home/j/.dwarfai/run/mcp/${launchId}.cred`
+    }
+  }
+
+  async release(launchId: string): Promise<void> {
+    this.released.push(launchId)
+  }
+
+  /** The relay's `permission` call for `launchId`'s session. */
+  ask(
+    launchId: string,
+    call: PromptToolCall,
+    signal: AbortSignal = new AbortController().signal
+  ): Promise<'allow' | 'deny'> {
+    const handler = this.handlers.get(launchId)
+    if (handler === undefined) throw new Error(`no session registered for ${launchId}`)
+    return handler(call, signal)
+  }
+}
+
 /** Ids as the Host minted them in a recording: `first` for the session, then the sequence. */
 class RecordedIds implements IdGenerator {
   private readonly rest = new SequenceIdGenerator()
@@ -95,9 +150,20 @@ class RecordedIds implements IdGenerator {
   }
 }
 
-function factoryWith(shared?: McpConfigFiles, ids?: () => IdGenerator): DriverFactory {
+/** What a fresh driver reads of the stored launch record to resume (ISSUE-173). */
+type ResumeContextLookup = NonNullable<
+  ConstructorParameters<typeof ClaudeStreamJsonDriver>[0]['resumeContext']
+>
+
+function factoryWith(
+  shared?: McpConfigFiles,
+  ids?: () => IdGenerator,
+  prompts?: RecordingPromptTools,
+  resumeContext?: ResumeContextLookup
+): DriverFactory {
   return (rig: ConformanceRig) => {
     const files = shared ?? new RecordingMcpConfigFiles()
+    const tools = prompts ?? new RecordingPromptTools()
     const resolver = new FakeInstallResolver()
     resolver.install('claude', { path: INSTALL.binaryPath, version: '2.1.x' })
     return new ClaudeStreamJsonDriver({
@@ -115,13 +181,20 @@ function factoryWith(shared?: McpConfigFiles, ids?: () => IdGenerator): DriverFa
       home: '/home/j',
       platform: 'linux',
       mcpConfig: { dir: MCP_DIR, files },
-      redact: (text) => text
+      promptTool: { sessions: tools, relay: tools },
+      redact: (text) => text,
+      ...(resumeContext === undefined ? {} : { resumeContext })
     })
   }
 }
 
+// AMENDMENT-21 (owner, 2026-10-17) serves the prompt tool, but its asks never cross the stdio
+// transport these harness cases script: they arrive as calls of the relay's `permission` tool. The
+// harness launch is unprobed, so its effective permission is the fail-closed none (only the probe
+// opens interactive, SP-08), and the prompt-tool asks run as this driver's own C-06, C-07 and C-13
+// cases ("permission prompt tool" below). A harness step that calls the prompt tool is a follow-up.
 const NO_ASK =
-  'permission and question are none: SP-08 proved the prompt-tool channel on 2.1.301, but the Host serves no ask route for mcp__dwarfai__permission yet, so no ask can open (hidden until built, 21 §1 item 8); questions stay disabled with --disallowedTools AskUserQuestion (ADR-009 D4)'
+  'the prompt-tool asks do not cross the stdio transport the harness scripts, and the unprobed harness launch keeps permission at its fail-closed none; they run as this driver’s own prompt-tool cases (AMENDMENT-21). Questions stay disabled with --disallowedTools AskUserQuestion (ADR-009 D4)'
 
 const OPTIONS: ConformanceOptions = {
   ceiling: CLAUDE.ceiling,
@@ -185,10 +258,11 @@ async function againstExpected(name: string, factory = factoryWith()): Promise<s
 
 async function launched(
   plan: { delegation?: boolean } = {},
-  files = new RecordingMcpConfigFiles()
+  files = new RecordingMcpConfigFiles(),
+  prompts = new RecordingPromptTools()
 ): Promise<{ run: Run; files: RecordingMcpConfigFiles }> {
   const run = await runScript(
-    factoryWith(files),
+    factoryWith(files, undefined, prompts),
     [{ do: 'launch' }, { do: 'transportLost' }],
     { variant: variantOf('s0201-readiness'), ...plan },
     OPTIONS
@@ -285,7 +359,10 @@ function processesOf(
 /** One SP-15 run: launch over the first process, then resume over `resumedProcess`. */
 async function resumedRun(
   variant: FixtureVariant,
-  resumedProcess: number
+  resumedProcess: number,
+  prompts = new RecordingPromptTools(),
+  /** Resume through a new driver instance (a restarted Host) with this record lookup. */
+  fresh?: { resumeContext?: ResumeContextLookup }
 ): Promise<{
   /** Per session (the launched one, then the resumed one): its own events, in order. */
   events: [DriverEvent[], DriverEvent[]]
@@ -314,7 +391,8 @@ async function resumedRun(
   })
   const driver = factoryWith(
     undefined,
-    () => new RecordedIds(RECORDED_SESSION)
+    () => new RecordedIds(RECORDED_SESSION),
+    prompts
   )({
     clock,
     scheduler,
@@ -344,9 +422,34 @@ async function resumedRun(
   transports[0]?.eof()
   await settle()
   let resumed: DriverSession | null = null
-  void driver.resume(session.ref).then((value) => {
-    resumed = value
-  })
+  let rejected: unknown = null
+  const resumer =
+    fresh === undefined
+      ? driver
+      : (factoryWith(
+          undefined,
+          () => new RecordedIds(RECORDED_SESSION),
+          prompts,
+          fresh.resumeContext
+        )({
+          clock,
+          scheduler,
+          processControl: spawn,
+          loginEnv: LOGIN_ENV
+        }) as ClaudeStreamJsonDriver)
+  void resumer
+    .resume({
+      providerId: session.ref.providerId,
+      providerSessionId: session.ref.providerSessionId
+    })
+    .then(
+      (value) => {
+        resumed = value
+      },
+      (error: unknown) => {
+        rejected = error
+      }
+    )
   await settle()
   clock.advance(2_999)
   await settle()
@@ -354,7 +457,14 @@ async function resumedRun(
   clock.advance(1)
   await settle()
   if (resumed === null) {
-    return { events: [launchedEvents, []], outcomes: [], sent: [], spawn, session, resumed: null }
+    return {
+      events: [launchedEvents, []],
+      outcomes: rejected === null ? [] : [{ rejected }],
+      sent: [],
+      spawn,
+      session,
+      resumed: null
+    }
   }
   const ready = resumed as DriverSession
   drain(ready, resumedEvents)
@@ -443,10 +553,16 @@ describe('ClaudeStreamJsonDriver', () => {
     expect(claude?.env).not.toHaveProperty('DWARFAI_DELEGATION_TOKEN')
     // The file lives only as long as the session: it is removed once the session exited.
     expect(files.removed).toEqual([config])
-    // Without a gated delegation there is no file and no --mcp-config.
+    // AMENDED by AMENDMENT-21 (owner, 2026-10-17; was: "Without a gated delegation there is no
+    // file and no --mcp-config"): the relay also serves the permission prompt tool, so a launch
+    // without a gated delegation carries the entry too, with the path only and no pre-approval.
     const plain = await launched()
-    expect(plain.files.written.size).toBe(0)
-    expect(plain.run.spawn.spawns[0]?.args).not.toContain('--mcp-config')
+    expect([...plain.files.written.keys()]).toEqual([config])
+    expect(plain.files.written.get(config)).not.toContain(CANARY_TOKEN)
+    expect(plain.run.spawn.spawns[0]?.args).toContain('--mcp-config')
+    expect(plain.run.spawn.spawns[0]?.args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(
+      false
+    )
   })
 
   it('[C-24] no forbidden flag appears in any argv the driver builds, dangerously-skip-permissions included', async () => {
@@ -553,7 +669,11 @@ describe('ClaudeStreamJsonDriver', () => {
       '--permission-prompt-tool',
       'mcp__dwarfai__permission',
       '--disallowedTools',
-      'AskUserQuestion'
+      'AskUserQuestion',
+      // AMENDED by AMENDMENT-21 (owner, 2026-10-17): every launch carries the relay entry that
+      // serves the prompt tool (was: no --mcp-config without a gated delegation).
+      '--mcp-config',
+      `${MCP_DIR}/launch-1.mcp.json`
     ])
     expect(run.session?.capabilities.question).toBe('none')
     expect(run.session?.capabilities.permission).toBe('none')
@@ -609,6 +729,38 @@ describe('ClaudeStreamJsonDriver', () => {
     expect(live.outcomes[1]).toEqual({
       rejected: { reason: 'resume-error', detail: expect.any(String) }
     })
+  })
+
+  it('[C-16, SP-15, S4.16] a fresh driver instance resumes a stored session from the launch record lookup, in its folder and with its spawn tag', async () => {
+    const variant = fixture('sp15-resume').variants[0] as FixtureVariant
+    const asked: string[] = []
+    const run = await resumedRun(variant, 1, undefined, {
+      resumeContext: (ref) => {
+        asked.push(ref.providerSessionId)
+        return ref.providerSessionId === RECORDED_SESSION
+          ? { cwd: '/work/stored-mine', spawnTag: 'v1:install-173:launch-1:epoch-2' }
+          : null
+      }
+    })
+    expect(run.outcomes).not.toContainEqual(
+      expect.objectContaining({ rejected: expect.anything() })
+    )
+    expect(run.resumed?.ref).toMatchObject({ providerSessionId: RECORDED_SESSION })
+    expect(asked).toEqual([RECORDED_SESSION])
+    const spawned = run.spawn.spawns[1]
+    expect(spawned?.cwd).toBe('/work/stored-mine')
+    expect(spawned?.env.DWARFAI_SPAWN).toBe('v1:install-173:launch-1:epoch-2')
+    expect(spawned?.args[(spawned?.args.indexOf('--resume') ?? 0) + 1]).toBe(RECORDED_SESSION)
+
+    // No lookup, or a lookup that knows nothing of the session: a resume-error, nothing spawned.
+    for (const fresh of [{}, { resumeContext: () => null }]) {
+      const unknown = await resumedRun(variant, 1, undefined, fresh)
+      expect(unknown.resumed).toBeNull()
+      expect(unknown.outcomes).toEqual([
+        { rejected: { reason: 'resume-error', detail: expect.any(String) } }
+      ])
+      expect(unknown.spawn.spawns).toHaveLength(1)
+    }
   })
 
   it('[C-16, SP-15] a launched session keeps resume cli-flag through the Claude ceiling (AMENDMENT-18)', async () => {
@@ -740,5 +892,444 @@ describe('ClaudeStreamJsonDriver', () => {
       })
     ).rejects.toEqual({ kind: 'channel-error', reason: expect.any(String) })
     expect(run.transports[0]?.sent).toHaveLength(1)
+  })
+})
+
+// ---------- the delegation entry (ISSUE-201 "Tests to write FIRST" item 1) ----------
+
+/** The hand-written parts of `gated-delegation-launch.expected.json` that the harness does not read. */
+interface GatedExpected {
+  readonly launchArgv: readonly string[]
+  readonly mcpConfigFile: { readonly path: string; readonly content: Json }
+}
+
+const GATED = 'gated-delegation-launch'
+const gatedExpected = fixture(GATED).expected as unknown as GatedExpected
+/** The two tools DwarfAI's relay serves, as Claude names them under the `dwarfai` entry. */
+const JEV_TOOLS = 'mcp__dwarfai__delegate_subtask,mcp__dwarfai__subtask_result'
+
+/** One run of the gated launch fixture per variant, each over its own file store. */
+async function gatedRuns(
+  extra: { do: 'transportLost' }[] = []
+): Promise<{ label: string; run: Run; files: RecordingMcpConfigFiles; failures: string[] }[]> {
+  const own = fixture(GATED)
+  const out = []
+  for (const variant of own.variants) {
+    const files = new RecordingMcpConfigFiles()
+    const run = await runScript(
+      factoryWith(files),
+      [...own.expected.script, ...extra],
+      { variant },
+      OPTIONS
+    )
+    const failures = [
+      ...run.failures,
+      ...compareEvents(run.events, own.expected.events ?? [], run.bindings),
+      ...differences(run.outcomes[0], bind(own.expected.outcomes?.[0] ?? null, run.bindings), '#0'),
+      ...differences(run.sent, bind(own.expected.sent ?? [], run.bindings), 'sent')
+    ]
+    out.push({ label: variant.label, run, files, failures })
+  }
+  return out
+}
+
+/** Every text a captured process or the mcp-config file holds: argv, env values, file contents. */
+function capturedTexts(run: Run, files: RecordingMcpConfigFiles): string[] {
+  return [
+    ...run.spawn.spawns.flatMap((spawn) => [
+      spawn.executable,
+      ...spawn.args,
+      ...Object.entries(spawn.env).flat()
+    ]),
+    ...files.written.values()
+  ]
+}
+
+describe('ClaudeStreamJsonDriver delegation entry', () => {
+  it('[C-23, INV-59, INV-83] a gated delegation launch puts no credential and no DWARFAI_DELEGATION_TOKEN string in any captured argv, env or the mcp-config file; the file holds only the relay command and the credential-file path', async () => {
+    for (const { label, run, files, failures } of await gatedRuns()) {
+      expect(failures, label).toEqual([])
+      expect(
+        run.spawn.spawns.map((spawn) => spawn.args),
+        label
+      ).toEqual([gatedExpected.launchArgv])
+      expect([...files.written.keys()], label).toEqual([gatedExpected.mcpConfigFile.path])
+      const text = files.written.get(gatedExpected.mcpConfigFile.path) ?? ''
+      expect(JSON.parse(text), label).toEqual(gatedExpected.mcpConfigFile.content)
+      for (const captured of capturedTexts(run, files)) {
+        expect(captured, label).not.toContain(CANARY_TOKEN)
+        expect(captured, label).not.toContain('DWARFAI_DELEGATION_TOKEN')
+      }
+    }
+  })
+
+  it("[C-23] DWARFAI_SPAWN is in the claude child's env and ELECTRON_RUN_AS_NODE and DWARFAI_MCP_CREDENTIAL_FILE are only in the relay entry's env", async () => {
+    for (const { label, run, files } of await gatedRuns()) {
+      const [claude, ...others] = run.spawn.spawns
+      expect(others, label).toEqual([])
+      expect(claude?.env.DWARFAI_SPAWN, label).toBe('v1:conformance:launch-1:1')
+      for (const name of ['ELECTRON_RUN_AS_NODE', 'DWARFAI_MCP_CREDENTIAL_FILE']) {
+        expect(claude?.env, `${label} ${name}`).not.toHaveProperty(name)
+        expect(claude?.args.join(' '), `${label} ${name}`).not.toContain(name)
+      }
+      const config = JSON.parse(files.written.get(gatedExpected.mcpConfigFile.path) ?? '{}') as {
+        mcpServers: Record<string, { env: Record<string, string> }>
+      }
+      expect(Object.keys(config.mcpServers), label).toEqual(['dwarfai'])
+      expect(Object.keys(config.mcpServers.dwarfai?.env ?? {}).sort(), label).toEqual([
+        'DWARFAI_MCP_CREDENTIAL_FILE',
+        'ELECTRON_RUN_AS_NODE'
+      ])
+    }
+  })
+
+  it('[C-24] a launch without both gates has no Jev entry and no pre-approval, and no launch carries a forbidden flag', async () => {
+    // Without both gates `issueFor` gives no entry (ADR-013 item 4): the request carries none.
+    // AMENDED by AMENDMENT-21 (owner, 2026-10-17; was: no file and no --mcp-config): the launch
+    // still carries the relay entry the prompt tool needs, but never the pre-approval.
+    const ungated = await launched()
+    const [plain] = ungated.run.spawn.spawns
+    expect(ungated.files.written.size).toBe(1)
+    expect(plain?.args).toContain('--mcp-config')
+    expect(plain?.args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(false)
+    expect(plain?.args.join(' ')).not.toMatch(/delegate_subtask|subtask_result/)
+    // With both gates on, exactly the two DwarfAI tools are pre-approved, nothing else.
+    const [first] = await gatedRuns()
+    const args: readonly string[] = first?.run.spawn.spawns[0]?.args ?? []
+    const allowed = args.flatMap((arg, index) =>
+      /^--allowed-?tools/i.test(arg) ? [args[index + 1] ?? ''] : []
+    )
+    expect(allowed).toEqual([JEV_TOOLS])
+    for (const argv of [plain?.args ?? [], args]) {
+      for (const flag of FORBIDDEN_FLAGS) {
+        expect(argv.join(' ').toLowerCase()).not.toContain(flag.toLowerCase())
+      }
+    }
+    // A permission mode cannot smuggle the pre-approval into an ungated launch.
+    expect(() =>
+      buildArgv({
+        kind: 'launch',
+        sessionId: SESSION,
+        mcpConfigPath: null,
+        policyArgv: ['--allowedTools', JEV_TOOLS]
+      })
+    ).toThrow(/forbidden/)
+  })
+
+  it("[C-24, INV-81] a delegated worker's launch, which issueFor gives no delegation entry, has no Jev entry and no pre-approval", async () => {
+    // Depth 1 (ADR-013 item 4): a worker's request carries `delegation: null`, like an ungated one.
+    // AMENDED by AMENDMENT-21 (owner, 2026-10-17; was: no file and no --mcp-config): a worker's
+    // launch carries the relay entry for its prompt tool; the pre-approval stays absent.
+    const { run, files } = await launched({ delegation: false })
+    expect(files.written.size).toBe(1)
+    const args = run.spawn.spawns[0]?.args ?? []
+    expect(args).toContain('--mcp-config')
+    expect(args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(false)
+    expect(args.join(' ')).not.toMatch(/delegate_subtask|subtask_result/)
+  })
+
+  it('[ADR-013] the --mcp-config file is deleted when the session ends', async () => {
+    for (const { label, files } of await gatedRuns([{ do: 'transportLost' }])) {
+      expect(files.removed, label).toEqual([gatedExpected.mcpConfigFile.path])
+    }
+    // A launch whose spawn fails after the file was written removes it too.
+    const files = new RecordingMcpConfigFiles()
+    const failed = await runScript(
+      factoryWith(files),
+      fixture(GATED).expected.script,
+      { variant: null, spawn: () => ({ kind: 'fail', code: 'EACCES' }) },
+      OPTIONS
+    )
+    expect(failed.outcomes[0]).toMatchObject({ rejected: { cause: 'could-not-start' } })
+    expect([...files.written.keys()]).toEqual([gatedExpected.mcpConfigFile.path])
+    expect(files.removed).toEqual([gatedExpected.mcpConfigFile.path])
+  })
+})
+
+// ---------- the permission prompt tool (AMENDMENT-21, owner-approved 2026-10-17) ----------
+
+/** A prompt as the relay's `permission` tool hands it over (the SP-08 call's shape). */
+const PROMPT: PromptToolCall = {
+  toolName: 'Write',
+  input: { file_path: '/work/mine/marker.txt', content: 'marker' },
+  toolUseId: 'toolu_01'
+}
+
+/** A live launched session over the readiness recording, and its prompt tools. */
+async function livePrompted(prompts = new RecordingPromptTools()): Promise<{
+  run: Run
+  session: DriverSession
+  prompts: RecordingPromptTools
+}> {
+  const run = await runScript(
+    factoryWith(undefined, undefined, prompts),
+    [{ do: 'launch' }],
+    { variant: variantOf('s0201-readiness') },
+    OPTIONS
+  )
+  if (run.session === null) throw new Error(`no session: ${JSON.stringify(run.outcomes)}`)
+  return { run, session: run.session, prompts }
+}
+
+/** Tracks a promise's settlement without awaiting it. */
+function watch<T>(promise: Promise<T>): { settled: boolean; value?: T } {
+  const seen: { settled: boolean; value?: T } = { settled: false }
+  void promise.then((value) => Object.assign(seen, { settled: true, value }))
+  return seen
+}
+
+const asksOf = (run: Run): DriverEvent[] =>
+  run.events.filter((event) => event.t === 'ask.opened' || event.t === 'ask.resolved')
+
+describe('ClaudeStreamJsonDriver permission prompt tool (AMENDMENT-21)', () => {
+  it('[C-23, ADR-013] a launch without the delegation gates still carries the relay --mcp-config entry: the credential file path only, and no pre-approval', async () => {
+    const prompts = new RecordingPromptTools()
+    const { run, files } = await launched({}, new RecordingMcpConfigFiles(), prompts)
+    const config = `${MCP_DIR}/launch-1.mcp.json`
+
+    expect(prompts.issued).toEqual(['launch-1'])
+    expect([...files.written.keys()]).toEqual([config])
+    expect(JSON.parse(files.written.get(config) ?? '{}')).toEqual({
+      mcpServers: {
+        dwarfai: {
+          command: '/opt/dwarfai/host/dwarfai',
+          args: ['dwarfai-mcp-relay'],
+          env: {
+            ELECTRON_RUN_AS_NODE: '1',
+            DWARFAI_MCP_CREDENTIAL_FILE: '/home/j/.dwarfai/run/mcp/launch-1.cred'
+          }
+        }
+      }
+    })
+    const args = run.spawn.spawns[0]?.args ?? []
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe(config)
+    expect(args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(false)
+    for (const captured of capturedTexts(run, files)) expect(captured).not.toContain(CANARY_TOKEN)
+    // A gated launch reuses its own entry: no second credential is issued.
+    const gated = new RecordingPromptTools()
+    await launched({ delegation: true }, new RecordingMcpConfigFiles(), gated)
+    expect(gated.issued).toEqual([])
+  })
+
+  it('[C-24] the permission tool is never pre-approved: a gated launch allows exactly the two delegation tools, and no argv may name it', async () => {
+    const [first] = await gatedRuns()
+    const args: readonly string[] = first?.run.spawn.spawns[0]?.args ?? []
+    const allowed = args.flatMap((arg, index) =>
+      /^--allowed-?tools/i.test(arg) ? [args[index + 1] ?? ''] : []
+    )
+    expect(allowed).toEqual([JEV_TOOLS])
+    expect(allowed.join(',')).not.toContain('mcp__dwarfai__permission')
+    for (const delegationGateOn of [false, true]) {
+      expect(() =>
+        buildArgv({
+          kind: 'launch',
+          sessionId: SESSION,
+          mcpConfigPath: `${MCP_DIR}/launch-1.mcp.json`,
+          delegationGateOn,
+          policyArgv: ['--allowedTools', 'mcp__dwarfai__permission']
+        })
+      ).toThrow(/forbidden/)
+    }
+  })
+
+  it('[C-06, ADR-010] a prompt-tool call opens one driver ask for its tool use, and an Allow settles the call allow and is accepted', async () => {
+    const { run, session, prompts } = await livePrompted()
+    const sentBefore = run.transports[0]?.sent.length
+
+    const call = watch(prompts.ask('launch-1', PROMPT))
+    await settle()
+
+    expect(asksOf(run)).toEqual([
+      {
+        t: 'ask.opened',
+        ask: {
+          kind: 'permission',
+          providerRequestId: 'toolu_01',
+          channel: 'driver',
+          payload: { toolName: 'Write', requestText: '/work/mine/marker.txt' },
+          options: { hasAllowOnce: true, hasRejectOnce: true }
+        }
+      }
+    ])
+    expect(call.settled).toBe(false)
+    expect(
+      await session.answerPermission({ providerRequestId: 'toolu_01', decision: 'allow' })
+    ).toEqual({ kind: 'accepted' })
+    await settle()
+    expect(call).toEqual({ settled: true, value: 'allow' })
+    // The answer goes back through the prompt tool, never on claude's stdin.
+    expect(run.transports[0]?.sent.length).toBe(sentBefore)
+  })
+
+  it('[C-07, ADR-010] a Deny settles the call deny, is accepted and does not end the turn', async () => {
+    const { run, session, prompts } = await livePrompted()
+    const call = watch(prompts.ask('launch-1', PROMPT))
+    await settle()
+    const at = run.events.length
+
+    expect(
+      await session.answerPermission({ providerRequestId: 'toolu_01', decision: 'deny' })
+    ).toEqual({ kind: 'accepted' })
+    await settle()
+
+    expect(call).toEqual({ settled: true, value: 'deny' })
+    expect(run.events.slice(at).filter((event) => event.t === 'turn.ended')).toEqual([])
+  })
+
+  it('[C-13, ADR-010] the first answer wins: a second or stale answer is refused ask-closed and the call keeps the first', async () => {
+    const { session, prompts } = await livePrompted()
+    const call = watch(prompts.ask('launch-1', PROMPT))
+    await settle()
+
+    const first = session.answerPermission({ providerRequestId: 'toolu_01', decision: 'allow' })
+    const second = session.answerPermission({ providerRequestId: 'toolu_01', decision: 'deny' })
+
+    expect(await first).toEqual({ kind: 'accepted' })
+    expect(await second).toEqual({ kind: 'refused', reason: 'ask-closed' })
+    await settle()
+    expect(call).toEqual({ settled: true, value: 'allow' })
+    expect(
+      await session.answerPermission({ providerRequestId: 'never-asked', decision: 'allow' })
+    ).toEqual({ kind: 'refused', reason: 'ask-closed' })
+  })
+
+  it('[ADR-010] a cancelled call resolves its ask cancelled and denies; an answer after it is ask-closed', async () => {
+    const { run, session, prompts } = await livePrompted()
+    const abort = new AbortController()
+    const call = watch(prompts.ask('launch-1', PROMPT, abort.signal))
+    await settle()
+
+    abort.abort()
+    await settle()
+
+    expect(call).toEqual({ settled: true, value: 'deny' })
+    expect(asksOf(run).at(-1)).toEqual({
+      t: 'ask.resolved',
+      providerRequestId: 'toolu_01',
+      by: 'cancelled'
+    })
+    expect(
+      await session.answerPermission({ providerRequestId: 'toolu_01', decision: 'allow' })
+    ).toEqual({ kind: 'refused', reason: 'ask-closed' })
+    // A call already cancelled when it arrives opens no ask.
+    const late = new AbortController()
+    late.abort()
+    expect(await prompts.ask('launch-1', { ...PROMPT, toolUseId: 'toolu_02' }, late.signal)).toBe(
+      'deny'
+    )
+    expect(asksOf(run)).toHaveLength(2)
+  })
+
+  it('[ADR-010, ADR-013] the session ending with an ask open denies the call and unregisters its launch', async () => {
+    const { run, session, prompts } = await livePrompted()
+    expect([...prompts.handlers.keys()]).toEqual(['launch-1'])
+    const call = watch(prompts.ask('launch-1', PROMPT))
+    await settle()
+
+    for (const transport of run.transports) transport.eof()
+    await settle()
+
+    expect(call).toEqual({ settled: true, value: 'deny' })
+    expect(prompts.handlers.size).toBe(0)
+    expect(
+      await session.answerPermission({ providerRequestId: 'toolu_01', decision: 'allow' })
+    ).toEqual({ kind: 'refused', reason: 'ask-closed' })
+  })
+
+  it('[ADR-013, C-02] a relay that cannot be issued fails the launch could-not-start before any spawn', async () => {
+    const prompts = new RecordingPromptTools()
+    prompts.fail = true
+    const run = await runScript(
+      factoryWith(undefined, undefined, prompts),
+      [{ do: 'launch' }],
+      { variant: variantOf('s0201-readiness') },
+      OPTIONS
+    )
+
+    expect(run.outcomes[0]).toMatchObject({ rejected: { cause: 'could-not-start' } })
+    expect(run.spawn.spawns).toEqual([])
+    expect(prompts.handlers.size).toBe(0)
+  })
+
+  it('[C-16, ADR-013] a resume carries the relay entry again in a file of its own and takes its launch prompts', async () => {
+    const prompts = new RecordingPromptTools()
+    const resumed = await resumedRun(
+      fixture('sp15-resume').variants[0] as FixtureVariant,
+      1,
+      prompts
+    )
+    const args = resumed.spawn.spawns[1]?.args ?? []
+
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe(`${MCP_DIR}/launch-1.resume-1.mcp.json`)
+    expect(args.some((arg) => /^--allowed-?tools/i.test(arg))).toBe(false)
+    expect(prompts.issued).toEqual(['launch-1'])
+    expect([...prompts.handlers.keys()]).toEqual(['launch-1'])
+    void prompts.ask('launch-1', PROMPT)
+    await settle()
+    expect(
+      await resumed.resumed?.answerPermission({ providerRequestId: 'toolu_01', decision: 'deny' })
+    ).toEqual({ kind: 'accepted' })
+  })
+
+  it('[SP-08, C-26] permission is interactive once the probe sees the prompt tool with SP-08 passed, and none otherwise', () => {
+    expect(capabilitiesFromHelp(HELP_2_1_301, SPIKE_RECORDS).permission).toBe('interactive')
+    expect(capabilitiesFromHelp(null, SPIKE_RECORDS).permission).toBe('none')
+    expect(capabilitiesFromHelp(HELP_WITHOUT_FLAG, SPIKE_RECORDS).permission).toBe('none')
+    expect(capabilitiesFromHelp(HELP_2_1_301, { ...SPIKE_RECORDS, sp08: false }).permission).toBe(
+      'none'
+    )
+  })
+
+  it('[ADR-013, INV-80] a session registers the delegation gate of its launch: false ungated, true gated, and a resume keeps its launch gate', async () => {
+    const ungated = new RecordingPromptTools()
+    await launched({}, new RecordingMcpConfigFiles(), ungated)
+    const gated = new RecordingPromptTools()
+    await launched({ delegation: true }, new RecordingMcpConfigFiles(), gated)
+    const resumed = new RecordingPromptTools()
+    await resumedRun(fixture('sp15-resume').variants[0] as FixtureVariant, 1, resumed)
+
+    expect(ungated.scopes).toEqual([['launch-1', false]])
+    expect(gated.scopes).toEqual([['launch-1', true]])
+    expect(resumed.scopes).toEqual([
+      ['launch-1', false],
+      ['launch-1', false]
+    ])
+  })
+
+  it('[ADR-013, INV-83] a launch that fails to start releases the prompt relay credential it was issued, never a gated request entry', async () => {
+    const failSpawn = { variant: null, spawn: () => ({ kind: 'fail', code: 'EACCES' }) as const }
+    const spawnFailed = new RecordingPromptTools()
+    const run = await runScript(
+      factoryWith(undefined, undefined, spawnFailed),
+      [{ do: 'launch' }],
+      failSpawn,
+      OPTIONS
+    )
+    expect(run.outcomes[0]).toMatchObject({ rejected: { cause: 'could-not-start' } })
+    expect(spawnFailed.released).toEqual(['launch-1'])
+
+    // An error result before system/init: the process ran but the launch never became ready.
+    const early = new RecordingPromptTools()
+    await runScript(
+      factoryWith(undefined, undefined, early),
+      fixture('s0201-early-exit').expected.script,
+      { variant: variantOf('s0201-early-exit') },
+      OPTIONS
+    )
+    expect(early.released).toEqual(['launch-1'])
+
+    // A gated request's entry is the delegation lifecycle's to revoke (its revokeLaunch).
+    const gated = new RecordingPromptTools()
+    await runScript(
+      factoryWith(undefined, undefined, gated),
+      [{ do: 'launch', delegation: true }],
+      failSpawn,
+      OPTIONS
+    )
+    expect(gated.released).toEqual([])
+    // A launch that started keeps its credential: it is revoked when its dwarf departs.
+    const started = new RecordingPromptTools()
+    await launched({}, new RecordingMcpConfigFiles(), started)
+    expect(started.released).toEqual([])
   })
 })

@@ -72,7 +72,7 @@ export const WINDOW_API_MEMBERS = {
   onTypographyPreferences: 'push',
   pathForDroppedFile: 'helper',
   setDwarfName: 'invoke',
-  resetDwarfName: 'invoke',
+  resetDwarfNameToday: 'invoke',
   reportRendererDiagnostic: 'send',
   onStopEverythingRequested: 'push',
   confirmStopEverything: 'invoke',
@@ -94,7 +94,11 @@ export const WINDOW_API_MEMBERS = {
   setClaudeHooksEnabled: 'invoke',
   setAskStep: 'invoke',
   answerWelcome: 'invoke',
-  stopDwarf: 'invoke'
+  stopDwarf: 'invoke',
+  renameDwarf: 'invoke',
+  resetDwarfName: 'invoke',
+  retryRecovery: 'invoke',
+  dismissRecovery: 'invoke'
 } as const satisfies Record<keyof DwarfAiMinersApi, WindowApiMemberKind>
 
 const MEMBERS: Readonly<Record<string, WindowApiMemberKind>> = WINDOW_API_MEMBERS

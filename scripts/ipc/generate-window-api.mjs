@@ -99,7 +99,8 @@ const MEMBERS = {
   'typography:preferences:changed': 'onTypographyPreferences',
   pathForDroppedFile: 'pathForDroppedFile',
   'dwarf:setName': 'setDwarfName',
-  'dwarf:resetName': 'resetDwarfName',
+  // 14 §8 I-21's legacy reset: renamed so it never shares `resetDwarfName` with its successor A-N09 (ISSUE-172)
+  'dwarf:resetName': 'resetDwarfNameToday',
   // NEW rows of 14 §2.2
   'diag:renderer:report': 'reportRendererDiagnostic', // A-N30
   'tray:stopEverything:requested': 'onStopEverythingRequested', // A-N25
@@ -122,7 +123,11 @@ const MEMBERS = {
   'claude:hooks:set': 'setClaudeHooksEnabled', // A-N31 (unrouted until cut 2)
   'ask:step:set': 'setAskStep', // A-N07 (unrouted until cut 2)
   'welcome:answer': 'answerWelcome', // A-N32 (unrouted until cut 2)
-  'dwarf:stop': 'stopDwarf' // A-N29 (unrouted until cut 3a)
+  'dwarf:stop': 'stopDwarf', // A-N29 (unrouted until cut 3a)
+  'dwarf:rename': 'renameDwarf', // A-N08
+  'dwarf:name:reset': 'resetDwarfName', // A-N09
+  'host:recovery:retry': 'retryRecovery', // A-N10 (unrouted until cut 3a)
+  'host:recovery:dismiss': 'dismissRecovery' // A-N11 (unrouted until cut 3a)
 }
 
 /**

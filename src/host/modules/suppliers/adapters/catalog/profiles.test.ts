@@ -4,7 +4,9 @@
 import { describe, expect, it } from 'vitest'
 import { childEnv } from '../drivers/shared/childEnv'
 import type { PermissionModeCatalog } from '../../domain/profile'
-import { CATALOG_RECORDS, publicLaunchOf } from './profiles'
+import type { CapabilityCeiling } from '../../domain/capabilities'
+import { merge } from '../../domain/mergeCapabilities'
+import { CATALOG_RECORDS, OPENCODE_ACP, publicLaunchOf } from './profiles'
 
 const claude = CATALOG_RECORDS.find((record) => record.profile.id === 'claude')
 
@@ -70,5 +72,25 @@ describe('the Codex catalog record', () => {
       CODEX_HOME: '/home/j/.codex-work',
       DWARFAI_SPAWN: 'v1:install:launch-1:epoch'
     })
+  })
+})
+
+const opencode = CATALOG_RECORDS.find((record) => record.profile.id === 'opencode')
+
+describe('the OpenCode catalog record', () => {
+  it('[FM-084, S-031-3, C-25] http-server then acp behind the opencode-permissions gate, and the acp entry runs opencode acp on row O2 within the ceiling', () => {
+    // ADR-009 D4: the server driver first (its probe reports launch false while S-031-3 has
+    // verified no protection), then the acp fallback, option (c).
+    expect(opencode?.profile.drivers).toEqual(['http-server', 'acp'])
+    expect(opencode?.profile.answerChannelGate).toBe('opencode-permissions')
+    expect(OPENCODE_ACP.agentArgs).toEqual(['acp'])
+    // 15 §4.7 (HR D8): no question channel; SP-12 (foreman ruling 2026-10-17): the path-only
+    // ticket-file relay entry for `opencode acp`.
+    expect(OPENCODE_ACP.row.question).toBe('none')
+    expect(OPENCODE_ACP.row.mcpInjection).toBe('ticket-file')
+    // The row is inside the ceiling: the ADR-009 D2 merge lowers none of its fields.
+    const ceiling = opencode?.ceiling as CapabilityCeiling
+    const row = { ...OPENCODE_ACP.row, resume: 'none' as const }
+    expect(merge(ceiling, row)).toEqual(row)
   })
 })

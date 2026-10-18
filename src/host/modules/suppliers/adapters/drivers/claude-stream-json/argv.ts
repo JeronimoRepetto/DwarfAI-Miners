@@ -2,7 +2,11 @@
 // `-p` print mode with stream-json in and out, the Host-assigned session id (or `--resume <id>`),
 // the model and effort, the pinned permission mode (AMENDMENT-19: `--permission-mode default` or
 // the DwarfAI permission mode's own value), DwarfAI's permission prompt tool, the question tool disallowed (ADR-009
-// D4, until SP-08), and the `--mcp-config` file when a delegation relay is injected. The prompt and
+// D4, until SP-08), and the `--mcp-config` file of the relay entry, which every launch and resume
+// carries because the relay serves the permission prompt tool (AMENDMENT-21), with the
+// pre-approval of DwarfAI's two delegation tools only on a launch both delegation gates let in
+// (ISSUE-201). The permission tool itself is never pre-approved: Claude calls it as its prompt
+// tool, and `assertNoForbidden` refuses any allowed-tools list that names it. The prompt and
 // every turn travel on stdin, never in argv (15 §1.2). Every argv goes through `assertNoForbidden`
 // (ADR-008 item 3, C-24), so the skip-permissions flag that `al@e631d18:chat.ts:471` passed (15
 // §4.2 Quirks: "dropped") can never be added, by this builder or by a permission mode's own argv.
@@ -14,6 +18,7 @@
 // no prompt tool and no forbidden-flag guard.
 import { HostInvariantError } from '../../../../../kernel/domain/errors'
 import { assertNoForbidden } from '../shared/forbiddenFlags'
+import { delegationToolIds } from '../shared/relayEntry'
 
 /** The MCP server name the relay is registered under in the `--mcp-config` file. */
 export const PERMISSION_SERVER = 'dwarfai'
@@ -31,8 +36,13 @@ const STREAM_JSON = [
   '--verbose'
 ]
 
-/** No delegation pre-approval is ever passed by this driver (ISSUE-201 owns the Jev entry). */
-const NO_DELEGATION_GATE = { subagentDelegationOn: false, launchedWithLetJevChoose: false }
+/**
+ * DwarfAI's two delegation tools (`delegationToolIds`), pre-approved only on a launch whose
+ * request carried a gated `DelegationInjection` (`delegationGateOn`, ISSUE-201).
+ */
+export const DELEGATION_TOOLS = delegationToolIds(PERMISSION_SERVER)
+const GATE_ON = { subagentDelegationOn: true, launchedWithLetJevChoose: true }
+const GATE_OFF = { subagentDelegationOn: false, launchedWithLetJevChoose: false }
 
 export interface ArgvInput {
   /** `launch`: `--session-id <id>` pre-assigned by the Host; `resume`: `--resume <id>`. */
@@ -40,8 +50,13 @@ export interface ArgvInput {
   readonly sessionId: string
   readonly model?: string
   readonly effort?: string
-  /** The Host-written `--mcp-config` file, when a delegation relay is injected (ADR-013 item 3). */
+  /** The Host-written `--mcp-config` file of the relay entry (ADR-013 item 3; AMENDMENT-21). */
   readonly mcpConfigPath: string | null
+  /**
+   * Both delegation gates let the launch in (its request carried a `DelegationInjection`): the
+   * two delegation tools are pre-approved. Absent or false: no pre-approval. Needs the file.
+   */
+  readonly delegationGateOn?: boolean
   /** The permission mode's own flags (ADR-011 item 1 `ProviderPolicy.argv`). */
   readonly policyArgv: readonly string[]
 }
@@ -59,6 +74,10 @@ const PERMISSION_MODE_FLAG = /^--permission-mode(?:=|$)/i
  * permission mode that does not ask, and when the policy sets the permission mode more than once.
  */
 export function buildArgv(input: ArgvInput): string[] {
+  const gateOn = input.delegationGateOn === true
+  if (gateOn && input.mcpConfigPath === null) {
+    throw new HostInvariantError('a delegation pre-approval without the relay --mcp-config entry')
+  }
   const policyModes = input.policyArgv.filter((arg) => PERMISSION_MODE_FLAG.test(arg)).length
   if (policyModes > 1) {
     throw new HostInvariantError(
@@ -78,8 +97,13 @@ export function buildArgv(input: ArgvInput): string[] {
     '--disallowedTools',
     QUESTION_TOOL,
     ...(input.mcpConfigPath === null ? [] : ['--mcp-config', input.mcpConfigPath]),
+    ...(gateOn ? ['--allowedTools', DELEGATION_TOOLS.join(',')] : []),
     ...input.policyArgv
   ]
-  assertNoForbidden(argv, {}, { delegationGate: NO_DELEGATION_GATE })
+  // The gate covers only the entry's own pre-approval: a permission mode's argv that names the two
+  // tools on an ungated launch is still refused, and any other allowed tool always is.
+  const delegationGate = gateOn ? GATE_ON : GATE_OFF
+  assertNoForbidden(argv.slice(0, argv.length - input.policyArgv.length), {}, { delegationGate })
+  assertNoForbidden(input.policyArgv, {}, { delegationGate: GATE_OFF })
   return argv
 }

@@ -6,13 +6,16 @@
 // behind in-process duplexes, over the crew application on its in-memory doubles (its own behaviour
 // is the L2 suite, modules/crew/application/rename.test.ts).
 //
-// TC-172-03 (seam-B half). The seam-A half (A-N08, A-N09) waits for its registry rows.
+// TC-172-03: B-M22, B-M23 and the A-N08 and A-N09 rows.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import {
+  CHANNELS,
+  ROW_IDS,
+  type ChannelSpec,
   HOST_FRAME_SCHEMAS,
   PROTOCOL_VERSION,
   resFrameSchema,
@@ -96,6 +99,14 @@ describe('crew.rename and crew.resetName params and result (14 §3.4, B-M22, B-M
     ]) {
       expect(rename.params.safeParse(invalid).success, JSON.stringify(invalid)).toBe(false)
     }
+    // The wire caps the raw text (ADR-019 fuzz; a package gap): far above 24 graphemes, so the Host
+    // still normalizes every text a person can type or paste into the field.
+    expect(
+      rename.params.safeParse({ dwarfId: DWARF, name: 'x'.repeat(256), requestId: REQUEST }).success
+    ).toBe(true)
+    expect(
+      rename.params.safeParse({ dwarfId: DWARF, name: 'x'.repeat(257), requestId: REQUEST }).success
+    ).toBe(false)
     expect(rename.result.safeParse({ ok: true, value: { customName: 'Gimli' } }).success).toBe(true)
     expect(rename.result.safeParse({ ok: true, value: { customName: null } }).success).toBe(true)
     expect(rename.result.safeParse({ ok: false, error: 'empty' }).success).toBe(true)
@@ -112,6 +123,69 @@ describe('crew.rename and crew.resetName params and result (14 §3.4, B-M22, B-M
     }
     expect(reset.result.safeParse({}).success).toBe(true)
     expect(reset.result.safeParse({ customName: null }).success).toBe(false)
+  })
+
+  it('[ADR-019] crew.rename and crew.resetName params are strict and A-N08 and A-N09 map to them', () => {
+    // A-N08 `renameDwarf` / `dwarf:rename` relays B-M22 unchanged (14 §1.2, §2.2): the same params, its
+    // result inside IpcResult.
+    const rename = HOST_METHOD_SCHEMAS['crew.rename']
+    const row = (CHANNELS as Record<string, ChannelSpec<z.ZodTypeAny, z.ZodTypeAny> | undefined>)[
+      'dwarf:rename'
+    ]
+    expect(row).toMatchObject({
+      name: 'dwarf:rename',
+      kind: 'invoke',
+      placement: 'host',
+      status: 'new'
+    })
+    expect(row?.request).toBe(rename.params)
+    expectTypeOf<
+      z.infer<(typeof CHANNELS)['dwarf:rename']['request']>
+    >().toEqualTypeOf<RenameDwarfParams>()
+    for (const result of [
+      { ok: true, value: { customName: 'Gimli' } },
+      { ok: true, value: { customName: null } },
+      { ok: false, error: 'empty' }
+    ]) {
+      expect(row?.response.safeParse({ ok: true, value: result }).success).toBe(true)
+    }
+    expect(row?.response.safeParse({ ok: true, value: { customName: 'Gimli' } }).success).toBe(
+      false
+    )
+    expect(row?.response.safeParse({ ok: false, error: 'empty' }).success).toBe(false)
+    expect(
+      row?.response.safeParse({
+        ok: false,
+        error: { code: 'INVALID_PARAMS', message: 'no', retryable: false }
+      }).success
+    ).toBe(true)
+    expect(ROW_IDS['dwarf:rename']).toBe('A-N08')
+
+    // A-N09 `resetDwarfName` / `dwarf:name:reset` relays B-M23 unchanged (14 §1.2, §2.2): the same params, and
+    // `IpcResult<void>` for B-M23's empty result.
+    const reset = HOST_METHOD_SCHEMAS['crew.resetName']
+    const resetRow = (
+      CHANNELS as Record<string, ChannelSpec<z.ZodTypeAny, z.ZodTypeAny> | undefined>
+    )['dwarf:name:reset']
+    expect(resetRow).toMatchObject({
+      name: 'dwarf:name:reset',
+      kind: 'invoke',
+      placement: 'host',
+      status: 'new'
+    })
+    expect(resetRow?.request).toBe(reset.params)
+    expectTypeOf<
+      z.infer<(typeof CHANNELS)['dwarf:name:reset']['request']>
+    >().toEqualTypeOf<ResetDwarfNameParams>()
+    expect(resetRow?.response.safeParse({ ok: true, value: undefined }).success).toBe(true)
+    expect(
+      resetRow?.response.safeParse({
+        ok: false,
+        error: { code: 'INVALID_PARAMS', message: 'no', retryable: false }
+      }).success
+    ).toBe(true)
+    expect(resetRow?.response.safeParse({ ok: false, error: 'empty' }).success).toBe(false)
+    expect(ROW_IDS['dwarf:name:reset']).toBe('A-N09')
   })
 })
 

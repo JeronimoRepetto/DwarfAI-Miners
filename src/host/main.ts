@@ -115,7 +115,13 @@ import { SqliteAskRepository } from './modules/asking/adapters/SqliteAskReposito
 import { createAskDrainGate, createAskRestartSettlement } from './modules/asking'
 import { AppBackgroundNotifierLauncher } from './modules/attention/adapters/AppBackgroundNotifierLauncher'
 import { SqliteAttentionLedger } from './modules/attention/adapters/SqliteAttentionLedger'
+import { FsAttachmentReader } from './modules/conversation/adapters/attachments/FsAttachmentReader'
+import { NodeAttachmentProbe } from './modules/conversation/adapters/attachments/NodeAttachmentProbe'
+import { createHostConsoleResolver, viewerEntryPath } from './modules/conversation'
 import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observed-send/ConsoleKeystrokeDelivery'
+import { CodexThreadQueue } from './modules/conversation/adapters/observed-send/CodexThreadQueue'
+import { ConsoleTextDelivery } from './modules/conversation/adapters/observed-send/ConsoleTextDelivery'
+import { ObservedSessionTurnSender } from './modules/conversation/adapters/observed-send/ObservedSessionTurnSender'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
@@ -125,6 +131,11 @@ import {
   OPENCODE_PLUGIN_FILE_NAME,
   OpenCodePluginConfigWriter
 } from './modules/preferences/adapters/external-config/openCodePlugin/OpenCodePluginConfigWriter'
+import { NapiKeyringBinding } from './modules/preferences/adapters/secret-store/napiKeyringBinding'
+import {
+  OsKeyringSecretStore,
+  SECRET_SERVICE
+} from './modules/preferences/adapters/secret-store/OsKeyringSecretStore'
 import { SqliteChannelTokenStore } from './modules/preferences/adapters/sqlite/SqliteChannelTokenStore'
 import { SqliteConfigWriteLedger } from './modules/preferences/adapters/sqlite/SqliteConfigWriteLedger'
 import { SqliteIntegrationSettingStore } from './modules/preferences/adapters/sqlite/SqliteIntegrationSettingStore'
@@ -198,6 +209,11 @@ import {
 import { appMetaIngressPort } from './wiring/bridges/ingressPort'
 import { suppliersInstalledTools } from './wiring/bridges/installedTools'
 import { createKeystrokeRelay } from './wiring/bridges/keystrokeRelay'
+import {
+  installedBinaryOf,
+  observedRouteTargets,
+  observedSendTargets
+} from './wiring/bridges/turnSender'
 import { composeObservedBatchSink } from './wiring/bridges/observedBatchSink'
 import { ownedSessionsOver } from './wiring/bridges/sessionTerminator'
 import { CUT_1_ROLLBACK_CHOICES } from './wiring/cut1Rollback'
@@ -220,11 +236,7 @@ import {
   routeLaunchDrainRechecks
 } from './wiring/hostDrainGate'
 import { hostMaintenanceSweeps, startMaintenanceTick } from './wiring/hostMaintenance'
-import {
-  servePreferences,
-  unavailableSecretStore,
-  type WiredPreferences
-} from './wiring/preferencesWiring'
+import { servePreferences, type WiredPreferences } from './wiring/preferencesWiring'
 import {
   ASKING_FRAMES,
   serveAsking,
@@ -249,9 +261,12 @@ import { LAUNCHING_FRAMES, serveLaunching, type WiredLaunching } from './wiring/
 import {
   createLaunchDrainGate,
   type LaunchingEvent,
+  type LaunchingRecovery,
+  type LaunchingRecoveryDeps,
   type LaunchingStopAll,
   type LaunchingStopAllDeps
 } from './modules/launching'
+import { SqliteRecoveryReportStore } from './modules/launching/adapters/sqlite/SqliteRecoveryReportStore'
 import type { SqliteDatabase } from './kernel/ports/sqliteDatabase'
 import { serveCrew, type CrewRouteEvent, type WiredCrew } from './wiring/routes/crew'
 import { launchableSource, serveSuppliers } from './wiring/routes/suppliers'
@@ -509,6 +524,9 @@ async function bootHost(base: HostBase): Promise<void> {
   // dispatcher answers HOST_NOT_READY for `host.shutdown` before `ready`, so it is always bound when
   // asked. Unbound, it fails closed: the Host never exits on a stop-all that ended nothing it owns.
   let launchingStopAll: LaunchingStopAll | undefined
+  // Launching's Host recovery pass (ISSUE-173), built at boot step 4 once crew, suppliers and
+  // conversation exist; boot step 5 awaits its classification.
+  let launchingRecovery: LaunchingRecovery | undefined
   // The 09 §7.1 maintenance tick, started once the Host answered `ready`, stopped at the clean exit.
   let maintenance: { stop(): void } | undefined
   // Built by boot step 3 for the Reset saga, used again by step 4: the ledger's one repository (its
@@ -644,6 +662,25 @@ async function bootHost(base: HostBase): Promise<void> {
         pid: process.pid,
         epoch
       })
+      // ISSUE-170: the console resolver of B-M29 and the viewer's per-view tokens (ADR-031 items 1–3,
+      // ADR-003 item 12). Observed dwarfs focus the provider process observation recorded, `log`
+      // second; launched ones get the `log` view, run on this versioned copy's executable.
+      const hostConsole = createHostConsoleResolver({
+        crew: { get: (dwarfId) => modules.crew?.crew.queries.get(dwarfId) ?? null },
+        observed: {
+          processIdentityOf: (dwarfId) =>
+            modules.observation?.crew.processIdentities.processIdentityOf(dwarfId) ?? null
+        },
+        clock,
+        ids,
+        hostDataDir: dataDir.userDataDir,
+        viewer: {
+          program: dataDir.execPath,
+          // `<appRoot>/out/host/main.js` is this entry (main(): the app root is three folders up).
+          entry: viewerEntryPath(join(appRoot, 'out', 'host', 'main.js')),
+          cwd: dataDir.userDataDir
+        }
+      })
       const endpoint = createUiEndpoint({
         facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
         log,
@@ -679,7 +716,8 @@ async function bootHost(base: HostBase): Promise<void> {
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
         sections: () => sections.names(),
         conditions: () => opened.capabilities(),
-        identityFile
+        identityFile,
+        viewers: hostConsole.viewerTokens
       })
       // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
       cleanExit = composeHostLifecycle({
@@ -714,6 +752,16 @@ async function bootHost(base: HostBase): Promise<void> {
         database: opened,
         // Step 3: preferences first, then the saga's boot resume (07 S13.08).
         resumeResetSaga: async () => {
+          // ADR-015 item 6: the viewer token files a previous Host left go before any method is
+          // served (B-M29 answers HOST_NOT_READY until `ready`).
+          await hostConsole.sweep().catch((error: unknown) =>
+            log.record({
+              level: 'warn',
+              event: 'viewer.sweep.failed',
+              subsystem: 'conversation',
+              errCode: errorCode(error)
+            })
+          )
           const { db, transactions } = opened.connection()
           bus = new InProcessEventBus<HostEvent>({
             transactionScope: transactions,
@@ -735,8 +783,8 @@ async function bootHost(base: HostBase): Promise<void> {
           })
           // Cut 2 (ISSUE-323): the one writer of DwarfAI's entries in other tools' configs (16 §7),
           // with the Claude Code hooks target; the hook entry carries the ingress's persisted port.
-          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches only to verify and
-          // revert (the Reset saga's `external-config` step; lead decision 2026-10-16).
+          // ISSUE-233: the OpenCode plugin target too, which the bridge reaches to verify and revert (the
+          // Reset saga's `external-config` step) and, from ISSUE-228, to install (B-M14, the ingress port set).
           const ingressPort = appMetaIngressPort(db)
           const openCodePluginPath = openCodePluginPathHere()
           configWriter = new ConfigWriterEngine({
@@ -773,6 +821,7 @@ async function bootHost(base: HostBase): Promise<void> {
             transactions,
             bus,
             clock,
+            scheduler,
             ids,
             hostEpoch: epoch,
             log,
@@ -789,8 +838,10 @@ async function bootHost(base: HostBase): Promise<void> {
             // `LedgerRepository.setInstallMoment` (16 §4.10) and the cut-1 module steps (ISSUE-121).
             ledger: ledgerRepository,
             moduleSteps: resetSteps.steps,
-            // No OS secret store yet (later: ISSUE-324).
-            secrets: unavailableSecretStore,
+            // The OS secret store (ADR-017 item 2; ISSUE-324): the Jev key and, from 4a, the
+            // OpenCode password live there only. No plain-text fallback (item 5): with no usable
+            // secret service it answers 'unavailable'.
+            secrets: new OsKeyringSecretStore(new NapiKeyringBinding(SECRET_SERVICE), log),
             // A cut-2 rollback build refuses every install: today's installer is the entry's one writer there.
             externalConfig: CUT_2_ROLLBACK_CHOICES.externalConfig(
               hostConfigWriter({
@@ -820,7 +871,10 @@ async function bootHost(base: HostBase): Promise<void> {
             ready: () => hostState.current().state === 'ready'
           })
           modules.preferences = preferences
-          return preferences.resumeOnBoot()
+          const resumed = await preferences.resumeOnBoot()
+          // The secrets' flags after a resumed `secrets` step, before any command (ISSUE-216).
+          await preferences.loadSecretStatuses()
+          return resumed
         },
         // Step 3, after the resume: every write a crash left between Tx A and Tx B (07 S14.11).
         reverifyConfigWrites: () => {
@@ -956,6 +1010,32 @@ async function bootHost(base: HostBase): Promise<void> {
             hostEpoch: epoch,
             log
           })
+          // The observed-session send path (ISSUE-167): an observed Claude session's terminal, an
+          // observed Codex thread's own queue, both through the kernel ProcessControl (R17).
+          const observedTerminal = new ConsoleTextDelivery({
+            processes: processControl,
+            platform: hostRuntime().os as NodeJS.Platform,
+            env: process.env,
+            cwd: homedir(),
+            scheduler
+          })
+          const codexQueue = new CodexThreadQueue({
+            processes: processControl,
+            executable: () => installedBinaryOf(modules.suppliers?.registry.drivers('codex') ?? []),
+            env: process.env,
+            cwd: homedir(),
+            scheduler
+          })
+          const observedObservation = modules.observation
+          // Crew's delivery-route read (INV-33), from observation alone: crew's view calls it.
+          const observedRoutes = new ObservedSessionTurnSender({
+            targets: observedRouteTargets({
+              identities: observedObservation.observation.identities,
+              processes: observedObservation.crew.processIdentities
+            }),
+            terminal: observedTerminal,
+            codex: codexQueue
+          })
           modules.crew = servedCrew.wire({
             db,
             transactions,
@@ -966,8 +1046,12 @@ async function bootHost(base: HostBase): Promise<void> {
             ids,
             hostEpoch: epoch,
             log,
-            // No launch and no delivery route reach the Host yet (later: EPIC-10).
-            links: { owned: () => false, hasDeliveryRoute: () => false },
+            // No launch reaches the Host yet (later: EPIC-10); an observed dwarf has a delivery
+            // route when the observed-session relay has a send path to it (ISSUE-167, INV-33).
+            links: {
+              owned: () => false,
+              hasDeliveryRoute: (dwarfId) => observedRoutes.canDeliverTo(dwarfId)
+            },
             processes: processControl,
             observation: modules.observation.crew,
             // The `dwarfs` section's stored outcome lines (owner amendment E).
@@ -1004,7 +1088,24 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             // The send path's door to a launched session, and its failed-write log (ISSUE-166).
             sessions: modules.suppliers.sessions,
-            diagnostics: log
+            // An observed dwarf's turn: the observed-session relay (ISSUE-167).
+            observedTurns: new ObservedSessionTurnSender({
+              targets: observedSendTargets({
+                dwarfs: modules.crew.crew.queries,
+                observation: observedObservation.observation.queries,
+                processes: observedObservation.crew.processIdentities
+              }),
+              terminal: observedTerminal,
+              codex: codexQueue
+            }),
+            diagnostics: log,
+            // The Host's own check of every attachment path, at describe and again at send
+            // (ISSUE-169; ADR-019 item 9; 18 C-17).
+            attachments: new FsAttachmentReader({
+              platform: hostRuntime().os as NodeJS.Platform,
+              probe: new NodeAttachmentProbe()
+            }),
+            console: hostConsole.resolver
           })
           // O-11-10: a mine created or reattached later is paid its pre-install usage as coal; not
           // in a cut-1 rollback build (the gate of step 7 and of the coal backfill).
@@ -1056,6 +1157,12 @@ async function bootHost(base: HostBase): Promise<void> {
             log,
             frames: connections,
             claudeProviderId: 'claude' as ProviderId,
+            // The OpenCode plugin's asks (ISSUE-229): the password only through the kernel reader.
+            openCodePlugin: {
+              providerId: 'opencode' as ProviderId,
+              secrets: modules.preferences.secretReader,
+              post: (url, init) => globalThis.fetch(url, init)
+            },
             suppliers: modules.suppliers,
             observed: observed.adapters,
             conversation: conversation.conversation,
@@ -1154,6 +1261,37 @@ async function bootHost(base: HostBase): Promise<void> {
             crew: modules.crew.crew.ownedEnds(ownedEndsDeps)
           }
           launchingStopAll = modules.launching.launching.stopAll(stopAllDeps)
+          // Host crash recovery (ISSUE-173; ADR-015 items 3–5): the previous epoch's owned sessions
+          // are classified at step 5 and resumed silently after it, over crew's terminator (a
+          // survivor ends with `why: 'host-recovery'`) and conversation's delivery reconcile (07
+          // S7.16: a 10 s evidence window).
+          const recoveryCrew = modules.crew
+          const recoveryBus = bus
+          const recoveryDeps: LaunchingRecoveryDeps = {
+            reports: new SqliteRecoveryReportStore({ db, scope: transactions, clock }),
+            previousEpochEnd: () => opened.previousEpochEnd(),
+            processControl,
+            crew: {
+              markUnrecovered: (dwarfId) => recoveryCrew.crew.commands.markUnrecovered(dwarfId),
+              rebind: (dwarfId, next) => recoveryCrew.crew.commands.rebind(dwarfId, next),
+              sessionClosed: (dwarfId, cause) =>
+                recoveryCrew.crew.commands.sessionClosed(dwarfId, cause),
+              get: (dwarfId) => recoveryCrew.crew.queries.get(dwarfId)
+            },
+            endSurvivor: (dwarfId) => recoveryCrew.terminator.end(dwarfId, 'host-recovery'),
+            catalogue: modules.suppliers.catalogue,
+            deliveries: {
+              reconcileSending: (dwarfIds) =>
+                conversation.conversation.reconcileSending({
+                  dwarfIds,
+                  windowMs: SENDING_RECONCILE_WINDOW_MS,
+                  scheduler,
+                  bus: recoveryBus
+                })
+            }
+          }
+          // Its report reaches the window as one grouped message with Retry and Dismiss (ISSUE-174).
+          launchingRecovery = modules.launching.recover(recoveryDeps)
           // Stop dwarf ends an owned session through its driver, then its recorded process tree
           // (ISSUE-171, ADR-014 items 1-3, 7): crew is wired before launching, so it binds late.
           modules.crew.bindOwnedSessions(
@@ -1174,6 +1312,13 @@ async function bootHost(base: HostBase): Promise<void> {
             mines: modules.mines.mines.queries,
             attention: modules.attention.attention
           })
+        },
+        // Step 5: the Host recovery's classification (ISSUE-173); its resumes go on after `ready`.
+        recoverSessions: () => {
+          if (launchingRecovery === undefined) {
+            throw new HostInvariantError('boot step 5 runs after step 4 wired launching')
+          }
+          return launchingRecovery.start().classified
         },
         // Step 6: the hook ingress listens (ISSUE-140), then the Host's own Claude hook entry follows
         // the bound port (07 S14.10; none in a cut-2 rollback build); the MCP endpoint is later
@@ -1243,6 +1388,9 @@ async function bootHost(base: HostBase): Promise<void> {
     })
   }
 }
+
+/** 07 S7.16: a `sending` row with no evidence within 10 s of the restart is ✕ `host-interrupted`. */
+const SENDING_RECONCILE_WINDOW_MS = 10_000
 
 /** `app_meta.install_id` (09 §4.9), the first field of every spawn tag (ADR-015 item 2). */
 function installIdOf(db: SqliteDatabase): string {

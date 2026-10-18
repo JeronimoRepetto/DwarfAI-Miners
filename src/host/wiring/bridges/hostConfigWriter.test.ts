@@ -116,7 +116,10 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
     expect(engine.calls).toStrictEqual([])
   })
 
-  it('[ADR-023, S13.03, INV-112] with the OpenCode plugin writer composed, its verify and revert reach it unchanged while install and the legacy probe stay refused', async () => {
+  // AMENDED for ISSUE-228 (was: install refused while the legacy installer enabled the plugin): the Host is the
+  // plugin file's writer from ISSUE-228 on (bridge header); B-M14 has no routed caller before the step-4a switch
+  // (ISSUE-235), so there is still one writer per release (21 §1 item 4). The legacy probe joins with ISSUE-232.
+  it('[ADR-023, S13.03, INV-112] with the OpenCode plugin writer composed, its verify, revert and install reach it unchanged while the legacy probe stays refused', async () => {
     const claudeHooks = recordingEngine()
     const openCodePlugin = recordingEngine()
     const writer = hostConfigWriter({
@@ -129,18 +132,55 @@ describe('the Host config writer of cut 2 (16 §7.1)', () => {
     // The Reset saga's `external-config` step and the boot re-verification (16 §7.3, §7.4).
     expect(await writer.revert('opencode-plugin')).toStrictEqual({ ok: false, error: 'locked' })
     expect(await writer.verify('opencode-plugin')).toBe('verified')
-    // One writer of the plugin file per release (21 §1 item 4): the enable and the first-run
-    // legacy probe join with ISSUE-228 and ISSUE-232.
-    expect(await writer.install('opencode-plugin', TOKEN, 'settings', HASH)).toStrictEqual({
-      ok: false,
-      error: 'io'
+    // The enable (ISSUE-228) reaches the writer with the persisted port; the first-run legacy probe
+    // joins with ISSUE-232.
+    expect(await writer.install('opencode-plugin', TOKEN, 'add-panel', HASH)).toStrictEqual({
+      ok: true,
+      value: { verified: true, backupPath: '/b' }
     })
     expect(await writer.findLegacy('opencode-plugin')).toBe(false)
     expect(openCodePlugin.calls).toStrictEqual([
       ['revert', 'opencode-plugin'],
-      ['verify', 'opencode-plugin']
+      ['verify', 'opencode-plugin'],
+      ['install', 'opencode-plugin', TOKEN, 'add-panel', HASH]
     ])
     expect(claudeHooks.calls).toStrictEqual([])
+  })
+
+  // ADDED for ISSUE-228: the plugin reports to the hook ingress (ADR-016 item 3), so its enable needs the
+  // persisted port exactly as the Claude hook entry does.
+  it('[ADR-016, NFR-SEC-12] with no ingress port persisted, enabling OpenCode permission requests writes nothing, issues no token and fails with io', async () => {
+    const claudeHooks = recordingEngine()
+    const openCodePlugin = recordingEngine()
+    const log = new RecordingDiagnosticsLog()
+    const writer = hostConfigWriter({
+      claudeHooks,
+      openCodePlugin,
+      ingressPort: { read: () => null },
+      log
+    })
+
+    expect(await writer.install('opencode-plugin', TOKEN, 'add-panel', HASH)).toStrictEqual({
+      ok: false,
+      error: 'io'
+    })
+    expect(openCodePlugin.calls).toStrictEqual([])
+    expect(claudeHooks.calls).toStrictEqual([])
+    expect(log.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'config.write',
+        subsystem: 'opencode-plugin',
+        outcome: 'failed',
+        causeClass: 'ingress-port-unset',
+        msg: 'add-panel'
+      })
+    )
+    expect(JSON.stringify(log.entries)).not.toContain(TOKEN)
+    expect(JSON.stringify(log.entries)).not.toContain(HASH)
+    // Turning it off and the boot check need no port.
+    await writer.revert('opencode-plugin')
+    await writer.verify('opencode-plugin')
+    expect(openCodePlugin.calls.map((call) => call[0])).toStrictEqual(['revert', 'verify'])
   })
 
   it('[ADR-016] the hook entry is rendered with the persisted ingress port, and never without one', () => {

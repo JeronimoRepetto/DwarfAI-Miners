@@ -237,7 +237,7 @@ export interface DwarfAiMinersApi {
   /** §8 I-21 · `dwarf:setName` · invoke · RETIRE · today shape */
   setDwarfName: (request: TodayRequest<'dwarf:setName'>) => Promise<TodayResult<'dwarf:setName'>>
   /** §8 I-21 · `dwarf:resetName` · invoke · RETIRE · today shape */
-  resetDwarfName: (
+  resetDwarfNameToday: (
     request: TodayRequest<'dwarf:resetName'>
   ) => Promise<TodayResult<'dwarf:resetName'>>
   /** A-N30 · `diag:renderer:report` · send · NEW · target shape */
@@ -306,6 +306,20 @@ export interface DwarfAiMinersApi {
   ) => Promise<TargetResult<'welcome:answer'>>
   /** A-N29 · `dwarf:stop` · invoke · NEW · target shape */
   stopDwarf: (request: TargetRequest<'dwarf:stop'>) => Promise<TargetResult<'dwarf:stop'>>
+  /** A-N08 · `dwarf:rename` · invoke · NEW · target shape */
+  renameDwarf: (request: TargetRequest<'dwarf:rename'>) => Promise<TargetResult<'dwarf:rename'>>
+  /** A-N09 · `dwarf:name:reset` · invoke · NEW · target shape */
+  resetDwarfName: (
+    request: TargetRequest<'dwarf:name:reset'>
+  ) => Promise<TargetResult<'dwarf:name:reset'>>
+  /** A-N10 · `host:recovery:retry` · invoke · NEW · target shape */
+  retryRecovery: (
+    request: TargetRequest<'host:recovery:retry'>
+  ) => Promise<TargetResult<'host:recovery:retry'>>
+  /** A-N11 · `host:recovery:dismiss` · invoke · NEW · target shape */
+  dismissRecovery: (
+    request: TargetRequest<'host:recovery:dismiss'>
+  ) => Promise<TargetResult<'host:recovery:dismiss'>>
 }
 
 const api: DwarfAiMinersApi = {
@@ -495,7 +509,7 @@ const api: DwarfAiMinersApi = {
         ...(typeof request?.name === 'string' ? { name: request.name } : {})
       })
     ),
-  resetDwarfName: (request) =>
+  resetDwarfNameToday: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('dwarf:resetName', textOf(request))),
   reportRendererDiagnostic: (request) =>
     sendOrDrop(() => ipcRenderer.send('diag:renderer:report', request)),
@@ -561,7 +575,14 @@ const api: DwarfAiMinersApi = {
     invokeOrReject(() => ipcRenderer.invoke('claude:hooks:set', request)),
   setAskStep: (request) => invokeOrReject(() => ipcRenderer.invoke('ask:step:set', request)),
   answerWelcome: (request) => invokeOrReject(() => ipcRenderer.invoke('welcome:answer', request)),
-  stopDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:stop', request))
+  stopDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:stop', request)),
+  renameDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:rename', request)),
+  resetDwarfName: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:name:reset', request)),
+  retryRecovery: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('host:recovery:retry', request)),
+  dismissRecovery: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('host:recovery:dismiss', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

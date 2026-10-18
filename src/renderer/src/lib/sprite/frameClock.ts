@@ -12,14 +12,16 @@
  * second to change nothing. A crew of breathing dwarfs wakes the renderer a few times a second, and
  * a panel where nothing moves holds no timer at all.
  *
- * Time here is SPRITE time: the environment's clock with every hidden stretch taken out, so a
- * dwarf resumes on the frame it stood on when the window went away rather than jumping to wherever
- * the wall clock would have carried it. Under reduced motion every frame of every sheet lasts a
+ * Time here is SPRITE time: the environment's clock with every hidden or paused stretch taken out
+ * (`pause()`, for a window its owner holds still; ISSUE-282), so a dwarf resumes on the frame it
+ * stood on when the window went away rather than jumping to wherever the wall clock would have
+ * carried it. Under reduced motion every frame of every sheet lasts a
  * flat 200ms (motion.md, Reduced motion): the dwarfs keep moving, and a change of the preference
  * mid-play keeps each sprite on the frame it is showing.
  *
- * Everything the clock touches outside itself comes through `FrameClockEnv`, which is what lets
- * the tests run it on a fake clock and the golden page on one stopped at t = 0.
+ * Everything the clock touches outside itself comes through `FrameClockEnv`, whose clock and one
+ * timer are the tick source port (tickSource.ts), which is what lets the tests run it on a
+ * `FakeTickSource` and the golden page on one stopped at t = 0.
  */
 import { prefersReducedMotion, watchReducedMotion } from '../scene/sceneMotion'
 import {
@@ -30,12 +32,14 @@ import {
   type SequencePosition,
   type SpriteClip
 } from './spriteSheet'
+import type { TickSource } from './tickSource'
+import { browserTickSource } from './timerTickSource'
 
-/** What the clock needs from its host: a clock, one timer, visibility, the motion preference. */
-export interface FrameClockEnv {
-  now(): number
-  setTimer(run: () => void, ms: number): unknown
-  clearTimer(handle: unknown): void
+/**
+ * What the clock needs from its host: a tick source (its clock and one timer), visibility, the
+ * motion preference.
+ */
+export interface FrameClockEnv extends TickSource {
   hidden(): boolean
   onVisibilityChange(listener: () => void): () => void
   reducedMotion(): boolean
@@ -75,6 +79,14 @@ export interface FrameClock {
   dispose(): void
 }
 
+/** The clock `createFrameClock` makes: one that its owner can also pause and resume. */
+export interface PausableFrameClock extends FrameClock {
+  /** Stops sprite time and asks for no tick until `resume`, as a hidden window does. */
+  pause(): void
+  /** Starts sprite time again where it stopped: every sprite carries on from the frame it shows. */
+  resume(): void
+}
+
 interface Track {
   clips: readonly SpriteClip[]
   /** The sprite time at which the sequence's elapsed time was zero. */
@@ -89,17 +101,20 @@ function samePosition(a: SequencePosition, b: SequencePosition): boolean {
   return a.clip === b.clip && a.frame === b.frame
 }
 
-export function createFrameClock(env: FrameClockEnv): FrameClock {
+export function createFrameClock(env: FrameClockEnv): PausableFrameClock {
   const tracks = new Set<Track>()
   let reduced = env.reducedMotion()
-  let hiddenSince: number | undefined = env.hidden() ? env.now() : undefined
-  let hiddenTotal = 0
+  // Sprite time stands still while the window is hidden or the owner has paused the clock.
+  let paused = false
+  const halted = (): boolean => paused || env.hidden()
+  let haltedSince: number | undefined = halted() ? env.now() : undefined
+  let haltedTotal = 0
   let timer: unknown
   let timerAt: number | undefined
   let disposed = false
 
   const flat = (): number | undefined => (reduced ? REDUCED_MOTION_FRAME_MS : undefined)
-  const spriteNow = (): number => (hiddenSince ?? env.now()) - hiddenTotal
+  const spriteNow = (): number => (haltedSince ?? env.now()) - haltedTotal
 
   function clearTimer(): void {
     if (timerAt === undefined) return
@@ -113,9 +128,9 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
     return next === undefined ? undefined : now + next
   }
 
-  // One timer, set to the earliest change; none while hidden or while nothing will change.
+  // One timer, set to the earliest change; none while halted or while nothing will change.
   function schedule(): void {
-    if (disposed || hiddenSince !== undefined) {
+    if (disposed || haltedSince !== undefined) {
       clearTimer()
       return
     }
@@ -152,13 +167,13 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
     schedule()
   }
 
-  function onVisibility(): void {
-    const hidden = env.hidden()
-    if (hidden && hiddenSince === undefined) {
-      hiddenSince = env.now()
-    } else if (!hidden && hiddenSince !== undefined) {
-      hiddenTotal += env.now() - hiddenSince
-      hiddenSince = undefined
+  function syncHalt(): void {
+    const stop = halted()
+    if (stop && haltedSince === undefined) {
+      haltedSince = env.now()
+    } else if (!stop && haltedSince !== undefined) {
+      haltedTotal += env.now() - haltedSince
+      haltedSince = undefined
     }
     schedule()
   }
@@ -182,7 +197,7 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
   let stopListening: (() => void) | undefined
   function listen(): void {
     if (stopListening !== undefined) return
-    const stopVisibility = env.onVisibilityChange(onVisibility)
+    const stopVisibility = env.onVisibilityChange(syncHalt)
     const stopReduced = env.onReducedMotionChange((next) => {
       applyReduced(next)
       schedule()
@@ -191,7 +206,7 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
       stopVisibility()
       stopReduced()
     }
-    onVisibility()
+    syncHalt()
   }
 
   function startOffset(clips: readonly SpriteClip[], options: PlayOptions | undefined): number {
@@ -243,6 +258,14 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
         }
       }
     },
+    pause() {
+      paused = true
+      syncHalt()
+    },
+    resume() {
+      paused = false
+      syncHalt()
+    },
     dispose() {
       disposed = true
       tracks.clear()
@@ -272,16 +295,15 @@ export function stoppedFrameClock(): FrameClock {
 }
 
 /**
- * The window as the clock's host: its wall clock and timer, the document's visibility, the
- * reduced-motion media query, and Math.random for the phase. Every call reaches the global at the
- * moment it is made, never a reference kept from before, so a test's fake timers are the timers.
+ * The window as the clock's host: its tick source (browserTickSource, the wall clock and one timer),
+ * the document's visibility, the reduced-motion media query, and Math.random for the phase. Every
+ * call reaches the global at the moment it is made, never a reference kept from before, so a test's
+ * fake timers are the timers.
  */
 export function browserFrameClockEnv(): FrameClockEnv {
   const doc = (): Document | undefined => globalThis.document
   return {
-    now: () => Date.now(),
-    setTimer: (run, ms) => globalThis.setTimeout(run, ms),
-    clearTimer: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+    ...browserTickSource(),
     hidden: () => doc()?.hidden === true,
     onVisibilityChange(listener) {
       const target = doc()

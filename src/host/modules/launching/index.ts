@@ -17,8 +17,8 @@
 //   PO #62): an owned session's record ends (`ended_at`, `resume_intent = 0`), and an owned session
 //   nobody stopped that is not covered by the current Host recovery publishes
 //   `LaunchedSessionCrashed` (application/sessionExited.ts). `recovery` is the current Host
-//   recovery's coverage; no recovery runs in the Host yet (later: ISSUE-173 makes it launching's
-//   own), so it defaults to `NO_HOST_RECOVERY`.
+//   recovery's coverage: by default the dwarfs the module's own recovery pass resumes or lists
+//   (ISSUE-173), none before it ran.
 // - `stopAll(deps)` (ISSUE-175) builds 16 §4.5 `LaunchCommands.stopAll` over crew's `endOwned`
 //   (crew's `ownedEnds` needs the Host's terminator, which exists only once both modules are
 //   wired): it waits for the launches in flight, read through the
@@ -31,8 +31,21 @@
 //   refusal settled `could-not-start` with nothing spawned, otherwise the same acceptance and
 //   settlement as `launch` over the "Other…" driver (application/launchCustom.ts).
 //
-// The other members join with their issues: the Jev path (later: ISSUE-164), recovery (later:
-// ISSUE-173).
+// - `recovery(deps)` (ISSUE-173) builds 16 §4.5 `LaunchCommands.recoverAfterHostStart` over what
+//   host/wiring binds once crew, suppliers and conversation exist (the report store, the boot's
+//   previous-epoch decision, the probe, crew's terminator and the delivery reconcile): boot step 5
+//   awaits its classification, and its resumes go on after `ready`
+//   (application/recoverAfterHostStart.ts). The dwarfs it covers are the `sessionExited` check's
+//   coverage unless a caller passes its own.
+//
+// - The same `recovery(deps)` carries the report's display and the person's two actions (ISSUE-174;
+//   16 §4.5 `retryRecovery`, `dismissRecovery`; 07 machine 16): `report()` is the offered report not
+//   settled yet (the snapshot `recovery` section), `view()` the latest one, settled included (the
+//   `host.recovered` frame), and `shown()` records that a `ui` connection was written it
+//   (application/recoveryActions.ts). Both actions resume through the same `SessionResumer` as the
+//   boot pass (application/sessionResumer.ts).
+//
+// The other members join with their issues: the Jev path (later: ISSUE-164).
 import { LaunchUseCase, type LaunchAccepted, type LaunchingDeps } from './application/launch'
 import { MarkStoppedByPerson } from './application/markStoppedByPerson'
 import { createLaunchDrainGate } from './application/launchDrain'
@@ -44,20 +57,29 @@ import {
   type LaunchSnapshotQueries
 } from './application/launchQueries'
 import {
-  NO_HOST_RECOVERY,
   SessionExitedCheck,
   type RecoveryCoverage,
   type SessionExit,
   type SessionExitResult
 } from './application/sessionExited'
+import {
+  HostRecoveryCoverage,
+  RecoverAfterHostStart,
+  type LaunchingRecoveryDeps,
+  type RecoveryRun
+} from './application/recoverAfterHostStart'
+import { RecoveryActions } from './application/recoveryActions'
+import { SessionResumer } from './application/sessionResumer'
 import { LaunchingResetStep } from './adapters/sqlite/LaunchingResetStep'
-import type { DwarfId, LaunchId } from '../../kernel/domain/values'
+import { HostInvariantError } from '../../kernel/domain/errors'
+import type { DwarfId, LaunchId, ProviderIdentity, Result } from '../../kernel/domain/values'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { StopAllOutcome } from '../../kernel/ports/stopAll'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import type { LaunchRecord } from './ports/launchRecordStore'
+import type { HostRecoveryReport, RecoveryReportView } from './domain/recoveryReport'
 import type { LaunchRequestInput } from './application/launch'
 import type { LaunchCustomInput } from './application/launchCustom'
 import type { LaunchingEvent } from './application/events'
@@ -70,13 +92,25 @@ export type { ProcessPurpose, ProcessRecord, ProcessRecordStore } from './ports/
 export type { Launch, LaunchRequest, LaunchState } from './domain/launch'
 export type {
   DwarfLaunched,
+  HostRecovered,
   LaunchedSessionCrashed,
   LaunchFailed,
   LaunchingEvent,
   LaunchRequested,
+  RecoveryDismissed,
+  RecoveryRetried,
+  RecoveryRetryFailed,
   StopAllIncomplete
 } from './application/events'
 export { NO_HOST_RECOVERY } from './application/sessionExited'
+export { RESUME_SPACING_MS } from './application/recoverAfterHostStart'
+export type { LaunchingRecoveryDeps, RecoveryRun } from './application/recoverAfterHostStart'
+export type { RecoveryReportStore } from './ports/recoveryReportStore'
+export type {
+  HostRecoveryReport,
+  RecoveryReportView,
+  UnrecoveredReason
+} from './domain/recoveryReport'
 export type { RecoveryCoverage, SessionExit, SessionExitResult } from './application/sessionExited'
 export type { LaunchAccepted, LaunchRefusal, LaunchRequestInput } from './application/launch'
 export type { LaunchCustomInput } from './application/launchCustom'
@@ -90,6 +124,7 @@ export {
   type LaunchOutcomeEvent
 } from './domain/classifyLaunchOutcome'
 export { buildLaunchFailure } from './domain/launchFailure'
+export { spawnTagFor } from './domain/spawnTag'
 export { NO_SUPPLIER_LABEL } from './domain/supplierLabel'
 
 /** The commands of 16 §4.5 `LaunchCommands` built so far, and the seen record of a failure. */
@@ -109,6 +144,11 @@ export interface LaunchingCommands {
 export interface OwnedLaunches {
   /** The dwarf's live `LaunchRecord` (no `endedAt`), null when launching owns no session for it. */
   liveRecordOf(dwarfId: DwarfId): LaunchRecord | null
+  /**
+   * The live record of a provider session (ADR-015 item 7 identity), null when launching owns none:
+   * what a restarted Host's driver reads to resume it (wiring/bridges/resumeContext.ts, ISSUE-173).
+   */
+  liveRecordOfSession(identity: ProviderIdentity): LaunchRecord | null
 }
 
 /** What `Launching.stopAll` runs over, bound by `host/wiring` once crew and launching exist. */
@@ -122,6 +162,27 @@ export interface LaunchingStopAll {
   stopAll(requestId: string): Promise<StopAllOutcome>
 }
 
+/** 16 §4.5 `LaunchCommands.recoverAfterHostStart` (ISSUE-173) and the report's actions (ISSUE-174). */
+export interface LaunchingRecovery {
+  /** Starts the pass (boot step 5 awaits `classified`); a second call answers the same run. */
+  start(): RecoveryRun
+  /** 16 §4.5: the report once every initial resume settled. */
+  recoverAfterHostStart(): Promise<HostRecoveryReport>
+  /** 16 §4.5: the person's Retry of the grouped message; answered once every retried resume settled. */
+  retryRecovery(
+    hostEpoch: string,
+    requestId: string
+  ): Promise<Result<RecoveryReportView, 'no-report'>>
+  /** 16 §4.5: the person's Dismiss of the grouped message. */
+  dismissRecovery(hostEpoch: string, requestId: string): Result<void, 'no-report'>
+  /** The offered report not settled yet, with its display state; null otherwise (snapshot `recovery`). */
+  report(): RecoveryReportView | null
+  /** The latest offered report, settled included (the `host.recovered` frame); null before one. */
+  view(): RecoveryReportView | null
+  /** A `ui` connection was written the report (14 §4.3 rule 5; 07 S16.04): marked shown once. */
+  shown(): void
+}
+
 export interface Launching {
   readonly commands: LaunchingCommands
   /** The live owned sessions (ISSUE-171), for the terminator bridge (wiring/bridges/sessionTerminator.ts). */
@@ -130,10 +191,12 @@ export interface Launching {
   readonly snapshots: LaunchSnapshotQueries
   /** `stopAll` over crew's `endOwned` (ISSUE-175; application/stopAll.ts); publishes on the module bus. */
   stopAll(deps: LaunchingStopAllDeps): LaunchingStopAll
+  /** The Host recovery pass (ISSUE-173; application/recoverAfterHostStart.ts), built once. */
+  recovery(deps: LaunchingRecoveryDeps): LaunchingRecovery
 }
 
 export type LaunchingModuleDeps = Omit<LaunchingDeps, 'memory'> & {
-  /** The current Host recovery's coverage; `NO_HOST_RECOVERY` until one runs (later: ISSUE-173). */
+  /** The Host recovery's coverage; by default the module's own recovery pass (ISSUE-173). */
   recovery?: RecoveryCoverage
 }
 
@@ -161,10 +224,12 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
   }
   const useCase = new LaunchUseCase({ ...deps, bus, memory })
   const stops = new MarkStoppedByPerson({ records: deps.records, transactions: deps.transactions })
+  const coverage = new HostRecoveryCoverage()
+  let recovery: LaunchingRecovery | null = null
   const exits = new SessionExitedCheck({
     records: deps.records,
     transactions: deps.transactions,
-    recovery: deps.recovery ?? NO_HOST_RECOVERY,
+    recovery: deps.recovery ?? coverage,
     bus: deps.bus,
     clock: deps.clock,
     ids: deps.ids,
@@ -181,7 +246,16 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
       markStoppedByPerson: (dwarfId) => stops.mark(dwarfId)
     },
     owned: {
-      liveRecordOf: (dwarfId) => deps.records.live().find((r) => r.dwarfId === dwarfId) ?? null
+      liveRecordOf: (dwarfId) => deps.records.live().find((r) => r.dwarfId === dwarfId) ?? null,
+      liveRecordOfSession: (identity) =>
+        deps.records
+          .live()
+          .find(
+            (r) =>
+              r.ref.providerId === identity.providerId &&
+              r.ref.providerSessionId === identity.providerSessionId &&
+              r.ref.providerAgentId === identity.providerAgentId
+          ) ?? null
     },
     queries,
     snapshots: memory,
@@ -196,7 +270,58 @@ export function createLaunching(deps: LaunchingModuleDeps): Launching {
         clock: deps.clock,
         ids: deps.ids,
         hostEpoch: deps.hostEpoch
+      }),
+    recovery: (recoveryDeps) => {
+      if (recovery !== null) throw new HostInvariantError('the launching recovery is built once')
+      const resumer = new SessionResumer({
+        records: deps.records,
+        processes: deps.processes,
+        transactions: deps.transactions,
+        suppliers: { registry: deps.suppliers.registry, bindings: deps.suppliers.bindings },
+        crew: recoveryDeps.crew,
+        processControl: recoveryDeps.processControl,
+        hostEpoch: deps.hostEpoch
       })
+      const actions = new RecoveryActions({
+        reports: recoveryDeps.reports,
+        records: deps.records,
+        transactions: deps.transactions,
+        resumer,
+        crew: recoveryDeps.crew,
+        bus: deps.bus,
+        clock: deps.clock,
+        scheduler: deps.scheduler,
+        ids: deps.ids,
+        hostEpoch: deps.hostEpoch,
+        log: deps.log
+      })
+      const pass = new RecoverAfterHostStart({
+        ...recoveryDeps,
+        records: deps.records,
+        processes: deps.processes,
+        launches: deps.launches,
+        transactions: deps.transactions,
+        coverage,
+        resumer,
+        display: actions,
+        bus: deps.bus,
+        clock: deps.clock,
+        scheduler: deps.scheduler,
+        ids: deps.ids,
+        hostEpoch: deps.hostEpoch,
+        log: deps.log
+      })
+      recovery = {
+        start: () => pass.start(),
+        recoverAfterHostStart: () => pass.start().settled,
+        retryRecovery: (hostEpoch, requestId) => actions.retryRecovery(hostEpoch, requestId),
+        dismissRecovery: (hostEpoch, requestId) => actions.dismissRecovery(hostEpoch, requestId),
+        report: () => actions.report(),
+        view: () => actions.view(),
+        shown: () => actions.shown()
+      }
+      return recovery
+    }
   }
 }
 

@@ -21,11 +21,14 @@ import {
   composeAskAnswers,
   composeAskStepAndIntegrationRows,
   composeBoardFacade,
+  composeDwarfNameRows,
+  composeOpenCodeSettingsRows,
   composeLegacyAgentRegistryFeed,
   composeLegacyAskRelay,
   composeLegacyDwarfIdBridge,
   composeLegacyLaunchObservation,
   composeHostReads,
+  composeJevKeyRows,
   composeMinesAdmin,
   composePresence,
   composeProviderShapeAdapters,
@@ -38,7 +41,9 @@ import {
 import type { HostEvent } from '../window/ports/hostClient'
 import { createStopEverything } from '../window/application/stopEverything'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { CUT_1_ROLLBACK, CUT_2_ROLLBACK } from '../../contracts/strangler'
 import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
@@ -580,7 +585,13 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       // AMENDED for ISSUE-223: A-N32 joins them, born `host` in cut 2 and routed by the cut-2 switch (ISSUE-141).
       'welcome:answer': 'cut-2',
       // AMENDED for ISSUE-171: A-N29 joins them, born `host` in 3a and routed by the step-3a switch (ISSUE-001).
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      // AMENDED for ISSUE-172: A-N08 and A-N09 join them, born `host` in cut 2 (lead decision, 2026-10-17).
+      'dwarf:rename': 'cut-2',
+      'dwarf:name:reset': 'cut-2',
+      // AMENDED for ISSUE-174: A-N10 and A-N11 join them, born `host` in 3a and routed by the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
   })
 
@@ -1759,12 +1770,18 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     // AMENDED for ISSUE-129: A-N07, born `host` in cut 2, waits for the same switch.
     // AMENDED for ISSUE-223: A-N32, born `host` in cut 2, waits for the same switch.
     // AMENDED for ISSUE-171: A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
+    // AMENDED for ISSUE-172: A-N08 and A-N09, born `host` in cut 2 (lead decision, 2026-10-17).
     expect(CUT_1_UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
       'claude:hooks:set': 'cut-2',
       'ask:step:set': 'cut-2',
       'welcome:answer': 'cut-2',
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      'dwarf:rename': 'cut-2',
+      'dwarf:name:reset': 'cut-2',
+      // AMENDED for ISSUE-174: A-N10 and A-N11, born `host` in 3a, wait for the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
     // A-44 on its 14 wire feeds UI main's PresenceTracker, which tells the Host (B-M07) once the report settled.
     const host = recordingHost()
@@ -2425,7 +2442,10 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     // AMENDED for ISSUE-171 (was: A-N33 only): A-N29, born `host` in 3a, waits for the step-3a switch (ISSUE-001).
     expect(UNROUTED).toEqual({
       'host:connection:confirm-restart': 'generation-2',
-      'dwarf:stop': 'cut-3a'
+      'dwarf:stop': 'cut-3a',
+      // AMENDED for ISSUE-174: A-N10 and A-N11, born `host` in 3a, wait for the same switch.
+      'host:recovery:retry': 'cut-3a',
+      'host:recovery:dismiss': 'cut-3a'
     })
     // The root composes their `host` handlers, each relaying its one seam-B member.
     const sent: Array<[string, unknown]> = []
@@ -2473,6 +2493,77 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     expect(composeAskStepAndIntegrationRows({ routes: CUT_1_ROUTES, client })).toBeUndefined()
   })
 
+  // ADDED for ISSUE-172 (lead decision, 2026-10-17): A-N08 and A-N09 are NEW rows with no legacy owner; the renderer's
+  // board is the Host's once its first snapshot is read (useMines, one writer), so every dwarf it can rename is a Host
+  // dwarf and the rows are born `host` in cut 2 rather than waiting for the step-3a switch.
+  it('[ADR-001, US-MSG-005.AC02, US-MSG-006.AC03] in cut 2 A-N08 and A-N09 exist and route host, relaying crew.rename and crew.resetName', async () => {
+    const born: ChannelKey[] = ['dwarf:rename', 'dwarf:name:reset']
+    for (const key of born) {
+      expect(CHANNELS[key].status, key).toBe('new')
+      expect(routeOf(key), key).toEqual([
+        { channel: key, owner: 'host', since: 'cut-2', parity: 'passed', shape: 'target' }
+      ])
+    }
+    expect(HOST_ROUTE_MEMBERS['dwarf:rename']).toEqual(['crew.rename'])
+    expect(HOST_ROUTE_MEMBERS['dwarf:name:reset']).toEqual(['crew.resetName'])
+    // The legacy rows of 14 §8 I-21 keep today's runtime for a board still fed by today's feed (a build that refuses
+    // A-N01); their RETIRE is cut 5's.
+    expect(routeOf('dwarf:setName')).toEqual([
+      {
+        channel: 'dwarf:setName',
+        owner: 'legacy',
+        since: 'pre-cut-0',
+        parity: 'n/a',
+        shape: 'today'
+      }
+    ])
+    expect(routeOf('dwarf:resetName')).toEqual([
+      {
+        channel: 'dwarf:resetName',
+        owner: 'legacy',
+        since: 'pre-cut-0',
+        parity: 'n/a',
+        shape: 'today'
+      }
+    ])
+    const sent: Array<[string, unknown]> = []
+    const replies: Record<string, unknown> = {
+      'crew.rename': { ok: true, value: { customName: 'Watcher of seals' } },
+      'crew.resetName': {}
+    }
+    const client = {
+      call: (method: string, params: unknown) => {
+        sent.push([method, params])
+        return Promise.resolve(replies[method])
+      }
+    } as unknown as Parameters<typeof composeDwarfNameRows>[0]['client']
+    const rows = composeDwarfNameRows({ routes: ROUTES, client })
+    expect(rows?.channels).toEqual(born)
+    const router = createRouter({
+      routes: ROUTES.filter((r) => born.includes(r.channel)),
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(rows === undefined ? {} : { host: rows.target }),
+      senders
+    })
+    const DWARF = '01920000-0000-7000-a000-000000000172'
+    expect(
+      await router.dispatch('dwarf:rename', FROM_PANEL, {
+        dwarfId: DWARF,
+        name: 'Watcher of seals',
+        requestId: REQUEST
+      })
+    ).toEqual({ ok: true, value: { ok: true, value: { customName: 'Watcher of seals' } } })
+    expect(
+      await router.dispatch('dwarf:name:reset', FROM_PANEL, { dwarfId: DWARF, requestId: REQUEST })
+    ).toEqual({ ok: true, value: undefined })
+    expect(sent).toEqual([
+      ['crew.rename', { dwarfId: DWARF, name: 'Watcher of seals', requestId: REQUEST }],
+      ['crew.resetName', { dwarfId: DWARF, requestId: REQUEST }]
+    ])
+    // A table that leaves them unrouted (the cut-1 table) composes neither.
+    expect(composeDwarfNameRows({ routes: CUT_1_ROUTES, client })).toBeUndefined()
+  })
+
   it('[ADR-001] in cut 2 the legacy hook installer and the Claude half of the legacy hook channel are not composed, and the OpenCode plugin route still is', () => {
     // TC-141-06: the root derives the legacy Claude hook composition from the route table (21 §1 item 4, §4 row
     // "Claude hook entry": the Host is that entry's only writer from cut 2).
@@ -2508,6 +2599,7 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       }
     }
     // 21 §2 "Seam B members: the cut in which each is born", row 2: B-M30…B-M32, B-M39, B-M40.
+    // AMENDED for ISSUE-172 (lead decision, 2026-10-17): B-M22 and B-M23 join them, served from cut 2 for A-N08 / A-N09.
     expect(
       Object.fromEntries(Object.entries(SEAM_B_METHODS_BORN).filter(([, step]) => step === 'cut-2'))
     ).toEqual({
@@ -2515,7 +2607,9 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       'asking.answerPermission': 'cut-2', // B-M31
       'asking.setStep': 'cut-2', // B-M32
       'preferences.setClaudeHooks': 'cut-2', // B-M39
-      'preferences.answerWelcome': 'cut-2' // B-M40
+      'preferences.answerWelcome': 'cut-2', // B-M40
+      'crew.rename': 'cut-2', // B-M22
+      'crew.resetName': 'cut-2' // B-M23
     })
     expect(
       Object.fromEntries(
@@ -2526,7 +2620,10 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       'agent:answerPermission': ['asking.answerPermission'], // A-41 → B-M31
       'ask:step:set': ['asking.setStep'], // A-N07 → B-M32
       'claude:hooks:set': ['preferences.setClaudeHooks'], // A-N31 → B-M39
-      'welcome:answer': ['preferences.answerWelcome'] // A-N32 → B-M40
+      'welcome:answer': ['preferences.answerWelcome'], // A-N32 → B-M40
+      // AMENDED for ISSUE-172 (lead decision, 2026-10-17): A-N08 and A-N09 are born `host` in cut 2.
+      'dwarf:rename': ['crew.rename'], // A-N08 → B-M22
+      'dwarf:name:reset': ['crew.resetName'] // A-N09 → B-M23
     })
   })
 
@@ -2906,5 +3003,270 @@ describe('shape adapters (21 §3.1)', () => {
         !path.startsWith('legacy-bridge/') && /(from|import\()\s*'[^']*legacy-bridge\//.test(text)
     )
     expect(outside.map(([path]) => path)).toEqual(['ui-main/index.ts'])
+  })
+})
+
+// ADDED for ISSUE-217: the Jev key rows of step 3a (21 §2 cut 3a, §3 `SecretMigrationBridge`, §3.1
+// `JevSettingsShapeAdapter`, §4 row "Jev API key"). The route rows are the step-3a switch's (later: ISSUE-001); these
+// cases drive a 3a table built here, over a temp legacy `userData` holding today's encrypted Jev-key file.
+describe('Jev key rows (21 §2 cut 3a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const KEY = 'ts-live-0123456789abcdef'
+  const MINTED = '01920000-0000-7000-a000-000000000217'
+  const PREFERENCES = { profile: 'premium', default: { provider: 'claude' }, delegation: true }
+  const GET: ChannelKey = 'jev:settings:get' // A-47
+  const SET: ChannelKey = 'jev:apiKey:set' // A-48
+  const CLEAR: ChannelKey = 'jev:apiKey:clear' // A-49
+
+  const hostRoute = (channel: ChannelKey): ChannelRoute => ({
+    channel,
+    owner: 'host',
+    since: 'cut-3a',
+    parity: 'passed',
+    shape: 'target'
+  })
+  /** A-47 through the adapter, A-48/A-49 `host`, as ISSUE-001's 3a rows will read. */
+  const JEV_3A: ChannelRoute[] = [
+    {
+      channel: GET,
+      owner: 'legacy',
+      since: 'cut-3a',
+      parity: 'n/a',
+      shape: 'target',
+      shapeAdapter: 'JevSettingsShapeAdapter'
+    },
+    hostRoute(SET),
+    hostRoute(CLEAR)
+  ]
+
+  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
+    decryptString: (data: Buffer) => {
+      const text = data.toString('utf8')
+      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
+      return text.slice('enc:'.length)
+    }
+  }
+
+  /** The Host over an in-memory Jev key: B-M10, B-M11 and B-M12, recording each call. */
+  function jevHost() {
+    const calls: Array<[string, unknown]> = []
+    let key: string | undefined
+    const call = (method: string, params: unknown): Promise<unknown> => {
+      calls.push([method, params])
+      if (method === 'settings.secret.set') {
+        key = (params as { value: string }).value
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: true } })
+      }
+      if (method === 'settings.secret.clear') {
+        key = undefined
+        return Promise.resolve({ ok: true, value: { name: 'jev-key', configured: false } })
+      }
+      if (method === 'preferences.get') {
+        return Promise.resolve({
+          preferences: {},
+          secrets: [{ name: 'jev-key', configured: key !== undefined }],
+          secretBackend: 'os-secret-store',
+          integrations: [],
+          welcome: { due: false, legacyFound: [], offered: [] }
+        })
+      }
+      return Promise.reject(new Error(`unexpected ${method}`))
+    }
+    const client = {
+      call,
+      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
+      onStateChange: () => () => {},
+      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
+    }
+    return {
+      calls,
+      key: () => key,
+      client: client as unknown as Parameters<typeof composeJevKeyRows>[0]['client']
+    }
+  }
+
+  /** Today's runtime: its A-47 handler answers today's stored preferences (its key verdict is dropped). */
+  const legacy = {
+    serve: (channel: string) =>
+      Promise.resolve(channel === GET ? { configured: false, preferences: PREFERENCES } : undefined)
+  }
+
+  it('[ADR-001] the release table composes no Jev key row and no migration; a release the adapters do not live in binds neither', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
+    try {
+      const base = {
+        legacy,
+        client: jevHost().client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      }
+      expect(
+        composeJevKeyRows({ ...base, routes: ROUTES, release: ROUTES_RELEASE })
+      ).toBeUndefined()
+      const late = composeJevKeyRows({ ...base, routes: JEV_3A, release: 'cut-5' })
+      expect(late?.migration).toBeUndefined()
+      expect(late?.shapeAdapters).toEqual({})
+      // Without the Host attach nothing is composed.
+      expect(
+        composeJevKeyRows({ ...base, client: undefined, routes: JEV_3A, release: 'cut-3a' })
+      ).toBeUndefined()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('[ADR-017, C-23] in a 3a table the legacy Jev-key file moves to the Host once before A-47 answers, and A-48/A-49 round-trip through B-M10 and B-M11', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
+    try {
+      const encrypted = safeStorage.encryptString(KEY).toString('base64')
+      await writeFile(join(userData, 'jev-api-key-v1.json'), `${JSON.stringify({ encrypted })}\n`)
+      const host = jevHost()
+      const jev = composeJevKeyRows({
+        routes: JEV_3A,
+        release: 'cut-3a',
+        legacy,
+        client: host.client,
+        migration: { userDataDir: userData, safeStorage },
+        log: { record: () => {} },
+        mintId: () => MINTED
+      })
+      expect(jev?.part?.channels).toEqual([SET, CLEAR])
+      expect(Object.keys(jev?.shapeAdapters ?? {})).toEqual(['JevSettingsShapeAdapter'])
+      const router = createRouter({
+        routes: JEV_3A,
+        legacy: { serve: () => Promise.reject(new Error('no legacy Jev row from 3a')) },
+        ...(jev?.part === undefined ? {} : { host: jev.part.target }),
+        shapeAdapters: jev?.shapeAdapters ?? {},
+        senders
+      })
+      const response = CHANNELS[GET].response
+
+      // A-47 waits for the run: the key is in the Host, configured, and today's file is gone.
+      expect(response.parse(await router.dispatch(GET, FROM_PANEL as never, undefined))).toEqual({
+        configured: true,
+        preferences: PREFERENCES
+      })
+      expect(host.key()).toBe(KEY)
+      expect(host.calls[0]).toEqual([
+        'settings.secret.set',
+        { name: 'jev-key', value: KEY, requestId: MINTED, origin: 'migration' }
+      ])
+      expect(await readdir(userData)).toEqual([])
+
+      // A malformed value never crosses: the gate (over the cap) and the handler (blank) answer the state in force.
+      const before = host.calls.length
+      for (const payload of ['a'.repeat(513), '  ']) {
+        expect(response.parse(await router.dispatch(SET, FROM_PANEL as never, payload))).toEqual({
+          configured: true,
+          preferences: PREFERENCES
+        })
+      }
+      expect(host.calls.slice(before).map(([method]) => method)).toEqual([
+        'preferences.get',
+        'preferences.get'
+      ])
+
+      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
+        configured: false,
+        preferences: PREFERENCES
+      })
+      expect(response.parse(await router.dispatch(SET, FROM_PANEL as never, 'ts-new'))).toEqual({
+        configured: true,
+        preferences: PREFERENCES
+      })
+      expect(host.key()).toBe('ts-new')
+      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
+        [
+          'settings.secret.set',
+          { name: 'jev-key', value: KEY, requestId: MINTED, origin: 'migration' }
+        ],
+        ['settings.secret.clear', { name: 'jev-key', requestId: MINTED }],
+        [
+          'settings.secret.set',
+          { name: 'jev-key', value: 'ts-new', requestId: MINTED, origin: 'settings' }
+        ]
+      ])
+      jev?.migration?.dispose()
+    } finally {
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+})
+
+// ADDED for ISSUE-228: A-52 and A-53 are CHANGE rows the step-4a switch routes `host` (ISSUE-235, 22 §5); until then
+// today's handlers serve them. These cases drive a table built here with both rows routed `host`.
+describe('step 4a A-52 and A-53 (21 §2 step 4a)', () => {
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
+  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
+  const REQUEST = '01920000-0000-7000-a000-000000000228'
+  const ROWS: ChannelKey[] = ['opencode:settings:get', 'opencode:plugin:set']
+
+  it('[ADR-001, ADR-011] the root composes the A-52/A-53 host handlers only where the table routes them host, relaying preferences.get and preferences.setOpenCodePermissions', async () => {
+    const sent: Array<[string, unknown]> = []
+    const client = {
+      call: (method: string, params: unknown) => {
+        sent.push([method, params])
+        return Promise.resolve(
+          method === 'preferences.get'
+            ? {
+                preferences: { subagentDelegationOn: false, routingProfile: 'balanced' },
+                secrets: [{ name: 'opencode-password', configured: false }],
+                secretBackend: 'os-secret-store',
+                integrations: [{ id: 'opencode-permissions', state: 'off', changedAt: 1 }],
+                welcome: { due: false, legacyFound: [], offered: [] }
+              }
+            : { ok: true, value: { state: 'on-verified' } }
+        )
+      }
+    } as unknown as Parameters<typeof composeOpenCodeSettingsRows>[0]['client']
+
+    // Today's table keeps them `legacy` with today's shape: the root composes nothing for them.
+    for (const key of ROWS) {
+      expect(
+        ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
+        key
+      ).toEqual([['legacy', 'today']])
+    }
+    expect(composeOpenCodeSettingsRows({ routes: ROUTES, client })).toBeUndefined()
+
+    const switched: ChannelRoute[] = ROWS.map((channel) => ({
+      channel,
+      owner: 'host',
+      since: 'cut-4a',
+      parity: 'pending',
+      shape: 'target'
+    }))
+    const rows = composeOpenCodeSettingsRows({ routes: switched, client })
+    expect(rows?.channels).toEqual(ROWS)
+    const router = createRouter({
+      routes: switched,
+      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
+      ...(rows === undefined ? {} : { host: rows.target }),
+      senders
+    })
+    const get = await router.dispatch('opencode:settings:get', FROM_PANEL, undefined)
+    expect(CHANNELS['opencode:settings:get'].response.safeParse(get).success).toBe(true)
+    expect(get).toEqual({
+      ok: true,
+      value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+    })
+    const set = await router.dispatch('opencode:plugin:set', FROM_PANEL, {
+      on: true,
+      origin: 'add-panel',
+      requestId: REQUEST
+    })
+    expect(CHANNELS['opencode:plugin:set'].response.safeParse(set).success).toBe(true)
+    expect(set).toEqual({ ok: true, value: { ok: true, value: { state: 'on-verified' } } })
+    expect(sent).toEqual([
+      ['preferences.get', {}],
+      ['preferences.setOpenCodePermissions', { on: true, origin: 'add-panel', requestId: REQUEST }]
+    ])
   })
 })

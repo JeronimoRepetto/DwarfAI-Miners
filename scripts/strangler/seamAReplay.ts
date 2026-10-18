@@ -130,16 +130,31 @@ export function legacyTodayPart(
   return {
     scenario: {
       ...scenario,
-      calls: keptAt.map((at) => scenario.calls[at]!),
+      calls: keptAt.map((at) => renamedCall(scenario.calls[at]!)),
       pushes: scenario.pushes.filter((push) => kept.has(push.channel))
     },
     recorded: {
-      calls: keptAt.map((at) => recorded.calls[at]!),
+      calls: keptAt.map((at) => renamedCall(recorded.calls[at]!)),
       pushes: Object.fromEntries(
         Object.entries(recorded.pushes).filter(([channel]) => kept.has(channel))
       )
     }
   }
+}
+
+/** A call with the member it is spoken through today (`RENAMED_SINCE_RECORDING`). */
+function renamedCall<C extends { channel: string; member: string }>(call: C): C {
+  const renamed = RENAMED_SINCE_RECORDING[call.channel]
+  return renamed === undefined ? call : { ...call, member: renamed }
+}
+
+/**
+ * The `window.api` members renamed after the recording was made, by channel: the replay calls the new name and compares
+ * the recorded answer under it, and the recording file, which names the member it was recorded with, stays as made. ISSUE-172: 14 gives `resetDwarfName` to A-N09
+ * and to the legacy `dwarf:resetName` row (§8 I-21), both live until cut 5, so today's reset is `resetDwarfNameToday`.
+ */
+const RENAMED_SINCE_RECORDING: Readonly<Record<string, string>> = {
+  'dwarf:resetName': 'resetDwarfNameToday'
 }
 
 /** The recording of a release made on this OS (the mine ids of the simulated world carry the OS's separator). */

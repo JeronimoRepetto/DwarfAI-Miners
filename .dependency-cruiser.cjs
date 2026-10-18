@@ -23,6 +23,16 @@
 //    process's entry (built as out/host/dwarfai-mcp.js by electron.vite.relay.config.ts) and holds the credential; nothing imports it
 //    but its own tests (`relay/*.test.ts`), not even the composition root. What the Host needs of
 //    the relay (the entry file name, the variable name, the 15 §4 entry) lives in relayEntry.ts.
+// 7. R9 split and R6-viewer-entry-not-imported, owner-approved 2026-10-17, ISSUE-170, on the relay's
+//    precedent (deviations 5 and 6): the console viewer `host/modules/conversation/adapters/console/
+//    viewer/**` (ADR-031 item 2, built as out/host/dwarfai-viewer.js by
+//    electron.vite.viewer.config.ts) may import `contracts/logging/**` (its FM-040 `shim-` segment)
+//    and `contracts/host-protocol/**` (the ADR-003 item 4 frame codec, the ADR-002 D2 endpoint rule)
+//    by relative path, never the `@dwarfai/contracts` barrel (R9-viewer-only-logging-and-host-protocol);
+//    and `viewerMain.ts` is the viewer process's entry, which reads the per-view token: nothing
+//    imports it but its own tests (`viewer/*.test.ts`), not even the composition root. What the Host
+//    needs of the viewer (the entry file name, the token file layout) lives in viewerEntry.ts and
+//    viewerTokenFile.ts.
 //
 // Each rule's `comment` names the ADR-004 principle it enforces, or "05 local rule" (05 §5.1 column
 // "ADR-004"); scripts/checks/rule-principles.test.mjs reads them (ADR-004 Verification).
@@ -178,6 +188,16 @@ module.exports = {
       to: { path: '^src/host/modules/delegation/adapters/mcp/relay/relayMain\.ts$' }
     },
     {
+      name: 'R6-viewer-entry-not-imported',
+      comment:
+        'the console viewer entry viewerMain.ts is imported only by its own tests (05 R6, deviation 7; ADR-004 P4)',
+      severity: 'error',
+      from: {
+        pathNot: '^src/host/modules/conversation/adapters/console/viewer/[^/]+\.test\.ts$'
+      },
+      to: { path: '^src/host/modules/conversation/adapters/console/viewer/viewerMain\.ts$' }
+    },
+    {
       name: 'R7-electron-only-ui-main',
       comment: 'electron only in src/ui-main and src/preload (05 R7; ADR-004 P2)',
       severity: 'error',
@@ -222,11 +242,12 @@ module.exports = {
     {
       name: 'R9-adapters-no-contracts',
       comment:
-        'module adapters never import contracts, except diagnostics and the relay shim (05 R9; ADR-004 P5)',
+        'module adapters never import contracts, except diagnostics, the relay shim and the console viewer (05 R9; ADR-004 P5)',
       severity: 'error',
       from: {
         path: `${M}adapters/`,
-        pathNot: '^src/host/modules/(diagnostics/adapters|delegation/adapters/mcp/relay)/'
+        pathNot:
+          '^src/host/modules/(diagnostics/adapters|delegation/adapters/mcp/relay|conversation/adapters/console/viewer)/'
       },
       to: { path: '^src/contracts/' }
     },
@@ -243,6 +264,14 @@ module.exports = {
         'the relay shim imports only contracts/logging and contracts/host-protocol (05 R9, deviation 5; ADR-004 P5, P13)',
       severity: 'error',
       from: { path: '^src/host/modules/delegation/adapters/mcp/relay/' },
+      to: { path: '^src/contracts/', pathNot: '^src/contracts/(logging|host-protocol)/' }
+    },
+    {
+      name: 'R9-viewer-only-logging-and-host-protocol',
+      comment:
+        'the console viewer imports only contracts/logging and contracts/host-protocol (05 R9, deviation 7; ADR-004 P5, P13)',
+      severity: 'error',
+      from: { path: '^src/host/modules/conversation/adapters/console/viewer/' },
       to: { path: '^src/contracts/', pathNot: '^src/contracts/(logging|host-protocol)/' }
     },
     {

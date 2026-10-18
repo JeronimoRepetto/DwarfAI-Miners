@@ -2,8 +2,9 @@
 // (INV-105), the Reset-metrics saga (ADR-023) and the feature flags read once at start (INV-110).
 // Cut 1 serves `get`, `set`, `resetMetrics` and the feature flags; the first-run consent step's
 // state joins in cut 2 (`createWelcomeStep`, ISSUE-222), and so does the Claude Code hooks toggle
-// (`setClaudeHooks`, ISSUE-221); secrets (only ever in `SecretStore`, ADR-017) and the OpenCode
-// toggle join with their issues. It imports no
+// (`setClaudeHooks`, ISSUE-221); the secrets' configured flags (`createSecrets`, ISSUE-216: the
+// values only ever in `SecretStore`, ADR-017) join in 3a, and the OpenCode toggle with its issue.
+// It imports no
 // other module (05 §1.3, R4): the other modules' Reset steps reach the saga as `ResetDbStep`s from
 // host/wiring/resetParticipants.ts.
 import type { HostEpoch } from '../../kernel/domain/values'
@@ -21,6 +22,7 @@ import { SqliteResetJournal } from './adapters/sqlite/SqliteResetJournal'
 import { SqliteWelcomeAnswerStore } from './adapters/SqliteWelcomeAnswerStore'
 import {
   PreferencesService,
+  SecretStatusService,
   WelcomeAnswerService,
   WelcomeStepService,
   type CredentialMinter,
@@ -28,13 +30,15 @@ import {
   type MintedCredential,
   type PreferencesCommands,
   type PreferencesQueries,
+  type SecretBoot,
+  type SecretCommands,
+  type SecretQueries,
   type WelcomeAnswer,
   type WelcomeBoot,
   type WelcomeIntegrations,
   type WelcomeQueries,
   type WelcomeSettle
 } from './application/preferencesService'
-import { OFFERED_FILTER } from './domain/offeredFilter'
 import { ResetSaga, type ResetDbMaintenance, type ResetUiFanout } from './application/resetSaga'
 import type { PreferencesEvent } from './domain/events'
 import type { MetricsResetResult, ResetMetricsCommand } from './domain/resetSaga'
@@ -50,6 +54,9 @@ export type {
   MintedCredential,
   PreferencesCommands,
   PreferencesQueries,
+  SecretBoot,
+  SecretCommands,
+  SecretQueries,
   WelcomeAnswer,
   WelcomeBoot,
   WelcomeIntegrations,
@@ -64,14 +71,21 @@ export type {
   MetricsResetFinished,
   MetricsResetStarted,
   PreferencesEvent,
+  SecretStatusChanged,
   WelcomeStepChanged
 } from './domain/events'
+export type { SecretStatus } from './domain/secretStatus'
 export type { WelcomeChoice, WelcomeResult, WelcomeStepState } from './domain/welcomeStep'
 export type { InstalledToolsReader } from './ports/installedToolsReader'
 export type { WelcomeAnswerStore } from './ports/welcomeAnswerStore'
 export type { MetricsResetResult, ResetMetricsCommand, ResetStep } from './domain/resetSaga'
 export type { ResetDbStep } from './ports/resetJournal'
-export type { SecretStore } from './ports/secretStore'
+export type {
+  SecretBackend,
+  SecretDeleteOutcome,
+  SecretName,
+  SecretStore
+} from './ports/secretStore'
 export type {
   ChannelToken,
   ConfigTarget,
@@ -133,6 +147,24 @@ export function createPreferences(deps: PreferencesDeps): Preferences {
   return { commands: service, queries: service }
 }
 
+export interface SecretsDeps {
+  /** The OS secret store (ADR-017 item 1; host/main.ts builds `OsKeyringSecretStore`). */
+  secrets: SecretStore
+  bus: DomainEventBus<PreferencesEvent>
+  clock: Clock
+  ids: IdGenerator
+  hostEpoch: HostEpoch
+}
+
+/**
+ * 16 §4.12 `saveSecret`, `clearSecret` and `secretStatus` (ADR-017 items 4, 5; ISSUE-216), over the
+ * OS secret store only: nothing of a secret is ever in the database. host/wiring joins them to the
+ * module's commands and queries and runs `loadSecretStatuses` once at boot, before `ready`.
+ */
+export function createSecrets(deps: SecretsDeps): SecretCommands & SecretQueries & SecretBoot {
+  return new SecretStatusService(deps)
+}
+
 export interface WelcomeStepDeps {
   /** The Host's one writer (09 §8.1), where `app_meta.welcome_answered_at` lives. */
   db: SqliteDatabase
@@ -148,8 +180,8 @@ export interface WelcomeStepDeps {
 
 /**
  * The first-run consent step (07 machine 41; AMENDMENT-7, -9, -10): 16 §4.12
- * `PreferencesQueries.welcome` and its boot evaluation, over `app_meta.welcome_answered_at` and the
- * cut's offered filter. host/wiring/preferencesWiring.ts joins `welcome` to the module's queries,
+ * `PreferencesQueries.welcome` and its boot evaluation, over `app_meta.welcome_answered_at`, the
+ * installed tools and the config writer's legacy probe. host/wiring/preferencesWiring.ts joins `welcome` to the module's queries,
  * as it joins `resetMetrics` to its commands.
  */
 export function createWelcomeStep(
@@ -159,7 +191,6 @@ export function createWelcomeStep(
     answers: new SqliteWelcomeAnswerStore({ db: deps.db }),
     installed: deps.installedTools,
     legacy: deps.externalConfig,
-    cutFilter: OFFERED_FILTER.offered,
     bus: deps.bus,
     clock: deps.clock,
     ids: deps.ids,
@@ -179,7 +210,7 @@ export interface WelcomeAnswerDeps {
   step: WelcomeQueries & WelcomeSettle
   /** The module `createPreferences` built: its toggles' enable path and their stored states. */
   preferences: {
-    commands: Pick<PreferencesCommands, 'setClaudeHooks'>
+    commands: Pick<PreferencesCommands, 'setClaudeHooks' | 'setOpenCodePermissions'>
     queries: Pick<PreferencesQueries, 'integrationState'>
   }
   /** The one config writer: its legacy probe and its revert of an old-app entry (16 §7.1, §7.4). */
@@ -198,10 +229,11 @@ export function createWelcomeAnswer(deps: WelcomeAnswerDeps): WelcomeAnswer {
     legacy: deps.externalConfig,
     integrations: {
       setClaudeHooks: (on, origin) => deps.preferences.commands.setClaudeHooks(on, origin),
+      setOpenCodePermissions: (on, origin) =>
+        deps.preferences.commands.setOpenCodePermissions(on, origin),
       integrationState: (id) => deps.preferences.queries.integrationState(id)
     },
     transactions: deps.transactions,
-    cutFilter: OFFERED_FILTER.offered,
     bus: deps.bus,
     clock: deps.clock,
     ids: deps.ids,

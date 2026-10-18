@@ -9,13 +9,14 @@
 import { z } from 'zod'
 import {
   feedPageSchema,
+  hostRecoveryReportViewSchema,
   mineHistoryViewSchema,
   mineIdSchema,
   stopAllOutcomeSchema,
   supplierEntryViewSchema
 } from '../wire'
 import { hostFrameSchema } from '../host-protocol/envelope'
-import { ipcResultSchema, type IpcResult } from '../host-protocol/errors'
+import { ipcResultSchema, outcomeSchema, type IpcResult } from '../host-protocol/errors'
 import { snapshotPageSchema, snapshotParamsSchema } from '../host-protocol/snapshot'
 import {
   answerOutcomeSchema,
@@ -30,6 +31,7 @@ import {
   launchCustomParamsSchema,
   launchParamsSchema,
   metricsResetResultSchema,
+  recoveryActionParamsSchema,
   resetMetricsParamsSchema,
   sendMessageParamsSchema,
   sendMessageResultSchema,
@@ -38,6 +40,9 @@ import {
   setAskStepParamsSchema,
   setOpenCodePermissionsParamsSchema,
   setOpenCodePermissionsResultSchema,
+  renameDwarfParamsSchema,
+  renameDwarfResultSchema,
+  resetDwarfNameParamsSchema,
   stopDwarfParamsSchema,
   stopDwarfResultSchema,
   suppliersLaunchableParamsSchema
@@ -842,6 +847,50 @@ export const CHANNELS = {
     status: 'new',
     request: stopDwarfParamsSchema,
     response: ipcResultSchema(stopDwarfResultSchema)
+  },
+  // A-N08 `renameDwarf` (AMENDMENT-2, SC-AR-05; PO #88; INV-29): a person-set name for a dwarf of any rank, the
+  // successor of the legacy `dwarf:setName` (14 §8 I-21); relays B-M22 `crew.rename` unchanged (14 §1.2). The Host
+  // normalizes the text and answers `customName: null` for a reset. 14 lists no sensitive flag for it
+  'dwarf:rename': {
+    name: 'dwarf:rename',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: renameDwarfParamsSchema,
+    response: ipcResultSchema(renameDwarfResultSchema)
+  },
+  // A-N09 `resetDwarfName` (PO #88; US-MSG-006): the ⋯ menu's Reset name, with no confirmation, the successor of the
+  // legacy `dwarf:resetName` (14 §8 I-21, whose preload member is `resetDwarfNameToday` so the two never share a
+  // name); relays B-M23 `crew.resetName` unchanged (14 §1.2), B-M23's `{}` read as 14 §2.2's `IpcResult<void>`. A dwarf
+  // id and a requestId, so not `sensitive`
+  'dwarf:name:reset': {
+    name: 'dwarf:name:reset',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: resetDwarfNameParamsSchema,
+    response: ipcVoidResultSchema
+  },
+  // A-N10 `retryRecovery` (PO #90; OQ-41 A; ADR-015 item 5): the grouped recovery message's Retry; relays B-M35
+  // `launching.retryRecovery` unchanged (14 §1.2), answered with the settled report or `no-report`. The request is
+  // an epoch and a requestId, so not `sensitive`
+  'host:recovery:retry': {
+    name: 'host:recovery:retry',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: recoveryActionParamsSchema,
+    response: ipcResultSchema(outcomeSchema(hostRecoveryReportViewSchema, z.literal('no-report')))
+  },
+  // A-N11 `dismissRecovery` (PO #90; OQ-43): the grouped recovery message's Dismiss; relays B-M36
+  // `launching.dismissRecovery` unchanged (14 §1.2). An epoch and a requestId, so not `sensitive`
+  'host:recovery:dismiss': {
+    name: 'host:recovery:dismiss',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: recoveryActionParamsSchema,
+    response: ipcResultSchema(outcomeSchema(z.object({}).strict(), z.literal('no-report')))
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

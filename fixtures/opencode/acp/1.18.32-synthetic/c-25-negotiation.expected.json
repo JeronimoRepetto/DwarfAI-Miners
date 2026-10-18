@@ -1,0 +1,95 @@
+{
+  "case": "C-25",
+  "description": "ADR-009 D2, 15 §2.1, §2.2 row acp (C-25b): the recorded OpenCode 1.18.32 initialize offers loadSession and sessionCapabilities.resume, so the protocol source says resume load; the OpenCode ceiling allows only resume none (rows O1, O2 U→none), so the effective resume is none, never above the lower one; every other field is the ceiling merged with the lower of the protocol and the O2 probe sources.",
+  "script": [
+    {
+      "do": "launch"
+    },
+    {
+      "do": "probe"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    },
+    null
+  ],
+  "negotiated": {
+    "protocol": {
+      "resume": "load"
+    }
+  },
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "opencode:opencode:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "opencode:opencode:{session}:1:1",
+        "role": "dwarf",
+        "text": "Ready.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "opencode:opencode:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "providerVersion": "1.18.32",
+  "capturedAt": "2026-10-17",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §2.7, §4.7, §4.10 and §6. The agent's handshake is the recorded OpenCode 1.18.32 one of ../1.18.32/sp12-session-new-mcp.jsonl (its initialize result verbatim, its session id and one config option of its session/new answer), re-numbered to the ids the driver's own client sends (the recording came from the spike's client, which numbers from 1). The turns, asks and stop reasons follow the generic synthetic set of ../../../acp-generic/acp/1/ (no recording of an OpenCode acp turn exists): no CLI was run. Not ported: the question case (OpenCode acp has no question channel, HR D8), the resume cases (resume is U→none in rows O1 and O2) and the session-mode case (OpenCode 1.18.32 reports no session modes).",
+  "capabilities": {
+    "driver": "acp",
+    "agent": "opencode acp, always the person’s own binary",
+    "note": "row O2 of 15 §3 (OPENCODE_ACP in catalog/profiles.ts): permission interactive iff the OpenCode integration is on-verified, no question channel, resume none, fidelity-1 usage, the path-only ticket-file relay entry on a gated delegation launch (SP-12 foreman ruling 2026-10-17)"
+  }
+}

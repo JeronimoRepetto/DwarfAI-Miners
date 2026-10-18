@@ -3437,10 +3437,12 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
       ...(customName === undefined ? {} : { customName })
     })
 
+  // AMENDED for ISSUE-172 (was: `resetDwarfName`): today's reset member is `resetDwarfNameToday`, A-N09 having its name.
+  // This block's dwarf `d55` is on no Host board, so its rename stays today's runtime's (useDwarfRename).
   function fakeNames(answer: DwarfNameResult = { saved: true, customName: 'Watcher' }) {
     const api = {
       setDwarfName: vi.fn().mockResolvedValue(answer),
-      resetDwarfName: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
+      resetDwarfNameToday: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
     }
     // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
     // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
@@ -3690,7 +3692,7 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
 
   it('says main’s reason in a warning toast when a reset saved nothing', async () => {
     const api = fakeNames()
-    api.resetDwarfName.mockResolvedValue({
+    api.resetDwarfNameToday.mockResolvedValue({
       saved: false,
       reason: 'This dwarf is no longer here, so its name cannot change.'
     } satisfies DwarfNameResult)
@@ -3716,7 +3718,7 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     const wrapper = attached({ dwarf: named('Watcher') })
     wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
     await flushPromises()
-    expect(api.resetDwarfName).toHaveBeenCalledWith('d55')
+    expect(api.resetDwarfNameToday).toHaveBeenCalledWith('d55')
     expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
     expect(said(wrapper)).toBe('Name reset to dwarfai-55')
   })
@@ -3744,7 +3746,10 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
  * runtime renames only the dwarfs on its own board. A dwarf the Host's board carries therefore has no Rename and no
  * Reset name anywhere in the panel: its name is plain text, no key opens a field, and the ⋯ menu has no Reset name.
  */
-describe('DwarfMessagePanel offers no rename the Host cannot serve yet (BR-19)', () => {
+// AMENDED for ISSUE-172 (was: `DwarfMessagePanel offers no rename the Host cannot serve yet (BR-19)`, whose three cases
+// asserted the name as plain text, no rename field and no Reset name for a dwarf the Host's board carries): A-N08 and
+// A-N09 route `host` from cut 2 (lead decision, 2026-10-17), so that dwarf is renamed and reset by the Host.
+describe('DwarfMessagePanel renames a dwarf the Host’s board carries through the Host (ISSUE-172)', () => {
   type Api = Window['api']
   const BORIN = '01920000-0000-7000-8000-00000000d001'
   const ALPHA = '01920000-0000-7000-8000-00000000a001'
@@ -3812,7 +3817,14 @@ describe('DwarfMessagePanel offers no rename the Host cannot serve yet (BR-19)',
       getHostSnapshot: vi.fn().mockResolvedValue(page) as unknown as Api['getHostSnapshot'],
       onHostEvent: vi.fn(() => () => undefined) as unknown as Api['onHostEvent'],
       setDwarfName: vi.fn() as unknown as Api['setDwarfName'],
-      resetDwarfName: vi.fn() as unknown as Api['resetDwarfName']
+      resetDwarfNameToday: vi.fn() as unknown as Api['resetDwarfNameToday'],
+      renameDwarf: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { ok: true, value: { customName: 'Scout' } }
+      }) as unknown as Api['renameDwarf'],
+      resetDwarfName: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: undefined }) as unknown as Api['resetDwarfName']
     })
     Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     await expect(useMines().start()).resolves.toBe(true)
@@ -3837,37 +3849,48 @@ describe('DwarfMessagePanel offers no rename the Host cannot serve yet (BR-19)',
     else Object.defineProperty(window, 'api', apiBefore)
   })
 
-  it('[BR-19] draws the name as plain text, with no Rename, for a dwarf the Host’s board carries', async () => {
+  it('[US-MSG-005.AC14, BR-19] draws the name as the Rename button for a dwarf the Host’s board carries', async () => {
     await hostCarriesBorin('Watcher')
     const wrapper = panel({ dwarf: borin('Watcher') })
-    expect(wrapper.find('.dm-msg__rename').exists()).toBe(false)
-    expect(wrapper.find('h2.dm-msg__name button').exists()).toBe(false)
-    expect(wrapper.find('[title="Rename"]').exists()).toBe(false)
+    expect(wrapper.get('.dm-msg__rename').attributes('title')).toBe('Rename')
     expect(wrapper.get('h2.dm-msg__name').text()).toBe('Watcher')
-    // The base name still stands under a custom name: it is shown, not edited.
+    // The base name still stands under a custom name.
     expect(wrapper.get('p.dm-msg__base').text()).toBe('Borin')
   })
 
-  it('[BR-19] opens no rename field for a dwarf the Host’s board carries, even one asked for open', async () => {
+  it('[US-MSG-005.AC02, US-MSG-005.AC14] saves the name of a dwarf the Host’s board carries through A-N08, never today’s rows', async () => {
     await hostCarriesBorin()
     const wrapper = panel({ dwarf: borin(), renaming: { value: 'Scout' } })
-    expect(wrapper.find('.dm-msg__field').exists()).toBe(false)
-    expect(wrapper.find('.dm-msg__hint').exists()).toBe(false)
-    expect(wrapper.get('h2.dm-msg__name').text()).toBe('Borin')
+    expect(wrapper.find('.dm-msg__field').exists()).toBe(true)
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(window.api.renameDwarf).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(window.api.renameDwarf).mock.calls[0]?.[0]).toMatchObject({
+      dwarfId: BORIN,
+      name: 'Scout'
+    })
+    expect(window.api.setDwarfName).not.toHaveBeenCalled()
+    expect(wrapper.get('.sr-only[role="status"][aria-live="polite"]').text()).toBe(
+      'Renamed to Scout'
+    )
   })
 
-  it('[BR-19] offers no Reset name in the ⋯ menu for a dwarf the Host’s board carries, custom name or not', async () => {
+  it('[US-MSG-006.AC03] offers Reset name for a Host dwarf with a custom name and resets it through A-N09 at once', async () => {
     await hostCarriesBorin('Watcher')
     const wrapper = panel({ dwarf: borin('Watcher') })
     const labels = (wrapper.findComponent(MenuButton).props('items') as MenuItem[]).map(
       (item) => item.label
     )
-    expect(labels).not.toContain('Reset name')
-    // The menu keeps its shape without the row: Stop dwarf… stands where it stands for any unnamed dwarf.
-    wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_STOP)
-    await wrapper.vm.$nextTick()
-    expect(wrapper.findComponent(ModalDialog).props('title')).toBe('Stop Watcher?')
-    expect(window.api.resetDwarfName).not.toHaveBeenCalled()
+    expect(labels).toContain('Reset name')
+    wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
+    await flushPromises()
+    expect(window.api.resetDwarfName).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(window.api.resetDwarfName).mock.calls[0]?.[0]).toMatchObject({
+      dwarfId: BORIN
+    })
+    expect(window.api.resetDwarfNameToday).not.toHaveBeenCalled()
+    // At once: no dialog asks first.
+    expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
   })
 })
 
@@ -4353,7 +4376,8 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
       setDwarfName: vi.fn(async ({ name }: { name: string }) =>
         name === '' || name === BASE ? { saved: true } : { saved: true, customName: name }
       ),
-      resetDwarfName: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
+      // AMENDED for ISSUE-172 (was: `resetDwarfName`): today's reset member, A-N09 having its name.
+      resetDwarfNameToday: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
     }
     ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
       api as unknown as Partial<Window['api']>
@@ -4493,7 +4517,7 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
     const reset = attached({ dwarf: named('Watcher') })
     reset.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
     await flushPromises()
-    expect(api.resetDwarfName).toHaveBeenCalledWith('d58')
+    expect(api.resetDwarfNameToday).toHaveBeenCalledWith('d58')
     expect(said(reset)).toBe('Name reset to ' + BASE)
   })
 
@@ -4737,5 +4761,34 @@ describe('DwarfMessagePanel and the ask card in the composer’s place (ISSUE-26
     const composer = wrapper.find('.dm-composer textarea')
     expect(document.activeElement).toBe(composer.element)
     expect((composer.element as HTMLTextAreaElement).value).toBe('')
+  })
+})
+
+/* --- ISSUE-266: an opened chat takes focus even when its composer cannot (NFR-A11Y-04) — one block, appended --- */
+
+/*
+ * An opened chat takes the keyboard one frame after it opens (accessibility.md, Focus). Its composer is the place,
+ * but never a composer the panel explains as dead (#217): then the chat's first live control, the dwarf's name,
+ * takes it, so the keyboard is in the chat that opened and Esc there closes it (found by the L12 E2E, ISSUE-266).
+ */
+describe('DwarfMessagePanel focus on opening, composer dead (ISSUE-266)', () => {
+  it('[NFR-A11Y-04] a chat whose composer cannot take text takes the focus on the dwarf’s name', async () => {
+    const wrapper = mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: { dwarf: defaultDwarf({ textDelivery: undefined }), focusOnOpen: true }
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).toBe(wrapper.get('.dm-msg__rename').element)
+    expect(document.activeElement).not.toBe(wrapper.get('.dm-composer textarea').element)
+    // Not opened on a selection, it takes nothing.
+    wrapper.unmount()
+    const drawn = mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: { dwarf: defaultDwarf({ textDelivery: undefined }), focusOnOpen: false }
+    })
+    await drawn.vm.$nextTick()
+    await drawn.vm.$nextTick()
+    expect(document.activeElement).not.toBe(drawn.get('.dm-msg__rename').element)
   })
 })
