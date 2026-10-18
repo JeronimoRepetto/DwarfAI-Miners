@@ -56,6 +56,7 @@ import {
 import { belongsToComposition } from '../../lib/controls/input'
 import { dwarfDisplayName } from '../../lib/dwarf/displayName'
 import { untrustedText } from '../../lib/text/untrustedText'
+import { launcherLabel } from '../../lib/message/launcherLabel'
 import { cleanDwarfName, filterDwarfName, type DwarfNameRefusal } from '@dwarfai/contracts'
 import type { AskAnswer } from '../../lib/question/questionAnswer'
 import { shownAskOf } from '../../lib/message/askCard'
@@ -236,6 +237,17 @@ const emit = defineEmits<{
  * the board, never a guess of what a save will leave: a rename shows once the board carries it.
  */
 const displayName = computed(() => dwarfDisplayName(props.dwarf))
+
+/**
+ * The launcher label of a delegated worker's brief, "from <dwarf>" (PO decision 2026-09-28 #53): only the brief
+ * carries an issuer (AMENDMENT-23), so only the brief wears it (US-DLG-003.AC04). The name is a person's or a
+ * provider's text, so it is shown as untrusted text.
+ */
+function launcherOf(message: PanelRow): string | undefined {
+  return message.issuer === undefined
+    ? undefined
+    : launcherLabel({ name: untrustedText(message.issuer.name) })
+}
 
 const message = ref(props.draft ?? '')
 watch(message, (text) => emit('draft', text))
@@ -1131,6 +1143,7 @@ async function resetName(): Promise<void> {
           :offers-retry="ownSend(entry.message) && canReceive"
           :session-closed="ownSend(entry.message) && (closed || !canReceive)"
           :reason="refusalOf(entry.message)"
+          :launcher="launcherOf(entry.message)"
           @open-link="emit('open-link', $event)"
           @retry="entry.message.echo && emit('retry', entry.message.echo.id)"
           @copy="emit('copy', entry.message.text)"

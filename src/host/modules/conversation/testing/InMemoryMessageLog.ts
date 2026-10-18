@@ -37,7 +37,7 @@ import {
 } from '../domain/messages'
 import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
 import { MESSAGES_PER_DWARF, rowsToTrim } from '../domain/retention'
-import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
+import type { AppendOptions, DeliverySettlement, MessageLog } from '../ports/messageLog'
 
 export interface InMemoryMessageLogDeps {
   /** The caller's transaction probe (16 §2.2). */
@@ -80,7 +80,8 @@ export class InMemoryMessageLog implements MessageLog {
   append(
     dwarfId: DwarfId,
     entries: ConversationEntry[],
-    origin: 'live-stream' | 'transcript'
+    origin: 'live-stream' | 'transcript',
+    opts: AppendOptions = {}
   ): { inserted: number; appended: Message[] } {
     if (!this.deps.scope.isInTransaction()) {
       throw new HostInvariantError('MessageLog.append runs inside the caller transaction (16 §2.2)')
@@ -115,12 +116,15 @@ export class InMemoryMessageLog implements MessageLog {
         throw new HostInvariantError('message text over 64 KiB (09 §4.4 CHECK)')
       }
       const activity = activitySummaryOf(entry.activity)
+      // AMENDMENT-23: the issuer goes on the batch's person row only (the delegated brief).
+      const issuer = entry.role === 'person' ? opts.issuer : undefined
       const message: Message = {
         id: this.deps.ids.uuidv7() as MessageId,
         dwarfId,
         sourceKey: entry.sourceKey,
         role: entry.role,
         text: entry.text,
+        ...(issuer === undefined ? {} : { issuer: { dwarfId: issuer } }),
         ...(activity === undefined ? {} : { activity }),
         attachments: [],
         origin,

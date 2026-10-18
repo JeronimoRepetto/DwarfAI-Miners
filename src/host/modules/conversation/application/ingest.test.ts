@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { DwarfId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
 import {
   CONVERSATION_DWARF as DWARF,
@@ -70,5 +71,22 @@ describe('ConversationCommands.ingest', () => {
       }
     })
     expect(seen).toEqual([{ inTransaction: false, rows: 2 }])
+  })
+
+  // AMENDMENT-23 (owner, 2026-10-18; ISSUE-207, TC-207-02): the brief of a delegated worker.
+  it('[US-DLG-003.AC04] an ingest given an issuer stores it on the batch person row and MessagesAppended carries it on that row only', () => {
+    const c = inMemoryConversation()
+    const parent = 'dwarf-parent' as DwarfId
+    const brief = entry(1, { role: 'person', text: 'the subtask brief' })
+
+    c.commands.ingest(DWARF, [brief, entry(2)], 'live-stream', { issuer: parent })
+    c.commands.ingest(DWARF, [entry(3, { role: 'person' })], 'live-stream')
+
+    const [first, later] = c.bus.ofType('MessagesAppended')
+    expect(first?.payload.messages.map((m) => [m.role, m.issuer])).toEqual([
+      ['person', { dwarfId: parent }],
+      ['dwarf', undefined]
+    ])
+    expect(later?.payload.messages.map((m) => 'issuer' in m)).toEqual([false])
   })
 })

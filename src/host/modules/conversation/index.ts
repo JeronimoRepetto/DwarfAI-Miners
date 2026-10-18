@@ -400,10 +400,10 @@ export function createConversation(deps: ConversationDeps): Conversation {
   /** The batches of joined ingests, handed to the sender after their caller's commit. */
   const joinedBatches: Array<Parameters<IngestCommands['ingest']>> = []
   const commands: IngestCommands = {
-    ingest: (dwarfId, received, origin) => {
+    ingest: (dwarfId, received, origin, opts) => {
       const joined = deps.transactions.isInTransaction()
       const entries = handoffs.recognise(dwarfId, received)
-      ingest.ingest(dwarfId, stored(dwarfId, entries, origin), origin)
+      ingest.ingest(dwarfId, stored(dwarfId, entries, origin), origin, opts)
       if (joined) joinedBatches.push([dwarfId, entries, origin])
       else {
         heard(dwarfId, entries)
@@ -465,7 +465,7 @@ export function createConversation(deps: ConversationDeps): Conversation {
         ingest.publishJoined()
         for (const batch of joinedBatches.splice(0)) {
           heard(batch[0], batch[1])
-          sender?.entriesIngested(...batch)
+          sender?.entriesIngested(batch[0], batch[1], batch[2])
         }
       },
       discard: () => {

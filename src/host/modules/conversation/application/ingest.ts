@@ -25,6 +25,9 @@
 // in its parent's session (`providerAgentId`, 15 §1.5): it is never re-resolved here.
 //
 // Amendment of 2026-10-02 to 16 §4.6 (ISSUE-098): `ingest` takes the feed of the batch (`origin`).
+// AMENDMENT-23 (owner, 2026-10-18; ISSUE-207): `ingest` takes optional `opts.issuer`, which
+// `MessageLog.append` stores on the batch's person row only: the delegated worker's brief, set by
+// the `DwarfLaunched` route alone (14 §2.4 note; 11 F6 step 5).
 //
 // The outcome line (ISSUE-102; 16 §4.6 amendment B): after the runs are saved, the same transaction
 // reads the dwarf's previous line, adds the steps this batch folded to its running total (the
@@ -59,7 +62,7 @@ import type { ConversationEvent } from '../domain/events'
 import { toMessageView } from '../domain/messages'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { ActivityLog } from '../ports/activityLog'
-import type { MessageLog } from '../ports/messageLog'
+import type { AppendOptions, MessageLog } from '../ports/messageLog'
 import { activityChanged } from './activityChanged'
 import { outcomeLineChanged, recomputeOutcome } from './outcomeRecompute'
 
@@ -94,7 +97,13 @@ export interface ConversationSendCommand {
  */
 export interface ConversationCommands {
   // from live streams + transcript readers
-  ingest(dwarfId: DwarfId, entries: ConversationEntry[], origin: 'live-stream' | 'transcript'): void
+  // Amended: AMENDMENT-23 (owner, 2026-10-18): `opts.issuer` goes on the batch's person row only.
+  ingest(
+    dwarfId: DwarfId,
+    entries: ConversationEntry[],
+    origin: 'live-stream' | 'transcript',
+    opts?: AppendOptions
+  ): void
   // ADR-021 payload from a driver turn.ended or ObservedTurnEnded; one transaction; LifecycleFactLog
   // key turn:<dwarfId>:<turnKey>; publishes TurnEnded only when the key is new (08 §4) (AMENDMENT-10)
   recordTurnEnd(end: TurnEnded): void
@@ -138,13 +147,14 @@ export class ConversationIngest implements Pick<ConversationCommands, 'ingest'> 
   ingest(
     dwarfId: DwarfId,
     entries: ConversationEntry[],
-    origin: 'live-stream' | 'transcript'
+    origin: 'live-stream' | 'transcript',
+    opts?: AppendOptions
   ): void {
     const { log, transactions, scope, clock, ids, hostEpoch } = this.deps
     const joined = scope.isInTransaction()
     // A batch carries one dwarf's entries, so that dwarf is the only one it can push over the cap.
     const { appended, runs, outcome } = transactions.inTransaction(() => {
-      const result = log.append(dwarfId, entries, origin)
+      const result = log.append(dwarfId, entries, origin, opts)
       log.trim(dwarfId, MESSAGES_PER_DWARF)
       const folded = this.foldActivity(
         dwarfId,
