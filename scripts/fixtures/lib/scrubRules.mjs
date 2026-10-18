@@ -294,7 +294,20 @@ const BUILTIN_SETUP_NAMES = new Set([
   // Claude Code permission modes (the ACP `mode` config option).
   'acceptEdits',
   'bypassPermissions',
-  'dontAsk'
+  'dontAsk',
+  // Codex built-in commands that codex-acp lists and that are also its own protocol vocabulary
+  // (`auth.logout` in agentCapabilities, the `_session/goal` steering method).
+  'skills',
+  'review-branch',
+  'review-commit',
+  'goal',
+  'rename',
+  'logout',
+  // codex-acp session modes (the ACP `mode` config option); `agent` is also ACP's own
+  // `agent_message_chunk` and `agent_thought_chunk`.
+  'read-only',
+  'agent',
+  'agent-full-access'
 ])
 
 /** A plugin file of the person's global OpenCode config (a project's own plugin stays). */
@@ -477,9 +490,10 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
 /**
  * An absolute path that no earlier rule recognised: outside the throwaway repository, so it names
  * something of the maintainer's machine. Not glued to a word, a scheme or a placeholder, so a URL
- * path and `<REPO>/src` stay.
+ * path, `<REPO>/src` and the rest of a path after a `[redacted]` segment stay (the secret rule runs
+ * after this one, so a second pass must change nothing).
  */
-const ABSOLUTE_PATH = /(?<![\w:/\\.<>-])(?:[A-Za-z]:[\\/]+|\/)[^\s"'<>|*?]+/g
+const ABSOLUTE_PATH = /(?<![\w:/\\.<>\]-])(?:[A-Za-z]:[\\/]+|\/)[^\s"'<>|*?]+/g
 
 /**
  * The keys whose string value is a provider session, message, tool-call or request id. The list is
