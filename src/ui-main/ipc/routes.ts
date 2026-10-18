@@ -1,13 +1,13 @@
 // The router table (ADR-001 item 3; 21 §1 items 1, 2, 2a): exactly one `ChannelRoute` per (channel, qualifier) for
 // the release `ROUTES_RELEASE`, reviewed per cut and checked by `ipc-routing.contract.test.ts`. A hot spot (22 §5):
 // after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1,
-// ISSUE-141 for cut 2, ISSUE-001 for step 3a), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
+// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
 // it is listed in `src/contracts/ipc/unrouted.ts` with that step.
 import { CATALOG_PROVIDER_IDS, STEP_ORDER, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, IpcChannelName, LegacyBridgeAdapter } from './channelRoute'
 
 /** The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. */
-export const ROUTES_RELEASE: StepId = 'cut-3a'
+export const ROUTES_RELEASE: StepId = 'cut-3b'
 
 /** The steps from `from` to `to`, both included, in `STEP_ORDER`. */
 function span(from: StepId, to: StepId): StepId[] {
@@ -132,11 +132,11 @@ const askAnswerCut2 = (channel: IpcChannelName): ChannelRoute[] => [
 
 /**
  * The catalog ids (ISSUE-009; R12: never a hand-typed provider literal here). Step 3a moves Claude's launcher to the
- * Host (21 §2 cut 3a); Codex, Antigravity and OpenCode move in 3b, 3e and 4b.
+ * Host (21 §2 cut 3a), step 3b Codex's (21 §2 cut 3b); Antigravity and OpenCode move in 3e and 4b.
  */
 const [CLAUDE = '', CODEX = '', ANTIGRAVITY = '', OPENCODE = ''] = CATALOG_PROVIDER_IDS
-/** The providers whose launch, send and stop rows are still served by today's runtime in 3a. */
-const NOT_MOVED_IN_3A: readonly string[] = [CODEX, ANTIGRAVITY, OPENCODE]
+/** The providers whose launch, send and stop rows are still served by today's runtime in 3b. */
+const NOT_MOVED_IN_3B: readonly string[] = [ANTIGRAVITY, OPENCODE]
 
 /**
  * A row the step-3a switch serves from the Host (21 §2 cut 3a "Rows born or moved") with its target shape, for every
@@ -150,6 +150,21 @@ const hostCut3a = (channel: IpcChannelName, provider?: string): ChannelRoute => 
   since: 'cut-3a',
   parity: 'passed',
   ...(provider === undefined ? {} : { qualifier: { provider } }),
+  shape: 'target'
+})
+
+/**
+ * A row the step-3b switch serves from the Host for Codex (21 §2 cut 3b "Rows born or moved": the provider-qualified
+ * rows for Codex) with its target shape: `passed` because its evidence is recorded in `docs/strangler/parity-cut-3b.md`
+ * (the launch-cause parity suite, the L2 Codex flow and the L4 conformance of the Codex drivers, C-23 included, its L6
+ * contract suite and the cut-3b E2E case; 21 §1 item 3, §2 row 3b "Parity / exit").
+ */
+const hostCut3b = (channel: IpcChannelName, provider: string): ChannelRoute => ({
+  channel,
+  owner: 'host',
+  since: 'cut-3b',
+  parity: 'passed',
+  qualifier: { provider },
   shape: 'target'
 })
 
@@ -169,9 +184,10 @@ const legacyThroughCut3a = (channel: IpcChannelName, shapeAdapter: string): Chan
 /**
  * A-27, A-P3 or A-P4 from 3a (21 §2 cut 3 common rules): today's runtime with today's shape, qualified to each provider
  * not yet moved; a moved provider has no route (its successors are B-F10, B-F19 and B-F12). Retired at the end of 4b.
+ * The step-3b switch removed Codex's route; the others are unchanged since 3a.
  */
 const legacyNotMovedCut3a = (channel: IpcChannelName): ChannelRoute[] =>
-  NOT_MOVED_IN_3A.map((provider) => ({
+  NOT_MOVED_IN_3B.map((provider) => ({
     channel,
     owner: 'legacy',
     since: 'cut-3a',
@@ -180,10 +196,14 @@ const legacyNotMovedCut3a = (channel: IpcChannelName): ChannelRoute[] =>
     shape: 'today'
   }))
 
-/** A-13, A-23 or A-35 from 3a: the Host for Claude, `PerProviderShapeAdapter` for every other provider (21 §3.1). */
-const perProviderCut3a = (channel: IpcChannelName): ChannelRoute[] => [
+/**
+ * A-13, A-23 or A-35 from 3b: the Host for Claude (3a) and Codex (3b), `PerProviderShapeAdapter` for every other
+ * provider (21 §3.1).
+ */
+const perProviderCut3b = (channel: IpcChannelName): ChannelRoute[] => [
   hostCut3a(channel, CLAUDE),
-  legacyThroughCut3a(channel, 'PerProviderShapeAdapter')
+  legacyThroughCut3a(channel, 'PerProviderShapeAdapter'),
+  hostCut3b(channel, CODEX)
 ]
 
 /**
@@ -217,6 +237,12 @@ const perProviderCut3a = (channel: IpcChannelName): ChannelRoute[] => [
  * dwarf. A-26 (kick), A-37 and A-38 are retired with no route (`RETIRED`). A-27, A-P3 and A-P4 stay `legacy` with
  * today's shape, qualified to the providers not yet moved.
  *
+ * Step 3b (21 §2 cut 3b; ISSUE-002): Codex's launch, send, console and stop rows move to the Host, qualified by
+ * provider exactly as 3a did for Claude (A-35 with its Retry path, A-36, A-23, A-13; A-N29's one `host` route already
+ * serves every dwarf). The shape adapters keep serving the providers still not moved (Antigravity, OpenCode, and
+ * "Other…", which no qualified route names), and A-27, A-P3 and A-P4 shrink to Antigravity and OpenCode. No seam B
+ * member and no NEW row is born in 3b.
+ *
  * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape; the rows
  * still `legacy` that carry a dwarf id reach today's runtime through `LegacyDwarfIdBridge` (21 §3). A-N33 stays
  * unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router
@@ -235,13 +261,13 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('shortcut:get'), // A-10
   uiLocalKept('shortcut:set'), // A-11
   hostCut1('mines:get'), // A-12, through BoardFacadeAdapter
-  ...perProviderCut3a('dwarf:activate'), // A-13, Claude's through splits/activateDwarf.ts
+  ...perProviderCut3b('dwarf:activate'), // A-13, Claude's through splits/activateDwarf.ts
   hostCut1('dwarf:feed:page'), // A-15
   hostCut1('mine:history'), // A-19
   hostCut1('mine:openPath'), // A-20
   uiLocalKept('shell:openExternalLink'), // A-21
   uiLocalKept('shell:copyText'), // A-22
-  ...perProviderCut3a('dwarf:sendText'), // A-23
+  ...perProviderCut3b('dwarf:sendText'), // A-23
   uiLocalKept('dwarf:attachments:choose'), // A-24
   hostCut3a('dwarf:attachments:describe'), // A-25, every provider
   ...legacyNotMovedCut3a('dwarf:retire'), // A-27
@@ -259,9 +285,10 @@ export const ROUTES: readonly ChannelRoute[] = [
     shapeAdapter: 'ResetFanout'
   },
   hostCut1('projects:query'), // A-34
-  ...perProviderCut3a('agent:launch'), // A-35 and its Retry path
-  hostCut3a('agent:providers', CLAUDE), // A-36, Claude's entry (the moved provider of the catalog merge)
+  ...perProviderCut3b('agent:launch'), // A-35 and its Retry path
+  hostCut3a('agent:providers', CLAUDE), // A-36, Claude's entry (a moved provider of the catalog merge)
   legacyThroughCut3a('agent:providers', 'CatalogMergeAdapter'), // A-36, the renderer's one catalog call
+  hostCut3b('agent:providers', CODEX), // A-36, Codex's entry (a moved provider of the catalog merge)
   legacyToday('agent:launchHosted'), // A-39
   ...askAnswerCut2('agent:answerQuestion'), // A-40
   ...askAnswerCut2('agent:answerPermission'), // A-41
@@ -349,11 +376,11 @@ export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMet
   'welcome:answer': ['preferences.answerWelcome'], // A-N32 → B-M40
   'dwarf:rename': ['crew.rename'], // A-N08 → B-M22
   'dwarf:name:reset': ['crew.resetName'], // A-N09 → B-M23
-  'dwarf:activate': ['conversation.resolveConsole'], // A-13 → B-M29, Claude (splits/activateDwarf.ts)
-  'dwarf:sendText': ['conversation.send'], // A-23 → B-M24, Claude
+  'dwarf:activate': ['conversation.resolveConsole'], // A-13 → B-M29, Claude and Codex (splits/activateDwarf.ts)
+  'dwarf:sendText': ['conversation.send'], // A-23 → B-M24, Claude and Codex
   'dwarf:attachments:describe': ['conversation.describeAttachments'], // A-25 → B-M28
-  'agent:launch': ['launching.launch'], // A-35 → B-M33, Claude
-  // A-36 → B-M37: Claude's entry, read by `CatalogMergeAdapter` for the renderer's one catalog call
+  'agent:launch': ['launching.launch'], // A-35 → B-M33, Claude and Codex
+  // A-36 → B-M37: Claude's and Codex's entries, read by `CatalogMergeAdapter` for the renderer's one catalog call
   'agent:providers': ['suppliers.launchable'],
   'jev:apiKey:set': ['settings.secret.set', 'preferences.get'], // A-48 → B-M10, answered with B-M12
   'jev:apiKey:clear': ['settings.secret.clear', 'preferences.get'], // A-49 → B-M11, answered with B-M12

@@ -2770,7 +2770,8 @@ describe('release 3a (21 §2 cut 3a)', () => {
     retired: RETIRED,
     adapters: LEGACY_BRIDGE_ADAPTERS
   }
-  const routeOf = (key: ChannelKey): ChannelRoute[] => ROUTES.filter((r) => r.channel === key)
+  const routeOf = (key: ChannelKey): ChannelRoute[] =>
+    CUT_3A_ROUTES.filter((r) => r.channel === key)
   const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
   const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
   const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
@@ -2884,7 +2885,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
    * whose board holds one Claude and one Codex dwarf, the shape adapters over a recording today's runtime, the
    * provider qualifiers, and the router registered on an `ipcMain` stand-in, so `invoke` is the renderer's call.
    */
-  function step3aWorld(table: readonly ChannelRoute[] = ROUTES) {
+  function step3aWorld(table: readonly ChannelRoute[] = CUT_3A_ROUTES) {
     const hostCalls: Array<[string, unknown]> = []
     const legacyServed: Array<[string, unknown]> = []
     const raised: unknown[] = []
@@ -3010,16 +3011,18 @@ describe('release 3a (21 §2 cut 3a)', () => {
   })
 
   it('[ADR-001] in 3a A-35, A-36, A-23, A-13 and A-N29 route host with shape target for the Claude qualifier', async () => {
-    expect(ROUTES_RELEASE).toBe('cut-3a')
+    expect(CUT_3A_RELEASE).toBe('cut-3a')
     expect(checkRouteTable(cut3a, KEYS)).toEqual([])
     for (const key of PROVIDER_ROWS) {
       // One owner per (channel, qualifier) (21 §1 item 2): the Host for Claude (21 §2 cut 3a).
       expect(routeOf(key), key).toContainEqual(hostFor(key, CLAUDE))
-      expect(resolveRoute(ROUTES, key, { provider: CLAUDE }), key).toEqual(hostFor(key, CLAUDE))
+      expect(resolveRoute(CUT_3A_ROUTES, key, { provider: CLAUDE }), key).toEqual(
+        hostFor(key, CLAUDE)
+      )
     }
     // A-N29 is born `host` for every dwarf (a legacy-launched one is ended first, 21 §3 `LegacyEndFirstAdapter`).
     expect(routeOf(STOP)).toEqual([hostAll(STOP)])
-    expect(resolveRoute(ROUTES, STOP, { provider: CLAUDE })?.owner).toBe('host')
+    expect(resolveRoute(CUT_3A_ROUTES, STOP, { provider: CLAUDE })?.owner).toBe('host')
 
     // Through the root's composition: the qualifier is the provider of the call's way or of its dwarf on the Host
     // board, and Claude's calls reach the Host with the renderer's payload unchanged.
@@ -3058,7 +3061,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     for (const key of [ACTIVATE, SEND, LAUNCH_ROW]) {
       expect(routeOf(key), key).toEqual([hostFor(key, CLAUDE), legacyThrough(key, PER_PROVIDER)])
       for (const provider of NOT_MOVED) {
-        expect(resolveRoute(ROUTES, key, { provider }), `${key} ${provider}`).toEqual(
+        expect(resolveRoute(CUT_3A_ROUTES, key, { provider }), `${key} ${provider}`).toEqual(
           legacyThrough(key, PER_PROVIDER)
         )
       }
@@ -3069,7 +3072,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
       hostFor(PROVIDERS, CLAUDE),
       legacyThrough(PROVIDERS, CATALOG_MERGE)
     ])
-    expect(resolveRoute(ROUTES, PROVIDERS)).toEqual(legacyThrough(PROVIDERS, CATALOG_MERGE))
+    expect(resolveRoute(CUT_3A_ROUTES, PROVIDERS)).toEqual(legacyThrough(PROVIDERS, CATALOG_MERGE))
 
     const world = step3aWorld()
     expect(Object.keys(world.adapters ?? {}).sort()).toEqual([CATALOG_MERGE, PER_PROVIDER])
@@ -3100,7 +3103,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
   it('[ADR-001] in 3a the settlement of a launch or a send of a provider not yet moved names the id the renderer was answered', async () => {
     // 21 §3.1 `PerProviderShapeAdapter`: its settlement stays on A-P3/A-P4 until 4b; the root shares one join between
     // the adapter and the push tap (legacySettlementJoin.ts), so A-P3 leaves with the minted LaunchId.
-    const join = composeSettlementJoin({ routes: ROUTES, release: ROUTES_RELEASE })
+    const join = composeSettlementJoin({ routes: CUT_3A_ROUTES, release: CUT_3A_RELEASE })
     expect(join).toBeDefined()
     expect(composeSettlementJoin({ routes: CUT_2_ROUTES, release: 'cut-2' })).toBeUndefined()
     const legacy = {
@@ -3251,16 +3254,18 @@ describe('release 3a (21 §2 cut 3a)', () => {
   it('[ADR-001] in 3a A-27, A-P3 and A-P4 route legacy only for providers not yet moved', () => {
     for (const key of ['dwarf:retire', 'agent:launchFailed', 'dwarf:sendText:settled'] as const) {
       expect(routeOf(key), key).toEqual(NOT_MOVED.map((provider) => legacyFor(key, provider)))
-      expect(resolveRoute(ROUTES, key, { provider: CLAUDE }), key).toBeUndefined()
+      expect(resolveRoute(CUT_3A_ROUTES, key, { provider: CLAUDE }), key).toBeUndefined()
       for (const provider of NOT_MOVED) {
-        expect(resolveRoute(ROUTES, key, { provider })?.owner, `${key} ${provider}`).toBe('legacy')
+        expect(resolveRoute(CUT_3A_ROUTES, key, { provider })?.owner, `${key} ${provider}`).toBe(
+          'legacy'
+        )
       }
     }
   })
 
   it('[ADR-001] in 3a every host route uses only seam-B members born by 3a and none has parity pending', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
-    for (const route of ROUTES.filter((r) => r.owner === 'host')) {
+    for (const route of CUT_3A_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
       const members = HOST_ROUTE_MEMBERS[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
@@ -3268,7 +3273,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
         const born = SEAM_B_METHODS_BORN[member]
         expect(born, `${member} has a birth release`).toBeDefined()
         expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
-          at(ROUTES_RELEASE)
+          at(CUT_3A_RELEASE)
         )
       }
     }
@@ -3340,7 +3345,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     })
     expect(stop?.part.channels).toEqual([STOP])
     const router = createRouter({
-      routes: ROUTES.filter((r) => r.channel === STOP),
+      routes: CUT_3A_ROUTES.filter((r) => r.channel === STOP),
       legacy: { serve: () => Promise.reject(new Error('never legacy')) },
       ...(stop === undefined ? {} : { host: stop.part.target }),
       senders
@@ -3384,7 +3389,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     // `LegacyEndFirstAdapter` ends a session Claude's legacy path launched before the step through the same join, so
     // those sessions stay listed (the root binds today's launched register). A rollback build (no provider moved)
     // composes every discovery again.
-    expect(legacyFeedModesOf(ROUTES)).toEqual({
+    expect(legacyFeedModesOf(CUT_3A_ROUTES)).toEqual({
       [CLAUDE]: 'legacy-launched',
       [CODEX]: 'discover',
       [ANTIGRAVITY]: 'discover',

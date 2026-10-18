@@ -37,7 +37,7 @@ import { createLegacyAskRelay, legacyOpenAsksOf } from '../legacy-bridge/LegacyA
 import {
   createLegacyAgentRegistryFeed,
   LEGACY_FEED_PROVIDERS_CUT_1,
-  LEGACY_FEED_PROVIDERS_CUT_3A,
+  legacyFeedModesFor,
   type LegacyAgentRegistryFeed,
   type LegacyFeedModes,
   type LegacyFeedTimers,
@@ -1309,14 +1309,14 @@ export function composeSettlementJoin(deps: {
 
 /**
  * What `LegacyAgentRegistryFeed` composes per legacy provider for a table (21 §3: it shrinks per provider step). A
- * table whose A-36 names a moved provider (a `host` route qualified to it, the step-3a switch) is step 3a's: Claude's
- * discovery keeps only its legacy-launched sessions (`LEGACY_FEED_PROVIDERS_CUT_3A`); a table that moved none (cuts 1 and 2, a 3a rollback build)
- * composes every discovery. Each later step's switch names its own modes here.
+ * provider whose A-36 entry the table routes `host` (moved: Claude from 3a, Codex from 3b) keeps only what its
+ * moved mode lists (`legacyFeedModesFor`: its legacy-launched sessions, and Codex's pending questions); a table that
+ * moved none (cuts 1 and 2, a 3a rollback build) composes every discovery. AMENDED for ISSUE-002 (was: the 3a modes
+ * for any table that moved a provider): derived per moved provider, so each step's switch and its rollback compose
+ * their own modes.
  */
 export function legacyFeedModesOf(routes: readonly ChannelRoute[]): LegacyFeedModes {
-  return movedProvidersOf(routes).size === 0
-    ? LEGACY_FEED_PROVIDERS_CUT_1
-    : LEGACY_FEED_PROVIDERS_CUT_3A
+  return legacyFeedModesFor(movedProvidersOf(routes))
 }
 
 /**
