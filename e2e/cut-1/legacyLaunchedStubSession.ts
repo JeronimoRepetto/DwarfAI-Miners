@@ -8,13 +8,14 @@ import { STUB_BIN } from '../_harness/stubs.ts'
 import { seedClaudeStubSession, STUB_SESSION_ID, type ClaudeStubWorld } from './claudeStubWorld.ts'
 
 /**
- * A legacy-launched Claude session of the cut-1 world (ISSUE-123 L9; 21 §3 `LegacyEndFirstAdapter`; ISSUE-090): the
+ * A legacy-launched Claude session of the cut-1 world (ISSUE-123 L9; ISSUE-090): the
  * claude stub's replayed transcript (`claudeStubWorld.ts`), a stub process standing for the session's CLI
  * (`fixtures/bin/sleeper`, never a provider CLI, 17 §1.8) named by Claude Code's own session registry
  * (`sessions/<pid>.json`, with the process's creation time as a Windows FILETIME), and the same process written down in
  * the profile's `launched_sessions` as a launch today's runtime made for that session. So the Host observes a present
- * dwarf whose process identity it can watch, today's runtime sees the same session and owns its identity-checked end,
- * and `LegacyDwarfIdBridge` joins the two by the session's provider identity.
+ * dwarf whose process identity it can watch. AMENDED for ISSUE-241, the end of cut 4 (was: also today's runtime owning
+ * its identity-checked end, joined to the Host dwarf by `LegacyDwarfIdBridge` through `LegacyEndFirstAdapter`): both
+ * bridges left the tree.
  */
 export interface LegacyLaunchedStubSession extends ClaudeStubWorld {
   readonly pid: number
