@@ -179,6 +179,36 @@ describe('DwarfMessagePanel shape', () => {
     expect(bubbles[1]!.classes()).not.toContain('dm-bubble--user')
   })
 
+  // AMENDMENT-23 (owner, 2026-10-18; ISSUE-207): a delegated worker's brief wears its launcher label,
+  // "from <dwarf>" (PO decision 2026-09-28 #53), and no later bubble does.
+  it('[US-DLG-003.AC04] labels the brief "from <dwarf>" and no later message', async () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ role: 'worker', name: 'dwarfai-9' }),
+      feed: {
+        readable: true,
+        messages: [
+          {
+            role: 'user',
+            text: 'Map the old shafts',
+            timestamp: 't0',
+            issuer: { role: 'foreman', name: 'Borin', launcherId: 'dwarf-parent' }
+          },
+          { role: 'assistant', text: 'On my way.', timestamp: 't1' },
+          { role: 'user', text: 'Check the pumps', timestamp: 't2' }
+        ]
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const bubbles = wrapper.findAll('.dm-bubble')
+    expect(bubbles.map((bubble) => bubble.find('.dm-bubble__from').exists())).toEqual([
+      true,
+      false,
+      false
+    ])
+    expect(bubbles[0]!.find('.dm-bubble__from').text()).toBe('from Borin')
+  })
+
   // AMENDED for #635 (was: "keeps the user's own face on a launch the human typed", the portrait's
   // alt): the person's own prompt is the person's own bubble.
   it('keeps a launch the human typed as the person’s own bubble', async () => {

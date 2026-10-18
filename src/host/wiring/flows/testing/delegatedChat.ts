@@ -85,9 +85,11 @@ export function delegatedChat(h: ReturnType<typeof delegationHost>) {
     events: h.launchingBus,
     launching: h.launching,
     conversation: {
-      ingest: (dwarfId, entries, origin) => {
+      ingest: (dwarfId, entries, origin, opts) => {
         rowOf(dwarfId)
-        conversation.commands.ingest(dwarfId, entries, origin)
+        // `messages.issuer_dwarf_id` references the issuer's row too (09 §4.4; AMENDMENT-23).
+        if (opts?.issuer !== undefined) rowOf(opts.issuer)
+        conversation.commands.ingest(dwarfId, entries, origin, opts)
       }
     },
     frames: {
@@ -105,6 +107,22 @@ export function delegatedChat(h: ReturnType<typeof delegationHost>) {
     send(dwarfId: DwarfId, text: string, requestId: string) {
       rowOf(dwarfId)
       return send(dwarfId, text, [], requestId)
+    },
+    /** A later batch of the dwarf's own words, as its live stream hands them to `ingest`. */
+    ingest(dwarfId: DwarfId, n: number, role: 'person' | 'dwarf' = 'dwarf') {
+      rowOf(dwarfId)
+      conversation.commands.ingest(
+        dwarfId,
+        [
+          {
+            sourceKey: `simulated:${dwarfId}:later-${n}`,
+            role,
+            text: `later ${n}`,
+            providerTime: null
+          }
+        ],
+        'live-stream'
+      )
     },
     /** The dwarf's chat, newest first (`ConversationQueries.feed`, 14 §3.6 `FeedPage`). */
     feed: (dwarfId: DwarfId) => conversation.queries.feed(dwarfId, { limit: 50 })

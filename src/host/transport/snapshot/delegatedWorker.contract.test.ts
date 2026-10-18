@@ -8,6 +8,10 @@
 // is checked against its 14 §3.5 / §3.7 strict() schema (14 §1.4).
 //
 // TC-207-01 (the snapshot and `dwarf.arrived` carry the mark and the parent).
+//
+// AMENDMENT-23 (owner, 2026-10-18): the worker's first message, the subtask brief, carries its
+// issuer on B-F11 `conversation.appended` (14 §2.4 note; §3.6 `MessageWire.issuer`); every later
+// message of its chat carries none (PO #53). TC-207-02.
 import { describe, expect, it } from 'vitest'
 import type { z } from 'zod'
 import {
@@ -18,16 +22,19 @@ import {
   type HostFrameName,
   type SnapshotPage
 } from '@dwarfai/contracts'
-import type { MineId } from '../../kernel/domain/values'
+import type { DwarfId, MineId } from '../../kernel/domain/values'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
+import { inMemoryConversation } from '../../modules/conversation/testing/inMemoryConversation'
 import { rankForDepth } from '../../modules/crew'
 import { inMemoryCrew } from '../../modules/crew/testing/inMemoryCrew'
 import type { MinesEvent } from '../../modules/mines'
 import type { ObservationEvent } from '../../modules/observation'
+import { ConnectionRegistry } from '../connectionRegistry'
 import { publishBoardFrames } from '../frames/board'
+import { publishConversationFrames } from '../frames/conversationAppended'
 import { BOARD_T0, FakeMinesQueries, mineView } from '../frames/testing/fakeBoard'
 import { NO_LEDGER_TOTALS } from '../mappers/wire'
 import { SectionRegistry } from './sectionRegistry'
@@ -137,5 +144,55 @@ describe('a delegated worker on seam B (14 §2.4 note, §3.6; ADR-013 item 5)', 
     // The worker is otherwise an ordinary dwarf: ranked by depth like the parent's own subagent.
     const [, ownWire, workerWire] = b.snapshotDwarfs()
     expect(workerWire?.rank).toBe(ownWire?.rank)
+  })
+
+  it('[US-DLG-003.AC04] conversation.appended carries issuer on the brief only', () => {
+    const worker = '01920000-0000-7000-9000-0000000002a7' as DwarfId
+    const parent = '01920000-0000-7000-9000-0000000002a8' as DwarfId
+    const c = inMemoryConversation()
+    const schemas: Readonly<Record<string, z.ZodTypeAny | undefined>> = HOST_FRAME_SCHEMAS
+    const connections = new ConnectionRegistry({
+      validateFrame: (name, data) => schemas[name]?.parse(data)
+    })
+    publishConversationFrames({ events: c.bus, frames: connections })
+    const ui: unknown[] = []
+    connections.attach({
+      role: 'ui',
+      clientId: 'ui-207',
+      send: (_name, data) => ui.push(data),
+      end: () => Promise.resolve()
+    })
+
+    // The brief, as the DwarfLaunched route ingests a delegated launch's prompt.
+    c.commands.ingest(
+      worker,
+      [
+        {
+          sourceKey: 'dwarfai:launch:l-207:prompt',
+          role: 'person',
+          text: 'Map the old shafts',
+          providerTime: null
+        }
+      ],
+      'live-stream',
+      { issuer: parent }
+    )
+    c.commands.ingest(
+      worker,
+      [
+        { sourceKey: 'simulated:w:1', role: 'dwarf', text: 'On my way', providerTime: 1_000 },
+        { sourceKey: 'simulated:w:2', role: 'person', text: 'Check the pumps', providerTime: 1_001 }
+      ],
+      'live-stream'
+    )
+
+    const messages = ui.flatMap(
+      (data) => HOST_FRAME_SCHEMAS['conversation.appended'].parse(data).messages
+    )
+    expect(messages.map((m) => [m.text, m.issuer])).toStrictEqual([
+      ['Map the old shafts', { dwarfId: parent }],
+      ['On my way', undefined],
+      ['Check the pumps', undefined]
+    ])
   })
 })

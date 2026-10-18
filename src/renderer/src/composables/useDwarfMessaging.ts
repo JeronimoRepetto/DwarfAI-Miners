@@ -1,4 +1,4 @@
-import { reactive, shallowRef } from 'vue'
+import { computed, reactive, shallowRef } from 'vue'
 import {
   HOST_FRAME_SCHEMAS,
   type Delivery,
@@ -28,6 +28,8 @@ import {
 import { mintRequestId } from './requestIds'
 import { createReadModel, followHost, type HostFollower } from './readModel'
 import { useHostConnection } from './useHostConnection'
+import { useMines } from './useMines'
+import { launcherIssuerOf } from '../lib/message/launcherLabel'
 import { boundEchoes, reconcileEchoes, type MessageEcho } from '../lib/message/echo'
 import {
   defaultDwarfMessagingState,
@@ -548,29 +550,50 @@ const FEED_ROLE: Record<MessageRole, FeedMessage['role']> = {
   'system-line': 'assistant'
 }
 
-/** Today's `FeedMessage` of one Host `MessageView` (14 §1.2: the composable maps it, never `lib/**`). */
+/**
+ * Today's `FeedMessage` of one Host `MessageView` (14 §1.2: the composable maps it, never `lib/**`). A delegated
+ * worker's brief names its launcher by id (AMENDMENT-23): it becomes today's `issuer`, the launcher as the board holds
+ * it now (US-DLG-003.AC03), so the panel draws the brief as the launcher's, labelled "from <dwarf>" (PO #53). A
+ * launcher the board does not hold leaves the row without one.
+ */
 export function feedMessageOf(view: MessageView): FeedMessage {
+  const issuer =
+    view.issuer === undefined
+      ? undefined
+      : launcherIssuerOf(view.issuer.dwarfId, useMines().state.mines)
   return {
     role: FEED_ROLE[view.role],
     text: view.text,
-    timestamp: new Date(view.providerTime ?? view.createdAt).toISOString()
+    timestamp: new Date(view.providerTime ?? view.createdAt).toISOString(),
+    ...(issuer === undefined ? {} : { issuer })
   }
 }
 
 /** Every chat the Host feeds; the reactive mirror below is what renders. */
 const chats: HostChats = new Map()
-/** The chats in today's shape, per dwarf id, rewritten whenever a snapshot or a batch of frames settled. */
-const hostFeeds = shallowRef<ReadonlyMap<string, DwarfFeedResult>>(new Map())
+/** The Host's rows per dwarf id, oldest first, rewritten whenever a snapshot or a batch of frames settled. */
+const hostRows = shallowRef<ReadonlyMap<string, readonly MessageView[]>>(new Map())
+/**
+ * The chats in today's shape, per dwarf id: recomputed from `hostRows`, and from the board when a brief names its
+ * launcher, so the launcher label follows a rename (US-DLG-003.AC03).
+ */
+const hostFeeds = computed<ReadonlyMap<string, DwarfFeedResult>>(
+  () =>
+    new Map(
+      [...hostRows.value].map(([dwarfId, rows]) => [
+        dwarfId,
+        { readable: true, messages: rows.map(feedMessageOf) }
+      ])
+    )
+)
 /** Whether a Host snapshot fed the chats since `startChat` (cleared by `stopChat`). */
 const hostChatFed = shallowRef(false)
 
 function publishChats(): void {
   hostChatFed.value = true
-  const next = new Map<string, DwarfFeedResult>()
-  for (const [dwarfId, chat] of chats) {
-    next.set(dwarfId, { readable: true, messages: [...chat.rows.values()].map(feedMessageOf) })
-  }
-  hostFeeds.value = next
+  const next = new Map<string, readonly MessageView[]>()
+  for (const [dwarfId, chat] of chats) next.set(dwarfId, [...chat.rows.values()])
+  hostRows.value = next
 }
 
 /** Applies one frame newer than the snapshot; a frame whose data is not its 14 §3.5 payload is ignored. */
@@ -631,7 +654,7 @@ function stopChat(): void {
   chatFollower = null
   chatModel.seq = 0
   chats.clear()
-  hostFeeds.value = new Map()
+  hostRows.value = new Map()
   hostChatFed.value = false
 }
 
