@@ -44,11 +44,21 @@ describe('agentProviderList', () => {
    * folder, discovered afterwards by the poll — so the chip that used to refuse
    * now starts something. It carries no refusal reason for the same purpose the
    * Claude one carries none: there is nothing left to explain.
+   *
+   * AMENDED for ISSUE-185, the step-3b deletion (was: "marks a detected Codex
+   * launchable now that the engine can start it"): today's Codex launch left
+   * the tree, so a detected Codex is installed but not launchable here, with
+   * NOT_LAUNCHABLE as its reason.
    */
-  it('marks a detected Codex launchable now that the engine can start it', () => {
+  it('marks a detected Codex installed but not launchable since the step-3b deletion', () => {
     const [, codex] = agentProviderList([found('claude'), found('codex')]).providers
 
-    expect(codex).toEqual({ provider: 'codex', installed: true, launchable: true })
+    expect(codex).toEqual({
+      provider: 'codex',
+      installed: true,
+      launchable: false,
+      reason: NOT_LAUNCHABLE
+    })
   })
 
   it('never calls an absent CLI launchable, even one the engine drives', () => {
@@ -93,7 +103,10 @@ describe('agentProviderList', () => {
     // AMENDED for ISSUE-189, the step-3e deletion (was: ['claude', 'codex',
     // 'antigravity', 'opencode']): today's Antigravity launch left the tree;
     // the Host's AntigravityNdjsonDriver is its only launcher.
-    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex', 'opencode'])
+    // AMENDED for ISSUE-185, the step-3b deletion (was: ['claude', 'codex',
+    // 'opencode']): today's Codex launch left the tree; the Host's Codex
+    // drivers are its only launcher.
+    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'opencode'])
   })
 
   /*

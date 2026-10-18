@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  PROVIDER_EFFORT_LEVELS,
-  codexTuningArgs,
-  parseLaunchTuning,
-  resumeTuning
-} from './launchTuning'
+import { PROVIDER_EFFORT_LEVELS, parseLaunchTuning, resumeTuning } from './launchTuning'
 
 describe('PROVIDER_EFFORT_LEVELS', () => {
   /*
@@ -185,42 +180,6 @@ describe('parseLaunchTuning', () => {
     // Half a tuning is a launch nobody asked for: the model would be honoured
     // and the effort silently dropped, at a cost the user cannot see.
     expect(parseLaunchTuning('codex', { model: 'gpt-5.6-sol', effort: 'nope' })).toBeNull()
-  })
-})
-
-describe('codexTuningArgs', () => {
-  /*
-   * Issue #462. One argv fragment, shared by the launch (`buildCodexLaunchArgs`)
-   * and the resume (`buildCodexResumeArgs`), so the key can only be spelled in
-   * one place. `-c model_reasoning_effort=<level>` is Codex's own config key
-   * (`launch.ts:156-159`) — there is no `--effort` flag to fall back on, so a
-   * typo here would silently be TOML nobody reads rather than a compile error.
-   */
-  it('carries nothing when neither field was asked for', () => {
-    expect(codexTuningArgs({})).toEqual([])
-  })
-
-  it('carries the model as its own flag pair', () => {
-    expect(codexTuningArgs({ model: 'gpt-5.6-sol' })).toEqual(['-m', 'gpt-5.6-sol'])
-  })
-
-  it('carries the effort as a config override, spelled exactly as Codex documents the key', () => {
-    // The literal string is asserted, not just the tuple shape: a rename of
-    // this key would fail here even though a `toEqual` on the pair alone
-    // would happily pass a differently-spelled TOML key.
-    expect(codexTuningArgs({ effort: 'high' })).toEqual(['-c', 'model_reasoning_effort=high'])
-    expect(codexTuningArgs({ effort: 'high' })[1]).toContain('model_reasoning_effort=')
-  })
-
-  it('puts the model pair before the effort pair when both are present', () => {
-    // The measured clap trap (`codexResume.test.ts:49-53`): Codex reads
-    // options left to right, so the ORDER here is load-bearing, not cosmetic.
-    expect(codexTuningArgs({ model: 'gpt-5.6-sol', effort: 'high' })).toEqual([
-      '-m',
-      'gpt-5.6-sol',
-      '-c',
-      'model_reasoning_effort=high'
-    ])
   })
 })
 

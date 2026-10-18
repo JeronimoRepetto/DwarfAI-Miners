@@ -114,7 +114,6 @@ function windowsPort(): WindowsTextDelivery {
     runRelay: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
     codexBinary: async () => 'C:\\Users\\j\\.local\\bin\\codex.exe',
     runCodexQueue: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
-    runCodexResume: vi.fn().mockResolvedValue({ running: true }),
     opencodeBinary: async () => 'C:\\Users\\j\\.local\\bin\\opencode.exe',
     runOpenCodeContinue: vi.fn().mockResolvedValue({ running: true }),
     fs: new FakeFs(),
@@ -157,7 +156,6 @@ function posixPort(
     runRelay: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
     codexBinary: async () => '/usr/local/bin/codex',
     runCodexQueue: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
-    runCodexResume: vi.fn().mockResolvedValue({ running: true }),
     opencodeBinary: async () => '/usr/local/bin/opencode',
     runOpenCodeContinue: vi.fn().mockResolvedValue({ running: true }),
     fs: new FakeFs(),
@@ -209,7 +207,8 @@ const EXPECTED_PRESENCE: Record<
   win32: {
     pasteToConsole: 'present',
     queueToCodexThread: 'present',
-    resumeCodexThread: 'present',
+    // ISSUE-185, the step-3b deletion: today's Codex resume left the tree.
+    resumeCodexThread: 'absent',
     continueOpenCodeSession: 'present',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'
@@ -217,7 +216,8 @@ const EXPECTED_PRESENCE: Record<
   darwin: {
     pasteToConsole: 'present',
     queueToCodexThread: 'present',
-    resumeCodexThread: 'present',
+    // ISSUE-185, the step-3b deletion: today's Codex resume left the tree.
+    resumeCodexThread: 'absent',
     continueOpenCodeSession: 'present',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'
@@ -225,7 +225,8 @@ const EXPECTED_PRESENCE: Record<
   linux: {
     pasteToConsole: 'present',
     queueToCodexThread: 'present',
-    resumeCodexThread: 'present',
+    // ISSUE-185, the step-3b deletion: today's Codex resume left the tree.
+    resumeCodexThread: 'absent',
     continueOpenCodeSession: 'present',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'

@@ -12,12 +12,7 @@ import {
   notInstalledReason
 } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
-import type {
-  AgentLaunchResult,
-  CodexPermissionMode,
-  DwarfProvider,
-  TurnOutcome
-} from '../domain/types'
+import type { AgentLaunchResult, DwarfProvider, TurnOutcome } from '../domain/types'
 import {
   describeProgramFailure,
   describeShimRefusal,
@@ -29,7 +24,6 @@ import { buildRelayEnv } from '../textDelivery/relay'
 import {
   claudeDetachedExtraArgs,
   claudeMcpConfigJson,
-  codexDelegationConfigArgs,
   mergeOpenCodeConfigContent,
   type DelegationInjectionContext
 } from '../mcp/delegationInjection'
@@ -144,11 +138,6 @@ export interface StderrFile {
  * type rather than a shared one because a real launch opens two distinct
  * files for two distinct fds, and a reader should never have to check which
  * concept a `StderrFile` value stands for at a given call site.
- *
- * Also the port a Codex launch reads its OWN `-o` file back through
- * (`LaunchInvocation.outputFile`) — that file is never opened by this app
- * (Codex writes it directly), so only `readTail`/`remove` are ever called
- * against it, never `openForWrite`.
  */
 export interface StdoutFile {
   /** A fresh, unique path for one launch's own capture file. */
@@ -236,9 +225,9 @@ export function createNodeStdoutFile(): StdoutFile {
  * a small port on the same shape `StderrFile`/`StdoutFile` are, but simpler:
  * this app WRITES the whole file once, synchronously, before `spawn`, rather
  * than opening an fd for a child to stream into. Removed on exit through the
- * same `StdoutFile` port that already owns the stdout capture and Codex's
- * `-o` file — see `TurnOutcomeWatch`'s own comment on why one more path
- * belongs there rather than a fourth file lifecycle.
+ * same `StdoutFile` port that already owns the stdout capture — see
+ * `TurnOutcomeWatch`'s own comment on why one more path belongs there rather
+ * than a third file lifecycle.
  */
 export interface DelegationConfigFile {
   /** A fresh, unique path for one launch's own mcp-config file. */
@@ -376,12 +365,10 @@ class EarlyFailureWatch {
  * the stderr tail here first is what lets that removal, wherever it runs,
  * find nothing left to do rather than a race over who reads it first.
  *
- * Codex's own `-o` file (`outputFile`, when the invocation carries one) is
- * preferred over the piped stdout tail whenever it actually has something in
- * it — stdout also carries whatever the run printed along the way, where the
- * output file carries only the clean final message. Both `stdoutPath` and
- * `outputFile` are removed unconditionally on exit, the same discipline
- * `EarlyFailureWatch` already holds for stderr.
+ * `stdoutPath` is removed unconditionally on exit, the same discipline
+ * `EarlyFailureWatch` already holds for stderr. AMENDED for ISSUE-185, the
+ * step-3b deletion (was: Codex's own `-o` file, `outputFile`, preferred over
+ * the stdout tail): today's Codex launch left the tree.
  */
 class TurnOutcomeWatch {
   private latched: TurnOutcome | null = null
@@ -393,7 +380,6 @@ class TurnOutcomeWatch {
     private readonly stdoutFile: StdoutFile,
     private readonly stderrPath: string,
     private readonly stderrFile: StderrFile,
-    private readonly outputFile: string | undefined,
     private readonly stdoutIsTurnText: boolean,
     private readonly now: () => number,
     /** #511 T4: a delegating Claude launch's own `--mcp-config` temp file, or absent. */
@@ -401,19 +387,11 @@ class TurnOutcomeWatch {
   ) {
     child.once('exit', (code, signal) => {
       const stderrTail = this.stderrFile.readTail(this.stderrPath, STDERR_TAIL_BYTES)
-      const outputText =
-        this.outputFile === undefined
-          ? ''
-          : this.stdoutFile.readTail(this.outputFile, STDOUT_TAIL_BYTES)
-      const stdoutTail =
-        outputText !== ''
-          ? outputText
-          : this.stdoutFile.readTail(this.stdoutPath, STDOUT_TAIL_BYTES)
+      const stdoutTail = this.stdoutFile.readTail(this.stdoutPath, STDOUT_TAIL_BYTES)
       this.stdoutFile.remove(this.stdoutPath)
-      if (this.outputFile !== undefined) this.stdoutFile.remove(this.outputFile)
       // #511 T4: removed unconditionally on every exit, the same discipline
-      // `outputFile` above already holds — through the SAME `StdoutFile`
-      // port, since this is just another path this app owns, never a fourth
+      // `stdoutPath` above already holds — through the SAME `StdoutFile`
+      // port, since this is just another path this app owns, never a third
       // file lifecycle.
       if (this.delegationConfigFile !== undefined) this.stdoutFile.remove(this.delegationConfigFile)
       this.latch(
@@ -497,19 +475,9 @@ export interface LaunchInvocation {
    */
   stdoutIsTurnText: boolean
   /**
-   * A path some CLIs write their own final message to directly (#510) — set
-   * today only for Codex, whose `-o, --output-last-message <FILE>` this
-   * app's own argv includes when it is present (see `launchClaudeSession`).
-   * `TurnOutcomeWatch` prefers this file's content over the piped stdout
-   * tail whenever it has anything in it. This app never opens the file for
-   * writing — the CLI creates and writes it itself — only reads it back
-   * bounded and removes it on exit, through the same `StdoutFile` port.
-   */
-  outputFile?: string
-  /**
    * The `--mcp-config` temp file this launch wrote for a delegating Claude
    * session (#511 T4), so `TurnOutcomeWatch` can remove it on exit the same
-   * unconditional way it already removes Codex's own `-o` file — never
+   * unconditional way it already removes the stdout capture — never
    * opened for writing through this app's own `StdoutFile`/`StderrFile`
    * ports (see `DelegationConfigFile`, whose own `write` is synchronous and
    * runs before `spawn`), only read back for cleanup here.
@@ -585,12 +553,9 @@ export type SessionLauncher = (
      * The MCP delegation server this launch's own gate check
      * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
      * absent when it declined (#511 T4) — read only by `launchClaudeSession`
-     * for `claude`/`opencode`/`codex`; `antigravity`'s own builder never
-     * sees it.
+     * for `claude`/`opencode`; no other provider's builder sees it.
      */
     delegation?: DelegationInjectionContext
-    /** Codex's own permission mode (#635) — see `ClaudeLaunchOptions.codexPermissionMode`. */
-    codexPermissionMode?: CodexPermissionMode
   } & LaunchTuning
 ) => Promise<SessionLaunchOutcome>
 
@@ -837,7 +802,6 @@ export function runLaunchProcess(
           stdoutFile,
           stderrPath,
           stderrFile,
-          invocation.outputFile,
           invocation.stdoutIsTurnText,
           now,
           invocation.delegationConfigFile
@@ -866,7 +830,6 @@ function retainedProcess(
   stdoutFile: StdoutFile,
   stderrPath: string,
   stderrFile: StderrFile,
-  outputFile: string | undefined,
   stdoutIsTurnText: boolean,
   now: () => number,
   delegationConfigFile?: string
@@ -883,8 +846,8 @@ function retainedProcess(
     // be cleaned up anyway: unlike the stdout/stderr capture files, this one
     // carries a live delegation secret, and "vanishingly rare" is still a
     // stray secret on disk rather than nothing. It goes through the SAME
-    // `StdoutFile` port `outputFile`'s own cleanup already uses — never a
-    // fourth file lifecycle of its own.
+    // `StdoutFile` port the stdout capture's own cleanup already uses — never
+    // a third file lifecycle of its own.
     stdoutFile.remove(stdoutPath)
     stderrFile.remove(stderrPath)
     if (delegationConfigFile !== undefined) stdoutFile.remove(delegationConfigFile)
@@ -903,7 +866,6 @@ function retainedProcess(
     stdoutFile,
     stderrPath,
     stderrFile,
-    outputFile,
     stdoutIsTurnText,
     now,
     delegationConfigFile
@@ -944,26 +906,14 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
   fs: FsLike
   run: LaunchRunner
   /**
-   * Where Codex's own `-o` flag will write the turn's final message directly
-   * (#510) — ignored by every other provider. Defaults to a fresh real temp
-   * path per call; a test injects a fixed one so it can assert argv and
-   * `LaunchInvocation.outputFile` against a known value.
-   */
-  codexOutputPath?: () => string
-  /**
-   * The permission mode a Codex launch asked for (#635), already checked at
-   * the IPC boundary — read only for `codex`, whose `--sandbox` it becomes
-   * (`codexPermissionArgs`); every other provider's builder never sees it.
-   */
-  codexPermissionMode?: CodexPermissionMode
-  /**
    * The MCP delegation server this launch's own gate check
    * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
    * absent when it declined (#511 T4) — read only for `claude` (a temp
-   * `--mcp-config` file), `opencode` (`OPENCODE_CONFIG_CONTENT`) and `codex`
-   * (its own `-c mcp_servers.jev...` argv, placed before the trailing `-`);
-   * `antigravity`'s own builder simply never sees it, on the same
-   * exhaustive-dispatch discipline `buildLaunchArgs` already holds for argv.
+   * `--mcp-config` file) and `opencode` (`OPENCODE_CONFIG_CONTENT`); no other
+   * provider's builder sees it, on the same exhaustive-dispatch discipline
+   * `buildLaunchArgs` already holds for argv. AMENDED for ISSUE-185 (was:
+   * also Codex's `-o` output path, its permission mode and its delegation
+   * argv): today's Codex launch left the tree.
    */
   delegation?: DelegationInjectionContext
   /**
@@ -975,17 +925,6 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
 }
 
 /**
- * The default `codexOutputPath` generator (#510) — a real, unique temp path,
- * on the same `dwarfai-launch-<kind>-<uuid>.log` naming `createNodeCaptureFile`
- * already uses for the stdout/stderr capture files. Not built from a
- * `StdoutFile`/`StderrFile` port: this app never opens the file for writing
- * (Codex does), so only a fresh name is needed here, never `openForWrite`.
- */
-function defaultCodexOutputPath(): string {
-  return join(tmpdir(), `dwarfai-launch-codex-output-${randomUUID()}.log`)
-}
-
-/**
  * What one detached provider's own per-invocation MCP mechanism needs,
  * given the gate's own approved injection context (#511 T4) — the ONE place
  * this function's caller (`launchClaudeSession`) has to branch on provider
@@ -993,15 +932,10 @@ function defaultCodexOutputPath(): string {
  * `buildLaunchArgs` (launch.ts) already holds for argv. `antigravity` is
  * never reached with a `delegation` context at all (`delegationGate.ts`'s
  * own `DELEGATION_CAPABLE_PROVIDERS` excludes it outright) and simply falls
- * through unchanged if it ever were. `codex` joined the capable list once a
- * real launch was measured exposing its `-c`-registered server's tools to
- * the model (see `delegationGate.ts`'s own comment) — its own argv is
- * returned as `codexDelegationArgs` rather than `extraArgs`, because it has
- * to land BEFORE Codex's trailing `-` prompt positional, never after it
- * (`buildCodexLaunchArgs`'s own comment); Codex needs no env change and
- * writes no config file, since its delegation env travels inside the `-c
- * mcp_servers.jev.env=…` TOML value itself, applied by Codex to the SPAWNED
- * SERVER only, never to Codex's own process.
+ * through unchanged if it ever were. AMENDED for ISSUE-185, the step-3b
+ * deletion (was: a `codex` branch returning the `-c` TOML overrides whose
+ * `env` table carried this launch's token in argv, ADR-013 items 2, 8):
+ * today's Codex launch left the tree.
  *
  * The side effect (writing the temp file) lives here rather than in
  * `delegationInjection.ts`, which stays pure — this function is the one
@@ -1017,16 +951,12 @@ function delegationInjectionFor(
   extraArgs: string[]
   env: NodeJS.ProcessEnv
   delegationConfigFile?: string
-  codexDelegationArgs?: string[]
 } {
   if (delegation === undefined) return { extraArgs: [], env }
   if (provider === 'claude') {
     const path = configFile.path()
     configFile.write(path, claudeMcpConfigJson(delegation))
     return { extraArgs: claudeDetachedExtraArgs(path), env, delegationConfigFile: path }
-  }
-  if (provider === 'codex') {
-    return { extraArgs: [], env, codexDelegationArgs: codexDelegationConfigArgs(delegation) }
   }
   if (provider === 'opencode') {
     // #511 L3: this env is inherited by the CLI process itself (never only
@@ -1055,11 +985,12 @@ function delegationInjectionFor(
 /**
  * Start one DETACHED session in a mine's folder, for whichever CLI was chosen.
  *
- * Detached is the whole of what this function does, and since #168 it is what a
- * Codex launch IS: Codex has no held-session engine in this app, so the only
- * shape available to it is start-and-let-go, with the ordinary poll discovering
- * the session afterwards through Codex's own rollout storage. Claude can be
- * launched either way; the held route lives in `heldSessionRegistry`.
+ * Detached is the whole of what this function does, and since #534 it is what
+ * an OpenCode launch IS: OpenCode has no held-session engine in this app, so
+ * the only shape available to it is start-and-let-go, with the ordinary poll
+ * discovering the session afterwards. Claude can be launched either way; the
+ * held route lives in `heldSessionRegistry`. AMENDED for ISSUE-185 (was:
+ * Codex's detached launch, which left the tree with the step-3b deletion).
  *
  * Every failure becomes a `launched: false` verdict with a reason, never a
  * silent no-op — the discipline deliverViaRelay already holds. "Not installed"
@@ -1114,23 +1045,8 @@ export async function launchClaudeSession(
         cause: 'could-not-start'
       }
     }
-    // #510. Only Codex has a `-o` flag; every other provider's builder
-    // simply never sees this value (see `buildLaunchArgs`'s own comment).
-    // Minted once, here, so the SAME path both lands in argv and travels on
-    // the invocation for `TurnOutcomeWatch` to read back on exit — the two
-    // must agree, and the caller (Codex itself) is who writes the file, so
-    // this app decides the name and nothing else about it.
-    const codexOutputPath =
-      options.provider === 'codex'
-        ? (options.codexOutputPath ?? defaultCodexOutputPath)()
-        : undefined
     // #511 T4: the gate's own approved injection, or a no-op for an ordinary
-    // launch — see `delegationInjectionFor`'s own comment. Computed BEFORE
-    // `buildLaunchArgs` is called below, because Codex needs its own
-    // delegation `-c` args threaded INTO that call (`codexDelegationArgs`,
-    // placed before the trailing `-` by `buildCodexLaunchArgs` itself)
-    // rather than appended after it the way Claude's and OpenCode's own
-    // injection is.
+    // launch — see `delegationInjectionFor`'s own comment.
     const injection = delegationInjectionFor(
       options.provider,
       options.delegation,
@@ -1142,27 +1058,15 @@ export async function launchClaudeSession(
       // The tuning belongs to the CLI's own argv, so it lands AFTER a shim's
       // node entry (#239): in front of it, `--model` would be an argument to
       // node rather than to the program node is about to run. Delegation's
-      // own extra argv (#511 T4) lands LAST for Claude and OpenCode:
-      // `claudeDetachedExtraArgs` documents why `--strict-mcp-config` is
-      // never among it, so nothing here narrows what the CLI's OWN config
-      // already grants this session. Codex is the one exception: its own
-      // `-c` args cannot land after `buildLaunchArgs`'s trailing `-` prompt
-      // positional (they would be read as that positional's own argument),
-      // so they are threaded INTO the call instead (`codexDelegationArgs`;
-      // `injection.extraArgs` stays `[]` for Codex — see
-      // `delegationInjectionFor`'s own comment).
+      // own extra argv (#511 T4) lands LAST: `claudeDetachedExtraArgs`
+      // documents why `--strict-mcp-config` is never among it, so nothing
+      // here narrows what the CLI's OWN config already grants this session.
       args: [
         ...program.args,
-        ...buildLaunchArgs(
-          options.provider,
-          {
-            ...(options.model === undefined ? {} : { model: options.model }),
-            ...(options.effort === undefined ? {} : { effort: options.effort })
-          },
-          codexOutputPath,
-          injection.codexDelegationArgs,
-          options.provider === 'codex' ? options.codexPermissionMode : undefined
-        ),
+        ...buildLaunchArgs(options.provider, {
+          ...(options.model === undefined ? {} : { model: options.model }),
+          ...(options.effort === undefined ? {} : { effort: options.effort })
+        }),
         ...injection.extraArgs
       ],
       // The relay's env rule, for the relay's reason: a re-exec of the CLI
@@ -1179,7 +1083,6 @@ export async function launchClaudeSession(
       // beside each provider's own argv (`ONE_SHOT_STDOUT_IS_TURN_TEXT`,
       // launch.ts) — never re-derived at the point that reads the capture.
       stdoutIsTurnText: ONE_SHOT_STDOUT_IS_TURN_TEXT[options.provider],
-      ...(codexOutputPath === undefined ? {} : { outputFile: codexOutputPath }),
       ...(injection.delegationConfigFile === undefined
         ? {}
         : { delegationConfigFile: injection.delegationConfigFile })

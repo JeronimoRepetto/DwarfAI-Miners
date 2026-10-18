@@ -18,7 +18,6 @@ import {
 } from '../platform/processProbe'
 import type {
   CodexQueueRequest,
-  CodexResumeRequest,
   ConsoleAnswerRequest,
   ConsoleTextRequest,
   EndSessionRequest,
@@ -29,7 +28,6 @@ import type {
   TextDeliveryPort
 } from './port'
 import { deliverViaCodexQueue, runCodexQueueProcess, type CodexQueueRunner } from './codexQueue'
-import { deliverViaCodexResume, runCodexResumeProcess, type CodexResumeRunner } from './codexResume'
 import {
   deliverViaOpenCodeContinue,
   runOpenCodeContinueProcess,
@@ -228,8 +226,6 @@ export interface WindowsTextDeliveryOptions {
   codexBinary?: () => Promise<string | undefined>
   /** Injected for tests; defaults to a real codex.exe spawn. */
   runCodexQueue?: CodexQueueRunner
-  /** Injected for tests; defaults to a real codex.exe spawn (#450). */
-  runCodexResume?: CodexResumeRunner
   /**
    * Resolves the opencode binary through the CLI detection port (#534), on
    * the same terms `codexBinary` is. Omitted, the continuation tier has no
@@ -477,7 +473,6 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
-  private readonly runCodexResume: CodexResumeRunner
   private readonly opencodeBinary: () => Promise<string | undefined>
   private readonly runOpenCodeContinue: OpenCodeContinueRunner
   private readonly fs: FsLike
@@ -514,7 +509,6 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
-    this.runCodexResume = options.runCodexResume ?? runCodexResumeProcess
     this.opencodeBinary = options.opencodeBinary ?? (async () => undefined)
     this.runOpenCodeContinue = options.runOpenCodeContinue ?? runOpenCodeContinueProcess
     this.fs = options.fs ?? new NodeFs()
@@ -707,30 +701,9 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   }
 
   /**
-   * The Codex resume tier (#450) — the second channel a Codex session has, and
-   * the first one that reaches a thread nothing is running. No PowerShell, no
-   * window and no pid: it spawns the detected codex binary on the thread's own
-   * folder and writes the message to its stdin, so nothing about the payload
-   * ever reaches a command line.
-   */
-  async resumeCodexThread(request: CodexResumeRequest): Promise<TextDeliveryOutcome> {
-    return deliverViaCodexResume({
-      threadId: request.threadId,
-      cwd: request.cwd,
-      text: request.text,
-      binaryPath: await this.codexBinary(),
-      run: this.runCodexResume,
-      fs: this.fs,
-      // Forwarded rather than defaulted (#462): an absent request.tuning must
-      // reach codexTuningArgs as absent too, which is what keeps the argv
-      // byte-identical to before this issue.
-      ...(request.tuning === undefined ? {} : { tuning: request.tuning })
-    })
-  }
-
-  /**
-   * The OpenCode continuation tier (#534) — the OpenCode twin of the Codex
-   * resume above, on the same terms: no PowerShell, no window and no pid, it
+   * The OpenCode continuation tier (#534) — the OpenCode twin of today's
+   * Codex resume (AMENDED for ISSUE-185, the step-3b deletion, which deleted it), on the same terms: no
+   * PowerShell, no window and no pid, it
    * spawns the detected opencode binary on the session's own folder and
    * writes the message to its stdin.
    */

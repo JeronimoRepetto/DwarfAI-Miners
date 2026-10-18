@@ -456,8 +456,9 @@ export interface TextDeliveryOutcome {
    * outlives its own verdict (#457) — today only the Codex resume.
    *
    * `codex exec resume` blocks for the whole model turn, so its outcome is
-   * taken at a short start window and the process runs on unobserved (see
-   * codexResume.ts). That was the whole of it until a second measurement:
+   * taken at a short start window and the process runs on unobserved (today's
+   * codexResume.ts, deleted by ISSUE-185). That was the whole of it until a
+   * second measurement:
    * a resume started while a turn is already running on that thread exits 1
    * at once, and Codex queues nothing — so somebody has to know when a turn
    * ends, and the only thing that can is whatever holds the child. This is
@@ -547,23 +548,19 @@ export interface TextDeliveryPort {
    * Continue a Codex thread that was started with `codex exec`, by starting its
    * next turn with this message as the prompt (#450).
    *
-   * Optional on the same terms `queueToCodexThread` is, and both shipped ports
-   * implement it for the same reason: it spawns a CLI, so it is
-   * platform-neutral like the relay.
-   *
-   * The one tier that does not wait for its own act to finish. `codex exec
-   * resume` blocks for the whole model turn — 29 s measured for a trivial one —
-   * so an implementation reports the hand-over once the process has taken the
-   * message on stdin and survived a short bounded start window, and reports a
-   * failure for one that died inside it. See codexResume.ts, which holds the
-   * window and the reasoning behind its length.
+   * Optional on the same terms `queueToCodexThread` is. AMENDED for ISSUE-185,
+   * the step-3b deletion (was: implemented by both shipped ports through
+   * `codexResume.ts`): today's Codex resume left the tree, so no shipped port
+   * implements it and the runtime answers its own "no resume tier" refusal.
+   * The Host's Codex drivers send to a thread they own (ISSUE-185, 21 §2 row
+   * 3b).
    */
   resumeCodexThread?(request: CodexResumeRequest): Promise<TextDeliveryOutcome>
   /**
    * Continue an OpenCode session that was started with `opencode run`, by
    * starting its next turn with this message as the prompt (#534).
    *
-   * Optional on the same terms `resumeCodexThread` is, and both shipped
+   * Optional on the same terms `queueToCodexThread` is, and both shipped
    * ports implement it for the same reason: it spawns a CLI, so it is
    * platform-neutral like the relay.
    *

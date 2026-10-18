@@ -5,7 +5,6 @@ import {
   claudeDetachedExtraArgs,
   claudeHeldMcpServers,
   claudeMcpConfigJson,
-  codexDelegationConfigArgs,
   mergeOpenCodeConfigContent,
   type DelegationInjectionContext
 } from './delegationInjection'
@@ -150,47 +149,5 @@ describe('mergeOpenCodeConfigContent', () => {
     expect(merged).toMatchObject({
       mcp: { jev: { command: [CTX.serverCommand, ...CTX.serverArgs] } }
     })
-  })
-})
-
-/*
- * AMENDED for #511 (Codex smoke measurement, 2026-09-23): Codex now joins
- * `DELEGATION_CAPABLE_PROVIDERS` (`delegationGate.ts`) — a real `codex exec`
- * launch registered the `-c`-configured `jev` server AND exposed its tools to
- * the model, which is the fact this describe block's old title said was still
- * unmeasured. The exact-shape assertions below were widened from 6 elements
- * to 10, never weakened, to cover the two new per-tool approval overrides
- * `codexDelegationConfigArgs` now emits alongside the three it already did —
- * see that function's own comment for why they are per-tool rather than
- * server-wide.
- */
-describe('codexDelegationConfigArgs', () => {
-  it('emits one -c pair per key, each value valid TOML, plus one -c pair per tool approval override', () => {
-    const args = codexDelegationConfigArgs(CTX)
-    expect(args[0]).toBe('-c')
-    expect(args[1]).toBe(`mcp_servers.jev.command="${CTX.serverCommand.replaceAll('\\', '\\\\')}"`)
-    expect(args[2]).toBe('-c')
-    expect(args[3]).toBe(`mcp_servers.jev.args=["${CTX.serverArgs[0]!.replaceAll('\\', '\\\\')}"]`)
-    expect(args[4]).toBe('-c')
-    expect(args[5]).toBe(
-      'mcp_servers.jev.env={ ELECTRON_RUN_AS_NODE = "1", ' +
-        `DWARFAI_DELEGATION_ENDPOINT = "${CTX.endpoint}", ` +
-        `DWARFAI_DELEGATION_TOKEN = "${CTX.token}" }`
-    )
-    expect(args[6]).toBe('-c')
-    expect(args[7]).toBe('mcp_servers.jev.tools.delegate_subtask.approval_mode="approve"')
-    expect(args[8]).toBe('-c')
-    expect(args[9]).toBe('mcp_servers.jev.tools.subtask_result.approval_mode="approve"')
-    expect(args).toHaveLength(10)
-  })
-
-  it('escapes a literal double quote and backslash in a value, so a Windows path never breaks the TOML string', () => {
-    const withQuote = codexDelegationConfigArgs({
-      ...CTX,
-      serverCommand: 'C:\\Program Files\\"weird"\\node.exe'
-    })
-    expect(withQuote[1]).toBe(
-      'mcp_servers.jev.command="C:\\\\Program Files\\\\\\"weird\\"\\\\node.exe"'
-    )
   })
 })

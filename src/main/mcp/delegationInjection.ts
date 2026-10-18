@@ -27,6 +27,12 @@ import {
  * (Claude `-p`, OpenCode) and `runtime.ts` (the gate check and token
  * lifecycle) — see each for how a `DelegationInjectionContext` is built and
  * when it is revoked.
+ *
+ * AMENDED for ISSUE-185, the step-3b deletion (was: also Codex's
+ * `codexDelegationConfigArgs`, the `-c` TOML overrides whose `env` table put
+ * this launch's token on a command line, ADR-013 items 2, 8): today's
+ * Codex launch left the tree, and the Host's Codex drivers carry only the
+ * credential file path in their `jev` entry (15 §4.4, C-23).
  */
 
 /**
@@ -224,75 +230,4 @@ export function mergeOpenCodeConfigContent(
     ...parsed,
     mcp: { ...existingMcp, [DELEGATION_SERVER_NAME]: openCodeDelegationEntry(context) }
   })
-}
-
-/**
- * Escapes a value for a TOML basic string (`"…"`): backslash first, then the
- * quote itself, so a Windows path's own backslashes survive round-tripping
- * through Codex's `-c key=value` TOML parser (#511 T4) — verified against
- * the feature document's own measurement (`codex -c 'mcp_servers.jevprobe
- * .command="node"' … mcp list` registered the server), extended here to the
- * general case a real install path needs: a backslash or a literal quote
- * inside `serverCommand`/`serverArgs` must not end the string early or
- * change what Codex's own TOML parser reads.
- */
-function tomlString(value: string): string {
-  return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
-}
-
-function tomlStringArray(values: readonly string[]): string {
-  return `[${values.map(tomlString).join(', ')}]`
-}
-
-function tomlInlineTable(entries: Record<string, string>): string {
-  const pairs = Object.entries(entries).map(([key, value]) => `${key} = ${tomlString(value)}`)
-  return `{ ${pairs.join(', ')} }`
-}
-
-/**
- * The `-c mcp_servers.jev.<key>=<TOML value>` triple Codex's own `--help`
- * documents (#511 T4), NOW measured end to end: a real `codex exec` launch,
- * spawned with no shell and this exact argv, registered the `jev` server AND
- * exposed its tools to the model — the fact `codex … mcp list` alone could
- * not answer, and the reason Codex joined `DELEGATION_CAPABLE_PROVIDERS`
- * (`delegationGate.ts`, 2026-09-23 measurement). See that constant's own
- * comment for the fuller evidence trail.
- *
- * Each `-c` and its value are separate argv elements, matching the measured
- * shape in the feature document (`-c 'mcp_servers.jevprobe.command="node"'`
- * is ONE shell-quoted argument, i.e. `-c` then the key=value pair as the
- * next argv element) — never `-c=value`, which Codex's own `--help` does not
- * document.
- *
- * ## The two trailing overrides, and why they are per-tool
- *
- * A bare `-c mcp_servers.jev...` registration alone was measured reaching
- * the model's tool list but refusing the actual call: `MCP tool call
- * requires approval, but approval policy is never`. Codex's own source
- * (`openai/codex`, `codex-rs/config/src/mcp_types.rs`) declares
- * `McpServerConfig.tools: HashMap<String, McpServerToolConfig { approval_mode:
- * AppToolApproval }>` — `auto | prompt | writes | approve` — alongside a
- * server-wide `default_tools_approval_mode`, and
- * `codex-rs/codex-mcp/src/mcp/mod.rs`'s `mcp_permission_prompt_is_auto_approved`
- * treats `approve` as auto-approved even under the CLI's own `never` policy.
- * Overriding PER TOOL (`mcp_servers.jev.tools.<name>.approval_mode`) rather
- * than the server-wide default keeps this grant as narrow as Claude's own
- * `--allowedTools` above: exactly `delegate_subtask` and `subtask_result` are
- * pre-approved, never every tool a `jev` server might one day add.
- */
-export function codexDelegationConfigArgs(context: DelegationInjectionContext): string[] {
-  const toolApproval = (tool: string): string[] => [
-    '-c',
-    `mcp_servers.${DELEGATION_SERVER_NAME}.tools.${tool}.approval_mode=${tomlString('approve')}`
-  ]
-  return [
-    '-c',
-    `mcp_servers.${DELEGATION_SERVER_NAME}.command=${tomlString(context.serverCommand)}`,
-    '-c',
-    `mcp_servers.${DELEGATION_SERVER_NAME}.args=${tomlStringArray(context.serverArgs)}`,
-    '-c',
-    `mcp_servers.${DELEGATION_SERVER_NAME}.env=${tomlInlineTable(delegationEnv(context))}`,
-    ...toolApproval(DELEGATE_SUBTASK_TOOL_NAME),
-    ...toolApproval(SUBTASK_RESULT_TOOL_NAME)
-  ]
 }

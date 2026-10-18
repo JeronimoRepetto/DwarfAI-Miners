@@ -120,6 +120,11 @@ With Codex no longer moved, `legacyFeedModesOf` composes Codex's whole discovery
 settles on A-P3/A-P4 through the settlement join, and "Let Jev choose" chooses among Claude only. Codex sessions the
 faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
 
+**Step-3b deletion (ISSUE-185): no rollback past this point.** From the ISSUE-185 commit today's Codex launch (the
+detached `codex exec` argv with its `-c` delegation overrides, and the `codexResume.ts` relaunch) is gone and today's
+launcher refuses Codex, so a table that routes Codex's launch or send `legacy` again starts and reaches nothing: 3b rolls
+forward only (`21` §2.1 item 4).
+
 **Step 3d note (ISSUE-186).** A 3d rollback build exists only before the 3d deletion commit merges (ISSUE-187, after the
 soak); after it, 3d rolls forward. `rollbackOf(table, 'cut-3d')` gives back exactly the 3b table
 (`src/ui-main/ipc/rollbackTable.test.ts` and `ipc-routing.contract.test.ts`, the 3d rollback cases):

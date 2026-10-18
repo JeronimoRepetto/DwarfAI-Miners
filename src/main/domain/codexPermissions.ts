@@ -1,9 +1,13 @@
 import { isCodexPermissionMode, type CodexPermissionMode, type DwarfProvider } from './types'
 
 /**
- * What each Codex permission mode means on the command line (#635, PO decision
- * 2026-09-28), and the boundary check that decides whether a launch may name
- * one.
+ * The boundary check that decides whether a launch may name a Codex permission
+ * mode (#635, PO decision 2026-09-28).
+ *
+ * AMENDED for ISSUE-185, the step-3b deletion (was: also `codexPermissionArgs`,
+ * each mode's `--sandbox` argv for today's `codex exec` launch): today's Codex
+ * launch left the tree; the Host's Codex drivers carry a mode's own flags
+ * (ADR-011 item 1). The flag notes below record what that argv was.
  *
  * Pure, and in `domain/` for the reason `launchTuning.ts` is: `main/index.ts`
  * owns Electron's `ipcMain`, so its parse functions cannot be unit tested, and
@@ -42,17 +46,6 @@ import { isCodexPermissionMode, type CodexPermissionMode, type DwarfProvider } f
  * reached (a Windows npm shim runs `node <entry>`) is decided before argv, and
  * never changes what argv says.
  */
-const CODEX_PERMISSION_ARGS: Readonly<Record<CodexPermissionMode, readonly string[]>> = {
-  default: [],
-  'workspace-write': ['--sandbox', 'workspace-write'],
-  'read-only': ['--sandbox', 'read-only']
-}
-
-/** The argv fragment one Codex permission mode means — a fresh array, safe to spread. */
-export function codexPermissionArgs(mode: CodexPermissionMode): string[] {
-  return [...CODEX_PERMISSION_ARGS[mode]]
-}
-
 /**
  * The permission mode one DETACHED launch payload asked for, or null when it
  * asked for something that cannot be carried out — on `parseLaunchTuning`'s

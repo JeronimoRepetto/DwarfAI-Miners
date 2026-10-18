@@ -143,28 +143,6 @@ export function parseLaunchTuning(
 }
 
 /**
- * The Codex argv fragment for one tuning (#462), shared between the launch
- * (`buildCodexLaunchArgs`) and the resume (`buildCodexResumeArgs`) so the
- * `model_reasoning_effort` key is spelled in exactly one place. A typo here
- * is not a compile error — it is TOML nobody's config file documents, parsed
- * by Codex as the literal string the doc comment above `buildCodexLaunchArgs`
- * describes — so this is the one function both call sites delegate to rather
- * than each writing the key out again.
- *
- * ORDER is load-bearing, not cosmetic: Codex reads its options left to
- * right, and every caller of this fragment places the whole thing BEFORE
- * `resume`/the trailing `-`. The model pair comes first, then the `-c` pair,
- * because that is the order the measured launch argv already uses and a
- * resume must not invent a second one.
- */
-export function codexTuningArgs(tuning: LaunchTuning): string[] {
-  const args: string[] = []
-  if (tuning.model !== undefined) args.push('-m', tuning.model)
-  if (tuning.effort !== undefined) args.push('-c', `model_reasoning_effort=${tuning.effort}`)
-  return args
-}
-
-/**
  * Per-field precedence for a resumed turn (#462, D3b): what the launch
  * explicitly asked for wins; the thread's own OBSERVED settings (Codex's
  * registry row or its rollout's `turn_context`) fill in only the field the

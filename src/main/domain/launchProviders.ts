@@ -71,8 +71,13 @@ export interface CliPresence {
  * 'antigravity', 'opencode']`): today's Antigravity launch left the tree with
  * its `agy` argv; the Host's `AntigravityNdjsonDriver` is Antigravity's only
  * launcher, so today's launcher refuses it before anything is spawned.
+ *
+ * AMENDED for ISSUE-185, the step-3b deletion (was: `['claude', 'codex',
+ * 'opencode']`): today's Codex launch left the tree with its `codex exec`
+ * argv; the Host's Codex drivers are Codex's only launcher, so today's
+ * launcher refuses it before anything is spawned.
  */
-export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex', 'opencode']
+export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'opencode']
 
 /**
  * What a detected provider with no launch path says for itself.

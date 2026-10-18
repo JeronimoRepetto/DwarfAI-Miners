@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
 import type { LaunchTuning } from '../domain/launchTuning'
-import { MAX_DWARF_TEXT_CHARS, type CodexPermissionMode, type DwarfProvider } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import { createCliDetector, type CliDetection, type CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
@@ -28,25 +28,14 @@ import {
   type StderrFile,
   type StdoutFile
 } from './launchRunner'
-import {
-  codexDelegationConfigArgs,
-  type DelegationInjectionContext
-} from '../mcp/delegationInjection'
+import type { DelegationInjectionContext } from '../mcp/delegationInjection'
 
 const CLAUDE_PATH = '/home/j/.local/bin/claude'
 const CODEX_PATH = '/home/j/.local/bin/codex'
 const OPENCODE_PATH = '/home/j/.local/bin/opencode'
 const MINE_PATH = '/home/j/work/project'
 
-/**
- * A fixed stand-in for Codex's own `-o` path (#510), injected through the
- * `launch()` helper below so every existing exact-argv assertion in this
- * file stays deterministic rather than matching a fresh `randomUUID()` path
- * on every run.
- */
-const CODEX_OUTPUT_PATH = '/tmp/dwarfai-launch-codex-output-test.log'
-
-/** npm's cmd-shim for opencode, the same shape the Codex fixture above is. */
+/** npm's cmd-shim for opencode, as `npm i -g opencode-ai` writes it on Windows. */
 const OPENCODE_SHIM_DIR = 'C:\\Users\\x\\AppData\\Roaming\\npm'
 const OPENCODE_SHIM = `${OPENCODE_SHIM_DIR}\\opencode.cmd`
 const OPENCODE_SHIM_ENTRY = `${OPENCODE_SHIM_DIR}\\node_modules\\opencode-ai\\bin\\opencode.js`
@@ -68,32 +57,9 @@ const OPENCODE_SHIM_TEXT = [
   'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\opencode-ai\\bin\\opencode.js" %*'
 ].join('\r\n')
 
-/** npm's cmd-shim for codex, as `npm i -g @openai/codex` writes it on Windows. */
+/** A node entry an npm cmd-shim names, as the console host below receives it. */
 const NPM_DIR = 'C:\\Users\\x\\AppData\\Roaming\\npm'
-const NPM_SHIM = `${NPM_DIR}\\codex.cmd`
 const NPM_ENTRY = `${NPM_DIR}\\node_modules\\@openai\\codex\\bin\\codex.js`
-const NPM_SHIM_TEXT = [
-  '@ECHO off',
-  'GOTO start',
-  ':find_dp0',
-  'SET dp0=%~dp0',
-  'EXIT /b',
-  ':start',
-  'SETLOCAL',
-  'CALL :find_dp0',
-  'IF EXIST "%dp0%\\node.exe" (',
-  '  SET "_prog=%dp0%\\node.exe"',
-  ') ELSE (',
-  '  SET "_prog=node"',
-  '  SET PATHEXT=%PATHEXT:;.JS;=;%',
-  ')',
-  'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*'
-].join('\r\n')
-
-function shimDetector(path: string): CliDetector {
-  return detector({ cli: 'codex', installed: true, path, source: 'convention' })
-}
-
 function detector(verdict: CliDetection): CliDetector {
   return { detect: vi.fn().mockResolvedValue(verdict), peek: vi.fn().mockReturnValue(verdict) }
 }
@@ -102,15 +68,11 @@ function installed(): CliDetector {
   return detector({ cli: 'claude', installed: true, path: CLAUDE_PATH, source: 'convention' })
 }
 
-function installedCodex(): CliDetector {
-  return detector({ cli: 'codex', installed: true, path: CODEX_PATH, source: 'convention' })
-}
-
 function installedOpenCode(): CliDetector {
   return detector({ cli: 'opencode', installed: true, path: OPENCODE_PATH, source: 'convention' })
 }
 
-function shimDetectorFor(cli: 'codex' | 'opencode', path: string): CliDetector {
+function shimDetectorFor(cli: 'opencode', path: string): CliDetector {
   return detector({ cli, installed: true, path, source: 'convention' })
 }
 
@@ -130,18 +92,10 @@ function launch(options: {
    * untuned path exactly as it did.
    */
   tuning?: LaunchTuning
-  /**
-   * Codex's own `-o` path generator (#510). Defaults to the fixed
-   * `CODEX_OUTPUT_PATH` above so every test gets a deterministic value; a
-   * test proving the generator itself overrides it.
-   */
-  codexOutputPath?: () => string
   /** #511 T4: the gate's own approved injection, or absent for an ordinary launch. */
   delegation?: DelegationInjectionContext
   /** #511 T4: the `--mcp-config` temp-file port; defaults to a deterministic in-memory fake. */
   delegationConfigFile?: DelegationConfigFile
-  /** #635: the Codex permission mode the Add panel picked; spread only when given. */
-  codexPermissionMode?: CodexPermissionMode
 }) {
   const run = options.run ?? vi.fn().mockResolvedValue(undefined)
   return {
@@ -155,15 +109,11 @@ function launch(options: {
       platform: options.platform ?? 'linux',
       fs: options.fs ?? new FakeFs(),
       run,
-      codexOutputPath: options.codexOutputPath ?? (() => CODEX_OUTPUT_PATH),
       ...(options.delegation === undefined ? {} : { delegation: options.delegation }),
       ...(options.delegationConfigFile === undefined
         ? {}
         : { delegationConfigFile: options.delegationConfigFile }),
-      ...(options.tuning === undefined ? {} : options.tuning),
-      ...(options.codexPermissionMode === undefined
-        ? {}
-        : { codexPermissionMode: options.codexPermissionMode })
+      ...(options.tuning === undefined ? {} : options.tuning)
     })
   }
 }
@@ -371,234 +321,11 @@ describe('launchClaudeSession', () => {
 
     expect(cli.detect).toHaveBeenCalledWith('claude')
   })
-
-  it('detects Codex, not Claude, when Codex is the provider asked for', async () => {
-    const cli = installedCodex()
-    await launch({ provider: 'codex', cli }).result
-
-    expect(cli.detect).toHaveBeenCalledWith('codex')
-  })
-})
-
-/*
- * Codex's launch, and what it can honestly be (#168).
- *
- * NOT a held session. docs/command-surface-evaluation.md states that "Codex has
- * no held-session engine in this app (no equivalent of `sdkHeldSession.ts`
- * exists for it)", and docs/question-capture-evaluation.md's matrix marks the
- * `codex exec` row's live capture and answering both No. So this is the
- * detached shape and only that: a process started in the mine's folder, let go
- * of, and discovered afterwards by the ordinary poll reading Codex's own
- * rollout storage — where `threads.cwd` is what puts it in the right mine, the
- * same trick the Claude launch relies on.
- */
-describe('launching Codex', () => {
-  it('starts the detected codex binary in the mine folder, with the prompt on stdin', async () => {
-    const { run, result } = launch({ provider: 'codex', cli: installedCodex(), prompt: 'dig' })
-
-    await expect(result).resolves.toEqual({ launched: true, provider: 'codex' })
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation.command).toBe(CODEX_PATH)
-    // cwd is the whole trick here too: the Codex provider reads a thread's own
-    // `cwd` column, so this is what files the new session under the right mine.
-    expect(invocation.cwd).toBe(MINE_PATH)
-    // AMENDED for #510 (was: `['exec', '-']`) — Codex's own `-o` flag now
-    // rides along so the runner can read the clean final message back; see
-    // 'wires the -o output path into both argv and the invocation' below.
-    expect(invocation.args).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
-    expect(invocation.stdin).toBe('dig')
-  })
-
-  it('wires the -o output path into both argv and the invocation, for Codex only (#510)', async () => {
-    const { run: codexRun, result: codexResult } = launch({
-      provider: 'codex',
-      cli: installedCodex()
-    })
-    await codexResult
-    const codexInvocation = (codexRun as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0] as LaunchInvocation
-    expect(codexInvocation.outputFile).toBe(CODEX_OUTPUT_PATH)
-
-    const { run: claudeRun, result: claudeResult } = launch({ provider: 'claude' })
-    await claudeResult
-    const claudeInvocation = (claudeRun as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0] as LaunchInvocation
-    // Every other provider ignores it — no -o flag exists for them.
-    expect(claudeInvocation.outputFile).toBeUndefined()
-    expect(claudeInvocation.args).not.toContain('-o')
-  })
-
-  it('never puts the prompt in argv for Codex either', async () => {
-    const secret = 'rotate the deploy key'
-    const { run, result } = launch({ provider: 'codex', cli: installedCodex(), prompt: secret })
-    await result
-
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation.args.join(' ')).not.toContain(secret)
-  })
-
-  it('says Codex is missing in Codex’s own words, carrying what detection said', async () => {
-    // "Claude Code is not installed" for a Codex chip would be this app naming
-    // the wrong program at the one moment the user can act on the answer.
-    const { run, result } = launch({
-      provider: 'codex',
-      cli: detector({ cli: 'codex', installed: false, reason: 'codex not found on PATH' })
-    })
-
-    const verdict = await result
-    expect(verdict.provider).toBe('codex')
-    expect(verdict.error).toContain('Codex')
-    expect(verdict.error).not.toContain('Claude')
-    expect(verdict.error).toContain('codex not found on PATH')
-    expect(run).not.toHaveBeenCalled()
-  })
-
-  /*
-   * The npm-global install, which is the common one for Codex on Windows, and
-   * pnpm's `codex.CMD` beside it. Until #193 this was REFUSED, with a message
-   * naming CODEX_CLI_PATH: a batch shim needs cmd.exe, and the launcher had
-   * borrowed the queue's reason for never handing a payload to a shell. That
-   * reason was the queue's alone — there the message is an argv element — and
-   * the named exit was one a packaged user could not take (no Settings UI for
-   * CLI paths). The shell was still not the answer: a detached cmd.exe has no
-   * console and starts no external program at all, while a non-detached one
-   * dies with the panel. So the launcher does what the shim would have done —
-   * reads it, and runs the node entry it names directly, detached. The two
-   * refusal tests that stood here ("refuses a shell shim rather than failing
-   * opaquely, and says what to set", "never publishes the shim path it
-   * refused") went with the refusal.
-   */
-  it('starts an npm .cmd shim by running the node entry it names, instead of refusing it (#193)', async () => {
-    const fs = new FakeFs()
-    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
-    const { run, result } = launch({
-      provider: 'codex',
-      platform: 'win32',
-      env: { Path: 'C:\\Windows\\System32' },
-      prompt: 'dig',
-      cli: shimDetector(NPM_SHIM),
-      fs
-    })
-
-    await expect(result).resolves.toEqual({ launched: true, provider: 'codex' })
-    expect(run).toHaveBeenCalledTimes(1)
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    // No node.exe beside this shim, so `node` from PATH — the shim's own ELSE arm.
-    expect(invocation.command).toBe('node')
-    // AMENDED for #510 (was: `[NPM_ENTRY, 'exec', '-']`) — see the dedicated
-    // -o wiring test above.
-    expect(invocation.args).toEqual([NPM_ENTRY, 'exec', '-o', CODEX_OUTPUT_PATH, '-'])
-    expect(invocation.stdin).toBe('dig')
-    expect(invocation.cwd).toBe(MINE_PATH)
-    // PATH is still led by the shim's directory: a re-exec of `codex` inside
-    // the child must find the same install detection did.
-    expect(invocation.env.Path).toBe(`${NPM_DIR};C:\\Windows\\System32`)
-  })
-
-  it('prefers the node.exe the shim itself would prefer, when one sits beside it', async () => {
-    const fs = new FakeFs()
-    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
-    fs.addFile(`${NPM_DIR}\\node.exe`, 'MZ')
-    const { run, result } = launch({
-      provider: 'codex',
-      platform: 'win32',
-      cli: shimDetector(NPM_SHIM),
-      fs
-    })
-    await result
-
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation.command).toBe(`${NPM_DIR}\\node.exe`)
-    expect(invocation.args[0]).toBe(NPM_ENTRY)
-  })
-
-  it('never hands a shim to a shell, in either direction', async () => {
-    const fs = new FakeFs()
-    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
-    const { run, result } = launch({
-      provider: 'codex',
-      platform: 'win32',
-      cli: shimDetector(NPM_SHIM),
-      fs
-    })
-    await result
-
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation).not.toHaveProperty('shell')
-    expect(invocation.command.toLowerCase().endsWith('.cmd')).toBe(false)
-  })
-
-  it('keeps the prompt off argv for a shim launch too', async () => {
-    const secret = 'rotate the deploy key'
-    const fs = new FakeFs()
-    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
-    const { run, result } = launch({
-      provider: 'codex',
-      platform: 'win32',
-      prompt: secret,
-      cli: shimDetector(NPM_SHIM),
-      fs
-    })
-    await result
-
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation.command).not.toContain(secret)
-    expect(invocation.args.join(' ')).not.toContain(secret)
-    expect(invocation.stdin).toBe(secret)
-  })
-
-  // AMENDED for #502 (was: 'says Codex could not be started when the shim
-  // names nothing it can run', asserting the fixed sentence
-  // 'Codex CLI could not be started.' and a comment claiming "never a path on
-  // the wire" — that claim is exactly what #502 asked to stop being true).
-  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact verdict
-  // without `cause`).
-  it('names the shim path and that its dialect was not understood', async () => {
-    // A third shim dialect, or a hand-written wrapper: an honest failure that
-    // names the path it tried and why, never a guess at an entry.
-    const fs = new FakeFs()
-    fs.addFile(NPM_SHIM, '@echo off\r\nrem nothing to run here\r\n')
-    const { run, result } = launch({
-      provider: 'codex',
-      platform: 'win32',
-      cli: shimDetector(NPM_SHIM),
-      fs
-    })
-
-    await expect(result).resolves.toEqual({
-      launched: false,
-      provider: 'codex',
-      error: `Codex CLI could not be started: ${NPM_SHIM} — the shim was found but its dialect was not understood.`,
-      cause: 'could-not-start'
-    })
-    expect(run).not.toHaveBeenCalled()
-  })
-
-  it('starts a real codex executable as itself, reading no shim', async () => {
-    const fs = new FakeFs()
-    const { run, result } = launch({ provider: 'codex', cli: installedCodex(), fs })
-    await result
-
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation.command).toBe(CODEX_PATH)
-    // AMENDED for #510 (was: `['exec', '-']`) — see the dedicated -o wiring
-    // test above.
-    expect(invocation.args).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
-  })
-
-  it('claims only that the process started, and never a dwarf', async () => {
-    // Codex's dwarf is discovered by the poll off its rollout storage, up to a
-    // poll interval later, exactly as a session a human started is.
-    await expect(launch({ provider: 'codex', cli: installedCodex() }).result).resolves.toEqual({
-      launched: true,
-      provider: 'codex'
-    })
-  })
 })
 
 /*
  * OpenCode's launch (#534), on the same DETACHED, one-shot terms as
- * Antigravity's and Codex's above: no held-session engine, discovered
+ * Antigravity's and Codex's once were: no held-session engine, discovered
  * afterwards by the ordinary poll reading `opencode.db` — where
  * `session.directory` is what puts it in the right mine, the same trick
  * every other provider's launch relies on.
@@ -676,6 +403,68 @@ describe('launching OpenCode (#534)', () => {
     expect(invocation.command.toLowerCase().endsWith('.cmd')).toBe(false)
   })
 
+  /*
+   * AMENDED for ISSUE-185, the step-3b deletion (was: three cases of
+   * 'launching Codex', on Codex's own npm shim): the shim reading they prove is
+   * the launcher's, not Codex's, so they now run on OpenCode's shim.
+   */
+  it('prefers the node.exe the shim itself would prefer, when one sits beside it', async () => {
+    const fs = new FakeFs()
+    fs.addFile(OPENCODE_SHIM, OPENCODE_SHIM_TEXT)
+    fs.addFile(`${OPENCODE_SHIM_DIR}\\node.exe`, 'MZ')
+    const { run, result } = launch({
+      provider: 'opencode',
+      platform: 'win32',
+      cli: shimDetectorFor('opencode', OPENCODE_SHIM),
+      fs
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.command).toBe(`${OPENCODE_SHIM_DIR}\\node.exe`)
+    expect(invocation.args[0]).toBe(OPENCODE_SHIM_ENTRY)
+  })
+
+  it('keeps the prompt off argv for a shim launch too', async () => {
+    const secret = 'rotate the deploy key'
+    const fs = new FakeFs()
+    fs.addFile(OPENCODE_SHIM, OPENCODE_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'opencode',
+      platform: 'win32',
+      prompt: secret,
+      cli: shimDetectorFor('opencode', OPENCODE_SHIM),
+      fs
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.command).not.toContain(secret)
+    expect(invocation.args.join(' ')).not.toContain(secret)
+    expect(invocation.stdin).toBe(secret)
+  })
+
+  it('names the shim path and that its dialect was not understood', async () => {
+    // A third shim dialect, or a hand-written wrapper: an honest failure that
+    // names the path it tried and why, never a guess at an entry.
+    const fs = new FakeFs()
+    fs.addFile(OPENCODE_SHIM, '@echo off\r\nrem nothing to run here\r\n')
+    const { run, result } = launch({
+      provider: 'opencode',
+      platform: 'win32',
+      cli: shimDetectorFor('opencode', OPENCODE_SHIM),
+      fs
+    })
+
+    await expect(result).resolves.toEqual({
+      launched: false,
+      provider: 'opencode',
+      error: `OpenCode could not be started: ${OPENCODE_SHIM} — the shim was found but its dialect was not understood.`,
+      cause: 'could-not-start'
+    })
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it('asks the detected OpenCode binary directly on POSIX, no shim to read', async () => {
     const fs = new FakeFs()
     const { run, result } = launch({ provider: 'opencode', cli: installedOpenCode(), fs })
@@ -717,14 +506,6 @@ describe('launching OpenCode (#534)', () => {
 
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
     expect(invocation.stdoutIsTurnText).toBe(false)
-  })
-
-  it("carries Codex's own stdoutIsTurnText verdict (true) onto the invocation", async () => {
-    const { run, result } = launch({ provider: 'codex', cli: installedCodex() })
-    await result
-
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation.stdoutIsTurnText).toBe(true)
   })
 })
 
@@ -894,49 +675,6 @@ describe('detached delegation injection (#511 T4)', () => {
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
     expect(invocation.env.OPENCODE_CONFIG_CONTENT).toBe(malformed)
     expect(invocation.args).toEqual(['run', '--format', 'json'])
-  })
-
-  /*
-   * AMENDED for #511 (Codex smoke measurement, 2026-09-23): was "never
-   * touches Codex argv or env, even when a delegation context is somehow
-   * present", asserting argv stayed exactly `['exec', '-o', CODEX_OUTPUT_PATH,
-   * '-']` — true only while Codex sat outside `DELEGATION_CAPABLE_PROVIDERS`.
-   * A real `codex exec` launch has since been measured registering the
-   * `-c`-configured `jev` server AND exposing its tools to the model, so
-   * Codex joined the capable list (`delegationGate.ts`) and this function now
-   * has to wire its own per-invocation mechanism, the same way it already
-   * does for `claude` and `opencode`. Codex carries no env change (its own
-   * delegation env rides inside the `-c mcp_servers.jev.env=…` TOML value,
-   * applied by Codex to the SPAWNED SERVER only, never to Codex's own
-   * process) and writes no config file — only extra argv, inserted before
-   * the trailing "-" by `buildCodexLaunchArgs` (see launch.test.ts's own
-   * #511 T4 coverage for that placement rule).
-   */
-  it('inserts codexDelegationConfigArgs before the trailing "-" for a delegating Codex launch', async () => {
-    const { run, result } = launch({
-      provider: 'codex',
-      cli: installedCodex(),
-      delegation: context()
-    })
-    await result
-
-    expect(argvOf(run)).toEqual([
-      'exec',
-      '-o',
-      CODEX_OUTPUT_PATH,
-      ...codexDelegationConfigArgs(context()),
-      '-'
-    ])
-    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect('OPENCODE_CONFIG_CONTENT' in invocation.env).toBe(false)
-    expect(invocation.delegationConfigFile).toBeUndefined()
-  })
-
-  it('leaves a Codex launch with no delegation byte for byte what it always was', async () => {
-    const { run, result } = launch({ provider: 'codex', cli: installedCodex() })
-    await result
-
-    expect(argvOf(run)).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
   })
 })
 
@@ -1111,10 +849,11 @@ const FAKE_STDOUT_FD = 901
 /**
  * One shared `contents` map serves two roles a real launch keeps separate
  * files for: the piped stdout capture this fake OPENS itself
- * (`openForWrite`/`writeStdout`, exactly like `fakeStderrFile`), and Codex's
- * own `-o` file, which Codex writes directly and this app only ever reads
- * and removes — `write(path, text)` stands in for Codex's own write, at
- * whatever path `invocation.outputFile` names, never through `openForWrite`.
+ * (`openForWrite`/`writeStdout`, exactly like `fakeStderrFile`), and a file
+ * a CLI writes directly at a path this app names and only ever reads and
+ * removes — `write(path, text)` stands in for that write, never through
+ * `openForWrite` (Codex's own `-o` file was the one such file until
+ * ISSUE-185 deleted today's Codex launch).
  * One fake rather than two, because both roles read and remove by PATH, and
  * a real `runLaunchProcess` is handed exactly one `StdoutFile` port for both.
  */
@@ -1839,67 +1578,9 @@ describe('onTurnOutcome (#510)', () => {
   })
 
   /*
-   * Codex's own `-o` file (#510) carries the clean final message alone;
-   * stdout also carries whatever the run printed along the way, so the
-   * output file wins whenever it actually has something in it.
-   */
-  it('prefers the Codex output file over the piped stdout tail when both are present', async () => {
-    const spawn = fakeSpawn()
-    const outFiles = fakeStdoutFile()
-    const outputPath = 'fake-codex-output-1.log'
-    const retained = await runLaunchProcess(
-      invocation({ outputFile: outputPath }),
-      spawn.spawnProcess,
-      fakeStderrFile(),
-      outFiles,
-      () => NOW
-    )
-    const onTurnOutcome = vi.fn()
-    retained?.onTurnOutcome?.(onTurnOutcome)
-
-    // The piped stdout capture (opened by the runner itself) carries the
-    // whole run's chatter; Codex's own -o file (never opened by this app —
-    // written directly, at its own named path) carries only the clean
-    // final message.
-    outFiles.writeStdout('progress: step 1\nprogress: step 2\n')
-    outFiles.write(outputPath, 'the clean final message\n')
-    spawn.exit(0)
-
-    expect(onTurnOutcome).toHaveBeenCalledWith({
-      kind: 'concluded',
-      text: 'the clean final message',
-      endedAt: NOW
-    })
-  })
-
-  it('falls back to the piped stdout tail when an output file was named but never written', async () => {
-    const spawn = fakeSpawn()
-    const outFiles = fakeStdoutFile()
-    const outputPath = 'fake-codex-output-unwritten.log'
-    const retained = await runLaunchProcess(
-      invocation({ outputFile: outputPath }),
-      spawn.spawnProcess,
-      fakeStderrFile(),
-      outFiles,
-      () => NOW
-    )
-    const onTurnOutcome = vi.fn()
-    retained?.onTurnOutcome?.(onTurnOutcome)
-
-    outFiles.writeStdout('the stdout tail answer\n')
-    spawn.exit(0)
-
-    expect(onTurnOutcome).toHaveBeenCalledWith({
-      kind: 'concluded',
-      text: 'the stdout tail answer',
-      endedAt: NOW
-    })
-  })
-
-  /*
    * #511 T4: the `--mcp-config` temp file `launchClaudeSession` writes for a
    * delegating Claude launch is removed on exit through the SAME `StdoutFile`
-   * port as the piped stdout capture and Codex's own `-o` file — it is just
+   * port as the piped stdout capture (and, until ISSUE-185, Codex's own `-o` file) — it is just
    * another path this app owns and must not leave behind, never a fourth
    * kind of file with its own lifecycle.
    */
@@ -2227,13 +1908,15 @@ describe('hosting the launched CLI’s console (#208)', () => {
     expect(exitCodes).toEqual([0])
   })
 
+  // AMENDED for ISSUE-185, the step-3b deletion (was: on Codex's npm shim and
+  // a real codex executable): the two node-entry cases run on OpenCode's.
   it('marks a shim launch as a node-entry launch, so the runner hosts its console', async () => {
     const fs = new FakeFs()
-    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    fs.addFile(OPENCODE_SHIM, OPENCODE_SHIM_TEXT)
     const { run, result } = launch({
-      provider: 'codex',
+      provider: 'opencode',
       platform: 'win32',
-      cli: shimDetector(NPM_SHIM),
+      cli: shimDetectorFor('opencode', OPENCODE_SHIM),
       fs
     })
     await result
@@ -2245,7 +1928,11 @@ describe('hosting the launched CLI’s console (#208)', () => {
   it('does not mark a real executable as a node-entry launch', async () => {
     // A program that IS the console program needs no host: spawned detached it
     // simply has no console, and nothing allocates a visible one for it.
-    const { run, result } = launch({ provider: 'codex', cli: installedCodex(), fs: new FakeFs() })
+    const { run, result } = launch({
+      provider: 'opencode',
+      cli: installedOpenCode(),
+      fs: new FakeFs()
+    })
     await result
 
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
@@ -2284,52 +1971,31 @@ describe('a detached launch that names a model and an effort (#239)', () => {
     expect(argvOf(run).join(' ')).not.toContain('rotate the deploy key')
   })
 
-  it("carries the model into Codex's argv in Codex's own spelling", async () => {
-    const { run, result } = launch({
-      provider: 'codex',
-      cli: installedCodex(),
-      tuning: { model: 'gpt-5.6-sol', effort: 'medium' }
-    })
-    await result
-
-    // AMENDED for #510 (was: no trailing `-o` pair) — see the dedicated -o
-    // wiring test in 'launching Codex' above.
-    expect(argvOf(run)).toEqual([
-      'exec',
-      '-m',
-      'gpt-5.6-sol',
-      '-c',
-      'model_reasoning_effort=medium',
-      '-o',
-      CODEX_OUTPUT_PATH,
-      '-'
-    ])
-  })
-
   it('keeps the tuning behind the shim’s own node entry, not in front of it', async () => {
     // A shim launch runs `node <entry> <the CLI's own argv>` (#193). The
     // tuning belongs to the CLI's argv, so it must land after the entry —
     // in front of it, it would be an argument to node itself.
+    // AMENDED for ISSUE-185, the step-3b deletion (was: on Codex's npm shim,
+    // `[NPM_ENTRY, 'exec', '-m', 'gpt-5.6-luna', '-o', <path>, '-']`): the
+    // ordering is the launcher's, so it runs on OpenCode's shim.
     const fs = new FakeFs()
-    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    fs.addFile(OPENCODE_SHIM, OPENCODE_SHIM_TEXT)
     const { run, result } = launch({
-      provider: 'codex',
+      provider: 'opencode',
       platform: 'win32',
-      cli: shimDetector(NPM_SHIM),
+      cli: shimDetectorFor('opencode', OPENCODE_SHIM),
       fs,
-      tuning: { model: 'gpt-5.6-luna' }
+      tuning: { model: 'opencode/big-pickle' }
     })
     await result
 
-    // AMENDED for #510 (was: no trailing `-o` pair).
     expect(argvOf(run)).toEqual([
-      NPM_ENTRY,
-      'exec',
+      OPENCODE_SHIM_ENTRY,
+      'run',
       '-m',
-      'gpt-5.6-luna',
-      '-o',
-      CODEX_OUTPUT_PATH,
-      '-'
+      'opencode/big-pickle',
+      '--format',
+      'json'
     ])
   })
 
@@ -2373,6 +2039,9 @@ describe('a detached launch that names a model and an effort (#239)', () => {
  * start" everywhere. The one per-OS difference (only Windows has batch shims
  * for detection to refuse) stops inside cliDetection.ts, the port.
  */
+// AMENDED for ISSUE-185, the step-3b deletion (was: the not-installed and
+// shim cases on Codex): the classification is the launcher's, so they run on
+// OpenCode.
 describe('the cause a failed detached launch names (#635)', () => {
   const HOMES: Record<Platform, string> = {
     win32: 'C:\\Users\\j',
@@ -2383,11 +2052,11 @@ describe('the cause a failed detached launch names (#635)', () => {
 
   it.each(PLATFORMS)('says not-installed when detection finds nothing on %s', async (platform) => {
     const cli = createCliDetector({ home: HOMES[platform], platform, fs: new FakeFs(), env: {} })
-    const { run, result } = launch({ provider: 'codex', platform, cli })
+    const { run, result } = launch({ provider: 'opencode', platform, cli })
 
     await expect(result).resolves.toMatchObject({
       launched: false,
-      provider: 'codex',
+      provider: 'opencode',
       cause: 'not-installed'
     })
     expect(run).not.toHaveBeenCalled()
@@ -2429,7 +2098,7 @@ describe('the cause a failed detached launch names (#635)', () => {
     async (platform) => {
       // An override is honoured on existence alone (cliDetection.ts), so the
       // refusal reaches the launch — the same step on every OS.
-      const shim = platform === 'win32' ? 'C:\\tools\\codex.cmd' : '/opt/tools/codex.cmd'
+      const shim = platform === 'win32' ? 'C:\\tools\\opencode.cmd' : '/opt/tools/opencode.cmd'
       const fs = new FakeFs()
       fs.addFile(shim, '@echo off\r\nrem nothing to run here\r\n')
       const cli = createCliDetector({
@@ -2437,13 +2106,13 @@ describe('the cause a failed detached launch names (#635)', () => {
         platform,
         fs,
         env: {},
-        overrides: { codex: shim }
+        overrides: { opencode: shim }
       })
-      const { run, result } = launch({ provider: 'codex', platform, cli, fs })
+      const { run, result } = launch({ provider: 'opencode', platform, cli, fs })
 
       await expect(result).resolves.toMatchObject({
         launched: false,
-        provider: 'codex',
+        provider: 'opencode',
         cause: 'could-not-start'
       })
       expect(run).not.toHaveBeenCalled()
@@ -2460,18 +2129,18 @@ describe('the cause a failed detached launch names (#635)', () => {
    */
   it('says could-not-start when detection found only a shim it cannot run (Windows)', async () => {
     const fs = new FakeFs()
-    fs.addFile('C:\\guard\\bin\\codex.cmd', '@echo off\r\nrem nothing to run here\r\n')
+    fs.addFile('C:\\guard\\bin\\opencode.cmd', '@echo off\r\nrem nothing to run here\r\n')
     const cli = createCliDetector({
       home: HOMES.win32,
       platform: 'win32',
       fs,
       env: { PATH: 'C:\\guard\\bin' }
     })
-    const { run, result } = launch({ provider: 'codex', platform: 'win32', cli, fs })
+    const { run, result } = launch({ provider: 'opencode', platform: 'win32', cli, fs })
 
     await expect(result).resolves.toMatchObject({
       launched: false,
-      provider: 'codex',
+      provider: 'opencode',
       cause: 'could-not-start'
     })
     expect(run).not.toHaveBeenCalled()
@@ -2486,73 +2155,5 @@ describe('the cause a failed detached launch names (#635)', () => {
   it('names no cause for a launch that started', async () => {
     const verdict = await launch({}).result
     expect(verdict).not.toHaveProperty('cause')
-  })
-})
-
-/*
- * #635 (PO decision 2026-09-28). The permission mode the Add panel picked for
- * Codex reaches its argv on every OS as the same two words: they are Codex's
- * own CLI flags, so nothing about them is per platform. What IS per platform
- * is how the program is reached — a Windows npm shim runs `node <entry>` — and
- * the mode belongs to the CLI's argv, so it lands after that entry.
- */
-describe('a detached Codex launch that names a permission mode (#635)', () => {
-  const POSIX: readonly Platform[] = ['linux', 'darwin']
-
-  for (const platform of POSIX) {
-    it(`carries read-only as --sandbox read-only on ${platform}`, async () => {
-      const { run, result } = launch({
-        provider: 'codex',
-        platform,
-        cli: installedCodex(),
-        codexPermissionMode: 'read-only'
-      })
-      await result
-      expect(argvOf(run)).toEqual(['exec', '--sandbox', 'read-only', '-o', CODEX_OUTPUT_PATH, '-'])
-    })
-  }
-
-  it('carries workspace-write behind the npm shim’s node entry on win32', async () => {
-    const fs = new FakeFs()
-    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
-    const { run, result } = launch({
-      provider: 'codex',
-      platform: 'win32',
-      cli: shimDetector(NPM_SHIM),
-      fs,
-      tuning: { model: 'gpt-5.6-luna' },
-      codexPermissionMode: 'workspace-write'
-    })
-    await result
-    expect(argvOf(run)).toEqual([
-      NPM_ENTRY,
-      'exec',
-      '-m',
-      'gpt-5.6-luna',
-      '--sandbox',
-      'workspace-write',
-      '-o',
-      CODEX_OUTPUT_PATH,
-      '-'
-    ])
-  })
-
-  for (const platform of ['linux', 'darwin', 'win32'] as const) {
-    it(`adds nothing for the default mode on ${platform}, the launch it always was`, async () => {
-      const { run, result } = launch({
-        provider: 'codex',
-        platform,
-        cli: installedCodex(),
-        codexPermissionMode: 'default'
-      })
-      await result
-      expect(argvOf(run)).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
-    })
-  }
-
-  it('never hands another provider a Codex sandbox flag', async () => {
-    const { run, result } = launch({ provider: 'claude', codexPermissionMode: 'read-only' })
-    await result
-    expect(argvOf(run)).toEqual(['-p', '--input-format', 'text'])
   })
 })

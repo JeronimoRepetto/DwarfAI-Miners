@@ -291,11 +291,11 @@ async function buildLaunch(provider, workDir, endpoint, token, program) {
   // 2026-09-23 (feature document): registration alone reached the model's
   // tool list but the CALL itself needed the two `approval_mode="approve"`
   // overrides below — `mcp_servers.jev.tools.<tool>.approval_mode`, per
-  // tool rather than server-wide, mirroring
-  // `codexDelegationConfigArgs`'s own comment (delegationInjection.ts) for
-  // the source citation. `--skip-git-repo-check` is added here, and ONLY
-  // here — never in `buildCodexLaunchArgs` (launch.ts), which deliberately
-  // leaves a real launch's own refusal to Codex — because this script's
+  // tool rather than server-wide, as the Host's Codex `jev` overrides do
+  // (`codex-app-server/argv.ts`; today's `codexDelegationConfigArgs` left
+  // with ISSUE-185). `--skip-git-repo-check` is added here, and ONLY here —
+  // never in a real launch's argv, which deliberately leaves a launch's own
+  // refusal to Codex — because this script's
   // `cwd` is a fresh `mkdtemp` directory, never a Git repository, and
   // without it Codex declines to run at all before it ever reaches the tool
   // call this script exists to observe.

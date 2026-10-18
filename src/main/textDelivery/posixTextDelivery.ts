@@ -10,7 +10,6 @@ import {
 import type { ConsoleInputAdapter } from './osascriptInput'
 import type {
   CodexQueueRequest,
-  CodexResumeRequest,
   ConsoleAnswerRequest,
   ConsoleTextRequest,
   EndSessionRequest,
@@ -21,7 +20,6 @@ import type {
   TextDeliveryPort
 } from './port'
 import { deliverViaCodexQueue, runCodexQueueProcess, type CodexQueueRunner } from './codexQueue'
-import { deliverViaCodexResume, runCodexResumeProcess, type CodexResumeRunner } from './codexResume'
 import {
   deliverViaOpenCodeContinue,
   runOpenCodeContinueProcess,
@@ -116,8 +114,6 @@ export interface PosixTextDeliveryOptions {
   codexBinary?: () => Promise<string | undefined>
   /** Injected for tests; defaults to a real codex spawn. */
   runCodexQueue?: CodexQueueRunner
-  /** Injected for tests; defaults to a real codex spawn (#450). */
-  runCodexResume?: CodexResumeRunner
   /**
    * Resolves the opencode binary through the CLI detection port (#534), on
    * the same terms `codexBinary` is. Omitted, the continuation tier has no
@@ -173,7 +169,6 @@ export class PosixTextDelivery implements TextDeliveryPort {
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
-  private readonly runCodexResume: CodexResumeRunner
   private readonly opencodeBinary: () => Promise<string | undefined>
   private readonly runOpenCodeContinue: OpenCodeContinueRunner
   private readonly fs: FsLike
@@ -193,7 +188,6 @@ export class PosixTextDelivery implements TextDeliveryPort {
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
-    this.runCodexResume = options.runCodexResume ?? runCodexResumeProcess
     this.opencodeBinary = options.opencodeBinary ?? (async () => undefined)
     this.runOpenCodeContinue = options.runOpenCodeContinue ?? runOpenCodeContinueProcess
     this.fs = options.fs ?? new NodeFs()
@@ -330,28 +324,8 @@ export class PosixTextDelivery implements TextDeliveryPort {
   }
 
   /**
-   * The Codex resume tier (#450): platform-neutral for the reason the queue
-   * beside it is, and reached through the same detected binary.
-   */
-  async resumeCodexThread(request: CodexResumeRequest): Promise<TextDeliveryOutcome> {
-    return deliverViaCodexResume({
-      threadId: request.threadId,
-      cwd: request.cwd,
-      text: request.text,
-      binaryPath: await this.codexBinary(),
-      run: this.runCodexResume,
-      fs: this.fs,
-      // Forwarded rather than defaulted (#462): an absent request.tuning must
-      // reach codexTuningArgs as absent too, which is what keeps the argv
-      // byte-identical to before this issue.
-      ...(request.tuning === undefined ? {} : { tuning: request.tuning })
-    })
-  }
-
-  /**
    * The OpenCode continuation tier (#534): platform-neutral for the reason
-   * the queue and the resume beside it are, and reached through the same
-   * detected binary.
+   * the queue beside it is, and reached through the same detected binary.
    */
   async continueOpenCodeSession(request: OpenCodeContinueRequest): Promise<TextDeliveryOutcome> {
     return deliverViaOpenCodeContinue({

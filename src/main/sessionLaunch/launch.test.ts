@@ -4,7 +4,6 @@ import { DWARF_PROVIDERS, MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import {
   ONE_SHOT_STDOUT_IS_TURN_TEXT,
   buildClaudeLaunchArgs,
-  buildCodexLaunchArgs,
   buildLaunchArgs,
   buildOpenCodeLaunchArgs,
   isShellShim,
@@ -57,8 +56,13 @@ describe('buildLaunchArgs', () => {
     expect(buildLaunchArgs('claude')).toEqual(buildClaudeLaunchArgs())
   })
 
-  it("answers Codex with Codex's own non-interactive argv", () => {
-    expect(buildLaunchArgs('codex')).toEqual(buildCodexLaunchArgs())
+  /*
+   * AMENDED for ISSUE-185, the step-3b deletion (was: "answers Codex with
+   * Codex's own non-interactive argv", #168): today's Codex launch left the
+   * tree, so the dispatch refuses it, as it refuses Antigravity.
+   */
+  it('refuses Codex, whose launch left today’s launcher with the step-3b deletion', () => {
+    expect(() => buildLaunchArgs('codex')).toThrow(NOT_LAUNCHABLE)
   })
 
   /*
@@ -166,154 +170,6 @@ describe('launch argv with a model and an effort, OpenCode (#534)', () => {
   })
 })
 
-describe('buildCodexLaunchArgs', () => {
-  /*
-   * Read out of the installed CLI's own help, exactly as Claude's argv was
-   * (codex-cli 0.151.0, the same build docs/console-hosting.md probed):
-   *
-   *   Usage: codex exec [OPTIONS] [PROMPT]
-   *   [PROMPT]  Initial instructions for the agent. If not provided as an
-   *             argument (or if `-` is used), instructions are read from stdin.
-   *
-   * So `-` is the documented spelling for "the prompt is on stdin", and it is
-   * passed explicitly rather than relying on the bare-positional default — the
-   * same reason Claude's argv states `--input-format text` instead of letting a
-   * default that could move under us decide.
-   */
-  it('asks for one non-interactive run reading its prompt from stdin', () => {
-    expect(buildCodexLaunchArgs()).toEqual(['exec', '-'])
-  })
-
-  it('carries no positional prompt, so nothing typed reaches the process list', () => {
-    // The argv/stdin split is not Claude's alone: docs/privacy.md and #59 are
-    // about this machine's process list, which does not care which CLI it is.
-    expect(buildCodexLaunchArgs()).not.toContain('dig the east gallery')
-    expect(buildCodexLaunchArgs().filter((arg) => arg !== 'exec' && arg !== '-')).toEqual([])
-  })
-
-  /*
-   * `--ephemeral` is "Run without persisting session files to disk". A launched
-   * session that persists nothing is a session the poll can never discover, so
-   * the dwarf would never appear and the launch would be invisible — the panel
-   * observes sessions through the provider's own storage and has no second
-   * path. It must never be added here.
-   */
-  it('never runs ephemerally, because an unpersisted session has no dwarf', () => {
-    expect(buildCodexLaunchArgs()).not.toContain('--ephemeral')
-  })
-
-  /*
-   * `--skip-git-repo-check` is deliberately absent too, and for the opposite
-   * kind of reason: it would make more launches succeed. Codex refuses to run
-   * outside a Git repository on purpose, and silently overriding that from a
-   * panel would be this app making a safety decision on the user's behalf in
-   * their own folder. If Codex declines, that is Codex's answer to give.
-   */
-  it('does not override Codex’s own refusal to run outside a repository', () => {
-    expect(buildCodexLaunchArgs()).not.toContain('--skip-git-repo-check')
-  })
-})
-
-/*
- * #510. `-o, --output-last-message <FILE>` (codex-cli 0.153.4's own
- * `codex exec --help`) writes ONLY the final message, which is a cleaner
- * source for a concluded turn's text than the piped stdout tail
- * `launchRunner.ts` reads for every provider — Codex's stdout also carries
- * whatever the run printed along the way, not just the answer.
- */
-describe('buildCodexLaunchArgs with an output-last-message path (#510)', () => {
-  it('adds no -o flag when no output path is given, unchanged from before #510', () => {
-    expect(buildCodexLaunchArgs()).toEqual(['exec', '-'])
-    expect(buildCodexLaunchArgs({}, undefined)).toEqual(['exec', '-'])
-  })
-
-  it('adds -o before the trailing "-", never after it', () => {
-    // `codex exec [OPTIONS] [PROMPT]` — a flag written after the prompt
-    // positional would be read as an argument to it (the same rule the two
-    // tuning flags above already follow).
-    expect(buildCodexLaunchArgs({}, '/tmp/dwarfai-launch-codex-output-1.log')).toEqual([
-      'exec',
-      '-o',
-      '/tmp/dwarfai-launch-codex-output-1.log',
-      '-'
-    ])
-  })
-
-  it('combines with tuning, output path last among the options', () => {
-    expect(buildCodexLaunchArgs({ model: 'gpt-5.6-sol', effort: 'high' }, '/tmp/out.log')).toEqual([
-      'exec',
-      '-m',
-      'gpt-5.6-sol',
-      '-c',
-      'model_reasoning_effort=high',
-      '-o',
-      '/tmp/out.log',
-      '-'
-    ])
-  })
-})
-
-describe('buildLaunchArgs dispatches the Codex output path (#510)', () => {
-  it('passes an output path through to Codex only', () => {
-    expect(buildLaunchArgs('codex', {}, '/tmp/out.log')).toEqual(
-      buildCodexLaunchArgs({}, '/tmp/out.log')
-    )
-  })
-
-  it('ignores an output path for every other provider, unchanged from before #510', () => {
-    expect(buildLaunchArgs('claude', {}, '/tmp/out.log')).toEqual(buildClaudeLaunchArgs())
-    expect(buildLaunchArgs('opencode', {}, '/tmp/out.log')).toEqual(buildOpenCodeLaunchArgs())
-  })
-})
-
-/*
- * #511 T4 correction. `codexDelegationConfigArgs` (delegationInjection.ts)
- * builds Codex's own delegation `-c` triples. Appending them AFTER this
- * function's return value — the way `launchRunner.ts` already appends
- * Claude's `--mcp-config`/`--allowedTools` — would land them AFTER the
- * trailing "-", read as an argument to the prompt positional: exactly the
- * mistake the two tuning flags and the output path above already avoid. So
- * `buildCodexLaunchArgs` takes them as a third parameter and places them
- * before "-", on the same terms as the output path.
- */
-describe('buildCodexLaunchArgs with delegation config args (#511 T4)', () => {
-  it('adds no delegation args when none are given, unchanged from before #511', () => {
-    expect(buildCodexLaunchArgs()).toEqual(['exec', '-'])
-    expect(buildCodexLaunchArgs({}, undefined, [])).toEqual(['exec', '-'])
-    expect(buildCodexLaunchArgs({}, undefined, undefined)).toEqual(['exec', '-'])
-  })
-
-  it('inserts delegation config args before the trailing "-", after the output path', () => {
-    expect(
-      buildCodexLaunchArgs({}, '/tmp/out.log', ['-c', 'mcp_servers.jev.command="node"'])
-    ).toEqual(['exec', '-o', '/tmp/out.log', '-c', 'mcp_servers.jev.command="node"', '-'])
-  })
-
-  it('inserts delegation config args before the trailing "-" even with no output path', () => {
-    expect(buildCodexLaunchArgs({}, undefined, ['-c', 'mcp_servers.jev.command="node"'])).toEqual([
-      'exec',
-      '-c',
-      'mcp_servers.jev.command="node"',
-      '-'
-    ])
-  })
-})
-
-describe('buildLaunchArgs dispatches Codex delegation config args (#511 T4)', () => {
-  it('passes delegation config args through to Codex only', () => {
-    const args = ['-c', 'mcp_servers.jev.command="node"']
-    expect(buildLaunchArgs('codex', {}, undefined, args)).toEqual(
-      buildCodexLaunchArgs({}, undefined, args)
-    )
-  })
-
-  it('ignores a fourth argument for every other provider, unchanged from before #511', () => {
-    const args = ['-c', 'mcp_servers.jev.command="node"']
-    expect(buildLaunchArgs('claude', {}, undefined, args)).toEqual(buildClaudeLaunchArgs())
-    expect(buildLaunchArgs('opencode', {}, undefined, args)).toEqual(buildOpenCodeLaunchArgs())
-  })
-})
-
 describe('launch argv with a model and an effort (#239)', () => {
   /*
    * Both flags are read out of the installed CLIs' own help, on 2026-09-07:
@@ -325,15 +181,9 @@ describe('launch argv with a model and an effort (#239)', () => {
    *   --effort <level>  Effort level for the current session (low, medium,
    *                     high, xhigh, max)
    *
-   * codex-cli 0.153.4
-   *   -m, --model <MODEL>       Model the agent should use
-   *   -c, --config <key=value>  Override a configuration value ... The `value`
-   *                             portion is parsed as TOML. If it fails to parse
-   *                             as TOML, the raw string is used as a literal.
-   *
-   * So Codex has no effort FLAG at all — the level travels as a config
-   * override on the key its own `config.toml` documents, and a bare level is
-   * carried as a literal string exactly as the help describes.
+   * AMENDED for ISSUE-185, the step-3b deletion: the Codex half of this block
+   * (its `-m` model and its `-c model_reasoning_effort=` override) left with
+   * today's Codex launch.
    *
    * `--effort` being documented on this build is the fact #239 asked to be
    * verified before wiring anything: the issue's own table marked it
@@ -343,11 +193,10 @@ describe('launch argv with a model and an effort (#239)', () => {
    */
   it('leaves both CLIs exactly as they were when nothing is tuned', () => {
     // The whole promise of the Add Panel's new row: ignoring it launches
-    // precisely as every launch before #239 did.
+    // precisely as every launch before #239 did. (ISSUE-185: Codex's half left
+    // with today's Codex launch.)
     expect(buildClaudeLaunchArgs()).toEqual(['-p', '--input-format', 'text'])
-    expect(buildCodexLaunchArgs()).toEqual(['exec', '-'])
     expect(buildLaunchArgs('claude', {})).toEqual(['-p', '--input-format', 'text'])
-    expect(buildLaunchArgs('codex', {})).toEqual(['exec', '-'])
   })
 
   it("names Claude's model with the flag Claude's own help documents", () => {
@@ -382,38 +231,6 @@ describe('launch argv with a model and an effort (#239)', () => {
     ])
   })
 
-  it("names Codex's model with -m, ahead of the stdin positional", () => {
-    // `codex exec [OPTIONS] [PROMPT]`: the options come first and `-` is the
-    // prompt, so a flag appended after it would be read as an argument to the
-    // positional rather than as an option.
-    expect(buildCodexLaunchArgs({ model: 'gpt-5.6-sol' })).toEqual([
-      'exec',
-      '-m',
-      'gpt-5.6-sol',
-      '-'
-    ])
-  })
-
-  it("carries Codex's effort as the config override its own config.toml documents", () => {
-    expect(buildCodexLaunchArgs({ effort: 'high' })).toEqual([
-      'exec',
-      '-c',
-      'model_reasoning_effort=high',
-      '-'
-    ])
-  })
-
-  it('carries both for Codex, still with the stdin positional last', () => {
-    expect(buildCodexLaunchArgs({ model: 'gpt-5.6-luna', effort: 'medium' })).toEqual([
-      'exec',
-      '-m',
-      'gpt-5.6-luna',
-      '-c',
-      'model_reasoning_effort=medium',
-      '-'
-    ])
-  })
-
   it('dispatches the tuning to the chosen provider and never lends one CLI the other’s flags', () => {
     // Argv does not transfer between CLIs — the reason `buildLaunchArgs` is
     // exhaustive with no default arm. A tuned launch must not become the one
@@ -421,21 +238,14 @@ describe('launch argv with a model and an effort (#239)', () => {
     expect(buildLaunchArgs('claude', { model: 'sonnet', effort: 'low' })).toEqual(
       buildClaudeLaunchArgs({ model: 'sonnet', effort: 'low' })
     )
-    expect(buildLaunchArgs('codex', { model: 'gpt-5.6-sol', effort: 'low' })).toEqual(
-      buildCodexLaunchArgs({ model: 'gpt-5.6-sol', effort: 'low' })
-    )
     expect(buildLaunchArgs('claude', { effort: 'low' })).not.toContain('model_reasoning_effort=low')
-    expect(buildLaunchArgs('codex', { effort: 'low' })).not.toContain('--effort')
   })
 
   it('still carries no positional prompt, whatever is tuned', () => {
     // The argv/stdin split is the privacy rule at the top of launch.ts, and a
     // new flag is exactly the kind of change that quietly breaks it.
     const claude = buildClaudeLaunchArgs({ model: 'sonnet', effort: 'high' })
-    const codex = buildCodexLaunchArgs({ model: 'gpt-5.6-sol', effort: 'high' })
     expect(claude).not.toContain('dig the east gallery')
-    expect(codex).not.toContain('dig the east gallery')
-    expect(codex.filter((arg) => arg === '-')).toEqual(['-'])
   })
 })
 
@@ -495,59 +305,5 @@ describe('ONE_SHOT_STDOUT_IS_TURN_TEXT (#510 correction)', () => {
 
   it('carries exactly one entry per known provider, never more and never fewer', () => {
     expect(Object.keys(ONE_SHOT_STDOUT_IS_TURN_TEXT).sort()).toEqual([...DWARF_PROVIDERS].sort())
-  })
-})
-
-/*
- * #635 (PO decision 2026-09-28): a Codex launch can carry the permission mode
- * the Add panel picked. `codex exec [OPTIONS] [PROMPT]` (codex-cli 0.153.4) is
- * why the mode's flags go BEFORE the trailing "-", on the same terms as every
- * other option this builder writes.
- */
-describe('buildCodexLaunchArgs with a permission mode (#635)', () => {
-  it('adds nothing for no mode or the default mode, so the argv is what it always was', () => {
-    expect(buildCodexLaunchArgs({}, undefined, undefined, undefined)).toEqual(['exec', '-'])
-    expect(buildCodexLaunchArgs({}, undefined, undefined, 'default')).toEqual(['exec', '-'])
-  })
-
-  it('writes the sandbox after the tuning and before the output path and the "-"', () => {
-    expect(
-      buildCodexLaunchArgs(
-        { model: 'gpt-5.6-sol', effort: 'high' },
-        '/tmp/out.log',
-        ['-c', 'mcp_servers.jev.command="node"'],
-        'read-only'
-      )
-    ).toEqual([
-      'exec',
-      '-m',
-      'gpt-5.6-sol',
-      '-c',
-      'model_reasoning_effort=high',
-      '--sandbox',
-      'read-only',
-      '-o',
-      '/tmp/out.log',
-      '-c',
-      'mcp_servers.jev.command="node"',
-      '-'
-    ])
-  })
-
-  it('writes workspace-write on its own, still before the "-"', () => {
-    expect(buildCodexLaunchArgs({}, undefined, undefined, 'workspace-write')).toEqual([
-      'exec',
-      '--sandbox',
-      'workspace-write',
-      '-'
-    ])
-  })
-})
-
-describe('buildLaunchArgs dispatches the Codex permission mode (#635)', () => {
-  it('passes the mode through to Codex', () => {
-    expect(buildLaunchArgs('codex', {}, undefined, undefined, 'read-only')).toEqual(
-      buildCodexLaunchArgs({}, undefined, undefined, 'read-only')
-    )
   })
 })

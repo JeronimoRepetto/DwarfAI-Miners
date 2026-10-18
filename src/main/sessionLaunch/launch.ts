@@ -1,6 +1,5 @@
-import { codexTuningArgs, type LaunchTuning } from '../domain/launchTuning'
-import { codexPermissionArgs } from '../domain/codexPermissions'
-import type { CodexPermissionMode, DwarfProvider } from '../domain/types'
+import type { LaunchTuning } from '../domain/launchTuning'
+import type { DwarfProvider } from '../domain/types'
 import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 
 /**
@@ -99,127 +98,8 @@ export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
 }
 
 /**
- * Argv for one non-interactive Codex run, on the same terms as Claude's.
- *
- * ## What a Codex launch can honestly be
- *
- * Not a held session. `docs/command-surface-evaluation.md` states outright that
- * "Codex has no held-session engine in this app (no equivalent of
- * `sdkHeldSession.ts` exists for it)", and `docs/question-capture-evaluation.md`
- * marks the `codex exec` row No for live capture and No for answering. So the
- * only shape available is the DETACHED one: start the process in the mine's
- * folder, let go of it, and let the ordinary poll discover it afterwards
- * through Codex's own rollout storage — where the thread row's `cwd` is what
- * files it under the mine it was launched from. Nothing here holds a stream,
- * and nothing pretends to.
- *
- * ## Why this exact spelling
- *
- * Read out of the installed CLI's own help, exactly as Claude's argv was
- * (codex-cli 0.151.0 — the same build `docs/console-hosting.md` probed):
- *
- *     Usage: codex exec [OPTIONS] [PROMPT]
- *     [PROMPT]  Initial instructions for the agent. If not provided as an
- *               argument (or if `-` is used), instructions are read from stdin.
- *
- * `-` is therefore the documented way to say "the prompt is on stdin", and it
- * is passed rather than relying on the bare-positional default, for the reason
- * Claude's argv names `--input-format text`: a default can move under us. The
- * argv/stdin split itself is the privacy rule at the top of this file, which
- * was never Claude-specific — argv is readable by any process on this machine
- * whichever binary owns it.
- *
- * ## The two flags that are deliberately NOT here
- *
- * `--ephemeral` ("Run without persisting session files to disk") would make the
- * launch invisible: the panel observes sessions through the provider's own
- * storage, so a session that persists nothing has no dwarf, ever.
- *
- * `--skip-git-repo-check` is absent for the opposite reason — it would make
- * more launches succeed. Codex declines to run outside a Git repository on
- * purpose; overriding that silently would be this panel making a safety
- * decision inside somebody's own folder. If Codex refuses, that refusal is
- * Codex's to give.
- */
-/*
- * ## The two tuning flags, and why only one of them is a flag (#239)
- *
- * Read out of the installed CLI's own help, on 2026-09-07 (codex-cli 0.153.4):
- *
- *     -m, --model <MODEL>       Model the agent should use
- *     -c, --config <key=value>  Override a configuration value that would
- *                               otherwise be loaded from `~/.codex/config.toml`
- *                               ... The `value` portion is parsed as TOML. If
- *                               it fails to parse as TOML, the raw string is
- *                               used as a literal.
- *
- * So the model has a flag of its own and the effort does not: Codex names no
- * effort option anywhere in `codex --help` or `codex exec --help`, and the
- * level travels as an override on the key its own config file documents
- * (`model_reasoning_effort`). A bare level is not valid TOML, so it arrives as
- * the literal string the help promises, which is the spelling that file uses.
- *
- * Both go BEFORE the `-` positional, because the usage line is
- * `codex exec [OPTIONS] [PROMPT]`: a flag written after the prompt would be
- * read as an argument to it rather than as an option.
- *
- * ## The output path, and why it is a third parameter rather than tuning (#510)
- *
- * `-o, --output-last-message <FILE>` (codex-cli 0.153.4's own
- * `codex exec --help`) writes ONLY the turn's final message to that file —
- * cleaner than the stdout tail `launchRunner.ts` reads for every provider,
- * since Codex's stdout also carries whatever the run printed along the way.
- * It is not `LaunchTuning` (model/effort are what a PERSON chose; this is a
- * temp path `launchClaudeSession` mints per launch, unrelated to tuning) and
- * it goes before the trailing `-` for the same reason the two tuning flags
- * do — a flag after the prompt positional would be read as its argument.
- *
- * ## The delegation config args, and why they are a fourth parameter (#511 T4)
- *
- * `codexDelegationConfigArgs` (delegationInjection.ts) builds the `-c
- * mcp_servers.jev...` triples a delegating launch needs. They cannot be
- * appended the way `launchRunner.ts` already appends Claude's own
- * `--mcp-config`/`--allowedTools` after this function's return value: Codex's
- * usage is `codex exec [OPTIONS] [PROMPT]`, and this argv's last element is
- * the `-` prompt positional, so anything appended after it would be read as
- * that positional's own argument rather than as a flag — the exact ordering
- * rule the output path above already follows. So they arrive here, as a
- * fourth parameter, and are placed before the trailing `-` on the same terms.
- *
- * ## The permission mode, and why it is a fifth parameter (#635)
- *
- * The mode the Add panel picked (PO decision 2026-09-28) is a sandbox and
- * nothing else — `codexPermissionArgs` (codexPermissions.ts) says why, with
- * `codex exec --help` quoted. It is not `LaunchTuning` for the reason the
- * output path is not: `resumeTuning` carries tuning onto a resumed turn, and
- * `codex exec resume --help` (0.153.4) has no `--sandbox` at all, so a mode
- * folded into tuning would be handed to a command that refuses it. It lands
- * after the tuning and before `-o`, and before the trailing `-` like every
- * other option; `default` adds nothing.
- */
-export function buildCodexLaunchArgs(
-  tuning: LaunchTuning = {},
-  outputPath?: string,
-  delegationConfigArgs?: readonly string[],
-  permissionMode?: CodexPermissionMode
-): string[] {
-  // The two tuning flags above come from `codexTuningArgs` (#462), the one
-  // builder this and `buildCodexResumeArgs` both delegate to, so the
-  // `model_reasoning_effort` key is spelled in exactly one place rather than
-  // twice and at risk of drifting apart.
-  return [
-    'exec',
-    ...codexTuningArgs(tuning),
-    ...(permissionMode === undefined ? [] : codexPermissionArgs(permissionMode)),
-    ...(outputPath === undefined ? [] : ['-o', outputPath]),
-    ...(delegationConfigArgs ?? []),
-    '-'
-  ]
-}
-
-/**
  * Argv for one non-interactive OpenCode turn (#534) — a DETACHED, one-shot
- * launch only, on the same terms as Codex's above: no held-session
+ * launch only, on the same terms as Codex's was: no held-session
  * engine for OpenCode in this app (see HELDABLE_PROVIDERS in
  * shared/contracts.ts), so this starts the process and lets go, discovered
  * afterwards by the ordinary poll reading `opencode.db`.
@@ -284,34 +164,20 @@ export function buildOpenCodeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * spelling of the same flag but a different mechanism. One shared tail here
  * would hand each CLI the other's.
  *
- * `codexOutputPath` (#510) is dispatched the same conservative way: it is
- * Codex's own `-o` file and nothing else, so every other provider's builder
- * simply never sees the parameter — never a shared "output path" concept
- * applied to a CLI that has no such flag. `codexDelegationConfigArgs` (#511
- * T4) is dispatched on the same terms, for the same reason: it is Codex's
- * own `-c mcp_servers.jev...` argv, placed before the trailing `-` by
- * `buildCodexLaunchArgs` itself (see that function's own comment), and no
- * other provider's builder ever sees it. `codexPermissionMode` (#635) is
- * dispatched on the same terms again: `--sandbox` is Codex's own flag, and
- * the IPC boundary already refused a mode named for any other provider.
+ * AMENDED for ISSUE-185, the step-3b deletion (was: also Codex's `-o` output
+ * path, its `-c mcp_servers.jev...` delegation argv and its `--sandbox`
+ * permission mode, dispatched to `buildCodexLaunchArgs`): today's Codex launch
+ * left the tree, and the Host's Codex drivers are Codex's only launcher.
  */
-export function buildLaunchArgs(
-  provider: DwarfProvider,
-  tuning: LaunchTuning = {},
-  codexOutputPath?: string,
-  codexDelegationConfigArgs?: readonly string[],
-  codexPermissionMode?: CodexPermissionMode
-): string[] {
+export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = {}): string[] {
   switch (provider) {
     case 'claude':
       return buildClaudeLaunchArgs(tuning)
     case 'codex':
-      return buildCodexLaunchArgs(
-        tuning,
-        codexOutputPath,
-        codexDelegationConfigArgs,
-        codexPermissionMode
-      )
+      // AMENDED for ISSUE-185, the step-3b deletion (was: `buildCodexLaunchArgs`,
+      // its `codex exec … -` argv): `LAUNCHABLE_PROVIDERS` refuses Codex before
+      // this is reached, so this arm is a refusal, as Antigravity's is.
+      throw new Error(NOT_LAUNCHABLE)
     case 'antigravity':
       // AMENDED for ISSUE-189, the step-3e deletion (was: its own `agy` argv,
       // #237 step 4, #282): today's Antigravity launch left the tree, and
@@ -348,11 +214,9 @@ export function buildLaunchArgs(
  * - `claude`: `true`. `buildClaudeLaunchArgs` carries no `--output-format`
  *   flag at all — `claude -p` prints its response as plain text by default
  *   (Claude Code 2.1.263's own `--help`, quoted above `buildClaudeLaunchArgs`).
- * - `codex`: `true`. `codex exec` has no `--format`/`--json` flag in its own
- *   `--help` (quoted above `buildCodexLaunchArgs`) — its stdout is prose,
- *   which is also why its own `-o, --output-last-message` file is preferred
- *   over the piped tail only for cleanliness (see `LaunchInvocation.outputFile`),
- *   never because the piped tail is a different SHAPE.
+ * - `codex`: `true`, unread since the step-3b deletion (ISSUE-185): today's
+ *   launcher no longer starts Codex. `codex exec` has no `--format`/`--json`
+ *   flag in its own `--help`, so its stdout was prose.
  * - `antigravity`: `true`, unread since the step-3e deletion (ISSUE-189):
  *   today's launcher no longer starts Antigravity. Its own default
  *   `--output-format` is `text` (Antigravity CLI 1.1.26's own `--help`).
