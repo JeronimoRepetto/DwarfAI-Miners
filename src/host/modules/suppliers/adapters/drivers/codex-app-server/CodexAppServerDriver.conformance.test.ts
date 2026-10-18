@@ -231,6 +231,78 @@ async function probedLaunch(
 }
 
 describe('CodexAppServerDriver', () => {
+  it('[C-02, ADR-029] on Windows an npm-installed codex that resolves to a script entry is probed and launched by the person node with the entry as its first argument, never through a shell', async () => {
+    // A Windows npm `codex.cmd` resolves to its quoted script entry (#1360), which the OS cannot
+    // start by itself (spawn EFTYPE) and R17 forbids running through a shell (ISSUE-002, the 3b E2E).
+    const entry = String.raw`C:\Users\j\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js`
+    const node = String.raw`C:\Program Files\nodejs\node.exe`
+    const windowsFactory =
+      (withNode: boolean): DriverFactory =>
+      (rig) => {
+        const resolver = new FakeInstallResolver()
+        resolver.install('codex', { path: entry, version: '0.153.4' })
+        if (withNode) resolver.install('node', { path: node })
+        return new CodexAppServerDriver({
+          record: CODEX,
+          detection: createInstallDetection({
+            resolver,
+            fs: { stat: async () => ({ mtimeMs: 0, size: 1, isDirectory: false }) },
+            scheduler: rig.scheduler
+          }),
+          processControl: rig.processControl,
+          clock: rig.clock,
+          scheduler: rig.scheduler,
+          loginEnv: rig.loginEnv,
+          home: String.raw`C:\Users\j`,
+          platform: 'win32',
+          clientInfo: { name: 'dwarfai', version: '0.0.0' },
+          redact: (text) => text
+        })
+      }
+    const install = { ...INSTALL, binaryPath: entry }
+    const options = { ...OPTIONS, install }
+    const run = await runScript(
+      windowsFactory(true),
+      [{ do: 'launch' }, { do: 'transportLost' }],
+      { variant: variantOf('s0151b-client1') },
+      options
+    )
+    expect(run.spawn.spawns.map((s) => s.executable)).toEqual([node])
+    expect(run.spawn.spawns[0]?.args[0]).toBe(entry)
+    expect(run.spawn.spawns[0]?.args).toContain('app-server')
+    // The help probe starts the same way.
+    const clock = new FakeClock(0)
+    const scheduler = new FakeScheduler(clock)
+    const spawn = new RecordingSpawn({
+      clock,
+      scheduler,
+      decide: () => ({ kind: 'exit', afterMs: 0, code: 0, stdout: HELP_0_153_4 })
+    })
+    const probing = windowsFactory(true)({
+      clock,
+      scheduler,
+      processControl: spawn,
+      loginEnv: LOGIN_ENV
+    }).probe(install)
+    for (let round = 0; round < 20; round++) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      clock.advance(0)
+    }
+    expect((await probing).launch).toBe(true)
+    expect(spawn.spawns.map((s) => [s.executable, ...s.args])).toEqual([[node, entry, '--help']])
+    // No node the resolver can find: not installed, and nothing is spawned (no shell fallback).
+    const noNode = await runScript(
+      windowsFactory(false),
+      [{ do: 'launch' }, { do: 'transportLost' }],
+      { variant: variantOf('s0151b-client1') },
+      options
+    )
+    expect(noNode.outcomes[0]).toEqual({
+      rejected: { cause: 'not-installed', detail: 'node, which runs Codex, is not installed' }
+    })
+    expect(noNode.spawn.spawns).toEqual([])
+  })
+
   it('[C-06, C-07] Allow sends accept and Deny sends decline, never the session-wide accept and never cancel', async () => {
     expect(await againstExpected('c-06-allow')).toEqual([])
     expect(await againstExpected('c-07-deny')).toEqual([])
