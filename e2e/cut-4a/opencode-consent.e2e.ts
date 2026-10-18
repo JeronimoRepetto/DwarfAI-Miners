@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test'
 import {
+  chooseTrayItem,
   createIsolatedProfile,
   disposeProfile,
   launchApp,
+  TRAY_ITEMS,
   waitForHostAttached,
   type IsolatedProfile,
   type LaunchedApp
@@ -48,10 +50,15 @@ test.describe('step 4a: OpenCode consent from the Add panel (ISSUE-235)', () => 
       profile: owned,
       stubs: openCodeOnlyPath(world),
       pathOnly: true,
+      trayProbe: true,
       tracePath: test.info().outputPath('trace.zip')
     })
     await waitForHostAttached(owned)
-    const { window } = launched
+    const { app, window } = launched
+    // The Panel is built hidden at start (the tray state): a person opens it from the tray, which fits it to the screen
+    // (zoom, then bounds). Driving the never-shown window instead left its page unzoomed in a window sized for the
+    // zoomed page, so on a screen whose UI scale is below 1 (the Windows runner) Settings drew its tabs off-screen.
+    await chooseTrayItem(app, TRAY_ITEMS.open)
     // OpenCode is installed, so the first-run step is due (OQ-68): answered with nothing ticked, it writes nothing.
     expect(await answerFirstRunStep(window), 'the step offers OpenCode from 4a').toBe(true)
     expect(openCodePlugin(owned)).toBeNull()
