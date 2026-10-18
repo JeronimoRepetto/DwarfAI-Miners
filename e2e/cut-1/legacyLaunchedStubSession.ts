@@ -1,10 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { APP_DB_FILENAME, createAppDatabase } from '../../src/main/appDatabase/appDatabase.ts'
-import { createProcessProbe } from '../../src/main/platform/processProbe.ts'
-import { createSqliteLaunchedSessionStore } from '../../src/main/sessionLaunch/launchedSessionStore.ts'
 import type { IsolatedProfile } from '../_harness/launchApp.ts'
+import { seedLegacyLaunch } from '../_harness/legacyLaunchedSessions.ts'
+import { processStartTimeMs } from '../_harness/processStart.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
 import { seedClaudeStubSession, STUB_SESSION_ID, type ClaudeStubWorld } from './claudeStubWorld.ts'
 
@@ -45,7 +44,7 @@ export async function seedLegacyLaunchedStubSession(
   child.once('exit', () => (exitedAt = Date.now()))
   const pid = child.pid
   if (pid === undefined) throw new Error('the fixture session did not start')
-  const started = await createProcessProbe().processStartTimeMs(pid)
+  const started = await processStartTimeMs(pid)
   if (started === null) {
     child.kill()
     throw new Error('the fixture session has no creation time to write down')
@@ -64,22 +63,16 @@ export async function seedLegacyLaunchedStubSession(
       procStart: String(BigInt(Math.round(started)) * 10_000n + FILETIME_EPOCH_OFFSET)
     })
   )
-  mkdirSync(profile.userDataDir, { recursive: true })
-  const database = createAppDatabase({ filePath: path.join(profile.userDataDir, APP_DB_FILENAME) })
   const launchId = 'launch:e2e-cut-1-fixture'
-  try {
-    await createSqliteLaunchedSessionStore({ database }).put({
-      launchId,
-      provider: 'claude',
-      sessionId: STUB_SESSION_ID,
-      minePath: world.minePath,
-      pid,
-      processStartTimeMs: started,
-      routedByJev: false
-    })
-  } finally {
-    database.close()
-  }
+  seedLegacyLaunch(profile.userDataDir, {
+    launchId,
+    provider: 'claude',
+    sessionId: STUB_SESSION_ID,
+    minePath: world.minePath,
+    pid,
+    processStartTimeMs: started,
+    routedByJev: false
+  })
   return {
     ...world,
     pid,

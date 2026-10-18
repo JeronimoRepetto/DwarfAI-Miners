@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../../shared/accelerator'
+import { DEFAULT_TOGGLE_ACCELERATOR } from '@dwarfai/contracts'
 import type { ShortcutState } from '../../types'
 import ShortcutSettings from './ShortcutSettings.vue'
 
