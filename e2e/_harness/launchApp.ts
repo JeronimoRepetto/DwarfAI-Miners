@@ -569,9 +569,11 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
       await app.evaluate(({ app: electronApp }) => {
         electronApp.quit()
       })
-    })().catch((error: unknown) => {
-      // An app that exits while answering ends the call with a closed connection: not a failure.
-      if (!hasExited(child)) quitError = error
+    })().catch(async (error: unknown) => {
+      // An app that exits while answering ends the call with a closed connection: not a failure. The connection can
+      // close before the process's `exit` event arrives (seen on Windows CI while the main process still waits for the
+      // debugger to disconnect), so the exit is awaited briefly before the error counts.
+      if (!(await waitForExit(child, KILL_TIMEOUT_MS))) quitError = error
     })
     let failure: unknown
     try {
