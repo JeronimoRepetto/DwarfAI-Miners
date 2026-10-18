@@ -1,0 +1,73 @@
+{
+  "spike": "SP-03",
+  "layout": "linux-appimage",
+  "environment": {
+    "date": "2026-10-18T14:16:18.854Z",
+    "platform": "linux",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Linux",
+    "imageOs": "ubuntu24",
+    "imageVersion": "20261012.334.1"
+  },
+  "app": "DwarfAI-Miners-0.13.1-x86_64.AppImage",
+  "appBytes": 309012106,
+  "signatureBefore": null,
+  "cleared": [],
+  "firstStart": {
+    "copyCompleteMs": 7526,
+    "hostIdentityMs": 7777,
+    "uiExitCode": null,
+    "copy": {
+      "version": "0.13.1",
+      "files": 95,
+      "bytes": 641393740
+    },
+    "copyTopLevel": [
+      "LICENSE.electron.txt",
+      "LICENSES.chromium.html",
+      "chrome-sandbox",
+      "chrome_100_percent.pak",
+      "chrome_200_percent.pak",
+      "chrome_crashpad_handler",
+      "dwarfai-miners",
+      "host-manifest.json",
+      "icudtl.dat",
+      "libffmpeg.so",
+      "libvk_swiftshader.so",
+      "libvulkan.so.1",
+      "locales",
+      "resources",
+      "resources.pak",
+      "snapshot_blob.bin",
+      "v8_context_snapshot.bin",
+      "vk_swiftshader_icd.json"
+    ],
+    "copySignature": null,
+    "hostProcess": {
+      "executable": "<home>/.local/share/dwarfai/host/0.13.1/dwarfai-miners",
+      "commandLine": "<home>/.local/share/dwarfai/host/0.13.1/dwarfai-miners <home>/.local/share/dwarfai/host/0.13.1/resources/app.asar/out/host/main.js"
+    },
+    "fuseMounts": [
+      "DwarfAI-Miners-0.13.1-x86_64.AppImage /tmp/.mount_DwarfADtwpFx fuse.DwarfAI-Miners-0.13.1-x86_64.AppImage"
+    ]
+  },
+  "afterUiEnded": {
+    "uiAlive": false,
+    "hostAlive": true,
+    "hostProcess": {
+      "executable": "<home>/.local/share/dwarfai/host/0.13.1/dwarfai-miners",
+      "commandLine": "<home>/.local/share/dwarfai/host/0.13.1/dwarfai-miners <home>/.local/share/dwarfai/host/0.13.1/resources/app.asar/out/host/main.js"
+    },
+    "fuseMounts": [
+      "DwarfAI-Miners-0.13.1-x86_64.AppImage /tmp/.mount_DwarfADtwpFx fuse.DwarfAI-Miners-0.13.1-x86_64.AppImage"
+    ],
+    "fuseMountHolders": []
+  },
+  "secondStart": {
+    "hostIdentityMs": 1755,
+    "copyReused": true
+  },
+  "signatureAfter": null,
+  "clearedAfter": ["<home>/.config/DwarfAI-Miners", "<home>/.local/share/dwarfai"]
+}

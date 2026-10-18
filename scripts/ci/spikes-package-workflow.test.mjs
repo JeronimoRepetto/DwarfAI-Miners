@@ -55,6 +55,36 @@ describe('packaging spike lane (ISSUE-328)', () => {
     }
   })
 
+  // Run 39130693732: Chromium aborted in linux-unpacked, whose chrome-sandbox is not root-owned with mode 4755; the
+  // AppImage and the installed deb started on the same image.
+  it('[S-019-3] starts the packaged Linux app for the traffic capture from the AppImage, not linux-unpacked', () => {
+    const traffic = steps.find((step) => step.startsWith('name: S-019-3 network traffic'))
+    expect(traffic, 'the S-019-3 packaged step').toBeDefined()
+    const linux = traffic?.slice(traffic.indexOf('Linux)')) ?? ''
+    expect(linux).toMatch(/spellcheck\.mjs packaged --app "\$appimage"/)
+    expect(traffic).not.toContain('linux-unpacked')
+  })
+
+  // Run 39134423991: the fused build's manifest listed the unfused binary on macOS and Linux, and only the Host's
+  // MANIFEST_MISMATCH at start showed it. The package step now checks the manifest as ci.yml checks release/.
+  it('[S-019-2] checks the Host manifest of the build with the ADR-019 set right after packaging it', () => {
+    const fused = steps.find((step) => step.startsWith('name: Package with the ADR-019 fuse set'))
+    expect(fused, 'the fused package step').toBeDefined()
+    expect(fused).toContain('--config spikes/S-019-2/electron-builder.fused.cjs')
+    expect(fused).toContain('node scripts/build/verify-packaged-host-manifest.mjs release-fused')
+  })
+
+  it('[S-019-2, SP-03] starts the build with the ADR-019 fuse set on every OS and records whether its Host comes up', () => {
+    const start = steps.find((step) =>
+      step.startsWith('name: S-019-2 the build with the ADR-019 set')
+    )
+    expect(start, 'the fused start step').toBeDefined()
+    expect(start).toContain("steps.fused-read.outcome == 'success'")
+    for (const os of ['Windows)', 'macOS)', 'Linux)']) expect(start, os).toContain(os)
+    expect(start?.match(/spikes\/SP-03\/packagedCopy\.mjs/g)).toHaveLength(3)
+    expect(start).toContain('scripts/ci/run-unelevated.mjs')
+  })
+
   it('[S-019-3, SP-03] uploads only the evidence folder, kept at most seven days, and publishes nothing', () => {
     const uploads = steps.filter((step) => step.includes('actions/upload-artifact@'))
     expect(uploads).toHaveLength(1)

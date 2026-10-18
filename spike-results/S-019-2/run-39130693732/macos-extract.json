@@ -1,0 +1,33 @@
+{
+  "environment": {
+    "date": "2026-10-18T13:19:19.475Z",
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "v24.22.0",
+    "runnerOs": "macOS",
+    "imageOs": "macos15",
+    "imageVersion": "20260907.0337.1"
+  },
+  "results": [
+    {
+      "artifact": "DwarfAI-Miners-0.13.1-arm64.dmg",
+      "kind": "dmg",
+      "ok": true
+    },
+    {
+      "artifact": "DwarfAI-Miners-0.13.1-arm64.zip",
+      "kind": "zip",
+      "ok": true
+    },
+    {
+      "artifact": "DwarfAI-Miners-0.13.1-x64.dmg",
+      "kind": "dmg",
+      "ok": true
+    },
+    {
+      "artifact": "DwarfAI-Miners-0.13.1-x64.zip",
+      "kind": "zip",
+      "ok": true
+    }
+  ]
+}

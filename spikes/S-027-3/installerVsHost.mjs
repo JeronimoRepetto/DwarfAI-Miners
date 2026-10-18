@@ -9,22 +9,27 @@
 // elevated (ADR-002 D6). It clears the DwarfAI state of the user (CI only unless --allow-local), then:
 //   1. installs `--base` silently (`/S`) and starts the installed app with `--background` until the Host writes
 //      `host.identity`;
-//   2. runs `--next` silently with that Host running, watching every process the installer starts, and records whether
+//   2. ends the installed app's own processes (the UI and its helpers; the Host runs from its copy and lives on), then
+//      runs `--next` silently with that Host running, watching every process the installer starts, and records whether
 //      it finished or blocked, whether the Host survived, the command line the old uninstaller received (the upgrade
 //      flag, UNVERIFIED in the register) and whether anything ran `--revert-integrations`;
 //   3. starts the upgraded app with `--background` and records what happens to the running older Host (the ADR-002 D8
 //      upgrade handshake): its identity, the copies under the copy root;
-//   4. uninstalls silently with a Host running, with the same watch, and records what is left: install folder, Host
+//   4. ends the upgraded app's own processes again and uninstalls silently with a Host running, with the same watch, and records what is left: install folder, Host
 //      copies, app data, the uninstall registry key, shortcuts.
+// The install folder is the uninstall key's `InstallLocation` or, as electron-builder's per-user installer writes none,
+// the uninstaller's folder. The product logs are saved under `<out>/product-logs/` before the state is cleared.
 // Writes `<out>/S-027-3.json`. Exits 1 when the base install or the first Host start failed.
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
+import { installDirOf } from '../../scripts/ci/packagingSpikes.mjs'
 import {
   assertDisposable,
   clearState,
   copyRoot,
   dwarfaiDataDirs,
+  endProcessesUnder,
   environmentFacts,
   findPackedApps,
   isAlive,
@@ -140,6 +145,26 @@ function leftovers(installLocation) {
   }
 }
 
+/** The command lines (cut to 200 characters) of the processes whose executable is under `dir`. */
+function processesUnder(dir) {
+  const root = path.resolve(dir).toLowerCase()
+  return processes()
+    .filter(
+      (p) =>
+        p.executable &&
+        path
+          .resolve(p.executable)
+          .toLowerCase()
+          .startsWith(root + path.sep)
+    )
+    .map((p) => (p.commandLine ?? p.executable).slice(0, 200))
+}
+
+/** The launched process's exit (`{ code, signal }`) when it has already exited, else null. */
+function exitOf(run) {
+  return Promise.race([run.exited, new Promise((resolve) => setTimeout(() => resolve(null), 0))])
+}
+
 async function startHost(exe, out, label, previousPid = null) {
   const started = Date.now()
   const run = launch(exe, ['--background'], {
@@ -176,7 +201,7 @@ async function main() {
     evidence.install = await runWatched(path.resolve(args.base), ['/S'])
     const entry = uninstallEntry()
     evidence.install.entry = entry
-    const installLocation = entry?.InstallLocation ?? null
+    const installLocation = installDirOf(entry)
     const app = installLocation ? findPackedApps(installLocation, 1)[0] : null
     evidence.install.installDir = installLocation ? listing(installLocation) : null
     if (!app) return 1
@@ -190,6 +215,12 @@ async function main() {
     }
     if (!first.identity) return 1
 
+    // The register asks about the Host, which runs from its copy: the UI, which runs from the install folder, is
+    // ended first, as the tray's Quit would.
+    evidence.uiEndedBeforeUpgrade = endProcessesUnder([installLocation]).length
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    evidence.installedProcessesBeforeUpgrade = processesUnder(installLocation)
+    evidence.hostBeforeUpgrade = hostFacts(first.identity)
     evidence.upgrade = await runWatched(path.resolve(args.next), ['/S'])
     evidence.upgrade.hostAfter = hostFacts(first.identity)
     evidence.upgrade.entryAfter = uninstallEntry()
@@ -205,10 +236,16 @@ async function main() {
         newHost: hostFacts(second.identity),
         oldHostAlive: isAlive(first.identity.pid),
         identityNow: hostFacts(readHostIdentity()),
-        copyRoot: listing(copyRoot())
+        copyRoot: listing(copyRoot()),
+        // Run 39134423991 saw no new Host and no product log of the upgraded UI: whether it had already exited, and
+        // what still ran from the install folder at the deadline.
+        upgradedUiExit: await exitOf(second.run),
+        installedProcesses: processesUnder(installLocation)
       }
     }
 
+    evidence.uiEndedBeforeUninstall = endProcessesUnder([installLocation]).length
+    await new Promise((resolve) => setTimeout(resolve, 2000))
     const running = readHostIdentity()
     const now = uninstallEntry()
     const command = splitCommand(now?.QuietUninstallString ?? `${now?.UninstallString ?? ''} /S`)
@@ -229,7 +266,7 @@ async function main() {
       killTree(run.child.pid)
       run.flushLog()
     }
-    evidence.clearedAfter = await clearState()
+    evidence.clearedAfter = await clearState({ logsTo: { outDir: args.out, label: 'S-027-3' } })
     writeEvidence(args.out, 'S-027-3', evidence)
     console.log(
       `S-027-3: install exit ${evidence.install?.exitCode}; Host started: ${Boolean(evidence.firstHost?.alive)}; ` +
