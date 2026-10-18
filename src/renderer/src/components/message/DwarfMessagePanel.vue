@@ -56,11 +56,7 @@ import {
 import { belongsToComposition } from '../../lib/controls/input'
 import { dwarfDisplayName } from '../../lib/dwarf/displayName'
 import { untrustedText } from '../../lib/text/untrustedText'
-import {
-  cleanDwarfName,
-  filterDwarfName,
-  type DwarfNameRefusal
-} from '../../../../shared/dwarfName'
+import { cleanDwarfName, filterDwarfName, type DwarfNameRefusal } from '@dwarfai/contracts'
 import type { AskAnswer } from '../../lib/question/questionAnswer'
 import { shownAskOf } from '../../lib/message/askCard'
 import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
@@ -873,7 +869,7 @@ function onStopAction(index: number): void {
  * field saves too; Esc cancels, and only the next Esc closes the panel. Focus returns to the name
  * after Enter or Esc; after leaving the field it stays wherever the person put it.
  *
- * The field drops refused characters as they are typed (shared/dwarfName's filterDwarfName, the
+ * The field drops refused characters as they are typed (contracts/text/dwarfName's filterDwarfName, the
  * rules main cleans every write with again), and the hint says why. What a save sends is what main
  * will keep; a save that would change nothing asks main for nothing. The words are
  * lib/message/rename's.

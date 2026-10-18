@@ -10,7 +10,12 @@ import {
   addPanelFormStateOf,
   addPanelSendRule
 } from '../../lib/launch/addPanelForm'
-import { jevCardEyebrow, jevCardTip, jevPickText } from '../../lib/launch/jevCardCopy'
+import {
+  jevCardEyebrow,
+  jevCardTip,
+  jevPickText,
+  jevSuggestionTip
+} from '../../lib/launch/jevCardCopy'
 import {
   jevFallbackReasonWords,
   launchFailureNotice,
@@ -327,13 +332,35 @@ const jevDecision = computed(() =>
   props.jev.routing.phase === 'decided' ? props.jev.routing.decision : null
 )
 
+/*
+ * AMENDED for AMENDMENT-22 (ISSUE-195's "Remaining": the card for the `suggested` phase): from step 3a Jev's pick
+ * arrives as A-50's suggestion in its 14 shape (`JevSuggestionView`), which the card draws the same way. The pick is
+ * what either shape names: the supplier, and the model and effort when it carries them.
+ */
+const jevSuggestion = computed(() =>
+  props.jev.routing.phase === 'suggested' && props.jev.routing.suggestion.providerId !== undefined
+    ? props.jev.routing.suggestion
+    : null
+)
+const jevCardPick = computed((): { provider: string; model?: string; effort?: string } | null => {
+  const decision = jevDecision.value
+  if (decision !== null) return decision
+  const suggestion = jevSuggestion.value
+  if (suggestion === null || suggestion.providerId === undefined) return null
+  return {
+    provider: suggestion.providerId,
+    ...(suggestion.model === undefined ? {} : { model: suggestion.model }),
+    ...(suggestion.effort === undefined ? {} : { effort: suggestion.effort })
+  }
+})
+
 /**
  * The decision card stays on screen while the launch is in flight, so the panel stays as it is
  * (MESSAGE-QUESTIONS Q1, design lead ruling 2026-09-28): what goes out is still what it names.
  * Its Dismiss waits with every other control instead, because putting the pickers back under a
  * launch already going would make the card name a launch that is not the one under way.
  */
-const showJevDecision = computed(() => jevDecision.value !== null)
+const showJevDecision = computed(() => jevCardPick.value !== null)
 
 /*
  * Dismiss hands the keyboard to Let Jev choose (components.md, Add a dwarf, Accessibility): the
@@ -350,7 +377,7 @@ function dismissJev(): void {
  * binary name; the raw id only for a provider no chip stands for.
  */
 const jevProviderLabel = computed(() => {
-  const decision = jevDecision.value
+  const decision = jevCardPick.value
   if (decision === null) return ''
   const chip = props.chips.find((entry) => entry.choice === decision.provider)
   return chip === undefined ? decision.provider : supplierLabel(chip.choice)
@@ -358,7 +385,7 @@ const jevProviderLabel = computed(() => {
 
 /** The model's label off the picker's own catalogue, falling back to the raw id it could not resolve. */
 const jevModelLabel = computed(() => {
-  const decision = jevDecision.value
+  const decision = jevCardPick.value
   if (decision === null || decision.model === undefined) return null
   return (
     props.modelPicker.models.find((option) => option.value === decision.model)?.label ??
@@ -376,7 +403,7 @@ const jevModelLabel = computed(() => {
  */
 const jevEyebrow = computed(() => jevCardEyebrow(props.jevAccepted ?? props.jev.autoAccept))
 const jevPick = computed(() => {
-  const decision = jevDecision.value
+  const decision = jevCardPick.value
   if (decision === null) return ''
   return jevPickText({
     supplier: jevProviderLabel.value,
@@ -386,7 +413,9 @@ const jevPick = computed(() => {
 })
 const jevTipLines = computed(() => {
   const decision = jevDecision.value
-  return decision === null ? [] : jevCardTip(decision, jevProviderLabel.value)
+  if (decision !== null) return jevCardTip(decision, jevProviderLabel.value)
+  const suggestion = jevSuggestion.value
+  return suggestion === null ? [] : jevSuggestionTip(suggestion, jevProviderLabel.value)
 })
 const jevTip = useHoverTip<'pick'>({ side: 'bottom', align: 'start' })
 const jevTipId = 'dm-add-jev-tip-' + ++cards
@@ -533,7 +562,7 @@ let cards = 0
           card undoing anything itself. Its shape is the design's (MESSAGE-QUESTIONS 15). The
           fallback line says every way Jev failed still launched, or what is owed instead (#523).
         -->
-        <div v-if="showJevDecision && jevDecision !== null" class="dm-add__jev" role="status">
+        <div v-if="showJevDecision" class="dm-add__jev" role="status">
           <span class="t-meta">{{ jevEyebrow }}</span>
           <p
             class="dm-add__jev-pick"

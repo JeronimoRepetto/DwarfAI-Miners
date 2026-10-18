@@ -64,6 +64,31 @@ describe('A-50 routeJevLaunch, host handler (14 §2.2, §3.4)', () => {
     })
   })
 
+  // AMENDMENT-22 (14 §6.5 case, 14 §3.6 note): the flags pass seam A unchanged under the strict response schema.
+  it('[US-LAUNCH-008.AC04] a suggestion carrying the trivial and large-context flags reaches the renderer unchanged', async () => {
+    const host = new FakeJevHost()
+    const flagged: JevSuggestResult = {
+      ok: true,
+      value: {
+        providerId: 'claude',
+        tier: 'frontier',
+        confidence: { providerId: 0.91 },
+        truncated: true,
+        parts: { providerId: 'answered', tier: 'safe-default' },
+        flags: { trivial: true, largeContext: true }
+      }
+    }
+    host.answer = flagged
+    const row = createRouteJevLaunchRow(host)
+    const response = CHANNELS[ROUTE_JEV_LAUNCH].response
+
+    const answer = response.safeParse(
+      await row.serve(ROUTE_JEV_LAUNCH, { prompt: 'which model', mineId: MINE })
+    )
+    expect(answer.success).toBe(true)
+    expect(answer.data).toStrictEqual({ ok: true, value: flagged })
+  })
+
   it('[ADR-019] invalid params are refused in main and never reach the Host; a Host call error is the error branch', async () => {
     const host = new FakeJevHost()
     const row = createRouteJevLaunchRow(host)

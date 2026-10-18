@@ -29,7 +29,6 @@ import KeyCap from '../components/panel/KeyCap.vue'
 import SettingsBanner from '../components/panel/SettingsBanner.vue'
 import SettingsRow from '../components/panel/SettingsRow.vue'
 import SettingsPanel from '../components/panel/SettingsPanel.vue'
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
 import CrewRoster from '../components/scene/CrewRoster.vue'
 import DwarfTip from '../components/dwarf/DwarfTip.vue'
 import MineColumn from '../components/scene/MineColumn.vue'
@@ -45,7 +44,12 @@ import { ACTIVITY_WORKING_LABEL, activityStepsLabel } from '../lib/message/activ
 import { historyClock } from '../lib/history/mineHistory'
 import { RETRY_TITLE, sendMarker } from '../lib/delivery/deliveryVerdict'
 import { COMPOSER_HINT, bubbleMark, messagePanelMenu } from '../lib/message/panelChrome'
-import { DWARF_NAME_MAX, nameChars, type DwarfNameRefusal } from '../../../shared/dwarfName'
+import {
+  DEFAULT_TOGGLE_ACCELERATOR,
+  DWARF_NAME_MAX,
+  nameChars,
+  type DwarfNameRefusal
+} from '@dwarfai/contracts'
 import type { MessageEcho } from '../lib/message/echo'
 import {
   ANSWERS_HEADING,

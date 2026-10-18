@@ -165,7 +165,7 @@ function host(
     options.starter === 'fake'
       ? fake
       : createSessionStarter({
-          registry: suppliers.registry,
+          launchDriver: suppliers.launchDriver,
           sessions: suppliers.sessions,
           clock,
           scheduler
@@ -189,6 +189,7 @@ function host(
     starter,
     suppliers: {
       registry: suppliers.registry,
+      launchDriver: suppliers.launchDriver,
       catalogue: {
         entry: (id) => {
           const entry = suppliers.catalogue.entry(id)

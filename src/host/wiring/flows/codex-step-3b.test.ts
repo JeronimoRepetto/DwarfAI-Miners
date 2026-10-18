@@ -120,4 +120,34 @@ describe('step 3b Codex flow (21 §2 cut 3b)', () => {
     expect(Object.keys(server?.env ?? {})).not.toContain('DWARFAI_DELEGATION_TOKEN')
     expect(JSON.stringify(server?.args)).not.toMatch(/token/i)
   })
+
+  it('[INV-60, US-LAUNCH-005.AC07] a Codex launch through the wired Host shows its first prompt once, though the driver echoes it', async () => {
+    // GitHub #1430: the app-server's `userMessage` item of the first turn is the launch prompt's
+    // echo, with no `echoOf` (the launch has no receipt): it merges into the launch's own row.
+    const w = world()
+    const recorded = allowRecording()
+    const h = await bootHost(w, {
+      epoch: 'epoch-1430-b',
+      processes: ({ clock, scheduler }) => codexSpawn(clock, scheduler, recorded, []),
+      installed: ['codex']
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+    await h.call(ui, 'launching.launch', {
+      mineId,
+      way: { kind: 'supplier', providerId: 'codex' },
+      prompt: recorded.prompt,
+      jevOn: false,
+      jevAutoAccept: false,
+      requestId: h.rid()
+    })
+    await h.run(4_000, ui)
+    const dwarfId = evts<LaunchChanged>(ui, 'launch.changed').find(
+      (frame) => frame.launch.state === 'succeeded'
+    )?.launch.dwarfId
+    if (dwarfId === undefined) throw new Error('codex did not launch')
+
+    const feed = h.conversation.conversation.queries.feed(dwarfId, { limit: 50 }).messages
+    expect(feed.filter((m) => m.role === 'person').map((m) => m.text)).toEqual([recorded.prompt])
+  })
 })

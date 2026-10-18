@@ -123,6 +123,16 @@ describe('step 4b OpenCode flow (21 §2 cut 4b)', () => {
     expect(JSON.stringify(agent?.args)).not.toMatch(/token/i)
   })
 
+  it('[INV-60, US-LAUNCH-005.AC07] a Host-launched OpenCode session shows its first prompt once, though the driver echoes it', async () => {
+    // GitHub #1430: the ACP client echoes the launch prompt's turn with no `echoOf` (no receipt).
+    const { h, launched } = await launchOpenCode('on-verified', 'epoch-1430-c')
+    const dwarfId = launched?.dwarfId
+    if (dwarfId === undefined) throw new Error('opencode did not launch')
+
+    const feed = h.conversation.conversation.queries.feed(dwarfId, { limit: 50 }).messages
+    expect(feed.filter((m) => m.role === 'person').map((m) => m.text)).toEqual(['Write the notes.'])
+  })
+
   it('[ADR-011, C-27] a Host-launched OpenCode session auto-denies its permission request with one chat line while the integration is off or unverified', async () => {
     for (const [state, epoch] of [
       ['off', 'epoch-238-b'],

@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import type { Token } from 'markdown-it'
-import { externalLinkOf } from '../../../../shared/externalLink'
+import { externalLinkOf } from '@dwarfai/contracts'
 
 /**
  * What a bubble's Markdown MEANS, as a tree this module owns (#347).

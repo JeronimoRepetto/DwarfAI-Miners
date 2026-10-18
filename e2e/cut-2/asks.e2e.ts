@@ -11,7 +11,7 @@ import {
   type LaunchedApp
 } from '../_harness/launchApp.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
-import { createProcessProbe } from '../../src/main/platform/processProbe.ts'
+import { processStartTimeMs } from '../_harness/processStart.ts'
 import {
   claudeSettings,
   hookCommands,
@@ -152,7 +152,7 @@ async function startStubConsole(profile: IsolatedProfile, cwd: string): Promise<
   try {
     await ready
     const pid = child.pid
-    const started = pid === undefined ? null : await createProcessProbe().processStartTimeMs(pid)
+    const started = pid === undefined ? null : await processStartTimeMs(pid)
     if (pid === undefined || started === null) throw new Error('the stub console has no identity')
     const sessions = path.join(profile.claudeConfigDir, 'sessions')
     mkdirSync(sessions, { recursive: true })

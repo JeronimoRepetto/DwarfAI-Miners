@@ -1,0 +1,42 @@
+{
+  "spike": "SP-05",
+  "platform": "darwin",
+  "osRelease": "25.6.0",
+  "principal": "nobody (sudo -n -u nobody)",
+  "umask": "0022",
+  "modes": {
+    "root": "755",
+    "runDir": "700",
+    "socket": "600",
+    "runFile": "600",
+    "controlFile": "644",
+    "controlSocket": "777"
+  },
+  "attempts": [
+    {
+      "what": "control: cat a 0644 file",
+      "exitCode": 0,
+      "firstLine": "control"
+    },
+    {
+      "what": "control: connect a 0777 socket",
+      "exitCode": 0,
+      "firstLine": "connected"
+    },
+    {
+      "what": "connect the Host socket",
+      "exitCode": 1,
+      "firstLine": "Traceback (most recent call last):"
+    },
+    {
+      "what": "cat run/host.identity",
+      "exitCode": 1,
+      "firstLine": "cat: <root>/run/host.identity: Permission denied"
+    },
+    {
+      "what": "ls the run directory",
+      "exitCode": 1,
+      "firstLine": "ls: <root>/run: Permission denied"
+    }
+  ]
+}
