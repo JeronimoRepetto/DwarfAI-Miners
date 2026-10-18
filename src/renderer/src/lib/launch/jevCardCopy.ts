@@ -6,6 +6,7 @@
  * AddPanel.vue whole; the card only draws them.
  */
 import type { JevModelFallbackReason, JevRouteModelPart, ModelTier } from '../../types'
+import { t, type JevModelTier, type JevSuggestionView } from '@dwarfai/contracts'
 import type { JevDecision } from './launchState'
 
 /** The eyebrow over the pick: the design's words, auto-accept deciding which (copy.md). */
@@ -138,9 +139,117 @@ export function jevCardTip(decision: JevDecision, supplier: string): string[] {
   if (decision.confidence !== undefined) {
     lines.push(`Jev's least certain answer was ${Math.round(decision.confidence * 100)}%.`)
   }
-  if (decision.parts.trivial.value) lines.push('Treated as a trivial prompt.')
-  if (decision.parts.largeContext.value) lines.push('Large-context model preferred.')
-  if (decision.truncated)
-    lines.push('The prompt sent to Jev was trimmed to fit its request budget.')
+  lines.push(
+    ...flagLines({
+      trivial: decision.parts.trivial.value,
+      largeContext: decision.parts.largeContext.value,
+      truncated: decision.truncated
+    })
+  )
   return lines
 }
+
+/**
+ * The tooltip's flag lines (US-LAUNCH-008.AC04): each flag that applies, in the story's fixed order — trivial, large
+ * context, trimmed prompt — and none at all when none applies (AC05). The words are the story's own, from the copy
+ * dictionary.
+ */
+function flagLines(flags: {
+  trivial: boolean
+  largeContext: boolean
+  truncated: boolean
+}): string[] {
+  const lines: string[] = []
+  if (flags.trivial) lines.push(t('jevCard.tip.trivial'))
+  if (flags.largeContext) lines.push(t('jevCard.tip.largeContext'))
+  if (flags.truncated) lines.push(t('jevCard.tip.trimmed'))
+  return lines
+}
+
+/* --- AMENDMENT-22: the tooltip of an A-50 suggestion in its 14 shape (ISSUE-195) — one block, appended --- */
+
+/**
+ * The model step in the 14 shape, which carries the part's origin and, when a second question was answered, its
+ * fit as the model's confidence — no fallback reason (06 §12). So: Jev's fit when it picked the model, the
+ * only-candidate sentence when it answered without a second question, and the #608 fallback sentence without the
+ * reason the shape does not carry.
+ */
+function suggestionModelSentence(suggestion: JevSuggestionView): string | null {
+  const origin = suggestion.parts.model
+  if (suggestion.model === undefined || origin === undefined) return null
+  if (origin === 'safe-default') {
+    return 'Jev could not pick the model; the closest local choice was used.'
+  }
+  const fit = suggestion.confidence.model
+  if (fit === undefined) return 'Only one model fits that tier, so no second question was asked.'
+  return `Jev picked the model (${Math.round(fit * 100)}% fit).`
+}
+
+/**
+ * Which parts Jev answered and how sure, and which fell to a safe value, then how the model was picked — the
+ * sentences of `partsSentence` over the 14 shape. A part that fell back carries no confidence in this shape
+ * (06 §12: "a part Jev did not answer has none"), so its figure is left out rather than guessed.
+ */
+function suggestionPartsSentence(suggestion: JevSuggestionView, supplier: string): string | null {
+  const tier: JevModelTier | undefined = suggestion.tier
+  const tierLabel = tier === undefined ? undefined : TIER_LABELS[tier]
+  const sure = (value: number | undefined) =>
+    value === undefined ? '' : ` (${Math.round(value * 100)}% sure)`
+
+  const chosen: string[] = []
+  const unsureNames: string[] = []
+  const unsureValues: string[] = []
+  if (tierLabel !== undefined && suggestion.parts.tier === 'answered') {
+    chosen.push(`the ${tierLabel} tier${sure(suggestion.confidence.tier)}`)
+  }
+  if (suggestion.parts.providerId === 'answered') {
+    chosen.push(`${supplier}${sure(suggestion.confidence.providerId)}`)
+  }
+  if (tierLabel !== undefined && suggestion.parts.tier === 'safe-default') {
+    unsureNames.push('the tier')
+    unsureValues.push(tierLabel)
+  }
+  if (suggestion.parts.providerId === 'safe-default') {
+    unsureNames.push('the provider')
+    unsureValues.push(supplier)
+  }
+
+  const sentences: string[] = []
+  if (chosen.length > 0) sentences.push(`Jev chose ${chosen.join(' and ')}.`)
+  if (unsureNames.length > 0) {
+    const plural = unsureValues.length > 1
+    sentences.push(
+      `Jev was unsure about ${unsureNames.join(' and ')}; the safe value${plural ? 's' : ''} ${unsureValues.join(' and ')} ${plural ? 'were' : 'was'} used.`
+    )
+  }
+  const model = suggestionModelSentence(suggestion)
+  if (model !== null) sentences.push(model)
+  return sentences.length === 0 ? null : sentences.join(' ')
+}
+
+/**
+ * The tooltip of an A-50 suggestion, one sentence per line, in the order of US-LAUNCH-008.AC04: the reasoning,
+ * Jev's least certain answer when a part was answered (the lowest per-part confidence the suggestion carries), then
+ * each flag that applies (AMENDMENT-22's `flags`, and `truncated`). It never repeats the bold pick (AC06).
+ */
+export function jevSuggestionTip(suggestion: JevSuggestionView, supplier: string): string[] {
+  const lines: string[] = []
+  const parts = suggestionPartsSentence(suggestion, supplier)
+  if (parts !== null) lines.push(parts)
+  const confidences = Object.values(suggestion.confidence).filter(
+    (value): value is number => value !== undefined
+  )
+  if (confidences.length > 0) {
+    lines.push(`Jev's least certain answer was ${Math.round(Math.min(...confidences) * 100)}%.`)
+  }
+  lines.push(
+    ...flagLines({
+      trivial: suggestion.flags?.trivial ?? false,
+      largeContext: suggestion.flags?.largeContext ?? false,
+      truncated: suggestion.truncated
+    })
+  )
+  return lines
+}
+
+/* --- end of the AMENDMENT-22 block ---------------------------------------------------- */

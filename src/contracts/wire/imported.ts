@@ -689,6 +689,9 @@ export type JevPartOrigin = 'answered' | 'safe-default'
  *   shows as a percentage ("88% sure", US-LAUNCH-008); a part Jev did not answer has none.
  * - `parts` is "answered vs fallen back": each part present in the pick with its origin.
  * - `truncated` is a boolean: "the prompt sent to Jev was itself trimmed to fit its request budget" (US-LAUNCH-008).
+ * - `flags` (AMENDMENT-22, owner-approved 2026-10-18): Jev's trivial and large-context answers, which the tooltip lists
+ *   as "Treated as a trivial prompt." and "Large-context model preferred." (US-LAUNCH-008.AC04); absent when Jev
+ *   answered no part, so a fallback suggestion carries none.
  */
 export interface JevSuggestion {
   providerId?: ProviderId
@@ -704,6 +707,7 @@ export interface JevSuggestion {
     tier?: JevPartOrigin
   }
   fallback?: JevFallbackReason
+  flags?: { trivial: boolean; largeContext: boolean }
 }
 
 export const jevModelTierSchema = z.enum(['fast-cheap', 'balanced', 'frontier', 'long-context'])
@@ -735,7 +739,8 @@ export const jevSuggestionSchema = z
         tier: jevPartOriginSchema.optional()
       })
       .strict(),
-    fallback: jevFallbackReasonSchema.optional()
+    fallback: jevFallbackReasonSchema.optional(),
+    flags: z.object({ trivial: z.boolean(), largeContext: z.boolean() }).strict().optional()
   })
   .strict()
 
