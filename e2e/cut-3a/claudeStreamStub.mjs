@@ -88,8 +88,12 @@ function relayClient(configPath) {
   if (server === undefined || typeof server.command !== 'string') {
     throw new Error(`the --mcp-config file names no ${SERVER} server`)
   }
+  // A provider need not pass XDG_RUNTIME_DIR to its stdio MCP servers (CI run 39109490095): the stub
+  // drops it, so the relay must find the endpoint without it, as it does from the credential file.
+  const inherited = { ...process.env }
+  delete inherited.XDG_RUNTIME_DIR
   const child = spawn(server.command, Array.isArray(server.args) ? server.args : [], {
-    env: { ...process.env, ...(server.env ?? {}) },
+    env: { ...inherited, ...(server.env ?? {}) },
     stdio: ['pipe', 'pipe', 'ignore'],
     windowsHide: true
   })

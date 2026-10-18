@@ -6,7 +6,8 @@
 //
 // - `wireDelegation` (boot step 4, before suppliers attaches the Claude stream-json driver): the
 //   lifecycle over its SQLite token and ticket stores and the owner-only credential files
-//   (`RunDirCredentialFileStore`, `<hostDataDir>/run/mcp/`), the stream-json driver's prompt-tool
+//   (`RunDirCredentialFileStore`, `<hostDataDir>/run/mcp/`, each naming the MCP endpoint `listen`
+//   bound through `EndpointNamingCredentialFiles`), the stream-json driver's prompt-tool
 //   relay (bridges/promptToolRelay.ts: every stream-json launch the gates leave out still gets a
 //   hash-only row and a credential FILE), the `PermissionPromptBridge`, and the routes of a token's
 //   life (16 §4.8): `DwarfLaunched` → `bindParent`, then the endpoint's `parentBound` (a `delegate`
@@ -76,6 +77,7 @@ import {
   type SubtaskRunEvent
 } from '../modules/delegation'
 import { RunDirCredentialFileStore } from '../modules/delegation/adapters/fs/RunDirCredentialFileStore'
+import { EndpointNamingCredentialFiles } from '../modules/delegation/adapters/mcp/EndpointNamingCredentialFiles'
 import { relayEntryArgs } from '../modules/delegation/adapters/mcp/relay/relayEntry'
 import { SqliteDelegationTicketStore } from '../modules/delegation/adapters/sqlite/SqliteDelegationTicketStore'
 import { SqliteDelegationTokenStore } from '../modules/delegation/adapters/sqlite/SqliteDelegationTokenStore'
@@ -252,7 +254,13 @@ export function wireDelegation(deps: DelegationWiringDeps): WiredDelegation {
   const { db, log } = deps
   const tokens = new SqliteDelegationTokenStore(db)
   const tickets = new SqliteDelegationTicketStore(db)
-  const files = new RunDirCredentialFileStore({ hostDataDir: deps.hostDataDir })
+  // The MCP endpoint `listen` bound, named in each credential file the relay reads (foreman
+  // decision 2026-10-18; EndpointNamingCredentialFiles.ts): null until then, or when it failed.
+  let mcpEndpointPath: string | null = null
+  const files = new EndpointNamingCredentialFiles(
+    new RunDirCredentialFileStore({ hostDataDir: deps.hostDataDir }),
+    () => mcpEndpointPath
+  )
   const relay = { program: deps.execPath, args: relayEntryArgs(deps.hostEntryPath) }
   const lifecycle = createDelegationLifecycle({
     tokens,
@@ -361,7 +369,8 @@ export function wireDelegation(deps: DelegationWiringDeps): WiredDelegation {
       }
       const created = createHandoffMcpDelegationServer(listener, log, composed.handoff, prompts)
       try {
-        await created.listen(composed.endpoint)
+        const bound = await created.listen(composed.endpoint)
+        mcpEndpointPath = bound.endpoint.path
         server = created
       } catch (error) {
         // 19 §9.3: the endpoint could not be bound; never the error's text (ADR-026). Every
