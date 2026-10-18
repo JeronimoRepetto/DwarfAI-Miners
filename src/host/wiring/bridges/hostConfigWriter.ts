@@ -17,11 +17,11 @@
 //   file (16 §7.4; ADR-023 item 1; S13.03; ISSUE-233), the boot re-verification reaches it (16 §7.3),
 //   and from ISSUE-228 the enable of `preferences.setOpenCodePermissions` (B-M14) does too. The plugin
 //   reports to the hook ingress on that same persisted port (ADR-016 item 3), so its enable fails
-//   closed without one exactly as the Claude hook entry's does. One writer per release (21 §1 item 4)
-//   still holds: B-M14 has no routed caller before the step-4a switch (ISSUE-235), which moves A-53
-//   off today's installer. `findLegacy` is never true here, and `enablableInstalledTools` keeps
-//   OpenCode out of the first-run step: the step-4a switch opens both together with the A-52/A-53
-//   routes (later: ISSUE-235), so the Host never becomes a second writer of the plugin file. With no plugin writer
+//   closed without one exactly as the Claude hook entry's does. One writer per release (21 §1 item 4):
+//   the step-4a switch (ISSUE-235) routes A-52/A-53 to the Host and switches today's installer off in
+//   the same release, and opens the rest of the target with them: the boot legacy probe reaches the
+//   writer (`findLegacy`, 21 §2 cut 4a, AMENDMENT-9, OQ-70, 07 S41.02), and `enablableInstalledTools`
+//   lets an installed OpenCode into the first-run step (OQ-68). With no plugin writer
 //   composed (a wiring whose OpenCode plugin folder is unknown), `install` fails with `io`, `verify`
 //   answers `absent` and `revert` completes with nothing to remove.
 //
@@ -40,7 +40,7 @@ export interface HostConfigWriterDeps {
   /** The config writer engine with the `claude-hooks` target (host/main.ts). */
   claudeHooks: ExternalConfigWriter
   /** The config writer engine with the `opencode-plugin` target (host/main.ts, ISSUE-233, ISSUE-228). */
-  openCodePlugin?: Pick<ExternalConfigWriter, 'install' | 'verify' | 'revert'>
+  openCodePlugin?: ExternalConfigWriter
   /** `app_meta.ingress_port` as the hook ingress persisted it (bridges/ingressPort.ts). */
   ingressPort: Pick<IngressPortRecord, 'read'>
   log: DiagnosticsLog
@@ -78,8 +78,12 @@ export function hostConfigWriter(deps: HostConfigWriterDeps): ExternalConfigWrit
         ? Promise.resolve({ ok: true, value: undefined })
         : openCodePlugin.revert(target)
     },
-    findLegacy: (target) =>
-      target === 'claude-hooks' ? claudeHooks.findLegacy(target) : Promise.resolve(false)
+    findLegacy: (target) => {
+      if (target === 'claude-hooks') return claudeHooks.findLegacy(target)
+      return openCodePlugin === undefined
+        ? Promise.resolve(false)
+        : openCodePlugin.findLegacy(target)
+    }
   }
 }
 
@@ -103,8 +107,9 @@ export function persistedIngressPort(record: Pick<IngressPortRecord, 'read'>): (
  * built", BR-19; ISSUE-223 decision 4): an installed tool whose integration cannot be turned on yet
  * is not offered, so the step is not due for it. The step has no close and no skip (ISSUE-224), and
  * an "Activate" that can only answer `config-write-failed` would hold the Panel. Claude Code counts
- * once the hook ingress persisted its port (`hostConfigWriter` refuses the enable before that);
- * OpenCode not before its first-run option (later: ISSUE-232). Read on every call, so a later boot with the
+ * once the hook ingress persisted its port (`hostConfigWriter` refuses the enable before that), and
+ * OpenCode on the same condition from the step-4a switch (ISSUE-235; its plugin reports to the same
+ * ingress, ADR-016 item 3). Read on every call, so a later boot with the
  * port persisted offers it. An old-app entry of a tool not offered is not looked for either (07
  * S41.02 runs on offered targets only): it is neither adopted nor shown.
  */
@@ -113,8 +118,7 @@ export function enablableInstalledTools(
   ingressPort: Pick<IngressPortRecord, 'read'>
 ): InstalledToolsReader {
   return {
-    installed: () =>
-      installed.installed().filter((id) => id === 'claude-hooks' && ingressPort.read() !== null)
+    installed: () => (ingressPort.read() === null ? [] : installed.installed())
   }
 }
 

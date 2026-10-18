@@ -397,9 +397,13 @@ export function useAgentLaunch(): AgentLaunch {
     if (!gated.value || noticeAction.value === 'enabling') return
     noticeAction.value = 'enabling'
     try {
-      // A-53 (14 §2.1): the option turns on as if from Settings, with the consent origin `add-panel` once the
-      // step-4a switch gives the bridge its target shape (ISSUE-235); until then the bridge takes the boolean.
-      await window.api.setOpenCodePluginEnabled(true)
+      // A-53 (14 §2.1): the option turns on as if from Settings, with the consent origin `add-panel` (the step-4a
+      // switch gave the bridge its target shape, ISSUE-235).
+      await window.api.setOpenCodePluginEnabled({
+        on: true,
+        origin: 'add-panel',
+        requestId: mintRequestId()
+      })
     } catch {
       // The provider list below tells whether the option turned on; the notice states it when it did not.
     }

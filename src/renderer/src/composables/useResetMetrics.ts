@@ -37,7 +37,8 @@ export function useResetMetrics(deps: ResetMetricsDeps = {}) {
     resetting.value = true
     try {
       // A-33 in its target shape from the cut-1 switch (ISSUE-123; 14 §2.1 A-33, §3.4): the typed confirmation and one
-      // request id for this intent, answered `IpcResult<MetricsResetResult>` once both resets ran (`ResetFanout`).
+      // request id for this intent, answered `IpcResult<MetricsResetResult>` once both resets ran (`ResetFanout`), and
+      // from the step-4a switch (ISSUE-235; ISSUE-234) once the Host saga alone ran (`ResetFanout` ended).
       const result = await window.api.resetMetrics({ confirmed: 'yes', requestId: newRequestId() })
       if (!result.ok) {
         error.value = LOST_CONTACT

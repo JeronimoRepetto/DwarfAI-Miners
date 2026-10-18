@@ -376,21 +376,27 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * section verdict on mount, so the four members exist even in tests that
      * never open Settings; each write answers with a stored verdict, as main
      * does. No existing assertion changed.
+     * AMENDED for ISSUE-234 (was: today's `OpenCodeSettings` answers): from the step-4a switch the four rows answer the
+     * Host's `OpenCodeSettingsView` in an `IpcResult`, and A-53 its outcome.
      */
-    getOpenCodeSettings: vi
-      .fn()
-      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
-    setOpenCodePluginEnabled: vi
-      .fn()
-      .mockImplementation((enabled: boolean) =>
-        Promise.resolve({ pluginEnabled: enabled, passwordConfigured: false })
-      ),
-    setOpenCodeServerPassword: vi
-      .fn()
-      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: true }),
-    clearOpenCodeServerPassword: vi
-      .fn()
-      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
+    getOpenCodeSettings: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+    }),
+    setOpenCodePluginEnabled: vi.fn().mockImplementation((request: { on: boolean }) =>
+      Promise.resolve({
+        ok: true,
+        value: { ok: true, value: { state: request.on ? 'on-verified' : 'off' } }
+      })
+    ),
+    setOpenCodeServerPassword: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { permissions: 'off', passwordConfigured: true, secretBackend: 'os-secret-store' }
+    }),
+    clearOpenCodeServerPassword: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+    }),
     /*
      * AMENDED for #635 (PANEL-QUESTIONS 25, was: absent). The shell reports each change of page or
      * mine so the next launch opens on it: a plain spy, like `setOpenMine`, since it is
@@ -3377,13 +3383,24 @@ describe('App MotionConfig root (#566 T3)', () => {
  * The round trip a person walks in Settings: the stored verdict is adopted on
  * mount, the switch and the password each ask main, and what main answered —
  * never the password — is what the section draws.
+ *
+ * AMENDED for ISSUE-234 (was: today's `OpenCodeSettings` answers, A-53 taking a boolean and answering a
+ * `pluginError` string): from the step-4a switch (ISSUE-235) A-52, A-54 and A-55 answer the Host's
+ * `OpenCodeSettingsView` (`permissions: IntegrationState`, 14 §2.1 CHANGE), and A-53 takes
+ * `SetOpenCodePermissionsParams` and answers the Host's outcome, whose failure has no approved words yet (25-AGENTS
+ * §8.1), so no reason line is drawn.
  */
 describe('OpenCode settings (#588 T6)', () => {
   it('adopts the stored settings on mount and draws them in Settings', async () => {
     const { wrapper } = await mountOpenApp({
-      getOpenCodeSettings: vi
-        .fn()
-        .mockResolvedValue({ pluginEnabled: true, passwordConfigured: true })
+      getOpenCodeSettings: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          permissions: 'on-verified',
+          passwordConfigured: true,
+          secretBackend: 'os-secret-store'
+        }
+      })
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
     // AMENDED (#635): on the Integrations tab, a switch.
@@ -3393,20 +3410,20 @@ describe('OpenCode settings (#588 T6)', () => {
   })
 
   it('asks main to turn the relay on, and draws a refusal as off with its reason', async () => {
-    const setOpenCodePluginEnabled = vi.fn().mockResolvedValue({
-      pluginEnabled: false,
-      pluginError: 'Port 47821 could not be opened: EADDRINUSE',
-      passwordConfigured: false
-    })
+    const setOpenCodePluginEnabled = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { ok: false, error: 'config-write-failed' } })
     const { wrapper, api } = await mountOpenApp({ setOpenCodePluginEnabled })
     await wrapper.find(NAV_SETTINGS).trigger('click')
     // AMENDED (#635): on the Integrations tab, a switch.
     await openSection(wrapper, 'Integrations')
     await wrapper.find('.opencode-plugin-enabled').trigger('click')
     await flushPromises()
-    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledWith(true)
+    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledWith(
+      expect.objectContaining({ on: true, origin: 'settings' })
+    )
     expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-checked')).toBe('false')
-    expect(wrapper.find('.plugin-error').text()).toContain('EADDRINUSE')
+    expect(wrapper.find('.plugin-error').exists()).toBe(false)
   })
 
   it('hands the typed password to main and then shows only that one is stored', async () => {

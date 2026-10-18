@@ -229,7 +229,8 @@ export interface BootOptions {
   /** The kernel process control every module and driver spawns and probes through, over this start's clock. */
   processes: (time: { clock: FakeClock; scheduler: FakeScheduler }) => ProcessControl
   /** The CLIs the one `InstallResolver` finds, with the files their detection stats. */
-  installed?: readonly ('codex' | 'claude' | 'agy')[]
+  // AMENDED for ISSUE-238 (was: codex, claude and agy): the step-4b flows launch the person's own `opencode`.
+  installed?: readonly ('codex' | 'claude' | 'agy' | 'opencode')[]
   /** The Jev key in the OS secret store; none by default. */
   jevKey?: string
   /** How the previous Host epoch ended (boot step 2); none by default (a first start). */
@@ -982,6 +983,17 @@ export async function bootHost(w: World, options: BootOptions) {
       clock.advance(DEFAULT_MINES_SETTINGS.automaticWalkDelayMs)
       await settle()
       return declared.value.mineId
+    },
+    /**
+     * "OpenCode · permission requests" in `state` as its setting row stores it (ADDED for ISSUE-238): the state the
+     * Host's answer-channel gate reads for a Host-launched OpenCode session (ADR-011 item 7; 21 §2 cut 4b).
+     */
+    openCodePermissions: (state: 'off' | 'on-unverified' | 'on-verified'): void => {
+      db.run(
+        `UPDATE integration_settings SET state = ?, consent_origin = ?, changed_at = ?
+         WHERE id = 'opencode-permissions'`,
+        [state, state === 'off' ? null : 'settings', clock.now()]
+      )
     },
     /** The `type` events the Host bus carried. */
     events: <T>(type: string): T[] =>

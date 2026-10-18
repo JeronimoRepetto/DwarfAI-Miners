@@ -5,16 +5,12 @@
 // A-N29) unrouted with the step that routes them. Test-only (R14): production never imports it.
 // AMENDED for ISSUE-186 (was: from the release table `ROUTES`): it starts from the 3a table as it shipped
 // (`cut3aRoutes.ts`), so a later step's switch (3d's A-39) never leaks into it.
-import {
-  RETIRED,
-  UNROUTED,
-  type ChannelKey,
-  type HostMethod,
-  type StepId
-} from '@dwarfai/contracts'
+import { UNROUTED, type ChannelKey, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
 import { HOST_ROUTE_MEMBERS, LEGACY_BRIDGE_ADAPTERS } from '../routes'
 import { CUT_3A_ROUTES } from './cut3aRoutes'
+// AMENDED for ISSUE-238 (was: `RETIRED`): the 4a retirements, `cut4aRoutes.ts`.
+import { CUT_4A_RETIRED } from './cut4aRoutes'
 
 /**
  * The today rows the step-3a switch moved, qualified or retired (21 §2 cut 3a): A-13, A-23, A-25, A-26, A-27, A-35…A-38,
@@ -49,7 +45,7 @@ export const CUT_2_UNROUTED: Partial<Record<ChannelKey, StepId>> = {
 
 /** The rows the cut-2 table listed as retired: the step-3a retirements (A-26, A-37, A-38) were not reached yet. */
 export const CUT_2_RETIRED: Partial<Record<ChannelKey, StepId>> = Object.fromEntries(
-  Object.entries(RETIRED).filter(([, step]) => step !== 'cut-3a')
+  Object.entries(CUT_4A_RETIRED).filter(([, step]) => step !== 'cut-3a')
 )
 
 export const CUT_2_ROUTES: readonly ChannelRoute[] = [
