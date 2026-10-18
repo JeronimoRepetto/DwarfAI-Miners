@@ -164,6 +164,26 @@ The renderer of the rollback build is this tree's: its Settings composables spea
 shape-adapter rows still answer, so no `pnpm ipc:generate` revert is needed for them. The first-run step keeps offering
 OpenCode (the Host stays its writer).
 
+**Step 4b note (ISSUE-238).** A 4b rollback build exists only before the 4b deletions merge (ISSUE-239…ISSUE-241, after
+the one soak at the end of cuts 3a–4b, OQ-71); after the first of them, 4b rolls forward (`21` §2 cut 4b "Rollback", §2.1
+item 1). 4b is the last provider step: besides moving OpenCode's rows it removed the routes no provider was left for, so
+`rollbackOf(table, 'cut-4b')` puts those back (`REMOVED_BY_THE_LAST_PROVIDER_STEP`, `src/ui-main/ipc/rollbackTable.ts`)
+and gives back exactly the 4a table, in either build (`ipc-routing.contract.test.ts` `describe('release 4b')`, the
+rollback case):
+
+| Rows                                     | In the 4b rollback build                                                                                                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-13, A-23, A-35 (and its Retry)         | OpenCode's qualified `host` route and the unqualified `host` route 4b added are dropped; the unqualified `legacy` route through `PerProviderShapeAdapter` is back, so OpenCode reaches today's launcher again |
+| A-36                                     | OpenCode's entry and the renderer's one call go back to `CatalogMergeAdapter` (OpenCode's entry from today's catalog); Claude's, Codex's and Antigravity's entries stay the Host's                            |
+| A-27, A-P3, A-P4                         | No longer retired: `legacy` with today's shape, qualified to OpenCode, as 4a routed them                                                                                                                      |
+| A-N29                                    | Unchanged: one `host` route since 3a, `LegacyEndFirstAdapter` ends a legacy-launched session first                                                                                                            |
+| A-40, A-41, A-52…A-55, the Settings rows | Unchanged: 4b moved none of them; the Host stays the one writer of the OpenCode plugin file and the one answerer of its asks                                                                                  |
+
+An OpenCode session the 4b build launched is left running; the rolled-back build's Host re-observes it (`21` §2 cut 3
+"Rollback (each step)"). The rollback build's preload is this tree's: run `pnpm ipc:generate` after the table is flipped,
+so A-27, A-P3 and A-P4 speak today's shape again (the 4b switch generated them with the registry's shape because they had
+no route).
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
