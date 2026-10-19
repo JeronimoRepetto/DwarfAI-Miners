@@ -5,6 +5,12 @@ shows, how a message reaches a session, what each provider can and cannot do, an
 app reads at startup. The [README](../README.md) is the short version — what the app is, how to
 install it, and what it runs on.
 
+> **This guide describes the previous app** (the v0.x releases, v0.13.1 and earlier). The app was
+> rebuilt as a background DwarfAI Host plus a window, with the redesigned Panel; many screens,
+> controls and mechanisms below no longer exist or work differently, and its source citations name
+> the previous app's code, which the rebuild deletes. Until this guide is rewritten, the [README](../README.md) and
+> [`docs/privacy.md`](privacy.md) describe the rebuilt app.
+
 - [The bigger picture](#the-bigger-picture)
 - [What the panel shows](#what-the-panel-shows)
   - [The message panel](#the-message-panel)
