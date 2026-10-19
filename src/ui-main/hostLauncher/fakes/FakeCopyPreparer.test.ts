@@ -8,6 +8,7 @@ runCopyPreparerContract('FakeCopyPreparer', () => {
   return Promise.resolve({
     prepare: copy.prepare,
     sourceDir,
+    sourceRealDir: sourceDir,
     copyDir,
     breakCopy: () => {
       copy.outcome = { ok: false, errCode: 'COPY_ENOSPC' }

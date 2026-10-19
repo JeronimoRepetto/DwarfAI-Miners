@@ -8,9 +8,12 @@ export class FakeCopyPreparer {
   prepared = 0
   outcome: PreparedHostCopy
 
-  /** `dir`: the app directory the copy is made from; `copyDir`: where its copy is (`<copy root>/<version>`). */
-  constructor(dir: string, copyDir: string) {
-    this.outcome = { ok: true, sourceDir: dir, contentDir: copyDir }
+  /**
+   * `dir`: the app directory the copy is made from; `copyDir`: where its copy is (`<copy root>/<version>`);
+   * `realDir`: the real path of `dir`, itself unless `dir` is reached through a link.
+   */
+  constructor(dir: string, copyDir: string, realDir: string = dir) {
+    this.outcome = { ok: true, sourceDir: dir, sourceRealDir: realDir, contentDir: copyDir }
   }
 
   readonly prepare: HostCopyPreparer = () => {

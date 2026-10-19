@@ -83,10 +83,15 @@ export function buildHostSpawn(input: HostSpawnInput): HostSpawnRequest {
  * build's `out/host/main.js`) stays where it is and is run by the copied executable. An executable
  * outside the copied directory is refused: the Host never runs from the install folder (ADR-027
  * item 1).
+ *
+ * The copied directory is known by two names when the install is reached through a link (a Scoop
+ * `current` junction, a symlinked install root): the executable keeps the link's name
+ * (`process.execPath`), while Electron resolves the app archive's real path, so the entry UI main
+ * derives from its own folder names the real one. A file under either name is inside the copy.
  */
 export function hostSpawnInputFromCopy(
   input: HostSpawnInput,
-  copy: { sourceDir: string; contentDir: string }
+  copy: { sourceDir: string; sourceRealDir: string; contentDir: string }
 ): { ok: true; value: HostSpawnInput } | { ok: false; errCode: string } {
   const execPath = relocate(input.execPath, copy)
   if (execPath === null) return { ok: false, errCode: 'EXEC_OUTSIDE_COPY' }
@@ -96,12 +101,18 @@ export function hostSpawnInputFromCopy(
   }
 }
 
-/** `file`'s place inside the copy, or null when it is not inside the copied directory. */
-function relocate(file: string, copy: { sourceDir: string; contentDir: string }): string | null {
-  const paths = WINDOWS_PATH.test(copy.sourceDir) ? path.win32 : path.posix
-  const relative = paths.relative(copy.sourceDir, file)
-  if (relative === '' || relative.startsWith('..') || paths.isAbsolute(relative)) return null
-  return paths.join(copy.contentDir, relative)
+/** `file`'s place inside the copy, or null when it is not inside the copied directory under either of its names. */
+function relocate(
+  file: string,
+  copy: { sourceDir: string; sourceRealDir: string; contentDir: string }
+): string | null {
+  for (const sourceDir of [copy.sourceDir, copy.sourceRealDir]) {
+    const paths = WINDOWS_PATH.test(sourceDir) ? path.win32 : path.posix
+    const relative = paths.relative(sourceDir, file)
+    if (relative === '' || relative.startsWith('..') || paths.isAbsolute(relative)) continue
+    return paths.join(copy.contentDir, relative)
+  }
+  return null
 }
 
 /** A drive-letter or UNC path: the copy's paths follow the platform that wrote them. */
