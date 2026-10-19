@@ -120,13 +120,9 @@ chip in the Add panel.
 
 ### Risk notice
 
-⟦COPY NEEDED: R-01 risk notice⟧
+<!-- Wording approved by the owner on 2026-10-19 (20 §8 R-01; ADR-008 item 5). -->
 
-<!-- Required content (20 §8 R-01, ADR-008 item 5), wording to be approved by design/owner:
-     (1) provider terms may change; (2) usage counts against the person's plan quota; (3) the
-     provider may limit or suspend the account; (4) DwarfAI never reads, stores or forwards provider
-     credentials — each tool logs in with its own official flow; (5) the alternative is the person's
-     own API key. Linked from Settings › Integrations. -->
+Running a provider's tool with your subscription is governed by that provider's terms, which may change. Usage counts against your plan's quota, and the provider may limit or suspend your account. DwarfAI never reads, stores or forwards your provider credentials: each tool logs in with its own official flow. If you prefer, use the provider's API with your own API key instead.
 
 <!-- release:R-21 -->
 
@@ -248,13 +244,9 @@ log lives and what the log never contains is under [Diagnostic log](#diagnostic-
 
 <!-- release:R-07 -->
 
-⟦COPY NEEDED: R-07 no-telemetry statement⟧
+<!-- Wording approved by the owner on 2026-10-19 (20 §8 R-07, verbatim). -->
 
-<!-- Draft text of 20 §8 R-07 (NFR-SEC-11; wording: design/owner): "DwarfAI sends no telemetry and
-     no crash reports. Nothing leaves your machine except what the AI tools you run send themselves
-     and, if you turn Jev on, your prompt and the list of available providers/models (and, with
-     subagent delegation, the subtask text and context) sent to TypeSafe (api.typesafe.ai).
-     DwarfAI does not check for updates; your package manager does." -->
+DwarfAI sends no telemetry and no crash reports. Nothing leaves your machine except what the AI tools you run send themselves and, if you turn Jev on, your prompt and the list of available providers/models (and, with subagent delegation, the subtask text and context) sent to TypeSafe (api.typesafe.ai). DwarfAI does not check for updates; your package manager does.
 
 <!-- release:R-10 -->
 <!-- 19 §13, verbatim. The folder paths are those of productName "DwarfAI-Miners" (package.json);
