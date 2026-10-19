@@ -13,17 +13,22 @@
 //      runs `--next` silently with that Host running, watching every process the installer starts, and records whether
 //      it finished or blocked, whether the Host survived, the command line the old uninstaller received (the upgrade
 //      flag, UNVERIFIED in the register) and whether anything ran `--revert-integrations`;
-//   3. starts the upgraded app with `--background` and records what happens to the running older Host (the ADR-002 D8
-//      upgrade handshake): its identity, the copies under the copy root;
+//   3. ends the older tray process the Host started from its own copy (ADR-018 D5: the Host starts the app
+//      `--background` once no UI is attached; it holds the single-instance lock, so a launch of the upgraded app would
+//      only hand itself over to it and quit, ADR-002 D3, as run 39205769685 showed), starts the upgraded app with
+//      `--background` and records the ADR-002 D8 upgrade handshake: the upgraded UI's own log records (`host.upgrade`
+//      names the decision: `attach` for two builds of one protocol version, D8 item 1), what happened to the running
+//      older Host, the copies under the copy root. A tray the Host started again first takes the lock back: the step
+//      is tried at most three times;
 //   4. ends the upgraded app's own processes again and uninstalls silently with a Host running, with the same watch, and records what is left: install folder, Host
 //      copies, app data, the uninstall registry key, shortcuts.
 // The install folder is the uninstall key's `InstallLocation` or, as electron-builder's per-user installer writes none,
 // the uninstaller's folder. The product logs are saved under `<out>/product-logs/` before the state is cleared.
 // Writes `<out>/S-027-3.json`. Exits 1 when the base install or the first Host start failed.
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { installDirOf } from '../../scripts/ci/packagingSpikes.mjs'
+import { installDirOf, trayProcessesOf, uiRecordsOf } from '../../scripts/ci/packagingSpikes.mjs'
 import {
   assertDisposable,
   clearState,
@@ -160,6 +165,65 @@ function processesUnder(dir) {
     .map((p) => (p.commandLine ?? p.executable).slice(0, 200))
 }
 
+/** Ends the tray processes the Host (`hostPid`) started from its copy; returns their command lines. */
+function endTrays(hostPid) {
+  const trays = trayProcessesOf(processes(), { copyRoot: copyRoot(), hostPid })
+  for (const tray of trays) killTree(tray.pid)
+  return trays.map((tray) => tray.commandLine.slice(0, 200))
+}
+
+/** The UI records of app version `version` in every UI product log (ADR-026 `<app data>/logs/ui-*.jsonl`). */
+function uiRecords(version) {
+  const records = []
+  for (const dir of dwarfaiDataDirs()) {
+    const logs = path.join(dir, 'logs')
+    if (!existsSync(logs)) continue
+    for (const name of readdirSync(logs).sort()) {
+      if (!/^ui-.*\.jsonl$/.test(name)) continue
+      try {
+        records.push(...uiRecordsOf(readFileSync(path.join(logs, name), 'utf8'), version))
+      } catch {
+        // Being rotated.
+      }
+    }
+  }
+  return records
+}
+
+/**
+ * Step 3: ends the older tray, starts the upgraded app `--background` and waits until its UI logged the D8 decision
+ * (`host.upgrade`), a new Host answered, or it exited. Tried again (at most three times in all) when it exited without
+ * a record, which is the hand-over to a tray the Host started again in between.
+ */
+async function startUpgraded(exe, out, version, oldHostPid) {
+  const attempts = []
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const traysEnded = endTrays(oldHostPid)
+    const started = Date.now()
+    const run = launch(exe, ['--background'], {
+      logFile: path.join(out, 'logs', `S-027-3-next-${attempt}.log`)
+    })
+    let exited = null
+    void run.exited.then((value) => (exited = value))
+    const outcome = await waitFor(() => {
+      const records = uiRecords(version)
+      if (records.some((record) => record.event === 'host.upgrade')) return 'decided'
+      const identity = readHostIdentity()
+      if (identity && identity.pid !== oldHostPid && isAlive(identity.pid)) return 'new-host'
+      return exited ? 'exited' : null
+    }, 180000)
+    attempts.push({
+      traysEnded,
+      outcome: outcome ?? 'timed-out',
+      ms: Date.now() - started,
+      exit: await exitOf(run),
+      run
+    })
+    if (outcome !== 'exited' || uiRecords(version).length > 0) break
+  }
+  return attempts
+}
+
 /** The launched process's exit (`{ code, signal }`) when it has already exited, else null. */
 function exitOf(run) {
   return Promise.race([run.exited, new Promise((resolve) => setTimeout(() => resolve(null), 0))])
@@ -228,18 +292,27 @@ async function main() {
     evidence.upgrade.copyRootAfter = listing(copyRoot())
 
     const upgradedApp = findPackedApps(installLocation, 1)[0]
-    if (upgradedApp) {
-      const second = await startHost(upgradedApp.executable, args.out, 'next', first.identity.pid)
-      runs.push(second.run)
+    const nextVersion = evidence.upgrade.entryAfter?.DisplayVersion
+    if (upgradedApp && nextVersion) {
+      const attempts = await startUpgraded(
+        upgradedApp.executable,
+        args.out,
+        nextVersion,
+        first.identity.pid
+      )
+      runs.push(...attempts.map((attempt) => attempt.run))
+      const records = uiRecords(nextVersion)
+      const identity = readHostIdentity()
       evidence.upgradeHandshake = {
-        newHostMs: second.ms,
-        newHost: hostFacts(second.identity),
+        version: nextVersion,
+        attempts: attempts.map(({ run: _run, ...attempt }) => attempt),
+        // ADR-002 D8: `attach` (same protocol version, item 1), `compat` (item 2), or the refusals of items 4-5.
+        decision: records.find((record) => record.event === 'host.upgrade')?.causeClass ?? null,
+        upgradedUiRecords: records,
+        newHost: identity && identity.pid !== first.identity.pid ? hostFacts(identity) : null,
         oldHostAlive: isAlive(first.identity.pid),
-        identityNow: hostFacts(readHostIdentity()),
+        identityNow: hostFacts(identity),
         copyRoot: listing(copyRoot()),
-        // Run 39134423991 saw no new Host and no product log of the upgraded UI: whether it had already exited, and
-        // what still ran from the install folder at the deadline.
-        upgradedUiExit: await exitOf(second.run),
         installedProcesses: processesUnder(installLocation)
       }
     }
@@ -274,7 +347,10 @@ async function main() {
         `${evidence.upgrade?.hostAfter?.alive}, old uninstaller args: ` +
         `${JSON.stringify(evidence.upgrade?.uninstallerCommandLines ?? [])}, revert ran ` +
         `${evidence.upgrade?.revertIntegrationsRan}; uninstall blocked ${evidence.uninstall?.blocked}, revert ran ` +
-        `${evidence.uninstall?.revertIntegrationsRan}`
+        `${evidence.uninstall?.revertIntegrationsRan}; upgraded UI decision ` +
+        `${evidence.upgradeHandshake?.decision ?? 'none'} after ` +
+        `${evidence.upgradeHandshake?.attempts?.length ?? 0} start(s), old Host alive ` +
+        `${evidence.upgradeHandshake?.oldHostAlive}`
     )
   }
 }

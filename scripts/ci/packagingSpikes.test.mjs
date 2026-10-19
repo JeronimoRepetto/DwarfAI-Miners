@@ -7,6 +7,8 @@ import {
   netLogUrls,
   nextPatchVersion,
   scoopManifest,
+  trayProcessesOf,
+  uiRecordsOf,
   scrubText,
   tarCommand
 } from './packagingSpikes.mjs'
@@ -123,5 +125,42 @@ describe('packaging spike lane helpers (ISSUE-328)', () => {
     expect(installDirOf({ UninstallString: 'C:\\x\\un.exe /S' })).toBe('C:\\x')
     expect(installDirOf(null)).toBeNull()
     expect(installDirOf({ InstallLocation: null, UninstallString: null })).toBeNull()
+  })
+
+  // Run 39205769685: after the test ended the installed UI, the Host started the app `--background` from its own copy
+  // (ADR-018 D5 respawn), outside the install folder. That 0.13.1 tray held the single-instance lock, so the upgraded
+  // UI handed its launch to it and quit (ADR-002 D3) before writing any log.
+  it('[S-027-3] finds the tray process the Host started from its copy, never the Host or an Electron helper', () => {
+    const root = String.raw`C:\Users\j\AppData\Local\DwarfAI\host`
+    const exe = String.raw`${root}\0.13.1\DwarfAI-Miners.exe`
+    const hostEntry = String.raw`${root}\0.13.1\resources\app.asar\out\host\main.js`
+    const installed = String.raw`C:\Programs\dwarfai-miners\DwarfAI-Miners.exe`
+    const list = [
+      { pid: 10, executable: exe, commandLine: `"${exe}" "${hostEntry}"` },
+      { pid: 11, executable: exe, commandLine: `"${exe}" --background` },
+      { pid: 12, executable: exe, commandLine: `"${exe}" --type=gpu-process --background` },
+      { pid: 13, executable: installed, commandLine: `"${installed}" --background` },
+      { pid: 14, executable: exe.toUpperCase(), commandLine: `"${exe}"  --background` }
+    ]
+    expect(trayProcessesOf(list, { copyRoot: root, hostPid: 10 }).map((p) => p.pid)).toEqual([
+      11, 14
+    ])
+    expect(trayProcessesOf([], { copyRoot: root, hostPid: 10 })).toEqual([])
+  })
+
+  it('[S-027-3] reads the upgraded UI records of a product log, skipping other versions, the Host and torn lines', () => {
+    const text = [
+      '{"proc":"ui","appVersion":"0.13.1","event":"host.upgrade","outcome":"ok","causeClass":"attach"}',
+      '{"proc":"host","appVersion":"0.13.2","event":"host.start","outcome":"ok"}',
+      '{"proc":"ui","appVersion":"0.13.2","event":"host.upgrade","outcome":"ok","causeClass":"compat","pid":7}',
+      '{"proc":"ui","appVersion":"0.13.2","event":"host.connect',
+      '',
+      '{"proc":"ui","appVersion":"0.13.2","event":"host.connection","outcome":"ok","causeClass":"connected"}'
+    ].join('\r\n')
+    expect(uiRecordsOf(text, '0.13.2')).toEqual([
+      { event: 'host.upgrade', outcome: 'ok', causeClass: 'compat' },
+      { event: 'host.connection', outcome: 'ok', causeClass: 'connected' }
+    ])
+    expect(uiRecordsOf('', '0.13.2')).toEqual([])
   })
 })

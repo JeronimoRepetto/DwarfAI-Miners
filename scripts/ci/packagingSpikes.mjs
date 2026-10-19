@@ -118,3 +118,40 @@ export function scrubText(text, replacements) {
   }
   return out
 }
+
+/**
+ * The tray processes a Host started from its own versioned copy (ADR-018 D5: with no `ui` or `notifier` client
+ * attached, the Host starts its own executable `--background`, ADR-002 D7): the main process of an app run from under
+ * `copyRoot` with `--background`, never the Host (`hostPid`) and never an Electron helper (`--type=`). That tray
+ * holds the app's single-instance lock (ADR-002 D3), so a later launch of an upgraded app hands itself over to it.
+ */
+export function trayProcessesOf(list, { copyRoot, hostPid }) {
+  const root = copyRoot.toLowerCase().replace(/[\\/]+$/, '')
+  return list.filter((p) => {
+    if (p.pid === hostPid) return false
+    const executable = (p.executable ?? '').toLowerCase()
+    if (!executable.startsWith(`${root}\\`) && !executable.startsWith(`${root}/`)) return false
+    const args = p.commandLine ?? ''
+    return /(^|\s)--background(\s|$)/.test(args) && !/(^|\s)--type=/.test(args)
+  })
+}
+
+/**
+ * The UI records of app version `version` in a product log's text (ADR-026 JSON lines), each as
+ * `{ event, outcome, causeClass }`: what the upgraded UI did. A torn last line or a blank one is skipped.
+ */
+export function uiRecordsOf(text, version) {
+  const records = []
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim() === '') continue
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (entry?.proc !== 'ui' || entry.appVersion !== version) continue
+    records.push({ event: entry.event, outcome: entry.outcome, causeClass: entry.causeClass })
+  }
+  return records
+}
