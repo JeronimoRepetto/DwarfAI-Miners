@@ -50,13 +50,15 @@ describe('preload always-on-top contract', () => {
     // Guard against an accidental surface rewrite: the pre-existing members
     // must still be there.
     expect(typeof api.hidePanel).toBe('function')
-    expect(typeof api.getMines).toBe('function')
-    expect(typeof api.onMinesUpdated).toBe('function')
+    // AMENDED for ISSUE-242 (was: `getMines` and `onMinesUpdated` present): A-12 and A-P2 left the facade at cut 5.
+    expect('getMines' in api).toBe(false)
+    expect('onMinesUpdated' in api).toBe(false)
     expect(typeof api.activateDwarf).toBe('function')
     expect(typeof api.sendDwarfText).toBe('function')
     // AMENDED for ISSUE-183 (was: `kickDwarf` present): A-26 left the facade in 3a; "Stop dwarf…" is A-N29.
     expect('kickDwarf' in api).toBe(false)
-    expect(typeof api.retireDwarf).toBe('function')
+    // AMENDED for ISSUE-239 (was: `retireDwarf` present): A-27 left the facade with the 4b deletion.
+    expect('retireDwarf' in api).toBe(false)
     expect(typeof api.getToggleShortcut).toBe('function')
     expect(typeof api.setToggleShortcut).toBe('function')
     expect(typeof api.getAppBuild).toBe('function')
@@ -127,29 +129,6 @@ describe('preload panel-toggle shortcut contract', () => {
     })
     await (api.setToggleShortcut as unknown as (value: unknown) => Promise<unknown>)(42)
     expect(invoke).toHaveBeenLastCalledWith('shortcut:set', '')
-  })
-})
-
-/**
- * Retirement (#46) is one-way on purpose: the renderer reports an observation
- * and main decides. The departure comes back through the ordinary poll, so
- * there is no verdict here to wait for.
- */
-describe('preload dwarf retirement contract', () => {
-  it('reports a retirement on the dwarf:retire channel without asking for an answer', () => {
-    expect(api.retireDwarf('claude:s1')).toBeUndefined()
-    expect(send).toHaveBeenLastCalledWith('dwarf:retire', 'claude:s1')
-  })
-
-  it('collapses a non-string id to an empty string before it crosses the bridge', () => {
-    // Same discipline as setToggleShortcut: main's boundary check should only
-    // ever have to reason about a clean string.
-    // AMENDED for ISSUE-238 (was: the id collapsed to ''): from step 4b A-27 has
-    // no route (`RETIRED`, 21 §2 cut 4b), so the generated member speaks the
-    // registry's shape and passes the payload through; the router refuses the
-    // call like any channel with no route, and nothing reaches today's runtime.
-    ;(api.retireDwarf as unknown as (value: unknown) => void)(42)
-    expect(send).toHaveBeenLastCalledWith('dwarf:retire', 42)
   })
 })
 
@@ -494,36 +473,10 @@ describe('preload provider-availability contract (#86)', () => {
   })
 })
 
-describe('preload model-catalogue contract (#239)', () => {
-  it('asks on the agent:models channel with no payload at all', async () => {
-    invoke.mockResolvedValueOnce({ catalogs: [] })
-    await expect(api.listAgentModels()).resolves.toEqual({ catalogs: [] })
-    expect(invoke).toHaveBeenLastCalledWith('agent:models')
-  })
-
-  it("hands back main's verdict untouched, every provider's source included", async () => {
-    const answered = {
-      catalogs: [
-        {
-          provider: 'claude',
-          models: [{ value: 'claude-sonnet-5', label: 'Sonnet' }],
-          efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-          source: 'provider'
-        },
-        {
-          provider: 'codex',
-          models: [{ value: 'gpt-5.6-sol' }],
-          efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
-          source: 'history'
-        },
-        { provider: 'antigravity', models: [], efforts: [], source: 'none' }
-      ]
-    }
-    invoke.mockResolvedValueOnce(answered)
-    await expect(api.listAgentModels()).resolves.toEqual(answered)
-  })
-})
-
+// REMOVED for ISSUE-249, stated rather than passing unseen (docs/test-removals.md): 'preload model-catalogue contract
+// (#239)', its two cases (A-37 `listAgentModels`, retired at 3a). The member left the facade at cut 5 with its RETIRE row
+// (`MEMBER_REMOVED`); coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019, ADR-001] every RETIRE
+// row of 14 §2.1 has no handler and no preload member in the release-5 build").
 /*
  * AMENDED for ISSUE-001 (was: today's `AgentLaunchRequest` rebuilt field by field, `{ mineId, provider, prompt, model?,
  * effort?, permissionMode?, routedByJev? }`, answered `{ launched, provider, error?, cause?, launchId? }`): from 3a A-35
@@ -560,16 +513,9 @@ describe('preload launch contract (#168)', () => {
   // 14 `LaunchParams` cross unchanged, and an unknown supplier reaches nothing (main's seam A gate, then
   // `PerProviderShapeAdapter`'s check against today's strict schema answers INVALID_PARAMS).
 
-  it('carries the chosen provider on the held channel too', async () => {
-    invoke.mockResolvedValueOnce({ launched: true })
-    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
-
-    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig'
-    })
-  })
+  // REMOVED for ISSUE-249, stated rather than passing unseen (docs/test-removals.md): "carries the chosen provider on the held channel too", "carries a model and an effort on the held channel too", "crosses no model or effort on the held channel when the caller named neither", "carries a permission mode on the held channel when the caller named one", "crosses no permission mode when the caller named none, rather than an empty string", "carries routedByJev on the held channel too", "crosses no routedByJev on the held channel when the caller did not name it". (A-38 `launchHeldSession`, retired at 3a.) The member left the
+  // facade at cut 5 with its RETIRE row (`MEMBER_REMOVED`); coverage now lives in `src/preload/preload.contract.test.ts`
+  // ("[ADR-019, ADR-001] every RETIRE row of 14 §2.1 has no handler and no preload member in the release-5 build").
 
   it("hands back main's verdict untouched, provider and reason included", async () => {
     // AMENDED for ISSUE-001 (was: today's `{ launched: false, provider, error }`): a refusal at acceptance is the
@@ -609,69 +555,7 @@ describe('preload launch contract (#168)', () => {
     expect('effort' in sent).toBe(false)
   })
 
-  it('carries a model and an effort on the held channel too', async () => {
-    invoke.mockResolvedValueOnce({ launched: true })
-    await api.launchHeldSession({
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      model: 'sonnet',
-      effort: 'max'
-    })
-
-    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      model: 'sonnet',
-      effort: 'max'
-    })
-  })
-
-  it('crosses no model or effort on the held channel when the caller named neither', async () => {
-    invoke.mockResolvedValueOnce({ launched: true })
-    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
-
-    const sent = invoke.mock.calls.at(-1)![1] as object
-    expect('model' in sent).toBe(false)
-    expect('effort' in sent).toBe(false)
-  })
-
-  /*
-   * #239. Held-only, exactly as HeldSessionLaunchRequest.permissionMode is —
-   * launchAgent carries no such field, and the bridge must not invent one for
-   * it.
-   *
-   * AMENDED for #635 (PO decision 2026-09-28, Codex permission modes; was: the
-   * sentence above, unqualified). launchAgent now carries a permission mode
-   * of its own, Codex's vocabulary rather than the Agent SDK's — see the three
-   * tests after the next one. The two tests here are unchanged.
-   */
-  it('carries a permission mode on the held channel when the caller named one', async () => {
-    invoke.mockResolvedValueOnce({ launched: true })
-    await api.launchHeldSession({
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      permissionMode: 'plan'
-    })
-
-    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      permissionMode: 'plan'
-    })
-  })
-
-  it('crosses no permission mode when the caller named none, rather than an empty string', async () => {
-    invoke.mockResolvedValueOnce({ launched: true })
-    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
-
-    const sent = invoke.mock.calls.at(-1)![1] as object
-    expect('permissionMode' in sent).toBe(false)
-  })
-
+  // The #239 note on the held channel's permission mode went with A-38's two cases (REMOVED for ISSUE-249, above).
   /*
    * #635 (PO decision 2026-09-28). A detached Codex launch now carries a
    * permission mode of its own. The bridge rebuilds this request field by
@@ -720,30 +604,6 @@ describe('preload launch contract (#168)', () => {
     expect('retryOf' in sent).toBe(false)
   })
 
-  it('carries routedByJev on the held channel too', async () => {
-    invoke.mockResolvedValueOnce({ launched: true })
-    await api.launchHeldSession({
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      routedByJev: true
-    })
-
-    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
-      mineId: 'mine-1',
-      provider: 'claude',
-      prompt: 'dig',
-      routedByJev: true
-    })
-  })
-
-  it('crosses no routedByJev on the held channel when the caller did not name it', async () => {
-    invoke.mockResolvedValueOnce({ launched: true })
-    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
-
-    const sent = invoke.mock.calls.at(-1)![1] as object
-    expect('routedByJev' in sent).toBe(false)
-  })
   /* --- end of the #511 block ---------------------------------------------------- */
 })
 
@@ -753,49 +613,13 @@ describe('preload launch contract (#168)', () => {
  * moment later rather than leaving the panel to find out never. One-way,
  * exactly like `onShowMine` and `onDwarfSendSettled`: there is no
  * request the panel makes for this, since main learns of it asynchronously.
+ *
+ * AMENDED for ISSUE-239, the 4b deletion (was: also the A-P3 `onLaunchFailed`
+ * subscription and its cause): A-P3 left the facade, and a launch failure
+ * reaches the Panel as the Host's `launch.failed` frame. The cause still
+ * crosses on each launch verdict.
  */
 describe('preload launch-failure contract (#263)', () => {
-  const FAILURE = {
-    launchId: 'receipt:1',
-    provider: 'codex',
-    mineId: 'mine:c:\\x\\anvil',
-    exitCode: 1,
-    stderrTail: 'codex: another instance is already running'
-  }
-
-  it('exposes the subscription beside the other launch members', () => {
-    expect(typeof api.onLaunchFailed).toBe('function')
-  })
-
-  it('subscribes to main’s push on agent:launchFailed, and unsubscribes', () => {
-    const listener = vi.fn()
-    const stop = api.onLaunchFailed(listener)
-    expect(on).toHaveBeenLastCalledWith('agent:launchFailed', expect.any(Function))
-    const wrapped = on.mock.lastCall?.[1] as (event: unknown, push: unknown) => void
-    wrapped(null, FAILURE)
-    // The renderer never sees the IpcRendererEvent: it is the push itself
-    // that is the message, exactly as every other subscription here reads.
-    expect(listener).toHaveBeenCalledWith(FAILURE)
-    stop()
-    expect(removeListener).toHaveBeenLastCalledWith('agent:launchFailed', wrapped)
-  })
-
-  /*
-   * #635 (MESSAGE-QUESTIONS 16/17). The launch-failure notice branches on
-   * `cause`, and a field this bridge drops never reaches it — the exact way a
-   * held answer's own words were lost in #671, where a request was rebuilt
-   * field by field and the new field was not among them. These pin that the
-   * cause crosses on the push and on all three launch verdicts, as main
-   * answered them.
-   */
-  it('hands the cause on the push to the renderer (#635)', () => {
-    const listener = vi.fn()
-    api.onLaunchFailed(listener)
-    const wrapped = on.mock.lastCall?.[1] as (event: unknown, push: unknown) => void
-    wrapped(null, { ...FAILURE, cause: 'exited-at-once' })
-    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ cause: 'exited-at-once' }))
-  })
-
   it('hands the cause on each launch verdict back as main answered it (#635)', async () => {
     const detached = {
       launched: false,
@@ -816,16 +640,8 @@ describe('preload launch-failure contract (#263)', () => {
       })
     ).resolves.toEqual(detached)
 
-    const held = {
-      launched: false,
-      error: 'The agent could not be started.',
-      cause: 'could-not-start'
-    }
-    invoke.mockResolvedValueOnce(held)
-    await expect(
-      api.launchHeldSession({ mineId: 'mine:1', provider: 'claude', prompt: 'dig' })
-    ).resolves.toEqual(held)
-
+    // AMENDED for ISSUE-249 (was: also A-38 `launchHeldSession`'s verdict): A-38 left the facade at cut 5 with its
+    // RETIRE row (`MEMBER_REMOVED`).
     const hosted = {
       launched: false,
       error: 'That command could not be started.',
@@ -943,23 +759,10 @@ describe('preload dwarf feed-page contract (#364)', () => {
  * can carry that dwarf's feed with its snapshot. One-way, like retireDwarf:
  * there is no verdict to wait for.
  */
-describe('preload watched-dwarf-feed contract (#196)', () => {
-  it('reports the watched dwarf on the panel:watchDwarfFeed channel', () => {
-    expect(api.setWatchedDwarf('claude:s1')).toBeUndefined()
-    expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', 'claude:s1')
-  })
-
-  it('reports null to clear the watch, as a real answer rather than a malformed one', () => {
-    api.setWatchedDwarf(null)
-    expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', null)
-  })
-
-  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "collapses anything that is not a string to null before it crosses the bridge" (A-16). The cut-1 switch routes
-  // this row nowhere (retired with no route, `RETIRED`), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
-  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
-  // preload member given a value it cannot coerce passes it on and never throws").
-})
-
+// REMOVED for ISSUE-249, stated rather than passing unseen (docs/test-removals.md): 'preload watched-dwarf-feed contract
+// (#196)', its two cases (A-16 `setWatchedDwarf`, retired at cut 1). The member left the facade at cut 5 with its
+// RETIRE row (`MEMBER_REMOVED`); coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019, ADR-001]
+// every RETIRE row of 14 §2.1 has no handler and no preload member in the release-5 build").
 /**
  * The panel asking a held session what its own context looks like (#96).
  *
@@ -969,18 +772,8 @@ describe('preload watched-dwarf-feed contract (#196)', () => {
  * no verdict here to wait for. Named by DWARF, never by session, because that
  * is what the panel has and main resolves the rest.
  */
-describe('preload session-telemetry refresh contract (#96)', () => {
-  it('asks for the dwarf on the dwarf:refreshTelemetry channel', () => {
-    expect(api.refreshDwarfTelemetry('claude:s1')).toBeUndefined()
-    expect(send).toHaveBeenLastCalledWith('dwarf:refreshTelemetry', 'claude:s1')
-  })
-
-  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "collapses anything that is not a string to '' before it crosses the bridge" (A-17). The cut-1 switch routes
-  // this row nowhere (retired with no route, `RETIRED`), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
-  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
-  // preload member given a value it cannot coerce passes it on and never throws").
-})
-
+// REMOVED for ISSUE-249, stated rather than passing unseen (docs/test-removals.md): 'preload session-telemetry refresh
+// contract (#96)', its one case (A-17 `refreshDwarfTelemetry`, retired at cut 1); same reason and coverage as above.
 /**
  * The panel CHANGING a held session's own model or effort (#96).
  *
@@ -989,35 +782,9 @@ describe('preload session-telemetry refresh contract (#96)', () => {
  * later. One channel carrying a discriminated `change`, rebuilt field by
  * field here so a caller cannot attach anything past the one act it names.
  */
-describe('preload session-tuning contract (#96)', () => {
-  it('sends a model change on the dwarf:setTuning channel and answers the verdict', async () => {
-    invoke.mockResolvedValueOnce({ applied: true })
-    await expect(
-      api.setDwarfTuning({
-        dwarfId: 'claude:s1',
-        change: { kind: 'model', model: 'claude-sonnet-5' }
-      })
-    ).resolves.toEqual({ applied: true })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
-      dwarfId: 'claude:s1',
-      change: { kind: 'model', model: 'claude-sonnet-5' }
-    })
-  })
+// REMOVED for ISSUE-249, stated rather than passing unseen (docs/test-removals.md): 'preload session-tuning contract
+// (#96)', its two cases (A-18 `setDwarfTuning`, retired at cut 1); same reason and coverage as above.
 
-  it('sends an effort change on the same channel, as its own kind', async () => {
-    invoke.mockResolvedValueOnce({ applied: true })
-    await api.setDwarfTuning({ dwarfId: 'claude:s1', change: { kind: 'effort', effort: 'high' } })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
-      dwarfId: 'claude:s1',
-      change: { kind: 'effort', effort: 'high' }
-    })
-  })
-
-  // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "rebuilds the request rather than forwarding whatever the caller attached", "collapses a change it cannot read to a kind main refuses, rather than guessing one" and "collapses a missing payload to one main refuses, without throwing" (A-18, RETIRE with no story). The cut-1 switch routes
-  // this row nowhere (retired with no route, `RETIRED`), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
-  // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
-  // preload member given a value it cannot coerce passes it on and never throws").
-})
 /*
  * REMOVED for #635, stated rather than passing unseen: 'preload message-panel contract (#162)', its
  * eleven cases (the surface's get, set, field-by-field rebuild, the collapses and the refused
@@ -1119,17 +886,9 @@ describe('preload notifications contract (#316)', () => {
   // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
   // preload member given a value it cannot coerce passes it on and never throws") and `src/ui-main/ipc/ipc-routing.contract.test.ts` ("[ADR-001] in cut 1 A-44, A-N17 to A-N21 and A-N12 route ui-local with shape target, and A-44 feeds presence").
 
-  it('subscribes to the open-this-mine push on panel:mine:show', () => {
-    const listener = vi.fn()
-    const stop = api.onShowMine(listener)
-    expect(on).toHaveBeenLastCalledWith('panel:mine:show', expect.any(Function))
-    const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
-    wrapped(null, 'mine-42')
-    expect(listener).toHaveBeenCalledWith('mine-42')
-    stop()
-    expect(removeListener).toHaveBeenLastCalledWith('panel:mine:show', wrapped)
-  })
-
+  // REMOVED for ISSUE-249, stated rather than passing unseen (docs/test-removals.md): "subscribes to the open-this-mine push on panel:mine:show". (A-P5 `onShowMine`, retired at cut 1.) The member left the
+  // facade at cut 5 with its RETIRE row (`MEMBER_REMOVED`); coverage now lives in `src/preload/preload.contract.test.ts`
+  // ("[ADR-019, ADR-001] every RETIRE row of 14 §2.1 has no handler and no preload member in the release-5 build").
   // REMOVED for ISSUE-123, stated rather than passing unseen (docs/test-removals.md): "drops a push that names no mine instead of forwarding an id nothing can open" (A-P5, successor A-N16). The cut-1 switch routes
   // this row nowhere (retired with no route, `RETIRED`; nothing sends it), so the generated preload passes the request on unchanged and main's seam A gate refuses a malformed
   // one (14 §1.4; ADR-019 items 7, 8). Coverage now lives in `src/preload/preload.contract.test.ts` ("[ADR-019] a
@@ -1480,54 +1239,12 @@ describe('preload launch view contract (#635)', () => {
  * shape rather than reading it as a reset. Only a real empty string removes a custom name.
  */
 describe('preload dwarf-name contract (#635)', () => {
-  it('sends a rename on the dwarf:setName channel and answers the verdict', async () => {
-    invoke.mockResolvedValueOnce({ saved: true, customName: 'Stonebeard' })
-    await expect(api.setDwarfName({ dwarfId: 'claude:s1', name: 'Stonebeard' })).resolves.toEqual({
-      saved: true,
-      customName: 'Stonebeard'
-    })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', {
-      dwarfId: 'claude:s1',
-      name: 'Stonebeard'
-    })
-  })
-
-  it('rebuilds the rename rather than forwarding whatever the caller attached', async () => {
-    invoke.mockResolvedValueOnce({ saved: true })
-    await api.setDwarfName({
-      dwarfId: 'claude:s1',
-      name: 'Stonebeard',
-      provider: 'codex'
-    } as unknown as Parameters<typeof api.setDwarfName>[0])
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', {
-      dwarfId: 'claude:s1',
-      name: 'Stonebeard'
-    })
-
-    // AMENDED for #635 (verifier finding; was: a non-string name crossed as '', which main read as
-    // a reset and answered saved: true, erasing the kept name). It crosses with no name at all
-    // now, a shape main refuses, so a malformed call can never remove a name.
-    await api.setDwarfName({ dwarfId: 7, name: null } as unknown as Parameters<
-      typeof api.setDwarfName
-    >[0])
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: '' })
-  })
-
-  it('still sends a real empty name, which removes the custom name', async () => {
-    invoke.mockResolvedValueOnce({ saved: true })
-    await api.setDwarfName({ dwarfId: 'claude:s1', name: '' })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: 'claude:s1', name: '' })
-  })
-
-  // AMENDED for ISSUE-172 (was: `api.resetDwarfName`): the legacy member is `resetDwarfNameToday` now, so it never
-  // shares its name with A-N09 `resetDwarfName` / `dwarf:name:reset` (14 §2.2, §8 I-21).
-  it('sends a reset on the dwarf:resetName channel, naming the dwarf alone', async () => {
-    invoke.mockResolvedValueOnce({ saved: true })
-    await expect(api.resetDwarfNameToday('claude:s1')).resolves.toEqual({ saved: true })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', 'claude:s1')
-
-    await api.resetDwarfNameToday(undefined as unknown as string)
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', '')
+  // AMENDED for ISSUE-243 (was: four cases of 14 §8 I-21's legacy rows, `setDwarfName` on `dwarf:setName` and
+  // `resetDwarfNameToday` on `dwarf:resetName`): both rows left with today's runtime (`MEMBER_REMOVED`, 21 §2 cut 5), so
+  // the facade has neither member; A-N08 and A-N09 below are the only rename and reset.
+  it('[ADR-001] the facade has no member for the legacy rename and reset rows', () => {
+    expect('setDwarfName' in api).toBe(false)
+    expect('resetDwarfNameToday' in api).toBe(false)
   })
 
   it('[ADR-019, US-MSG-005.AC02, US-MSG-006.AC03] A-N08 and A-N09 send their payloads unchanged on dwarf:rename and dwarf:name:reset', async () => {

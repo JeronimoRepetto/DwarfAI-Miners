@@ -1,8 +1,11 @@
 // The router of Electron main (ADR-001 item 3; 21 §1 items 1, 2, 2a; 05 §2.1 `ui-main/ipc/`). It registers the
-// `ipcMain` listeners from the channel registry and dispatches each call by the route table: `legacy` → today's
-// runtime through `LegacyRuntimeRoute` (the only door to legacy code, lint R16), or through the route's named shape
-// adapter for a `legacy` + `target` route (21 §3.1); `ui-local` → the window module; `host` → the HostClient. A call
-// whose (channel, qualifier) has no route is refused with a typed error, never guessed. Every call goes through the
+// `ipcMain` listeners from the channel registry and dispatches each call by the route table: `ui-local` → the window
+// module; `host` → the HostClient; `legacy` → the `legacy` target, or the route's named shape adapter for a `legacy` +
+// `target` route (21 §3.1), only where a table of an earlier release is checked with stand-ins for them. AMENDED for
+// ISSUE-243 (was: `legacy` → today's runtime through `LegacyRuntimeRoute`, the only door to legacy code, lint R16):
+// today's runtime and its door left the tree (21 §2 cut 5), so the composition root binds no `legacy` target and a
+// `legacy` route stops the router from starting. A call whose (channel, qualifier) has no route is refused with a typed
+// error, never guessed. Every call goes through the
 // seam A gate first (`validate.ts`, ADR-019 items 7, 8): an unknown sender or an invalid payload never reaches a
 // handler; it is answered with the row's typed refusal, and a one-way call is dropped and counted.
 import {
@@ -48,8 +51,12 @@ export interface RouteTarget {
 
 export interface RouterDeps {
   routes: readonly ChannelRoute[]
-  /** `LegacyRuntimeRoute` (21 §3). */
-  legacy: RouteTarget
+  /**
+   * Who serves a `legacy` route; needed once a route is `legacy`. AMENDED for ISSUE-243 (was: `LegacyRuntimeRoute`,
+   * 21 §3, always bound): no release from cut 5 on has a `legacy` route, so only the router tests of an earlier
+   * release's table bind one.
+   */
+  legacy?: RouteTarget
   /** The window module (ISSUE-046, ISSUE-047); needed once a route is `ui-local`. */
   uiLocal?: RouteTarget
   /** The HostClient (ISSUE-051); needed once a route is `host`. */

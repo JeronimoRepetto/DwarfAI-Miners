@@ -45,7 +45,8 @@ All four must hold:
   two places an agent will hit it. Index it under "Domain invariants" in the tracked
   [`AGENTS.md`](../../AGENTS.md) and stop. This is why there is no `vault-materials` skill: the
   no-cross-material-summing rule is stated at `MATERIAL_TOKENS_PER_UNIT` in
-  `src/shared/contracts.ts` and enforced by three named tests.
+  `src/contracts/wire/today.ts` (re-homed from `src/shared/contracts.ts` by ISSUE-246) and enforced
+  by three named tests.
 - **A rule that only applies inside specific files.** Use a path-scoped rule in `.claude/rules/`
   with a `paths:` glob. See the decision rule below.
 - **A procedure only the maintainer can run.** This is why there is no `art-pipeline` skill: it

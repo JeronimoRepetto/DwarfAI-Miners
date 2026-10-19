@@ -16,9 +16,9 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 # Per-OS behaviour goes behind a port
 
-**Scope.** This skill governs today's legacy code under `src/main/platform/` and
-`src/main/textDelivery/`, which stays in force until cut 5 deletes it (ISSUE-336 and ISSUE-340).
-Rebuild work follows the rebuild manual and the architecture package instead. Per-OS code moves to
+**Scope.** This skill described the legacy code under `src/main/platform/` and
+`src/main/textDelivery/`, which cut 5 deleted (ISSUE-336 and ISSUE-340). Rebuild work follows the
+rebuild manual and the architecture package instead. Per-OS code moves to
 `host/platform/process`, the kernel `ProcessControl` and the window adapters (`21-migration-plan.md`
 §6, rows "Per-OS builders" and "Text delivery family"), and new code is governed by lint rules R17
 and R18 (`05-modules-and-ports.md` §5.1): `node:child_process` and `process.platform` are allowed

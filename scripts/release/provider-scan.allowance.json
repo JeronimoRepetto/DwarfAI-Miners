@@ -1,11 +1,4 @@
 {
-  "$comment": "The one legacy allowance of the provider scan (ISSUE-273; 20 §2.3 P-03). It lets the legacy Agent SDK path's packages pass only while src/main/sessionLaunch/sdkHeldSession.ts exists, admits no pattern but @anthropic-ai/claude-agent-sdk*, and can only shrink. ISSUE-184 (step 3a) deletes the legacy path and removes this entry.",
-  "entries": [
-    {
-      "pattern": "@anthropic-ai/claude-agent-sdk*",
-      "reason": "legacy Agent SDK path until step 3a",
-      "removedBy": "step-3a",
-      "since": "2026-10-16"
-    }
-  ]
+  "$comment": "The one legacy allowance of the provider scan (ISSUE-273; 20 §2.3 P-03). It let the legacy Agent SDK path's packages (@anthropic-ai/claude-agent-sdk*) pass while src/main/sessionLaunch/sdkHeldSession.ts existed. ISSUE-184 (step 3a) deleted that path and the packages, so the allowance is closed: it stays empty, and any entry fails the scan.",
+  "entries": []
 }

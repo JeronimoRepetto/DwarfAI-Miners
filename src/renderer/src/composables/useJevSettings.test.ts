@@ -25,7 +25,8 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     // AMENDED for ISSUE-001 (was: today's A-36 `{ providers }` and A-37 `{ catalogs }`): from 3a A-36 answers every
     // provider's `SupplierEntryView` with its models; A-37 is retired and never asked.
     listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [] }),
-    listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
+    // AMENDED for ISSUE-249 (was: also mocks of the RETIRE rows' members): A-14, A-16, A-17, A-18, A-P5, A-37 and
+    // A-38 left the facade at cut 5 (`MEMBER_REMOVED`), and the fake refuses a member the registry does not have.
     setJevPreferences: vi.fn(async () => ({ configured: true })),
     ...overrides
   }
@@ -175,7 +176,7 @@ describe('useJevSettings — loading the default-launch sources', () => {
     const api = fakeApi()
     useJevSettings()
     expect(api.listAgentProviders).not.toHaveBeenCalled()
-    expect(api.listAgentModels).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-37 `listAgentModels` never called): the member left the facade at cut 5.
   })
 
   it('starts both empty, so the pickers have nothing to offer before a sync', () => {
@@ -194,7 +195,7 @@ describe('useJevSettings — loading the default-launch sources', () => {
     await sync()
     expect(api.listAgentProviders).toHaveBeenCalledWith({})
     // AMENDED for ISSUE-001: the catalogue rides on the provider's own entry (A-37 is never asked).
-    expect(api.listAgentModels).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-37 `listAgentModels` never called): the member left the facade at cut 5.
     expect(providers.value).toEqual([{ provider: 'claude', installed: true, launchable: true }])
     expect(catalogs.value).toEqual([
       {
@@ -211,7 +212,7 @@ describe('useJevSettings — loading the default-launch sources', () => {
     const { sync } = useJevSettings()
     await sync()
     expect(api.listAgentProviders).not.toHaveBeenCalled()
-    expect(api.listAgentModels).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-37 `listAgentModels` never called): the member left the facade at cut 5.
   })
 
   it('loads providers and catalogues once a save turns the section configured', async () => {
@@ -228,8 +229,7 @@ describe('useJevSettings — loading the default-launch sources', () => {
   it('degrades to empty lists rather than throwing when the bridge cannot answer', async () => {
     fakeApi({
       getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-      listAgentProviders: vi.fn().mockRejectedValue(new Error('no bridge')),
-      listAgentModels: vi.fn().mockRejectedValue(new Error('no bridge'))
+      listAgentProviders: vi.fn().mockRejectedValue(new Error('no bridge'))
     })
     const { providers, catalogs, sync } = useJevSettings()
     await expect(sync()).resolves.toBeUndefined()
@@ -367,7 +367,9 @@ describe('useJevSettings reporting a preference write that did not happen', () =
 
     await setPreferences({ profile: 'economy', default: {}, delegation: false })
 
-    expect(api.listAgentModels).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-37 `listAgentModels` never called): the member left the facade at cut 5, and the
+    // catalogue rides on A-36 `listAgentProviders` since 3a, so that is the query this failure path must not repeat.
+    expect(api.listAgentProviders).not.toHaveBeenCalled()
   })
 
   it('carries a refusal main reported, the same way it carries a rejection', async () => {

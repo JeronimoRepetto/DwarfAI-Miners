@@ -16,7 +16,6 @@ import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, MineId, ProviderIdentity } from '../../../kernel/domain/values'
 import type { SqliteDatabase, SqliteParam, SqliteRow } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
-import type { PresentDwarfs } from '../application/crewQueries'
 import type { Dwarf, SessionProfile, UsagePath } from '../domain/dwarf'
 import type { DepartureCause, DwarfPresence, DwarfProcessState } from '../domain/presence'
 import type { DwarfRank } from '../domain/rank'
@@ -61,7 +60,7 @@ const UPSERT = `INSERT INTO dwarfs (${COLUMNS})
     departed_at = excluded.departed_at,
     departure_cause = excluded.departure_cause`
 
-export class SqliteDwarfRepository implements DwarfRepository, PresentDwarfs {
+export class SqliteDwarfRepository implements DwarfRepository {
   constructor(private readonly deps: SqliteDwarfRepositoryDeps) {}
 
   byId(id: DwarfId): Dwarf | null {
@@ -75,13 +74,6 @@ export class SqliteDwarfRepository implements DwarfRepository, PresentDwarfs {
   inMine(id: MineId): Dwarf[] {
     return this.deps.db
       .all(`${SELECT} WHERE mine_id = ? ORDER BY arrived_at, rowid`, [id])
-      .map(fromRow)
-  }
-
-  /** Strangler-only (`PresentDwarfs`): deleted with B-M41 at the end of cut 4. */
-  present(): Dwarf[] {
-    return this.deps.db
-      .all(`${SELECT} WHERE departed_at IS NULL ORDER BY arrived_at, rowid`, [])
       .map(fromRow)
   }
 

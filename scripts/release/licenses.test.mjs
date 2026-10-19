@@ -340,38 +340,38 @@ describe('the legacy Agent SDK allowance (ISSUE-273 provider-scan.allowance.json
     { name: 'closed-thing', version: '3.1.0', license: 'UNLICENSED' }
   ]
 
-  it('[ADR-008] the Agent SDK packages pass, printed as allowed, while the legacy SDK path exists; nothing else does', () => {
-    project({ deps: sdk })
-    write('src/main/sessionLaunch/sdkHeldSession.ts', 'export {}\n')
-    const report = buildLicenceReport({ rootDir: dir, denied, allowance })
-    expect(report.allowed).toEqual([
-      '@anthropic-ai/claude-agent-sdk@0.3.258 by the legacy allowance @anthropic-ai/claude-agent-sdk* (removedBy step-3a)',
-      '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.258 by the legacy allowance @anthropic-ai/claude-agent-sdk* (removedBy step-3a)'
-    ])
-    expect(report.packages.find((p) => p.name === '@anthropic-ai/claude-agent-sdk').verdict).toBe(
-      'allowance'
-    )
-    expect(report.failures).toEqual([
-      'closed-thing@3.1.0: licence "UNLICENSED" is denied (UNLICENSED)'
-    ])
-  })
+  /** The allowance as it stood before ISSUE-184 closed it: one entry for the Agent SDK packages. */
+  const sdkAllowance = {
+    entries: [
+      {
+        pattern: '@anthropic-ai/claude-agent-sdk*',
+        reason: 'legacy Agent SDK path until step 3a',
+        removedBy: 'step-3a'
+      }
+    ]
+  }
 
-  it('[ADR-008] once the legacy SDK path is gone the allowance is stale: it fails, and the SDK packages fail again', () => {
+  // AMENDED for ISSUE-184, the step-3a deletion (was: "the Agent SDK packages pass, printed as allowed, while the
+  // legacy SDK path exists; nothing else does" and "once the legacy SDK path is gone the allowance is stale: it fails,
+  // and the SDK packages fail again"): the legacy path is gone for good, so the allowance is closed.
+  it('[ADR-008] since the step-3a deletion a non-empty allowance fails, and the SDK packages fail on their licence', () => {
     project({ deps: sdk.slice(0, 3) })
-    const report = buildLicenceReport({ rootDir: dir, denied, allowance })
+    const report = buildLicenceReport({ rootDir: dir, denied, allowance: sdkAllowance })
     expect(report.allowed).toEqual([])
     expect(report.failures).toEqual([
-      'allowance: the legacy allowance is not empty but src/main/sessionLaunch/sdkHeldSession.ts is gone: remove @anthropic-ai/claude-agent-sdk* (removedBy step-3a)',
+      'allowance: the legacy allowance is closed: ISSUE-184 deleted the Agent SDK path (step 3a), remove @anthropic-ai/claude-agent-sdk* (removedBy step-3a)',
       '@anthropic-ai/claude-agent-sdk@0.3.258: licence "SEE LICENSE IN README.md" is not an SPDX expression',
       '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.258: licence "SEE LICENSE IN LICENSE.md" is not an SPDX expression'
     ])
   })
 
-  it('[ADR-008] the repository report passes today only by that allowance', () => {
+  // AMENDED for ISSUE-184, the step-3a deletion (was: "the repository report passes today only by that allowance"):
+  // the SDK left the lockfile and the committed allowance is empty.
+  it('[ADR-008] the repository report passes with the empty allowance and allows nothing', () => {
     const report = buildLicenceReport({ rootDir: repoRoot, denied, allowance })
+    expect(allowance.entries).toEqual([])
     expect(report.failures).toEqual([])
-    expect(report.allowed.length).toBeGreaterThan(0)
-    for (const line of report.allowed) expect(line).toMatch(/^@anthropic-ai\/claude-agent-sdk/)
+    expect(report.allowed).toEqual([])
   })
 })
 

@@ -17,7 +17,10 @@ export type ChannelRole = Hello['role']
 const UI: readonly ChannelRole[] = ['ui']
 const UI_VIEWER: readonly ChannelRole[] = ['ui', 'viewer']
 
-/** 14 §2.3 B-M02…B-M41: method → the roles that may call it. */
+/**
+ * 14 §2.3 B-M02…B-M40: method → the roles that may call it. AMENDED for ISSUE-241 (was: also B-M41
+ * `strangler.dwarfIdentities`, `ui` only): its lifetime ended with `LegacyDwarfIdBridge` at the end of cut 4 (21 §3).
+ */
 export const METHOD_ROLES: Readonly<Record<string, readonly ChannelRole[]>> = Object.freeze({
   ping: ['ui', 'notifier', 'viewer'], // B-M02
   'events.subscribe': UI_VIEWER, // B-M03
@@ -57,8 +60,7 @@ export const METHOD_ROLES: Readonly<Record<string, readonly ChannelRole[]>> = Ob
   'suppliers.launchable': UI, // B-M37
   'jev.suggest': UI, // B-M38
   'preferences.setClaudeHooks': UI, // B-M39
-  'preferences.answerWelcome': UI, // B-M40
-  'strangler.dwarfIdentities': UI // B-M41 (only LegacyDwarfIdBridge calls it)
+  'preferences.answerWelcome': UI // B-M40
 })
 
 /** 14 §2.4 B-F03…B-F28: evt frame → the roles that receive it. */

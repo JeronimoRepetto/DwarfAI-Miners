@@ -360,10 +360,10 @@ async function host() {
       }
       return { mineId: declared.value.mineId, cwd }
     },
+    // AMENDED for ISSUE-241 (was: crew's strangler-only `presentIdentities()`, deleted with B-M41 at the end of
+    // cut 4): the observation index this run's routes read (`ProviderIdentity → DwarfId`, 16 §4.3).
     dwarfOf(sessionId: string) {
-      return running.crew.queries
-        .presentIdentities()
-        .find((p) => p.identity.providerSessionId === sessionId)
+      return stores.sessions.byIdentity(identityOf(sessionId))
     },
     tokens(mineId: MineId): number {
       const totals = running.ledger.queries.totals(mineId)

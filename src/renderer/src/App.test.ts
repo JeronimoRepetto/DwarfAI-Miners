@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../contracts/ipc/testing/fakeWindowApi'
+import { EMPTY_BOARD, publishBoard, type TestBoard } from './testing/board'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import { MotionConfig } from 'motion-v'
 import App from './App.vue'
@@ -155,13 +156,15 @@ const EMPTY_HOST_TAILS = {
 const HISTORY_MINE_ID = '01890a5d-ac96-774b-bcce-b302099a0001'
 
 function stubApi(overrides: Record<string, unknown> = {}) {
+  // AMENDED for ISSUE-242 (was: A-12 `getMines` and A-P2 `onMinesUpdated` among the members, deleted at cut 5): the
+  // board is what the Host read model publishes (testing/board.ts), so a test's `board` is published, not installed.
+  const { board = EMPTY_BOARD, ...memberOverrides } = overrides
+  publishBoard(board as TestBoard, true)
   const api = {
     hidePanel: vi.fn(),
     // Fire-and-forget, like hidePanel: the shell reports every click on itself
     // so main can raise the window, and there is no verdict to render (#165).
     raisePanel: vi.fn(),
-    getMines: vi.fn().mockResolvedValue({ mines: [], tokensObserved: 0 }),
-    onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
     // Answers "a window was focused", the verdict that leaves the panel alone. AMENDED for ISSUE-001 (was: today's
     // `DwarfActivation`): A-13's 14 answer from the step-3a switch, `IpcResult<ConsoleOpenResult>`.
     activateDwarf: vi
@@ -169,10 +172,10 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .mockResolvedValue({ ok: true, value: { outcome: 'raised', mode: 'focus-terminal' } }),
     // The message panel reads an observed session's transcript on selection
     // (#159); a readable-but-empty answer is the quiet default.
-    getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
+    // AMENDED for ISSUE-249 (was: also mocks of the RETIRE rows' members): A-14, A-16, A-17, A-18, A-P5, A-37 and
+    // A-38 left the facade at cut 5 (`MEMBER_REMOVED`), and the fake refuses a member the registry does not have.
     // One-way, like retireDwarf: the panel reports which observed dwarf it
     // has open so main can push that dwarf's feed with the poll (#196).
-    setWatchedDwarf: vi.fn(),
     // The Mine History panel reads the mine's transcripts on open (#192); a
     // readable mine nobody has spoken in is the quiet default.
     // AMENDED for ISSUE-123 (was: today's `{ readable, speakers }`): A-19 reads the Host's message log from the cut-1
@@ -191,7 +194,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // A promoted kick retires its dwarf through this (#46). Stubbed rather
     // than made optional in the composable: a missing member should fail a
     // test loudly, not be swallowed at every call site.
-    retireDwarf: vi.fn(),
     answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
     answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
@@ -205,8 +207,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * message main HELD (#457). Both hear nothing by default. One page of scrollback (#364) is a
      * readable answer with nothing older, the quiet default.
      */
-    onLaunchFailed: vi.fn().mockReturnValue(() => undefined),
-    onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
     getDwarfFeedPage: vi
       .fn()
       .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),
@@ -259,7 +259,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
         }
       ]
     }),
-    launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
     launchAgent: vi
       .fn()
       .mockResolvedValue({ ok: true, value: { launchId: '01920000-0000-7000-8000-0000000005b1' } }),
@@ -270,7 +269,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * plain spy, like `retireDwarf`: it is `ipcRenderer.send` with no verdict
      * to await. No existing assertion changed.
      */
-    refreshDwarfTelemetry: vi.fn(),
     /*
      * AMENDED for #96's mutating slice (was: absent). The strip's two selects
      * are fed by #239's catalogue channel and answered through the tuning
@@ -279,26 +277,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * accepted — the verdict that leaves nothing on the strip to say. No
      * existing assertion changed.
      */
-    listAgentModels: vi.fn().mockResolvedValue({
-      catalogs: [
-        {
-          provider: 'claude',
-          models: [
-            { value: 'claude-haiku-4-5' },
-            { value: 'claude-sonnet-5', effortLevels: ['low', 'high'] }
-          ],
-          efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-          source: 'provider'
-        }
-      ]
-    }),
-    setDwarfTuning: vi.fn().mockResolvedValue({ applied: true }),
     /*
      * AMENDED for #174/#173 (was: absent). The shell owns the audio engine, so
      * all four members have to exist even in tests that never make a sound:
      * two are AWAITED on mount (the stored settings, the window's real
-     * visibility) and the third returns an unsubscribe, exactly like
-     * onMinesUpdated.
+     * visibility) and the third returns an unsubscribe.
      *
      * `getPanelVisible` answers NOT visible by default, for the same reason
      * `getPanelLayout` answers "closed": that is what main actually creates
@@ -320,12 +303,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * main raised — so all four members have to exist even in tests that never
      * open Settings. `setOpenMine` is a plain spy, like `refreshDwarfTelemetry`:
      * it is `ipcRenderer.send` with no verdict to await. `onShowMine` returns
-     * an unsubscribe, exactly like `onMinesUpdated`. The switch answers ON,
+     * an unsubscribe. The switch answers ON,
      * which is what main's own default is. No existing assertion changed.
      */
     // AMENDED for ISSUE-123 (was: `setOpenMine`): A-44 under its 14 name, `reportVisibleMines`, a plain spy too.
     reportVisibleMines: vi.fn(),
-    onShowMine: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-114 (was: absent): the shell also hears A-N16, the reveal a notification click runs.
     onRevealDwarfChat: vi.fn().mockReturnValue(() => undefined),
     getNotificationsEnabled: vi.fn().mockResolvedValue(true),
@@ -439,7 +421,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     }),
     patchUiSession: vi.fn(),
     onUiSessionChanged: vi.fn().mockReturnValue(() => undefined),
-    ...overrides
+    ...memberOverrides
   }
   // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
   // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
@@ -592,7 +574,7 @@ describe('App panel motion (#164)', () => {
   it('never strands the shell as an empty amber frame when the leaves stop reporting (#266)', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     async function finishAnimations() {
       for (const animation of animations.splice(0)) animation.finish()
@@ -609,7 +591,7 @@ describe('App panel motion (#164)', () => {
     // snapshot starts will ever report itself finished. Before #266 that left
     // the mine column invisible inside a window still sized to hold it, with
     // the amber ground painted over the whole of it and nothing to remove.
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({ mines: [], tokensObserved: 0 })
     await flushPromises()
     expect(api.setPanelLayout).not.toHaveBeenCalled()
@@ -625,7 +607,7 @@ describe('App panel motion (#164)', () => {
     const dwarf = defaultDwarf()
     const mine = defaultMine({ dwarfs: [dwarf] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     async function finishAnimations() {
       for (const animation of animations.splice(0)) animation.finish()
@@ -711,7 +693,7 @@ describe('App panel motion (#164)', () => {
     let apply!: (layout: unknown) => void
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 }),
+      board: { mines: [mine], tokensObserved: 0 },
       setPanelLayout: vi.fn().mockImplementation((request: { mineOpen: boolean }) =>
         request.mineOpen
           ? Promise.resolve({ edge: 'right', ...request })
@@ -751,7 +733,7 @@ describe('App panel motion (#164)', () => {
   it('settles the shell’s ground once for a request, never before the request has moved anything', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     const shell = wrapper.get('.shell').element as HTMLElement
     const clips: string[] = []
@@ -778,7 +760,7 @@ describe('App panel motion (#164)', () => {
   it('retains the dock slot’s width until the history has finished leaving', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -812,7 +794,7 @@ describe('App panel motion (#164)', () => {
           .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
             Promise.resolve({ edge, ...request })
           ),
-        getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+        board: { mines: [mine], tokensObserved: 0 }
       })
       wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
       await flushPromises()
@@ -837,7 +819,7 @@ describe('App panel motion (#164)', () => {
   it('removes the docked history at once when its mine closes, before the column folds', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -1517,7 +1499,7 @@ describe('App mines browse', () => {
 
   it('enters the mine a live card names', async () => {
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({
+      board: {
         mines: [
           {
             id: 'C:/dev/alpha',
@@ -1530,7 +1512,7 @@ describe('App mines browse', () => {
           }
         ],
         tokensObserved: 0
-      }),
+      },
       queryProjects: vi.fn().mockResolvedValue({
         answered: true,
         projects: [
@@ -1728,7 +1710,7 @@ describe('App concurrent mine', () => {
 
   async function openMine(overrides: Record<string, unknown> = {}) {
     const mounted = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [LIVE_MINE], tokensObserved: 0 }),
+      board: { mines: [LIVE_MINE], tokensObserved: 0 },
       ...overrides
     })
     mounted.wrapper.findComponent(MapPage).vm.$emit('open', LIVE_MINE.id)
@@ -1840,10 +1822,10 @@ describe('App concurrent mine', () => {
   })
 
   it('lets go of the mine when it leaves the board', async () => {
-    const { wrapper, api } = await openMine()
+    const { wrapper } = await openMine()
     // Main's next snapshot no longer carries it: the panel must not keep a
     // column open onto a mine that is gone.
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({ mines: [], tokensObserved: 0 })
     await flushPromises()
     expect(wrapper.find('.dm-minecol').exists()).toBe(false)
@@ -1891,7 +1873,7 @@ describe('App selecting a dwarf (#162)', () => {
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
+      board: { mines: [{ ...MINE, dwarfs }], tokensObserved: 0 },
       ...overrides
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
@@ -2030,7 +2012,7 @@ describe('App add action (#162)', () => {
 
   async function openMine(overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      board: { mines: [MINE], tokensObserved: 0 },
       ...overrides
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
@@ -2155,7 +2137,7 @@ describe('App exclusive selection (#165)', () => {
 
   async function openCrewedMine() {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
+      board: { mines: [MINE], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2314,7 +2296,7 @@ describe('App mine history', () => {
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
+      board: { mines: [{ ...MINE, dwarfs }], tokensObserved: 0 },
       ...overrides
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
@@ -2322,8 +2304,8 @@ describe('App mine history', () => {
     return { wrapper, api }
   }
 
-  function pushFrom(api: ReturnType<typeof stubApi>) {
-    return api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+  function pushFrom() {
+    return publishBoard as (snapshot: unknown) => void
   }
 
   it('opens the panel from the mine own History action and asks main for that mine by id', async () => {
@@ -2367,13 +2349,13 @@ describe('App mine history', () => {
     expect(api.getMineHistory).toHaveBeenCalledTimes(1)
 
     // The same board again: nothing about the crew's transcripts moved.
-    pushFrom(api)({ mines: [{ ...MINE, dwarfs: [CREW_DWARF] }], tokensObserved: 0 })
+    pushFrom()({ mines: [{ ...MINE, dwarfs: [CREW_DWARF] }], tokensObserved: 0 })
     await flushPromises()
     expect(api.getMineHistory).toHaveBeenCalledTimes(1)
 
     // The transcript's own mtime moved — the feed's signal (#183) — so the
     // history is read again.
-    pushFrom(api)({
+    pushFrom()({
       mines: [{ ...MINE, dwarfs: [{ ...CREW_DWARF, transcriptUpdatedAt: 2_000 }] }],
       tokensObserved: 0
     })
@@ -2386,7 +2368,7 @@ describe('App mine history', () => {
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
-    pushFrom(api)({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    pushFrom()({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
     await flushPromises()
     expect(api.getMineHistory).toHaveBeenCalledTimes(2)
     // And the panel is still there: it follows the mine, not the crew.
@@ -2399,11 +2381,11 @@ describe('App mine history', () => {
       .fn()
       .mockResolvedValueOnce(historyOf([SPEAKER]))
       .mockImplementationOnce(() => new Promise((resolve) => (release = resolve)))
-    const { wrapper, api } = await openMineWith([CREW_DWARF], { getMineHistory })
+    const { wrapper } = await openMineWith([CREW_DWARF], { getMineHistory })
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
-    pushFrom(api)({
+    pushFrom()({
       mines: [{ ...MINE, dwarfs: [{ ...CREW_DWARF, transcriptUpdatedAt: 2_000 }] }],
       tokensObserved: 0
     })
@@ -2623,9 +2605,7 @@ describe('App audio (#174, #173)', () => {
 
   it('plays the mine ambience while an interior is open, and stops it on the way out', async () => {
     const { wrapper } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+      board: { mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2650,9 +2630,7 @@ describe('App audio (#174, #173)', () => {
 
   it('mutes the ambience from the interior, and says so on the control', async () => {
     const { wrapper } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+      board: { mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2671,9 +2649,7 @@ describe('App audio (#174, #173)', () => {
 
   it('gives a clicked dwarf its rank voice, once', async () => {
     const { wrapper } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+      board: { mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2756,16 +2732,14 @@ describe('App audio (#174, #173)', () => {
    * which hears each need once per key (ADR-018 item 3), so the ask that begins after launch is a new one.
    */
   it('cues a permission when a snapshot begins one, not at launch and not on a re-poll (#635)', async () => {
-    const { api } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    await audioApp({
+      board: { mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 }
     })
     const cues = () => opened.filter((src) => src.includes('attention-'))
     // Already pending when the app started: nobody heard it begin.
     expect(cues()).toHaveLength(0)
 
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     const ASKING_AGAIN = defaultDwarf({
       ...ASKING,
       pendingPermission: { ...ASKING.pendingPermission!, toolUseId: 'p2' }
@@ -2782,12 +2756,12 @@ describe('App audio (#174, #173)', () => {
   })
 
   it('plays no attention cue with Notification sounds off (#635)', async () => {
-    const { api } = await audioApp({
+    await audioApp({
       getAudioPreferences: vi
         .fn()
         .mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES, notificationSounds: false })
     })
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
     await flushPromises()
     expect(opened.filter((src) => src.includes('attention-'))).toHaveLength(0)
@@ -2796,9 +2770,7 @@ describe('App audio (#174, #173)', () => {
   it('gives a foreman the foreman voice, and no other rank’s', async () => {
     const foreman = defaultDwarf({ id: 'claude:s2', role: 'foreman', status: 'waiting' })
     const { wrapper } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [foreman] }], tokensObserved: 0 })
+      board: { mines: [{ ...MINE, dwarfs: [foreman] }], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2824,7 +2796,7 @@ describe('App system notifications (#316)', () => {
 
   async function notifiedApp(overrides: Record<string, unknown> = {}) {
     return mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      board: { mines: [MINE], tokensObserved: 0 },
       ...overrides
     })
   }
@@ -2929,7 +2901,7 @@ describe('App system notifications (#316)', () => {
   it('[ADR-019] after the cut-1 switch the notification composable subscribes to onRevealDwarfChat only and no longer to onShowMine', async () => {
     const { api } = await notifiedApp()
     expect(api.onRevealDwarfChat).toHaveBeenCalledOnce()
-    expect(api.onShowMine).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-P5 `onShowMine` never called): the member left the facade at cut 5.
   })
 
   type Reveal = (t: { mineId: string; dwarfId: string | null }) => void
@@ -3471,12 +3443,8 @@ describe('App Mines page', () => {
   const toasts = (wrapper: VueWrapper) => wrapper.findAll('.dm-toast').map((toast) => toast.text())
 
   it('opens the mine just added in the mine column once main publishes it', async () => {
-    let push: (snapshot: unknown) => void = () => undefined
+    const push = publishBoard as (snapshot: unknown) => void
     const { wrapper, api } = await mountOpenApp({
-      onMinesUpdated: vi.fn().mockImplementation((listener: (snapshot: unknown) => void) => {
-        push = listener
-        return () => undefined
-      }),
       declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: ALPHA.id })
     })
     await wrapper.find(NAV_MINES).trigger('click')
@@ -3518,10 +3486,10 @@ describe('App Mines page', () => {
 
   it('lists a board mine the store has no row for, as working but not recorded yet', async () => {
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({
+      board: {
         mines: [{ ...ALPHA, declared: false, unrecorded: true }],
         tokensObserved: 0
-      })
+      }
     })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
@@ -3552,12 +3520,8 @@ describe('App Mines page', () => {
    * board goes on not carrying it. + Dwarf asks main for the Add panel on that mine.
    */
   it('opens a remembered mine nobody is working, onto the empty roster, and keeps it open', async () => {
-    let push: (snapshot: unknown) => void = () => undefined
+    const push = publishBoard as (snapshot: unknown) => void
     const { wrapper, api } = await mountOpenApp({
-      onMinesUpdated: vi.fn((listener: (snapshot: unknown) => void) => {
-        push = listener
-        return () => undefined
-      }),
       queryProjects: vi.fn().mockResolvedValue({
         answered: true,
         projects: [{ ...ALPHA_ROW, declared: false, live: false }]
@@ -3620,12 +3584,8 @@ describe('App Map page', () => {
   })
 
   it('asks main for a folder from the first-run card, and opens the mine it adds', async () => {
-    let push: (snapshot: unknown) => void = () => undefined
+    const push = publishBoard as (snapshot: unknown) => void
     const { wrapper, api } = await mountOpenApp({
-      onMinesUpdated: vi.fn().mockImplementation((listener: (snapshot: unknown) => void) => {
-        push = listener
-        return () => undefined
-      }),
       declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: ALPHA.id })
     })
     await wrapper.get('.dm-mappage__card button').trigger('click')
@@ -3641,7 +3601,7 @@ describe('App Map page', () => {
 
   it('opens a mine from its marker, and presses the marker of the mine that is open', async () => {
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [ALPHA], tokensObserved: 0 })
+      board: { mines: [ALPHA], tokensObserved: 0 }
     })
     await wrapper.get('.dm-marker').trigger('click')
     await flushPromises()
@@ -3686,7 +3646,7 @@ describe('App tab order (#635, PANEL-QUESTIONS 2)', () => {
           .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
             Promise.resolve({ edge, ...request })
           ),
-        getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+        board: { mines: [mine], tokensObserved: 0 }
       })
       await flushPromises()
       wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
@@ -3726,7 +3686,7 @@ describe('App toast position (#635, PANEL-QUESTIONS 10)', () => {
   it('raises a toast in the page column, even from the nav beside an open mine', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -3744,7 +3704,7 @@ describe('App toast position (#635, PANEL-QUESTIONS 10)', () => {
   it('draws no toast host but the page column’s', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -3768,7 +3728,7 @@ describe('App dock (#635)', () => {
     const dwarf = defaultDwarf()
     const mine = defaultMine({ dwarfs: [dwarf] })
     const mounted = await mountApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 }),
+      board: { mines: [mine], tokensObserved: 0 },
       ...overrides
     })
     mounted.wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
@@ -3970,7 +3930,7 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
     const { wrapper } = await launchOn(
       { area: 'mines', mineId: NORTH.id },
       {
-        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        board: { mines: [NORTH], tokensObserved: 0 },
         queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [NORTH_ROW] })
       }
     )
@@ -4029,7 +3989,7 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
     const { wrapper, api } = await launchOn(
       { area: 'mines', mineId: NORTH.id },
       {
-        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        board: { mines: [NORTH], tokensObserved: 0 },
         queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [NORTH_ROW] })
       }
     )
@@ -4050,7 +4010,7 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
     const { wrapper, api } = await launchOn(
       { area: 'mines', mineId: NORTH.id },
       {
-        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        board: { mines: [NORTH], tokensObserved: 0 },
         queryProjects: vi.fn().mockResolvedValue({
           answered: true,
           projects: [{ ...NORTH_ROW, folderMissing: true }]
@@ -4067,7 +4027,7 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
     const { wrapper, api } = await launchOn(
       { area: 'mines', mineId: NORTH.id },
       {
-        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        board: { mines: [NORTH], tokensObserved: 0 },
         queryProjects: vi.fn(
           () =>
             new Promise((resolve) => {
@@ -4120,11 +4080,11 @@ describe('App keeping the Mines list current (#635)', () => {
 
   it('reads the list again when a measurement lands while Mines is on screen', async () => {
     const queryProjects = vi.fn().mockResolvedValue({ answered: true, projects: [MEASURING] })
-    const { wrapper, api } = await mountOpenApp({ queryProjects })
+    const { wrapper } = await mountOpenApp({ queryProjects })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
     const asked = queryProjects.mock.calls.length
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     queryProjects.mockResolvedValue({
       answered: true,
       projects: [{ ...MEASURING, knownTier: 'gold', weightBytes: 3_000_000 }]
@@ -4141,9 +4101,9 @@ describe('App keeping the Mines list current (#635)', () => {
 
   it('asks nothing while the Mines page is not on screen', async () => {
     const queryProjects = vi.fn().mockResolvedValue({ answered: true, projects: [MEASURING] })
-    const { api } = await mountOpenApp({ queryProjects })
+    await mountOpenApp({ queryProjects })
     const asked = queryProjects.mock.calls.length
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({ mines: [{ ...BOARD_MINE, weightBytes: 3_000_000 }], tokensObserved: 0 })
     await flushPromises()
     expect(queryProjects.mock.calls.length).toBe(asked)
@@ -4188,7 +4148,7 @@ describe('App message dock (#635)', () => {
 
   async function openMine(overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      board: { mines: [MINE], tokensObserved: 0 },
       ...overrides
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
@@ -4277,10 +4237,10 @@ describe('App Stop everything and quit (ISSUE-317)', () => {
     let push: ((payload: { confirmationId: string }) => void) | undefined
     const cancelStopEverything = vi.fn()
     await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({
+      board: {
         mines: [defaultMine({ dwarfs: [defaultDwarf()] })],
         tokensObserved: 0
-      }),
+      },
       onStopEverythingRequested: vi.fn((listener: typeof push) => {
         push = listener
         return () => undefined
@@ -4505,10 +4465,10 @@ describe('App mine column (ISSUE-254)', () => {
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
     const api = stubApi({
       getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT),
-      getMines: vi.fn().mockResolvedValue({
+      board: {
         mines: [mineOf(ALPHA, 'alpha', dwarfs), mineOf(BETA, 'beta', [])],
         tokensObserved: 0
-      }),
+      },
       queryProjects: vi.fn().mockResolvedValue({
         answered: true,
         projects: [project(ALPHA, 'alpha'), project(BETA, 'beta')]
@@ -4577,7 +4537,7 @@ describe('App mine column (ISSUE-254)', () => {
   })
 
   it('[US-OBS-004.AC06, US-OBS-004.AC10] a status change reaches sprite pose, tooltip, roster and outcome line in the same render, and working shows the working pose and Working with its step count', async () => {
-    const { wrapper, api } = await openMineWith([{ ...WORKER, status: 'waiting' }])
+    const { wrapper } = await openMineWith([{ ...WORKER, status: 'waiting' }])
     await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
     await wrapper.find('.dm-roster button.dm-portrait').trigger('focus')
@@ -4592,7 +4552,7 @@ describe('App mine column (ISSUE-254)', () => {
     expect(shown()).toMatchObject({ sprite: 'asleep', roster: 'asleep', tooltip: 'asleep' })
     expect(shown().outcome).not.toMatch(/^Working/)
 
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({
       mines: [mineOf(ALPHA, 'alpha', [WORKER]), mineOf(BETA, 'beta', [])],
       tokensObserved: 0
@@ -4739,7 +4699,7 @@ describe('App, hidden until built (ISSUE-267)', () => {
 
   it('[ADR-034, BR-19] the nav and General render nothing for an unshipped mode, taking no space, and the Add panel renders no chip for a provider whose launch is not offered', async () => {
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      board: { mines: [MINE], tokensObserved: 0 },
       // Detected, and not offered: what main answers for Antigravity in a public build (R-03) or
       // for any provider whose driver is not built.
       // AMENDED for ISSUE-001 (was: today's `{ providers }`): A-36's 14 entries, Antigravity's launch gated.
@@ -4866,7 +4826,7 @@ describe('App shell motion and window slot (ISSUE-262)', () => {
   it('[US-SHELL-003.AC05] opening another page leaves the open mine untouched', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -4896,7 +4856,7 @@ describe('App shell motion and window slot (ISSUE-262)', () => {
     const first = defaultMine({ id: 'p1', name: 'first', dwarfs: [defaultDwarf({ id: 'd1' })] })
     const second = defaultMine({ id: 'p2', name: 'second', dwarfs: [defaultDwarf({ id: 'd2' })] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [first, second], tokensObserved: 0 })
+      board: { mines: [first, second], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', first.id)
     await flushPromises()
@@ -4917,7 +4877,7 @@ describe('App shell motion and window slot (ISSUE-262)', () => {
   it('[US-SHELL-004.AC03, NFR-TIM-12] Close mine closes any window first, then the column leaves on the fold, and only then does the window give the room back (#566 timing)', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -4944,7 +4904,7 @@ describe('App shell motion and window slot (ISSUE-262)', () => {
     const dwarf = defaultDwarf()
     const mine = defaultMine({ dwarfs: [dwarf] })
     const { wrapper } = await mountApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()

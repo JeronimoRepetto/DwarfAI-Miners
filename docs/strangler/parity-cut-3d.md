@@ -116,15 +116,23 @@ run exists.
 ## Soak record for the deletion
 
 The step's deletion work unit (ISSUE-187) merges only after this internal build met the step's exit criteria on the
-three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71).
+three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71; owner 2026-10-18: one
+soak at the end of cuts 3a–4b, recorded once in [`soak-record.md`](soak-record.md)).
 
-| Field                        | Value     |
-| ---------------------------- | --------- |
-| Exit criteria met on Windows | pending   |
-| Exit criteria met on macOS   | pending   |
-| Exit criteria met on Linux   | pending   |
-| Soak build                   | pending   |
-| Soak start                   | pending   |
-| Soak end                     | pending   |
-| Blocking problems            | pending   |
-| Retirement or deletion issue | ISSUE-187 |
+| Field                        | Value                              |
+| ---------------------------- | ---------------------------------- |
+| Soak record                  | [`soak-record.md`](soak-record.md) |
+| Retirement or deletion issue | ISSUE-187                          |
+
+## Step-3d deletion (ISSUE-187)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 3d parity run above (`HostedCommandDriver` C-01…C-05,
+C-18, C-28, C-29 and the unchanged `hostedCommand.test.ts`), `pnpm vitest run src/host/noLegacyHostedLaunch.static.test.ts`
+and the census against the merge base. Today's "Other…" launch leaves the tree: `runtime.ts` composes no
+`HostedProcessRegistry` and has no `launchHostedProcess`, no `hosted-stdin` delivery or kick tier and no hosted board
+stamp; the legacy A-39 handlers of `src/main/index.ts` and `LegacyRuntimeRoute.ts` are deleted, and so are
+`hostedProcesses.ts`, `nodeHostedProcess.ts`, `hostedBoard.ts` and today's `hostedCommand.ts` (its Host copy is
+`src/host/modules/launching/domain/hostedCommand.ts`), with their tests (`docs/test-removals.md`, ISSUE-187). The
+legacy exclusion is the one pattern `^src/(main|shared)/` and shrinks by the files it covers. From this commit 3d rolls
+forward only (`rollback.md` "Step 3d note"). The work unit merges only once the single soak record
+([`soak-record.md`](soak-record.md)) is filled.

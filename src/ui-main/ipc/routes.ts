@@ -1,49 +1,39 @@
 // The router table (ADR-001 item 3; 21 §1 items 1, 2, 2a): exactly one `ChannelRoute` per (channel, qualifier) for
 // the release `ROUTES_RELEASE`, reviewed per cut and checked by `ipc-routing.contract.test.ts`. A hot spot (22 §5):
 // after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1,
-// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e, ISSUE-235 for step 4a, ISSUE-238 for step 4b), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
+// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e, ISSUE-235 for step 4a, ISSUE-238 for step 4b, ISSUE-249 for cut 5), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
 // it is listed in `src/contracts/ipc/unrouted.ts` with that step.
-import { CATALOG_PROVIDER_IDS, STEP_ORDER, type HostMethod, type StepId } from '@dwarfai/contracts'
+import { CATALOG_PROVIDER_IDS, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, IpcChannelName, LegacyBridgeAdapter } from './channelRoute'
 
-/** The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. */
-export const ROUTES_RELEASE: StepId = 'cut-4b'
-
-/** The steps from `from` to `to`, both included, in `STEP_ORDER`. */
-function span(from: StepId, to: StepId): StepId[] {
-  return STEP_ORDER.slice(STEP_ORDER.indexOf(from), STEP_ORDER.indexOf(to) + 1)
-}
+/**
+ * The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. ISSUE-249, the
+ * cut-5 switch, moved only this marker: no row changes owner in cut 5 (21 §2 cut 5).
+ */
+export const ROUTES_RELEASE: StepId = 'cut-5'
 
 /**
  * The legacy-bridge adapters of 21 §3 and the shape adapters of 21 §3.1, with the steps they live in ("1–4" is cut 1
  * up to the end of cut 4, that is 4b). A `legacy` + `target` route names one of the shape adapters living in the
  * table's release; none lives past cut 5. Each is built by the cut that needs it (21 §3.1), in `src/legacy-bridge/**`.
+ * AMENDED for ISSUE-236, the 4a retirement (was: also `ResetFanout` and `SettingsMirrorBridge`, cuts 1–3e, and
+ * `JevSettingsShapeAdapter`, 3a–4a): their lifetime ended in 4a and they left the tree after the soak (21 §3).
+ * AMENDED for ISSUE-240, the 4b deletion (was: also `LegacyLaunchObservation`, cuts 1–4b, and the shape adapters
+ * `PerProviderShapeAdapter` and `CatalogMergeAdapter`, 3a–4b): no provider is launched by today's runtime any more, so
+ * they left the tree (21 §3, §3.1).
+ * AMENDED for ISSUE-241, the end of cut 4 (was: also `LegacyDwarfIdBridge`, `LegacyAgentRegistryFeed` and
+ * `LegacyAskRelay`, cuts 1–4b, `LegacyEndFirstAdapter`, cuts 0–4b, and the shape adapter `LegacyAnswerShapeAdapter`,
+ * 2–4b): the bridges that joined Host and legacy dwarfs end together in one work unit (21 §2 4b "Legacy deleted"; 14
+ * §5, §6.5 AMENDMENT-8).
+ * AMENDED for ISSUE-242, the first cut-5 deletion (was: also `BoardFacadeAdapter`, cuts 1–4b): a test proved it had no
+ * consumer, so it left the tree with A-12 and A-P2 (21 §2 cut 5 entry, §3).
+ * AMENDED for ISSUE-243, the deletion of today's runtime (was: also `LegacyRuntimeRoute`, cuts 0–5, the one door to
+ * today's runtime): no row of this table is `legacy` any more, so the door left the tree with the runtime it composed
+ * (21 §2 cut 5, §3); the releases that shipped it list it as they shipped it (`testing/adaptersAsShipped.ts`).
+ * AMENDED for ISSUE-247, the strangler's last door (was: `SecretMigrationBridge`, cuts 3a and 4a): the one-time secret
+ * migration left the tree with src/legacy-bridge, so no adapter is listed (21 §2 cut 5, §3; 14 §6.5 "Router").
  */
-export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
-  { name: 'LegacyRuntimeRoute', cuts: span('cut-0', 'cut-5'), shapeAdapter: false },
-  { name: 'BoardFacadeAdapter', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyDwarfIdBridge', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyLaunchObservation', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false },
-  { name: 'ResetFanout', cuts: span('cut-1', 'cut-3e'), shapeAdapter: true },
-  { name: 'LegacyAgentRegistryFeed', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'SettingsMirrorBridge', cuts: span('cut-1', 'cut-3e'), shapeAdapter: false },
-  { name: 'LegacyAskRelay', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
-  { name: 'LegacyEndFirstAdapter', cuts: span('cut-0', 'cut-4b'), shapeAdapter: false },
-  { name: 'PerProviderShapeAdapter', cuts: span('cut-3a', 'cut-4b'), shapeAdapter: true },
-  { name: 'CatalogMergeAdapter', cuts: span('cut-3a', 'cut-4b'), shapeAdapter: true },
-  { name: 'LegacyAnswerShapeAdapter', cuts: span('cut-2', 'cut-4b'), shapeAdapter: true },
-  { name: 'JevSettingsShapeAdapter', cuts: span('cut-3a', 'cut-4a'), shapeAdapter: true }
-]
-
-/** A row served by today's runtime through `LegacyRuntimeRoute` with today's shape, unmoved since before cut 0. */
-const legacyToday = (channel: IpcChannelName): ChannelRoute => ({
-  channel,
-  owner: 'legacy',
-  since: 'pre-cut-0',
-  parity: 'n/a',
-  shape: 'today'
-})
+export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = []
 
 /**
  * A KEEP row the cut-0 switch moved to the rebuilt window module (21 §2 cut 0 "New core serves" U). Its target shape is
@@ -110,25 +100,6 @@ const hostCut2 = (channel: IpcChannelName): ChannelRoute => ({
   parity: 'passed',
   shape: 'target'
 })
-
-/**
- * A-40 or A-41 in cut 2 (21 §2 cut 2 "Qualified routes"; §1 items 2, 2a; 14 §8 I-11): the Host answers its own AskIds
- * (the unqualified route), and each origin of `LegacyAskRelay`'s `legacy:` namespace stays today's runtime's, reached
- * through the shape adapter `LegacyAnswerShapeAdapter` (21 §3.1). One owner per (channel, qualifier); the qualifier
- * is the relay's, read from the answer's AskId by the root (never a guess).
- */
-const askAnswerCut2 = (channel: IpcChannelName): ChannelRoute[] => [
-  hostCut2(channel),
-  ...(['legacy-launch', 'legacy-ask-channel'] as const).map((origin): ChannelRoute => ({
-    channel,
-    owner: 'legacy',
-    since: 'cut-2',
-    parity: 'n/a',
-    qualifier: { origin },
-    shape: 'target',
-    shapeAdapter: 'LegacyAnswerShapeAdapter'
-  }))
-]
 
 /**
  * The catalog ids (ISSUE-009; R12: never a hand-typed provider literal here). Step 3a moves Claude's launcher to the
@@ -354,8 +325,20 @@ const perProviderCut4b = (channel: IpcChannelName): ChannelRoute[] => [
  * launch are deleted after the soak (ISSUE-239…ISSUE-241). "Let Jev choose" reaches the Host, whose candidates are every
  * launchable provider: the narrowing of 3a…4a ends. No seam B member and no NEW row is born in 4b.
  *
- * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape; the rows
- * still `legacy` that carry a dwarf id reach today's runtime through `LegacyDwarfIdBridge` (21 §3). A-N33 stays
+ * End of cut 4 (21 §2 4b "Legacy deleted"; ISSUE-241): `LegacyDwarfIdBridge`, `LegacyEndFirstAdapter`,
+ * `LegacyAgentRegistryFeed`, `LegacyAskRelay` and `LegacyAnswerShapeAdapter` end together, so A-40 and A-41 keep only
+ * their unqualified `host` route (a person-launched Codex question opens no card, ADR-011 item 4) and A-N26, A-32 and
+ * A-N29 reach the Host alone (a session the old app launched has no identity to end, 15 §5 `no-identity`).
+ *
+ * First cut-5 deletion (21 §2 cut 5 entry; ISSUE-242): A-12 and A-P2 leave with `BoardFacadeAdapter`, retired at the
+ * end of its 4b lifetime (`RETIRED`, `MEMBER_REMOVED`); the renderer reads the board through A-N01/A-N02 alone.
+ *
+ * Deletion of today's runtime (21 §2 cut 5; ISSUE-243, foreman decision D2): the two legacy rows of 14 §8 I-21,
+ * `dwarf:setName` and `dwarf:resetName` (RETIRE, successors A-N08 and A-N09), leave with `LegacyRuntimeRoute` and today's
+ * runtime, retired at the end of 4b (`RETIRED`, `MEMBER_REMOVED`), since the board is the Host's alone (ISSUE-242). No
+ * row of the table is `legacy`.
+ *
+ * A-N33 stays
  * unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router
  * registers no listener for a push or for the A-X1 preload helper.
  */
@@ -371,7 +354,6 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('panel:layout:set'), // A-09
   uiLocalKept('shortcut:get'), // A-10
   uiLocalKept('shortcut:set'), // A-11
-  hostCut1('mines:get'), // A-12, through BoardFacadeAdapter
   ...perProviderCut4b('dwarf:activate'), // A-13, every provider's through splits/activateDwarf.ts
   hostCut1('dwarf:feed:page'), // A-15
   hostCut1('mine:history'), // A-19
@@ -385,7 +367,7 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('app:features'), // A-29
   hostCut1('mine:declare'), // A-30
   hostCut1('mine:declare-main'), // A-31
-  hostCut1('mine:undeclare'), // A-32, through LegacyEndFirstAdapter
+  hostCut1('mine:undeclare'), // A-32
   hostCut4a('metrics:reset'), // A-33, the Host saga alone (`ResetFanout` ended)
   hostCut1('projects:query'), // A-34
   ...perProviderCut3d('agent:launch'), // A-35 and its Retry path (Antigravity's: `DEVELOPMENT_BUILD_ROUTES`)
@@ -397,8 +379,8 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut4b('agent:providers', OPENCODE), // A-36, OpenCode's entry
   hostCut4b('agent:providers'), // A-36, the renderer's one catalog call: the Host's entries whole
   hostCut3d('agent:launchHosted'), // A-39, every "Other…" launch and its Retry
-  ...askAnswerCut2('agent:answerQuestion'), // A-40
-  ...askAnswerCut2('agent:answerPermission'), // A-41
+  hostCut2('agent:answerQuestion'), // A-40, Host AskIds only since ISSUE-241
+  hostCut2('agent:answerPermission'), // A-41, Host AskIds only since ISSUE-241
   hostCut4a('notifications:enabled:get'), // A-42
   hostCut4a('notifications:enabled:set'), // A-43
   uiLocalCut1Kept('presence:visibleMines'), // A-44
@@ -416,18 +398,15 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('launch-view:get'), // A-56
   uiLocalKept('launch-view:set'), // A-57
   uiLocalKept('panel:visible:changed'), // A-P1
-  hostCut1('mines:update'), // A-P2, through BoardFacadeAdapter
   uiLocalKept('typography:preferences:changed'), // A-P6
   uiLocalKept('pathForDroppedFile'), // A-X1
-  legacyToday('dwarf:setName'), // 14 §8 I-21 (no §2 id)
-  legacyToday('dwarf:resetName'), // 14 §8 I-21 (no §2 id)
   uiLocalNew('host:connection:get'), // A-N03
   uiLocalNew('host:connection:changed'), // A-N04
   uiLocalNew('host:connection:retry'), // A-N05
   uiLocalNew('diag:renderer:report'), // A-N30
   uiLocalNew('tray:stopEverything:requested'), // A-N25
   {
-    channel: 'tray:stopEverything:confirm', // A-N26, through LegacyEndFirstAdapter (21 §3)
+    channel: 'tray:stopEverything:confirm', // A-N26
     owner: 'host',
     since: 'cut-0',
     parity: 'passed',
@@ -449,7 +428,7 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut2('welcome:answer'), // A-N32 (AMENDMENT-7)
   hostCut2('dwarf:rename'), // A-N08 (ISSUE-172 lead decision)
   hostCut2('dwarf:name:reset'), // A-N09 (ISSUE-172 lead decision)
-  hostCut3a('dwarf:stop'), // A-N29, through LegacyEndFirstAdapter for a legacy-launched session
+  hostCut3a('dwarf:stop'), // A-N29
   hostCut3a('dwarf:message:retry'), // A-N06
   hostCut3a('host:recovery:retry'), // A-N10
   hostCut3a('host:recovery:dismiss') // A-N11
@@ -475,16 +454,14 @@ export function routesForBuild(build: { publicBuild: boolean }): readonly Channe
 
 /**
  * The seam B members each `host` route relays (14 §6.3), for the router test's rule that a `host` route uses only
- * members born by its release (21 §2 "Seam B members: the cut in which each is born"). A-12 and A-P2 are the facade's
- * reading of the Host board (the snapshot, then the frames); A-32's `LegacyEndFirstAdapter` reads the Host board too
- * and relays only `mines.remove`.
+ * members born by its release (21 §2 "Seam B members: the cut in which each is born"). AMENDED for ISSUE-242 (was:
+ * also A-12 and A-P2, the facade's reading of the Host board, and A-32 through `LegacyEndFirstAdapter`): the rows a
+ * cut-5 deletion removed keep their members in the tables of the releases that shipped them (`testing/cut4aRoutes.ts`).
  */
 export const HOST_ROUTE_MEMBERS: Partial<Record<IpcChannelName, readonly HostMethod[]>> = {
   'tray:stopEverything:confirm': ['host.shutdown'], // A-N26 → B-M05 `host.shutdown {mode:'stop-all'}`
   'host:snapshot': ['session.snapshot'], // A-N01 → B-M04
   'host:event': ['events.subscribe'], // A-N02 → B-M03's frames
-  'mines:get': ['session.snapshot', 'events.subscribe'], // A-12 through BoardFacadeAdapter
-  'mines:update': ['session.snapshot', 'events.subscribe'], // A-P2 through BoardFacadeAdapter
   'dwarf:feed:page': ['conversation.feed'], // A-15 → B-M26
   'mine:history': ['conversation.mineHistory'], // A-19 → B-M27
   'mine:openPath': ['mines.resolveFile'], // A-20 → B-M20
@@ -550,7 +527,6 @@ export const SEAM_B_METHODS_BORN: Readonly<Partial<Record<HostMethod, StepId>>> 
   'mines.resolveFile': 'cut-1',
   'conversation.feed': 'cut-1',
   'conversation.mineHistory': 'cut-1',
-  'strangler.dwarfIdentities': 'cut-1',
   'asking.answerQuestion': 'cut-2',
   'asking.answerPermission': 'cut-2',
   'asking.setStep': 'cut-2',

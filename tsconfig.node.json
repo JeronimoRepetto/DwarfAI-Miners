@@ -22,9 +22,7 @@
     }
   },
   "include": [
-    "src/main/**/*.ts",
     "src/preload/**/*.ts",
-    "src/shared/**/*.ts",
     "src/contracts/**/*.ts",
     "src/host/**/*.ts",
     "src/ui-main/**/*.ts",
@@ -33,7 +31,6 @@
     "e2e/**/*.ts",
     "playwright.config.ts",
     "electron.vite.config.ts",
-    "electron.vite.jevMcpServer.config.ts",
     "electron.vite.host.config.ts",
     "electron.vite.relay.config.ts",
     "vitest.config.ts",

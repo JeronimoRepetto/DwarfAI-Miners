@@ -9,17 +9,14 @@
 // It prints every package that passes by the legacy allowance (`allowed: <name>@<version> ...`), one line per
 // finding, and exits 1 on any finding or allowance error. It reads files only. The packaged check P-03
 // (packaged/p03-no-provider-binaries.packaged.mjs) runs the same list over every packed app, and both read the one
-// legacy allowance, provider-scan.allowance.json, through checkAllowance below.
-import { existsSync } from 'node:fs'
+// legacy allowance, provider-scan.allowance.json, through checkAllowance below. Since ISSUE-184 deleted the legacy
+// Agent SDK path (step 3a) the allowance is closed: it is empty, and any entry fails.
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 export const REPO_ROOT = path.resolve(here, '..', '..')
-
-/** The legacy Agent SDK path (`21` §2 step 3a; ISSUE-184 deletes it): the allowance holds only while it exists. */
-export const LEGACY_SDK_PATH = 'src/main/sessionLaunch/sdkHeldSession.ts'
 
 /** The only pattern the allowance may ever hold; it can only shrink from here, to empty (review R7B-10). */
 const ALLOWABLE_PATTERNS = new Set(['@anthropic-ai/claude-agent-sdk*'])
@@ -55,10 +52,12 @@ export function forbiddenExecutable(fileName, list) {
 }
 
 /**
- * Checks the legacy allowance against the tree at `rootDir`. It returns its errors and the entries that apply: none
- * when there is an error, and none once the legacy path is gone (a non-empty allowance is then an error itself).
+ * Checks the legacy allowance. It returns its errors and the entries that apply, which are none: the allowance held
+ * only while the legacy Agent SDK path existed, and ISSUE-184 deleted it (step 3a; 21 §2 row 3a), so a non-empty
+ * allowance is an error itself. AMENDED for ISSUE-184 (was: an entry applied while `LEGACY_SDK_PATH`,
+ * `src/main/sessionLaunch/sdkHeldSession.ts`, existed under `rootDir`); the second argument is kept for the callers.
  */
-export function checkAllowance(allowance, { rootDir }) {
+export function checkAllowance(allowance, _tree = {}) {
   const errors = []
   const seen = new Set()
   for (const entry of allowance.entries ?? []) {
@@ -74,19 +73,14 @@ export function checkAllowance(allowance, { rootDir }) {
     }
     seen.add(pattern)
   }
-  const entries = allowance.entries ?? []
-  if (
-    errors.length === 0 &&
-    entries.length > 0 &&
-    !existsSync(path.join(rootDir, ...LEGACY_SDK_PATH.split('/')))
-  ) {
-    for (const entry of entries) {
+  if (errors.length === 0) {
+    for (const entry of allowance.entries ?? []) {
       errors.push(
-        `the legacy allowance is not empty but ${LEGACY_SDK_PATH} is gone: remove ${entry.pattern} (removedBy ${entry.removedBy})`
+        `the legacy allowance is closed: ISSUE-184 deleted the Agent SDK path (step 3a), remove ${entry.pattern} (removedBy ${entry.removedBy})`
       )
     }
   }
-  return { errors, entries: errors.length === 0 ? entries : [] }
+  return { errors, entries: [] }
 }
 
 /** The allowance entry a package name passes by, or null. */

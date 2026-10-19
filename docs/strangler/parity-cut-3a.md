@@ -105,6 +105,11 @@ complete in time (`07` machine 5B S5.19).
 | The Jev key status                          | A-47, and every Jev row that answers the state in force (A-51 on a refused payload), read today's key file through `safeStorage` | A-47 answers the Host's `SecretStatus('jev-key')` through `JevSettingsShapeAdapter`, so a refused A-51 (answered with A-47, `LEGACY_REFUSALS`) does too: with no usable OS secret store for the Host (`secretBackend: 'unavailable'`) it reads `encryption-unavailable` even where Electron's `safeStorage` could encrypt (seen on the macOS CI runner). The seam-A replay leaves such a row out by reading `ROUTES` | ADR-017 items 1, 5; `21` §3.1                                                     |
 | The Host's `toast` frame (B-F28)            | —                                                                                                                                | named, not routed: `14` §2 gives the frame (`HostToast`, for example `dwarf-stop-failed`, `session-crashed`) no seam-A member of its own, and this step adds no row for it (a channel `14` does not list is an amendment, never a silent addition)                                                                                                                                                                   | `14` §2; `21` §2 pre-cut 0 P-3                                                    |
 
+Recorded later (ISSUE-249, 2026-10-19): from this step the chat shows transcript text without display redaction;
+`redactSecrets` covers log lines and activity summaries only, as the package requires. The row is in
+[`parity-cut-5.md`](parity-cut-5.md) "Intended differences" (the owner may ask to restore it; the package does not
+require it).
+
 ## Foreman decision: the credential file names the MCP endpoint (2026-10-18)
 
 Owner-approved in place of the rejected AMENDMENT-24; ADR-013 (not frozen) is the only document whose reading changes,
@@ -217,15 +222,33 @@ run exists.
 The step's deletion work unit (ISSUE-184: the Agent SDK path, `sdkHeldSession.ts`, the `@anthropic-ai/claude-agent-sdk*`
 dependencies, the legacy Claude launch and ask channel, the A-26 handler, the legacy Jev key file) merges only after
 this internal build met the step's exit criteria on the three OSes and then ran for 7 days of normal use with no
-blocking problem (the soak, OQ-71).
+blocking problem (the soak, OQ-71; owner 2026-10-18: one soak at the end of cuts 3a–4b, recorded once in
+[`soak-record.md`](soak-record.md)).
 
-| Field                        | Value     |
-| ---------------------------- | --------- |
-| Exit criteria met on Windows |           |
-| Exit criteria met on macOS   |           |
-| Exit criteria met on Linux   |           |
-| Soak build                   |           |
-| Soak start                   |           |
-| Soak end                     |           |
-| Blocking problems            |           |
-| Retirement or deletion issue | ISSUE-184 |
+| Field                        | Value                              |
+| ---------------------------- | ---------------------------------- |
+| Soak record                  | [`soak-record.md`](soak-record.md) |
+| Retirement or deletion issue | ISSUE-184                          |
+
+## Step-3a deletion (ISSUE-184)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 3a parity run above (`ClaudeStreamJsonDriver` and
+`ClaudeAcpDriver` conformance, the 3a flows), `pnpm vitest run src/host/noAgentSdk.static.test.ts`, `pnpm depcruise`,
+`pnpm test:canaries` and the census against the merge base. `sdkHeldSession.ts` is not a candidate (OQ-52). Milestone
+M4a (`20` R-20): no Agent SDK in the tree. Deleted: `sdkHeldSession.ts` (the Agent SDK held session, its `canUseTool`
+ask relay and its model catalogue query), `claudeTurnOutcome.ts`, `delegationHeldServer.ts` (the SDK's in-process
+delegation server), the detached `claude -p` launch of `launchRunner.ts` with its `--mcp-config` temp file and Claude's
+builders in `delegationInjection.ts`, and the legacy A-38 `launchHeldSession` handlers of `src/main/index.ts` and
+`LegacyRuntimeRoute.ts` and A-26's `kickDwarf` handler of `LegacyRuntimeRoute.ts`; today's runtime composes no held
+engine, so its registry refuses every held launch, and `LAUNCHABLE_PROVIDERS` no longer names Claude. The packages
+leave `package.json` and the lockfile with `scripts/pruneSdkRuntimes.mjs` (and its `afterPack` call) and
+`scripts/sdkRuntimeVersions.test.mjs`; the provider-scan allowance is closed (empty); R11 also matches the bare module
+name, so `lint-canaries/R11-no-claude-agent-sdk` and a planted import in the real tree still fail lint. Kept on
+purpose: the `supportedArchitectures` block of `pnpm-workspace.yaml`, which the bundled `@napi-rs/keyring` bindings
+still need for the cross-arch macOS build (a difference from foreman decision D6, recorded here); `src/main/index.ts`'s
+A-26 registration, unrouted since 3a, which the registry re-inventory still lists as a found RETIRE row until
+`index.ts` goes whole (ISSUE-243); the A-40/A-41 `legacy-launch` answer route, which ISSUE-241 retires. TC-184-04: a
+Claude session today's code launched before 3a is ended through `LegacyEndFirstAdapter` (A-N29's one `host` route)
+and observed by the Host; a held one died with its window. From this commit 3a rolls forward only (`rollback.md`
+"Step-3a deletion"). The work unit merges only once the single soak record ([`soak-record.md`](soak-record.md)) is
+filled.

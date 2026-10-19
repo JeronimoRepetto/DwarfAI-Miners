@@ -6,25 +6,19 @@ import type { EnsureHostResult } from './hostLauncher/launcher'
 import { createHostClient, type HostClientService } from './host-client/HostClient'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from './host-client/testing/FakeHost'
 import { FakeHostClientTimers } from './host-client/testing/FakeHostClientTimers'
-import {
-  startUiMain as startUiMainOn,
-  type CreatedWindow,
-  type UiMainDeps,
-  type UiMainLifecycle
-} from './index'
+import { startUiMain as startUiMainOn, type CreatedWindow, type UiMainLifecycle } from './index'
 import type { IpcMainRegistrar } from './ipc/router'
 import type { HostBoardState } from './window/application/reopen'
-import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
 import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceLock'
 import { InMemoryUiPreferenceStore } from './window/ports/fakes/InMemoryUiPreferenceStore'
 import type { UiPreferenceStoreKey } from './window/ports/uiPreferenceStore'
-import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
+import { fakeRebuiltPanel } from './window/testing/fakeRebuiltPanel'
 
-// AMENDED for ISSUE-056 (was: `startUiMain` on the release's own table, which was the pre-cut table): these cases pin
-// the root with the window family served `legacy`, today's Panel window included, as before the cut-0 switch and in a
-// rollback build (21 §2.1); the cut-0 composition is pinned by index.cut0.test.ts.
-const startUiMain = (deps: Parameters<typeof startUiMainOn>[0]) =>
-  startUiMainOn({ routes: PRE_CUT_0_ROUTES, ...deps })
+// AMENDED for ISSUE-056 (was: `startUiMain` on the release's own table, which was the pre-cut table): these cases pinned
+// the root with the window family served `legacy`, today's Panel window included. AMENDED for ISSUE-243 (was: that
+// pre-cut table, the first paint being today's runtime composing its Panel window): today's runtime left the tree (21
+// §2 cut 5), so the release's own table runs with the rebuilt Panel, whose window is the first paint.
+const startUiMain = (deps: Parameters<typeof startUiMainOn>[0]) => startUiMainOn(deps)
 
 // L2 (17 §1; US-RES-003.AC07, UI-main half; UC-024 "remembered layout and rehydrated sessions arrive together";
 // 14 §4.2): the composition root starts the Host attach beside the launch-view read, never holds the window back
@@ -88,7 +82,6 @@ describe('UI main start: launch view and Host attach together (US-RES-003.AC07)'
     }
     const store = new OrderedStore()
     store.storage.stored.launchView = { area: 'mines', mineId: 'm1' }
-    const panel = new FakePanelWindowController({ visible: false })
     const lifecycle: UiMainLifecycle = {
       quit: () => {},
       exit: () => {},
@@ -98,25 +91,14 @@ describe('UI main start: launch view and Host attach together (US-RES-003.AC07)'
       onWindowAllClosed: () => {},
       onWindowCreated: (_h: (w: CreatedWindow) => void) => {}
     }
-    const legacyRuntime: UiMainDeps['legacyRuntime'] = {
-      compose: async () => {
-        order.push('first paint')
-        return panel
-      },
-      serve: async () => undefined,
-      beforeQuit: () => {},
-      willQuit: () => {},
-      // AMENDED for ISSUE-056 (was: absent): the root reaches today's launched register for the A-N26 relay.
-      liveLaunches: async () => [],
-      endLaunch: async () => 'already-ended'
-    }
     const ipc: IpcMainRegistrar = { handle: () => {}, on: () => {} }
 
     const started = await startUiMain({
       lock: new FakeSingleInstanceLock(true),
       lifecycle,
-      legacyRuntime,
       ipc,
+      // The first paint: the rebuilt Panel's window, built hidden with its page loading once the app is ready.
+      panelWindow: fakeRebuiltPanel(undefined, () => order.push('first paint')),
       appEntry: 'file:///opt/DwarfAI/out/renderer/index.html',
       uiPreferences: { store, windows: () => [] },
       host: { client }

@@ -22,6 +22,7 @@ import { DEFAULT_OPENCODE_SETTINGS_VIEW, useOpenCodeSettings } from './useOpenCo
 import { useProjectBrowse } from './useProjectBrowse'
 import { useResetMetrics } from './useResetMetrics'
 import { useToasts } from './useToasts'
+import { publishBoard } from '../testing/board'
 
 /** `window.api`'s own type, as the preload declares it on `Window` (R8: never imported from the preload). */
 type DwarfAiMinersApi = Window['api']
@@ -293,7 +294,7 @@ describe('useHostConnection', () => {
             ]
           })
         ),
-        listAgentModels: vi.fn(() => Promise.resolve({ catalogs: [] })),
+        // AMENDED for ISSUE-249: A-37 `listAgentModels` left the facade at cut 5 (`MEMBER_REMOVED`).
         getJevSettings: vi.fn(() => Promise.resolve(DEFAULT_JEV_SETTINGS)),
         getNotificationsEnabled: vi.fn(() => Promise.resolve(true)),
         // AMENDED for ISSUE-234 (was: today's `OpenCodeSettings`): A-52 answers the Host's view from the 4a switch.
@@ -319,7 +320,7 @@ describe('useHostConnection', () => {
     const mines = useMines()
     mines.clear()
     const crew = [defaultDwarf({ id: 'a' }), defaultDwarf({ id: 'b' })]
-    mines.setMines({ mines: [defaultMine({ dwarfs: crew })], tokensObserved: 0 })
+    publishBoard({ mines: [defaultMine({ dwarfs: crew })], tokensObserved: 0 })
     const before = mines.state.mines
 
     push(reconnecting)

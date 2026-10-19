@@ -508,6 +508,38 @@ describe('stop dwarf (F9)', () => {
     expect(h.crew.queries.get(dwarfId)?.departed).toBe(false)
   })
 
+  // ADDED for ISSUE-241 (TC-241-03; 21 §2 4b "Legacy deleted"; ADR-014 item 2; 15 §5 `no-identity`): with
+  // `LegacyEndFirstAdapter` deleted, no legacy kill runs before `crew.stop`. A session the old app launched and that is
+  // still running is an observed session of the Host, with no ProcessIdentity it may end, so the terminator answers
+  // `failed: 'no-identity'` with nothing signalled (the real bridge's observed path, bridges/sessionTerminator.test.ts),
+  // and Stop dwarf answers could-not-end with the dwarf left present. Characterization: the Host never depended on the
+  // adapter, so there is no RED.
+  it('[ADR-014] Stop dwarf on a still-running session the old app launched reports could-not-end with the no-identity cause', async () => {
+    const h = host()
+    const dwarfId = h.crew.commands.arrive({
+      mineId: MINE,
+      identity: {
+        providerId: CATALOG_PROVIDER_IDS[3] as ProviderId,
+        providerSessionId: 'ses-old-app'
+      },
+      rank: 'foreman',
+      status: 'working'
+    })
+    h.terminator.script(dwarfId, { kind: 'failed', reason: 'no-identity' })
+
+    const answer = await h.stop.stop(dwarfId, REQUEST)
+
+    expect(answer).toEqual({ ok: false, error: 'could-not-end' })
+    expect(h.terminator.calls.map((call) => [call.dwarfId, call.why])).toEqual([
+      [dwarfId, 'stop-dwarf']
+    ])
+    expect(h.crew.queries.get(dwarfId)).toMatchObject({ departed: false, stopInFlight: false })
+    expect(framesNamed(h.ui, 'dwarf.departed')).toEqual([])
+    expect(h.bus.ofType('DwarfStopFailed').map((event) => event.payload)).toEqual([
+      { dwarfId, requestId: REQUEST, why: 'stop-dwarf', reason: 'could-not-end' }
+    ])
+  })
+
   it('[US-MSG-008.AC05, BR-11, INV-26] a dwarf whose process has not closed never departs with time alone', async () => {
     const h = host()
     const { dwarfId, session } = await launchedDwarf(h)

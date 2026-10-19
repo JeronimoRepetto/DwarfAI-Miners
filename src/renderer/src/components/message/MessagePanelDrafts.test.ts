@@ -19,8 +19,9 @@ import { useMessageDock } from '../../composables/useMessageDock'
 import { useMines } from '../../composables/useMines'
 import { useToasts } from '../../composables/useToasts'
 import type { MessageEcho } from '../../lib/message/echo'
-import { defaultDwarf, defaultMine } from '../../testing/factories'
+import { defaultDwarf } from '../../testing/factories'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
+import { publishBoard } from '../../testing/board'
 
 /*
  * ISSUE-257 (EPIC-16): drafts per dwarf for the app run (US-MSG-009; NFR-PERS-06; decision log,
@@ -140,22 +141,19 @@ async function openDock(
         listeners.delete(follow)
       }
     }) as unknown as Api['onHostEvent'],
-    getDwarfFeed: vi.fn(() =>
-      Promise.resolve({ readable: true, messages: [] })
-    ) as unknown as Api['getDwarfFeed'],
+    // AMENDED for ISSUE-249: A-14 `getDwarfFeed` left the facade at cut 5 (`MEMBER_REMOVED`), so the fake no longer has it.
     ...overrides
   })
   Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   await useMines().start()
-  // Today's delivery route of each dwarf, which A-P2 still carries onto the Host board until the
-  // Host send lands (useMines `legacyAsks`): without one the composer is rightly asleep.
-  useMines().setMines({
-    mines: [
-      defaultMine({
-        dwarfs: [BORIN, DORI].map((id) => defaultDwarf({ id, textDelivery: 'terminal' }))
-      })
-    ],
-    tokensObserved: 0
+  // The Host board with a delivery route (`textDelivery`) on each dwarf, written as one publish of the board
+  // (testing/board.ts; AMENDED for ISSUE-242, was: A-P2 folding it on through useMines `legacyAsks`, deleted at cut 5):
+  // without one the composer is rightly asleep.
+  publishBoard({
+    mines: useMines().state.mines.map((mine) => ({
+      ...mine,
+      dwarfs: mine.dwarfs.map((dwarf) => ({ ...dwarf, textDelivery: 'terminal' as const }))
+    }))
   })
   let dock: Dock | null = null
   const history = ref(false)

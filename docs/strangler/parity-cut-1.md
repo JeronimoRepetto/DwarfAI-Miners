@@ -171,3 +171,12 @@ criteria on the three OSes and then ran for 7 days of normal use with no blockin
   them again" no longer holds for any part. The A-42/A-43 preference store stays (both rows still route `legacy`), and
   the `notifications/*` files stay until cut 5. Pinned by `ipc-routing.contract.test.ts`
   `describe('cut-1 notifier retirement (21 §2 cut 1)')` and `src/legacy-bridge/retiredNotifier.test.ts`.
+- **2026-10-18, ISSUE-242 (first cut-5 deletion).** `BoardFacadeAdapter` (21 §3, cuts 1–4b) and its two RETIRE rows,
+  A-12 `getMines` and A-P2 `onMinesUpdated`, leave the tree. Candidate decision (`21` §6): candidate **replaced**,
+  evidence: `src/ui-main/boardFacadeConsumers.test.ts` (no file under `src` imports the adapter; no renderer file calls
+  either member) and `ipc-routing.contract.test.ts` `describe('release 5 (21 §2 cut 5)')` (no route, no handler, no
+  preload member, the adapter absent from the listing). Before the deletion the renderer stopped reading A-12/A-P2
+  (foreman decision D9): `App.vue` hears the Host board read model (`useMines`, A-N01/A-N02) alone, and `useMines`'s
+  `setMines` and its `legacyAsks` overlay, fed by nothing since `LegacyAskRelay` left (ISSUE-241), are deleted. Today's
+  A-12 handler (`LegacyRuntimeRoute.ts`, `src/main/index.ts`) and A-P2 push (`src/main/index.ts`) go with them. Soak:
+  the single soak record (`soak-record.md`). No rollback past this point (`rollback.md`).

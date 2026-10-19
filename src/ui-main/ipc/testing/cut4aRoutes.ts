@@ -5,6 +5,15 @@
 // reaches) removed, the unqualified `legacy` routes of the shape adapters back beside Claude's (A-13, A-23, A-35 through
 // `PerProviderShapeAdapter`, A-36 through `CatalogMergeAdapter`), and OpenCode's A-27, A-P3, A-P4 back where 4a routed
 // them, `legacy` with today's shape. Test-only (R14): production never imports it.
+// AMENDED for ISSUE-241, the end of cut 4: the release table no longer has A-40/A-41's `legacy` routes through
+// `LegacyAnswerShapeAdapter`, one per origin of the relay's `legacy:` AskIds, which cut 2 created and 4a still shipped,
+// so they are back after each row's `host` route too (`LEGACY_ANSWER_ROUTES`).
+// AMENDED for ISSUE-242, the first cut-5 deletion: the release table no longer has A-12 and A-P2, which every release
+// from cut 1 to 4b routed `host` through `BoardFacadeAdapter`, so they are back where 4a routed them
+// (`REMOVED_BY_BOARD_FACADE_DELETION`), with their seam B members (`HOST_ROUTE_MEMBERS_AS_SHIPPED`).
+// AMENDED for ISSUE-243, the deletion of today's runtime: the release table no longer has 14 §8 I-21's `dwarf:setName`
+// and `dwarf:resetName`, which every release up to 4b served `legacy` with today's shape, so they are back where 4a
+// routed them (`REMOVED_BY_RUNTIME_DELETION`).
 import {
   CATALOG_PROVIDER_IDS,
   RETIRED,
@@ -13,7 +22,9 @@ import {
   type StepId
 } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { LEGACY_BRIDGE_ADAPTERS, routesForBuild } from '../routes'
+import type { HostMethod } from '@dwarfai/contracts'
+import { HOST_ROUTE_MEMBERS, routesForBuild } from '../routes'
+import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 
 const [CLAUDE = '', , , OPENCODE = ''] = CATALOG_PROVIDER_IDS
 
@@ -45,6 +56,82 @@ const openCodeNotMoved = (channel: ChannelKey): ChannelRoute => ({
   shape: 'today'
 })
 
+/** A-40 or A-41's `legacy` route for one origin, as cut 2 created it and 4a still shipped it (21 §3.1). */
+const legacyAnswer = (
+  channel: ChannelKey,
+  origin: 'legacy-launch' | 'legacy-ask-channel'
+): ChannelRoute => ({
+  channel,
+  owner: 'legacy',
+  since: 'cut-2',
+  parity: 'n/a',
+  qualifier: { origin },
+  shape: 'target',
+  shapeAdapter: 'LegacyAnswerShapeAdapter'
+})
+
+/** The routes the ISSUE-241 deletion removed: each answer row's two origins, after the row's `host` route. */
+const LEGACY_ANSWER_ROUTES = (['agent:answerQuestion', 'agent:answerPermission'] as const).flatMap(
+  (channel) =>
+    (['legacy-launch', 'legacy-ask-channel'] as const).map((origin) => ({
+      after: (route: ChannelRoute) =>
+        route.channel === channel && route.owner === 'host' && route.qualifier === undefined,
+      route: legacyAnswer(channel, origin)
+    }))
+)
+
+/** A-12 or A-P2 as the cut-1 switch routed it and 4a still shipped it, through `BoardFacadeAdapter` (21 §3). */
+const throughBoardFacade = (channel: ChannelKey): ChannelRoute => ({
+  channel,
+  owner: 'host',
+  since: 'cut-1',
+  parity: 'passed',
+  shape: 'target'
+})
+
+/** The routes the ISSUE-242 deletion removed: A-12 after A-11, A-P2 after A-P1. */
+const REMOVED_BY_BOARD_FACADE_DELETION = [
+  {
+    after: (route: ChannelRoute) => route.channel === 'shortcut:set',
+    route: throughBoardFacade('mines:get') // A-12
+  },
+  {
+    after: (route: ChannelRoute) => route.channel === 'panel:visible:changed',
+    route: throughBoardFacade('mines:update') // A-P2
+  }
+]
+
+/** 14 §8 I-21's legacy rename or reset as every release up to 4b served it: today's runtime, today's shape. */
+const servedToday = (channel: ChannelKey): ChannelRoute => ({
+  channel,
+  owner: 'legacy',
+  since: 'pre-cut-0',
+  parity: 'n/a',
+  shape: 'today'
+})
+
+/** The routes the ISSUE-243 deletion removed: `dwarf:setName` after A-X1, `dwarf:resetName` after it. */
+const REMOVED_BY_RUNTIME_DELETION = [
+  {
+    after: (route: ChannelRoute) => route.channel === 'pathForDroppedFile',
+    route: servedToday('dwarf:setName')
+  },
+  {
+    after: (route: ChannelRoute) => route.channel === 'dwarf:setName',
+    route: servedToday('dwarf:resetName')
+  }
+]
+
+/**
+ * The seam B members of every `host` route the releases up to 4b shipped: the release's, and A-12 and A-P2's, the
+ * facade's reading of the Host board (the snapshot, then the frames).
+ */
+export const HOST_ROUTE_MEMBERS_AS_SHIPPED: Partial<Record<ChannelKey, readonly HostMethod[]>> = {
+  ...HOST_ROUTE_MEMBERS,
+  'mines:get': ['session.snapshot', 'events.subscribe'],
+  'mines:update': ['session.snapshot', 'events.subscribe']
+}
+
 /**
  * Each route the step-4b switch removed, placed after the route it followed in 4a: the shape adapters' route after
  * Claude's (the first `host` route of its channel since 3a), A-27 after A-25, A-P3 and A-P4 after A-P2.
@@ -74,7 +161,10 @@ const REMOVED_BY_4B: ReadonlyArray<{
   {
     after: (route: ChannelRoute) => route.channel === 'agent:launchFailed',
     route: openCodeNotMoved('dwarf:sendText:settled') // A-P4
-  }
+  },
+  ...LEGACY_ANSWER_ROUTES,
+  ...REMOVED_BY_BOARD_FACADE_DELETION,
+  ...REMOVED_BY_RUNTIME_DELETION
 ]
 
 const sameRoute = (a: ChannelRoute, b: ChannelRoute): boolean =>
@@ -109,5 +199,5 @@ export const CUT_4A_TABLE: RouteTable = {
   routes: CUT_4A_ROUTES,
   unrouted: UNROUTED,
   retired: CUT_4A_RETIRED,
-  adapters: LEGACY_BRIDGE_ADAPTERS
+  adapters: ADAPTERS_AS_SHIPPED
 }

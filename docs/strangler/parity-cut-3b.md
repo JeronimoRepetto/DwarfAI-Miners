@@ -27,7 +27,8 @@ delegation entry) and ISSUE-001 (the 3a switch).
   `src/host/modules/suppliers/adapters/drivers/acp-codex/CodexAcpDriver.conformance.test.ts` (ISSUE-153). This switch
   adds one case to the first: on Windows an npm `codex` that resolves to its script entry is probed and launched by the
   person's `node` (ADR-029 row 8), as 3a did for Claude.
-- **Launch parity per Codex launch failure** (TC-002-03): `src/legacy-bridge/parity/launchCauseParity.cut-3b.test.ts`
+- **Launch parity per Codex launch failure** (TC-002-03; the test left with its legacy side in the ISSUE-185
+  deletion, see "Step-3b deletion" below): `src/legacy-bridge/parity/launchCauseParity.cut-3b.test.ts`
   "[ADR-020] each recorded Codex launch failure maps from its legacy reason to the ADR-020 cause listed in
   parity-cut-3b.md". Today's side is today's detached `codex exec` launch (`launchClaudeSession` over
   `runLaunchProcess` and its early-failure window) over a spawn double; the Host's side is the launching module's
@@ -57,8 +58,9 @@ delegation entry) and ISSUE-001 (the 3a switch).
 
 ## Launch-cause mapping
 
-Copied from `src/legacy-bridge/parity/launchCauseParity.cut-3b.test.ts`, which fails on any pair this table does not
-list. A row whose two sides differ is an intended difference.
+Copied from `src/legacy-bridge/parity/launchCauseParity.cut-3b.test.ts`, which failed on any pair this table did not
+list until the ISSUE-185 deletion removed it with today's Codex launch. A row whose two sides differ is an intended
+difference.
 
 | Failure                                      | Legacy reason     | Host cause (ADR-020 D1) | Decided by               |
 | -------------------------------------------- | ----------------- | ----------------------- | ------------------------ |
@@ -161,17 +163,31 @@ run exists.
 ## Soak record for the deletion
 
 The step's deletion work unit (ISSUE-185: the legacy Codex detached launch, `codexResume.ts` and the queue relaunch
-path, the `-c mcp_servers.jev.env={…token…}` builder, and with it the legacy test that pins the token in argv)
-merges only after this internal build met the step's exit criteria on the three OSes and then ran for 7 days of normal
-use with no blocking problem (the soak, OQ-71).
+path, the `-c` delegation builder whose `env` table carried the token, and with it the legacy test that pins the token
+in argv) merges only after this internal build met the step's exit criteria on the three OSes and then ran for 7 days of
+normal use with no blocking problem (the soak, OQ-71; owner 2026-10-18: one soak at the end of cuts 3a–4b, recorded
+once in [`soak-record.md`](soak-record.md)).
 
-| Field                        | Value     |
-| ---------------------------- | --------- |
-| Exit criteria met on Windows |           |
-| Exit criteria met on macOS   |           |
-| Exit criteria met on Linux   |           |
-| Soak build                   |           |
-| Soak start                   |           |
-| Soak end                     |           |
-| Blocking problems            |           |
-| Retirement or deletion issue | ISSUE-185 |
+| Field                        | Value                              |
+| ---------------------------- | ---------------------------------- |
+| Soak record                  | [`soak-record.md`](soak-record.md) |
+| Retirement or deletion issue | ISSUE-185                          |
+
+## Step-3b deletion (ISSUE-185)
+
+Candidate decision (`21` §6): candidate replaced, evidence: `CodexAppServerDriver` and `CodexAcpDriver` conformance
+(C-01…C-29, C-23 with ISSUE-202's gated-delegation cases), `pnpm vitest run src/host/noTokenInArgv.static.test.ts` and
+the census against the merge base. Today's Codex launch leaves the tree: the detached `codex exec` argv
+(`buildCodexLaunchArgs`, its `-o` output file, its `--sandbox` mode and `codexTuningArgs`), the `codexDelegationConfigArgs`
+builder that put the delegation token in argv (ADR-013 items 2, 8), and `codexResume.ts`, today's relaunch of a
+thread per message; `LAUNCHABLE_PROVIDERS` no longer names Codex, so today's launcher refuses it before anything is
+spawned. The legacy test that pinned the token in argv (`delegationInjection.test.ts:175-178`) is removed visibly and
+replaced by C-23 of `CodexAppServerDriver.conformance.test.ts` ("[C-23, INV-59, INV-83] a gated delegation launch has
+no credential and no DWARFAI_DELEGATION_TOKEN string in any captured argv or env; …", #1421); the launch-cause parity
+test left with its legacy side (`docs/test-removals.md`, ISSUE-185). TC-185-03: a Codex session today's code launched
+before 3b is ended through `LegacyEndFirstAdapter`, which this deletion leaves composed (A-N29's one `host` route), and
+observed by the Host. The observed-Codex queue send (`codexQueue.ts`, and the Host's `CodexThreadQueue`, ISSUE-167) is
+not deleted. Today's runtime still composes the Codex hold queue (`codexHold.ts`), which no longer receives a turn to
+wait on; it goes with `runtime.ts` (ISSUE-243, foreman decision D3). From this commit 3b rolls forward only
+(`rollback.md` "Step-3b deletion"). The work unit merges only once the single soak record
+([`soak-record.md`](soak-record.md)) is filled.

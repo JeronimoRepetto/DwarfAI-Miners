@@ -5,7 +5,7 @@
 // cut 1 the release table is `ROUTES` (`../routes.ts`), changed only by each step's route-switch issue (22 §5).
 import { CHANNELS, ROW_IDS, type ChannelKey, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { LEGACY_BRIDGE_ADAPTERS } from '../routes'
+import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 
 /**
  * The 14 ids cut 0 serves `ui-local` (21 §2 cut 0 "New core serves" U), plus A-N34 (owner-approved amendment
@@ -74,5 +74,5 @@ export const CUT_0_TABLE: RouteTable = {
   release: 'cut-0',
   routes: CUT_0_ROUTES,
   unrouted: CUT_0_UNROUTED,
-  adapters: LEGACY_BRIDGE_ADAPTERS
+  adapters: ADAPTERS_AS_SHIPPED
 }

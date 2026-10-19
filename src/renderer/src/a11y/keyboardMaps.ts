@@ -59,7 +59,7 @@ export const KEYBOARD_MAPS: readonly KeyMapRow[] = [
       'Hides and shows the app: the default of the configurable global shortcut.'
     ),
     // A global shortcut is registered and heard by Electron main; this file pins the default it registers.
-    proof: { lane: 'main', proof: 'src/shared/accelerator.ts' }
+    proof: { lane: 'main', proof: 'src/contracts/text/accelerator.ts' }
   },
   everywhere(
     'any-layer',

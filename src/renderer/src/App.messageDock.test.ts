@@ -2,6 +2,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../contracts/ipc/testing/fakeWindowApi'
+import { publishBoard, type TestBoard } from './testing/board'
 import App from './App.vue'
 import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
@@ -122,41 +123,38 @@ const EMPTY_HOST_TAILS = {
 }
 
 function stubApi(overrides: Record<string, unknown> = {}) {
+  // AMENDED for ISSUE-242 (was: A-12 `getMines` and A-P2 `onMinesUpdated` among the members, deleted at cut 5): the
+  // board is what the Host read model publishes (testing/board.ts), so a test's `board` is published, not installed.
+  const { board = { mines: [MINE], tokensObserved: 0 }, ...memberOverrides } = overrides
+  publishBoard(board as TestBoard, true)
   const api = {
     hidePanel: vi.fn(),
     raisePanel: vi.fn(),
     // The mine the panels open in, crewless: a test about a dwarf names its own crew.
-    getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
-    onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
     // The launch-failure push (#263), subscribed unconditionally on mount.
-    onLaunchFailed: vi.fn().mockReturnValue(() => undefined),
     // Answers "a window was focused", the verdict that leaves the panel alone. AMENDED for ISSUE-001 (was: today's
     // `DwarfActivation`): A-13's 14 answer, `IpcResult<ConsoleOpenResult>`.
     activateDwarf: vi
       .fn()
       .mockResolvedValue({ ok: true, value: { outcome: 'raised', mode: 'focus-terminal' } }),
     // An observed session's transcript, read on selection (#159): readable and empty.
-    getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
+    // AMENDED for ISSUE-249 (was: also mocks of the RETIRE rows' members): A-14, A-16, A-17, A-18, A-P5, A-37 and
+    // A-38 left the facade at cut 5 (`MEMBER_REMOVED`), and the fake refuses a member the registry does not have.
     // One page of scrollback (#364): readable, with nothing older.
     getDwarfFeedPage: vi
       .fn()
       .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),
-    setWatchedDwarf: vi.fn(),
     // AMENDED for ISSUE-001 (was: today's `{ delivered, via }`): A-23's 14 answer.
     sendDwarfText: vi.fn(() => Promise.resolve(accepted())),
     // The verdict of a message main HELD (#457), subscribed unconditionally on mount.
-    onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-183 (was: A-26 `kickDwarf`, which left the facade in 3a): "Stop dwarf…" is A-N29.
     stopDwarf: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } }),
-    retireDwarf: vi.fn(),
     // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): A-40/A-41 answer the 14 `IpcResult<AnswerOutcome>`.
     answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
     answerDwarfPermission: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
     // The launch surface (#86): Claude detected and launchable; a launch answers "started". AMENDED for ISSUE-001
     // (was: today's A-36 and A-38): A-36's 14 entries, and A-35 accepted under its `LaunchId`.
     listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [supplier('claude')] }),
-    listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
-    launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
     launchAgent: vi.fn().mockResolvedValue({ ok: true, value: { launchId: LAUNCH_ID } }),
     openMinePath: vi.fn().mockResolvedValue({ opened: true }),
     openExternalLink: vi.fn().mockResolvedValue({ opened: true }),
@@ -186,7 +184,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     getAppBuild: vi.fn().mockResolvedValue({ version: '1.2.3', packaged: true }),
     getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnabled: false }),
     queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [] }),
-    refreshDwarfTelemetry: vi.fn(),
     getAudioPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES }),
     setAudioPreferences: vi.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
     // Hidden, as main creates the window: nothing opens a media element jsdom cannot play.
@@ -194,7 +191,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     onPanelVisibility: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-123 (was: `setOpenMine`): A-44 under its 14 name.
     reportVisibleMines: vi.fn(),
-    onShowMine: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-114 (was: absent): the shell also hears A-N16.
     onRevealDwarfChat: vi.fn().mockReturnValue(() => undefined),
     getNotificationsEnabled: vi.fn().mockResolvedValue(true),
@@ -238,7 +234,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     }),
     patchUiSession: vi.fn(),
     onUiSessionChanged: vi.fn().mockReturnValue(() => undefined),
-    ...overrides
+    ...memberOverrides
   }
   // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
   // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
@@ -305,16 +301,15 @@ async function openOn(dwarfs: unknown[], dwarfId: string, overrides: Record<stri
   return mountPanel(
     { surface: 'message', mineId: MINE.id, dwarfId },
     {
-      getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
+      board: { mines: [{ ...MINE, dwarfs }], tokensObserved: 0 },
       ...overrides
     }
   )
 }
 
-/** The poll, as main publishes it to the shell. */
-function pushSnapshot(api: Record<string, ReturnType<typeof vi.fn>>, snapshot: unknown) {
-  const push = api.onMinesUpdated!.mock.calls[0]![0] as (snapshot: unknown) => void
-  push(snapshot)
+/** The board, as the Host read model publishes it to the shell (AMENDED for ISSUE-242, was: A-P2's push). */
+function pushSnapshot(snapshot: unknown) {
+  publishBoard(snapshot as TestBoard)
 }
 
 /** Stop dwarf… from the chat's ⋯ menu, confirmed, as a person stops one (#635). */
@@ -562,7 +557,7 @@ describe('the docked message panel', () => {
     const { wrapper, api } = await openOn([HOST_DWARF], HOST_DWARF_ID, chats.overrides)
 
     expect(api.getHostSnapshot).toHaveBeenCalledWith({ sections: ['tails'] })
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-14 `getDwarfFeed` never called): the member left the facade at cut 5.
     expect(wrapper.find('.dm-bubble__text').text()).toBe('Blasting the last metre')
     expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('Latest activity')
   })
@@ -644,14 +639,14 @@ describe('the docked message panel', () => {
     const chats = hostChats({
       [HOST_DWARF_ID]: [hostRow(HOST_DWARF_ID, 'assistant', 'Blasting the last metre')]
     })
-    const { wrapper, api } = await openOn(
+    const { wrapper } = await openOn(
       [{ ...HOST_DWARF, textDelivery: 'terminal' }],
       HOST_DWARF_ID,
       chats.overrides
     )
     expect(wrapper.find('.dm-composer textarea').attributes('disabled')).toBeUndefined()
 
-    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    pushSnapshot({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
     await flushPromises()
 
     expect(wrapper.find('.dm-msg').exists()).toBe(true)
@@ -671,14 +666,11 @@ describe('the docked message panel', () => {
    * says the closed sentence in the well.
    */
   it('tells a delivery route that went away apart from a session type with no channel', async () => {
-    const { wrapper, api } = await openOn(
-      [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
-      'claude:s1'
-    )
+    const { wrapper } = await openOn([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }], 'claude:s1')
     const box = () => wrapper.find('.dm-composer textarea')
     expect(box().attributes('disabled')).toBeUndefined()
 
-    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
+    pushSnapshot({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
     await flushPromises()
 
     expect(box().attributes('disabled')).toBeDefined()
@@ -694,9 +686,9 @@ describe('the docked message panel', () => {
   })
 
   it("leaves closing an ended session's panel to the person", async () => {
-    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+    const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
 
-    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    pushSnapshot({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
     await flushPromises()
     expect(wrapper.find('.dm-msg').exists()).toBe(true)
 
@@ -796,16 +788,13 @@ describe('handing the delivery verdicts to the mine', () => {
    */
 
   it('promotes a delivered message when the next poll shows new output', async () => {
-    const { wrapper, api } = await openOn(
-      [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
-      'claude:s1'
-    )
+    const { wrapper } = await openOn([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }], 'claude:s1')
     await wrapper.find('.dm-composer textarea').setValue('dig deeper')
     await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
     expect(useDwarfMessaging().stateFor('claude:s1')?.phase).toBe('delivered')
 
-    pushSnapshot(api, {
+    pushSnapshot({
       mines: [{ ...MINE, dwarfs: [{ ...OBSERVED_DWARF, lastMessage: 'On it' }] }],
       tokensObserved: 0
     })
@@ -817,10 +806,10 @@ describe('handing the delivery verdicts to the mine', () => {
   // AMENDED for ISSUE-183 (was: a kick's verdict left at delivered while nothing about the session changed): "Stop
   // dwarf…" (A-N29) is a request, never a verdict of its own; with the session unchanged nothing about it changes.
   it('leaves a delivery alone while nothing about the session changed', async () => {
-    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+    const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
     await stopDwarf(wrapper)
 
-    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
+    pushSnapshot({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
     await flushPromises()
 
     // Idle is what the Host said once the stop was answered; nothing else is claimed.
@@ -1072,15 +1061,15 @@ describe('the chat from the Host (ISSUE-123)', () => {
     const chats = hostChats({
       [HOST_DWARF_ID]: [hostRow(HOST_DWARF_ID, 'assistant', 'Halfway down the shaft')]
     })
-    const { wrapper, api } = await openOn([HOST_DWARF], HOST_DWARF_ID, chats.overrides)
+    const { wrapper } = await openOn([HOST_DWARF], HOST_DWARF_ID, chats.overrides)
     const texts = () => wrapper.findAll('.dm-bubble__text').map((bubble) => bubble.text())
     expect(texts()).toEqual(['Halfway down the shaft'])
 
     await chats.append(HOST_DWARF_ID, hostRow(HOST_DWARF_ID, 'assistant', 'Seam exhausted'))
     expect(texts()).toEqual(['Halfway down the shaft', 'Seam exhausted'])
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
-    expect(api.setWatchedDwarf).not.toHaveBeenCalled()
-    expect(api.refreshDwarfTelemetry).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-14 `getDwarfFeed` never called): the member left the facade at cut 5.
+    // AMENDED for ISSUE-249 (was: A-16 `setWatchedDwarf` never called): the member left the facade at cut 5.
+    // AMENDED for ISSUE-249 (was: A-17 `refreshDwarfTelemetry` never called): the member left the facade at cut 5.
   })
 
   it('[ADR-033] a delivered send asks main for nothing more: the words the session took arrive as Host frames', async () => {
@@ -1097,7 +1086,7 @@ describe('the chat from the Host (ISSUE-123)', () => {
 
     expect(api.sendDwarfText).toHaveBeenCalledOnce()
     expect(api.getHostSnapshot.mock.calls.length).toBe(snapshotReads)
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-14 `getDwarfFeed` never called): the member left the facade at cut 5.
   })
 
   it('[ADR-033] a switch to another dwarf draws that dwarf’s chat at once, from the same read model', async () => {
@@ -1213,9 +1202,7 @@ describe('the add panel', () => {
     const { wrapper } = await mountPanel(
       { surface: 'launch', mineId: MINE.id, dwarfId: '' },
       {
-        getMines: vi
-          .fn()
-          .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [OTHER_DWARF] }], tokensObserved: 0 })
+        board: { mines: [{ ...MINE, dwarfs: [OTHER_DWARF] }], tokensObserved: 0 }
       }
     )
     expect(wrapper.find(ADD).exists()).toBe(true)
@@ -1313,13 +1300,13 @@ describe('the add panel', () => {
   // names the dwarf the launch became.
   it('hands over to the MessagePanel when the launched dwarf arrives', async () => {
     const chats = hostChats({})
-    const { wrapper, api } = await openAddPanel({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+    const { wrapper } = await openAddPanel({
+      board: { mines: [MINE], tokensObserved: 0 },
       ...chats.overrides
     })
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
+    pushSnapshot({ mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
     await hostLaunched(chats)
     await flushPromises()
 
@@ -1339,13 +1326,13 @@ describe('the add panel', () => {
     // mark on it.
     // AMENDED for ISSUE-001: the Host names the dwarf the launch became (07 5A S5.05).
     const chats = hostChats({})
-    const { wrapper, api } = await openAddPanel({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+    const { wrapper } = await openAddPanel({
+      board: { mines: [MINE], tokensObserved: 0 },
       ...chats.overrides
     })
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
+    pushSnapshot({ mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
     await hostLaunched(chats)
     await flushPromises()
 
@@ -1366,13 +1353,13 @@ describe('the add panel', () => {
     const chats = hostChats({
       [HOST_DWARF_ID]: [hostRow(HOST_DWARF_ID, 'user', 'dig the east gallery')]
     })
-    const { wrapper, api } = await openAddPanel({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+    const { wrapper } = await openAddPanel({
+      board: { mines: [MINE], tokensObserved: 0 },
       ...chats.overrides
     })
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
+    pushSnapshot({ mines: [{ ...MINE, dwarfs: [HOST_LAUNCHED] }], tokensObserved: 0 })
     // AMENDED for ISSUE-001: the Host names the dwarf the launch became (07 5A S5.05).
     await hostLaunched(chats)
     await flushPromises()
@@ -1384,12 +1371,12 @@ describe('the add panel', () => {
   })
 
   it('keeps waiting while only an unrelated session turns up', async () => {
-    const { wrapper, api } = await openAddPanel({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
+    const { wrapper } = await openAddPanel({
+      board: { mines: [MINE], tokensObserved: 0 }
     })
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [OTHER_DWARF] }], tokensObserved: 0 })
+    pushSnapshot({ mines: [{ ...MINE, dwarfs: [OTHER_DWARF] }], tokensObserved: 0 })
     await flushPromises()
 
     expect(wrapper.find(ADD).exists()).toBe(true)
@@ -1410,48 +1397,6 @@ describe('the add panel', () => {
 
     expect(wrapper.find(ADD).exists()).toBe(true)
     expect(wrapper.find('.dm-add__why.is-alert').text()).toBe('The agent could not be started.')
-  })
-
-  /*
-   * The failure channel (#263), end to end: main pushes what it learned
-   * AFTER `agent:launch` already answered `launched: true`, and the panel
-   * returns to the composer with the CLI's own words rather than staying
-   * parked on "the session started" forever.
-   *
-   * AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: a push with no
-   * `cause`, and the CLI's stderr on the line as an alert). The push always
-   * names its cause now, and the panel says it as the launch-failure notice.
-   */
-  it('returns to the composer with the notice naming the cause when the launch fails after it started', async () => {
-    // AMENDED for ISSUE-001 (was: today's A-36 and A-35 answers, the receipt `receipt:1`): Codex is served by today's
-    // runtime behind `PerProviderShapeAdapter`, accepted under the `LaunchId` today's A-P3 then names.
-    const { wrapper, api } = await openAddPanel({
-      listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [supplier('codex')] })
-    })
-
-    await submitPrompt(wrapper, 'dig the east gallery')
-    // The wait, before anything failed. AMENDED for ISSUE-001 (was: "The session started."): the launch is still
-    // being sent in, and the line is not an alert yet.
-    expect(wrapper.find('.dm-add__why').text()).toBe('Sending the dwarf in…')
-    expect(wrapper.find('.dm-add__why.is-alert').exists()).toBe(false)
-
-    const fail = api.onLaunchFailed.mock.calls[0]![0] as (push: unknown) => void
-    fail({
-      launchId: LAUNCH_ID,
-      provider: 'codex',
-      mineId: MINE.id,
-      exitCode: 1,
-      stderrTail: 'codex: another instance is already running',
-      cause: 'exited-at-once'
-    })
-    await flushPromises()
-
-    expect(wrapper.get('.dm-add__fail[role="alert"] .dm-add__fail-title').text()).toBe(
-      'Codex stopped as soon as it started'
-    )
-    expect(wrapper.find('.dm-add__why').text()).toBe('The dwarf did not go in.')
-    // The composer is back, prompt intact, so a retry costs one click.
-    expect(wrapper.find<HTMLTextAreaElement>(PROMPT).element.value).toBe('dig the east gallery')
   })
 
   /*
@@ -2065,9 +2010,7 @@ describe('the rebuilt Add panel, as a person drives it (#635)', () => {
     const host = document.createElement('div')
     document.body.append(host)
     const api = stubApi({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [DWARF] }], tokensObserved: 0 }),
+      board: { mines: [{ ...MINE, dwarfs: [DWARF] }], tokensObserved: 0 },
       ...overrides
     })
     const wrapper = mount(App, { attachTo: host })

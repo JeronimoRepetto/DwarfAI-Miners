@@ -41,8 +41,8 @@ test.describe('cut 0: Quit and Stop everything and quit from the tray (ISSUE-053
     launched = await launchApp({
       trayProbe: true,
       env: homeIn,
-      beforeLaunch: async (profile) => {
-        session = await seedLegacyFixtureSession(profile)
+      beforeLaunch: async () => {
+        session = await seedLegacyFixtureSession()
       },
       tracePath: test.info().outputPath('trace.zip')
     })
@@ -68,7 +68,9 @@ test.describe('cut 0: Quit and Stop everything and quit from the tray (ISSUE-053
     await window.getByRole('button', { name: CONFIRM }).click({ timeout: 30_000 })
     expect(await exitsWithin(app.process(), 30_000), 'the app exits').toBe(true)
     expect(trayEvents(profile), 'the icon is removed').toEqual(['shown', 'removed'])
-    expect(session?.alive(), 'the fixture session was ended').toBe(false)
+    // AMENDED for ISSUE-241, the end of cut 4 (was: the fixture session was ended, by `LegacyEndFirstAdapter` before
+    // `host.shutdown` stop-all): a session the old app launched has no identity the Host can end (15 §5 `no-identity`,
+    // docs/strangler/parity-cut-4b.md), so Stop everything leaves it to the case's own cleanup.
     await expect.poll(() => isProcessAlive(hostPid), { timeout: 15_000 }).toBe(false)
   })
 

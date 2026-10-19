@@ -7,8 +7,10 @@
 // - The working folder's `.env` is read into the process environment, quietly, as today's start read it.
 // - The candidate login autostart (candidateAutostart.ts), composed only in a packaged build of an OS where S-027-4 has
 //   not passed (loginEntryGate.ts): the old writer of the entry until v1 (21 §2 cut 1).
+// - ADDED for ISSUE-243: the app's identity (`app.setAppUserModelId`, appUserModelId.ts), which today's composition set
+//   right after this work at every start, before ISSUE-243 deleted it.
 //
-// The order is today's: the Dock first, then `.env`, then the login entry.
+// The order is today's: the Dock first, then `.env`, then the login entry, then the identity.
 
 /** The shell start's work, each part handed in by the Electron root. */
 export interface UiShellStartDeps {
@@ -18,6 +20,11 @@ export interface UiShellStartDeps {
   loadEnvironmentFile(): void
   /** The candidate login autostart, where it is composed (loginEntryGate.ts). */
   candidateAutostart?: () => Promise<void>
+  /**
+   * Sets the app's identity, the one Windows groups its windows and attributes its toasts to (Electron's
+   * `app.setAppUserModelId`), at every start as today's composition did.
+   */
+  setAppUserModelId?: () => void
 }
 
 export interface UiShellStart {
@@ -30,6 +37,7 @@ export function createUiShellStart(deps: UiShellStartDeps): UiShellStart {
       deps.dock?.hide()
       deps.loadEnvironmentFile()
       await deps.candidateAutostart?.()
+      deps.setAppUserModelId?.()
     }
   }
 }

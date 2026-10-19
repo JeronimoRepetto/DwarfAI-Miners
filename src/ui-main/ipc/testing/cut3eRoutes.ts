@@ -6,7 +6,7 @@
 // (R14): production never imports it.
 import { UNROUTED, type ChannelKey, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { LEGACY_BRIDGE_ADAPTERS } from '../routes'
+import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 // AMENDED for ISSUE-238 (was: from the release table `routesForBuild` and `RETIRED`): from the step-4b switch the
 // release table is 4b's, so the 3e table starts from the 4a build's table as it shipped (`cut4aRoutes.ts`).
 import { CUT_4A_RETIRED, cut4aRoutesForBuild } from './cut4aRoutes'
@@ -67,5 +67,5 @@ export const CUT_3E_TABLE: RouteTable = {
   routes: CUT_3E_ROUTES,
   unrouted: UNROUTED,
   retired: CUT_4A_RETIRED,
-  adapters: LEGACY_BRIDGE_ADAPTERS
+  adapters: ADAPTERS_AS_SHIPPED
 }

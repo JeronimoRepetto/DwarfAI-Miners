@@ -236,18 +236,6 @@ describe('write-packaged-host-manifest.mjs (ADR-002 D5)', () => {
 })
 
 describe('afterPack.mjs (electron-builder afterPack)', () => {
-  it('[ADR-002] the SDK runtimes are pruned first, then the manifest is written, so it lists only what ships', async () => {
-    const app = packedApp('win32')
-    const scope = path.join(app.resourcesDir, 'app.asar.unpacked', 'node_modules', '@anthropic-ai')
-    write(path.join(scope, 'claude-agent-sdk-win32-x64', 'marker.txt'), 'kept')
-    write(path.join(scope, 'claude-agent-sdk-linux-x64', 'marker.txt'), 'pruned')
-
-    await afterPack(contextOf(app.appOutDir, 'win32'))
-
-    expect(existsSync(path.join(scope, 'claude-agent-sdk-linux-x64'))).toBe(false)
-    expect(await verifyPackagedHostManifest(app.sourceDir, 'win32')).toEqual({ ok: true })
-  })
-
   it('[ADR-002] package.json runs it as the afterPack hook', () => {
     const pkg = JSON.parse(readFileSync(path.join(rootDir, 'package.json'), 'utf8'))
     expect(pkg.build.afterPack).toBe('scripts/build/afterPack.mjs')

@@ -19,6 +19,8 @@ const RETIRED = ['src/main/shell/window.ts', 'src/main/shell/tray.ts']
 function excludeList() {
   const config = createRequire(import.meta.url)(path.join(repoRoot, '.dependency-cruiser.cjs'))
   const exclude = config.options.exclude
+  // AMENDED for ISSUE-248: after cut 5 the config has no exclude at all, an empty list.
+  if (exclude === undefined) return []
   return (Array.isArray(exclude) ? exclude : [exclude]).map((entry) => entry.path)
 }
 

@@ -404,6 +404,23 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
     CRUISE_TIMEOUT_MS
   )
 
+  // ISSUE-184: the package left package.json and the lockfile, so a planted import no longer resolves into
+  // node_modules; the rule still names it by its module name.
+  it(
+    '[R11, NFR-COMP-03] an import of @anthropic-ai/claude-agent-sdk that resolves to no installed package is still reported as R11-no-claude-agent-sdk',
+    async () => {
+      const from = 'src/host/modules/suppliers/adapters/drivers/claude/driver.ts'
+      const result = await cruise({
+        files: {
+          [from]: "import sdk from '@anthropic-ai/claude-agent-sdk'\nexport const driver = sdk\n",
+          'src/host/modules/suppliers/index.ts': TEST_FILE
+        }
+      })
+      expectViolation(result, 'R11-no-claude-agent-sdk', from, '@anthropic-ai/claude-agent-sdk')
+    },
+    CRUISE_TIMEOUT_MS
+  )
+
   it(
     '[R11] node:sqlite outside host/platform/sqlite is reported as R11-sqlite-containment',
     async () => {
@@ -457,11 +474,10 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
     CRUISE_TIMEOUT_MS
   )
 
-  // R16 (only src/legacy-bridge imports src/main or src/shared) is not proven here. The legacy
-  // `exclude` drops every dependency whose resolved path matches it
-  // (dependency-cruiser 18.4.0 src/extract/extract-dependencies.mjs:180-181), so an import of an
-  // excluded legacy file never reaches R16-legacy-only-through-bridge. The ISSUE-005 canary suite
-  // owns that proof, through ESLint's IMP.legacy group (05 §5.2 notes, §5.3).
+  // R16 (only src/legacy-bridge imports src/main or src/shared) is not proven here. Until ISSUE-248 the legacy
+  // `exclude` dropped every dependency whose resolved path matched it (dependency-cruiser 18.4.0
+  // src/extract/extract-dependencies.mjs:180-181), so the rule could not fire; the canary suite owns the proof: the
+  // R16 canary (ESLint's mirror, ISSUE-005) and the R16-runtime canary (dependency-cruiser, ISSUE-248).
 
   it(
     '[R17] node:child_process outside the three allowed paths is reported as R17-spawn-containment',
@@ -528,6 +544,14 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
     for (const pattern of excludeList(config)) {
       expect(baseline, `exclude path ${pattern} is not in the baseline`).toContain(pattern)
     }
+  })
+
+  // ISSUE-248 (21 §1 item 7, §2 cut 5 exit; 17 §1.7 "Legacy window"): with the legacy trees gone the exclusion is
+  // empty, and so is its ratchet, so the subset case above fails for any path added to it.
+  it('[ADR-004] after cut 5 the legacy exclude list and its baseline are empty', () => {
+    const config = createRequire(import.meta.url)(configPath)
+    expect(excludeList(config)).toEqual([])
+    expect(JSON.parse(readFileSync(baselinePath, 'utf8'))).toEqual([])
   })
 
   it(
