@@ -4397,6 +4397,39 @@ describe('release 5 (21 §2 cut 5)', () => {
       String.raw`(handle|ipcMain\.handle|ipcMain\.on)\(\s*IPC_CHANNELS\.${member}\b|send\(\s*IPC_CHANNELS\.${member}\b`
     )
 
+  // ADDED for ISSUE-249, the cut-5 switch (21 §2 cut 5 exit: "router test, no `legacy` owner, no adapter"; 14 §6.5
+  // "Router"): the release marker moves to 5 and no row changes owner. Parity is `passed` for every row that replaced
+  // legacy code; a NEW row (registry status `new`) never had legacy code, so its parity stays `n/a` (21 §1 item 3).
+  it('[ADR-001] in release 5 every seam-A row routes host or ui-local with parity passed', () => {
+    expect(ROUTES_RELEASE).toBe('cut-5')
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      const routes = routesForBuild(build)
+      const table: RouteTable = {
+        release: ROUTES_RELEASE,
+        routes,
+        unrouted: UNROUTED,
+        retired: RETIRED,
+        adapters: LEGACY_BRIDGE_ADAPTERS
+      }
+      expect(checkRouteTable(table, KEYS)).toEqual([])
+      for (const route of routes) {
+        expect(['host', 'ui-local'], route.channel).toContain(route.owner)
+        const parity = CHANNELS[route.channel].status === 'new' ? ['passed', 'n/a'] : ['passed']
+        expect(parity, `${route.channel} parity`).toContain(route.parity)
+      }
+    }
+  })
+
+  it('[ADR-001] in release 5 no route names a legacy-bridge adapter or a shape adapter', () => {
+    expect(ROUTES_RELEASE).toBe('cut-5')
+    expect(LEGACY_BRIDGE_ADAPTERS).toEqual([])
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      const routes = routesForBuild(build)
+      expect(routes.filter((route) => route.shapeAdapter !== undefined)).toEqual([])
+      expect(routes.filter((route) => route.shape !== 'target').map((r) => r.channel)).toEqual([])
+    }
+  })
+
   it('[ADR-001] A-12 and A-P2 have no route and no handler', () => {
     for (const file of ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']) {
       const text = legacySource(resolve(SRC, file))
