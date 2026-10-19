@@ -60,7 +60,7 @@ import {
 } from '../domain/messages'
 import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
-import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
+import type { AppendOptions, DeliverySettlement, MessageLog } from '../ports/messageLog'
 
 export interface SqliteMessageLogDeps {
   /** The Host's one writer (09 §8.1). */
@@ -92,8 +92,9 @@ const MERGE_ECHO = `UPDATE messages SET source_key = ?, pending_echo = NULL, pro
   WHERE id = ?`
 
 const INSERT_ROW = `INSERT INTO messages
-  (id, dwarf_id, source_key, role, text, activity_json, origin, provider_time, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  (id, dwarf_id, source_key, role, text, issuer_dwarf_id, activity_json, origin, provider_time,
+    created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const POINT_KEY = 'UPDATE message_keys SET message_id = ? WHERE source_key = ?'
 
@@ -174,7 +175,8 @@ export class SqliteMessageLog implements MessageLog {
   append(
     dwarfId: DwarfId,
     entries: ConversationEntry[],
-    origin: 'live-stream' | 'transcript'
+    origin: 'live-stream' | 'transcript',
+    opts: AppendOptions = {}
   ): { inserted: number; appended: Message[] } {
     const { db, scope, clock, ids } = this.deps
     if (!scope.isInTransaction()) {
@@ -204,12 +206,15 @@ export class SqliteMessageLog implements MessageLog {
       }
       // Step 2b: a new row, then the key points at it.
       const activity = activitySummaryOf(entry.activity)
+      // AMENDMENT-23: the issuer goes on the batch's person row only (the delegated brief).
+      const issuer = entry.role === 'person' ? opts.issuer : undefined
       const message: Message = {
         id: ids.uuidv7() as MessageId,
         dwarfId,
         sourceKey: entry.sourceKey,
         role: entry.role,
         text: entry.text,
+        ...(issuer === undefined ? {} : { issuer: { dwarfId: issuer } }),
         ...(activity === undefined ? {} : { activity }),
         attachments: [],
         origin,
@@ -222,6 +227,7 @@ export class SqliteMessageLog implements MessageLog {
         entry.sourceKey,
         entry.role,
         entry.text,
+        issuer ?? null,
         activity === undefined ? null : JSON.stringify(activity),
         origin,
         entry.providerTime,

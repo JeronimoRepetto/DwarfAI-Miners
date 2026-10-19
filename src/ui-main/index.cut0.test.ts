@@ -234,6 +234,7 @@ async function cut0App(
     notifications?: { display: RecordingNotificationDisplay; drawsWithoutWindow: boolean }
     launch?: UiMainDeps['launch']
     startWithSystem?: UiMainDeps['startWithSystem']
+    shellStart?: UiMainDeps['shellStart']
     onPanelBuilt?: () => void
     // AMENDED for ISSUE-123 (was: none of the three): the release the table is for (default the cut-0 table's), the
     // Host methods advertised beyond the cut-0 ones, and the answers of today's rows.
@@ -313,7 +314,8 @@ async function cut0App(
         platform: 'win32'
       }),
     ...(options.launch === undefined ? {} : { launch: options.launch }),
-    ...(options.startWithSystem === undefined ? {} : { startWithSystem: options.startWithSystem })
+    ...(options.startWithSystem === undefined ? {} : { startWithSystem: options.startWithSystem }),
+    ...(options.shellStart === undefined ? {} : { shellStart: options.shellStart })
   })
   lifecycle.becomeReady()
   await started
@@ -518,6 +520,44 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
       expect(store.load('startWithSystem')).toBe(false)
       expect(order[0], argv.join(' ')).toBe('autostart.register removed')
     }
+  })
+
+  it('[ADR-001] the shell start (the Dock, the .env file, the candidate login entry) runs once, after the Panel is built, and today’s runtime is composed after it', async () => {
+    const order: string[] = []
+    const { legacy } = await cut0App({
+      onPanelBuilt: () => order.push('panel built'),
+      shellStart: {
+        start: async () => {
+          order.push('shell start')
+        }
+      }
+    })
+
+    expect(order).toEqual(['panel built', 'shell start'])
+    expect(legacy.counts.composed).toBe(1)
+  })
+
+  it('[ADR-026] a shell start that fails records ui.start failed at the shell step and composes nothing of today’s runtime', async () => {
+    const { log, legacy, lifecycle } = await cut0App({
+      shellStart: {
+        start: async () => {
+          throw Object.assign(new Error(String.raw`no .env at C:\Users\j\x`), { code: 'EACCES' })
+        }
+      }
+    })
+
+    expect(log.filter((entry) => entry.event === 'ui.start')).toEqual([
+      {
+        level: 'error',
+        event: 'ui.start',
+        subsystem: 'ui-main',
+        outcome: 'failed',
+        causeClass: 'shell',
+        errCode: 'EACCES'
+      }
+    ])
+    expect(legacy.counts.composed).toBe(0)
+    expect(lifecycle.calls).toContain('exit 1')
   })
 
   it('[ADR-026] a start that fails records ui.start failed with its step and error class, never its message, before it exits with code 1', async () => {

@@ -1291,3 +1291,45 @@ describe('Boost by the guild stories (ISSUE-265)', () => {
       }
   })
 })
+
+/*
+ * APPENDED: the composer is enabled from the Host's `canReceiveMessages` (14 §3.6 `DwarfWire`,
+ * "composer enabled", INV-33) for a Host board dwarf, not from today's `textDelivery`, which only
+ * the legacy board overlay carries (A-12/A-P2, removed in cut 5). A dwarf off the Host board
+ * carries no flag and keeps today's route.
+ */
+describe('the chat action on a Host board dwarf', () => {
+  const hostDwarf = (canReceiveMessages: boolean, overrides: Partial<Dwarf> = {}) => ({
+    ...defaultDwarf({ textDelivery: undefined, ...overrides }),
+    canReceiveMessages,
+    owned: true
+  })
+
+  it('[US-MSG-001.AC11, INV-33] a Host dwarf that can receive messages has an enabled composer without textDelivery', () => {
+    const dwarf = hostDwarf(true)
+    expect(entryFor('chat', dwarf)).toMatchObject({
+      enabled: true,
+      hint: CHANNEL_HINT['held-session']
+    })
+    expect(refusalLine(dwarf)).toBeNull()
+  })
+
+  it('[US-MSG-001.AC11, INV-33] a Host dwarf that cannot receive messages has a disabled composer with its reason, whatever textDelivery says', () => {
+    for (const dwarf of [hostDwarf(false), hostDwarf(false, { textDelivery: 'terminal' })]) {
+      expect(entryFor('chat', dwarf)).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
+      expect(refusalLine(dwarf)).toBe(NO_CHANNEL_REASON)
+    }
+  })
+
+  it('[US-MSG-001.AC11] an observed Host dwarf that can receive messages has an enabled composer and claims no channel it cannot name', () => {
+    const dwarf = { ...hostDwarf(true), owned: false }
+    expect(entryFor('chat', dwarf)).toMatchObject({ enabled: true, hint: '' })
+  })
+
+  it('[US-OBS-005.AC03] a leaving Host dwarf keeps a disabled composer even while the Host still says it can receive', () => {
+    expect(entryFor('chat', hostDwarf(true, { status: 'leaving' }))).toMatchObject({
+      enabled: false,
+      hint: SESSION_ENDED_REASON
+    })
+  })
+})

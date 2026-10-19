@@ -14,7 +14,12 @@ import type {
   SnapshotParams
 } from '@dwarfai/contracts'
 import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
-import { sessionClosed } from '../lib/delivery/actionBar'
+import {
+  buildActionBar,
+  CHANNEL_HINT,
+  NO_CHANNEL_REASON,
+  sessionClosed
+} from '../lib/delivery/actionBar'
 import { dwarfTip } from '../lib/dwarf/dwarfTip'
 import { sceneDwarfStatus } from '../lib/scene/sceneDwarf'
 import { publishBoard } from '../testing/board'
@@ -325,6 +330,34 @@ describe('useMines from the Host read model', () => {
     await settle()
     expect(host.requests).toHaveLength(2)
     expect(useMines().state.mines.map((mine) => mine.name)).toEqual(['alpha-again'])
+  })
+
+  /*
+   * APPENDED: the composer of a Host board dwarf is enabled from the Host's own `canReceiveMessages`
+   * (14 §3.6 `DwarfWire`, "composer enabled", INV-33), kept current by `dwarf.changed`, so the board
+   * needs no `textDelivery` from today's overlay (A-12/A-P2, removed in cut 5) to enable chat.
+   */
+  it('[US-MSG-001.AC11, US-MSG-013.AC01, INV-33] a Host board dwarf’s composer follows the Host’s canReceiveMessages, with no textDelivery', async () => {
+    const host = installHost([
+      page(
+        3,
+        [mineWire()],
+        [dwarfWire(BORIN, { owned: true }), dwarfWire(DAIN, { canReceiveMessages: false })]
+      )
+    ])
+    await useMines().start()
+    const shown = (id: DwarfId) => boardDwarfs().find((dwarf) => dwarf.id === id)!
+    const chat = (id: DwarfId) =>
+      buildActionBar(shown(id), { kicking: false }).find((it) => it.id === 'chat')!
+    expect(shown(BORIN).textDelivery).toBeUndefined()
+    expect(chat(BORIN)).toMatchObject({ enabled: true, hint: CHANNEL_HINT['held-session'] })
+    expect(chat(DAIN)).toMatchObject({ enabled: false, hint: NO_CHANNEL_REASON })
+    host.push([
+      frame(4, 'dwarf.changed', {
+        dwarf: dwarfWire(BORIN, { owned: true, canReceiveMessages: false })
+      })
+    ])
+    expect(chat(BORIN).enabled).toBe(false)
   })
 
   /*

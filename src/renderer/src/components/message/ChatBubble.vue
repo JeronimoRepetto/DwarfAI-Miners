@@ -54,6 +54,12 @@ const props = defineProps<{
    * it is the mark's tooltip, never an alert and never a line in the bubble.
    */
   reason?: string
+  /**
+   * The launcher label of a delegated worker's brief, "from <dwarf>" (PO decision 2026-09-28 #53;
+   * US-DLG-003.AC04), in its host's words; absent on every other message. Provisional look: the
+   * design draws no captured state of it yet, so it takes the foot's meta type above the body.
+   */
+  launcher?: string
 }>()
 
 const emit = defineEmits<{
@@ -91,6 +97,9 @@ let bubbles = 0
     role="article"
     :aria-label="from === 'user' ? 'You' : 'Dwarf'"
   >
+    <span v-if="launcher" class="dm-bubble__from"
+      ><bdi>{{ launcher }}</bdi></span
+    >
     <MarkdownBubble class="dm-bubble__text" :text="text" @open-link="emit('open-link', $event)" />
     <div class="dm-bubble__foot">
       <span v-if="time">{{ time }}</span>
@@ -244,6 +253,10 @@ let bubbles = 0
   font: var(--fs-meta) / 1 var(--f-meta);
   color: var(--ink-on-light-soft);
   justify-content: flex-end;
+}
+.dm-bubble__from {
+  font: var(--fs-meta) / 1 var(--f-meta);
+  color: var(--ink-on-light-soft);
 }
 .dm-bubble__mark[data-mark='reacted'] {
   color: var(--ok-lo);

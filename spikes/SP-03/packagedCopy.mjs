@@ -10,7 +10,9 @@
 // stored `host-manifest.json` appears under the copy root, when the Host writes `host.identity`, and the copy's size
 // and file count. It then ends the UI process alone and records whether the Host lives on (and, for an AppImage, the
 // FUSE mounts before and after), ends the Host, and starts the app again to measure the start with the copy already
-// in place. On macOS it also records `codesign` and `spctl` on the bundle before and after. Writes
+// in place. On macOS it also records `codesign` and `spctl` on the bundle before and after and on the copied bundle;
+// on Linux, which processes still hold an AppImage's FUSE mount once the UI was ended. The product logs go to
+// `<out>/product-logs/` before the state is cleared. Writes
 // `<out>/SP-03-<layout>.json`; exits 1 when the Host never started.
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -67,6 +69,25 @@ function macSignature(bundle) {
     verify: tool('codesign', ['--verify', '--deep', '--strict', bundle]),
     spctl: tool('spctl', ['-a', '-vv', bundle])
   }
+}
+
+/**
+ * The processes still running from an AppImage's FUSE mount (`/tmp/.mount_*`): what keeps the mount alive once the
+ * UI was ended. Null off Linux.
+ */
+function mountHolders(mounts) {
+  if (PLATFORM !== 'linux' || !mounts?.length) return null
+  const points = mounts.map((line) => line.split(' ')[1]).filter(Boolean)
+  return processes()
+    .filter((p) => points.some((point) => p.commandLine.includes(point)))
+    .map((p) => ({ pid: p.pid, ppid: p.ppid, commandLine: p.commandLine.slice(0, 300) }))
+}
+
+/** The `.app` bundle inside a macOS Host copy, or null. */
+function copiedBundle(copyDir) {
+  if (PLATFORM !== 'darwin' || !copyDir || !existsSync(copyDir)) return null
+  const name = readdirSync(copyDir).find((entry) => entry.endsWith('.app'))
+  return name ? path.join(copyDir, name) : null
 }
 
 function hostProcess(identity) {
@@ -132,16 +153,21 @@ async function main() {
     uiExitCode: first.uiExited,
     copy: copy ? { version: copy.version, ...treeStats(copy.dir) } : null,
     copyTopLevel: copy ? readdirSync(copy.dir).sort() : null,
+    // ADR-027 item 2 asks whether the copy keeps the bundle's signature state: read it on the copy itself.
+    copySignature: macSignature(copiedBundle(copy?.dir)),
     hostProcess: hostProcess(first.identity),
     fuseMounts: fuseMounts()
   }
   if (first.identity) {
     endUiOnly(first.run.child.pid)
     await new Promise((resolve) => setTimeout(resolve, 10000))
+    const mounts = fuseMounts()
     evidence.afterUiEnded = {
+      uiAlive: isAlive(first.run.child.pid),
       hostAlive: isAlive(first.identity.pid),
       hostProcess: hostProcess(first.identity),
-      fuseMounts: fuseMounts()
+      fuseMounts: mounts,
+      fuseMountHolders: mountHolders(mounts)
     }
     killTree(first.identity.pid)
     await waitFor(() => !isAlive(first.identity.pid), 15000)
@@ -158,7 +184,10 @@ async function main() {
   killTree(first.run.child.pid)
   first.run.flushLog()
   evidence.signatureAfter = macSignature(bundle)
-  evidence.clearedAfter = await clearState({ appDirs })
+  evidence.clearedAfter = await clearState({
+    appDirs,
+    logsTo: { outDir: args.out, label: `SP-03-${args.layout}` }
+  })
   writeEvidence(args.out, `SP-03-${args.layout}`, evidence)
   console.log(
     `SP-03 ${args.layout}: copy ${evidence.firstStart.copy?.bytes ?? '-'} bytes in ` +

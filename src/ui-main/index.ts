@@ -1,3 +1,5 @@
+import { config as loadDotenv } from 'dotenv'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -136,6 +138,7 @@ import {
   createNodeHungHostEnder,
   createNodeRevertIntegrations,
   nodeHostManifestPath,
+  runRegExe,
   wantsRevertIntegrations,
   winLaunchPrebuildsDir
 } from './hostLauncher'
@@ -156,6 +159,12 @@ import {
   UI_PREFERENCES_RESET_PUSH
 } from './ipc/handlers/uiPreferencesReset'
 import { createStartWithSystem, type StartWithSystem } from './window/application/startWithSystem'
+import { createUiShellStart, type UiShellStart } from './window/application/shellStart'
+import { createCandidateAutostart } from './window/application/candidateAutostart'
+import {
+  candidateDefaultMarkerAt,
+  candidateLoginEntryFor
+} from './window/adapters/autostart/CandidateAutostart'
 import { ElectronAutostart } from './window/adapters/autostart/ElectronAutostart'
 import { loginEntryOffered } from './window/domain/loginEntryGate'
 import { LOGIN_ENTRY_ARGS, uiStartPlanOf, type UiStartPlan } from './window/domain/uiStart'
@@ -957,7 +966,7 @@ export function windowFamilyOwner(routes: readonly ChannelRoute[]): 'legacy' | '
 }
 
 /** The steps of the start once Electron is ready, as `ui.start` names the one that failed. */
-export type UiStartStep = 'ready' | 'panel-load' | 'shortcut' | 'tray' | 'legacy-compose'
+export type UiStartStep = 'ready' | 'panel-load' | 'shortcut' | 'tray' | 'shell' | 'legacy-compose'
 
 /** What `errCode` may hold (19 §9.6; the UI writer's own shape): a code or a class name, never a sentence. */
 const ERROR_CODE = /^[A-Za-z0-9_.:-]{1,64}$/
@@ -1089,6 +1098,12 @@ export interface UiMainDeps {
    * entry until v1 (21 §2 cut 1).
    */
   startWithSystem?: StartWithSystem
+  /**
+   * The shell's own start work (window/application/shellStart.ts; 21 §2 cut 5 preparation for ISSUE-243): the macOS
+   * Dock tile hidden, the `.env` file read, and the candidate login entry where it is composed. It runs once per start,
+   * right before today's runtime is composed, where today's composition did the same work.
+   */
+  shellStart?: UiShellStart
 }
 
 /** What a started root holds: the reopen state when the Host attach was composed. */
@@ -1139,7 +1154,8 @@ export async function startUiMain({
   secretMigration,
   notifications,
   launch = { kind: 'normal', tray: true, window: true },
-  startWithSystem
+  startWithSystem,
+  shellStart
 }: UiMainDeps): Promise<UiMainStarted | undefined> {
   if (!lock.acquire()) {
     lifecycle.quit()
@@ -1515,9 +1531,14 @@ export async function startUiMain({
           offerFromWindow: () => panel.show()
         })
       }
+      // The Dock, the `.env` file and the candidate login entry, where today's composition did them (shellStart.ts).
+      step = 'shell'
+      await shellStart?.start()
       step = 'legacy-compose'
       await legacyRuntime.compose()
     } else {
+      step = 'shell'
+      await shellStart?.start()
       step = 'legacy-compose'
       const legacyPanel = await legacyRuntime.compose()
       if (legacyPanel === null) throw new Error('today’s runtime composed no Panel window')
@@ -1789,6 +1810,38 @@ function electronStartWithSystem(
   }
 }
 
+/**
+ * The shell's own start work (shellStart.ts), run right before today's runtime is composed, where today's composition
+ * did it: macOS's Dock tile hidden (`app.dock` exists there only), the working folder's `.env` read quietly, and the
+ * candidate login entry (candidateAutostart.ts; 21 §2 cut 1) in a packaged build of an OS where S-027-4 has not passed
+ * (`loginEntryGate.ts`), the old writer of the entry until v1. It writes today's entry: the packaged executable with no
+ * arguments, the once-only default marker in Electron's userData.
+ */
+function electronShellStart(uiLog: UiLog): UiShellStart {
+  const platform = currentUiPlatform()
+  const candidateAutostart =
+    app.isPackaged && !loginEntryOffered(platform)
+      ? createCandidateAutostart({
+          entry: candidateLoginEntryFor({
+            platform,
+            command: { executable: process.execPath, args: [] },
+            home: homedir(),
+            env: process.env,
+            reg: runRegExe
+          }),
+          marker: candidateDefaultMarkerAt(
+            join(app.getPath('userData'), 'autostart-default-v1.marker')
+          ),
+          log: (record) => uiLog.record(record)
+        })
+      : undefined
+  return createUiShellStart({
+    dock: app.dock,
+    loadEnvironmentFile: () => void loadDotenv({ quiet: true }),
+    ...(candidateAutostart === undefined ? {} : { candidateAutostart })
+  })
+}
+
 // The Electron wiring: the lock first, then the rest (16 §8.4). It runs only when Electron's main
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
 // `startUiMain` from it. From cut 0 it is the app's Electron entry (21 §2 cut 0, ISSUE-056).
@@ -1954,6 +2007,7 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     },
     launch: uiStartPlanOf(process.argv),
     ...electronStartWithSystem(uiPreferenceStore, uiLog),
+    shellStart: electronShellStart(uiLog),
     // Today's Jev-key and OpenCode password files live where today's stores wrote them (`src/main/shell/jevApiKey.ts`,
     // `src/main/opencodePermissions/openCodeServerPassword.ts`, under `userData`).
     secretMigration: { userDataDir: app.getPath('userData'), safeStorage }

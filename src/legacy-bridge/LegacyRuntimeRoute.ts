@@ -1,4 +1,3 @@
-import { config as loadDotenv } from 'dotenv'
 import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -37,11 +36,6 @@ import {
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from '../main/textDelivery/attachmentFiles'
 import type { AttachmentReader } from '../main/textDelivery/attachmentDelivery'
-import {
-  enable as enableAutostart,
-  ensureDefaultAutostart,
-  migrateLegacyAutostart
-} from '../main/shell/autostart'
 import {
   cliOverridesFrom,
   darwinConsoleInputOverride,
@@ -185,7 +179,6 @@ interface LegacyNativeImage {
 export interface LegacyElectronMain {
   app: {
     setAppUserModelId(id: string): void
-    readonly dock?: { hide(): void } | undefined
     getPath(name: 'userData'): string
     readonly isPackaged: boolean
     getAppPath(): string
@@ -372,24 +365,15 @@ export function composeLegacyRuntime(
     }
 
     app.setAppUserModelId('com.jeronimorepetto.dwarfaiminers')
-    // A tray app with a hidden floating panel owns no Dock tile (macOS only).
-    app.dock?.hide()
+    // The macOS Dock tile, the `.env` file and the candidate login entry are UI main's shell start, run right before
+    // this composition (ui-main/window/application/shellStart.ts; ISSUE-243 preparation).
 
     // Typed config, fails fast before any window exists (#38): env beats file beats defaults.
-    loadDotenv({ quiet: true })
     const configFile = createConfigFileStore({
       filePath: join(app.getPath('userData'), CONFIG_FILE_NAME),
       onWarn: warnFrom('config')
     })
     const config = loadConfig(withConfigFileFallback(process.env, await configFile.load()))
-
-    await migrateLegacyAutostart(app.isPackaged)
-    await ensureDefaultAutostart({
-      isPackaged: app.isPackaged,
-      markerPath: join(app.getPath('userData'), 'autostart-default-v1.marker'),
-      enable: enableAutostart,
-      warn: warnFrom('autostart')
-    })
 
     // Where the pushes, the pickers and the notification click of today's runtime land: the rebuilt Panel, handed over
     // by the Electron root (21 §2 cut 0). Today's own window is retired (ISSUE-058).

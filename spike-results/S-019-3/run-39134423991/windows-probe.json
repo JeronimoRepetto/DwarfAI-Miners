@@ -1,0 +1,155 @@
+{
+  "spike": "S-019-3",
+  "part": "probe",
+  "environment": {
+    "date": "2026-10-18T14:16:35.726Z",
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Windows",
+    "imageOs": "win25-vs2026",
+    "imageVersion": "20261007.264.1"
+  },
+  "runs": [
+    {
+      "mode": "off",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "off",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "win32",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "",
+          "dictionarySuggestions": []
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    },
+    {
+      "mode": "on",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "on",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "win32",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "Thiss",
+          "dictionarySuggestions": ["This", "This's", "Thiess", "Thys"]
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    },
+    {
+      "mode": "on-unreachable",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "on-unreachable",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "win32",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "Thiss",
+          "dictionarySuggestions": ["This", "This's", "Thiess", "Thys"]
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    },
+    {
+      "mode": "cached-unreachable",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "cached-unreachable",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "win32",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "Thiss",
+          "dictionarySuggestions": ["This", "This's", "Thiess", "Thys"]
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    }
+  ]
+}

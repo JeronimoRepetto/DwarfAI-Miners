@@ -4,14 +4,15 @@
 //
 //   node spikes/_packaged/extract.mjs <artifact dir> <out dir> [--evidence <dir>]
 //
-// Windows: the zip with `tar` (bsdtar), the nsis installer with 7-Zip (its `$PLUGINSDIR/app-64.7z` payload). macOS:
-// the zip with `ditto`, the dmg mounted read-only with `hdiutil`. Linux: the AppImage with `--appimage-extract`, the
-// deb with `dpkg-deb -x`. Each artifact lands in `<out>/<artifact file name>/`. Nothing is installed or run except
+// Windows: the zip with the system's bsdtar (`System32\tar.exe`; Git's GNU tar, first on the bash step's PATH, reads
+// no zip), the nsis installer with 7-Zip (its `$PLUGINSDIR/app-64.7z` payload). macOS: the zip with `ditto`, the
+// dmg mounted read-only with `hdiutil`. Linux: the AppImage with `--appimage-extract`, the deb with `dpkg-deb -x`. Each artifact lands in `<out>/<artifact file name>/`. Nothing is installed or run except
 // the AppImage's own extractor.
 import { execFileSync } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { tarCommand } from '../../scripts/ci/packagingSpikes.mjs'
 import { environmentFacts, options, PLATFORM, writeEvidence } from './kit.mjs'
 
 const run = (file, args, cwd) =>
@@ -34,7 +35,7 @@ function extractOne(artifact, target) {
   mkdirSync(target, { recursive: true })
   if (name.endsWith('.zip')) {
     if (PLATFORM === 'darwin') run('ditto', ['-x', '-k', artifact, target])
-    else run('tar', ['-xf', artifact, '-C', target])
+    else run(tarCommand(PLATFORM, process.env), ['-xf', artifact, '-C', target])
     return 'zip'
   }
   if (name.endsWith('.exe') && PLATFORM === 'win32') {

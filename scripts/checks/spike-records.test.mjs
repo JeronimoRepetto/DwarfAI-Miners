@@ -783,6 +783,68 @@ ${decision}
     ).toBe(true)
   })
 
+  // ADDED for ISSUE-328 (TC-328-01, TC-328-03): the packaging spike records written from the hosted-runner lane
+  // (.github/workflows/spikes-package.yml). Each names the build issue it gates; while it is not passed on every OS it
+  // says the gap is listed as an R-16 known limit by the v1 checklist (later: ISSUE-281).
+  it('[S-019-2, S-019-3, S-027-1, S-027-3, SP-03, S-027-4, S-018-2] the packaging spike records exist, name their gated issue and, while open, the R-16 known limit', () => {
+    const dir = path.join(repoRoot, 'spike-results')
+    const read = (id) => {
+      const file = path.join(dir, `${id}.md`)
+      expect(existsSync(file), `spike-results/${id}.md exists`).toBe(true)
+      const text = readFileSync(file, 'utf8')
+      expect(checkSpikeRecord(text, `${id}.md`), `spike-results/${id}.md`).toEqual([])
+      expect(existsSync(path.join(dir, id)), `spike-results/${id}/ holds the raw outputs`).toBe(
+        true
+      )
+      const { data, body } = parseFrontMatter(text)
+      return { data, body, decision: decisionText(body) ?? '' }
+    }
+    const gates = {
+      'S-019-2': /ISSUE-269/,
+      'S-019-3': /ISSUE-046[\s\S]*ISSUE-274|ISSUE-274[\s\S]*ISSUE-046/,
+      'S-027-1': /ISSUE-275/,
+      'S-027-3': /ISSUE-276/
+    }
+    for (const [id, gate] of Object.entries(gates)) {
+      const { data, body, decision } = read(id)
+      expect(decision, `${id} names its gated issue`).toMatch(gate)
+      for (const os of ['Windows', 'macOS', 'Linux']) {
+        expect(body, `${id} has a row for ${os}, run or not`).toMatch(
+          new RegExp(`^\\| ${os}\\b`, 'm')
+        )
+      }
+      if (data.verdict !== 'passed') {
+        expect(decision, `${id} is open, so it names the R-16 known limit`).toMatch(
+          /R-16[\s\S]*ISSUE-281/
+        )
+      }
+    }
+    for (const id of ['SP-03', 'S-027-4', 'S-018-2']) {
+      expect(read(id).body, `${id} has its packaged re-check section`).toMatch(
+        /^## Packaged (half|re-check) \(ISSUE-328\)/m
+      )
+    }
+  })
+
+  // ADDED for ISSUE-328 (TC-328-02): the release artifacts' bundled packages are recorded against S-008-1, and the
+  // Agent SDK the legacy path still ships is recorded as failed, not passed, until ISSUE-184 removes it.
+  it('[S-008-1] the record lists what the release artifacts ship and records the shipped Agent SDK as failed', () => {
+    const text = readFileSync(path.join(repoRoot, 'spike-results', 'S-008-1.md'), 'utf8')
+    const section =
+      /^## Release artifacts \(ISSUE-328\)\s*\r?\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)
+    expect(section, 'S-008-1 has the release-artifact section').not.toBeNull()
+    const sdkRow = section?.[1]
+      .split(/\r?\n/)
+      .find((line) => line.startsWith('| `@anthropic-ai/claude-agent-sdk` '))
+    expect(sdkRow, 'the shipped Agent SDK has a row').toBeDefined()
+    expect(sdkRow).toMatch(/\bfailed\b/)
+    expect(sdkRow).toMatch(/ISSUE-184/)
+    expect(
+      existsSync(path.join(repoRoot, 'spike-results', 'S-008-1', 'release-artifacts')),
+      'the bundled-package tables per OS are kept'
+    ).toBe(true)
+  })
+
   it('[SP-02, SP-04, SP-05] every committed spike record passes the record check', () => {
     const dir = path.join(repoRoot, 'spike-results')
     const records = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.md')) : []

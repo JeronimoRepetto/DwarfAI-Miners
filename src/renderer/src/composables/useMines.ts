@@ -21,6 +21,7 @@ import {
   type Mine
 } from '../types'
 import { LEAVING_EXIT_MS } from '../lib/presentation'
+import type { HostDeliveryFacts } from '../lib/delivery/deliveryRoute'
 import type { BoardDwarf } from '../lib/scene/boardDwarf'
 import { MAX_WALK_MS, prefersReducedMotion } from '../lib/scene/sceneMotion'
 import { createReadModel, followHost } from './readModel'
@@ -147,7 +148,12 @@ function statusOf(dwarf: DwarfWire): Dwarf['status'] {
  * (`hostStatus`, lib/scene/boardDwarf), since today's `status` folds asking, idle and asleep into one
  * `waiting`; the scene reads it first, so a Host-idle dwarf reads "Waiting", never asleep.
  */
-function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): BoardDwarf {
+/*
+ * The Host's `canReceiveMessages` ("composer enabled", INV-33) and `owned` ride on the board dwarf too
+ * (lib/delivery/deliveryRoute `HostDeliveryFacts`): the composer is enabled from the Host's flag, never
+ * from a `textDelivery` only today's overlay carries.
+ */
+function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): BoardDwarf & HostDeliveryFacts {
   const { model, effort } = dwarf.sessionProfile
   return {
     id: dwarf.id,
@@ -159,6 +165,8 @@ function toBoardDwarf(dwarf: DwarfWire, status: Dwarf['status']): BoardDwarf {
     ...(effort === undefined ? {} : { effort }),
     status,
     hostStatus: dwarf.status,
+    canReceiveMessages: dwarf.canReceiveMessages,
+    owned: dwarf.owned,
     ...(dwarf.parentDwarfId === null ? {} : { parentId: dwarf.parentDwarfId }),
     // Today's board names a dwarf's session; the Host's id stands in for it (ADR-015: provider ids stay apart).
     sessionId: dwarf.id,
