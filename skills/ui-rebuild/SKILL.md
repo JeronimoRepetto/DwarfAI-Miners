@@ -21,7 +21,7 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 **Scope.** This skill governs UI work on today's code, including epic #635. Rebuild issues follow
 the rebuild manual instead: the renderer is rebuilt in place (manual §3.2), and any new type that
-crosses a process boundary goes in `src/contracts/`, not in `src/shared/`.
+crosses a process boundary goes in `src/contracts/` (`src/shared/` was deleted in cut 5, ISSUE-246).
 
 The redesign's source of truth is `docs/dwarfai-miners-design/` — and it is **deliberately not
 committed**. The folder is gitignored and exists only in the maintainer's main checkout, so an
@@ -140,9 +140,9 @@ for access and replicate its behaviour, rather than eyeballing a screenshot.
 
 ## Boundaries the rebuild does not get to break
 
-- On today's code, new wire state crosses processes only through `src/shared/contracts.ts`,
-  re-exported by both barrels — the "Boundaries that must survive" section in
-  [`AGENTS.md`](../../AGENTS.md) is the contract. Rebuild issues use `src/contracts/` instead.
+- New wire state crosses processes only through `src/contracts/`; today's renderer types live in
+  `src/contracts/wire/today.ts` (re-homed from `src/shared/contracts.ts` by ISSUE-246), re-exported by the
+  renderer barrel — the "Boundaries that must survive" section in [`AGENTS.md`](../../AGENTS.md) is the contract.
 - `renderer/src/components/` stays thin; framework-agnostic logic goes to `renderer/src/lib/`.
 - The map and mine-interior art stay untouched, and their spawn points, work points and passable
   paths are not machine-readable in the design docs. Deriving them is its own task, and the

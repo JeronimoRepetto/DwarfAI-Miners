@@ -946,11 +946,6 @@ export function useDwarfMessaging() {
     })
   }
 
-  /** Hear main's held-message verdicts. Returns the unsubscribe. */
-  function listenHeld(): () => void {
-    return window.api.onDwarfSendSettled(settle)
-  }
-
   /** The files one sent message carried, for its own bubble and its retry (#408). */
   function attachmentsFor(dwarfId: string, echoId: string): readonly DwarfAttachment[] {
     return echoAttachments[dwarfId]?.[echoId] ?? []
@@ -1139,7 +1134,6 @@ export function useDwarfMessaging() {
     settleAnswer,
     withdrawAnswer,
     settle,
-    listenHeld,
     retry,
     observe,
     reconcile,

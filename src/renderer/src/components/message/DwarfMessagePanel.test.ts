@@ -62,6 +62,20 @@ import {
   MENU_RESET_NAME,
   MENU_STOP
 } from '../../lib/message/panelChrome'
+import { publishBoard } from '../../testing/board'
+
+/**
+ * The Host's A-N08 answer for what a save stored (ADDED for ISSUE-243): every rename and reset reaches the Host
+ * (useDwarfRename), since today's rows `setDwarfName` / `resetDwarfNameToday` left with today's runtime.
+ */
+function hostRenameAnswer(answer: DwarfNameResult) {
+  return answer.saved
+    ? { ok: true, value: { ok: true, value: { customName: answer.customName ?? null } } }
+    : { ok: false, error: { code: 'INTERNAL', message: 'not saved', retryable: false } }
+}
+
+/** The Host's A-N09 answer: the base name is back. */
+const HOST_RESET = { ok: true, value: undefined }
 
 // Every mounted panel is unmounted after its test, so no outcome clock or tooltip it started
 // outlives the document jsdom's teardown empties (#635: CI caught five updating a detached tree).
@@ -3429,12 +3443,13 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
       ...(customName === undefined ? {} : { customName })
     })
 
-  // AMENDED for ISSUE-172 (was: `resetDwarfName`): today's reset member is `resetDwarfNameToday`, A-N09 having its name.
-  // This block's dwarf `d55` is on no Host board, so its rename stays today's runtime's (useDwarfRename).
+  // AMENDED for ISSUE-243 (was: today's `setDwarfName` and `resetDwarfNameToday`, since this block's dwarf `d55` is on
+  // no Host board): today's rows left with today's runtime, so every rename is A-N08 and every reset A-N09
+  // (useDwarfRename). An empty save is A-N09's reset (US-MSG-005.AC04).
   function fakeNames(answer: DwarfNameResult = { saved: true, customName: 'Watcher' }) {
     const api = {
-      setDwarfName: vi.fn().mockResolvedValue(answer),
-      resetDwarfNameToday: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
+      renameDwarf: vi.fn().mockResolvedValue(hostRenameAnswer(answer)),
+      resetDwarfName: vi.fn().mockResolvedValue(HOST_RESET)
     }
     // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
     // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
@@ -3545,7 +3560,9 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     await type(wrapper, '  Watcher   of  seals ')
     await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(api.setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: 'Watcher of seals' })
+    expect(api.renameDwarf).toHaveBeenCalledWith(
+      expect.objectContaining({ dwarfId: 'd55', name: 'Watcher of seals' })
+    )
     expect(wrapper.find('.dm-msg__field').exists()).toBe(false)
     expect(document.activeElement).toBe(wrapper.get('.dm-msg__rename').element)
     expect(wrapper.get('.dm-msg__chips').isVisible()).toBe(true)
@@ -3575,8 +3592,10 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     const composer = wrapper.get('.dm-composer textarea').element as HTMLTextAreaElement
     composer.focus()
     await flushPromises()
-    expect(api.setDwarfName).toHaveBeenCalledTimes(1)
-    expect(api.setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: 'Watcher' })
+    expect(api.renameDwarf).toHaveBeenCalledTimes(1)
+    expect(api.renameDwarf).toHaveBeenCalledWith(
+      expect.objectContaining({ dwarfId: 'd55', name: 'Watcher' })
+    )
     expect(wrapper.find('.dm-msg__field').exists()).toBe(false)
     expect(document.activeElement).toBe(composer)
   })
@@ -3588,7 +3607,7 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     await type(wrapper, 'Warden')
     await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Escape' })
     await flushPromises()
-    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(api.renameDwarf).not.toHaveBeenCalled()
     expect(wrapper.emitted('close')).toBeUndefined()
     const name = wrapper.get('.dm-msg__rename')
     expect(name.text()).toBe('Watcher')
@@ -3634,7 +3653,9 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     expect(wrapper.get('.dm-msg__hint').text()).toBe('Empty · Enter goes back to dwarfai-55')
     await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(api.setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: '' })
+    // AMENDED for ISSUE-243 (was: today's `setDwarfName` with an empty name): an empty save is A-N09's reset.
+    expect(api.resetDwarfName).toHaveBeenCalledWith(expect.objectContaining({ dwarfId: 'd55' }))
+    expect(api.renameDwarf).not.toHaveBeenCalled()
     expect(said(wrapper)).toBe('Name reset to dwarfai-55')
   })
 
@@ -3645,7 +3666,7 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     await type(wrapper, ' Watcher ')
     await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(api.renameDwarf).not.toHaveBeenCalled()
     expect(said(wrapper)).toBe('')
   })
 
@@ -3658,7 +3679,7 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     await input.trigger('keydown', { key: 'Enter', isComposing: true })
     await input.trigger('keydown', { key: 'Enter', keyCode: 229 })
     await flushPromises()
-    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(api.renameDwarf).not.toHaveBeenCalled()
     expect(wrapper.find('.dm-msg__field').exists()).toBe(true)
   })
 
@@ -3682,18 +3703,17 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     expect(wrapper.get('.dm-msg__rename').text()).toBe(BASE)
   })
 
+  // AMENDED for ISSUE-243 (was: today's reset refusing in today's words, "This dwarf is no longer here, so its name
+  // cannot change."): every reset is A-N09's, whose refusal is said in today's "The name could not be saved."
   it('says main’s reason in a warning toast when a reset saved nothing', async () => {
     const api = fakeNames()
-    api.resetDwarfNameToday.mockResolvedValue({
-      saved: false,
-      reason: 'This dwarf is no longer here, so its name cannot change.'
-    } satisfies DwarfNameResult)
+    api.resetDwarfName.mockResolvedValue(hostRenameAnswer({ saved: false, reason: 'refused' }))
     const wrapper = attached({ dwarf: named('Watcher') })
     wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
     await flushPromises()
     expect(said(wrapper)).toBe('')
     expect(useToasts().toasts.value.at(-1)).toMatchObject({
-      text: 'This dwarf is no longer here, so its name cannot change.',
+      text: 'The name could not be saved.',
       icon: 'warning'
     })
   })
@@ -3710,7 +3730,7 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
     const wrapper = attached({ dwarf: named('Watcher') })
     wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
     await flushPromises()
-    expect(api.resetDwarfNameToday).toHaveBeenCalledWith('d55')
+    expect(api.resetDwarfName).toHaveBeenCalledWith(expect.objectContaining({ dwarfId: 'd55' }))
     expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
     expect(said(wrapper)).toBe('Name reset to dwarfai-55')
   })
@@ -3808,8 +3828,6 @@ describe('DwarfMessagePanel renames a dwarf the Host’s board carries through t
     const api = createFakeWindowApi({
       getHostSnapshot: vi.fn().mockResolvedValue(page) as unknown as Api['getHostSnapshot'],
       onHostEvent: vi.fn(() => () => undefined) as unknown as Api['onHostEvent'],
-      setDwarfName: vi.fn() as unknown as Api['setDwarfName'],
-      resetDwarfNameToday: vi.fn() as unknown as Api['resetDwarfNameToday'],
       renameDwarf: vi.fn().mockResolvedValue({
         ok: true,
         value: { ok: true, value: { customName: 'Scout' } }
@@ -3861,7 +3879,6 @@ describe('DwarfMessagePanel renames a dwarf the Host’s board carries through t
       dwarfId: BORIN,
       name: 'Scout'
     })
-    expect(window.api.setDwarfName).not.toHaveBeenCalled()
     expect(wrapper.get('.sr-only[role="status"][aria-live="polite"]').text()).toBe(
       'Renamed to Scout'
     )
@@ -3880,7 +3897,6 @@ describe('DwarfMessagePanel renames a dwarf the Host’s board carries through t
     expect(vi.mocked(window.api.resetDwarfName).mock.calls[0]?.[0]).toMatchObject({
       dwarfId: BORIN
     })
-    expect(window.api.resetDwarfNameToday).not.toHaveBeenCalled()
     // At once: no dialog asks first.
     expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
   })
@@ -4048,7 +4064,7 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
       pendingPermission: permission,
       pendingQuestion: question
     })
-    useMines().setMines({ mines: [defaultMine({ dwarfs: [dwarf] })], tokensObserved: 0 })
+    publishBoard({ mines: [defaultMine({ dwarfs: [dwarf] })], tokensObserved: 0 })
     const wrapper = panel({ dwarf })
     await flushPromises()
 
@@ -4057,7 +4073,7 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
 
     // A board whose ids are outside the relay's namespace (no front card) draws its own ask too.
     const raw = defaultDwarf({ id: DWARF, textDelivery: 'terminal', pendingQuestion: question })
-    useMines().setMines({ mines: [defaultMine({ dwarfs: [raw] })], tokensObserved: 0 })
+    publishBoard({ mines: [defaultMine({ dwarfs: [raw] })], tokensObserved: 0 })
     await wrapper.setProps({ dwarf: raw })
 
     expect(wrapper.find('.dm-qcard__q').exists()).toBe(true)
@@ -4362,14 +4378,14 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
       ...(customName === undefined ? {} : { customName })
     })
 
-  // Main's answer as main gives it: a name that is empty or the base name leaves no custom name.
+  // The Host's answer as it gives it: a name that is the base name leaves no custom name. AMENDED for ISSUE-243 (was:
+  // today's `setDwarfName` and `resetDwarfNameToday`): today's rows left with today's runtime; an empty save is A-N09's.
   function fakeNames() {
     const api = {
-      setDwarfName: vi.fn(async ({ name }: { name: string }) =>
-        name === '' || name === BASE ? { saved: true } : { saved: true, customName: name }
+      renameDwarf: vi.fn(async ({ name }: { name: string }) =>
+        hostRenameAnswer(name === BASE ? { saved: true } : { saved: true, customName: name })
       ),
-      // AMENDED for ISSUE-172 (was: `resetDwarfName`): today's reset member, A-N09 having its name.
-      resetDwarfNameToday: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
+      resetDwarfName: vi.fn().mockResolvedValue(HOST_RESET)
     }
     ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
       api as unknown as Partial<Window['api']>
@@ -4455,7 +4471,7 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
     await type(wrapper, 'Warden')
     await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Escape' })
     await flushPromises()
-    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(api.renameDwarf).not.toHaveBeenCalled()
     expect(wrapper.find('.dm-msg__field').exists()).toBe(false)
     expect(wrapper.get('.dm-msg__rename').text()).toBe('Watcher')
     expect(wrapper.emitted('close')).toBeUndefined()
@@ -4509,7 +4525,7 @@ describe('ISSUE-258 the MessagePanel header, ⋯ menu and stop dialog', () => {
     const reset = attached({ dwarf: named('Watcher') })
     reset.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
     await flushPromises()
-    expect(api.resetDwarfNameToday).toHaveBeenCalledWith('d58')
+    expect(api.resetDwarfName).toHaveBeenCalledWith(expect.objectContaining({ dwarfId: 'd58' }))
     expect(said(reset)).toBe('Name reset to ' + BASE)
   })
 

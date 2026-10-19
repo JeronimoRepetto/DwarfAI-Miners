@@ -8,7 +8,11 @@
 //
 // Pinned so far (ISSUE-072): the ended-agent rule (#28/#64/#157/#391, INV-36), the #45 pid-recycle
 // guard and coal only via the backfill (INV-95). The legacy tests stay referenced while the legacy
-// code they cover exists (cut 5 deletes it); the Host's tests are their successors.
+// code they cover exists (cut 5 deletes it); the Host's tests are their successors. ISSUE-337 and ISSUE-245
+// deleted src/main/providers and src/main/sessionLaunch, so their legacy entries are re-pointed at the successors
+// already pinned here (reconcile.test.ts, the ended-agent ledger contract, observationLoop.ended.test.ts). ISSUE-341
+// deleted src/main/domain, so the legacy coal-only-via-backfill entry (ledger.test.ts) is re-pointed at its successors
+// already pinned here (credit.test.ts, ledgerTriggers.test.ts).
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -25,29 +29,8 @@ interface Pinned {
 }
 
 const CLAUDE_RECONCILE = 'src/host/modules/observation/adapters/claude/reconcile.test.ts'
-const LEGACY_CLAUDE = 'src/main/providers/claude/claudeProvider.test.ts'
 
 const PRESERVED_INVARIANT_TESTS: readonly Pinned[] = [
-  {
-    invariant: 'an ended agent is never re-adopted (#28/#64/#157/#391)',
-    file: LEGACY_CLAUDE,
-    titles: [
-      'drops a remembered worker on its terminal notification and never resurrects it',
-      'drops a recovered worker on its terminal notification and never resurrects it',
-      'never lets the under-count recovery re-adopt a stale worker',
-      'never re-adopts a pruned agent when its launch record returns to the tail',
-      'never re-adopts a pruned agent through a later under-count deep read',
-      'never re-adopts on a resume record it has already acted on'
-    ]
-  },
-  {
-    invariant: 'an ended agent is never re-adopted (#28/#64/#157/#391)',
-    file: 'src/main/sessionLaunch/heldCrew.test.ts',
-    titles: [
-      'never lets an ended subagent come back, whatever a later signal says',
-      'ends a task that ended before this panel ever heard it start'
-    ]
-  },
   {
     invariant: 'an ended agent is never re-adopted (#28/#64/#157/#391)',
     file: CLAUDE_RECONCILE,
@@ -72,23 +55,10 @@ const PRESERVED_INVARIANT_TESTS: readonly Pinned[] = [
   },
   {
     invariant: 'the #45 pid-recycle guard keeps its own polarity on the shared tolerance',
-    file: LEGACY_CLAUDE,
-    titles: [
-      're-probes after the pid dies, so a later recycle cannot ride a stale verdict',
-      'drops a session whose pid was recycled, however fresh its entry reads'
-    ]
-  },
-  {
-    invariant: 'the #45 pid-recycle guard keeps its own polarity on the shared tolerance',
     file: CLAUDE_RECONCILE,
     titles: [
       '[ADR-029] a pid reused by another process within the tolerance is not taken for the recorded session'
     ]
-  },
-  {
-    invariant: 'coal only via the backfill (INV-95)',
-    file: 'src/main/domain/ledger.test.ts',
-    titles: ['never credits coal from live observation']
   },
   {
     invariant: 'coal only via the backfill (INV-95)',

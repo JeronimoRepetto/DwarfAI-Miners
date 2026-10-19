@@ -13,10 +13,5 @@
     "no-restricted-syntax": {
       "count": 1
     }
-  },
-  "src/renderer/src/types.ts": {
-    "arch/legacy-only-through-bridge": {
-      "count": 4
-    }
   }
 }

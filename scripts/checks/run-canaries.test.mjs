@@ -104,6 +104,20 @@ describe('canary job (05 §5.2)', () => {
     JOB_TIMEOUT_MS
   )
 
+  // ISSUE-248 (21 §1 item 7: after cut 5 an import of src/main/runtime/runtime.ts fails lint; ADR-001 Verification):
+  // the dependency-cruiser half of R16, which the legacy exclude kept from firing (05 §5.2 note, UNVERIFIED until here).
+  it(
+    '[R16, ADR-001] an import of src/main/runtime/runtime.ts from src/ui-main is reported as R16-legacy-only-through-bridge',
+    async () => {
+      const canary = loadCanaries().find((each) => each.name === 'R16-runtime')
+      expect(canary, 'the R16-runtime canary').toBeDefined()
+      expect([canary.rule, canary.tool]).toEqual(['R16-legacy-only-through-bridge', 'depcruise'])
+      const result = await runCanary(canary)
+      expect(result.ok, `${canary.name}: ${result.reason}`).toBe(true)
+    },
+    ONE_CANARY_TIMEOUT_MS
+  )
+
   it(
     '[ADR-004] a canary that produces no violation fails the job',
     async () => {

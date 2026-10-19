@@ -414,7 +414,7 @@ SEARCH logs USING COVERING INDEX idx_logs_thread_id_ts (thread_id>?)
 Despite the `WHERE ts >= ?` filter, SQLite satisfies the `GROUP BY thread_id`
 by walking the covering index across **all 57 053 rows**, then applying the time
 filter — it is not the bounded range scan the comment above
-`readCodexHeartbeats` in `src/main/providers/codex/state.ts` claims it is. **That
+`readCodexHeartbeats` in the legacy `src/main/providers/codex/state.ts` (deleted in cut 5) claimed it is. **That
 comment is now known to be wrong** and should be corrected whatever else is done.
 
 The cost therefore grows with the user's accumulated Codex log store, not with
@@ -448,7 +448,7 @@ read off the critical path. This is the structural version of R1 and subsumes it
 
 ### R4 — `sumSourceBytes` built paths with a hard-coded backslash (correctness, not performance) — FIXED
 
-Found while auditing the tier walk. `src/main/tier/tierService.ts` joined paths
+Found while auditing the tier walk. The legacy `src/main/tier/tierService.ts` (deleted in cut 5) joined paths
 with a hard-coded backslash rather than with `node:path`'s `join`. On macOS and
 Linux that produced a path that resolved to nothing: `listDir` returned `[]` and
 `stat` returned `null`, so `sumSourceBytes` totalled 0 bytes and **every mine on
@@ -458,8 +458,8 @@ This was not a performance defect and was deliberately not fixed inside this
 performance change; it shipped separately as
 `fix(tier): stop weighing bundles, duplicates and Windows-only paths (#39)`.
 `sumSourceBytes` now joins with `node:path`'s `join`
-(`src/main/tier/tierService.ts:187`), with a doc comment at `:167-170` recording
-exactly this failure mode.
+(`src/main/tier/tierService.ts:187` at the time), with a doc comment at `:167-170` recording
+exactly this failure mode. Its successor is the mines `FsSourceWeightScanner` (`21` §6 row "Tier / weight").
 
 ## What was not measured
 

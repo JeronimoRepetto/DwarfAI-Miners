@@ -47,20 +47,21 @@ and release notes unless you ask not to be.
 
 In scope — the app's own attack surface:
 
-- **The loopback hooks listener** (`src/main/hooks/`): bypassing the per-install token,
-  reaching the listener from off-box despite the `127.0.0.1` bind, or exceeding the 4 KB
-  body cap's memory guarantees.
-- **The Claude `settings.json` writer** (`src/main/hooks/hookInstaller.ts`): any path where
-  install or uninstall corrupts the file or touches entries that are not DwarfAI-Miners' own.
-- **The message relay** (`src/main/textDelivery/`): making the one-shot `claude -p` turn do
-  anything beyond delivering the message to the named session.
-- **The renderer/preload boundary** (`src/main/shell/window.ts`, `src/preload/`): escaping the
-  typed API, or navigating the panel's own frame somewhere it has no business being — the
-  `setWindowOpenHandler` rule below covers new windows only.
-- **Transcript redaction** (`src/main/domain/redactSecrets.ts`): a class of secrets that
-  predictably escapes the redaction pass, or a path by which text the pass never sees reaches
-  the panel. Note that redaction is display hardening and deliberately lossy — it is not, and
-  does not claim to be, a guarantee.
+- **The Host's loopback ingress** (`src/host/transport/ingress/httpIngress.ts`, its tokens in
+  `src/host/transport/auth/`): bypassing a channel's token, reaching the listener from off-box
+  despite the `127.0.0.1` bind, or exceeding the 256 KiB body cap's memory guarantees.
+- **The Claude `settings.json` writer**
+  (`src/host/modules/preferences/adapters/external-config/claudeHooks/ClaudeHooksConfigWriter.ts`):
+  any path where install or uninstall corrupts the file or touches entries that are not
+  DwarfAI-Miners' own.
+- **The observed-session relay** (`src/host/modules/conversation/adapters/observed-send/`): making
+  it write a message or a key anywhere but the terminal of the session it was addressed to.
+- **The renderer/preload boundary** (`src/ui-main/window/adapters/secureWindowOptions.ts`,
+  `navigationGuard.ts` beside it, `src/preload/`): escaping the typed API, or navigating the app's
+  own frame away from its entry.
+- **Redaction** (`src/contracts/logging/redactSecrets.ts`): a class of secrets that predictably
+  escapes the redaction pass where it applies. Note that redaction is deliberately lossy — it is
+  not, and does not claim to be, a guarantee.
 
 Out of scope:
 
@@ -77,21 +78,18 @@ Out of scope:
 
 Verified in source, not aspirational:
 
-- The renderer runs with context isolation enabled and Node integration disabled, and a link
-  asking for a new window is refused, its URL handed to the system browser instead
-  (`setWindowOpenHandler` in `src/main/shell/window.ts`). That handler is the only navigation
-  guard there is: no `will-navigate` handler exists, so the panel's own frame is not held to
-  it. Electron's Chromium sandbox is also disabled (`sandbox: false`), which leaves the
-  preload/context-isolation line as the boundary that matters.
-- The hooks listener binds `127.0.0.1` only, drops unauthenticated requests before reading
-  their body (constant-time token comparison), and caps bodies at 4 KB
-  (`src/main/hooks/hookServer.ts`, `src/main/hooks/hookToken.ts`).
-- The relay turn is restricted to the `ListAgents` and `SendMessage` tools and fences the
-  message payload so its content cannot become instructions that execute commands
-  (`src/main/textDelivery/relay.ts`).
-- Transcript **message text** is redacted at the provider boundary, before it ever crosses
-  into the renderer (`src/main/providers/`, `src/main/domain/redactSecrets.ts`). Message text
-  is the whole of what the pass covers: a Claude subagent's task `description` becomes the
-  worker's name and its tooltip line without passing through it, as do project paths and
-  session names. See
+- The renderer runs sandboxed (`sandbox: true`), with context isolation enabled and Node
+  integration disabled, from the one window factory
+  (`src/ui-main/window/adapters/secureWindowOptions.ts`). Every navigation or redirect away from
+  the app's own entry is prevented, a webview is never attached, and a link asking for a new
+  window is refused, its URL handed to the system browser only when the external-link allowlist
+  admits it (`src/ui-main/window/adapters/navigationGuard.ts`).
+- The Host's ingress binds `127.0.0.1` only, refuses any `Origin` header and any `Host`
+  other than `127.0.0.1:<port>`, rate-limits each channel, drops unauthenticated requests before
+  reading their body (constant-time comparison of token digests), and caps bodies at 256 KiB
+  (`src/host/transport/ingress/httpIngress.ts`, `src/host/transport/auth/channelTokenCheck.ts`).
+- An ask's text and an activity summary line are redacted before they leave the Host (the
+  `redactSecrets` rule of `src/contracts/logging/`, bound into the asking and driver adapters by
+  `src/host/main.ts`), and so is every diagnostics log line (ADR-026). The legacy pass over every
+  transcript message (`src/main/domain/redactSecrets.ts`) left with the legacy tree in cut 5. See
   [what is shown on screen](docs/privacy.md#what-is-shown-on-screen).

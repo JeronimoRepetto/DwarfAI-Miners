@@ -26,7 +26,8 @@ import { FRAME_CLOCK_KEY } from '../composables/useFramePlayer'
 import { createFrameClock, type FrameClock } from '../lib/sprite/frameClock'
 import type { SequencePosition } from '../lib/sprite/spriteSheet'
 import PanelApp from '../App.vue'
-import { goldenApi } from './api'
+import { goldenApi, goldenBoard } from './api'
+import { useMines } from '../composables/useMines'
 import { restoreLaunchView } from '../composables/useView'
 import { useDwarfMessaging } from '../composables/useDwarfMessaging'
 import { RENDERS, failedEchoesOf, type GoldenAttributes, type GoldenText } from './renders'
@@ -282,6 +283,9 @@ async function mountScreen(): Promise<void> {
   caret.textContent = '*, *::before, *::after { caret-color: transparent !important; }'
   document.head.appendChild(caret)
   Object.defineProperty(window, 'api', { configurable: true, value: goldenApi(sample) })
+  // The sample's board, written into the board read model the shell draws (AMENDED for ISSUE-242, was: answered by
+  // A-12 `getMines`): the bridge refuses the Host snapshot, so nothing else writes it. Nobody walks in on it.
+  Object.assign(useMines().state, goldenBoard(sample), { arrived: new Set<string>() })
   // As the product's entry does before it mounts the shell (#635, PANEL-QUESTIONS 25): the App
   // opens on the view the bridge answers as stored, the sample's remembered launch.
   await restoreLaunchView(window.api)

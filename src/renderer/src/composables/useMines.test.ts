@@ -17,127 +17,32 @@ import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowAp
 import {
   buildActionBar,
   CHANNEL_HINT,
-  KICK_HINT,
-  kickBlocked,
   NO_CHANNEL_REASON,
-  refusalLine,
   sessionClosed
 } from '../lib/delivery/actionBar'
 import { dwarfTip } from '../lib/dwarf/dwarfTip'
 import { sceneDwarfStatus } from '../lib/scene/sceneDwarf'
-import { defaultDwarf, defaultMaterials, defaultMine } from '../testing/factories'
+import { publishBoard } from '../testing/board'
+import { defaultMaterials, defaultMine } from '../testing/factories'
 import { useMines, type BoardWalk } from './useMines'
 import { useToasts } from './useToasts'
 
 /*
- * WHO IS NEW ON THE BOARD (#156).
- *
- * The mine's interior walks an arriving dwarf in from a spawn point, and it used
- * to decide who had arrived from its own first snapshot. That cannot see the one
- * case the acceptance run found: a mine nobody is working is not on the board at
- * all, so its interior is not mounted — launch the first agent and the scene
- * mounts with that agent already in it, which its own first snapshot reads as
- * "was already at work before anybody looked". The maintainer's first foreman
- * materialised on the spot; his second walked, because by then the interior had
- * been open long enough to see the mine empty.
- *
- * The panel has been polling the whole time and does know. This is that fact,
- * held where every consumer can read it: the dwarfs on this snapshot that were
- * not on the one before it.
+ * The board's own reset (AMENDED for ISSUE-242, cut 5: was `useMines arrivals`, `useMines` and `useMines global vault`
+ * over `setMines`, today's A-12/A-P2 feed, deleted with `BoardFacadeAdapter`; arrivals and totals are the Host read
+ * model's below, `[US-MINE-009.AC02, S2.02]` and the snapshot tests).
  */
-describe('useMines arrivals', () => {
-  const crew = (...ids: string[]) => ids.map((id) => defaultDwarf({ id }))
-
-  it('reports nobody as arriving on the first snapshot it ever sees', () => {
-    // Everything running when the panel starts was already running. Calling
-    // that an arrival would parade the whole valley across its interiors.
-    const { state, setMines, clear } = useMines()
-    clear()
-    setMines({ mines: [defaultMine({ dwarfs: crew('a', 'b') })], tokensObserved: 0 })
-    expect([...state.arrived]).toEqual([])
-  })
-
-  it('reports the dwarfs that were not on the snapshot before', () => {
-    const { state, setMines, clear } = useMines()
-    clear()
-    setMines({ mines: [defaultMine({ dwarfs: crew('a') })], tokensObserved: 0 })
-    setMines({ mines: [defaultMine({ dwarfs: crew('a', 'b') })], tokensObserved: 0 })
-    expect([...state.arrived]).toEqual(['b'])
-  })
-
-  it('reports an arrival into a mine that had nobody in it', () => {
-    // The reproduction: the mine is not on the board at all until a session
-    // starts in it, so the arrival brings the mine with it.
-    const { state, setMines, clear } = useMines()
-    clear()
-    setMines({ mines: [], tokensObserved: 0 })
-    setMines({ mines: [defaultMine({ dwarfs: crew('a') })], tokensObserved: 0 })
-    expect([...state.arrived]).toEqual(['a'])
-  })
-
-  it('stops calling a dwarf new once it has been on a snapshot', () => {
-    const { state, setMines, clear } = useMines()
-    clear()
-    setMines({ mines: [], tokensObserved: 0 })
-    setMines({ mines: [defaultMine({ dwarfs: crew('a') })], tokensObserved: 0 })
-    setMines({ mines: [defaultMine({ dwarfs: crew('a') })], tokensObserved: 0 })
-    expect([...state.arrived]).toEqual([])
-  })
-
-  it('forgets who was there when the board is cleared', () => {
-    // A cleared board is a panel that has stopped looking; what it sees next is
-    // a first snapshot again, not a valley of arrivals.
-    const { state, setMines, clear } = useMines()
-    setMines({ mines: [defaultMine({ dwarfs: crew('a') })], tokensObserved: 0 })
-    clear()
-    setMines({ mines: [defaultMine({ dwarfs: crew('a', 'b') })], tokensObserved: 0 })
-    expect([...state.arrived]).toEqual([])
-  })
-})
-
 describe('useMines', () => {
-  it('stores the mines list and vault total from a snapshot', () => {
-    const { state, setMines } = useMines()
-    const mine = defaultMine({ tokensObserved: 500 })
-    setMines({ mines: [mine], tokensObserved: 500 })
-    expect(state.mines).toEqual([mine])
-    expect(state.tokensObserved).toBe(500)
-  })
-
-  it('clears both the mines list and the vault total', () => {
-    const { state, setMines, clear } = useMines()
-    setMines({ mines: [defaultMine()], tokensObserved: 42 })
+  it('clears the mines list, the vault total and its breakdown', () => {
+    const { state, clear } = useMines()
+    publishBoard({
+      mines: [defaultMine()],
+      tokensObserved: 42,
+      materials: defaultMaterials({ bronze: 20_000 })
+    })
     clear()
     expect(state.mines).toEqual([])
     expect(state.tokensObserved).toBe(0)
-  })
-})
-
-/*
- * The global vault (see #22) travels on the same snapshot. It is deliberately
- * NOT the sum of the mines in the list: main sums it over the entire persisted
- * ledger, so it includes projects with no crew today — which is the only place
- * backfilled coal can appear.
- */
-describe('useMines global vault', () => {
-  it('stores the whole-ledger breakdown the snapshot carries', () => {
-    const { state, setMines } = useMines()
-    const materials = defaultMaterials({ coal: 500_000 })
-    setMines({ mines: [], tokensObserved: 0, materials })
-    expect(state.materials).toEqual(materials)
-  })
-
-  it('carries an absent breakdown through as absent rather than inventing one', () => {
-    const { state, setMines } = useMines()
-    setMines({ mines: [], tokensObserved: 0, materials: defaultMaterials({ gold: 100_000 }) })
-    setMines({ mines: [], tokensObserved: 0 })
-    expect(state.materials).toBeUndefined()
-  })
-
-  it('clears the vault breakdown along with the rest', () => {
-    const { state, setMines, clear } = useMines()
-    setMines({ mines: [], tokensObserved: 42, materials: defaultMaterials({ bronze: 20_000 }) })
-    clear()
     expect(state.materials).toBeUndefined()
   })
 })
@@ -425,118 +330,6 @@ describe('useMines from the Host read model', () => {
     await settle()
     expect(host.requests).toHaveLength(2)
     expect(useMines().state.mines.map((mine) => mine.name)).toEqual(['alpha-again'])
-  })
-
-  it('[ADR-033] while the Host read path is unrouted the board stays on the feed of today', async () => {
-    // Hidden until built (21 §1 item 8): until the cut-1 switch (ISSUE-123) routes A-N01 the router refuses it, and
-    // today's A-12/A-P2 feed stays the board's one writer.
-    installHost([{ ok: false, error: { code: 'INTERNAL', message: 'no route' } } as SnapshotAnswer])
-    await useMines().start()
-    useMines().setMines({ mines: [defaultMine({ name: 'today' })], tokensObserved: 7 })
-    expect(useMines().state.mines.map((mine) => mine.name)).toEqual(['today'])
-    expect(useMines().state.tokensObserved).toBe(7)
-  })
-
-  it('[ADR-033] once the Host snapshot is read, the feed of today no longer writes the board', async () => {
-    installHost([page(3, [mineWire()], [dwarfWire(BORIN)])])
-    await useMines().start()
-    useMines().setMines({ mines: [], tokensObserved: 0 })
-    expect(useMines().state.mines.map((mine) => mine.name)).toEqual(['alpha'])
-    expect(
-      useMines()
-        .hostDwarfs()
-        .map((dwarf) => dwarf.id)
-    ).toEqual([BORIN])
-  })
-
-  // AMENDED for ISSUE-123 (appended): until cut 2 the asks of the rows still `legacy` reach the renderer only through
-  // A-P2 (`LegacyAskRelay` folds them into `BoardFacadeAdapter`'s board, 21 §3), so the Host board carries them.
-  it('[ADR-001] in cut 1 the Host board carries the open asks today’s runtime holds, which only A-P2 brings, and nothing else of A-P2', async () => {
-    installHost([page(3, [mineWire()], [dwarfWire(BORIN), dwarfWire(DAIN)])])
-    await useMines().start()
-    const permission = {
-      toolUseId: 'legacy:toolu_1',
-      toolName: 'Bash',
-      input: 'ls',
-      channel: 'held' as const,
-      askedAt: '2026-10-07T10:00:00.000Z'
-    }
-    const facade = (asks: Partial<ReturnType<typeof defaultDwarf>>) => ({
-      mines: [
-        defaultMine({
-          id: ALPHA,
-          name: 'facade',
-          dwarfs: [defaultDwarf({ id: BORIN, name: 'Other', ...asks }), defaultDwarf({ id: DAIN })]
-        })
-      ],
-      tokensObserved: 99
-    })
-    useMines().setMines(facade({ pendingPermission: permission, waitingReason: 'approval' }))
-    const borin = () => boardDwarfs().find((dwarf) => dwarf.id === BORIN)
-    expect(borin()).toMatchObject({ pendingPermission: permission, waitingReason: 'approval' })
-    expect(borin()?.name).toBe('Borin')
-    expect(boardDwarfs().find((dwarf) => dwarf.id === DAIN)?.pendingPermission).toBeUndefined()
-    expect(useMines().state.mines.map((mine) => mine.name)).toEqual(['alpha'])
-    expect(useMines().state.tokensObserved).toBe(0)
-    // An arrival the Host just announced is still to be drawn when A-P2 follows it.
-    const host = installHost([page(3, [mineWire()], [dwarfWire(BORIN)])])
-    useMines().stop()
-    await useMines().start()
-    host.push([frame(4, 'dwarf.arrived', { dwarf: dwarfWire(DAIN), announce: false })])
-    useMines().setMines(facade({ pendingPermission: permission }))
-    expect(borin()?.pendingPermission).toEqual(permission)
-    expect([...useMines().state.arrived]).toEqual([DAIN])
-    // The ask closes when A-P2 no longer carries it.
-    useMines().setMines(facade({}))
-    expect(borin()?.pendingPermission).toBeUndefined()
-    expect(borin()?.waitingReason).toBeUndefined()
-  })
-
-  // A-23 `dwarf:sendText` and A-26 `dwarf:kick` stay `legacy` through `LegacyDwarfIdBridge` in cuts 1–2, so the route a
-  // message or a kick takes is today's runtime's: it reaches the Host board only on A-P2, beside the asks.
-  it('[ADR-001] in cut 1 the Host board carries the text delivery route and capabilities today’s runtime resolved, which only A-P2 brings', async () => {
-    installHost([page(3, [mineWire()], [dwarfWire(BORIN), dwarfWire(DAIN, { status: 'working' })])])
-    await useMines().start()
-    const delivery = {
-      textDelivery: 'terminal' as const,
-      capabilities: {
-        sendText: 'terminal' as const,
-        cancel: 'terminal' as const,
-        adjustEffort: null,
-        attach: 'terminal' as const
-      }
-    }
-    const facade = (borin: Partial<ReturnType<typeof defaultDwarf>>) => ({
-      mines: [
-        defaultMine({
-          id: ALPHA,
-          dwarfs: [defaultDwarf({ id: BORIN, ...borin }), defaultDwarf({ id: DAIN })]
-        })
-      ],
-      tokensObserved: 0
-    })
-    const shown = (id: DwarfId) => boardDwarfs().find((dwarf) => dwarf.id === id)!
-    const entry = (id: DwarfId, action: 'chat' | 'kick') =>
-      buildActionBar(shown(id), { kicking: false }).find((it) => it.id === action)!
-
-    useMines().setMines(facade(delivery))
-    expect(shown(BORIN)).toMatchObject(delivery)
-    expect(entry(BORIN, 'chat')).toMatchObject({ enabled: true, hint: CHANNEL_HINT.terminal })
-    expect(refusalLine(shown(BORIN))).toBeNull()
-    expect(entry(BORIN, 'kick')).toMatchObject({ enabled: true, hint: KICK_HINT.terminal })
-    // A dwarf today's runtime reports no route for gets none.
-    // AMENDED (was: its chat disabled with NO_CHANNEL_REASON, and BORIN's too once A-P2 dropped its
-    // route): the composer is enabled from the Host's `canReceiveMessages` (14 §3.6, INV-33), which
-    // is true for both here, never from A-P2's route; with no route to name for an observed dwarf
-    // its hint is empty. The disabled case is the Host-flag test below.
-    expect(shown(DAIN).textDelivery).toBeUndefined()
-    expect(shown(DAIN).capabilities).toBeUndefined()
-    expect(entry(DAIN, 'chat')).toMatchObject({ enabled: true, hint: '' })
-    expect(kickBlocked(shown(DAIN), { kicking: false })).toBe('open-turn')
-    // The route closes when A-P2 no longer carries it.
-    useMines().setMines(facade({}))
-    expect(shown(BORIN).textDelivery).toBeUndefined()
-    expect(entry(BORIN, 'chat')).toMatchObject({ enabled: true, hint: '' })
   })
 
   /*

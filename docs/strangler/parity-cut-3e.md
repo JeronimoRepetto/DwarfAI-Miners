@@ -134,15 +134,26 @@ run exists.
 ## Soak record for the deletion
 
 The step's deletion work unit (ISSUE-189) merges only after this internal build met the step's exit criteria on the
-three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71).
+three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71; owner 2026-10-18: one
+soak at the end of cuts 3a–4b, recorded once in [`soak-record.md`](soak-record.md)).
 
-| Field                        | Value     |
-| ---------------------------- | --------- |
-| Exit criteria met on Windows | pending   |
-| Exit criteria met on macOS   | pending   |
-| Exit criteria met on Linux   | pending   |
-| Soak build                   | pending   |
-| Soak start                   | pending   |
-| Soak end                     | pending   |
-| Blocking problems            | pending   |
-| Retirement or deletion issue | ISSUE-189 |
+| Field                        | Value                              |
+| ---------------------------- | ---------------------------------- |
+| Soak record                  | [`soak-record.md`](soak-record.md) |
+| Retirement or deletion issue | ISSUE-189                          |
+
+## Step-3e deletion (ISSUE-189)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 3e parity run above (`AntigravityNdjsonDriver` C-01,
+C-05, C-18, C-22 and `publicBuild.test.ts`), `pnpm vitest run src/host/noLegacyAntigravityLaunch.static.test.ts` and the
+census against the merge base. Today's Antigravity launch leaves the tree: `runtime.ts` composes no Antigravity held
+session (its `HeldSessionRegistry` refuses Antigravity as any provider with no engine), `antigravityHeldSession.ts` is
+deleted with its tests, and today's detached `agy` argv (`buildAntigravityLaunchArgs`) is deleted, with
+`LAUNCHABLE_PROVIDERS` no longer naming Antigravity, so today's launcher refuses it before anything is spawned
+(`docs/test-removals.md`, ISSUE-189). Antigravity is launched only by the Host's `AntigravityNdjsonDriver`, in
+development builds (ADR-009 D6). TC-189-03: an Antigravity session today's code launched before 3e is ended through
+`LegacyEndFirstAdapter`, which this deletion leaves composed (A-N29's one `host` route), and observed by the Host;
+a held one died with its window. OpenCode is the only provider with a legacy launch path left (until the 4b
+deletions). The legacy exclusion is the one pattern `^src/(main|shared)/` and shrinks by the files it covers. From this
+commit 3e rolls forward only (`rollback.md` "Step 3e note"). The work unit merges only once the single soak record
+([`soak-record.md`](soak-record.md)) is filled.

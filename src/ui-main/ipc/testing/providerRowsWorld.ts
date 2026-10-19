@@ -1,12 +1,12 @@
 // The provider-qualified rows of a step-3 table as the root composes them (ISSUE-188; the worlds of the 3b and 3d router
-// cases, shared): the Host's handlers over a recording HostClient whose board holds the given dwarfs, the shape adapters
-// over a recording today's runtime, the provider qualifiers, and the router on an `ipcMain` stand-in. Test-only (R14):
-// production never imports it.
-import type { SnapshotPage, StepId } from '@dwarfai/contracts'
+// cases, shared): the Host's handlers over a recording HostClient whose board holds the given dwarfs, the provider
+// qualifiers, and the router on an `ipcMain` stand-in. Test-only (R14): production never imports it. AMENDED for
+// ISSUE-240, the 4b deletion (was: also the shape adapters over a recording today's runtime): `PerProviderShapeAdapter`
+// and `CatalogMergeAdapter` left the tree, so a route that names a shape adapter is not composed here.
+import type { SnapshotPage } from '@dwarfai/contracts'
 import {
   composeConversationAndLaunchRows,
   composeProviderRouting,
-  composeProviderShapeAdapters,
   composeStopDwarf
 } from '../../index'
 import type { HostEvent } from '../../window/ports/hostClient'
@@ -18,9 +18,8 @@ export const WORLD_APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
 const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: WORLD_APP_ENTRY } }
 const SENDERS = { appEntry: WORLD_APP_ENTRY, isModeWindow: (id: number) => id === 7 }
 export const WORLD_MINE = '01920000-0000-7000-8000-000000000601'
-/** The LaunchId `PerProviderShapeAdapter` mints for a launch it hands to today's runtime. */
+/** The LaunchId the deleted `PerProviderShapeAdapter` minted for a launch it handed to today's runtime. */
 export const WORLD_MINTED = '01920000-0000-7000-8000-0000000006a1'
-const SHAPE_ADAPTERS = ['PerProviderShapeAdapter', 'CatalogMergeAdapter']
 
 /** A present Host dwarf of `providerId` (14 §3.6 `DwarfWire`). */
 export function dwarfWire(id: string, providerId: string, owned: boolean) {
@@ -62,7 +61,6 @@ export function hostEntry(providerId: string, publicLaunch: 'enabled' | 'gated' 
 
 export interface ProviderRowsWorldOptions {
   table: readonly ChannelRoute[]
-  release: StepId
   /** The dwarfs on the Host board (`dwarfWire`). */
   dwarfs: readonly unknown[]
   /** The Host's answer to each method the rows relay. */
@@ -72,13 +70,13 @@ export interface ProviderRowsWorldOptions {
 }
 
 export function providerRowsWorld(options: ProviderRowsWorldOptions) {
-  const { table, release, dwarfs, hostReplies, today } = options
+  const { table, dwarfs, hostReplies, today } = options
   const hostCalls: Array<[string, unknown]> = []
   const legacyServed: Array<[string, unknown]> = []
   const client = {
     call: (method: string, params: unknown) => {
-      if (method !== 'strangler.dwarfIdentities') hostCalls.push([method, params])
-      return Promise.resolve(method === 'strangler.dwarfIdentities' ? [] : hostReplies[method])
+      hostCalls.push([method, params])
+      return Promise.resolve(hostReplies[method])
     },
     subscribe: (handler: (event: HostEvent) => void) => {
       handler({
@@ -107,39 +105,21 @@ export function providerRowsWorld(options: ProviderRowsWorldOptions) {
   })
   const stop = composeStopDwarf({
     routes: table,
-    release,
-    client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client'],
-    legacy: {
-      liveLaunches: () => Promise.resolve([]),
-      endLaunch: () => Promise.resolve('ended'),
-      launchIdOfDwarf: () => undefined
-    },
-    bridge: { toLegacy: () => Promise.resolve(null) }
+    client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client']
   })
   const routing = composeProviderRouting({
     routes: table,
     client: client as unknown as Parameters<typeof composeProviderRouting>[0]['client']
-  })
-  const adapters = composeProviderShapeAdapters({
-    routes: table,
-    release,
-    legacy,
-    models: { read: () => Promise.resolve({ catalogs: [] }) },
-    client: typedClient,
-    mintId: () => WORLD_MINTED
   })
   const parts = [rows, stop?.part].filter(
     (part): part is NonNullable<typeof part> => part !== undefined
   )
   const handlers = new Map<string, (event: typeof FROM_PANEL, payload: unknown) => unknown>()
   createRouter({
-    routes: table.filter(
-      (r) => r.shapeAdapter === undefined || SHAPE_ADAPTERS.includes(r.shapeAdapter)
-    ),
+    routes: table.filter((r) => r.shapeAdapter === undefined),
     legacy,
     host: composeRouteTargets(parts),
     uiLocal: { serve: () => Promise.reject(new Error('no ui-local row under test')) },
-    ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
     qualifiers: routing.qualifiers,
     senders: SENDERS
   }).register({

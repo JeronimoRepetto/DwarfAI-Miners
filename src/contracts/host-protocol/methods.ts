@@ -14,7 +14,6 @@ import {
   mineIdSchema,
   preferencesViewSchema,
   stopAllOutcomeSchema,
-  stranglerDwarfIdentitySchema,
   supplierEntryViewSchema,
   feedPageSchema,
   mineHistoryViewSchema,
@@ -30,7 +29,6 @@ import {
   type PreferencesView,
   type SecretName,
   type StopAllOutcome,
-  type StranglerDwarfIdentity,
   type SupplierEntryView
 } from '../wire'
 import {
@@ -142,7 +140,10 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M10, B-M11, B-M12, B-M13, B-M14, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M35, B-M36, B-M37, B-M39, B-M40 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M10, B-M11, B-M12, B-M13, B-M14, B-M15, B-M16, B-M17, B-M18, B-M19, B-M20, B-M21, B-M22, B-M23, B-M24, B-M26, B-M27, B-M28, B-M29, B-M30, B-M31, B-M32, B-M33, B-M34, B-M35, B-M36, B-M37, B-M39 and B-M40 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// AMENDED for ISSUE-241, the end of cut 4 (was: also the strangler-only B-M41 `strangler.dwarfIdentities` entry, 14
+// §2.3, §3.4 AMENDMENT-8): its lifetime ended with `LegacyDwarfIdBridge` (21 §3; 14 §6.5 "AMENDMENT-8": after cut 4
+// no handler, `METHOD_NOT_FOUND`).
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -199,9 +200,6 @@ export interface HostMethods {
   'launching.dismissRecovery':       { params: RecoveryActionParams; result: Outcome<{}, 'no-report'> }
   'suppliers.launchable':            { params: { refresh?: boolean }; result: SupplierEntryView[] }
   'jev.suggest':                     { params: JevSuggestParams; result: JevSuggestResult }
-  // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
-  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
-  'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
 }
 // end verbatim: 14 §3.4
 
@@ -494,8 +492,6 @@ export const HOST_METHOD_SCHEMAS = {
     params: recoveryActionParamsSchema,
     result: outcomeSchema(z.object({}).strict(), z.literal('no-report'))
   },
-  // B-M41 (14 §2.3, §1.10; AMENDMENT-8, OQ-69): `ui` only, never relayed to seam A; deleted with
-  // LegacyDwarfIdBridge at the end of cut 4 (later: ISSUE-241).
   // B-M37 (14 §2.3, §4.1; ADR-009 D5, ADR-011): `ui` only, a query (no requestId, 14 §1.6); the
   // installed detection runs on each call, that is on each Add-panel open
   // (host/transport/methods/suppliersLaunchable.ts).
@@ -506,10 +502,6 @@ export const HOST_METHOD_SCHEMAS = {
   'jev.suggest': {
     params: jevSuggestParamsSchema,
     result: jevSuggestResultSchema
-  },
-  'strangler.dwarfIdentities': {
-    params: z.object({}).strict(),
-    result: z.array(stranglerDwarfIdentitySchema)
   }
 } as const satisfies Partial<{
   [M in keyof HostMethods]: {

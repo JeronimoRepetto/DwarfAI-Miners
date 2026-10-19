@@ -25,6 +25,7 @@ import {
   DEFAULT_TYPOGRAPHY_PREFERENCES,
   MATERIALS,
   type MaterialTotals,
+  type MinesSnapshot,
   type PanelLayout,
   type ProjectQuery,
   type ProjectSummary
@@ -96,6 +97,20 @@ function browse(sample: GoldenSample, query: ProjectQuery): ProjectSummary[] {
   return found.slice(offset, query.limit === undefined ? undefined : offset + query.limit)
 }
 
+/**
+ * The board a full-screen golden draws: the sample's mines, and the vault as each material summed on its own.
+ * AMENDED for ISSUE-242, cut 5 (was: the answer of A-12 `getMines`, with A-P2 never pushing): A-12 and A-P2 left with
+ * `BoardFacadeAdapter` and the board is the Host read model's (`useMines`), which a golden does not follow, so the page
+ * writes this board into it before the shell mounts (page.ts).
+ */
+export function goldenBoard(sample: GoldenSample): MinesSnapshot {
+  return {
+    mines: sample.mines,
+    tokensObserved: sample.mines.reduce((sum, m) => sum + m.tokensObserved, 0),
+    materials: vault(sample)
+  }
+}
+
 export function goldenApi(sample: GoldenSample): Api {
   let layout: PanelLayout = { edge: sample.edge, mineOpen: false, dockOpen: false }
   const shortcut = {
@@ -123,28 +138,12 @@ export function goldenApi(sample: GoldenSample): Api {
     },
     getToggleShortcut: () => Promise.resolve({ ...shortcut }),
     setToggleShortcut: refuse('setToggleShortcut'),
-    getMines: () =>
-      Promise.resolve({
-        mines: sample.mines,
-        tokensObserved: sample.mines.reduce((sum, m) => sum + m.tokensObserved, 0),
-        materials: vault(sample)
-      }),
-    onMinesUpdated: unsubscribe,
     activateDwarf: refuse('activateDwarf'),
-    // The open dwarf's conversation (#635, the MessagePanel slice), as the sample carries it.
-    getDwarfFeed: (dwarfId) => {
-      const feed = sample.feeds[dwarfId]
-      return feed === undefined
-        ? Promise.reject(new Error('golden: the sample carries no dwarf ' + dwarfId))
-        : Promise.resolve(feed)
-    },
+    // AMENDED for ISSUE-249 (was: also A-14 `getDwarfFeed` answering the sample's feeds, A-16 `setWatchedDwarf`, A-17
+    // `refreshDwarfTelemetry` and A-18 `setDwarfTuning`): those RETIRE rows left the facade at cut 5 (`MEMBER_REMOVED`).
     getDwarfFeedPage: refuse('getDwarfFeedPage'),
-    setWatchedDwarf: none,
-    refreshDwarfTelemetry: none,
-    setDwarfTuning: refuse('setDwarfTuning'),
     // Dwarf names (#635): the golden stage renames nothing.
-    setDwarfName: refuse('setDwarfName'),
-    resetDwarfNameToday: refuse('resetDwarfNameToday'),
+    // AMENDED for ISSUE-243 (was: also today's `setDwarfName` and `resetDwarfNameToday`, which left with today's runtime).
     // A-19 reads the Host's message log from the cut-1 switch (ISSUE-123), keyed by Host ids the sample does not carry:
     // a full-screen history state is one this fake does not model yet, and the page's error list says so.
     getMineHistory: refuse('getMineHistory'),
@@ -152,16 +151,13 @@ export function goldenApi(sample: GoldenSample): Api {
     openExternalLink: refuse('openExternalLink'),
     copyText: refuse('copyText'),
     sendDwarfText: refuse('sendDwarfText'),
-    onDwarfSendSettled: unsubscribe,
     pathForDroppedFile: () => '',
     chooseDwarfAttachments: refuse('chooseDwarfAttachments'),
     describeDwarfAttachments: refuse('describeDwarfAttachments'),
     launchAgent: refuse('launchAgent'),
-    onLaunchFailed: unsubscribe,
     // A-36 in its 14 shape from the step-3a switch (ISSUE-001).
     listAgentProviders: () => Promise.resolve({ ok: true, value: supplierEntries(sample) }),
-    listAgentModels: () => Promise.resolve({ catalogs: sample.catalogs }),
-    retireDwarf: none,
+    // AMENDED for ISSUE-249 (was: also A-37 `listAgentModels` answering the sample's catalogs): A-37 left at cut 5.
     getAppBuild: () => Promise.resolve({ version: sample.version ?? '', packaged: true }),
     getFeatureFlags: () => Promise.resolve({ guildAreasEnabled: sample.config.guildEnabled }),
     declareMine: refuse('declareMine'),
@@ -175,7 +171,6 @@ export function goldenApi(sample: GoldenSample): Api {
         return Promise.reject(error)
       }
     },
-    launchHeldSession: refuse('launchHeldSession'),
     answerDwarfQuestion: refuse('answerDwarfQuestion'),
     answerDwarfPermission: refuse('answerDwarfPermission'),
     launchHostedProcess: refuse('launchHostedProcess'),
@@ -183,7 +178,6 @@ export function goldenApi(sample: GoldenSample): Api {
     setNotificationsEnabled: (enabled) => Promise.resolve(enabled),
     // A-44 under its 14 name from the cut-1 switch (ISSUE-123): a golden reports no mine on screen to anyone.
     reportVisibleMines: none,
-    onShowMine: unsubscribe,
     getTypographyPreferences: () => Promise.resolve({ ...DEFAULT_TYPOGRAPHY_PREFERENCES }),
     setTypographyPreferences: (preferences) => Promise.resolve(preferences),
     onTypographyPreferences: unsubscribe,

@@ -197,15 +197,23 @@ answer from the old app's Claude route, as a non-blocking hook failure. Run by t
 ## Soak record for the deletion
 
 The step's retirement work unit (ISSUE-142) merges only after this internal build met the step's exit criteria on the
-three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71).
+three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71; owner 2026-10-18: one soak
+at the end of cuts 3a–4b, recorded once in [`soak-record.md`](soak-record.md)).
 
-| Field                        | Value     |
-| ---------------------------- | --------- |
-| Exit criteria met on Windows |           |
-| Exit criteria met on macOS   |           |
-| Exit criteria met on Linux   |           |
-| Soak build                   |           |
-| Soak start                   |           |
-| Soak end                     |           |
-| Blocking problems            |           |
-| Retirement or deletion issue | ISSUE-142 |
+| Field                        | Value                              |
+| ---------------------------- | ---------------------------------- |
+| Soak record                  | [`soak-record.md`](soak-record.md) |
+| Retirement or deletion issue | ISSUE-142                          |
+
+## Cut-2 retirement (ISSUE-142)
+
+Candidate decision (`21` §6): composition removed, evidence: `pnpm vitest run src/ui-main/ipc/ipc-routing.contract.test.ts`
+(`describe('cut-2 retirement (21 §2 cut 2)')`, green on the ISSUE-142 branch; broken on purpose: a `HookChannel` left
+composed, or the listener's Claude events handed to `noteHookEvent`, fails it). Today's hook installer and its channel,
+the Claude route of the shared loopback listener, the observed-Claude permission registry and the keystroke path are no
+longer composed by `LegacyRuntimeRoute.ts`, whatever the route table; `legacyClaudeHooksSwitch.ts` and the root's
+`legacyClaudeHooksComposed` are deleted, so a cut-2 rollback build no longer composes today's Claude hook half (from
+here cut 2 rolls forward only, `21` §2.1). The listener stays composed for the OpenCode plugin route until 4a. The legacy
+files (`src/main/hooks/**`, `src/main/textDelivery/permissionKeys.ts`, the observed-Claude path of
+`src/main/runtime/runtime.ts`) leave with the legacy tree in cut 5. The work unit merges only once the single soak record
+([`soak-record.md`](soak-record.md)) is filled.

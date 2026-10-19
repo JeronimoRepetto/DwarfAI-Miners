@@ -7,7 +7,7 @@
 // never imports it.
 import { CATALOG_PROVIDER_IDS, UNROUTED, type ChannelKey, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteTable } from '../channelRoute'
-import { LEGACY_BRIDGE_ADAPTERS } from '../routes'
+import { ADAPTERS_AS_SHIPPED } from './adaptersAsShipped'
 import { CUT_3B_ROUTES } from './cut3bRoutes'
 // AMENDED for ISSUE-238 (was: `RETIRED`, the release's list): from 4b the release retires A-27, A-P3 and A-P4, which
 // this release still routed, so its table lists the 4a retirements (`cut4aRoutes.ts`).
@@ -53,5 +53,5 @@ export const CUT_3A_TABLE: RouteTable = {
   routes: CUT_3A_ROUTES,
   unrouted: UNROUTED,
   retired: CUT_4A_RETIRED,
-  adapters: LEGACY_BRIDGE_ADAPTERS
+  adapters: ADAPTERS_AS_SHIPPED
 }

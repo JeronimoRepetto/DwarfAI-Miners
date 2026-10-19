@@ -20,6 +20,7 @@ import { defaultDwarf, defaultMine } from '../testing/factories'
 import type { Dwarf, DwarfAttachment, FeedMessage } from '../types'
 import { RESULT_VISIBLE_MS, feedMessageOf, useDwarfMessaging } from './useDwarfMessaging'
 import { useMines } from './useMines'
+import { publishBoard } from '../testing/board'
 
 function stubApi(sendDwarfText: (...args: never[]) => Promise<unknown>): void {
   // AMENDED for ISSUE-250 (was: hand-built objects as `window.api` in this file's stubs): installed through the generated
@@ -1304,10 +1305,9 @@ describe('useDwarfMessaging chat from the Host read model', () => {
         return () => {
           listener = null
         }
-      }) as unknown as Api['onHostEvent'],
-      getDwarfFeed: vi.fn() as unknown as Api['getDwarfFeed'],
-      setWatchedDwarf: vi.fn() as unknown as Api['setWatchedDwarf'],
-      refreshDwarfTelemetry: vi.fn() as unknown as Api['refreshDwarfTelemetry']
+      }) as unknown as Api['onHostEvent']
+      // AMENDED for ISSUE-249 (was: spies for A-14, A-16 and A-17): those RETIRE rows left the facade at cut 5
+      // (`MEMBER_REMOVED`), and the fake refuses a read of a member the registry does not have.
     })
     Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     return {
@@ -1348,9 +1348,7 @@ describe('useDwarfMessaging chat from the Host read model', () => {
       ]
     })
     expect(useDwarfMessaging().hostOldestMessageId(BORIN)).toBe(id(1))
-    expect(host.api.getDwarfFeed).not.toHaveBeenCalled()
-    expect(host.api.setWatchedDwarf).not.toHaveBeenCalled()
-    expect(host.api.refreshDwarfTelemetry).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-14, A-16 and A-17 never called): those members no longer exist (`MEMBER_REMOVED`).
   })
 
   it('[ADR-033] a frame with seq at or below the snapshot seq is ignored, and resync-required re-reads the snapshot', async () => {
@@ -1437,7 +1435,7 @@ describe('useDwarfMessaging chat from the Host read model', () => {
   // id, and the chat names that launcher as the board holds it, so a rename follows (PO #53).
   it('[US-DLG-003.AC03, US-DLG-003.AC04] a brief names its launcher as the board does, custom name first, and only the brief carries it', async () => {
     const board = (customName?: string) =>
-      useMines().setMines({
+      publishBoard({
         mines: [
           defaultMine({
             dwarfs: [

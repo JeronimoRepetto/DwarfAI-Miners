@@ -5,8 +5,8 @@ import { shownAskOf } from './askCard'
 
 /*
  * The ask the message panel draws (ISSUE-138, the read half; 14 §6.4 row `useDwarfQuestion`): the dwarf's front card
- * of the dual-source read model, a Host ask in the card's own shape, else the legacy card, else the board's own asks
- * exactly as the panel drew them before the Host had any.
+ * of the read model, a Host ask in the card's own shape, else the board's own asks exactly as the panel drew them
+ * before the Host had any (AMENDED for ISSUE-241: the legacy card between them left with `LegacyAskRelay`).
  */
 
 const ASK_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
@@ -110,15 +110,8 @@ describe('shownAskOf', () => {
     ).toBeNull()
   })
 
-  it('[ADR-033] a legacy card is drawn in its own shape, by its legacy: id', () => {
-    const permission = { ...boardPermission, toolUseId: 'legacy:toolu_09' }
-    expect(
-      shownAskOf(
-        { source: 'legacy', kind: 'permission', permission },
-        { pendingPermission: permission }
-      )
-    ).toEqual({ kind: 'permission', askId: 'legacy:toolu_09', permission })
-  })
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-033] a legacy card is drawn in its own shape, by its legacy:
+  // id"): `LegacyAskRelay` left the tree, so no front card is a legacy one.
 
   it("[ADR-033] with no front card the board's own asks are drawn as before, a permission ahead of a question", () => {
     expect(

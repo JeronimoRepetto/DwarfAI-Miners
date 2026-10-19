@@ -10,7 +10,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  *
  *   electron-vite build --config electron.vite.relay.config.ts
  *
- * Its own config, like `electron.vite.jevMcpServer.config.ts` and `electron.vite.host.config.ts`
+ * Its own config, like `electron.vite.host.config.ts`
  * and for the same reason: a second `input` in the Host build shares one Rollup graph between two
  * entries and splits their common code into hashed `out/host/chunks/*.js`, so `out/host/main.js`
  * stops being one self-contained file and imports a chunk shared with the relay. A separate build

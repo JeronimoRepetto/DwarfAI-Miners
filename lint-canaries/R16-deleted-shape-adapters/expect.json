@@ -1,0 +1,1 @@
+{ "rule": "R16-bridge-only-from-roots", "tool": "depcruise" }

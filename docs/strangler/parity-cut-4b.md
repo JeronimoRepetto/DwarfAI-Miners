@@ -31,7 +31,7 @@ attach), ISSUE-325 (SP-14) and the S-031-3 record.
 | C-23: no delegation token in env or configuration (`OPENCODE_CONFIG_CONTENT` not built by the Host)                              | same suite (C-23 case, the path-only `ticket-file` relay entry of SP-12, ISSUE-203); L2 `src/host/wiring/flows/opencode-step-4b.test.ts` (no token, no `OPENCODE_CONFIG_CONTENT` in the agent's env) | `pnpm vitest run src/host/modules/suppliers src/host/wiring/flows/opencode-step-4b.test.ts`              | Windows | passed                                                     | 2026-10-18 |
 | The Host reads its own `opencode-permissions` state: a card while `on-verified`, auto-denied with one chat line otherwise        | L2 `src/host/wiring/flows/opencode-step-4b.test.ts` (both cases; break-checked: a gate answering `on-verified` always opens a card while off); L9 `e2e/cut-4b/opencode-launch.e2e.ts`                | `pnpm vitest run src/host/wiring/flows/opencode-step-4b.test.ts`; `pnpm exec playwright test e2e/cut-4b` | Windows | passed; macOS and Linux: CI release lanes                  | 2026-10-18 |
 | No legacy plugin channel answers: one answerer                                                                                   | router case "in 4b no legacy launch, send or stop row remains …" (`legacyOpenCodePluginComposed` false; since 4a)                                                                                    | `pnpm vitest run src/ui-main/ipc`                                                                        | Windows | passed                                                     | 2026-10-18 |
-| Launch outcomes as for every provider step                                                                                       | `src/legacy-bridge/parity/launchCauseParity.cut-4b.test.ts` (the table below)                                                                                                                        | `pnpm vitest run src/legacy-bridge/parity`                                                               | Windows | passed                                                     | 2026-10-18 |
+| Launch outcomes as for every provider step                                                                                       | `src/legacy-bridge/parity/launchCauseParity.cut-4b.test.ts` (the table below; deleted with its legacy side by ISSUE-239)                                                                             | `pnpm vitest run src/legacy-bridge/parity`                                                               | Windows | passed                                                     | 2026-10-18 |
 | Router: A-27, A-P3, A-P4 have no handler; no legacy launch, send or stop row remains (TC-238-01)                                 | `src/ui-main/ipc/ipc-routing.contract.test.ts` `describe('release 4b (21 §2 cut 4b)')`                                                                                                               | `pnpm vitest run src/ui-main/ipc`                                                                        | Windows | passed                                                     | 2026-10-18 |
 | A-36 relayed from the Host whole                                                                                                 | `src/ui-main/ipc/handlers/listAgentProviders.host.contract.test.ts`                                                                                                                                  | same                                                                                                     | Windows | passed                                                     | 2026-10-18 |
 | L9 E2E with the OpenCode stub: launch, send, a card while `on-verified`, auto-deny with one line while off, stop; Jev candidates | `e2e/cut-4b/opencode-launch.e2e.ts` (an ACP stub `opencode`, `e2e/cut-4b/opencodeAcpStub.mjs`)                                                                                                       | `pnpm exec playwright test -c playwright.config.ts e2e/cut-4b`                                           | Windows | passed; macOS and Linux: CI release lanes                  | 2026-10-18 |
@@ -105,15 +105,69 @@ module's OpenCode plugin channel, with the stored password, since 4a.
 
 The step's deletion work units (ISSUE-239, ISSUE-240, ISSUE-241) merge only after this internal build met the step's
 exit criteria on the three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71; owner
-2026-10-18: one soak at the end of cuts 3a–4b, then every retirement and cut 5 in a row).
+2026-10-18: one soak at the end of cuts 3a–4b, recorded once in [`soak-record.md`](soak-record.md)).
 
-| Field                        | Value                                    |
-| ---------------------------- | ---------------------------------------- |
-| Exit criteria met on Windows | pending (owner: internal build)          |
-| Exit criteria met on macOS   | pending (owner: CI lanes, real-CLI lane) |
-| Exit criteria met on Linux   | pending (owner: CI lanes, real-CLI lane) |
-| Soak build                   | pending                                  |
-| Soak start                   | pending                                  |
-| Soak end                     | pending                                  |
-| Blocking problems            | pending                                  |
-| Retirement or deletion issue | ISSUE-239, ISSUE-240, ISSUE-241          |
+| Field                        | Value                              |
+| ---------------------------- | ---------------------------------- |
+| Soak record                  | [`soak-record.md`](soak-record.md) |
+| Retirement or deletion issue | ISSUE-239, ISSUE-240, ISSUE-241    |
+
+## Step-4b deletion: the legacy OpenCode launch (ISSUE-239)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 4b parity run above (the conformance of OpenCode's `acp`
+entry, C-01…C-29 with C-23, the L2 OpenCode flow, the cut-4b E2E case), `pnpm vitest run
+src/ui-main/ipc/ipc-routing.contract.test.ts` (`describe('after the 4b retirement')`),
+`src/host/noOpenCodeConfigToken.static.test.ts` (TC-239-02), `pnpm test:canaries` and the census against the merge
+base. Deleted: today's OpenCode launch argv (`buildOpenCodeLaunchArgs`), the `OPENCODE_CONFIG_CONTENT` delegation
+builder (`mergeOpenCodeConfigContent` and its call in `launchRunner.ts`; the `21` §8 blocker), the `opencodeContinue.ts`
+relaunch and both ports' continuation tier; `LAUNCHABLE_PROVIDERS` is empty, so today's launcher refuses every provider
+before anything is spawned. The legacy handlers of A-35 `launchAgent`, A-23 `sendDwarfText` and A-27 `retireDwarf` and
+the A-P3, A-P4 pushes are gone from `LegacyRuntimeRoute.ts` and `src/main/index.ts`, and the three RETIRE members leave
+the generated preload (`MEMBER_REMOVED`, TC-239-01) with the renderer's subscriptions to them. The 4b launch-cause parity
+test leaves with its legacy side. The new canary `lint-canaries/R16-deleted-legacy-opencode-launch` proves an import of
+the deleted relaunch fails lint. 4b rolls forward only (`rollback.md` "Step-4b deletion").
+
+Not deleted here, and why: today's detached launch engine (`launchRunner.ts`, `launch.ts`), the OpenCode hold queue
+(`opencodeHold.ts`) and the runtime's continuation path are still composed by today's runtime, which reaches them no
+more; they go with `runtime.ts` (ISSUE-243, foreman decision D3). The legacy `.dependency-cruiser.cjs` exclusion is the
+whole `^src/(main|shared)/` tree and shrinks only when those trees go (cut 5).
+
+## Step-4b deletion: the launch observation and the per-provider shape adapters (ISSUE-240)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 4b parity run above (every provider's A-13, A-23, A-35
+and A-36 through the Host, the drivers' conformance), `pnpm vitest run src/ui-main/ipc/ipc-routing.contract.test.ts`
+(`describe('after the 4b retirement')`, TC-240-01, TC-240-02), `pnpm test:canaries` and the census against the merge
+base. Deleted: `src/legacy-bridge/LegacyLaunchObservation.ts` (Stop everything relays to today's launched register
+directly until `LegacyEndFirstAdapter` ends with ISSUE-241), `src/legacy-bridge/shape/PerProviderShapeAdapter.ts`,
+`src/legacy-bridge/shape/CatalogMergeAdapter.ts` and their settlement join `legacySettlementJoin.ts` (its only other
+user, the A-P3/A-P4 push tap, lost its pushes with ISSUE-239), with their tests, their composition in
+`src/ui-main/index.ts` and their rows of `LEGACY_BRIDGE_ADAPTERS`; the earlier releases' tables are checked against the
+listing they shipped (`testing/adaptersAsShipped.ts`), and the router cases that served a provider not yet moved
+through the adapters lost those statements (`docs/test-removals.md`). The new canary
+`lint-canaries/R16-deleted-shape-adapters` proves an import of a deleted adapter's path fails lint (TC-240-03).
+
+## End of cut 4: the id bridge, the end-first adapter, the registry feed and the ask relay (ISSUE-241)
+
+Candidate decision (`21` §6): candidate replaced, evidence: the 4b parity run above, `pnpm vitest run
+src/ui-main/ipc/ipc-routing.contract.test.ts` (`describe('after the 4b retirement')`, TC-241-02),
+`src/host/wiring/flows/crew.flow.test.ts` (B-M41 answers `METHOD_NOT_FOUND`, TC-241-01), the two L2 flow cases below
+(TC-241-03), `pnpm test:canaries` and the census against the merge base. Deleted in one work unit (`21` §2 4b "Legacy
+deleted"): `LegacyDwarfIdBridge`, `LegacyEndFirstAdapter`, `LegacyAgentRegistryFeed`, `LegacyAskRelay` and
+`LegacyAnswerShapeAdapter` with `LegacyRuntimeSurface`, the row-shape helpers and their tests; their composition in
+`src/ui-main/index.ts` and their rows of `LEGACY_BRIDGE_ADAPTERS` (the earlier releases' tables keep them as they
+shipped, `testing/adaptersAsShipped.ts`); A-40 and A-41's `legacy` routes (foreman decision D2) and the root's answer
+qualifier `answerDwarf.dispatch.ts`; B-M41 `strangler.dwarfIdentities` (its `methods.ts` entry, `contracts/wire/strangler.ts`,
+the handler, its role and the crew's strangler-only `presentIdentities()`), whose documented lifetime ended with the
+bridge (`14` §2.3 AMENDMENT-8, §6.5), so no contract changed; the renderer's legacy ask overlay (`useDwarfQuestion`
+reads the Host source only); today's delegation service, Jev stores and router, OpenCode password store and answer
+port, loopback hook listener and OpenCode plugin channel in `LegacyRuntimeRoute.ts`, which no route reached any more;
+and the three e2e cases that proved the legacy end first (cut-0 `stop-all-legacy-first`, cut-1
+`remove-mine-legacy-first`, cut-3a `stop-legacy-launched`). The new canary `lint-canaries/R16-deleted-dwarf-id-bridge`
+proves an import of a deleted bridge fails lint. No rollback past this point (`rollback.md`).
+
+The two consequences recorded above for this issue, now in the tree:
+
+| Behaviour                                          | Until this issue                                                                                  | From this issue                                                                                                                                               | Evidence                                                                                                                                                                                                   |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A question of a person-launched Codex session      | a card through `LegacyAskRelay`'s `legacy:` id, answered by today's runtime                       | no card, and the dwarf's status stays as the observation reports it (ADR-011 item 4)                                                                          | `src/host/wiring/flows/observation.flow.test.ts` "[ADR-011] a question of a person-launched Codex session opens no card …"; `useDwarfQuestion.test.ts` "… a legacy: ask on the facade board opens no card" |
+| A session the old app launched that is still alive | ended by today's identity-checked kill before Stop dwarf, Remove mine and Stop everything relayed | DwarfAI can no longer end it: Stop dwarf answers `could-not-end` with the `no-identity` cause (`15` §5), and Stop everything and Remove mine leave it running | `src/host/wiring/flows/stopDwarf.test.ts` "[ADR-014] Stop dwarf on a still-running session the old app launched reports could-not-end with the no-identity cause"; `e2e/cut-0/tray-stop-everything.e2e.ts` |

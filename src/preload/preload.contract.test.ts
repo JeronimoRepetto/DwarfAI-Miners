@@ -13,6 +13,7 @@ import type { z } from 'zod'
 import {
   CHANNELS,
   MEMBER_REMOVED,
+  RETIRED,
   PRELOAD_HELPERS,
   ROW_IDS,
   STEP_ORDER,
@@ -216,6 +217,7 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // AMENDED for ISSUE-186 (was: those thirteen): the step-3d switch moves the CHANGE row A-39 to its target shape.
     // AMENDED for ISSUE-235 (was: those fourteen): the step-4a switch moves the CHANGE rows A-52…A-55 to their target
     // shape with their `host` route (21 §3.1: no shape adapter).
+    // AMENDED for ISSUE-242 (was: those eighteen): A-12 and A-P2 left with `BoardFacadeAdapter` at cut 5, with no route.
     expect(
       [
         ...new Set(
@@ -228,7 +230,6 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
         )
       ].sort()
     ).toEqual([
-      'A-12',
       'A-13',
       'A-15',
       'A-19',
@@ -244,8 +245,7 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       'A-52',
       'A-53',
       'A-54',
-      'A-55',
-      'A-P2'
+      'A-55'
     ])
     const expected = KEYS.map(memberOf)
     expect(
@@ -380,13 +380,11 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // `legacy` with today's shape.
     // AMENDED for ISSUE-238 (was: A-P3 `agent:launchFailed` too): the step-4b switch retires A-P3 with no route
     // (`RETIRED`), so the 14 §8 I-21 rows are the ones still `today`.
-    const today = ['dwarf:setName', 'dwarf:resetName']
-    for (const key of today) {
-      expect(
-        [...new Set(ROUTES.filter((route) => route.channel === key).map((route) => route.shape))],
-        key
-      ).toEqual(['today'])
-    }
+    // AMENDED for ISSUE-243 (was: those two rows' routes keep `shape: 'today'`): they left with today's runtime (21 §2
+    // cut 5), so no route of the table keeps today's shape.
+    expect(ROUTES.filter((route) => route.shape === 'today').map((route) => route.channel)).toEqual(
+      []
+    )
     // A-39 from 3d: the target `LaunchCustomParams` → `IpcResult<LaunchAccepted>`, no longer today's
     // `AgentLaunchResult`.
     expectTypeOf<LaunchCustomParams>().toExtend<
@@ -395,27 +393,13 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     expectTypeOf<DwarfAiMinersApi['launchHostedProcess']>().returns.resolves.toEqualTypeOf<
       IpcResult<LaunchAccepted>
     >()
-    // A request of a row still `today` is accepted as today's types have it (the preload never mutates it).
-    // AMENDED for ISSUE-235 (was: A-43 `setNotificationsEnabled` and A-52 `getOpenCodeSettings`): the step-4a switch
-    // routes both `host` with their target shape, so the rows still `today` are the 14 §8 I-21 legacy rows.
-    expectTypeOf<TodayRequest<'dwarf:setName'>>().toExtend<
-      Parameters<DwarfAiMinersApi['setDwarfName']>[0]
-    >()
+    // AMENDED for ISSUE-243 (was: a request and a result of a row still `today`, the 14 §8 I-21 legacy rows since
+    // ISSUE-235): those rows left with today's runtime, so no row is `today` any more.
     expectTypeOf<readonly string[]>().toExtend<
       Parameters<DwarfAiMinersApi['describeDwarfAttachments']>[0]
     >()
-    expectTypeOf<DwarfAiMinersApi['setDwarfName']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'dwarf:setName'>
-    >()
-    // RETIRE row and KEEP row. AMENDED for ISSUE-123 (was: A-12 `getMines` as the RETIRE row): A-12's target shape is
-    // today's `MinesSnapshot` (H3), so its result type is unchanged; A-P3 stands for a RETIRE row still `today`.
-    expectTypeOf<DwarfAiMinersApi['getMines']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'mines:get'>
-    >()
-    expectTypeOf<DwarfAiMinersApi['onLaunchFailed']>()
-      .parameter(0)
-      .parameter(0)
-      .toEqualTypeOf<TodayResult<'agent:launchFailed'>>()
+    // KEEP row. AMENDED for ISSUE-242 (was: also A-12 `getMines` as the RETIRE row, its target shape today's
+    // `MinesSnapshot`): A-12 left the facade with `BoardFacadeAdapter` (`MEMBER_REMOVED`).
     expectTypeOf<DwarfAiMinersApi['getAlwaysOnTop']>().returns.resolves.toEqualTypeOf<boolean>()
     // A-44 keeps today's member name and today's request while its route is today. AMENDED for ISSUE-123 (was: the
     // `setOpenMine` member): from cut 1 its route is `target`, so it is `reportVisibleMines` with its 14 request.
@@ -423,18 +407,50 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       Parameters<DwarfAiMinersApi['reportVisibleMines']>[0]
     >()
     // A push hands its listener today's payload; the helper answers synchronously.
-    expectTypeOf<DwarfAiMinersApi['onMinesUpdated']>()
+    // AMENDED for ISSUE-242 (was: A-P2 `onMinesUpdated`, which left the facade at cut 5): A-P1.
+    expectTypeOf<DwarfAiMinersApi['onPanelVisibility']>()
       .parameter(0)
       .parameter(0)
-      .toEqualTypeOf<TodayResult<'mines:update'>>()
+      .toEqualTypeOf<TodayResult<'panel:visible:changed'>>()
     expectTypeOf<DwarfAiMinersApi['pathForDroppedFile']>().returns.toEqualTypeOf<string>()
+  })
+})
+
+// ISSUE-249 TC-249-02 (ADR-019 item 6, ADR-001): the release-5 build has no handler and no preload member for a RETIRE
+// row, and the facade holds the after-cut-5 member count.
+describe('release-5 facade (14 §2.1 RETIRE rows, §7 counts; 21 §2 cut 5)', () => {
+  it('[ADR-019, ADR-001] every RETIRE row of 14 §2.1 has no handler and no preload member in the release-5 build', () => {
+    expect(ROUTES_RELEASE).toBe('cut-5')
+    const retired = Object.keys(RETIRED) as ChannelKey[]
+    // The 13 RETIRE rows of 14 §2.1, plus the two 14 §8 I-21 legacy rows retired with today's runtime.
+    expect(retired.filter((key) => ROW_IDS[key] !== I21)).toHaveLength(13)
+    const members = new Set(Object.keys(api))
+    const left = retired.flatMap((key) => {
+      const member = memberOf(key) ?? key
+      const problems: string[] = []
+      if (ROUTES.some((route) => route.channel === key)) problems.push(`${key}: has a route`)
+      if (members.has(member)) problems.push(`${key}: preload member ${member}`)
+      return problems
+    })
+    expect(left).toEqual([])
+  })
+
+  it('[ADR-019] the release-5 facade holds the members 14 §7 counts after cut 5', () => {
+    // 14 §7 counts 84 members after cut 5 (35 KEEP + 16 CHANGE + 33 NEW, A-N33 included). The registry holds 78:
+    // - the seven ADR-025 mode/Veta NEW rows A-N13, A-N14, A-N15, A-N22, A-N23, A-N24 and A-N28 are declared by the
+    //   EPIC-19 issues 284–286, which depend on ISSUE-249, so no cut-5 build has them yet (84 − 7 = 77);
+    // - A-N34 `tray:stopEverything:request` (owner amendment 2026-10-01, ISSUE-316) is a NEW row 14 §7 does not
+    //   count (77 + 1 = 78).
+    // Recorded for the lead as a package inconsistency in docs/strangler/parity-cut-5.md; no row is invented here.
+    expect(Object.keys(api)).toHaveLength(84 - 7 + 1)
+    expect(Object.values(ROW_IDS)).not.toContain('A-N13')
+    expect(Object.values(ROW_IDS)).toContain('A-N34')
   })
 })
 
 type TodayRow<K extends ChannelKey> = K extends keyof typeof TODAY
   ? (typeof TODAY)[K]
   : (typeof CHANNELS)[K]
-type TodayRequest<K extends ChannelKey> = z.input<TodayRow<K>['request']>
 type TodayResult<K extends ChannelKey> = z.output<TodayRow<K>['response']>
 
 describe('built preload (ADR-019 item 1; S-019-1 Decision)', () => {

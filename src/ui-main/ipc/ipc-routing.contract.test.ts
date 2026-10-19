@@ -1,5 +1,5 @@
 // layer: L6
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   CATALOG_PROVIDER_IDS,
   CHANNELS,
@@ -11,25 +11,14 @@ import {
   TODAY_SHAPES,
   UNROUTED,
   type ChannelKey,
-  type DwarfId,
-  type FolderPath,
-  type HostResult,
-  type MineId,
   type SnapshotPage,
-  type StepId,
-  supplierEntryViewSchema
+  type StepId
 } from '@dwarfai/contracts'
 import {
-  composeAskAnswers,
   composeAskStepAndIntegrationRows,
-  composeBoardFacade,
   composeConversationAndLaunchRows,
   composeDwarfNameRows,
   composeOpenCodeSettingsRows,
-  composeLegacyAgentRegistryFeed,
-  composeLegacyAskRelay,
-  composeLegacyDwarfIdBridge,
-  composeLegacyLaunchObservation,
   composeHostReads,
   composeJevRouteRow,
   composeJevKeyRows,
@@ -37,31 +26,18 @@ import {
   composeOpenCodePasswordRows,
   composePresence,
   composeProviderRouting,
-  composeProviderShapeAdapters,
-  composeResetFanout,
   composeResetMetricsRow,
-  composeSettlementJoin,
-  composeStopAllRelay,
   composeStopDwarf,
-  composeSystemNotificationRows,
-  legacyClaudeHooksComposed,
-  legacyFeedModesOf,
-  legacyOpenCodePluginComposed,
-  settingsMirrorComposed,
-  type LegacyAskRelayComposition,
-  type LegacyRuntimeSurface
+  composeSystemNotificationRows
 } from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
-import { createStopEverything } from '../window/application/stopEverything'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { CUT_1_ROLLBACK, CUT_2_ROLLBACK } from '../../contracts/strangler'
 import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { composeRouteTargets } from './composeRouteTargets'
-import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
+import { STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
 import { rollbackOf } from './rollbackTable'
 import { createRouter } from './router'
 import { resolveRoute } from './routeResolver'
@@ -85,10 +61,11 @@ import { CUT_3E_RELEASE, CUT_3E_ROUTES, cut3eRoutesForBuild } from './testing/cu
 import {
   CUT_4A_RELEASE,
   CUT_4A_RETIRED,
-  CUT_4A_ROUTES,
-  cut4aRoutesForBuild
+  cut4aRoutesForBuild,
+  HOST_ROUTE_MEMBERS_AS_SHIPPED
 } from './testing/cut4aRoutes'
 import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
+import { ADAPTERS_AS_SHIPPED } from './testing/adaptersAsShipped'
 import {
   DEVELOPMENT_BUILD_ROUTES,
   HOST_ROUTE_MEMBERS,
@@ -98,13 +75,14 @@ import {
   routesForBuild,
   SEAM_B_METHODS_BORN
 } from './routes'
-import {
-  dwarfWire,
-  hostEntry,
-  providerRowsWorld,
-  WORLD_MINE,
-  WORLD_MINTED
-} from './testing/providerRowsWorld'
+import { dwarfWire, hostEntry, providerRowsWorld, WORLD_MINE } from './testing/providerRowsWorld'
+
+/**
+ * A legacy composition file's text, or nothing once it left the tree. ADDED for ISSUE-243, the deletion of today's
+ * runtime (21 §2 cut 5): `LegacyRuntimeRoute` and `src/main/index.ts` are gone, so each retirement check below that
+ * reads them for a handler, a module or a composition holds by their absence.
+ */
+const legacySource = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '')
 
 /**
  * The router's contract (ADR-001 item 3; 21 §1 items 1, 2, 2a; 14 §6.5 "Router"): every registry row has exactly one
@@ -351,33 +329,27 @@ describe('pre-cut table', () => {
     const cuts = Object.fromEntries(LEGACY_BRIDGE_ADAPTERS.map((a) => [a.name, a.cuts]))
     const span = (from: StepId, to: StepId): StepId[] =>
       STEP_ORDER.slice(STEP_ORDER.indexOf(from), STEP_ORDER.indexOf(to) + 1)
-    expect(cuts).toEqual({
-      LegacyRuntimeRoute: span('cut-0', 'cut-5'),
-      BoardFacadeAdapter: span('cut-1', 'cut-4b'),
-      LegacyDwarfIdBridge: span('cut-1', 'cut-4b'),
-      LegacyLaunchObservation: span('cut-1', 'cut-4b'),
-      SecretMigrationBridge: ['cut-3a', 'cut-4a'],
-      ResetFanout: span('cut-1', 'cut-3e'),
-      LegacyAgentRegistryFeed: span('cut-1', 'cut-4b'),
-      SettingsMirrorBridge: span('cut-1', 'cut-3e'),
-      LegacyAskRelay: span('cut-1', 'cut-4b'),
-      LegacyEndFirstAdapter: span('cut-0', 'cut-4b'),
-      PerProviderShapeAdapter: span('cut-3a', 'cut-4b'),
-      CatalogMergeAdapter: span('cut-3a', 'cut-4b'),
-      LegacyAnswerShapeAdapter: span('cut-2', 'cut-4b'),
-      JevSettingsShapeAdapter: span('cut-3a', 'cut-4a')
-    })
-    expect(
-      LEGACY_BRIDGE_ADAPTERS.filter((a) => a.shapeAdapter)
-        .map((a) => a.name)
-        .sort()
-    ).toEqual([
-      'CatalogMergeAdapter',
-      'JevSettingsShapeAdapter',
-      'LegacyAnswerShapeAdapter',
-      'PerProviderShapeAdapter',
-      'ResetFanout'
+    // AMENDED for ISSUE-243 (was: also `LegacyRuntimeRoute`, cuts 0–5): the door left the tree with today's runtime
+    // (21 §2 cut 5); the releases that shipped it list it as they shipped it (`testing/adaptersAsShipped.ts`, cuts 0–4b).
+    // AMENDED for ISSUE-247 (was: `SecretMigrationBridge`, cuts 3a and 4a): the last bridge left the tree (21 §2 cut 5,
+    // §3), so nothing is listed; the releases that shipped it list it as they shipped it (`testing/adaptersAsShipped.ts`).
+    expect(cuts).toEqual({})
+    expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'SecretMigrationBridge')?.cuts).toEqual([
+      'cut-3a',
+      'cut-4a'
     ])
+    expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'LegacyRuntimeRoute')?.cuts).toEqual(
+      span('cut-0', 'cut-4b')
+    )
+    // AMENDED for ISSUE-236, the 4a retirement (was: also `ResetFanout` and `SettingsMirrorBridge`, cuts 1–3e, and
+    // `JevSettingsShapeAdapter`, 3a–4a): they left the tree with their 4a lifetime (`testing/adaptersAsShipped.ts`
+    // keeps them for the earlier releases' tables). AMENDED for ISSUE-240, the 4b deletion (was: also
+    // `LegacyLaunchObservation`, cuts 1–4b, and `PerProviderShapeAdapter` and `CatalogMergeAdapter`, 3a–4b): the same.
+    // AMENDED for ISSUE-241, the end of cut 4 (was: also `LegacyDwarfIdBridge`, `LegacyAgentRegistryFeed`,
+    // `LegacyAskRelay`, cuts 1–4b, `LegacyEndFirstAdapter`, cuts 0–4b, and `LegacyAnswerShapeAdapter`, 2–4b, the last
+    // shape adapter): the same. AMENDED for ISSUE-242, the first cut-5 deletion (was: also `BoardFacadeAdapter`, cuts
+    // 1–4b): the same.
+    expect(LEGACY_BRIDGE_ADAPTERS.filter((a) => a.shapeAdapter)).toEqual([])
 
     // A route's shape adapter must be listed as a shape adapter living in the table's release.
     const naming = (release: StepId, shapeAdapter: string): RouteTable => ({
@@ -388,8 +360,18 @@ describe('pre-cut table', () => {
       }),
       release
     })
-    expect(reasons(naming('cut-1', 'ResetFanout'))).toEqual([])
-    expect(reasons(naming('cut-4a', 'ResetFanout'))).toEqual(['adapter-not-listed ResetFanout'])
+    // AMENDED for ISSUE-236 (was: `ResetFanout`, listed for cut 1 and not for 4a): a listed shape adapter outside its cuts.
+    // AMENDED for ISSUE-241 (was: over this listing): the last shape adapter left it, so the rule is checked over the
+    // listing as the releases up to 4b shipped it, and a table over today's listing no longer finds it.
+    const shipped = (table: RouteTable): RouteTable => ({ ...table, adapters: ADAPTERS_AS_SHIPPED })
+    expect(reasons(shipped(naming('cut-2', 'LegacyAnswerShapeAdapter')))).toEqual([])
+    expect(reasons(shipped(naming('cut-1', 'LegacyAnswerShapeAdapter')))).toEqual([
+      'adapter-not-listed LegacyAnswerShapeAdapter'
+    ])
+    expect(reasons(naming('cut-2', 'LegacyAnswerShapeAdapter'))).toEqual([
+      'adapter-not-listed LegacyAnswerShapeAdapter'
+    ])
+    expect(reasons(naming('cut-1', 'ResetFanout'))).toEqual(['adapter-not-listed ResetFanout'])
     expect(reasons(naming('cut-1', 'LegacyDwarfIdBridge'))).toEqual([
       'adapter-not-listed LegacyDwarfIdBridge'
     ])
@@ -400,84 +382,12 @@ describe('pre-cut table', () => {
     ).toEqual(['adapter-after-cut-5 Late'])
   })
 
-  it('[ADR-001] LegacyEndFirstAdapter is listed for cuts 0 to 4 and composed on A-N26', async () => {
-    // TC-054-03 (21 §3, 14 §5): listed from cut 0 to the end of cut 4 (4b), absent from cut 5 on.
-    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')).toEqual({
-      name: 'LegacyEndFirstAdapter',
-      cuts: ['cut-0', 'cut-1', 'cut-2', 'cut-3a', 'cut-3b', 'cut-3d', 'cut-3e', 'cut-4a', 'cut-4b'],
-      shapeAdapter: false
-    })
-    // A-N26 is a `host` row the cut-0 switch routes (ISSUE-056); its one handler relays through the root's relay.
-    expect(CHANNELS[STOP_EVERYTHING_CONFIRM].placement).toBe('host')
-    // AMENDED for ISSUE-056 (was: `UNROUTED[STOP_EVERYTHING_CONFIRM]` is 'cut-0'): the cut-0 switch routed it.
-    expect(UNROUTED[STOP_EVERYTHING_CONFIRM]).toBeUndefined()
-    expect(ROUTES.filter((r) => r.channel === STOP_EVERYTHING_CONFIRM).map((r) => r.owner)).toEqual(
-      ['host']
-    )
-
-    // The root's A-N26 relay, over a legacy runtime holding one live launch whose end reports `verdict`, and a Host
-    // recording what it is sent; A-N26 is served by its one handler over the Stop everything use case.
-    const HOST_DWARF = '01890a5d-ac96-774b-bcce-b302099ad101' as DwarfId
-    async function confirmThroughRoot(verdict: 'ended' | 'refused') {
-      const events: string[] = []
-      const relay = composeStopAllRelay({
-        liveLaunches: async () => [{ launchId: 'launch:1' }],
-        endLaunch: async (launchId) => {
-          events.push(`legacy end ${launchId}`)
-          return verdict
-        }
-      })
-      const connection = {
-        snapshot: async (): Promise<SnapshotPage> => ({
-          snapshotId: 'snap-1',
-          seq: 1,
-          epoch: 'epoch-1' as SnapshotPage['epoch'],
-          chunks: []
-        }),
-        call: async (method: string, params: unknown): Promise<HostResult['host.shutdown']> => {
-          events.push(`${method} ${JSON.stringify(params)}`)
-          return { mode: 'stop-all', outcome: { ended: [HOST_DWARF], failed: [] } }
-        }
-      }
-      const stop = createStopEverything({
-        host: {
-          withUiConnection: (use) => use(connection as unknown as Parameters<typeof use>[0])
-        },
-        windows: { anyOpen: () => true, open: () => {}, push: () => {} },
-        newConfirmationId: () => 'c-1',
-        relay
-      })
-      await stop.request()
-      const answer = await createStopEverythingRows(stop).serve(STOP_EVERYTHING_CONFIRM, {
-        confirmationId: 'c-1',
-        requestId: 'r-1'
-      })
-      return { events, answer }
-    }
-    const response = CHANNELS[STOP_EVERYTHING_CONFIRM].response
-
-    // Every legacy launch ended: relayed after it, and the Host's outcome answered unchanged.
-    const ended = await confirmThroughRoot('ended')
-    expect(ended.events).toEqual([
-      'legacy end launch:1',
-      'host.shutdown {"mode":"stop-all","requestId":"r-1"}'
-    ])
-    expect(ended.answer).toEqual({ ok: true, value: { ended: [HOST_DWARF], failed: [] } })
-    expect(response.safeParse(ended.answer).success).toBe(true)
-
-    // TC-054-02: a legacy launch that could not be ended: nothing relayed, A-N26 answers INTERNAL (eB).
-    const refused = await confirmThroughRoot('refused')
-    expect(refused.events).toEqual(['legacy end launch:1'])
-    expect(refused.answer).toMatchObject({
-      ok: false,
-      error: { code: 'INTERNAL', retryable: false }
-    })
-    expect(response.safeParse(refused.answer).success).toBe(true)
-  })
-
-  it('[ADR-001] BoardFacadeAdapter is listed for cuts 1 to 4', async () => {
-    // TC-086-03 (21 §3, 14 §5): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
-    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'BoardFacadeAdapter')).toEqual({
+  it('[ADR-001] BoardFacadeAdapter is listed for cuts 1 to 4', () => {
+    // TC-086-03 (21 §3, 14 §5): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on. AMENDED for ISSUE-242
+    // (was: today's listing, and the root composing the facade as A-12's `host` handler and A-P2's pusher once a table
+    // routes them to the Host): the facade left the tree after a test proved it had no consumer, so the listing is the
+    // one the releases up to 4b shipped (`describe('release 5 (21 §2 cut 5)')` pins its absence).
+    expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'BoardFacadeAdapter')).toEqual({
       name: 'BoardFacadeAdapter',
       cuts: ['cut-1', 'cut-2', 'cut-3a', 'cut-3b', 'cut-3d', 'cut-3e', 'cut-4a', 'cut-4b'],
       shapeAdapter: false
@@ -493,82 +403,6 @@ describe('pre-cut table', () => {
         key
       ).toEqual(['legacy'])
     }
-
-    // The root composes the facade only once the table routes A-12 to the Host: not in the cut-0 table.
-    let handler: ((event: HostEvent) => void) | null = null
-    const client = {
-      subscribe: (h: (event: HostEvent) => void) => {
-        handler = h
-        return () => (handler = null)
-      }
-    }
-    const sent: Array<[string, unknown]> = []
-    const windows = () => [
-      { webContentsId: 1, send: (push: string, p: unknown) => void sent.push([push, p]) }
-    ]
-    const macrotasks: Array<() => void> = []
-    const defer = (run: () => void) => void macrotasks.push(run)
-    expect(composeBoardFacade({ routes: CUT_0_ROUTES, client, windows, defer })).toBeUndefined()
-    expect(handler).toBeNull()
-
-    // In a table that routes A-12 and A-P2 to the Host (as the cut-1 switch will), the facade is A-12's `host` handler
-    // and pushes A-P2 to the mode windows, both in today's shape.
-    const hostRoute = (channel: ChannelKey): ChannelRoute => ({
-      channel,
-      owner: 'host',
-      since: 'cut-1',
-      parity: 'passed',
-      shape: 'target'
-    })
-    const cut1Routes = [
-      ...CUT_0_ROUTES.filter((r) => !BOARD_ROWS.includes(r.channel)),
-      ...BOARD_ROWS.map(hostRoute)
-    ]
-    const facade = composeBoardFacade({ routes: cut1Routes, client, windows, defer })
-    expect(facade?.part.channels).toEqual(['mines:get'])
-    const MINE = '01920000-0000-7000-9000-0000000c0001'
-    const ore = { tokens: 5 }
-    ;(handler as ((event: HostEvent) => void) | null)?.({
-      kind: 'snapshot',
-      snapshot: {
-        snapshotId: 's-1',
-        seq: 1,
-        epoch: 'epoch-1',
-        chunks: [
-          {
-            section: 'mines',
-            data: [
-              {
-                id: MINE as MineId,
-                path: '/work/gamma' as FolderPath,
-                name: 'gamma',
-                state: 'active',
-                tier: 'silver',
-                hasBeenMeasured: true,
-                lastUsedAt: 1,
-                totals: {
-                  coal: ore,
-                  bronze: ore,
-                  copper: ore,
-                  silver: ore,
-                  gold: ore,
-                  uranium: ore
-                }
-              }
-            ]
-          }
-        ]
-      }
-    })
-    for (const run of macrotasks.splice(0)) run()
-    const answer = await facade?.part.target.serve('mines:get', undefined)
-    expect(CHANNELS['mines:get'].response.safeParse(answer).success).toBe(true)
-    expect((answer as { mines: Array<{ id: string }> }).mines.map((m) => m.id)).toEqual([MINE])
-    expect(sent.map(([push]) => push)).toEqual(['mines:update'])
-    expect(CHANNELS['mines:update'].response.safeParse(sent[0]?.[1]).success).toBe(true)
-    expect(sent[0]?.[1]).toEqual(answer)
-    facade?.dispose()
-    expect(handler).toBeNull()
   })
 })
 
@@ -649,9 +483,10 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     expect(CUT_0_ROUTES.filter((r) => r.owner === 'host').map((r) => r.channel)).toEqual([
       STOP_EVERYTHING_CONFIRM
     ])
-    // The relay that ends the legacy-launched sessions first lives in this release (21 §3), and the root composes it
-    // as A-N26's only path (`composeStopAllRelay`, the LegacyEndFirstAdapter case above; index.cut0.test.ts).
-    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')?.cuts).toContain(
+    // The relay that ends the legacy-launched sessions first lived in this release (21 §3). AMENDED for ISSUE-241 (was:
+    // the release listing, and the root's `composeStopAllRelay`): it ended with cut 4, so the listing is the one cut 0
+    // shipped.
+    expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'LegacyEndFirstAdapter')?.cuts).toContain(
       cut0.release
     )
   })
@@ -677,7 +512,7 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_0_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).not.toBe('pending')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -703,8 +538,10 @@ describe('release cut-0 (21 §2 cut 0)', () => {
   })
 
   it('[ADR-001] in cut 0 LegacyRuntimeRoute and LegacyEndFirstAdapter are the only adapters composed', () => {
+    // AMENDED for ISSUE-241 (was: the release listing): `LegacyEndFirstAdapter` ended with cut 4, so the listing is the
+    // one cut 0 shipped.
     expect(
-      LEGACY_BRIDGE_ADAPTERS.filter((a) => a.cuts.includes(cut0.release)).map((a) => a.name)
+      ADAPTERS_AS_SHIPPED.filter((a) => a.cuts.includes(cut0.release)).map((a) => a.name)
     ).toEqual(['LegacyRuntimeRoute', 'LegacyEndFirstAdapter'])
     // No route of this release names a shape adapter (21 §3.1: the first is born in cut 1).
     expect(CUT_0_ROUTES.filter((r) => r.shapeAdapter !== undefined)).toEqual([])
@@ -861,387 +698,9 @@ describe('rollback', () => {
   })
 })
 
-describe('cut-1 legacy composition', () => {
-  /** Today's runtime as `LegacyAgentRegistryFeed` is handed it: one discovery, every other part recording. */
-  function legacySurface() {
-    const reached: string[] = []
-    const surface: LegacyRuntimeSurface = {
-      pollIntervalMs: 2_000,
-      discovery: [
-        {
-          kind: 'claude',
-          scan: async () => {
-            reached.push('discovery')
-            return [
-              {
-                provider: 'claude',
-                sessionId: 's1',
-                cwd: '/work/moria',
-                status: 'busy',
-                dwarfs: [],
-                updatedAt: 1
-              }
-            ]
-          }
-        }
-      ],
-      registry: { replace: () => void reached.push('registry') },
-      board: { publish: () => void reached.push('board publish') },
-      ledger: { credit: () => void reached.push('crediting') },
-      projects: { record: () => void reached.push('projects-store write') },
-      notifier: { update: () => void reached.push('notifier') }
-    }
-    return { surface, reached }
-  }
-  const launches = {
-    liveLaunches: async () => [{ launchId: 'launch:1' }],
-    endLaunch: async () => 'ended' as const
-  }
-  const span = (from: StepId, to: StepId): StepId[] =>
-    STEP_ORDER.slice(STEP_ORDER.indexOf(from), STEP_ORDER.indexOf(to) + 1)
-
-  it('[ADR-001] in cut 1 LegacyAgentRegistryFeed and LegacyLaunchObservation are composed and listed with their cuts', () => {
-    // TC-087-01 (21 §3): both are listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
-    for (const name of ['LegacyAgentRegistryFeed', 'LegacyLaunchObservation']) {
-      expect(
-        LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === name),
-        name
-      ).toEqual({
-        name,
-        cuts: span('cut-1', 'cut-4b'),
-        shapeAdapter: false
-      })
-    }
-    // The root composes each exactly in the releases it is listed for: in cut 1 (and its rollback build, whose table
-    // is cut 1's), not in this release's cut-0 table, and no longer once it is deleted.
-    const { surface } = legacySurface()
-    const timers = { every: () => () => {} }
-    for (const release of span('cut-1', 'cut-4b')) {
-      expect(
-        composeLegacyAgentRegistryFeed({ release, legacy: surface, timers }),
-        release
-      ).toBeDefined()
-      expect(composeLegacyLaunchObservation({ release, launches }), release).toBeDefined()
-    }
-    // AMENDED for ISSUE-123 (was: `[ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1']`): the release is cut 1 from the switch.
-    for (const release of ['cut-0', 'cut-5', 'v1'] as StepId[]) {
-      expect(
-        composeLegacyAgentRegistryFeed({ release, legacy: surface, timers }),
-        release
-      ).toBeUndefined()
-      expect(composeLegacyLaunchObservation({ release, launches }), release).toBeUndefined()
-    }
-  })
-
-  it('[ADR-001] composing LegacyAgentRegistryFeed adds no legacy board publish, crediting, projects-store write or notifier path', async () => {
-    // TC-087-01 (21 §1 item 4; ADR-001 Consequences, IR-21-07): the feed reaches only the discovery and the registry.
-    const { surface, reached } = legacySurface()
-    let cycle: (() => void) | null = null
-    const feed = composeLegacyAgentRegistryFeed({
-      release: 'cut-1',
-      legacy: surface,
-      timers: {
-        every: (_ms, run) => {
-          cycle = run
-          return () => (cycle = null)
-        }
-      }
-    })
-    feed?.start()
-    await feed?.whenIdle()
-    ;(cycle as (() => void) | null)?.()
-    await feed?.whenIdle()
-    expect(reached).toEqual(['discovery', 'registry', 'discovery', 'registry'])
-    feed?.stop()
-    expect(cycle).toBeNull()
-
-    // LegacyLaunchObservation composes only the legacy runtime's own launch channel: no observation path of its own.
-    const observation = composeLegacyLaunchObservation({ release: 'cut-1', launches })
-    expect(Object.keys(observation ?? {})).toEqual(['channel'])
-    expect(await observation?.channel.liveLaunches()).toEqual([{ launchId: 'launch:1' }])
-  })
-
-  it('[ADR-001] LegacyDwarfIdBridge is listed for cuts 1 to 4 and composed on A-13, A-23, A-26, A-27, A-P3, A-P4', async () => {
-    // TC-088-03 (21 §3; 14 §5; AMENDMENT-8): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
-    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyDwarfIdBridge')).toEqual({
-      name: 'LegacyDwarfIdBridge',
-      cuts: span('cut-1', 'cut-4b'),
-      shapeAdapter: false
-    })
-    const HOST_DWARF = '01920000-0000-7000-9000-0000000e0001'
-    const SESSION = 's-1'
-    const reads: string[] = []
-    const client = {
-      call: (method: string) => {
-        reads.push(method)
-        return Promise.resolve([
-          {
-            dwarfId: HOST_DWARF,
-            providerId: 'claude',
-            identity: { providerId: 'claude', providerSessionId: SESSION }
-          }
-        ])
-      },
-      subscribe: () => () => {}
-    } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client']
-    const served: Array<[string, unknown]> = []
-    const legacy = {
-      serve: (channel: string, payload: unknown) => {
-        served.push([channel, payload])
-        return Promise.resolve(undefined)
-      }
-    }
-    const { surface } = legacySurface()
-    const compose = (release: StepId) =>
-      composeLegacyDwarfIdBridge({ release, client, legacy, registry: surface })
-    // Composed exactly in the releases it is listed for: not in this release's cut-0 table, and no longer once deleted.
-    for (const release of span('cut-1', 'cut-4b')) {
-      const composed = compose(release)
-      expect(composed, release).toBeDefined()
-      composed?.dispose()
-    }
-    // AMENDED for ISSUE-123 (was: `[ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1']`): the release is cut 1 from the switch.
-    for (const release of ['cut-0', 'cut-5', 'v1'] as StepId[]) {
-      expect(compose(release), release).toBeUndefined()
-    }
-    expect(reads).toEqual([])
-
-    // In cut 1 it is composed on the six legacy rows that carry a dwarf id, and on no other row.
-    const composed = compose('cut-1')
-    expect(composed?.channels.map((channel) => ROW_IDS[channel]).sort()).toEqual(
-      ['A-13', 'A-23', 'A-26', 'A-27', 'A-P3', 'A-P4'].sort()
-    )
-    // The legacy side is what the registry feed writes through it; a bridged row reaches today's runtime with the
-    // legacy id, and every other row passes unchanged.
-    composed?.registry.registry.replace([
-      {
-        provider: 'claude',
-        sessionId: SESSION,
-        cwd: '/work/moria',
-        status: 'busy',
-        dwarfs: [
-          {
-            id: `claude:${SESSION}`,
-            provider: 'claude',
-            role: 'foreman',
-            name: 'Thorin',
-            status: 'working',
-            sessionId: SESSION
-          }
-        ],
-        updatedAt: 1
-      }
-    ])
-    await composed?.legacy.serve('dwarf:activate', HOST_DWARF)
-    await composed?.legacy.serve('mine:history', 'mine-1')
-    expect(served).toEqual([
-      ['dwarf:activate', `claude:${SESSION}`],
-      ['mine:history', 'mine-1']
-    ])
-    // It reads only B-M41 from the Host.
-    expect(new Set(reads)).toEqual(new Set(['strangler.dwarfIdentities']))
-    composed?.dispose()
-  })
-
-  it('[ADR-001] LegacyAskRelay is listed for cuts 1 to 4', async () => {
-    // TC-089 (21 §3; 14 §8 I-11): listed from cut 1 to the end of cut 4 (4b), absent from cut 5 on.
-    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyAskRelay')).toEqual({
-      name: 'LegacyAskRelay',
-      cuts: span('cut-1', 'cut-4b'),
-      shapeAdapter: false
-    })
-    // A-40 and A-41 stay `legacy` with today's shape in this release (21 §2 cut 1 "Legacy still serves").
-    // AMENDED for ISSUE-141 (was: `ROUTES`, the cut-1 release table): from the cut-2 switch the release table is cut
-    // 2's, so this pins the cut-1 table as it shipped (`testing/cut1Routes.ts`); cut 2 is pinned below.
-    for (const key of ['agent:answerQuestion', 'agent:answerPermission'] as ChannelKey[]) {
-      expect(
-        CUT_1_ROUTES.filter((r) => r.channel === key).map((r) => [r.owner, r.shape]),
-        key
-      ).toEqual([['legacy', 'today']])
-    }
-    const HOST_DWARF = '01920000-0000-7000-9000-0000000e0001'
-    const SESSION = 's-1'
-    const LEGACY_DWARF = `claude:${SESSION}`
-    const reads: string[] = []
-    const client = {
-      call: (method: string) => {
-        reads.push(method)
-        return Promise.resolve([
-          {
-            dwarfId: HOST_DWARF,
-            providerId: 'claude',
-            identity: { providerId: 'claude', providerSessionId: SESSION }
-          }
-        ])
-      },
-      subscribe: () => () => {}
-    } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client']
-    const served: Array<[string, unknown]> = []
-    const legacy = {
-      serve: (channel: string, payload: unknown) => {
-        served.push([channel, payload])
-        return Promise.resolve({ answered: true })
-      }
-    }
-    const { surface } = legacySurface()
-    const dwarfIds = composeLegacyDwarfIdBridge({
-      release: 'cut-1',
-      client,
-      legacy,
-      registry: surface
-    })
-    // Composed exactly in the releases it is listed for: not in this release's cut-0 table, and no longer once deleted.
-    for (const release of span('cut-1', 'cut-4b')) {
-      const relay = composeLegacyAskRelay({ release, dwarfIds })
-      expect(relay, release).toBeDefined()
-      relay?.dispose()
-    }
-    // AMENDED for ISSUE-123 (was: `[ROUTES_RELEASE, 'cut-0', 'cut-5', 'v1']`): the release is cut 1 from the switch.
-    for (const release of ['cut-0', 'cut-5', 'v1'] as StepId[]) {
-      expect(composeLegacyAskRelay({ release, dwarfIds }), release).toBeUndefined()
-    }
-    expect(composeLegacyAskRelay({ release: 'cut-1', dwarfIds: undefined })).toBeUndefined()
-
-    // In cut 1 it is composed on A-40 and A-41, and on no other row.
-    const relay = composeLegacyAskRelay({ release: 'cut-1', dwarfIds })
-    expect(relay?.channels.map((channel) => ROW_IDS[channel]).sort()).toEqual(['A-40', 'A-41'])
-    let changes = 0
-    relay?.onChanged(() => (changes += 1))
-    // The feed writes today's registry through it: the open ask is read after the write and shown on the Host dwarf.
-    relay?.registry.registry.replace([
-      {
-        provider: 'claude',
-        sessionId: SESSION,
-        cwd: '/work/moria',
-        status: 'busy',
-        dwarfs: [
-          {
-            id: LEGACY_DWARF,
-            provider: 'claude',
-            role: 'foreman',
-            name: 'Thorin',
-            status: 'waiting',
-            sessionId: SESSION,
-            pendingPermission: {
-              toolUseId: 'toolu_1',
-              toolName: 'Bash',
-              input: 'ls',
-              channel: 'held',
-              askedAt: '2026-10-05T10:00:00.000Z'
-            }
-          }
-        ],
-        updatedAt: 1
-      }
-    ])
-    await relay?.whenIdle()
-    expect(changes).toBe(1)
-    expect(relay?.askFields(HOST_DWARF as DwarfId).pendingPermission?.toolUseId).toBe(
-      'legacy:toolu_1'
-    )
-    // An answer to the relayed card reaches today's runtime with the legacy ids; every other row passes unchanged.
-    await relay?.legacy.serve('agent:answerPermission', {
-      dwarfId: HOST_DWARF,
-      toolUseId: 'legacy:toolu_1',
-      decision: 'allow'
-    })
-    await relay?.legacy.serve('mine:history', 'mine-1')
-    expect(served).toEqual([
-      [
-        'agent:answerPermission',
-        { dwarfId: LEGACY_DWARF, toolUseId: 'toolu_1', decision: 'allow' }
-      ],
-      ['mine:history', 'mine-1']
-    ])
-    // It reads only B-M41 from the Host (through the bridge).
-    expect(new Set(reads)).toEqual(new Set(['strangler.dwarfIdentities']))
-
-    // The facade shows the relay's ask fields on the Host dwarf (in a table that routes A-12 to the Host, as cut 1 will).
-    let handler: ((event: HostEvent) => void) | null = null
-    const board = composeBoardFacade({
-      routes: [
-        ...ROUTES.filter((r) => r.channel !== 'mines:get'),
-        { channel: 'mines:get', owner: 'host', since: 'cut-1', parity: 'passed', shape: 'target' }
-      ],
-      client: {
-        subscribe: (h: (event: HostEvent) => void) => {
-          handler = h
-          return () => (handler = null)
-        }
-      },
-      windows: () => [],
-      defer: (run) => run(),
-      ...(relay === undefined ? {} : { askFields: relay.askFields })
-    })
-    const MINE = '01920000-0000-7000-9000-0000000c0001'
-    const ore = { tokens: 0 }
-    ;(handler as ((event: HostEvent) => void) | null)?.({
-      kind: 'snapshot',
-      snapshot: {
-        snapshotId: 's-1',
-        seq: 1,
-        epoch: 'epoch-1',
-        chunks: [
-          {
-            section: 'mines',
-            data: [
-              {
-                id: MINE as MineId,
-                path: '/work/moria' as FolderPath,
-                name: 'moria',
-                state: 'active',
-                tier: 'silver',
-                hasBeenMeasured: true,
-                lastUsedAt: 1,
-                totals: {
-                  coal: ore,
-                  bronze: ore,
-                  copper: ore,
-                  silver: ore,
-                  gold: ore,
-                  uranium: ore
-                }
-              }
-            ]
-          },
-          {
-            section: 'dwarfs',
-            data: [
-              {
-                id: HOST_DWARF as DwarfId,
-                mineId: MINE as MineId,
-                providerId: 'claude',
-                baseName: 'Thorin',
-                customName: null,
-                rank: 'foreman',
-                parentDwarfId: null,
-                delegated: false,
-                sessionProfile: { providerId: 'claude' },
-                presence: 'present',
-                processState: 'running',
-                status: 'asking',
-                needsYou: true,
-                canReceiveMessages: true,
-                stopInFlight: false,
-                stopUnavailableReason: null,
-                owned: false,
-                arrivedAt: 1
-              }
-            ]
-          }
-        ]
-      }
-    })
-    const shown = (await board?.part.target.serve('mines:get', undefined)) as {
-      mines: Array<{ dwarfs: Array<{ id: string; pendingPermission?: { toolUseId: string } }> }>
-    }
-    expect(CHANNELS['mines:get'].response.safeParse(shown).success).toBe(true)
-    expect(shown.mines[0]?.dwarfs[0]?.pendingPermission?.toolUseId).toBe('legacy:toolu_1')
-    board?.dispose()
-    relay?.dispose()
-    dwarfIds?.dispose()
-  })
-})
+// AMENDED for ISSUE-241, the end of cut 4 (was: `describe('cut-1 legacy composition')`, composing
+// `LegacyAgentRegistryFeed`, `LegacyDwarfIdBridge` and `LegacyAskRelay` in the releases they lived in): the bridges left
+// the tree; the listing the earlier releases shipped keeps them (`testing/adaptersAsShipped.ts`).
 
 // AMENDED for ISSUE-091 (appended): the mines admin rows' future `host` routes.
 describe('cut-1 mines admin rows (ISSUE-091)', () => {
@@ -1292,12 +751,6 @@ describe('cut-1 mines admin rows (ISSUE-091)', () => {
     chooseFolder: async () => '/work/moria',
     openPath: async () => ({ opened: true as const })
   }
-  const legacy = {
-    liveLaunches: async () => [],
-    endLaunch: async () => 'ended' as const,
-    launchIdOfDwarf: () => undefined
-  }
-  const bridge = { toLegacy: async () => null }
 
   // AMENDED for ISSUE-123 (was: "in this release …" over `ROUTES` / `ROUTES_RELEASE`): the cut-1 switch routed them,
   // so the case proves the cut-0 table as it shipped; the cut-1 routes are pinned in `describe('release cut 1')`.
@@ -1312,11 +765,8 @@ describe('cut-1 mines admin rows (ISSUE-091)', () => {
     expect(
       composeMinesAdmin({
         routes: CUT_0_ROUTES,
-        release: 'cut-0',
         client: recordingClient().client,
-        native,
-        legacy,
-        bridge
+        native
       })
     ).toBeUndefined()
   })
@@ -1328,11 +778,8 @@ describe('cut-1 mines admin rows (ISSUE-091)', () => {
     const { client, sent } = recordingClient()
     const composed = composeMinesAdmin({
       routes: table.routes,
-      release: 'cut-1',
       client,
       native,
-      legacy,
-      bridge,
       newRequestId: () => '01890a5d-ac96-774b-bcce-b302099a8001'
     })
     expect(composed?.part.channels).toEqual(ADMIN_ROWS)
@@ -1364,36 +811,21 @@ describe('cut-1 mines admin rows (ISSUE-091)', () => {
     composed?.dispose()
   })
 
-  it('[ADR-001] the mines admin rows are composed with LegacyEndFirstAdapter only over LegacyDwarfIdBridge through cut 4, and with a pass-through after it', async () => {
-    const routes = cut1Table().routes
-    const { client } = recordingClient()
-    // Through cut 4 (21 §3): no bridge, or no launched register to join, composes no removal that skips the legacy end.
-    expect(
-      composeMinesAdmin({ routes, release: 'cut-1', client, native, legacy, bridge: undefined })
-    ).toBeUndefined()
-    expect(
-      composeMinesAdmin({
-        routes,
-        release: 'cut-4b',
-        client,
-        native,
-        legacy: { liveLaunches: legacy.liveLaunches, endLaunch: legacy.endLaunch },
-        bridge
-      })
-    ).toBeUndefined()
-    // From cut 5 the adapter is gone: A-32 relays mines.remove directly.
-    const late = composeMinesAdmin({
-      routes,
-      release: 'cut-5',
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-001] the mines admin rows are composed with
+  // LegacyEndFirstAdapter only over LegacyDwarfIdBridge through cut 4, and with a pass-through after it"): the adapter
+  // left the tree, so A-32 relays mines.remove at once in every release.
+  it('[ADR-001] A-32 relays mines.remove at once, with no legacy end first', async () => {
+    const { client, sent } = recordingClient()
+    const composed = composeMinesAdmin({
+      routes: cut1Table().routes,
       client,
       native,
-      legacy: { liveLaunches: legacy.liveLaunches, endLaunch: legacy.endLaunch },
-      bridge: undefined,
       newRequestId: () => '01890a5d-ac96-774b-bcce-b302099a8001'
     })
-    expect(await late?.part.target.serve('mine:undeclare', MINE, FROM_PANEL)).toEqual({
+    expect(await composed?.part.target.serve('mine:undeclare', MINE, FROM_PANEL)).toEqual({
       outcome: 'removed'
     })
+    expect(sent).toEqual(['mines.remove'])
   })
 })
 
@@ -1471,7 +903,9 @@ describe('cut-1 rollback (21 §2 cut 1)', () => {
       ...files(resolve(SRC, 'renderer')),
       ...files(resolve(SRC, 'preload')),
       ...files(resolve(SRC, 'host/modules/preferences')),
+      // AMENDED for ISSUE-247: src/legacy-bridge left the tree (21 §2 cut 5); a folder that is gone holds no reader.
       ...[resolve(SRC, 'ui-main'), resolve(SRC, 'legacy-bridge')]
+        .filter((folder) => existsSync(folder))
         .flatMap((folder) => files(folder))
         .filter((path) => /settings|preferences/i.test(relativeOf(path)))
     ]
@@ -1493,7 +927,7 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     routes: CUT_1_ROUTES,
     unrouted: CUT_1_UNROUTED,
     retired: CUT_1_TABLE.retired ?? {},
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   /** The one registry key of a 14 id. */
   const keyOf = (id: string): ChannelKey => {
@@ -1608,18 +1042,11 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     // A-31 and A-34 are mines admin rows of the `host` target (A-20, A-30 and A-32 are pinned below).
     const admin = composeMinesAdmin({
       routes: CUT_1_ROUTES,
-      release: 'cut-1',
       client: client as unknown as Parameters<typeof composeMinesAdmin>[0]['client'],
       native: {
         chooseFolder: async () => '/work/moria',
         openPath: async () => ({ opened: true as const })
-      },
-      legacy: {
-        liveLaunches: async () => [],
-        endLaunch: async () => 'ended' as const,
-        launchIdOfDwarf: () => undefined
-      },
-      bridge: { toLegacy: async () => null }
+      }
     })
     expect(admin?.part.channels).toEqual(
       expect.arrayContaining(['mine:declare-main', 'projects:query'])
@@ -1653,19 +1080,10 @@ describe('release cut 1 (21 §2 cut 1)', () => {
         return client.call(method)
       }
     } as unknown as Parameters<typeof composeMinesAdmin>[0]['client']
-    const legacy = {
-      liveLaunches: async () => [],
-      endLaunch: async () => 'ended' as const,
-      launchIdOfDwarf: () => undefined
-    }
-    const bridge = { toLegacy: async () => null }
     const admin = composeMinesAdmin({
       routes: CUT_1_ROUTES,
-      release: 'cut-1',
       client: recorded,
       native,
-      legacy,
-      bridge,
       newRequestId: () => '01890a5d-ac96-774b-bcce-b302099a8001'
     })
     const router = createRouter({
@@ -1685,28 +1103,15 @@ describe('release cut 1 (21 §2 cut 1)', () => {
     expect(sent).toEqual(['mines.resolveFile', 'mines.declare'])
     admin?.dispose()
 
-    // A-32 is composed only with LegacyEndFirstAdapter in cut 1: without the dwarf id bridge or today's launched
-    // register to join, the root composes no removal at all (21 §3; ISSUE-090).
-    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')?.cuts).toContain(
+    // A-32 was composed with LegacyEndFirstAdapter in cut 1 (21 §3; ISSUE-090). AMENDED for ISSUE-241, the end of cut
+    // 4 (was: the release listing, and the root composing no removal without the dwarf id bridge or today's launched
+    // register to join): the adapter left the tree, so the listing is the one cut 1 shipped and A-32 relays at once.
+    expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'LegacyEndFirstAdapter')?.cuts).toContain(
       'cut-1'
     )
-    const composedWith = (deps: Partial<Parameters<typeof composeMinesAdmin>[0]>) =>
-      composeMinesAdmin({
-        routes: CUT_1_ROUTES,
-        release: 'cut-1',
-        client: recorded,
-        native,
-        legacy,
-        bridge,
-        ...deps
-      })
-    expect(composedWith({ bridge: undefined })).toBeUndefined()
-    expect(
-      composedWith({ legacy: { liveLaunches: legacy.liveLaunches, endLaunch: legacy.endLaunch } })
-    ).toBeUndefined()
   })
 
-  it('[ADR-001] in cut 1 A-12 and A-P2 go through BoardFacadeAdapter and A-33 through ResetFanout', async () => {
+  it('[ADR-001] in cut 1 A-12 and A-P2 go through BoardFacadeAdapter and A-33 through ResetFanout', () => {
     // Lead resolution H3: A-12 and A-P2 are RETIRE rows routed `host` with the target shape, and a RETIRE row's
     // registry entry is today's shape (14 §2.1), so the generated preload keeps today's `MinesSnapshot` for both.
     for (const id of ['A-12', 'A-P2']) {
@@ -1715,20 +1120,9 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       expect(CHANNELS[key].status, id).toBe('retired')
       expect(CHANNELS[key].response, id).toBe(TODAY_SHAPES[key]?.response)
     }
-    const preload = readFileSync(resolve(import.meta.dirname, '../../preload/index.ts'), 'utf8')
-    expect(preload).toContain('/** A-12 · `mines:get` · invoke · RETIRE · target shape */')
-    expect(preload).toContain('/** A-P2 · `mines:update` · push · RETIRE · target shape */')
-
-    // The root composes the facade as A-12's `host` handler, and it pushes A-P2.
-    const { client } = recordingHost()
-    const facade = composeBoardFacade({
-      routes: CUT_1_ROUTES,
-      client,
-      windows: () => [],
-      defer: (run) => run()
-    })
-    expect(facade?.part.channels).toEqual(['mines:get'])
-    facade?.dispose()
+    // AMENDED for ISSUE-242, the first cut-5 deletion (was: the generated preload's A-12 and A-P2 members, and the root
+    // composing the facade as A-12's `host` handler over the cut-1 table): both members and the facade left the tree
+    // (`describe('release 5 (21 §2 cut 5)')`).
 
     // A-33 is `legacy` + `target` through its shape adapter ResetFanout: the legacy reset first, then the Host saga.
     const a33 = keyOf('A-33')
@@ -1742,39 +1136,8 @@ describe('release cut 1 (21 §2 cut 1)', () => {
         shapeAdapter: 'ResetFanout'
       }
     ])
-    const order: string[] = []
-    const legacy = {
-      serve: async (channel: string) => {
-        order.push(`legacy ${channel}`)
-        return { outcome: 'reset' }
-      }
-    }
-    const host = recordingHost()
-    const adapters = composeResetFanout({
-      routes: CUT_1_ROUTES,
-      release: 'cut-1',
-      legacy,
-      client: host.client as unknown as Parameters<typeof composeResetFanout>[0]['client'],
-      now: () => 0
-    })
-    expect(Object.keys(adapters ?? {})).toEqual(['ResetFanout'])
-    // Without it the router does not start: a route naming a shape adapter needs it bound.
-    expect(() =>
-      createRouter({ routes: CUT_1_ROUTES.filter((r) => r.channel === a33), legacy, senders })
-    ).toThrow()
-    const router = createRouter({
-      routes: CUT_1_ROUTES.filter((r) => r.channel === a33),
-      legacy,
-      ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
-      senders
-    })
-    const answer = await router.dispatch(a33, FROM_PANEL, {
-      confirmed: 'yes',
-      requestId: '01890a5d-ac96-774b-bcce-b302099a8002'
-    })
-    expect(CHANNELS[a33].response.safeParse(answer).success).toBe(true)
-    expect(order).toEqual(['legacy metrics:reset'])
-    expect(host.sent).toEqual(['preferences.resetMetrics'])
+    // AMENDED for ISSUE-236, the 4a retirement (was: `composeResetFanout` over the cut-1 table, the router refusing to
+    // start without it, and A-33 running today's reset before the Host saga): `ResetFanout` left the tree.
   })
 
   it('[ADR-001] in cut 1 A-14, A-16, A-17, A-18 and A-P5 have no route and no handler, and A-N16 exists', async () => {
@@ -1941,8 +1304,8 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       'mines.list': 'cut-1', // B-M19
       'mines.resolveFile': 'cut-1', // B-M20
       'conversation.feed': 'cut-1', // B-M26
-      'conversation.mineHistory': 'cut-1', // B-M27
-      'strangler.dwarfIdentities': 'cut-1' // B-M41
+      'conversation.mineHistory': 'cut-1' // B-M27
+      // AMENDED for ISSUE-241 (was: also B-M41 `strangler.dwarfIdentities`, born in cut 1): it ended with cut 4.
     })
     expect(CUT_1_HOST_ROUTE_MEMBERS).toEqual({
       'tray:stopEverything:confirm': ['host.shutdown'],
@@ -1959,53 +1322,8 @@ describe('release cut 1 (21 §2 cut 1)', () => {
       'projects:query': ['mines.list']
     })
   })
-  it('[ADR-001] in cut 1 the bridges composed over today’s runtime read its poll interval only once the feed starts', async () => {
-    // Today's runtime answers its poll interval only once it is composed (`LegacyRuntimeRoute.surface`), which the
-    // root does after the bridges are composed: composing them must not read it, or the start fails.
-    let composed = false
-    const reads: string[] = []
-    const surface: LegacyRuntimeSurface = {
-      get pollIntervalMs() {
-        if (!composed)
-          throw new Error('the poll interval is read before today’s runtime is composed')
-        return 2_000
-      },
-      discovery: [],
-      registry: { replace: () => {} },
-      board: { publish: () => {} },
-      ledger: { credit: () => {} },
-      projects: { record: () => {} },
-      notifier: { update: () => {} }
-    }
-    const client = {
-      call: () => Promise.resolve([]),
-      subscribe: () => () => {}
-    } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client']
-    const dwarfIds = composeLegacyDwarfIdBridge({
-      release: 'cut-1',
-      client,
-      legacy: { serve: () => Promise.resolve(undefined) },
-      registry: surface
-    })
-    const relay = composeLegacyAskRelay({ release: 'cut-1', dwarfIds })
-    const feed = composeLegacyAgentRegistryFeed({
-      release: 'cut-1',
-      legacy: relay?.registry,
-      timers: {
-        every: (ms) => {
-          reads.push(`every ${ms}`)
-          return () => {}
-        }
-      }
-    })
-    expect(feed).toBeDefined()
-    composed = true
-    feed?.start()
-    expect(reads).toEqual(['every 2000'])
-    feed?.stop()
-    relay?.dispose()
-    dwarfIds?.dispose()
-  })
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-001] in cut 1 the bridges composed over today’s runtime read
+  // its poll interval only once the feed starts"): the bridges left the tree.
 })
 
 describe('cut-0 retirement', () => {
@@ -2028,9 +1346,9 @@ describe('cut-0 retirement', () => {
   const SRC = resolve(import.meta.dirname, '../..')
   const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
 
-  /** `IPC_CHANNELS` member names by wire, read from the shared constants' own text (a test may not import src/shared). */
+  /** `IPC_CHANNELS` member names by wire, read from the text of `contracts/wire/today.ts` (ISSUE-246). */
   function memberOfWire(wire: string): string {
-    const block = read('shared/contracts.ts').split('export const IPC_CHANNELS = {')[1] ?? ''
+    const block = read('contracts/wire/today.ts').split('export const IPC_CHANNELS = {')[1] ?? ''
     const match = new RegExp(`^ {2}([A-Za-z]+): '${wire}'`, 'm').exec(block)
     if (match?.[1] === undefined) throw new Error(`no IPC_CHANNELS member for ${wire}`)
     return match[1]
@@ -2048,7 +1366,7 @@ describe('cut-0 retirement', () => {
     // No composition of today's runtime names a window-family wire: neither the bridge nor the legacy root.
     const composers = ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']
     for (const file of composers) {
-      const source = read(file)
+      const source = legacySource(resolve(SRC, file))
       for (const wire of WINDOW_FAMILY_WIRES) {
         expect(source, `${file} ${wire}`).not.toMatch(
           new RegExp(String.raw`IPC_CHANNELS\.${memberOfWire(wire)}\b`)
@@ -2071,7 +1389,7 @@ describe('cut-1 retirement (21 §2 cut 1)', () => {
   const cut1: RouteTable = CUT_1_TABLE
   const SRC = resolve(import.meta.dirname, '../..')
   const legacyRoute = (): string =>
-    readFileSync(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'), 'utf8')
+    legacySource(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'))
 
   it('[ADR-001] after the cut-1 retirement LegacyRuntimeRoute composes no poller, scan wiring, publish gate, ledger crediting or projects-store board path, whatever the route table', () => {
     // AMENDED for ISSUE-125 (was: each table's `legacyObserverComposition` had none of the four retired sinks): the
@@ -2080,50 +1398,22 @@ describe('cut-1 retirement (21 §2 cut 1)', () => {
       expect(checkRouteTable(table, KEYS)).toEqual([])
     }
     const source = legacyRoute()
-    // No poll timer: today's runtime ticks only through LegacyAgentRegistryFeed's cycles (the scan wiring it keeps).
+    // No poll timer (until ISSUE-241 today's runtime ticked only through LegacyAgentRegistryFeed's cycles).
     expect(source).not.toMatch(/\bruntime\??\.start\(/)
-    // No publish gate → board path: A-P2 is BoardFacadeAdapter's push from the Host board.
+    // No publish gate → board path: A-P2 was BoardFacadeAdapter's push from the Host board, deleted at cut 5 (ISSUE-242).
     expect(source).not.toMatch(/IPC_CHANNELS\.minesUpdated\b/)
     // No ledger crediting: no vault store and no coal backfill; today's ledger is a vault that remembers nothing.
     expect(source).not.toMatch(/openLedgerStore|runCoalBackfill/)
-    expect(source).toMatch(/store: nullLedgerStore\(\)/)
-    // No projects-store board path: what a tick observes is written nowhere, every read and person's act stays.
-    expect(source).toMatch(/withoutObserverWrites\(openedProjects\.store/)
+    // No projects-store board path. AMENDED for ISSUE-243 (was: also today's ledger a vault that remembers nothing,
+    // `nullLedgerStore()`, and today's projects store composed without the observer's writes): today's runtime, which
+    // needed both, left the tree with `LegacyRuntimeRoute`.
     expect(source).not.toMatch(
       /observer\.(pollTimer|boardPublish|ledgerCrediting|projectsObserverWrites)\b/
     )
   })
 
-  it('[ADR-001] after the cut-1 retirement LegacyAgentRegistryFeed is still composed and writes only the legacy in-memory registry', async () => {
-    const reached: string[] = []
-    const surface: LegacyRuntimeSurface = {
-      pollIntervalMs: 2_000,
-      discovery: [
-        {
-          kind: 'claude',
-          scan: async () => {
-            reached.push('discovery')
-            return []
-          }
-        }
-      ],
-      registry: { replace: () => void reached.push('registry') },
-      board: { publish: () => void reached.push('board publish') },
-      ledger: { credit: () => void reached.push('crediting') },
-      projects: { record: () => void reached.push('projects-store write') },
-      notifier: { update: () => void reached.push('notifier') }
-    }
-    const feed = composeLegacyAgentRegistryFeed({
-      release: ROUTES_RELEASE,
-      legacy: surface,
-      timers: { every: () => () => {} }
-    })
-    expect(feed).toBeDefined()
-    feed?.start()
-    await feed?.whenIdle()
-    expect(reached).toEqual(['discovery', 'registry'])
-    feed?.stop()
-  })
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-001] after the cut-1 retirement LegacyAgentRegistryFeed is still
+  // composed and writes only the legacy in-memory registry"): the feed left the tree.
 })
 
 describe('cut-1 notifier retirement (21 §2 cut 1)', () => {
@@ -2142,7 +1432,7 @@ describe('cut-1 notifier retirement (21 §2 cut 1)', () => {
     })
 
   it('[ADR-018] after the cut-1 retirement no legacy notifier is composed, whatever the route table, and only the Host attention policy reaches an OS notification', () => {
-    const route = read('legacy-bridge/LegacyRuntimeRoute.ts')
+    const route = legacySource(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'))
     expect(route).not.toMatch(
       /createNotifier|createElectronNotifications|notifyDecision|main\/notifications\/(notifier|notifyDecision|electronNotifications|appUserModelId)'/
     )
@@ -2151,10 +1441,8 @@ describe('cut-1 notifier retirement (21 §2 cut 1)', () => {
     expect(root).not.toMatch(/legacyObserver(Owner|Composition)\b/)
     expect(route).not.toMatch(/observer\.notifier\b/)
     // The only Electron `Notification` of the UI process is the one handed to the Host policy's display adapter.
-    const notificationImporters = [
-      ...productionFiles('ui-main'),
-      ...productionFiles('legacy-bridge')
-    ].filter((file) =>
+    // AMENDED for ISSUE-247 (was: also every production file of src/legacy-bridge): that folder left the tree.
+    const notificationImporters = [...productionFiles('ui-main')].filter((file) =>
       /import\s*\{[^}]*\bNotification\b[^}]*\}\s*from\s*'electron'/.test(read(file))
     )
     expect(notificationImporters).toEqual(['ui-main/index.ts'])
@@ -2172,7 +1460,7 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     routes: CUT_2_ROUTES,
     unrouted: CUT_2_UNROUTED,
     retired: CUT_2_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] => CUT_2_ROUTES.filter((r) => r.channel === key)
   const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
@@ -2182,156 +1470,10 @@ describe('release cut 2 (21 §2 cut 2)', () => {
   const PERMISSION = 'agent:answerPermission' as const // A-41
   const HOST_ASK = '01920000-0000-7000-9000-0000000000a5'
   const REQUEST = '01920000-0000-7000-a000-000000000141'
-  const FOREMAN = '01920000-0000-7000-9000-0000000e0001'
-  const CODEX = '01920000-0000-7000-9000-0000000e0002'
-  const SESSION = 's-1'
-  const THREAD = 't-1'
 
-  /** Today's sessions: a held Claude permission (legacy-launch) and an observed Codex question (legacy-ask-channel). */
-  const LEGACY_SESSIONS = [
-    {
-      provider: 'claude',
-      sessionId: SESSION,
-      cwd: '/work/moria',
-      status: 'busy',
-      dwarfs: [
-        {
-          id: `claude:${SESSION}`,
-          provider: 'claude',
-          role: 'foreman',
-          name: 'Thorin',
-          status: 'waiting',
-          sessionId: SESSION,
-          pendingPermission: {
-            toolUseId: 'toolu_1',
-            toolName: 'Bash',
-            input: 'ls',
-            channel: 'held',
-            askedAt: '2026-10-14T10:00:00.000Z'
-          }
-        }
-      ],
-      updatedAt: 1
-    },
-    {
-      provider: 'codex',
-      sessionId: THREAD,
-      cwd: '/work/moria',
-      status: 'idle',
-      dwarfs: [
-        {
-          id: `codex:${THREAD}`,
-          provider: 'codex',
-          role: 'foreman',
-          name: 'Balin',
-          status: 'waiting',
-          sessionId: THREAD,
-          pendingQuestion: {
-            toolUseId: 'call_1',
-            channel: 'terminal',
-            questions: [
-              {
-                question: 'Which branch should I use?',
-                multiSelect: false,
-                options: [{ label: 'main' }, { label: 'develop' }]
-              }
-            ],
-            askedAt: '2026-10-14T10:00:01.000Z'
-          }
-        }
-      ],
-      updatedAt: 1
-    }
-  ]
-
-  /**
-   * The cut-2 answer path as the root composes it: today's runtime (recording, answering today's success) behind
-   * `LegacyDwarfIdBridge` and `LegacyAskRelay`, the A-40/A-41 `host` handlers over a recording HostClient, and the
-   * router registered over the release table with the answer qualifiers. `invoke` is the renderer's call on a row's
-   * wire.
-   */
-  // AMENDED for ISSUE-141 (verifier, 2026-10-14; was: no parameter, the release table's routes): the routes to compose
-  // and route over, so the rollback build's table can be driven with the renderer's own payloads too.
-  async function answerWorld(table: readonly ChannelRoute[] = CUT_2_ROUTES) {
-    const legacyServed: Array<[string, unknown]> = []
-    const hostCalls: Array<[string, unknown]> = []
-    const client = {
-      call: (method: string, params: unknown) => {
-        if (method === 'strangler.dwarfIdentities') {
-          return Promise.resolve([
-            {
-              dwarfId: FOREMAN,
-              providerId: 'claude',
-              identity: { providerId: 'claude', providerSessionId: SESSION }
-            },
-            {
-              dwarfId: CODEX,
-              providerId: 'codex',
-              identity: { providerId: 'codex', providerSessionId: THREAD }
-            }
-          ])
-        }
-        hostCalls.push([method, params])
-        return Promise.resolve({ kind: 'accepted' })
-      },
-      subscribe: () => () => {}
-    }
-    const legacy = {
-      serve: (channel: string, payload: unknown) => {
-        legacyServed.push([channel, payload])
-        return Promise.resolve({ answered: true })
-      }
-    }
-    const surface: LegacyRuntimeSurface = {
-      pollIntervalMs: 2_000,
-      discovery: [],
-      registry: { replace: () => {} },
-      board: { publish: () => {} },
-      ledger: { credit: () => {} },
-      projects: { record: () => {} },
-      notifier: { update: () => {} }
-    }
-    const dwarfIds = composeLegacyDwarfIdBridge({
-      release: 'cut-2',
-      client: client as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client'],
-      legacy,
-      registry: surface
-    })
-    const relay = composeLegacyAskRelay({ release: 'cut-2', dwarfIds })
-    relay?.registry.registry.replace(
-      LEGACY_SESSIONS as unknown as Parameters<LegacyRegistryReplace>[0]
-    )
-    await relay?.whenIdle()
-    const answers = composeAskAnswers({
-      routes: table,
-      release: 'cut-2',
-      client: client as unknown as Parameters<typeof composeAskAnswers>[0]['client'],
-      relay,
-      log: { record: () => {} }
-    })
-    const handlers = new Map<string, (event: typeof FROM_PANEL, payload: unknown) => unknown>()
-    createRouter({
-      routes: table.filter((r) => r.channel === QUESTION || r.channel === PERMISSION),
-      legacy: relay?.legacy ?? legacy,
-      ...(answers?.part === undefined ? {} : { host: answers.part.target }),
-      ...(answers === undefined ? {} : { shapeAdapters: answers.shapeAdapters }),
-      ...(answers === undefined ? {} : { qualifiers: answers.qualifiers }),
-      senders
-    }).register({
-      handle: (wire, listener) => void handlers.set(wire, listener),
-      on: () => {}
-    })
-    const invoke = (wire: string, payload: unknown) => {
-      const listener = handlers.get(wire)
-      if (listener === undefined) throw new Error(`no listener for ${wire}`)
-      return listener(FROM_PANEL, payload)
-    }
-    const dispose = () => {
-      relay?.dispose()
-      dwarfIds?.dispose()
-    }
-    return { answers, invoke, legacyServed, hostCalls, dispose }
-  }
+  // AMENDED for ISSUE-241, the end of cut 4 (was: `LEGACY_SESSIONS` and `answerWorld`, the cut-2 answer path composed
+  // over `LegacyDwarfIdBridge`, `LegacyAskRelay` and `LegacyAnswerShapeAdapter`): the bridges left the tree, so the cut-2
+  // table is checked as it shipped and no longer composed.
 
   it('[ADR-001] in cut 2 A-40 and A-41 route host with shape target for Host AskIds and legacy through LegacyAnswerShapeAdapter for legacy: AskIds, one owner per qualifier', async () => {
     expect('cut-2').toBe('cut-2')
@@ -2368,122 +1510,14 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       }
     }
 
-    // Through the root's composition: the qualifier is the relay's AskId namespace and origin, never a guess.
-    const world = await answerWorld()
-    expect(world.answers?.part?.channels).toEqual([QUESTION, PERMISSION])
-    expect(Object.keys(world.answers?.shapeAdapters ?? {})).toEqual(['LegacyAnswerShapeAdapter'])
-    const accepted = { ok: true, value: { kind: 'accepted' } }
-    // A legacy-launched session's permission (origin legacy-launch) reaches today's runtime with today's ids.
-    expect(
-      await world.invoke(PERMISSION, {
-        askId: 'legacy:toolu_1',
-        decision: 'allow',
-        requestId: REQUEST
-      })
-    ).toEqual(accepted)
-    // An observed Codex question (origin legacy-ask-channel) reaches today's runtime too.
-    expect(
-      await world.invoke(QUESTION, {
-        askId: 'legacy:call_1',
-        answers: [{ step: 0, option: 'develop' }],
-        requestId: REQUEST
-      })
-    ).toEqual(accepted)
-    expect(world.legacyServed).toEqual([
-      [PERMISSION, { dwarfId: `claude:${SESSION}`, toolUseId: 'toolu_1', decision: 'allow' }],
-      [
-        QUESTION,
-        {
-          dwarfId: `codex:${THREAD}`,
-          toolUseId: 'call_1',
-          answers: { 'Which branch should I use?': 'develop' }
-        }
-      ]
-    ])
-    // A Host AskId goes to the broker with the renderer's payload unchanged, and never to today's runtime.
-    const hostPermission = { askId: HOST_ASK, decision: 'deny', requestId: REQUEST }
-    expect(await world.invoke(PERMISSION, hostPermission)).toEqual(accepted)
-    expect(world.hostCalls).toEqual([['asking.answerPermission', hostPermission]])
-    // A `legacy:` id the relay does not hold now is stale: not-open, and it reaches neither side.
-    expect(
-      await world.invoke(PERMISSION, {
-        askId: 'legacy:toolu_gone',
-        decision: 'allow',
-        requestId: REQUEST
-      })
-    ).toEqual({ ok: true, value: { kind: 'not-open' } })
-    expect(world.legacyServed).toHaveLength(2)
-    expect(world.hostCalls).toHaveLength(1)
-    world.dispose()
+    // AMENDED for ISSUE-241 (was: the same answers through the root's composition, the qualifier read from the relay's
+    // AskId namespace): the relay and the shape adapter left the tree with cut 4.
   })
 
-  // ADDED for ISSUE-141 (verifier finding, 2026-10-14): the rollback build keeps this tree's preload and renderer, which
-  // send A-40/A-41 in the 14 target shape; its table must still reach today's runtime with exactly those payloads.
-  it("[ADR-001, US-ASK-003.AC07] in a cut-2 rollback build the renderer's own A-40/A-41 payloads reach today's runtime through LegacyAnswerShapeAdapter", async () => {
-    const rolledBack = rollbackOf(cut2, 'cut-2')
-    const world = await answerWorld(rolledBack.routes)
-    const accepted = { ok: true, value: { kind: 'accepted' } }
-    expect(
-      await world.invoke(PERMISSION, {
-        askId: 'legacy:toolu_1',
-        decision: 'allow',
-        requestId: REQUEST
-      })
-    ).toEqual(accepted)
-    expect(
-      await world.invoke(QUESTION, {
-        askId: 'legacy:call_1',
-        answers: [{ step: 0, option: 'develop' }],
-        requestId: REQUEST
-      })
-    ).toEqual(accepted)
-    expect(world.legacyServed).toEqual([
-      [PERMISSION, { dwarfId: `claude:${SESSION}`, toolUseId: 'toolu_1', decision: 'allow' }],
-      [
-        QUESTION,
-        {
-          dwarfId: `codex:${THREAD}`,
-          toolUseId: 'call_1',
-          answers: { 'Which branch should I use?': 'develop' }
-        }
-      ]
-    ])
-    // Nothing reaches the Host: the rollback build routes no answer there.
-    expect(world.hostCalls).toEqual([])
-    world.dispose()
-  })
-
-  // ADDED for ISSUE-141 (verifier finding, 2026-10-14): wherever the table names `LegacyAnswerShapeAdapter` the root binds
-  // it, even with no `LegacyAskRelay` composed, so the router never refuses to start (`router: no shape adapter`).
-  it('[ADR-001] with no relay composed the router still starts over the cut-2 table and its rollback, and a legacy: answer is not-open', async () => {
-    const client = { call: () => Promise.resolve({ kind: 'accepted' }) }
-    for (const table of [cut2, rollbackOf(cut2, 'cut-2')]) {
-      const answers = composeAskAnswers({
-        routes: table.routes,
-        release: 'cut-2',
-        client: client as unknown as Parameters<typeof composeAskAnswers>[0]['client'],
-        relay: undefined,
-        log: { record: () => {} }
-      })
-      const reached: string[] = []
-      const router = createRouter({
-        routes: table.routes.filter((r) => r.channel === QUESTION || r.channel === PERMISSION),
-        legacy: { serve: async (channel) => void reached.push(`legacy ${channel}`) },
-        ...(answers?.part === undefined ? {} : { host: answers.part.target }),
-        shapeAdapters: answers?.shapeAdapters ?? {},
-        qualifiers: answers?.qualifiers ?? {},
-        senders
-      })
-      // As `register` does: the root's qualifier of the payload picks the route.
-      const payload = { askId: 'legacy:toolu_1', decision: 'allow', requestId: REQUEST }
-      const qualifier = answers?.qualifiers[PERMISSION]?.(payload) ?? {}
-      expect(
-        await router.dispatch(PERMISSION, FROM_PANEL, payload, qualifier),
-        table.release
-      ).toEqual({ ok: true, value: { kind: 'not-open' } })
-      expect(reached).toEqual([])
-    }
-  })
+  // AMENDED for ISSUE-241 (was: "[ADR-001, US-ASK-003.AC07] in a cut-2 rollback build the renderer's own A-40/A-41
+  // payloads reach today's runtime through LegacyAnswerShapeAdapter" and "[ADR-001] with no relay composed the router
+  // still starts over the cut-2 table and its rollback, and a legacy: answer is not-open"): no build composes the relay
+  // or the shape adapter after cut 4, and no rollback reaches past it (docs/strangler/rollback.md).
 
   it('[ADR-001] in cut 2 A-N07, A-N31 and A-N32 exist and route host', async () => {
     const born: ChannelKey[] = ['ask:step:set', 'claude:hooks:set', 'welcome:answer']
@@ -2621,33 +1655,11 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     expect(composeDwarfNameRows({ routes: CUT_1_ROUTES, client })).toBeUndefined()
   })
 
-  it('[ADR-001] in cut 2 the legacy hook installer and the Claude half of the legacy hook channel are not composed, and the OpenCode plugin route still is', () => {
-    // TC-141-06: the root derives the legacy Claude hook composition from the route table (21 §1 item 4, §4 row
-    // "Claude hook entry": the Host is that entry's only writer from cut 2).
-    expect(legacyClaudeHooksComposed(CUT_2_ROUTES)).toBe(false)
-    expect(legacyClaudeHooksComposed(CUT_1_ROUTES)).toBe(true)
-    // LegacyRuntimeRoute builds today's Claude HookChannel (installer and restore) only through the switch, and the
-    // shared listener's Claude events reach today's permission registry only through it; the OpenCode plugin channel
-    // and its route of the shared listener are composed whatever the table (until 4a). The switch's behaviour is
-    // proven in src/legacy-bridge/legacyClaudeHooksSwitch.test.ts.
-    const SRC = resolve(import.meta.dirname, '../..')
-    const route = readFileSync(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'), 'utf8')
-    expect(route).toMatch(/legacyClaudeHookComposition\(options\.claudeHooks/)
-    expect(route).not.toMatch(/=\s*new HookChannel\(/)
-    expect(route).toMatch(/onEvent: \(event\) => claude\.onEvent\(event\)/)
-    expect(route).toMatch(/new OpenCodePluginChannel\(\{[^}]*listener: hookListener/s)
-    // The root hands the decision to today's composition.
-    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
-    // AMENDED for ISSUE-001: the root's own table (`ROUTES`, 3a's) still keeps A-40/A-41 on the Host.
-    expect(root).toMatch(/claudeHooks: legacyClaudeHooksComposed\(ROUTES\)/)
-    expect(legacyClaudeHooksComposed(ROUTES)).toBe(false)
-  })
-
   it('[ADR-001] in cut 2 every host route uses only seam-B members born by cut 2 and none has parity pending', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_2_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -2688,7 +1700,10 @@ describe('release cut 2 (21 §2 cut 2)', () => {
     })
   })
 
-  it('[ADR-016] with A-40 and A-41 flipped back to their cut-1 routes the legacy hook installer and the Claude hook route are composed again, and never while the Host writes the Claude hook entry', async () => {
+  it('[ADR-016] with A-40 and A-41 flipped back to their cut-1 routes the build withdraws the rows that write the Claude hook entry, and the router refuses them', async () => {
+    // AMENDED for ISSUE-142 (was: "…the legacy hook installer and the Claude hook route are composed again, and never
+    // while the Host writes the Claude hook entry"): after the cut-2 retirement today's Claude hook half is composed in
+    // no table, the rollback one included ("cut-2 retirement" below), so this case keeps the rollback rows only.
     // AMENDED for ISSUE-141 (verifier finding, 2026-10-14; was: `legacy` with today's shape, `legacyToday(key)`): the
     // folded row keeps the renderer's target shape through `LegacyAnswerShapeAdapter`, or no answer would be delivered.
     // TC-141-06 (21 §2 cut 2 row "Rollback"; §2.1 item 1; §1 items 4, 8): the rollback build of cut 2 routes A-40 and
@@ -2721,21 +1736,12 @@ describe('release cut 2 (21 §2 cut 2)', () => {
       table.routes.some(
         (r) =>
           r.owner === 'host' &&
-          (HOST_ROUTE_MEMBERS[r.channel] ?? []).some((member) =>
+          (HOST_ROUTE_MEMBERS_AS_SHIPPED[r.channel] ?? []).some((member) =>
             ['preferences.setClaudeHooks', 'preferences.answerWelcome'].includes(member)
           )
       )
-    expect(legacyClaudeHooksComposed(rolledBack.routes)).toBe(true)
     expect(hostWritesClaudeEntry(rolledBack)).toBe(false)
-    expect(legacyClaudeHooksComposed(cut2.routes)).toBe(false)
     expect(hostWritesClaudeEntry(cut2)).toBe(true)
-    // One writer per release, in every table this tree can build (21 §1 item 4).
-    for (const table of [CUT_1_TABLE, cut2, rolledBack]) {
-      expect(
-        legacyClaudeHooksComposed(table.routes) && hostWritesClaudeEntry(table),
-        table.release
-      ).toBe(false)
-    }
     // The rollback build's router refuses the withdrawn rows like a row with no route. (AMENDED for ISSUE-141: its
     // A-40/A-41 rows name `LegacyAnswerShapeAdapter`, so the router is handed one, as the root binds it.)
     const reached: string[] = []
@@ -2773,8 +1779,52 @@ describe('release cut 2 (21 §2 cut 2)', () => {
   })
 })
 
-/** Today's registry write, as `LegacyAskRelay`'s composition is handed it. */
-type LegacyRegistryReplace = LegacyAskRelayComposition['registry']['registry']['replace']
+describe('cut-2 retirement (21 §2 cut 2)', () => {
+  // ISSUE-142 (21 §2 cut 2 "Retired at the end"; 21 §1 items 3, 4, 7; §4 row "Claude hook entry"): after the cut-2 soak
+  // (OQ-71) today's Claude ask composition leaves LegacyRuntimeRoute whatever the route table, so a table that routes
+  // A-40 and A-41 `legacy` again composes none of it either: from here cut 2 rolls forward only. The Host's evaluated
+  // copies in `asking` and its ingress are the only path; the shared loopback listener stays for the OpenCode plugin
+  // route until 4a. The legacy files leave with the legacy tree in cut 5 (src/legacy-bridge/retiredClaudeAsks.test.ts).
+  // The cut-2 table as it shipped (the release table has moved on since ISSUE-001).
+  const cut2: RouteTable = {
+    release: 'cut-2',
+    routes: CUT_2_ROUTES,
+    unrouted: CUT_2_UNROUTED,
+    retired: CUT_2_RETIRED,
+    adapters: ADAPTERS_AS_SHIPPED
+  }
+  const SRC = resolve(import.meta.dirname, '../..')
+  const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
+
+  it('[ADR-012] after the cut-2 retirement no legacy Claude hook installer, hook route, prompt registry or keystroke path is composed, whatever the route table', () => {
+    for (const table of [cut2, rollbackOf(cut2, 'cut-2')]) {
+      expect(checkRouteTable(table, KEYS)).toEqual([])
+    }
+    const route = legacySource(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'))
+    // No hook installer: today's `HookChannel` (installer and restore) is neither imported nor built.
+    expect(route).not.toMatch(/\bHookChannel\b|main\/hooks\/(hookChannel|hookInstaller)'/)
+    // No Claude hook route and no prompt registry: nothing hands a Claude hook event to today's runtime.
+    expect(route).not.toMatch(/noteHookEvent|main\/hooks\/permissionPrompts'/)
+    // No keystroke path: today's permission keystrokes are not composed.
+    expect(route).not.toMatch(/main\/textDelivery\/permissionKeys'|permissionKeystroke/)
+    // Whatever the route table: the root derives nothing of today's Claude hook half from it any more.
+    expect(route).not.toMatch(/options\.claudeHooks|legacyClaudeHookComposition/)
+    expect(read('ui-main/index.ts')).not.toMatch(/legacyClaudeHooks(Composed|Composition)\b/)
+  })
+
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-016] after the cut-2 retirement the legacy loopback listener
+  // serves only the OpenCode plugin route", one listener with the OpenCode plugin channel on it until 4a): no route of
+  // any release left to compose reaches today's plugin half, so neither the listener nor the channel is composed, and
+  // neither is today's delegation service (the Host owns delegation, ADR-013).
+  it('[ADR-016] after the end of cut 4 today’s runtime composes no loopback hook listener, OpenCode plugin channel or delegation service', () => {
+    const route = legacySource(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'))
+    expect(route).not.toMatch(
+      /new HookListener\(|new OpenCodePluginChannel\(|new DelegationService\(/
+    )
+    expect(route).not.toMatch(/main\/hooks\/hookListener'|main\/mcp\/delegationService'/)
+    expect(read('ui-main/index.ts')).not.toMatch(/legacyOpenCodePluginComposed/)
+  })
+})
 
 // ADDED for ISSUE-001: the step-3a switch (21 §2 cut 3a; 14 §5; 21 §1 items 1, 2, 2a, 3). The release table moves
 // Claude's launch, send, console and stop rows to the Host (provider-qualified), A-25 and the Jev rows to the Host for
@@ -2791,7 +1841,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     routes: CUT_3A_ROUTES,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
     CUT_3A_ROUTES.filter((r) => r.channel === key)
@@ -2805,8 +1855,6 @@ describe('release 3a (21 §2 cut 3a)', () => {
   const LAUNCH = '01920000-0000-7000-8000-0000000003c1'
   const CLAUDE_DWARF = '01920000-0000-7000-9000-000000000311'
   const CODEX_DWARF = '01920000-0000-7000-9000-000000000312'
-  const PER_PROVIDER = 'PerProviderShapeAdapter'
-  const CATALOG_MERGE = 'CatalogMergeAdapter'
   const ACTIVATE: ChannelKey = 'dwarf:activate' // A-13
   const SEND: ChannelKey = 'dwarf:sendText' // A-23
   const DESCRIBE: ChannelKey = 'dwarf:attachments:describe' // A-25
@@ -2899,8 +1947,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     'crew.resetName': {},
     'launching.retryRecovery': { ok: false, error: 'no-report' },
     'launching.dismissRecovery': { ok: false, error: 'no-report' },
-    'jev.suggest': { ok: false, error: 'not-configured' },
-    'strangler.dwarfIdentities': []
+    'jev.suggest': { ok: false, error: 'not-configured' }
   }
 
   /**
@@ -2914,7 +1961,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     const raised: unknown[] = []
     const client = {
       call: (method: string, params: unknown) => {
-        if (method !== 'strangler.dwarfIdentities') hostCalls.push([method, params])
+        hostCalls.push([method, params])
         return Promise.resolve(HOST_REPLIES[method])
       },
       subscribe: (handler: (event: HostEvent) => void) => {
@@ -2965,41 +2012,23 @@ describe('release 3a (21 §2 cut 3a)', () => {
     })
     const stop = composeStopDwarf({
       routes: table,
-      release: CUT_3A_RELEASE,
-      client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client'],
-      legacy: {
-        liveLaunches: () => Promise.resolve([]),
-        endLaunch: () => Promise.resolve('ended'),
-        launchIdOfDwarf: () => undefined
-      },
-      bridge: { toLegacy: () => Promise.resolve(null) }
+      client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client']
     })
     const routing = composeProviderRouting({
       routes: table,
       client: client as unknown as Parameters<typeof composeProviderRouting>[0]['client']
-    })
-    const adapters = composeProviderShapeAdapters({
-      routes: table,
-      release: CUT_3A_RELEASE,
-      legacy,
-      models: { read: () => Promise.resolve({ catalogs: [] }) },
-      client: typedClient,
-      mintId: () => MINTED
     })
     const parts = [rows, stop?.part].filter(
       (part): part is NonNullable<typeof part> => part !== undefined
     )
     const handlers = new Map<string, (event: typeof FROM_PANEL, payload: unknown) => unknown>()
     // The rows under test: every route but those through a shape adapter of another family (A-33, A-40, A-41, A-47).
-    const underTest = table.filter(
-      (r) => r.shapeAdapter === undefined || [PER_PROVIDER, CATALOG_MERGE].includes(r.shapeAdapter)
-    )
+    const underTest = table.filter((r) => r.shapeAdapter === undefined)
     createRouter({
       routes: underTest,
       legacy,
       host: composeRouteTargets(parts),
       uiLocal: { serve: () => Promise.reject(new Error('no ui-local row under test')) },
-      ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
       qualifiers: routing.qualifiers,
       senders
     }).register({
@@ -3015,7 +2044,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
       stop?.dispose()
       routing.dispose()
     }
-    return { rows, stop, routing, adapters, invoke, hostCalls, legacyServed, raised, dispose }
+    return { rows, stop, routing, invoke, hostCalls, legacyServed, raised, dispose }
   }
 
   const launchParams = (providerId: string) => ({
@@ -3080,112 +2109,6 @@ describe('release 3a (21 §2 cut 3a)', () => {
     world.dispose()
   })
 
-  it('[ADR-001] in 3a every other provider reaches A-13, A-23, A-35 through PerProviderShapeAdapter and A-36 through CatalogMergeAdapter, with shape target', async () => {
-    for (const key of [ACTIVATE, SEND, LAUNCH_ROW]) {
-      expect(routeOf(key), key).toEqual([hostFor(key, CLAUDE), legacyThrough(key, PER_PROVIDER)])
-      for (const provider of NOT_MOVED) {
-        expect(resolveRoute(CUT_3A_ROUTES, key, { provider }), `${key} ${provider}`).toEqual(
-          legacyThrough(key, PER_PROVIDER)
-        )
-      }
-    }
-    // Catalog merge (21 §3.1): the renderer's A-36 call carries no qualifier, so the merge answers it, with the
-    // Claude entry from the Host (its `host` route names the moved provider) and the others from today's catalog.
-    expect(routeOf(PROVIDERS)).toEqual([
-      hostFor(PROVIDERS, CLAUDE),
-      legacyThrough(PROVIDERS, CATALOG_MERGE)
-    ])
-    expect(resolveRoute(CUT_3A_ROUTES, PROVIDERS)).toEqual(legacyThrough(PROVIDERS, CATALOG_MERGE))
-
-    const world = step3aWorld()
-    expect(Object.keys(world.adapters ?? {}).sort()).toEqual([CATALOG_MERGE, PER_PROVIDER])
-    const catalog = (await world.invoke(PROVIDERS, {})) as {
-      ok: boolean
-      value: Array<{ providerId: string }>
-    }
-    expect(catalog.ok).toBe(true)
-    expect(catalog.value.map((entry) => entry.providerId)).toEqual([CLAUDE, CODEX])
-    expect(catalog.value[0]).toEqual(HOST_CLAUDE)
-    // A Codex launch in the target shape reaches today's launch and answers a minted LaunchId.
-    expect(await world.invoke(LAUNCH_ROW, launchParams(CODEX))).toEqual({
-      ok: true,
-      value: { launchId: MINTED }
-    })
-    // A Codex dwarf's message reaches today's send, never the Host's.
-    const sent = (await world.invoke(SEND, sendParams(CODEX_DWARF))) as { ok: boolean }
-    expect(sent.ok).toBe(true)
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual([
-      'agent:providers',
-      'agent:launch',
-      'dwarf:sendText'
-    ])
-    expect(world.hostCalls.map(([method]) => method)).toEqual(['suppliers.launchable'])
-    world.dispose()
-  })
-
-  it('[ADR-001] in 3a the settlement of a launch or a send of a provider not yet moved names the id the renderer was answered', async () => {
-    // 21 §3.1 `PerProviderShapeAdapter`: its settlement stays on A-P3/A-P4 until 4b; the root shares one join between
-    // the adapter and the push tap (legacySettlementJoin.ts), so A-P3 leaves with the minted LaunchId.
-    const join = composeSettlementJoin({ routes: CUT_3A_ROUTES, release: CUT_3A_RELEASE })
-    expect(join).toBeDefined()
-    expect(composeSettlementJoin({ routes: CUT_2_ROUTES, release: 'cut-2' })).toBeUndefined()
-    const legacy = {
-      serve: (channel: string) =>
-        Promise.resolve(
-          channel === 'agent:launch'
-            ? { launched: true, provider: CODEX, launchId: 'receipt:7' }
-            : undefined
-        )
-    }
-    const adapters = composeProviderShapeAdapters({
-      routes: CUT_3A_ROUTES,
-      release: CUT_3A_RELEASE,
-      legacy,
-      models: { read: () => Promise.resolve({ catalogs: [] }) },
-      client: undefined,
-      mintId: () => MINTED,
-      settlements: join
-    })
-    expect(
-      await adapters?.[PER_PROVIDER]?.serve(LAUNCH_ROW, launchParams(CODEX), undefined)
-    ).toEqual({ ok: true, value: { launchId: MINTED } })
-    let installed: { push(channel: string, payload: unknown): Promise<unknown> } | undefined
-    const tap = {
-      send: () => {},
-      install: (map: NonNullable<typeof installed>) => {
-        installed = map
-        return () => {}
-      }
-    } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['pushes']
-    const dwarfIds = composeLegacyDwarfIdBridge({
-      release: CUT_3A_RELEASE,
-      client: {
-        call: () => Promise.resolve([]),
-        subscribe: () => () => {}
-      } as unknown as Parameters<typeof composeLegacyDwarfIdBridge>[0]['client'],
-      legacy,
-      registry: {
-        pollIntervalMs: 2_000,
-        discovery: [],
-        registry: { replace: () => {} },
-        board: { publish: () => {} },
-        ledger: { credit: () => {} },
-        projects: { record: () => {} },
-        notifier: { update: () => {} }
-      },
-      pushes: tap,
-      settlements: join
-    })
-    expect(
-      await installed?.push('agent:launchFailed', { launchId: 'receipt:7', cause: 'not-installed' })
-    ).toEqual({ launchId: MINTED, cause: 'not-installed' })
-    // Settled once: a second push naming the same receipt leaves as today's runtime sent it.
-    expect(
-      await installed?.push('agent:launchFailed', { launchId: 'receipt:7', cause: 'not-installed' })
-    ).toEqual({ launchId: 'receipt:7', cause: 'not-installed' })
-    dwarfIds?.dispose()
-  })
-
   it('[ADR-001] in 3a A-25, A-50, A-48 and A-49 route host for every provider and A-47 goes through JevSettingsShapeAdapter', async () => {
     for (const key of [DESCRIBE, 'jev:route', 'jev:apiKey:set', 'jev:apiKey:clear'] as const) {
       expect(routeOf(key), key).toEqual([hostAll(key)])
@@ -3197,17 +2120,14 @@ describe('release 3a (21 §2 cut 3a)', () => {
     const client = {
       call: (method: string) => Promise.resolve(HOST_REPLIES[method])
     }
+    // AMENDED for ISSUE-236 (was: also A-47's `JevSettingsShapeAdapter` composed over today's runtime): the adapter
+    // left the tree with the 4a retirement.
     const jev = composeJevKeyRows({
       routes: CUT_3A_ROUTES,
-      release: CUT_3A_RELEASE,
-      legacy: { serve: () => Promise.resolve(undefined) },
       client: client as unknown as Parameters<typeof composeJevKeyRows>[0]['client'],
-      migration: undefined,
-      log: { record: () => {} },
       mintId: () => MINTED
     })
     expect(jev?.part?.channels).toEqual(['jev:apiKey:set', 'jev:apiKey:clear'])
-    expect(Object.keys(jev?.shapeAdapters ?? {})).toEqual(['JevSettingsShapeAdapter'])
     expect(
       composeJevRouteRow({
         routes: CUT_3A_ROUTES,
@@ -3290,7 +2210,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_3A_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -3345,97 +2265,12 @@ describe('release 3a (21 §2 cut 3a)', () => {
     })
   })
 
-  it('[ADR-001] in 3a A-N29 and A-N26 compose LegacyEndFirstAdapter for legacy-launched sessions', async () => {
-    // A-N29 (21 §2 cut 3 common rules; §3 `LegacyEndFirstAdapter`): a dwarf today's runtime launched is ended by
-    // today's identity-checked kill before `crew.stop` is relayed; any other dwarf is relayed at once.
-    const events: string[] = []
-    const client = {
-      call: (method: string, params: unknown) => {
-        events.push(`${method} ${(params as { dwarfId?: string }).dwarfId ?? ''}`.trim())
-        return Promise.resolve({ ok: true, value: {} })
-      },
-      subscribe: () => () => {}
-    }
-    const stop = composeStopDwarf({
-      routes: CUT_3A_ROUTES,
-      release: CUT_3A_RELEASE,
-      client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client'],
-      legacy: {
-        liveLaunches: () => Promise.resolve([{ launchId: 'launch-1' }]),
-        endLaunch: (launchId) => {
-          events.push(`end ${launchId}`)
-          return Promise.resolve('ended')
-        },
-        launchIdOfDwarf: (legacyId) => (legacyId === `codex:s-1` ? 'launch-1' : undefined)
-      },
-      bridge: {
-        toLegacy: (dwarfId) => Promise.resolve(dwarfId === CODEX_DWARF ? 'codex:s-1' : null)
-      }
-    })
-    expect(stop?.part.channels).toEqual([STOP])
-    const router = createRouter({
-      routes: CUT_3A_ROUTES.filter((r) => r.channel === STOP),
-      legacy: { serve: () => Promise.reject(new Error('never legacy')) },
-      ...(stop === undefined ? {} : { host: stop.part.target }),
-      senders
-    })
-    for (const dwarfId of [CODEX_DWARF, CLAUDE_DWARF]) {
-      expect(await router.dispatch(STOP, FROM_PANEL, { dwarfId, requestId: REQUEST })).toEqual({
-        ok: true,
-        value: { ok: true, value: {} }
-      })
-    }
-    expect(events).toEqual([
-      'end launch-1',
-      `crew.stop ${CODEX_DWARF}`,
-      `crew.stop ${CLAUDE_DWARF}`
-    ])
-    stop?.dispose()
-    // Without the join the root composes no A-N29 relay that could skip the legacy end.
-    expect(
-      composeStopDwarf({
-        routes: CUT_3A_ROUTES,
-        release: CUT_3A_RELEASE,
-        client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client'],
-        legacy: {
-          liveLaunches: () => Promise.resolve([]),
-          endLaunch: () => Promise.resolve('ended')
-        },
-        bridge: undefined
-      })
-    ).toBeUndefined()
-    // A-N26 keeps its cut-0 relay: every legacy launch ends before `host.shutdown {mode:'stop-all'}`.
-    const SRC = resolve(import.meta.dirname, '../..')
-    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
-    expect(root).toMatch(
-      /relay: composeStopAllRelay\(launchObservation\?\.channel \?\? legacyRuntime\)/
-    )
-    expect(root).toMatch(/: composeStopDwarf\(\{\s*routes,\s*release,/)
-  })
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-001] in 3a A-N29 and A-N26 compose LegacyEndFirstAdapter for
+  // legacy-launched sessions"): the adapter left the tree, so A-N29 and A-N26 reach the Host alone.
 
-  it('[ADR-001] in 3a the legacy feed keeps only the legacy-launched sessions of a moved provider, and the Jev preferences are mirrored', () => {
-    // 21 §3 `LegacyAgentRegistryFeed`: it shrinks per provider step; Claude's rows left today's runtime in 3a, but
-    // `LegacyEndFirstAdapter` ends a session Claude's legacy path launched before the step through the same join, so
-    // those sessions stay listed (the root binds today's launched register). A rollback build (no provider moved)
-    // composes every discovery again.
-    expect(legacyFeedModesOf(CUT_3A_ROUTES)).toEqual({
-      [CLAUDE]: 'legacy-launched',
-      [CODEX]: 'discover',
-      [ANTIGRAVITY]: 'discover',
-      [OPENCODE]: 'discover'
-    })
-    for (const mode of Object.values(legacyFeedModesOf(CUT_2_ROUTES))) {
-      expect(mode).toBe('discover')
-    }
-    // 21 §3 `SettingsMirrorBridge` from 3a: the Jev half joins the notifications half (ISSUE-194).
-    const SRC = resolve(import.meta.dirname, '../..')
-    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
-    expect(root).toMatch(
-      /launched: \(legacyDwarfId\) => legacyRuntime\.launchIdOfDwarf\?\.\(legacyDwarfId\) !== undefined/
-    )
-    expect(root).toMatch(/halves: settingsMirrorHalves\(ROUTES_RELEASE, legacyRuntime\)/)
-    expect(root).toMatch(/reportSettingsMirrorWrites\(\s*ROUTES_RELEASE,/)
-  })
+  // AMENDED for ISSUE-241 (was: "[ADR-001] in 3a the legacy feed keeps only the legacy-launched sessions of a moved
+  // provider, and the Jev preferences are mirrored"): `LegacyAgentRegistryFeed` left the tree, so no build composes
+  // the feed.
 })
 
 // ADDED for ISSUE-002: the step-3b switch (21 §2 cut 3b; 14 §5; 21 §1 items 1, 2, 2a, 3). The release table moves
@@ -3449,13 +2284,12 @@ describe('release 3b (21 §2 cut 3b)', () => {
   /** The providers whose launcher has not moved to the Host by 3b (21 §2 cut 3 rows 3e, 4b). */
   const NOT_MOVED = [ANTIGRAVITY, OPENCODE]
   /** A provider id no catalog entry names ("Other…" reaches the shape adapters by having no qualified route). */
-  const OTHER = 'other-command'
   const cut3b: RouteTable = {
     release: CUT_3B_RELEASE,
     routes: CUT_3B_ROUTES,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
     CUT_3B_ROUTES.filter((r) => r.channel === key)
@@ -3464,13 +2298,10 @@ describe('release 3b (21 §2 cut 3b)', () => {
   const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
   const MINE = '01920000-0000-7000-8000-000000000401'
   const REQUEST = '01920000-0000-7000-a000-000000000401'
-  const MINTED = '01920000-0000-7000-8000-0000000004a1'
   const MESSAGE = '01920000-0000-7000-8000-0000000004b1'
   const LAUNCH = '01920000-0000-7000-8000-0000000004c1'
   const CODEX_DWARF = '01920000-0000-7000-9000-000000000412'
   const OPENCODE_DWARF = '01920000-0000-7000-9000-000000000414'
-  const PER_PROVIDER = 'PerProviderShapeAdapter'
-  const CATALOG_MERGE = 'CatalogMergeAdapter'
   const ACTIVATE: ChannelKey = 'dwarf:activate' // A-13
   const SEND: ChannelKey = 'dwarf:sendText' // A-23
   const LAUNCH_ROW: ChannelKey = 'agent:launch' // A-35
@@ -3486,14 +2317,6 @@ describe('release 3b (21 §2 cut 3b)', () => {
     parity: 'passed',
     qualifier: { provider },
     shape: 'target'
-  })
-  const legacyThrough = (channel: ChannelKey, adapter: string): ChannelRoute => ({
-    channel,
-    owner: 'legacy',
-    since: 'cut-3a',
-    parity: 'n/a',
-    shape: 'target',
-    shapeAdapter: adapter
   })
   const legacyFor = (channel: ChannelKey, provider: string): ChannelRoute => ({
     channel,
@@ -3545,8 +2368,7 @@ describe('release 3b (21 §2 cut 3b)', () => {
       command: { program: 'tail', args: [], cwd: '/w' }
     },
     'suppliers.launchable': [hostEntry(CLAUDE), hostEntry(CODEX)],
-    'crew.stop': { ok: true, value: {} },
-    'strangler.dwarfIdentities': []
+    'crew.stop': { ok: true, value: {} }
   }
 
   /**
@@ -3554,15 +2376,12 @@ describe('release 3b (21 §2 cut 3b)', () => {
    * Codex and one OpenCode dwarf on the Host board): the Host's handlers over a recording HostClient, the shape
    * adapters over a recording today's runtime, the provider qualifiers, and the router on an `ipcMain` stand-in.
    */
-  function step3bWorld(
-    table: readonly ChannelRoute[] = CUT_3B_ROUTES,
-    release: StepId = CUT_3B_RELEASE
-  ) {
+  function step3bWorld(table: readonly ChannelRoute[] = CUT_3B_ROUTES) {
     const hostCalls: Array<[string, unknown]> = []
     const legacyServed: Array<[string, unknown]> = []
     const client = {
       call: (method: string, params: unknown) => {
-        if (method !== 'strangler.dwarfIdentities') hostCalls.push([method, params])
+        hostCalls.push([method, params])
         return Promise.resolve(HOST_REPLIES[method])
       },
       subscribe: (handler: (event: HostEvent) => void) => {
@@ -3609,40 +2428,22 @@ describe('release 3b (21 §2 cut 3b)', () => {
     })
     const stop = composeStopDwarf({
       routes: table,
-      release,
-      client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client'],
-      legacy: {
-        liveLaunches: () => Promise.resolve([]),
-        endLaunch: () => Promise.resolve('ended'),
-        launchIdOfDwarf: () => undefined
-      },
-      bridge: { toLegacy: () => Promise.resolve(null) }
+      client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client']
     })
     const routing = composeProviderRouting({
       routes: table,
       client: client as unknown as Parameters<typeof composeProviderRouting>[0]['client']
     })
-    const adapters = composeProviderShapeAdapters({
-      routes: table,
-      release,
-      legacy,
-      models: { read: () => Promise.resolve({ catalogs: [] }) },
-      client: typedClient,
-      mintId: () => MINTED
-    })
     const parts = [rows, stop?.part].filter(
       (part): part is NonNullable<typeof part> => part !== undefined
     )
     const handlers = new Map<string, (event: typeof FROM_PANEL, payload: unknown) => unknown>()
-    const underTest = table.filter(
-      (r) => r.shapeAdapter === undefined || [PER_PROVIDER, CATALOG_MERGE].includes(r.shapeAdapter)
-    )
+    const underTest = table.filter((r) => r.shapeAdapter === undefined)
     createRouter({
       routes: underTest,
       legacy,
       host: composeRouteTargets(parts),
       uiLocal: { serve: () => Promise.reject(new Error('no ui-local row under test')) },
-      ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
       qualifiers: routing.qualifiers,
       senders
     }).register({
@@ -3720,51 +2521,6 @@ describe('release 3b (21 §2 cut 3b)', () => {
     world.dispose()
   })
 
-  it('[ADR-001] in 3b only OpenCode, Other… and Antigravity reach A-13, A-23, A-35, A-36 through the shape adapters', async () => {
-    for (const key of [ACTIVATE, SEND, LAUNCH_ROW]) {
-      expect(routeOf(key), key).toEqual([
-        hostFor(key, CLAUDE, 'cut-3a'),
-        legacyThrough(key, PER_PROVIDER),
-        hostFor(key, CODEX, 'cut-3b')
-      ])
-      for (const provider of [...NOT_MOVED, OTHER]) {
-        expect(resolveRoute(CUT_3B_ROUTES, key, { provider }), `${key} ${provider}`).toEqual(
-          legacyThrough(key, PER_PROVIDER)
-        )
-      }
-    }
-    // Catalog merge (21 §3.1): the Claude and Codex entries from the Host, the others from today's catalog.
-    expect(routeOf(PROVIDERS)).toEqual([
-      hostFor(PROVIDERS, CLAUDE, 'cut-3a'),
-      legacyThrough(PROVIDERS, CATALOG_MERGE),
-      hostFor(PROVIDERS, CODEX, 'cut-3b')
-    ])
-    expect(resolveRoute(CUT_3B_ROUTES, PROVIDERS)).toEqual(legacyThrough(PROVIDERS, CATALOG_MERGE))
-
-    const world = step3bWorld()
-    const catalog = (await world.invoke(PROVIDERS, {})) as {
-      ok: boolean
-      value: Array<{ providerId: string }>
-    }
-    expect(catalog.ok).toBe(true)
-    expect(catalog.value.map((entry) => entry.providerId)).toEqual([CLAUDE, CODEX, OPENCODE])
-    expect(catalog.value[1]).toEqual(hostEntry(CODEX))
-    // An OpenCode launch in the target shape reaches today's launch and answers a minted LaunchId.
-    expect(await world.invoke(LAUNCH_ROW, launchParams(OPENCODE))).toEqual({
-      ok: true,
-      value: { launchId: MINTED }
-    })
-    const sent = (await world.invoke(SEND, sendParams(OPENCODE_DWARF))) as { ok: boolean }
-    expect(sent.ok).toBe(true)
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual([
-      'agent:providers',
-      'agent:launch',
-      'dwarf:sendText'
-    ])
-    expect(world.hostCalls.map(([method]) => method)).toEqual(['suppliers.launchable'])
-    world.dispose()
-  })
-
   it('[ADR-001] in 3b A-27, A-P3 and A-P4 route legacy only for OpenCode, Other… and Antigravity', () => {
     for (const key of NOT_MOVED_ROWS) {
       expect(routeOf(key), key).toEqual(NOT_MOVED.map((provider) => legacyFor(key, provider)))
@@ -3784,7 +2540,7 @@ describe('release 3b (21 §2 cut 3b)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_3B_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -3805,21 +2561,8 @@ describe('release 3b (21 §2 cut 3b)', () => {
     expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
   })
 
-  it('[ADR-001] in 3b the legacy feed keeps the legacy-launched Codex sessions and their pending questions', () => {
-    // 21 §3 `LegacyAgentRegistryFeed` shrinks per provider step: Codex's rows left today's runtime in 3b, but
-    // `LegacyEndFirstAdapter` ends a session Codex's legacy path launched before the step through the same join, and
-    // `LegacyAskRelay` still answers the questions of person-launched Codex sessions until the end of cut 4 (21 §2
-    // cut 2 "Qualified routes"), so both stay listed. A 3b rollback build composes Codex's whole discovery again.
-    expect(legacyFeedModesOf(CUT_3B_ROUTES)).toEqual({
-      [CLAUDE]: 'legacy-launched',
-      [CODEX]: 'legacy-launched-or-pending-questions',
-      [ANTIGRAVITY]: 'discover',
-      [OPENCODE]: 'discover'
-    })
-    expect(legacyFeedModesOf(rollbackOf(cut3b, 'cut-3b').routes)).toEqual(
-      legacyFeedModesOf(CUT_3A_ROUTES)
-    )
-  })
+  // AMENDED for ISSUE-241 (was: "[ADR-001] in 3b the legacy feed keeps the legacy-launched Codex sessions and their
+  // pending questions"): `LegacyAgentRegistryFeed` and `LegacyAskRelay` left the tree.
 
   it('[ADR-001] a 3b rollback build routes every Codex row as the 3a table did', async () => {
     // 21 §2.1 item 1, §2 cut 3 "Rollback (each step)": the provider-qualified rows flip back to `legacy` before the
@@ -3829,13 +2572,8 @@ describe('release 3b (21 §2 cut 3b)', () => {
     const order = (routes: readonly ChannelRoute[]) =>
       routes.map((route) => JSON.stringify(route)).sort()
     expect(order(rolledBack.routes)).toEqual(order(CUT_3A_ROUTES))
-    const world = step3bWorld(rolledBack.routes, 'cut-3b')
-    expect(await world.invoke(LAUNCH_ROW, launchParams(CODEX))).toEqual({
-      ok: true,
-      value: { launchId: MINTED }
-    })
-    expect(world.hostCalls).toEqual([])
-    world.dispose()
+    // AMENDED for ISSUE-240 (was: also through the root's composition, a Codex launch reaching today's runtime through
+    // `PerProviderShapeAdapter` under the LaunchId it minted): the adapter left the tree with the 4b deletion.
   })
 })
 
@@ -3857,7 +2595,7 @@ describe('release 3d (21 §2 cut 3d)', () => {
     routes: CUT_3D_ROUTES,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   }
   const routeOf = (key: ChannelKey): ChannelRoute[] =>
     CUT_3D_ROUTES.filter((r) => r.channel === key)
@@ -3866,14 +2604,12 @@ describe('release 3d (21 §2 cut 3d)', () => {
   const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
   const MINE = '01920000-0000-7000-8000-000000000501'
   const REQUEST = '01920000-0000-7000-a000-000000000501'
-  const MINTED = '01920000-0000-7000-8000-0000000005a1'
   const MESSAGE = '01920000-0000-7000-8000-0000000005b1'
   const LAUNCH = '01920000-0000-7000-8000-0000000005c1'
   const FAILED_LAUNCH = '01920000-0000-7000-8000-0000000005c2'
   const OTHER_DWARF = '01920000-0000-7000-9000-000000000515'
   const OPENCODE_DWARF = '01920000-0000-7000-9000-000000000514'
   const PER_PROVIDER = 'PerProviderShapeAdapter'
-  const CATALOG_MERGE = 'CatalogMergeAdapter'
   const ACTIVATE: ChannelKey = 'dwarf:activate' // A-13
   const SEND: ChannelKey = 'dwarf:sendText' // A-23
   const LAUNCH_ROW: ChannelKey = 'agent:launch' // A-35
@@ -3938,8 +2674,7 @@ describe('release 3d (21 §2 cut 3d)', () => {
       mode: 'log',
       command: { program: 'tail', args: [], cwd: '/w' }
     },
-    'crew.stop': { ok: true, value: {} },
-    'strangler.dwarfIdentities': []
+    'crew.stop': { ok: true, value: {} }
   }
 
   /**
@@ -3947,15 +2682,12 @@ describe('release 3d (21 §2 cut 3d)', () => {
    * dwarf and one OpenCode dwarf on the Host board): the Host's handlers over a recording HostClient, the shape
    * adapters over a recording today's runtime, the provider qualifiers, and the router on an `ipcMain` stand-in.
    */
-  function step3dWorld(
-    table: readonly ChannelRoute[] = CUT_3D_ROUTES,
-    release: StepId = CUT_3D_RELEASE
-  ) {
+  function step3dWorld(table: readonly ChannelRoute[] = CUT_3D_ROUTES) {
     const hostCalls: Array<[string, unknown]> = []
     const legacyServed: Array<[string, unknown]> = []
     const client = {
       call: (method: string, params: unknown) => {
-        if (method !== 'strangler.dwarfIdentities') hostCalls.push([method, params])
+        hostCalls.push([method, params])
         return Promise.resolve(HOST_REPLIES[method])
       },
       subscribe: (handler: (event: HostEvent) => void) => {
@@ -3996,40 +2728,22 @@ describe('release 3d (21 §2 cut 3d)', () => {
     })
     const stop = composeStopDwarf({
       routes: table,
-      release,
-      client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client'],
-      legacy: {
-        liveLaunches: () => Promise.resolve([]),
-        endLaunch: () => Promise.resolve('ended'),
-        launchIdOfDwarf: () => undefined
-      },
-      bridge: { toLegacy: () => Promise.resolve(null) }
+      client: client as unknown as Parameters<typeof composeStopDwarf>[0]['client']
     })
     const routing = composeProviderRouting({
       routes: table,
       client: client as unknown as Parameters<typeof composeProviderRouting>[0]['client']
     })
-    const adapters = composeProviderShapeAdapters({
-      routes: table,
-      release,
-      legacy,
-      models: { read: () => Promise.resolve({ catalogs: [] }) },
-      client: typedClient,
-      mintId: () => MINTED
-    })
     const parts = [rows, stop?.part].filter(
       (part): part is NonNullable<typeof part> => part !== undefined
     )
     const handlers = new Map<string, (event: typeof FROM_PANEL, payload: unknown) => unknown>()
-    const underTest = table.filter(
-      (r) => r.shapeAdapter === undefined || [PER_PROVIDER, CATALOG_MERGE].includes(r.shapeAdapter)
-    )
+    const underTest = table.filter((r) => r.shapeAdapter === undefined)
     createRouter({
       routes: underTest,
       legacy,
       host: composeRouteTargets(parts),
       uiLocal: { serve: () => Promise.reject(new Error('no ui-local row under test')) },
-      ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
       qualifiers: routing.qualifiers,
       senders
     }).register({
@@ -4117,8 +2831,9 @@ describe('release 3d (21 §2 cut 3d)', () => {
     expect(resolveRoute(CUT_3D_ROUTES, STOP, { provider: OTHER })?.owner).toBe('host')
     expect(routeOf('agent:providers').some((r) => r.qualifier?.provider === OTHER)).toBe(false)
 
-    // Through the root's composition: an "Other…" dwarf's send, console and stop reach the Host, an OpenCode dwarf's
-    // send still reaches today's runtime.
+    // Through the root's composition: an "Other…" dwarf's send, console and stop reach the Host. AMENDED for ISSUE-240
+    // (was: and an OpenCode dwarf's send still reached today's runtime through `PerProviderShapeAdapter`): the adapter
+    // left the tree with the 4b deletion.
     const world = step3dWorld()
     expect(await world.invoke(SEND, sendParams(OTHER_DWARF))).toEqual({
       ok: true,
@@ -4131,14 +2846,11 @@ describe('release 3d (21 §2 cut 3d)', () => {
       ok: true,
       value: { ok: true, value: {} }
     })
-    const sent = (await world.invoke(SEND, sendParams(OPENCODE_DWARF))) as { ok: boolean }
-    expect(sent.ok).toBe(true)
     expect(world.hostCalls.map(([method]) => method)).toEqual([
       'conversation.send',
       'conversation.resolveConsole',
       'crew.stop'
     ])
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual(['dwarf:sendText'])
     world.dispose()
   })
 
@@ -4162,7 +2874,7 @@ describe('release 3d (21 §2 cut 3d)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of CUT_3D_ROUTES.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -4196,17 +2908,9 @@ describe('release 3d (21 §2 cut 3d)', () => {
     const order = (routes: readonly ChannelRoute[]) =>
       routes.map((route) => JSON.stringify(route)).sort()
     expect(order(rolledBack.routes)).toEqual(order(CUT_3B_ROUTES))
-    const world = step3dWorld(rolledBack.routes, 'cut-3d')
-    expect(await world.invoke(SEND, sendParams(OTHER_DWARF))).toMatchObject({ ok: true })
-    expect(
-      await world.invoke(LAUNCH_HOSTED, { mineId: MINE, command: 'my-agent', prompt: 'go' })
-    ).toEqual({ launched: true })
-    expect(world.hostCalls).toEqual([])
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual([
-      'dwarf:sendText',
-      'agent:launchHosted'
-    ])
-    world.dispose()
+    // AMENDED for ISSUE-240 (was: also through the root's composition, an "Other…" dwarf's send through
+    // `PerProviderShapeAdapter` and A-39 reaching today's runtime): the adapter left the tree with the 4b deletion, and
+    // today's A-39 handlers with the 3d deletion (ISSUE-187).
   })
 })
 
@@ -4229,7 +2933,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
     routes,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   })
   const cut3e = tableOf(DEVELOPMENT)
   const routeOf = (key: ChannelKey): ChannelRoute[] => DEVELOPMENT.filter((r) => r.channel === key)
@@ -4274,13 +2978,9 @@ describe('release 3e (21 §2 cut 3e)', () => {
   })
 
   /** The rows as the root composes them over `table`, one Antigravity and one OpenCode dwarf on the Host board. */
-  const step3eWorld = (
-    table: readonly ChannelRoute[] = DEVELOPMENT,
-    release: StepId = CUT_3E_RELEASE
-  ) =>
+  const step3eWorld = (table: readonly ChannelRoute[] = DEVELOPMENT) =>
     providerRowsWorld({
       table,
-      release,
       dwarfs: [
         dwarfWire(ANTIGRAVITY_DWARF, ANTIGRAVITY, true),
         dwarfWire(OPENCODE_DWARF, OPENCODE, false)
@@ -4365,7 +3065,9 @@ describe('release 3e (21 §2 cut 3e)', () => {
     expect(DEVELOPMENT).toEqual([...PUBLIC, ...DEVELOPMENT_BUILD_ROUTES])
 
     // Through the root's composition: an Antigravity launch (and its Retry), send, console and stop reach the Host with
-    // the renderer's payload unchanged; the catalog lists Antigravity's entry from the Host, never today's.
+    // the renderer's payload unchanged. AMENDED for ISSUE-240 (was: and the catalog, through `CatalogMergeAdapter`,
+    // listed Antigravity's entry from the Host and OpenCode's from today's catalog): the adapter left the tree with the
+    // 4b deletion.
     const world = step3eWorld()
     expect(await world.invoke(LAUNCH_ROW, launchParams(ANTIGRAVITY))).toEqual({
       ok: true,
@@ -4385,27 +3087,14 @@ describe('release 3e (21 §2 cut 3e)', () => {
       ok: true,
       value: { ok: true, value: {} }
     })
-    const catalog = (await world.invoke(PROVIDERS, {})) as {
-      ok: boolean
-      value: Array<{ providerId: string }>
-    }
-    expect(catalog.value.map((entry) => entry.providerId)).toEqual([
-      CLAUDE,
-      CODEX,
-      ANTIGRAVITY,
-      OPENCODE
-    ])
-    expect(catalog.value[2]).toEqual(hostEntry(ANTIGRAVITY, 'gated'))
     expect(world.hostCalls.map(([method]) => method)).toEqual([
       'launching.launch',
       'launching.launch',
       'conversation.send',
       'conversation.resolveConsole',
-      'crew.stop',
-      'suppliers.launchable'
+      'crew.stop'
     ])
     expect(world.hostCalls[0]?.[1]).toEqual(launchParams(ANTIGRAVITY))
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual(['agent:providers'])
     world.dispose()
   })
 
@@ -4428,7 +3117,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of DEVELOPMENT.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -4448,22 +3137,8 @@ describe('release 3e (21 §2 cut 3e)', () => {
     expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
   })
 
-  it('[ADR-001] in 3e the legacy feed keeps only the legacy-launched Antigravity sessions, in either build', () => {
-    // 21 §3 `LegacyAgentRegistryFeed` shrinks per provider step; A-36 is the Host's for Antigravity in both builds, so
-    // the Host observes every Antigravity session and today's runtime keeps only the ones it launched (for
-    // `LegacyEndFirstAdapter`). A 3e rollback build composes Antigravity's whole discovery again.
-    const expected = {
-      [CLAUDE]: 'legacy-launched',
-      [CODEX]: 'legacy-launched-or-pending-questions',
-      [ANTIGRAVITY]: 'legacy-launched',
-      [OPENCODE]: 'discover'
-    }
-    expect(legacyFeedModesOf(DEVELOPMENT)).toEqual(expected)
-    expect(legacyFeedModesOf(PUBLIC)).toEqual(expected)
-    expect(legacyFeedModesOf(rollbackOf(cut3e, 'cut-3e').routes)).toEqual(
-      legacyFeedModesOf(CUT_3D_ROUTES)
-    )
-  })
+  // AMENDED for ISSUE-241 (was: "[ADR-001] in 3e the legacy feed keeps only the legacy-launched Antigravity sessions,
+  // in either build"): `LegacyAgentRegistryFeed` left the tree.
 
   it('[ADR-001] a 3e rollback build routes every Antigravity row as the 3d table did', async () => {
     // 21 §2.1 item 1, §2 cut 3 "Rollback (each step)": before the 3e deletion commit (ISSUE-189) the rows flip back to
@@ -4475,14 +3150,8 @@ describe('release 3e (21 §2 cut 3e)', () => {
       expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
       expect(order(rolledBack.routes)).toEqual(order(CUT_3D_ROUTES))
     }
-    const world = step3eWorld(rollbackOf(cut3e, 'cut-3e').routes, 'cut-3e')
-    expect(await world.invoke(LAUNCH_ROW, launchParams(ANTIGRAVITY))).toEqual({
-      ok: true,
-      value: { launchId: WORLD_MINTED }
-    })
-    expect(world.hostCalls).toEqual([])
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual(['agent:launch'])
-    world.dispose()
+    // AMENDED for ISSUE-240 (was: also through the root's composition, an Antigravity launch reaching today's runtime
+    // through `PerProviderShapeAdapter` under the LaunchId it minted): the adapter left the tree with the 4b deletion.
   })
 })
 
@@ -4495,7 +3164,7 @@ describe('release 3e (21 §2 cut 3e)', () => {
 // `routesForBuild`, `ROUTES_RELEASE` and `RETIRED`): from the step-4b switch the 4a table as it shipped is
 // `testing/cut4aRoutes.ts`.
 describe('release 4a (21 §2 cut 4a)', () => {
-  const [, CODEX = '', , OPENCODE = ''] = CATALOG_PROVIDER_IDS
+  const [, , , OPENCODE = ''] = CATALOG_PROVIDER_IDS
   const DEVELOPMENT = cut4aRoutesForBuild({ publicBuild: false })
   const PUBLIC = cut4aRoutesForBuild({ publicBuild: true })
   const tableOf = (routes: readonly ChannelRoute[]): RouteTable => ({
@@ -4503,7 +3172,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
     routes,
     unrouted: UNROUTED,
     retired: CUT_4A_RETIRED,
-    adapters: LEGACY_BRIDGE_ADAPTERS
+    adapters: ADAPTERS_AS_SHIPPED
   })
   const cut4a = tableOf(DEVELOPMENT)
   const routeOf = (key: ChannelKey): ChannelRoute[] => DEVELOPMENT.filter((r) => r.channel === key)
@@ -4568,35 +3237,20 @@ describe('release 4a (21 §2 cut 4a)', () => {
     }
     return {
       calls,
-      client: client as unknown as NonNullable<Parameters<typeof composeJevKeyRows>[0]['client']>
+      client: client as unknown as NonNullable<Parameters<typeof composeJevKeyRows>[0]['client']> &
+        Parameters<typeof composeResetMetricsRow>[0]['client']
     }
   }
 
   /** The Settings parts of the `host` target as the root composes them over `routes`. */
-  function settingsParts(routes: readonly ChannelRoute[], release: StepId) {
+  function settingsParts(routes: readonly ChannelRoute[]) {
     const { client, calls } = settingsHost()
-    const legacy = { serve: () => Promise.reject(new Error('no legacy Settings row from 4a')) }
-    const jev = composeJevKeyRows({
-      routes,
-      release,
-      legacy,
-      client,
-      migration: undefined,
-      log: { record: () => {} },
-      mintId: () => REQUEST
-    })
+    const jev = composeJevKeyRows({ routes, client, mintId: () => REQUEST })
     const parts = [
       composeSystemNotificationRows({ routes, client, mintId: () => REQUEST }),
       jev?.part,
       composeOpenCodeSettingsRows({ routes, client }),
-      composeOpenCodePasswordRows({
-        routes,
-        release,
-        client,
-        migration: undefined,
-        log: { record: () => {} },
-        mintId: () => REQUEST
-      })?.part,
+      composeOpenCodePasswordRows({ routes, client, mintId: () => REQUEST })?.part,
       composeResetMetricsRow({ routes, client })
     ].filter((part) => part !== undefined)
     return { parts, calls, jev, client }
@@ -4615,7 +3269,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
     }
 
     // Through the root's compositions: every row is a part of the `host` target, and A-33 runs the Host saga alone.
-    const { parts, calls } = settingsParts(DEVELOPMENT, CUT_4A_RELEASE)
+    const { parts, calls } = settingsParts(DEVELOPMENT)
     const served = parts.flatMap((part) => part.channels)
     expect(served.filter((key) => SETTINGS_ROWS.includes(key)).sort()).toEqual(
       [...SETTINGS_ROWS].sort()
@@ -4637,57 +3291,31 @@ describe('release 4a (21 §2 cut 4a)', () => {
     expect(calls).toEqual([['preferences.resetMetrics', { confirmed: 'yes', requestId: REQUEST }]])
   })
 
+  // AMENDED for ISSUE-236, the 4a retirement (was: also `composeResetFanout`, `settingsMirrorComposed` and the Jev
+  // composition's shape adapters, over the 4a and the 3e tables): the three bridges left the tree, and
+  // `describe('after the 4a retirement')` pins their absence from the listing.
   it('[ADR-001] in 4a ResetFanout, SettingsMirrorBridge and JevSettingsShapeAdapter are no longer composed', () => {
     for (const table of [DEVELOPMENT, PUBLIC]) {
       expect(
         table.filter((r) => r.shapeAdapter !== undefined && ENDED.includes(r.shapeAdapter))
       ).toEqual([])
     }
-    const { client, jev } = settingsParts(DEVELOPMENT, CUT_4A_RELEASE)
-    expect(jev?.shapeAdapters).toEqual({})
-    expect(
-      composeResetFanout({
-        routes: DEVELOPMENT,
-        release: CUT_4A_RELEASE,
-        legacy: { serve: () => Promise.resolve() },
-        client
-      })
-    ).toBeUndefined()
-    expect(settingsMirrorComposed(DEVELOPMENT)).toBe(false)
-    expect(settingsMirrorComposed(PUBLIC)).toBe(false)
-    // The 3e table composed all three.
-    expect(settingsMirrorComposed(CUT_3E_ROUTES)).toBe(true)
-    expect(
-      Object.keys(
-        composeResetFanout({
-          routes: CUT_3E_ROUTES,
-          release: CUT_3E_RELEASE,
-          legacy: { serve: () => Promise.resolve() },
-          client
-        }) ?? {}
-      )
-    ).toEqual(['ResetFanout'])
-    expect(
-      Object.keys(settingsParts(CUT_3E_ROUTES, CUT_3E_RELEASE).jev?.shapeAdapters ?? {})
-    ).toEqual(['JevSettingsShapeAdapter'])
   })
 
   it('[ADR-001] in 4a the OpenCode plugin asks are not under the legacy-ask-channel qualifier, which covers only person-launched Codex questions', () => {
     // 21 §2 cut 4a: the Host's plugin channel answers the OpenCode plugin asks, of legacy-launched sessions too; today's
     // plugin installer and the OpenCode route of its loopback listener are not composed, so no OpenCode ask reaches
-    // `LegacyAskRelay`. The `legacy-ask-channel` route stays for the person-launched Codex questions only.
-    expect(legacyOpenCodePluginComposed(DEVELOPMENT)).toBe(false)
-    expect(legacyOpenCodePluginComposed(PUBLIC)).toBe(false)
-    expect(legacyOpenCodePluginComposed(CUT_3E_ROUTES)).toBe(true)
+    // `LegacyAskRelay`. The `legacy-ask-channel` route stays for the person-launched Codex questions only. AMENDED for
+    // ISSUE-241 (was: also the root's `legacyOpenCodePluginComposed` over the 4a, 4a public and 3e tables): the root no
+    // longer composes today's plugin half in any release.
     for (const key of ['agent:answerQuestion', 'agent:answerPermission'] as const) {
       expect(
         routeOf(key).map((r) => r.qualifier?.origin ?? 'host'),
         key
       ).toEqual(['host', 'legacy-launch', 'legacy-ask-channel'])
     }
-    expect(legacyFeedModesOf(DEVELOPMENT)).toMatchObject({
-      [CODEX]: 'legacy-launched-or-pending-questions'
-    })
+    // AMENDED for ISSUE-241 (was: also today's feed keeping Codex's pending questions, `legacyFeedModesOf`): the feed
+    // left the tree with cut 4.
   })
 
   it('[ADR-001] in 4a the OpenCode launch, send, stop, console rows and A-27, A-P3, A-P4 still route legacy for OpenCode', () => {
@@ -4721,9 +3349,9 @@ describe('release 4a (21 §2 cut 4a)', () => {
           }
         ])
       }
-      // A-N29 ends a legacy-launched OpenCode session through `LegacyEndFirstAdapter` (one `host` route since 3a).
+      // A-N29 is the Host's for OpenCode (one `host` route since 3a). AMENDED for ISSUE-241 (was: also today's feed
+      // discovering OpenCode's sessions, `legacyFeedModesOf`): the feed left the tree with cut 4.
       expect(resolveRoute(table, 'dwarf:stop', { provider: OPENCODE })?.owner).toBe('host')
-      expect(legacyFeedModesOf(table)).toMatchObject({ [OPENCODE]: 'discover' })
     }
   })
 
@@ -4731,7 +3359,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of DEVELOPMENT.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
@@ -4752,33 +3380,13 @@ describe('release 4a (21 §2 cut 4a)', () => {
     expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
   })
 
-  it('[ADR-001] a 4a rollback build routes A-33, A-42, A-43, A-47 and A-51 as 3e did and keeps A-52…A-55 on the Host', () => {
-    // 21 §2 cut 4a "Rollback", §2.1: the moved rows flip back while the legacy code is in the tree, except the OpenCode
-    // settings rows, whose view carries the status of the password `SecretMigrationBridge` moved into the Host and
-    // deleted from today's file (`KEPT_WITH_THE_MIGRATED_SECRET`); the Host stays the plugin file's one writer.
+  // AMENDED for ISSUE-236, the 4a retirement (was: "a 4a rollback build routes A-33, A-42, A-43, A-47 and A-51 as 3e
+  // did and keeps A-52…A-55 on the Host"): today's settings handlers and the adapters that rollback routed A-33 and
+  // A-47 through left the tree, so 4a rolls forward only (21 §2.1 item 4; docs/strangler/rollback.md).
+  it('[ADR-001] a 4a rollback build is refused since the 4a retirement: 4a rolls forward only', () => {
     expect(CUT_4A_RELEASE).toBe('cut-4a')
-    const KEPT: readonly ChannelKey[] = [
-      'opencode:settings:get',
-      'opencode:plugin:set',
-      'opencode:password:set',
-      'opencode:password:clear'
-    ]
-    const order = (routes: readonly ChannelRoute[]) =>
-      routes.map((route) => JSON.stringify(route)).sort()
-    for (const [table, before] of [
-      [cut4a, CUT_3E_ROUTES],
-      [tableOf(PUBLIC), cut3eRoutesForBuild({ publicBuild: true })]
-    ] as const) {
-      const rolledBack = rollbackOf(table, 'cut-4a')
-      expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
-      expect(order(rolledBack.routes)).toEqual(
-        order([
-          ...before.filter((r) => !KEPT.includes(r.channel)),
-          ...KEPT.map((key) => hostCut4a(key))
-        ])
-      )
-      expect(settingsMirrorComposed(rolledBack.routes)).toBe(true)
-      expect(legacyOpenCodePluginComposed(rolledBack.routes)).toBe(false)
+    for (const table of [cut4a, tableOf(PUBLIC)]) {
+      expect(() => rollbackOf(table, 'cut-4a')).toThrow(/cut-4a rolls forward only/)
     }
   })
 })
@@ -4795,8 +3403,11 @@ describe('release 4b (21 §2 cut 4b)', () => {
   const OTHER = 'other'
   const DEVELOPMENT = routesForBuild({ publicBuild: false })
   const PUBLIC = routesForBuild({ publicBuild: true })
+  // AMENDED for ISSUE-249 (was: `ROUTES_RELEASE`): the cut-5 switch moved only the release marker (21 §2 cut 5: no row
+  // changes owner), so the 4b table as it shipped is the release table's rows under the 4b marker.
+  const CUT_4B_RELEASE: StepId = 'cut-4b'
   const tableOf = (routes: readonly ChannelRoute[]): RouteTable => ({
-    release: ROUTES_RELEASE,
+    release: CUT_4B_RELEASE,
     routes,
     unrouted: UNROUTED,
     retired: RETIRED,
@@ -4835,13 +3446,9 @@ describe('release 4b (21 §2 cut 4b)', () => {
   })
 
   /** The rows as the root composes them over `table`, one Host-launched OpenCode dwarf on the Host board. */
-  const step4bWorld = (
-    table: readonly ChannelRoute[] = DEVELOPMENT,
-    release: StepId = ROUTES_RELEASE
-  ) =>
+  const step4bWorld = (table: readonly ChannelRoute[] = DEVELOPMENT) =>
     providerRowsWorld({
       table,
-      release,
       dwarfs: [dwarfWire(OPENCODE_DWARF, OPENCODE, true)],
       hostReplies: {
         'launching.launch': { launchId: LAUNCH },
@@ -4879,7 +3486,7 @@ describe('release 4b (21 §2 cut 4b)', () => {
   })
 
   it('[ADR-001] in 4b A-35, A-36, A-23, A-13 and A-N29 route host with shape target for the OpenCode qualifier', async () => {
-    expect(ROUTES_RELEASE).toBe('cut-4b')
+    expect(CUT_4B_RELEASE).toBe('cut-4b')
     expect(checkRouteTable(cut4b, KEYS)).toEqual([])
     expect(checkRouteTable(tableOf(PUBLIC), KEYS)).toEqual([])
     // One owner per (channel, qualifier) (21 §1 item 2): the Host for every provider, OpenCode's routes born in 4b.
@@ -5013,31 +3620,13 @@ describe('release 4b (21 §2 cut 4b)', () => {
         ).toEqual([])
         expect(RETIRED[key], key).toBe('cut-4b')
       }
-      // The legacy feed keeps only the sessions today's runtime launched, for `LegacyEndFirstAdapter` until ISSUE-241.
-      expect(legacyFeedModesOf(table)).toEqual({
-        [CLAUDE]: 'legacy-launched',
-        [CODEX]: 'legacy-launched-or-pending-questions',
-        [ANTIGRAVITY]: 'legacy-launched',
-        [OPENCODE]: 'legacy-launched'
-      })
-      // The Host is the one answerer of the OpenCode asks since 4a; today's plugin half stays off.
-      expect(legacyOpenCodePluginComposed(table)).toBe(false)
+      // AMENDED for ISSUE-241 (was: the legacy feed keeping only the sessions today's runtime launched, for
+      // `LegacyEndFirstAdapter`, `legacyFeedModesOf`): the feed and the adapter left the tree with cut 4.
+      // The Host is the one answerer of the OpenCode asks since 4a (AMENDED for ISSUE-241, was: today's plugin half
+      // stays off, `legacyOpenCodePluginComposed`: the root composes it in no release any more).
     }
-    // The root composes neither shape adapter nor their settlement join.
-    const legacy = {
-      serve: () => Promise.reject(new Error('no legacy launch, send or stop row in 4b'))
-    }
-    expect(
-      composeProviderShapeAdapters({
-        routes: DEVELOPMENT,
-        release: ROUTES_RELEASE,
-        legacy,
-        models: { read: () => Promise.resolve({ catalogs: [] }) },
-        client: undefined,
-        mintId: () => REQUEST
-      })
-    ).toBeUndefined()
-    expect(composeSettlementJoin({ routes: DEVELOPMENT, release: ROUTES_RELEASE })).toBeUndefined()
+    // AMENDED for ISSUE-240, the 4b deletion (was: the root composing neither shape adapter nor their settlement join
+    // over the 4b table): both adapters and the join left the tree (`describe('after the 4b retirement')`).
 
     // "Let Jev choose" reaches the Host, whose candidates are every launchable provider (the narrowing ends).
     const world = step4bWorld()
@@ -5054,13 +3643,13 @@ describe('release 4b (21 §2 cut 4b)', () => {
     const at = (step: StepId) => STEP_ORDER.indexOf(step)
     for (const route of DEVELOPMENT.filter((r) => r.owner === 'host')) {
       expect(route.parity, route.channel).toBe('passed')
-      const members = HOST_ROUTE_MEMBERS[route.channel]
+      const members = HOST_ROUTE_MEMBERS_AS_SHIPPED[route.channel]
       expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
       for (const member of members ?? []) {
         const born = SEAM_B_METHODS_BORN[member]
         expect(born, `${member} has a birth release`).toBeDefined()
         expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
-          at(ROUTES_RELEASE)
+          at(CUT_4B_RELEASE)
         )
       }
     }
@@ -5076,31 +3665,14 @@ describe('release 4b (21 §2 cut 4b)', () => {
     expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
   })
 
-  it('[ADR-001] a 4b rollback build routes every OpenCode row as the 4a table did', async () => {
-    // 21 §2 cut 4b "Rollback", §2.1 item 1: before the 4b deletion commits (ISSUE-239…ISSUE-241) the OpenCode rows flip
-    // back to `legacy`, in either build: OpenCode reaches the shape adapters again and gets its A-27, A-P3, A-P4 rows
-    // back. The rows 4a moved keep their routes (only forward fixes after 4a's own deletion).
-    const order = (routes: readonly ChannelRoute[]) =>
-      routes.map((route) => JSON.stringify(route)).sort()
-    for (const [table, before] of [
-      [cut4b, CUT_4A_ROUTES],
-      [tableOf(PUBLIC), cut4aRoutesForBuild({ publicBuild: true })]
-    ] as const) {
-      const rolledBack = rollbackOf(table, 'cut-4b')
-      expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
-      expect(order(rolledBack.routes)).toEqual(order(before))
-      expect(rolledBack.retired).toEqual(CUT_4A_RETIRED)
+  // AMENDED for ISSUE-239, the 4b deletion (was: "a 4b rollback build routes every OpenCode row as the 4a table did":
+  // the OpenCode rows flipped back to `legacy` through the shape adapters, with A-27, A-P3 and A-P4 back): today's
+  // OpenCode launch and the A-27, A-P3, A-P4 handlers left the tree, so 4b rolls forward only (21 §2 cut 4b "Rollback",
+  // §2.1 item 4; docs/strangler/rollback.md).
+  it('[ADR-001] a 4b rollback build is refused since the 4b deletion: 4b rolls forward only', () => {
+    for (const table of [cut4b, tableOf(PUBLIC)]) {
+      expect(() => rollbackOf(table, 'cut-4b')).toThrow(/cut-4b rolls forward only/)
     }
-    const world = step4bWorld(rollbackOf(cut4b, 'cut-4b').routes, 'cut-4b')
-    expect(
-      await world.invoke(LAUNCH_ROW, launchParams({ kind: 'supplier', providerId: OPENCODE }))
-    ).toEqual({
-      ok: true,
-      value: { launchId: WORLD_MINTED }
-    })
-    expect(world.hostCalls).toEqual([])
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual(['agent:launch'])
-    world.dispose()
   })
 })
 
@@ -5119,7 +3691,9 @@ describe('step 3a A-N29 (21 §2 step 3a)', () => {
     expect(UNROUTED[STOP_DWARF]).toBeUndefined()
 
     // A 3a table routing A-N29 `host` passes the router test, and lists LegacyEndFirstAdapter as living in it.
-    const cut3a: RouteTable = { ...routedBase, release: 'cut-3a' }
+    // AMENDED for ISSUE-241 (was: over the release listing): the adapter ended with cut 4, so the 3a table is checked
+    // with the listing as it shipped.
+    const cut3a: RouteTable = { ...routedBase, release: 'cut-3a', adapters: ADAPTERS_AS_SHIPPED }
     expect(cut3a.routes.filter((r) => r.channel === STOP_DWARF)).toEqual([
       { channel: STOP_DWARF, owner: 'host', since: 'cut-3a', parity: 'passed', shape: 'target' }
     ])
@@ -5132,138 +3706,17 @@ describe('step 3a A-N29 (21 §2 step 3a)', () => {
       expect(endFirst?.cuts, step).toContain(step)
     expect(endFirst?.cuts).not.toContain('cut-5')
     expect(endFirst?.cuts.at(-1)).toBe(
-      LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyDwarfIdBridge')?.cuts.at(-1)
+      ADAPTERS_AS_SHIPPED.find((a) => a.name === 'LegacyDwarfIdBridge')?.cuts.at(-1)
     )
   })
 })
 
-// ADDED for ISSUE-177: the two per-provider shape adapters of steps 3a–4b (21 §3.1). The route rows that name them are
-// the step switches' (later: ISSUE-001, ISSUE-002, ISSUE-186, ISSUE-188); these cases drive a 3a table built here, with
-// Claude moved and the other providers still launched by today's runtime.
-describe('shape adapters (21 §3.1)', () => {
+// AMENDED for ISSUE-240, the 4b deletion (was: `describe('shape adapters (21 §3.1)')`, the router cases of
+// `PerProviderShapeAdapter` and `CatalogMergeAdapter` over a 3a table, the catalog merge included): both adapters left
+// the tree, and `describe('after the 4b retirement')` pins their absence.
+// The R16 case of that describe stays, in a describe of its own.
+describe('legacy-bridge importers (05 R16)', () => {
   const SRC = resolve(import.meta.dirname, '../..')
-  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
-  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
-  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
-  const MINE = '01920000-0000-7000-8000-000000000177'
-  const REQUEST = '01920000-0000-7000-a000-000000000177'
-  const MINTED = '01920000-0000-7000-8000-0000000001a1'
-  const PER_PROVIDER = 'PerProviderShapeAdapter'
-  const CATALOG_MERGE = 'CatalogMergeAdapter'
-  const PROVIDER_ROWS: ChannelKey[] = ['dwarf:activate', 'dwarf:sendText', 'agent:launch']
-  const PROVIDERS: ChannelKey = 'agent:providers' // A-36
-  const MODELS: ChannelKey = 'agent:models' // A-37
-  const shapeRows: ChannelKey[] = [...PROVIDER_ROWS, PROVIDERS, MODELS]
-
-  const hostFor = (channel: ChannelKey, provider: string): ChannelRoute => ({
-    channel,
-    owner: 'host',
-    since: 'cut-3a',
-    parity: 'passed',
-    qualifier: { provider },
-    shape: 'target'
-  })
-  const legacyThrough = (
-    channel: ChannelKey,
-    adapter: string,
-    provider?: string
-  ): ChannelRoute => ({
-    channel,
-    owner: 'legacy',
-    since: 'cut-3a',
-    parity: 'n/a',
-    ...(provider === undefined ? {} : { qualifier: { provider } }),
-    shape: 'target',
-    shapeAdapter: adapter
-  })
-
-  /** A 3a table: Claude's rows on the Host, Codex's through the shape adapters, A-36 merged, A-37 retired. */
-  const cut3a: RouteTable = {
-    ...routedBase,
-    release: 'cut-3a',
-    routes: [
-      ...routedBase.routes.filter((r) => !shapeRows.includes(r.channel)),
-      ...PROVIDER_ROWS.flatMap((channel) => [
-        hostFor(channel, 'claude'),
-        legacyThrough(channel, PER_PROVIDER, 'codex')
-      ]),
-      hostFor(PROVIDERS, 'claude'),
-      legacyThrough(PROVIDERS, CATALOG_MERGE)
-    ],
-    retired: { [MODELS]: 'cut-3a' }
-  }
-
-  const HOST_CLAUDE = {
-    providerId: 'claude',
-    label: 'Claude Code',
-    models: [{ value: 'opus', efforts: ['high'] }],
-    permissionModes: ['default'],
-    offeredModes: ['default'],
-    installed: true,
-    publicLaunch: 'enabled',
-    answerChannel: 'available'
-  }
-
-  /** The root's composition over `table`, with today's runtime and the Host recording what reaches them. */
-  function shapeWorld(table: readonly ChannelRoute[]) {
-    const legacyServed: Array<[string, unknown]> = []
-    const hostCalls: Array<[string, unknown]> = []
-    const today: Record<string, unknown> = {
-      'agent:launch': { launched: true, provider: 'codex', launchId: 'receipt:1' },
-      'agent:providers': {
-        providers: [
-          { provider: 'claude', installed: true, launchable: true },
-          { provider: 'codex', installed: true, launchable: true },
-          { provider: 'antigravity', installed: false, launchable: false },
-          { provider: 'opencode', installed: true, launchable: true }
-        ]
-      }
-    }
-    const legacy = {
-      serve: (channel: string, payload: unknown) => {
-        legacyServed.push([channel, payload])
-        return Promise.resolve(today[channel])
-      }
-    }
-    const client = {
-      call: (method: string, params: unknown) => {
-        hostCalls.push([method, params])
-        // The Host lists Codex too (its driver may be offered later): never a second Codex entry.
-        return Promise.resolve([
-          HOST_CLAUDE,
-          { ...HOST_CLAUDE, providerId: 'codex', label: 'Codex' }
-        ])
-      }
-    }
-    const adapters = composeProviderShapeAdapters({
-      routes: table,
-      release: 'cut-3a',
-      legacy,
-      models: {
-        read: () =>
-          Promise.resolve({
-            catalogs: [
-              {
-                provider: 'codex',
-                models: [{ value: 'gpt-5-codex', effortLevels: ['high'] }],
-                efforts: [],
-                source: 'history'
-              }
-            ]
-          })
-      },
-      client: client as unknown as Parameters<typeof composeProviderShapeAdapters>[0]['client'],
-      mintId: () => MINTED
-    })
-    const router = createRouter({
-      routes: table.filter((r) => shapeRows.includes(r.channel)),
-      legacy,
-      host: { serve: () => Promise.reject(new Error('the Host route is not under test')) },
-      ...(adapters === undefined ? {} : { shapeAdapters: adapters }),
-      senders
-    })
-    return { adapters, router, legacyServed, hostCalls }
-  }
 
   /** Every production source under src/ (no test, contract, testing or fixture file), as [path, text]. */
   function productionSources(): Array<[string, string]> {
@@ -5283,118 +3736,14 @@ describe('shape adapters (21 §3.1)', () => {
     ])
   }
 
-  it('[ADR-001] catalog merge answers one entry per provider, moved ones from the Host and the others from the legacy catalog, each a valid SupplierEntryView', async () => {
-    const world = shapeWorld(cut3a.routes)
-    const answer = (await world.router.dispatch(PROVIDERS, FROM_PANEL as never, {})) as {
-      ok: boolean
-      value: Array<{ providerId: string; label: string; models: unknown[] }>
-    }
-
-    expect(answer.ok).toBe(true)
-    // One entry per provider: Claude from the Host, Codex and OpenCode converted from today's list; Antigravity is
-    // not launchable today, so it is absent.
-    expect(answer.value.map((entry) => entry.providerId)).toEqual(['claude', 'codex', 'opencode'])
-    expect(answer.value[0]).toEqual(HOST_CLAUDE)
-    expect(answer.value[1]?.label).toBe('Codex CLI')
-    expect(answer.value[1]?.models).toEqual([{ value: 'gpt-5-codex', efforts: ['high'] }])
-    for (const entry of answer.value) {
-      expect(supplierEntryViewSchema.safeParse(entry).success, entry.providerId).toBe(true)
-    }
-    expect(world.hostCalls).toEqual([['suppliers.launchable', {}]])
-    // A-37 is never reached: the catalog is read inside the adapter.
-    expect(world.legacyServed.map(([channel]) => channel)).toEqual(['agent:providers'])
-  })
-
-  it('[ADR-001] a legacy route with shape target for A-13, A-23 or A-35 names PerProviderShapeAdapter, and one for A-36 names CatalogMergeAdapter', async () => {
-    expect(
-      reasons(cut3a).filter((reason) => shapeRows.some((row) => reason.endsWith(row)))
-    ).toEqual([])
-    for (const route of cut3a.routes.filter(
-      (r) => r.owner === 'legacy' && r.shape === 'target' && shapeRows.includes(r.channel)
-    )) {
-      expect(route.shapeAdapter, route.channel).toBe(
-        route.channel === PROVIDERS ? CATALOG_MERGE : PER_PROVIDER
-      )
-    }
-    const world = shapeWorld(cut3a.routes)
-    expect(Object.keys(world.adapters ?? {}).sort()).toEqual([CATALOG_MERGE, PER_PROVIDER])
-
-    // A Codex launch in the target shape reaches today's launch and answers LaunchAccepted.
-    const launch = {
-      mineId: MINE,
-      way: { kind: 'supplier', providerId: 'codex' },
-      prompt: 'Map the build',
-      jevOn: false,
-      jevAutoAccept: false,
-      requestId: REQUEST
-    }
-    expect(
-      await world.router.dispatch('agent:launch', FROM_PANEL as never, launch, {
-        provider: 'codex'
-      })
-    ).toEqual({ ok: true, value: { launchId: MINTED } })
-    expect(world.legacyServed).toEqual([
-      ['agent:launch', { mineId: MINE, provider: 'codex', prompt: 'Map the build' }]
-    ])
-
-    // An adapter named for a row it does not convert stops the router from starting.
-    for (const [channel, adapter] of [
-      ['agent:launch', CATALOG_MERGE],
-      [PROVIDERS, PER_PROVIDER]
-    ] as const) {
-      const wrong = withRoutes(cut3a, channel, legacyThrough(channel, adapter, 'codex')).routes
-      expect(() => shapeWorld(wrong), `${channel} ${adapter}`).toThrow(
-        `router: shape adapter ${adapter} does not serve ${channel}`
-      )
-    }
-  })
-
-  it('[ADR-001] both adapters are listed in the router test and composed only by src/ui-main/index.ts', () => {
-    for (const name of [PER_PROVIDER, CATALOG_MERGE]) {
-      const listed = LEGACY_BRIDGE_ADAPTERS.find((adapter) => adapter.name === name)
-      expect(listed?.shapeAdapter, name).toBe(true)
-      expect(listed?.cuts, name).toEqual([
-        'cut-3a',
-        'cut-3b',
-        'cut-3d',
-        'cut-3e',
-        'cut-4a',
-        'cut-4b'
-      ])
-    }
-    const inert = {
-      legacy: { serve: () => Promise.resolve(undefined) },
-      models: { read: () => Promise.resolve(undefined) },
-      client: undefined,
-      mintId: () => MINTED
-    }
-    // Not composed by the cut-2 table, which names neither. AMENDED for ISSUE-001 (was: the release table, which named
-    // neither before the step-3a switch; it names both from 3a, `describe('release 3a')`).
-    expect(
-      composeProviderShapeAdapters({ ...inert, routes: CUT_2_ROUTES, release: 'cut-2' })
-    ).toBeUndefined()
-    // Not composed in a release they do not live in, even where a table names them.
-    for (const release of ['cut-2', 'cut-5'] as const) {
-      expect(
-        composeProviderShapeAdapters({ ...inert, routes: cut3a.routes, release }),
-        release
-      ).toBeUndefined()
-    }
-    const importers = productionSources().filter(([, text]) =>
-      /from '[^']*legacy-bridge\/shape\//.test(text)
-    )
-    expect(importers.map(([path]) => path)).toEqual(['ui-main/index.ts'])
-    expect(readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')).toMatch(
-      /= composeProviderShapeAdapters\(\{/
-    )
-  })
-
   it('[R16] nothing outside src/ui-main/index.ts imports src/legacy-bridge', () => {
     const outside = productionSources().filter(
       ([path, text]) =>
         !path.startsWith('legacy-bridge/') && /(from|import\()\s*'[^']*legacy-bridge\//.test(text)
     )
-    expect(outside.map(([path]) => path)).toEqual(['ui-main/index.ts'])
+    // AMENDED for ISSUE-247 (was: `['ui-main/index.ts']`, the root composing `SecretMigrationBridge`): the last
+    // bridge left the tree, so nothing at all imports src/legacy-bridge (21 §2 cut 5).
+    expect(outside.map(([path]) => path)).toEqual([])
   })
 })
 
@@ -5402,12 +3751,7 @@ describe('shape adapters (21 §3.1)', () => {
 // `JevSettingsShapeAdapter`, §4 row "Jev API key"). The route rows are the step-3a switch's (later: ISSUE-001); these
 // cases drive a 3a table built here, over a temp legacy `userData` holding today's encrypted Jev-key file.
 describe('Jev key rows (21 §2 cut 3a)', () => {
-  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
-  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
-  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
-  const KEY = 'ts-live-0123456789abcdef'
   const MINTED = '01920000-0000-7000-a000-000000000217'
-  const PREFERENCES = { profile: 'premium', default: { provider: 'claude' }, delegation: true }
   const GET: ChannelKey = 'jev:settings:get' // A-47
   const SET: ChannelKey = 'jev:apiKey:set' // A-48
   const CLEAR: ChannelKey = 'jev:apiKey:clear' // A-49
@@ -5432,17 +3776,6 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
     hostRoute(SET),
     hostRoute(CLEAR)
   ]
-
-  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
-  const safeStorage = {
-    isEncryptionAvailable: () => true,
-    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
-    decryptString: (data: Buffer) => {
-      const text = data.toString('utf8')
-      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
-      return text.slice('enc:'.length)
-    }
-  }
 
   /** The Host over an in-memory Jev key: B-M10, B-M11 and B-M12, recording each call. */
   function jevHost() {
@@ -5482,112 +3815,22 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
     }
   }
 
-  /** Today's runtime: its A-47 handler answers today's stored preferences (its key verdict is dropped). */
-  const legacy = {
-    serve: (channel: string) =>
-      Promise.resolve(channel === GET ? { configured: false, preferences: PREFERENCES } : undefined)
-  }
+  // AMENDED for ISSUE-236, the 4a retirement (was: today's runtime answering A-47 through `JevSettingsShapeAdapter`, and
+  // the case "in a 3a table the legacy Jev-key file moves to the Host once before A-47 answers, and A-48/A-49
+  // round-trip through B-M10 and B-M11" over it): the adapter left the tree.
 
   // AMENDED for ISSUE-001 (was: "the release table composes no Jev key row…", over `ROUTES`): from the step-3a switch the
   // release table routes the Jev key rows (`describe('release 3a')`), so the table that composes none is cut 2's.
-  it('[ADR-001] the cut-2 table composes no Jev key row and no migration; a release the adapters do not live in binds neither', async () => {
-    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
-    try {
-      const base = {
-        legacy,
-        client: jevHost().client,
-        migration: { userDataDir: userData, safeStorage },
-        log: { record: () => {} },
-        mintId: () => MINTED
-      }
-      expect(composeJevKeyRows({ ...base, routes: CUT_2_ROUTES, release: 'cut-2' })).toBeUndefined()
-      const late = composeJevKeyRows({ ...base, routes: JEV_3A, release: 'cut-5' })
-      expect(late?.migration).toBeUndefined()
-      expect(late?.shapeAdapters).toEqual({})
-      // Without the Host attach nothing is composed.
-      expect(
-        composeJevKeyRows({ ...base, client: undefined, routes: JEV_3A, release: 'cut-3a' })
-      ).toBeUndefined()
-    } finally {
-      await rm(userData, { recursive: true, force: true })
-    }
-  })
-
-  it('[ADR-017, C-23] in a 3a table the legacy Jev-key file moves to the Host once before A-47 answers, and A-48/A-49 round-trip through B-M10 and B-M11', async () => {
-    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
-    try {
-      const encrypted = safeStorage.encryptString(KEY).toString('base64')
-      await writeFile(join(userData, 'jev-api-key-v1.json'), `${JSON.stringify({ encrypted })}\n`)
-      const host = jevHost()
-      const jev = composeJevKeyRows({
-        routes: JEV_3A,
-        release: 'cut-3a',
-        legacy,
-        client: host.client,
-        migration: { userDataDir: userData, safeStorage },
-        log: { record: () => {} },
-        mintId: () => MINTED
-      })
-      expect(jev?.part?.channels).toEqual([SET, CLEAR])
-      expect(Object.keys(jev?.shapeAdapters ?? {})).toEqual(['JevSettingsShapeAdapter'])
-      const router = createRouter({
-        routes: JEV_3A,
-        legacy: { serve: () => Promise.reject(new Error('no legacy Jev row from 3a')) },
-        ...(jev?.part === undefined ? {} : { host: jev.part.target }),
-        shapeAdapters: jev?.shapeAdapters ?? {},
-        senders
-      })
-      const response = CHANNELS[GET].response
-
-      // A-47 waits for the run: the key is in the Host, configured, and today's file is gone.
-      expect(response.parse(await router.dispatch(GET, FROM_PANEL as never, undefined))).toEqual({
-        configured: true,
-        preferences: PREFERENCES
-      })
-      expect(host.key()).toBe(KEY)
-      expect(host.calls[0]).toEqual([
-        'settings.secret.set',
-        { name: 'jev-key', value: KEY, requestId: MINTED, origin: 'migration' }
-      ])
-      expect(await readdir(userData)).toEqual([])
-
-      // A malformed value never crosses: the gate (over the cap) and the handler (blank) answer the state in force.
-      const before = host.calls.length
-      for (const payload of ['a'.repeat(513), '  ']) {
-        expect(response.parse(await router.dispatch(SET, FROM_PANEL as never, payload))).toEqual({
-          configured: true,
-          preferences: PREFERENCES
-        })
-      }
-      expect(host.calls.slice(before).map(([method]) => method)).toEqual([
-        'preferences.get',
-        'preferences.get'
-      ])
-
-      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
-        configured: false,
-        preferences: PREFERENCES
-      })
-      expect(response.parse(await router.dispatch(SET, FROM_PANEL as never, 'ts-new'))).toEqual({
-        configured: true,
-        preferences: PREFERENCES
-      })
-      expect(host.key()).toBe('ts-new')
-      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
-        [
-          'settings.secret.set',
-          { name: 'jev-key', value: KEY, requestId: MINTED, origin: 'migration' }
-        ],
-        ['settings.secret.clear', { name: 'jev-key', requestId: MINTED }],
-        [
-          'settings.secret.set',
-          { name: 'jev-key', value: 'ts-new', requestId: MINTED, origin: 'settings' }
-        ]
-      ])
-      jev?.migration?.dispose()
-    } finally {
-      await rm(userData, { recursive: true, force: true })
-    }
+  // AMENDED for ISSUE-247 (was: a temp legacy `userData` and a release the bridge does not live in, cut 5): the bridge
+  // left the tree, so no release composes a migration and the composition takes no legacy file at all.
+  it('[ADR-001] the cut-2 table composes no Jev key row and no migration; a release the adapters do not live in binds neither', () => {
+    const base = { client: jevHost().client, mintId: () => MINTED }
+    expect(composeJevKeyRows({ ...base, routes: CUT_2_ROUTES })).toBeUndefined()
+    const late = composeJevKeyRows({ ...base, routes: JEV_3A })
+    expect(late?.part?.channels).toEqual([SET, CLEAR])
+    expect(late).not.toHaveProperty('migration')
+    // Without the Host attach nothing is composed.
+    expect(composeJevKeyRows({ ...base, client: undefined, routes: JEV_3A })).toBeUndefined()
   })
 })
 
@@ -5734,15 +3977,14 @@ describe('step 4a A-52 and A-53 (21 §2 step 4a)', () => {
 
 // ADDED for ISSUE-231: the OpenCode server password rows of step 4a (21 §2 cut 4a, §3 `SecretMigrationBridge`, §4 row
 // "OpenCode server password"). The route rows are the step-4a switch's (later: ISSUE-235); these cases drive a 4a table
-// built here, over a temp legacy `userData` holding today's encrypted password file.
+// built here.
+// AMENDED for ISSUE-247, the cut-5 deletion of `SecretMigrationBridge` (was: also a temp legacy `userData` holding
+// today's encrypted password file, and the cases "[ADR-017, C-23] in a 4a table the legacy password file moves to the
+// Host once before A-54/A-55 answer, and they round-trip through B-M10 and B-M11" and "[NFR-SEC-12] the migrated or typed
+// password never reaches a log line"): the one-time migration left the tree with its bridge (ADR-017 item 8); the rows'
+// own round trip, cap and no-echo cases are in handlers/openCodePassword.contract.test.ts.
 describe('OpenCode server password rows (21 §2 cut 4a)', () => {
-  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
-  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
-  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
-  const PASSWORD = ' migrated pass 0231 '
-  const TYPED = 'typed-pass-4a-0231'
   const MINTED = '01920000-0000-7000-a000-000000000231'
-  const PASSWORD_FILE = 'opencode-server-password-v1.json'
   const SET: ChannelKey = 'opencode:password:set' // A-54
   const CLEAR: ChannelKey = 'opencode:password:clear' // A-55
 
@@ -5756,194 +3998,25 @@ describe('OpenCode server password rows (21 §2 cut 4a)', () => {
   /** A-54/A-55 `host`, as ISSUE-235's 4a rows will read. */
   const PASSWORD_4A: ChannelRoute[] = [hostRoute(SET), hostRoute(CLEAR)]
 
-  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
-  const safeStorage = {
-    isEncryptionAvailable: () => true,
-    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
-    decryptString: (data: Buffer) => {
-      const text = data.toString('utf8')
-      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
-      return text.slice('enc:'.length)
-    }
-  }
+  /** The Host as the composition sees it: it is never called while the rows are only composed. */
+  const client = {
+    call: () => Promise.reject(new Error('never called'))
+  } as unknown as Parameters<typeof composeOpenCodePasswordRows>[0]['client']
 
-  /** The Host over an in-memory password: B-M10, B-M11 and B-M12, recording each call. */
-  function passwordHost(backend: 'os-secret-store' | 'unavailable' = 'os-secret-store') {
-    const calls: Array<[string, unknown]> = []
-    let password: string | undefined
-    const call = (method: string, params: unknown): Promise<unknown> => {
-      calls.push([method, params])
-      if (method === 'settings.secret.set') {
-        if (backend === 'unavailable') {
-          return Promise.resolve({ ok: false, error: 'backend-unavailable' })
-        }
-        password = (params as { value: string }).value
-        return Promise.resolve({ ok: true, value: { name: 'opencode-password', configured: true } })
-      }
-      if (method === 'settings.secret.clear') {
-        password = undefined
-        return Promise.resolve({
-          ok: true,
-          value: { name: 'opencode-password', configured: false }
-        })
-      }
-      if (method === 'preferences.get') {
-        return Promise.resolve({
-          preferences: {},
-          secrets: [{ name: 'opencode-password', configured: password !== undefined }],
-          secretBackend: backend,
-          integrations: [],
-          welcome: { due: false, legacyFound: [], offered: [] }
-        })
-      }
-      return Promise.reject(new Error(`unexpected ${method}`))
-    }
-    const client = {
-      call,
-      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
-      onStateChange: () => () => {},
-      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
-    }
-    return {
-      calls,
-      password: () => password,
-      client: client as unknown as Parameters<typeof composeOpenCodePasswordRows>[0]['client']
-    }
-  }
-
-  async function seedPassword(userData: string): Promise<void> {
-    const encrypted = safeStorage.encryptString(PASSWORD).toString('base64')
-    await writeFile(join(userData, PASSWORD_FILE), `${JSON.stringify({ encrypted })}\n`)
-  }
-
-  it('[ADR-001] the release table composes no password row and no migration; a release the bridge does not live in runs none', async () => {
-    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
-    try {
-      const base = {
-        client: passwordHost().client,
-        migration: { userDataDir: userData, safeStorage },
-        log: { record: () => {} },
-        mintId: () => MINTED
-      }
-      // AMENDED for ISSUE-235 (was: the release table `ROUTES` / `ROUTES_RELEASE`): the step-4a switch routes
-      // A-54/A-55 `host`, so the table that composes none is the 3e table as it shipped.
-      expect(
-        composeOpenCodePasswordRows({ ...base, routes: CUT_3E_ROUTES, release: CUT_3E_RELEASE })
-      ).toBeUndefined()
-      const late = composeOpenCodePasswordRows({ ...base, routes: PASSWORD_4A, release: 'cut-5' })
-      expect(late?.part.channels).toEqual([SET, CLEAR])
-      expect(late?.migration).toBeUndefined()
-      // Without the Host attach nothing is composed.
-      expect(
-        composeOpenCodePasswordRows({
-          ...base,
-          client: undefined,
-          routes: PASSWORD_4A,
-          release: 'cut-4a'
-        })
-      ).toBeUndefined()
-    } finally {
-      await rm(userData, { recursive: true, force: true })
-    }
-  })
-
-  it('[ADR-017, C-23] in a 4a table the legacy password file moves to the Host once before A-54/A-55 answer, and they round-trip through B-M10 and B-M11', async () => {
-    // TC-231-01, TC-231-02
-    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
-    try {
-      await seedPassword(userData)
-      const host = passwordHost()
-      const rows = composeOpenCodePasswordRows({
-        routes: PASSWORD_4A,
-        release: 'cut-4a',
-        client: host.client,
-        migration: { userDataDir: userData, safeStorage },
-        log: { record: () => {} },
-        mintId: () => MINTED
-      })
-      expect(rows?.part.channels).toEqual([SET, CLEAR])
-      const router = createRouter({
-        routes: PASSWORD_4A,
-        legacy: { serve: () => Promise.reject(new Error('no legacy password row from 4a')) },
-        ...(rows === undefined ? {} : { host: rows.part.target }),
-        senders
-      })
-      const response = CHANNELS[SET].response
-
-      // A-55 waits for the run: the migrated password was in the Host before the clear, and today's file is gone.
-      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
-        ok: true,
-        value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
-      })
-      expect(await readdir(userData)).toEqual([])
-
-      // Over the cap: refused in main, it never crosses.
-      const refused = await router.dispatch(SET, FROM_PANEL as never, 'a'.repeat(1025))
-      expect(JSON.stringify(refused)).not.toContain('a'.repeat(1025))
-
-      const saved = response.parse(await router.dispatch(SET, FROM_PANEL as never, TYPED))
-      expect(saved).toEqual({
-        ok: true,
-        value: { permissions: 'off', passwordConfigured: true, secretBackend: 'os-secret-store' }
-      })
-      expect(JSON.stringify(saved)).not.toContain(TYPED)
-      expect(host.password()).toBe(TYPED)
-      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
-        [
-          'settings.secret.set',
-          { name: 'opencode-password', value: PASSWORD, requestId: MINTED, origin: 'migration' }
-        ],
-        ['settings.secret.clear', { name: 'opencode-password', requestId: MINTED }],
-        [
-          'settings.secret.set',
-          { name: 'opencode-password', value: TYPED, requestId: MINTED, origin: 'settings' }
-        ]
-      ])
-      rows?.migration?.dispose()
-    } finally {
-      await rm(userData, { recursive: true, force: true })
-    }
-  })
-
-  it('[NFR-SEC-12] the migrated or typed password never reaches a log line', async () => {
-    // L7 (17 §1.7 log redaction): the UI log and every console method, over a migration that succeeds, one the Host
-    // refuses, and a typed save.
-    const consoleLines: unknown[][] = []
-    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
-      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
-        consoleLines.push(args)
-      })
-    )
-    const logged: unknown[] = []
-    try {
-      for (const backend of ['os-secret-store', 'unavailable'] as const) {
-        const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
-        try {
-          await seedPassword(userData)
-          const host = passwordHost(backend)
-          const rows = composeOpenCodePasswordRows({
-            routes: PASSWORD_4A,
-            release: 'cut-4a',
-            client: host.client,
-            migration: { userDataDir: userData, safeStorage },
-            log: { record: (entry) => logged.push(entry) },
-            mintId: () => MINTED
-          })
-          await rows?.part.target.serve(SET, TYPED, FROM_PANEL as never)
-          rows?.migration?.dispose()
-        } finally {
-          await rm(userData, { recursive: true, force: true })
-        }
-      }
-    } finally {
-      for (const spy of spies) spy.mockRestore()
-    }
-
-    expect(logged.length).toBeGreaterThan(0)
-    for (const line of [...logged, ...consoleLines]) {
-      expect(JSON.stringify(line)).not.toContain(PASSWORD.trim())
-      expect(JSON.stringify(line)).not.toContain(TYPED)
-    }
+  // AMENDED for ISSUE-247 (was: over a temp legacy `userData` and a release the bridge does not live in, cut 5): the
+  // bridge left the tree, so no release composes a migration and the composition takes no legacy file at all.
+  it('[ADR-001] the release table composes no password row and no migration; a release the bridge does not live in runs none', () => {
+    const base = { client, mintId: () => MINTED }
+    // AMENDED for ISSUE-235 (was: the release table `ROUTES` / `ROUTES_RELEASE`): the step-4a switch routes
+    // A-54/A-55 `host`, so the table that composes none is the 3e table as it shipped.
+    expect(composeOpenCodePasswordRows({ ...base, routes: CUT_3E_ROUTES })).toBeUndefined()
+    const late = composeOpenCodePasswordRows({ ...base, routes: PASSWORD_4A })
+    expect(late?.part.channels).toEqual([SET, CLEAR])
+    expect(late).not.toHaveProperty('migration')
+    // Without the Host attach nothing is composed.
+    expect(
+      composeOpenCodePasswordRows({ ...base, client: undefined, routes: PASSWORD_4A })
+    ).toBeUndefined()
   })
 })
 
@@ -6039,11 +4112,7 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
     ).toBeUndefined()
     const jev = composeJevKeyRows({
       routes: CUT_3E_ROUTES,
-      release: CUT_3E_RELEASE,
-      legacy,
       client,
-      migration: undefined,
-      log: { record: () => {} },
       mintId: () => MINTED
     })
     expect(jev?.part?.channels ?? []).not.toContain(JEV_GET)
@@ -6054,11 +4123,7 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
     const host = settingsHost()
     const jev = composeJevKeyRows({
       routes: SETTINGS_4A,
-      release: 'cut-4a',
-      legacy,
       client: host.client,
-      migration: undefined,
-      log: { record: () => {} },
       mintId: () => MINTED
     })
     const notifications = composeSystemNotificationRows({
@@ -6068,7 +4133,6 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
     })
     expect(jev?.part?.channels).toEqual([KEY_SET, KEY_CLEAR, JEV_GET, JEV_SET])
     expect(notifications?.channels).toEqual([NOTIFICATIONS_GET, NOTIFICATIONS_SET])
-    expect(jev?.shapeAdapters).toEqual({})
     const parts = [jev?.part, notifications].filter((part) => part !== undefined)
     const router = createRouter({
       routes: SETTINGS_4A,
@@ -6096,5 +4160,343 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
       ['preferences.set', { key: 'defaultProvider', value: 'claude', requestId: MINTED }],
       ['preferences.set', { key: 'subagentDelegationOn', value: true, requestId: MINTED }]
     ])
+  })
+})
+
+// ADDED for ISSUE-236, the 4a retirement (21 §2 cut 4a "Retired at the end"; §3, §3.1; §1 items 3, 6, 7): after the
+// soak, today's settings, secret and reset handlers and the three bridges whose lifetime ended in 4a leave the tree.
+// Read as text, because this tree never imports legacy code (05 R16).
+describe('after the 4a retirement', () => {
+  const SRC = resolve(import.meta.dirname, '..', '..')
+  /** The rows 4a moved to the Host, with today's preload member (14 §2.1 A-33, A-42, A-43, A-47…A-55). */
+  const RETIRED_HANDLERS: Readonly<Record<string, string>> = {
+    'notifications:enabled:get': 'getNotificationsEnabled', // A-42
+    'notifications:enabled:set': 'setNotificationsEnabled', // A-43
+    'jev:settings:get': 'getJevSettings', // A-47
+    'jev:apiKey:set': 'setJevApiKey', // A-48
+    'jev:apiKey:clear': 'clearJevApiKey', // A-49
+    'jev:route': 'routeJevLaunch', // A-50
+    'jev:preferences:set': 'setJevPreferences', // A-51
+    'opencode:settings:get': 'getOpenCodeSettings', // A-52
+    'opencode:plugin:set': 'setOpenCodePluginEnabled', // A-53
+    'opencode:password:set': 'setOpenCodeServerPassword', // A-54
+    'opencode:password:clear': 'clearOpenCodeServerPassword', // A-55
+    'metrics:reset': 'resetMetrics' // A-33
+  }
+
+  it('[ADR-001] no settings, secret or reset row has a legacy handler', () => {
+    const legacyHandlers = ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts'].flatMap(
+      (file) => {
+        const text = legacySource(resolve(SRC, file))
+        return Object.values(RETIRED_HANDLERS)
+          .filter((member) =>
+            new RegExp(String.raw`(handle|ipcMain\.handle)\(\s*IPC_CHANNELS\.${member}\b`).test(
+              text
+            )
+          )
+          .map((member) => `${file} ${member}`)
+      }
+    )
+    expect(legacyHandlers).toEqual([])
+    for (const channel of Object.keys(RETIRED_HANDLERS)) {
+      expect(
+        ROUTES.filter((route) => route.channel === channel && route.owner === 'legacy'),
+        channel
+      ).toEqual([])
+    }
+  })
+
+  it('[ADR-001] SettingsMirrorBridge, ResetFanout and JevSettingsShapeAdapter are absent from the adapter listing', () => {
+    const names = LEGACY_BRIDGE_ADAPTERS.map((adapter) => adapter.name)
+    for (const ended of ['SettingsMirrorBridge', 'ResetFanout', 'JevSettingsShapeAdapter']) {
+      expect(names, ended).not.toContain(ended)
+    }
+    for (const path of [
+      'legacy-bridge/settingsMirror',
+      'legacy-bridge/reset/resetFanout.ts',
+      'legacy-bridge/secrets/jevSettingsShapeAdapter.ts'
+    ]) {
+      expect(existsSync(resolve(SRC, path)), path).toBe(false)
+    }
+  })
+})
+
+// ADDED for ISSUE-239, the 4b deletion (21 §2 cut 4b "Legacy deleted"; cut 3 common rules; §1 items 3, 6, 7; 14 §6.5
+// "Registry completeness"): after the soak, today's OpenCode launch and the handlers and pushes of the RETIRE rows A-27,
+// A-P3 and A-P4 leave the tree. Read as text, because this tree never imports legacy code (05 R16).
+describe('after the 4b retirement', () => {
+  const SRC = resolve(import.meta.dirname, '..', '..')
+  const LEGACY_ROOTS = ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']
+  /** Today's member of each retired row (14 §2.1 A-27, A-P3, A-P4). */
+  const RETIRED_IN_4B: Readonly<Record<string, string>> = {
+    'dwarf:retire': 'retireDwarf', // A-27, successor B-F10 `dwarf.departed`
+    'agent:launchFailed': 'launchFailed', // A-P3, successor B-F19 `launch.failed`
+    'dwarf:sendText:settled': 'dwarfSendSettled' // A-P4, successor B-F12 `message.delivery`
+  }
+  /** Today's launch, send and stop handlers (14 §2.1 A-35, A-23, A-27). */
+  const LAUNCH_SEND_STOP = ['launchAgent', 'sendDwarfText', 'retireDwarf']
+  const registered = (member: string) =>
+    new RegExp(
+      String.raw`(handle|ipcMain\.handle|ipcMain\.on)\(\s*IPC_CHANNELS\.${member}\b|send\(\s*IPC_CHANNELS\.${member}\b`
+    )
+  const legacyUses = (members: readonly string[]) =>
+    LEGACY_ROOTS.flatMap((file) => {
+      const text = legacySource(resolve(SRC, file))
+      return members
+        .filter((member) => registered(member).test(text))
+        .map((member) => `${file} ${member}`)
+    })
+
+  it('[ADR-001] after 4b A-27, A-P3 and A-P4 have no handler and no route', () => {
+    expect(legacyUses(Object.values(RETIRED_IN_4B))).toEqual([])
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      for (const channel of Object.keys(RETIRED_IN_4B) as ChannelKey[]) {
+        expect(
+          routesForBuild(build).filter((route) => route.channel === channel),
+          channel
+        ).toEqual([])
+        expect(RETIRED[channel], channel).toBe('cut-4b')
+        // The generated facade drops the member with its handler (ISSUE-045 generator, `MEMBER_REMOVED`).
+        expect(MEMBER_REMOVED[channel], channel).toBe('cut-4b')
+      }
+    }
+    const preload = readFileSync(resolve(SRC, 'preload/index.ts'), 'utf8')
+    for (const member of ['retireDwarf', 'onLaunchFailed', 'onDwarfSendSettled']) {
+      expect(preload, member).not.toContain(member)
+    }
+  })
+
+  it('[ADR-001] no legacy launch, send or stop handler is composed for any provider', () => {
+    expect(legacyUses(LAUNCH_SEND_STOP)).toEqual([])
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      const legacy = routesForBuild(build).filter((route) =>
+        (
+          [
+            'agent:launch',
+            'agent:launchHosted',
+            'dwarf:sendText',
+            'dwarf:activate',
+            'dwarf:stop',
+            'dwarf:retire'
+          ] as ChannelKey[]
+        ).includes(route.channel)
+      )
+      expect(legacy.filter((route) => route.owner === 'legacy')).toEqual([])
+    }
+    // 4b rolls forward only: a rollback build would route OpenCode back to code that is gone (21 §2.1 item 4).
+    // AMENDED for ISSUE-249 (was: `ROUTES_RELEASE`): the cut-5 switch moved only the marker, so 4b's table is the
+    // release rows under the 4b marker.
+    const cut4b: RouteTable = {
+      release: 'cut-4b',
+      routes: ROUTES,
+      unrouted: UNROUTED,
+      retired: RETIRED,
+      adapters: LEGACY_BRIDGE_ADAPTERS
+    }
+    expect(() => rollbackOf(cut4b, 'cut-4b')).toThrow(/cut-4b rolls forward only/)
+  })
+  // ADDED for ISSUE-240 (21 §3 row `LegacyLaunchObservation`, §3.1 rows `PerProviderShapeAdapter`, `CatalogMergeAdapter`;
+  // §1 item 2a): with no provider launched by today's runtime, the bridges that served the providers not yet moved end.
+  it('[ADR-001] after 4b no route names PerProviderShapeAdapter or CatalogMergeAdapter and A-13, A-23, A-35, A-36 route host with shape target for every provider', () => {
+    const ENDED = ['PerProviderShapeAdapter', 'CatalogMergeAdapter']
+    expect(
+      LEGACY_BRIDGE_ADAPTERS.map((adapter) => adapter.name).filter((name) => ENDED.includes(name))
+    ).toEqual([])
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      const table = routesForBuild(build)
+      expect(
+        table.filter(
+          (route) => route.shapeAdapter !== undefined && ENDED.includes(route.shapeAdapter)
+        )
+      ).toEqual([])
+      for (const channel of [
+        'dwarf:activate',
+        'dwarf:sendText',
+        'agent:launch',
+        'agent:providers'
+      ] as ChannelKey[]) {
+        for (const route of table.filter((r) => r.channel === channel)) {
+          expect(route.owner, channel).toBe('host')
+          expect(route.shape, channel).toBe('target')
+        }
+        for (const provider of [...CATALOG_PROVIDER_IDS, 'other', 'not-a-provider']) {
+          expect(resolveRoute(table, channel, { provider })?.owner, channel + ' ' + provider).toBe(
+            'host'
+          )
+        }
+      }
+    }
+    for (const path of [
+      'legacy-bridge/shape/PerProviderShapeAdapter.ts',
+      'legacy-bridge/shape/CatalogMergeAdapter.ts',
+      'legacy-bridge/shape/legacySettlementJoin.ts'
+    ]) {
+      expect(existsSync(resolve(SRC, path)), path).toBe(false)
+    }
+  })
+
+  it('[ADR-001] LegacyLaunchObservation is absent from the adapter listing and from the composition', () => {
+    expect(LEGACY_BRIDGE_ADAPTERS.map((adapter) => adapter.name)).not.toContain(
+      'LegacyLaunchObservation'
+    )
+    expect(readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')).not.toMatch(
+      /legacy-bridge\/LegacyLaunchObservation|composeLegacyLaunchObservation|createLegacyLaunchObservation/
+    )
+    expect(existsSync(resolve(SRC, 'legacy-bridge/LegacyLaunchObservation.ts'))).toBe(false)
+  })
+
+  // ADDED for ISSUE-241 (21 §2 4b "Legacy deleted": one work unit at the end of cut 4; §3 rows `LegacyDwarfIdBridge`,
+  // `LegacyAgentRegistryFeed`, `LegacyAskRelay`, `LegacyEndFirstAdapter`; §3.1 row `LegacyAnswerShapeAdapter`; 14 §5,
+  // §6.5 AMENDMENT-8): the strangler bridges that joined Host and legacy dwarfs end together, and asks route only to
+  // the Host (foreman decision D2: the A-40/A-41 legacy answer rows go with them).
+  it('[ADR-001] the router test lists LegacyDwarfIdBridge, LegacyEndFirstAdapter, LegacyAgentRegistryFeed, LegacyAskRelay and LegacyAnswerShapeAdapter as absent and no A-40/A-41 route has a legacy qualifier', () => {
+    const ENDED = [
+      'LegacyDwarfIdBridge',
+      'LegacyEndFirstAdapter',
+      'LegacyAgentRegistryFeed',
+      'LegacyAskRelay',
+      'LegacyAnswerShapeAdapter'
+    ]
+    expect(
+      LEGACY_BRIDGE_ADAPTERS.map((adapter) => adapter.name).filter((name) => ENDED.includes(name))
+    ).toEqual([])
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      for (const channel of ['agent:answerQuestion', 'agent:answerPermission'] as ChannelKey[]) {
+        const own = routesForBuild(build).filter((route) => route.channel === channel)
+        expect(
+          own.map((route) => `${route.owner} ${JSON.stringify(route.qualifier ?? {})}`),
+          channel
+        ).toEqual(['host {}'])
+      }
+    }
+    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
+    for (const name of ENDED) {
+      expect(root, name).not.toMatch(new RegExp(`legacy-bridge/(asks/)?${name}'`))
+    }
+    for (const path of [
+      'legacy-bridge/LegacyDwarfIdBridge.ts',
+      'legacy-bridge/LegacyEndFirstAdapter.ts',
+      'legacy-bridge/LegacyAgentRegistryFeed.ts',
+      'legacy-bridge/LegacyAskRelay.ts',
+      'legacy-bridge/asks/LegacyAnswerShapeAdapter.ts'
+    ]) {
+      expect(existsSync(resolve(SRC, path)), path).toBe(false)
+    }
+  })
+})
+
+// ADDED for ISSUE-242, the first cut-5 deletion (21 §2 cut 5 entry; 21 §3 row `BoardFacadeAdapter`; 14 §2.1 A-12, A-P2
+// RETIRE, successors A-N01/A-N02; 14 §6.5 "Router", "Registry completeness"): once nothing reads the facade
+// (`ui-main/boardFacadeConsumers.test.ts`), the adapter and its two rows leave the tree. The facade's lifetime ended
+// with 4b (cuts 1–4b), so the rows are retired at that step, as the other rows the 4b soak let go of. Read as text where
+// the tree never imports legacy code (05 R16).
+describe('release 5 (21 §2 cut 5)', () => {
+  const SRC = resolve(import.meta.dirname, '..', '..')
+  /** A-12 and A-P2, with today's member of each. */
+  const FACADE_ROWS: Readonly<Record<string, string>> = {
+    'mines:get': 'getMines', // A-12
+    'mines:update': 'minesUpdated' // A-P2
+  }
+  const registered = (member: string) =>
+    new RegExp(
+      String.raw`(handle|ipcMain\.handle|ipcMain\.on)\(\s*IPC_CHANNELS\.${member}\b|send\(\s*IPC_CHANNELS\.${member}\b`
+    )
+
+  // ADDED for ISSUE-249, the cut-5 switch (21 §2 cut 5 exit: "router test, no `legacy` owner, no adapter"; 14 §6.5
+  // "Router"): the release marker moves to 5 and no row changes owner. Parity is `passed` for every row that replaced
+  // legacy code; a NEW row (registry status `new`) never had legacy code, so its parity stays `n/a` (21 §1 item 3).
+  it('[ADR-001] in release 5 every seam-A row routes host or ui-local with parity passed', () => {
+    expect(ROUTES_RELEASE).toBe('cut-5')
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      const routes = routesForBuild(build)
+      const table: RouteTable = {
+        release: ROUTES_RELEASE,
+        routes,
+        unrouted: UNROUTED,
+        retired: RETIRED,
+        adapters: LEGACY_BRIDGE_ADAPTERS
+      }
+      expect(checkRouteTable(table, KEYS)).toEqual([])
+      for (const route of routes) {
+        expect(['host', 'ui-local'], route.channel).toContain(route.owner)
+        const parity = CHANNELS[route.channel].status === 'new' ? ['passed', 'n/a'] : ['passed']
+        expect(parity, `${route.channel} parity`).toContain(route.parity)
+      }
+    }
+  })
+
+  it('[ADR-001] in release 5 no route names a legacy-bridge adapter or a shape adapter', () => {
+    expect(ROUTES_RELEASE).toBe('cut-5')
+    expect(LEGACY_BRIDGE_ADAPTERS).toEqual([])
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      const routes = routesForBuild(build)
+      expect(routes.filter((route) => route.shapeAdapter !== undefined)).toEqual([])
+      expect(routes.filter((route) => route.shape !== 'target').map((r) => r.channel)).toEqual([])
+    }
+  })
+
+  it('[ADR-001] A-12 and A-P2 have no route and no handler', () => {
+    for (const file of ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']) {
+      const text = legacySource(resolve(SRC, file))
+      for (const member of Object.values(FACADE_ROWS)) {
+        expect(registered(member).test(text), `${file} ${member}`).toBe(false)
+      }
+    }
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      for (const channel of Object.keys(FACADE_ROWS) as ChannelKey[]) {
+        expect(
+          routesForBuild(build).filter((route) => route.channel === channel),
+          channel
+        ).toEqual([])
+        expect(RETIRED[channel], channel).toBe('cut-4b')
+        // The generated facade and the fake `window.api` drop the member with its route (`MEMBER_REMOVED`).
+        expect(MEMBER_REMOVED[channel], channel).toBe('cut-4b')
+        expect(HOST_ROUTE_MEMBERS[channel], channel).toBeUndefined()
+      }
+    }
+    const preload = readFileSync(resolve(SRC, 'preload/index.ts'), 'utf8')
+    for (const member of ['getMines', 'onMinesUpdated']) {
+      expect(preload, member).not.toMatch(new RegExp(String.raw`\b${member}\b`))
+    }
+    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
+    expect(root).not.toMatch(/'mines:get'|'mines:update'/)
+  })
+
+  // ADDED for ISSUE-243 (21 §2 cut 5: nothing routed `legacy`; ADR-001 item 4 step 5): the guard of the deletion of
+  // today's runtime and its one door, `LegacyRuntimeRoute`. It fails if a later change re-adds a `legacy` row.
+  it('[ADR-001] before the legacy door is removed, no route of the table has owner legacy', () => {
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      expect(
+        routesForBuild(build)
+          .filter((route) => route.owner === 'legacy')
+          .map((route) => route.channel)
+      ).toEqual([])
+    }
+  })
+
+  // ADDED for ISSUE-247 (21 §2 cut 5, §3; 14 §6.5 "Router"): the strangler's last door closes, so the release listing
+  // is empty and the composition root imports and composes no adapter of src/legacy-bridge.
+  it('[ADR-001] the router test lists no legacy-bridge adapter and ui-main composes none', () => {
+    expect(LEGACY_BRIDGE_ADAPTERS).toEqual([])
+    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
+    expect(root).not.toMatch(/(\bfrom|\bimport\(?)\s*['"][^'"]*legacy-bridge\//)
+    expect(root).not.toMatch(/\bcreateSecretMigrationBridge\b|\bbridgeLivesIn\b/)
+  })
+
+  it('[ADR-001] the adapter list of the router test no longer names BoardFacadeAdapter', () => {
+    expect(LEGACY_BRIDGE_ADAPTERS.map((adapter) => adapter.name)).not.toContain(
+      'BoardFacadeAdapter'
+    )
+    // The releases that shipped it are still checked with it in their listing (`testing/adaptersAsShipped.ts`).
+    expect(
+      ADAPTERS_AS_SHIPPED.find((adapter) => adapter.name === 'BoardFacadeAdapter')?.cuts
+    ).toEqual(STEP_ORDER.slice(STEP_ORDER.indexOf('cut-1'), STEP_ORDER.indexOf('cut-4b') + 1))
+    for (const path of [
+      'legacy-bridge/BoardFacadeAdapter.ts',
+      'legacy-bridge/BoardFacadeAdapter.test.ts',
+      'legacy-bridge/BoardFacadeAdapter.contract.test.ts'
+    ]) {
+      expect(existsSync(resolve(SRC, path)), path).toBe(false)
+    }
   })
 })

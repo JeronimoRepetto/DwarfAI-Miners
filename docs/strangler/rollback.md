@@ -78,6 +78,12 @@ rollback build's Host boots, but no route answers a Host `AskId` in that build (
 as a request the Host no longer holds: it closes answered elsewhere (`07` S6.11, S6.20), its card disappears with no
 notice, and the person answers in the provider's own terminal (#1293).
 
+**Cut 2 retirement (ISSUE-142): no rollback past this point.** From the ISSUE-142 commit today's Claude hook half
+(the hook installer, the Claude route of the shared listener, the observed-Claude permission registry and its keystroke
+path) is composed in no table, a cut-2 rollback table included: `legacyClaudeHooksComposed` and
+`legacyClaudeHooksSwitch.ts` are deleted. `rollbackOf(table, 'cut-2')` still folds A-40 and A-41 and withdraws A-N31 and
+A-N32, but the build it makes answers no Claude ask from today's code, so cut 2 rolls forward only (`21` §2.1 item 4).
+
 **Step 3a note (ISSUE-001).** A 3a rollback build exists only before the 3a deletion commit merges (ISSUE-184, after the
 soak); after it, 3a rolls forward (`21` §2 cut 3 "Rollback (each step)"). `rollbackOf(table, 'cut-3a')` decides each
 row as follows (`src/ui-main/ipc/rollbackTable.test.ts`, the 3a case):
@@ -99,6 +105,11 @@ Known limit of a 3a rollback build: a "Let Jev choose" launch has no `host` rout
 `PerProviderShapeAdapter`, which refuses it (`INVALID_PARAMS`, "a Jev launch is served by the Host only"); the person
 picks a supplier on the pickers. Widening Jev's candidates with an adapter was decided against (`21` §11 OI-21-4).
 
+**Step-3a deletion (ISSUE-184): no rollback past this point.** From the ISSUE-184 commit today's Claude launch (the
+Agent SDK held session `sdkHeldSession.ts` with its `canUseTool` relay, the detached `claude -p` argv, and the
+`@anthropic-ai/claude-agent-sdk*` packages) is gone and today's launcher refuses Claude, so a table that routes Claude's
+launch, send or stop `legacy` again starts and reaches nothing: 3a rolls forward only (`21` §2.1 item 4).
+
 **Step 3b note (ISSUE-002).** A 3b rollback build exists only before the 3b deletion commit merges (ISSUE-185, after the
 soak); after it, 3b rolls forward. 3b moves one more provider beside the shape-adapter routes 3a created, so
 `rollbackOf(table, 'cut-3b')` gives back exactly the 3a table (`src/ui-main/ipc/rollbackTable.test.ts` and
@@ -114,6 +125,11 @@ With Codex no longer moved, `legacyFeedModesOf` composes Codex's whole discovery
 settles on A-P3/A-P4 through the settlement join, and "Let Jev choose" chooses among Claude only. Codex sessions the
 faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
 
+**Step-3b deletion (ISSUE-185): no rollback past this point.** From the ISSUE-185 commit today's Codex launch (the
+detached `codex exec` argv with its `-c` delegation overrides, and the `codexResume.ts` relaunch) is gone and today's
+launcher refuses Codex, so a table that routes Codex's launch or send `legacy` again starts and reaches nothing: 3b rolls
+forward only (`21` §2.1 item 4).
+
 **Step 3d note (ISSUE-186).** A 3d rollback build exists only before the 3d deletion commit merges (ISSUE-187, after the
 soak); after it, 3d rolls forward. `rollbackOf(table, 'cut-3d')` gives back exactly the 3b table
 (`src/ui-main/ipc/rollbackTable.test.ts` and `ipc-routing.contract.test.ts`, the 3d rollback cases):
@@ -127,6 +143,10 @@ soak); after it, 3d rolls forward. `rollbackOf(table, 'cut-3d')` gives back exac
 
 "Other…" sessions the faulty build's Host launched are left running and are re-observed by the Host (`21` §2 cut 3
 "Rollback (each step)"); a new "Other…" launch is today's hosted process again, which dies with the window.
+
+**Step-3d deletion (ISSUE-187): no rollback past this point.** From the ISSUE-187 commit today's hosted-process launch
+(`hostedProcesses.ts` and its composition in `runtime.ts`) and the legacy A-39 handlers are gone, so a table that routes
+A-39 `legacy` again reaches no handler: 3d rolls forward only (`21` §2.1 item 4).
 
 **Step 3e note (ISSUE-188).** A 3e rollback build exists only before the 3e deletion commit merges (ISSUE-189, after the
 soak); after it, 3e rolls forward. 3e moves Antigravity beside the shape-adapter routes 3a created, its launch row in
@@ -146,6 +166,10 @@ Antigravity launch is today's held session again and settles on A-P3/A-P4 throug
 choose" chooses among Claude and Codex only. Antigravity sessions the faulty build's Host launched are left running and
 are re-observed by the Host (`21` §2 cut 3 "Rollback (each step)").
 
+**Step-3e deletion (ISSUE-189): no rollback past this point.** From the ISSUE-189 commit today's Antigravity launch (the
+held `antigravityHeldSession.ts` engine and the detached `agy` argv) is gone and today's launcher refuses Antigravity, so a
+table that routes Antigravity's launch `legacy` again starts nothing: 3e rolls forward only (`21` §2.1 item 4).
+
 **Step 4a note (ISSUE-235).** A 4a rollback build exists only before the 4a retirement merges (ISSUE-236, after the
 soak) and, on a machine where an OpenCode server password was stored, only before `SecretMigrationBridge` deleted the
 legacy password file (`21` §2 cut 4a "Rollback"); after either, 4a rolls forward. `rollbackOf(table, 'cut-4a')` gives
@@ -163,6 +187,12 @@ back the 3e table except the OpenCode settings rows (`src/ui-main/ipc/rollbackTa
 The renderer of the rollback build is this tree's: its Settings composables speak the 4a shapes, which the kept and the
 shape-adapter rows still answer, so no `pnpm ipc:generate` revert is needed for them. The first-run step keeps offering
 OpenCode (the Host stays its writer).
+
+**Step-4a retirement (ISSUE-236): no rollback past this point.** From the ISSUE-236 commit today's settings, secret and
+reset handlers (A-33, A-42, A-43, A-47…A-55) and the three bridges whose lifetime ended in 4a (`ResetFanout`,
+`SettingsMirrorBridge`, `JevSettingsShapeAdapter`) are gone, so the table above routes A-33 and A-47 through adapters
+that no longer exist and the other rows to handlers that no longer exist: `rollbackOf(table, 'cut-4a')` refuses
+(`ROLLS_FORWARD_ONLY`, `src/ui-main/ipc/rollbackTable.ts`), and 4a rolls forward only (`21` §2.1 item 4).
 
 **Step 4b note (ISSUE-238).** A 4b rollback build exists only before the 4b deletions merge (ISSUE-239…ISSUE-241, after
 the one soak at the end of cuts 3a–4b, OQ-71); after the first of them, 4b rolls forward (`21` §2 cut 4b "Rollback", §2.1
@@ -183,6 +213,48 @@ An OpenCode session the 4b build launched is left running; the rolled-back build
 "Rollback (each step)"). The rollback build's preload is this tree's: run `pnpm ipc:generate` after the table is flipped,
 so A-27, A-P3 and A-P4 speak today's shape again (the 4b switch generated them with the registry's shape because they had
 no route).
+
+**Step-4b deletion (ISSUE-239): no rollback past this point.** From the ISSUE-239 commit today's OpenCode launch (the
+detached `opencode run` argv with its `OPENCODE_CONFIG_CONTENT` delegation entry, and the `opencodeContinue.ts`
+relaunch) and the legacy A-27, A-P3 and A-P4 handlers and pushes are gone, so the table above routes OpenCode to a
+launcher that refuses it and A-27, A-P3, A-P4 to handlers that no longer exist: `rollbackOf(table, 'cut-4b')` refuses
+(`ROLLS_FORWARD_ONLY`, `src/ui-main/ipc/rollbackTable.ts`; `REMOVED_BY_THE_LAST_PROVIDER_STEP` is deleted), and 4b
+rolls forward only (`21` §2.1 item 4).
+
+**End of cut 4 (ISSUE-241): no rollback past this point.** From the ISSUE-241 commits `LegacyDwarfIdBridge`,
+`LegacyEndFirstAdapter`, `LegacyAgentRegistryFeed`, `LegacyAskRelay`, `LegacyAnswerShapeAdapter` and B-M41 are gone, so
+no build can route A-40/A-41 to today's runtime again or end a session the old app launched before the Host acts: the
+release table has A-40/A-41's unqualified `host` route only, and the earlier tables that named the bridges are kept only
+as they shipped, for the router tests (`src/ui-main/ipc/testing/adaptersAsShipped.ts`, `testing/cut4aRoutes.ts`). Cut 4
+rolls forward only (`21` §2.1 item 4).
+
+**First cut-5 deletion (ISSUE-242): no rollback past this point.** From the ISSUE-242 commits `BoardFacadeAdapter`, A-12
+`getMines` and A-P2 `onMinesUpdated` are gone: no route, no handler in today's runtime or `src/main/index.ts`, and no
+preload member (`RETIRED`, `MEMBER_REMOVED` at the end of the facade's 4b lifetime). The renderer reads the board only
+through A-N01/A-N02 (`useMines`), so no build can hand the Panel today's `MinesSnapshot` again. The tables that routed
+A-12 and A-P2 through the facade are kept only as they shipped, for the router tests (`testing/cut4aRoutes.ts`,
+`testing/adaptersAsShipped.ts`). Cut 1 already rolled forward only since its retirement (ISSUE-124).
+
+**Deletion of today's runtime (ISSUE-243): no rollback past this point.** From the ISSUE-243 commits `runtime.ts`,
+`src/main/index.ts` and `LegacyRuntimeRoute` are gone, and the router of UI main binds no `legacy` target: a table with
+a `legacy` row, a window family served `legacy` included, cannot start. 14 §8 I-21's `dwarf:setName` and
+`dwarf:resetName` left with them (`RETIRED`, `MEMBER_REMOVED` at cut-4b). No rollback build of any step can be made from
+this tree; the earlier tables are kept only as they shipped, for the router tests (`testing/adaptersAsShipped.ts` lists
+`LegacyRuntimeRoute` for cuts 0–4b, `testing/cut4aRoutes.ts` the two I-21 rows).
+
+**Legacy-area deletions (ISSUE-333 onward): no rollback rule changes.** Each later cut-5 issue deletes one legacy area
+under `src/main/**` that no route, handler or composition reaches any more (`scripts/checks/legacy-trees.test.mjs`):
+ISSUE-333 the Jev tree (`src/main/jev`), ISSUE-334 the notifications tree (`src/main/notifications`), ISSUE-335 the shell tree (`src/main/shell`), ISSUE-339 the ledger tree (`src/main/ledger`), ISSUE-338 the projects, mine-history and tier trees (`src/main/projects`, `src/main/history`, then `src/main/tier` with `src/main/config`, the ISSUE-341 area that was its last importer), ISSUE-332 the delegation tree (`src/main/mcp`; its last three modules left with `src/main/sessionLaunch`) with the standalone `jevMcpServer` build, and ISSUE-337, ISSUE-245 and ISSUE-336 the provider, session-launch and text-delivery trees (`src/main/providers`, `src/main/sessionLaunch`, `src/main/textDelivery`, with the stranded `src/main/platform/cliDetection.ts`, `platformAdapters.ts` and `fakePlatformAdapters.ts`), ISSUE-331 the hook and OpenCode-permission trees (`src/main/hooks`, `src/main/opencodePermissions`), ISSUE-244 every code path that opens `projects-v1.db` (`src/main/appDatabase`, `src/main/dwarfNames` and the writable SQLite adapter of `src/main/adapters`; `scripts/checks/no-legacy-db.mjs` keeps it out, and the file itself stays on the person's disk untouched), ISSUE-340 the platform and adapter trees (`src/main/platform`, `src/main/adapters`, with the stranded `src/main/domain/aggregate.ts`; `safeStorageLike.ts` and `fakeSafeStorage.ts` moved into `src/legacy-bridge/secrets/` until ISSUE-247). The route table and `rollbackOf` are unchanged by these commits; the area is
+past its rollback point since ISSUE-243, and one revert of the issue's commits restores that area alone, except inside the import cycle of foreman decision D1: the provider, session-launch and text-delivery trees import each other, so they left in one commit and one revert restores the three together (each issue keeps its own static test and census rows; an accepted difference for `docs/strangler/parity-cut-5.md`, ISSUE-249).
+ISSUE-341 then deleted the last folders (`src/main/domain`, `src/main/runtime`), so `src/main` holds no file, and
+ISSUE-246 deleted `src/shared` (its pure modules already lived in `src/contracts/text`; `contracts.ts` moved unchanged to
+`src/contracts/wire/today.ts`). Neither changes a route or `rollbackOf`.
+
+**Last legacy-bridge deletion (ISSUE-247): no rollback past this point.** From the ISSUE-247 commits
+`SecretMigrationBridge` and the whole `src/legacy-bridge` folder are gone: `LEGACY_BRIDGE_ADAPTERS` is empty, the
+composition root composes no adapter and no build reads a legacy `safeStorage` secret file again. A rollback build of
+step 3a or 4a, which ran the one-time migration, cannot be made from this tree; the tables that shipped with it are kept
+only as they shipped (`testing/adaptersAsShipped.ts` lists `SecretMigrationBridge` for cuts 3a and 4a).
 
 ## 2. Older artifact (maintainers only, last resort)
 

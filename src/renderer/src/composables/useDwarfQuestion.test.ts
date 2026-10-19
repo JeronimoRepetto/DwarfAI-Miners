@@ -29,6 +29,7 @@ import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
 import { useMines } from './useMines'
 import { useToasts } from './useToasts'
+import { publishBoard } from '../testing/board'
 
 /**
  * AMENDED for ISSUE-141 (was: the fake answered today's `DwarfQuestionAnswerResult`): from the cut-2 switch A-40 and
@@ -687,11 +688,11 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
 /* --- The dual-source ask read model (ISSUE-138) — one block, appended ------------------------ */
 
 /*
- * From cut 2 the question store is a read model with two sources (21 §2 cut 2 "Legacy-bridge adapters", §3
- * `LegacyAskRelay`; 14 §6.4 row `useDwarfQuestion`; ADR-033 items 3, 4): the Host's asks (the snapshot `asks` section
- * and the `ask.*` frames above its seq) and the legacy overlay the facade's board carries (its own `legacy:` ids,
- * replaced whole, never sequence-filtered). A card's source is its id namespace. Partial picks live in the UI main
- * session store (`ask-picks`), never in the Host.
+ * From cut 2 the question store is a read model (14 §6.4 row `useDwarfQuestion`; ADR-033 items 3, 4) of the Host's asks
+ * (the snapshot `asks` section and the `ask.*` frames above its seq). Partial picks live in the UI main session store
+ * (`ask-picks`), never in the Host. AMENDED for ISSUE-241, the end of cut 4 (was: also the legacy overlay the facade's
+ * board carried, its own `legacy:` ids, 21 §2 cut 2 "Legacy-bridge adapters", §3 `LegacyAskRelay`): the relay left the
+ * tree, so the Host is the one source.
  */
 describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
   const EPOCH = 'epoch-0138'
@@ -800,7 +801,7 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
 
   /** The facade's board (A-12/A-P2) with today's open asks on its dwarfs, ids in the relay's namespace. */
   function facadeBoard(dwarfs: Array<Partial<Dwarf> & { id: string }>): void {
-    useMines().setMines({
+    publishBoard({
       mines: [defaultMine({ dwarfs: dwarfs.map((dwarf) => defaultDwarf(dwarf)) })],
       tokensObserved: 0
     })
@@ -813,9 +814,13 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
     useMines().clear()
   })
 
-  it('[ADR-033] Host asks come from the asks section and ask frames with a higher seq, legacy asks from the facade overlay, each keyed by its own id', async () => {
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-033] Host asks come from the asks section and ask frames with a
+  // higher seq, legacy asks from the facade overlay, each keyed by its own id"): `LegacyAskRelay` left the tree, so a
+  // question the facade's board still carries in its `legacy:` namespace opens no card (ADR-011 item 4). TC-241-03.
+  it('[ADR-033, ADR-011] Host asks come from the asks section and ask frames with a higher seq, and a legacy: ask on the facade board opens no card', async () => {
+    const DWARF_C = '01920000-0000-7000-a000-00000000d003'
     const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
-    facadeBoard([{ id: DWARF_B, pendingQuestion: question({ toolUseId: 'legacy:toolu_01' }) }])
+    facadeBoard([{ id: DWARF_C, pendingQuestion: question({ toolUseId: 'legacy:toolu_01' }) }])
     const store = useDwarfQuestion()
 
     expect(await store.startAsks()).toBe(true)
@@ -823,16 +828,12 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
       frame(9, 'ask.opened', { ask: hostAsk(ASK_STALE, DWARF_A) }),
       frame(11, 'ask.opened', { ask: hostAsk(ASK_B, DWARF_B, { openedAt: 2_000 }) })
     ])
-    facadeBoard([{ id: DWARF_B, pendingQuestion: question({ toolUseId: 'legacy:toolu_02' }) }])
+    facadeBoard([{ id: DWARF_C, pendingQuestion: question({ toolUseId: 'legacy:toolu_02' }) }])
 
     expect(Object.keys(store.asks.host).sort()).toEqual([ASK_A, ASK_B])
-    expect(Object.keys(store.asks.legacy)).toEqual(['legacy:toolu_02'])
-    expect(store.asks.legacy['legacy:toolu_02']).toMatchObject({
-      source: 'legacy',
-      dwarfId: DWARF_B,
-      kind: 'question'
-    })
     expect(store.frontAsk(DWARF_A)).toMatchObject({ source: 'host', id: ASK_A })
+    expect(store.frontAsk(DWARF_B)).toMatchObject({ source: 'host', id: ASK_B })
+    expect(store.frontAsk(DWARF_C)).toBeUndefined()
   })
 
   it('[US-RES-003.AC02] after a reopen the card shows on its current step with no earlier pick selected', async () => {
@@ -966,72 +967,10 @@ describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
     }
   })
 
-  // AMENDED for ISSUE-141 (appended; lead decision 2026-10-14: ISSUE-138's answer half, folded into the cut-2 switch).
-  // From the switch A-40/A-41 have their 14 shape, and main routes each answer by its AskId: a `legacy:` id through
-  // `LegacyAnswerShapeAdapter` to today's runtime, any other to the Host's broker (routes.ts; the route per AskId is
-  // proven by the L6 router case "in cut 2 A-40 and A-41 route host…"). The renderer's half: each card answers with its
-  // own id, in the 14 shape, one UUIDv7 per submit.
-  it('[ADR-001] an answer to a legacy: card goes through the legacy route and an answer to a Host card through the host route', async () => {
-    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
-    const sent: Array<[string, unknown]> = []
-    const answered = { ok: true, value: { kind: 'accepted' } }
-    Object.assign(window.api, {
-      answerDwarfQuestion: vi.fn((request: unknown) => {
-        sent.push(['A-40', request])
-        return Promise.resolve(answered)
-      }),
-      answerDwarfPermission: vi.fn((request: unknown) => {
-        sent.push(['A-41', request])
-        return Promise.resolve(answered)
-      })
-    })
-    facadeBoard([{ id: DWARF_B, pendingPermission: permission({ toolUseId: 'legacy:toolu_09' }) }])
-    const store = useDwarfQuestion()
-    await store.startAsks()
-    expect(fake.patches).toEqual([])
-
-    const host = store.frontAsk(DWARF_A)
-    const legacy = store.frontAsk(DWARF_B)
-    expect(host).toMatchObject({ source: 'host', id: ASK_A })
-    expect(legacy).toMatchObject({ source: 'legacy', id: 'legacy:toolu_09', kind: 'permission' })
-    await store.answer(
-      DWARF_A,
-      question({
-        toolUseId: ASK_A,
-        questions: [
-          {
-            question: 'Which database?',
-            multiSelect: false,
-            options: [{ label: 'Postgres' }, { label: 'SQLite' }]
-          }
-        ]
-      }),
-      'SQLite'
-    )
-    await store.decide(DWARF_B, permission({ toolUseId: 'legacy:toolu_09' }), 'allow')
-
-    const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-    expect(sent).toEqual([
-      [
-        'A-40',
-        {
-          askId: ASK_A,
-          answers: [{ step: 0, option: 'SQLite' }],
-          requestId: expect.stringMatching(UUID_V7)
-        }
-      ],
-      [
-        'A-41',
-        { askId: 'legacy:toolu_09', decision: 'allow', requestId: expect.stringMatching(UUID_V7) }
-      ]
-    ])
-    expect(store.stateFor(DWARF_A)).toEqual({ phase: 'answered', toolUseId: ASK_A })
-    expect(store.stateFor(DWARF_B)).toEqual({
-      phase: 'answered',
-      toolUseId: 'legacy:toolu_09',
-      decision: 'allow'
-    })
-  })
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-001] an answer to a legacy: card goes through the legacy route
+  // and an answer to a Host card through the host route", ISSUE-141): no card is a legacy one any more, and every answer
+  // reaches the Host's broker (the L6 router case "the router test lists LegacyDwarfIdBridge, … as absent and no A-40/A-41
+  // route has a legacy qualifier").
 
   it('[US-ASK-006.AC09] a not-open outcome renders nothing and leaves the card state as the Host reports it', async () => {
     install(() =>

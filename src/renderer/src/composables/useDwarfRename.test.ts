@@ -15,7 +15,10 @@ import { useDwarfRename } from './useDwarfRename'
 import { useMines } from './useMines'
 
 /*
- * WHERE A RENAME GOES (14 §2.2 A-N08 / A-N09, §8 I-21; ISSUE-172 lead decision, 2026-10-17).
+ * WHERE A RENAME GOES (14 §2.2 A-N08 / A-N09, §8 I-21; ISSUE-172 lead decision, 2026-10-17; ISSUE-243).
+ *
+ * AMENDED for ISSUE-243: today's rows of 14 §8 I-21 left with today's runtime, so every rename and reset is the
+ * Host's. The note below is the cut-2 to 4b state.
  *
  * AMENDED for ISSUE-172 (was: a dwarf the Host's board carries could not be renamed until step 3a, BR-19). A-N08 and
  * A-N09 are routed `host` from cut 2: a dwarf the Host's board carries is renamed and reset by the Host (B-M22,
@@ -90,26 +93,25 @@ describe('useDwarfRename', () => {
     const renameDwarf = vi
       .fn()
       .mockResolvedValue({ ok: true, value: { ok: true, value: { customName: 'Scout' } } })
-    const setDwarfName = vi.fn()
-    await hostBoard({
-      renameDwarf: renameDwarf as unknown as Api['renameDwarf'],
-      setDwarfName: setDwarfName as unknown as Api['setDwarfName']
-    })
+    // AMENDED for ISSUE-243 (was: also a `setDwarfName` stand-in never called): today's rows left the registry's
+    // `window.api`, so no call to them can be made at all.
+    await hostBoard({ renameDwarf: renameDwarf as unknown as Api['renameDwarf'] })
     await useDwarfRename().setName({ dwarfId: BORIN, name: 'Scout' })
     expect(renameDwarf).toHaveBeenCalledTimes(1)
-    expect(setDwarfName).not.toHaveBeenCalled()
   })
 
-  // AMENDED for ISSUE-172 (was: `canRename('d55')` true): with the Host feeding the board, a dwarf only today's
-  // runtime carries still goes to today's rows.
-  it('[BR-19] keeps the rename for a dwarf only today’s runtime carries', async () => {
-    const setDwarfName = vi.fn().mockResolvedValue({ saved: true, customName: 'Watcher' })
-    const resetDwarfNameToday = vi.fn().mockResolvedValue({ saved: true })
-    const renameDwarf = vi.fn()
+  // AMENDED for ISSUE-243 (was: '[BR-19] keeps the rename for a dwarf only today’s runtime carries' and '[ADR-033]
+  // renames and resets a dwarf through setDwarfName and resetDwarfName, answering main’s verdict'): today's rows of 14 §8
+  // I-21 left with today's runtime (21 §2 cut 5), and the board is the Host's alone (ISSUE-242), so a dwarf its board
+  // does not carry is renamed and reset by the Host too, which refuses one it does not know.
+  it('[US-MSG-005.AC14] a dwarf the Host’s board does not carry is renamed and reset through A-N08 and A-N09 too', async () => {
+    const renameDwarf = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { ok: true, value: { customName: 'Watcher' } } })
+    const resetDwarfName = vi.fn().mockResolvedValue({ ok: true, value: undefined })
     await hostBoard({
-      setDwarfName: setDwarfName as unknown as Api['setDwarfName'],
-      resetDwarfNameToday: resetDwarfNameToday as unknown as Api['resetDwarfNameToday'],
-      renameDwarf: renameDwarf as unknown as Api['renameDwarf']
+      renameDwarf: renameDwarf as unknown as Api['renameDwarf'],
+      resetDwarfName: resetDwarfName as unknown as Api['resetDwarfName']
     })
     const rename = useDwarfRename()
     await expect(rename.setName({ dwarfId: 'd55', name: 'Watcher' })).resolves.toEqual({
@@ -117,31 +119,8 @@ describe('useDwarfRename', () => {
       customName: 'Watcher'
     })
     await expect(rename.resetName('d55')).resolves.toEqual({ saved: true })
-    expect(renameDwarf).not.toHaveBeenCalled()
-  })
-
-  // AMENDED for ISSUE-172 (was: `resetDwarfName`): today's reset member is `resetDwarfNameToday`, A-N09 having its
-  // name.
-  it('[ADR-033] renames and resets a dwarf through setDwarfName and resetDwarfName, answering main’s verdict', async () => {
-    const setDwarfName = vi.fn().mockResolvedValue({ saved: true, customName: 'Watcher' })
-    const resetDwarfName = vi.fn().mockResolvedValue({ saved: false, reason: 'gone' })
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      writable: true,
-      value: createFakeWindowApi({
-        setDwarfName: setDwarfName as unknown as Api['setDwarfName'],
-        resetDwarfNameToday: resetDwarfName as unknown as Api['resetDwarfNameToday']
-      })
-    })
-    const rename = useDwarfRename()
-
-    await expect(rename.setName({ dwarfId: 'd55', name: 'Watcher' })).resolves.toEqual({
-      saved: true,
-      customName: 'Watcher'
-    })
-    await expect(rename.resetName('d55')).resolves.toEqual({ saved: false, reason: 'gone' })
-    expect(setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: 'Watcher' })
-    expect(resetDwarfName).toHaveBeenCalledWith('d55')
+    expect(renameDwarf.mock.calls[0]?.[0]).toMatchObject({ dwarfId: 'd55', name: 'Watcher' })
+    expect(resetDwarfName.mock.calls[0]?.[0]).toMatchObject({ dwarfId: 'd55' })
   })
 
   /** A Host-fed board carrying Borin, over a fake window.api with these A-N08 / A-N09 members. */
@@ -162,11 +141,7 @@ describe('useDwarfRename', () => {
       .fn()
       .mockResolvedValueOnce({ ok: true, value: { ok: true, value: { customName: 'Watcher' } } })
       .mockResolvedValueOnce({ ok: true, value: { ok: true, value: { customName: null } } })
-    const setDwarfName = vi.fn()
-    await hostBoard({
-      renameDwarf: renameDwarf as unknown as Api['renameDwarf'],
-      setDwarfName: setDwarfName as unknown as Api['setDwarfName']
-    })
+    await hostBoard({ renameDwarf: renameDwarf as unknown as Api['renameDwarf'] })
     const rename = useDwarfRename()
 
     await expect(rename.setName({ dwarfId: BORIN, name: 'Watcher' })).resolves.toEqual({
@@ -182,7 +157,6 @@ describe('useDwarfRename', () => {
     expect(second).toMatchObject({ dwarfId: BORIN, name: 'Borin' })
     expect(first.requestId).toMatch(/^[0-9a-f-]{36}$/)
     expect(first.requestId).not.toBe(second.requestId)
-    expect(setDwarfName).not.toHaveBeenCalled()
   })
 
   it('[US-MSG-005.AC04, US-MSG-006.AC03] for a Host dwarf an empty save and Reset name go through A-N09, at once', async () => {

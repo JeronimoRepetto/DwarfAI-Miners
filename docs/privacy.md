@@ -8,6 +8,12 @@ in full in [What it transmits](#what-it-transmits). This document states exactly
 what is stored, and what is transmitted. Every claim names the source that implements it, so it
 can be checked rather than trusted.
 
+> **Rebuild note (cut 5).** The source citations below name files under `src/main/` and `src/shared/`,
+> the legacy implementation that the rebuild replaced and cut 5 deleted. Until this document is rewritten
+> against the rebuilt code — the Host (`src/host/`), the window process (`src/ui-main/`) and the shared
+> contracts (`src/contracts/`) — read each citation as the legacy behaviour it described, not as the
+> current one.
+
 ## What it reads
 
 - **Claude Code session registries.** Every configured Claude root (default `~/.claude`, plus
@@ -680,4 +686,4 @@ DwarfAI-Miners observes the files other tools write; it does not control what th
 - **Building from source** makes pnpm fetch dependencies from the npm registry. The packaged
   app fetches nothing.
 
-Anything this document does not cover, the source does — start at `src/main/`.
+Anything this document does not cover, the source does — start at `src/host/` and `src/ui-main/`.

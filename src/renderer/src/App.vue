@@ -69,15 +69,7 @@ import { unavailableAreaOf } from './lib/shell/shellNav'
 import { needsYouCount, reachableArea } from './lib/shell/panelNav'
 import { SHIPPED_MODES, leverModes } from './lib/shell/builtDestinations'
 import { versionLabel, versionTitle } from './lib/appBuild'
-import type {
-  AppBuild,
-  Dwarf,
-  FeatureFlags,
-  Mine,
-  MineHistoryResult,
-  MinesSnapshot,
-  ShellArea
-} from './types'
+import type { AppBuild, Dwarf, FeatureFlags, Mine, MineHistoryResult, ShellArea } from './types'
 
 const props = defineProps<{
   /**
@@ -108,13 +100,7 @@ const stopWatchingReducedMotion = watchReducedMotion((asked) => {
 })
 onBeforeUnmount(stopWatchingReducedMotion)
 
-const {
-  state,
-  setMines,
-  start: followHostBoard,
-  stop: stopFollowingHostBoard,
-  hostDwarfs
-} = useMines()
+const { state, start: followHostBoard, stop: stopFollowingHostBoard, hostDwarfs } = useMines()
 /** The painting the Map page wears, by the time of day (#136). */
 const mapVariant = useMapTime()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
@@ -583,14 +569,12 @@ function selectArea(area: ShellArea): void {
   playSfx('click')
   if (viewState.area === 'settings' && area !== 'settings') stopShortcutRecording()
   showArea(area)
-  error.value = null
   if (area === 'mines') void loadProjects()
 }
 
 /** The browse and the board share one id scheme, so a card opens its mine directly. */
 function openFromBrowse(projectId: string): void {
   openMine(projectId)
-  error.value = null
 }
 
 /**
@@ -715,8 +699,6 @@ const mineColumnWidth =
 const shellHeight = `calc(100vh - ${SHELL_CONTENT_INSET}px)`
 
 const loading = ref(true)
-const error = ref<string | null>(null)
-let unsubscribe: (() => void) | undefined
 let unlistenAudio: (() => void) | undefined
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 let unlistenTypography: (() => void) | undefined
@@ -820,37 +802,31 @@ function raisePanel(): void {
   window.api.raisePanel()
 }
 
-function update(snapshot: MinesSnapshot): void {
-  setMines(snapshot)
-  if (viewState.area === 'mines' && browseRefresh.due(snapshot.mines, projects.value)) {
+/*
+ * The board as the Host read model last published it (ISSUE-092, ISSUE-123). AMENDED for ISSUE-242, cut 5 (was:
+ * `update`, run on A-12 `getMines` at mount and on every A-P2 `onMinesUpdated` push, which `setMines` fed into the read
+ * model): A-12 and A-P2 are deleted with `BoardFacadeAdapter`, so the shell hears the board from `useMines` itself —
+ * each Host publish, and the first read once it has answered, whatever it answered (a Host that has not answered shows
+ * the empty board the facade showed then, and claims no load error). A launch in flight watches the same board for its
+ * own dwarf (useMessageDock).
+ */
+function boardChanged(): void {
+  if (viewState.area === 'mines' && browseRefresh.due(state.mines, projects.value)) {
     void refreshProjects()
   }
   loading.value = false
   boardRead = true
   pruneOpenMine()
-  // A launch in flight is watching for its own dwarf, which arrives on an
-  // ordinary poll like every other session's — this is that poll — and the
-  // open chat adopts the feed main pushed with it (#196).
-  dock.observeSnapshot(snapshot)
   if (import.meta.env.DEV) {
     console.log(
       '[renderer] mines:',
-      snapshot.mines
+      state.mines
         .map((mine) => `${mine.name} (${mine.tier}, ${mine.dwarfs.length} dwarfs)`)
         .join('; ') || 'none'
     )
   }
 }
-
-async function load(): Promise<void> {
-  try {
-    update(await window.api.getMines())
-  } catch {
-    error.value =
-      'DwarfAI-Miners could not load active mines. It will keep trying as activity changes.'
-    loading.value = false
-  }
-}
+watch(() => state.mines, boardChanged)
 
 async function loadBuild(): Promise<void> {
   try {
@@ -863,12 +839,10 @@ async function loadBuild(): Promise<void> {
 
 function enterMine(mineId: string): void {
   openMine(mineId)
-  error.value = null
 }
 
 function leaveMine(): void {
   closeMine()
-  error.value = null
 }
 
 /** Clicking the selected dwarf again closes its panel, as a toggle should. */
@@ -1169,7 +1143,6 @@ watch(
  * whatever opened the mine.
  */
 function showMineFromNotification(mineId: string): void {
-  error.value = null
   if (dock.surface.value.surface !== 'none') closeMessagePanel()
   historyOpen.value = false
   openMine(mineId)
@@ -1197,7 +1170,6 @@ onMounted(() => {
   // The footprint the first opening unfolds from: whatever rectangle main
   // created the window at, which is the Panel with nothing beside its page.
   settleShellFold(false)
-  void load()
   // The map draws every remembered project, not only the live board (#197),
   // and the map is the DEFAULT area — a read gated on visiting Mines first
   // left the common case (open the panel, look at the map) stuck on the
@@ -1228,11 +1200,13 @@ onMounted(() => {
     })
   })
   // The board from the Host (ISSUE-092, ISSUE-123): its snapshot and frames, so a dwarf walks in and out as the Host
-  // says; A-12/A-P2 keep coming through `BoardFacadeAdapter` and bring today's open asks onto it until cut 2.
-  void followHostBoard()
+  // says. AMENDED for ISSUE-242 (was: beside A-12/A-P2, which `BoardFacadeAdapter` served until cut 5): the board's
+  // one source. Its first read ends the loading state once answered, even unanswered (`boardChanged`).
+  void followHostBoard().then(() => {
+    if (!unmounted && !boardRead) boardChanged()
+  })
   // Hears the window being shown or hidden, and gives the engine its tick.
   unlistenAudio = listenAudio()
-  unsubscribe = window.api.onMinesUpdated(update)
   /* --- System notifications (#316) — one block, appended ------------------- */
   // Adopts the stored switch, and listens for a click on a notification main
   // raised. Subscribed rather than pulled, like the message panel above: a
@@ -1285,7 +1259,6 @@ onMounted(() => {
   /* --- end of the ISSUE-330 block --------------------------------------------- */
 })
 onBeforeUnmount(() => {
-  unsubscribe?.()
   unlistenAudio?.()
   unmounted = true
   stopAttentionCues?.()
@@ -1670,7 +1643,6 @@ const recoveryNames = computed(() => {
             />
           </PanelTransition>
 
-          <p v-if="error" class="notice" role="alert">{{ error }}</p>
           <!--
             Toasts stand in the page column, centred 56px from its bottom, whatever raised them
             (PANEL-QUESTIONS 10, PO ruling 2026-09-27): never over the painting, the dwarfs or the
@@ -1972,19 +1944,5 @@ const recoveryNames = computed(() => {
 .shell-mine > .dm-minecol {
   flex: 1;
   min-height: 0;
-}
-.notice {
-  position: absolute;
-  z-index: 90;
-  right: var(--space-modal-margin);
-  bottom: var(--space-modal-margin);
-  left: var(--space-modal-margin);
-  flex: none;
-  margin: 0;
-  padding: 9px var(--space-settings);
-  border-left: 3px solid var(--danger-line);
-  border-radius: var(--radius-default);
-  color: var(--danger-hi);
-  background: var(--danger-bg);
 }
 </style>

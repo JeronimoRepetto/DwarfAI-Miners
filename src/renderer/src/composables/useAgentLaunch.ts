@@ -32,7 +32,6 @@ import {
   jevSuggestAsked,
   jevSuggestParams,
   JEV_NO_CHOICE_REFUSAL,
-  launchFailed,
   launchParamsOf,
   customLaunchParamsOf,
   launchPhase,
@@ -65,13 +64,7 @@ import {
 import { launchRefusal, providerChips, type ProviderChip } from '../lib/launch/providerChips'
 import { DEFAULT_JEV_SETTINGS } from '../types'
 import { useHostConnection } from './useHostConnection'
-import type {
-  AgentModelCatalog,
-  AgentProviderOption,
-  JevSettings,
-  LaunchFailedPush,
-  Mine
-} from '../types'
+import type { AgentModelCatalog, AgentProviderOption, JevSettings, Mine } from '../types'
 
 /*
  * THE LAUNCHES FROM THE HOST (ISSUE-179 read side, ISSUE-001 part C; ADR-020 D1; ADR-033 item 3; 14 §4.1, §4.3).
@@ -85,9 +78,9 @@ import type {
  * - A snapshot replaces every launch whole; a launch missing from it is simply gone (14 §4.3 rules 2, 7).
  *
  * From the step-3a switch (ISSUE-001) A-35 goes out with `LaunchParams` for every provider, and the launch it answered
- * settles from here (`hostLaunchFollowed`, after each settled batch); the dock starts this model on mount. Today's A-P3
- * push (`listenFailures`) still settles a launch of a provider not yet moved, served by `PerProviderShapeAdapter`
- * under the `LaunchId` it minted (21 §3.1; legacySettlementJoin.ts).
+ * settles from here (`hostLaunchFollowed`, after each settled batch); the dock starts this model on mount. AMENDED for
+ * ISSUE-239, the 4b deletion (was: today's A-P3 push, `listenFailures`, still settled a launch of a provider not yet
+ * moved, served by `PerProviderShapeAdapter`): A-P3 left with its push, and every launch settles from the Host.
  */
 
 /** The Host's launches as this composable reads them. Every read is reactive. */
@@ -303,13 +296,6 @@ export interface AgentLaunch {
   /** The notice's Pick manually (#635): Let Jev choose off, so the pickers choose. */
   pickManually: () => void
   observe: (mines: readonly Mine[]) => void
-  /**
-   * Subscribe to main's launch-failure push (#263). Returns the unsubscribe,
-   * exactly like every other `window.api.on*` member — the caller
-   * (useMessageDock, which the shell holds for its lifetime) holds it and
-   * calls it on unmount.
-   */
-  listenFailures: () => () => void
   /**
    * The notice over the composer while the chosen provider's permission requests cannot be answered from the app
    * (ADR-011 item 7; 07 5A S5.02): its entry is `answerChannel: 'gated-off'` until its integration is on. `offered`
@@ -660,20 +646,6 @@ export function useAgentLaunch(): AgentLaunch {
     state.value = adoptLaunchedDwarf(state.value, dwarf.id)
   }
 
-  /**
-   * Main's launch-failure push (#263), subscribed like every other
-   * `window.api.on*` member, returning the unsubscribe. Applies
-   * `launchFailed` unconditionally — its own launchId/launchedDwarfId guard
-   * is what keeps a push for a closed, retried or already-adopted launch
-   * from touching this panel, so nothing here has to re-check what state
-   * the push arrived on.
-   */
-  function listenFailures(): () => void {
-    return window.api.onLaunchFailed((push: LaunchFailedPush) => {
-      state.value = launchFailed(state.value, push)
-    })
-  }
-
   return {
     state,
     hostLaunches,
@@ -704,7 +676,6 @@ export function useAgentLaunch(): AgentLaunch {
     retry,
     pickManually,
     observe,
-    listenFailures,
     integrationNotice,
     offeredModes: computed(() => [...(chosenEntry.value?.offeredModes ?? [])]),
     pausedForNotice: computed(() => pausedForNotice.value),

@@ -11,7 +11,7 @@ import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRo
 import { rollbackOf } from './rollbackTable'
 // AMENDED for ISSUE-002 (was: the release table `ROUTES` as the 3a table): from the step-3b switch the 3a table as it
 // shipped is `testing/cut3aRoutes.ts`.
-import { LEGACY_BRIDGE_ADAPTERS } from './routes'
+import { ADAPTERS_AS_SHIPPED } from './testing/adaptersAsShipped'
 import { CUT_3A_RELEASE, CUT_3A_ROUTES } from './testing/cut3aRoutes'
 import { CUT_3B_RELEASE, CUT_3B_ROUTES } from './testing/cut3bRoutes'
 import { CUT_3D_RELEASE, CUT_3D_ROUTES } from './testing/cut3dRoutes'
@@ -190,7 +190,7 @@ describe('rollbackOf', () => {
       routes: CUT_3A_ROUTES,
       unrouted: UNROUTED,
       retired: CUT_4A_RETIRED,
-      adapters: LEGACY_BRIDGE_ADAPTERS
+      adapters: ADAPTERS_AS_SHIPPED
     }
     expect(cut3a.release).toBe('cut-3a')
     expect(checkRouteTable(cut3a, KEYS)).toEqual([])
@@ -274,7 +274,7 @@ describe('rollbackOf', () => {
       routes: CUT_3B_ROUTES,
       unrouted: UNROUTED,
       retired: CUT_4A_RETIRED,
-      adapters: LEGACY_BRIDGE_ADAPTERS
+      adapters: ADAPTERS_AS_SHIPPED
     }
     expect(cut3b.release).toBe('cut-3b')
     const rolledBack = rollbackOf(cut3b, 'cut-3b')
@@ -308,7 +308,7 @@ describe('rollbackOf', () => {
       routes: CUT_3D_ROUTES,
       unrouted: UNROUTED,
       retired: CUT_4A_RETIRED,
-      adapters: LEGACY_BRIDGE_ADAPTERS
+      adapters: ADAPTERS_AS_SHIPPED
     }
     expect(cut3d.release).toBe('cut-3d')
     const rolledBack = rollbackOf(cut3d, 'cut-3d')
@@ -354,7 +354,7 @@ describe('rollbackOf', () => {
         routes: cut3eRoutesForBuild({ publicBuild }),
         unrouted: UNROUTED,
         retired: CUT_4A_RETIRED,
-        adapters: LEGACY_BRIDGE_ADAPTERS
+        adapters: ADAPTERS_AS_SHIPPED
       }
       const rolledBack = rollbackOf(cut3e, 'cut-3e')
       expect(rolledBack.routes.some((r) => r.since === 'cut-3e')).toBe(false)

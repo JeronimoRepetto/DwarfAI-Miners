@@ -43,9 +43,10 @@ describe('Dispatcher role scopes (ADR-003 item 12)', () => {
       }
     }
 
-    // 40 methods (B-M02…B-M41); the notifier never mutates and the viewer only reads its dwarf.
-    expect(Object.keys(METHOD_ROLES)).toHaveLength(40)
-    expect(reached.ui).toHaveLength(39)
+    // 39 methods (B-M02…B-M40; B-M41 ended with the bridge at the end of cut 4, ISSUE-241); the notifier never
+    // mutates and the viewer only reads its dwarf.
+    expect(Object.keys(METHOD_ROLES)).toHaveLength(39)
+    expect(reached.ui).toHaveLength(38)
     expect(reached.ui).not.toContain('attention.clicked')
     expect(reached.notifier.sort()).toEqual(['attention.clicked', 'ping', 'session.snapshot'])
     expect(reached.viewer.sort()).toEqual(['conversation.feed', 'events.subscribe', 'ping'])

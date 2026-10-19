@@ -88,12 +88,12 @@ describe('legacy importers (05 §5.1 R16)', () => {
       'src/renderer/src/components/a/B.vue -> src/shared/dwarfName'
     ])
     const e2e = [
-      "import { a } from '../../src/main/platform/processProbe.ts'",
+      "import { a } from '../../src/main/sample/area.ts'",
       "const b = await import('../../src/contracts/index.ts')",
       "export { c } from '../_harness/launchApp.ts'"
     ].join('\n')
     expect(legacyImportsOf('e2e/cut-0/x.ts', e2e)).toEqual([
-      'e2e/cut-0/x.ts -> src/main/platform/processProbe.ts'
+      'e2e/cut-0/x.ts -> src/main/sample/area.ts'
     ])
     // A folder merely named `shared` elsewhere is not the legacy tree.
     expect(

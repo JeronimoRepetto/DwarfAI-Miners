@@ -75,7 +75,8 @@ describe('fake window.api (ADR-033 item 7; 17 §1.6)', () => {
 
     // An override answers; a member left unfaked never answers silently.
     await expect(fake.getAlwaysOnTop()).resolves.toBe(true)
-    await expect(fake.getMines()).rejects.toThrow(/getMines/)
+    // AMENDED for ISSUE-242 (was: A-12 `getMines`, which left the facade with `BoardFacadeAdapter`).
+    await expect(fake.getPanelVisible()).rejects.toThrow(/getPanelVisible/)
     const helper = KEYS.find((key) => helpers.includes(key))
     expect(helper && memberOf(helper)).toBe('pathForDroppedFile')
 
