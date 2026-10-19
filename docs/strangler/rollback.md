@@ -235,6 +235,13 @@ through A-N01/A-N02 (`useMines`), so no build can hand the Panel today's `MinesS
 A-12 and A-P2 through the facade are kept only as they shipped, for the router tests (`testing/cut4aRoutes.ts`,
 `testing/adaptersAsShipped.ts`). Cut 1 already rolled forward only since its retirement (ISSUE-124).
 
+**Deletion of today's runtime (ISSUE-243): no rollback past this point.** From the ISSUE-243 commits `runtime.ts`,
+`src/main/index.ts` and `LegacyRuntimeRoute` are gone, and the router of UI main binds no `legacy` target: a table with
+a `legacy` row, a window family served `legacy` included, cannot start. 14 §8 I-21's `dwarf:setName` and
+`dwarf:resetName` left with them (`RETIRED`, `MEMBER_REMOVED` at cut-4b). No rollback build of any step can be made from
+this tree; the earlier tables are kept only as they shipped, for the router tests (`testing/adaptersAsShipped.ts` lists
+`LegacyRuntimeRoute` for cuts 0–4b, `testing/cut4aRoutes.ts` the two I-21 rows).
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").

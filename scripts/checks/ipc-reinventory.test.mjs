@@ -227,7 +227,11 @@ describe('registry re-inventory (14 §6.5, P-3)', () => {
       }
       // ISSUE-239: a RETIRE row whose handler and preload member left with its deletion issue keeps only its
       // `IPC_CHANNELS` constant (no kind), so only its wire is compared with 14.
-      const memberGone = row.kind === null && entry.status === 'RETIRE'
+      // ISSUE-243: so does the today wire of a row 14 renames (A-44's `panel:openMine`), whose handler left with today's
+      // runtime (`src/main/index.ts`) while the renamed wire carries the row.
+      const todayWireOfRenamed =
+        RENAMED_14[row.id] !== undefined && row.wire !== RENAMED_14[row.id].wire
+      const memberGone = row.kind === null && (entry.status === 'RETIRE' || todayWireOfRenamed)
       const said = memberGone ? `${row.wire}` : `${row.wire} ${row.member} ${row.kind}`
       const listed = memberGone ? `${entry.wire}` : `${entry.wire} ${entry.member} ${entry.kind}`
       if (said !== listed)
