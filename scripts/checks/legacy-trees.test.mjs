@@ -206,4 +206,12 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
   it('[ADR-001] src/main/config, the importer src/main/tier stranded, holds no file and no source outside it imports it', () => {
     expectAreaGone(['src/main/config'])
   })
+
+  it('[ADR-001] src/main/platform, src/main/adapters hold no file and no source outside them imports them', () => {
+    expectAreaGone(['src/main/platform', 'src/main/adapters'])
+  })
+
+  it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/platform, src/main/adapters', () => {
+    expectNoInvariantIn(['src/main/platform', 'src/main/adapters'])
+  })
 })
