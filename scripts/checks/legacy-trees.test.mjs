@@ -146,4 +146,31 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
   it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/projects, src/main/history', () => {
     expectNoInvariantIn(['src/main/projects', 'src/main/history'])
   })
+
+  // ISSUE-332 is partial: src/main/sessionLaunch (the D1 import cycle) still imports these three modules, so they
+  // leave with that group; this list only shrinks.
+  it('[ADR-001] src/main/mcp holds only the modules src/main/sessionLaunch still imports, and their tests', () => {
+    expect(filesUnder('src/main/mcp').sort()).toEqual([
+      'src/main/mcp/delegationInjection.ts',
+      'src/main/mcp/delegationLink.test.ts',
+      'src/main/mcp/delegationLink.ts',
+      'src/main/mcp/delegationProtocol.test.ts',
+      'src/main/mcp/delegationProtocol.ts'
+    ])
+    const outside = areaState('src/main/mcp').importers.filter(
+      (line) => !line.startsWith('src/main/sessionLaunch/')
+    )
+    expect(outside).toEqual([])
+  })
+
+  it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/mcp', () => {
+    expectNoInvariantIn(['src/main/mcp'])
+  })
+
+  it('[ADR-001] the standalone jevMcpServer build is gone: no config, no package script, no unpacked output', () => {
+    expect(existsSync(path.join(repoRoot, 'electron.vite.jevMcpServer.config.ts'))).toBe(false)
+    const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+    expect(JSON.stringify(pkg.scripts)).not.toMatch(/jevMcpServer|build:mcp-server/)
+    expect(pkg.build.asarUnpack).not.toContain('out/main/jevMcpServer.mjs')
+  })
 })
