@@ -1,0 +1,17 @@
+{
+  "$comment": "drifted-record.jsonl and its -crlf variant: a renamed field (stepIndex) and an unknown step type (CHECKPOINT_SUMMARY) are skipped, each one warning (drift, FM-068, INV-38) with nothing of the record in it, and the steps after them are still read.",
+  "warnings": 2,
+  "session": {
+    "providerSessionId": "11111111-1111-4111-8111-111111111111",
+    "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+    "at": 1788548473000
+  },
+  "entries": [
+    { "role": "person", "text": "Is the build green?", "providerTime": 1788548473000 },
+    { "role": "dwarf", "text": "Yes, all checks passed.", "providerTime": 1788548476000 }
+  ],
+  "activity": ["turn-started"],
+  "closes": 0,
+  "turnEnds": 0,
+  "usage": []
+}

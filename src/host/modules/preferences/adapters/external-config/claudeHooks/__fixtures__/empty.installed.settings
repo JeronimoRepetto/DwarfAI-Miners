@@ -1,0 +1,88 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 2 --noproxy 127.0.0.1 -X POST -H Content-Type:application/json -d@- -H x-dwarfai-token:f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d http://127.0.0.1:45123/hooks/claude/event",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 2 --noproxy 127.0.0.1 -X POST -H Content-Type:application/json -d@- -H x-dwarfai-token:f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d http://127.0.0.1:45123/hooks/claude/event",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 2 --noproxy 127.0.0.1 -X POST -H Content-Type:application/json -d@- -H x-dwarfai-token:f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d http://127.0.0.1:45123/hooks/claude/event",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 2 --noproxy 127.0.0.1 -X POST -H Content-Type:application/json -d@- -H x-dwarfai-token:f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d http://127.0.0.1:45123/hooks/claude/event",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 2 --noproxy 127.0.0.1 -X POST -H Content-Type:application/json -d@- -H x-dwarfai-token:f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d http://127.0.0.1:45123/hooks/claude/event",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 2 --noproxy 127.0.0.1 -X POST -H Content-Type:application/json -d@- -H x-dwarfai-token:f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d http://127.0.0.1:45123/hooks/claude/event",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 2 --noproxy 127.0.0.1 -X POST -H Content-Type:application/json -d@- -H x-dwarfai-token:f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d http://127.0.0.1:45123/hooks/claude/event",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

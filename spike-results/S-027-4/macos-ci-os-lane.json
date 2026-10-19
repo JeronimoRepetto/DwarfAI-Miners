@@ -1,0 +1,45 @@
+{
+  "spike": "S-027-4",
+  "platform": "darwin",
+  "osRelease": "25.6.0",
+  "elevation": {
+    "elevated": false,
+    "evidence": "uid not 0"
+  },
+  "entry": {
+    "kind": "macos-launch-agent",
+    "location": "<home>/Library/LaunchAgents/com.dwarfai.spike.s0274.<suffix>.plist"
+  },
+  "writeMs": 17,
+  "readBack": {
+    "present": true,
+    "command": {
+      "executable": "<repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+      "args": ["<tmp>/dwarfai-s0274-W1rJTm/app", "--background"]
+    },
+    "disabledByPerson": false,
+    "raw": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>com.dwarfai.spike.s0274.<suffix></string>\n\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string><repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron</string>\n\t\t<string><tmp>/dwarfai-s0274-W1rJTm/app</string>\n\t\t<string>--background</string>\n\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<false/>\n</dict>\n</plist>\n"
+  },
+  "started": {
+    "code": 0,
+    "events": [
+      {
+        "event": "started",
+        "electron": "44.0.0",
+        "startedAt": "2026-10-02T22:46:55.191Z",
+        "uptimeSeconds": 858,
+        "background": true,
+        "windows": 0,
+        "tray": {
+          "ok": true
+        }
+      }
+    ]
+  },
+  "afterRemove": {
+    "present": false,
+    "command": null,
+    "disabledByPerson": null,
+    "raw": null
+  }
+}

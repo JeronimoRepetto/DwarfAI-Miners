@@ -5,6 +5,7 @@ import MinesList from './MinesList.vue'
 import type { MineCardView } from '../../lib/browse/mineCard'
 import { MINE_CARD_ENTER, MINE_CARD_EXIT } from '../../lib/browse/cardMotion'
 import type { MotionAnimate } from '../../lib/shell/boundedMotion'
+import { motionBoundMs } from '../../lib/shell/motionTiming'
 
 /*
  * The redesigned Mines page (#635), organisms/mines-list. It replaces MinesPanel (#92, #85, #165,
@@ -230,10 +231,12 @@ describe('MinesList', () => {
     })
     await flushPromises()
     const dialog = document.body.querySelector('.dm-scrim [role="dialog"]')!
-    expect(dialog.getAttribute('aria-label')).toBe('This folder is a worktree')
+    // The story's words (US-MINES-004.AC07); the title and action these replaced were
+    // "This folder is a worktree" and "Open the main project".
+    expect(dialog.getAttribute('aria-label')).toBe('alpha-wt is a worktree of alpha')
     const [cancel, open] = [...dialog.querySelectorAll<HTMLElement>('.dm-dialog__actions button')]
     expect(cancel!.textContent).toBe('Cancel')
-    expect(open!.textContent).toBe('Open the main project')
+    expect(open!.textContent).toBe('Add alpha')
     open!.click()
     cancel!.click()
     expect(list.emitted('open-main-project')).toHaveLength(1)
@@ -260,7 +263,7 @@ describe('MinesList', () => {
     expect(list.get('[role="status"]').text()).toBe('Reading your projects...')
   })
 
-  it('holds Open the main project while main is adopting, so it cannot fire twice', async () => {
+  it('holds the worktree dialog s Add while main is adopting, so it cannot fire twice', async () => {
     const list = mount(MinesList, {
       props: {
         ...base,
@@ -335,6 +338,13 @@ describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
   beforeEach(() => {
     runs.length = 0
     scrolled.length = 0
+    /*
+     * The bounded runner's watchdog (#266) is a timer of its own; on real timers it ended a run
+     * whenever the host stalled past its bound, racing the engine every case here drives by hand
+     * (found failing in CI). Faked, it fires only when a case advances it. `flushPromises` turns on
+     * `setImmediate`, which stays real.
+     */
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     Object.defineProperty(HTMLElement.prototype, 'animate', {
       configurable: true,
       value: () => undefined
@@ -347,6 +357,7 @@ describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
     })
   })
   afterEach(() => {
+    vi.useRealTimers()
     Reflect.deleteProperty(HTMLElement.prototype, 'animate')
     Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
   })
@@ -563,6 +574,330 @@ describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
     await flushPromises()
     expect(runs).toHaveLength(1)
     expect(inline(runs[0]!.element).transition).toBe('none')
+    list.unmount()
+  })
+
+  /*
+   * APPENDED (fix/mineslist-motion-flake): "slides a removed mine's card out…" failed in CI on
+   * Linux and Windows with the card already gone before the engine finished. The bounded runner
+   * also ends a run on its watchdog, a timer one margin past the motion's length (#266); on real
+   * timers, a host busy for longer than that between the slide starting and the test looking ended
+   * the slide before the engine did. The watchdog is the runner's, and this describe holds its clock.
+   */
+  it('holds the leaving card while the host stalls past the watchdog, until its motion ends', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.get('[data-mine="beta"] .dm-card__menu').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="menuitem"]')!.click()
+    await flushPromises()
+    document.body.querySelectorAll<HTMLElement>('.dm-dialog__actions button')[1]!.click()
+    await list.setProps({ cards: [valley[1]!] })
+    expect(runs).toHaveLength(1)
+    // A loaded CI worker, in wall-clock time: the event loop turns until the bound has passed.
+    const stalledUntil =
+      Date.now() + motionBoundMs(MINE_CARD_EXIT.keyframes, MINE_CARD_EXIT.transition) + 20
+    while (Date.now() < stalledUntil) await new Promise<void>((turn) => setImmediate(turn))
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(true)
+    runs[0]!.finish()
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(false)
+    list.unmount()
+  })
+
+  // APPENDED with the case above: the watchdog the cases hold still bounds the slide (#266).
+  it('removes the leaving card at the watchdog when its motion never reports ending (#266)', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.get('[data-mine="beta"] .dm-card__menu').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="menuitem"]')!.click()
+    await flushPromises()
+    document.body.querySelectorAll<HTMLElement>('.dm-dialog__actions button')[1]!.click()
+    await list.setProps({ cards: [valley[1]!] })
+    expect(runs).toHaveLength(1)
+    const bound = motionBoundMs(MINE_CARD_EXIT.keyframes, MINE_CARD_EXIT.transition)
+    vi.advanceTimersByTime(bound - 1)
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(true)
+    vi.advanceTimersByTime(1)
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(false)
+    list.unmount()
+  })
+})
+
+/*
+ * ISSUE-253: the Mines page against its acceptance criteria. The cards stand for the Host's read
+ * model (ADR-033 item 3): tier, score, measured and the needs-you count are given, never derived
+ * here. The parent owns search, tier and sort; a test stands in for it by feeding each emitted
+ * value back as its prop.
+ */
+describe('MinesList acceptance (ISSUE-253)', () => {
+  const countOf = (list: ReturnType<typeof mount>) => list.get('.dm-mines__count').text()
+  const dialogEl = () => document.body.querySelector<HTMLElement>('.dm-scrim [role="dialog"]')!
+  const dialogButtons = () => [
+    ...document.body.querySelectorAll<HTMLElement>('.dm-scrim .dm-dialog__actions button')
+  ]
+  const escape = () =>
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+
+  it('[US-MINES-001.AC06, US-MINES-001.AC07, US-MINES-001.AC02, NFR-A11Y-02] the search field shows × only with text and its placeholder when empty, and × or Esc clears the query', async () => {
+    const list = mount(MinesList, { props: base, attachTo: document.body })
+    const input = list.get<HTMLInputElement>('input[type="search"]')
+    const clear = list.get('button[aria-label="Clear search"]')
+    expect(input.attributes('placeholder')).toBe('Search by name')
+    expect(clear.attributes('hidden')).toBeDefined()
+
+    await input.setValue('al')
+    await list.setProps({ search: 'al' })
+    expect(input.element.value).toBe('al')
+    expect(clear.attributes('hidden')).toBeUndefined()
+    expect(names(list)).toEqual(['alpha'])
+
+    await clear.trigger('click')
+    expect(list.emitted('search')!.at(-1)).toEqual([''])
+    await list.setProps({ search: '' })
+    expect(names(list)).toEqual(['alpha', 'beta'])
+    expect(clear.attributes('hidden')).toBeDefined()
+
+    await input.setValue('be')
+    await list.setProps({ search: 'be', tier: 'copper' })
+    await input.trigger('keydown', { key: 'Escape' })
+    expect(list.emitted('search')!.at(-1)).toEqual([''])
+    // The query clears; the tier filter stays, so the tier-filtered list returns.
+    await list.setProps({ search: '' })
+    expect(names(list)).toEqual(['beta'])
+    expect(list.emitted('tier')).toBeUndefined()
+    list.unmount()
+  })
+
+  it('[US-MINES-001.AC08, US-MINES-005.AC05] the footer reads shown of total mines in every state, including 0 of 0', async () => {
+    const list = mount(MinesList, { props: base })
+    expect(countOf(list)).toBe('2 of 2 mines')
+    await list.setProps({ search: 'alp' })
+    expect(countOf(list)).toBe('1 of 2 mines')
+    await list.setProps({ search: 'zz' })
+    expect(list.find('.dm-empty').exists()).toBe(true)
+    expect(countOf(list)).toBe('0 of 2 mines')
+    await list.setProps({ search: '', tier: 'uranium' })
+    expect(countOf(list)).toBe('0 of 2 mines')
+    await list.setProps({ tier: null, cards: [] })
+    expect(countOf(list)).toBe('0 of 0 mines')
+  })
+
+  it('[US-MINES-002.AC04] the chips read All, Bronze, Copper, Silver, Gold, Uranium in a row named Filter by tier', () => {
+    const list = mount(MinesList, { props: base })
+    const row = list.get('[aria-label="Filter by tier"]')
+    expect(row.findAll('[role="radio"]').map((c) => c.text())).toEqual([
+      'All',
+      'Bronze',
+      'Copper',
+      'Silver',
+      'Gold',
+      'Uranium'
+    ])
+  })
+
+  it('[US-MINES-002.AC01, US-MINES-002.AC05] a second tier chip replaces the first, single-select', async () => {
+    // Attached: whether a card is shown after the filter changes is read from the live layout.
+    const list = mount(MinesList, { props: base, attachTo: document.body })
+    const chip = (label: string) => list.findAll('[role="radio"]').find((c) => c.text() === label)!
+    const checked = () =>
+      list
+        .findAll('[role="radio"]')
+        .filter((c) => c.attributes('aria-checked') === 'true')
+        .map((c) => c.text())
+    await chip('Gold').trigger('click')
+    expect(list.emitted('tier')!.at(-1)).toEqual(['gold'])
+    await list.setProps({ tier: 'gold' })
+    expect(checked()).toEqual(['Gold'])
+    expect(names(list)).toEqual(['alpha'])
+    await chip('Copper').trigger('click')
+    expect(list.emitted('tier')!.at(-1)).toEqual(['copper'])
+    await list.setProps({ tier: 'copper' })
+    expect(checked()).toEqual(['Copper'])
+    expect(names(list)).toEqual(['beta'])
+    list.unmount()
+  })
+
+  it('[US-MINES-001.AC03, US-MINES-005.AC01, US-MINES-005.AC06, US-MINES-005.AC04] a search with no match shows No mine found with its body and Clear search, which resets search and tier together', async () => {
+    const list = mount(MinesList, { props: { ...base, search: 'zz' } })
+    expect(names(list)).toEqual([])
+    expect(list.get('.dm-empty__title').text()).toBe('No mine found')
+    expect(list.get('.dm-empty__text').text()).toBe('Nothing matches “zz”.')
+    await list.setProps({ tier: 'gold' })
+    expect(list.get('.dm-empty__text').text()).toBe('Nothing matches “zz” in Gold.')
+    const clear = list.get('.dm-empty button')
+    expect(clear.text()).toBe('Clear search')
+    await clear.trigger('click')
+    expect(list.emitted('search')).toEqual([['']])
+    expect(list.emitted('tier')).toEqual([[null]])
+    // Clear search is there only while a search is: with the search gone, so is the button.
+    await list.setProps({ search: '', tier: 'uranium' })
+    expect(list.find('.dm-empty button').exists()).toBe(false)
+  })
+
+  it('[US-MINES-002.AC08, US-MINES-005.AC02] a tier filter with no mine shows No Tier mine yet. and no button', () => {
+    const list = mount(MinesList, { props: { ...base, tier: 'uranium' } })
+    expect(list.get('.dm-empty__title').text()).toBe('No mine found')
+    expect(list.get('.dm-empty__text').text()).toBe('No Uranium mine yet.')
+    expect(list.find('.dm-empty button').exists()).toBe(false)
+  })
+
+  it('[US-MINES-005.AC03] with no mine at all the page reads No mines yet. with Add a mine', async () => {
+    const list = mount(MinesList, { props: { ...base, cards: [] } })
+    expect(list.get('.dm-empty__text').text()).toBe('No mines yet.')
+    const add = list.get('.dm-empty button')
+    expect(add.text()).toBe('Add a mine')
+    expect(add.classes()).toContain('dm-btn--primary')
+    await add.trigger('click')
+    expect(list.emitted('add')).toHaveLength(1)
+  })
+
+  it('[US-MINES-003.AC07] the sort button s name reads Sort: and the current order', async () => {
+    const list = mount(MinesList, { props: base })
+    const title = () => list.get('.dm-phead button[title^="Sort: "]').attributes('title')
+    expect(title()).toBe('Sort: Tier, richest first')
+    await list.setProps({ sort: 'name' })
+    expect(title()).toBe('Sort: Name')
+    await list.setProps({ sort: 'needs' })
+    expect(title()).toBe('Sort: Needs you first')
+  })
+
+  it('[US-MINES-004.AC04] a successful add never opens the Add panel', async () => {
+    // The page asks for an add and nothing else; the App-level journey (folder picked, mine opened
+    // in the mine column, no AddPanel) is App.test.ts "opens the mine just added in the mine
+    // column once main publishes it".
+    const list = mount(MinesList, { props: { ...base, cards: [] }, attachTo: document.body })
+    await list.get('.dm-empty button').trigger('click')
+    await list.setProps({ adding: true })
+    await list.setProps({ adding: false, cards: valley, revealId: 'alpha' })
+    await flushPromises()
+    // The page's own requests: one add, and nothing that opens a panel or a mine.
+    expect(list.emitted('add')).toHaveLength(1)
+    for (const request of ['open', 'refuse', 'open-main-project', 'dismiss-worktree']) {
+      expect(list.emitted(request)).toBeUndefined()
+    }
+    expect(document.body.querySelector('.dm-scrim')).toBeNull()
+    list.unmount()
+  })
+
+  it('[US-MINES-004.AC07] the worktree dialog shows its title, body and the actions Cancel and Add mine', async () => {
+    const list = mount(MinesList, {
+      props: {
+        ...base,
+        worktreeQuestion: {
+          worktree: 'C:\\dev\\alpha-worktrees\\fix-ore',
+          root: 'C:\\dev\\alpha',
+          branch: 'fix/ore'
+        }
+      },
+      attachTo: document.body
+    })
+    await flushPromises()
+    expect(dialogEl().getAttribute('aria-label')).toBe('fix-ore is a worktree of alpha')
+    expect(dialogEl().querySelector('.dm-dialog__title')!.textContent).toBe(
+      'fix-ore is a worktree of alpha'
+    )
+    expect(dialogEl().querySelector('.dm-dialog__body')!.textContent).toBe(
+      'Its dwarfs will work in alpha.'
+    )
+    expect(dialogButtons().map((b) => b.textContent)).toEqual(['Cancel', 'Add alpha'])
+    list.unmount()
+  })
+
+  it('[US-MINES-006.AC01, US-MINES-006.AC08, US-MINES-006.AC02, BR-18, NFR-A11Y-03] the card menu offers only Remove mine…, whose danger dialog shows its title, body and actions, and Cancel leaves the mine untouched', async () => {
+    const list = mount(MinesList, { props: base, attachTo: document.body })
+    await list.get('[data-mine="alpha"] .dm-card__menu').trigger('click')
+    await flushPromises()
+    const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(items.map((i) => i.textContent)).toEqual(['Remove mine…'])
+    items[0]!.click()
+    await flushPromises()
+    // BR-18: nothing is removed by asking.
+    expect(list.emitted('remove')).toBeUndefined()
+    expect(dialogEl().classList).toContain('dm-dialog--danger')
+    expect(dialogEl().querySelector('.dm-dialog__title')!.textContent).toBe('Remove alpha?')
+    expect(dialogEl().querySelector('.dm-dialog__body p')!.textContent).toBe(
+      'The mine leaves the valley and its dwarfs are sent home. The project folder and its ore stay on disk.'
+    )
+    const [cancel, remove] = dialogButtons()
+    expect([cancel!.textContent, remove!.textContent]).toEqual(['Cancel', 'Remove mine'])
+    expect(remove!.classList).toContain('dm-btn--danger')
+    // NFR-A11Y-03: the dialog takes the focus on Cancel, the safe action.
+    expect(document.activeElement).toBe(cancel)
+    cancel!.click()
+    await flushPromises()
+    expect(document.body.querySelector('.dm-scrim')).toBeNull()
+    expect(list.emitted('remove')).toBeUndefined()
+    expect(names(list)).toEqual(['alpha', 'beta'])
+    list.unmount()
+  })
+
+  it('[US-MINES-007.AC01, US-MINES-007.AC03, US-MINES-007.AC04, BR-15] the footer icon named Tiers and ore opens the modal with the five tiers in order, and Esc or Close returns focus to it', async () => {
+    const list = mount(MinesList, { props: base, attachTo: document.body })
+    const icon = list.get<HTMLButtonElement>('.dm-mines__foot button[title="Tiers and ore"]')
+    expect(icon.attributes('aria-label') ?? icon.attributes('title')).toBe('Tiers and ore')
+
+    const open = async () => {
+      icon.element.focus()
+      await icon.trigger('click')
+      await flushPromises()
+    }
+    await open()
+    expect(dialogEl().getAttribute('aria-label')).toBe('Tiers and ore')
+    const rows = [...dialogEl().querySelectorAll('.dm-tinfo__row')]
+    expect(rows.map((r) => r.querySelector('.dm-tier')!.textContent)).toEqual([
+      'Bronze',
+      'Copper',
+      'Silver',
+      'Gold',
+      'Uranium'
+    ])
+    expect(
+      rows.every((r) => / KB( and up)?$/.test(r.querySelector('.dm-tinfo__range')!.textContent!))
+    ).toBe(true)
+    escape()
+    await flushPromises()
+    expect(document.body.querySelector('.dm-scrim')).toBeNull()
+    expect(document.activeElement).toBe(icon.element)
+
+    await open()
+    dialogButtons()
+      .find((b) => b.textContent === 'Close')!
+      .click()
+    await flushPromises()
+    expect(document.body.querySelector('.dm-scrim')).toBeNull()
+    expect(document.activeElement).toBe(icon.element)
+    list.unmount()
+  })
+})
+
+// C-08 (18 §5.1, NFR-SEC-07): the mine the worktree dialog's body names is a folder's name, drawn
+// stripped inside a bidi-isolated text node, as MineCard draws it (#1341).
+describe('MinesList worktree dialog, an untrusted mine name (C-08)', () => {
+  it('[NFR-SEC-07] draws the mine named in the worktree dialog s body stripped and inside a bidi-isolated text node', async () => {
+    const list = mount(MinesList, {
+      props: {
+        ...base,
+        worktreeQuestion: { worktree: 'C:\\dev\\fix', root: 'C:\\dev\\an\u202Evil\u001b[0m' }
+      },
+      attachTo: document.body
+    })
+    await flushPromises()
+    const body = document.body.querySelector('.dm-scrim .dm-dialog__body')!
+    const isolate = body.querySelector('bdi')
+    expect(isolate, 'no <bdi> around the mine name').not.toBeNull()
+    expect(isolate!.textContent).toBe('anvil')
+    expect(body.textContent).toBe('Its dwarfs will work in anvil.')
     list.unmount()
   })
 })

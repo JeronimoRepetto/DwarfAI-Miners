@@ -16,20 +16,21 @@
  * picker) is refused with its name, never answered with a guess: a recipe that reaches it is one
  * this fake does not model yet, and the page's error list says so.
  */
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
+import { DEFAULT_TOGGLE_ACCELERATOR } from '@dwarfai/contracts'
 import {
   DEFAULT_AUDIO_PREFERENCES,
   DEFAULT_JEV_SETTINGS,
   DEFAULT_LAUNCH_VIEW,
   DEFAULT_NOTIFICATIONS_ENABLED,
-  DEFAULT_OPENCODE_SETTINGS,
   DEFAULT_TYPOGRAPHY_PREFERENCES,
   MATERIALS,
   type MaterialTotals,
+  type MinesSnapshot,
   type PanelLayout,
   type ProjectQuery,
   type ProjectSummary
 } from '../types'
+import type { ProviderId, SupplierEntryView } from '@dwarfai/contracts'
 import type { GoldenSample } from './sample'
 
 type Api = Window['api']
@@ -53,6 +54,30 @@ function vault(sample: GoldenSample): MaterialTotals {
   ) as MaterialTotals
 }
 
+/*
+ * The sample's providers as A-36 answers them from the step-3a switch (ISSUE-001; 14 §3.6 `SupplierEntryView`): one entry
+ * per provider, its catalogue's models each carrying the catalogue's efforts, launchable as the sample says.
+ */
+function supplierEntries(sample: GoldenSample): SupplierEntryView[] {
+  return sample.providers.map((option) => {
+    const catalog = sample.catalogs.find((entry) => entry.provider === option.provider)
+    return {
+      providerId: option.provider as ProviderId,
+      label: option.provider,
+      models: (catalog?.models ?? []).map((model) => ({
+        value: model.value,
+        ...(model.label === undefined ? {} : { label: model.label }),
+        efforts: [...(model.effortLevels ?? catalog?.efforts ?? [])]
+      })),
+      permissionModes: [],
+      offeredModes: [],
+      installed: option.installed,
+      publicLaunch: option.launchable ? 'enabled' : 'gated',
+      answerChannel: 'available'
+    }
+  })
+}
+
 // The browse's one order (browseQuery.ts): last opened first, and the never opened after them.
 function browse(sample: GoldenSample, query: ProjectQuery): ProjectSummary[] {
   if (query.sortBy !== 'lastOpenedAt' || query.direction !== 'desc') {
@@ -70,6 +95,20 @@ function browse(sample: GoldenSample, query: ProjectQuery): ProjectSummary[] {
     .sort((a, b) => (b.lastOpenedAt ?? -Infinity) - (a.lastOpenedAt ?? -Infinity))
   const offset = query.offset ?? 0
   return found.slice(offset, query.limit === undefined ? undefined : offset + query.limit)
+}
+
+/**
+ * The board a full-screen golden draws: the sample's mines, and the vault as each material summed on its own.
+ * AMENDED for ISSUE-242, cut 5 (was: the answer of A-12 `getMines`, with A-P2 never pushing): A-12 and A-P2 left with
+ * `BoardFacadeAdapter` and the board is the Host read model's (`useMines`), which a golden does not follow, so the page
+ * writes this board into it before the shell mounts (page.ts).
+ */
+export function goldenBoard(sample: GoldenSample): MinesSnapshot {
+  return {
+    mines: sample.mines,
+    tokensObserved: sample.mines.reduce((sum, m) => sum + m.tokensObserved, 0),
+    materials: vault(sample)
+  }
 }
 
 export function goldenApi(sample: GoldenSample): Api {
@@ -99,44 +138,26 @@ export function goldenApi(sample: GoldenSample): Api {
     },
     getToggleShortcut: () => Promise.resolve({ ...shortcut }),
     setToggleShortcut: refuse('setToggleShortcut'),
-    getMines: () =>
-      Promise.resolve({
-        mines: sample.mines,
-        tokensObserved: sample.mines.reduce((sum, m) => sum + m.tokensObserved, 0),
-        materials: vault(sample)
-      }),
-    onMinesUpdated: unsubscribe,
     activateDwarf: refuse('activateDwarf'),
-    // The open dwarf's conversation (#635, the MessagePanel slice), as the sample carries it.
-    getDwarfFeed: (dwarfId) => {
-      const feed = sample.feeds[dwarfId]
-      return feed === undefined
-        ? Promise.reject(new Error('golden: the sample carries no dwarf ' + dwarfId))
-        : Promise.resolve(feed)
-    },
+    // AMENDED for ISSUE-249 (was: also A-14 `getDwarfFeed` answering the sample's feeds, A-16 `setWatchedDwarf`, A-17
+    // `refreshDwarfTelemetry` and A-18 `setDwarfTuning`): those RETIRE rows left the facade at cut 5 (`MEMBER_REMOVED`).
     getDwarfFeedPage: refuse('getDwarfFeedPage'),
-    setWatchedDwarf: none,
-    refreshDwarfTelemetry: none,
-    setDwarfTuning: refuse('setDwarfTuning'),
     // Dwarf names (#635): the golden stage renames nothing.
-    setDwarfName: refuse('setDwarfName'),
-    resetDwarfName: refuse('resetDwarfName'),
-    getMineHistory: (mineId) =>
-      Promise.resolve(sample.histories[mineId] ?? { readable: true, speakers: [] }),
+    // AMENDED for ISSUE-243 (was: also today's `setDwarfName` and `resetDwarfNameToday`, which left with today's runtime).
+    // A-19 reads the Host's message log from the cut-1 switch (ISSUE-123), keyed by Host ids the sample does not carry:
+    // a full-screen history state is one this fake does not model yet, and the page's error list says so.
+    getMineHistory: refuse('getMineHistory'),
     openMinePath: refuse('openMinePath'),
     openExternalLink: refuse('openExternalLink'),
     copyText: refuse('copyText'),
     sendDwarfText: refuse('sendDwarfText'),
-    onDwarfSendSettled: unsubscribe,
     pathForDroppedFile: () => '',
     chooseDwarfAttachments: refuse('chooseDwarfAttachments'),
     describeDwarfAttachments: refuse('describeDwarfAttachments'),
-    kickDwarf: refuse('kickDwarf'),
     launchAgent: refuse('launchAgent'),
-    onLaunchFailed: unsubscribe,
-    listAgentProviders: () => Promise.resolve({ providers: sample.providers }),
-    listAgentModels: () => Promise.resolve({ catalogs: sample.catalogs }),
-    retireDwarf: none,
+    // A-36 in its 14 shape from the step-3a switch (ISSUE-001).
+    listAgentProviders: () => Promise.resolve({ ok: true, value: supplierEntries(sample) }),
+    // AMENDED for ISSUE-249 (was: also A-37 `listAgentModels` answering the sample's catalogs): A-37 left at cut 5.
     getAppBuild: () => Promise.resolve({ version: sample.version ?? '', packaged: true }),
     getFeatureFlags: () => Promise.resolve({ guildAreasEnabled: sample.config.guildEnabled }),
     declareMine: refuse('declareMine'),
@@ -150,14 +171,13 @@ export function goldenApi(sample: GoldenSample): Api {
         return Promise.reject(error)
       }
     },
-    launchHeldSession: refuse('launchHeldSession'),
     answerDwarfQuestion: refuse('answerDwarfQuestion'),
     answerDwarfPermission: refuse('answerDwarfPermission'),
     launchHostedProcess: refuse('launchHostedProcess'),
     getNotificationsEnabled: () => Promise.resolve(DEFAULT_NOTIFICATIONS_ENABLED),
     setNotificationsEnabled: (enabled) => Promise.resolve(enabled),
-    setOpenMine: none,
-    onShowMine: unsubscribe,
+    // A-44 under its 14 name from the cut-1 switch (ISSUE-123): a golden reports no mine on screen to anyone.
+    reportVisibleMines: none,
     getTypographyPreferences: () => Promise.resolve({ ...DEFAULT_TYPOGRAPHY_PREFERENCES }),
     setTypographyPreferences: (preferences) => Promise.resolve(preferences),
     onTypographyPreferences: unsubscribe,
@@ -166,14 +186,84 @@ export function goldenApi(sample: GoldenSample): Api {
     clearJevApiKey: refuse('clearJevApiKey'),
     routeJevLaunch: refuse('routeJevLaunch'),
     setJevPreferences: (preferences) => Promise.resolve({ ...DEFAULT_JEV_SETTINGS, preferences }),
-    getOpenCodeSettings: () => Promise.resolve({ ...DEFAULT_OPENCODE_SETTINGS }),
-    setOpenCodePluginEnabled: (enabled) =>
-      Promise.resolve({ ...DEFAULT_OPENCODE_SETTINGS, pluginEnabled: enabled }),
+    // AMENDED for ISSUE-234 (was: today's `OpenCodeSettings` and boolean): from the step-4a switch A-52 answers the
+    // Host's `OpenCodeSettingsView` and A-53 takes `SetOpenCodePermissionsParams` (14 §2.1 CHANGE).
+    getOpenCodeSettings: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: {
+          permissions: 'off' as const,
+          passwordConfigured: false,
+          secretBackend: 'os-secret-store' as const
+        }
+      }),
+    setOpenCodePluginEnabled: (request) =>
+      Promise.resolve({
+        ok: true as const,
+        value: {
+          ok: true as const,
+          value: { state: request.on ? ('on-verified' as const) : ('off' as const) }
+        }
+      }),
     setOpenCodeServerPassword: refuse('setOpenCodeServerPassword'),
     clearOpenCodeServerPassword: refuse('clearOpenCodeServerPassword'),
     // The sample's remembered launch (#635, PANEL-QUESTIONS 25): a state with no steps opens where
     // the references open. A reported view is taken and changes nothing: a golden never relaunches.
     getLaunchView: () => Promise.resolve({ ...(sample.launch ?? DEFAULT_LAUNCH_VIEW) }),
-    setLaunchView: none
+    setLaunchView: none,
+    // A-N30: a golden renders a fixed sample, so a renderer diagnostic goes nowhere.
+    reportRendererDiagnostic: none,
+    // A-N25…A-N27: a golden has no tray, so no confirmation is ever asked for and nothing stops.
+    onStopEverythingRequested: unsubscribe,
+    confirmStopEverything: refuse('confirmStopEverything'),
+    cancelStopEverything: none,
+    // A-N34: a golden has no Host, so asking for Stop everything goes nowhere.
+    requestStopEverything: none,
+    // A-N03…A-N05, A-N33: a golden renders a fixed sample, never a Host connection, so these are not answered.
+    getHostConnection: refuse('getHostConnection'),
+    onHostConnection: unsubscribe,
+    retryHostConnection: refuse('retryHostConnection'),
+    confirmHostRestart: refuse('confirmHostRestart'),
+    // A-N17…A-N19: a golden renders a fixed sample in one window, so its session store is empty and nothing changes it.
+    getUiSession: () =>
+      Promise.resolve({
+        drafts: {},
+        chatViews: {},
+        askPicks: {},
+        openChat: {},
+        currentMine: {},
+        valle: {}
+      }),
+    patchUiSession: none,
+    onUiSessionChanged: unsubscribe,
+    // A-N20, A-N21: a golden stores no UI preference, so none is answered and none is written.
+    getUiPreferences: () => Promise.resolve({}),
+    setUiPreference: refuse('setUiPreference'),
+    // A-N12: a golden runs no Reset metrics, so no reset is ever pushed.
+    onUiPreferencesReset: unsubscribe,
+    // A-N01, A-N02: the board a golden draws is the sample's, not the Host's; no renderer reads the Host before the
+    // cut-1 switch (ISSUE-092, ISSUE-123), so a snapshot request is refused by name and no Host frame ever arrives.
+    getHostSnapshot: refuse('getHostSnapshot'),
+    onHostEvent: unsubscribe,
+    // A-N16: a golden draws a fixed sample and shows no OS notification, so no reveal is ever pushed.
+    onRevealDwarfChat: unsubscribe,
+    // A-N31: a golden draws a fixed sample and never writes another tool's configuration.
+    setClaudeHooksEnabled: refuse('setClaudeHooksEnabled'),
+    // A-N07: a golden draws a fixed sample and never moves an ask.
+    setAskStep: refuse('setAskStep'),
+    // A-N32: a golden draws a fixed sample, never answers the first-run step and never writes another tool's
+    // configuration.
+    answerWelcome: refuse('answerWelcome'),
+    // A-N29: a golden draws a fixed sample and never ends a session.
+    stopDwarf: refuse('stopDwarf'),
+    // A-N06: a golden draws a fixed sample and never re-sends a message.
+    retryDwarfMessage: refuse('retryDwarfMessage'),
+    // A-N08: a golden draws a fixed sample and never renames a dwarf.
+    renameDwarf: refuse('renameDwarf'),
+    // A-N09: a golden draws a fixed sample and never resets a dwarf's name.
+    resetDwarfName: refuse('resetDwarfName'),
+    // A-N10, A-N11: a golden draws a fixed sample and never acts on a recovery report.
+    retryRecovery: refuse('retryRecovery'),
+    dismissRecovery: refuse('dismissRecovery')
   }
 }

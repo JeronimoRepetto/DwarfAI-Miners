@@ -1,0 +1,23 @@
+{
+  "environment": {
+    "date": "2026-10-18T13:20:28.766Z",
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Windows",
+    "imageOs": "win25-vs2026",
+    "imageVersion": "20261007.264.1"
+  },
+  "results": [
+    {
+      "artifact": "DwarfAI-Miners-0.13.1-win-x64.zip",
+      "ok": false,
+      "error": "tar: Cannot connect to D: resolve failed\n"
+    },
+    {
+      "artifact": "DwarfAI-Miners-Setup-0.13.1-x64.exe",
+      "kind": "nsis",
+      "ok": true
+    }
+  ]
+}

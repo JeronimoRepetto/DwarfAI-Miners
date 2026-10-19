@@ -222,9 +222,9 @@ The checks CI runs, the testing philosophy and the rest of the contribution work
 
 ## Platform support
 
-Every operating-system-specific behavior sits behind a port selected in one place
-(`src/main/platform/platformAdapters.ts`), and each adapter's commands and file contents are
-unit-tested as pure builders. macOS and Linux have been run on real hardware, but with far less
+Every operating-system-specific behavior sits behind a port selected in the two composition
+roots (`src/host/main.ts` for the Host, `src/ui-main/index.ts` for the window), and each
+adapter's commands and file contents are unit-tested as pure builders. macOS and Linux have been run on real hardware, but with far less
 mileage than Windows, so the table keeps the distinction between verified and expected.
 
 <details>
@@ -268,19 +268,16 @@ Notes on the three honest gaps:
 - **Linux window focus** is unsupported on purpose. `wmctrl`/`xdotool` are X11-only, absent by
   default, and blocked outright under Wayland; guessing would mean hanging on a tool that is not
   there. Clicking a dwarf goes straight to the transcript viewer instead.
-- **macOS console input** is implemented and still gated off behind the
-  `DARWIN_CONSOLE_INPUT_ENABLED` constant in `src/main/platform/platformAdapters.ts` — set the
-  `DARWIN_CONSOLE_INPUT` environment variable (see
-  [Diagnostic switches](docs/guide.md#diagnostic-switches)) to test it. It is two mechanisms, and
-  they ask for different things. A **message** is written into the Terminal.app tab the session's
+- **macOS console input** is on, as the matrix above says, and lives in the Host's
+  observed-session relay (`src/host/modules/conversation/adapters/observed-send/`); the legacy
+  `DARWIN_CONSOLE_INPUT_ENABLED` gate left with the legacy tree in cut 5. It is two mechanisms,
+  and they ask for different things. A **message** is written into the Terminal.app tab the session's
   own tty names: no window is raised, no keystroke is synthesized, and macOS asks only for
   Automation permission to control Terminal. A **permission or question key** must not carry a
   Return, so it stays a System Events keystroke at the foreground and still needs Accessibility
   permission, which the app cannot detect. Only Terminal.app has been measured; a session in
   iTerm2, WezTerm, Alacritty, kitty, Ghostty, Hyper or Warp is refused by name rather than guessed
-  at. While the switch is off, a session with a registry name still takes the relay, and one
-  without gets a Send and a Kick rendered disabled with their reason rather than silently typing
-  nowhere. The measurements are in
+  at. The measurements are in
   [`docs/console-hosting.md`](docs/console-hosting.md); Linux has no console-write path yet.
 - **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`,
   `~/.local/share/opencode`) are assumed platforms. They are home-relative already and nothing in
@@ -331,6 +328,9 @@ switches are in the [configuration reference](docs/guide.md#configuration-refere
 row: `GUILD_AREAS_ENABLED` shows the nav's Guild group and the Lab, Market and Laboral Union pages
 while they are being built. The configuration reference has the accepted values.
 
+**A new mine is scored on its own** a few seconds after it appears: `MINE_MEASURE_DELAY_MS`
+(default `5000`, `0` scores it at once) sets how long it shows "not recorded yet" first.
+
 **The Jev API key is not one of those layers.** It is a secret you type into Settings, not an
 operator value, so it is never read from `.env` or written into `config-v1.json` — enter, replace
 or clear it from the Jev section of Settings only, on either setup. It is stored encrypted on this
@@ -346,8 +346,8 @@ default launch is the provider, model and effort a session falls back to when Je
 leaving any of the three unset keeps that part of a launch on the CLI's own default, exactly like
 an ordinary untuned launch. Neither is ever a guess this app makes for you — see
 [`docs/privacy.md`](docs/privacy.md#what-it-transmits) for what changed on the wire, and the
-[`jev-capabilities`](skills/jev-capabilities/SKILL.md) skill for how a model earns a place in the
-table the profile routes through.
+[`src/host/modules/jev/domain/capabilities/modelCapability.ts`](src/host/modules/jev/domain/capabilities/modelCapability.ts) header for
+how a model earns a place in the table the profile routes through.
 
 <p align="center"><img src="docs/readme/plates/reporting-a-problem.png" width="644" alt="Section plate: Reporting a problem"></p>
 

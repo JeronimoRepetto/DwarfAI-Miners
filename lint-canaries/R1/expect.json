@@ -1,0 +1,1 @@
+{ "rule": "R1-domain-no-builtins", "tool": "depcruise" }

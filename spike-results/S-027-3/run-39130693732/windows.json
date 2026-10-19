@@ -1,0 +1,41 @@
+{
+  "spike": "S-027-3",
+  "environment": {
+    "date": "2026-10-18T13:34:14.446Z",
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Windows",
+    "imageOs": "win25-vs2026",
+    "imageVersion": "20261007.264.1"
+  },
+  "base": "DwarfAI-Miners-Setup-0.13.1-x64.exe",
+  "next": "DwarfAI-Miners-Setup-0.13.2-x64.exe",
+  "cleared": [],
+  "install": {
+    "exitCode": 0,
+    "ms": 31433,
+    "blocked": false,
+    "processes": [
+      {
+        "executable": "D:\\a\\DwarfAI-Miners\\DwarfAI-Miners\\release\\DwarfAI-Miners-Setup-0.13.1-x64.exe",
+        "commandLine": "D:\\a\\DwarfAI-Miners\\DwarfAI-Miners\\release\\DwarfAI-Miners-Setup-0.13.1-x64.exe /S"
+      },
+      {
+        "executable": "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "commandLine": "\"C:\\Windows\\system32\\WindowsPowerShell\\v1.0\\powershell.exe\" -C \"if ((Get-CimInstance -ClassName Win32_Process | ? {$_.Path -and $_.Path.StartsWith('<home>\\AppData\\Local\\Programs\\dwarfai-miners', 'CurrentCultureIgnoreCase')}).Count -gt 0) { exit 0 } else { exit 1 }\""
+      }
+    ],
+    "revertIntegrationsRan": false,
+    "uninstallerCommandLines": [],
+    "entry": {
+      "DisplayName": "DwarfAI-Miners 0.13.1",
+      "DisplayVersion": "0.13.1",
+      "InstallLocation": null,
+      "UninstallString": "\"<home>\\AppData\\Local\\Programs\\dwarfai-miners\\Uninstall DwarfAI-Miners.exe\" /currentuser",
+      "QuietUninstallString": "\"<home>\\AppData\\Local\\Programs\\dwarfai-miners\\Uninstall DwarfAI-Miners.exe\" /currentuser /S"
+    },
+    "installDir": null
+  },
+  "clearedAfter": []
+}

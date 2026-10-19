@@ -1,0 +1,27 @@
+{
+  "$comment": "transcript.jsonl and its -crlf and -with-extra variants, read whole from a fresh cursor with history.jsonl naming the conversation's workspace and its presence lock held. Hand-written from 15 §5 (Antigravity row): person lines are USER_EXPLICIT/USER_INPUT content inside <USER_REQUEST>, dwarf lines are MODEL/PLANNER_RESPONSE content; a person line starts a turn, a step with tool calls and a GENERIC step are a record; SYSTEM_MESSAGE and ERROR_MESSAGE are the harness and yield nothing. No turn end (turnEnd none) and no usage in the step log.",
+  "warnings": 0,
+  "session": {
+    "providerSessionId": "11111111-1111-4111-8111-111111111111",
+    "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+    "at": 1788548473000
+  },
+  "entries": [
+    { "role": "person", "text": "What does this project do?", "providerTime": 1788548473000 },
+    {
+      "role": "dwarf",
+      "text": "It is a small command-line tool with one entry point and a test suite.",
+      "providerTime": 1788548478000
+    },
+    { "role": "person", "text": "Add a test for the parser.", "providerTime": 1788548582000 },
+    {
+      "role": "dwarf",
+      "text": "Added a test for the parser and ran the suite; it passes.",
+      "providerTime": 1788548592000
+    }
+  ],
+  "activity": ["turn-started", "record", "record", "record", "turn-started", "record", "record"],
+  "closes": 0,
+  "turnEnds": 0,
+  "usage": []
+}

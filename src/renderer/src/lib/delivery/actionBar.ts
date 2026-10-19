@@ -1,5 +1,6 @@
 import { isPanelObserved } from '../../types'
 import type { Dwarf, DwarfProvider, TextDeliveryChannel } from '../../types'
+import { hasTextRoute, type HostDeliveryFacts } from './deliveryRoute'
 import { describeEffort } from './effort'
 
 /**
@@ -501,11 +502,18 @@ function boostAction(dwarf: Dwarf): ActionBarEntry {
   }
 }
 
-function chatAction(dwarf: Dwarf): ActionBarEntry {
+/*
+ * The composer is enabled from the Host's `canReceiveMessages` for a Host board dwarf (14 §3.6
+ * `DwarfWire`, "composer enabled", INV-33), and from today's `textDelivery` only for a dwarf off the
+ * Host board (lib/delivery/deliveryRoute `hasTextRoute`). The Host delivers over its own route, so
+ * with no `textDelivery` the hint names the one channel it can honestly name: the session the Host
+ * holds (`owned`). An observed session's route is the Host's to choose and the board does not say
+ * which, so its enabled composer carries no channel sentence rather than a guessed one.
+ */
+function chatAction(dwarf: Dwarf & HostDeliveryFacts): ActionBarEntry {
   if (hasEnded(dwarf))
     return { id: 'chat', name: 'Chat', enabled: false, hint: SESSION_ENDED_REASON }
-  const channel = dwarf.textDelivery
-  if (channel === undefined) {
+  if (!hasTextRoute(dwarf)) {
     // A session with a cancel and no send is one this panel LAUNCHED (#217),
     // and its refusal is a fact rather than a "not yet": the generic string
     // describes a gap in this app, and this describes the session. Read off
@@ -526,7 +534,13 @@ function chatAction(dwarf: Dwarf): ActionBarEntry {
           (noOneShotExitReason(dwarf) ?? NO_CHANNEL_REASON)
     return { id: 'chat', name: 'Chat', enabled: false, hint }
   }
-  return { id: 'chat', name: 'Chat', enabled: true, hint: CHANNEL_HINT[channel] }
+  const channel = dwarf.textDelivery ?? (dwarf.owned === true ? 'held-session' : undefined)
+  return {
+    id: 'chat',
+    name: 'Chat',
+    enabled: true,
+    hint: channel === undefined ? '' : CHANNEL_HINT[channel]
+  }
 }
 
 /**
@@ -543,7 +557,7 @@ function chatAction(dwarf: Dwarf): ActionBarEntry {
  * `chatAction` directly for that reason: there is no transient state left in
  * the answer, so taking one would invite a caller to think it mattered.
  */
-export function refusalLine(dwarf: Dwarf): string | null {
+export function refusalLine(dwarf: Dwarf & HostDeliveryFacts): string | null {
   const chat = chatAction(dwarf)
   return chat.enabled ? null : chat.hint
 }
@@ -552,7 +566,10 @@ export function refusalLine(dwarf: Dwarf): string | null {
  * The four bar entries in their fixed left-to-right order. Pure: the component
  * re-derives this on every relevant change instead of mutating entries.
  */
-export function buildActionBar(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry[] {
+export function buildActionBar(
+  dwarf: Dwarf & HostDeliveryFacts,
+  state: ActionTransientState
+): ActionBarEntry[] {
   return [
     kickAction(dwarf, state),
     boostAction(dwarf),

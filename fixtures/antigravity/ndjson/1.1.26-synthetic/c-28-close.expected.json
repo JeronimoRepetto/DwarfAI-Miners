@@ -1,0 +1,18 @@
+{
+  "case": "C-28",
+  "description": "15 §1.3 close, ADR-014: end-thread closes the stdin of agy, which ends its turn loop, and resolves closed; a second end-thread is closed too; detach is unsupported on a stdio driver. The driver signals no process: the tree kill is the SessionTerminator's.",
+  "script": [
+    { "do": "launch", "readyAfterMs": 3000 },
+    { "do": "close", "mode": "end-thread" },
+    { "do": "close", "mode": "end-thread" },
+    { "do": "close", "mode": "detach" }
+  ],
+  "outcomes": [
+    { "resolved": true },
+    { "kind": "closed" },
+    { "kind": "closed" },
+    { "kind": "failed", "reason": "unsupported" }
+  ],
+  "events": [{ "t": "status", "value": "working" }],
+  "sent": [{ "event": "user", "message": { "content": "first prompt" } }]
+}

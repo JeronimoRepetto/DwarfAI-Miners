@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { readonly, ref } from 'vue'
 import type { AudioPreferences, DwarfRole } from '../types'
 import { DEFAULT_AUDIO_PREFERENCES, parseAudioPreferences } from '../types'
 import {
@@ -90,7 +90,10 @@ export function useAudio(options: UseAudioOptions = {}) {
    * is what keeps a launch into a hidden window silent.
    */
   let visibilityKnown = false
+  /** Whether this window is the shown mode window (ISSUE-117: the attention cues play only there). */
+  const windowShown = ref(true)
   function applyGates(): void {
+    windowShown.value = !hidden
     engine.setGates({ hidden, collapsed })
   }
 
@@ -268,6 +271,7 @@ export function useAudio(options: UseAudioOptions = {}) {
     playVoice,
     playSfx,
     playCrew,
-    dispose
+    dispose,
+    windowShown: readonly(windowShown)
   }
 }

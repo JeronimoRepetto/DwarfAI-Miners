@@ -1,0 +1,407 @@
+[
+  {
+    "label": "os-lane round 1",
+    "takenAt": "2026-09-30T21:12:33.177Z",
+    "platform": "win32",
+    "osRelease": "10.0.26200",
+    "osVersion": "Windows 11 Pro",
+    "node": "24.11.1",
+    "fastStartup": true,
+    "readings": [
+      {
+        "source": "registry PrefetchParameters\\BootId (reg.exe)",
+        "field": "bootId",
+        "value": 213,
+        "latencyMs": 109.6,
+        "error": null
+      },
+      {
+        "source": "CIM Win32_OperatingSystem.LastBootUpTime (powershell)",
+        "field": "bootTimeMs",
+        "value": 1789864316000,
+        "latencyMs": 441,
+        "error": null
+      },
+      {
+        "source": "now - os.uptime() (Node, in process)",
+        "field": "bootTimeMs",
+        "value": 1789864300000,
+        "latencyMs": 0.1,
+        "error": null
+      },
+      {
+        "source": "whoami /logonid (logon SID)",
+        "field": "logonSessionId",
+        "value": "1a6287121fcb",
+        "latencyMs": 96.6,
+        "error": null
+      },
+      {
+        "source": "NtQuerySystemInformation(SystemTimeOfDayInformation).BootTime, to the second (helper)",
+        "field": "reference",
+        "value": 1789864318000,
+        "latencyMs": 83.4,
+        "error": null
+      },
+      {
+        "source": "now - GetTickCount64(), to the second (helper)",
+        "field": "reference",
+        "value": 1789864300000,
+        "latencyMs": 83.4,
+        "error": null
+      },
+      {
+        "source": "now - QueryUnbiasedInterruptTime() (excludes sleep), to the second (helper)",
+        "field": "reference",
+        "value": 1789978653000,
+        "latencyMs": 83.4,
+        "error": null
+      },
+      {
+        "source": "SystemTimeOfDayInformation.SleepTimeBias, ms (helper)",
+        "field": "reference",
+        "value": 114352821,
+        "latencyMs": 83.4,
+        "error": null
+      },
+      {
+        "source": "token TokenStatistics.AuthenticationId (logon LUID, helper)",
+        "field": "logonSessionId",
+        "value": "191a93af8307",
+        "latencyMs": 83.4,
+        "error": null
+      },
+      {
+        "source": "ProcessIdToSessionId (terminal session, helper)",
+        "field": "reference",
+        "value": "ef2d127de37b",
+        "latencyMs": 83.4,
+        "error": null
+      }
+    ]
+  },
+  {
+    "label": "os-lane round 2",
+    "takenAt": "2026-09-30T21:12:33.994Z",
+    "platform": "win32",
+    "osRelease": "10.0.26200",
+    "osVersion": "Windows 11 Pro",
+    "node": "24.11.1",
+    "fastStartup": true,
+    "readings": [
+      {
+        "source": "registry PrefetchParameters\\BootId (reg.exe)",
+        "field": "bootId",
+        "value": 213,
+        "latencyMs": 98.3,
+        "error": null
+      },
+      {
+        "source": "CIM Win32_OperatingSystem.LastBootUpTime (powershell)",
+        "field": "bootTimeMs",
+        "value": 1789864316000,
+        "latencyMs": 529.9,
+        "error": null
+      },
+      {
+        "source": "now - os.uptime() (Node, in process)",
+        "field": "bootTimeMs",
+        "value": 1789864300000,
+        "latencyMs": 0,
+        "error": null
+      },
+      {
+        "source": "whoami /logonid (logon SID)",
+        "field": "logonSessionId",
+        "value": "1a6287121fcb",
+        "latencyMs": 106.9,
+        "error": null
+      },
+      {
+        "source": "NtQuerySystemInformation(SystemTimeOfDayInformation).BootTime, to the second (helper)",
+        "field": "reference",
+        "value": 1789864318000,
+        "latencyMs": 104.4,
+        "error": null
+      },
+      {
+        "source": "now - GetTickCount64(), to the second (helper)",
+        "field": "reference",
+        "value": 1789864300000,
+        "latencyMs": 104.4,
+        "error": null
+      },
+      {
+        "source": "now - QueryUnbiasedInterruptTime() (excludes sleep), to the second (helper)",
+        "field": "reference",
+        "value": 1789978653000,
+        "latencyMs": 104.4,
+        "error": null
+      },
+      {
+        "source": "SystemTimeOfDayInformation.SleepTimeBias, ms (helper)",
+        "field": "reference",
+        "value": 114352821,
+        "latencyMs": 104.4,
+        "error": null
+      },
+      {
+        "source": "token TokenStatistics.AuthenticationId (logon LUID, helper)",
+        "field": "logonSessionId",
+        "value": "191a93af8307",
+        "latencyMs": 104.4,
+        "error": null
+      },
+      {
+        "source": "ProcessIdToSessionId (terminal session, helper)",
+        "field": "reference",
+        "value": "ef2d127de37b",
+        "latencyMs": 104.4,
+        "error": null
+      }
+    ]
+  },
+  {
+    "label": "os-lane round 3",
+    "takenAt": "2026-09-30T21:12:34.973Z",
+    "platform": "win32",
+    "osRelease": "10.0.26200",
+    "osVersion": "Windows 11 Pro",
+    "node": "24.11.1",
+    "fastStartup": true,
+    "readings": [
+      {
+        "source": "registry PrefetchParameters\\BootId (reg.exe)",
+        "field": "bootId",
+        "value": 213,
+        "latencyMs": 93.6,
+        "error": null
+      },
+      {
+        "source": "CIM Win32_OperatingSystem.LastBootUpTime (powershell)",
+        "field": "bootTimeMs",
+        "value": 1789864316000,
+        "latencyMs": 527.2,
+        "error": null
+      },
+      {
+        "source": "now - os.uptime() (Node, in process)",
+        "field": "bootTimeMs",
+        "value": 1789864300000,
+        "latencyMs": 0,
+        "error": null
+      },
+      {
+        "source": "whoami /logonid (logon SID)",
+        "field": "logonSessionId",
+        "value": "1a6287121fcb",
+        "latencyMs": 122.3,
+        "error": null
+      },
+      {
+        "source": "NtQuerySystemInformation(SystemTimeOfDayInformation).BootTime, to the second (helper)",
+        "field": "reference",
+        "value": 1789864318000,
+        "latencyMs": 104.9,
+        "error": null
+      },
+      {
+        "source": "now - GetTickCount64(), to the second (helper)",
+        "field": "reference",
+        "value": 1789864300000,
+        "latencyMs": 104.9,
+        "error": null
+      },
+      {
+        "source": "now - QueryUnbiasedInterruptTime() (excludes sleep), to the second (helper)",
+        "field": "reference",
+        "value": 1789978653000,
+        "latencyMs": 104.9,
+        "error": null
+      },
+      {
+        "source": "SystemTimeOfDayInformation.SleepTimeBias, ms (helper)",
+        "field": "reference",
+        "value": 114352821,
+        "latencyMs": 104.9,
+        "error": null
+      },
+      {
+        "source": "token TokenStatistics.AuthenticationId (logon LUID, helper)",
+        "field": "logonSessionId",
+        "value": "191a93af8307",
+        "latencyMs": 104.9,
+        "error": null
+      },
+      {
+        "source": "ProcessIdToSessionId (terminal session, helper)",
+        "field": "reference",
+        "value": "ef2d127de37b",
+        "latencyMs": 104.9,
+        "error": null
+      }
+    ]
+  },
+  {
+    "label": "os-lane round 4",
+    "takenAt": "2026-09-30T21:12:35.905Z",
+    "platform": "win32",
+    "osRelease": "10.0.26200",
+    "osVersion": "Windows 11 Pro",
+    "node": "24.11.1",
+    "fastStartup": true,
+    "readings": [
+      {
+        "source": "registry PrefetchParameters\\BootId (reg.exe)",
+        "field": "bootId",
+        "value": 213,
+        "latencyMs": 53.2,
+        "error": null
+      },
+      {
+        "source": "CIM Win32_OperatingSystem.LastBootUpTime (powershell)",
+        "field": "bootTimeMs",
+        "value": 1789864316000,
+        "latencyMs": 703.6,
+        "error": null
+      },
+      {
+        "source": "now - os.uptime() (Node, in process)",
+        "field": "bootTimeMs",
+        "value": 1789864300000,
+        "latencyMs": 0,
+        "error": null
+      },
+      {
+        "source": "whoami /logonid (logon SID)",
+        "field": "logonSessionId",
+        "value": "1a6287121fcb",
+        "latencyMs": 120.4,
+        "error": null
+      },
+      {
+        "source": "NtQuerySystemInformation(SystemTimeOfDayInformation).BootTime, to the second (helper)",
+        "field": "reference",
+        "value": 1789864318000,
+        "latencyMs": 110.4,
+        "error": null
+      },
+      {
+        "source": "now - GetTickCount64(), to the second (helper)",
+        "field": "reference",
+        "value": 1789864300000,
+        "latencyMs": 110.4,
+        "error": null
+      },
+      {
+        "source": "now - QueryUnbiasedInterruptTime() (excludes sleep), to the second (helper)",
+        "field": "reference",
+        "value": 1789978653000,
+        "latencyMs": 110.4,
+        "error": null
+      },
+      {
+        "source": "SystemTimeOfDayInformation.SleepTimeBias, ms (helper)",
+        "field": "reference",
+        "value": 114352821,
+        "latencyMs": 110.4,
+        "error": null
+      },
+      {
+        "source": "token TokenStatistics.AuthenticationId (logon LUID, helper)",
+        "field": "logonSessionId",
+        "value": "191a93af8307",
+        "latencyMs": 110.4,
+        "error": null
+      },
+      {
+        "source": "ProcessIdToSessionId (terminal session, helper)",
+        "field": "reference",
+        "value": "ef2d127de37b",
+        "latencyMs": 110.4,
+        "error": null
+      }
+    ]
+  },
+  {
+    "label": "os-lane round 5",
+    "takenAt": "2026-09-30T21:12:37.012Z",
+    "platform": "win32",
+    "osRelease": "10.0.26200",
+    "osVersion": "Windows 11 Pro",
+    "node": "24.11.1",
+    "fastStartup": true,
+    "readings": [
+      {
+        "source": "registry PrefetchParameters\\BootId (reg.exe)",
+        "field": "bootId",
+        "value": 213,
+        "latencyMs": 77.1,
+        "error": null
+      },
+      {
+        "source": "CIM Win32_OperatingSystem.LastBootUpTime (powershell)",
+        "field": "bootTimeMs",
+        "value": 1789864316000,
+        "latencyMs": 548.7,
+        "error": null
+      },
+      {
+        "source": "now - os.uptime() (Node, in process)",
+        "field": "bootTimeMs",
+        "value": 1789864300000,
+        "latencyMs": 0,
+        "error": null
+      },
+      {
+        "source": "whoami /logonid (logon SID)",
+        "field": "logonSessionId",
+        "value": "1a6287121fcb",
+        "latencyMs": 49.5,
+        "error": null
+      },
+      {
+        "source": "NtQuerySystemInformation(SystemTimeOfDayInformation).BootTime, to the second (helper)",
+        "field": "reference",
+        "value": 1789864318000,
+        "latencyMs": 99.6,
+        "error": null
+      },
+      {
+        "source": "now - GetTickCount64(), to the second (helper)",
+        "field": "reference",
+        "value": 1789864300000,
+        "latencyMs": 99.6,
+        "error": null
+      },
+      {
+        "source": "now - QueryUnbiasedInterruptTime() (excludes sleep), to the second (helper)",
+        "field": "reference",
+        "value": 1789978653000,
+        "latencyMs": 99.6,
+        "error": null
+      },
+      {
+        "source": "SystemTimeOfDayInformation.SleepTimeBias, ms (helper)",
+        "field": "reference",
+        "value": 114352821,
+        "latencyMs": 99.6,
+        "error": null
+      },
+      {
+        "source": "token TokenStatistics.AuthenticationId (logon LUID, helper)",
+        "field": "logonSessionId",
+        "value": "191a93af8307",
+        "latencyMs": 99.6,
+        "error": null
+      },
+      {
+        "source": "ProcessIdToSessionId (terminal session, helper)",
+        "field": "reference",
+        "value": "ef2d127de37b",
+        "latencyMs": 99.6,
+        "error": null
+      }
+    ]
+  }
+]

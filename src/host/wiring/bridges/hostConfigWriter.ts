@@ -1,0 +1,158 @@
+// The Host's one config writer as host/main.ts composes it for cut 2 (16 §7.1, ADR-016 items 3, 6;
+// 21 §1 item 4, §2 cut 2), per target:
+//
+// - `claude-hooks` → the config writer engine (configWriterEngine.ts) with the Claude Code hooks
+//   adapter, which host/main.ts constructs over the Host database. The hook entry points at the
+//   hook ingress's stable port (ADR-016 item 3: chosen when the first HTTP integration is enabled,
+//   persisted in `app_meta.ingress_port`). That port is chosen and persisted by the ingress itself,
+//   which boot step 6 starts at every boot (wiring/hookIngress.ts, ISSUE-140). Until a port is
+//   persisted (a first boot whose ingress could not bind, 13 FM-038) an enable
+//   fails closed here, before the engine's Tx A: nothing is written, no `config_writes` row and no
+//   token hash is issued, the integration stays `off`, and the command answers
+//   `config-write-failed` (16 §7.3 Tx B failure, the same outcome). An entry pointing at a port
+//   nothing listens on would be an integration that is never on in fact. Turning it off, the boot
+//   re-verification and the legacy probe need no port and always reach the engine.
+// - `opencode-plugin` → the config writer engine with the `OpenCodePluginConfigWriter` target
+//   (ISSUE-227), which host/main.ts passes: the Reset saga's `external-config` step removes the plugin
+//   file (16 §7.4; ADR-023 item 1; S13.03; ISSUE-233), the boot re-verification reaches it (16 §7.3),
+//   and from ISSUE-228 the enable of `preferences.setOpenCodePermissions` (B-M14) does too. The plugin
+//   reports to the hook ingress on that same persisted port (ADR-016 item 3), so its enable fails
+//   closed without one exactly as the Claude hook entry's does. One writer per release (21 §1 item 4):
+//   the step-4a switch (ISSUE-235) routes A-52/A-53 to the Host and switches today's installer off in
+//   the same release, and opens the rest of the target with them: the boot legacy probe reaches the
+//   writer (`findLegacy`, 21 §2 cut 4a, AMENDMENT-9, OQ-70, 07 S41.02), and `enablableInstalledTools`
+//   lets an installed OpenCode into the first-run step (OQ-68). With no plugin writer
+//   composed (a wiring whose OpenCode plugin folder is unknown), `install` fails with `io`, `verify`
+//   answers `absent` and `revert` completes with nothing to remove.
+//
+// Neither the token nor its hash reaches a log record (NFR-SEC-12, ADR-026).
+import { HostInvariantError } from '../../kernel/domain/errors'
+import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
+import type {
+  ChannelToken,
+  CredentialMinter,
+  ExternalConfigWriter,
+  InstalledToolsReader
+} from '../../modules/preferences'
+import type { IngressPortRecord } from '../../transport/ingress/ingressPort'
+
+export interface HostConfigWriterDeps {
+  /** The config writer engine with the `claude-hooks` target (host/main.ts). */
+  claudeHooks: ExternalConfigWriter
+  /** The config writer engine with the `opencode-plugin` target (host/main.ts, ISSUE-233, ISSUE-228). */
+  openCodePlugin?: ExternalConfigWriter
+  /** `app_meta.ingress_port` as the hook ingress persisted it (bridges/ingressPort.ts). */
+  ingressPort: Pick<IngressPortRecord, 'read'>
+  log: DiagnosticsLog
+}
+
+/** The `ExternalConfigWriter` the preferences module, its first-run step and its Reset saga use. */
+export function hostConfigWriter(deps: HostConfigWriterDeps): ExternalConfigWriter {
+  const { claudeHooks, openCodePlugin } = deps
+  return {
+    install: (target, token, origin, tokenSha256) => {
+      const writer = target === 'claude-hooks' ? claudeHooks : openCodePlugin
+      if (writer === undefined) return Promise.resolve({ ok: false, error: 'io' })
+      if (deps.ingressPort.read() === null) {
+        deps.log.record({
+          level: 'warn',
+          event: 'config.write',
+          subsystem: target,
+          outcome: 'failed',
+          msg: origin,
+          causeClass: 'ingress-port-unset'
+        })
+        return Promise.resolve({ ok: false, error: 'io' })
+      }
+      return writer.install(target, token, origin, tokenSha256)
+    },
+    verify: (target) => {
+      if (target === 'claude-hooks') return claudeHooks.verify(target)
+      return openCodePlugin === undefined
+        ? Promise.resolve('absent')
+        : openCodePlugin.verify(target)
+    },
+    revert: (target) => {
+      if (target === 'claude-hooks') return claudeHooks.revert(target)
+      return openCodePlugin === undefined
+        ? Promise.resolve({ ok: true, value: undefined })
+        : openCodePlugin.revert(target)
+    },
+    findLegacy: (target) => {
+      if (target === 'claude-hooks') return claudeHooks.findLegacy(target)
+      return openCodePlugin === undefined
+        ? Promise.resolve(false)
+        : openCodePlugin.findLegacy(target)
+    }
+  }
+}
+
+/**
+ * The Claude Code hooks adapter's `ingressPort` (ClaudeHooksConfigWriter): the persisted port at
+ * the moment of the write. `hostConfigWriter` never lets an enable reach the engine without one, so
+ * a missing port here is a wiring defect.
+ */
+export function persistedIngressPort(record: Pick<IngressPortRecord, 'read'>): () => number {
+  return () => {
+    const port = record.read()
+    if (port === null) {
+      throw new HostInvariantError('a Claude hook entry is rendered only with a persisted port')
+    }
+    return port
+  }
+}
+
+/**
+ * The first-run step's installed tools as this Host can act on them (21 §1 item 8 "hidden until
+ * built", BR-19; ISSUE-223 decision 4): an installed tool whose integration cannot be turned on yet
+ * is not offered, so the step is not due for it. The step has no close and no skip (ISSUE-224), and
+ * an "Activate" that can only answer `config-write-failed` would hold the Panel. Claude Code counts
+ * once the hook ingress persisted its port (`hostConfigWriter` refuses the enable before that), and
+ * OpenCode on the same condition from the step-4a switch (ISSUE-235; its plugin reports to the same
+ * ingress, ADR-016 item 3). Read on every call, so a later boot with the
+ * port persisted offers it. An old-app entry of a tool not offered is not looked for either (07
+ * S41.02 runs on offered targets only): it is neither adopted nor shown.
+ */
+export function enablableInstalledTools(
+  installed: InstalledToolsReader,
+  ingressPort: Pick<IngressPortRecord, 'read'>
+): InstalledToolsReader {
+  return {
+    installed: () => (ingressPort.read() === null ? [] : installed.installed())
+  }
+}
+
+/** The engine's 07 S14.10 rewrite as this bridge sees it (ConfigWriterEngine.followIngressPort). */
+export interface IngressPortFollowing {
+  followIngressPort(
+    target: 'claude-hooks',
+    credential: () => { token: ChannelToken; tokenSha256: string }
+  ): Promise<unknown>
+}
+
+export interface ClaudeHookEntryFollowerDeps {
+  engine: IngressPortFollowing
+  /** A cut-2 rollback build (wiring/cut2Rollback.ts `rolledBack`). */
+  rolledBack: boolean
+  /** The transport's token issuance (transport/auth/mintCredential.ts). */
+  mintCredential: CredentialMinter
+}
+
+/**
+ * Boot step 6's 07 S14.10 half (ADR-016 item 3; 16 §7.4): once the hook ingress is bound, the Host's
+ * own Claude hook entry follows the port it is bound on. The engine writes only an `on-verified`
+ * integration's own entry, only when it names another port, under the consent on record, with a
+ * token minted here (lead decision 2026-09-30, ISSUE-198: the transport mints, never the module).
+ * A cut-2 rollback build writes nothing: today's installer is the entry's one writer there (21 §1
+ * item 4; wiring/cut2Rollback.ts), and the entry this Host wrote was removed before that build
+ * started (`--revert-integrations`, docs/strangler/rollback.md).
+ */
+export function claudeHookEntryFollower(deps: ClaudeHookEntryFollowerDeps): () => Promise<void> {
+  if (deps.rolledBack) return () => Promise.resolve()
+  return async () => {
+    await deps.engine.followIngressPort('claude-hooks', () => {
+      const credential = deps.mintCredential()
+      return { token: credential.value as ChannelToken, tokenSha256: credential.sha256 }
+    })
+  }
+}

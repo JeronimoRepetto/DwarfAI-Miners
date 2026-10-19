@@ -1,0 +1,92 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -m 2 -X POST -H x-dwarfai-token:0123456789abcdef0123456789abcdef -H Content-Type:application/json --noproxy 127.0.0.1 -d@- http://127.0.0.1:45123/dwarfai-miners-hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo foreign-notify"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -m 2 -X POST -H x-dwarfai-token:0123456789abcdef0123456789abcdef -H Content-Type:application/json --noproxy 127.0.0.1 -d@- http://127.0.0.1:45123/dwarfai-miners-hook",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "echo foreign-beside-the-old-entry"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -m 2 -X POST -H x-dwarfai-token:0123456789abcdef0123456789abcdef -H Content-Type:application/json --noproxy 127.0.0.1 -d@- http://127.0.0.1:45123/dwarfai-miners-hook",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 2 -X POST -H x-dwarfai-token:0123456789abcdef0123456789abcdef -H Content-Type:application/json --noproxy 127.0.0.1 -d@- http://127.0.0.1:45123/dwarfai-miners-hook/opencode"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -m 2 -X POST -H x-dwarfai-token:0123456789abcdef0123456789abcdef -H Content-Type:application/json --noproxy 127.0.0.1 -d@- http://127.0.0.1:45123/dwarfai-miners-hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl.exe -s -m 2 -X POST -H x-dwarfai-token:0123456789abcdef0123456789abcdef -H Content-Type:application/json --noproxy 127.0.0.1 -d@- http://127.0.0.1:45123/dwarfai-miners-hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "theme": "dark"
+}

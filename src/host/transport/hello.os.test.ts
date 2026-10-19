@@ -1,0 +1,311 @@
+// L8 OS lane (17 §1.6, §1.8): the authentication cases of hello.contract.test.ts over this OS's real
+// UI endpoint — a named pipe on Windows, a Unix socket elsewhere — plus the run/ui.token mode on
+// POSIX. Runs only in `pnpm test:os`.
+// AMENDED for the cut-0 conformance fixes (was: authentication cases only): the generation refusal
+// (INCOMPATIBLE_GENERATION) and the role rule (FORBIDDEN) of the same L6 suite run here too, so the
+// real-pipe suite carries every exit-criteria case of 21 §2 cut 0.
+import { lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { connect } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import {
+  checkSocketPathLength,
+  encodeFrame,
+  FRAME_CAP_AFTER_HELLO_OK,
+  FRAME_CAP_BEFORE_HELLO_OK,
+  helloOkSchema,
+  PROTOCOL_VERSION,
+  requestIdSchema,
+  resFrameSchema,
+  type HostEndpoint
+} from '@dwarfai/contracts'
+import { FakeClock } from '../kernel/fakes/FakeClock'
+import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
+import { RecordingDiagnosticsLog } from '../kernel/fakes/RecordingDiagnosticsLog'
+import { SequenceIdGenerator } from '../kernel/fakes/SequenceIdGenerator'
+import { createNativeOwnerOnlyPipe } from '../platform/endpoint/win-pipe/nativeOwnerOnlyPipe'
+import { decideBind } from '../wiring/singleInstance'
+import { UI_TOKEN_FILE, UiToken } from './auth/uiToken'
+import { collectCapabilities } from './capabilities'
+import { acceptConnection, HELLO_TIMEOUT_MS } from './connection'
+import { Dispatcher } from './dispatcher'
+import { bindEndpoint } from './endpoint/server'
+import { ConnectionRegistry } from './connectionRegistry'
+import { HostStateHolder } from './lifecycle/hostState'
+import { FrameClient } from './testing/frameClient'
+import { HelloThrottle } from './auth/throttle'
+import { METHOD_ROLES } from './roles'
+
+const WINDOWS = process.platform === 'win32'
+
+/** How long a real connection is watched for bytes the Host must not send. */
+const SILENCE_MS = 300
+
+const cleanups: Array<() => Promise<void> | void> = []
+
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
+
+/** A fresh folder; on POSIX directly under /tmp so the socket path fits `sun_path` on macOS. */
+function caseRoot(): string {
+  const root = WINDOWS ? mkdtempSync(join(tmpdir(), 'dwarfai-023-os-')) : mkdtempSync('/tmp/dw023-')
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }))
+  return root
+}
+
+let pipeCounter = 0
+
+function endpointUnder(root: string): HostEndpoint {
+  if (WINDOWS) {
+    pipeCounter += 1
+    const suffix = `${process.pid}-${pipeCounter}-${Math.random().toString(16).slice(2, 10)}`
+    return { kind: 'named-pipe', path: `\\\\.\\pipe\\dwarfai-test-023-${suffix}` }
+  }
+  const dir = join(root, 'run')
+  const path = join(dir, 'host-0123456789ab.sock')
+  const fits = checkSocketPathLength(process.platform === 'darwin' ? 'darwin' : 'linux', path)
+  if (!fits.ok) throw new Error(`test socket path too long for this OS: ${JSON.stringify(fits)}`)
+  return { kind: 'unix-socket', dir, path }
+}
+
+/**
+ * One Host: the real endpoint server with the auth layer, its token in <root>/run/ui.token. With
+ * `withMethods`, the dispatcher serves the faked modules of hello.contract.test.ts (`ping` and
+ * `host.shutdown`, each under its 14 §2.3 roles); without it, it serves none.
+ */
+async function realHost(options: { withMethods?: boolean } = {}) {
+  const root = caseRoot()
+  const endpoint = endpointUnder(root)
+  const clock = new FakeClock(1_000)
+  const scheduler = new FakeScheduler(clock)
+  const log = new RecordingDiagnosticsLog()
+  const connections = new ConnectionRegistry()
+  const state = new HostStateHolder(connections)
+  state.report({ state: 'ready', jobStatus: WINDOWS ? 'none' : 'n/a' })
+  const dispatcher = new Dispatcher({
+    log,
+    clock,
+    scheduler: new FakeScheduler(clock),
+    state: () => state.current().state
+  })
+  if (options.withMethods === true) {
+    dispatcher.register('ping', z.object({}).strict(), METHOD_ROLES['ping'] ?? [], () => ({
+      at: clock.now()
+    }))
+    dispatcher.registerMutating(
+      'host.shutdown',
+      z.object({ mode: z.literal('stop-all'), requestId: requestIdSchema }).strict(),
+      METHOD_ROLES['host.shutdown'] ?? [],
+      () => ({ accepted: true })
+    )
+  }
+  const token = new UiToken()
+  const outcome = await bindEndpoint(endpoint, {
+    log,
+    scheduler,
+    decide: decideBind,
+    probeExisting: () => Promise.resolve('no-hello'),
+    // AMENDED for the ISSUE-022 Windows half (was: no helper): a named pipe is created only by
+    // the native owner-only pipe helper (built by `pnpm build:native`); a Unix socket ignores it.
+    ownerOnlyPipe: createNativeOwnerOnlyPipe({
+      prebuildsDir: fileURLToPath(new URL('../../../prebuilds', import.meta.url))
+    }),
+    accept: (connection) =>
+      acceptConnection(connection, {
+        token,
+        ids: new SequenceIdGenerator(),
+        identity: { hostVersion: '0.20.0', buildId: 'abc1234', protocolVersion: PROTOCOL_VERSION },
+        epoch: 'epoch-os',
+        state: () => state.current(),
+        capabilities: () => collectCapabilities({ methods: dispatcher.methods() }),
+        scheduler,
+        clock,
+        log,
+        dispatcher,
+        connections,
+        throttle: new HelloThrottle(clock)
+      })
+  })
+  if (outcome.kind !== 'bound') throw new Error(`expected a bind, got ${outcome.kind}`)
+  cleanups.push(() => outcome.endpoint.close())
+  const runDir = join(root, 'run')
+  await token.issue(runDir)
+  return {
+    runDir,
+    clock,
+    log,
+    token: readFileSync(join(runDir, UI_TOKEN_FILE), 'utf8'),
+    connect: (): Promise<FrameClient> =>
+      new Promise((resolve, reject) => {
+        const socket = connect(endpoint.path)
+        socket.once('connect', () => {
+          cleanups.push(() => void socket.destroy())
+          resolve(new FrameClient(socket))
+        })
+        socket.once('error', reject)
+      })
+  }
+}
+
+function hello(token: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    type: 'hello',
+    endpointGeneration: 1,
+    protocolVersion: PROTOCOL_VERSION,
+    role: 'ui',
+    token,
+    client: { appVersion: '0.20.0', buildId: 'abc1234', pid: 4242 },
+    ...overrides
+  }
+}
+
+function header(length: number): Uint8Array {
+  const bytes = new Uint8Array(4)
+  new DataView(bytes.buffer).setUint32(0, length, true)
+  return bytes
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+describe('hello-first authentication over the real UI endpoint (ADR-003 items 2–5)', () => {
+  it('[ADR-003, C-11] no byte is sent before a valid hello', async () => {
+    const host = await realHost()
+    const client = await host.connect()
+    const frame = encodeFrame(hello(host.token))
+
+    client.sendRaw(frame.subarray(0, frame.length - 1))
+    await pause(SILENCE_MS)
+    expect({ bytes: client.bytes, closed: client.closed }).toEqual({ bytes: 0, closed: false })
+
+    client.sendRaw(frame.subarray(frame.length - 1))
+    await client.until(() => client.frames.length > 0)
+    expect(client.frames[0]).toMatchObject({ type: 'hello.ok' })
+  })
+
+  it('[ADR-003, FM-026] a bad token gets one AUTH_FAILED error frame and the connection closes', async () => {
+    const host = await realHost()
+    const client = await host.connect()
+
+    client.send(hello('0'.repeat(64)))
+    await client.until(() => client.closed)
+
+    expect(client.frames).toEqual([{ type: 'error', code: 'AUTH_FAILED' }])
+  })
+
+  it('[ADR-003] a second hello gets PROTOCOL_ERROR and close; a req before hello gets PROTOCOL_ERROR and close', async () => {
+    const host = await realHost()
+
+    const twice = await host.connect()
+    twice.send(hello(host.token))
+    await twice.until(() => twice.frames.length === 1)
+    twice.send(hello(host.token))
+    await twice.until(() => twice.closed)
+    expect(twice.frames.slice(1)).toEqual([{ type: 'error', code: 'PROTOCOL_ERROR' }])
+
+    const early = await host.connect()
+    early.send({ type: 'req', id: '1', method: 'ping', params: {} })
+    await early.until(() => early.closed)
+    expect(early.frames).toEqual([{ type: 'error', code: 'PROTOCOL_ERROR' }])
+  })
+
+  it('[ADR-003] no hello within 5 s gets HELLO_TIMEOUT', async () => {
+    const host = await realHost()
+    const client = await host.connect()
+    await pause(50)
+
+    host.clock.advance(HELLO_TIMEOUT_MS)
+    await client.until(() => client.closed)
+
+    expect(client.frames).toEqual([{ type: 'error', code: 'HELLO_TIMEOUT' }])
+  })
+
+  it('[ADR-003, FM-030] an oversized frame closes the connection without a frame, before and after hello.ok', async () => {
+    const host = await realHost()
+
+    const early = await host.connect()
+    early.sendRaw(header(FRAME_CAP_BEFORE_HELLO_OK + 1))
+    await early.until(() => early.closed)
+    expect(early.frames).toEqual([])
+
+    const late = await host.connect()
+    late.send(hello(host.token))
+    await late.until(() => late.frames.length === 1)
+    late.sendRaw(header(FRAME_CAP_AFTER_HELLO_OK + 1))
+    await late.until(() => late.closed)
+    expect(late.frames).toHaveLength(1)
+  })
+
+  it('[ADR-003] a valid ui hello gets hello.ok with epoch, state, jobStatus, capabilities and a clientId', async () => {
+    const host = await realHost()
+    const client = await host.connect()
+
+    client.send(hello(host.token))
+    await client.until(() => client.frames.length === 1)
+
+    expect(helloOkSchema.parse(client.frames[0])).toMatchObject({
+      epoch: 'epoch-os',
+      state: 'ready',
+      endpointGeneration: 1,
+      capabilities: []
+    })
+    await pause(50)
+    expect(client.closed).toBe(false)
+  })
+
+  it('[ADR-003, ADR-002] a hello with endpointGeneration 2 gets INCOMPATIBLE_GENERATION and the connection closes', async () => {
+    const host = await realHost()
+    const client = await host.connect()
+
+    client.send(hello(host.token, { endpointGeneration: 2 }))
+    await client.until(() => client.closed)
+
+    expect(client.frames).toEqual([{ type: 'error', code: 'INCOMPATIBLE_GENERATION' }])
+  })
+
+  it('[ADR-003, FM-035] a notifier calling a method outside its scope gets FORBIDDEN and an error record; the connection stays open', async () => {
+    const host = await realHost({ withMethods: true })
+    const notifier = await host.connect()
+    notifier.send(hello(host.token, { role: 'notifier' }))
+    await notifier.until(() => notifier.frames.length === 1)
+    const connId = helloOkSchema.parse(notifier.frames[0]).clientId
+
+    notifier.send({
+      type: 'req',
+      id: '7',
+      method: 'host.shutdown',
+      params: { mode: 'stop-all', requestId: '01890a5d-ac96-774b-bcce-b302099a8057' }
+    })
+    await notifier.until(() => notifier.frames.length === 2)
+    expect(resFrameSchema.parse(notifier.frames[1])).toEqual({
+      type: 'res',
+      id: '7',
+      ok: false,
+      error: { code: 'FORBIDDEN', message: expect.any(String), retryable: false }
+    })
+    expect(host.log.byEvent('channel.forbidden')).toEqual([
+      expect.objectContaining({ level: 'error', method: 'host.shutdown', role: 'notifier', connId })
+    ])
+
+    // The connection stays open and a method in the notifier's scope is served.
+    notifier.send({ type: 'req', id: '8', method: 'ping', params: {} })
+    await notifier.until(() => notifier.frames.length === 3)
+    expect(resFrameSchema.parse(notifier.frames[2])).toEqual({
+      type: 'res',
+      id: '8',
+      ok: true,
+      result: { at: 1_000 }
+    })
+    expect(notifier.closed).toBe(false)
+  })
+
+  it.runIf(!WINDOWS)('[ADR-003, NFR-SEC-05] run/ui.token is created 0600 (POSIX)', async () => {
+    const host = await realHost()
+
+    expect((lstatSync(join(host.runDir, UI_TOKEN_FILE)).mode & 0o777).toString(8)).toBe('600')
+    expect((lstatSync(host.runDir).mode & 0o777).toString(8)).toBe('700')
+  })
+})

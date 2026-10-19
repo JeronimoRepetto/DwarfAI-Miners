@@ -1,0 +1,43 @@
+{
+  "$comment": "Hand-written from 15 §5 and the person-line rule of the candidate (#458): a codex exec rollout writes no user_message event, so the person's words are its user items that are not injected context; shared by exec-run-crlf.jsonl.",
+  "warnings": 0,
+  "session": {
+    "providerSessionId": "01a0b000-0000-7000-8000-000000000734",
+    "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+    "at": 1790773199000,
+    "parentProviderSessionId": null
+  },
+  "entries": [
+    {
+      "role": "person",
+      "text": "Reply with exactly the word ALPHA.",
+      "providerTime": 1790773200500
+    },
+    { "role": "dwarf", "text": "ALPHA", "providerTime": 1790773201000 }
+  ],
+  "activity": ["turn-started"],
+  "turnEnds": [
+    {
+      "turnKey": "01a0b000-0000-7000-8000-0000000007d1",
+      "kind": "concluded",
+      "at": 1790773201200,
+      "reliability": "reliable",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "01a0b000-0000-7000-8000-0000000007d1",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 10993,
+        "output": 6,
+        "cacheRead": 8576,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "sealed": true,
+      "providerTime": 1790773201100
+    }
+  ]
+}

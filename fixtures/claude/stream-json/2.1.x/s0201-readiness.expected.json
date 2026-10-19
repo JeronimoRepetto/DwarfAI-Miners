@@ -1,0 +1,72 @@
+{
+  "case": "C-01",
+  "description": "S-020-1 (Claude Code 2.1.301), 15 §1.3 launch, §4.2: the prompt goes on stdin first; the SessionStart hook lines that come before it are not readiness; launch resolves at system/init, which the CLI writes only after that first stdin line; the session id is the one the Host pre-assigned with --session-id. The rest of the recorded turn follows: the reply, one sealed usage unit per assistant message.id, one reliable turn.ended keyed by the result record, status working then idle. The rate_limit_event status allowed and the system notification add nothing.",
+  "script": [
+    {
+      "do": "launch",
+      "prompt": "Reply with the single word hello and nothing else. Do not use any tool."
+    }
+  ],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-7000-8000-000000000002",
+        "role": "person",
+        "text": "Reply with the single word hello and nothing else. Do not use any tool.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000a",
+        "role": "dwarf",
+        "text": "hello",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "claude:claude:{session}:00000000-0000-4000-8000-000000000009",
+        "unitKey": "00000000-0000-4000-8000-000000000009",
+        "fidelity": 2,
+        "tokens": {
+          "inputNet": 2,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 46833,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "claude:claude:{session}:00000000-0000-4000-8000-00000000000e",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Reply with the single word hello and nothing else. Do not use any tool."
+      },
+      "parent_tool_use_id": null,
+      "session_id": "{session}",
+      "uuid": "00000000-0000-7000-8000-000000000002"
+    }
+  ]
+}

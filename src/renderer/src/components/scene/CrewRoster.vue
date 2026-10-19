@@ -32,11 +32,17 @@ const props = withDefaults(
 )
 const emit = defineEmits<{ pick: [dwarf: Dwarf] }>()
 
-const split = computed(() => rosterSplit(props.dwarfs, props.max))
+/*
+ * The portraits are added or dropped at once (ISSUE-255; motion.md, a dwarf arrives or leaves): a
+ * departing dwarf stays on the board as 'leaving' while its sprite walks out, and its portrait is
+ * already gone, as the design's column drops it the moment the dwarf leaves its data.
+ */
+const present = computed(() => props.dwarfs.filter((dwarf) => dwarf.status !== 'leaving'))
+const split = computed(() => rosterSplit(present.value, props.max))
 const menuItems = computed(() => rosterMenuItems(split.value.rest))
 
 const tip = useHoverTip<string>()
-const tipDwarf = computed(() => props.dwarfs.find((dwarf) => dwarf.id === tip.shown.value))
+const tipDwarf = computed(() => present.value.find((dwarf) => dwarf.id === tip.shown.value))
 
 function pick(dwarf: Dwarf): void {
   tip.hide()
@@ -130,7 +136,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside, true)
     >
       +{{ split.rest.length }}
     </button>
-    <span v-if="dwarfs.length === 0" class="dm-roster__empty">{{ ROSTER_EMPTY }}</span>
+    <span v-if="present.length === 0" class="dm-roster__empty">{{ ROSTER_EMPTY }}</span>
   </div>
   <Teleport to="body">
     <Transition name="dm-menu-pop">

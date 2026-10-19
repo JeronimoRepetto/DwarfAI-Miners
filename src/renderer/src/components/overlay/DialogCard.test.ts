@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import DialogCard from './DialogCard.vue'
+import dialogCardSource from './DialogCard.vue?raw'
 
 const typedActions = [
   { label: 'Cancel' },
@@ -67,5 +68,37 @@ describe('DialogCard', () => {
     const card = mount(DialogCard, { props: { title: 'T', actions: [], static: true } })
     expect(card.attributes('aria-modal')).toBeUndefined()
     expect(card.classes()).toContain('dm-dialog--static')
+  })
+})
+
+/*
+ * Owner's rule (2026-10-02): a popup never scrolls sideways; its text wraps to fit the card, whatever its words. jsdom
+ * lays nothing out, so this holds the card's declared CSS to that contract; stop-everything-ui.e2e.ts measures it on
+ * the built app (scrollWidth <= clientWidth).
+ */
+describe('DialogCard never scrolls sideways', () => {
+  const style = dialogCardSource.slice(dialogCardSource.indexOf('<style'))
+  /** The declarations of the first rule whose selector list is exactly `selector`. */
+  const rule = (selector: string): string => {
+    const at = style.indexOf(`${selector} {`)
+    expect(at, `a rule for ${selector}`).toBeGreaterThanOrEqual(0)
+    return style.slice(at, style.indexOf('}', at))
+  }
+
+  it('[NFR-A11Y-03] the card holds one column no wider than itself and hides nothing sideways', () => {
+    expect(rule('.dm-dialog')).toContain('grid-template-columns: minmax(0, 1fr)')
+    expect(rule('.dm-dialog')).toMatch(/overflow-x: hidden/)
+    expect(style).not.toMatch(/overflow-x: (auto|scroll)/)
+  })
+
+  it('[NFR-A11Y-03] the title, the body and the action labels wrap, a long word included', () => {
+    for (const part of ['.dm-dialog__title', '.dm-dialog__body']) {
+      expect(rule(part)).toContain('overflow-wrap: anywhere')
+    }
+    const buttons = rule('.dm-dialog__actions :deep(.dm-btn)')
+    expect(buttons).toContain('white-space: normal')
+    expect(buttons).toContain('overflow-wrap: anywhere')
+    expect(buttons).toContain('max-width: 100%')
+    expect(style).not.toContain('white-space: nowrap')
   })
 })

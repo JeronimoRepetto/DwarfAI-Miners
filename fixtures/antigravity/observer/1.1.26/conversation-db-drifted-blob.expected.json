@@ -1,0 +1,35 @@
+{
+  "$comment": "conversation-db-drifted-blob.sql read whole once its conversation closed: idx 2 (does not decode) and idx 3 (usage not at 1.17.2) yield no usage and one warning each (drift, FM-068); idx 1 and idx 4 are units as usual and the watermark passes every row.",
+  "warnings": 2,
+  "watermark": 4,
+  "usage": [
+    {
+      "unitKey": "11111111-1111-4111-8111-111111111111:gen:1",
+      "modelId": "synthetic-model-a",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 1200,
+        "output": 210,
+        "cacheRead": 3400,
+        "cacheWrite": 0,
+        "reasoning": 50
+      },
+      "sealed": true,
+      "providerTime": null
+    },
+    {
+      "unitKey": "11111111-1111-4111-8111-111111111111:gen:4",
+      "modelId": "synthetic-model-b",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 80,
+        "output": 44,
+        "cacheRead": 5000,
+        "cacheWrite": 512,
+        "reasoning": 20
+      },
+      "sealed": true,
+      "providerTime": null
+    }
+  ]
+}

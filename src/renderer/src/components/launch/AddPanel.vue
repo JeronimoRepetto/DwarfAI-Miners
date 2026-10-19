@@ -1,9 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { t } from '@dwarfai/contracts'
+import type { IntegrationNotice } from '../../composables/useAgentLaunch'
 import { belongsToComposition } from '../../lib/controls/input'
 import { useHoverTip } from '../../composables/useHoverTip'
 import { addPanelSelects, addPanelWhy, supplierLabel } from '../../lib/launch/addPanelCopy'
-import { jevCardEyebrow, jevCardTip, jevPickText } from '../../lib/launch/jevCardCopy'
+import {
+  addPanelFormLocked,
+  addPanelFormStateOf,
+  addPanelSendRule
+} from '../../lib/launch/addPanelForm'
+import {
+  jevCardEyebrow,
+  jevCardTip,
+  jevPickText,
+  jevSuggestionTip
+} from '../../lib/launch/jevCardCopy'
 import {
   jevFallbackReasonWords,
   launchFailureNotice,
@@ -36,7 +48,8 @@ import LaunchFailureOutput from './LaunchFailureOutput.vue'
  * that dwarf's MessagePanel in the same anchored place.
  *
  * Thin, like every component here. It decides nothing: which chips exist and in which state is
- * lib/launch/providerChips', whether a launch may go is lib/launch/launchState's, and every word
+ * lib/launch/providerChips', whether a launch may go is lib/launch/launchState's, which machine 5A
+ * state the panel is in and what that state locks is lib/launch/addPanelForm's, and every word
  * the panel says about where it stands is lib/launch/addPanelCopy's. This file turns those
  * answers into the design's parts and reports gestures back.
  *
@@ -49,39 +62,53 @@ import LaunchFailureOutput from './LaunchFailureOutput.vue'
  * on a Mac) does, as the design's accessibility row says, beside the button.
  */
 
-const props = defineProps<{
-  /** The mine the panel adds a dwarf to, as its title and its Ready line name it. */
-  mineName: string
-  chips: ProviderChip[]
-  phase: LaunchPhase
-  /** Whether the gate in front of the launch is open: a valid supplier, or Jev standing in. */
-  enabled: boolean
-  command: string
-  prompt: string
-  /** Why the chosen chip cannot start a session, or null. */
-  refusal: string | null
-  /** The reason main gave for refusing the last launch, or null. */
-  error: string | null
-  /** The tuning row (#239): what the model select should draw. */
-  modelPicker: ModelPicker
-  /** What the effort select should draw — hidden when the chosen provider has none. */
-  effortPicker: EffortPicker
-  /** Whether the Permissions select holds values — held Claude and, since #635, Codex. */
-  permissionsVisible: boolean
-  /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
-  jev: JevState
-  /**
-   * What the launch model holds for the three selects, which they show (#635). Vue sets a bound
-   * value again on every render, so a select drawn without these snapped each pick back to its
-   * first option (the PO's report, 2026-09-28), and Jev's pick, which sets them without touching
-   * the controls, never showed at all (MESSAGE-QUESTIONS 2). Absent, a select shows its first.
-   */
-  model?: string | null
-  effort?: string | null
-  permissionMode?: LaunchPermissionMode | null
-  /** Why the last launch failed, for the launch-failure notice (#635), or null. */
-  failure?: LaunchFailure | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** The mine the panel adds a dwarf to, as its title and its Ready line name it. */
+    mineName: string
+    chips: ProviderChip[]
+    phase: LaunchPhase
+    /** Whether the gate in front of the launch is open: a valid supplier, or Jev standing in. */
+    enabled: boolean
+    command: string
+    prompt: string
+    /** Why the chosen chip cannot start a session, or null. */
+    refusal: string | null
+    /** The reason main gave for refusing the last launch, or null. */
+    error: string | null
+    /** The tuning row (#239): what the model select should draw. */
+    modelPicker: ModelPicker
+    /** What the effort select should draw — hidden when the chosen provider has none. */
+    effortPicker: EffortPicker
+    /** Whether the Permissions select holds values — held Claude and, since #635, Codex. */
+    permissionsVisible: boolean
+    /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
+    jev: JevState
+    /**
+     * What the launch model holds for the three selects, which they show (#635). Vue sets a bound
+     * value again on every render, so a select drawn without these snapped each pick back to its
+     * first option (the PO's report, 2026-09-28), and Jev's pick, which sets them without touching
+     * the controls, never showed at all (MESSAGE-QUESTIONS 2). Absent, a select shows its first.
+     */
+    model?: string | null
+    effort?: string | null
+    permissionMode?: LaunchPermissionMode | null
+    /** Why the last launch failed, for the launch-failure notice (#635), or null. */
+    failure?: LaunchFailure | null
+    /**
+     * The OpenCode notice (ISSUE-235, from ISSUE-228; ADR-011 item 7, O-14; 07 S5.02, S5.26): shown while the chosen
+     * supplier's permission requests wait for an integration that is off. Absent, none.
+     */
+    integrationNotice?: IntegrationNotice
+    /**
+     * Whether Jev's card reads as accepted automatically (the launch model's `jevAccepted`: auto-accept on and not
+     * paused for the notice, PO #108; 07 S5.25). Absent, the toggle's own `jev.autoAccept`.
+     */
+    jevAccepted?: boolean
+  }>(),
+  // Absent means "not given", never false: Vue would cast a missing boolean prop to false (ISSUE-235).
+  { jevAccepted: undefined }
+)
 
 const emit = defineEmits<{
   choose: [choice: LaunchChoice]
@@ -102,6 +129,8 @@ const emit = defineEmits<{
   /** The decision card's own Dismiss control (#509). */
   'dismiss-jev': []
   submit: []
+  /** The OpenCode notice's "Turn on" (ISSUE-235): the launch model turns the option on. */
+  'enable-integration': []
   /** The launch-failure notice's Retry (#635): the same launch, again. */
   retry: []
   /** Its Pick manually (#635): Let Jev choose off, so the chips and selects choose. */
@@ -190,13 +219,30 @@ const selects = computed(() =>
   })
 )
 
-/** Send the dwarf in wakes once a supplier is valid (or Jev is on) and there is a prompt. */
+/*
+ * The panel as machine 5A reads it (07 §5A; lib/launch/addPanelForm): `sending` while a launch is
+ * in flight, `failed-shown` under the failure notice, else `ready` or `invalid` by the Send rule.
+ * `sending` locks every control but Close, which is the only thing `locked` is used for.
+ */
+const sendRule = computed(() =>
+  addPanelSendRule({ wayToRun: supplierReady.value, prompt: props.prompt })
+)
+const form = computed(() =>
+  addPanelFormStateOf({
+    inFlight: launched.value,
+    failureShown: notice.value !== null,
+    sendRule: sendRule.value
+  })
+)
+const locked = computed(() => addPanelFormLocked(form.value))
+
+/**
+ * Send the dwarf in wakes once the Send rule holds — a supplier is valid (or Jev is on) and there
+ * is a prompt — with nothing in flight and Jev not being asked. A shown failure notice does not
+ * hold it back: an edited form can go again, as it always could here.
+ */
 const canLaunch = computed(
-  () =>
-    supplierReady.value &&
-    !launched.value &&
-    props.jev.routing.phase !== 'asking' &&
-    props.prompt.trim() !== ''
+  () => sendRule.value && !locked.value && props.jev.routing.phase !== 'asking'
 )
 
 function launch(): void {
@@ -286,13 +332,35 @@ const jevDecision = computed(() =>
   props.jev.routing.phase === 'decided' ? props.jev.routing.decision : null
 )
 
+/*
+ * AMENDED for AMENDMENT-22 (ISSUE-195's "Remaining": the card for the `suggested` phase): from step 3a Jev's pick
+ * arrives as A-50's suggestion in its 14 shape (`JevSuggestionView`), which the card draws the same way. The pick is
+ * what either shape names: the supplier, and the model and effort when it carries them.
+ */
+const jevSuggestion = computed(() =>
+  props.jev.routing.phase === 'suggested' && props.jev.routing.suggestion.providerId !== undefined
+    ? props.jev.routing.suggestion
+    : null
+)
+const jevCardPick = computed((): { provider: string; model?: string; effort?: string } | null => {
+  const decision = jevDecision.value
+  if (decision !== null) return decision
+  const suggestion = jevSuggestion.value
+  if (suggestion === null || suggestion.providerId === undefined) return null
+  return {
+    provider: suggestion.providerId,
+    ...(suggestion.model === undefined ? {} : { model: suggestion.model }),
+    ...(suggestion.effort === undefined ? {} : { effort: suggestion.effort })
+  }
+})
+
 /**
  * The decision card stays on screen while the launch is in flight, so the panel stays as it is
  * (MESSAGE-QUESTIONS Q1, design lead ruling 2026-09-28): what goes out is still what it names.
  * Its Dismiss waits with every other control instead, because putting the pickers back under a
  * launch already going would make the card name a launch that is not the one under way.
  */
-const showJevDecision = computed(() => jevDecision.value !== null)
+const showJevDecision = computed(() => jevCardPick.value !== null)
 
 /*
  * Dismiss hands the keyboard to Let Jev choose (components.md, Add a dwarf, Accessibility): the
@@ -309,7 +377,7 @@ function dismissJev(): void {
  * binary name; the raw id only for a provider no chip stands for.
  */
 const jevProviderLabel = computed(() => {
-  const decision = jevDecision.value
+  const decision = jevCardPick.value
   if (decision === null) return ''
   const chip = props.chips.find((entry) => entry.choice === decision.provider)
   return chip === undefined ? decision.provider : supplierLabel(chip.choice)
@@ -317,7 +385,7 @@ const jevProviderLabel = computed(() => {
 
 /** The model's label off the picker's own catalogue, falling back to the raw id it could not resolve. */
 const jevModelLabel = computed(() => {
-  const decision = jevDecision.value
+  const decision = jevCardPick.value
   if (decision === null || decision.model === undefined) return null
   return (
     props.modelPicker.models.find((option) => option.value === decision.model)?.label ??
@@ -333,9 +401,9 @@ const jevModelLabel = computed(() => {
  * same lines describes the paragraph for a screen reader. The #509 closing note is gone: the
  * pickers show the pick themselves.
  */
-const jevEyebrow = computed(() => jevCardEyebrow(props.jev.autoAccept))
+const jevEyebrow = computed(() => jevCardEyebrow(props.jevAccepted ?? props.jev.autoAccept))
 const jevPick = computed(() => {
-  const decision = jevDecision.value
+  const decision = jevCardPick.value
   if (decision === null) return ''
   return jevPickText({
     supplier: jevProviderLabel.value,
@@ -345,7 +413,9 @@ const jevPick = computed(() => {
 })
 const jevTipLines = computed(() => {
   const decision = jevDecision.value
-  return decision === null ? [] : jevCardTip(decision, jevProviderLabel.value)
+  if (decision !== null) return jevCardTip(decision, jevProviderLabel.value)
+  const suggestion = jevSuggestion.value
+  return suggestion === null ? [] : jevSuggestionTip(suggestion, jevProviderLabel.value)
 })
 const jevTip = useHoverTip<'pick'>({ side: 'bottom', align: 'start' })
 const jevTipId = 'dm-add-jev-tip-' + ++cards
@@ -441,7 +511,7 @@ let cards = 0
             :label="supplierLabel(chip.choice)"
             :pressed="chip.state === 'selected'"
             :data-value="chip.choice"
-            :disabled="launched"
+            :disabled="locked"
             @click="emit('choose', chip.choice)"
           />
         </div>
@@ -451,7 +521,7 @@ let cards = 0
           placeholder="Custom command, e.g. my-agent --yes"
           label="Custom command"
           :value="command"
-          :disabled="launched"
+          :disabled="locked"
           @update:value="emit('command', $event)"
           @keydown="onCommandKeydown"
         />
@@ -471,7 +541,7 @@ let cards = 0
             ref="jevToggle"
             label="Let Jev choose"
             :on="jev.enabled"
-            :disabled="jev.availability !== 'ready' || launched"
+            :disabled="jev.availability !== 'ready' || locked"
             :title="jev.availability === 'ready' ? undefined : jevUnavailableTitle"
             held
             @update:on="emit('toggle-jev')"
@@ -480,7 +550,7 @@ let cards = 0
           <ToggleSwitch
             label="Auto-accept Jev"
             :on="jev.autoAccept"
-            :disabled="jev.availability !== 'ready' || launched"
+            :disabled="jev.availability !== 'ready' || locked"
             :title="jev.availability === 'ready' ? undefined : jevUnavailableTitle"
             held
             @update:on="emit('toggle-jev-auto')"
@@ -492,7 +562,7 @@ let cards = 0
           card undoing anything itself. Its shape is the design's (MESSAGE-QUESTIONS 15). The
           fallback line says every way Jev failed still launched, or what is owed instead (#523).
         -->
-        <div v-if="showJevDecision && jevDecision !== null" class="dm-add__jev" role="status">
+        <div v-if="showJevDecision" class="dm-add__jev" role="status">
           <span class="t-meta">{{ jevEyebrow }}</span>
           <p
             class="dm-add__jev-pick"
@@ -513,7 +583,7 @@ let cards = 0
               class="jev-dismiss"
               label="Dismiss"
               size="sm"
-              :disabled="launched"
+              :disabled="locked"
               @click="dismissJev"
             />
           </div>
@@ -544,7 +614,7 @@ let cards = 0
             class="jev-dismiss jev-fallback-dismiss"
             label="Dismiss"
             size="sm"
-            :disabled="launched"
+            :disabled="locked"
             @click="dismissJev"
           />
         </div>
@@ -564,13 +634,36 @@ let cards = 0
             :label="select.label"
             :options="select.options"
             :value="select.value"
-            :disabled="select.disabled || launched"
+            :disabled="select.disabled || locked"
             @update:value="pick(select.label, $event)"
           />
         </div>
         <p v-if="modelPicker.visible && modelPicker.note" class="dm-add__note">
           {{ modelPicker.note }}
         </p>
+      </div>
+
+      <!--
+        The OpenCode notice (ISSUE-235; ADR-011 item 7, O-14; owner-approved copy 2026-10-18): the chosen supplier's
+        permission requests wait for an integration that is off. "Turn on" turns it on as if from Settings (consent
+        origin `add-panel`); the launch still goes out only on the person's Send.
+      -->
+      <div v-if="integrationNotice?.shown" class="dm-add__sec dm-add__integration" role="status">
+        <p class="dm-add__note dm-add__integration-text">{{ t('addPanel.openCodeNotice.text') }}</p>
+        <p
+          v-if="integrationNotice.state === 'failed'"
+          class="dm-add__note dm-add__integration-failed"
+          role="alert"
+        >
+          {{ t('addPanel.openCodeNotice.failure') }}
+        </p>
+        <ActionButton
+          class="dm-add__integration-action"
+          :label="t('addPanel.openCodeNotice.action')"
+          size="sm"
+          :disabled="integrationNotice.state === 'enabling'"
+          @click="emit('enable-integration')"
+        />
       </div>
 
       <!--
@@ -586,7 +679,7 @@ let cards = 0
           placeholder="What should this dwarf work on?"
           label="Prompt"
           :value="prompt"
-          :disabled="launched"
+          :disabled="locked"
           @update:value="emit('prompt', $event)"
           @keydown="onPromptKeydown"
         />
@@ -638,14 +731,14 @@ let cards = 0
               v-if="notice.retry"
               class="dm-add__fail-retry"
               label="Retry"
-              :disabled="launched"
+              :disabled="locked"
               @click="emit('retry')"
             />
             <ActionButton
               v-if="notice.pickManually"
               class="dm-add__fail-manual"
               label="Pick manually"
-              :disabled="launched"
+              :disabled="locked"
               @click="pickManually"
             />
           </div>

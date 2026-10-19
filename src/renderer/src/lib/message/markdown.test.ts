@@ -344,11 +344,10 @@ describe('images, the one exception (#412)', () => {
   })
 
   /*
-   * `ftp:` is a scheme markdown-it's OWN link-destination parser lets
-   * through structurally (unlike javascript:/data:/file:, below), so this is
-   * the case that actually exercises OUR OWN `externalLinkOf` admission — a
-   * refused address does not take the alt text with it, same rule
-   * `link_open` already follows.
+   * Every scheme reaches `externalLinkOf` as a token (ISSUE-251: markdown-it's
+   * own `validateLink` no longer turns a refused address into raw
+   * characters), so this exercises OUR OWN admission — a refused address does
+   * not take the alt text with it, same rule `link_open` already follows.
    */
   it('draws a refused address as its own alt text, with no link node', () => {
     expect(inlineOf(markdownBlocks('![alt](ftp://example.test/a.png)'))).toEqual([
@@ -357,12 +356,10 @@ describe('images, the one exception (#412)', () => {
   })
 
   /*
-   * javascript:, vbscript:, file: and data: (bar allowed image mimetypes)
-   * are refused a step earlier still: markdown-it's own link-destination
-   * parser never produces an `image` token for them at all, so the whole
-   * construct falls back to raw text rather than just the alt surviving.
-   * Loose on purpose, matching how the pre-existing "links" tests above
-   * already treat this same family of scheme.
+   * javascript: is refused by the same `externalLinkOf` admission, and only
+   * its alt text is drawn (ISSUE-251, ADR-019 item 4; the hostile corpus in
+   * hostileMarkdown.test.ts pins that exactly). Loose on purpose, matching how
+   * the pre-existing "links" tests above already treat this family of scheme.
    */
   it('leaves a javascript: address as text with no link node, same as a link would', () => {
     const inline = inlineOf(markdownBlocks('![alt](javascript:x)'))

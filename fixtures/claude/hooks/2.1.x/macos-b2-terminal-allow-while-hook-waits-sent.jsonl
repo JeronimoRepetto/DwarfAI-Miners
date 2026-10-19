@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied by the SP-11 spike hook."}}}

@@ -1,0 +1,628 @@
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import type { z } from 'zod'
+import type {
+  AskId,
+  AskRecord,
+  AskState,
+  AttentionKind,
+  ConsentOrigin,
+  Delivery,
+  DwarfId,
+  DwarfWire,
+  HostToast,
+  Instant,
+  IntegrationId,
+  IntegrationState,
+  Material,
+  MaterialAmount,
+  MineId,
+  MessageView,
+  MineWire,
+  OsNotification,
+  PreferencesView,
+  ResetId
+} from '../wire'
+import type { HelloOk } from './adr-003'
+import { HOST_FRAME_SCHEMAS, SENSITIVE_FRAMES, SENSITIVE_METHODS, type HostFrames } from './frames'
+import type { DepartureCause } from './params/crew'
+import type { ResetStep } from './params/preferences'
+
+// The B-F04 and B-F05 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
+
+describe('host.state and host.closing payloads (14 §3.5, B-F04, B-F05)', () => {
+  it('[ADR-002] each lifecycle frame schema infers exactly its 14 §3.5 payload and refuses any other key', () => {
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['host.state']>>().toEqualTypeOf<
+      HostFrames['host.state']
+    >()
+    expectTypeOf<HostFrames['host.state']>().toEqualTypeOf<{
+      state: HelloOk['state']
+      jobStatus: HelloOk['jobStatus']
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['host.closing']>>().toEqualTypeOf<
+      HostFrames['host.closing']
+    >()
+    expectTypeOf<HostFrames['host.closing']>().toEqualTypeOf<{
+      reason: 'idle' | 'stop-all' | 'upgrade' | 'os-session-end'
+      clean: true
+    }>()
+
+    const state = HOST_FRAME_SCHEMAS['host.state']
+    const closing = HOST_FRAME_SCHEMAS['host.closing']
+    expect(state.safeParse({ state: 'upgrade-pending', jobStatus: 'in-job' }).success).toBe(true)
+    expect(state.safeParse({ state: 'ready', jobStatus: 'none', extra: 1 }).success).toBe(false)
+    expect(state.safeParse({ state: 'checkpointing', jobStatus: 'none' }).success).toBe(false)
+    expect(closing.safeParse({ reason: 'os-session-end', clean: true }).success).toBe(true)
+    expect(closing.safeParse({ reason: 'stop-all', clean: false }).success).toBe(false)
+    expect(closing.safeParse({ reason: 'stop-all', clean: true, at: 1 }).success).toBe(false)
+  })
+})
+
+// The B-F03 payload of 14 §3.5 and its strict() schema (14 §1.4).
+
+describe('resync-required payload (14 §3.5, B-F03)', () => {
+  it('[ADR-003] the resync-required schema infers exactly its 14 §3.5 payload with its five reasons and refuses any other', () => {
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['resync-required']>>().toEqualTypeOf<
+      HostFrames['resync-required']
+    >()
+    expectTypeOf<HostFrames['resync-required']>().toEqualTypeOf<{
+      reason:
+        'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset'
+    }>()
+
+    const resync = HOST_FRAME_SCHEMAS['resync-required']
+    for (const reason of [
+      'epoch-changed',
+      'seq-not-in-ring',
+      'ring-overrun',
+      'backpressure',
+      'metrics-reset'
+    ]) {
+      expect(resync.safeParse({ reason }).success, reason).toBe(true)
+    }
+    expect(resync.safeParse({ reason: 'events-lost' }).success).toBe(false)
+    expect(resync.safeParse({ reason: 'backpressure', seq: 3 }).success).toBe(false)
+    expect(resync.safeParse({}).success).toBe(false)
+  })
+})
+
+// The B-F24 payload of 14 §3.5 and its strict() schema (14 §1.4).
+
+describe('preferences.changed payload (14 §3.5, B-F24)', () => {
+  it('[ADR-024] the preferences.changed schema infers exactly its 14 §3.5 PreferencesView and refuses any other key', () => {
+    expectTypeOf<HostFrames['preferences.changed']>().toEqualTypeOf<PreferencesView>()
+    expectTypeOf<
+      z.infer<(typeof HOST_FRAME_SCHEMAS)['preferences.changed']>
+    >().toEqualTypeOf<PreferencesView>()
+
+    const changed = HOST_FRAME_SCHEMAS['preferences.changed']
+    const view = {
+      preferences: {
+        subagentDelegationOn: false,
+        routingProfile: 'balanced',
+        systemNotificationsOn: true,
+        openCodePermissionsOn: false
+      },
+      secrets: [],
+      secretBackend: 'unavailable',
+      integrations: [],
+      welcome: { due: false, legacyFound: [], offered: [] }
+    }
+    expect(changed.safeParse(view).success).toBe(true)
+    expect(changed.safeParse({ ...view, seq: 3 }).success).toBe(false)
+    expect(changed.safeParse({ preferences: view.preferences }).success).toBe(false)
+  })
+})
+
+// The B-F26 and B-F27 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
+
+describe('ui.resetPreferences and reset.progress payloads (14 §3.5, B-F26, B-F27)', () => {
+  const RESET_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
+
+  it('[ADR-023] each reset frame schema infers exactly its 14 §3.5 payload, takes only the seven ResetStep values and refuses any other key', () => {
+    expectTypeOf<HostFrames['ui.resetPreferences']>().toEqualTypeOf<{ epoch: number }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ui.resetPreferences']>>().toEqualTypeOf<
+      HostFrames['ui.resetPreferences']
+    >()
+    expectTypeOf<HostFrames['reset.progress']>().toEqualTypeOf<{
+      resetId: ResetId
+      epoch: number
+      step: ResetStep
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['reset.progress']>>().toEqualTypeOf<
+      HostFrames['reset.progress']
+    >()
+    expectTypeOf<ResetStep>().toEqualTypeOf<
+      'begun' | 'db' | 'secrets' | 'external-config' | 'ui-prefs' | 'install-moment' | 'done'
+    >()
+
+    const resetPreferences = HOST_FRAME_SCHEMAS['ui.resetPreferences']
+    expect(resetPreferences.safeParse({ epoch: 1 }).success).toBe(true)
+    expect(resetPreferences.safeParse({ epoch: 0 }).success).toBe(false)
+    expect(resetPreferences.safeParse({ epoch: 1, resetId: RESET_ID }).success).toBe(false)
+
+    const progress = HOST_FRAME_SCHEMAS['reset.progress']
+    for (const step of [
+      'begun',
+      'db',
+      'secrets',
+      'external-config',
+      'ui-prefs',
+      'install-moment',
+      'done'
+    ]) {
+      expect(progress.safeParse({ resetId: RESET_ID, epoch: 1, step }).success, step).toBe(true)
+    }
+    expect(progress.safeParse({ resetId: RESET_ID, epoch: 1, step: 'vacuum' }).success).toBe(false)
+    expect(progress.safeParse({ resetId: 'reset-1', epoch: 1, step: 'db' }).success).toBe(false)
+    expect(progress.safeParse({ resetId: RESET_ID, epoch: 1 }).success).toBe(false)
+    expect(
+      progress.safeParse({ resetId: RESET_ID, epoch: 1, step: 'db', reason: 'x' }).success
+    ).toBe(false)
+  })
+})
+
+// The B-F06, B-F08, B-F09 and B-F10 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
+
+describe('board frame payloads (14 §3.5, B-F06, B-F08, B-F09, B-F10)', () => {
+  const MINE = '01920000-0000-7000-8000-000000000001'
+  const DWARF = '01920000-0000-7000-8000-000000000002'
+  const totals = {
+    coal: { tokens: 1 },
+    bronze: { tokens: 0 },
+    copper: { tokens: 0 },
+    silver: { tokens: 0 },
+    gold: { tokens: 0 },
+    uranium: { tokens: 0 }
+  }
+  const mine = {
+    id: MINE,
+    path: '/work/alpha',
+    name: 'alpha',
+    state: 'unrecorded',
+    tier: null,
+    hasBeenMeasured: false,
+    lastUsedAt: 1,
+    totals
+  }
+  const dwarf = {
+    id: DWARF,
+    mineId: MINE,
+    providerId: 'claude',
+    baseName: 'Borin',
+    customName: null,
+    rank: 'foreman',
+    parentDwarfId: null,
+    delegated: false,
+    sessionProfile: { providerId: 'claude' },
+    presence: 'present',
+    processState: 'running',
+    status: 'idle',
+    needsYou: false,
+    canReceiveMessages: false,
+    stopInFlight: false,
+    stopUnavailableReason: null,
+    owned: false,
+    arrivedAt: 1
+  }
+
+  it('[ADR-003] each board frame schema infers exactly its 14 §3.5 payload, carries the full MineWire or DwarfWire and refuses any other key', () => {
+    expectTypeOf<HostFrames['mine.changed']>().toEqualTypeOf<{ mine: MineWire }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['mine.changed']>>().toEqualTypeOf<
+      HostFrames['mine.changed']
+    >()
+    expectTypeOf<HostFrames['dwarf.arrived']>().toEqualTypeOf<{
+      dwarf: DwarfWire
+      announce: boolean
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['dwarf.arrived']>>().toEqualTypeOf<
+      HostFrames['dwarf.arrived']
+    >()
+    expectTypeOf<HostFrames['dwarf.changed']>().toEqualTypeOf<{ dwarf: DwarfWire }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['dwarf.changed']>>().toEqualTypeOf<
+      HostFrames['dwarf.changed']
+    >()
+    expectTypeOf<HostFrames['dwarf.departed']>().toEqualTypeOf<{
+      dwarfId: DwarfId
+      mineId: MineId
+      cause: DepartureCause
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['dwarf.departed']>>().toEqualTypeOf<
+      HostFrames['dwarf.departed']
+    >()
+    expectTypeOf<DepartureCause>().toEqualTypeOf<
+      | 'stopped'
+      | 'mine-removed'
+      | 'closed-elsewhere'
+      | 'crashed'
+      | 'recovery-dismissed'
+      | 'recovery-failed'
+    >()
+
+    const changed = HOST_FRAME_SCHEMAS['mine.changed']
+    expect(changed.safeParse({ mine }).success).toBe(true)
+    expect(changed.safeParse({ mine: { ...mine, state: 'removed' } }).success).toBe(false)
+    expect(changed.safeParse({ mine, seq: 3 }).success).toBe(false)
+
+    const arrived = HOST_FRAME_SCHEMAS['dwarf.arrived']
+    expect(arrived.safeParse({ dwarf, announce: true }).success).toBe(true)
+    expect(arrived.safeParse({ dwarf }).success).toBe(false)
+    // No status facts and no process id cross the channel (14 §3.6 DwarfWire).
+    expect(arrived.safeParse({ dwarf: { ...dwarf, pid: 4242 }, announce: false }).success).toBe(
+      false
+    )
+    expect(
+      arrived.safeParse({ dwarf: { ...dwarf, facts: { openAsk: null } }, announce: false }).success
+    ).toBe(false)
+
+    const dwarfChanged = HOST_FRAME_SCHEMAS['dwarf.changed']
+    expect(dwarfChanged.safeParse({ dwarf }).success).toBe(true)
+    expect(dwarfChanged.safeParse({ dwarf, announce: false }).success).toBe(false)
+
+    const departed = HOST_FRAME_SCHEMAS['dwarf.departed']
+    for (const cause of [
+      'stopped',
+      'mine-removed',
+      'closed-elsewhere',
+      'crashed',
+      'recovery-dismissed',
+      'recovery-failed'
+    ]) {
+      expect(departed.safeParse({ dwarfId: DWARF, mineId: MINE, cause }).success, cause).toBe(true)
+    }
+    expect(departed.safeParse({ dwarfId: DWARF, mineId: MINE, cause: 'killed' }).success).toBe(
+      false
+    )
+    expect(departed.safeParse({ dwarfId: DWARF, cause: 'stopped' }).success).toBe(false)
+    expect(
+      departed.safeParse({ dwarfId: DWARF, mineId: MINE, cause: 'stopped', toast: true }).success
+    ).toBe(false)
+  })
+})
+
+// The B-F22 and B-F23 payloads of 14 §3.5, their strict() schemas (14 §1.4) and SENSITIVE_FRAMES:
+// the notifier's attention frames (ADR-003 item 12; ADR-018).
+
+describe('attention.notify and attention.withdraw payloads (14 §3.5, B-F22, B-F23)', () => {
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a8111'
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099ad111'
+  const NOTIFICATION = {
+    key: `${DWARF}:question:ask-1`,
+    kind: 'question',
+    title: 'Canary has a question',
+    body: 'Mine one',
+    mineId: MINE,
+    dwarfId: DWARF,
+    sensitive: true
+  }
+
+  it('[ADR-018] the attention frame schemas infer exactly OsNotification and {keys}, and refuse any other key', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toEqual(
+      expect.arrayContaining(['attention.notify', 'attention.withdraw'])
+    )
+    expectTypeOf<HostFrames['attention.notify']>().toEqualTypeOf<OsNotification>()
+    expectTypeOf<OsNotification>().toEqualTypeOf<{
+      key: string
+      kind: AttentionKind
+      title: string
+      body: string
+      mineId: MineId
+      dwarfId: DwarfId
+      sensitive: true
+    }>()
+    expectTypeOf<AttentionKind>().toEqualTypeOf<'permission' | 'question' | 'turn-finished'>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['attention.notify']>>().toEqualTypeOf<
+      HostFrames['attention.notify']
+    >()
+    expectTypeOf<HostFrames['attention.withdraw']>().toEqualTypeOf<{ keys: string[] }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['attention.withdraw']>>().toEqualTypeOf<
+      HostFrames['attention.withdraw']
+    >()
+
+    const notify = HOST_FRAME_SCHEMAS['attention.notify']
+    for (const kind of ['permission', 'question', 'turn-finished']) {
+      expect(notify.safeParse({ ...NOTIFICATION, kind }).success, kind).toBe(true)
+    }
+    expect(notify.safeParse({ ...NOTIFICATION, kind: 'host-crash' }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, sensitive: false }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, mineId: 'mine-1' }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, dwarfId: 'dwarf-1' }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, at: 1 }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, body: undefined }).success).toBe(false)
+
+    const withdraw = HOST_FRAME_SCHEMAS['attention.withdraw']
+    expect(withdraw.safeParse({ keys: [NOTIFICATION.key, 'k2'] }).success).toBe(true)
+    expect(withdraw.safeParse({ keys: [] }).success).toBe(true)
+    expect(withdraw.safeParse({ keys: [1] }).success).toBe(false)
+    expect(withdraw.safeParse({ keys: ['k'], reason: 'ended' }).success).toBe(false)
+  })
+
+  it('[NFR-SEC-12] attention.notify is a sensitive frame: its payload is never logged (14 §3.5)', () => {
+    expect(SENSITIVE_FRAMES).toContain('attention.notify')
+    expect(SENSITIVE_FRAMES).not.toContain('attention.withdraw')
+  })
+})
+
+describe('ledger.changed payload (14 §3.5, B-F20)', () => {
+  const MINE = '01920000-0000-7000-8000-00000000000a'
+  const TOTALS = {
+    coal: { tokens: 2_600 },
+    bronze: { tokens: 0 },
+    copper: { tokens: 30_000 },
+    silver: { tokens: 0 },
+    gold: { tokens: 0 },
+    uranium: { tokens: 0 }
+  }
+
+  it('[US-MINE-010.AC02, ADR-006] the ledger.changed schema infers exactly its 14 §3.5 payload with six separate material totals and refuses any other key', () => {
+    expectTypeOf<HostFrames['ledger.changed']>().toEqualTypeOf<{
+      mineId: MineId
+      totals: Record<Material, MaterialAmount>
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ledger.changed']>>().toEqualTypeOf<
+      HostFrames['ledger.changed']
+    >()
+
+    const changed = HOST_FRAME_SCHEMAS['ledger.changed']
+    expect(changed.safeParse({ mineId: MINE, totals: TOTALS }).success).toBe(true)
+    // Six materials, each its own count: never a summed total, never a missing material.
+    expect(
+      changed.safeParse({ mineId: MINE, totals: { ...TOTALS, all: { tokens: 32_600 } } }).success
+    ).toBe(false)
+    const five: Partial<typeof TOTALS> = { ...TOTALS }
+    delete five.uranium
+    expect(changed.safeParse({ mineId: MINE, totals: five }).success).toBe(false)
+    expect(changed.safeParse({ mineId: MINE, totals: TOTALS, total: 32_600 }).success).toBe(false)
+    expect(
+      changed.safeParse({ mineId: MINE, totals: { ...TOTALS, coal: { tokens: -1 } } }).success
+    ).toBe(false)
+    expect(
+      changed.safeParse({ mineId: MINE, totals: { ...TOTALS, coal: { tokens: 1, units: 0 } } })
+        .success
+    ).toBe(false)
+    expect(changed.safeParse({ totals: TOTALS }).success).toBe(false)
+    expect(SENSITIVE_FRAMES).not.toContain('ledger.changed')
+  })
+})
+
+// The B-F11 payload of 14 §3.5 and its strict() schema (14 §1.4); 14 §3.5 SENSITIVE_METHODS.
+
+describe('conversation.appended payload (14 §3.5, B-F11) and SENSITIVE_METHODS', () => {
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099a8057'
+  const view = {
+    id: '01890a5d-ac96-774b-bcce-b302099a8058',
+    dwarfId: DWARF,
+    role: 'person',
+    text: 'hello',
+    attachments: [],
+    providerTime: null,
+    createdAt: 1_001
+  }
+
+  it('[ADR-003] the conversation.appended schema infers exactly its 14 §3.5 payload of MessageView rows, and the frame and the feed result are never logged', () => {
+    expectTypeOf<HostFrames['conversation.appended']>().toEqualTypeOf<{
+      dwarfId: DwarfId
+      messages: MessageView[]
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['conversation.appended']>>().toEqualTypeOf<
+      HostFrames['conversation.appended']
+    >()
+
+    const appended = HOST_FRAME_SCHEMAS['conversation.appended']
+    expect(appended.safeParse({ dwarfId: DWARF, messages: [view] }).success).toBe(true)
+    expect(appended.safeParse({ dwarfId: DWARF, messages: [] }).success).toBe(true)
+    expect(
+      appended.safeParse({ dwarfId: DWARF, messages: [{ ...view, sourceKey: 'k' }] }).success
+    ).toBe(false)
+    expect(appended.safeParse({ dwarfId: DWARF, messages: [view], seq: 1 }).success).toBe(false)
+    expect(appended.safeParse({ messages: [view] }).success).toBe(false)
+
+    expect(SENSITIVE_FRAMES).toContain('conversation.appended')
+    expect(SENSITIVE_METHODS['conversation.feed']).toBe('result')
+    expect(SENSITIVE_METHODS['session.snapshot']).toBe('result')
+  })
+})
+
+// The B-F12 payload of 14 §3.5 (ADR-022 `Delivery`) and its strict() schema (14 §1.4).
+
+describe('message.delivery payload (14 §3.5, B-F12)', () => {
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099a8057'
+  const delivery = {
+    messageId: '01890a5d-ac96-774b-bcce-b302099a8058',
+    dwarfId: DWARF,
+    kind: 'message',
+    phase: 'delivered',
+    confidence: 'unconfirmed',
+    attempts: 1,
+    phaseAt: 1_001
+  }
+
+  it('[ADR-022, US-MSG-001.AC03] the message.delivery schema infers exactly { delivery: Delivery } and refuses an unknown phase or key', () => {
+    expectTypeOf<HostFrames['message.delivery']>().toEqualTypeOf<{ delivery: Delivery }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['message.delivery']>>().toEqualTypeOf<
+      HostFrames['message.delivery']
+    >()
+
+    const frame = HOST_FRAME_SCHEMAS['message.delivery']
+    expect(frame.safeParse({ delivery }).success).toBe(true)
+    expect(
+      frame.safeParse({
+        delivery: { ...delivery, phase: 'failed', failure: { kind: 'session-closed' } }
+      }).success
+    ).toBe(true)
+    expect(frame.safeParse({ delivery: { ...delivery, phase: 'read' } }).success).toBe(false)
+    expect(frame.safeParse({ delivery, seq: 1 }).success).toBe(false)
+    expect(frame.safeParse({ delivery: { ...delivery, text: 'hello' } }).success).toBe(false)
+    // A mark carries no message text, so the frame is not a sensitive one (14 §3.5).
+    expect(SENSITIVE_FRAMES).not.toContain('message.delivery')
+    expect(SENSITIVE_METHODS['conversation.send']).toBe('params')
+  })
+})
+
+// The B-F28 payload of 14 §3.5 (`HostToast`, 14 §3.6) and its strict() schema (14 §1.4).
+
+describe('toast payload (14 §3.5, B-F28; 14 §3.6 HostToast)', () => {
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099a8084'
+
+  it('[US-RES-004.AC01, BR-23] the toast frame carries exactly HostToast, refuses any other key, and is never logged', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toContain('toast')
+    expectTypeOf<HostFrames['toast']>().toEqualTypeOf<HostToast>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['toast']>>().toEqualTypeOf<
+      HostFrames['toast']
+    >()
+
+    const toast = HOST_FRAME_SCHEMAS['toast']
+    const providerError = {
+      kind: 'provider-error',
+      providerId: 'claude',
+      cause: 'unreadable',
+      dwarfId: DWARF
+    }
+    expect(toast.safeParse(providerError).success).toBe(true)
+    expect(toast.safeParse({ ...providerError, dwarfId: undefined }).success).toBe(true)
+    expect(toast.safeParse({ ...providerError, detail: 'provider text' }).success).toBe(false)
+    expect(toast.safeParse({ kind: 'errored', dwarfId: DWARF }).success).toBe(false)
+    expect(SENSITIVE_FRAMES).toContain('toast')
+  })
+})
+
+// The B-F07 payload of 14 §3.5 and its strict() schema (14 §1.4).
+
+describe('mine.removed payload (14 §3.5, B-F07)', () => {
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a8057'
+
+  it('[US-MAP-004.AC02, US-MINES-006.AC03] mine.removed carries exactly the mine id and its removal instant, and the mine-removal-failed toast names every failed dwarf', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toContain('mine.removed')
+    expectTypeOf<HostFrames['mine.removed']>().toEqualTypeOf<{
+      mineId: MineId
+      removedAt: Instant
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['mine.removed']>>().toEqualTypeOf<
+      HostFrames['mine.removed']
+    >()
+
+    const removed = HOST_FRAME_SCHEMAS['mine.removed']
+    expect(removed.safeParse({ mineId: MINE, removedAt: 1_790_000_000_000 }).success).toBe(true)
+    expect(removed.safeParse({ mineId: MINE }).success).toBe(false)
+    expect(removed.safeParse({ mineId: MINE, removedAt: 1, name: 'alpha' }).success).toBe(false)
+    expect(removed.safeParse({ mineId: 'alpha', removedAt: 1 }).success).toBe(false)
+    // Not a sensitive frame: an id and an instant only (14 §3.5 SENSITIVE_FRAMES).
+    expect(SENSITIVE_FRAMES).not.toContain('mine.removed')
+
+    const toast = HOST_FRAME_SCHEMAS['toast']
+    const failed = { kind: 'mine-removal-failed', requestId: 'r-1', mineId: MINE, failed: [MINE] }
+    expect(toast.safeParse(failed).success).toBe(true)
+    expect(toast.safeParse({ ...failed, failed: undefined }).success).toBe(false)
+  })
+})
+
+// The B-F15, B-F16 and B-F17 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
+
+describe('ask.opened, ask.closed and ask.step payloads (14 §3.5, B-F15…B-F17)', () => {
+  const ASK = '01920000-0000-7000-9000-0000000130a1'
+  const DWARF = '01920000-0000-7000-9000-0000000130d1'
+  const record = {
+    id: ASK,
+    dwarfId: DWARF,
+    kind: 'permission',
+    channel: 'driver',
+    providerRequestId: 'req-130',
+    payload: { toolName: 'Bash', requestText: 'run the tests' },
+    currentStep: 0,
+    state: 'open',
+    reannounce: true,
+    openedAt: 1_790_000_000_000
+  }
+
+  it('[ADR-010] ask.opened, ask.closed and ask.step carry exactly their 14 §3.5 payloads and refuse any other key', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toEqual(
+      expect.arrayContaining(['ask.opened', 'ask.closed', 'ask.step'])
+    )
+    expectTypeOf<HostFrames['ask.opened']>().toEqualTypeOf<{ ask: AskRecord }>()
+    expectTypeOf<HostFrames['ask.closed']>().toEqualTypeOf<{
+      askId: AskId
+      dwarfId: DwarfId
+      reason: AskState
+    }>()
+    expectTypeOf<HostFrames['ask.step']>().toEqualTypeOf<{ askId: AskId; currentStep: number }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ask.opened']>>().toEqualTypeOf<
+      HostFrames['ask.opened']
+    >()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ask.closed']>>().toEqualTypeOf<
+      HostFrames['ask.closed']
+    >()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ask.step']>>().toEqualTypeOf<
+      HostFrames['ask.step']
+    >()
+
+    const opened = HOST_FRAME_SCHEMAS['ask.opened']
+    expect(opened.safeParse({ ask: record }).success).toBe(true)
+    expect(opened.safeParse({ ask: { ...record, partialPicks: [0] } }).success).toBe(false)
+    expect(opened.safeParse({ ask: record, reopened: true }).success).toBe(false)
+
+    const closed = HOST_FRAME_SCHEMAS['ask.closed']
+    expect(closed.safeParse({ askId: ASK, dwarfId: DWARF, reason: 'auto-denied' }).success).toBe(
+      true
+    )
+    expect(closed.safeParse({ askId: ASK, dwarfId: DWARF, reason: 'expired' }).success).toBe(false)
+    expect(closed.safeParse({ askId: ASK, reason: 'cancelled' }).success).toBe(false)
+
+    const step = HOST_FRAME_SCHEMAS['ask.step']
+    expect(step.safeParse({ askId: ASK, currentStep: 2 }).success).toBe(true)
+    expect(step.safeParse({ askId: ASK, currentStep: -1 }).success).toBe(false)
+    expect(step.safeParse({ askId: ASK, currentStep: 2, picks: [1] }).success).toBe(false)
+
+    // ask.opened carries question text and tool summaries; the other two carry ids only.
+    expect(SENSITIVE_FRAMES).toContain('ask.opened')
+    expect(SENSITIVE_FRAMES).not.toContain('ask.closed')
+    expect(SENSITIVE_FRAMES).not.toContain('ask.step')
+  })
+})
+
+// The B-F25 payload of 14 §3.5 and its strict() schema (14 §1.4; PO #84, #104; AMENDMENT-7): the
+// real state of one integration, sent to every `ui` connection after every enable, revert, failed
+// write and Reset. It never carries a channel token.
+
+describe('integration.changed payload (14 §3.5, B-F25)', () => {
+  it('[ADR-016] the integration.changed schema infers exactly its 14 §3.5 payload and refuses any other key, a token included', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toContain('integration.changed')
+    expectTypeOf<HostFrames['integration.changed']>().toEqualTypeOf<{
+      id: IntegrationId
+      state: IntegrationState
+      consentOrigin?: ConsentOrigin
+      failure?: 'config-write-failed' | 'config-revert-failed'
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['integration.changed']>>().toEqualTypeOf<
+      HostFrames['integration.changed']
+    >()
+
+    const changed = HOST_FRAME_SCHEMAS['integration.changed']
+    expect(changed.safeParse({ id: 'claude-hooks', state: 'off' }).success).toBe(true)
+    expect(
+      changed.safeParse({ id: 'claude-hooks', state: 'on-verified', consentOrigin: 'settings' })
+        .success
+    ).toBe(true)
+    expect(
+      changed.safeParse({
+        id: 'claude-hooks',
+        state: 'on-verified',
+        consentOrigin: 'settings',
+        failure: 'config-revert-failed'
+      }).success
+    ).toBe(true)
+    expect(
+      changed.safeParse({
+        id: 'opencode-permissions',
+        state: 'off',
+        failure: 'config-write-failed'
+      }).success
+    ).toBe(true)
+    expect(changed.safeParse({ id: 'claude', state: 'off' }).success).toBe(false)
+    expect(changed.safeParse({ id: 'claude-hooks', state: 'on' }).success).toBe(false)
+    expect(changed.safeParse({ id: 'claude-hooks', state: 'off', failure: 'locked' }).success).toBe(
+      false
+    )
+    expect(
+      changed.safeParse({ id: 'claude-hooks', state: 'on-verified', token: 'a'.repeat(64) }).success
+    ).toBe(false)
+  })
+})

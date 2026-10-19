@@ -54,11 +54,25 @@ It sees every suite shape in the repo — `.test.ts`, `.test.tsx`, `.test.js`, `
 a `function test(`/`function it(` declaration (a hand-rolled harness's own runner) from the count
 (issue #120).
 
+**Known limitation.** The census only matches file names of the form
+`/\.test\.[cm]?[jt]sx?$/`, so it does not see `*.contract.ts`, `*.e2e.ts` or `*.perf.ts` files, the
+suffixes that `17-testing-strategy.md` §2.2 and §1.11 give to contract suites, end-to-end tests and
+perf tests. A test lost from one of those passes the census unseen, so check those files by hand
+with `git diff` until the matcher covers them.
+
 ## When a test genuinely goes
 
-Say so where it stood. When a test goes because its subject went, leave the note in the file it
-left, naming the issue that removed the function and the file where the coverage now lives.
-`economy.test.ts` in the renderer keeps two worked examples of this.
+Say so in two places. Where it stood: when a test goes because its subject went, leave a note in the
+file it left, naming the issue that removed the function and the file where the coverage now lives
+(`economy.test.ts` in the renderer keeps two worked examples). And in the change itself: **every
+lost test statement needs an entry in `docs/test-removals.md` in the same change** (`17` §2.6, rebuild
+manual §4.4). An entry gives the file, the statements removed, the reason, the issue that removed
+the subject, and where the coverage now lives. The rebuild's CI census gate reads that file rather
+than PR text, and fails when a losing file has no entry; it arrives with ISSUE-015, so until then
+the entry is still required and the census output is the evidence.
+
+Where this skill and `17` §2 differ, `17` §2 wins during the rebuild (rebuild manual §4); the same
+holds for [`tdd`](../tdd/SKILL.md).
 
 ## Why this is a skill and not a path-scoped rule
 
@@ -81,3 +95,5 @@ means it has to be a skill and it has to be in the auto-invoke table.
 - [`assets/test-census.mjs`](assets/test-census.mjs) — the enforcement; its header explains the
   counting rules
 - [`CONTRIBUTING.md`](../../CONTRIBUTING.md) — testing philosophy and the named deterministic fakes
+- `17-testing-strategy.md` §2.6 in the architecture package — the rebuild's census gate and the
+  `docs/test-removals.md` rule

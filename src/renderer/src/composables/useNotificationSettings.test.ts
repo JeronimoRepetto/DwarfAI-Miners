@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { DEFAULT_NOTIFICATIONS_ENABLED } from '../types'
 import { useNotificationSettings } from './useNotificationSettings'
 
@@ -16,7 +17,7 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     setNotificationsEnabled: vi.fn(async (enabled: boolean) => enabled),
     ...overrides
   }
-  ;(globalThis as { window?: unknown }).window = { api }
+  ;(globalThis as { window?: unknown }).window = { api: createFakeWindowApi(api) }
   return api
 }
 
@@ -83,3 +84,56 @@ describe('useNotificationSettings', () => {
     await first
   })
 })
+
+/* --- ISSUE-234: the Host-fed read model (14 §6.4 row `useNotificationSettings`) — one block, appended --- */
+// From the step-4a switch (ISSUE-235) A-42/A-43 read and write the Host-owned `systemNotificationsOn`, so the switch
+// also follows the `preferences` snapshot section and the `preferences.changed` frames above its seq (ADR-033 items 2–3).
+describe('useNotificationSettings as a read model of the Host (ISSUE-234)', () => {
+  const EPOCH = 'epoch-0234'
+  const view = (systemNotificationsOn: boolean) => ({
+    preferences: {
+      subagentDelegationOn: false,
+      routingProfile: 'balanced',
+      systemNotificationsOn,
+      openCodePermissionsOn: false
+    },
+    secrets: [],
+    secretBackend: 'os-secret-store',
+    integrations: [],
+    welcome: { due: false, legacyFound: [], offered: [] }
+  })
+
+  it('[ADR-033, ADR-011] a preferences.changed frame from another window turns the switch, and one at or below the snapshot’s seq is ignored', async () => {
+    let listener: ((frames: unknown[]) => void) | null = null
+    fakeApi({
+      getHostSnapshot: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: {
+            snapshotId: 'snap-10',
+            seq: 10,
+            epoch: EPOCH,
+            chunks: [{ section: 'preferences', data: view(true) }]
+          }
+        })
+      ),
+      onHostEvent: vi.fn((follow: (frames: unknown[]) => void) => {
+        listener = follow
+        return () => {
+          listener = null
+        }
+      })
+    })
+    const notifications = useNotificationSettings()
+    expect(await notifications.start()).toBe(true)
+    expect(notifications.enabled.value).toBe(true)
+    const push = (seq: number, on: boolean) =>
+      listener?.([{ type: 'evt', seq, epoch: EPOCH, name: 'preferences.changed', data: view(on) }])
+    push(10, false)
+    expect(notifications.enabled.value).toBe(true)
+    push(11, false)
+    expect(notifications.enabled.value).toBe(false)
+    notifications.stop()
+  })
+})
+/* --- end of the ISSUE-234 block ----------------------------------------------- */

@@ -1,0 +1,207 @@
+// The board frames of seam B (14 §2.4 B-F06, B-F07, B-F08, B-F09, B-F10, B-F28; 14 §3.5, §3.6,
+// frozen),
+// projected from the mines and crew events (08 §2.1, §2.2). Each event is published after its
+// commit (16 §2.3) and handled synchronously, so its frame is enqueued before the command that
+// caused it answers (14 §1.7 "effects before response"). A frame carries the full read model as it
+// is after the commit — the mine or the dwarf read through the modules' public queries and mapped
+// by mappers/wire.ts — never the event payload, so every frame of one kind has the same shape as
+// the snapshot section it updates (sections/mines.ts, sections/dwarfs.ts).
+//
+// - `mine.changed {mine}` (B-F06) ← `MineCreated`, `MineReattached`, the scoring walk's
+//   `MineMeasurementStarted` and `MineMeasured` (ISSUE-065), and `MineBecameUnenterable` /
+//   `MineBecameEnterable` (the walk's and the folder check's, ISSUE-085). `DwarfWorkplaceChanged`
+//   (→ `dwarf.changed`) joins with the workplace stamp (ADR-030 D4). A mine no longer on the board
+//   when its event is handled sends nothing: it is `mine.removed`'s.
+// - `mine.removed {mineId, removedAt}` (B-F07) ← `MineRemoved` (ISSUE-080; S3.16): the marker and
+//   the mine's ore leave the board; its dwarfs' `dwarf.departed {mine-removed}` came first, from
+//   crew's ends (UC-020).
+// - `dwarf.arrived {dwarf, announce}` (B-F08) ← `DwarfArrived`. `announce` is the toast "`<d>`
+//   started in `<mine>`" (08 §2.2; US-OBS-002.AC07): true for an observed arrival in a known mine.
+//   Observed: the dwarf is not `owned` (no live `LaunchRecord`, 14 §3.6, INV-30). Known: the mine
+//   was on the board before this arrival — not created or reattached in the same Host turn, which
+//   is how the observer's one route lands a session in a folder that was not a mine (US-OBS-001;
+//   US-OBS-002.AC08; 11 §2 steps 4–7). Package gap: 08 §2.2 does not define "known"; this is the
+//   owner-consistent reading, recorded in the ISSUE-082 hand-off.
+// - `dwarf.changed {dwarf}` (B-F09) ← `DwarfStatusChanged`, `DwarfPresenceChanged`, and crew's end
+//   events `DwarfStopRequested` and `DwarfStopFailed` (ISSUE-171), which set and clear `stopInFlight`
+//   and so `stopUnavailableReason` (US-MSG-016.AC02; 07 S15.01, S15.15), and `DwarfRenamed` (ISSUE-172),
+//   so every window shows the custom name, or the base name after a reset, at once (BR-14);
+//   `OutcomeLineChanged` is conversation's route (host/wiring/routes/conversationFrames.ts,
+//   ISSUE-108). Every `dwarf.changed` and `dwarf.arrived` here carries the dwarf's stored outcome
+//   line (`ConversationQueries.outcomeOf`, owner amendment E, 2026-10-06). The outbound queue folds a waiting `dwarf.changed` into the newer
+//   one of the same dwarf within a Host tick (14 §1.8, events/outbound.ts); each frame here is the
+//   whole dwarf, so the one that stays is the latest. A departed dwarf sends no `dwarf.changed`:
+//   `dwarf.departed` is its last frame.
+// - `dwarf.departed {dwarfId, mineId, cause}` (B-F10) ← `DwarfDeparted`, for `ui` and the viewer of
+//   that dwarf (ADR-031 item 2). It is the only walk-out trigger (14 §4.3 rule 6), and no departure
+//   cause sends anything else from here: an observed dwarf whose process died on its own departs
+//   `closed-elsewhere` with no toast, like any outside closure (S2.06; US-RES-001.AC01; FM-059).
+//   The other toasts of 14 §2.4 B-F28 come from their own events.
+// - `toast {kind: 'provider-error', providerId, cause, dwarfId?}` (B-F28, 14 §3.6 `HostToast`) ←
+//   observation's `ProviderErrorObserved` (ISSUE-084; 05 §4; US-RES-004), for `ui`. Observation
+//   already folds it to one per `(providerId, cause, dwarfId?)` and poll cycle (08 §2.3), so each
+//   event is one toast. The frame is built field by field from the event: a typed cause, never
+//   the provider's text (16 §2.1; ADR-026 item 4). A drift that surfaced is the same toast, worded
+//   no differently (US-RES-004.AC04). Nothing else is sent: the dwarf keeps its status, with no
+//   errored state (US-RES-004.AC02; ADR-032), and a session that did not survive departs through
+//   crew's own `DwarfDeparted` (US-RES-004.AC03).
+// - `toast {kind: 'mine-removal-failed', requestId, mineId, failed}` (B-F28) ← mines'
+//   `MineRemovalFailed` (ISSUE-080; S3.17; ADR-014 item 6): the ONE danger toast of a partial
+//   Remove mine, naming every dwarf that could not be ended (PO #79). Crew's per-dwarf
+//   `DwarfStopFailed{why: 'remove-mine'}` sends no toast (08 §2.2), so it is not routed here.
+// - `DwarfRebound` has no frame (14 §2.4 "No frame exists for").
+//
+// Nothing here logs: the board frames carry custom names, folder paths and provider causes (14 §3.5
+// SENSITIVE_FRAMES).
+import type { HostFrameData, HostFrameName } from '@dwarfai/contracts'
+import type { DwarfId, MineId } from '../../kernel/domain/values'
+import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
+import type { CrewEndEvent, CrewEvent, CrewQueries } from '../../modules/crew'
+import type { MinesEvent, MinesQueries } from '../../modules/mines'
+import type { ObservationEvent } from '../../modules/observation'
+import type { FrameAudience } from '../events/framePublisher'
+import {
+  NO_OUTCOMES,
+  toDwarfWireWithOutcome,
+  toMineWire,
+  type DwarfOutcomeReader,
+  type MineTotalsReader
+} from '../mappers/wire'
+
+/** The frames this file publishes, for `hello.ok.capabilities` (14 §1.3). */
+export const BOARD_FRAMES: readonly HostFrameName[] = Object.freeze([
+  'mine.changed',
+  'dwarf.arrived',
+  'dwarf.changed',
+  'dwarf.departed',
+  'toast',
+  'mine.removed'
+])
+
+/** Where the frames go: the connection registry (connectionRegistry.ts). */
+export interface BoardFramePublisher {
+  publishFrame<F extends HostFrameName>(
+    name: F,
+    data: HostFrameData[F],
+    audience?: FrameAudience
+  ): void
+}
+
+export interface BoardFramesDeps {
+  /** The Host's event bus, as each module's events (16 §2.3). */
+  events: {
+    mines: Pick<DomainEventBus<MinesEvent>, 'subscribe'>
+    crew: Pick<DomainEventBus<CrewEvent>, 'subscribe'>
+    observation: Pick<DomainEventBus<ObservationEvent>, 'subscribe'>
+    /** Crew's end events (`DwarfStopRequested`, `DwarfStopFailed`); a board without stops omits them. */
+    crewEnds?: Pick<DomainEventBus<CrewEndEvent>, 'subscribe'>
+  }
+  mines: Pick<MinesQueries, 'get'>
+  crew: Pick<CrewQueries, 'get'>
+  /** The ledger's totals (`WiredLedger.totals`, ISSUE-096; `NO_LEDGER_TOTALS` without a ledger). */
+  ledger: MineTotalsReader
+  /** Each dwarf's stored outcome line (owner amendment E); `NO_OUTCOMES` without conversation. */
+  outcomes?: DwarfOutcomeReader
+  frames: BoardFramePublisher
+}
+
+/** Routes the board events to their frames; returns the unsubscribe. */
+export function publishBoardFrames(deps: BoardFramesDeps): () => void {
+  const { frames } = deps
+  const outcomes = deps.outcomes ?? NO_OUTCOMES
+  /** The mines that came onto the board in this Host turn: an arrival there is not announced. */
+  const newThisTurn = new Set<MineId>()
+  const cameOntoBoard = (mineId: MineId): void => {
+    newThisTurn.add(mineId)
+    queueMicrotask(() => newThisTurn.delete(mineId))
+  }
+
+  const mineChanged = (mineId: MineId): void => {
+    const view = deps.mines.get(mineId)
+    if (view === null) return
+    frames.publishFrame('mine.changed', {
+      mine: toMineWire(view, deps.ledger.totalsOf(mineId))
+    })
+  }
+  const dwarfChanged = (dwarfId: DwarfId): void => {
+    const view = deps.crew.get(dwarfId)
+    if (view === null || view.departed) return
+    frames.publishFrame('dwarf.changed', { dwarf: toDwarfWireWithOutcome(view, outcomes) })
+  }
+
+  const unsubscribes = [
+    deps.events.mines.subscribe('MineCreated', (event) => {
+      cameOntoBoard(event.payload.mineId)
+      mineChanged(event.payload.mineId)
+    }),
+    deps.events.mines.subscribe('MineReattached', (event) => {
+      cameOntoBoard(event.payload.mineId)
+      mineChanged(event.payload.mineId)
+    }),
+    deps.events.mines.subscribe('MineMeasurementStarted', (event) =>
+      mineChanged(event.payload.mineId)
+    ),
+    deps.events.mines.subscribe('MineMeasured', (event) => mineChanged(event.payload.mineId)),
+    deps.events.mines.subscribe('MineBecameUnenterable', (event) =>
+      mineChanged(event.payload.mineId)
+    ),
+    deps.events.mines.subscribe('MineBecameEnterable', (event) =>
+      mineChanged(event.payload.mineId)
+    ),
+    deps.events.mines.subscribe('MineRemoved', (event) => {
+      const { mineId, removedAt } = event.payload
+      frames.publishFrame('mine.removed', { mineId, removedAt })
+    }),
+    deps.events.mines.subscribe('MineRemovalFailed', (event) => {
+      const { mineId, requestId, failed } = event.payload
+      frames.publishFrame('toast', {
+        kind: 'mine-removal-failed',
+        requestId,
+        mineId,
+        failed: [...failed]
+      })
+    }),
+    deps.events.crew.subscribe('DwarfArrived', (event) => {
+      const view = deps.crew.get(event.payload.dwarfId)
+      if (view === null || view.departed) return
+      const announce = !view.owned && !newThisTurn.has(view.mineId)
+      frames.publishFrame('dwarf.arrived', {
+        dwarf: toDwarfWireWithOutcome(view, outcomes),
+        announce
+      })
+    }),
+    deps.events.crew.subscribe('DwarfStatusChanged', (event) =>
+      dwarfChanged(event.payload.dwarfId)
+    ),
+    deps.events.crew.subscribe('DwarfPresenceChanged', (event) =>
+      dwarfChanged(event.payload.dwarfId)
+    ),
+    deps.events.crew.subscribe('DwarfRenamed', (event) => dwarfChanged(event.payload.dwarfId)),
+    deps.events.crew.subscribe('DwarfDeparted', (event) => {
+      const { dwarfId, mineId, cause } = event.payload
+      frames.publishFrame('dwarf.departed', { dwarfId, mineId, cause }, { dwarfId })
+    }),
+    ...(deps.events.crewEnds === undefined
+      ? []
+      : [
+          deps.events.crewEnds.subscribe('DwarfStopRequested', (event) =>
+            dwarfChanged(event.payload.dwarfId)
+          ),
+          deps.events.crewEnds.subscribe('DwarfStopFailed', (event) =>
+            dwarfChanged(event.payload.dwarfId)
+          )
+        ]),
+    deps.events.observation.subscribe('ProviderErrorObserved', (event) => {
+      const { providerId, cause, dwarfId } = event.payload
+      frames.publishFrame('toast', {
+        kind: 'provider-error',
+        providerId,
+        cause,
+        ...(dwarfId === undefined ? {} : { dwarfId })
+      })
+    })
+  ]
+  return () => {
+    for (const unsubscribe of unsubscribes) unsubscribe()
+  }
+}

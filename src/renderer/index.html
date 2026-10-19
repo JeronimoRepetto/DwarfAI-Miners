@@ -16,10 +16,15 @@
 
       Per-directive on purpose: a `data:` image or font cannot execute anything,
       and `script-src` stays shut so a `data:` script still cannot run.
+
+      `connect-src 'self'` (ADR-019 item 4): the renderer never talks to the
+      network or to the Host directly. The policy is the window CSP of
+      src/ui-main/window/adapters/contentSecurityPolicy.ts, whose test holds
+      this tag equal to it.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'"
     />
   </head>
   <body>

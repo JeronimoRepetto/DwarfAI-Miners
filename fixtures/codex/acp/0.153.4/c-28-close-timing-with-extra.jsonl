@@ -1,0 +1,17 @@
+{"at":1735689600836,"event":"spawned","pid":"adapter","dwarfaiUnknownField":"extra"}
+{"at":1735689600837,"stream":"sent","bytes":102,"dwarfaiUnknownField":"extra"}
+{"at":1735689600939,"stream":"received","bytes":987,"dwarfaiUnknownField":"extra"}
+{"at":1735689600941,"stream":"sent","bytes":90,"dwarfaiUnknownField":"extra"}
+{"at":1735689600953,"stream":"received","bytes":159,"dwarfaiUnknownField":"extra"}
+{"at":1735689601135,"stream":"received","bytes":6959,"dwarfaiUnknownField":"extra"}
+{"at":1735689601464,"stream":"sent","bytes":221,"dwarfaiUnknownField":"extra"}
+{"at":1735689601464,"stream":"received","bytes":4142,"dwarfaiUnknownField":"extra"}
+{"at":1735689601568,"stream":"received","bytes":225,"dwarfaiUnknownField":"extra"}
+{"at":1735689605441,"stream":"received","bytes":290,"dwarfaiUnknownField":"extra"}
+{"at":1735689605657,"stream":"received","bytes":175,"dwarfaiUnknownField":"extra"}
+{"at":1735689605662,"stream":"received","bytes":206,"dwarfaiUnknownField":"extra"}
+{"at":1735689605663,"stream":"received","bytes":237,"dwarfaiUnknownField":"extra"}
+{"at":1735689605664,"stream":"received","bytes":468,"dwarfaiUnknownField":"extra"}
+{"at":1735689606015,"stream":"sent","bytes":112,"dwarfaiUnknownField":"extra"}
+{"at":1735689606017,"stream":"received","bytes":37,"dwarfaiUnknownField":"extra"}
+{"at":1735689608042,"event":"exit","code":0,"signal":null,"dwarfaiUnknownField":"extra"}

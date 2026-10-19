@@ -4,8 +4,8 @@ import type {
   Mine,
   ProjectSummary,
   LaunchView
-} from '../../shared/contracts'
-import { DEFAULT_LAUNCH_VIEW } from '../../shared/contracts'
+} from '../../contracts/wire/today'
+import { DEFAULT_LAUNCH_VIEW } from '../../contracts/wire/today'
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
@@ -147,7 +147,7 @@ export type {
   OpenCodePasswordUnavailableReason,
   OpenCodeSettings
   /* --- end of the #588 T6 block ------------------------------------------------ */
-} from '../../shared/contracts'
+} from '../../contracts/wire/today'
 
 /**
  * The wire constants and helpers the renderer reads as VALUES, not just types,
@@ -257,7 +257,7 @@ export {
   MAX_OPENCODE_SERVER_PASSWORD_CHARS,
   parseOpenCodeServerPasswordInput
   /* --- end of the #588 T6 block ------------------------------------------------ */
-} from '../../shared/contracts'
+} from '../../contracts/wire/today'
 
 /** Root state for the mines store. */
 export interface MinesState {
@@ -387,8 +387,8 @@ export interface FailedSend {
 export interface DwarfDeliveryReport {
   /** Send verdicts, keyed by dwarf id. */
   send: Record<string, DwarfSendState>
-  /** Kick verdicts, keyed by dwarf id. */
-  kick: Record<string, DwarfKickState>
+  // REMOVED for ISSUE-183 (was: `kick`, the kick verdicts keyed by dwarf id): A-26 is retired in 3a for every
+  // provider and nothing replaces it, so the dock holds no kick verdict to hand the mine.
   /**
    * The messages the panel sent that never reached their session, per dwarf, oldest first
    * (PANEL-QUESTIONS 16): the app's own record of the send, which the mine history draws because

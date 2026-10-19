@@ -1,0 +1,103 @@
+{
+  "case": "C-01",
+  "description": "Recorded against the user-installed @agentclientprotocol/codex-acp 1.13.1 with CODEX_PATH pinned to the person’s codex-cli 0.153.4 (scrubbed). 15 §4.5, §4.10: initialize declares no client capability (row X2: no question card), session/new {cwd, mcpServers: []}; the session reports the pinned read-only mode (Ask for approval: on-request, the person reviews, workspace-write sandbox), so no session/set_mode is sent, and the first prompt goes out. The launch resolves at the session/new answer; the agent chunk is one dwarf message; session_info_update, usage_update and _auth/status_update open nothing; end_turn is one reliable concluded turn with its usage (inputNet is codex-acp’s uncached input).",
+  "script": [
+    {
+      "do": "launch"
+    }
+  ],
+  "outcomes": [
+    {
+      "resolved": true
+    }
+  ],
+  "events": [
+    {
+      "t": "status",
+      "value": "working"
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:0",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:1:1",
+        "role": "dwarf",
+        "text": "hello",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "usage",
+      "observation": {
+        "sourceKey": "codex:codex:{session}:turn:1",
+        "unitKey": "{session}:turn:1",
+        "fidelity": 1,
+        "tokens": {
+          "inputNet": 31298,
+          "output": 5,
+          "cacheRead": 7808,
+          "cacheWrite": 0,
+          "reasoning": 0
+        },
+        "sealed": true,
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "codex:codex:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    {
+      "t": "status",
+      "value": "idle"
+    }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "session/new",
+      "params": {
+        "cwd": "/work/mine",
+        "mcpServers": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/prompt",
+      "params": {
+        "sessionId": "{session}",
+        "prompt": [
+          {
+            "type": "text",
+            "text": "first prompt"
+          }
+        ]
+      }
+    }
+  ]
+}

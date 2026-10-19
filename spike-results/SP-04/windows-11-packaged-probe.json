@@ -1,0 +1,240 @@
+{
+  "date": "2026-09-30",
+  "builder": {
+    "electronBuilder": "26.15.3",
+    "target": "dir",
+    "buildMs": 4301
+  },
+  "runs": {
+    "asar": {
+      "exitCode": 0,
+      "report": {
+        "platform": "win32",
+        "arch": "x64",
+        "versions": {
+          "node": "24.18.1",
+          "electron": "44.0.0",
+          "modules": "149"
+        },
+        "runAsNode": true,
+        "execPath": "<build>\\out\\win-unpacked\\DwarfAI-SP04.exe",
+        "script": "<build>\\out\\win-unpacked\\resources\\app.asar\\host\\packagedHost.mjs",
+        "resourcesPath": {
+          "type": "string",
+          "value": "<build>\\out\\win-unpacked\\resources",
+          "isExecDirResources": true
+        },
+        "sqlite": {
+          "ok": true,
+          "sqliteVersion": "3.53.1",
+          "journalMode": "wal",
+          "foreignKeyEnforced": true,
+          "rows": 1
+        },
+        "clis": {
+          "claude": {
+            "found": true,
+            "firstExt": ".cmd",
+            "matches": [
+              {
+                "pathIndex": 30,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 41,
+                "ext": ".exe"
+              }
+            ]
+          },
+          "codex": {
+            "found": true,
+            "firstExt": ".cmd",
+            "matches": [
+              {
+                "pathIndex": 30,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 40,
+                "ext": ".cmd"
+              }
+            ]
+          },
+          "agy": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "opencode": {
+            "found": true,
+            "firstExt": ".cmd",
+            "matches": [
+              {
+                "pathIndex": 30,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 31,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 40,
+                "ext": ".cmd"
+              }
+            ]
+          },
+          "kimi": {
+            "found": true,
+            "firstExt": ".cmd",
+            "matches": [
+              {
+                "pathIndex": 30,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 32,
+                "ext": ".exe"
+              }
+            ]
+          },
+          "kiro-cli": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "claude-agent-acp": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          }
+        },
+        "cmdShimSpawn": {
+          "directShellFalse": {
+            "error": "EINVAL",
+            "status": null
+          },
+          "viaComSpecShellFalse": {
+            "status": 0,
+            "ran": true
+          }
+        }
+      },
+      "stderr": null
+    },
+    "unpacked": {
+      "exitCode": 0,
+      "report": {
+        "platform": "win32",
+        "arch": "x64",
+        "versions": {
+          "node": "24.18.1",
+          "electron": "44.0.0",
+          "modules": "149"
+        },
+        "runAsNode": true,
+        "execPath": "<build>\\out\\win-unpacked\\DwarfAI-SP04.exe",
+        "script": "<build>\\out\\win-unpacked\\resources\\app.asar.unpacked\\host\\packagedHost.mjs",
+        "resourcesPath": {
+          "type": "string",
+          "value": "<build>\\out\\win-unpacked\\resources",
+          "isExecDirResources": true
+        },
+        "sqlite": {
+          "ok": true,
+          "sqliteVersion": "3.53.1",
+          "journalMode": "wal",
+          "foreignKeyEnforced": true,
+          "rows": 1
+        },
+        "clis": {
+          "claude": {
+            "found": true,
+            "firstExt": ".cmd",
+            "matches": [
+              {
+                "pathIndex": 30,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 41,
+                "ext": ".exe"
+              }
+            ]
+          },
+          "codex": {
+            "found": true,
+            "firstExt": ".cmd",
+            "matches": [
+              {
+                "pathIndex": 30,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 40,
+                "ext": ".cmd"
+              }
+            ]
+          },
+          "agy": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "opencode": {
+            "found": true,
+            "firstExt": ".cmd",
+            "matches": [
+              {
+                "pathIndex": 30,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 31,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 40,
+                "ext": ".cmd"
+              }
+            ]
+          },
+          "kimi": {
+            "found": true,
+            "firstExt": ".cmd",
+            "matches": [
+              {
+                "pathIndex": 30,
+                "ext": ".cmd"
+              },
+              {
+                "pathIndex": 32,
+                "ext": ".exe"
+              }
+            ]
+          },
+          "kiro-cli": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "claude-agent-acp": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          }
+        },
+        "cmdShimSpawn": {
+          "directShellFalse": {
+            "error": "EINVAL",
+            "status": null
+          },
+          "viaComSpecShellFalse": {
+            "status": 0,
+            "ran": true
+          }
+        }
+      },
+      "stderr": null
+    }
+  }
+}

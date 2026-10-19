@@ -1,13 +1,13 @@
 node_modules/
 
-# Build output. Anchored with a leading slash: an unanchored `release/` also
-# matches at any depth, which silently swallowed skills/release/ — the pattern
-# had no way to say it meant the packaging directory rather than any directory
-# that happens to be named that.
+# Build output. Anchored with a leading slash: an unanchored `release/` would
+# match a directory of that name at any depth, not just the packaging directory.
 /dist/
 /release/
 /out/
 /coverage/
+# The Host's prebuilt native helper (`pnpm build:native`, built by CI; ships in the app).
+/prebuilds/
 docs/investigations/*
 # tsc's incremental build cache — one per tsconfig, regenerated every build.
 *.tsbuildinfo
@@ -33,8 +33,20 @@ docs/dwarfai-miners-design/*
 # `pnpm golden:design`. Never committed, never a link.
 /.design/
 
+# Raw fixture recordings (`<case>.raw.*`): only their scrubbed output is committed (fixtures/README.md).
+fixtures/**/*.raw.*
+
+# Traceability build outputs (testing strategy 17 §3.2): the extractor's map and the id catalogs
+# generated from the architecture package, which is never copied into a tracked path.
+traceability.json
+scripts/traceability/catalogs/
+
 # ODD feature documents: the orchestrator's working notes, kept local and mirrored to Engram
 odd/
 
 #OLD AGENT.md NO DELETE
 Deprecated_AGENTS.md
+# Release-lane outputs (testing strategy 17 §1.9, §1.11): Playwright's per-case output
+# (traces of failed E2E cases) and the perf records, which CI uploads as run artifacts.
+/test-results/
+/perf-results/

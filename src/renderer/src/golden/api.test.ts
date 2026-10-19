@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
+import type { MineId } from '@dwarfai/contracts'
+import { DEFAULT_TOGGLE_ACCELERATOR } from '@dwarfai/contracts'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
-import { goldenApi } from './api'
+import { launchSourcesOf } from '../lib/launch/supplierEntries'
+import { goldenApi, goldenBoard } from './api'
 import { adaptSample } from './sample'
 
 /*
@@ -24,14 +26,14 @@ function sampleOf(data: Record<string, unknown> = {}) {
 }
 
 describe('goldenApi — the board', () => {
-  it('answers the sample mines, and the vault as each material summed on its own', async () => {
+  it('answers the sample mines, and the vault as each material summed on its own', () => {
     const sample = sampleOf({
       mines: [
         { ...shaft, ore: { coal: 2 } },
         { ...shaft, id: 'south-shaft', ore: { coal: 1, gold: 1 } }
       ]
     })
-    const snapshot = await goldenApi(sample).getMines()
+    const snapshot = goldenBoard(sample)
     expect(snapshot.mines.map((m) => m.id)).toEqual(['north-shaft', 'south-shaft'])
     expect(snapshot.materials).toMatchObject({
       coal: 3 * MATERIAL_TOKENS_PER_UNIT.coal,
@@ -40,16 +42,19 @@ describe('goldenApi — the board', () => {
     })
   })
 
-  it('answers an empty board with an empty vault', async () => {
-    const snapshot = await goldenApi(sampleOf()).getMines()
+  it('answers an empty board with an empty vault', () => {
+    const snapshot = goldenBoard(sampleOf())
     expect(snapshot.mines).toEqual([])
     expect(snapshot.tokensObserved).toBe(0)
   })
 
-  it("reads a mine's history from its dwarfs' conversations", async () => {
+  // AMENDED for ISSUE-123 (was: "reads a mine's history from its dwarfs' conversations", answering the sample's
+  // history in today's shape): from the cut-1 switch A-19 reads the Host's message log, keyed by Host ids the sample
+  // does not carry, so the full-screen bridge refuses it by name like every member it does not model.
+  it("refuses a mine's history by name, since A-19 reads the Host's message log", async () => {
     const sample = sampleOf({ mines: [shaft] })
-    expect(await goldenApi(sample).getMineHistory('north-shaft')).toEqual(
-      sample.histories['north-shaft']
+    await expect(goldenApi(sample).getMineHistory('north-shaft' as MineId)).rejects.toThrow(
+      /getMineHistory/
     )
   })
 })
@@ -131,8 +136,15 @@ describe('goldenApi — the window and the app', () => {
     const provider = { id: 'codex', label: 'Codex', models: ['m-large'], efforts: ['low'] }
     const sample = sampleOf({ providers: [provider] })
     const api = goldenApi(sample)
-    expect(await api.listAgentProviders()).toEqual({ providers: sample.providers })
-    expect(await api.listAgentModels()).toEqual({ catalogs: sample.catalogs })
+    // AMENDED for ISSUE-001 (was: today's `{ providers }`): from 3a A-36 answers `SupplierEntryView[]`, which the
+    // Add panel reads back into the sample's providers and models (lib/launch/supplierEntries.ts).
+    const sources = launchSourcesOf(await api.listAgentProviders({}))
+    expect(sources.providers).toEqual(sample.providers)
+    expect(sources.catalogs.map((entry) => entry.models.map((model) => model.value))).toEqual(
+      sample.catalogs.map((entry) => entry.models.map((model) => model.value))
+    )
+    // AMENDED for ISSUE-249 (was: also A-37 `listAgentModels` answering the sample's catalogues): A-37 left the facade
+    // at cut 5 with its RETIRE row (`MEMBER_REMOVED`); the catalogues reach the Add panel through A-36 above.
   })
 })
 
@@ -159,28 +171,9 @@ describe('goldenApi — the launch view', () => {
   })
 })
 
-/*
- * APPENDED (#635, the MessagePanel slice): a full-screen MessagePanel state reads the open dwarf's
- * conversation, so the bridge answers each dwarf's feed from the sample, and refuses a dwarf the
- * sample does not carry rather than answering it with a guess.
- */
-describe('goldenApi — a dwarf feed', () => {
-  const talker = {
-    id: 'a1',
-    name: 'digger-1',
-    mine: 'north-shaft',
-    role: 'worker',
-    provider: 'Claude',
-    status: 'working',
-    conversation: [{ from: 'dwarf', md: 'Done.', time: '09:07' }]
-  }
-
-  it("answers the dwarf's feed from the sample", async () => {
-    const sample = sampleOf({ mines: [shaft], dwarfs: [talker] })
-    expect(await goldenApi(sample).getDwarfFeed('a1')).toEqual(sample.feeds.a1)
-  })
-
-  it('refuses a dwarf the sample does not carry', async () => {
-    await expect(goldenApi(sampleOf()).getDwarfFeed('nobody')).rejects.toThrow(/nobody/)
-  })
-})
+// REMOVED for ISSUE-249, stated rather than passing unseen (docs/test-removals.md): 'goldenApi — a dwarf feed', its two
+// cases ("answers the dwarf's feed from the sample", "refuses a dwarf the sample does not carry"). A-14 `getDwarfFeed`
+// left the facade at cut 5 with its RETIRE row (`MEMBER_REMOVED`); a full-screen MessagePanel state reads the Host's
+// conversation, which the golden page seeds itself. Coverage of the removal lives in
+// `src/preload/preload.contract.test.ts` ("[ADR-019, ADR-001] every RETIRE row of 14 §2.1 has no handler and no
+// preload member in the release-5 build").

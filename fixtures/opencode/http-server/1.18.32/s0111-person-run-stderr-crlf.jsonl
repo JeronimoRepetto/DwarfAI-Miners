@@ -1,0 +1,29 @@
+timestamp=2026-10-17T08:23:38.939Z level=INFO run=878af07c message=loading path="<HOME>\\.config\\opencode\\config.json"
+timestamp=2026-10-17T08:23:38.941Z level=INFO run=878af07c message=loading path="<HOME>\\.config\\opencode\\opencode.json"
+timestamp=2026-10-17T08:23:38.954Z level=INFO run=878af07c message=loading path="<HOME>\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-17T08:23:39.082Z level=INFO run=878af07c message="creating instance" directory="<REPO>"
+timestamp=2026-10-17T08:23:39.082Z level=INFO run=878af07c message=fromDirectory directory="<REPO>"
+timestamp=2026-10-17T08:23:39.193Z level=INFO run=878af07c message=bootstrapping directory="<REPO>"
+timestamp=2026-10-17T08:23:39.196Z level=INFO run=878af07c message=loading path="<HOME>\\.config\\opencode\\config.json"
+timestamp=2026-10-17T08:23:39.197Z level=INFO run=878af07c message=loading path="<HOME>\\.config\\opencode\\opencode.json"
+timestamp=2026-10-17T08:23:39.200Z level=INFO run=878af07c message=loading path="<HOME>\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-17T08:23:39.577Z level=INFO run=878af07c message="all LSPs are disabled"
+timestamp=2026-10-17T08:23:39.578Z level=INFO run=878af07c message="all formatters are disabled"
+timestamp=2026-10-17T08:23:39.578Z level=INFO run=878af07c message=init
+timestamp=2026-10-17T08:23:39.579Z level=INFO run=878af07c message="event connected"
+timestamp=2026-10-17T08:23:39.583Z level=INFO run=878af07c message=created id=00000000-0000-4000-8000-000000000003 slug=sunny-canyon version=1.18.32 projectID=[redacted] directory="<REPO>" path="" workspaceID=undefined parentID=undefined title="New session - 2026-10-17T08:23:39.583Z" agent=undefined model=undefined metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1792225419583 time.updated=1792225419583
+timestamp=2026-10-17T08:23:41.103Z level=INFO run=878af07c message=created id=00000000-0000-4000-8000-000000000005 slug=tidy-falcon version=1.18.32 projectID=[redacted] directory="<REPO>" path="" workspaceID=undefined parentID=undefined title="New session - 2026-10-17T08:23:41.103Z" agent=undefined model=undefined metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1792225421103 time.updated=1792225421103
+timestamp=2026-10-17T08:23:49.293Z level=INFO run=878af07c message="creating instance" directory="<HOME>\\AppData\\Local\\Temp\\[redacted]"
+timestamp=2026-10-17T08:23:49.294Z level=INFO run=878af07c message=fromDirectory directory="<HOME>\\AppData\\Local\\Temp\\[redacted]"
+timestamp=2026-10-17T08:23:49.396Z level=INFO run=878af07c message=bootstrapping directory="<HOME>\\AppData\\Local\\Temp\\[redacted]"
+timestamp=2026-10-17T08:23:49.404Z level=INFO run=878af07c message=loading path="<HOME>\\AppData\\Local\\Temp\\[redacted]\\.opencode\\opencode.json"
+timestamp=2026-10-17T08:23:49.404Z level=INFO run=878af07c message=loading path="<HOME>\\AppData\\Local\\Temp\\[redacted]\\.opencode\\opencode.jsonc"
+timestamp=2026-10-17T08:23:52.227Z level=INFO run=878af07c message="all LSPs are disabled"
+timestamp=2026-10-17T08:23:52.228Z level=INFO run=878af07c message="all formatters are disabled"
+timestamp=2026-10-17T08:23:52.228Z level=INFO run=878af07c message=init
+timestamp=2026-10-17T08:23:52.453Z level=INFO run=878af07c message=created id=00000000-0000-4000-8000-00000000000a slug=proud-cactus version=1.18.32 projectID=[redacted] directory="<HOME>\\AppData\\Local\\Temp\\[redacted]" path="" workspaceID=undefined parentID=undefined title="New session - 2026-10-17T08:23:52.453Z" agent=undefined model=undefined metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1792225432453 time.updated=1792225432453
+timestamp=2026-10-17T08:23:52.472Z level=INFO run=878af07c message="disposing instance" directory="<REPO>"
+timestamp=2026-10-17T08:23:52.478Z level=INFO run=878af07c message=created id=00000000-0000-4000-8000-000000000008 slug=hidden-orchid version=1.18.32 projectID=[redacted] directory="<REPO>" path="" workspaceID=undefined parentID=undefined title="New session - 2026-10-17T08:23:52.478Z" agent=undefined model=undefined metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1792225432478 time.updated=1792225432478
+timestamp=2026-10-17T08:23:52.490Z level=INFO run=878af07c message="event disconnected"
+timestamp=2026-10-17T08:23:52.879Z level=INFO run=878af07c message=loading path="<REPO>\\.opencode\\opencode.json"
+timestamp=2026-10-17T08:23:52.879Z level=INFO run=878af07c message=loading path="<REPO>\\.opencode\\opencode.jsonc"

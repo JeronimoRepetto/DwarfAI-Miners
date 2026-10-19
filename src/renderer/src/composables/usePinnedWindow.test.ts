@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { usePinnedWindow } from './usePinnedWindow'
 
 function stubApi(api: {
@@ -8,7 +9,8 @@ function stubApi(api: {
 }): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: api
+    writable: true,
+    value: createFakeWindowApi(api)
   })
 }
 

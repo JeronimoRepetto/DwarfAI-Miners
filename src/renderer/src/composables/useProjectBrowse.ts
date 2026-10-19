@@ -5,6 +5,7 @@ import { defaultBrowseFilters, hasMorePages, projectQueryFor } from '../lib/brow
 import type { MineSort } from '../lib/browse/minesList'
 import { removeFailureNotice } from '../lib/browse/removeMine'
 import type { MineTier, MineWorktreeOf, ProjectSummary } from '../types'
+import { useHostConnection } from './useHostConnection'
 
 /**
  * What the panel says when a browse could not be read and main gave no reason.
@@ -207,6 +208,8 @@ export function useProjectBrowse() {
    * The map needs nothing from here: it picks the mine up on its next poll.
    */
   async function addProject(): Promise<string | undefined> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return undefined
     if (adding.value) return undefined
     adding.value = true
     addError.value = null
@@ -259,6 +262,8 @@ export function useProjectBrowse() {
    * could only offer a button that no longer works.
    */
   async function openMainProject(): Promise<string | undefined> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return undefined
     if (adding.value) return undefined
     worktreeQuestion.value = null
     adding.value = true
@@ -313,6 +318,8 @@ export function useProjectBrowse() {
    * reports the mine removed.
    */
   async function removeProject(projectId: string): Promise<boolean> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return false
     if (removing.value) return false
     removing.value = true
     removeError.value = null

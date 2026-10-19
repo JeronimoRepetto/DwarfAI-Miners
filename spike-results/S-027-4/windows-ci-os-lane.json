@@ -1,0 +1,54 @@
+{
+  "spike": "S-027-4",
+  "platform": "win32",
+  "osRelease": "10.0.26100",
+  "elevation": {
+    "elevated": false,
+    "evidence": "integrity level S-1-16-8192"
+  },
+  "entry": {
+    "kind": "windows-run-value",
+    "location": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\DwarfAI-S0274-<suffix>"
+  },
+  "writeMs": 20,
+  "readBack": {
+    "present": true,
+    "command": {
+      "executable": "<repo>\\node_modules\\.pnpm\\electron@44.0.0\\node_modules\\electron\\dist\\electron.exe",
+      "args": ["<tmp>\\dwarfai-s0274-gHi5eB\\app", "--background"]
+    },
+    "disabledByPerson": false,
+    "raw": "\"<repo>\\node_modules\\.pnpm\\electron@44.0.0\\node_modules\\electron\\dist\\electron.exe\" \"<tmp>\\dwarfai-s0274-gHi5eB\\app\" \"--background\""
+  },
+  "started": {
+    "code": 0,
+    "events": [
+      {
+        "event": "started",
+        "electron": "44.0.0",
+        "startedAt": "2026-10-02T22:44:31.632Z",
+        "uptimeSeconds": 2726,
+        "background": true,
+        "windows": 0,
+        "tray": {
+          "ok": true
+        }
+      }
+    ]
+  },
+  "afterRemove": {
+    "present": false,
+    "command": null,
+    "disabledByPerson": null,
+    "raw": null
+  },
+  "disabledReadBack": {
+    "present": true,
+    "command": {
+      "executable": "<repo>\\node_modules\\.pnpm\\electron@44.0.0\\node_modules\\electron\\dist\\electron.exe",
+      "args": ["<tmp>\\dwarfai-s0274-gHi5eB\\app", "--background"]
+    },
+    "disabledByPerson": true,
+    "raw": "\"<repo>\\node_modules\\.pnpm\\electron@44.0.0\\node_modules\\electron\\dist\\electron.exe\" \"<tmp>\\dwarfai-s0274-gHi5eB\\app\" \"--background\""
+  }
+}

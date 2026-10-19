@@ -1,0 +1,21 @@
+{
+  "spike": "S-019-3",
+  "part": "packaged",
+  "environment": {
+    "date": "2026-10-18T13:22:56.179Z",
+    "platform": "linux",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Linux",
+    "imageOs": "ubuntu24",
+    "imageVersion": "20261012.334.1"
+  },
+  "app": "dwarfai-miners",
+  "seconds": 30,
+  "hostStarted": false,
+  "cleared": [],
+  "netLog": {
+    "written": false
+  },
+  "clearedAfter": []
+}

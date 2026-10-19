@@ -1,0 +1,17 @@
+{
+  "case": "probe-help-without-prompt-tool",
+  "spike": "SP-08",
+  "claudeVersion": "2.1.301",
+  "osRelease": "10.0.26200",
+  "arch": "x64",
+  "date": "2026-10-16",
+  "promptToolListed": false,
+  "disallowedToolsListed": true,
+  "mcpConfigListed": true,
+  "strictMcpConfigListed": true,
+  "sessionIdListed": true,
+  "resumeListed": true,
+  "forkSessionListed": true,
+  "inputFormatListed": true,
+  "permissionModeListed": true
+}

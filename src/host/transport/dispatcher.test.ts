@@ -1,0 +1,164 @@
+// layer: L6
+// The method dispatcher's role rule, table-driven over 14 §2.3 (14 §1.10: "the FORBIDDEN contract
+// test is table-driven"; ADR-003 item 12).
+import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import { FakeClock } from '../kernel/fakes/FakeClock'
+import { RecordingDiagnosticsLog } from '../kernel/fakes/RecordingDiagnosticsLog'
+import { requestIdSchema } from '@dwarfai/contracts'
+import { MUTATING_METHODS } from './dedupe/mutatingMethods'
+import { CallError, Dispatcher } from './dispatcher'
+import { FRAME_ROLES, METHOD_ROLES, type ChannelRole } from './roles'
+import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
+
+const ROLES: readonly ChannelRole[] = ['ui', 'notifier', 'viewer']
+const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
+const MUTATING_PARAMS = z.object({ requestId: requestIdSchema }).strict()
+
+describe('Dispatcher role scopes (ADR-003 item 12)', () => {
+  it('[ADR-003, FM-035] each role reaches exactly the methods 14 §2.3 lists for it, and every other call is FORBIDDEN', async () => {
+    const dispatcher = new Dispatcher({
+      log: new RecordingDiagnosticsLog(),
+      clock: new FakeClock(),
+      scheduler: new FakeScheduler(new FakeClock()),
+      state: () => 'ready'
+    })
+    // AMENDED for ISSUE-027 (was: every method registered with `register` and params `{}`): the
+    // 14 §1.6 mutating methods register with `registerMutating` and carry a UUIDv7 requestId.
+    for (const [method, roles] of Object.entries(METHOD_ROLES)) {
+      if (MUTATING_METHODS.has(method)) {
+        dispatcher.registerMutating(method, MUTATING_PARAMS, roles, () => ({}))
+      } else {
+        dispatcher.register(method, z.object({}).strict(), roles, () => ({}))
+      }
+    }
+
+    const reached: Record<ChannelRole, string[]> = { ui: [], notifier: [], viewer: [] }
+    for (const role of ROLES) {
+      for (const method of Object.keys(METHOD_ROLES)) {
+        const params = MUTATING_METHODS.has(method) ? { requestId: REQUEST_ID } : {}
+        const res = await dispatcher.dispatch({ id: '1', method, params }, { role, clientId: 'c' })
+        if (res.ok) reached[role].push(method)
+        else expect(res.error.code, `${role} ${method}`).toBe('FORBIDDEN')
+      }
+    }
+
+    // 39 methods (B-M02…B-M40; B-M41 ended with the bridge at the end of cut 4, ISSUE-241); the notifier never
+    // mutates and the viewer only reads its dwarf.
+    expect(Object.keys(METHOD_ROLES)).toHaveLength(39)
+    expect(reached.ui).toHaveLength(38)
+    expect(reached.ui).not.toContain('attention.clicked')
+    expect(reached.notifier.sort()).toEqual(['attention.clicked', 'ping', 'session.snapshot'])
+    expect(reached.viewer.sort()).toEqual(['conversation.feed', 'events.subscribe', 'ping'])
+
+    // 26 evt frames (B-F03…B-F28); the notifier receives only its three.
+    expect(Object.keys(FRAME_ROLES)).toHaveLength(26)
+    const notifierFrames = Object.entries(FRAME_ROLES)
+      .filter(([, roles]) => roles.includes('notifier'))
+      .map(([name]) => name)
+      .sort()
+    expect(notifierFrames).toEqual(['attention.notify', 'attention.withdraw', 'host.closing'])
+  })
+})
+
+describe('Dispatcher effects deferred past the answer (14 §1.7)', () => {
+  it('[ADR-002] an effect a mutating handler defers runs only after its answer was handed to the writer, and a repeat answered from the table runs none', async () => {
+    const dispatcher = new Dispatcher({
+      log: new RecordingDiagnosticsLog(),
+      clock: new FakeClock(),
+      scheduler: new FakeScheduler(new FakeClock()),
+      state: () => 'ready'
+    })
+    const journal: string[] = []
+    dispatcher.registerMutating('test.after', MUTATING_PARAMS, ['ui'], (_params, context) => {
+      journal.push('handler')
+      context.afterAnswer(() => journal.push('effect'))
+      return { done: true }
+    })
+    const ui = { role: 'ui' as const, clientId: 'c' }
+    const write = (res: unknown): void => {
+      journal.push(`res:${JSON.stringify(res)}`)
+    }
+
+    const first = await dispatcher.dispatch(
+      { id: '1', method: 'test.after', params: { requestId: REQUEST_ID } },
+      ui,
+      write
+    )
+    const repeat = await dispatcher.dispatch(
+      { id: '2', method: 'test.after', params: { requestId: REQUEST_ID } },
+      ui,
+      write
+    )
+
+    expect(first).toEqual({ type: 'res', id: '1', ok: true, result: { done: true } })
+    expect(repeat).toEqual({ type: 'res', id: '2', ok: true, result: { done: true } })
+    expect(journal).toEqual([
+      'handler',
+      `res:${JSON.stringify(first)}`,
+      'effect',
+      `res:${JSON.stringify(repeat)}`
+    ])
+  })
+})
+
+describe('Dispatcher afterAnswer on a method that does not mutate (14 §3.4)', () => {
+  it('[ADR-003] a query handler may defer an effect until its answer was handed to the writer; a throwing handler defers none', async () => {
+    const dispatcher = new Dispatcher({
+      log: new RecordingDiagnosticsLog(),
+      clock: new FakeClock(),
+      scheduler: new FakeScheduler(new FakeClock()),
+      state: () => 'ready'
+    })
+    const journal: string[] = []
+    dispatcher.register('test.follow', z.object({}).strict(), ['ui'], (_params, context) => {
+      journal.push('handler')
+      context.afterAnswer(() => journal.push('follow'))
+      return { status: 'live' }
+    })
+    dispatcher.register('test.throws', z.object({}).strict(), ['ui'], (_params, context) => {
+      context.afterAnswer(() => journal.push('never'))
+      throw new Error('boom')
+    })
+    const ui = { role: 'ui' as const, clientId: 'c' }
+    const write = (res: { id: string }): void => {
+      journal.push(`res:${res.id}`)
+    }
+
+    await dispatcher.dispatch({ id: '1', method: 'test.follow', params: {} }, ui, write)
+    await dispatcher.dispatch({ id: '2', method: 'test.throws', params: {} }, ui, write)
+
+    expect(journal).toEqual(['handler', 'res:1', 'follow', 'res:2'])
+  })
+})
+
+describe('Dispatcher call errors from a handler (14 §3.3)', () => {
+  it('[ADR-003] a handler that throws a CallError answers that call error, logged by its code only, never INTERNAL', async () => {
+    const log = new RecordingDiagnosticsLog()
+    const clock = new FakeClock()
+    const dispatcher = new Dispatcher({
+      log,
+      clock,
+      scheduler: new FakeScheduler(clock),
+      state: () => 'ready'
+    })
+    dispatcher.register('test.expired', z.object({}).strict(), ['ui'], () => {
+      throw new CallError('SNAPSHOT_EXPIRED')
+    })
+
+    const res = await dispatcher.dispatch(
+      { id: '1', method: 'test.expired', params: {} },
+      { role: 'ui', clientId: 'c' }
+    )
+
+    expect(res).toEqual({
+      type: 'res',
+      id: '1',
+      ok: false,
+      error: { code: 'SNAPSHOT_EXPIRED', message: 'the snapshot expired', retryable: false }
+    })
+    expect(log.byEvent('channel.req')).toEqual([
+      expect.objectContaining({ outcome: 'failed', errCode: 'SNAPSHOT_EXPIRED' })
+    ])
+  })
+})

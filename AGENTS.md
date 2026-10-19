@@ -12,8 +12,8 @@ does not — mostly things that have already gone wrong at least once.
 
 - **The single source of truth.** `CLAUDE.md` imports it; every other tool reads it directly.
 - **Budgeted under 300 lines** — a new section takes one out; duplicated prose goes first.
-- **Three regions are generated** by `node skills/skill-sync/assets/sync.mjs` — skill tables from
-  frontmatter, the `main/` tree bullet from the filesystem. Never hand-edit inside the markers.
+- **Two regions are generated** by `node skills/skill-sync/assets/sync.mjs` — the skill tables, from
+  frontmatter. Never hand-edit inside the markers.
 - [`skills/README.md`](skills/README.md) is the spec for the skills system itself.
 
 ## Skills
@@ -23,13 +23,11 @@ does not — mostly things that have already gone wrong at least once.
 | Skill                                                  | What it covers                                                                                                                                                |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`config-layering`](skills/config-layering/SKILL.md)   | The three configuration layers, why a packaged app never sees .env, and the deliberate split between a bad shape and a bad value                              |
-| [`jev-capabilities`](skills/jev-capabilities/SKILL.md) | How a launchable model earns a place in Jev's routing table, and the evidence rule every entry must meet                                                      |
 | [`platform-ports`](skills/platform-ports/SKILL.md)     | How per-OS behaviour is isolated behind ports so that macOS and Linux assertions run on a Windows host                                                        |
 | [`privacy-guard`](skills/privacy-guard/SKILL.md)       | Keeping machine-specific identifiers out of tracked files, and the CI step that fails the build when one gets in                                              |
-| [`release`](skills/release/SKILL.md)                   | How an installer release is actually cut — pushing a v-prefixed tag — and the traps in the workflow that do the building                                      |
 | [`simulated-valley`](skills/simulated-valley/SKILL.md) | The development-only simulated provider, for seeing the panel under load without launching real agent sessions                                                |
 | [`skill-creator`](skills/skill-creator/SKILL.md)       | How to add, change or retire a skill in this repository, and how to decide whether one is warranted at all                                                    |
-| [`skill-sync`](skills/skill-sync/SKILL.md)             | Regenerating AGENTS.md's three generated regions — the skill catalogue, the auto-invoke table, and the main/ tree bullet                                      |
+| [`skill-sync`](skills/skill-sync/SKILL.md)             | Regenerating AGENTS.md's two generated regions — the skill catalogue and the auto-invoke table                                                                |
 | [`tdd`](skills/tdd/SKILL.md)                           | The test-first workflow this repo holds agents to, and the house idioms for writing a test that belongs here                                                  |
 | [`test-safety`](skills/test-safety/SKILL.md)           | Preserving tests that already exist — a test file you did not create is append-and-amend only, and every removal is stated out loud                           |
 | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             | The generated, read-only design docs behind the interface rebuild, the reading route through them, and the decisions resolved there that code must not reopen |
@@ -45,21 +43,15 @@ This table is the imperative form, and it is the one that binds.
 
 | When you are about to…                                          | ALWAYS invoke this skill first                         |
 | --------------------------------------------------------------- | ------------------------------------------------------ |
-| adding a provider or a model the app can launch                 | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
-| adding a provider whose models come from a live catalogue       | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
 | adding art, icons or sprite assets for the new interface        | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             |
 | adding behaviour that differs per operating system              | [`platform-ports`](skills/platform-ports/SKILL.md)     |
 | adding or changing a configuration setting                      | [`config-layering`](skills/config-layering/SKILL.md)   |
 | adding or changing a skill under skills/                        | [`skill-creator`](skills/skill-creator/SKILL.md)       |
 | adding or editing a test fixture                                | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
-| changing a model catalogue builder                              | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
 | changing an existing test file                                  | [`test-safety`](skills/test-safety/SKILL.md)           |
-| changing packaging or the release workflow                      | [`release`](skills/release/SKILL.md)                   |
 | committing a screenshot or a captured terminal transcript       | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
-| cutting a release or publishing installers                      | [`release`](skills/release/SKILL.md)                   |
 | deleting or replacing a test                                    | [`test-safety`](skills/test-safety/SKILL.md)           |
 | documenting a configuration option                              | [`config-layering`](skills/config-layering/SKILL.md)   |
-| editing a Jev question, criterion or confidence floor           | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
 | finishing a change under skills/                                | [`skill-sync`](skills/skill-sync/SKILL.md)             |
 | fixing a bug                                                    | [`tdd`](skills/tdd/SKILL.md)                           |
 | fixing a skill that is missing from a table in AGENTS.md        | [`skill-sync`](skills/skill-sync/SKILL.md)             |
@@ -205,23 +197,6 @@ adding a file. This is the index — one line per group, so you can tell what a 
 - **`shared/`** — the wire boundary: `contracts.ts`, `accelerator.ts`, `truncate.ts`,
   `externalLink.ts`.
 - **`preload/`** — the one typed API surface handed to the renderer.
-
-<!-- BEGIN GENERATED: main-tree -->
-
-- **`main/`** — `index.ts` is the composition root, and the only file that owns Electron's
-  `ipcMain` and `globalShortcut`. Beside it, one directory per subject: `adapters` (fs and sqlite
-  seams with their fakes), `appDatabase` (the one SQLite file), `config`, `domain` (pure rules and
-  the type barrel), `dwarfNames` (the names a person gives dwarfs, kept per machine), `history`,
-  `hooks` (the opt-in Claude push channel), `jev` (asking the TypeSafe Jev model which provider,
-  model and effort to launch with), `ledger` (mined, persisted), `mcp` (the subtask-delegation
-  gate, and the stdio MCP server itself), `notifications` (the OS notification centre, behind a
-  port), `opencodePermissions` (the OpenCode permission push payload builder, and the plugin
-  artifact that feeds it (#588)), `platform` (composed once in `platformAdapters.ts`), `projects`,
-  `providers` (one per agent CLI plus the simulated one), `runtime` (the poll loop),
-  `sessionLaunch` (starting a session and holding one), `shell` (window, tray, autostart,
-  shortcuts), `textDelivery`, `tier`.
-
-<!-- END GENERATED: main-tree -->
 
 - **`renderer/src/`** — one root, `App.vue`, the shell; the MessagePanel and the Add panel are in its
   dock slot (`useMessageDock`). `components/` is thin and decides nothing, `lib/` framework-agnostic;

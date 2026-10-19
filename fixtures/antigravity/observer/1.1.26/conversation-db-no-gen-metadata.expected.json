@@ -1,0 +1,6 @@
+{
+  "$comment": "conversation-db-no-gen-metadata.sql: a database without gen_metadata yields no usage and one warning (drift, FM-068), once per file; the watermark stays at 0.",
+  "warnings": 1,
+  "watermark": 0,
+  "usage": []
+}

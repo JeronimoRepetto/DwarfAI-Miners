@@ -1,0 +1,10 @@
+{
+  "version": "2.1.263",
+  "ambiguous": false,
+  "pending": {
+    "id": "toolu_01KeystrokeAsk",
+    "toolName": "AskUserQuestion",
+    "requestText": "{\"questions\":[{\"question\":\"Which suite?\",\"options\":[{\"label\":\"All\"},{\"label\":\"Unit\"}]}]}",
+    "kind": "question"
+  }
+}

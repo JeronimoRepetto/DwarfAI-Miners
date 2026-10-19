@@ -1,0 +1,39 @@
+{
+  "$comment": "Hand-written from 15 §5 and ADR-015 item 7: the transcript of the subagent task-notifications.jsonl ends (completed). Read on its own it is an ordinary depth-1 subagent; written after its ending was seen, it is the late write of FM-092 that reconcile.test.ts holds to no event and no dwarf. Shared by ended-subagent-crlf.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000720",
+      "providerAgentId": "c3d4e5f60718293ab",
+      "cwd": "C:\\Users\\j\\work\\sample.project",
+      "at": 1790791203000,
+      "parent": {
+        "providerSessionId": "01a0b000-0000-7000-8000-000000000720",
+        "providerAgentId": null
+      }
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "Review the change.", "providerTime": 1790791203000 },
+    { "role": "dwarf", "text": "The change reads well.", "providerTime": 1790791250000 }
+  ],
+  "activity": ["turn-started", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000720:c3d4e5f60718293ab:00000000-0000-4000-8000-000000072102",
+      "kind": "concluded",
+      "at": 1790791250000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01EndedSubagentA",
+      "fidelity": 1,
+      "tokens": { "inputNet": 5, "output": 12, "cacheRead": 0, "cacheWrite": 300, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790791250000
+    }
+  ]
+}

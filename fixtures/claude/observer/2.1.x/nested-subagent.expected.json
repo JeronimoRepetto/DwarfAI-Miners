@@ -1,0 +1,39 @@
+{
+  "$comment": "Hand-written from 15 §5 (the sidecar carries parentAgentId, #391) and ADR-015 item 7: a nested subagent is its own identity, and its parent is the agent its sidecar names, not the session. Shared by nested-subagent-crlf.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000716",
+      "providerAgentId": "b2c3d4e5f6071829a",
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790780403000,
+      "parent": {
+        "providerSessionId": "01a0b000-0000-7000-8000-000000000716",
+        "providerAgentId": "a1b2c3d4e5f607181"
+      }
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "List the changed files.", "providerTime": 1790780403000 },
+    { "role": "dwarf", "text": "Two files changed.", "providerTime": 1790780406000 }
+  ],
+  "activity": ["turn-started", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000716:b2c3d4e5f6071829a:00000000-0000-4000-8000-000000071612",
+      "kind": "concluded",
+      "at": 1790780406000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01NestedSubagentB",
+      "fidelity": 1,
+      "tokens": { "inputNet": 2, "output": 11, "cacheRead": 0, "cacheWrite": 300, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790780406000
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "version": "2.1.14 (Claude Code)",
+  "replay": [
+    {
+      "file": "projects/-work-sample-project/00000000-0000-4000-8000-000000000003.jsonl",
+      "records": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-4000-8000-000000000301",
+          "parentUuid": null,
+          "sessionId": "00000000-0000-4000-8000-000000000003",
+          "cwd": "/work/sample-project",
+          "version": "2.1.14",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "message": { "role": "user", "content": "List the files of the sample project." }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-4000-8000-000000000302",
+          "parentUuid": "00000000-0000-4000-8000-000000000301",
+          "sessionId": "00000000-0000-4000-8000-000000000003",
+          "cwd": "/work/sample-project",
+          "version": "2.1.14",
+          "timestamp": "2026-01-01T00:00:02.000Z",
+          "message": {
+            "id": "msg_000000000000000000000003",
+            "type": "message",
+            "role": "assistant",
+            "model": "sample-model",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_000000000000000000000003",
+                "name": "Bash",
+                "input": { "command": "ls", "description": "List the files" }
+              }
+            ],
+            "stop_reason": "tool_use",
+            "usage": {
+              "input_tokens": 14,
+              "output_tokens": 6,
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "exitCode": 0,
+  "ignoreStdin": true
+}

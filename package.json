@@ -7,20 +7,24 @@
   "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
-  "main": "./out/main/index.js",
+  "main": "./out/ui-main/index.js",
   "build": {
     "appId": "com.jeronimorepetto.dwarfaiminers",
     "productName": "DwarfAI-Miners",
     "directories": {
       "output": "release"
     },
-    "afterPack": "scripts/pruneSdkRuntimes.mjs",
+    "publish": null,
+    "afterPack": "scripts/build/afterPack.mjs",
+    "afterSign": "scripts/build/afterSign.mjs",
     "files": [
       "out/**/*",
-      "package.json"
+      "prebuilds/**/*",
+      "package.json",
+      "!**/*.test.*"
     ],
     "asarUnpack": [
-      "out/main/jevMcpServer.mjs"
+      "prebuilds/**"
     ],
     "extraResources": [
       {
@@ -29,19 +33,39 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "release/licenses/THIRD-PARTY-NOTICES.md",
+        "to": "THIRD-PARTY-NOTICES.md"
       }
     ],
     "win": {
       "target": [
-        "nsis",
-        "portable"
-      ]
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
     "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "packElevateHelper": false,
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
-    },
-    "portable": {
-      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     },
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -71,8 +95,18 @@
     "linux": {
       "category": "Development",
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     }
@@ -82,31 +116,39 @@
     "art:build": "node scripts/build-art.mjs",
     "icons": "node scripts/build-icons.mjs",
     "interior:map": "node scripts/build-interior-map.mjs",
-    "dev": "install-electron && pnpm build:mcp-server && electron-vite dev",
-    "build": "electron-vite build && pnpm build:mcp-server",
-    "build:mcp-server": "electron-vite build --config electron.vite.jevMcpServer.config.ts",
-    "package": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
-    "package:mac": "pnpm build && electron-builder --mac --publish never",
-    "package:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --publish never",
+    "dev": "install-electron && electron-vite dev",
+    "build": "electron-vite build && node scripts/build/write-host-manifest.mjs && electron-vite build --config electron.vite.host.config.ts && electron-vite build --config electron.vite.relay.config.ts && electron-vite build --config electron.vite.viewer.config.ts",
+    "build:native": "node scripts/native/build-win-pipe.mjs",
+    "package": "electron-builder --publish never",
+    "test:packaged": "node scripts/release/packaged/run.mjs",
     "preview": "install-electron && electron-vite preview",
-    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
-    "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck:node": "node --max-old-space-size=8192 node_modules/typescript/bin/tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "node --max-old-space-size=8192 node_modules/vue-tsc/bin/vue-tsc.js --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
-    "lint": "eslint .",
+    "lint": "eslint . && pnpm depcruise",
+    "depcruise": "depcruise src --config .dependency-cruiser.cjs",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:os": "vitest run --config vitest.os.config.ts",
+    "test:e2e": "playwright test -c playwright.config.ts",
+    "test:perf": "node perf/_harness/runPerf.mjs",
     "test:golden": "node scripts/golden/run.mjs",
-    "golden:design": "node scripts/golden/design-copy.mjs"
+    "test:canaries": "node scripts/checks/run-canaries.mjs",
+    "test:real-cli": "vitest run --maxWorkers=1 integration.test",
+    "trace:check": "node scripts/traceability/extract.mjs && node scripts/traceability/check.mjs",
+    "golden:design": "node scripts/golden/design-copy.mjs",
+    "ipc:generate": "node scripts/ipc/generate-window-api.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.258",
+    "@agentclientprotocol/sdk": "1.6.0",
     "@fontsource-variable/pixelify-sans": "^5.3.0",
     "@fontsource/jacquard-12": "^5.3.0",
     "@fontsource/tiny5": "^5.3.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@napi-rs/keyring": "2.1.0",
     "@typesafe-ai/sdk": "0.6.0",
     "dotenv": "17.4.2",
     "markdown-it": "^15.0.1",
@@ -114,16 +156,12 @@
     "vue": "3.5.42",
     "zod": "3.25.76"
   },
-  "optionalDependencies": {
-    "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.258",
-    "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.258",
-    "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.258",
-    "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.258"
-  },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "26.4.0",
     "@vitejs/plugin-vue": "6.0.8",
     "@vue/test-utils": "^2.5.0",
+    "dependency-cruiser": "18.4.0",
     "electron": "44.0.0",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
@@ -132,6 +170,7 @@
     "eslint-plugin-vue": "10.10.0",
     "jimp": "1.6.1",
     "jsdom": "^30.0.1",
+    "node-api-headers": "1.9.0",
     "png2icons": "2.0.1",
     "prettier": "3.9.6",
     "typescript": "6.0.3",

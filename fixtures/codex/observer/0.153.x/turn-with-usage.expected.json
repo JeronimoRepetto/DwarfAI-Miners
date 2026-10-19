@@ -1,0 +1,61 @@
+{
+  "$comment": "Hand-written from 15 §5 (Codex row), ADR-006 item 4 and ADR-021 items 1 and 5; shared by turn-with-usage-crlf.jsonl and turn-with-usage-with-extra.jsonl.",
+  "warnings": 0,
+  "session": {
+    "providerSessionId": "01a0b000-0000-7000-8000-000000000731",
+    "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
+    "at": 1790762399000,
+    "parentProviderSessionId": null
+  },
+  "entries": [
+    { "role": "person", "text": "Count the files in this folder.", "providerTime": 1790762401200 },
+    { "role": "dwarf", "text": "There are three files.", "providerTime": 1790762405000 },
+    { "role": "person", "text": "Now list them.", "providerTime": 1790762460100 },
+    { "role": "dwarf", "text": "a.txt, b.txt, c.txt", "providerTime": 1790762462000 }
+  ],
+  "activity": ["turn-started", "record", "record", "record", "turn-started"],
+  "turnEnds": [
+    {
+      "turnKey": "01a0b000-0000-7000-8000-0000000007a1",
+      "kind": "concluded",
+      "at": 1790762405300,
+      "reliability": "reliable",
+      "cancelledFromApp": false
+    },
+    {
+      "turnKey": "01a0b000-0000-7000-8000-0000000007a2",
+      "kind": "concluded",
+      "at": 1790762462200,
+      "reliability": "reliable",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "01a0b000-0000-7000-8000-0000000007a1",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 1600,
+        "output": 80,
+        "cacheRead": 900,
+        "cacheWrite": 0,
+        "reasoning": 40
+      },
+      "sealed": true,
+      "providerTime": 1790762405100
+    },
+    {
+      "unitKey": "01a0b000-0000-7000-8000-0000000007a2",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 400,
+        "output": 60,
+        "cacheRead": 1100,
+        "cacheWrite": 0,
+        "reasoning": 20
+      },
+      "sealed": true,
+      "providerTime": 1790762462100
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "case": "C-20",
+  "description": "ADR-021 items 1 and 5, 15 §4.8: each result status of the documented vocabulary maps to a kind (SUCCESS concluded; ERROR and INVALID errored; CANCELED and INTERRUPTED interrupted, not cancelledFromApp: DwarfAI sent no interrupt), WAITING and RUNNING end no turn, and a status this build does not know ends its turn errored with the status as detail. Every end is inferred (row A1 turnEnd is none); the turn key is the num_turns of the result.",
+  "script": [{ "do": "launch", "readyAfterMs": 3000 }],
+  "outcomes": [{ "resolved": true }],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:1",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:2",
+        "kind": "errored",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false,
+        "detail": "ERROR"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:3",
+        "kind": "errored",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false,
+        "detail": "INVALID"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:4",
+        "kind": "interrupted",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false,
+        "detail": "CANCELED"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:5",
+        "kind": "interrupted",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false,
+        "detail": "INTERRUPTED"
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "antigravity:antigravity:{session}:turn:8",
+        "kind": "errored",
+        "at": 0,
+        "reliability": "inferred",
+        "cancelledFromApp": false,
+        "detail": "A_STATUS_THIS_BUILD_DOES_NOT_KNOW"
+      }
+    }
+  ],
+  "sent": [{ "event": "user", "message": { "content": "first prompt" } }]
+}

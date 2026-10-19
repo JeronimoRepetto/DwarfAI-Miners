@@ -1,0 +1,61 @@
+{
+  "$comment": "Hand-written from 15 §5 OpenCode row (identity = session id; eventId = message / part id; unitKey = assistant message id; turn end none until S-021-2), 15 §4.6 (sourceKey = opencode:opencode:<sessionId>:<messageId or partId>) and 09 §5.5 (lifetime total unit key coal:<streamId>). Reasoning, step-start and step-finish parts are no conversation entry; the usage is the message's own tokens, sealed by time.completed.",
+  "warnings": 0,
+  "watermark": 1790800009000,
+  "sessions": [
+    {
+      "providerSessionId": "ses_parent_0001",
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790800000000,
+      "parentProviderSessionId": null
+    }
+  ],
+  "entries": [
+    {
+      "providerSessionId": "ses_parent_0001",
+      "sourceKey": "opencode:opencode:ses_parent_0001:prt_parent_0001",
+      "role": "person",
+      "text": "What does this project do?",
+      "providerTime": 1790800001000
+    },
+    {
+      "providerSessionId": "ses_parent_0001",
+      "sourceKey": "opencode:opencode:ses_parent_0001:prt_parent_0004",
+      "role": "dwarf",
+      "text": "It renders a board of dwarfs, one per agent session.",
+      "providerTime": 1790800004100
+    }
+  ],
+  "usage": [
+    {
+      "providerSessionId": "ses_parent_0001",
+      "sourceKey": "opencode:opencode:ses_parent_0001:msg_parent_0002",
+      "unitKey": "msg_parent_0002",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 1200,
+        "output": 80,
+        "cacheRead": 3000,
+        "cacheWrite": 0,
+        "reasoning": 40
+      },
+      "sealed": true,
+      "providerTime": 1790800009000
+    }
+  ],
+  "turnEnds": [],
+  "lifetimeTotals": [
+    {
+      "providerSessionId": "ses_parent_0001",
+      "unitKey": "coal:opencode:session:ses_parent_0001",
+      "tokens": {
+        "inputNet": 1200,
+        "output": 80,
+        "cacheRead": 3000,
+        "cacheWrite": 0,
+        "reasoning": 40
+      },
+      "newestRecordAt": 1790800009000
+    }
+  ]
+}

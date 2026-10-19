@@ -1,0 +1,84 @@
+{
+  "spike": "S-018-1",
+  "platform": "linux",
+  "osRelease": "6.17.0-1022-azure",
+  "mode": "record",
+  "idleMs": 1500,
+  "waitMs": 15000,
+  "desktop": {
+    "XDG_CURRENT_DESKTOP": "(unset)",
+    "XDG_SESSION_TYPE": "(unset)",
+    "DESKTOP_SESSION": "(unset)",
+    "statusNotifierWatcher": "(false,)",
+    "notificationServer": "(false,)",
+    "notificationServerInformation": "unavailable: Error: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.Notifications was not provided by any .service files"
+  },
+  "runs": [
+    {
+      "mode": "none",
+      "exitCode": 0,
+      "events": [
+        {
+          "event": "ready",
+          "electron": "44.0.0",
+          "platform": "linux",
+          "mode": "none",
+          "windows": 0
+        },
+        {
+          "event": "tray",
+          "ok": true
+        },
+        {
+          "event": "support",
+          "notificationSupported": false
+        },
+        {
+          "event": "idle",
+          "idleMs": 1500,
+          "windows": 0
+        },
+        {
+          "event": "done",
+          "reason": "no notification in this mode",
+          "windows": 0
+        }
+      ]
+    },
+    {
+      "mode": "record",
+      "exitCode": 0,
+      "events": [
+        {
+          "event": "ready",
+          "electron": "44.0.0",
+          "platform": "linux",
+          "mode": "record",
+          "windows": 0
+        },
+        {
+          "event": "tray",
+          "ok": true
+        },
+        {
+          "event": "support",
+          "notificationSupported": false
+        },
+        {
+          "event": "idle",
+          "idleMs": 1500,
+          "windows": 0
+        },
+        {
+          "event": "timeout",
+          "waitMs": 15000
+        },
+        {
+          "event": "done",
+          "reason": "timeout",
+          "windows": 0
+        }
+      ]
+    }
+  ]
+}

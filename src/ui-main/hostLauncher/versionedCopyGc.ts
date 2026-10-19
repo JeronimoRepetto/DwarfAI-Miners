@@ -1,0 +1,112 @@
+// Garbage collection of the Host's versioned copies (ADR-027 item 2; ADR-002 D5): "copies not used
+// by a running Host and older than the two newest are deleted at Host start". The launcher runs it
+// right after ensureVersionedCopy, with the spawn gate held and no Host answering on the endpoint,
+// so no Host runs from any copy: the copy about to be used is the only one in use.
+//
+// - "Newest" is version precedence (compareVersions, SemVer 2.0.0 §11), since each copy's folder is
+//   named by its app version; a folder name that is not a version sorts below every version.
+// - A copy a running process still executes from (one of its files cannot be opened for writing,
+//   CopyOps.busyFile) is skipped whole and retried at the next start: on Windows the folder of a
+//   running executable can still be renamed, and a removal would delete every file but the held
+//   ones (versionedCopyInUse.os.test.ts). Any other copy to delete is first renamed aside to
+//   `<name>.tmp-<pid>-gc` and then removed; a rename that fails skips it too. A copy renamed aside
+//   whose removal fails is a `.tmp-` leftover, which ensureVersionedCopy removes first at the next
+//   start.
+// - It never throws: nothing here can fail the Host's start.
+//
+// Each deletion or skip is logged as `versioned-copy` (19 §9.1, proc `ui`) with cause class `gc`,
+// never a path or a version.
+import path from 'node:path'
+import type { UiLog } from '../diagnostics/uiLogger'
+import { plainFs } from './plainFs'
+import { errnoOf, TEMP_MARKER, type CopyOps } from './versionedCopy'
+import { compareVersions } from '../window/domain/appVersion'
+
+// Without Electron's asar layer: a copy holds an `.asar` archive (plainFs.ts).
+const { readdir } = plainFs.promises
+
+/** How many of the newest copies are kept besides the one in use (ADR-027 item 2). */
+export const KEPT_NEWEST_COPIES = 2
+
+export interface VersionedCopyGcRequest {
+  /** The per-OS `host/` folder. */
+  root: string
+  /** The version whose copy the Host is about to run from: always kept. */
+  inUse: string
+  /** The UI process's pid: the suffix of a copy renamed aside. */
+  pid: number
+  ops: CopyOps
+  log: UiLog
+}
+
+export interface VersionedCopyGcReport {
+  /** The versions whose copies were removed. */
+  deleted: string[]
+  /** The versions whose copies could not be removed now (busy, denied); retried at the next start. */
+  skipped: string[]
+}
+
+const EVENT = 'versioned-copy'
+const SUBSYSTEM = 'host-launcher'
+
+export async function collectVersionedCopies(
+  request: VersionedCopyGcRequest
+): Promise<VersionedCopyGcReport> {
+  const report: VersionedCopyGcReport = { deleted: [], skipped: [] }
+  let names: string[]
+  try {
+    const entries = await readdir(request.root, { withFileTypes: true })
+    names = entries
+      .filter((entry) => entry.isDirectory() && !entry.name.includes(TEMP_MARKER))
+      .map((entry) => entry.name)
+  } catch {
+    return report
+  }
+  const newestFirst = names.slice().sort(compareVersions).reverse()
+  const kept = new Set([request.inUse, ...newestFirst.slice(0, KEPT_NEWEST_COPIES)])
+  for (const name of newestFirst.filter((candidate) => !kept.has(candidate)).reverse()) {
+    const copy = path.join(request.root, name)
+    const aside = path.join(request.root, `${name}${TEMP_MARKER}${request.pid}-gc`)
+    try {
+      const busy = await request.ops.busyFile(copy)
+      if (busy !== null) {
+        skip(request.log, report, name, busy)
+        continue
+      }
+      await request.ops.rename(copy, aside)
+    } catch (error) {
+      skip(request.log, report, name, errnoOf(error))
+      continue
+    }
+    try {
+      await request.ops.removeTree(aside)
+    } catch (error) {
+      skip(request.log, report, name, errnoOf(error))
+      continue
+    }
+    report.deleted.push(name)
+    request.log.record({
+      level: 'info',
+      event: EVENT,
+      subsystem: SUBSYSTEM,
+      outcome: 'ok',
+      causeClass: 'gc'
+    })
+  }
+  return report
+}
+
+function skip(log: UiLog, report: VersionedCopyGcReport, name: string, errCode: string): void {
+  report.skipped.push(name)
+  log.record({
+    level: 'warn',
+    event: EVENT,
+    subsystem: SUBSYSTEM,
+    outcome: 'skipped',
+    causeClass: 'gc',
+    errCode
+  })
+}
+
+// SemVer precedence lives with the app version rules (window/domain/appVersion.ts); re-exported for this module.
+export { compareVersions }

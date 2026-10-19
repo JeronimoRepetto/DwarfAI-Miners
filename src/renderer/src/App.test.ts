@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../contracts/ipc/testing/fakeWindowApi'
+import { EMPTY_BOARD, publishBoard, type TestBoard } from './testing/board'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import { MotionConfig } from 'motion-v'
 import App from './App.vue'
@@ -21,7 +23,7 @@ import { panelLeaveBoundMs } from './lib/shell/panelMotion'
 import { dockReplaceMotion, dockWindowMotion } from './lib/shell/dockMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { useAgentLaunch } from './composables/useAgentLaunch'
-import { useDwarfKicking } from './composables/useDwarfKicking'
+import { useDwarfStopping } from './composables/useDwarfStopping'
 import { RESULT_VISIBLE_MS, useDwarfMessaging } from './composables/useDwarfMessaging'
 import { REACTION_WINDOW_MS } from './lib/delivery/reaction'
 import { restoreLaunchView, useView } from './composables/useView'
@@ -138,31 +140,60 @@ const GUILD_ON = { getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnable
  * is `ipcRenderer.send`) is a plain spy. The same discipline MineScene.test.ts's own stub stated
  * in as many words, before that file went with its scene (#635).
  */
+/** How the router answers a row with no route yet (ui-main/ipc/router.ts): a typed refusal, never a guess. */
+const HOST_CONNECTION_UNROUTED = {
+  ok: false,
+  error: { code: 'METHOD_NOT_FOUND', message: 'no route', retryable: false }
+}
+
+/** A Host snapshot of the `tails` section with nothing said in it (ADDED for ISSUE-123). */
+const EMPTY_HOST_TAILS = {
+  ok: true,
+  value: { snapshotId: 'snap-1', seq: 1, epoch: 'epoch-1', chunks: [] }
+}
+
+/** The mine id a Host history answer names (a UUIDv7, as `MineHistoryView.mineId` is); ADDED for ISSUE-123. */
+const HISTORY_MINE_ID = '01890a5d-ac96-774b-bcce-b302099a0001'
+
 function stubApi(overrides: Record<string, unknown> = {}) {
+  // AMENDED for ISSUE-242 (was: A-12 `getMines` and A-P2 `onMinesUpdated` among the members, deleted at cut 5): the
+  // board is what the Host read model publishes (testing/board.ts), so a test's `board` is published, not installed.
+  const { board = EMPTY_BOARD, ...memberOverrides } = overrides
+  publishBoard(board as TestBoard, true)
   const api = {
     hidePanel: vi.fn(),
     // Fire-and-forget, like hidePanel: the shell reports every click on itself
     // so main can raise the window, and there is no verdict to render (#165).
     raisePanel: vi.fn(),
-    getMines: vi.fn().mockResolvedValue({ mines: [], tokensObserved: 0 }),
-    onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
-    // Answers "a window was focused", the verdict that leaves the panel alone.
-    activateDwarf: vi.fn().mockResolvedValue({ focused: true, openedTerminal: false, feed: [] }),
+    // Answers "a window was focused", the verdict that leaves the panel alone. AMENDED for ISSUE-001 (was: today's
+    // `DwarfActivation`): A-13's 14 answer from the step-3a switch, `IpcResult<ConsoleOpenResult>`.
+    activateDwarf: vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { outcome: 'raised', mode: 'focus-terminal' } }),
     // The message panel reads an observed session's transcript on selection
     // (#159); a readable-but-empty answer is the quiet default.
-    getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
+    // AMENDED for ISSUE-249 (was: also mocks of the RETIRE rows' members): A-14, A-16, A-17, A-18, A-P5, A-37 and
+    // A-38 left the facade at cut 5 (`MEMBER_REMOVED`), and the fake refuses a member the registry does not have.
     // One-way, like retireDwarf: the panel reports which observed dwarf it
     // has open so main can push that dwarf's feed with the poll (#196).
-    setWatchedDwarf: vi.fn(),
     // The Mine History panel reads the mine's transcripts on open (#192); a
     // readable mine nobody has spoken in is the quiet default.
-    getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [] }),
-    sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
-    kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    // AMENDED for ISSUE-123 (was: today's `{ readable, speakers }`): A-19 reads the Host's message log from the cut-1
+    // switch and answers `IpcResult<MineHistoryView>`.
+    getMineHistory: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { mineId: HISTORY_MINE_ID, speakers: [] }
+    }),
+    // AMENDED for ISSUE-001 (was: today's `{ delivered, via }`): A-23's 14 answer, accepted under a MessageId.
+    sendDwarfText: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { ok: true, value: { messageId: '01920000-0000-7000-8000-0000000005a1' } }
+    }),
+    // AMENDED for ISSUE-183 (was: A-26 `kickDwarf`, which left the facade in 3a): "Stop dwarf…" is A-N29.
+    stopDwarf: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } }),
     // A promoted kick retires its dwarf through this (#46). Stubbed rather
     // than made optional in the composable: a missing member should fail a
     // test loudly, not be swallowed at every call site.
-    retireDwarf: vi.fn(),
     answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
     answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
@@ -176,8 +207,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * message main HELD (#457). Both hear nothing by default. One page of scrollback (#364) is a
      * readable answer with nothing older, the quiet default.
      */
-    onLaunchFailed: vi.fn().mockReturnValue(() => undefined),
-    onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
     getDwarfFeedPage: vi
       .fn()
       .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),
@@ -203,15 +232,36 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     declareMine: vi.fn().mockResolvedValue({ outcome: 'cancelled' }),
     // Settings' "Reset metrics" action (#138). Answered as a no-op success by
     // default; only the tests about it care what main actually did.
-    resetMetrics: vi.fn().mockResolvedValue({ outcome: 'reset' }),
+    // AMENDED for ISSUE-123 (was: today's `{ outcome }`): A-33's target answer, `IpcResult<MetricsResetResult>`.
+    resetMetrics: vi.fn().mockResolvedValue({ ok: true, value: { outcome: 'reset', epoch: 1 } }),
     // The launch surface (#86). Both are AWAITED, so both resolve their real
     // shape for the reason stated at length above. Claude detected and
     // launchable is the ordinary machine; a launch answers "started", the
     // verdict that says a session began and claims no dwarf.
+    // AMENDED for ISSUE-001 (was: today's `{ providers }`, and today's A-37 catalogue below): from the step-3a switch
+    // A-36 answers each provider's `SupplierEntryView` with its models; the Claude entry carries the catalogue
+    // A-37 used to (each model with the efforts it takes).
     listAgentProviders: vi.fn().mockResolvedValue({
-      providers: [{ provider: 'claude', installed: true, launchable: true }]
+      ok: true,
+      value: [
+        {
+          providerId: 'claude',
+          label: 'Claude Code',
+          models: [
+            { value: 'claude-haiku-4-5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+            { value: 'claude-sonnet-5', efforts: ['low', 'high'] }
+          ],
+          permissionModes: [],
+          offeredModes: [],
+          installed: true,
+          publicLaunch: 'enabled',
+          answerChannel: 'available'
+        }
+      ]
     }),
-    launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
+    launchAgent: vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { launchId: '01920000-0000-7000-8000-0000000005b1' } }),
     /*
      * AMENDED for #96 (was: absent). The mine's session strip asks a held
      * session for its own context reading when the strip's subject changes,
@@ -219,7 +269,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * plain spy, like `retireDwarf`: it is `ipcRenderer.send` with no verdict
      * to await. No existing assertion changed.
      */
-    refreshDwarfTelemetry: vi.fn(),
     /*
      * AMENDED for #96's mutating slice (was: absent). The strip's two selects
      * are fed by #239's catalogue channel and answered through the tuning
@@ -228,26 +277,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * accepted — the verdict that leaves nothing on the strip to say. No
      * existing assertion changed.
      */
-    listAgentModels: vi.fn().mockResolvedValue({
-      catalogs: [
-        {
-          provider: 'claude',
-          models: [
-            { value: 'claude-haiku-4-5' },
-            { value: 'claude-sonnet-5', effortLevels: ['low', 'high'] }
-          ],
-          efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-          source: 'provider'
-        }
-      ]
-    }),
-    setDwarfTuning: vi.fn().mockResolvedValue({ applied: true }),
     /*
      * AMENDED for #174/#173 (was: absent). The shell owns the audio engine, so
      * all four members have to exist even in tests that never make a sound:
      * two are AWAITED on mount (the stored settings, the window's real
-     * visibility) and the third returns an unsubscribe, exactly like
-     * onMinesUpdated.
+     * visibility) and the third returns an unsubscribe.
      *
      * `getPanelVisible` answers NOT visible by default, for the same reason
      * `getPanelLayout` answers "closed": that is what main actually creates
@@ -269,11 +303,13 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * main raised — so all four members have to exist even in tests that never
      * open Settings. `setOpenMine` is a plain spy, like `refreshDwarfTelemetry`:
      * it is `ipcRenderer.send` with no verdict to await. `onShowMine` returns
-     * an unsubscribe, exactly like `onMinesUpdated`. The switch answers ON,
+     * an unsubscribe. The switch answers ON,
      * which is what main's own default is. No existing assertion changed.
      */
-    setOpenMine: vi.fn(),
-    onShowMine: vi.fn().mockReturnValue(() => undefined),
+    // AMENDED for ISSUE-123 (was: `setOpenMine`): A-44 under its 14 name, `reportVisibleMines`, a plain spy too.
+    reportVisibleMines: vi.fn(),
+    // AMENDED for ISSUE-114 (was: absent): the shell also hears A-N16, the reveal a notification click runs.
+    onRevealDwarfChat: vi.fn().mockReturnValue(() => undefined),
     getNotificationsEnabled: vi.fn().mockResolvedValue(true),
     setNotificationsEnabled: vi
       .fn()
@@ -291,6 +327,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockImplementation((preferences: unknown) => Promise.resolve(preferences)),
     onTypographyPreferences: vi.fn().mockReturnValue(() => undefined),
+    onStopEverythingRequested: vi.fn().mockReturnValue(() => undefined),
     /*
      * AMENDED for #509 (was: absent). The shell adopts the stored Jev
      * verdict on mount, so all three members have to exist even in tests
@@ -321,21 +358,27 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * section verdict on mount, so the four members exist even in tests that
      * never open Settings; each write answers with a stored verdict, as main
      * does. No existing assertion changed.
+     * AMENDED for ISSUE-234 (was: today's `OpenCodeSettings` answers): from the step-4a switch the four rows answer the
+     * Host's `OpenCodeSettingsView` in an `IpcResult`, and A-53 its outcome.
      */
-    getOpenCodeSettings: vi
-      .fn()
-      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
-    setOpenCodePluginEnabled: vi
-      .fn()
-      .mockImplementation((enabled: boolean) =>
-        Promise.resolve({ pluginEnabled: enabled, passwordConfigured: false })
-      ),
-    setOpenCodeServerPassword: vi
-      .fn()
-      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: true }),
-    clearOpenCodeServerPassword: vi
-      .fn()
-      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
+    getOpenCodeSettings: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+    }),
+    setOpenCodePluginEnabled: vi.fn().mockImplementation((request: { on: boolean }) =>
+      Promise.resolve({
+        ok: true,
+        value: { ok: true, value: { state: request.on ? 'on-verified' : 'off' } }
+      })
+    ),
+    setOpenCodeServerPassword: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { permissions: 'off', passwordConfigured: true, secretBackend: 'os-secret-store' }
+    }),
+    clearOpenCodeServerPassword: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
+    }),
     /*
      * AMENDED for #635 (PANEL-QUESTIONS 25, was: absent). The shell reports each change of page or
      * mine so the next launch opens on it: a plain spy, like `setOpenMine`, since it is
@@ -345,9 +388,48 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      */
     getLaunchView: vi.fn().mockResolvedValue({ area: 'map', mineId: null }),
     setLaunchView: vi.fn(),
-    ...overrides
+    /*
+     * AMENDED for ISSUE-316 (was: absent). The Host connection rows A-N03…A-N05, read on mount: unrouted until the
+     * cut-0 switch, so main refuses them as it does today and the panel stays usable. No existing assertion changed.
+     */
+    getHostConnection: vi.fn().mockResolvedValue(HOST_CONNECTION_UNROUTED),
+    onHostConnection: vi.fn().mockReturnValue(() => undefined),
+    retryHostConnection: vi.fn().mockResolvedValue(HOST_CONNECTION_UNROUTED),
+    /*
+     * AMENDED for ISSUE-123 (was: absent). The dock follows the Host's chats from mount (A-N02, then A-N01): the
+     * snapshot answers a Host with nothing said for the `tails` section, so every chat is an empty conversation until a
+     * test says otherwise, and refuses any other section, so the board stays on A-12/A-P2 in these tests.
+     */
+    onHostEvent: vi.fn().mockReturnValue(() => undefined),
+    getHostSnapshot: vi.fn((params: { sections?: string[] } | undefined) =>
+      Promise.resolve(
+        params?.sections?.includes('tails') === true ? EMPTY_HOST_TAILS : HOST_CONNECTION_UNROUTED
+      )
+    ),
+    /*
+     * AMENDED for ISSUE-138 (was: absent). The question read model follows the UI main session store's picks from
+     * mount (A-N17…A-N19): an empty store, a patch spy and a subscription that releases. Its `asks` snapshot is refused
+     * above, so the cards stay the board's in these tests. No existing assertion changed.
+     */
+    getUiSession: vi.fn().mockResolvedValue({
+      drafts: {},
+      chatViews: {},
+      askPicks: {},
+      openChat: {},
+      currentMine: {},
+      valle: {}
+    }),
+    patchUiSession: vi.fn(),
+    onUiSessionChanged: vi.fn().mockReturnValue(() => undefined),
+    ...memberOverrides
   }
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api as unknown as Partial<Window['api']>)
+  })
   return api
 }
 
@@ -492,7 +574,7 @@ describe('App panel motion (#164)', () => {
   it('never strands the shell as an empty amber frame when the leaves stop reporting (#266)', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     async function finishAnimations() {
       for (const animation of animations.splice(0)) animation.finish()
@@ -509,7 +591,7 @@ describe('App panel motion (#164)', () => {
     // snapshot starts will ever report itself finished. Before #266 that left
     // the mine column invisible inside a window still sized to hold it, with
     // the amber ground painted over the whole of it and nothing to remove.
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({ mines: [], tokensObserved: 0 })
     await flushPromises()
     expect(api.setPanelLayout).not.toHaveBeenCalled()
@@ -525,7 +607,7 @@ describe('App panel motion (#164)', () => {
     const dwarf = defaultDwarf()
     const mine = defaultMine({ dwarfs: [dwarf] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     async function finishAnimations() {
       for (const animation of animations.splice(0)) animation.finish()
@@ -611,7 +693,7 @@ describe('App panel motion (#164)', () => {
     let apply!: (layout: unknown) => void
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 }),
+      board: { mines: [mine], tokensObserved: 0 },
       setPanelLayout: vi.fn().mockImplementation((request: { mineOpen: boolean }) =>
         request.mineOpen
           ? Promise.resolve({ edge: 'right', ...request })
@@ -651,7 +733,7 @@ describe('App panel motion (#164)', () => {
   it('settles the shell’s ground once for a request, never before the request has moved anything', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     const shell = wrapper.get('.shell').element as HTMLElement
     const clips: string[] = []
@@ -678,7 +760,7 @@ describe('App panel motion (#164)', () => {
   it('retains the dock slot’s width until the history has finished leaving', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -712,7 +794,7 @@ describe('App panel motion (#164)', () => {
           .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
             Promise.resolve({ edge, ...request })
           ),
-        getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+        board: { mines: [mine], tokensObserved: 0 }
       })
       wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
       await flushPromises()
@@ -737,7 +819,7 @@ describe('App panel motion (#164)', () => {
   it('removes the docked history at once when its mine closes, before the column folds', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper } = await animatedApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -1123,7 +1205,10 @@ describe('App reset metrics', () => {
   }
 
   it('opens the modal from Data Base and confirms only once "yes" is typed', async () => {
-    const resetMetrics = vi.fn().mockResolvedValue({ outcome: 'reset' })
+    // AMENDED for ISSUE-123 (was: today's `{ outcome: 'reset' }`): A-33's target answer.
+    const resetMetrics = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { outcome: 'reset', epoch: 1 } })
     const { wrapper } = await openSettings({ resetMetrics })
 
     await openReset(wrapper)
@@ -1140,9 +1225,11 @@ describe('App reset metrics', () => {
   })
 
   it('shows main’s refusal reason without closing the modal', async () => {
-    const resetMetrics = vi
-      .fn()
-      .mockResolvedValue({ outcome: 'failed', reason: 'Nothing was deleted.' })
+    // AMENDED for ISSUE-123 (was: today's `{ outcome: 'failed', reason }`): A-33's target answer.
+    const resetMetrics = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { outcome: 'failed', reason: 'Nothing was deleted.', resumesOnNextStart: false }
+    })
     const { wrapper } = await openSettings({ resetMetrics })
 
     await openReset(wrapper)
@@ -1412,7 +1499,7 @@ describe('App mines browse', () => {
 
   it('enters the mine a live card names', async () => {
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({
+      board: {
         mines: [
           {
             id: 'C:/dev/alpha',
@@ -1425,7 +1512,7 @@ describe('App mines browse', () => {
           }
         ],
         tokensObserved: 0
-      }),
+      },
       queryProjects: vi.fn().mockResolvedValue({
         answered: true,
         projects: [
@@ -1623,7 +1710,7 @@ describe('App concurrent mine', () => {
 
   async function openMine(overrides: Record<string, unknown> = {}) {
     const mounted = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [LIVE_MINE], tokensObserved: 0 }),
+      board: { mines: [LIVE_MINE], tokensObserved: 0 },
       ...overrides
     })
     mounted.wrapper.findComponent(MapPage).vm.$emit('open', LIVE_MINE.id)
@@ -1735,10 +1822,10 @@ describe('App concurrent mine', () => {
   })
 
   it('lets go of the mine when it leaves the board', async () => {
-    const { wrapper, api } = await openMine()
+    const { wrapper } = await openMine()
     // Main's next snapshot no longer carries it: the panel must not keep a
     // column open onto a mine that is gone.
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({ mines: [], tokensObserved: 0 })
     await flushPromises()
     expect(wrapper.find('.dm-minecol').exists()).toBe(false)
@@ -1772,11 +1859,21 @@ describe('App selecting a dwarf (#162)', () => {
     updatedAt: 0
   }
 
-  beforeEach(() => useView().clear())
+  /*
+   * The delivery verdicts are useDwarfMessaging's module-scope store, keyed by dwarf id, and a
+   * delivered one stays for the whole reaction window (a minute of real time). Another block that
+   * sends to the same 'claude:s1' leaves its ✓ on this dwarf's sprite, so the marker cases below
+   * would start with a mark they never drew unless the store starts empty, as it does in the other
+   * blocks that send ('App message dock (#635)', 'App mine history').
+   */
+  beforeEach(() => {
+    useView().clear()
+    useDwarfMessaging().clearAll()
+  })
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
+      board: { mines: [{ ...MINE, dwarfs }], tokensObserved: 0 },
       ...overrides
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
@@ -1915,7 +2012,7 @@ describe('App add action (#162)', () => {
 
   async function openMine(overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      board: { mines: [MINE], tokensObserved: 0 },
       ...overrides
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
@@ -2035,12 +2132,12 @@ describe('App exclusive selection (#165)', () => {
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
   })
 
   async function openCrewedMine() {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
+      board: { mines: [MINE], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2162,24 +2259,44 @@ describe('App mine history', () => {
     updatedAt: 0
   }
 
+  /*
+   * AMENDED for ISSUE-123 (was: today's `MineHistorySpeaker` with the id 'claude:older', answered in today's
+   * `{ readable, speakers }`): A-19 reads the Host's message log from the cut-1 switch, so the speaker is a Host one and
+   * every answer is an `IpcResult<MineHistoryView>`.
+   */
+  const OLDER = '01890a5d-ac96-774b-bcce-b302099ad0aa'
   const SPEAKER = {
-    id: 'claude:older',
-    provider: 'claude',
-    role: 'foreman',
-    name: 'older-se',
-    lastMessageAt: SPOKE_AT,
-    messages: [{ role: 'assistant', text: 'Done long ago.', timestamp: '2026-09-04T09:05:00Z' }]
+    dwarfId: OLDER,
+    displayName: 'older-se',
+    rank: 'foreman',
+    providerId: 'claude',
+    departed: true,
+    messages: [
+      {
+        id: '01890a5d-ac96-774b-bcce-b302099ae0aa',
+        dwarfId: OLDER,
+        role: 'dwarf',
+        text: 'Done long ago.',
+        attachments: [],
+        providerTime: SPOKE_AT,
+        createdAt: SPOKE_AT
+      }
+    ]
   }
+  const historyOf = (speakers: unknown[]) => ({
+    ok: true,
+    value: { mineId: HISTORY_MINE_ID, speakers }
+  })
 
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
   })
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
+      board: { mines: [{ ...MINE, dwarfs }], tokensObserved: 0 },
       ...overrides
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
@@ -2187,13 +2304,13 @@ describe('App mine history', () => {
     return { wrapper, api }
   }
 
-  function pushFrom(api: ReturnType<typeof stubApi>) {
-    return api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+  function pushFrom() {
+    return publishBoard as (snapshot: unknown) => void
   }
 
   it('opens the panel from the mine own History action and asks main for that mine by id', async () => {
     const { wrapper, api } = await openMineWith([], {
-      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] })
+      getMineHistory: vi.fn().mockResolvedValue(historyOf([SPEAKER]))
     })
     expect(wrapper.find('.dm-hist').exists()).toBe(false)
 
@@ -2232,13 +2349,13 @@ describe('App mine history', () => {
     expect(api.getMineHistory).toHaveBeenCalledTimes(1)
 
     // The same board again: nothing about the crew's transcripts moved.
-    pushFrom(api)({ mines: [{ ...MINE, dwarfs: [CREW_DWARF] }], tokensObserved: 0 })
+    pushFrom()({ mines: [{ ...MINE, dwarfs: [CREW_DWARF] }], tokensObserved: 0 })
     await flushPromises()
     expect(api.getMineHistory).toHaveBeenCalledTimes(1)
 
     // The transcript's own mtime moved — the feed's signal (#183) — so the
     // history is read again.
-    pushFrom(api)({
+    pushFrom()({
       mines: [{ ...MINE, dwarfs: [{ ...CREW_DWARF, transcriptUpdatedAt: 2_000 }] }],
       tokensObserved: 0
     })
@@ -2251,7 +2368,7 @@ describe('App mine history', () => {
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
-    pushFrom(api)({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    pushFrom()({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
     await flushPromises()
     expect(api.getMineHistory).toHaveBeenCalledTimes(2)
     // And the panel is still there: it follows the mine, not the crew.
@@ -2262,20 +2379,20 @@ describe('App mine history', () => {
     let release: ((value: unknown) => void) | undefined
     const getMineHistory = vi
       .fn()
-      .mockResolvedValueOnce({ readable: true, speakers: [SPEAKER] })
+      .mockResolvedValueOnce(historyOf([SPEAKER]))
       .mockImplementationOnce(() => new Promise((resolve) => (release = resolve)))
-    const { wrapper, api } = await openMineWith([CREW_DWARF], { getMineHistory })
+    const { wrapper } = await openMineWith([CREW_DWARF], { getMineHistory })
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
-    pushFrom(api)({
+    pushFrom()({
       mines: [{ ...MINE, dwarfs: [{ ...CREW_DWARF, transcriptUpdatedAt: 2_000 }] }],
       tokensObserved: 0
     })
     await flushPromises()
     expect(wrapper.find('.dm-bubble__text').text()).toBe('Done long ago.')
 
-    release!({ readable: true, speakers: [] })
+    release!(historyOf([]))
     await flushPromises()
     expect(wrapper.find('.dm-hist__note').text()).toBe('Nobody has worked here yet.')
   })
@@ -2331,7 +2448,7 @@ describe('App mine history', () => {
   it('relays a link pressed in the history to main', async () => {
     const openExternalLink = vi.fn().mockResolvedValue({ opened: true })
     const { wrapper } = await openMineWith([], {
-      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] }),
+      getMineHistory: vi.fn().mockResolvedValue(historyOf([SPEAKER])),
       openExternalLink
     })
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
@@ -2347,10 +2464,13 @@ describe('App mine history', () => {
   // that failed is a real one.
   it("draws a failed message from the app's own record of the send", async () => {
     const { wrapper } = await openMineWith([], {
-      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] }),
-      sendDwarfText: vi.fn().mockResolvedValue({ delivered: false, error: 'no session' })
+      getMineHistory: vi.fn().mockResolvedValue(historyOf([SPEAKER])),
+      // AMENDED for ISSUE-001 (was: today's `{ delivered: false, error }`): A-23's 14 refusal.
+      sendDwarfText: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { ok: false, error: 'cannot-receive' } })
     })
-    await useDwarfMessaging().send('claude:older', 'Never got there.', true, [])
+    await useDwarfMessaging().send(OLDER, 'Never got there.', true, [])
     await flushPromises()
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
@@ -2485,9 +2605,7 @@ describe('App audio (#174, #173)', () => {
 
   it('plays the mine ambience while an interior is open, and stops it on the way out', async () => {
     const { wrapper } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+      board: { mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2512,9 +2630,7 @@ describe('App audio (#174, #173)', () => {
 
   it('mutes the ambience from the interior, and says so on the control', async () => {
     const { wrapper } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+      board: { mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2533,9 +2649,7 @@ describe('App audio (#174, #173)', () => {
 
   it('gives a clicked dwarf its rank voice, once', async () => {
     const { wrapper } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+      board: { mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2612,35 +2726,42 @@ describe('App audio (#174, #173)', () => {
     }
   })
 
+  /*
+   * AMENDED for ISSUE-123 (was: the same ask, `p1`, cued again once a poll had shown it closed, as `createAttentionWatch`
+   * judged each snapshot against the last): from the cut-1 switch the cues come from `useAttentionCues` (ISSUE-117),
+   * which hears each need once per key (ADR-018 item 3), so the ask that begins after launch is a new one.
+   */
   it('cues a permission when a snapshot begins one, not at launch and not on a re-poll (#635)', async () => {
-    const { api } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    await audioApp({
+      board: { mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 }
     })
     const cues = () => opened.filter((src) => src.includes('attention-'))
     // Already pending when the app started: nobody heard it begin.
     expect(cues()).toHaveLength(0)
 
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
+    const ASKING_AGAIN = defaultDwarf({
+      ...ASKING,
+      pendingPermission: { ...ASKING.pendingPermission!, toolUseId: 'p2' }
+    })
     push({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
-    push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    push({ mines: [{ ...MINE, dwarfs: [ASKING_AGAIN] }], tokensObserved: 0 })
     await flushPromises()
     expect(cues()).toHaveLength(1)
     expect(cues()[0]).toContain('attention-permission')
 
-    push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    push({ mines: [{ ...MINE, dwarfs: [ASKING_AGAIN] }], tokensObserved: 0 })
     await flushPromises()
     expect(cues()).toHaveLength(1)
   })
 
   it('plays no attention cue with Notification sounds off (#635)', async () => {
-    const { api } = await audioApp({
+    await audioApp({
       getAudioPreferences: vi
         .fn()
         .mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES, notificationSounds: false })
     })
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
     await flushPromises()
     expect(opened.filter((src) => src.includes('attention-'))).toHaveLength(0)
@@ -2649,9 +2770,7 @@ describe('App audio (#174, #173)', () => {
   it('gives a foreman the foreman voice, and no other rank’s', async () => {
     const foreman = defaultDwarf({ id: 'claude:s2', role: 'foreman', status: 'waiting' })
     const { wrapper } = await audioApp({
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [foreman] }], tokensObserved: 0 })
+      board: { mines: [{ ...MINE, dwarfs: [foreman] }], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
@@ -2677,7 +2796,7 @@ describe('App system notifications (#316)', () => {
 
   async function notifiedApp(overrides: Record<string, unknown> = {}) {
     return mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      board: { mines: [MINE], tokensObserved: 0 },
       ...overrides
     })
   }
@@ -2692,8 +2811,12 @@ describe('App system notifications (#316)', () => {
    * reported is true of this window either way; asserting which call came last
    * would be asserting the order two windows happened to run in.
    */
+  // AMENDED for ISSUE-123 (was: `setOpenMine`'s string-or-null): A-44 under its 14 name, `reportVisibleMines`, carries
+  // `{ mineIds }`, so "no mine on screen" is an empty list, read here as the null it was.
   function reports(api: Record<string, ReturnType<typeof vi.fn>>): unknown[] {
-    return api.setOpenMine!.mock.calls.map((call) => call[0])
+    return api.reportVisibleMines!.mock.calls.map(
+      (call) => (call[0] as { mineIds: string[] }).mineIds[0] ?? null
+    )
   }
 
   it('reports no mine on screen while nothing is open', async () => {
@@ -2712,7 +2835,7 @@ describe('App system notifications (#316)', () => {
     const { wrapper, api } = await notifiedApp()
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
-    api.setOpenMine.mockClear()
+    api.reportVisibleMines.mockClear()
     wrapper.findComponent(MineColumn).vm.$emit('close')
     await flushPromises()
     expect(reports(api)).toContain(null)
@@ -2729,9 +2852,15 @@ describe('App system notifications (#316)', () => {
    * the computed above is its only caller.
    */
 
+  // AMENDED for ISSUE-123 (was: through A-P5 `onShowMine`, retired by the cut-1 switch): a click reaches the window as
+  // A-N16 `onRevealDwarfChat`, which for a mine alone (`dwarfId: null`) opens it as A-P5 did.
   it('opens the mine main asked for, and gives its column the width to be drawn in', async () => {
     const { wrapper, api } = await notifiedApp()
-    const open = api.onShowMine.mock.calls[0]![0] as (mineId: string) => void
+    const open = (mineId: string) =>
+      (api.onRevealDwarfChat.mock.calls[0]![0] as (t: { mineId: string; dwarfId: null }) => void)({
+        mineId,
+        dwarfId: null
+      })
     open(MINE.id)
     await flushPromises()
     expect(wrapper.find('.dm-minecol').exists()).toBe(true)
@@ -2752,11 +2881,76 @@ describe('App system notifications (#316)', () => {
     await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
     expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
-    const open = api.onShowMine.mock.calls[0]![0] as (mineId: string) => void
+    // AMENDED for ISSUE-123 (was: A-P5 `onShowMine`): A-N16 for the mine alone, as above.
+    const open = (mineId: string) =>
+      (api.onRevealDwarfChat.mock.calls[0]![0] as (t: { mineId: string; dwarfId: null }) => void)({
+        mineId,
+        dwarfId: null
+      })
     open(MINE.id)
     await flushPromises()
     expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
     expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('false')
+  })
+
+  /*
+   * ISSUE-114 (ADR-018 item 6; ADR-025 item 8; 14 §2.2 A-N16) — APPENDED. The reveal a notification click runs:
+   * unlike #316's click, it opens that dwarf's chat, or the mine alone when the dwarf left.
+   */
+  // AMENDED for ISSUE-123 (appended): A-P5 is retired by the cut-1 switch, so the window hears A-N16 alone.
+  it('[ADR-019] after the cut-1 switch the notification composable subscribes to onRevealDwarfChat only and no longer to onShowMine', async () => {
+    const { api } = await notifiedApp()
+    expect(api.onRevealDwarfChat).toHaveBeenCalledOnce()
+    // AMENDED for ISSUE-249 (was: A-P5 `onShowMine` never called): the member left the facade at cut 5.
+  })
+
+  type Reveal = (t: { mineId: string; dwarfId: string | null }) => void
+  const revealOf = (api: { onRevealDwarfChat: { mock: { calls: unknown[][] } } }): Reveal =>
+    api.onRevealDwarfChat.mock.calls[0]![0] as Reveal
+
+  it('[US-SHELL-010.AC10] onRevealDwarfChat selects the mine, brings the card into view and opens the chat', async () => {
+    // jsdom has no scrollIntoView: the test gives elements one that records who was brought into view.
+    const scrolled: Element[] = []
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: function (this: Element) {
+        scrolled.push(this)
+      }
+    })
+    try {
+      const { wrapper, api } = await notifiedApp()
+      revealOf(api)({ mineId: MINE.id, dwarfId: MINE.dwarfs[0]!.id })
+      await flushPromises()
+      expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+      expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
+      const card = wrapper.find(`button.dm-dwarf[data-dwarf="${MINE.dwarfs[0]!.id}"]`)
+      expect(card.attributes('aria-pressed')).toBe('true')
+      expect(scrolled).toContain(card.element)
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
+    }
+  })
+
+  it('[ADR-018] onRevealDwarfChat with no dwarf, or one no longer on the board, opens the mine with no chat', async () => {
+    const { wrapper, api } = await notifiedApp()
+    // A chat already open on the dwarf is put away: the reveal says the dwarf left.
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
+    revealOf(api)({ mineId: MINE.id, dwarfId: null })
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+    revealOf(api)({ mineId: MINE.id, dwarfId: '01890a5d-ac96-774b-bcce-b302099adfff' })
+    await flushPromises()
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('false')
+    // Nothing is held open in the dock for it either: the window keeps no slot beside the mine.
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mineOpen: true, dockOpen: false })
+    )
   })
 
   it('adopts the stored switch on mount and draws it in Settings', async () => {
@@ -3103,7 +3297,13 @@ describe('App shell packing (#488)', () => {
     expect(rule('.shell-secondary')).toMatch(/(^|[;\s])width:\s*var\(--page-width\)/)
     // And on a screen narrower than the dock the page is still the part that gives way.
     expect(rule('.shell-secondary')).toMatch(/min-width:\s*0/)
-    expect(rule('.shell')).toMatch(/min-width:\s*0/)
+    // AMENDED for ISSUE-262 (was: `min-width: 0` on `.shell`): shrunk to nothing, the plate clipped
+    // the mine column and the nav from their free side while the window stayed whole, against the
+    // decision log's Narrow screen rule. The page still gives way; the plate stops at the docked
+    // parts ('App narrow screen (ISSUE-262)' pins the floor).
+    expect(rule('.shell')).toMatch(
+      /min-width:\s*calc\(2 \* var\(--shell-pad\) \+ var\(--nav-width\)/
+    )
   })
 
   it('keeps no separate rule for the frames a fold is held over', () => {
@@ -3155,13 +3355,24 @@ describe('App MotionConfig root (#566 T3)', () => {
  * The round trip a person walks in Settings: the stored verdict is adopted on
  * mount, the switch and the password each ask main, and what main answered —
  * never the password — is what the section draws.
+ *
+ * AMENDED for ISSUE-234 (was: today's `OpenCodeSettings` answers, A-53 taking a boolean and answering a
+ * `pluginError` string): from the step-4a switch (ISSUE-235) A-52, A-54 and A-55 answer the Host's
+ * `OpenCodeSettingsView` (`permissions: IntegrationState`, 14 §2.1 CHANGE), and A-53 takes
+ * `SetOpenCodePermissionsParams` and answers the Host's outcome, whose failure has no approved words yet (25-AGENTS
+ * §8.1), so no reason line is drawn.
  */
 describe('OpenCode settings (#588 T6)', () => {
   it('adopts the stored settings on mount and draws them in Settings', async () => {
     const { wrapper } = await mountOpenApp({
-      getOpenCodeSettings: vi
-        .fn()
-        .mockResolvedValue({ pluginEnabled: true, passwordConfigured: true })
+      getOpenCodeSettings: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          permissions: 'on-verified',
+          passwordConfigured: true,
+          secretBackend: 'os-secret-store'
+        }
+      })
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
     // AMENDED (#635): on the Integrations tab, a switch.
@@ -3171,20 +3382,20 @@ describe('OpenCode settings (#588 T6)', () => {
   })
 
   it('asks main to turn the relay on, and draws a refusal as off with its reason', async () => {
-    const setOpenCodePluginEnabled = vi.fn().mockResolvedValue({
-      pluginEnabled: false,
-      pluginError: 'Port 47821 could not be opened: EADDRINUSE',
-      passwordConfigured: false
-    })
+    const setOpenCodePluginEnabled = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { ok: false, error: 'config-write-failed' } })
     const { wrapper, api } = await mountOpenApp({ setOpenCodePluginEnabled })
     await wrapper.find(NAV_SETTINGS).trigger('click')
     // AMENDED (#635): on the Integrations tab, a switch.
     await openSection(wrapper, 'Integrations')
     await wrapper.find('.opencode-plugin-enabled').trigger('click')
     await flushPromises()
-    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledWith(true)
+    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledWith(
+      expect.objectContaining({ on: true, origin: 'settings' })
+    )
     expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-checked')).toBe('false')
-    expect(wrapper.find('.plugin-error').text()).toContain('EADDRINUSE')
+    expect(wrapper.find('.plugin-error').exists()).toBe(false)
   })
 
   it('hands the typed password to main and then shows only that one is stored', async () => {
@@ -3232,12 +3443,8 @@ describe('App Mines page', () => {
   const toasts = (wrapper: VueWrapper) => wrapper.findAll('.dm-toast').map((toast) => toast.text())
 
   it('opens the mine just added in the mine column once main publishes it', async () => {
-    let push: (snapshot: unknown) => void = () => undefined
+    const push = publishBoard as (snapshot: unknown) => void
     const { wrapper, api } = await mountOpenApp({
-      onMinesUpdated: vi.fn().mockImplementation((listener: (snapshot: unknown) => void) => {
-        push = listener
-        return () => undefined
-      }),
       declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: ALPHA.id })
     })
     await wrapper.find(NAV_MINES).trigger('click')
@@ -3279,10 +3486,10 @@ describe('App Mines page', () => {
 
   it('lists a board mine the store has no row for, as working but not recorded yet', async () => {
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({
+      board: {
         mines: [{ ...ALPHA, declared: false, unrecorded: true }],
         tokensObserved: 0
-      })
+      }
     })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
@@ -3313,12 +3520,8 @@ describe('App Mines page', () => {
    * board goes on not carrying it. + Dwarf asks main for the Add panel on that mine.
    */
   it('opens a remembered mine nobody is working, onto the empty roster, and keeps it open', async () => {
-    let push: (snapshot: unknown) => void = () => undefined
+    const push = publishBoard as (snapshot: unknown) => void
     const { wrapper, api } = await mountOpenApp({
-      onMinesUpdated: vi.fn((listener: (snapshot: unknown) => void) => {
-        push = listener
-        return () => undefined
-      }),
       queryProjects: vi.fn().mockResolvedValue({
         answered: true,
         projects: [{ ...ALPHA_ROW, declared: false, live: false }]
@@ -3381,12 +3584,8 @@ describe('App Map page', () => {
   })
 
   it('asks main for a folder from the first-run card, and opens the mine it adds', async () => {
-    let push: (snapshot: unknown) => void = () => undefined
+    const push = publishBoard as (snapshot: unknown) => void
     const { wrapper, api } = await mountOpenApp({
-      onMinesUpdated: vi.fn().mockImplementation((listener: (snapshot: unknown) => void) => {
-        push = listener
-        return () => undefined
-      }),
       declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: ALPHA.id })
     })
     await wrapper.get('.dm-mappage__card button').trigger('click')
@@ -3402,7 +3601,7 @@ describe('App Map page', () => {
 
   it('opens a mine from its marker, and presses the marker of the mine that is open', async () => {
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [ALPHA], tokensObserved: 0 })
+      board: { mines: [ALPHA], tokensObserved: 0 }
     })
     await wrapper.get('.dm-marker').trigger('click')
     await flushPromises()
@@ -3447,7 +3646,7 @@ describe('App tab order (#635, PANEL-QUESTIONS 2)', () => {
           .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
             Promise.resolve({ edge, ...request })
           ),
-        getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+        board: { mines: [mine], tokensObserved: 0 }
       })
       await flushPromises()
       wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
@@ -3487,7 +3686,7 @@ describe('App toast position (#635, PANEL-QUESTIONS 10)', () => {
   it('raises a toast in the page column, even from the nav beside an open mine', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -3505,7 +3704,7 @@ describe('App toast position (#635, PANEL-QUESTIONS 10)', () => {
   it('draws no toast host but the page column’s', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      board: { mines: [mine], tokensObserved: 0 }
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
@@ -3529,7 +3728,7 @@ describe('App dock (#635)', () => {
     const dwarf = defaultDwarf()
     const mine = defaultMine({ dwarfs: [dwarf] })
     const mounted = await mountApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 }),
+      board: { mines: [mine], tokensObserved: 0 },
       ...overrides
     })
     mounted.wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
@@ -3731,7 +3930,7 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
     const { wrapper } = await launchOn(
       { area: 'mines', mineId: NORTH.id },
       {
-        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        board: { mines: [NORTH], tokensObserved: 0 },
         queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [NORTH_ROW] })
       }
     )
@@ -3790,7 +3989,7 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
     const { wrapper, api } = await launchOn(
       { area: 'mines', mineId: NORTH.id },
       {
-        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        board: { mines: [NORTH], tokensObserved: 0 },
         queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [NORTH_ROW] })
       }
     )
@@ -3811,7 +4010,7 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
     const { wrapper, api } = await launchOn(
       { area: 'mines', mineId: NORTH.id },
       {
-        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        board: { mines: [NORTH], tokensObserved: 0 },
         queryProjects: vi.fn().mockResolvedValue({
           answered: true,
           projects: [{ ...NORTH_ROW, folderMissing: true }]
@@ -3828,7 +4027,7 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
     const { wrapper, api } = await launchOn(
       { area: 'mines', mineId: NORTH.id },
       {
-        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        board: { mines: [NORTH], tokensObserved: 0 },
         queryProjects: vi.fn(
           () =>
             new Promise((resolve) => {
@@ -3881,11 +4080,11 @@ describe('App keeping the Mines list current (#635)', () => {
 
   it('reads the list again when a measurement lands while Mines is on screen', async () => {
     const queryProjects = vi.fn().mockResolvedValue({ answered: true, projects: [MEASURING] })
-    const { wrapper, api } = await mountOpenApp({ queryProjects })
+    const { wrapper } = await mountOpenApp({ queryProjects })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
     const asked = queryProjects.mock.calls.length
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     queryProjects.mockResolvedValue({
       answered: true,
       projects: [{ ...MEASURING, knownTier: 'gold', weightBytes: 3_000_000 }]
@@ -3902,9 +4101,9 @@ describe('App keeping the Mines list current (#635)', () => {
 
   it('asks nothing while the Mines page is not on screen', async () => {
     const queryProjects = vi.fn().mockResolvedValue({ answered: true, projects: [MEASURING] })
-    const { api } = await mountOpenApp({ queryProjects })
+    await mountOpenApp({ queryProjects })
     const asked = queryProjects.mock.calls.length
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    const push = publishBoard as (snapshot: unknown) => void
     push({ mines: [{ ...BOARD_MINE, weightBytes: 3_000_000 }], tokensObserved: 0 })
     await flushPromises()
     expect(queryProjects.mock.calls.length).toBe(asked)
@@ -3943,13 +4142,13 @@ describe('App message dock (#635)', () => {
   beforeEach(() => {
     useView().clear()
     useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
+    useDwarfStopping().clearAll()
     useAgentLaunch().close()
   })
 
   async function openMine(overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      board: { mines: [MINE], tokensObserved: 0 },
       ...overrides
     })
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
@@ -4003,19 +4202,951 @@ describe('App message dock (#635)', () => {
     wrapper.findComponent(DwarfMessagePanel).vm.$emit('send', { text: 'dig', pressEnter: true })
     await flushPromises()
 
+    // AMENDED for ISSUE-001 (was: today's `{ dwarfId, text, pressEnter }`): A-23's 14 request.
     expect(api.sendDwarfText).toHaveBeenCalledWith({
       dwarfId: 'claude:s1',
       text: 'dig',
-      pressEnter: true
+      attachments: [],
+      requestId: expect.any(String)
     })
     expect(wrapper.find('button.dm-dwarf').attributes('data-mark')).toBe('delivered')
   })
 
   it('asks main for no second window: the panel is never a surface of its own', async () => {
-    const setMessagePanel = vi.fn().mockImplementation((state: unknown) => Promise.resolve(state))
-    const { wrapper } = await openMine({ setMessagePanel })
+    // AMENDED for ISSUE-250 (was: a hand stub's `setMessagePanel`, asserted never called): that member is no row of
+    // the channel registry (14 §2), so the generated fake `window.api` (ADR-033 item 7) refuses it outright, and App
+    // reading it would throw. The case keeps its subject: the bridge has no second-window request, and the click
+    // opens the panel in this window, which App draws itself.
+    const { wrapper } = await openMine()
+    expect('setMessagePanel' in window.api).toBe(false)
     await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
-    expect(setMessagePanel).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
   })
 })
+
+/*
+ * APPENDED (ISSUE-317): Stop everything and quit over the window. UI main pushes A-N25; App shows the confirmation with
+ * the Host-owned count, which in cut 0 is 0 because the snapshot has no `dwarfs` section (accepted difference OQ-78):
+ * the legacy board's dwarfs are never added to it.
+ */
+describe('App Stop everything and quit (ISSUE-317)', () => {
+  const CONFIRMATION = '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e'
+
+  it('[US-RES-002.AC08, S10.18] the A-N25 push shows the confirmation over the window with the Host-owned count', async () => {
+    let push: ((payload: { confirmationId: string }) => void) | undefined
+    const cancelStopEverything = vi.fn()
+    await mountOpenApp({
+      board: {
+        mines: [defaultMine({ dwarfs: [defaultDwarf()] })],
+        tokensObserved: 0
+      },
+      onStopEverythingRequested: vi.fn((listener: typeof push) => {
+        push = listener
+        return () => undefined
+      }),
+      cancelStopEverything
+    })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    push?.({ confirmationId: CONFIRMATION })
+    await flushPromises()
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    // The legacy board has running dwarfs; none of them is in the Host-owned count.
+    expect(dialog?.textContent).toContain('No dwarf started by DwarfAI-Miners is running.')
+
+    document.body.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click()
+    await flushPromises()
+    expect(cancelStopEverything).toHaveBeenCalledWith({ confirmationId: CONFIRMATION })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+
+/*
+ * APPENDED (ISSUE-224): the first-run consent step over the Panel (07 machine 41; 14 §6.3). App owns useWelcomeStep
+ * and mounts the step while it is shown: the `preferences` snapshot says it is due, and the `preferences.changed`
+ * frame with `due: false` closes it. Every other test answers the `preferences` section with a refusal, so the step
+ * stays hidden there.
+ */
+describe('App first-run consent step (ISSUE-224)', () => {
+  const EPOCH = 'epoch-224'
+
+  function preferencesWith(due: boolean) {
+    return {
+      preferences: {
+        subagentDelegationOn: false,
+        routingProfile: 'balanced',
+        systemNotificationsOn: true,
+        openCodePermissionsOn: false
+      },
+      secrets: [],
+      secretBackend: 'unavailable',
+      integrations: [
+        { id: 'claude-hooks', state: 'off', changedAt: 1 },
+        { id: 'opencode-permissions', state: 'off', changedAt: 1 }
+      ],
+      welcome: {
+        due,
+        ...(due ? { reason: 'first-run' } : {}),
+        legacyFound: [],
+        offered: ['claude-hooks', 'opencode-permissions']
+      }
+    }
+  }
+
+  function hostWithStepDue() {
+    // Every read model of the window subscribes to A-N02 on its own; a pushed batch reaches each of them.
+    const follows: Array<(frames: unknown[]) => void> = []
+    const answerWelcome = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        integrations: {
+          'claude-hooks': { state: 'on-verified' },
+          'opencode-permissions': { state: 'on-verified' }
+        },
+        welcome: preferencesWith(false).welcome
+      }
+    })
+    return {
+      push: (frames: unknown[]) => {
+        for (const follow of follows) follow(frames)
+      },
+      answerWelcome,
+      overrides: {
+        onHostEvent: vi.fn((listener: (frames: unknown[]) => void) => {
+          follows.push(listener)
+          return () => undefined
+        }),
+        getHostSnapshot: vi.fn((params: { sections?: string[] } | undefined) =>
+          Promise.resolve(
+            params?.sections?.includes('preferences') === true
+              ? {
+                  ok: true,
+                  value: {
+                    snapshotId: 'snap-welcome',
+                    seq: 4,
+                    epoch: EPOCH,
+                    chunks: [{ section: 'preferences', data: preferencesWith(true) }]
+                  }
+                }
+              : params?.sections?.includes('tails') === true
+                ? EMPTY_HOST_TAILS
+                : HOST_CONNECTION_UNROUTED
+          )
+        ),
+        answerWelcome
+      }
+    }
+  }
+
+  it('[US-SET-012.AC07, US-SET-012.AC03, S41.05] the step shows over the Panel while due, Activate answers, and the frame closes it', async () => {
+    const host = hostWithStepDue()
+    await mountOpenApp(host.overrides)
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    const toggles = [...document.body.querySelectorAll('[role="dialog"] [role="switch"]')]
+    expect(toggles.map((toggle) => toggle.getAttribute('aria-checked'))).toEqual(['true', 'true'])
+    expect(host.answerWelcome).not.toHaveBeenCalled()
+
+    document.body
+      .querySelector<HTMLButtonElement>('[role="dialog"] .dm-dialog__actions button')!
+      .click()
+    await flushPromises()
+    expect(host.answerWelcome).toHaveBeenCalledWith(
+      expect.objectContaining({ claudeHooks: true, openCodePermissions: true })
+    )
+
+    host.push([
+      {
+        type: 'evt',
+        seq: 5,
+        epoch: EPOCH,
+        name: 'preferences.changed',
+        data: preferencesWith(false)
+      }
+    ])
+    await flushPromises()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('[S41.08] while the Host has not reported the step due, nothing is shown', async () => {
+    await mountOpenApp()
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+
+/* --- Host asks from the read model (ISSUE-138, the read half) — one block, appended ------------- */
+describe('App Host asks (ISSUE-138)', () => {
+  it('[ADR-033] the shell follows the Host asks and their picks from mount and lets go of them on unmount', async () => {
+    let released = 0
+    const { wrapper, api } = await mountApp({
+      onUiSessionChanged: vi.fn(() => () => {
+        released += 1
+      })
+    })
+
+    expect(api.getHostSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ sections: ['asks'] })
+    )
+    expect(api.onUiSessionChanged).toHaveBeenCalledTimes(1)
+
+    mounted.splice(mounted.indexOf(wrapper), 1)
+    wrapper.unmount()
+    expect(released).toBe(1)
+  })
+})
+/* --- end of the ISSUE-138 block ------------------------------------------------------------------ */
+
+/* --- The mine column (ISSUE-254) — one block, appended ------------------------------------------- */
+/*
+ * What the shell does with the column's presses (US-MINE-002, US-MINE-006…008, US-OBS-004): the chat
+ * it opens and where the keyboard lands, the current mine, the Add panel in the dock slot, the
+ * history's way back, and one status reaching every place a dwarf is drawn in the same render.
+ */
+describe('App mine column (ISSUE-254)', () => {
+  const ALPHA = 'C:/dev/alpha'
+  const BETA = 'C:/dev/beta'
+  const WORKER = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'worker',
+    name: 'dwarfai-53',
+    status: 'working',
+    sessionId: 's1',
+    textDelivery: 'terminal'
+  }
+  const ASKING = {
+    ...WORKER,
+    id: 'claude:s2',
+    name: 'dwarfai-54',
+    sessionId: 's2',
+    status: 'waiting',
+    waitingReason: 'user-input',
+    pendingQuestion: {
+      toolUseId: 't1',
+      channel: 'terminal',
+      questions: [
+        { question: 'Which one?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }
+      ]
+    }
+  }
+  const mineOf = (id: string, name: string, dwarfs: unknown[]) => ({
+    id,
+    path: id,
+    name,
+    tier: 'bronze',
+    dwarfs,
+    tokensObserved: 0,
+    updatedAt: 0
+  })
+  const project = (id: string, name: string) => ({
+    id,
+    path: id,
+    name,
+    declared: false,
+    addedAt: 1,
+    live: true
+  })
+
+  beforeEach(() => {
+    useView().clear()
+    useDwarfMessaging().clearAll()
+  })
+  afterEach(() => useView().clear())
+
+  /*
+   * Mounted into the page, unlike mountApp: where the keyboard lands is only real in a document, and
+   * the focus is what these cases read.
+   */
+  async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
+    const api = stubApi({
+      getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT),
+      board: {
+        mines: [mineOf(ALPHA, 'alpha', dwarfs), mineOf(BETA, 'beta', [])],
+        tokensObserved: 0
+      },
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [project(ALPHA, 'alpha'), project(BETA, 'beta')]
+      }),
+      ...overrides
+    })
+    const wrapper = mount(App, { attachTo: document.body })
+    mounted.push(wrapper)
+    await flushPromises()
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.find(`[data-mine="${ALPHA}"] .dm-card__hit`).trigger('click')
+    await flushPromises()
+    return { wrapper, api }
+  }
+
+  const current = (wrapper: VueWrapper) =>
+    wrapper
+      .findAll('.dm-card__hit[aria-current="true"]')
+      .map((hit) => hit.element.closest('[data-mine]')?.getAttribute('data-mine'))
+
+  it('[US-MINE-002.AC03, NFR-A11Y-04] the opened chat has focus on the next frame: the composer, or the question card’s first option', async () => {
+    const { wrapper } = await openMineWith([WORKER, ASKING])
+    await wrapper.find(`button.dm-dwarf[data-dwarf="${WORKER.id}"]`).trigger('click')
+    await flushPromises()
+    const panel = wrapper.findComponent(DwarfMessagePanel)
+    expect(panel.props('dwarf')).toMatchObject({ id: WORKER.id })
+    expect(document.activeElement?.tagName).toBe('TEXTAREA')
+    expect(panel.element.contains(document.activeElement)).toBe(true)
+
+    await wrapper.find(`.dm-roster button.dm-portrait[data-dwarf="${ASKING.id}"]`).trigger('click')
+    await flushPromises()
+    const asking = wrapper.findComponent(DwarfMessagePanel)
+    expect(asking.props('dwarf')).toMatchObject({ id: ASKING.id })
+    expect(document.activeElement?.classList.contains('dm-qopt')).toBe(true)
+    expect(asking.element.contains(document.activeElement)).toBe(true)
+  })
+
+  it('[US-MINE-002.AC04, US-MINE-002.AC05] a chat gaining focus makes its mine current with the mark and the sound, and a click on the mine painting or header makes it current without moving chat focus', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    // The open mine is the current one: its card wears the mark, and only its card.
+    expect(current(wrapper)).toEqual([ALPHA])
+    expect(wrapper.find('.dm-minecol').attributes('data-mine')).toBe(ALPHA)
+
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([ALPHA])
+    const focused = document.activeElement
+    expect(wrapper.findComponent(DwarfMessagePanel).element.contains(focused)).toBe(true)
+
+    // A click on the mine's painting or its header keeps it current and leaves the chat focused.
+    await wrapper.find('.dm-minecol__art').trigger('click')
+    await wrapper.find('.dm-minecol__bar').trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([ALPHA])
+    expect(wrapper.findComponent(DwarfMessagePanel).props('dwarf')).toMatchObject({
+      id: WORKER.id
+    })
+    expect(document.activeElement).toBe(focused)
+
+    // Opening another mine makes that one current, and the mark follows it.
+    await wrapper.find(`[data-mine="${BETA}"] .dm-card__hit`).trigger('click')
+    await flushPromises()
+    expect(current(wrapper)).toEqual([BETA])
+    expect(wrapper.find('.dm-minecol').attributes('data-mine')).toBe(BETA)
+  })
+
+  it('[US-OBS-004.AC06, US-OBS-004.AC10] a status change reaches sprite pose, tooltip, roster and outcome line in the same render, and working shows the working pose and Working with its step count', async () => {
+    const { wrapper } = await openMineWith([{ ...WORKER, status: 'waiting' }])
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    await wrapper.find('.dm-roster button.dm-portrait').trigger('focus')
+    await flushPromises()
+
+    const shown = () => ({
+      sprite: wrapper.find('button.dm-dwarf').attributes('data-status'),
+      roster: wrapper.find('.dm-roster button.dm-portrait').attributes('data-status'),
+      tooltip: document.body.querySelector('.dm-tip .dm-dtip__status')?.textContent,
+      outcome: wrapper.find('.dm-msg__outcome').text()
+    })
+    expect(shown()).toMatchObject({ sprite: 'asleep', roster: 'asleep', tooltip: 'asleep' })
+    expect(shown().outcome).not.toMatch(/^Working/)
+
+    const push = publishBoard as (snapshot: unknown) => void
+    push({
+      mines: [mineOf(ALPHA, 'alpha', [WORKER]), mineOf(BETA, 'beta', [])],
+      tokensObserved: 0
+    })
+    // One render: every place the dwarf is drawn has changed together.
+    await wrapper.vm.$nextTick()
+    const now = shown()
+    expect(now).toMatchObject({ sprite: 'working', roster: 'working', tooltip: 'working' })
+    expect(now.outcome).toMatch(/^Working( · \d+ steps? so far)?$/)
+  })
+
+  it('[US-MINE-007.AC02, US-MINE-007.AC03, US-MINE-007.AC06] the toolbar opens Mine history, closes the mine and is named Mine and the mine name, with its tier chip', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    const column = wrapper.find('section.dm-minecol')
+    expect(column.attributes('aria-label')).toBe('Mine alpha')
+    expect(column.find('header.dm-minecol__bar .dm-tier').attributes('data-tier')).toBe('bronze')
+    expect(column.find('header.dm-minecol__bar h2').text()).toBe('alpha')
+
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(HistoryPanel).props('mine')).toMatchObject({ id: ALPHA })
+    expect(wrapper.find('.dm-hist__title').text()).toBe('History · alpha')
+
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+    expect(wrapper.find('.dm-hist').exists()).toBe(false)
+  })
+
+  /*
+   * The story returns to the MessagePanel when the history was opened from it; the pinned design
+   * rules otherwise (screens/shell.md, Layout: closing the history "closes the window ... it never
+   * returns to the chat it replaced"), and the new design wins. Either way the column is in view.
+   */
+  it('[US-MINE-006.AC06, NFR-A11Y-02] Close history or Esc closes the panel and the mine column is in view', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    for (const close of ['button', 'escape'] as const) {
+      // Reached by the keyboard, as Enter on a focused button presses it.
+      const opener = wrapper.find('button[aria-label="Mine history"]')
+      ;(opener.element as HTMLElement).focus()
+      await opener.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.dm-hist').exists()).toBe(true)
+      // The keyboard moves into the panel, as Tab takes it there, and closes it from inside.
+      const inside = wrapper.find('button[aria-label="Close history"]')
+      ;(inside.element as HTMLElement).focus()
+      expect(document.activeElement).toBe(inside.element)
+      if (close === 'button') await inside.trigger('click')
+      else await inside.trigger('keydown', { key: 'Escape' })
+      await flushPromises()
+      expect(wrapper.find('.dm-hist').exists(), close).toBe(false)
+      expect(wrapper.find('.dm-minecol .dm-minecol__art').exists(), close).toBe(true)
+      expect(document.activeElement, close).toBe(
+        wrapper.find('button[aria-label="Mine history"]').element
+      )
+    }
+  })
+
+  it('[US-MINE-008.AC01, US-MINE-008.AC02, US-MINE-008.AC03] + Dwarf is the footer’s only primary button and opens the Add panel aimed at this mine in the dock slot, replacing a MessagePanel', async () => {
+    const { wrapper } = await openMineWith([WORKER])
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dock-window').findComponent(DwarfMessagePanel).exists()).toBe(true)
+
+    const primaries = wrapper.find('.dm-minecol').findAll('.dm-btn--primary')
+    expect(primaries.map((button) => button.text())).toEqual(['+ Dwarf'])
+    await primaries[0]!.trigger('click')
+    await flushPromises()
+
+    // The same dock slot, the chat replaced, the Add panel aimed at this mine.
+    const slot = wrapper.findAll('.dock-window')
+    expect(slot).toHaveLength(1)
+    expect(slot[0]!.findComponent(AddPanel).exists()).toBe(true)
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+    expect(useAgentLaunch().mineId.value).toBe(ALPHA)
+    expect(wrapper.find('.dm-minecol .dm-minecol__art').exists()).toBe(true)
+  })
+})
+/* --- end of the ISSUE-254 block ------------------------------------------------------------------ */
+
+/* --- ISSUE-265: the guild flag across the whole shell ---------------------------------------- */
+describe('App and the guild flag (ISSUE-265)', () => {
+  const GUILD_NAMES = /\b(Lab|Market|Laboral Union|Guild)\b/
+
+  it('[US-GUILD-002.AC01, BR-19, INV-110] with the flag off no control anywhere in the app names or opens a guild page, and the flags are read once', async () => {
+    const { wrapper, api } = await mountOpenApp()
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+    expect(wrapper.find('.dm-nav__group[aria-label="Guild"]').exists()).toBe(false)
+    const controls = wrapper.findAll('button, a, [role="button"], [role="menuitem"], [role="tab"]')
+    expect(controls.length).toBeGreaterThan(0)
+    for (const control of controls) {
+      const names = [
+        control.text(),
+        control.attributes('aria-label') ?? '',
+        control.attributes('title') ?? '',
+        control.attributes('data-label') ?? '',
+        control.attributes('data-slot') ?? ''
+      ].join(' ')
+      expect(names).not.toMatch(GUILD_NAMES)
+      expect(control.attributes('data-slot') ?? '').not.toMatch(/^(lab|market|union)$/)
+    }
+    // Pressing every nav control still never shows a guild page.
+    for (const slot of wrapper.findAll(NAV)) {
+      await slot.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.dm-guild').exists()).toBe(false)
+    }
+    // Read once: nothing the person did asked main for the flags again.
+    expect(api.getFeatureFlags).toHaveBeenCalledOnce()
+  })
+
+  it('[US-GUILD-002.AC02, US-GUILD-001.AC03] with the flag on each guild slot opens its own page, replacing the one before', async () => {
+    const { wrapper } = await mountOpenApp(GUILD_ON)
+    for (const name of ['Lab', 'Market', 'Laboral Union', 'Lab']) {
+      await wrapper.find(`${NAV}[data-label="${name}"]`).trigger('click')
+      await flushPromises()
+      const pages = wrapper.findAll('.dm-guild')
+      expect(pages).toHaveLength(1)
+      expect(pages[0]!.attributes('aria-label')).toBe(name)
+      expect(pages[0]!.get('h1').text()).toBe(name)
+    }
+  })
+})
+/* --- end of the ISSUE-265 block -------------------------------------------------------------- */
+
+/* --- ISSUE-267: hidden until built — one block, appended ----------------------------------------- */
+/*
+ * A Panel build shows no control whose destination is not built (ADR-034 item 2; BR-19; 21 §1
+ * item 8): the nav's mode lever and Settings › General "Mode at launch" are absent while the build's
+ * feature list ships the Panel alone, and a provider whose launch main does not offer has no chip.
+ */
+describe('App, hidden until built (ISSUE-267)', () => {
+  const MINE = {
+    id: 'mine:c:\\x\\anvil',
+    path: 'C:\\x\\anvil',
+    name: 'anvil',
+    tier: 'bronze',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  beforeEach(() => useView().clear())
+
+  it('[ADR-034, BR-19] the nav and General render nothing for an unshipped mode, taking no space, and the Add panel renders no chip for a provider whose launch is not offered', async () => {
+    const { wrapper } = await mountOpenApp({
+      board: { mines: [MINE], tokensObserved: 0 },
+      // Detected, and not offered: what main answers for Antigravity in a public build (R-03) or
+      // for any provider whose driver is not built.
+      // AMENDED for ISSUE-001 (was: today's `{ providers }`): A-36's 14 entries, Antigravity's launch gated.
+      listAgentProviders: vi.fn().mockResolvedValue({
+        ok: true,
+        value: (['claude', 'antigravity'] as const).map((providerId) => ({
+          providerId,
+          label: providerId,
+          models: [],
+          permissionModes: [],
+          offeredModes: [],
+          // AMENDED for ISSUE-188 (was: `installed: true` and Antigravity `publicLaunch: 'gated'`): the Host lists only
+          // what it may launch in its build (ADR-009 D6, development builds keep a gated one), so the entry the panel
+          // must not offer is one that cannot start here.
+          installed: providerId === 'claude',
+          publicLaunch: 'enabled',
+          answerChannel: 'available'
+        }))
+      })
+    })
+
+    // The nav: no lever group, no side of it, no MODE label, so the System group ends at Music.
+    const nav = wrapper.get('.dm-nav')
+    expect(nav.find('.dm-nav__lever').exists()).toBe(false)
+    expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
+    expect(nav.text()).not.toContain('MODE')
+    expect(
+      nav
+        .get('.dm-nav__group[aria-label="System"]')
+        .findAll('.dm-slot')
+        .map((slot) => slot.attributes('data-label'))
+    ).toEqual(['Settings', 'Music'])
+
+    // Settings › General: no Mode at launch row.
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await openSection(wrapper, 'General')
+    expect(wrapper.get('.dm-settings__panel').text()).not.toContain('Mode at launch')
+
+    // The Add panel: Claude and Other, and no chip for the provider main did not offer.
+    await wrapper.find(NAV_MAP).trigger('click')
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('.dm-minecol__foot .dm-btn--primary').trigger('click')
+    await flushPromises()
+    const chips = wrapper
+      .get('.dm-add__chips')
+      .findAll('[data-value]')
+      .map((chip) => chip.attributes('data-value'))
+    expect(chips).toEqual(['claude', 'other'])
+  })
+})
+/* --- end of the ISSUE-267 block ------------------------------------------------------------------ */
+
+/* --- ISSUE-262: the nav, the mine column, the window slot and the Music slot ------------------ */
+describe('App shell motion and window slot (ISSUE-262)', () => {
+  const runs: {
+    element: Element
+    keyframes: DOMKeyframesDefinition
+    transition: unknown
+    finish: () => void
+  }[] = []
+  const wrappers: VueWrapper[] = []
+  /** motion-v's `animate()` stood in for, recording what each run was handed (see 'App panel motion'). */
+  const engine: MotionAnimate = (element, keyframes: DOMKeyframesDefinition, transition) => {
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    runs.push({ element, keyframes, transition, finish })
+    return {
+      cancel: () => undefined,
+      then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+    }
+  }
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    runs.length = 0
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value: () => undefined
+    })
+  })
+  afterEach(() => {
+    for (const wrapper of wrappers.splice(0)) wrapper.unmount()
+    Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+    useAgentLaunch().close()
+    vi.useRealTimers()
+  })
+  async function finishRuns(): Promise<void> {
+    for (const run of runs.splice(0)) run.finish()
+    await flushPromises()
+  }
+  async function animatedApp(overrides: Record<string, unknown> = {}) {
+    const api = stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT), ...overrides })
+    const wrapper = mount(App, { props: { engine }, global: { stubs: { transition: false } } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await finishRuns()
+    return { wrapper, api }
+  }
+
+  it('[US-SHELL-003.AC01] a World slot or Settings swaps the page at once, the new page fading in where it stands', async () => {
+    const { wrapper, api } = await animatedApp()
+    for (const slot of [NAV_SETTINGS, NAV_MINES, NAV_MAP]) {
+      await wrapper.get(slot).trigger('click')
+      await flushPromises()
+      const pageRuns = runs.filter((run) => run.element.classList.contains('shell-page'))
+      expect(pageRuns).toHaveLength(2)
+      const leaving = pageRuns.find((run) => (run.element as HTMLElement).inert)!
+      const entering = pageRuns.find((run) => !(run.element as HTMLElement).inert)!
+      // The old page is hidden at once, with no exit: no travel, and no time to play one.
+      expect(leaving.keyframes).toEqual({ opacity: [1, 0] })
+      expect(leaving.transition).toEqual({ duration: 0 })
+      // The new one fades in where it stands (motion.md, Page swap: --dur-base, --ease-out).
+      expect(entering.keyframes).toEqual({ opacity: [0, 1] })
+      expect(entering.transition).toEqual({ duration: 0.14, ease: [0.2, 0.7, 0.1, 1] })
+      await finishRuns()
+      expect(wrapper.findAll('.shell-page')).toHaveLength(1)
+    }
+    // Same-size pages: the window is never asked to change for a page swap.
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+  })
+
+  it('[US-SHELL-003.AC05] opening another page leaves the open mine untouched', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper, api } = await animatedApp({
+      board: { mines: [mine], tokensObserved: 0 }
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    await finishRuns()
+    const column = wrapper.findComponent(MineColumn).vm.$
+    api.setPanelLayout.mockClear()
+    for (const slot of [NAV_SETTINGS, NAV_MINES, NAV_MAP]) {
+      await wrapper.get(slot).trigger('click')
+      await flushPromises()
+      // Only the page column moves; nothing runs on the mine column or the shell's ground.
+      expect(runs.length).toBeGreaterThan(0)
+      expect(runs.every((run) => run.element.classList.contains('shell-page'))).toBe(true)
+      await finishRuns()
+      expect(wrapper.findComponent(MineColumn).vm.$).toBe(column)
+    }
+    expect(useView().state.mineId).toBe(mine.id)
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The mine column's own motion is the owner's ruling, not the 180/90 ms of NFR-TIM-12 (#566:
+   * motion-v's own defaults, no authored durations; #585: the maintainer's drawing of the column
+   * uncovered in place). That is an owner-ruled accepted difference. What the ACs fix beyond the
+   * timing is asserted here; the fold's own geometry is useShellFold.test.ts's.
+   */
+  it('[US-SHELL-004.AC02, NFR-TIM-12] another mine swaps the column in place, and nothing else on screen moves (#566 timing)', async () => {
+    const first = defaultMine({ id: 'p1', name: 'first', dwarfs: [defaultDwarf({ id: 'd1' })] })
+    const second = defaultMine({ id: 'p2', name: 'second', dwarfs: [defaultDwarf({ id: 'd2' })] })
+    const { wrapper, api } = await animatedApp({
+      board: { mines: [first, second], tokensObserved: 0 }
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', first.id)
+    await flushPromises()
+    await finishRuns()
+    const before = wrapper.findComponent(MineColumn).vm.$
+    api.setPanelLayout.mockClear()
+    wrapper.findComponent(MapPage).vm.$emit('open', second.id)
+    await flushPromises()
+    // A fresh column for the other mine, in the same place...
+    expect(wrapper.findComponent(MineColumn).vm.$).not.toBe(before)
+    expect(wrapper.findComponent(MineColumn).props('mine')).toMatchObject({ id: second.id })
+    // ...and nothing else moved: no fold of the ground, no carried page, the nav untouched.
+    expect(runs).toEqual([])
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    expect((wrapper.get('.dm-nav').element as HTMLElement).style.transform).toBe('')
+  })
+
+  it('[US-SHELL-004.AC03, NFR-TIM-12] Close mine closes any window first, then the column leaves on the fold, and only then does the window give the room back (#566 timing)', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper, api } = await animatedApp({
+      board: { mines: [mine], tokensObserved: 0 }
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    await finishRuns()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    await finishRuns()
+    api.setPanelLayout.mockClear()
+    wrapper.findComponent(MineColumn).vm.$emit('close')
+    await flushPromises()
+    // The window first, at once (0 ms, no travel), then the shell folding over the column.
+    expect(runs.map((run) => run.element.classList[0])).toEqual(['dock-window', 'shell'])
+    expect(runs[0]!.keyframes).toEqual({ opacity: [1, 0] })
+    expect(runs[0]!.transition).toEqual({ duration: 0 })
+    // The column still stands where it was, and the window keeps its room, until the fold ends.
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    await finishRuns()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: false, dockOpen: false })
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+  })
+
+  it('[US-SHELL-004.AC06] the window slot holds one of chat, history or Add panel, and closing history or the Add panel closes the slot', async () => {
+    const dwarf = defaultDwarf()
+    const mine = defaultMine({ dwarfs: [dwarf] })
+    const { wrapper } = await mountApp({
+      board: { mines: [mine], tokensObserved: 0 }
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    const slotHolds = (): string[] => {
+      const slot = wrapper.findAll('.dock-window')
+      if (slot.length === 0) return []
+      expect(slot).toHaveLength(1)
+      const held: string[] = []
+      if (slot[0]!.findComponent(DwarfMessagePanel).exists()) held.push('chat')
+      if (slot[0]!.findComponent(HistoryPanel).exists()) held.push('history')
+      if (slot[0]!.findComponent(AddPanel).exists()) held.push('add')
+      return held
+    }
+    // The chat, then the history replacing it; closing the history closes the slot, not back to the chat.
+    wrapper.findComponent(MineColumn).vm.$emit('select', dwarf)
+    await flushPromises()
+    expect(slotHolds()).toEqual(['chat'])
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    expect(slotHolds()).toEqual(['history'])
+    wrapper.findComponent(HistoryPanel).vm.$emit('close')
+    await flushPromises()
+    expect(slotHolds()).toEqual([])
+    // The chat, then the Add panel replacing it; closing the Add panel closes the slot as well.
+    wrapper.findComponent(MineColumn).vm.$emit('select', dwarf)
+    await flushPromises()
+    expect(slotHolds()).toEqual(['chat'])
+    wrapper.findComponent(MineColumn).vm.$emit('add')
+    await flushPromises()
+    expect(slotHolds()).toEqual(['add'])
+    wrapper.findComponent(AddPanel).vm.$emit('close')
+    await flushPromises()
+    expect(slotHolds()).toEqual([])
+  })
+})
+
+/*
+ * The narrow-screen rule (decision log, Narrow screen; screens/shell.md): the nav, the mine column
+ * and the window stay whole at the docked edge, the page's column gives way and clips, and what
+ * still does not fit runs off the far side. jsdom lays nothing out, so the declarations that make
+ * the rule are pinned here, off the stylesheets; e2e/panel/shell.e2e.ts measures the real layout.
+ */
+describe('App narrow screen (ISSUE-262)', () => {
+  function rulesOf(file: string): (selector: string) => string {
+    const source = readFileSync(join(import.meta.dirname, file), 'utf8')
+    const tag = '<style scoped>'
+    const style = source.slice(source.indexOf(tag) + tag.length).replace(/\/\*[\s\S]*?\*\//g, '')
+    return (selector) =>
+      [...style.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+        .filter((match) => match[1]!.split(',').some((one) => one.trim() === selector))
+        .map((match) => match[2]!)
+        .join(';')
+  }
+  const app = rulesOf('App.vue')
+  const nav = rulesOf('components/shell/PanelNav.vue')
+
+  it('[US-SHELL-007.AC01, US-SHELL-007.AC02, US-SHELL-007.AC03, US-SHELL-007.AC05, NFR-PLAT-12] docked parts keep their width, the page shrinks and clips, then the farthest part runs off-screen, with no minimum width', () => {
+    // The docked parts never shrink.
+    expect(app('.dock-window')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(app('.shell-mine')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(nav('.dm-nav')).toMatch(/(^|[;\s])flex:\s*none/)
+    expect(nav('.dm-nav')).toMatch(/(^|[;\s])width:\s*var\(--nav-width, 56px\)/)
+    // The page's column is the one part that gives way, and it clips.
+    expect(app('.shell-secondary')).toMatch(/(^|[;\s])flex:\s*0 1 var\(--page-width\)/)
+    expect(app('.shell-secondary')).toMatch(/min-width:\s*0/)
+    expect(app('.shell-secondary')).toMatch(/overflow:\s*hidden/)
+    // The plate shrinks only by its page: never below the nav, and the mine column while one stands.
+    expect(app('.shell')).toMatch(/(^|[;\s])--nav-width:\s*56px/)
+    expect(app('.shell')).toMatch(
+      /min-width:\s*calc\(2 \* var\(--shell-pad\) \+ var\(--nav-width\) \+ var\(--shell-gap\)\)/
+    )
+    expect(app('.shell:has(> .shell-mine)')).toMatch(
+      /min-width:\s*calc\(\s*2 \* var\(--shell-pad\) \+ var\(--nav-width\) \+ var\(--mine-column-width\) \+\s*2 \* var\(--shell-gap\)\s*\)/
+    )
+    // What still does not fit runs off the far side: packed at the docked edge, clipped by the dock.
+    expect(app('.panel-dock')).toMatch(/justify-content:\s*flex-end/)
+    expect(app('.panel-dock')).toMatch(/overflow:\s*hidden/)
+    // No named minimum anywhere the dock is laid out.
+    for (const selector of ['.panel-dock', '.panel-dock.edge-left', '.dock-window'])
+      expect(app(selector)).not.toMatch(/min-width/)
+  })
+
+  it('[US-SHELL-007.AC06] the page clips on its inward side for either dock', () => {
+    // Docked right the page keeps its 440px against its right (the mine column) and is cut on its
+    // left; docked left the anchor and the cut are mirrored.
+    expect(app('.shell-secondary > .shell-page')).toMatch(/(^|[;\s])right:\s*0/)
+    expect(app('.shell-secondary > .shell-page')).toMatch(/(^|[;\s])width:\s*var\(--page-width\)/)
+    expect(app('.shell.edge-left .shell-secondary > .shell-page')).toMatch(/right:\s*auto/)
+    expect(app('.shell.edge-left .shell-secondary > .shell-page')).toMatch(/left:\s*0/)
+  })
+})
+
+describe('App Music slot (ISSUE-262)', () => {
+  let realAudio: typeof Audio
+  beforeEach(() => {
+    realAudio = window.Audio
+    // jsdom's media element has no pipeline (see 'App audio'): only what the player touches.
+    class FakeAudio {
+      preload = ''
+      loop = false
+      volume = 0
+      currentTime = 0
+      duration = Number.NaN
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      removeAttribute(): void {}
+      play(): void {}
+      pause(): void {}
+      load(): void {}
+    }
+    Object.defineProperty(window, 'Audio', { configurable: true, value: FakeAudio })
+  })
+  afterEach(() => {
+    Object.defineProperty(window, 'Audio', { configurable: true, value: realAudio })
+  })
+  const musicIcon = (wrapper: VueWrapper): unknown =>
+    wrapper.get(NAV_MUSIC).findComponent({ name: 'PixelIcon' }).props('name')
+  const toastTexts = (wrapper: VueWrapper): string[] =>
+    wrapper.findAll('.dm-toast').map((toast) => toast.text())
+  const musicApp = (overrides: Record<string, unknown> = {}) =>
+    mountOpenApp({ getPanelVisible: vi.fn().mockResolvedValue(true), ...overrides })
+
+  it('[US-SHELL-005.AC01] with Music at startup on, the Music slot starts pressed and lit', async () => {
+    const { wrapper } = await musicApp({
+      getAudioPreferences: vi
+        .fn()
+        .mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES, musicAtStartup: true })
+    })
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
+    expect(musicIcon(wrapper)).toBe('music-on')
+  })
+
+  it('[US-SHELL-005.AC02, US-SHELL-005.AC03] toggling Music dims or lights its icon with the toast Music off or Music on', async () => {
+    const { wrapper } = await musicApp()
+    expect(musicIcon(wrapper)).toBe('music-on')
+    await wrapper.get(NAV_MUSIC).trigger('click')
+    await flushPromises()
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-pressed')).toBe('false')
+    expect(musicIcon(wrapper)).toBe('music-off')
+    expect(toastTexts(wrapper)).toContain('Music off')
+    await wrapper.get(NAV_MUSIC).trigger('click')
+    await flushPromises()
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
+    expect(musicIcon(wrapper)).toBe('music-on')
+    expect(toastTexts(wrapper)).toContain('Music on')
+  })
+
+  it('[US-SHELL-005.AC04, US-SHELL-005.AC05] a pressed Music slot never takes the gold current-page mark and toggling changes neither the Music volume nor Notification sounds', async () => {
+    const { wrapper, api } = await musicApp()
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get(NAV_MUSIC).attributes('aria-current')).toBeUndefined()
+    expect(wrapper.get(NAV_MAP).attributes('aria-current')).toBe('page')
+    for (let press = 0; press < 3; press++) {
+      await wrapper.get(NAV_MUSIC).trigger('click')
+      await flushPromises()
+      expect(wrapper.get(NAV_MUSIC).attributes('aria-current')).toBeUndefined()
+      expect(wrapper.get(NAV_MAP).attributes('aria-current')).toBe('page')
+    }
+    // The volume and Notification sounds are stored audio preferences; the toggle writes none.
+    expect(api.setAudioPreferences).not.toHaveBeenCalled()
+    expect(api.setNotificationsEnabled).not.toHaveBeenCalled()
+  })
+})
+/* --- end of the ISSUE-262 block -------------------------------------------------------------- */
+
+/* --- Recovery message (ISSUE-330) — one block, appended ------------------------------------------ */
+/*
+ * The one grouped recovery message on the Host-state surface (ADR-015 item 5; 14 §6.4 recovery-message store). App
+ * owns useRecoveryReport and mounts RecoveryMessage while the `recovery` snapshot section holds an unsettled report;
+ * Dismiss sends A-N11 with the report's epoch and nothing else. Every other test answers the section with a refusal,
+ * so the message stays hidden there.
+ */
+describe('App recovery message (ISSUE-330)', () => {
+  const EPOCH = 'epoch-330'
+  const LOST = '01920000-0000-7000-a000-000000000332'
+
+  function hostWithReport() {
+    const dismissRecovery = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: {} } })
+    const stopDwarf = vi.fn()
+    return {
+      dismissRecovery,
+      stopDwarf,
+      overrides: {
+        getHostSnapshot: vi.fn((params: { sections?: string[] } | undefined) =>
+          Promise.resolve(
+            params?.sections?.includes('recovery') === true
+              ? {
+                  ok: true,
+                  value: {
+                    snapshotId: 'snap-recovery',
+                    seq: 7,
+                    epoch: EPOCH,
+                    chunks: [
+                      {
+                        section: 'recovery',
+                        data: {
+                          hostEpoch: EPOCH,
+                          at: 1,
+                          resumed: [],
+                          unrecovered: [{ dwarfId: LOST, reason: 'no-resume' }],
+                          state: 'pending-display'
+                        }
+                      }
+                    ]
+                  }
+                }
+              : params?.sections?.includes('tails') === true
+                ? EMPTY_HOST_TAILS
+                : HOST_CONNECTION_UNROUTED
+          )
+        ),
+        dismissRecovery,
+        stopDwarf
+      }
+    }
+  }
+
+  it('[S16.08, US-RES-009.AC03, ADR-015] a pending report at attach shows one message, and Dismiss sends only dismissRecovery', async () => {
+    const host = hostWithReport()
+    await mountOpenApp(host.overrides)
+
+    const dialogs = document.body.querySelectorAll('[role="dialog"]')
+    expect(dialogs).toHaveLength(1)
+    expect(dialogs[0]!.getAttribute('aria-label')).toBe('Some dwarfs could not come back')
+    // A dwarf the board does not hold is named by its id.
+    expect(dialogs[0]!.querySelector('li bdi')?.textContent).toBe(LOST)
+
+    const dismiss = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')
+    ].find((button) => button.textContent?.trim() === 'Dismiss')!
+    dismiss.click()
+    await flushPromises()
+    expect(host.dismissRecovery).toHaveBeenCalledTimes(1)
+    expect(host.dismissRecovery).toHaveBeenCalledWith(expect.objectContaining({ hostEpoch: EPOCH }))
+    expect(host.stopDwarf).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('[ADR-015] while the Host reports no recovery, nothing is shown', async () => {
+    await mountOpenApp()
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+/* --- end of the ISSUE-330 block ------------------------------------------------------------------ */

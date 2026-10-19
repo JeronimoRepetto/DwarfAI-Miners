@@ -1,0 +1,1 @@
+{ "rule": "arch/no-host-result-cast-in-promise-resolve", "tool": "eslint" }

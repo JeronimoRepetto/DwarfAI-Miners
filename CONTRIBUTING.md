@@ -21,7 +21,7 @@ binary is ever missing (an interrupted download, say), run `pnpm exec install-el
 
 Configuration in a checkout is env-based: copy `.env.example` to `.env` if you want to override
 defaults. Every key is optional and invalid values fail fast at startup
-(`src/main/config/config.ts`). One thing to know before adding a setting: **an installed app never
+(`src/contracts/config/config.ts`). One thing to know before adding a setting: **an installed app never
 sees `.env`**, because `dotenv` resolves it against the working directory. It reads a
 `config-v1.json` under Electron's `userData` instead, layered underneath the real environment. So a
 new setting that is only reachable from `.env` is unreachable from the product — see
@@ -32,22 +32,33 @@ config layers at all.
 
 ## Packaging dependencies
 
-`@anthropic-ai/claude-agent-sdk` ships its native runtime as one optional package per target
-platform and architecture. `package.json` declares the four this app actually builds for —
-`claude-agent-sdk-darwin-arm64`, `-darwin-x64`, `-linux-x64` and `-win32-x64` — in
-`optionalDependencies`, pinned to the exact version already in `dependencies`. **Bump both
-together**: a mismatch is exactly the drift `scripts/sdkRuntimeVersions.test.mjs` exists to catch.
-Without this, pnpm installs only the runtime matching the machine that ran `pnpm install`, so an
-installer built on the "wrong" architecture for its own target — the x64 macOS build made on an
-Apple Silicon Mac, notably — would ship without the runtime a held Claude session needs.
-
-electron-builder does not prune the other three runtimes out of an artifact on its own (that is a
-v27 feature; this project pins 26.x — see [`docs/signing.md`](docs/signing.md) for why). The
-`build.afterPack` hook `scripts/pruneSdkRuntimes.mjs` removes every `claude-agent-sdk-*` folder
-except the one matching the artifact actually being packaged, before code signing runs.
+The SecretStore's keyring library, `@napi-rs/keyring`, ships its native binding as one optional
+package per target platform and architecture. pnpm installs only the binding matching the machine
+that ran `pnpm install`, so `pnpm-workspace.yaml` widens `supportedArchitectures`: an installer
+built on the "wrong" architecture for its own target — the x64 macOS build made on an Apple Silicon
+Mac, notably — still ships the binding its target needs.
 
 `package.json` also declares a `homepage`, which electron-builder's `.deb` (fpm) target refuses to
 build without.
+
+### The Windows native modules
+
+On Windows the Host creates its UI pipe through one small native module,
+`src/host/platform/endpoint/win-pipe/win_pipe.c`: Node cannot give a pipe the owner-only DACL or
+reject remote clients, which the architecture requires (ADR-003 item 2, spike SP-05). It is built
+with `pnpm build:native [--arch x64|arm64]` into `prebuilds/win32-<arch>/` (git-ignored), against
+the C Node-API, with the static C runtime, so the installed app needs no VC++ redistributable and
+nothing is ever compiled on a user's machine. CI builds it; the packaged app carries it
+asar-unpacked. Building it locally needs Visual Studio with the MSVC C++ tools, and only the Windows
+OS lane (`pnpm test:os`) and a local Host run need it: `pnpm test` uses a double. The Host refuses
+to bind its pipe without it rather than fall back to Node's default pipe.
+
+The same command builds the UI's own native module, the launch helper
+`src/ui-main/hostLauncher/win-launch/win_launch.c`, into the same folder. UI main uses it to start
+the Host outside every job object the UI may be in (ADR-002 D6, spike SP-02): `CreateProcessW` with
+job breakaway, the `IsProcessInJob` check, and the exit watch, all in-process, so starting the Host
+never waits for PowerShell or a compiler. Only a job that forbids breakaway still goes through one
+Windows PowerShell step (WMI). Each tree loads only its own binary.
 
 ## Verification
 
@@ -92,24 +103,6 @@ skips a non-executable hook): `git ls-files -s scripts/git-hooks/pre-commit` sho
 The whole test suite is platform-independent and must stay that way: it runs and passes on
 any host OS, because per-OS behavior is tested through pure builders (see below), never by
 executing platform commands.
-
-### Delegation smoke test
-
-`scripts/smoke/delegation.mjs` is a separate, opt-in check for [subtask delegation](docs/guide.md#delegation)
-(#511) — not part of the seven checks above, never run by CI, and never run automatically by an
-agent working this repository. It launches real, installed agent CLIs, which every unit test in this
-project refuses to do:
-
-```bash
-pnpm build   # out/main/jevMcpServer.mjs must exist and be current
-node scripts/smoke/delegation.mjs
-```
-
-For each of `claude`, `opencode` and `codex` actually installed on your machine, it spends one
-short, low-cost turn confirming the delegation server was registered and its tool was actually
-exposed to the model — `PASS`, `FAIL`, or `SKIPPED` for a CLI not on this machine's PATH. Run it by
-hand when you want to know whether a real CLI still honours its own documented MCP mechanism; the
-script's own top comment says exactly what it proves and what it does not.
 
 ### Golden UI tests (maintainer machine only)
 
@@ -179,12 +172,12 @@ pnpm test:golden
 - **Every real-world bug becomes a regression test.** If you fix something that broke on a
   real machine, the fix includes a test that fails without it.
 - **Deterministic fakes, no network, no credentials.** Unit tests use in-memory fakes —
-  `FakeFs` (`src/main/adapters/fakeFs.ts`), `FakeHookFs` (`src/main/hooks/fakeHookFs.ts`),
-  an in-memory SQLite (`src/main/adapters/memorySqlite.ts`) — never the real home directory,
-  a live CLI, or the network.
+  `FakeFs` (`src/host/kernel/fakes/FakeFs.ts`), the other port doubles under
+  `src/host/kernel/fakes/`, an in-memory SQLite (`src/host/platform/sqlite/testing/MemoryWritableSqlite.ts`)
+  — never the real home directory, a live CLI, or the network.
 - **Per-platform code is pure builders plus a thin runner.** Everything OS-specific produces
-  a testable value (a command's argv, a plist's exact bytes) and is selected in one place,
-  `src/main/platform/platformAdapters.ts`. Tests pass the platform explicitly, which is how
+  a testable value (a command's argv, a plist's exact bytes) and is composed in the two roots,
+  `src/host/main.ts` and `src/ui-main/index.ts`. Tests pass the platform explicitly, which is how
   macOS and Linux assertions run on a Windows host and vice versa.
 
 ## Commit conventions

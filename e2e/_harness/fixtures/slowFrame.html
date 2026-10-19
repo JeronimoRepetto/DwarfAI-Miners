@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>slow frame</title>
+  </head>
+  <body>
+    <!-- A harness self-test's sub-frame (slowMainLoadEnd.cjs): it finishes loading 1.5 s after it starts. -->
+    <script>
+      const end = Date.now() + 1500
+      while (Date.now() < end) {
+        // Busy: this frame's load ends late.
+      }
+    </script>
+  </body>
+</html>

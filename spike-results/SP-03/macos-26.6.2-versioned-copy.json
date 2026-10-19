@@ -1,0 +1,50 @@
+[
+  {
+    "layout": "electron-dist-darwin",
+    "files": 270,
+    "bytes": 299776374,
+    "manifestMs": 243,
+    "copyMs": 123,
+    "verifyMs": 174,
+    "renameMs": 0,
+    "reuseMs": 175,
+    "reused": true,
+    "signatureBefore": "codesign:invalid(<app>: code has no resources but signature indicates they must be present) gatekeeper:rejected(<app>: code has no resources but signature indicates they must be present)",
+    "signatureAfter": "codesign:invalid(<app>: code has no resources but signature indicates they must be present) gatekeeper:rejected(<app>: code has no resources but signature indicates they must be present)",
+    "hostStarted": true,
+    "hostExecPathInsideCopy": true,
+    "hostElectron": "44.0.0",
+    "appAsarName": null,
+    "startMs": 1734,
+    "diagnostics": {
+      "hostExecPath": "<work>/electron-dist-darwin/host/0.0.0-sp03/Electron.app/Contents/MacOS/Electron",
+      "copiedPath": "<work>/electron-dist-darwin/host/0.0.0-sp03/Electron.app",
+      "workDirIsLink": true
+    },
+    "note": null
+  },
+  {
+    "layout": "app-mac",
+    "files": 281,
+    "bytes": 617598345,
+    "manifestMs": 376,
+    "copyMs": 278,
+    "verifyMs": 341,
+    "renameMs": 0,
+    "reuseMs": 331,
+    "reused": true,
+    "signatureBefore": "codesign:invalid(<app>: code has no resources but signature indicates they must be present) gatekeeper:rejected(<app>: code has no resources but signature indicates they must be present)",
+    "signatureAfter": "codesign:invalid(<app>: code has no resources but signature indicates they must be present) gatekeeper:rejected(<app>: code has no resources but signature indicates they must be present)",
+    "hostStarted": true,
+    "hostExecPathInsideCopy": true,
+    "hostElectron": "44.0.0",
+    "appAsarName": "dwarfai-miners",
+    "startMs": 1818,
+    "diagnostics": {
+      "hostExecPath": "<work>/app-mac/host/0.0.0-sp03/DwarfAI-Miners.app/Contents/MacOS/DwarfAI-Miners",
+      "copiedPath": "<work>/app-mac/host/0.0.0-sp03/DwarfAI-Miners.app",
+      "workDirIsLink": true
+    },
+    "note": null
+  }
+]

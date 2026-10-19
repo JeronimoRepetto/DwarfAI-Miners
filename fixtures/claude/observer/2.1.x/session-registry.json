@@ -1,0 +1,15 @@
+{
+  "pid": 32896,
+  "sessionId": "01a0b000-0000-7000-8000-000000000711",
+  "cwd": "C:\\Users\\j\\work\\sample.project",
+  "startedAt": 1788001972417,
+  "procStart": "134324755721362761",
+  "version": "2.1.263",
+  "kind": "interactive",
+  "entrypoint": "cli",
+  "pidDomain": "win32:placeholder-host",
+  "name": "sample-project-70",
+  "status": "busy",
+  "updatedAt": 1788003794280,
+  "statusUpdatedAt": 1788003794280
+}

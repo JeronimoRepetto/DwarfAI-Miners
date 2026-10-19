@@ -15,15 +15,26 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@dwarfai/contracts": ["./src/contracts/index.ts"]
+    }
   },
   "include": [
-    "src/main/**/*.ts",
     "src/preload/**/*.ts",
-    "src/shared/**/*.ts",
+    "src/contracts/**/*.ts",
+    "src/host/**/*.ts",
+    "src/ui-main/**/*.ts",
+    "src/legacy-bridge/**/*.ts",
+    "spikes/**/*.ts",
+    "e2e/**/*.ts",
+    "playwright.config.ts",
     "electron.vite.config.ts",
-    "electron.vite.jevMcpServer.config.ts",
+    "electron.vite.host.config.ts",
+    "electron.vite.relay.config.ts",
     "vitest.config.ts",
-    "vitest.golden.config.ts"
+    "vitest.golden.config.ts",
+    "vitest.os.config.ts"
   ]
 }

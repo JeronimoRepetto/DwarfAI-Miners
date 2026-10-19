@@ -1,0 +1,273 @@
+name: Packaging spikes
+
+# The packaging spike lane of ISSUE-328 (testing strategy 17 §4; 20 §2.3): on a manual dispatch only, each OS packages
+# the way ci.yml's `package` job does, then the spike harnesses run against the real packaged artifacts and upload
+# their scrubbed evidence for the spike records (spike-results/<ID>.md, written by hand from it):
+#
+#   S-019-2  fuse set and asar integrity of every artifact, stock and with the ADR-019 item 5 set asked of
+#            electron-builder (spikes/S-019-2);
+#   S-019-3  spellcheck dictionary traffic of Electron's spellchecker (probe app) and of the packaged app (net log)
+#            (spikes/S-019-3);
+#   SP-03    the Host's versioned copy made by the packaged app per layout: size, time, Host outliving the UI, AppImage
+#            mounts, macOS signature state (spikes/SP-03);
+#   S-008-1  the packages each artifact ships, with their licence and S-008-1 row (spikes/S-008-1);
+#   S-027-3  Windows nsis install, upgrade and uninstall around a running Host (spikes/S-027-3);
+#   S-027-1  Windows zip layout, a real Scoop install/update/uninstall with logging hooks, and the portable target
+#            (spikes/S-027-1).
+#
+#   gh workflow run spikes-package.yml --ref main
+#
+# docs/spikes-lane.md "Packaging spikes (ISSUE-328)" says how to dispatch it and read the evidence.
+#
+# It publishes nothing: the job holds `contents: read`, uses no Environment, reads no secret, and uploads only the
+# evidence folder as a workflow artifact kept seven days (the installers are not uploaded; the repository is public).
+# The macOS leg packages unsigned, as ci.yml `package`. The Windows harnesses that start the app run as the standard
+# user scripts/ci/run-unelevated.mjs creates, because the Host refuses to start elevated (ADR-002 D6). The only
+# download besides the toolchain is Scoop's official installer (https://get.scoop.sh), for S-027-1 on Windows.
+#
+# Every harness step runs after a successful package even when an earlier harness failed (`!cancelled()`), so one
+# failing spike never hides the others' evidence; the job still ends red when any of them failed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      relax_linux_userns:
+        description: >-
+          Linux leg only: allow unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=0) before
+          the app starts, for a re-run when Chromium's sandbox stopped the AppImage on the default image
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  # As ci.yml: @electron/get caches the Electron download here, restored by the cache step below.
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  TZ: UTC
+  LANG: C.UTF-8
+
+jobs:
+  spikes:
+    name: Packaging spikes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            package_args: ''
+          # Pinned like ci.yml `package`: the image electron-builder 26.15.3 is known to package on.
+          - os: macos-15
+            package_args: '-c.mac.identity=null'
+          - os: ubuntu-latest
+            package_args: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Signing off on macOS, as ci.yml `package`: no identity is picked from the runner's keychain.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the owner-only pipe helper (Windows x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
+
+      - name: Build
+        run: pnpm build
+
+      - name: Write the third-party notices
+        run: node scripts/release/third-party-notices.mjs
+
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK
+        run: node scripts/release/lockfile-provider-scan.mjs
+
+      # The release targets of the runner's OS, exactly as ci.yml `package` builds them.
+      - name: Package
+        id: package
+        run: pnpm package ${{ matrix.package_args }}
+
+      - name: Check the Host build manifest of each packed app
+        run: node scripts/build/verify-packaged-host-manifest.mjs release
+
+      - name: Run the packaged-artifact checks
+        run: pnpm test:packaged release
+
+      - name: Prepare the evidence folder and the Linux tools
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          mkdir -p spike-evidence spike-work
+          if [ "$RUNNER_OS" = Linux ]; then
+            # The AppImage runtime mounts itself through FUSE 2 (SP-03 records the mount lifetime).
+            sudo apt-get update -q
+            sudo apt-get install -y -q libfuse2t64
+          fi
+
+      # Off by default, so the record first shows what the stock image (and a stock Ubuntu 24.04 desktop) does.
+      - name: Allow unprivileged user namespaces (Linux, on request)
+        if: ${{ !cancelled() && runner.os == 'Linux' && inputs.relax_linux_userns }}
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Extract every artifact
+        id: extract
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: node spikes/_packaged/extract.mjs release spike-work/extracted --evidence spike-evidence/extract
+
+      - name: S-008-1 packages shipped by each artifact
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: node spikes/S-008-1/bundledPackages.mjs --root release --root spike-work/extracted --out spike-evidence/S-008-1
+
+      - name: S-019-2 fuses of the release build
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: node spikes/S-019-2/fuses.packaged.mjs --root release --root spike-work/extracted --label release --out spike-evidence/S-019-2
+
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK (fused build)
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: node scripts/release/lockfile-provider-scan.mjs
+
+      # The same targets with the ADR-019 item 5 fuse set, into release-fused. The spike's afterPack hook flips the fuses
+      # before the Host manifest is written (electronFuses flips them after it, run 39134423991), and the manifest is
+      # checked as ci.yml checks release/.
+      - name: Package with the ADR-019 fuse set
+        id: fused
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          pnpm exec electron-builder --publish never --config spikes/S-019-2/electron-builder.fused.cjs ${{ matrix.package_args }}
+          node scripts/build/verify-packaged-host-manifest.mjs release-fused
+
+      - name: S-019-2 fuses of the build with the ADR-019 set
+        id: fused-read
+        if: ${{ !cancelled() && steps.fused.outcome == 'success' }}
+        run: |
+          node spikes/_packaged/extract.mjs release-fused spike-work/extracted-fused --evidence spike-evidence/extract-fused
+          node spikes/S-019-2/fuses.packaged.mjs --root release-fused --root spike-work/extracted-fused --label adr-019-set --out spike-evidence/S-019-2
+
+      # A fuse set that stops the Host is no answer for ISSUE-269 (RunAsNode stays on, the Host runs app.asar's
+      # out/host/main.js): the SP-03 harness starts the fused build once per OS and records whether its Host comes up.
+      - name: S-019-2 the build with the ADR-019 set starts its Host
+        if: ${{ !cancelled() && steps.fused-read.outcome == 'success' }}
+        run: |
+          case "$RUNNER_OS" in
+            Windows) node scripts/ci/run-unelevated.mjs -- node spikes/SP-03/packagedCopy.mjs --find "$(ls -d spike-work/extracted-fused/*-win-x64.zip)" --layout win-zip-adr-019-set --out spike-evidence/S-019-2/start ;;
+            macOS) node spikes/SP-03/packagedCopy.mjs --find "$(ls -d spike-work/extracted-fused/*-arm64.zip)" --layout mac-zip-arm64-adr-019-set --out spike-evidence/S-019-2/start ;;
+            Linux)
+              appimage=$(ls release-fused/*.AppImage)
+              chmod +x "$appimage"
+              xvfb-run --auto-servernum node spikes/SP-03/packagedCopy.mjs --app "$appimage" --layout linux-appimage-adr-019-set --out spike-evidence/S-019-2/start
+              ;;
+          esac
+
+      - name: S-019-3 spellcheck probe (Electron's spellchecker)
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run --auto-servernum node spikes/S-019-3/spellcheck.mjs probe --out spike-evidence/S-019-3
+          else
+            node spikes/S-019-3/spellcheck.mjs probe --out spike-evidence/S-019-3
+          fi
+
+      - name: S-019-3 network traffic of the packaged app
+        if: ${{ !cancelled() && steps.extract.outcome == 'success' }}
+        run: |
+          case "$RUNNER_OS" in
+            Windows) node scripts/ci/run-unelevated.mjs -- node spikes/S-019-3/spellcheck.mjs packaged --find "$(ls -d spike-work/extracted/*-win-x64.zip)" --out spike-evidence/S-019-3 ;;
+            macOS) node spikes/S-019-3/spellcheck.mjs packaged --find "$(ls -d spike-work/extracted/*-arm64.zip)" --out spike-evidence/S-019-3 ;;
+            # The AppImage, not linux-unpacked: run 39130693732 showed linux-unpacked's chrome-sandbox is not root-owned
+            # with mode 4755, so Chromium aborts there; the AppImage and the deb install start (SP-03).
+            Linux)
+              appimage=$(ls release/*.AppImage)
+              chmod +x "$appimage"
+              xvfb-run --auto-servernum node spikes/S-019-3/spellcheck.mjs packaged --app "$appimage" --out spike-evidence/S-019-3
+              ;;
+          esac
+
+      - name: SP-03 versioned copy per layout
+        if: ${{ !cancelled() && steps.extract.outcome == 'success' }}
+        run: |
+          case "$RUNNER_OS" in
+            Windows)
+              # The nsis layout's first start is measured by S-027-3, which installs it.
+              node scripts/ci/run-unelevated.mjs -- node spikes/SP-03/packagedCopy.mjs --find "$(ls -d spike-work/extracted/*-win-x64.zip)" --layout win-zip --out spike-evidence/SP-03
+              ;;
+            macOS)
+              status=0
+              node spikes/SP-03/packagedCopy.mjs --find "$(ls -d spike-work/extracted/*-arm64.zip)" --layout mac-zip-arm64 --out spike-evidence/SP-03 || status=1
+              node spikes/SP-03/packagedCopy.mjs --find "$(ls -d spike-work/extracted/*-arm64.dmg)" --layout mac-dmg-arm64 --out spike-evidence/SP-03 || status=1
+              exit $status
+              ;;
+            Linux)
+              status=0
+              appimage=$(ls release/*.AppImage)
+              chmod +x "$appimage"
+              xvfb-run --auto-servernum node spikes/SP-03/packagedCopy.mjs --app "$appimage" --layout linux-appimage --out spike-evidence/SP-03 || status=1
+              sudo apt-get install -y -q "./$(ls release/*.deb)"
+              deb_dir=$(dpkg -L "$(dpkg-deb -f "$(ls release/*.deb)" Package)" | grep -m1 '^/opt/[^/]*$')
+              xvfb-run --auto-servernum node spikes/SP-03/packagedCopy.mjs --find "$deb_dir" --layout linux-deb --out spike-evidence/SP-03 || status=1
+              exit $status
+              ;;
+          esac
+
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK (Windows upgrade and portable builds)
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.package.outcome == 'success' }}
+        run: node scripts/release/lockfile-provider-scan.mjs
+
+      # The next patch version of the same commit (the upgrade of S-027-3 and S-027-1), and electron-builder's portable
+      # target (S-027-1's portable extraction). Both stay in the job; neither is a release target.
+      - name: Package the upgrade build and the portable exe (Windows)
+        id: windows-extra
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.package.outcome == 'success' }}
+        run: |
+          next=$(node -e "import('./scripts/ci/packagingSpikes.mjs').then((m) => console.log(m.nextPatchVersion(require('./package.json').version)))")
+          echo "Upgrade build version: $next"
+          pnpm package -c.extraMetadata.version="$next" -c.directories.output=release-next
+          pnpm exec electron-builder --publish never --win portable --x64 -c.directories.output=release-portable
+
+      - name: S-027-3 installer upgrade and uninstall around a running Host (Windows)
+        if: ${{ !cancelled() && steps.windows-extra.outcome == 'success' }}
+        run: node scripts/ci/run-unelevated.mjs -- node spikes/S-027-3/installerVsHost.mjs --base "$(ls release/*Setup*.exe)" --next "$(ls release-next/*Setup*.exe)" --out spike-evidence/S-027-3
+
+      - name: S-027-1 zip layout, Scoop install, update and uninstall, portable exe (Windows)
+        if: ${{ !cancelled() && steps.windows-extra.outcome == 'success' }}
+        run: |
+          status=0
+          node spikes/S-027-1/scoopLayout.mjs layout --zip "$(ls release/*-win-x64.zip)" --out spike-evidence/S-027-1 || status=1
+          node scripts/ci/run-unelevated.mjs -- node spikes/S-027-1/scoopLayout.mjs scoop --install-scoop --zip "$(ls release/*-win-x64.zip)" --next-zip "$(ls release-next/*-win-x64.zip)" --out spike-evidence/S-027-1 || status=1
+          node scripts/ci/run-unelevated.mjs -- node spikes/S-027-1/scoopLayout.mjs portable --exe "$(ls release-portable/*.exe)" --out spike-evidence/S-027-1 || status=1
+          exit $status
+
+      - name: Upload the spike evidence (kept seven days)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-evidence-${{ matrix.os }}
+          path: spike-evidence/
+          retention-days: 7
+          if-no-files-found: warn

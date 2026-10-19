@@ -1,0 +1,50 @@
+{
+  "$comment": "Hand-written from 15 §5 (Claude row: identity sessionId, eventId = entry uuid, usage by message.id final row, turn end inferred until S-021-1), 15 §1.5 (sourceKey) and ADR-006 items 4 and 6; shared by plain-session-crlf.jsonl and plain-session-with-extra.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000711",
+      "providerAgentId": null,
+      "cwd": "C:\\Users\\j\\work\\sample.project",
+      "at": 1790762400000,
+      "parent": null
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "Is the build green?", "providerTime": 1790762400000 },
+    { "role": "dwarf", "text": "Let me check.", "providerTime": 1790762402000 },
+    { "role": "dwarf", "text": "Yes, all checks passed.", "providerTime": 1790762408000 }
+  ],
+  "activity": ["turn-started", "record", "record", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000711:00000000-0000-4000-8000-000000071105",
+      "kind": "concluded",
+      "at": 1790762408000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01PlainSessionA",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 10,
+        "output": 40,
+        "cacheRead": 200,
+        "cacheWrite": 100,
+        "reasoning": 0
+      },
+      "sealed": true,
+      "providerTime": 1790762403000
+    },
+    {
+      "unitKey": "msg_01PlainSessionB",
+      "fidelity": 1,
+      "tokens": { "inputNet": 3, "output": 40, "cacheRead": 310, "cacheWrite": 0, "reasoning": 20 },
+      "sealed": true,
+      "providerTime": 1790762408000
+    }
+  ]
+}

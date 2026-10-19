@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import type { AudioPreferences } from '../types'
 import { DEFAULT_AUDIO_PREFERENCES } from '../types'
 import { createFakeAudioPlayer, type FakeAudioPlayer } from '../lib/audio/fakeAudioPlayer'
@@ -22,7 +23,8 @@ function stubApi(api: StubApi = {}): void {
   unsubscribed = false
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: {
+    writable: true,
+    value: createFakeWindowApi({
       getAudioPreferences: () => Promise.resolve({ ...DEFAULT_AUDIO_PREFERENCES }),
       setAudioPreferences: (preferences: AudioPreferences) => Promise.resolve(preferences),
       getPanelVisible: () => Promise.resolve(true),
@@ -33,7 +35,7 @@ function stubApi(api: StubApi = {}): void {
         }
       },
       ...api
-    }
+    })
   })
 }
 
@@ -379,5 +381,25 @@ describe('useAudio', () => {
 
     surface.dispose()
     expect(player.live()).toHaveLength(0)
+  })
+
+  /*
+   * ISSUE-117: the attention cue composable plays only while this window is the shown mode window (ADR-018 item 8),
+   * so the one place that hears the window being shown or hidden says so, rather than a second listener restating it.
+   */
+  it('[NFR-SND-07] says whether this window is shown, as read at sync and as every push restates it', async () => {
+    stubApi({ getPanelVisible: () => Promise.resolve(false) })
+    const surface = audio(player)
+    await surface.sync()
+    const stop = surface.listen()
+    expect(surface.windowShown.value).toBe(false)
+
+    pushVisibility!(true)
+    expect(surface.windowShown.value).toBe(true)
+    pushVisibility!(false)
+    expect(surface.windowShown.value).toBe(false)
+
+    stop()
+    surface.dispose()
   })
 })

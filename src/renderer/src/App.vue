@@ -16,6 +16,10 @@ import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
 import MinesList from './components/browse/MinesList.vue'
 import ToastHost from './components/overlay/ToastHost.vue'
+import StopEverythingConfirmation from './components/stopEverything/StopEverythingConfirmation.vue'
+import HostStateMessage from './components/hostConnection/HostStateMessage.vue'
+import RecoveryMessage from './components/hostConnection/RecoveryMessage.vue'
+import WelcomeStep from './components/welcome/WelcomeStep.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import PanelNav from './components/shell/PanelNav.vue'
@@ -23,6 +27,8 @@ import GuildPage from './components/shell/GuildPage.vue'
 import { useAudio } from './composables/useAudio'
 import { useMessageDock } from './composables/useMessageDock'
 import { useMines } from './composables/useMines'
+import { historyAsToday, useMineHistory } from './composables/useMineHistory'
+import type { MineId } from '@dwarfai/contracts'
 import { useMapTime } from './composables/useMapTime'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
@@ -30,19 +36,24 @@ import { useShellFold } from './composables/useShellFold'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
-import { createAttentionWatch } from './lib/audio/attentionCues'
+import { useAttentionCues } from './composables/useAttentionCues'
+import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { browseRows } from './lib/browse/boardRows'
 import { createBrowseRefresh } from './lib/browse/browseRefresh'
 import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/columnMine'
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
+import { useStopEverything } from './composables/useStopEverything'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { takeLaunchMine, useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
 import { useJevSettings } from './composables/useJevSettings'
 import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
 import { useTypography } from './composables/useTypography'
+import { useHostConnection } from './composables/useHostConnection'
+import { useRecoveryReport } from './composables/useRecoveryReport'
+import { useWelcomeStep } from './composables/useWelcomeStep'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import {
   MINE_COLUMN_ART_INSET,
@@ -56,16 +67,9 @@ import { dockReplaceMotion, dockWindowMotion } from './lib/shell/dockMotion'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { needsYouCount, reachableArea } from './lib/shell/panelNav'
+import { SHIPPED_MODES, leverModes } from './lib/shell/builtDestinations'
 import { versionLabel, versionTitle } from './lib/appBuild'
-import type {
-  AppBuild,
-  Dwarf,
-  FeatureFlags,
-  Mine,
-  MineHistoryResult,
-  MinesSnapshot,
-  ShellArea
-} from './types'
+import type { AppBuild, Dwarf, FeatureFlags, Mine, MineHistoryResult, ShellArea } from './types'
 
 const props = defineProps<{
   /**
@@ -96,7 +100,7 @@ const stopWatchingReducedMotion = watchReducedMotion((asked) => {
 })
 onBeforeUnmount(stopWatchingReducedMotion)
 
-const { state, setMines } = useMines()
+const { state, start: followHostBoard, stop: stopFollowingHostBoard, hostDwarfs } = useMines()
 /** The painting the Map page wears, by the time of day (#136). */
 const mapVariant = useMapTime()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
@@ -177,9 +181,33 @@ const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 const {
   enabled: notificationsEnabled,
   sync: syncNotifications,
+  start: followNotificationSettings,
+  stop: stopFollowingNotificationSettings,
   set: setNotificationsEnabled
 } = useNotificationSettings()
 /* --- end of the #316 block ------------------------------------------------- */
+
+/* --- Notification reveal (ISSUE-114) — one block, appended ------------------ */
+// The reveal a notification click runs (ADR-018 item 6; ADR-025 item 8; 14 §2.2 A-N16): UI main chose the mode and
+// pushes `{ mineId, dwarfId | null }` here; the Panel selects the mine, brings the dwarf's card into view and opens its
+// chat. `dwarfId` null, or a dwarf no longer on the mine's board, is the mine with no chat ('mine-only'). Unlike #316's
+// `onShowMine` (A-P5, retired by the cut-1 switch, ISSUE-123), the chat IS opened: the person asked for that dwarf. No
+// voice plays: a click on the dwarf itself is the only thing that makes one speak (#173).
+let unlistenRevealDwarfChat: (() => void) | undefined
+async function revealDwarfChat(target: { mineId: string; dwarfId: string | null }): Promise<void> {
+  showMineFromNotification(target.mineId)
+  // The mine watch closes the dock when the mine changes: the chat opens after it ran, not before.
+  await nextTick()
+  const dwarfId = target.dwarfId
+  if (dwarfId === null || !currentMine.value?.dwarfs.some((d) => d.id === dwarfId)) return
+  rememberDockOpener()
+  dock.openMessage(target.mineId, dwarfId)
+  await nextTick()
+  const cards = shellEl.value?.querySelectorAll<HTMLElement>('button.dm-dwarf[data-dwarf]') ?? []
+  const card = [...cards].find((el) => el.dataset['dwarf'] === dwarfId)
+  card?.scrollIntoView?.({ block: 'nearest' })
+}
+/* --- end of the ISSUE-114 block --------------------------------------------- */
 
 /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
 /**
@@ -198,6 +226,8 @@ const {
   providers: jevProviders,
   catalogs: jevCatalogs,
   sync: syncJevSettings,
+  start: followJevSettings,
+  stop: stopFollowingJevSettings,
   save: saveJevApiKey,
   clear: clearJevApiKey,
   setPreferences: setJevPreferences
@@ -211,10 +241,14 @@ const {
  * what main answered with — the password is handed to the preload and never
  * kept here.
  */
+// AMENDED for ISSUE-234 (was: today's `OpenCodeSettings` as the state): the state is the Host's `OpenCodeSettingsView`
+// read model; Settings › Integrations draws its `view`, unchanged for the person.
 const {
-  settings: openCodeSettings,
+  view: openCodeSettings,
   applying: openCodeApplying,
   sync: syncOpenCodeSettings,
+  start: followOpenCodeSettings,
+  stop: stopFollowingOpenCodeSettings,
   setPluginEnabled: setOpenCodePluginEnabled,
   savePassword: saveOpenCodeServerPassword,
   clearPassword: clearOpenCodeServerPassword
@@ -260,16 +294,19 @@ const {
   playVoice,
   playSfx,
   playCrew,
-  dispose: disposeAudio
+  dispose: disposeAudio,
+  windowShown
 } = useAudio()
 
-/**
- * The attention cues (#635): every snapshot, however it arrived, goes through
- * one watch, which answers the cues whose state BEGAN since the last one — never
- * a state that was already pending at launch or merely re-polled. The engine
- * decides whether each is heard (Notification sounds, the hidden window).
+/*
+ * The attention cues (#635; level 2, ISSUE-117): from the cut-1 switch (ISSUE-123) they come from Host facts, the board
+ * read model (its asks, which `LegacyAskRelay` brings until cut 2) and the `turn.ended` frames, through
+ * `useAttentionCues`, started once the stored Audio settings are read and stopped with the window. AMENDED (was:
+ * `createAttentionWatch`, fed every A-P2 snapshot): the two never run together.
  */
-const attentionWatch = createAttentionWatch()
+let stopAttentionCues: (() => void) | undefined
+/** Set once the window is torn down, so settings that arrive after it start no cues. */
+let unmounted = false
 
 /**
  * The docked shell's own shape (#90). `layout` is only ever what MAIN reported,
@@ -532,14 +569,12 @@ function selectArea(area: ShellArea): void {
   playSfx('click')
   if (viewState.area === 'settings' && area !== 'settings') stopShortcutRecording()
   showArea(area)
-  error.value = null
   if (area === 'mines') void loadProjects()
 }
 
 /** The browse and the board share one id scheme, so a card opens its mine directly. */
 function openFromBrowse(projectId: string): void {
   openMine(projectId)
-  error.value = null
 }
 
 /**
@@ -664,8 +699,6 @@ const mineColumnWidth =
 const shellHeight = `calc(100vh - ${SHELL_CONTENT_INSET}px)`
 
 const loading = ref(true)
-const error = ref<string | null>(null)
-let unsubscribe: (() => void) | undefined
 let unlistenAudio: (() => void) | undefined
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 let unlistenTypography: (() => void) | undefined
@@ -769,38 +802,31 @@ function raisePanel(): void {
   window.api.raisePanel()
 }
 
-function update(snapshot: MinesSnapshot): void {
-  setMines(snapshot)
-  if (viewState.area === 'mines' && browseRefresh.due(snapshot.mines, projects.value)) {
+/*
+ * The board as the Host read model last published it (ISSUE-092, ISSUE-123). AMENDED for ISSUE-242, cut 5 (was:
+ * `update`, run on A-12 `getMines` at mount and on every A-P2 `onMinesUpdated` push, which `setMines` fed into the read
+ * model): A-12 and A-P2 are deleted with `BoardFacadeAdapter`, so the shell hears the board from `useMines` itself —
+ * each Host publish, and the first read once it has answered, whatever it answered (a Host that has not answered shows
+ * the empty board the facade showed then, and claims no load error). A launch in flight watches the same board for its
+ * own dwarf (useMessageDock).
+ */
+function boardChanged(): void {
+  if (viewState.area === 'mines' && browseRefresh.due(state.mines, projects.value)) {
     void refreshProjects()
   }
-  for (const cue of attentionWatch.observe(snapshot.mines)) playSfx(cue)
   loading.value = false
   boardRead = true
   pruneOpenMine()
-  // A launch in flight is watching for its own dwarf, which arrives on an
-  // ordinary poll like every other session's — this is that poll — and the
-  // open chat adopts the feed main pushed with it (#196).
-  dock.observeSnapshot(snapshot)
   if (import.meta.env.DEV) {
     console.log(
       '[renderer] mines:',
-      snapshot.mines
+      state.mines
         .map((mine) => `${mine.name} (${mine.tier}, ${mine.dwarfs.length} dwarfs)`)
         .join('; ') || 'none'
     )
   }
 }
-
-async function load(): Promise<void> {
-  try {
-    update(await window.api.getMines())
-  } catch {
-    error.value =
-      'DwarfAI-Miners could not load active mines. It will keep trying as activity changes.'
-    loading.value = false
-  }
-}
+watch(() => state.mines, boardChanged)
 
 async function loadBuild(): Promise<void> {
   try {
@@ -813,12 +839,10 @@ async function loadBuild(): Promise<void> {
 
 function enterMine(mineId: string): void {
   openMine(mineId)
-  error.value = null
 }
 
 function leaveMine(): void {
   closeMine()
-  error.value = null
 }
 
 /** Clicking the selected dwarf again closes its panel, as a toggle should. */
@@ -852,21 +876,26 @@ function selectDwarf(dwarf: Dwarf): void {
 const historyOpen = ref(false)
 
 /**
- * What main read for the open mine's history. `undefined` means no answer has
- * come back yet, which the panel says out loud rather than drawing as an empty
- * mine. Deliberately NOT reset when a re-read starts: the previous answer stays
- * on screen until the next lands, or a live update would flash "reading" over
- * a transcript somebody is in the middle of.
+ * What the Host read for the open mine's history (A-19 from its message log, routed `host` by the cut-1 switch,
+ * ISSUE-123; `useMineHistory`), in the shape the panel draws. `undefined` means no answer has come back yet, which
+ * the panel says out loud rather than drawing as an empty mine. Deliberately NOT reset when a re-read starts: the
+ * previous answer stays on screen until the next lands, or a live update would flash "reading" over a transcript
+ * somebody is in the middle of; a slow answer for a mine the panel left never lands (the store's own token).
  */
-const mineHistory = ref<MineHistoryResult | undefined>(undefined)
-/** Which read is the current one, so a slow answer cannot land on a later mine. */
-let historyToken = 0
+const { state: hostHistory, open: readHostHistory, close: closeHostHistory } = useMineHistory()
+const mineHistory = computed<MineHistoryResult | undefined>(() => historyAsToday(hostHistory))
 
 /**
  * The mine's History action (#192), and the MessagePanel's (#635): the history opens in the dock's
  * window slot, which holds one thing at a time, so the chat or the Add panel is put away.
  */
 function openHistory(): void {
+  /*
+   * Esc or Close history hands the keyboard back to what opened it (ISSUE-254; NFR-A11Y-02):
+   * the mine's History button, remembered at the press. Opened from the chat in the slot, the
+   * chat's own button goes with the chat, so the control that opened the chat stays the one.
+   */
+  if (dockItem.value === null) rememberDockOpener()
   closeMessagePanel()
   historyOpen.value = true
 }
@@ -910,12 +939,21 @@ function dockMotion(leaving: boolean): ReturnType<typeof dockWindowMotion> {
   return dockWindowMotion(leaving, layout.value.edge, { withMine: viewState.mineId === null })
 }
 
+/**
+ * A page swap (US-SHELL-003.AC01; motion.md, "Page swap (Panel and Valle)"): the new page fades in
+ * where it stands, with no travel, and the old one is hidden at once, with no exit. The motion is
+ * the one the window slot plays when what it holds is replaced (`dockReplaceMotion`: --dur-base
+ * and --ease-out in, 0 ms out), so it is named here rather than written out a second time.
+ */
+const pageSwapMotion = dockReplaceMotion
+
 watch([() => viewState.mineId !== null, () => dockItem.value !== null], ([mineOpen, dockOpen]) => {
   void applyLayout({ mineOpen, dockOpen })
 })
 
 function closeHistory(): void {
   historyOpen.value = false
+  closeDockToOpener()
 }
 
 /*
@@ -928,17 +966,10 @@ watch(dock.error, (text) => {
   if (text !== null) showToast(text, 'warning')
 })
 
-async function readMineHistory(mineId: string): Promise<void> {
-  const token = ++historyToken
-  try {
-    const result = await window.api.getMineHistory(mineId)
-    if (historyToken === token) mineHistory.value = result
-  } catch {
-    // The bridge is the only source there is. "Could not be read" is exactly
-    // what happened, and it is a different statement from "nobody has spoken".
-    if (historyToken === token) mineHistory.value = { readable: false, speakers: [] }
-  }
-}
+/*
+ * AMENDED for ISSUE-123 (was: `readMineHistory`, A-19 in today's shape): the store reads the Host's message log, and
+ * a refused or lost read is "could not be read", a different statement from "nobody has spoken" (useMineHistory).
+ */
 
 /**
  * The refusal main gave for the LAST History path click (#279), keyed by the
@@ -1003,13 +1034,11 @@ watch(
   [historyOpen, () => viewState.mineId, crewSignal],
   ([open, mineId]) => {
     if (!open || mineId === null) {
-      // Nothing to show: bump the token so a read still in flight cannot land
-      // on a panel that has since closed or moved to another mine.
-      historyToken++
-      mineHistory.value = undefined
+      // Nothing to show: a read still in flight cannot land on a panel that has since closed or moved on.
+      closeHostHistory()
       return
     }
-    void readMineHistory(mineId)
+    void readHostHistory(mineId as MineId, window.api.getMineHistory)
   },
   { immediate: true }
 )
@@ -1091,10 +1120,13 @@ watch(
  * width — are stated with the reason neither is enough on its own.
  */
 const openMineOnScreen = computed(() => mineOnScreen(viewState.mineId, layout.value))
-watch(openMineOnScreen, (mineId) => window.api.setOpenMine(mineId), { immediate: true })
-
-/** Released with the window, like every other subscription here. */
-let unlistenShowMine: (() => void) | undefined
+// A-44 under its 14 name from the cut-1 switch (ISSUE-123; 14 §2.1 A-44): the mines this window shows, which UI main's
+// PresenceTracker tells the Host (B-M07). The Panel shows one mine interior at most.
+watch(
+  openMineOnScreen,
+  (mineId) => window.api.reportVisibleMines({ mineIds: mineId === null ? [] : [mineId as MineId] }),
+  { immediate: true }
+)
 
 /**
  * A click on a system notification (#316). Main already showed and raised the
@@ -1111,18 +1143,33 @@ let unlistenShowMine: (() => void) | undefined
  * whatever opened the mine.
  */
 function showMineFromNotification(mineId: string): void {
-  error.value = null
   if (dock.surface.value.surface !== 'none') closeMessagePanel()
   historyOpen.value = false
   openMine(mineId)
 }
 /* --- end of the #316 block ------------------------------------------------- */
 
+/* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
+// The one Host-state message over the Panel (ADR-002 D9; 07 §12B). useHostConnection is also the one source every
+// read model that sends a Host-owned mutation gates on (13 FM-146). The incompatible message's Stop everything and quit
+// asks UI main for the tray item's flow over A-N34 (amendment owner-approved 2026-10-01).
+const {
+  message: hostMessage,
+  retrying: hostRetrying,
+  start: followHostConnection,
+  stop: stopFollowingHostConnection,
+  retry: retryHostConnection,
+  stopEverything: stopEverythingFromHostMessage
+} = useHostConnection()
+/* --- end of the ISSUE-316 block --------------------------------------------- */
+/* --- Host asks (ISSUE-138) — one block, appended ---------------------------- */
+const { startAsks, stopAsks } = useDwarfQuestion()
+/* --- end of the ISSUE-138 block --------------------------------------------- */
+
 onMounted(() => {
   // The footprint the first opening unfolds from: whatever rectangle main
   // created the window at, which is the Panel with nothing beside its page.
   settleShellFold(false)
-  void load()
   // The map draws every remembered project, not only the live board (#197),
   // and the map is the DEFAULT area — a read gated on visiting Mines first
   // left the common case (open the panel, look at the map) stuck on the
@@ -1142,18 +1189,37 @@ onMounted(() => {
   // The features that ship hidden (#635): pulled once, like the build.
   void loadFeatureFlags()
   // Adopts the stored Audio settings and the window's REAL visibility, then
-  // starts the music if the settings say it should be playing (#174).
-  void syncAudio()
+  // starts the music if the settings say it should be playing (#174). The attention cues start once the settings are
+  // read, so a cue is judged against the person's own Notification sounds (ISSUE-117, ISSUE-123).
+  void syncAudio().then(() => {
+    if (unmounted) return
+    stopAttentionCues ??= useAttentionCues().start({
+      settings: audioSettings,
+      windowShown,
+      playSfx
+    })
+  })
+  // The board from the Host (ISSUE-092, ISSUE-123): its snapshot and frames, so a dwarf walks in and out as the Host
+  // says. AMENDED for ISSUE-242 (was: beside A-12/A-P2, which `BoardFacadeAdapter` served until cut 5): the board's
+  // one source. Its first read ends the loading state once answered, even unanswered (`boardChanged`).
+  void followHostBoard().then(() => {
+    if (!unmounted && !boardRead) boardChanged()
+  })
   // Hears the window being shown or hidden, and gives the engine its tick.
   unlistenAudio = listenAudio()
-  unsubscribe = window.api.onMinesUpdated(update)
   /* --- System notifications (#316) — one block, appended ------------------- */
   // Adopts the stored switch, and listens for a click on a notification main
   // raised. Subscribed rather than pulled, like the message panel above: a
   // click can land at any moment and there is no state to poll for.
   void syncNotifications()
-  unlistenShowMine = window.api.onShowMine((mineId) => showMineFromNotification(mineId))
+  // ISSUE-234: and follows the Host's `preferences.changed` frames, so a change in another window shows here.
+  void followNotificationSettings()
+  // AMENDED for ISSUE-123 (was: `onShowMine`, A-P5): A-P5 is retired by the cut-1 switch; a notification click reaches
+  // this window as A-N16 `onRevealDwarfChat` below.
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
+  unlistenRevealDwarfChat = window.api.onRevealDwarfChat((target) => void revealDwarfChat(target))
+  /* --- end of the ISSUE-114 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   // Adopts the stored faces, and listens to main's broadcast of them — which
   // since #635 only ever comes from this window's own Settings, applied twice.
@@ -1165,26 +1231,120 @@ onMounted(() => {
   // outside this window ever changes it — the message panel never draws this
   // section — so there is no push to hear and nothing to release on unmount.
   void syncJevSettings()
+  // ISSUE-234: AMENDED (was: no subscription): from the step-4a switch the Host owns these preferences and another
+  // window or a Reset can change them, so the section follows the `preferences.changed` frames too.
+  void followJevSettings()
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
   // Adopts the stored verdict, for the reason syncJevSettings gives: nothing
   // outside this window changes it, so there is no push to hear.
   void syncOpenCodeSettings()
+  // ISSUE-234: AMENDED (was: no push to hear): the Add panel and the first-run step change it too (US-SET-009.AC08), so
+  // the section follows the Host's `integration.changed` and `preferences.changed` frames.
+  void followOpenCodeSettings()
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
+  void followHostConnection()
+  /* --- end of the ISSUE-316 block --------------------------------------------- */
+  /* --- First-run consent step (ISSUE-224) — one block, appended --------------- */
+  void followWelcomeStep()
+  /* --- end of the ISSUE-224 block --------------------------------------------- */
+  /* --- Host asks (ISSUE-138) — one block, appended ---------------------------- */
+  // The dual-source ask read model: the Host's asks (A-N01/A-N02) beside the board's legacy ones, and their partial
+  // picks in the UI main session store (A-N17…A-N19). The message panel draws its dwarf's front card from it.
+  void startAsks()
+  /* --- end of the ISSUE-138 block --------------------------------------------- */
+  /* --- Recovery message (ISSUE-330) — one block, appended --------------------- */
+  void followRecoveryReport()
+  /* --- end of the ISSUE-330 block --------------------------------------------- */
 })
 onBeforeUnmount(() => {
-  unsubscribe?.()
   unlistenAudio?.()
-  /* --- System notifications (#316) — one block, appended ------------------- */
-  unlistenShowMine?.()
-  /* --- end of the #316 block ---------------------------------------------- */
+  unmounted = true
+  stopAttentionCues?.()
+  stopAttentionCues = undefined
+  stopFollowingHostBoard()
+  /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
+  unlistenRevealDwarfChat?.()
+  /* --- end of the ISSUE-114 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   unlistenTypography?.()
   /* --- end of the #370 block ----------------------------------------------- */
   // Every sound released with the window: a clip left decoding would outlive
   // the surface that asked for it.
   disposeAudio()
+  /* --- Settings read models (ISSUE-234) — one block, appended ------------------- */
+  stopFollowingNotificationSettings()
+  stopFollowingJevSettings()
+  stopFollowingOpenCodeSettings()
+  /* --- end of the ISSUE-234 block ----------------------------------------------- */
+  /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
+  stopFollowingHostConnection()
+  /* --- end of the ISSUE-316 block --------------------------------------------- */
+  /* --- First-run consent step (ISSUE-224) — one block, appended --------------- */
+  stopFollowingWelcomeStep()
+  /* --- end of the ISSUE-224 block --------------------------------------------- */
+  /* --- Host asks (ISSUE-138) — one block, appended ---------------------------- */
+  stopAsks()
+  /* --- end of the ISSUE-138 block --------------------------------------------- */
+  /* --- Recovery message (ISSUE-330) — one block, appended --------------------- */
+  stopFollowingRecoveryReport()
+  /* --- end of the ISSUE-330 block --------------------------------------------- */
 })
+
+/* --- Stop everything and quit (ISSUE-317) — one block, appended ----------- */
+// The confirmation UI main asks for with A-N25, over the current window. App
+// owns the composable and therefore the IPC (ADR-033 item 2). Its count is
+// the Host read model's owned dwarfs only (OQ-78). AMENDED for ISSUE-123 (was: none, the cut-0 snapshot having no
+// `dwarfs` section): the board read model's Host dwarfs, kept current by its frames.
+const {
+  view: stopEverythingView,
+  confirm: confirmStopEverything,
+  cancel: cancelStopEverything,
+  dismiss: dismissStopEverything
+} = useStopEverything({ readModel: { dwarfs: () => hostDwarfs() } })
+/* --- end of the ISSUE-317 block ------------------------------------------- */
+
+/* --- First-run consent step (ISSUE-224) — one block, appended --------------- */
+// The step over the Panel while the Host reports it due (07 machine 41; 14 §6.3), or while the answer's failures wait
+// to be read. App owns the singleton and therefore the IPC (ADR-033 item 2); the step only draws it.
+const {
+  shown: welcomeShown,
+  due: welcomeDue,
+  options: welcomeOptions,
+  failures: welcomeFailures,
+  answering: welcomeAnswering,
+  start: followWelcomeStep,
+  stop: stopFollowingWelcomeStep,
+  answer: answerWelcomeStep,
+  acknowledge: acknowledgeWelcomeStep
+} = useWelcomeStep()
+/* --- end of the ISSUE-224 block --------------------------------------------- */
+
+/* --- Recovery message (ISSUE-330) — one block, appended --------------------- */
+// The one grouped recovery message on the Host-state surface (ADR-015 item 5; 14 §6.4 recovery-message store). App owns
+// the singleton and therefore the IPC (ADR-033 item 2). The listed dwarfs stay on the board while it shows: Dismiss is
+// only A-N11. Each is named as the board names it (customName ?? baseName, PO #88), by its id if it is not there; the
+// board's reactive state is read so a name that arrives after the report still shows.
+const {
+  shown: recoveryShown,
+  unrecovered: recoveryUnrecovered,
+  acting: recoveryActing,
+  start: followRecoveryReport,
+  stop: stopFollowingRecoveryReport,
+  retry: retryRecovery,
+  dismiss: dismissRecovery
+} = useRecoveryReport()
+const { readOnly: hostIsReadOnly } = useHostConnection()
+const recoveryNames = computed(() => {
+  void state.mines
+  const dwarfs = hostDwarfs()
+  return recoveryUnrecovered.value.map(({ dwarfId }) => {
+    const dwarf = dwarfs.find((one) => one.id === dwarfId)
+    return dwarf === undefined ? dwarfId : (dwarf.customName ?? dwarf.baseName)
+  })
+})
+/* --- end of the ISSUE-330 block --------------------------------------------- */
 </script>
 
 <template>
@@ -1249,6 +1409,9 @@ onBeforeUnmount(() => {
               :effort="dock.launch.state.value.effort"
               :permission-mode="dock.launch.state.value.permissionMode"
               :failure="dock.launch.state.value.failure"
+              :integration-notice="dock.launch.integrationNotice.value"
+              :jev-accepted="dock.launch.jevAccepted.value"
+              @enable-integration="dock.launch.enableIntegration"
               @choose="dock.launch.choose"
               @command="dock.launch.setCommand"
               @commit="dock.launch.commit"
@@ -1280,14 +1443,14 @@ onBeforeUnmount(() => {
               :send-state="dock.messageStateFor(dock.selectedDwarf.value.id)"
               :echoes="dock.sentEchoes[dock.selectedDwarf.value.id]"
               :echo-attachments="dock.sentEchoAttachments[dock.selectedDwarf.value.id]"
-              :kick-state="dock.kickingState.byDwarfId[dock.selectedDwarf.value.id]"
+              :stop-disabled="dock.stopDisabled(dock.selectedDwarf.value.id)"
               :answer-state="dock.questionState.byDwarfId[dock.selectedDwarf.value.id]"
               focus-on-open
               @draft="dock.setDraft(dock.selectedDwarf.value.id, $event)"
               @send="dock.sendText(dock.selectedDwarf.value, $event)"
               @retry="dock.retryMessage(dock.selectedDwarf.value, $event)"
               @copy="dock.copyMessage"
-              @kick="dock.kickDwarf(dock.selectedDwarf.value)"
+              @stop="dock.stopDwarf(dock.selectedDwarf.value)"
               @answer="dock.answerQuestion(dock.selectedDwarf.value, $event)"
               @answer-text="dock.answerQuestionInWords(dock.selectedDwarf.value, $event)"
               @decide="dock.decidePermission(dock.selectedDwarf.value, $event)"
@@ -1336,6 +1499,11 @@ onBeforeUnmount(() => {
         destination is not built yet, so the nav's own "no dead buttons" rule
         is the fallback until that is ruled on.
 
+        AMENDED for ISSUE-267 (ruled: ADR-034 item 2, BR-19): the lever's sides
+        come from the build's feature list (lib/shell/builtDestinations), no
+        longer a hard-coded false. With the Panel alone there are none, so the
+        nav draws no lever at all; between Veta and Valle, "▼ Veta" alone.
+
         AMENDED for #635: the nav and the page are always there while the
         window shows ("the page and the nav are always there"), so neither is
         mounted or retained by the fold any more; only the mine column is.
@@ -1347,7 +1515,7 @@ onBeforeUnmount(() => {
           :badge="needsYou"
           :music="musicPlaying"
           :warn="shortcutBroken"
-          :lever="false"
+          :modes="leverModes(SHIPPED_MODES)"
           @nav="selectArea"
           @mark="hidePanel"
           @music="toggleMusicAndSay"
@@ -1358,7 +1526,7 @@ onBeforeUnmount(() => {
       bounds nothing is resizing.
     -->
         <div ref="secondaryEl" class="shell-secondary">
-          <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
+          <PanelTransition :motion="pageSwapMotion" :engine="props.engine" @leave="trackPanelLeave">
             <!--
           The Map page (#635) in the page column, where the Mines page stands: the redesign
           replaced the 21px map frame, so the painting is no longer letterboxed inside it.
@@ -1475,13 +1643,32 @@ onBeforeUnmount(() => {
             />
           </PanelTransition>
 
-          <p v-if="error" class="notice" role="alert">{{ error }}</p>
           <!--
             Toasts stand in the page column, centred 56px from its bottom, whatever raised them
             (PANEL-QUESTIONS 10, PO ruling 2026-09-27): never over the painting, the dwarfs or the
             MessagePanel's composer. The column is the containing block.
           -->
           <ToastHost />
+          <!-- ISSUE-316: the one Host-state message, over the Panel's page column (ADR-002 D9). -->
+          <HostStateMessage
+            :message="hostMessage"
+            :retrying="hostRetrying"
+            :on-stop-everything="stopEverythingFromHostMessage"
+            :covered="stopEverythingView.kind !== 'closed'"
+            @retry="retryHostConnection"
+          />
+          <!--
+            ISSUE-330: the one grouped recovery message, on the same surface. It steps aside while the
+            Host-state message or Stop everything and quit holds the window: one message at a time.
+          -->
+          <RecoveryMessage
+            :shown="recoveryShown"
+            :names="recoveryNames"
+            :acting="recoveryActing"
+            :covered="hostIsReadOnly || stopEverythingView.kind !== 'closed'"
+            @retry="retryRecovery"
+            @dismiss="dismissRecovery"
+          />
         </div>
 
         <!--
@@ -1515,7 +1702,6 @@ onBeforeUnmount(() => {
               :mine="currentMine"
               :arrived="state.arrived"
               :send-states="dwarfDelivery.send"
-              :kick-states="dwarfDelivery.kick"
               :selected-id="openDwarfId"
               :ambience-muted="ambienceMuted"
               @close="leaveMine"
@@ -1529,6 +1715,29 @@ onBeforeUnmount(() => {
         </PanelTransition>
       </div>
     </div>
+    <!--
+      Stop everything and quit (ISSUE-317): the confirmation over the whole
+      window, drawn into <body> by the dialog itself, so nothing here clips it.
+    -->
+    <StopEverythingConfirmation
+      :view="stopEverythingView"
+      @confirm="confirmStopEverything"
+      @cancel="cancelStopEverything"
+      @dismiss="dismissStopEverything"
+    />
+    <!--
+      The first-run consent step (ISSUE-224): over the Panel while it is shown, drawn into <body>
+      by the dialog itself. It has no close or skip control; Activate is the only way out.
+    -->
+    <WelcomeStep
+      :shown="welcomeShown"
+      :due="welcomeDue"
+      :options="welcomeOptions"
+      :failures="[...welcomeFailures]"
+      :answering="welcomeAnswering"
+      @activate="answerWelcomeStep"
+      @acknowledge="acknowledgeWelcomeStep"
+    />
   </MotionConfig>
 </template>
 
@@ -1623,6 +1832,7 @@ onBeforeUnmount(() => {
   --shell-pad: 6px;
   --shell-gap: 6px;
   --page-width: 440px;
+  --nav-width: 56px;
   --mat-fill: var(--rock);
   --mat-hi: var(--rock-hi);
   --mat-lo: var(--rock-lo);
@@ -1630,8 +1840,15 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex: 0 1 auto;
-  /* May shrink below its columns on a screen narrower than the dock, so the page gives way. */
-  min-width: 0;
+  /*
+   * On a screen narrower than the dock the plate shrinks by its page column alone (ISSUE-262,
+   * decision log, Narrow screen): never below the nav and its padding, and never below the mine
+   * column while one stands (the rule below). Shrunk to nothing, as `min-width: 0` let it, the
+   * plate clipped the mine column and then the nav from their free side while the window beside
+   * it stayed whole; held at the docked parts, the row overflows the dock instead, and what does
+   * not fit (the window first) runs off the far side.
+   */
+  min-width: calc(2 * var(--shell-pad) + var(--nav-width) + var(--shell-gap));
   justify-content: flex-end;
   height: calc(100vh - 2 * var(--dock-inset));
   margin: var(--dock-inset) var(--shell-edge);
@@ -1642,6 +1859,12 @@ onBeforeUnmount(() => {
 .shell.edge-left {
   --panel-motion-x: -12px;
   flex-direction: row-reverse;
+}
+/* The mine column is a docked part too, for as long as it stands (a leaving one included). */
+.shell:has(> .shell-mine) {
+  min-width: calc(
+    2 * var(--shell-pad) + var(--nav-width) + var(--mine-column-width) + 2 * var(--shell-gap)
+  );
 }
 /*
  * Where each column stands, which is no longer where it is in the DOM (PANEL-QUESTIONS 2, design
@@ -1721,19 +1944,5 @@ onBeforeUnmount(() => {
 .shell-mine > .dm-minecol {
   flex: 1;
   min-height: 0;
-}
-.notice {
-  position: absolute;
-  z-index: 90;
-  right: var(--space-modal-margin);
-  bottom: var(--space-modal-margin);
-  left: var(--space-modal-margin);
-  flex: none;
-  margin: 0;
-  padding: 9px var(--space-settings);
-  border-left: 3px solid var(--danger-line);
-  border-radius: var(--radius-default);
-  color: var(--danger-hi);
-  background: var(--danger-bg);
 }
 </style>

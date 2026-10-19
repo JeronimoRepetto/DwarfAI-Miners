@@ -13,7 +13,6 @@ import {
   JUMP_TO_TERMINAL_NAME,
   approvalNote,
   buildActionBar,
-  kickBlocked,
   refusalLine,
   SESSION_CLOSED_REASON,
   sessionClosed
@@ -21,7 +20,7 @@ import {
 /* --- Message attachments (#408) — one block, appended -------------------- */
 import { ATTACH_LOST_CONTACT, acceptAttachments, attachHint } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
-import { kickStatusLine, sendMarker, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
+import { sendMarker, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { historyClock, historyMarks, HISTORY_MARK } from '../../lib/history/mineHistory'
 import {
   activityStepsLabel,
@@ -49,19 +48,19 @@ import {
 import {
   DWARF_NAME_LABEL,
   RENAME_TITLE,
-  renameAnnouncement,
   renameChanges,
   renameHint,
-  renameLabel
+  renameLabel,
+  renameNotice
 } from '../../lib/message/rename'
 import { belongsToComposition } from '../../lib/controls/input'
 import { dwarfDisplayName } from '../../lib/dwarf/displayName'
-import {
-  cleanDwarfName,
-  filterDwarfName,
-  type DwarfNameRefusal
-} from '../../../../shared/dwarfName'
+import { untrustedText } from '../../lib/text/untrustedText'
+import { launcherLabel } from '../../lib/message/launcherLabel'
+import { cleanDwarfName, filterDwarfName, type DwarfNameRefusal } from '@dwarfai/contracts'
 import type { AskAnswer } from '../../lib/question/questionAnswer'
+import { shownAskOf } from '../../lib/message/askCard'
+import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
 import { sceneDwarfLabel, sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
 import {
   STICK_TO_BOTTOM_TOLERANCE_PX,
@@ -80,11 +79,15 @@ import {
   type DwarfAttachment,
   type DwarfAttachmentPick,
   type DwarfFeedResult,
-  type DwarfKickState,
+  type DwarfNameResult,
   type DwarfPermissionDecision,
   type DwarfSendState
 } from '../../types'
 import { useHoverTip } from '../../composables/useHoverTip'
+import { useHostConnection } from '../../composables/useHostConnection'
+import { useDwarfRename } from '../../composables/useDwarfRename'
+import { useAttachments } from '../../composables/useAttachments'
+import { useToasts } from '../../composables/useToasts'
 import ActionButton from '../controls/ActionButton.vue'
 import FieldHint from '../controls/FieldHint.vue'
 import InputField from '../controls/InputField.vue'
@@ -124,8 +127,8 @@ import MessageComposer from './MessageComposer.vue'
  *
  * It never clears the question or permission card on its own, for the reason DwarfQuestionCard
  * states at length: only main's next snapshot may drop a `pendingQuestion` or a
- * `pendingPermission`. And it does not yank a reader to the bottom when a row arrives
- * (lib/message/listScroll): only their own sent message chases them down.
+ * `pendingPermission`. And it moves the log only when the log adds a row: to its end, after every
+ * message it adds (screens/message.md; ISSUE-257), never on a tick changing or a run opened.
  */
 
 const props = defineProps<{
@@ -156,7 +159,11 @@ const props = defineProps<{
   echoes?: readonly MessageEcho[]
   /** The files each of those messages was sent with, by echo id (#408). */
   echoAttachments?: Readonly<Record<string, readonly DwarfAttachment[]>>
-  kickState?: DwarfKickState
+  /**
+   * "Stop dwarf…" (A-N29) is unavailable: only while the Host says a stop is already in flight (INV-31; ISSUE-001,
+   * ISSUE-183). The kick (A-26) is retired in 3a and nothing replaces it: Stop dwarf… ends the whole session.
+   */
+  stopDisabled?: boolean
   /**
    * The verdict of the last answer or decision given for this dwarf, whatever prompt it named (see
    * DwarfQuestionCard and DwarfPermissionCard).
@@ -194,7 +201,8 @@ const emit = defineEmits<{
    * exact payload it always did.
    */
   send: [payload: { text: string; pressEnter: boolean; attachments?: readonly DwarfAttachment[] }]
-  kick: []
+  /** Stop dwarf…, confirmed: the host relays A-N29 (ISSUE-001; ISSUE-183 removed the kick). */
+  stop: []
   close: []
   /** One of the agent's own option labels, or one value per question (#443, see AskAnswer). */
   answer: [answer: AskAnswer]
@@ -229,6 +237,17 @@ const emit = defineEmits<{
  * the board, never a guess of what a save will leave: a rename shows once the board carries it.
  */
 const displayName = computed(() => dwarfDisplayName(props.dwarf))
+
+/**
+ * The launcher label of a delegated worker's brief, "from <dwarf>" (PO decision 2026-09-28 #53): only the brief
+ * carries an issuer (AMENDMENT-23), so only the brief wears it (US-DLG-003.AC04). The name is a person's or a
+ * provider's text, so it is shown as untrusted text.
+ */
+function launcherOf(message: PanelRow): string | undefined {
+  return message.issuer === undefined
+    ? undefined
+    : launcherLabel({ name: untrustedText(message.issuer.name) })
+}
 
 const message = ref(props.draft ?? '')
 watch(message, (text) => emit('draft', text))
@@ -271,8 +290,9 @@ onUnmounted(() => clearInterval(clock))
 /** The header portrait wears the dwarf's state, as the scene does. */
 const portraitStatus = computed(() => sceneDwarfStatus(props.dwarf))
 
-const transient = computed(() => ({ kicking: isKicking.value }))
-const actions = computed(() => buildActionBar(props.dwarf, transient.value))
+/** No kick is ever in flight from 3a (A-26 retired, ISSUE-183): the action model is read with none. */
+const NO_KICK = { kicking: false } as const
+const actions = computed(() => buildActionBar(props.dwarf, NO_KICK))
 /*
  * Why a disabled composer is disabled, said where the design says it: the composer's own hint
  * (#217). Which sentence it is belongs to lib/delivery/actionBar.
@@ -284,14 +304,16 @@ const refusal = computed(() => refusalLine(props.dwarf))
  * simply has a dialog up somewhere else.
  */
 const approval = computed(() => approvalNote(props.dwarf))
-function action(id: 'kick' | 'boost' | 'chat') {
+function action(id: 'boost' | 'chat') {
   return actions.value.find((entry) => entry.id === id)
 }
 
 // Off the capability model rather than off `textDelivery` directly: a leaving
 // dwarf still carries the channel it had, and the model is what knows the
-// session behind it has ended (#192).
-const canReceive = computed(() => action('chat')?.enabled === true)
+// session behind it has ended (#192). While the Host is not connected the composer holds its draft and sends
+// nothing (ADR-002 D9; 13 FM-146): the Host connection's read-only state is the one source (ISSUE-316).
+const { readOnly: hostReadOnly } = useHostConnection()
+const canReceive = computed(() => action('chat')?.enabled === true && !hostReadOnly.value)
 /*
  * A session that can no longer take text: it ended, or its route went away (decision log, Copy
  * alone on a closed session). One fact for the composer and the failed bubbles alike, so the
@@ -299,15 +321,30 @@ const canReceive = computed(() => action('chat')?.enabled === true)
  */
 const closed = computed(() => sessionClosed(props.dwarf, props.routeGone === true))
 /*
+ * A draft dies with its session (US-MSG-009.AC05; decision log, Drafts per dwarf): once the
+ * session can no longer take text, whatever caused it, the well empties and the `draft` watch
+ * tells the host to forget it, so nothing is kept to restore. Also on mount, for a chat opened
+ * again on a session that closed while another chat was open.
+ */
+watch(
+  closed,
+  (isClosed) => {
+    if (isClosed) message.value = ''
+  },
+  { immediate: true }
+)
+/*
  * The box's tooltip: the capability model's reason, except where the route went away — the
  * model sees only a dwarf with no channel and would say the no-channel sentence, which is never
- * said of a closed session. An ended session keeps saying it has ended.
+ * said of a closed session. An ended session keeps saying it has ended. An empty hint (a Host
+ * route the board names no channel for) is no tooltip at all.
  */
 const composerTitle = computed(() =>
-  props.routeGone === true && !canReceive.value ? SESSION_CLOSED_REASON : action('chat')?.hint
+  props.routeGone === true && !canReceive.value
+    ? SESSION_CLOSED_REASON
+    : action('chat')?.hint || undefined
 )
 const isSending = computed(() => props.sendState?.phase === 'sending')
-const isKicking = computed(() => props.kickState?.phase === 'kicking')
 
 /**
  * The composer (#409, #635): the shell window takes the keyboard on the press that selected the
@@ -316,12 +353,19 @@ const isKicking = computed(() => props.kickState?.phase === 'kicking')
 const composerRef = ref<HTMLElement | null>(null)
 
 /*
+ * AMENDED for ISSUE-138 (was: the board's own `pendingPermission`, then `pendingQuestion`): the card this dwarf shows
+ * is its front card of the dual-source ask read model — a Host ask, else its legacy card — and, with neither, the
+ * board's own asks as before (lib/message/askCard.ts). The answers still leave in today's shape until the cut-2
+ * switch (later: ISSUE-141).
+ */
+const { frontAsk } = useDwarfQuestion()
+const shownAsk = computed(() => shownAskOf(frontAsk(props.dwarf.id), props.dwarf))
+
+/*
  * Whether THIS render draws the ordinary composer rather than one of the two cards that take its
  * slot instead (#203).
  */
-const showsComposer = computed(
-  () => props.dwarf.pendingPermission === undefined && props.dwarf.pendingQuestion === undefined
-)
+const showsComposer = computed(() => shownAsk.value === null)
 
 /** Hand the composer the keyboard, once Vue has actually drawn it (#409). */
 async function focusComposer(): Promise<void> {
@@ -343,12 +387,15 @@ async function focusCard(): Promise<void> {
 
 /*
  * The panel is keyed by dwarf id (App.vue, the dock slot), so MOUNTING is the moment a person
- * selected one. Never on a control the panel is already explaining as dead (#217).
+ * selected one. Never on a control the panel is already explaining as dead (#217): then the
+ * chat's first live control, the dwarf's name, takes the keyboard, so it is still in the chat that
+ * opened (NFR-A11Y-04; ISSUE-266).
  */
 onMounted(() => {
   if (!props.focusOnOpen) return
   if (showsComposer.value && canReceive.value) void focusComposer()
   else if (!showsComposer.value) void focusCard()
+  else void nextTick(() => nameRef.value?.focus({ preventScroll: true }))
 })
 
 /*
@@ -388,6 +435,9 @@ function attachmentsOfEcho(echoId: string): readonly DwarfAttachment[] {
   return props.echoAttachments?.[echoId] ?? []
 }
 
+// The picker, the drop helper and the description (A-24, A-X1, A-25) go through the composable (ADR-033 item 2).
+const attaching = useAttachments()
+
 /**
  * Take what main said about a set of paths, and say what was refused — the one place a file
  * becomes pending, so the drop and the picker cannot grow separate rules.
@@ -402,7 +452,7 @@ function absorb(picks: readonly DwarfAttachmentPick[]): void {
 async function describeAndAbsorb(paths: readonly string[]): Promise<void> {
   if (paths.length === 0) return
   try {
-    absorb(await window.api.describeDwarfAttachments(paths))
+    absorb(await attaching.describe(paths))
   } catch {
     // The bridge is the only thing that can fail here, and a file that vanished
     // without a word is exactly what this line exists to prevent.
@@ -418,18 +468,14 @@ async function onDrop(event: DragEvent): Promise<void> {
     return
   }
   const files = [...(event.dataTransfer?.files ?? [])]
-  // `webUtils` in preload is the only thing that can turn a dropped File into a
-  // path; a File carrying none — a drag out of a web page — answers '' and is
-  // dropped rather than guessed at.
-  const paths = files
-    .map((file) => window.api.pathForDroppedFile(file))
-    .filter((path) => path !== '')
-  await describeAndAbsorb(paths)
+  // A File carrying no path — a drag out of a web page — is dropped rather than
+  // guessed at (useAttachments).
+  await describeAndAbsorb(attaching.droppedPaths(files))
 }
 
 async function onAttachClick(): Promise<void> {
   if (!canAttach.value) return
-  const chosen = await window.api.chooseDwarfAttachments()
+  const chosen = await attaching.choose()
   await describeAndAbsorb(chosen)
   // The OS dialog took the keyboard; the person's next act is typing (#409).
   await focusComposer()
@@ -535,9 +581,10 @@ const outcome = computed(() =>
 /*
  * The line's tooltip (MESSAGE-QUESTIONS 9): what the line leaves out, on hover after the tooltip
  * delay and at once on keyboard focus, as every tooltip here shows (useHoverTip). With nothing to
- * add the line has no tooltip and takes no focus.
+ * add the line has no tooltip and takes no focus. It sits below the line, aligned to its start
+ * (US-MSG-012.AC06).
  */
-const outcomeTip = useHoverTip<'outcome'>()
+const outcomeTip = useHoverTip<'outcome'>({ side: 'bottom', align: 'start' })
 const outcomeTipId = 'dm-outcome-tip-' + props.dwarf.id
 
 /** A row as the log draws it: a day divider, a run of steps, or something said. */
@@ -617,17 +664,13 @@ function activityLines(lines: readonly Row[]) {
  * The success lines say whether the action was merely handed over or actually reacted to (#21);
  * a failure carries its own reason verbatim.
  */
-const sendLine = computed(() => sendStatusLine(props.sendState))
-const kickLine = computed(() => kickStatusLine(props.kickState))
-const statusLine = computed(() => sendLine.value ?? kickLine.value)
+// AMENDED for ISSUE-183 (was: the send's line, else the kick's): the kick is retired, so the send's alone.
+const statusLine = computed(() => sendStatusLine(props.sendState))
 const alertLine = computed(() => {
   // Ahead of both verdicts (#431): the only one about what is in the box RIGHT NOW.
   if (tooLong.value !== null) return tooLong.value
   if (props.sendState?.phase === 'failed') {
     return props.sendState.error ?? 'The message could not be delivered.'
-  }
-  if (props.kickState?.phase === 'failed') {
-    return props.kickState.error ?? 'The kick could not be delivered.'
   }
   // A file the composer just refused speaks in the same ink and the same line (#408).
   return attachRefusal.value
@@ -659,8 +702,8 @@ const canSend = computed(
 )
 
 /*
- * Open on the LATEST message: the design orders a transcript oldest first. Only on mount, never
- * on a new message — the panel must not yank a reader to the bottom mid-sentence.
+ * Open on the LATEST message: the design orders a transcript oldest first. On mount, and again
+ * after every message the log adds (below): screens/message.md, As built, Where the log starts.
  */
 const conversationRef = ref<HTMLElement | null>(null)
 
@@ -684,9 +727,15 @@ onMounted(showLatest)
  * watchers, because the decision needs a metric from BEFORE Vue patches the new rows in and a
  * write AFTER it has; lib/message/listScroll is the rule (#195). A page of older conversation
  * (#364) takes the other write, adding its height back to the scroll.
+ *
+ * AMENDED for ISSUE-257 (was: a row arriving at the end left a reader who had scrolled up where
+ * they were, #195): the log goes to its end "again after every message it adds" (screens/message.md,
+ * As built, Where the log starts; foreman ruling 2026-10-17, new design wins). Anything that adds no
+ * row at the end — a tick changing, a run opened — still moves nothing.
  */
 let pendingStickToBottom = false
 let pendingPrepend = false
+let pendingArrival = false
 let scrollHeightBeforePatch = 0
 
 watch(rows, (next, previous) => {
@@ -699,6 +748,12 @@ watch(rows, (next, previous) => {
     STICK_TO_BOTTOM_TOLERANCE_PX
   )
   pendingPrepend = rowsWerePrepended(previous ?? [], next)
+  pendingArrival =
+    !pendingPrepend &&
+    tailArrivals(
+      (previous ?? []).map((row) => row.key),
+      next.map((row) => row.key)
+    ).size > 0
   scrollHeightBeforePatch = list.scrollHeight
 })
 
@@ -714,6 +769,11 @@ watch(
         scrollHeightBeforePatch,
         list.scrollHeight
       )
+      return
+    }
+    if (pendingArrival) {
+      pendingArrival = false
+      list.scrollTop = list.scrollHeight
       return
     }
     list.scrollTop = nextScrollTop(list.scrollTop, list.scrollHeight, pendingStickToBottom)
@@ -762,6 +822,16 @@ function submit(): void {
 }
 
 /*
+ * A card's submit is a send (US-MSG-009.AC04, US-ASK-006.AC05; ISSUE-260): the "Answers:" record,
+ * or the message sent under "Other thing…", takes the place of whatever the composer held, so the
+ * draft is cleared as an ordinary Send clears it and the composer that comes back is empty. The
+ * `draft` watch reports the empty text to the host that keeps the draft.
+ */
+function sentFromCard(): void {
+  message.value = ''
+}
+
+/*
  * The composer's own element, for the keyboard (composerRef): the composer is a component now, and
  * the focus code reads the element it draws.
  */
@@ -770,18 +840,25 @@ function bindComposer(instance: unknown): void {
 }
 
 /*
- * The ⋯ menu: Open console, Mine history, Reset name while the dwarf has a custom name, and Stop
- * dwarf…, which confirms first, disabled with its reason only while the kick itself is
- * (MESSAGE-QUESTIONS 13).
+ * Every dwarf can be renamed from here (US-MSG-005.AC14): useDwarfRename sends a dwarf the Host's
+ * board carries to A-N08 / A-N09 and one only today's runtime carries to the legacy rows (ISSUE-172).
  */
-const hasCustomName = computed(() => props.dwarf.customName !== undefined)
+const { setName, resetName: resetDwarfName } = useDwarfRename()
+
+/*
+ * The ⋯ menu: Open console, Mine history, Reset name while the dwarf has a custom name it can lose,
+ * and Stop dwarf…, which confirms first. AMENDED for ISSUE-183 (was: disabled with its reason while the kick itself
+ * was, MESSAGE-QUESTIONS 13): disabled only while the Host says a stop is already in flight (INV-31); availability
+ * never depends on the turn (OQ-54).
+ */
+const offersReset = computed(() => props.dwarf.customName !== undefined)
 const menu = computed(() =>
-  messagePanelMenu(kickBlocked(props.dwarf, transient.value), hasCustomName.value)
+  messagePanelMenu(props.stopDisabled === true ? 'stopping' : null, offersReset.value)
 )
 const stopAsked = ref(false)
 
 function onMenu(index: number): void {
-  const picked = messagePanelMenuAction(index, hasCustomName.value)
+  const picked = messagePanelMenuAction(index, offersReset.value)
   if (picked === 'console') emit('open-console')
   else if (picked === 'history') emit('history')
   else if (picked === 'reset-name') void resetName()
@@ -789,16 +866,15 @@ function onMenu(index: number): void {
 }
 
 /**
- * Stop dwarf… is the kick (#293), moved out of the composer into the ⋯ menu and confirmed first
- * (screens/message.md, W4·6). What the kick DOES still varies, and the action model decides it:
- * a session with an interrupt channel has its turn cut short, and one nothing can interrupt has
- * its dwarf dismissed from the board.
+ * Stop dwarf…, confirmed first (screens/message.md, W4·6). AMENDED for ISSUE-183 (was: the kick, #293, whose effect
+ * the action model decided): it is A-N29, which ends the dwarf's whole session, also mid-turn (AMENDMENT-2, OQ-54).
  */
 function onStopAction(index: number): void {
   stopAsked.value = false
   if (index !== 1) return
-  if (action('kick')?.enabled !== true) return
-  emit('kick')
+  // A confirmation already open stops nothing once the Host says a stop is in flight (INV-31).
+  if (props.stopDisabled === true) return
+  emit('stop')
 }
 
 /*
@@ -808,7 +884,7 @@ function onStopAction(index: number): void {
  * field saves too; Esc cancels, and only the next Esc closes the panel. Focus returns to the name
  * after Enter or Esc; after leaving the field it stays wherever the person put it.
  *
- * The field drops refused characters as they are typed (shared/dwarfName's filterDwarfName, the
+ * The field drops refused characters as they are typed (contracts/text/dwarfName's filterDwarfName, the
  * rules main cleans every write with again), and the hint says why. What a save sends is what main
  * will keep; a save that would change nothing asks main for nothing. The words are
  * lib/message/rename's.
@@ -828,6 +904,14 @@ const nameRef = ref<HTMLButtonElement | null>(null)
 const nameFieldRef = ref<ComponentPublicInstance | null>(null)
 /** The panel's polite status (accessibility.md, names): what the last save or reset came to. */
 const said = ref('')
+const { showToast } = useToasts()
+
+/** Says what main answered: a save or a reset politely, a failure as a warning everyone sees. */
+function tell(result: DwarfNameResult, base: string): void {
+  const notice = renameNotice(result, base)
+  if (notice.warning) showToast(notice.text, 'warning')
+  else said.value = notice.text
+}
 
 const keptName = (raw: string): string => filterDwarfName(raw).text
 
@@ -885,11 +969,11 @@ async function saveName(text: string): Promise<void> {
   if (!renameChanges(text, props.dwarf)) return
   const base = props.dwarf.name
   try {
-    const result = await window.api.setDwarfName({
+    const result = await setName({
       dwarfId: props.dwarf.id,
       name: cleanDwarfName(text)
     })
-    said.value = renameAnnouncement(result, base)
+    tell(result, base)
   } catch {
     // Only the bridge can throw here; the name stays the one the board has, which is the truth.
   }
@@ -899,7 +983,7 @@ async function saveName(text: string): Promise<void> {
 async function resetName(): Promise<void> {
   const base = props.dwarf.name
   try {
-    said.value = renameAnnouncement(await window.api.resetDwarfName(props.dwarf.id), base)
+    tell(await resetDwarfName(props.dwarf.id), base)
   } catch {
     // As for a save: the board still carries the name, and the panel shows it.
   }
@@ -953,12 +1037,12 @@ async function resetName(): Promise<void> {
             @click="startRename"
             @keydown="onNameKey"
           >
-            {{ displayName }}
+            <bdi>{{ untrustedText(displayName) }}</bdi>
           </button>
         </h2>
         <!-- The base name, only under a custom name and never while renaming (Dwarf names). -->
         <p v-if="dwarf.customName !== undefined && editing === null" class="dm-msg__base">
-          {{ dwarf.name }}
+          <bdi>{{ untrustedText(dwarf.name) }}</bdi>
         </p>
         <div v-show="editing === null" class="dm-msg__chips">
           <MetaChip v-for="chip in chips" :key="chip" :text="chip" />
@@ -1059,6 +1143,7 @@ async function resetName(): Promise<void> {
           :offers-retry="ownSend(entry.message) && canReceive"
           :session-closed="ownSend(entry.message) && (closed || !canReceive)"
           :reason="refusalOf(entry.message)"
+          :launcher="launcherOf(entry.message)"
           @open-link="emit('open-link', $event)"
           @retry="entry.message.echo && emit('retry', entry.message.echo.id)"
           @copy="emit('copy', entry.message.text)"
@@ -1075,10 +1160,12 @@ async function resetName(): Promise<void> {
               v-for="item in attachmentsOfEcho(entry.message.echo.id)"
               :key="item.path"
               class="dm-composer__file"
-              :title="item.name"
+              :title="untrustedText(item.name)"
             >
               <PixelIcon name="attach" />
-              <span>{{ item.name }}</span>
+              <span
+                ><bdi>{{ untrustedText(item.name) }}</bdi></span
+              >
             </li>
           </ul>
         </ChatBubble>
@@ -1106,24 +1193,25 @@ async function resetName(): Promise<void> {
         (W4·7). Neither is ever behind a toggle, because each is the reason the dwarf was clicked.
       -->
       <DwarfPermissionCard
-        v-if="dwarf.pendingPermission"
+        v-if="shownAsk?.kind === 'permission'"
         class="dm-msg__ask"
-        :permission="dwarf.pendingPermission"
+        :permission="shownAsk.permission"
         :name="displayName"
         :answer-state="answerState"
-        @decide="emit('decide', $event)"
-        @send-text="emit('send', $event)"
+        @decide="(sentFromCard(), emit('decide', $event))"
+        @send-text="(sentFromCard(), emit('send', $event))"
         @open-console="emit('open-console')"
       />
       <DwarfQuestionCard
-        v-else-if="dwarf.pendingQuestion"
+        v-else-if="shownAsk?.kind === 'question'"
         class="dm-msg__ask"
-        :question="dwarf.pendingQuestion"
+        :question="shownAsk.question"
+        :at="shownAsk.at"
         :name="displayName"
         :answer-state="answerState"
-        @answer="emit('answer', $event)"
-        @answer-text="emit('answer-text', $event)"
-        @send-text="emit('send', $event)"
+        @answer="(sentFromCard(), emit('answer', $event))"
+        @answer-text="(sentFromCard(), emit('answer-text', $event))"
+        @send-text="(sentFromCard(), emit('send', $event))"
         @open-console="emit('open-console')"
       />
       <!--
@@ -1151,7 +1239,7 @@ async function resetName(): Promise<void> {
       />
     </div>
 
-    <!-- What a rename or a reset came to, said politely to screen readers only (copy.md). -->
+    <!-- A saved rename or reset, said politely to screen readers (copy.md); a failure is a toast. -->
     <span class="sr-only" role="status" aria-live="polite">{{ said }}</span>
 
     <ModalDialog
@@ -1163,12 +1251,6 @@ async function resetName(): Promise<void> {
       @cancel="stopAsked = false"
     >
       <p>{{ STOP_DWARF_BODY }}</p>
-      <!--
-        What stopping THIS session actually does, in the capability model's own words (#383): an
-        interrupt channel cuts the turn short, and a session nothing can interrupt has its dwarf
-        dismissed. Said beside the design's sentence rather than instead of it.
-      -->
-      <p v-if="action('kick')?.hint">{{ action('kick')?.hint }}</p>
     </ModalDialog>
   </section>
 </template>
@@ -1210,7 +1292,8 @@ async function resetName(): Promise<void> {
   font: var(--fs-title) / 1 var(--f-display);
   color: var(--parchment);
 }
-.dm-msg__rename {
+.dm-msg__rename,
+.dm-msg__title {
   display: block;
   width: fit-content;
   max-width: 100%;
@@ -1219,6 +1302,8 @@ async function resetName(): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
+}
+.dm-msg__rename {
   cursor: text;
 }
 /* Hover and keyboard focus put a wood plate with a brass underline behind the name: editable. */

@@ -1,0 +1,21 @@
+{
+  "providerVersion": "2.1.x",
+  "capturedAt": "2026-10-16T00:00:00.000Z",
+  "capturedBy": "maintainer",
+  "os": "win32",
+  "scrubbed": true,
+  "capabilities": {
+    "driver": "stream-json",
+    "measuredVersion": "2.1.301",
+    "permissionPromptToolListedInHelp": false,
+    "permissionPromptToolAccepted": true,
+    "permissionRoutedThroughPromptTool": true,
+    "questionRoutedThroughPromptTool": true,
+    "disallowedToolsRemovesAskUserQuestion": true,
+    "deniedWithoutPromptTool": true,
+    "readinessLine": "system/init, after the first stdin message",
+    "earlyExitBeforeInit": true,
+    "resumeKeepsSessionId": true,
+    "forkKeepsSessionId": false
+  }
+}

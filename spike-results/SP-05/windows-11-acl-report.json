@@ -1,0 +1,383 @@
+[
+  {
+    "object": "run\\ (helper, protected)",
+    "dacl": "D:P(A;OICI;FA;;;<owner-sid>)(A;OICI;FA;;;SY)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      }
+    ],
+    "protectedDacl": true,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\ui.token (inherits from the protected run\\)",
+    "dacl": "D:(A;ID;FA;;;<owner-sid>)(A;ID;FA;;;SY)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      }
+    ],
+    "protectedDacl": false,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\viewers\\<viewId>.token (inherits from the protected run\\)",
+    "dacl": "D:(A;ID;FA;;;<owner-sid>)(A;ID;FA;;;SY)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      }
+    ],
+    "protectedDacl": false,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\mcp\\<launchId>.cred (inherits from the protected run\\)",
+    "dacl": "D:(A;ID;FA;;;<owner-sid>)(A;ID;FA;;;SY)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      }
+    ],
+    "protectedDacl": false,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "pipe (ADR-003 item 2 helper)",
+    "dacl": "D:P(D;;FA;;;NU)(A;;FA;;;<owner-sid>)(A;;FA;;;SY)",
+    "aces": [
+      {
+        "type": "D",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "S-1-5-2"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      }
+    ],
+    "protectedDacl": true,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 393216,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\ (helper, protected, with BA and WD added on purpose)",
+    "dacl": "D:P(A;OICI;FA;;;<owner-sid>)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;WD)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "S-1-5-32-544"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "S-1-1-0"
+      }
+    ],
+    "protectedDacl": true,
+    "foreignGrants": ["S-1-5-32-544", "S-1-1-0"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 2032127,
+      "anonymous": 2032127,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 2032127
+    }
+  },
+  {
+    "object": "pipe (Node net.Server default)",
+    "dacl": "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;<owner-sid>)(A;;FR;;;WD)(A;;FR;;;AN)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "S-1-5-32-544"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 1179785,
+        "sid": "S-1-1-0"
+      },
+      {
+        "type": "A",
+        "inherited": false,
+        "mask": 1179785,
+        "sid": "S-1-5-7"
+      }
+    ],
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-32-544", "S-1-1-0", "S-1-5-7"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 1179785,
+      "anonymous": 1179785,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 1179785
+    }
+  },
+  {
+    "object": "run\\ (Node mkdirSync 0o700)",
+    "dacl": "D:AI(A;OICIID;0x1200a9;;;S-1-5-21-<machine>-1003)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;<owner-sid>)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 1179817,
+        "sid": "S-1-5-21-<machine>-1003"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-32-544"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      }
+    ],
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-21-<machine>-1003", "S-1-5-32-544"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\ui.token (Node, inherited from %APPDATA%)",
+    "dacl": "D:AI(A;ID;0x1200a9;;;S-1-5-21-<machine>-1003)(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;<owner-sid>)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 1179817,
+        "sid": "S-1-5-21-<machine>-1003"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-32-544"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      }
+    ],
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-21-<machine>-1003", "S-1-5-32-544"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\viewers\\<viewId>.token (Node, inherited from %APPDATA%)",
+    "dacl": "D:AI(A;ID;0x1200a9;;;S-1-5-21-<machine>-1003)(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;<owner-sid>)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 1179817,
+        "sid": "S-1-5-21-<machine>-1003"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-32-544"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      }
+    ],
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-21-<machine>-1003", "S-1-5-32-544"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\mcp\\<launchId>.cred (Node, inherited from %APPDATA%)",
+    "dacl": "D:AI(A;ID;0x1200a9;;;S-1-5-21-<machine>-1003)(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;<owner-sid>)",
+    "aces": [
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 1179817,
+        "sid": "S-1-5-21-<machine>-1003"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-18"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "S-1-5-32-544"
+      },
+      {
+        "type": "A",
+        "inherited": true,
+        "mask": 2032127,
+        "sid": "<owner-sid>"
+      }
+    ],
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-21-<machine>-1003", "S-1-5-32-544"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  }
+]

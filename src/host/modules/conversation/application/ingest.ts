@@ -1,0 +1,265 @@
+// `ConversationCommands.ingest` (16 §4.6; 09 §5.2): one batch of entries from a live stream or a
+// transcript reader is written in ONE transaction through `MessageLog.append` (steps 1–2), then
+// `MessageLog.trim` caps the dwarf at `MESSAGES_PER_DWARF` rows in the same transaction (step 3,
+// INV-61), then the batch's tool steps are folded into the dwarf's activity runs (07 §11) and saved
+// through `ActivityLog`, which keeps the newest 50 runs, never the open one (step 4; ISSUE-101).
+// Only after the commit (step 6; 08 §5.1) are `MessagesAppended` — with the rows this batch
+// inserted and nothing else — and one `ActivityChanged` per run the batch changed, with its final
+// state, published: a batch whose every key was already claimed publishes nothing, and a batch that
+// throws rolls back every row and run and publishes nothing.
+//
+// Activity runs (07 §11; INV-66): only an entry this batch inserted moves a run, so a re-parse —
+// the other path, or a replay after a restart — never grows a step count again (ADR-006: the
+// entry's key was claimed). Per entry, in batch order: the dwarf speaking (a `dwarf` entry with
+// text) closes the open run (S11.03); the person's own message keeps it open (S11.02); then each of
+// the entry's tool steps opens a run or grows the open one (S11.01, S11.02). Package gap resolved
+// in development: 15 §1.2 does not order an entry's text against its folded steps; a provider
+// record says its words before the tool calls it makes, so the text applies first.
+//
+// An observed batch (ISSUE-099; AMENDMENT-10, OQ-78) arrives through observation's
+// `ObservedBatchSink`, inside observation's batch transaction, so that the stream's cursor commits
+// with the rows the batch produced (09 §5.2 step 5). Called while a transaction is open, `ingest`
+// joins it (16 §2.2) and holds its events instead of publishing inside it (16 §2.3): the caller
+// publishes the held events after its commit (`publishJoined`) or drops them after a rollback
+// (`discardJoined`). The dwarf is the one the caller resolved, also for an entry a subagent wrote
+// in its parent's session (`providerAgentId`, 15 §1.5): it is never re-resolved here.
+//
+// Amendment of 2026-10-02 to 16 §4.6 (ISSUE-098): `ingest` takes the feed of the batch (`origin`).
+// AMENDMENT-23 (owner, 2026-10-18; ISSUE-207): `ingest` takes optional `opts.issuer`, which
+// `MessageLog.append` stores on the batch's person row only: the delegated worker's brief, set by
+// the `DwarfLaunched` route alone (14 §2.4 note; 11 F6 step 5).
+//
+// The outcome line (ISSUE-102; 16 §4.6 amendment B): after the runs are saved, the same transaction
+// reads the dwarf's previous line, adds the steps this batch folded to its running total (the
+// person's own message, in batch order, starts the total again), and saves the derived line; its
+// `OutcomeLineChanged` follows the batch's other events after the commit, only when it changed. A
+// batch that folded steps makes the dwarf working, unless it is asking (the trusted ask first,
+// ADR-032 item 2); any other batch keeps the status the previous line carries.
+import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
+import type {
+  AskId,
+  DwarfId,
+  EventId,
+  HostEpoch,
+  Instant,
+  MessageId,
+  Result
+} from '../../../kernel/domain/values'
+import type { Clock } from '../../../kernel/ports/clock'
+import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
+import type { IdGenerator } from '../../../kernel/ports/idGenerator'
+import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
+import type { TransactionScope } from '../../../kernel/ports/transactionScope'
+import type { ConversationEntry } from '../../suppliers'
+import {
+  applyDwarfSpoke,
+  applyPersonMessage,
+  applyStep,
+  type ActivityDisclosure,
+  type RunChange
+} from '../domain/activityRun'
+import type { ConversationEvent } from '../domain/events'
+import { toMessageView } from '../domain/messages'
+import { MESSAGES_PER_DWARF } from '../domain/retention'
+import type { ActivityLog } from '../ports/activityLog'
+import type { AppendOptions, MessageLog } from '../ports/messageLog'
+import { activityChanged } from './activityChanged'
+import { outcomeLineChanged, recomputeOutcome } from './outcomeRecompute'
+
+/**
+ * 16 §4.6 `ConversationCommands.send` (ISSUE-166), built by application/send.ts once host/wiring
+ * passes its routes; the module's public `ConversationCommands` is this member with the ones below.
+ */
+export interface ConversationSendCommand {
+  // send/retry answer at acceptance (14 §1.7): once the message row and its `sending` delivery are
+  // committed and MessageSent is published; the hand-over continues and settles as
+  // MessageHandedOver / MessageDeliveryFailed. requestId is stored on the message row (UNIQUE), so a
+  // repeat after a Host restart returns the same messageId (14 §1.6).
+  send(
+    dwarfId: DwarfId,
+    text: string,
+    attachments: AttachmentPath[],
+    requestId: string
+  ): Promise<Result<MessageId, 'cannot-receive' | 'attachment-refused'>>
+  // ISSUE-168: only failed{channel-error | host-interrupted} while the dwarf can receive; the same
+  // MessageId, attempts + 1, restamped (INV-64, S7.09); a message already sending is not-failed.
+  // The requestId dedupes at the transport (14 §1.6), never in the module.
+  retry(
+    messageId: MessageId,
+    requestId: string
+  ): Promise<Result<void, 'cannot-receive' | 'not-failed'>>
+}
+
+/**
+ * The members of 05 §3.6 `ConversationCommands` the module builds at once; `send` is
+ * `ConversationSendCommand` (ISSUE-166), and each later issue adds its member with the types it
+ * needs (`retry` ISSUE-168, …).
+ */
+export interface ConversationCommands {
+  // from live streams + transcript readers
+  // Amended: AMENDMENT-23 (owner, 2026-10-18): `opts.issuer` goes on the batch's person row only.
+  ingest(
+    dwarfId: DwarfId,
+    entries: ConversationEntry[],
+    origin: 'live-stream' | 'transcript',
+    opts?: AppendOptions
+  ): void
+  // ADR-021 payload from a driver turn.ended or ObservedTurnEnded; one transaction; LifecycleFactLog
+  // key turn:<dwarfId>:<turnKey>; publishes TurnEnded only when the key is new (08 §4) (AMENDMENT-10)
+  recordTurnEnd(end: TurnEnded): void
+  // route of DwarfDeparted / DriverSessionExited: closes an open activity run (07 S11.05); idempotent (AMENDMENT-10)
+  recordSessionEnd(dwarfId: DwarfId, at: Instant): void
+  // Amended: 16 §4.6 noteAsk (owner amendment B2, 2026-10-05): an opened ask carries its kind and
+  // question count. Route of ask.opened / ask.closed: the outcome-line trigger (US-MSG-011 AC02).
+  noteAsk(dwarfId: DwarfId, change: AskChange): void
+}
+
+/** 16 §4.6 `noteAsk`'s change, as amended (B2): what the line words of an opened ask. */
+/** 05 `AttachmentPath`: a picker or drop path the Host re-validates (attachments: ISSUE-169). */
+export type AttachmentPath = string
+
+export type AskChange =
+  | { askId: AskId; state: 'opened'; kind: 'question' | 'permission'; questionCount: number }
+  | { askId: AskId; state: 'closed' }
+
+export interface ConversationIngestDeps {
+  log: MessageLog
+  /** The dwarf's activity runs (16 §4.6 `ActivityLog`, amended with `openRun`). */
+  activity: ActivityLog
+  /** One transaction per batch (16 §2.2), joined when the caller has one open. */
+  transactions: TransactionRunner
+  /** Whether the caller has a transaction open (16 §2.3). */
+  scope: TransactionScope
+  /** Where the events go, after the commit (16 §2.3). */
+  bus: DomainEventBus<ConversationEvent>
+  clock: Clock
+  ids: IdGenerator
+  /** This boot's epoch. */
+  hostEpoch: HostEpoch
+}
+
+export class ConversationIngest implements Pick<ConversationCommands, 'ingest'> {
+  /** The events of ingests that joined a caller's transaction, until it publishes or drops them. */
+  private readonly held: ConversationEvent[] = []
+
+  constructor(private readonly deps: ConversationIngestDeps) {}
+
+  ingest(
+    dwarfId: DwarfId,
+    entries: ConversationEntry[],
+    origin: 'live-stream' | 'transcript',
+    opts?: AppendOptions
+  ): void {
+    const { log, transactions, scope, clock, ids, hostEpoch } = this.deps
+    const joined = scope.isInTransaction()
+    // A batch carries one dwarf's entries, so that dwarf is the only one it can push over the cap.
+    const { appended, runs, outcome } = transactions.inTransaction(() => {
+      const result = log.append(dwarfId, entries, origin, opts)
+      log.trim(dwarfId, MESSAGES_PER_DWARF)
+      const folded = this.foldActivity(
+        dwarfId,
+        entries,
+        result.appended.map((m) => m.sourceKey)
+      )
+      const line = recomputeOutcome(
+        this.deps.activity,
+        dwarfId,
+        (previous) => {
+          if (previous === null && folded.steps === 0) return null
+          const before = folded.personReset ? 0 : (previous?.stepsSinceLastPersonMessage ?? 0)
+          const kept = previous ?? { status: 'working' as const, lastTurnEnd: null, frontAsk: null }
+          const status = folded.steps > 0 && kept.status !== 'asking' ? 'working' : kept.status
+          return { ...kept, status, stepsSinceLastPersonMessage: before + folded.steps }
+        },
+        clock.now()
+      )
+      return { appended: result.appended, runs: folded.runs, outcome: line }
+    })
+    if (appended.length > 0) {
+      this.emit(
+        {
+          type: 'MessagesAppended',
+          v: 1,
+          id: ids.uuidv7() as EventId,
+          at: clock.now(),
+          hostEpoch,
+          payload: { dwarfId, messages: appended.map(toMessageView) }
+        },
+        joined
+      )
+    }
+    for (const run of runs) this.emit(activityChanged(run, { clock, ids, hostEpoch }), joined)
+    if (outcome !== null) this.emit(outcomeLineChanged(outcome, { clock, ids, hostEpoch }), joined)
+  }
+
+  /**
+   * After the commit of the transaction that wrote `event`'s rows: published now, or held for the
+   * caller whose transaction the write joined (`publishJoined` / `discardJoined`).
+   */
+  emit(event: ConversationEvent, joined: boolean): void {
+    if (joined) {
+      this.held.push(event)
+      return
+    }
+    this.deps.bus.publish(event)
+  }
+
+  /** After the caller's commit: publishes the events its joined ingests held, in order. */
+  publishJoined(): void {
+    for (const event of this.held.splice(0)) this.deps.bus.publish(event)
+  }
+
+  /** After the caller's rollback: the held events describe rows that no longer exist. */
+  discardJoined(): void {
+    this.held.length = 0
+  }
+
+  /**
+   * Inside the batch transaction: applies the inserted entries to the dwarf's open run (07 §11) and
+   * saves every run they changed, in the order each first changed, so a run that closed is saved
+   * before the one that opened after it (INV-66). Returns those runs in their final state, the
+   * steps folded since the batch's last person message, and whether it had one (the line's total).
+   */
+  private foldActivity(
+    dwarfId: DwarfId,
+    entries: readonly ConversationEntry[],
+    insertedKeys: readonly (string | null)[]
+  ): { runs: ActivityDisclosure[]; steps: number; personReset: boolean } {
+    const { activity, clock, ids } = this.deps
+    const inserted = new Set(insertedKeys)
+    const changed = new Map<string, ActivityDisclosure>()
+    const now = clock.now()
+    let open = activity.openRun(dwarfId)
+    let steps = 0
+    let personReset = false
+    const take = (change: RunChange): void => {
+      if (!change.changed || change.run === null) return
+      changed.set(change.run.id, change.run)
+      open = change.run.open ? change.run : null
+    }
+    for (const entry of entries) {
+      // Only an entry this batch inserted, once: a claimed key is a re-parse (ADR-006).
+      if (!inserted.delete(entry.sourceKey)) continue
+      const at = entry.providerTime ?? now
+      if (entry.role === 'dwarf' && entry.text.trim() !== '') take(applyDwarfSpoke(open, at))
+      if (entry.role === 'person') {
+        take(applyPersonMessage(open, at))
+        personReset = true
+        steps = 0
+      }
+      for (const step of entry.activity ?? []) {
+        steps += 1
+        take(
+          applyStep(
+            open,
+            dwarfId,
+            { sourceKey: step.sourceKey, summary: step.summary, at: step.at ?? at },
+            () => ids.uuidv7()
+          )
+        )
+      }
+    }
+    for (const run of changed.values()) activity.saveDisclosure(run)
+    return { runs: [...changed.values()], steps, personReset }
+  }
+}

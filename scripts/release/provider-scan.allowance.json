@@ -1,0 +1,4 @@
+{
+  "$comment": "The one legacy allowance of the provider scan (ISSUE-273; 20 §2.3 P-03). It let the legacy Agent SDK path's packages (@anthropic-ai/claude-agent-sdk*) pass while src/main/sessionLaunch/sdkHeldSession.ts existed. ISSUE-184 (step 3a) deleted that path and the packages, so the allowance is closed: it stays empty, and any entry fails the scan.",
+  "entries": []
+}

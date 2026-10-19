@@ -1,33 +1,85 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  Dwarf,
   DwarfPermissionAnswerRequest,
   DwarfPermissionRequest,
   DwarfQuestion,
   DwarfQuestionAnswerRequest,
   DwarfQuestionAnswerResult
 } from '../types'
+import type {
+  AskId,
+  AskRecord,
+  DwarfId,
+  HostFrame,
+  HostFrames,
+  IpcResult,
+  SnapshotPage,
+  UiSessionChange,
+  UiSessionPatch,
+  UiSessionSnapshot
+} from '@dwarfai/contracts'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
+import { defaultDwarf, defaultMine } from '../testing/factories'
+import { ref } from 'vue'
+import { DEFAULT_AUDIO_PREFERENCES } from '../types'
+import { useAttentionCues } from './useAttentionCues'
 import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
+import { useMines } from './useMines'
+import { useToasts } from './useToasts'
+import { publishBoard } from '../testing/board'
+
+/**
+ * AMENDED for ISSUE-141 (was: the fake answered today's `DwarfQuestionAnswerResult`): from the cut-2 switch A-40 and
+ * A-41 answer `IpcResult<AnswerOutcome>` (14 §3.4; ADR-010 item 5). These cases still script each verdict in today's
+ * words, and the bridge answers it in the 14 shape: handed over is `accepted`, a refusal is `refused` (whose reason is a
+ * code: the panel shows today's "That answer could not be delivered.", never main's own sentence any more), and a
+ * bridge that never answered still rejects.
+ */
+function asOutcome(result: Promise<DwarfQuestionAnswerResult>): Promise<unknown> {
+  return result.then((today) =>
+    today.answered
+      ? { ok: true, value: { kind: 'accepted' } }
+      : { ok: true, value: { kind: 'refused', reason: 'channel-rejected' } }
+  )
+}
+
+/** The panel's own words for an answer not handed over (today's, unchanged). */
+const NOT_ANSWERED = 'That answer could not be delivered.'
+
+/** A UUIDv7, as each submit's `requestId` is minted (14 §1.6). */
+const REQUEST_ID = expect.stringMatching(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+)
 
 function stubApi(
-  answerDwarfQuestion: (request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>
+  answerDwarfQuestion: (request: never) => Promise<DwarfQuestionAnswerResult>
 ): void {
+  // AMENDED for ISSUE-250 (was: hand-built objects as `window.api` in this file's stubs): installed through the generated
+  // fake (ADR-033 item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than
+  // the contract.
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { answerDwarfQuestion }
+    writable: true,
+    value: createFakeWindowApi({
+      answerDwarfQuestion: (request: never) => asOutcome(answerDwarfQuestion(request))
+    } as unknown as Partial<Window['api']>)
   })
 }
 
 /** Same shape as stubApi, for the permission channel `decide` sends over. */
 function stubPermissionApi(
-  answerDwarfPermission: (
-    request: DwarfPermissionAnswerRequest
-  ) => Promise<DwarfQuestionAnswerResult>
+  answerDwarfPermission: (request: never) => Promise<DwarfQuestionAnswerResult>
 ): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { answerDwarfQuestion: vi.fn(), answerDwarfPermission }
+    writable: true,
+    value: createFakeWindowApi({
+      answerDwarfQuestion: vi.fn(),
+      answerDwarfPermission: (request: never) => asOutcome(answerDwarfPermission(request))
+    } as unknown as Partial<Window['api']>)
   })
 }
 
@@ -83,10 +135,12 @@ describe('useDwarfQuestion', () => {
     const { answer } = useDwarfQuestion()
 
     await answer('claude:s1', question(), 'SQLite')
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, answers: { [question text]: label } }`): the 14
+    // `AnswerQuestionParams`, the ask's own id, each label on its step, one requestId per submit.
     expect(sent).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Which database should the importer write to?': 'SQLite' }
+      askId: 'toolu_01',
+      answers: [{ step: 0, option: 'SQLite' }],
+      requestId: REQUEST_ID
     })
   })
 
@@ -100,10 +154,12 @@ describe('useDwarfQuestion', () => {
     const { answer, stateFor } = useDwarfQuestion()
 
     await answer('claude:s1', question(), 'SQLite')
+    // AMENDED for ISSUE-141 (was: main's own sentence): a refused `AnswerOutcome` carries a reason code, so the panel
+    // explains itself with today's own words.
     expect(stateFor('claude:s1')).toEqual({
       phase: 'refused',
       toolUseId: 'toolu_01',
-      error: 'That session is not one this panel is holding.'
+      error: NOT_ANSWERED
     })
   })
 
@@ -184,10 +240,11 @@ describe('useDwarfQuestion', () => {
     const { answerWithText } = useDwarfQuestion()
 
     await answerWithText('claude:s1', question({ channel: 'terminal' }), 'put it in Redis')
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, text }`): the 14 shape's free text of the first step.
     expect(sent).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      text: 'put it in Redis'
+      askId: 'toolu_01',
+      answers: [{ step: 0, freeText: 'put it in Redis' }],
+      requestId: REQUEST_ID
     })
   })
 
@@ -206,10 +263,12 @@ describe('useDwarfQuestion', () => {
     const { answerWithText, stateFor } = useDwarfQuestion()
 
     await answerWithText('claude:s1', question({ channel: 'terminal' }), '   ')
+    // AMENDED for ISSUE-141 (was: main's own sentence, printed verbatim): a refused `AnswerOutcome` carries a reason
+    // code, so the card prints today's own words.
     expect(stateFor('claude:s1')).toEqual({
       phase: 'refused',
       toolUseId: 'toolu_01',
-      error: 'There was nothing written to send.'
+      error: NOT_ANSWERED
     })
   })
 
@@ -271,10 +330,14 @@ describe('useDwarfQuestion', () => {
 
     await answer('claude:s1', pair(), ['Postgres', 'West'])
     expect(sent).toHaveBeenCalledTimes(1)
+    // AMENDED for ISSUE-141 (was: today's record keyed by question text): one entry per step, in the call's order.
     expect(sent).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Which database?': 'Postgres', 'Which regions?': 'West' }
+      askId: 'toolu_01',
+      answers: [
+        { step: 0, option: 'Postgres' },
+        { step: 1, option: 'West' }
+      ],
+      requestId: REQUEST_ID
     })
     expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_01' })
   })
@@ -341,10 +404,12 @@ describe('useDwarfQuestion decide (#203)', () => {
     const { decide } = useDwarfQuestion()
 
     await decide('claude:s1', permission(), 'deny')
+    // AMENDED for ISSUE-141 (was: today's `{ dwarfId, toolUseId, decision }`): the 14 `AnswerPermissionParams`, the
+    // prompt's own id as its AskId, one requestId per submit.
     expect(sent).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_09',
-      decision: 'deny'
+      askId: 'toolu_09',
+      decision: 'deny',
+      requestId: REQUEST_ID
     })
   })
 
@@ -355,11 +420,12 @@ describe('useDwarfQuestion decide (#203)', () => {
     const { decide, stateFor } = useDwarfQuestion()
 
     await decide('claude:s1', permission(), 'allow')
+    // AMENDED for ISSUE-141 (was: main's own sentence): a refused `AnswerOutcome` carries a reason code.
     expect(stateFor('claude:s1')).toEqual({
       phase: 'refused',
       toolUseId: 'toolu_09',
       decision: 'allow',
-      error: 'That prompt is no longer open.'
+      error: NOT_ANSWERED
     })
   })
 
@@ -395,12 +461,14 @@ describe('useDwarfQuestion decide (#203)', () => {
   it('shares one store with answer, keyed by dwarf rather than by kind of prompt', async () => {
     // #203's whole reason to reuse DwarfAnswerState rather than a shape of its
     // own: a verdict is about a toolUseId, whichever kind of prompt named it.
+    // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: {
-        answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
-        answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true })
-      }
+      writable: true,
+      value: createFakeWindowApi({
+        answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
+        answerDwarfPermission: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } })
+      } as unknown as Partial<Window['api']>)
     })
     const { answer, decide, stateFor } = useDwarfQuestion()
 
@@ -431,12 +499,14 @@ describe('useDwarfQuestion decide (#203)', () => {
   })
 
   it('leaves an answered question carrying no decision at all', async () => {
+    // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: {
-        answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
+      writable: true,
+      value: createFakeWindowApi({
+        answerDwarfQuestion: vi.fn().mockResolvedValue({ ok: true, value: { kind: 'accepted' } }),
         answerDwarfPermission: vi.fn()
-      }
+      } as unknown as Partial<Window['api']>)
     })
     const { answer, stateFor } = useDwarfQuestion()
 
@@ -455,12 +525,18 @@ describe('useDwarfQuestion decide (#203)', () => {
 describe('useDwarfQuestion: the "Answers:" record', () => {
   const sendDwarfText = vi.fn()
 
+  // AMENDED for ISSUE-141 (was: the fakes answered today's result): each answers the scripted verdict in the 14 shape.
   function stub(result: () => Promise<DwarfQuestionAnswerResult>) {
-    const answerDwarfQuestion = vi.fn(result)
-    const answerDwarfPermission = vi.fn(result)
+    const answerDwarfQuestion = vi.fn(() => asOutcome(result()))
+    const answerDwarfPermission = vi.fn(() => asOutcome(result()))
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { answerDwarfQuestion, answerDwarfPermission, sendDwarfText }
+      writable: true,
+      value: createFakeWindowApi({
+        answerDwarfQuestion,
+        answerDwarfPermission,
+        sendDwarfText
+      } as unknown as Partial<Window['api']>)
     })
     return { answerDwarfQuestion, answerDwarfPermission }
   }
@@ -513,9 +589,10 @@ describe('useDwarfQuestion: the "Answers:" record', () => {
     stub(() => Promise.resolve({ answered: false, error: 'That ask is no longer open.' }))
     await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
 
+    // AMENDED for ISSUE-141 (was: main's own sentence): a refused `AnswerOutcome` carries a reason code.
     expect(useDwarfMessaging().echoesFor('claude:s1')[0]?.state).toEqual({
       phase: 'failed',
-      error: 'That ask is no longer open.'
+      error: NOT_ANSWERED
     })
   })
 
@@ -565,11 +642,15 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
     let answered = false
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: {
+      writable: true,
+      value: createFakeWindowApi({
+        // AMENDED for ISSUE-141 (was: today's result): the scripted verdict in the 14 shape.
         answerDwarfQuestion: vi.fn(() =>
-          Promise.resolve(answered ? { answered: true } : { answered: false, error: 'nope' })
+          asOutcome(
+            Promise.resolve(answered ? { answered: true } : { answered: false, error: 'nope' })
+          )
         )
-      }
+      } as unknown as Partial<Window['api']>)
     })
     await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
     const [refused] = useDwarfMessaging().echoesFor('claude:s1')
@@ -589,7 +670,11 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
   it('puts the record’s verdict on the dwarf’s marker', async () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { answerDwarfQuestion: vi.fn(() => Promise.resolve({ answered: true })) }
+      writable: true,
+      // AMENDED for ISSUE-141 (was: today's `{ answered: true }`): the 14 `accepted` outcome.
+      value: createFakeWindowApi({
+        answerDwarfQuestion: vi.fn(() => asOutcome(Promise.resolve({ answered: true })))
+      } as unknown as Partial<Window['api']>)
     })
     await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
     expect(useDwarfMessaging().stateFor('claude:s1')).toEqual({
@@ -599,3 +684,339 @@ describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 1
   })
 })
 /* --- end of the rulings 19 and 20 block ----------------------------------------------------- */
+
+/* --- The dual-source ask read model (ISSUE-138) — one block, appended ------------------------ */
+
+/*
+ * From cut 2 the question store is a read model (14 §6.4 row `useDwarfQuestion`; ADR-033 items 3, 4) of the Host's asks
+ * (the snapshot `asks` section and the `ask.*` frames above its seq). Partial picks live in the UI main session store
+ * (`ask-picks`), never in the Host. AMENDED for ISSUE-241, the end of cut 4 (was: also the legacy overlay the facade's
+ * board carried, its own `legacy:` ids, 21 §2 cut 2 "Legacy-bridge adapters", §3 `LegacyAskRelay`): the relay left the
+ * tree, so the Host is the one source.
+ */
+describe('useDwarfQuestion: the dual-source ask read model (ISSUE-138)', () => {
+  const EPOCH = 'epoch-0138'
+  const DWARF_A = '01920000-0000-7000-a000-00000000d001'
+  const DWARF_B = '01920000-0000-7000-a000-00000000d002'
+  const ASK_A = '01920000-0000-7000-a000-00000000a001'
+  const ASK_B = '01920000-0000-7000-a000-00000000a002'
+  const ASK_STALE = '01920000-0000-7000-a000-00000000a003'
+
+  type Api = ReturnType<typeof createFakeWindowApi>
+
+  function hostAsk(id: string, dwarfId: string, overrides: Partial<AskRecord> = {}): AskRecord {
+    return {
+      id,
+      dwarfId,
+      kind: 'question',
+      channel: 'driver',
+      providerRequestId: `req-${id.slice(-4)}`,
+      payload: {
+        steps: [
+          { text: 'Which database?', options: ['Postgres', 'SQLite'], allowsFreeText: true },
+          { text: 'Which schema?', options: ['public', 'app'], allowsFreeText: true },
+          { text: 'Run migrations?', options: ['Yes', 'No'], allowsFreeText: true }
+        ]
+      },
+      currentStep: 0,
+      state: 'open',
+      reannounce: true,
+      openedAt: 1_000,
+      ...overrides
+    }
+  }
+
+  function page(seq: number, asks: AskRecord[]): IpcResult<SnapshotPage> {
+    return {
+      ok: true,
+      value: {
+        snapshotId: `snap-${seq}`,
+        seq,
+        epoch: EPOCH,
+        chunks: [{ section: 'asks', data: { asks, needsYou: [] } }]
+      }
+    } as IpcResult<SnapshotPage>
+  }
+
+  function frame<N extends 'ask.opened' | 'ask.closed' | 'ask.step'>(
+    seq: number,
+    name: N,
+    data: HostFrames[N]
+  ): HostFrame {
+    return { type: 'evt', seq, epoch: EPOCH, name, data } as HostFrame
+  }
+
+  interface Fake {
+    push(frames: HostFrame[]): void
+    patches: UiSessionPatch[]
+    session(change: UiSessionChange): void
+  }
+
+  function emptySession(askPicks: UiSessionSnapshot['askPicks'] = {}): UiSessionSnapshot {
+    return { drafts: {}, chatViews: {}, askPicks, openChat: {}, currentMine: {}, valle: {} }
+  }
+
+  /** The fake `window.api`: A-N01/A-N02 for the Host source, A-N17…A-N19 for the UI session store. */
+  function install(
+    snapshot: () => IpcResult<SnapshotPage>,
+    session: UiSessionSnapshot = emptySession()
+  ): Fake {
+    let listener: ((frames: HostFrame[]) => void) | null = null
+    let sessionListener: ((change: UiSessionChange) => void) | null = null
+    const patches: UiSessionPatch[] = []
+    const api = createFakeWindowApi({
+      getHostSnapshot: vi.fn(() =>
+        Promise.resolve(snapshot())
+      ) as unknown as Api['getHostSnapshot'],
+      onHostEvent: vi.fn((follow: (frames: HostFrame[]) => void) => {
+        listener = follow
+        return () => {
+          listener = null
+        }
+      }) as unknown as Api['onHostEvent'],
+      getUiSession: vi.fn(() => Promise.resolve(session)) as unknown as Api['getUiSession'],
+      patchUiSession: vi.fn((patch: UiSessionPatch) => {
+        patches.push(patch)
+      }) as unknown as Api['patchUiSession'],
+      onUiSessionChanged: vi.fn((follow: (change: UiSessionChange) => void) => {
+        sessionListener = follow
+        return () => {
+          sessionListener = null
+        }
+      }) as unknown as Api['onUiSessionChanged']
+    })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+    return {
+      push(frames) {
+        if (listener === null) throw new Error('nothing follows onHostEvent')
+        listener(frames)
+      },
+      patches,
+      session(change) {
+        if (sessionListener === null) throw new Error('nothing follows onUiSessionChanged')
+        sessionListener(change)
+      }
+    }
+  }
+
+  /** The facade's board (A-12/A-P2) with today's open asks on its dwarfs, ids in the relay's namespace. */
+  function facadeBoard(dwarfs: Array<Partial<Dwarf> & { id: string }>): void {
+    publishBoard({
+      mines: [defaultMine({ dwarfs: dwarfs.map((dwarf) => defaultDwarf(dwarf)) })],
+      tokensObserved: 0
+    })
+  }
+
+  beforeEach(() => {
+    useDwarfQuestion().stopAsks()
+    useDwarfQuestion().clearAll()
+    useMines().stop()
+    useMines().clear()
+  })
+
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-033] Host asks come from the asks section and ask frames with a
+  // higher seq, legacy asks from the facade overlay, each keyed by its own id"): `LegacyAskRelay` left the tree, so a
+  // question the facade's board still carries in its `legacy:` namespace opens no card (ADR-011 item 4). TC-241-03.
+  it('[ADR-033, ADR-011] Host asks come from the asks section and ask frames with a higher seq, and a legacy: ask on the facade board opens no card', async () => {
+    const DWARF_C = '01920000-0000-7000-a000-00000000d003'
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    facadeBoard([{ id: DWARF_C, pendingQuestion: question({ toolUseId: 'legacy:toolu_01' }) }])
+    const store = useDwarfQuestion()
+
+    expect(await store.startAsks()).toBe(true)
+    fake.push([
+      frame(9, 'ask.opened', { ask: hostAsk(ASK_STALE, DWARF_A) }),
+      frame(11, 'ask.opened', { ask: hostAsk(ASK_B, DWARF_B, { openedAt: 2_000 }) })
+    ])
+    facadeBoard([{ id: DWARF_C, pendingQuestion: question({ toolUseId: 'legacy:toolu_02' }) }])
+
+    expect(Object.keys(store.asks.host).sort()).toEqual([ASK_A, ASK_B])
+    expect(store.frontAsk(DWARF_A)).toMatchObject({ source: 'host', id: ASK_A })
+    expect(store.frontAsk(DWARF_B)).toMatchObject({ source: 'host', id: ASK_B })
+    expect(store.frontAsk(DWARF_C)).toBeUndefined()
+  })
+
+  it('[US-RES-003.AC02] after a reopen the card shows on its current step with no earlier pick selected', async () => {
+    install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const store = useDwarfQuestion()
+    await store.startAsks()
+    store.pick(ASK_A, [{ step: 0, option: 'SQLite' }])
+    store.stopAsks()
+
+    // The window reopens: the Host kept the step, the UI session store (never persisted) holds no pick.
+    install(() => page(20, [hostAsk(ASK_A, DWARF_A, { currentStep: 2 })]))
+    await store.startAsks()
+
+    expect(store.stepOf(ASK_A)).toBe(2)
+    expect(store.picksFor(ASK_A)).toEqual([])
+  })
+
+  it('[US-ASK-001.AC07] going back to an answered step shows its pick from the UI session store', async () => {
+    const fake = install(
+      () => page(10, [hostAsk(ASK_A, DWARF_A, { currentStep: 1 })]),
+      emptySession({ [ASK_A]: [{ step: 0, option: 'SQLite' }] } as UiSessionSnapshot['askPicks'])
+    )
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    expect(store.picksFor(ASK_A)).toEqual([{ step: 0, option: 'SQLite' }])
+
+    store.pick(ASK_A, [
+      { step: 0, option: 'SQLite' },
+      { step: 1, option: 'app' }
+    ])
+    expect(fake.patches).toEqual([
+      {
+        kind: 'ask-picks',
+        askId: ASK_A,
+        picks: [
+          { step: 0, option: 'SQLite' },
+          { step: 1, option: 'app' }
+        ]
+      }
+    ])
+
+    // Another window changed the picks: this one follows.
+    fake.session({
+      kind: 'ask-picks',
+      askId: ASK_A as AskId,
+      picks: [{ step: 0, option: 'Postgres' }],
+      origin: 'valle'
+    })
+    expect(store.picksFor(ASK_A)).toEqual([{ step: 0, option: 'Postgres' }])
+  })
+
+  it('[US-ASK-006.AC06] an ask.closed frame lets the card give way to the composer with no notice', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const store = useDwarfQuestion()
+    await store.startAsks()
+    expect(store.frontAsk(DWARF_A)).toMatchObject({ id: ASK_A })
+
+    fake.push([
+      frame(11, 'ask.closed', {
+        askId: ASK_A as AskId,
+        dwarfId: DWARF_A as DwarfId,
+        reason: 'answered-elsewhere'
+      })
+    ])
+
+    expect(store.frontAsk(DWARF_A)).toBeUndefined()
+    expect(store.stateFor(DWARF_A)).toBeUndefined()
+    expect(useToasts().toasts.value).toEqual([])
+  })
+
+  it('[US-ASK-007.AC02] an ask.opened frame re-sent for the same askId after a refusal brings the card back with no alert', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const store = useDwarfQuestion()
+    await store.startAsks()
+    // The card's last verdict was a refusal of this ask, and the ask closed.
+    store.state.byDwarfId[DWARF_A] = { phase: 'refused', toolUseId: ASK_A, error: 'refused' }
+    fake.push([
+      frame(11, 'ask.closed', {
+        askId: ASK_A as AskId,
+        dwarfId: DWARF_A as DwarfId,
+        reason: 'cancelled'
+      })
+    ])
+
+    fake.push([frame(12, 'ask.opened', { ask: hostAsk(ASK_A, DWARF_A, { reannounce: false }) })])
+
+    expect(store.frontAsk(DWARF_A)).toMatchObject({ source: 'host', id: ASK_A })
+    expect(store.stateFor(DWARF_A)).toBeUndefined()
+    expect(useToasts().toasts.value).toEqual([])
+  })
+
+  it('[ADR-033] an ask.step frame above the seq moves the card to the step the Host reports', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    fake.push([frame(11, 'ask.step', { askId: ASK_A as AskId, currentStep: 1 })])
+    fake.push([frame(11, 'ask.step', { askId: ASK_A as AskId, currentStep: 2 })])
+
+    expect(store.stepOf(ASK_A)).toBe(1)
+  })
+
+  it('[US-MINE-003.AC03, US-ASK-006.AC02, INV-103] an ask.opened frame reaches the attention cues through askOpened once, a snapshot ask is no arrival, and reannounce false plays nothing', async () => {
+    const fake = install(() => page(10, [hostAsk(ASK_A, DWARF_A)]))
+    const played: string[] = []
+    // The cues subscribe first, so the fake's one A-N02 listener is the read model's once it starts.
+    const stopCues = useAttentionCues().start({
+      settings: ref({ ...DEFAULT_AUDIO_PREFERENCES, notificationSounds: true }),
+      windowShown: ref(true),
+      playSfx: (kind) => played.push(kind)
+    })
+    try {
+      await useDwarfQuestion().startAsks()
+      expect(played).toEqual([])
+
+      const permissionAsk = hostAsk(ASK_B, DWARF_B, {
+        kind: 'permission',
+        payload: { toolName: 'Bash', requestText: 'npm test' }
+      })
+      fake.push([frame(11, 'ask.opened', { ask: permissionAsk })])
+      fake.push([
+        frame(12, 'ask.opened', { ask: hostAsk(ASK_STALE, DWARF_A, { reannounce: false }) })
+      ])
+      // Re-sent for the same askId: the same need, never a second cue.
+      fake.push([frame(13, 'ask.opened', { ask: permissionAsk })])
+
+      expect(played).toEqual(['permission'])
+    } finally {
+      stopCues()
+    }
+  })
+
+  // AMENDED for ISSUE-241, the end of cut 4 (was: "[ADR-001] an answer to a legacy: card goes through the legacy route
+  // and an answer to a Host card through the host route", ISSUE-141): no card is a legacy one any more, and every answer
+  // reaches the Host's broker (the L6 router case "the router test lists LegacyDwarfIdBridge, … as absent and no A-40/A-41
+  // route has a legacy qualifier").
+
+  it('[US-ASK-006.AC09] a not-open outcome renders nothing and leaves the card state as the Host reports it', async () => {
+    install(() =>
+      page(10, [
+        hostAsk(ASK_A, DWARF_A, {
+          kind: 'permission',
+          payload: { toolName: 'Bash', requestText: 'npm test' }
+        })
+      ])
+    )
+    Object.assign(window.api, {
+      answerDwarfPermission: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'not-open' } }))
+    })
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    await store.decide(DWARF_A, permission({ toolUseId: ASK_A }), 'allow')
+
+    // No verdict, no alert, no toast: the stale submit is dropped silently, and the card is the Host's to close.
+    expect(store.stateFor(DWARF_A)).toBeUndefined()
+    expect(store.frontAsk(DWARF_A)).toMatchObject({ source: 'host', id: ASK_A })
+    expect(useToasts().toasts.value).toEqual([])
+  })
+
+  // ADDED for ISSUE-141 (lead decision 2026-10-14): the "Answers:" record drawn at Submit is withdrawn on a not-open
+  // outcome, so the conversation shows no ✕ and the dwarf's marker no verdict for an answer that was never handed over.
+  it('[US-ASK-006.AC09] a not-open outcome withdraws the "Answers:" record and the marker it took', async () => {
+    install(() =>
+      page(10, [
+        hostAsk(ASK_A, DWARF_A, {
+          kind: 'permission',
+          payload: { toolName: 'Bash', requestText: 'npm test' }
+        })
+      ])
+    )
+    Object.assign(window.api, {
+      answerDwarfPermission: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'not-open' } }))
+    })
+    useDwarfMessaging().clearAll()
+    const store = useDwarfQuestion()
+    await store.startAsks()
+
+    await store.decide(DWARF_A, permission({ toolUseId: ASK_A }), 'allow')
+
+    expect(useDwarfMessaging().echoesFor(DWARF_A)).toEqual([])
+    expect(useDwarfMessaging().stateFor(DWARF_A)).toBeUndefined()
+  })
+})
+/* --- end of the dual-source ask read model block --------------------------------------------- */

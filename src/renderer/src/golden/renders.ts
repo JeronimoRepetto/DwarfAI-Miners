@@ -13,7 +13,7 @@
  * each state, and the captions its tree shows, which the harness reads at run time and hands in as
  * `texts`. A specimen still marked `Unbuilt` has no view yet, so it fails as it should.
  */
-import { defineComponent, h, onUnmounted, type Component } from 'vue'
+import { defineComponent, h, type Component } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
 import TierProgress from '../components/browse/TierProgress.vue'
 import TierMarker from '../components/map/TierMarker.vue'
@@ -29,7 +29,6 @@ import KeyCap from '../components/panel/KeyCap.vue'
 import SettingsBanner from '../components/panel/SettingsBanner.vue'
 import SettingsRow from '../components/panel/SettingsRow.vue'
 import SettingsPanel from '../components/panel/SettingsPanel.vue'
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
 import CrewRoster from '../components/scene/CrewRoster.vue'
 import DwarfTip from '../components/dwarf/DwarfTip.vue'
 import MineColumn from '../components/scene/MineColumn.vue'
@@ -45,7 +44,12 @@ import { ACTIVITY_WORKING_LABEL, activityStepsLabel } from '../lib/message/activ
 import { historyClock } from '../lib/history/mineHistory'
 import { RETRY_TITLE, sendMarker } from '../lib/delivery/deliveryVerdict'
 import { COMPOSER_HINT, bubbleMark, messagePanelMenu } from '../lib/message/panelChrome'
-import { DWARF_NAME_MAX, nameChars, type DwarfNameRefusal } from '../../../shared/dwarfName'
+import {
+  DEFAULT_TOGGLE_ACCELERATOR,
+  DWARF_NAME_MAX,
+  nameChars,
+  type DwarfNameRefusal
+} from '@dwarfai/contracts'
 import type { MessageEcho } from '../lib/message/echo'
 import {
   ANSWERS_HEADING,
@@ -99,7 +103,6 @@ import {
   type DwarfRole,
   type JevFallbackReason,
   type JevRouteLaunchResult,
-  type LaunchFailedPush,
   type LaunchFailureCause,
   type Material,
   type MaterialTotals,
@@ -1496,10 +1499,10 @@ const LaunchStage = defineComponent({
     const never = (): Promise<never> => new Promise<never>(() => {})
     const failedLaunch = props.failedLaunch
     const cliCause = failedLaunch === null ? undefined : CLI_CAUSES[failedLaunch.cause]
-    // An early exit is a launch that started: main answers `launched: true` with its receipt, then
-    // pushes the failure a moment later, on the channel `listenFailures` subscribes to.
+    // An early exit is a launch that started: main answers `launched: true` with its receipt. AMENDED for ISSUE-239
+    // (was: then today's A-P3 push carried the failure, on the channel `listenFailures` subscribed to): A-P3 left with
+    // the 4b deletion, and a launch failure reaches the Panel only as the Host's `launch.failed` frame.
     const pushed = cliCause === 'exited-at-once'
-    let pushFailure: ((push: LaunchFailedPush) => void) | null = null
     const failing =
       failedLaunch === null
         ? {}
@@ -1519,19 +1522,8 @@ const LaunchStage = defineComponent({
                   ? { launched: true, provider: request.provider, launchId: 'golden-launch' }
                   : { launched: false, provider: request.provider, cause: cliCause }
               ),
-            launchHeldSession: () =>
-              Promise.resolve(
-                pushed
-                  ? { launched: true, launchId: 'golden-launch' }
-                  : { launched: false, cause: cliCause }
-              ),
-            launchHostedProcess: () => Promise.resolve({ launched: false, cause: cliCause }),
-            onLaunchFailed: (listener: (push: LaunchFailedPush) => void) => {
-              pushFailure = listener
-              return () => {
-                pushFailure = null
-              }
-            }
+            // AMENDED for ISSUE-249 (was: also A-38 `launchHeldSession`): A-38 left the facade at cut 5.
+            launchHostedProcess: () => Promise.resolve({ launched: false, cause: cliCause })
           }
     Object.defineProperty(window, 'api', {
       configurable: true,
@@ -1561,15 +1553,12 @@ const LaunchStage = defineComponent({
                   }
                 }),
               launchAgent: never,
-              launchHeldSession: never,
               launchHostedProcess: never
             })
       }
     })
     const launch = useAgentLaunch()
     launch.close()
-    const unlisten = failedLaunch === null ? null : launch.listenFailures()
-    onUnmounted(() => unlisten?.())
     void launch.open(props.mineId).then(async () => {
       if (props.choice !== null) launch.choose(props.choice)
       if (failedLaunch !== null) {
@@ -1577,16 +1566,6 @@ const LaunchStage = defineComponent({
         if (props.choice === null) launch.toggleJevEnabled()
         launch.setPrompt(failedLaunch.prompt)
         await launch.submit()
-        if (pushed) {
-          pushFailure?.({
-            launchId: 'golden-launch',
-            provider: props.choice as DwarfProvider,
-            mineId: props.mineId,
-            exitCode: 1,
-            stderrTail: failedLaunch.output ?? '',
-            cause: 'exited-at-once'
-          })
-        }
         return
       }
       if (jevLaunch === null) return

@@ -1,0 +1,206 @@
+{
+  "about": "The legacy seam-A replay of cut 0 (21 §2 note 1; ISSUE-056): each call is made through the renderer's window.api in the app's own window, against the simulated fixture world, on the pre-cut build (recorded) and on the cut-0 build (replayed). Ids and payloads are synthetic; nothing names a real session, folder or person.",
+  "world": {
+    "DWARFAI_SIMULATE": "1",
+    "DWARFAI_SIMULATE_SEED": "seam-a-replay",
+    "DWARFAI_SIMULATE_MINES": "3",
+    "DWARFAI_SIMULATE_CREW": "3",
+    "DWARFAI_SIMULATE_ANIMATE": "false",
+    "DWARFAI_SIMULATE_STEP_MS": "600000",
+    "DWARFAI_SIMULATE_TOKENS": "0"
+  },
+  "calls": [
+    { "row": "A-12", "channel": "mines:get", "member": "getMines", "args": [] },
+    {
+      "row": "A-13",
+      "channel": "dwarf:activate",
+      "member": "activateDwarf",
+      "args": ["replay:none"]
+    },
+    { "row": "A-14", "channel": "dwarf:feed", "member": "getDwarfFeed", "args": ["replay:none"] },
+    {
+      "row": "A-15",
+      "channel": "dwarf:feed:page",
+      "member": "getDwarfFeedPage",
+      "args": [{ "dwarfId": "replay:none", "before": { "timestamp": "replay", "text": "replay" } }]
+    },
+    {
+      "row": "A-16",
+      "channel": "panel:watchDwarfFeed",
+      "member": "setWatchedDwarf",
+      "args": [null]
+    },
+    {
+      "row": "A-17",
+      "channel": "dwarf:refreshTelemetry",
+      "member": "refreshDwarfTelemetry",
+      "args": ["replay:none"]
+    },
+    {
+      "row": "A-18",
+      "channel": "dwarf:setTuning",
+      "member": "setDwarfTuning",
+      "args": [{ "dwarfId": "replay:none", "change": { "kind": "model", "model": "replay-model" } }]
+    },
+    {
+      "row": "A-19",
+      "channel": "mine:history",
+      "member": "getMineHistory",
+      "args": ["replay:none"]
+    },
+    {
+      "row": "A-20",
+      "channel": "mine:openPath",
+      "member": "openMinePath",
+      "args": [{ "mineId": "replay:none", "target": "README.md", "dwarfId": "replay:none" }]
+    },
+    {
+      "row": "A-23",
+      "channel": "dwarf:sendText",
+      "member": "sendDwarfText",
+      "args": [{ "dwarfId": "replay:none", "text": "replay", "pressEnter": false }]
+    },
+    {
+      "row": "A-25",
+      "channel": "dwarf:attachments:describe",
+      "member": "describeDwarfAttachments",
+      "args": [[]]
+    },
+    {
+      "row": "A-26",
+      "channel": "dwarf:kick",
+      "member": "kickDwarf",
+      "args": [{ "dwarfId": "replay:none" }]
+    },
+    { "row": "A-27", "channel": "dwarf:retire", "member": "retireDwarf", "args": ["replay:none"] },
+    { "row": "A-30", "channel": "mine:declare", "member": "declareMine", "args": [] },
+    { "row": "A-31", "channel": "mine:declare-main", "member": "declareMainProject", "args": [] },
+    {
+      "row": "A-32",
+      "channel": "mine:undeclare",
+      "member": "undeclareMine",
+      "args": ["replay:none"]
+    },
+    { "row": "A-33", "channel": "metrics:reset", "member": "resetMetrics", "args": [] },
+    {
+      "row": "A-34",
+      "channel": "projects:query",
+      "member": "queryProjects",
+      "args": [{ "sortBy": "addedAt", "direction": "asc" }]
+    },
+    {
+      "row": "A-35",
+      "channel": "agent:launch",
+      "member": "launchAgent",
+      "args": [{ "mineId": "replay:none", "provider": "replay-unknown", "prompt": "replay" }]
+    },
+    { "row": "A-36", "channel": "agent:providers", "member": "listAgentProviders", "args": [] },
+    { "row": "A-37", "channel": "agent:models", "member": "listAgentModels", "args": [] },
+    {
+      "row": "A-38",
+      "channel": "agent:launchHeld",
+      "member": "launchHeldSession",
+      "args": [{ "mineId": "replay:none", "provider": "replay-unknown", "prompt": "replay" }]
+    },
+    {
+      "row": "A-39",
+      "channel": "agent:launchHosted",
+      "member": "launchHostedProcess",
+      "args": [{ "mineId": "replay:none", "prompt": "replay" }]
+    },
+    {
+      "row": "A-40",
+      "channel": "agent:answerQuestion",
+      "member": "answerDwarfQuestion",
+      "args": [{ "dwarfId": "replay:none", "toolUseId": "replay", "answers": {} }]
+    },
+    {
+      "row": "A-41",
+      "channel": "agent:answerPermission",
+      "member": "answerDwarfPermission",
+      "args": [{ "dwarfId": "replay:none", "toolUseId": "replay", "decision": "deny" }]
+    },
+    {
+      "row": "A-42",
+      "channel": "notifications:enabled:get",
+      "member": "getNotificationsEnabled",
+      "args": []
+    },
+    {
+      "row": "A-43",
+      "channel": "notifications:enabled:set",
+      "member": "setNotificationsEnabled",
+      "args": [false]
+    },
+    {
+      "row": "A-42",
+      "channel": "notifications:enabled:get",
+      "member": "getNotificationsEnabled",
+      "args": []
+    },
+    {
+      "row": "A-43",
+      "channel": "notifications:enabled:set",
+      "member": "setNotificationsEnabled",
+      "args": [true]
+    },
+    {
+      "row": "A-44",
+      "channel": "presence:visibleMines",
+      "member": "setOpenMine",
+      "args": ["replay:none"]
+    },
+    { "row": "A-47", "channel": "jev:settings:get", "member": "getJevSettings", "args": [] },
+    { "row": "A-48", "channel": "jev:apiKey:set", "member": "setJevApiKey", "args": [""] },
+    { "row": "A-49", "channel": "jev:apiKey:clear", "member": "clearJevApiKey", "args": [] },
+    { "row": "A-50", "channel": "jev:route", "member": "routeJevLaunch", "args": [{}] },
+    {
+      "row": "A-51",
+      "channel": "jev:preferences:set",
+      "member": "setJevPreferences",
+      "args": [{}]
+    },
+    {
+      "row": "A-52",
+      "channel": "opencode:settings:get",
+      "member": "getOpenCodeSettings",
+      "args": []
+    },
+    {
+      "row": "A-53",
+      "channel": "opencode:plugin:set",
+      "member": "setOpenCodePluginEnabled",
+      "args": [false]
+    },
+    {
+      "row": "A-54",
+      "channel": "opencode:password:set",
+      "member": "setOpenCodeServerPassword",
+      "args": [""]
+    },
+    {
+      "row": "A-55",
+      "channel": "opencode:password:clear",
+      "member": "clearOpenCodeServerPassword",
+      "args": []
+    },
+    {
+      "row": "§8 I-21",
+      "channel": "dwarf:setName",
+      "member": "setDwarfName",
+      "args": [{ "dwarfId": "replay:none", "name": "Replay" }]
+    },
+    {
+      "row": "§8 I-21",
+      "channel": "dwarf:resetName",
+      "member": "resetDwarfName",
+      "args": ["replay:none"]
+    }
+  ],
+  "pushes": [
+    { "row": "A-P2", "channel": "mines:update", "member": "onMinesUpdated" },
+    { "row": "A-P3", "channel": "agent:launchFailed", "member": "onLaunchFailed" },
+    { "row": "A-P4", "channel": "dwarf:sendText:settled", "member": "onDwarfSendSettled" },
+    { "row": "A-P5", "channel": "panel:mine:show", "member": "onShowMine" }
+  ]
+}

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import { reactive } from 'vue'
 import { DEFAULT_JEV_SETTINGS, type JevPreferences, type JevSettings } from '../types'
 import { useJevSettings } from './useJevSettings'
@@ -21,18 +22,39 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     // that never touch the default-launch pickers. Answered empty by
     // default, the same "only the tests that care see any effect" idiom
     // every other stub in this suite holds.
-    listAgentProviders: vi.fn().mockResolvedValue({ providers: [] }),
-    listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
+    // AMENDED for ISSUE-001 (was: today's A-36 `{ providers }` and A-37 `{ catalogs }`): from 3a A-36 answers every
+    // provider's `SupplierEntryView` with its models; A-37 is retired and never asked.
+    listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    // AMENDED for ISSUE-249 (was: also mocks of the RETIRE rows' members): A-14, A-16, A-17, A-18, A-P5, A-37 and
+    // A-38 left the facade at cut 5 (`MEMBER_REMOVED`), and the fake refuses a member the registry does not have.
     setJevPreferences: vi.fn(async () => ({ configured: true })),
     ...overrides
   }
-  ;(globalThis as { window?: unknown }).window = { api }
+  // AMENDED for ISSUE-250 (was: this hand-built object as `window.api`): installed through the generated fake (ADR-033
+  // item 7), which refuses any member the channel registry lacks. Cast: the test data is typed looser than the contract.
+  ;(globalThis as { window?: unknown }).window = {
+    api: createFakeWindowApi(api as unknown as Partial<Window['api']>)
+  }
   return api
 }
 
 afterEach(() => {
   delete (globalThis as { window?: unknown }).window
 })
+
+/** One A-36 entry (14 §3.6 `SupplierEntryView`): installed, launchable, one model. */
+function entry(providerId: string) {
+  return {
+    providerId,
+    label: providerId,
+    models: [{ value: 'opus', efforts: ['high'] }],
+    permissionModes: [],
+    offeredModes: [],
+    installed: true,
+    publicLaunch: 'enabled',
+    answerChannel: 'available'
+  }
+}
 
 describe('useJevSettings', () => {
   it('starts on the documented default, so the first paint is almost always right', () => {
@@ -154,7 +176,7 @@ describe('useJevSettings — loading the default-launch sources', () => {
     const api = fakeApi()
     useJevSettings()
     expect(api.listAgentProviders).not.toHaveBeenCalled()
-    expect(api.listAgentModels).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-37 `listAgentModels` never called): the member left the facade at cut 5.
   })
 
   it('starts both empty, so the pickers have nothing to offer before a sync', () => {
@@ -167,20 +189,21 @@ describe('useJevSettings — loading the default-launch sources', () => {
   it('loads providers and catalogues on sync once the section is configured', async () => {
     const api = fakeApi({
       getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-      listAgentProviders: vi.fn().mockResolvedValue({
-        providers: [{ provider: 'claude', installed: true, launchable: true }]
-      }),
-      listAgentModels: vi.fn().mockResolvedValue({
-        catalogs: [{ provider: 'claude', models: [], efforts: [], source: 'provider' }]
-      })
+      listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [entry('claude')] })
     })
     const { providers, catalogs, sync } = useJevSettings()
     await sync()
-    expect(api.listAgentProviders).toHaveBeenCalled()
-    expect(api.listAgentModels).toHaveBeenCalled()
+    expect(api.listAgentProviders).toHaveBeenCalledWith({})
+    // AMENDED for ISSUE-001: the catalogue rides on the provider's own entry (A-37 is never asked).
+    // AMENDED for ISSUE-249 (was: A-37 `listAgentModels` never called): the member left the facade at cut 5.
     expect(providers.value).toEqual([{ provider: 'claude', installed: true, launchable: true }])
     expect(catalogs.value).toEqual([
-      { provider: 'claude', models: [], efforts: [], source: 'provider' }
+      {
+        provider: 'claude',
+        models: [{ value: 'opus', effortLevels: ['high'] }],
+        efforts: ['high'],
+        source: 'provider'
+      }
     ])
   })
 
@@ -189,15 +212,13 @@ describe('useJevSettings — loading the default-launch sources', () => {
     const { sync } = useJevSettings()
     await sync()
     expect(api.listAgentProviders).not.toHaveBeenCalled()
-    expect(api.listAgentModels).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-37 `listAgentModels` never called): the member left the facade at cut 5.
   })
 
   it('loads providers and catalogues once a save turns the section configured', async () => {
     const api = fakeApi({
       setJevApiKey: vi.fn().mockResolvedValue({ configured: true }),
-      listAgentProviders: vi.fn().mockResolvedValue({
-        providers: [{ provider: 'codex', installed: true, launchable: true }]
-      })
+      listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [entry('codex')] })
     })
     const { providers, save } = useJevSettings()
     await save('sk-typesafe-abc123')
@@ -208,8 +229,7 @@ describe('useJevSettings — loading the default-launch sources', () => {
   it('degrades to empty lists rather than throwing when the bridge cannot answer', async () => {
     fakeApi({
       getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
-      listAgentProviders: vi.fn().mockRejectedValue(new Error('no bridge')),
-      listAgentModels: vi.fn().mockRejectedValue(new Error('no bridge'))
+      listAgentProviders: vi.fn().mockRejectedValue(new Error('no bridge'))
     })
     const { providers, catalogs, sync } = useJevSettings()
     await expect(sync()).resolves.toBeUndefined()
@@ -347,7 +367,9 @@ describe('useJevSettings reporting a preference write that did not happen', () =
 
     await setPreferences({ profile: 'economy', default: {}, delegation: false })
 
-    expect(api.listAgentModels).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-37 `listAgentModels` never called): the member left the facade at cut 5, and the
+    // catalogue rides on A-36 `listAgentProviders` since 3a, so that is the query this failure path must not repeat.
+    expect(api.listAgentProviders).not.toHaveBeenCalled()
   })
 
   it('carries a refusal main reported, the same way it carries a rejection', async () => {
@@ -474,3 +496,89 @@ describe('useJevSettings crossing the context bridge', () => {
   })
   /* --- end of the #511 block ---------------------------------------------------- */
 })
+
+/* --- ISSUE-234: the Host-fed read model (14 §6.4 row `useJevSettings`) — one block, appended --- */
+// From the step-4a switch (ISSUE-235) A-47…A-51 are served from the Host's preferences, so the section also follows the
+// `preferences` snapshot section and the `preferences.changed` frames above its seq (ADR-033 items 2–3): a change made
+// elsewhere (another window, a Reset) shows here. The key is never part of any value it holds (INV-107).
+describe('useJevSettings as a read model of the Host (ISSUE-234)', () => {
+  const EPOCH = 'epoch-0234'
+  const KEY = 'ts-live-0234-0123456789abcdef'
+
+  function preferencesView(configured: boolean, routingProfile = 'balanced') {
+    return {
+      preferences: {
+        subagentDelegationOn: false,
+        routingProfile,
+        systemNotificationsOn: true,
+        openCodePermissionsOn: false,
+        defaultProvider: 'claude'
+      },
+      secrets: [{ name: 'jev-key', configured }],
+      secretBackend: 'os-secret-store',
+      integrations: [],
+      welcome: { due: false, legacyFound: [], offered: [] }
+    }
+  }
+
+  function hostApi(overrides: Record<string, unknown> = {}) {
+    let listener: ((frames: unknown[]) => void) | null = null
+    const api = fakeApi({
+      getHostSnapshot: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: {
+            snapshotId: 'snap-10',
+            seq: 10,
+            epoch: EPOCH,
+            chunks: [{ section: 'preferences', data: preferencesView(false) }]
+          }
+        })
+      ),
+      onHostEvent: vi.fn((follow: (frames: unknown[]) => void) => {
+        listener = follow
+        return () => {
+          listener = null
+        }
+      }),
+      ...overrides
+    })
+    return {
+      api,
+      push(seq: number, data: unknown) {
+        listener?.([{ type: 'evt', seq, epoch: EPOCH, name: 'preferences.changed', data }])
+      }
+    }
+  }
+
+  it('[US-SET-007.AC01, NFR-SEC-04] useJevSettings exposes configured and never a key', async () => {
+    const host = hostApi({
+      setJevApiKey: vi.fn(async () => ({
+        configured: true,
+        preferences: {
+          profile: 'balanced',
+          default: { provider: 'claude' },
+          delegation: false
+        }
+      }))
+    })
+    const jev = useJevSettings()
+    expect(await jev.start()).toBe(true)
+    expect(jev.settings.value.configured).toBe(false)
+    await jev.save(KEY)
+    expect(host.api.setJevApiKey).toHaveBeenCalledWith(KEY)
+    expect(jev.settings.value.configured).toBe(true)
+    // Another window saved a profile: the Host's whole view arrives, the key's status only, never the key.
+    host.push(11, preferencesView(true, 'premium'))
+    expect(jev.settings.value).toEqual({
+      configured: true,
+      preferences: { profile: 'premium', default: { provider: 'claude' }, delegation: false }
+    })
+    // An older frame than the last one applied changes nothing (ADR-033 item 3).
+    host.push(11, preferencesView(false))
+    expect(jev.settings.value.configured).toBe(true)
+    expect(JSON.stringify(jev.settings.value)).not.toContain(KEY)
+    jev.stop()
+  })
+})
+/* --- end of the ISSUE-234 block ----------------------------------------------- */

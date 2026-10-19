@@ -1,0 +1,17 @@
+{
+  "$comment": "Hand-written from 13 FM-068 and 15 §6 C-11 (INV-38): after its first record the CLI changed its format (the record type field renamed); each record of the new format is skipped with one warning and nothing of it is read. Shared by format-changed-crlf.jsonl. The observation loop's case (ISSUE-084) replays the drifted records one poll at a time.",
+  "warnings": 3,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000841",
+      "providerAgentId": null,
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790776800000,
+      "parent": null
+    }
+  ],
+  "entries": [{ "role": "person", "text": "Is the build green?", "providerTime": 1790776800000 }],
+  "activity": ["turn-started"],
+  "turnEnds": [],
+  "usage": []
+}

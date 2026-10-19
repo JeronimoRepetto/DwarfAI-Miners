@@ -1,0 +1,835 @@
+// The jev request builder (16 §6.2), transplanted from the found tree's `src/main/jev/routeRequest.ts`
+// and its request types from `jevRouterPort.ts` (ISSUE-190, candidate adapted): the provider tables
+// are keyed by catalog provider id and looked up, never branched on (R12); a provider this module
+// has no criteria for is left out of the request rather than described with invented text. Pure: no
+// I/O, no clock read (05 §2.2, R1).
+import type { ProviderId } from '../../../kernel/domain/values'
+import type {
+  JevCapabilityTable,
+  ModelCapabilityEntry,
+  ModelTier
+} from './capabilities/modelCapabilityEntry'
+import { PROVIDER_TOOLING_MARKERS } from './capabilities/providerTooling'
+import type { JevRoutingProfile } from './suggestion'
+
+/**
+ * One provider as the launch catalogue offers it to Jev (the found tree's `AgentProviderOption`,
+ * without its display-only `reason`).
+ */
+export interface RoutingProviderOption {
+  provider: ProviderId
+  /** Whether this CLI was found on this machine. */
+  installed: boolean
+  /** Whether a session can actually be started for it now. */
+  launchable: boolean
+  /**
+   * The catalog's own display name of the provider (`SupplierEntry.label`). It describes a catalog
+   * provider this module holds no hand-written criteria for (`providerChoiceCriteria`), so a
+   * provider added to the catalog later is still offered to Jev with no code change (R12).
+   */
+  label?: string
+}
+
+/**
+ * One Choice option's own description, in TypeSafe's OWN documented
+ * vocabulary (docs.typesafe.ai) — snake_case is THEIR spelling, kept
+ * verbatim rather than translated to camelCase, because this object is sent
+ * to Jev exactly as built and Jev is calibrated on that exact shape.
+ */
+export interface JevChoiceCriteria {
+  what: string
+  not_for?: string
+  examples: readonly [string, string]
+}
+
+/**
+ * 16 §4.9 `JevRouteRequest`: one built System One request (`buildJevRouteRequest`). Only the parts
+ * that vary per call live here; the four fixed questions are this module's constants.
+ */
+export interface JevRouteRequest {
+  /** The launch prompt — verbatim, or head+tail trimmed; see `truncated` (INV-88). */
+  prompt: string
+  /** The profile Settings holds today. Rides on `state`, never on a question. */
+  routingProfile: JevRoutingProfile
+  /** Whether `prompt` was shortened to fit TypeSafe's own token budget. */
+  truncated: boolean
+  /** The `provider` question's own criteria: one entry per launchable provider plus `no_preference`. */
+  providerCriteria: Readonly<Record<string, JevChoiceCriteria>>
+}
+
+/**
+ * One second-request candidate's own capability facts, in a Choice option's criteria shape plus the
+ * facts that tell two same-tier candidates apart. Never the model's own id, name or family (16 §6.2).
+ */
+export interface JevModelCandidateCriteria extends JevChoiceCriteria {
+  tier: ModelTier
+  relativeCost: ModelCapabilityEntry['relativeCost']
+  contextWindowTokens?: number
+}
+
+/**
+ * 16 §4.9 `JevModelRequest` (#608): one Noul per candidate plus one Choice over the same candidates,
+ * all keyed by INDEX (`'0'`, `'1'`, …), never by model id, name or family (16 §6.2). Only built for
+ * two or more candidates.
+ */
+export interface JevModelRequest {
+  prompt: string
+  routingProfile: JevRoutingProfile
+  truncated: boolean
+  /** The tier the task needs — read into the Noul question's own instructions. */
+  tier: ModelTier
+  /** One entry per candidate, keyed by index. */
+  candidates: Readonly<Record<string, JevModelCandidateCriteria>>
+}
+
+/**
+ * The product name of each catalog provider, as the provider question names it (the found tree's
+ * `PRODUCT_NAME`, `src/main/domain/launchProviders.ts`).
+ */
+const PRODUCT_NAME: Readonly<Record<ProviderId, string>> = {
+  claude: 'Claude Code',
+  codex: 'Codex CLI',
+  antigravity: 'Antigravity CLI',
+  opencode: 'OpenCode'
+}
+
+/**
+ * Turning what the launch already knows — which providers this app can
+ * actually start, and the routing profile Settings holds — into ONE System
+ * One request of FIVE parallel questions (jev-routing-profiles T3, request
+ * v2). Pure: every fact it reads was already asked for elsewhere
+ * (listAgentProviders) or is a fixed table this module already imports
+ * (MODEL_CAPABILITIES), so this is only shaping.
+ *
+ * ## Why five questions, and why they never chain
+ *
+ * The v1 request (#509) asked ONE Choice over every (provider, model) pair —
+ * up to a dozen near-identical options, and near-identical option TEXT is a
+ * calibrated matcher's known failure mode (System One's own consistency
+ * cookbook): confidence flattens across the whole set. Splitting the
+ * question along the axes that actually vary — is this trivial, does it need
+ * a huge context, which provider's tooling fits, how capable a model, how
+ * hard is the work — gives Jev a SMALL, clearly contrastive option set per
+ * question instead of one long one. All five stay in ONE request (TypeSafe's
+ * own systemOne call answers every question against the same `state` in
+ * parallel): a second stage that re-asked based on the first answer would
+ * double the latency budget for a call already on this app's own critical
+ * launch path, for a gain no evidence here shows is needed under twenty
+ * options.
+ *
+ * `model_tier` and `provider` are independent by design, unlike v1's single
+ * merged choice: `routeDecision.ts`'s `decideLaunch` is what turns
+ * (provider, tier, profile, needs_large_context) into one concrete model
+ * through the capability table, so a disagreement between the two answers
+ * is resolved there, once, rather than by making the question no CLI could
+ * ever answer contradiction-free at the wire.
+ */
+
+/**
+ * One Choice or Noul question's own instructions, in TypeSafe's OWN
+ * documented vocabulary — `question` is the ask itself, `focus` narrows what
+ * Jev should weigh, `inspect` names a `state` field Jev should read to
+ * condition its answer. Snake-case-free by design (these three keys are
+ * TypeSafe's own spelling too), kept as an object rather than a single
+ * string so `focus`/`inspect` can be added without changing every question's
+ * shape at once.
+ */
+export interface JevQuestionInstructions {
+  question: string
+  focus?: string
+  inspect?: string
+}
+
+/** One side of a Noul's own two-sided description. */
+export interface JevNoulSideCriteria {
+  what: string
+  examples: readonly [string, string]
+}
+
+/**
+ * The fixed task-difficulty rubric asked in every route request, independent
+ * of which provider ends up chosen. `mapEffortScore` is what turns the score
+ * this rubric returns into a level on the CHOSEN provider's own ladder —
+ * kept separate because the rubric is asked once per launch and the mapping
+ * needs to know the answer to the other questions first (`routeDecision.ts`).
+ */
+export const EFFORT_RUBRIC = [
+  'A trivial lookup — a one-line factual question with no code change.',
+  'A small, contained edit — one file, a well-understood change.',
+  'A multi-file change — coordinating an edit across several files or modules.',
+  'Architectural or migration-scale work — a design decision, or a change that touches the shape of the system.'
+] as const
+
+const EFFORT_RUBRIC_MAX_SCORE = EFFORT_RUBRIC.length - 1
+
+export const EFFORT_QUESTION_INSTRUCTIONS =
+  'How difficult is the work described in state? Score it against the rubric — a low score is ' +
+  'quick and mechanical, a high score is architectural or spans many files.'
+
+/**
+ * Where a rubric score (0..3, possibly fractional — System One's own score
+ * answers may fall between integer rubric levels) lands on ONE provider's
+ * own effort ladder, proportionally rather than by a fixed offset. A fixed
+ * offset would run off the short end of the smallest ladder: the ladders are
+ * different lengths (Claude 5, Codex 6, Antigravity 3 — PROVIDER_EFFORT_LEVELS
+ * in launchTuning.ts), so "add 2" means something different for each one.
+ *
+ * `undefined` for an empty ladder, on the same terms LaunchTuning already
+ * reads absence as: the CLI keeps its own default. `routeDecision.ts`
+ * narrows this further to the CHOSEN MODEL's own accepted levels, which can
+ * be a strict subset of the provider's full ladder (Codex's `ultra`).
+ */
+export function mapEffortScore(
+  provider: ProviderId,
+  score: number,
+  effortLevels: Readonly<Record<ProviderId, readonly string[]>>
+): string | undefined {
+  const ladder = effortLevels[provider] ?? []
+  if (ladder.length === 0) return undefined
+  const clamped = Math.min(Math.max(score, 0), EFFORT_RUBRIC_MAX_SCORE)
+  const index = Math.round((clamped / EFFORT_RUBRIC_MAX_SCORE) * (ladder.length - 1))
+  return ladder[index]
+}
+
+export const IS_TRIVIAL_INSTRUCTIONS: JevQuestionInstructions = {
+  question:
+    'Is this prompt trivial — small talk or a one-line factual question that asks for no code ' +
+    'change — rather than a real request to write, read, debug, explain or change code?'
+}
+
+export const IS_TRIVIAL_CRITERIA: { true: JevNoulSideCriteria; false: JevNoulSideCriteria } = {
+  true: {
+    what: 'Small talk, a greeting, thanks, or a one-line factual question that asks for no code change.',
+    examples: ['Thanks, that fixed it!', 'What does HTTP 404 mean?']
+  },
+  false: {
+    what: 'Any request to write, read, debug, explain or change code, however small.',
+    examples: ['Fix the typo on line 12.', 'What does this function do?']
+  }
+}
+
+export const NEEDS_LARGE_CONTEXT_INSTRUCTIONS: JevQuestionInstructions = {
+  question:
+    'Does this prompt need a very large amount of context — many files or modules, or a large ' +
+    'pasted corpus — rather than being scoped to one file or function?'
+}
+
+export const NEEDS_LARGE_CONTEXT_CRITERIA: {
+  true: JevNoulSideCriteria
+  false: JevNoulSideCriteria
+} = {
+  true: {
+    what: 'Spans many files or modules, or includes a large pasted corpus of text or code to reason over.',
+    examples: [
+      'Review this migration end to end across the whole repository.',
+      'Here is our entire changelog pasted below — summarize the breaking changes.'
+    ]
+  },
+  false: {
+    what: 'Scoped to one file or one function, with nothing extra to hold in mind.',
+    examples: ['Fix the bug in this one function.', 'Add a docstring to this file.']
+  }
+}
+
+export const PROVIDER_QUESTION_INSTRUCTIONS: JevQuestionInstructions = {
+  question:
+    'Which agent CLI is the best tooling fit for this prompt, from providers this app can ' +
+    'actually launch right now?',
+  focus: 'Judge tooling and ecosystem fit only, not cost.',
+  inspect: 'prompt'
+}
+
+/**
+ * Held versus detached is a real TOOLING fact this app already draws on
+ * (`launchProviders.ts`'s own module comment: Claude Code can be HELD, an
+ * Agent SDK stream this panel keeps live; Codex and Antigravity can only be
+ * DETACHED, started and let go of). Used here because
+ * `PROVIDER_QUESTION_INSTRUCTIONS.focus` asks Jev to judge tooling fit, not
+ * cost, and this is the one tooling difference this app can state as a
+ * verified fact rather than invent. A product default (the exact wording),
+ * tunable from the JEV_DEBUG trace like the floors in routeDecision.ts.
+ */
+const HELD_TOOLING_NOTE: Readonly<Record<ProviderId, string>> = {
+  claude:
+    'Runs as a held session this panel keeps live, so its output streams back to you as it works.',
+  codex:
+    'Runs detached — started and then let go of, better suited to a task you check back on than one you watch live.',
+  antigravity:
+    'Runs detached — started and then let go of, better suited to a task you check back on than one you watch live.',
+  // #547 (was: '', "Never launchable — never reached" — #537 joined OpenCode
+  // to LAUNCHABLE_PROVIDERS, so this note is now read on every request that
+  // offers it). Detached through `opencode run` (#534) — the same register as
+  // Codex's and Antigravity's own notes — and the panel can continue the
+  // SAME session afterward with `opencode run --session <id>` (#546,
+  // opencodeContinue.ts's `buildOpenCodeContinueArgs`), a capability neither
+  // of those two has.
+  opencode:
+    'Runs detached — started and then let go of, better suited to a task you check back on than one you watch live; the panel can continue the same session afterward.'
+}
+
+/**
+ * Two examples per provider. The first still leans on the held/detached
+ * difference (`HELD_TOOLING_NOTE`'s own caveat). The second is #625's own
+ * fix, worked example for worked example: a prompt that NAMES the
+ * provider's own distinctive tool (`PROVIDER_TOOLING_MARKERS`,
+ * capabilities/providerTooling.ts), in the exact register of the prompt
+ * issue #625 was filed over ("Before proposing any plan, call the
+ * `request_user_input` tool ONCE with three questions…", routed to Claude at
+ * 0.68 confidence because nothing here named Codex's own tool). Antigravity
+ * keeps its old second example — no verified tooling markers exist for it
+ * yet (`providerTooling.ts`'s own comment says why), and inventing one here
+ * would be exactly the guess the evidence rule forbids.
+ */
+const PROVIDER_EXAMPLES: Readonly<Record<ProviderId, readonly [string, string]>> = {
+  claude: [
+    'Keep working on this while I watch and steer as you go.',
+    'Before proposing any plan, call the AskUserQuestion tool once with three questions.'
+  ],
+  codex: [
+    'Take care of this in the background — I will check back later.',
+    'Before proposing any plan, call the request_user_input tool once with three questions.'
+  ],
+  antigravity: [
+    'Take care of this in the background — I will check back later.',
+    'Run this migration and report back once it is done.'
+  ],
+  // AMENDED for #625 (was: the same two detached-register prompts Codex's own
+  // pair used, #547's own reasoning for putting OpenCode on identical tooling
+  // terms). The second example now names OpenCode's own distinctive `question`
+  // tool instead — the same fix the other two launchable providers get, and
+  // the reason the three no longer read byte-identical.
+  opencode: [
+    'Take care of this in the background — I will check back later.',
+    'Before proposing any plan, call the question tool once with three questions.'
+  ]
+}
+
+/** Tiers a routing decision may actually land on — `'special-purpose'` (an image model, an internal reviewer) is never offered here. */
+const ROUTING_TIERS: readonly ModelTier[] = ['fast-cheap', 'balanced', 'frontier', 'long-context']
+
+/** "fast-cheap, balanced and frontier models" — an ordinary English list, never an Oxford-comma debate worth a dependency. */
+function describeTierList(tiers: readonly ModelTier[]): string {
+  if (tiers.length === 0) return 'models'
+  if (tiers.length === 1) return `${tiers[0]} models`
+  return `${tiers.slice(0, -1).join(', ')} and ${tiers[tiers.length - 1]} models`
+}
+
+/**
+ * Whether `capabilities[provider]` has at least one entry a launch may
+ * actually be offered on (#547) — the same test `providerChoiceCriteria`
+ * already filters its own tier list by. A provider with none (OpenCode's
+ * derived table when its catalogue could not be read) has nothing this
+ * question could truthfully describe, so `buildJevRouteRequest` omits it
+ * entirely rather than sending an option built from zero tiers — the same
+ * "degrade rather than send something empty" rule a non-launchable provider
+ * already gets from `RoutingProviderOption.launchable`.
+ */
+function hasAnyLaunchTarget(entries: Readonly<Record<string, ModelCapabilityEntry>>): boolean {
+  return Object.values(entries).some((entry) => entry.launchTarget)
+}
+
+/**
+ * Every name `field` (`toolNames` or `instructionFiles`) carries for a
+ * provider OTHER than `provider`, across the WHOLE `PROVIDER_TOOLING_MARKERS`
+ * table (#625) — every provider this app knows about, not just whichever
+ * happen to be offered in one particular request, since a name's shared
+ * status is a fact about the evidence, not about who is asking this time.
+ * What makes a shared marker (`apply_patch`, `AGENTS.md`) computed rather
+ * than hand-flagged, so a future provider adding the same name can never
+ * leave a stale "exclusive" claim behind.
+ */
+function otherProvidersMarkerNames(
+  provider: ProviderId,
+  field: 'toolNames' | 'instructionFiles'
+): ReadonlySet<string> {
+  const names = Object.keys(PROVIDER_TOOLING_MARKERS)
+    .filter((candidate) => candidate !== provider)
+    .flatMap((candidate) => PROVIDER_TOOLING_MARKERS[candidate]?.[field] ?? [])
+  return new Set(names)
+}
+
+/**
+ * `provider`'s own names in `field` that no OTHER provider's sourced table
+ * also carries (#625) — the shared-marker honesty rule the issue's own scope
+ * demands for `AGENTS.md`, made structural rather than prose someone has to
+ * remember to write correctly per provider. Exported for the tests that pin
+ * both halves of it: a distinctive name reaching the wire, and a shared one
+ * never being claimed exclusive.
+ */
+export function distinctiveToolingNames(
+  provider: ProviderId,
+  field: 'toolNames' | 'instructionFiles'
+): readonly string[] {
+  const others = otherProvidersMarkerNames(provider, field)
+  const own = PROVIDER_TOOLING_MARKERS[provider]?.[field] ?? []
+  return own.filter((name) => !others.has(name))
+}
+
+/** Renders one marker group (`toolNames` or `instructionFiles`) as a joined, backtick-quoted list — a shared name gets an honest "(shared with another provider offered here)" suffix instead of being presented as exclusive. */
+function describeMarkerNames(names: readonly string[], distinctive: ReadonlySet<string>): string {
+  return names
+    .map((name) =>
+      distinctive.has(name)
+        ? `\`${name}\``
+        : `\`${name}\` (shared with another provider offered here)`
+    )
+    .join(' and ')
+}
+
+/**
+ * One provider's SOURCED tooling markers (#625), rendered into
+ * `providerChoiceCriteria`'s own `what` sentence — the tool names and
+ * instruction files that let a prompt naming them (Codex's own
+ * `request_user_input`, Claude Code's own `AskUserQuestion`) route to the
+ * right provider, instead of session style alone (issue #625's own reported
+ * root cause). Empty string for a provider with no verified markers yet
+ * (Antigravity today — `providerTooling.ts`'s own top comment says why): the
+ * held/detached sentence above still names the provider without it, the same
+ * degrade-rather-than-invent rule the rest of this table already holds to.
+ */
+function describeToolingMarkers(provider: ProviderId): string {
+  const markers = PROVIDER_TOOLING_MARKERS[provider]
+  if (!markers) return ''
+  const toolNames = describeMarkerNames(
+    markers.toolNames,
+    new Set(distinctiveToolingNames(provider, 'toolNames'))
+  )
+  const instructionFiles = describeMarkerNames(
+    markers.instructionFiles,
+    new Set(distinctiveToolingNames(provider, 'instructionFiles'))
+  )
+  const toolsSentence = toolNames ? ` Its own tools include ${toolNames}.` : ''
+  const filesSentence = instructionFiles
+    ? ` It reads ${instructionFiles} for project instructions.`
+    : ''
+  return `${toolsSentence}${filesSentence}`
+}
+
+/**
+ * The two examples of a catalog provider this module holds no hand-written criteria for: plain
+ * requests any agent CLI takes, claiming no tooling fact about it (ISSUE-192; R12).
+ */
+const CATALOG_PROVIDER_EXAMPLES: readonly [string, string] = [
+  'Make this change in the project.',
+  'Look into this problem and fix it.'
+]
+
+/**
+ * One provider's own `provider` Choice option, built from PRODUCT_NAME, its capability table's own
+ * offered tiers, and its sourced tooling markers — never from a model name (see this module's own
+ * top comment). A catalog provider added after these tables (ISSUE-192, US-LAUNCH-003.AC11, R12)
+ * is described by the facts the catalog holds and nothing more: its own label and the tiers its
+ * capability table offers, with plain examples that claim no tooling fact. `undefined` when there
+ * is not even a label: it is left out of the question rather than described with invented text,
+ * the same degrade-rather-than-invent rule the tooling markers follow.
+ */
+function providerChoiceCriteria(
+  provider: ProviderId,
+  capabilities: JevCapabilityTable,
+  label: string | undefined
+): JevChoiceCriteria | undefined {
+  const productName = PRODUCT_NAME[provider]
+  const note = HELD_TOOLING_NOTE[provider]
+  const examples = PROVIDER_EXAMPLES[provider]
+  const offered = describeTierList(offeredTiersOf(provider, capabilities))
+  if (productName === undefined || note === undefined || examples === undefined) {
+    const name = label?.trim() ?? ''
+    if (name === '') return undefined
+    return {
+      what: `${name} — an agent CLI this app can launch. Offers ${offered}.`,
+      examples: CATALOG_PROVIDER_EXAMPLES
+    }
+  }
+  return {
+    what: `${productName} — ${note} Offers ${offered}.${describeToolingMarkers(provider)}`,
+    examples
+  }
+}
+
+/** The routing tiers `provider`'s capability table offers a launch on, in table order. */
+function offeredTiersOf(provider: ProviderId, capabilities: JevCapabilityTable): ModelTier[] {
+  return Array.from(
+    new Set(
+      Object.values(capabilities[provider] ?? {})
+        .filter(
+          (entry) => entry.launchTarget && (ROUTING_TIERS as readonly string[]).includes(entry.tier)
+        )
+        .map((entry) => entry.tier as ModelTier)
+    )
+  )
+}
+
+/** The catch-all `provider` option for "no requirement" — see `routeDecision.ts`'s own no-preference handling. */
+const NO_PREFERENCE_PROVIDER_CRITERIA: JevChoiceCriteria = {
+  what: 'No requirement for a specific provider or its tooling — any capable provider works.',
+  examples: ['Fix this bug.', 'Add this feature.']
+}
+
+/** Every key the `model_tier` Choice may answer with — snake_case, TypeSafe's own spelling, and the wire's `'no_preference'` twin to the `provider` question. */
+export const TIER_CHOICE_KEYS = [
+  'fast_cheap',
+  'balanced',
+  'frontier',
+  'long_context',
+  'no_preference'
+] as const
+export type TierChoiceKey = (typeof TIER_CHOICE_KEYS)[number]
+
+/** Every answerable tier key mapped onto the internal `ModelTier` vocabulary `routeDecision.ts` and the capability table share. */
+export const TIER_CHOICE_TO_MODEL_TIER: Readonly<
+  Record<Exclude<TierChoiceKey, 'no_preference'>, ModelTier>
+> = {
+  fast_cheap: 'fast-cheap',
+  balanced: 'balanced',
+  frontier: 'frontier',
+  long_context: 'long-context'
+}
+
+export const MODEL_TIER_QUESTION_INSTRUCTIONS: JevQuestionInstructions = {
+  question: 'How capable a model does this prompt need?',
+  focus:
+    "Apply the chosen routing profile's own rule: economy prefers the cheapest tier that can " +
+    'still do the job; balanced weighs cost and capability together; premium reaches for the ' +
+    'frontier tier when the task needs deep reasoning, architecture-level judgment or tricky ' +
+    'multi-file coordination — never for a trivial prompt, whatever the profile.',
+  inspect: 'routing_profile'
+}
+
+export const MODEL_TIER_CRITERIA: Readonly<Record<TierChoiceKey, JevChoiceCriteria>> = {
+  fast_cheap: {
+    what: 'A quick, well-understood, low-risk task that needs no real reasoning depth.',
+    examples: [
+      'Rename this variable across the file.',
+      'Add a null check before this property access.'
+    ]
+  },
+  balanced: {
+    what: 'An everyday task that needs real reasoning but nothing architectural.',
+    examples: [
+      'Add a new field to this form and wire it through validation.',
+      'Extract this duplicated logic into a shared helper.'
+    ]
+  },
+  frontier: {
+    what: 'A hard task needing deep reasoning, architecture-level judgment, or tricky multi-file coordination.',
+    not_for: 'Trivial or simple prompts, whatever the routing profile.',
+    examples: [
+      'Design the data model for a feature this codebase has never had before.',
+      'Untangle a deadlock that only reproduces under real production load.'
+    ]
+  },
+  long_context: {
+    what: 'A task whose relevant material will not fit an ordinary context window.',
+    examples: [
+      'Trace where this regression was introduced across the full test history.',
+      'Review this migration end to end across the whole monorepo.'
+    ]
+  },
+  no_preference: {
+    what: 'No clear signal about how capable a model this needs — let the routing profile decide.',
+    examples: [
+      'Continue the change already under way in this thread.',
+      'Take a look at this and tell me what you think.'
+    ]
+  }
+}
+
+/**
+ * TypeSafe's own limits (docs.typesafe.ai, verified 2026-09-20 — issue
+ * #509's evidence section): 64k tokens total per systemOne request, and 32k
+ * for `state` plus the single longest question. Estimated as ceil(chars/4), a
+ * rough rule of thumb for English text — TypeSafe publishes no tokenizer and
+ * no chars-per-token figure, so this is an ESTIMATE, never an exact count,
+ * and the budget below is read conservatively because of it.
+ *
+ * Unlike v1, none of the five questions here scale with a model catalogue —
+ * four are fixed constants and `provider` scales with the launchable
+ * provider count alone (at most a handful) — so `budget-exceeded` is, in
+ * practice, unreachable through the fixed questions today. The guard stays
+ * for the same reason `parseLaunchTuning` re-validates a decision this app
+ * already built: belt and braces, cheap to keep, never trusted away.
+ */
+const CHARS_PER_TOKEN_ESTIMATE = 4
+const MAX_REQUEST_TOKENS = 64_000
+const MAX_STATE_AND_LONGEST_QUESTION_TOKENS = 32_000
+const TRUNCATION_MARKER = '\n…\n'
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE)
+}
+
+/** Keeps the head and the tail of `text` within `maxChars`, marked in between. */
+function truncateHeadTail(text: string, maxChars: number): string {
+  const budget = Math.max(0, maxChars)
+  if (budget <= TRUNCATION_MARKER.length) return TRUNCATION_MARKER.slice(0, budget)
+  const keep = budget - TRUNCATION_MARKER.length
+  const headChars = Math.ceil(keep / 2)
+  const tailChars = keep - headChars
+  const tail = tailChars > 0 ? text.slice(text.length - tailChars) : ''
+  return text.slice(0, headChars) + TRUNCATION_MARKER + tail
+}
+
+/**
+ * The shared truncate-then-check tail of building a System One request,
+ * for BOTH requests (verifier fix, #608): per models.md, "The 64k budget
+ * covers the `state` plus all questions combined" — trims the prompt to fit
+ * the 32k state-plus-longest-question ceiling first (unchanged), THEN
+ * checks the estimated POST-TRUNCATION state tokens plus every question
+ * against the 64k ceiling. The check used to read `allQuestionsTokens`
+ * alone, never adding the prompt at all — a request whose questions fit on
+ * their own could still carry a prompt that pushes the combined total over
+ * 64k, and TypeSafe would see the OVER-budget request, not this app's own
+ * (wrong) verdict that it fit.
+ *
+ * Exported for a direct test: `buildJevRouteRequest`'s own five questions
+ * are ALL fixed-size or bounded by the catalog's provider list (at most
+ * four short, constant option texts) — no caller input can make
+ * `allQuestionsTokens` approach anywhere near 64k, so a real end-to-end
+ * `buildJevRouteRequest` call can never actually exercise the combined
+ * check this function adds (`buildJevModelRouteRequest`'s own many-candidate
+ * test in routeRequest.test.ts DOES exercise it end to end — its question
+ * count scales with the tier's own candidates, unlike request 1's). Both
+ * builders delegate to this one function for the check, so a direct test
+ * against realistic-but-controllable token counts proves the fix for
+ * BOTH call sites at once, honestly, rather than fabricating an
+ * unreachable scenario for request 1.
+ */
+export function truncateAndCheckBudget(
+  prompt: string,
+  longestQuestionTokens: number,
+  allQuestionsTokens: number
+): { kind: 'over-budget' } | { kind: 'fits'; prompt: string; truncated: boolean } {
+  const stateBudgetTokens = MAX_STATE_AND_LONGEST_QUESTION_TOKENS - longestQuestionTokens
+  const truncated = estimateTokens(prompt) > stateBudgetTokens
+  const trimmedPrompt = truncated
+    ? truncateHeadTail(prompt, stateBudgetTokens * CHARS_PER_TOKEN_ESTIMATE)
+    : prompt
+  if (estimateTokens(trimmedPrompt) + allQuestionsTokens >= MAX_REQUEST_TOKENS) {
+    return { kind: 'over-budget' }
+  }
+  return { kind: 'fits', prompt: trimmedPrompt, truncated }
+}
+
+export interface BuildJevRouteRequestInput {
+  prompt: string
+  routingProfile: JevRoutingProfile
+  providers: readonly RoutingProviderOption[]
+  /**
+   * The per-install capability table, injected rather than imported (#547) —
+   * the same `JevCapabilityTable` shape `decideLaunch` already takes, so the
+   * two never disagree about which providers have entries. `routeLaunch.ts`
+   * assembles the real one at route time (curated tables plus OpenCode's own
+   * live-derived one); tests pass a small synthetic table instead, the same
+   * way `routeDecision.test.ts` already does.
+   */
+  capabilities: JevCapabilityTable
+}
+
+export type BuildJevRouteRequestResult =
+  | { kind: 'request'; request: JevRouteRequest }
+  | { kind: 'skip'; reason: 'no-launchable-provider' | 'budget-exceeded' }
+
+/**
+ * Builds one System One request, or says why none can be built. Never
+ * reaches for LAUNCHABLE_PROVIDERS itself — `providers` already carries each
+ * option's own `launchable` verdict (agentProviderList), and reading it
+ * straight off the input is what keeps this module decoupled from that
+ * table rather than duplicating its rule.
+ *
+ * A launchable provider whose `capabilities` entry has ZERO `launchTarget:
+ * true` models is OMITTED from the `provider` question too (#547) — the
+ * same "degrade rather than offer something empty" rule `launchable` above
+ * already applies, extended to cover a provider that CAN be started but has
+ * nothing this table could truthfully describe (OpenCode when its own live
+ * catalogue could not be read). This is the only place that check happens:
+ * a provider passing it always has at least one tier `providerChoiceCriteria`
+ * can name.
+ */
+export function buildJevRouteRequest(input: BuildJevRouteRequestInput): BuildJevRouteRequestResult {
+  const providerCriteria: Record<string, JevChoiceCriteria> = {}
+  for (const option of input.providers) {
+    if (!option.launchable || !hasAnyLaunchTarget(input.capabilities[option.provider] ?? {}))
+      continue
+    const criteria = providerChoiceCriteria(option.provider, input.capabilities, option.label)
+    if (criteria !== undefined) providerCriteria[option.provider] = criteria
+  }
+  if (Object.keys(providerCriteria).length === 0) {
+    return { kind: 'skip', reason: 'no-launchable-provider' }
+  }
+  providerCriteria.no_preference = NO_PREFERENCE_PROVIDER_CRITERIA
+
+  const questionTokenCosts = {
+    trivial: estimateTokens(
+      JSON.stringify(IS_TRIVIAL_INSTRUCTIONS) + JSON.stringify(IS_TRIVIAL_CRITERIA)
+    ),
+    largeContext: estimateTokens(
+      JSON.stringify(NEEDS_LARGE_CONTEXT_INSTRUCTIONS) +
+        JSON.stringify(NEEDS_LARGE_CONTEXT_CRITERIA)
+    ),
+    provider: estimateTokens(
+      JSON.stringify(PROVIDER_QUESTION_INSTRUCTIONS) + JSON.stringify(providerCriteria)
+    ),
+    tier: estimateTokens(
+      JSON.stringify(MODEL_TIER_QUESTION_INSTRUCTIONS) + JSON.stringify(MODEL_TIER_CRITERIA)
+    ),
+    effort: estimateTokens(EFFORT_QUESTION_INSTRUCTIONS + EFFORT_RUBRIC.join(''))
+  }
+  const longestQuestionTokens = Math.max(...Object.values(questionTokenCosts))
+  const allQuestionsTokens = Object.values(questionTokenCosts).reduce((sum, cost) => sum + cost, 0)
+
+  if (longestQuestionTokens >= MAX_STATE_AND_LONGEST_QUESTION_TOKENS) {
+    return { kind: 'skip', reason: 'budget-exceeded' }
+  }
+
+  const budgeted = truncateAndCheckBudget(input.prompt, longestQuestionTokens, allQuestionsTokens)
+  if (budgeted.kind === 'over-budget') {
+    return { kind: 'skip', reason: 'budget-exceeded' }
+  }
+
+  return {
+    kind: 'request',
+    request: {
+      prompt: budgeted.prompt,
+      routingProfile: input.routingProfile,
+      truncated: budgeted.truncated,
+      providerCriteria
+    }
+  }
+}
+
+/* --- #608: the second request, over the tier's own candidate models ------- */
+
+/**
+ * One candidate's own capability facts, in `JevModelCandidateCriteria`'s own
+ * shape (above) — `what`/`notFor`/`examples` straight off the
+ * entry, plus `tier`/`relativeCost`/`contextWindowTokens` so two same-tier
+ * candidates can still be told apart on cost and context alone when their
+ * prose is close. Never the model's own id, name, alias or family — see this
+ * module's own top comment and the jev-capabilities skill's evidence rule.
+ * The one function both `buildJevModelRouteRequest` below and
+ * `typesafeJevRouter.ts`'s adapter call, so the Choice criteria and every
+ * Noul's own embedded facts are built from the identical values.
+ */
+export function candidateCapabilityFacts(entry: ModelCapabilityEntry): JevModelCandidateCriteria {
+  return {
+    what: entry.what,
+    not_for: entry.notFor,
+    examples: entry.examples,
+    tier: entry.tier,
+    relativeCost: entry.relativeCost,
+    ...(entry.contextWindowTokens === undefined
+      ? {}
+      : { contextWindowTokens: entry.contextWindowTokens })
+  }
+}
+
+/**
+ * The `which` Choice question's own instructions (#608) — parameterised by
+ * `tier`, unlike request 1's fixed questions, because THIS tier is a fact
+ * about the launch just resolved, not a fixed rubric. Mirrors the skill-
+ * suggestion cookbook's own `RERANK_INSTRUCTIONS`: exactly one candidate is
+ * the right one, read what each actually offers rather than guessing from a
+ * label — there is no label here to guess from anyway.
+ */
+export function modelChoiceInstructions(tier: ModelTier): JevQuestionInstructions {
+  return {
+    question:
+      `Exactly one of these models is the best fit for the prompt in state, given the task ` +
+      `needs a ${tier} model. Which one?`
+  }
+}
+
+/**
+ * One `fits::<index>` Noul question's own instructions (#608) — the
+ * candidate's own capability facts ride INSIDE the structured instructions
+ * object (never in `criteria`, which a Noul only ever gives two fixed
+ * yes/no sides — primitives/noul.md), the same "structure when the question
+ * needs data alongside it" shape the SDE cascade cookbook and this file's
+ * own `EFFORT_QUESTION_INSTRUCTIONS` sibling questions already use.
+ */
+export function modelFitInstructions(
+  tier: ModelTier,
+  candidate: JevModelCandidateCriteria
+): { question: string; candidate: JevModelCandidateCriteria } {
+  return {
+    question: `Given the task needs a ${tier} model, does this specific model fit the prompt in state?`,
+    candidate
+  }
+}
+
+export interface BuildJevModelRouteRequestInput {
+  prompt: string
+  routingProfile: JevRoutingProfile
+  /** The tier the task needs — read into the fit question, and carried on the request for the adapter to phrase the Choice question with too. */
+  tier: ModelTier
+  /**
+   * Two or more candidates. `routeLaunch.ts` never calls this with fewer:
+   * zero candidates means nothing to ask about, and exactly one means no
+   * second request at all (`applied: 'only-candidate'`) — both decided
+   * before this function is ever reached.
+   */
+  candidates: ReadonlyArray<{ id: string; entry: ModelCapabilityEntry }>
+}
+
+export type BuildJevModelRouteRequestResult =
+  { kind: 'request'; request: JevModelRequest } | { kind: 'skip'; reason: 'budget-exceeded' }
+
+/**
+ * Builds #608's second System One request, or says why it could not fit —
+ * the same token-budgeting discipline `buildJevRouteRequest` already holds
+ * to (TypeSafe's own 64k-total / 32k-state-plus-longest-question limits,
+ * estimated the same conservative ceil(chars/4) way), reused rather than
+ * reimplemented. Unlike request 1's fixed five questions, THIS request's
+ * size scales with the candidate count, so `budget-exceeded` is a real,
+ * reachable outcome here — a large OpenCode tier with many differentiated
+ * candidates is exactly the case #608 T1 exists for.
+ *
+ * Candidates are keyed by INDEX (`'0'`, `'1'`, …) in both the returned
+ * request's own `candidates` and the `fits::<index>` Noul questions the
+ * adapter builds from it — never by the candidate's own model id, so a
+ * model's identity never rides the wire to Jev (jev-capabilities skill's
+ * evidence rule).
+ */
+export function buildJevModelRouteRequest(
+  input: BuildJevModelRouteRequestInput
+): BuildJevModelRouteRequestResult {
+  const candidateCriteria: Record<string, JevModelCandidateCriteria> = {}
+  input.candidates.forEach((candidate, index) => {
+    candidateCriteria[String(index)] = candidateCapabilityFacts(candidate.entry)
+  })
+
+  const questionTokenCosts: Record<string, number> = {
+    which: estimateTokens(
+      JSON.stringify(modelChoiceInstructions(input.tier)) + JSON.stringify(candidateCriteria)
+    )
+  }
+  for (const [key, criteria] of Object.entries(candidateCriteria)) {
+    questionTokenCosts[`fits::${key}`] = estimateTokens(
+      JSON.stringify(modelFitInstructions(input.tier, criteria))
+    )
+  }
+  const longestQuestionTokens = Math.max(...Object.values(questionTokenCosts))
+  const allQuestionsTokens = Object.values(questionTokenCosts).reduce((sum, cost) => sum + cost, 0)
+
+  if (longestQuestionTokens >= MAX_STATE_AND_LONGEST_QUESTION_TOKENS) {
+    return { kind: 'skip', reason: 'budget-exceeded' }
+  }
+
+  const budgeted = truncateAndCheckBudget(input.prompt, longestQuestionTokens, allQuestionsTokens)
+  if (budgeted.kind === 'over-budget') {
+    return { kind: 'skip', reason: 'budget-exceeded' }
+  }
+
+  return {
+    kind: 'request',
+    request: {
+      prompt: budgeted.prompt,
+      routingProfile: input.routingProfile,
+      truncated: budgeted.truncated,
+      tier: input.tier,
+      candidates: candidateCriteria
+    }
+  }
+}
+
+/* --- end of the #608 block ------------------------------------------------- */

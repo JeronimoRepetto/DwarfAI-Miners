@@ -1,0 +1,81 @@
+{
+  "label": "electron-run-as-node",
+  "takenAt": "2026-09-30T21:14:01.106Z",
+  "platform": "win32",
+  "osRelease": "10.0.26200",
+  "osVersion": "Windows 11 Pro",
+  "node": "24.18.1",
+  "fastStartup": true,
+  "readings": [
+    {
+      "source": "registry PrefetchParameters\\BootId (reg.exe)",
+      "field": "bootId",
+      "value": 213,
+      "latencyMs": 23,
+      "error": null
+    },
+    {
+      "source": "CIM Win32_OperatingSystem.LastBootUpTime (powershell)",
+      "field": "bootTimeMs",
+      "value": 1789864316000,
+      "latencyMs": 412.5,
+      "error": null
+    },
+    {
+      "source": "now - os.uptime() (Node, in process)",
+      "field": "bootTimeMs",
+      "value": 1789864300000,
+      "latencyMs": 0.1,
+      "error": null
+    },
+    {
+      "source": "whoami /logonid (logon SID)",
+      "field": "logonSessionId",
+      "value": "1a6287121fcb",
+      "latencyMs": 41.3,
+      "error": null
+    },
+    {
+      "source": "NtQuerySystemInformation(SystemTimeOfDayInformation).BootTime, to the second (helper)",
+      "field": "reference",
+      "value": 1789864318000,
+      "latencyMs": 50.5,
+      "error": null
+    },
+    {
+      "source": "now - GetTickCount64(), to the second (helper)",
+      "field": "reference",
+      "value": 1789864300000,
+      "latencyMs": 50.5,
+      "error": null
+    },
+    {
+      "source": "now - QueryUnbiasedInterruptTime() (excludes sleep), to the second (helper)",
+      "field": "reference",
+      "value": 1789978653000,
+      "latencyMs": 50.5,
+      "error": null
+    },
+    {
+      "source": "SystemTimeOfDayInformation.SleepTimeBias, ms (helper)",
+      "field": "reference",
+      "value": 114352821,
+      "latencyMs": 50.5,
+      "error": null
+    },
+    {
+      "source": "token TokenStatistics.AuthenticationId (logon LUID, helper)",
+      "field": "logonSessionId",
+      "value": "191a93af8307",
+      "latencyMs": 50.5,
+      "error": null
+    },
+    {
+      "source": "ProcessIdToSessionId (terminal session, helper)",
+      "field": "reference",
+      "value": "ef2d127de37b",
+      "latencyMs": 50.5,
+      "error": null
+    }
+  ]
+}

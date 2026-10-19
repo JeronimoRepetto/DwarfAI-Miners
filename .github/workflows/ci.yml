@@ -4,19 +4,45 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # `labeled` joins the default pull-request activity types so that adding the
+  # `e2e` label starts the E2E release lane on that pull request (17 §1.13).
+  # The checks job also runs again on a label change; its result stays the
+  # merge check for the same commit.
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  # Nightly release lanes, E2E and perf (17 §1.11, §1.13; 20 §2.1). The checks
+  # job runs too, so a nightly run also shows main's merge checks.
+  schedule:
+    - cron: '0 3 * * *'
+  # The package job runs on a manual dispatch too (20 §2.1 `package`, ISSUE-268). A dispatch also runs
+  # checks and native-arm64, which run on every event; e2e and perf keep their own triggers.
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# A new push to a pull request supersedes its older run, so that run is cancelled and the runners go to
+# the newest commit. Runs on main, tags, the nightly schedule and dispatches are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # @electron/get honors this env var to pick where it caches the downloaded
   # Electron zip. Paired with the actions/cache step below, this avoids
   # re-downloading Electron (~100+ MB) on every run.
   ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  # Determinism of the test lanes (17 §5.3): a fixed time zone and locale, and
+  # a fixed property-test seed, so a test that depends on the runner's clock
+  # zone, language or a random seed fails the same way everywhere.
+  TZ: UTC
+  LANG: C.UTF-8
+  FC_SEED: '20260930'
 
 jobs:
   checks:
+    # The display name is kept as it was: the "Protect main" ruleset requires this exact status check, so a
+    # rename would leave every pull request waiting on a check that no longer reports.
     name: Privacy guard, typecheck, lint, format, skills-sync, test, build (${{ matrix.os }})
     # All three OSes, because the suite is only platform-independent when a
     # host other than Windows runs it. This job was Windows-only until #470,
@@ -24,16 +50,38 @@ jobs:
     # on a Mac, 28 tests failed, every one a path built with the host's
     # `join` against a Windows-shaped fixture. A leg per OS is what keeps that
     # class from coming back; fail-fast is off so one red leg still shows the
-    # other two. The `release` job below covers the same three for packaging.
+    # other two. The `package` job below covers the same three for packaging.
+    #
+    # The steps are the required merge checks of the testing strategy
+    # (architecture package 17 §5.2), in the stage order of its §5.1:
+    #   1. static: privacy guard, typecheck, lint (ESLint + dependency-cruiser),
+    #      format check, skills in sync;
+    #   2. architecture: lint canaries, the ESLint print-config test and the
+    #      arch-exception ratchet, contract sync;
+    #   3. tests: `pnpm test` (L1-L7), shuffled with a printed seed;
+    #   4. gates: test-loss census against the merge base, `pnpm trace:check`,
+    #      the quarantine expiry rule and cross-OS parity;
+    #   5. OS lane: `pnpm test:os` (L8) and its empty-lane guard;
+    #   6. build.
+    # Contract sync and the gates run on the Linux leg only; the rest on all
+    # three. Any failing step fails the job and blocks the merge: no step
+    # continues on error and L1-L7 have no retries (17 §5.4). E2E, perf and
+    # the golden image tests are not merge checks and never run here.
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
+      # The census compares the tree with the merge base, so the Linux leg,
+      # which runs it, needs the whole history; the other legs stay shallow.
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ matrix.os == 'ubuntu-latest' && '0' || '1' }}
+
+      # ---- Stage 1: static ----
 
       # Recurrence guard for the pre-publication privacy audit (issue #32,
       # docs/privacy-audit.md). Test paths, fixtures and shipped defaults used
@@ -107,11 +155,13 @@ jobs:
       # via `allowBuilds` conventions and the committed lockfile) — its own
       # docs say to use pnpm/setup instead for v11+. pnpm/setup also installs
       # the pinned Node.js runtime in the same step, so a separate
-      # actions/setup-node step is not needed.
+      # actions/setup-node step is not needed. `version` is exact, never a
+      # floating major (AGENTS §0.2): every job runs the pnpm the maintainer
+      # runs locally; ci-lanes.test.mjs checks it.
       - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
@@ -124,7 +174,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache Electron download
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ELECTRON_CACHE }}
           key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
@@ -132,10 +182,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # tsc and vue-tsc check the whole program in one process; the typecheck scripts in package.json raise the
+      # V8 heap ceiling themselves (exit 134 "JavaScript heap out of memory" on macOS at the default, PR #1386,
+      # and locally at 4 GB, 2026-10-18), so every machine runs the same command.
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Lint
+      # `pnpm lint` runs ESLint, then dependency-cruiser (`pnpm depcruise`),
+      # so the four-command local gate stays the whole gate (17 §0).
+      - name: Lint (ESLint and dependency-cruiser)
         run: pnpm lint
 
       - name: Format check
@@ -149,47 +204,444 @@ jobs:
       - name: Skills in sync with AGENTS.md
         run: node skills/skill-sync/assets/sync.mjs --check
 
-      - name: Test
-        run: pnpm test
+      # ---- Stage 2: architecture ----
+
+      # Every lint rule R1-R19 has a canary tree that must trip exactly that
+      # rule; a rule that can no longer fire fails here (ADR-004 item 3).
+      - name: Lint canaries
+        run: pnpm test:canaries
+
+      - name: ESLint print-config test and arch-exception ratchet
+        run: pnpm vitest run scripts/checks/eslint-print-config.test.mjs scripts/checks/arch-exception-ratchet.test.mjs
+
+      # Compares the verbatim contract copies of the architecture package with
+      # their owners. The package lives only on the owner's machine
+      # (new-architecture/ is git-ignored and never pushed), so here the
+      # script prints "architecture package not present: contract sync
+      # skipped" and exits 0; the owner runs it before pushing (17 §5.2, OQ-83).
+      - name: Contract sync
+        if: runner.os == 'Linux'
+        run: node scripts/checks/contract-sync.mjs
+
+      # ---- Stage 3: tests ----
+
+      # Shuffled so no test can depend on another's order (17 §5.3). The seed
+      # is this run's id, printed first, so a failure reproduces locally with
+      # the command the step prints.
+      - name: Test (L1-L7)
+        shell: bash
+        env:
+          SEED: ${{ github.run_id }}
+        run: |
+          echo "Vitest shuffle seed: $SEED (reproduce with: pnpm test --sequence.shuffle --sequence.seed=$SEED)"
+          pnpm test --sequence.shuffle --sequence.seed="$SEED"
+
+      # ---- Stage 4: gates (Linux leg) ----
+
+      # A pull request is compared with the merge base of its target branch; a
+      # push with the commit it moved the branch from; a tag, or a push whose
+      # previous commit is unknown, with the first parent of HEAD.
+      - name: Resolve the merge base
+        id: merge-base
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base=$(git merge-base "origin/$BASE_REF" HEAD)
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base=$(git merge-base "$BEFORE" HEAD)
+          else
+            base=$(git rev-parse HEAD~1)
+          fi
+          echo "Merge base: $base"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      # A file that lost test statements passes only with its new row in
+      # docs/test-removals.md (17 §2.6).
+      - name: Test-loss census against the merge base
+        if: runner.os == 'Linux'
+        run: node scripts/checks/census-gate.mjs --base ${{ steps.merge-base.outputs.base }}
+
+      # Its catalog (typo) check needs the architecture package, so here it is
+      # skipped with a notice; the closed-AC and ratchet checks run (17 §3.2).
+      - name: Trace check
+        if: runner.os == 'Linux'
+        run: pnpm trace:check
+
+      - name: Quarantine expiry
+        if: runner.os == 'Linux'
+        run: node scripts/checks/quarantine.mjs
+
+      # Compares the golden run's visible-text and control report of the three
+      # OS legs (BR-24). The golden lane runs only on the maintainer's machine,
+      # so without its reports this step prints a skip notice.
+      - name: Cross-OS parity
+        if: runner.os == 'Linux'
+        run: node scripts/checks/cross-os-parity.mjs
+
+      # ---- Stage 5: OS lane ----
+
+      # The Windows native modules, prebuilt here and never on a person's
+      # machine: the Host's owner-only pipe helper (ADR-003 item 2) and the UI's
+      # launch helper (ADR-002 D6 item 1, job breakaway from UI main). The runner's Visual
+      # Studio has the MSVC x64 and ARM64 build tools (actions/runner-images,
+      # Windows Server 2025), so arm64 is cross-compiled to prove it builds;
+      # the OS lane below loads the x64 one, and the native-arm64 job runs the
+      # arm64 one on an arm64 runner.
+      - name: Build the Windows native modules (x64 and arm64)
+        if: runner.os == 'Windows'
+        run: |
+          pnpm build:native --arch x64
+          pnpm build:native --arch arm64
+
+      # Real OS facilities, per platform, on every pull request and push
+      # (17 §1.8, §1.13). The guard fails the leg when its lane executed zero
+      # tests, so a mistyped platform guard cannot pass silently (HO-38).
+      # The Linux runner has no display, so its leg runs under Xvfb, as the E2E
+      # lane does: an OS-lane test that opens an Electron window then runs on
+      # all three OSes instead of skipping its Linux leg.
+      # The hosted Windows runner runs every step elevated (an administrator with
+      # UAC off), while the package's test user is not (ISSUE-021 L8) and the real
+      # Host refuses to start elevated (ADR-002 D6). The Windows steps that run the
+      # real Host therefore run as a standard local user created here
+      # (scripts/ci/run-unelevated.mjs; ISSUE-051). This probe prints that user's
+      # integrity level and fails unless it is medium or below.
+      - name: Non-elevated test user (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs --probe
+
+      - name: OS lane (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        env:
+          SPIKE_REPORT_DIR: coverage/spike-reports
+          S0181_MODE: record
+        run: xvfb-run --auto-servernum pnpm test:os
+
+      - name: OS lane (Windows, as the non-elevated test user)
+        if: runner.os == 'Windows'
+        env:
+          SPIKE_REPORT_DIR: coverage/spike-reports
+          S0181_MODE: record
+        run: node scripts/ci/run-unelevated.mjs -- pnpm test:os
+
+      - name: OS lane
+        if: runner.os == 'macOS'
+        env:
+          SPIKE_REPORT_DIR: coverage/spike-reports
+          S0181_MODE: record
+        run: pnpm test:os
+
+      - name: OS-lane empty guard
+        run: node scripts/checks/os-lane-guard.mjs
+
+      # The raw outputs of the cut-1 entry spikes S-030-1, S-018-1 and S-027-4 (ISSUE-318): the OS-lane harnesses
+      # above write them under SPIKE_REPORT_DIR, and S0181_MODE=record lets the S-018-1 harness show one notification
+      # on this runner's desktop, which is nobody's. The owner copies them into spike-results/<ID>/ (17 §4).
+      - name: Upload spike evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-evidence-${{ matrix.os }}
+          path: coverage/spike-reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ---- Stage 6: build ----
 
       - name: Build
         run: pnpm build
 
-  # electron-builder cannot cross-build a dmg or a deb, so macOS/Linux
-  # artifacts each need their own runner — hence the matrix below. Each leg
-  # packages its own installers and attaches them to the same GitHub Release
-  # for the pushed tag. macOS is deliberately NOT one of this matrix's
-  # entries — see the `release-mac` job below for why.
-  release:
-    name: Package installers and publish release
+      # The high-integrity half of ELEVATED_REFUSED (ADR-002 D6; 07 S12.03; 13
+      # FM-011). The OS lane above runs as the non-elevated test user and still
+      # asserts it is not elevated there, so it can only prove the Host's
+      # fail-closed refusal. This leg's own user is elevated, so this one step,
+      # deliberately outside run-unelevated.mjs, starts the Host just built and
+      # expects exit 65 with nothing bound; the script fails if the token is not
+      # high integrity, since it would prove nothing. It reads no secret, and it
+      # never runs for a pull request from a fork.
+      - name: Elevated start refused (Windows, as the elevated job user)
+        if: runner.os == 'Windows' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)
+        run: node scripts/ci/check-elevated-refusal.mjs --entry out/host/main.js
+
+  # The Windows native modules (the owner-only pipe helper, ADR-003 item 2, and
+  # the UI's launch helper, ADR-002 D6 item 1) as arm64 binaries on an arm64
+  # Windows runner (a standard GitHub-hosted runner, free on public
+  # repositories): built natively and run through their OS-lane tests, the
+  # security test of the Host's pipe included. The checks job only
+  # cross-compiles them. Not a required merge check: the ruleset names only the
+  # checks job.
+  native-arm64:
+    name: Owner-only pipe helper on Windows arm64
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the Windows native modules (arm64)
+        run: pnpm build:native --arch arm64
+
+      - name: Native modules OS-lane tests
+        run: pnpm vitest run --config vitest.os.config.ts src/host/platform/endpoint/win-pipe src/host/transport/endpoint/server.os.test.ts src/ui-main/hostLauncher/win-launch scripts/native
+
+  # Release lane L9, E2E (17 §1.9, §1.13, §5.2; 20 §2.1): the built app under
+  # Playwright's `_electron`, on every push to main, nightly, on release tags
+  # and on a pull request labelled `e2e`. It is required for a release, never
+  # for a merge (HO-38: flaky real-process lanes never block normal merges): the
+  # "Protect main" ruleset requires only the checks job's name above, and that
+  # job does not wait for this one. On a pull request it runs only with the
+  # `e2e` label, and a label event starts it only when that label is the one
+  # added. Linux runs the app under Xvfb (an X11 session, 17 §1.13). The build
+  # carries the E2E build profile (build-time data, 17 §1.9) through
+  # DWARFAI_BUILD_PROFILE; docs/e2e.md describes the lane.
+  e2e:
+    name: E2E release lane (${{ matrix.os }})
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'e2e') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'e2e'))
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # pnpm-workspace.yaml does not let electron's own install script run, so
+      # the Electron binary the tests launch is fetched here (from the cache
+      # above when it holds this version).
+      - name: Install the Electron binary
+        run: pnpm exec install-electron
+
+      # The Windows native modules the built app loads from prebuilds/ (git-ignored): the
+      # Host's owner-only pipe helper (ADR-003 item 2) and the UI's launch helper (ADR-002
+      # D6 item 1). Without them the Host the app starts cannot bind its pipe (ISSUE-051).
+      - name: Build the Windows native modules (x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
+
+      - name: Build (E2E build profile)
+        env:
+          DWARFAI_BUILD_PROFILE: e2e
+        run: pnpm build
+
+      # As in the checks job: the Windows leg runs the E2E cases, whose app starts
+      # the real Host, as a standard local user (ADR-002 D6; ISSUE-021 L8;
+      # ISSUE-051), after a probe of its integrity level.
+      - name: Non-elevated test user (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs --probe
+
+      - name: E2E (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum pnpm test:e2e
+
+      - name: E2E (Windows, as the non-elevated test user)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs -- pnpm test:e2e
+
+      - name: E2E
+        if: runner.os == 'macOS'
+        run: pnpm test:e2e
+
+      # Traces are kept only for a failed test (playwright.config.ts).
+      - name: Upload E2E traces
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-traces-${{ matrix.os }}
+          path: test-results/e2e/**
+          if-no-files-found: ignore
+
+  # Release lane L11, perf (17 §1.11, §1.13, §5.2): `pnpm test:perf` nightly and
+  # on release tags, per OS, and never on a pull request. It appends its records
+  # to perf-results/<os>/<date>.json, uploaded as this run's artifact. No
+  # threshold exists yet, so it gates nothing until the lead records each OS's
+  # baseline in 17 §1.11; it never blocks a merge (HO-38).
+  perf:
+    name: Perf release lane (${{ matrix.os }})
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Perf
+        run: pnpm test:perf
+
+      - name: Upload perf results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-results-${{ matrix.os }}
+          path: perf-results/**
+          if-no-files-found: warn
+
+  # The licence report, the SBOM of each artifact OS and the S-008-1 record check (20 §2.1 `license-sbom`, §2.4,
+  # §3.2; 18 C-35, C-36; ISSUE-272). It runs on Linux on every push to main and on every event the package job runs
+  # on (a `v*` tag, a manual dispatch), and never on a pull request, so it is not a merge check. It fails on a denied
+  # or unreadable licence (scripts/release/licenses.denied.json), on a bundled provider adapter or library without a
+  # closed GPL-compatible S-008-1 row for its pinned version, and on an SBOM that does not list exactly the lockfile's
+  # production packages. The legacy Agent SDK packages pass the licence report only by ISSUE-273's dated
+  # allowance (scripts/release/provider-scan.allowance.json), printed as `allowed:`. The SBOM generator is the
+  # pinned pnpm's own `pnpm sbom` (CycloneDX), so no dependency is added (OI-20-3). Everything is read from the lockfile and the installed packages. It publishes nothing: the
+  # outputs are workflow artifacts kept one day; attaching them to a release is ISSUE-278's.
+  license-sbom:
+    name: Licence report and SBOM
     needs: checks
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'workflow_dispatch'
     permissions:
-      contents: write
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Licence report (licenses.json)
+        run: node scripts/release/licenses.mjs
+
+      - name: S-008-1 records of the bundled adapters and libraries
+        run: node scripts/release/s008-records.mjs
+
+      - name: SBOM per artifact OS (sbom-<os>.json)
+        run: |
+          pnpm sbom --sbom-format cyclonedx --prod --sbom-type application > "$RUNNER_TEMP/pnpm-sbom.json"
+          node scripts/release/sbom.mjs --input "$RUNNER_TEMP/pnpm-sbom.json"
+
+      - name: Third-party notices
+        run: node scripts/release/third-party-notices.mjs
+
+      - name: Upload the licence report, the SBOMs and the notices (kept one day)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: license-sbom
+          path: |
+            release/licenses/licenses.json
+            release/licenses/sbom-*.json
+            release/licenses/THIRD-PARTY-NOTICES.md
+          retention-days: 1
+          if-no-files-found: error
+
+  # The package job of the architecture (20 §2.1 `package`, ISSUE-268): on a `v*` tag and on a manual dispatch,
+  # each OS packages on its own runner, because electron-builder cannot cross-build a dmg or a deb. `pnpm package`
+  # builds exactly the 20 §3.2 targets of package.json `build` for the runner's OS (Windows zip and per-user nsis
+  # installer, macOS dmg and zip for arm64 and x64, Linux AppImage and deb), then the packaged-artifact checks run on
+  # what it wrote (`pnpm test:packaged`; P-08 today, the other P checks plug in from their own issues).
+  #
+  # It publishes nothing. The artifacts are workflow artifacts, kept one day because the repository is public; the
+  # release job that uploads to a draft GitHub Release is ISSUE-278's, and the signed, notarized macOS build is
+  # ISSUE-280's. Until then a `v*` tag packages and checks, and publishes nothing (no public build before cut 5,
+  # OQ-66). So the job holds `contents: read`, uses no Environment and reads no secret, and the macOS leg packages
+  # unsigned. Fuses (ISSUE-269), the licence report and SBOM (ISSUE-272) join it from their own issues.
+  package:
+    name: Package (${{ matrix.os }})
+    needs: checks
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            package_script: package
-            asset_files: |
-              release/DwarfAI-Miners-Setup-*.exe
-              release/DwarfAI-Miners-Portable-*.exe
+            package_args: ''
+            installer_suffixes: .exe .zip
+          # Pinned, not `macos-latest`: macos-15 is the image electron-builder 26.15.3 is known to package on
+          # (on the macOS 26 image its temporary keychain failed, 2026-09-10). Move the pin only after a dispatch
+          # proves the newer image.
+          - os: macos-15
+            package_args: '-c.mac.identity=null'
+            installer_suffixes: .dmg .zip
           - os: ubuntu-latest
-            package_script: package:linux
-            asset_files: |
-              release/*.AppImage
-              release/*.deb
+            package_args: ''
+            installer_suffixes: .AppImage .deb
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          version: 11
+          version: 11.1.1
           runtime: node@24
           cache: true
           install: false
@@ -202,7 +654,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache Electron download
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ELECTRON_CACHE }}
           key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
@@ -210,124 +662,57 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Package installers
-        run: pnpm ${{ matrix.package_script }}
+      # The Windows app ships the Host's prebuilt owner-only pipe helper (prebuilds/, asar-unpacked by
+      # package.json `build`); the Windows targets are x64 only.
+      - name: Build the owner-only pipe helper (Windows x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
 
-      # softprops/action-gh-release's release() already retries and
-      # reconciles concurrent creates against the same tag (it picks the
-      # canonical non-draft/oldest-id release), so no separate "create the
-      # release first" job is needed for the legs racing to create it.
-      #
-      # `generate_release_notes` is scoped to a single leg (ubuntu-latest) on
-      # purpose: GitHub's API re-generates notes from commits on every
-      # updateRelease call, and — because the other legs pass no body, the
-      # action falls back to re-sending the existing body — flipping this on
-      # for every leg would prepend a fresh copy of the same notes on every
-      # leg that runs after the first, duplicating them. `append_body` stays
-      # on for all legs as a safety net: it only appends when a leg's own
-      # body is non-empty, which is never the case here, so it never clobbers
-      # whatever the notes-leg has already written. `release-mac` below keeps
-      # this the same single leg by passing `generate_release_notes: false`.
-      - name: Publish release
-        uses: softprops/action-gh-release@v3
-        with:
-          draft: false
-          generate_release_notes: ${{ matrix.os == 'ubuntu-latest' }}
-          append_body: true
-          fail_on_unmatched_files: true
-          files: ${{ matrix.asset_files }}
+      - name: Build
+        run: pnpm build
 
-  # macOS packaging needs the Developer ID certificate and Apple notarization
-  # credentials, which live only in the GitHub `release` Environment (never
-  # as repository secrets) — see docs/signing.md. `environment:` takes one
-  # value per job, evaluated once for that job; there is no clean way to
-  # apply it to a single entry of the matrix above without giving the
-  # Windows/Linux entries an empty/conditional environment name, which is
-  # not a real "no environment" and risks those legs failing or waiting on
-  # an environment that was never meant to gate them. Splitting macOS into
-  # its own job keeps the blast radius of those five secrets to exactly the
-  # one job that needs them, and the `release` environment's own `v*`
-  # deployment policy means this job additionally refuses to run for any ref
-  # that isn't a `v*` tag, on top of the `if:` below. That policy has to be
-  # of type TAG: the first tag build after the repository went public
-  # (v0.9.0, 2026-09-10) was refused in two seconds because the only policy
-  # was `v*` of type BRANCH, which no tag ever matches — environment
-  # protection is enforced only on public repositories, so it had never run.
-  release-mac:
-    name: Package macOS installers and publish release
-    needs: checks
-    if: startsWith(github.ref, 'refs/tags/v')
-    environment: release
-    permissions:
-      contents: write
-    # Pinned, not `macos-latest`. On the macOS 26 image (Darwin 25.6.0, what
-    # `macos-latest` resolved to on 2026-09-10) electron-builder 26.15.3's
-    # own temporary keychain fails at `security set-key-partition-list` with
-    # "SecKeychainUnlock: The user name or passphrase you entered is not
-    # correct" — after the certificate import succeeded, so the secrets are
-    # not the cause; the same secrets signed and notarized v0.8.0 by hand the
-    # day before. macOS 15 is the image that flow is known to work on. Move
-    # the pin only after a tag build proves the newer image.
-    runs-on: macos-15
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      # THIRD-PARTY-NOTICES.md ships in the app resources beside LICENSE (package.json build.extraResources; 20 §2.4,
+      # R-06; ISSUE-272). It reads the lockfile and installed packages only.
+      - name: Write the third-party notices
+        run: node scripts/release/third-party-notices.mjs
 
-      - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
-        with:
-          version: 11
-          runtime: node@24
-          cache: true
-          install: false
+      # P-03's lockfile half (20 §2.3; ISSUE-273): a provider binary, the Agent SDK or a provider CLI package among
+      # the production dependencies, or a production source reading a provider credential store, stops the job
+      # here, before electron-builder starts. Reads files only.
+      - name: Scan the lockfile and sources for provider binaries and the Agent SDK
+        run: node scripts/release/lockfile-provider-scan.mjs
 
-      - name: Read Electron version
-        id: electron-version
-        shell: bash
-        run: |
-          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Electron download
-        uses: actions/cache@v6
-        with:
-          path: ${{ env.ELECTRON_CACHE }}
-          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # Only this step sees the release environment's secrets — nothing
-      # earlier in the job needs them, and scoping them to the step keeps
-      # them out of the job's ambient env for every other step. CSC_LINK is
-      # the Developer ID Application .p12 as base64; electron-builder
-      # decodes it into a temporary keychain and auto-discovers the identity
-      # from there, which is why build.mac in package.json names no
-      # `identity` string. `notarize: true` in package.json stays
-      # unconditional rather than gated here — see docs/signing.md for why.
-      - name: Package installers
-        run: pnpm package:mac
+      # `pnpm package` passes `--publish never`, package.json `build` names no publish provider, and no token is
+      # in this job's environment. On macOS, `-c.mac.identity=null` (pnpm appends it to the script's
+      # electron-builder command) skips code signing, CSC_IDENTITY_AUTO_DISCOVERY=false keeps electron-builder from
+      # picking an identity out of the runner's keychain, and notarization runs only after a signature, so it is
+      # skipped with it. Signing and notarization are ISSUE-280's.
+      - name: Package
+        run: pnpm package ${{ matrix.package_args }}
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      # Mac artifact names come from the `build.mac.artifactName` template in
-      # package.json (`${productName}-${version}-${arch}.${ext}`), so the
-      # dmg/zip files carry no `-mac` suffix — e.g.
-      # `DwarfAI-Miners-0.1.0-arm64.dmg` / `DwarfAI-Miners-0.1.0-x64.zip`.
-      # `generate_release_notes: false` keeps note generation on the single
-      # ubuntu-latest leg above, per the comment on that step.
-      - name: Publish release
-        uses: softprops/action-gh-release@v3
+      # The installed app starts its Host from a versioned copy checked against host-manifest.json in its
+      # resources folder (ADR-002 D5); without a matching one the Host never starts. Reads files only.
+      - name: Check the Host build manifest of each packed app
+        run: node scripts/build/verify-packaged-host-manifest.mjs release
+
+      - name: Run the packaged-artifact checks
+        run: pnpm test:packaged release
+
+      - name: Write SHA256SUMS
+        run: node scripts/ci/sha256sums.mjs release ${{ matrix.installer_suffixes }}
+
+      - name: Upload artifacts (kept one day)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          draft: false
-          generate_release_notes: false
-          append_body: true
-          fail_on_unmatched_files: true
-          files: |
-            release/*.dmg
+          name: dwarfai-package-${{ matrix.os }}
+          path: |
+            release/*.exe
             release/*.zip
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+            release/SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error

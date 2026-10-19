@@ -1,0 +1,91 @@
+{
+  "case": "C-05",
+  "description": "The command writes a stderr line at its start, before DwarfAI gave it anything: an activity step of no turn. The first prompt on stdin opens a turn and its stdout line is a message; with no output for 30 s the turn end is inferred (turnEnd none, ADR-021 item 1, ADR-032 D5). The composer text is written to stdin with a newline, confirmed once written, echoed with echoOf, and its output arrives as log entries keyed by byte offset until the next inferred end.",
+  "script": [
+    { "do": "launch", "readyAfterMs": 3000 },
+    { "do": "advance", "ms": 27000 },
+    { "do": "sendTurn", "messageId": "m-1", "text": "list the files" },
+    { "do": "advance", "ms": 30000 }
+  ],
+  "outcomes": [
+    { "resolved": true },
+    null,
+    { "confidence": "confirmed", "heldUntilTurnEnd": false, "correlation": "{session}:m-1" },
+    null
+  ],
+  "events": [
+    {
+      "t": "activity",
+      "step": {
+        "sourceKey": "other:other:{session}:stderr@0",
+        "turnKey": null,
+        "kind": "other",
+        "summary": "warning: running without a config file",
+        "state": "finished",
+        "at": 0
+      }
+    },
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "other:other:{session}:stdout@0",
+        "role": "dwarf",
+        "text": "Agent ready. Reading the prompt.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "other:other:{session}:stdin@0",
+        "kind": "concluded",
+        "at": 30000,
+        "reliability": "inferred",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" },
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "other:other:{session}:stdin@13",
+        "role": "person",
+        "text": "list the files",
+        "providerTime": null,
+        "echoOf": "{session}:m-1"
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "other:other:{session}:stdout@33",
+        "role": "dwarf",
+        "text": "Listing the files.",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "other:other:{session}:stdout@52",
+        "role": "dwarf",
+        "text": "a.txt b.txt",
+        "providerTime": null
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "other:other:{session}:stdin@13",
+        "kind": "concluded",
+        "at": 60000,
+        "reliability": "inferred",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": ["first prompt", "list the files"]
+}

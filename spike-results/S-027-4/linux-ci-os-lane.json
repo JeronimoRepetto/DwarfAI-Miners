@@ -1,0 +1,54 @@
+{
+  "spike": "S-027-4",
+  "platform": "linux",
+  "osRelease": "6.17.0-1022-azure",
+  "elevation": {
+    "elevated": false,
+    "evidence": "uid not 0"
+  },
+  "entry": {
+    "kind": "linux-xdg-autostart",
+    "location": "<home>/.config/autostart/dwarfai-spike-s0274-<suffix>.desktop"
+  },
+  "writeMs": 1,
+  "readBack": {
+    "present": true,
+    "command": {
+      "executable": "<repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/electron",
+      "args": ["<tmp>/dwarfai-s0274-uZFwAY/app", "--no-sandbox", "--background"]
+    },
+    "disabledByPerson": false,
+    "raw": "[Desktop Entry]\nType=Application\nName=DwarfAI spike S-027-4\nExec=<repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/electron <tmp>/dwarfai-s0274-uZFwAY/app --no-sandbox --background\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
+  },
+  "started": {
+    "code": 0,
+    "events": [
+      {
+        "event": "started",
+        "electron": "44.0.0",
+        "startedAt": "2026-10-02T22:44:14.908Z",
+        "uptimeSeconds": 472,
+        "background": true,
+        "windows": 0,
+        "tray": {
+          "ok": true
+        }
+      }
+    ]
+  },
+  "afterRemove": {
+    "present": false,
+    "command": null,
+    "disabledByPerson": null,
+    "raw": null
+  },
+  "disabledReadBack": {
+    "present": true,
+    "command": {
+      "executable": "<repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/electron",
+      "args": ["<tmp>/dwarfai-s0274-uZFwAY/app", "--background"]
+    },
+    "disabledByPerson": true,
+    "raw": "[Desktop Entry]\nType=Application\nName=DwarfAI spike S-027-4\nExec=<repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/electron <tmp>/dwarfai-s0274-uZFwAY/app --background\nTerminal=false\nX-GNOME-Autostart-enabled=true\nHidden=true\n"
+  }
+}

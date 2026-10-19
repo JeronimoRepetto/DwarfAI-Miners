@@ -8,6 +8,12 @@ in full in [What it transmits](#what-it-transmits). This document states exactly
 what is stored, and what is transmitted. Every claim names the source that implements it, so it
 can be checked rather than trusted.
 
+> **Rebuild note (cut 5).** The source citations below name files under `src/main/` and `src/shared/`,
+> the legacy implementation that the rebuild replaced and cut 5 deleted. Until this document is rewritten
+> against the rebuilt code — the Host (`src/host/`), the window process (`src/ui-main/`) and the shared
+> contracts (`src/contracts/`) — read each citation as the legacy behaviour it described, not as the
+> current one.
+
 ## What it reads
 
 - **Claude Code session registries.** Every configured Claude root (default `~/.claude`, plus
@@ -320,10 +326,10 @@ plus one Choice over the same set — never by the candidate's own model id
 plus tier, relativeCost and contextWindowTokens — never the model id'` and `'keys every candidate by
 index — never by its own model id — in both the fits and the choice questions'`).
 **The model's own id, name, alias or family is never sent** — every candidate's description is the
-same sourced capability text the [`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill's
-evidence rule already governs for request 1's own criteria, never a label a matcher could read as a
-name. That skill's own "What Jev never receives" section says why: the first live run that asked Jev
-to choose among model names directly returned 0.38 confidence over eleven near-identical options.
+same sourced capability text that request 1's own criteria use (see
+[`modelCapability.ts`](../src/main/jev/capabilities/modelCapability.ts)), never a label a matcher could
+read as a name. The reason: the first live run that asked Jev to choose among model names directly
+returned 0.38 confidence over eleven near-identical options.
 
 **What comes back, in that response:** one "fits" probability per candidate, and the tie-breaking
 Choice's own winning index plus its full probability distribution over the same candidates — never a
@@ -385,8 +391,8 @@ and the launch still happens on the pickers' current values, saying that it did 
 `src/main/jev/typesafeJevRouter.ts`; `createJevLaunchRouter`, `src/main/jev/routeLaunch.ts`).
 `'low-confidence'` is still a named reason on the wire, kept for a distinguishable low-confidence
 failure worth naming again in the future, but no path produces it today: every per-question floor
-now resolves to a safe default instead — see the
-[`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill's own tier-routing section. When you
+now resolves to a safe default instead — see
+[`routeDecision.ts`](../src/main/jev/routeDecision.ts). When you
 have set a default provider, model or effort in Settings
 (see [What it stores](#what-it-stores-and-where)), main attaches it to the fallback on the wire
 (`fallbackTo`, `JevRouteLaunchResult`), and the panel applies it to the pickers exactly as it would
@@ -680,4 +686,4 @@ DwarfAI-Miners observes the files other tools write; it does not control what th
 - **Building from source** makes pnpm fetch dependencies from the npm registry. The packaged
   app fetches nothing.
 
-Anything this document does not cover, the source does — start at `src/main/`.
+Anything this document does not cover, the source does — start at `src/host/` and `src/ui-main/`.

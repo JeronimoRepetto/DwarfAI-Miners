@@ -1,0 +1,23 @@
+{
+  "spike": "S-014-1",
+  "mode": "stub",
+  "platform": "win32",
+  "osRelease": "10.0.26200",
+  "node": "24.11.1",
+  "windowMs": 2000,
+  "listingMs": 351,
+  "processesListed": 401,
+  "providerRowsListed": 5,
+  "providerRowsWithCwd": 5,
+  "sessionStartAfterProcessStartMs": {
+    "a": 30,
+    "b": 26
+  },
+  "outcomes": {
+    "a": "identity",
+    "b": "identity",
+    "c": "no-identity:ambiguous:2",
+    "staleB": "no-identity:no-candidate:0",
+    "d": "no-identity:no-candidate:0"
+  }
+}

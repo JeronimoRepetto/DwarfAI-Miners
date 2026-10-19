@@ -1,0 +1,7 @@
+{"at":3,"event":"spawn","pid":39960,"dwarfaiUnknownField":"extra"}
+{"at":4,"stream":"sent","bytes":224,"dwarfaiUnknownField":"extra"}
+{"at":535,"stream":"received","bytes":726,"dwarfaiUnknownField":"extra"}
+{"at":535,"stream":"sent","bytes":716,"dwarfaiUnknownField":"extra"}
+{"at":703,"stream":"received","bytes":1413,"dwarfaiUnknownField":"extra"}
+{"at":704,"stream":"received","bytes":7498,"dwarfaiUnknownField":"extra"}
+{"at":2113,"event":"exit","code":1,"signal":null,"dwarfaiUnknownField":"extra"}

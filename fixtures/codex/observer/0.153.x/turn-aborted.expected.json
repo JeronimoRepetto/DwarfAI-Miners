@@ -1,0 +1,41 @@
+{
+  "$comment": "Hand-written from 15 §5 (Codex row), ADR-006 items 4 and 6 and ADR-021 item 5 (an unknown abort reason is errored with the raw word); shared by turn-aborted-crlf.jsonl.",
+  "warnings": 0,
+  "session": {
+    "providerSessionId": "01a0b000-0000-7000-8000-000000000732",
+    "cwd": "/home/j/work/sample-project",
+    "at": 1790765999000,
+    "parentProviderSessionId": "01a0b000-0000-7000-8000-000000000731"
+  },
+  "entries": [
+    { "role": "person", "text": "Run the full test suite.", "providerTime": 1790766001100 },
+    { "role": "person", "text": "Try again, only the unit tests.", "providerTime": 1790766060100 }
+  ],
+  "activity": ["turn-started", "turn-started"],
+  "turnEnds": [
+    {
+      "turnKey": "01a0b000-0000-7000-8000-0000000007b1",
+      "kind": "interrupted",
+      "at": 1790766003000,
+      "reliability": "reliable",
+      "cancelledFromApp": false
+    },
+    {
+      "turnKey": "01a0b000-0000-7000-8000-0000000007b2",
+      "kind": "errored",
+      "at": 1790766061000,
+      "reliability": "reliable",
+      "cancelledFromApp": false,
+      "detail": "synthetic_unknown_reason"
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "01a0b000-0000-7000-8000-0000000007b1",
+      "fidelity": 1,
+      "tokens": { "inputNet": 300, "output": 10, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790766002000
+    }
+  ]
+}

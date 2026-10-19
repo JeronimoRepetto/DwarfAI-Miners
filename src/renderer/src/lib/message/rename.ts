@@ -4,7 +4,7 @@
  * decides what the two are called, the one hint the field shows at a time, whether a save changes
  * anything, and what is announced once main has answered. The panel draws; this decides.
  *
- * What a name may hold, and what a save keeps, is shared/dwarfName's: main cleans every write with
+ * What a name may hold, and what a save keeps, is contracts/text/dwarfName's: main cleans every write with
  * the same rules, so nothing here second-guesses what main will save.
  */
 import {
@@ -13,7 +13,7 @@ import {
   customNameFor,
   nameChars,
   type DwarfNameRefusal
-} from '../../../../shared/dwarfName'
+} from '@dwarfai/contracts'
 import type { Dwarf, DwarfNameResult } from '../../types'
 
 /** The name button's title; its accessible name is `renameLabel`. */
@@ -77,4 +77,21 @@ export function renameAnnouncement(result: DwarfNameResult, baseName: string): s
   return result.customName === undefined
     ? 'Name reset to ' + baseName
     : 'Renamed to ' + result.customName
+}
+
+/** What main's answer to a rename or a reset says, and whether it is a warning everyone sees. */
+export interface RenameNotice {
+  text: string
+  /** True when nothing was saved: a warning toast, never the panel's screen-reader-only status. */
+  warning: boolean
+}
+
+/**
+ * Where main's answer is said (BR-19): a save or a reset is announced in the panel's polite status
+ * (accessibility.md, names); a rename or a reset that saved nothing is main's own reason as a warning
+ * toast, which everyone sees and the toast host announces politely. A failure is never said to
+ * screen readers alone.
+ */
+export function renameNotice(result: DwarfNameResult, baseName: string): RenameNotice {
+  return { text: renameAnnouncement(result, baseName), warning: !result.saved }
 }

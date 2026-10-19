@@ -1,0 +1,57 @@
+{
+  "testProcessInJob": "true",
+  "measurements": [
+    {
+      "jobKind": "plain",
+      "mode": "d6",
+      "launcher": "breakaway",
+      "hostPid": 97240,
+      "launchMs": 117.03169999999999,
+      "createMs": 28,
+      "breakawayRefused": false,
+      "uiInJob": true,
+      "hostInJobBeforeClose": true,
+      "uiExitedWithJob": true,
+      "hostAnswersAfterClose": false
+    },
+    {
+      "jobKind": "plain",
+      "mode": "node-detached",
+      "launcher": "node-detached",
+      "hostPid": 5124,
+      "launchMs": 29.934700000000003,
+      "createMs": null,
+      "breakawayRefused": false,
+      "uiInJob": true,
+      "hostInJobBeforeClose": true,
+      "uiExitedWithJob": true,
+      "hostAnswersAfterClose": false
+    },
+    {
+      "jobKind": "breakaway-ok",
+      "mode": "node-detached",
+      "launcher": "node-detached",
+      "hostPid": 64560,
+      "launchMs": 27.5537,
+      "createMs": null,
+      "breakawayRefused": false,
+      "uiInJob": true,
+      "hostInJobBeforeClose": true,
+      "uiExitedWithJob": true,
+      "hostAnswersAfterClose": false
+    },
+    {
+      "jobKind": "scoop-shim",
+      "mode": "node-detached",
+      "launcher": "node-detached",
+      "hostPid": 61084,
+      "launchMs": 15.739899999999999,
+      "createMs": null,
+      "breakawayRefused": false,
+      "uiInJob": true,
+      "hostInJobBeforeClose": false,
+      "uiExitedWithJob": true,
+      "hostAnswersAfterClose": true
+    }
+  ]
+}

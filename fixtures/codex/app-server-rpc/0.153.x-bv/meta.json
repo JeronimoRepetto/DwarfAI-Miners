@@ -1,0 +1,14 @@
+{
+  "providerVersion": "0.153.x",
+  "capturedAt": "2026-09-22",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "source": "Codex app-server protocol messages copied unchanged (LF line endings, as the upstream repository stores them) from ben-vargas/ai-sdk-provider-codex-cli at commit 88eaa5c (bv@88eaa5c), src/__tests__/fixtures/app-server-protocol/{server-requests,notifications}/*.json, renamed server-request-<name>.json and notification-<name>.json (15 §4.4 Fixtures needed). The two upstream files ending in -with-extra.json (auth-refresh, turn-completed) are upstream's own; every other -with-extra.json adds dwarfaiUnknownField to every object, as scripts/fixtures/scrub.mjs does (HR T1). The *-codex-0153 messages are upstream's captures of Codex 0.153; the others are upstream's hand-written shapes. They are reference data for the CodexAppServerDriver's protocol readers, not a replayed session.",
+  "license": "MIT",
+  "licenseText": "MIT License\n\nCopyright (c) 2025 Ben Vargas\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+  "capabilities": {
+    "driver": "app-server-rpc",
+    "note": "protocol shapes only; no capability is measured from them"
+  }
+}

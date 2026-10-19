@@ -1,0 +1,14 @@
+{
+  "providerVersion": "2.1.x",
+  "capturedAt": "2026-10-16",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §2.7, §4.3, §4.10 and §6 and the ACP schema of @agentclientprotocol/sdk 1.6.0 (the pinned client); no adapter or CLI was run. The JSON-RPC error frames of c-11 are the pinned SDK's own replies. The scrubbed maintainer recordings against a user-installed claude-agent-acp 0.93.0 live in ../2.1.x/ (c-01, c-05, c-06, c-07, c-08, c-09, c-16, c-28); the cases here are the ones no recording can show (an option set without allow_once, unknown and malformed requests, stale and twice-given answers, the handover timeout, the turn-end mapping, auth_required, drift, decline and empty answers, and a gated delegation launch whose session/new carries the relay entry and the pre-approval of DwarfAI's two delegation tools, ISSUE-201). Two cases follow what the recordings showed: c-21's prompt usage is per turn, and c-09's forms carry the question in message and a header in the field title. The clacp test fixture (Apache-2.0, at e6681d2) is in ../2.1.x/ with its attribution.",
+  "capabilities": {
+    "driver": "acp",
+    "adapter": "claude-agent-acp (user-installed, never shipped)",
+    "note": "the 15 §3 row C3 design values as ClaudeAcpDriver reports them, with usage.rateLimits false until a recording shows _meta[\"_claude/rateLimit\"]"
+  }
+}

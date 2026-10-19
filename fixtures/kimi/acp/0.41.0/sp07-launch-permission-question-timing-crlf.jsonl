@@ -1,0 +1,14 @@
+{"at":3,"event":"spawn","pid":26132}
+{"at":4,"stream":"sent","bytes":224}
+{"at":532,"stream":"received","bytes":726}
+{"at":532,"stream":"sent","bytes":160}
+{"at":671,"stream":"received","bytes":1413}
+{"at":672,"stream":"sent","bytes":268}
+{"at":672,"stream":"received","bytes":7498}
+{"at":677,"stream":"received","bytes":284}
+{"at":3454,"stream":"received","bytes":245}
+{"at":3455,"stream":"sent","bytes":379}
+{"at":3455,"stream":"received","bytes":180}
+{"at":4577,"stream":"received","bytes":245}
+{"at":4679,"stream":"received","bytes":180}
+{"at":4706,"event":"exit","code":1,"signal":null}

@@ -1,0 +1,42 @@
+{
+  "spike": "S-018-1",
+  "platform": "win32",
+  "osRelease": "10.0.26200",
+  "mode": "none",
+  "idleMs": 1500,
+  "waitMs": 15000,
+  "desktop": null,
+  "runs": [
+    {
+      "mode": "none",
+      "exitCode": 0,
+      "events": [
+        {
+          "event": "ready",
+          "electron": "44.0.0",
+          "platform": "win32",
+          "mode": "none",
+          "windows": 0
+        },
+        {
+          "event": "tray",
+          "ok": true
+        },
+        {
+          "event": "support",
+          "notificationSupported": true
+        },
+        {
+          "event": "idle",
+          "idleMs": 1500,
+          "windows": 0
+        },
+        {
+          "event": "done",
+          "reason": "no notification in this mode",
+          "windows": 0
+        }
+      ]
+    }
+  ]
+}

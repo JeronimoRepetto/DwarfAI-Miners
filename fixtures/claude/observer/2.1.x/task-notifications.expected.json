@@ -1,0 +1,48 @@
+{
+  "$comment": "Hand-written from 15 §5 anti-ghost item 1 and docs/provider-formats.md (#64): the root transcript of a session whose subagents ended. The endings sit in the three delivery envelopes (queue-operation content, a queued_command attachment prompt, a user line of origin task-notification) and are read by reconcile.ts, never as conversation; the quotations (a tool result, model output, a hook's stdout) end nobody. The endings are 'closed' facts of the subagents, asserted in reconcile.test.ts; this file holds the session's own facts. Shared by task-notifications-crlf.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000720",
+      "providerAgentId": null,
+      "cwd": "C:\\Users\\j\\work\\sample.project",
+      "at": 1790791200000,
+      "parent": null
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "Spawn a reviewer for the change.", "providerTime": 1790791200000 },
+    { "role": "system-line", "text": "meta", "providerTime": 1790791263000, "controlPlane": true },
+    {
+      "role": "dwarf",
+      "text": "The reviewer is done. A quoted one: <task-id>d4e5f6071829304bc</task-id><status>completed</status>",
+      "providerTime": 1790791265000
+    }
+  ],
+  "activity": ["turn-started", "record", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000720:00000000-0000-4000-8000-000000072009",
+      "kind": "concluded",
+      "at": 1790791265000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01EndedRootA",
+      "fidelity": 1,
+      "tokens": { "inputNet": 8, "output": 30, "cacheRead": 400, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790791202000
+    },
+    {
+      "unitKey": "msg_01EndedRootB",
+      "fidelity": 1,
+      "tokens": { "inputNet": 4, "output": 18, "cacheRead": 420, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790791265000
+    }
+  ]
+}

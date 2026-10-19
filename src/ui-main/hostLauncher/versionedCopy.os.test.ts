@@ -1,0 +1,356 @@
+// L8 OS lane (17 §1.8; ADR-002 D5; ADR-027 item 2; SP-03 decision table): the launcher makes the
+// versioned copy of the Electron runtime this repository installs (the same files electron-builder
+// packs around the app; SP-03 layout `electron-dist-*`) and starts the Host from it. The Host is the
+// stub of fixtures/bin/fake-host, which reports the executable it runs on. Each case uses its own
+// temporary folder for the copy root, the Host data folder and the manifest, and a private endpoint,
+// so it never meets the owner's app or the owner's real copy root. Every Host started is ended in
+// the `finally`, and the case checks that none is left running.
+import { randomBytes } from 'node:crypto'
+import {
+  cpSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+import type { HostEndpoint } from '@dwarfai/contracts'
+import { RecordingUiLog } from './fakes/RecordingUiLog'
+import { buildManifest, serializeManifest } from './hostManifest'
+import { createNodeHostLauncher } from './index'
+import { IDENTITY_TOLERANCE_MS, createProcessStartReader } from './processStart'
+import { osQueryRunner, thisPlatform } from './testing/osQueryRunner'
+import { copySourceOf, packagedResourcesDirOf, type CopyPlatform } from './versionedCopy'
+
+const WINDOWS = process.platform === 'win32'
+const PLATFORM: CopyPlatform =
+  process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux'
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT = path.resolve(HERE, '..', '..', '..')
+const FAKE_HOST = path.join(REPO_ROOT, 'fixtures', 'bin', 'fake-host', 'fake-host.cjs')
+/** The Electron binary of the installed `electron` package (its main export is the path). */
+const ELECTRON = createRequire(import.meta.url)('electron') as unknown as string
+const VERSION = '0.0.0-os031'
+const CASE_TIMEOUT_MS = 180_000
+
+interface FakeHostReport {
+  pid: number
+  execPath: string
+}
+
+function newWorld() {
+  // On POSIX directly under /tmp, so the socket path fits sun_path on macOS.
+  const root = WINDOWS
+    ? mkdtempSync(path.join(tmpdir(), 'dwarfai-031-os-'))
+    : mkdtempSync('/tmp/dw031-')
+  const hostDataDir = path.join(root, 'userData', 'host')
+  mkdirSync(hostDataDir, { recursive: true })
+  const endpoint: HostEndpoint = WINDOWS
+    ? {
+        kind: 'named-pipe',
+        path: `\\\\.\\pipe\\dwarfai-test-031-${randomBytes(8).toString('hex')}`
+      }
+    : {
+        kind: 'unix-socket',
+        dir: path.join(root, 'run'),
+        path: path.join(root, 'run', 'host-0123456789ab.sock')
+      }
+  writeFileSync(
+    path.join(hostDataDir, 'fake-host.json'),
+    JSON.stringify({ endpoint: endpoint.path, mode: 'ready', maxLifeMs: CASE_TIMEOUT_MS })
+  )
+  return {
+    root,
+    hostDataDir,
+    endpoint,
+    copyRoot: path.join(root, 'DwarfAI', 'host'),
+    manifest: path.join(root, 'build', 'host-manifest.json')
+  }
+}
+
+function hostReports(hostDataDir: string): FakeHostReport[] {
+  return readdirSync(hostDataDir)
+    .filter((name) => /^fake-host-\d+\.json$/.test(name))
+    .map((name) => JSON.parse(readFileSync(path.join(hostDataDir, name), 'utf8')) as FakeHostReport)
+}
+
+/** Each fake Host's pid and when its report was last written (it was running then). */
+function hostRecords(hostDataDir: string): Array<{ pid: number; recordedAtMs: number }> {
+  return readdirSync(hostDataDir)
+    .filter((name) => /^fake-host-\d+\.json$/.test(name))
+    .map((name) => {
+      const file = path.join(hostDataDir, name)
+      const report = JSON.parse(readFileSync(file, 'utf8')) as FakeHostReport
+      return { pid: report.pid, recordedAtMs: statSync(file).mtimeMs }
+    })
+}
+
+/** Real paths on both sides: on macOS `/var/folders/…` is a link to `/private/var/folders/…` (SP-03). */
+function isInside(file: string, folder: string): boolean {
+  const real = (target: string): string => {
+    try {
+      return realpathSync.native(target)
+    } catch {
+      return path.resolve(target)
+    }
+  }
+  const normalize = (target: string): string => (WINDOWS ? target.toLowerCase() : target)
+  const relative = path.relative(normalize(real(folder)), normalize(real(file)))
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const readStart = createProcessStartReader({ platform: thisPlatform(), runQuery: osQueryRunner() })
+
+/**
+ * Whether `pid` is still the process that was running when its record was written at
+ * `recordedAtMs` (ADR-014: never a bare pid): it runs and started no later than that, within the
+ * one tolerance. A pid that is gone or started later is another process or none.
+ */
+async function recordedState(
+  pid: number,
+  recordedAtMs: number
+): Promise<'recorded' | 'other' | 'unknown'> {
+  const start = await readStart(pid)
+  if (start.kind === 'unknown') return 'unknown'
+  return start.kind === 'started' && start.ms <= recordedAtMs + IDENTITY_TOLERANCE_MS
+    ? 'recorded'
+    : 'other'
+}
+
+/**
+ * Ends `pid` only while it is the recorded process, and waits until it is gone; true when the
+ * recorded process is not left running. A pid Windows or the kernel handed to another process is
+ * never signalled, and neither is one whose start time cannot be read (that answers false).
+ */
+async function endProcess(pid: number, recordedAtMs: number): Promise<boolean> {
+  const state = await recordedState(pid, recordedAtMs)
+  if (state !== 'recorded') return state === 'other'
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // already gone
+  }
+  for (let waited = 0; waited < 5_000 && isAlive(pid); waited += 100) await sleep(100)
+  return !isAlive(pid) || (await recordedState(pid, recordedAtMs)) === 'other'
+}
+
+/** Removes `dir`, retrying while Windows still holds a just-ended process's files for up to 10 s. */
+async function removeFolder(dir: string): Promise<boolean> {
+  for (let waited = 0; waited <= 10_000; waited += 250) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      return true
+    } catch {
+      await sleep(250)
+    }
+  }
+  return false
+}
+
+describe('the Host runs from its versioned copy (ADR-002 D5, ADR-027 item 2)', () => {
+  it(
+    '[SP-03, ADR-002] the Host process started by the launcher runs from host/<version>/ and not from the build output',
+    async () => {
+      const world = newWorld()
+      const survivors: number[] = []
+      try {
+        const sourceDir = copySourceOf(ELECTRON, PLATFORM)
+        mkdirSync(path.dirname(world.manifest), { recursive: true })
+        writeFileSync(world.manifest, serializeManifest(await buildManifest(sourceDir)))
+        const log = new RecordingUiLog()
+        const launcher = createNodeHostLauncher({
+          hostDataDir: world.hostDataDir,
+          execPath: ELECTRON,
+          hostEntry: FAKE_HOST,
+          hostManifest: world.manifest,
+          log,
+          client: { appVersion: VERSION, buildId: 'os-test' },
+          endpoint: world.endpoint,
+          build: 'dev',
+          copyRoot: world.copyRoot,
+          // ADDED (fix: Windows launch timeout): the launch helper the Windows spawner loads.
+          prebuildsDir: path.join(REPO_ROOT, 'prebuilds')
+        })
+
+        expect(await launcher.ensureHostRunning(), JSON.stringify(log.entries)).toBe('spawned')
+
+        const reports = hostReports(world.hostDataDir)
+        expect(reports).toHaveLength(1)
+        const [host] = reports
+        const copyDir = path.join(world.copyRoot, VERSION)
+        expect(isInside(host?.execPath ?? '', copyDir), 'the Host runs from host/<version>/').toBe(
+          true
+        )
+        expect(isInside(host?.execPath ?? '', sourceDir), 'not from the build output').toBe(false)
+        expect(readdirSync(world.copyRoot), 'no temporary directory is left').toEqual([VERSION])
+        expect(log.byEvent('versioned-copy')).toMatchObject([{ outcome: 'ok', causeClass: 'copy' }])
+      } finally {
+        for (const host of hostRecords(world.hostDataDir)) {
+          if (!(await endProcess(host.pid, host.recordedAtMs))) survivors.push(host.pid)
+        }
+        const removed = await removeFolder(world.root)
+        expect(survivors, 'no Host process is left running').toEqual([])
+        expect(removed, 'the temporary folder is removed').toBe(true)
+      }
+    },
+    CASE_TIMEOUT_MS
+  )
+
+  it(
+    '[SP-03, ADR-002] an install reached through a link to its folder (a Scoop current junction, a Homebrew-style symlink) starts the Host from a real copy of its real folder',
+    async () => {
+      const world = newWorld()
+      const survivors: number[] = []
+      try {
+        // A private install made from the Electron runtime, so nothing is written next to the
+        // installed package: the real folder holds the files the package manager adds beside the
+        // app (Scoop's install.json and manifest.json, GitHub #1439), and the app starts through a
+        // link to that folder: a junction on Windows (no privilege needed), a symbolic link on
+        // macOS and Linux (links inside Electron.app stay links).
+        const electronSource = copySourceOf(ELECTRON, PLATFORM)
+        const realSource = path.join(world.root, 'apps', 'real', path.basename(electronSource))
+        cpSync(electronSource, realSource, { recursive: true, verbatimSymlinks: true })
+        mkdirSync(path.dirname(world.manifest), { recursive: true })
+        writeFileSync(world.manifest, serializeManifest(await buildManifest(realSource)))
+        writeFileSync(path.join(realSource, 'install.json'), '{}')
+        writeFileSync(path.join(realSource, 'manifest.json'), '{}')
+        const linkedSource = path.join(world.root, 'apps', 'current', path.basename(electronSource))
+        mkdirSync(path.dirname(linkedSource), { recursive: true })
+        symlinkSync(realSource, linkedSource, 'junction')
+        const log = new RecordingUiLog()
+        const launcher = createNodeHostLauncher({
+          hostDataDir: world.hostDataDir,
+          execPath: path.join(linkedSource, path.relative(electronSource, ELECTRON)),
+          hostEntry: FAKE_HOST,
+          hostManifest: world.manifest,
+          log,
+          client: { appVersion: VERSION, buildId: 'os-test' },
+          endpoint: world.endpoint,
+          build: 'dev',
+          copyRoot: world.copyRoot,
+          prebuildsDir: path.join(REPO_ROOT, 'prebuilds')
+        })
+
+        expect(await launcher.ensureHostRunning(), JSON.stringify(log.entries)).toBe('spawned')
+
+        const copyDir = path.join(world.copyRoot, VERSION)
+        const contentDir =
+          PLATFORM === 'darwin' ? path.join(copyDir, path.basename(electronSource)) : copyDir
+        expect(lstatSync(contentDir).isSymbolicLink(), 'the copy is a real tree').toBe(false)
+        const [host] = hostReports(world.hostDataDir)
+        expect(isInside(host?.execPath ?? '', copyDir), 'the Host runs from host/<version>/').toBe(
+          true
+        )
+        expect(isInside(host?.execPath ?? '', realSource), 'not from the install').toBe(false)
+        expect(readdirSync(contentDir), 'the package manager files stay out').not.toContain(
+          'install.json'
+        )
+        expect(log.byEvent('versioned-copy')).toMatchObject([{ outcome: 'ok', causeClass: 'copy' }])
+      } finally {
+        for (const host of hostRecords(world.hostDataDir)) {
+          if (!(await endProcess(host.pid, host.recordedAtMs))) survivors.push(host.pid)
+        }
+        const removed = await removeFolder(world.root)
+        expect(survivors, 'no Host process is left running').toEqual([])
+        expect(removed, 'the temporary folder is removed').toBe(true)
+      }
+    },
+    CASE_TIMEOUT_MS
+  )
+
+  // GitHub #1439 follow-up (spike lane run 39179212245): a Scoop install starts the app through its
+  // `current` junction. Electron keeps the junction in `process.execPath` but resolves the app
+  // archive's real path, so UI main names the Host entry under the real version folder. That entry
+  // must run from the copy too: run from the install, its resources folder is not the copied
+  // executable's, and the Host takes itself for a development build (DEV_BUILD_ON_RELEASE_DATA).
+  it(
+    '[SP-03, ADR-002, ADR-027] an install reached through a link: the packaged entry, named under the real folder as Electron names it, runs from the copy',
+    async () => {
+      const world = newWorld()
+      const survivors: number[] = []
+      try {
+        const electronSource = copySourceOf(ELECTRON, PLATFORM)
+        const realSource = path.join(world.root, 'apps', 'real', path.basename(electronSource))
+        cpSync(electronSource, realSource, { recursive: true, verbatimSymlinks: true })
+        // A packaged entry inside the app's resources folder: it records the file it runs from,
+        // then is the fake Host.
+        const entryName = 'host-entry.cjs'
+        writeFileSync(
+          path.join(packagedResourcesDirOf(realSource, PLATFORM), entryName),
+          [
+            "const fs = require('node:fs')",
+            "const path = require('node:path')",
+            "fs.writeFileSync(path.join(process.env.DWARFAI_HOST_DATA_DIR, 'entry-ran-from.txt'), __filename)",
+            `require(${JSON.stringify(FAKE_HOST)})`,
+            ''
+          ].join('\n')
+        )
+        mkdirSync(path.dirname(world.manifest), { recursive: true })
+        writeFileSync(world.manifest, serializeManifest(await buildManifest(realSource)))
+        const linkedSource = path.join(world.root, 'apps', 'current', path.basename(electronSource))
+        mkdirSync(path.dirname(linkedSource), { recursive: true })
+        symlinkSync(realSource, linkedSource, 'junction')
+        const log = new RecordingUiLog()
+        const launcher = createNodeHostLauncher({
+          hostDataDir: world.hostDataDir,
+          execPath: path.join(linkedSource, path.relative(electronSource, ELECTRON)),
+          hostEntry: path.join(
+            packagedResourcesDirOf(realpathSync.native(realSource), PLATFORM),
+            entryName
+          ),
+          hostManifest: world.manifest,
+          log,
+          client: { appVersion: VERSION, buildId: 'os-test' },
+          endpoint: world.endpoint,
+          build: 'dev',
+          copyRoot: world.copyRoot,
+          prebuildsDir: path.join(REPO_ROOT, 'prebuilds')
+        })
+
+        expect(await launcher.ensureHostRunning(), JSON.stringify(log.entries)).toBe('spawned')
+
+        const copyDir = path.join(world.copyRoot, VERSION)
+        const ranFrom = readFileSync(path.join(world.hostDataDir, 'entry-ran-from.txt'), 'utf8')
+        expect(isInside(ranFrom, copyDir), `the entry runs from host/<version>/: ${ranFrom}`).toBe(
+          true
+        )
+        expect(isInside(ranFrom, realSource), 'not from the install').toBe(false)
+        const [host] = hostReports(world.hostDataDir)
+        expect(isInside(host?.execPath ?? '', copyDir), 'the executable runs from the copy').toBe(
+          true
+        )
+      } finally {
+        for (const host of hostRecords(world.hostDataDir)) {
+          if (!(await endProcess(host.pid, host.recordedAtMs))) survivors.push(host.pid)
+        }
+        const removed = await removeFolder(world.root)
+        expect(survivors, 'no Host process is left running').toEqual([])
+        expect(removed, 'the temporary folder is removed').toBe(true)
+      }
+    },
+    CASE_TIMEOUT_MS
+  )
+})

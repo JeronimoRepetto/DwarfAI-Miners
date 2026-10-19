@@ -1,0 +1,151 @@
+// The asking module (05 §3.7): one ask broker for questions and permission requests (ADR-010).
+// ISSUE-126: its pure domain, the `Ask` aggregate and machine 6 (07 §6), and these public types.
+// ISSUE-127: the AskRepository port (16 §4.7); its SQLite adapter and the closed-asks sweep are
+// composed by the Host (R6).
+// ISSUE-128: `createAsking`, the broker's two answer paths (`answerPermission`, `answerQuestion`)
+// over the AskRepository, conversation's `AnswerRecords` and the answer channels; the Host composes
+// it (ISSUE-140: wiring/routes/askingRoutes.ts).
+// ISSUE-132: `createAskOpening`, the broker's `open` with ADR-011's capability-based emission over
+// the `SessionCapabilities` port; the Host binds that port to suppliers' capability data and
+// composes it (ISSUE-140: wiring/routes/askingRoutes.ts).
+// ISSUE-139: `createAskingResetStep`, the module's step of the Reset-metrics saga (ADR-023).
+// ISSUE-130: the `AskQueries` port and the `AskOpened` / `AskStepChanged` events, for the asks
+// frame projections (transport/frames/askFrames.ts); `createAskQueries`, the read model behind the
+// snapshot's `asks` section (transport/snapshot/asksSection.ts) over `AskRepository.live` (owner
+// amendment L).
+// ISSUE-129: `createAskStep`, the broker's `setStep` (S6.04, INV-75), which B-M32 serves
+// (transport/methods/askingSetStep.ts); the Host composes it (ISSUE-140).
+// #1293: `createAskRestartSettlement`, the Host boot settlement of the asks a stopped Host left live
+// (07 S6.11, S6.17, S6.18, S6.20) over machine 6's `reconcileAfterRestart`; the Host composes it.
+// #1290: `createAskDrainGate`, the live asks that hold the upgrade drain (ADR-002 D8 item 2; S12.14,
+// S12.15) as the kernel `DrainGate`; host/wiring/hostDrainGate.ts binds it with the Host's others.
+// ISSUE-134: the broker's external resolutions (`Asking.resolutions`, with ADR-010 item 10's
+// keystroke attribution) and the observed-Claude keystroke channel's adapters
+// (`adapters/observedClaude/`: the channel, the prompt registry, the key map, the transcript tail),
+// which host/wiring imports directly (R6); wiring/routes/observedClaudeAsks.ts feeds them.
+// ISSUE-229: the OpenCode plugin's `http` answer channel and its asks (`adapters/openCodePlugin/`:
+// `OpenCodePluginAskChannel`, `OpenCodePluginAsks`), which host/wiring imports directly (R6);
+// wiring/routes/askingRoutes.ts composes them with the `/opencode/*` ingress route.
+import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
+import type { Ask } from './domain/ask'
+import type { RestartFacts } from './domain/askMachine'
+import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
+import type { TransactionScope } from '../../kernel/ports/transactionScope'
+import { AskingResetStep } from './adapters/sqlite/AskingResetStep'
+import type { DrainGate } from '../../kernel/ports/drainGate'
+import { AskDrainGate, type AskDrainGateDeps } from './application/askDrain'
+import { AskRestartSettlement, type RestartSettlementDeps } from './application/askRestart'
+import {
+  AskReadModel,
+  type AskReadModelDeps,
+  type AskSnapshotQueries
+} from './application/askQueries'
+import {
+  AskAnswerPaths,
+  AskOpenPath,
+  AskStepPath,
+  type AnswerPathsDeps,
+  type AskBroker,
+  type OpenPathDeps,
+  type StepPathDeps
+} from './application/askBroker'
+
+export type { AnswerPathsDeps, AskBroker } from './application/askBroker'
+export type {
+  AskQueries,
+  AskReadModelDeps,
+  AsksSnapshot,
+  AskSnapshotQueries,
+  AskView,
+  NeedsYouEntry
+} from './application/askQueries'
+export type {
+  AskClosed,
+  AskingEvent,
+  AskOpened,
+  AskReopened,
+  AskStepChanged
+} from './domain/events'
+export type { AskAnswerChannel } from './ports/askAnswerChannel'
+export type { OpenPathDeps, StepPathDeps } from './application/askBroker'
+export type { AskCapabilities, AskSession, SessionCapabilities } from './ports/sessionCapabilities'
+export type {
+  AnswerOutcome,
+  AnswerRefusalReason,
+  Ask,
+  AskChannel,
+  AskKind,
+  AskRecord,
+  AskState
+} from './domain/ask'
+export type { PermissionDecision } from './domain/permissionOptions'
+export type { RestartFacts } from './domain/askMachine'
+export type { RestartSettlementDeps } from './application/askRestart'
+export type {
+  AskAnswer,
+  AskChannelRef,
+  AskRepository,
+  AskSettlement,
+  SettledAnswer
+} from './ports/askRepository'
+
+/**
+ * The asking module so far: the broker's two answer paths and its external resolutions (16 §4.7),
+ * one instance, so a resolution sees the answer in flight (S6.21) and the keystroke injections it
+ * attributes (S6.12, ISSUE-134).
+ */
+export interface Asking {
+  answers: Pick<AskBroker, 'answerPermission' | 'answerQuestion'>
+  /** External resolutions and closing by death (`closeForDwarf`, ISSUE-140). */
+  resolutions: Pick<AskBroker, 'resolveExternally' | 'closeForDwarf'>
+}
+
+export function createAsking(deps: AnswerPathsDeps): Asking {
+  const paths = new AskAnswerPaths(deps)
+  return { answers: paths, resolutions: paths }
+}
+
+/** Structurally the preferences module's `ResetDbStep` (16 §4.12); asking never imports it. */
+export interface AskingResetDbStep {
+  readonly name: string
+  reset(tx: TransactionRunner): void
+}
+
+/** `name: 'asking'`; registered with the saga by host/wiring/resetParticipants.ts (ISSUE-139). */
+export function createAskingResetStep(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+}): AskingResetDbStep {
+  return new AskingResetStep(deps)
+}
+
+/** The broker's `open` (16 §4.7 row `open`; ADR-011 item 5), composed by the Host (ISSUE-140). */
+export function createAskOpening(deps: OpenPathDeps): Pick<AskBroker, 'open'> {
+  return new AskOpenPath(deps)
+}
+
+/** The `AskQueries` read model with the `asks` section's snapshot read (ISSUE-130). */
+export function createAskQueries(deps: AskReadModelDeps): AskSnapshotQueries {
+  return new AskReadModel(deps)
+}
+
+/** The broker's `setStep` (16 §4.7 row `setStep`; S6.04), composed by the Host (ISSUE-140). */
+export function createAskStep(deps: StepPathDeps): Pick<AskBroker, 'setStep'> {
+  return new AskStepPath(deps)
+}
+
+/** The settlement of the asks a stopped Host left `open` or `answering`, run once at boot. */
+export interface AskRestartSettlementPath {
+  /** Settles each live ask by the facts the boot knows of its session and request. */
+  settleAfterRestart(factsOf: (ask: Ask) => RestartFacts): void
+}
+
+/** The Host boot settlement of the live asks (07 S6.11, S6.17, S6.18, S6.20), composed by the Host (#1293). */
+export function createAskRestartSettlement(deps: RestartSettlementDeps): AskRestartSettlementPath {
+  return new AskRestartSettlement(deps)
+}
+
+/** The asks that hold the upgrade drain (ADR-002 D8 item 2; S12.14, S12.15), bound by the Host (#1290). */
+export function createAskDrainGate(deps: AskDrainGateDeps): DrainGate {
+  return new AskDrainGate(deps)
+}

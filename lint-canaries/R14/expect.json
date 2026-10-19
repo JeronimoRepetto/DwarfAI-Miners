@@ -1,0 +1,1 @@
+{ "rule": "R14-no-test-code-in-prod", "tool": "depcruise" }

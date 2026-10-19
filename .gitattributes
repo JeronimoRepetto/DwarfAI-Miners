@@ -10,3 +10,6 @@
 # to it, and a file the panel plays deserves the same certainty.
 *.mp3 binary
 *.ogg binary
+
+# CRLF fixture variants (17 §1.4, HO-37) keep their line endings byte for byte.
+fixtures/**/*-crlf.jsonl -text

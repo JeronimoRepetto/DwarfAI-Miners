@@ -461,3 +461,46 @@ describe('HistoryPanel, dwarf names (#635)', () => {
     expect(names(wrapper).sort()).toEqual(['Map the seam', 'Watcher'])
   })
 })
+
+/*
+ * C-08 (18 §5.1, ISSUE-251): a mine is named after its folder, which a repository chose. The name
+ * is drawn without its controls and escapes, inside a bidi-isolated text node.
+ */
+describe('HistoryPanel, an untrusted mine name (C-08)', () => {
+  it('[NFR-SEC-07] draws a hostile folder name stripped and inside a bidi-isolated text node', () => {
+    const hostile = `\u001b[31manvil\u202Eexe.txt\u0000\u001b[0m`
+    const wrapper = panel({ mine: defaultMine({ name: hostile }) })
+    const isolate = wrapper.find('.dm-hist__title > bdi')
+    expect(isolate.exists(), 'no <bdi> around the mine name').toBe(true)
+    expect(isolate.element.textContent).toBe('anvilexe.txt')
+    expect(wrapper.find('.dm-hist__title').text()).toBe('History · anvilexe.txt')
+  })
+})
+
+/*
+ * APPENDED for ISSUE-254: the history panel as US-MINE-006 reads it. Where the panel returns to on
+ * closing is the shell's, asserted in App.test.ts ('App mine column (ISSUE-254)'); the panel's part
+ * is to ask to close from its control and from Esc alike.
+ */
+describe('HistoryPanel, the mine column (ISSUE-254)', () => {
+  it('[US-MINE-006.AC05, US-MINE-006.AC04, US-MINE-006.AC06, NFR-A11Y-02] the history panel shows its header and banner, arrow keys move between dwarf tabs, and Close history or Esc returns to where it opened', async () => {
+    const wrapper = panel()
+    expect(wrapper.find('.dm-hist__title').text()).toBe('History · anvil')
+    expect(wrapper.find('.dm-hist__note').text()).toBe('Read-only · up to the last 50 messages')
+
+    // ← and → move the focus and the transcript shown to the adjacent dwarf's tab.
+    const log = () => wrapper.find('.dm-hist__log').text()
+    expect(log()).toContain('Mapped')
+    await tabs(wrapper)[0]!.trigger('keydown', { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(tabs(wrapper)[1]!.element)
+    expect(log()).toContain('Found the seam.')
+    expect(log()).not.toContain('Mapped')
+    await tabs(wrapper)[1]!.trigger('keydown', { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(tabs(wrapper)[0]!.element)
+    expect(log()).toContain('Mapped')
+
+    await wrapper.find('button[aria-label="Close history"]').trigger('click')
+    await tabs(wrapper)[0]!.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.emitted('close')).toHaveLength(2)
+  })
+})

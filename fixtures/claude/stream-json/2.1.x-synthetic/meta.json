@@ -1,0 +1,13 @@
+{
+  "providerVersion": "2.1.x",
+  "capturedAt": "2026-10-15",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §4.2 and §6 and the Claude Code stream-json record shapes; no real CLI was run. These are the cases the ISSUE-321 recordings in ../2.1.x/ do not cover: a help without --permission-prompt-tool at all (C-26), a second turn sent on stdin (C-05 echoOf), every result subtype (C-20), a probe that does not answer (C-25), a subagent, a CLI that is not logged in, a rejected rate limit, protocol drift, a resume whose first system line names a new id, and a gated delegation launch (ISSUE-201: the --mcp-config relay entry and the pre-approval of DwarfAI's two delegation tools, which no recording may show because no recording runs the relay). Replace each with a scrubbed maintainer recording when one exists.",
+  "capabilities": {
+    "driver": "stream-json",
+    "note": "the in-force C2 row of 15 §3 as ClaudeStreamJsonDriver reports it with SP-08, S-020-1 and SP-15 recorded (see ../2.1.x/meta.json for the measured values)"
+  }
+}

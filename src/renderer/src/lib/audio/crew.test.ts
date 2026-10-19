@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { CREW_POLYPHONY, CREW_RELEASE_MS, crewVariantIndex } from './crew'
+import { CREW_CAPS, CREW_RELEASE_MS, crewVariantIndex } from './crew'
 
 describe('the crew clip limits (#330)', () => {
   it('lets three crew clips sound at once and no more', () => {
     // A missing strike in a busy mine is inaudible; nine of them at once is a
     // rattle. Three is the maintainer's number.
-    expect(CREW_POLYPHONY).toBe(3)
+    // AMENDED for ISSUE-255 (was: the single CREW_POLYPHONY of three): the caps are one count
+    // per crew cue (sound.md, Mapping onto the engine), and three is the strikes' own.
+    expect(CREW_CAPS.strike).toBe(3)
   })
 
   it('releases a sustained clip over 300ms, which is a fade and not a cut', () => {
@@ -55,5 +57,13 @@ describe('crewVariantIndex (#330)', () => {
     // neighbour the other. Two ids one character apart must be free to differ.
     const runs = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'].map((id) => crewVariantIndex(id, 2))
     expect(new Set(runs).size).toBe(2)
+  })
+})
+
+// APPENDED for ISSUE-255 (sound.md, Mapping onto the engine; PO ruling 2026-09-26): the single cap of
+// three crew clips is one count per crew cue now.
+describe('the crew caps per cue (ISSUE-255)', () => {
+  it('[NFR-SND-01] caps each crew cue on its own: 3 pick strikes, 2 worker2 grinds and 2 walks', () => {
+    expect(CREW_CAPS).toEqual({ strike: 3, shift: 2, walk: 2 })
   })
 })

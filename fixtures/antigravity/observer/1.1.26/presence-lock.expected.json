@@ -1,0 +1,4 @@
+{
+  "$comment": "No close while the lock is held or within the 30 s grace after it went (a lock replaced between two reads is no ending); from then on, every read of the closed conversation states one close with the same key, which the loop's ledger keeps to one SessionClosedObserved (INV-36). A lock that comes back opens the conversation again: no close.",
+  "closes": [0, 0, 0, 1, 1, 0]
+}

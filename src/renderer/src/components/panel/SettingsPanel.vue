@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useId, watch } from 'vue'
-import { formatAccelerator } from '../../../../shared/accelerator'
+import { formatAccelerator } from '@dwarfai/contracts'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
@@ -14,6 +14,7 @@ import type {
 } from '../../types'
 import {
   SETTINGS_SECTIONS,
+  openingSection,
   steppedSection,
   type SettingsSection
 } from '../../lib/settings/sections'
@@ -44,9 +45,9 @@ import TypographySettings from './TypographySettings.vue'
  *   drawn: the app has one mode until Veta and Valle land, and a choice of modes that do not exist
  *   is a control that lies (PR5 question) — the nav's mode lever is hidden for the same reason.
  * - Appearance: the Font style list and Custom's rows. Sound: music at startup and the three
- *   volumes. Notifications: the one switch. Integrations: Jev, then OpenCode. Data: Reset
- *   metrics…, in the danger zone, confirmed by typing "yes" in the dialog. About: the version and
- *   Hide panel.
+ *   volumes. Notifications: the one switch. Integrations: Jev, its privacy notice, then OpenCode.
+ *   Data: Reset metrics…, in the danger zone, confirmed by typing "yes" in the dialog. About: the
+ *   version and Hide panel.
  *
  * A failed shortcut also puts a warning dot on the General tab. Every row's label, help and
  * behaviour is the section component's own, copied from what it did before (handoff.md,
@@ -55,8 +56,10 @@ import TypographySettings from './TypographySettings.vue'
  * Presentational, like every settings piece: every verdict arrives as a prop and every intent
  * leaves as an event, so App.vue keeps owning the IPC (the shortcut, the panel layout, the pin, the
  * reset, every stored preference) and the "render only what main verified" rule stays in exactly
- * one place. Kept LOCAL here: which section is shown, and whether the reset dialog is open —
- * display state nothing outside this page ever needs to read.
+ * one place. Kept LOCAL here: which section is shown, and whether the reset dialog is open. The
+ * page opens on the section its owner hands back as `section` (the one last open, NFR-PERS-11),
+ * or on General on first run and whenever the shortcut failed to register (US-SHELL-008.AC02),
+ * and tells its owner each section it shows (`section-change`), so the owner can keep it.
  */
 const props = withDefaults(
   defineProps<{
@@ -96,10 +99,10 @@ const props = withDefaults(
     openCodeSettings: OpenCodeSettingsType
     /** True while a request the OpenCode rows made is in flight. */
     openCodeApplying: boolean
-    /** The section shown when the page opens; General unless a caller asks for another. */
+    /** The section last open, shown when the page opens; General when there is none. */
     section?: SettingsSection
   }>(),
-  { section: 'General' }
+  { section: undefined }
 )
 
 const emit = defineEmits<{
@@ -130,9 +133,10 @@ const emit = defineEmits<{
   'opencode-password-save': [password: string]
   /** Forget the stored OpenCode server password. */
   'opencode-password-clear': []
+  /** The section now shown, for its owner to hand back as `section` next time (NFR-PERS-11). */
+  'section-change': [section: SettingsSection]
 }>()
 
-const shown = ref<SettingsSection>(props.section)
 // The recorder takes the focus when Settings opens on General, not when a keyboard user walks
 // back to General through the tabs: the tab keeps the focus the arrow gave it.
 const recorderFocus = ref(true)
@@ -151,10 +155,13 @@ const brokenShortcut = computed(() =>
     : null
 )
 
+const shown = ref<SettingsSection>(openingSection(props.section, brokenShortcut.value !== null))
+
 function show(section: SettingsSection): void {
   recorderFocus.value = false
   shown.value = section
   if (panel.value) panel.value.scrollTop = 0
+  emit('section-change', section)
 }
 
 async function step(event: KeyboardEvent): Promise<void> {
@@ -296,6 +303,8 @@ watch(
             @clear="emit('jev-clear')"
             @preferences-change="emit('jev-preferences-change', $event)"
           />
+          <!-- Where the Jev rows end and before OpenCode, as the design draws it (settings.js:191). -->
+          <JevPrivacyNotice />
           <OpenCodeSettings
             :settings="openCodeSettings"
             :applying="openCodeApplying"
@@ -303,7 +312,6 @@ watch(
             @password-save="emit('opencode-password-save', $event)"
             @password-clear="emit('opencode-password-clear')"
           />
-          <JevPrivacyNotice />
         </template>
 
         <DataBaseSection v-else-if="shown === 'Data'" @open-reset="resetOpen = true" />

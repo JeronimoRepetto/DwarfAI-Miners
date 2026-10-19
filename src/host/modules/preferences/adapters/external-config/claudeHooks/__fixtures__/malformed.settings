@@ -1,0 +1,4 @@
+{
+  // Claude Code rejects comments and trailing commas in settings.json
+  "hooks": {},
+}

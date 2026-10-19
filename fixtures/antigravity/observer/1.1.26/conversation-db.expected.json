@@ -1,0 +1,49 @@
+{
+  "$comment": "conversation-db.sql read whole once its conversation closed (presence lock gone past the grace): one sealed usage unit per gen_metadata row, unitKey <conversationId>:gen:<idx>, fidelity 1, with the model id of field 1.19; inputNet is field 1.17.2.1 as recorded (uncached input). The watermark is the last idx read.",
+  "warnings": 0,
+  "watermark": 3,
+  "usage": [
+    {
+      "unitKey": "11111111-1111-4111-8111-111111111111:gen:1",
+      "modelId": "synthetic-model-a",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 1200,
+        "output": 210,
+        "cacheRead": 3400,
+        "cacheWrite": 0,
+        "reasoning": 50
+      },
+      "sealed": true,
+      "providerTime": null
+    },
+    {
+      "unitKey": "11111111-1111-4111-8111-111111111111:gen:2",
+      "modelId": "synthetic-model-a",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 300,
+        "output": 95,
+        "cacheRead": 4600,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "sealed": true,
+      "providerTime": null
+    },
+    {
+      "unitKey": "11111111-1111-4111-8111-111111111111:gen:3",
+      "modelId": "synthetic-model-b",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 80,
+        "output": 44,
+        "cacheRead": 5000,
+        "cacheWrite": 512,
+        "reasoning": 20
+      },
+      "sealed": true,
+      "providerTime": null
+    }
+  ]
+}

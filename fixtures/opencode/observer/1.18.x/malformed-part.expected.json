@@ -1,0 +1,49 @@
+{
+  "$comment": "Hand-written from 15 §6 C-11 and 13 FM-086: each unreadable row (three parts and one message) is skipped with one warning naming its id and nothing it held; the parts of an unreadable message are skipped with it; the rows around them still read.",
+  "warnings": 4,
+  "watermark": 1790840009000,
+  "sessions": [
+    {
+      "providerSessionId": "ses_bad_0005",
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790840000000,
+      "parentProviderSessionId": null
+    }
+  ],
+  "entries": [
+    {
+      "providerSessionId": "ses_bad_0005",
+      "sourceKey": "opencode:opencode:ses_bad_0005:prt_bad_0001",
+      "role": "person",
+      "text": "Is the build green?",
+      "providerTime": 1790840001000
+    },
+    {
+      "providerSessionId": "ses_bad_0005",
+      "sourceKey": "opencode:opencode:ses_bad_0005:prt_bad_0006",
+      "role": "dwarf",
+      "text": "Yes, all checks passed.",
+      "providerTime": 1790840005000
+    }
+  ],
+  "usage": [
+    {
+      "providerSessionId": "ses_bad_0005",
+      "sourceKey": "opencode:opencode:ses_bad_0005:msg_bad_0003",
+      "unitKey": "msg_bad_0003",
+      "fidelity": 1,
+      "tokens": { "inputNet": 200, "output": 20, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790840009000
+    }
+  ],
+  "turnEnds": [],
+  "lifetimeTotals": [
+    {
+      "providerSessionId": "ses_bad_0005",
+      "unitKey": "coal:opencode:session:ses_bad_0005",
+      "tokens": { "inputNet": 200, "output": 20, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 },
+      "newestRecordAt": 1790840009000
+    }
+  ]
+}

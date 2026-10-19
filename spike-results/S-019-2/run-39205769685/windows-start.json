@@ -1,0 +1,70 @@
+{
+  "spike": "SP-03",
+  "layout": "win-zip-adr-019-set",
+  "environment": {
+    "date": "2026-10-19T05:50:54.406Z",
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Windows",
+    "imageOs": "win25-vs2026",
+    "imageVersion": "20261007.264.1"
+  },
+  "app": "DwarfAI-Miners.exe",
+  "appBytes": 244546048,
+  "signatureBefore": null,
+  "cleared": [],
+  "firstStart": {
+    "copyCompleteMs": 4374,
+    "hostIdentityMs": 5643,
+    "uiExitCode": null,
+    "copy": {
+      "version": "0.13.1",
+      "files": 102,
+      "bytes": 739708365
+    },
+    "copyTopLevel": [
+      "DwarfAI-Miners.exe",
+      "LICENSE.electron.txt",
+      "LICENSES.chromium.html",
+      "chrome_100_percent.pak",
+      "chrome_200_percent.pak",
+      "d3dcompiler_47.dll",
+      "dxcompiler.dll",
+      "dxil.dll",
+      "ffmpeg.dll",
+      "host-manifest.json",
+      "icudtl.dat",
+      "locales",
+      "resources",
+      "resources.pak",
+      "snapshot_blob.bin",
+      "v8_context_snapshot.bin",
+      "vk_swiftshader.dll",
+      "vk_swiftshader_icd.json",
+      "vulkan-1.dll"
+    ],
+    "copySignature": null,
+    "hostProcess": {
+      "executable": "<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe",
+      "commandLine": "\"<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe\" \"<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\resources\\app.asar\\out\\host\\main.js\""
+    },
+    "fuseMounts": null
+  },
+  "afterUiEnded": {
+    "uiAlive": false,
+    "hostAlive": true,
+    "hostProcess": {
+      "executable": "<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe",
+      "commandLine": "\"<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe\" \"<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\resources\\app.asar\\out\\host\\main.js\""
+    },
+    "fuseMounts": null,
+    "fuseMountHolders": null
+  },
+  "secondStart": {
+    "hostIdentityMs": 2036,
+    "copyReused": true
+  },
+  "signatureAfter": null,
+  "clearedAfter": ["<home>\\AppData\\Roaming\\DwarfAI-Miners", "<home>\\AppData\\Local\\DwarfAI"]
+}

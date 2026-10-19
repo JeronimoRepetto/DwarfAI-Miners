@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createFrameClock, stoppedFrameClock, type FrameClockEnv } from './frameClock'
+import { settledClips } from './dwarfSequence'
 import { loopOf, onceOf, type SequencePosition, type SpriteSheet } from './spriteSheet'
+import { FakeTickSource, fakeFrameClockEnv } from './testing/FakeTickSource'
 
 /** A three-frame swing with the shape of the pick: 120ms, a hurried 60ms, the impact held 200ms. */
 const SWING: SpriteSheet = { src: 'swing.png', frames: 3, frameMs: 100, durations: [120, 60, 200] }
@@ -414,5 +416,107 @@ describe('the phase over a shift', () => {
     const frames: SequencePosition[] = []
     clock.player((p) => frames.push(p)).play(shift, { phase: true, phaseClips: 1 })
     expect(frames).toEqual([{ clip: 0, frame: 2 }])
+  })
+})
+
+/*
+ * APPENDED for ISSUE-255. Under reduced motion only the walk collapses: a dwarf's status loops keep
+ * animating, every frame a flat 200 ms (US-MINE-009.AC08; motion.md, Reduced motion). Written
+ * against the frames a person sees on the real sheets, never against the timer that drives them.
+ */
+describe('the status loops under reduced motion (ISSUE-255)', () => {
+  it('[US-MINE-009.AC08, NFR-TIM-10] under reduced motion the idle, working and asleep loops keep 200 ms per frame', () => {
+    const loops = {
+      idle: settledClips('worker', false, false),
+      working: settledClips('worker', false, true),
+      asleep: settledClips('worker', true, false)
+    }
+    for (const [name, clips] of Object.entries(loops)) {
+      const env = fakeEnv()
+      env.reduced = true
+      const clock = createFrameClock(env)
+      const shownAt: number[] = []
+      clock.player(() => shownAt.push(env.t)).play(clips)
+      env.advance(2_000)
+      // It keeps animating: a change every 200 ms, ten of them in two seconds.
+      expect(shownAt, name).toEqual(Array.from({ length: 11 }, (_, n) => n * 200))
+      clock.dispose()
+    }
+  })
+})
+
+/*
+ * ISSUE-282 (TC-282-03): the clock on its tick source port, counted by `FakeTickSource`. A "frame
+ * request" is one tick asked of the source; the clock asks for one at a time, for every sprite.
+ */
+describe('frameClock on one tick source', () => {
+  const BREATH: SpriteSheet = {
+    src: 'breath.png',
+    frames: 4,
+    frameMs: 100,
+    durations: [90, 130, 70, 110]
+  }
+
+  it('[NFR-TIM-10] every subscribed sprite advances on one tick source: three sheets request one frame per tick', () => {
+    const ticks = new FakeTickSource()
+    const { env } = fakeFrameClockEnv(ticks)
+    const clock = createFrameClock(env)
+    const shown: SequencePosition[][] = [[], [], []]
+    const sheets = [SWING, IDLE, BREATH]
+    sheets.forEach((sheet, i) => clock.player((p) => shown[i]!.push(p)).play([loopOf(sheet)]))
+
+    expect(ticks.pending).toBe(1)
+    for (let tick = 0; tick < 30; tick++) {
+      const before = ticks.requests
+      expect(ticks.runNext()).toBe(true)
+      expect(ticks.requests - before).toBe(1)
+      expect(ticks.pending).toBe(1)
+    }
+    // Each sprite walked its own frames on that one source, not one shared tempo.
+    for (const frames of shown) expect(new Set(frames.map((p) => p.frame)).size).toBeGreaterThan(1)
+    expect(shown[0]!.length).not.toBe(shown[1]!.length)
+  })
+
+  it('[NFR-PERF-04] with no subscribed sheet the clock requests no frame', () => {
+    const ticks = new FakeTickSource()
+    const { env } = fakeFrameClockEnv(ticks)
+    const clock = createFrameClock(env)
+    ticks.advance(10_000)
+    expect(ticks.requests).toBe(0)
+
+    const player = clock.player(() => {})
+    player.play([loopOf(SWING)])
+    ticks.advance(1_000)
+    player.stop()
+    const afterStop = ticks.requests
+    ticks.advance(10_000)
+
+    expect(ticks.pending).toBe(0)
+    expect(ticks.requests).toBe(afterStop)
+  })
+
+  it('[ADR-025] a paused clock requests no frame and on resume shows the frame its elapsed time selects', () => {
+    const ticks = new FakeTickSource()
+    const { env } = fakeFrameClockEnv(ticks)
+    const clock = createFrameClock(env)
+    let shown: SequencePosition = { clip: -1, frame: -1 }
+    clock.player((p) => (shown = p)).play([loopOf(SWING)])
+
+    ticks.advance(130) // SWING is 120, 60, 200: 130ms in is frame 1, 50ms of it left.
+    expect(shown.frame).toBe(1)
+
+    clock.pause()
+    const atPause = ticks.requests
+    ticks.advance(60_000)
+    expect(ticks.pending).toBe(0)
+    expect(ticks.requests).toBe(atPause)
+    expect(shown.frame).toBe(1)
+
+    clock.resume()
+    // Sprite time stood still while paused: 130ms elapsed selects frame 1, which ends 50ms on.
+    expect(shown.frame).toBe(1)
+    expect(ticks.nextAt).toBe(ticks.t + 50)
+    ticks.advance(50)
+    expect(shown.frame).toBe(2)
   })
 })

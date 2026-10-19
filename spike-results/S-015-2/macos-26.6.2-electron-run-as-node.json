@@ -1,0 +1,60 @@
+{
+  "label": "electron-run-as-node",
+  "takenAt": "2026-10-03T07:19:48.647Z",
+  "platform": "darwin",
+  "osRelease": "25.6.0",
+  "osVersion": "Darwin Kernel Version 25.6.0: Fri Jul 31 19:18:49 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6000",
+  "node": "24.18.1",
+  "fastStartup": null,
+  "readings": [
+    {
+      "source": "sysctl kern.bootsessionuuid",
+      "field": "bootId",
+      "value": "c761abbd23de",
+      "latencyMs": 3.7,
+      "error": null
+    },
+    {
+      "source": "sysctl kern.boottime",
+      "field": "bootTimeMs",
+      "value": 1790968608094,
+      "latencyMs": 2.1,
+      "error": null
+    },
+    {
+      "source": "now - os.uptime() (Node, in process)",
+      "field": "bootTimeMs",
+      "value": 1790968609000,
+      "latencyMs": 0,
+      "error": null
+    },
+    {
+      "source": "SECURITYSESSIONID (environment, audit session)",
+      "field": "logonSessionId",
+      "value": null,
+      "latencyMs": 0,
+      "error": null
+    },
+    {
+      "source": "ps -o sess= (session of this process)",
+      "field": "logonSessionId",
+      "value": "5feceb66ffc8",
+      "latencyMs": 1.9,
+      "error": null
+    },
+    {
+      "source": "who console login (utmpx, to the minute)",
+      "field": "logonSessionId",
+      "value": "Oct  2 19:27",
+      "latencyMs": 4.2,
+      "error": null
+    },
+    {
+      "source": "loginwindow start time (ps lstart, to the second)",
+      "field": "logonSessionId",
+      "value": 1790969170000,
+      "latencyMs": 30.1,
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,477 @@
+// The MessageLog double (16 §4.6, §2.8). Never imported by production code (R14). It lives in
+// `testing/`, not `ports/fakes/`: it imports values (the entry rule, the invariant error), and
+// `ports/` is type-only (05 R2) — the crew precedent (`InMemoryDwarfRepository`).
+//
+// The same rules as `SqliteMessageLog` (09 §5.2 steps 1–2): each entry claims its source key
+// first, and a key already claimed writes nothing; a dropped record keeps its key with no row; an
+// echo merges into its dwarf's waiting DwarfAI row, and an uncorrelated observed person entry into
+// the oldest waiting row with its exact text inside the typed-echo window; text over 64 KiB (UTF-8) is refused like the
+// `messages` CHECK; `append` runs only inside the caller's transaction. A test's transaction rolls
+// it back with `snapshot` / `restore`. `trim` keeps the newest `MESSAGES_PER_DWARF` rows of the
+// dwarf by the domain rule `rowsToTrim` (`sending` first), and a trimmed row's key stays with no
+// row. `page` returns every stored row as a `Message` with its delivery, newest first by
+// `sortAt` then id (amendment of 2026-10-05 to 16 §4.6, ISSUE-103). An entry's tool steps are kept on
+// its row as its `ActivitySummary` (ISSUE-101). AMENDMENT-16 (owner, 2026-10-15): `writeSent`
+// keeps one sent row per `requestId` (the UNIQUE `messages_send_request`), and `settleDelivery`
+// records the confidence and moves only a `delivered` delivery to `reacted`. Owner
+// amendment K (2026-10-09): `writeAnswersRecord` keeps one "Answers:" record per ask (the UNIQUE
+// `messages_one_record_per_ask`) and updates it in place given `existing`; `settleDelivery` settles a
+// `sending` delivery. AMENDMENT-20 (owner, 2026-10-17): `resend` puts a row's delivery back to
+// `sending` (attempts + 1, restamped) and answers the delivery it had before.
+import { HostInvariantError } from '../../../kernel/domain/errors'
+import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
+import type { Clock } from '../../../kernel/ports/clock'
+import type { IdGenerator } from '../../../kernel/ports/idGenerator'
+import type { TransactionScope } from '../../../kernel/ports/transactionScope'
+import type { ConversationEntry } from '../../suppliers'
+import {
+  activitySummaryOf,
+  classifyEntry,
+  echoesTypedSend,
+  MESSAGE_TEXT_MAX_BYTES,
+  type Delivery,
+  type DeliveryFailure,
+  type DeliveryPhase,
+  type FeedPageRequest,
+  type Message
+} from '../domain/messages'
+import { RequestIdOfAnotherDwarfError } from '../domain/delivery'
+import { MESSAGES_PER_DWARF, rowsToTrim } from '../domain/retention'
+import type { AppendOptions, DeliverySettlement, MessageLog } from '../ports/messageLog'
+
+export interface InMemoryMessageLogDeps {
+  /** The caller's transaction probe (16 §2.2). */
+  scope: TransactionScope
+  /** Stamps `createdAt`. */
+  clock: Clock
+  /** Mints message ids. */
+  ids: IdGenerator
+}
+
+interface StoredRow {
+  message: Message
+  /** `messages.pending_echo`: set only on a DwarfAI row waiting for its echo. */
+  pendingEcho: string | null
+  /** The row's `deliveries` row, or null when it has none. */
+  delivery: Delivery | null
+  /** `messages.request_id`: set only on the row a `conversation.send` wrote (AMENDMENT-16). */
+  requestId?: string
+}
+
+interface StoredKey {
+  dwarfId: DwarfId
+  messageId: MessageId | null
+}
+
+export interface InMemorySnapshot {
+  rows: readonly StoredRow[]
+  keys: ReadonlyMap<string, StoredKey>
+}
+
+const PAGE_LIMIT = 50
+const utf8 = new TextEncoder()
+
+export class InMemoryMessageLog implements MessageLog {
+  private rows: StoredRow[] = []
+  private keys = new Map<string, StoredKey>()
+
+  constructor(private readonly deps: InMemoryMessageLogDeps) {}
+
+  append(
+    dwarfId: DwarfId,
+    entries: ConversationEntry[],
+    origin: 'live-stream' | 'transcript',
+    opts: AppendOptions = {}
+  ): { inserted: number; appended: Message[] } {
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError('MessageLog.append runs inside the caller transaction (16 §2.2)')
+    }
+    const now = this.deps.clock.now()
+    const appended: Message[] = []
+    for (const entry of entries) {
+      if (this.keys.has(entry.sourceKey)) continue
+      this.keys.set(entry.sourceKey, { dwarfId, messageId: null })
+      const typed =
+        entry.echoOf === undefined ? this.typedEcho(dwarfId, entry, origin, now) : undefined
+      const disposition = classifyEntry(
+        entry,
+        (c) => this.waiting(dwarfId, c) !== undefined,
+        typed !== undefined
+      )
+      if (disposition === 'drop-keep-key') continue
+      if (disposition === 'merge-echo') {
+        const row = entry.echoOf === undefined ? typed : this.waiting(dwarfId, entry.echoOf)
+        if (row !== undefined) {
+          row.message = {
+            ...row.message,
+            sourceKey: entry.sourceKey,
+            providerTime: entry.providerTime
+          }
+          row.pendingEcho = null
+          this.keys.set(entry.sourceKey, { dwarfId, messageId: row.message.id })
+          continue
+        }
+      }
+      if (utf8.encode(entry.text).length > MESSAGE_TEXT_MAX_BYTES) {
+        throw new HostInvariantError('message text over 64 KiB (09 §4.4 CHECK)')
+      }
+      const activity = activitySummaryOf(entry.activity)
+      // AMENDMENT-23: the issuer goes on the batch's person row only (the delegated brief).
+      const issuer = entry.role === 'person' ? opts.issuer : undefined
+      const message: Message = {
+        id: this.deps.ids.uuidv7() as MessageId,
+        dwarfId,
+        sourceKey: entry.sourceKey,
+        role: entry.role,
+        text: entry.text,
+        ...(issuer === undefined ? {} : { issuer: { dwarfId: issuer } }),
+        ...(activity === undefined ? {} : { activity }),
+        attachments: [],
+        origin,
+        providerTime: entry.providerTime,
+        createdAt: now
+      }
+      this.rows.push({ message, pendingEcho: null, delivery: null })
+      this.keys.set(entry.sourceKey, { dwarfId, messageId: message.id })
+      appended.push(structuredClone(message))
+    }
+    return { inserted: appended.length, appended }
+  }
+
+  page(dwarfId: DwarfId, req: FeedPageRequest): Message[] {
+    const ordered = this.rows.filter((r) => r.message.dwarfId === dwarfId).sort(newestFirst)
+    let from = 0
+    if (req.before !== undefined) {
+      const at = ordered.findIndex((r) => r.message.id === req.before)
+      if (at === -1) return []
+      from = at + 1
+    }
+    return ordered
+      .slice(from, from + (req.limit ?? PAGE_LIMIT))
+      .map((r) =>
+        structuredClone(r.delivery === null ? r.message : { ...r.message, delivery: r.delivery })
+      )
+  }
+
+  trim(dwarfId: DwarfId, keep: number): void {
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError('MessageLog.trim runs inside the caller transaction (16 §2.2)')
+    }
+    if (keep !== MESSAGES_PER_DWARF) {
+      throw new HostInvariantError(`MessageLog.trim keeps MESSAGES_PER_DWARF rows, not ${keep}`)
+    }
+    const trimmed = new Set(
+      rowsToTrim(
+        this.rows
+          .filter((r) => r.message.dwarfId === dwarfId)
+          .map((r) => ({
+            id: r.message.id,
+            sortAt: sortAt(r.message),
+            sending: r.delivery?.phase === 'sending'
+          }))
+      )
+    )
+    if (trimmed.size === 0) return
+    // The row goes with its delivery; its key stays, pointing at no row (09 §5.2).
+    this.rows = this.rows.filter((r) => !trimmed.has(r.message.id))
+    for (const [sourceKey, key] of this.keys) {
+      if (key.messageId !== null && trimmed.has(key.messageId)) {
+        this.keys.set(sourceKey, { ...key, messageId: null })
+      }
+    }
+  }
+
+  writeAnswersRecord(
+    dwarfId: DwarfId,
+    askId: AskId,
+    text: string,
+    at: Instant,
+    existing?: MessageId
+  ): MessageId {
+    this.requireTransaction('writeAnswersRecord')
+    if (utf8.encode(text).length > MESSAGE_TEXT_MAX_BYTES) {
+      throw new HostInvariantError('message text over 64 KiB (09 §4.4 CHECK)')
+    }
+    if (existing !== undefined) {
+      const row = this.rows.find(
+        (r) =>
+          r.message.id === existing &&
+          r.message.dwarfId === dwarfId &&
+          r.message.askId === askId &&
+          r.message.role === 'answers-record'
+      )
+      if (row === undefined || row.delivery === null) {
+        throw new HostInvariantError(`no answers-record ${existing} of ask ${askId} to update`)
+      }
+      row.message = { ...row.message, text, createdAt: at }
+      const { failure, confidence, ...rest } = row.delivery
+      void [failure, confidence]
+      row.delivery = { ...rest, phase: 'sending', attempts: rest.attempts + 1, phaseAt: at }
+      return existing
+    }
+    // `messages_one_record_per_ask` (09 §4.4): one record per ask.
+    if (this.rows.some((r) => r.message.askId === askId)) {
+      throw new HostInvariantError(`ask ${askId} already has an answers-record`)
+    }
+    const message: Message = {
+      id: this.deps.ids.uuidv7() as MessageId,
+      dwarfId,
+      sourceKey: null,
+      role: 'answers-record',
+      text,
+      attachments: [],
+      origin: 'dwarfai',
+      providerTime: null,
+      askId,
+      createdAt: at
+    }
+    this.rows.push({
+      message,
+      pendingEcho: null,
+      delivery: {
+        messageId: message.id,
+        dwarfId,
+        kind: 'answers-record',
+        phase: 'sending',
+        attempts: 1,
+        phaseAt: at
+      }
+    })
+    return message.id
+  }
+
+  settleDelivery(id: MessageId, result: DeliverySettlement, at: Instant): void {
+    this.requireTransaction('settleDelivery')
+    const from = result.phase === 'reacted' ? 'delivered' : 'sending'
+    const row = this.rows.find((r) => r.message.id === id && r.delivery?.phase === from)
+    if (row === undefined || row.delivery === null) {
+      throw new HostInvariantError(`no ${from} delivery of message ${id}`)
+    }
+    if (result.phase === 'reacted') {
+      row.delivery = { ...row.delivery, phase: 'reacted', phaseAt: at }
+      return
+    }
+    if (result.phase === 'sending') {
+      row.delivery = { ...row.delivery, heldUntilTurnEnd: true }
+      return
+    }
+    const { heldUntilTurnEnd, ...rest } = row.delivery
+    void heldUntilTurnEnd
+    row.delivery = {
+      ...rest,
+      phase: result.phase,
+      ...(result.phase === 'delivered' && result.confidence !== undefined
+        ? { confidence: result.confidence }
+        : {}),
+      ...(result.phase === 'failed' ? { failure: result.failure } : {}),
+      phaseAt: at
+    }
+  }
+
+  writeSent(
+    dwarfId: DwarfId,
+    text: string,
+    requestId: string,
+    at: Instant
+  ): { messageId: MessageId; existing: boolean } {
+    this.requireTransaction('writeSent')
+    if (utf8.encode(text).length > MESSAGE_TEXT_MAX_BYTES) {
+      throw new HostInvariantError('message text over 64 KiB (09 §4.4 CHECK)')
+    }
+    // `messages_send_request` (UNIQUE): the stored row of this requestId, while it is stored.
+    const stored = this.rows.find((r) => r.requestId === requestId)
+    if (stored !== undefined) {
+      if (stored.message.dwarfId !== dwarfId) throw new RequestIdOfAnotherDwarfError()
+      return { messageId: stored.message.id, existing: true }
+    }
+    const message: Message = {
+      id: this.deps.ids.uuidv7() as MessageId,
+      dwarfId,
+      sourceKey: null,
+      role: 'person',
+      text,
+      attachments: [],
+      origin: 'dwarfai',
+      providerTime: null,
+      createdAt: at
+    }
+    this.rows.push({
+      message,
+      pendingEcho: null,
+      requestId,
+      delivery: {
+        messageId: message.id,
+        dwarfId,
+        kind: 'message',
+        phase: 'sending',
+        attempts: 1,
+        phaseAt: at
+      }
+    })
+    return { messageId: message.id, existing: false }
+  }
+
+  resend(
+    id: MessageId,
+    at: Instant
+  ): { dwarfId: DwarfId; text: string; delivery: Delivery } | null {
+    this.requireTransaction('resend')
+    const row = this.rows.find((r) => r.message.id === id)
+    if (row === undefined || row.delivery === null) return null
+    const before = structuredClone(row.delivery)
+    const { failure, confidence, heldUntilTurnEnd, ...rest } = row.delivery
+    void [failure, confidence, heldUntilTurnEnd]
+    row.message = { ...row.message, createdAt: at }
+    row.delivery = { ...rest, phase: 'sending', attempts: rest.attempts + 1, phaseAt: at }
+    return { dwarfId: row.message.dwarfId, text: row.message.text, delivery: before }
+  }
+
+  private requireTransaction(method: string): void {
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError(
+        `MessageLog.${method} runs inside the caller transaction (16 §2.2)`
+      )
+    }
+  }
+
+  /** Test seam: a DwarfAI-sent row waiting for `correlation` (send writes these later, ISSUE-166). */
+  seedWaitingRow(dwarfId: DwarfId, correlation: string, text: string): MessageId {
+    return this.seedDwarfAiRow(dwarfId, 'person', text, correlation, null)
+  }
+
+  /** Test seam: a DwarfAI-sent person row whose delivery is still `sending` (ISSUE-166 writes these). */
+  seedSendingRow(dwarfId: DwarfId, text: string): MessageId {
+    return this.seedDwarfAiRow(dwarfId, 'person', text, null, 'sending')
+  }
+
+  /**
+   * Test seam: a DwarfAI-sent person row whose delivery failed with `failure` (ISSUE-166 settles
+   * these through `settleDelivery`).
+   */
+  seedFailedRow(dwarfId: DwarfId, text: string, failure: DeliveryFailure): MessageId {
+    return this.seedDwarfAiRow(dwarfId, 'person', text, null, 'failed', failure)
+  }
+
+  /**
+   * Test seam: an "Answers:" record of `dwarfId`, delivered unless `phase` says otherwise (asking
+   * writes these through `AnswerRecords`).
+   */
+  seedAnswersRecord(
+    dwarfId: DwarfId,
+    text: string,
+    phase: 'sending' | 'delivered' = 'delivered'
+  ): MessageId {
+    return this.seedDwarfAiRow(dwarfId, 'answers-record', text, null, phase)
+  }
+
+  /**
+   * Test seam for the Reset step double (09 §7.2): every row goes with its delivery except one whose
+   * delivery is still `sending`; every key stays, pointing at no row once its row went.
+   */
+  resetKeepingSending(): void {
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError('the Reset step runs inside the caller transaction (16 §2.2)')
+    }
+    this.rows = this.rows.filter((r) => r.delivery?.phase === 'sending')
+    const kept = new Set(this.rows.map((r) => r.message.id))
+    for (const [sourceKey, key] of this.keys) {
+      if (key.messageId !== null && !kept.has(key.messageId)) {
+        this.keys.set(sourceKey, { ...key, messageId: null })
+      }
+    }
+  }
+
+  /** The ids of the dwarf's stored rows, in insertion order. */
+  rowIds(dwarfId: DwarfId): MessageId[] {
+    return this.rows.filter((r) => r.message.dwarfId === dwarfId).map((r) => r.message.id)
+  }
+
+  keyOf(sourceKey: string): StoredKey | null {
+    const key = this.keys.get(sourceKey)
+    return key === undefined ? null : { ...key }
+  }
+
+  rowCount(dwarfId: DwarfId): number {
+    return this.rows.filter((r) => r.message.dwarfId === dwarfId).length
+  }
+
+  snapshot(): InMemorySnapshot {
+    return { rows: structuredClone(this.rows), keys: new Map(this.keys) }
+  }
+
+  restore(snapshot: InMemorySnapshot): void {
+    this.rows = structuredClone([...snapshot.rows])
+    this.keys = new Map(snapshot.keys)
+  }
+
+  private seedDwarfAiRow(
+    dwarfId: DwarfId,
+    role: 'person' | 'answers-record',
+    text: string,
+    pendingEcho: string | null,
+    delivery: DeliveryPhase | null,
+    failure?: DeliveryFailure
+  ): MessageId {
+    const now = this.deps.clock.now()
+    const message: Message = {
+      id: this.deps.ids.uuidv7() as MessageId,
+      dwarfId,
+      sourceKey: null,
+      role,
+      text,
+      attachments: [],
+      origin: 'dwarfai',
+      providerTime: null,
+      createdAt: now
+    }
+    this.rows.push({
+      message,
+      pendingEcho,
+      delivery:
+        delivery === null
+          ? null
+          : {
+              messageId: message.id,
+              dwarfId,
+              kind: role === 'answers-record' ? 'answers-record' : 'message',
+              phase: delivery,
+              ...(failure === undefined ? {} : { failure }),
+              attempts: 1,
+              phaseAt: now
+            }
+    })
+    return message.id
+  }
+
+  /** The oldest waiting row of the dwarf this uncorrelated observed entry echoes (ADR-007 item 3). */
+  private typedEcho(
+    dwarfId: DwarfId,
+    entry: ConversationEntry,
+    origin: 'live-stream' | 'transcript',
+    now: Instant
+  ): StoredRow | undefined {
+    return this.rows
+      .filter((r) => r.message.dwarfId === dwarfId && r.pendingEcho !== null)
+      .sort((a, b) => a.message.createdAt - b.message.createdAt || compareIds(a, b))
+      .find((r) => echoesTypedSend(entry, origin, r.message, now))
+  }
+
+  private waiting(dwarfId: DwarfId, correlation: string): StoredRow | undefined {
+    return this.rows.find((r) => r.message.dwarfId === dwarfId && r.pendingEcho === correlation)
+  }
+}
+
+function compareIds(a: StoredRow, b: StoredRow): number {
+  return a.message.id < b.message.id ? -1 : a.message.id > b.message.id ? 1 : 0
+}
+
+function sortAt(m: Message): number {
+  return m.providerTime ?? m.createdAt
+}
+
+/** `sort_at DESC, id DESC` (the `messages_feed` index). */
+function newestFirst(a: StoredRow, b: StoredRow): number {
+  const x = a.message
+  const y = b.message
+  return sortAt(y) - sortAt(x) || (y.id < x.id ? -1 : y.id > x.id ? 1 : 0)
+}

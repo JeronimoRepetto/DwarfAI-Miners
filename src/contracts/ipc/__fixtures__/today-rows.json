@@ -1,0 +1,516 @@
+[
+  {
+    "id": "A-01",
+    "wire": "panel:hide",
+    "kind": "send",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-02",
+    "wire": "panel:raise",
+    "kind": "send",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-03",
+    "wire": "panel:getAlwaysOnTop",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-04",
+    "wire": "panel:setAlwaysOnTop",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-05",
+    "wire": "panel:visible:get",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-06",
+    "wire": "audio:preferences:get",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-07",
+    "wire": "audio:preferences:set",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-08",
+    "wire": "panel:layout:get",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-09",
+    "wire": "panel:layout:set",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-10",
+    "wire": "shortcut:get",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-11",
+    "wire": "shortcut:set",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-12",
+    "wire": "mines:get",
+    "kind": "invoke",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-13",
+    "wire": "dwarf:activate",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "split",
+    "sensitive": false
+  },
+  {
+    "id": "A-14",
+    "wire": "dwarf:feed",
+    "kind": "invoke",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-15",
+    "wire": "dwarf:feed:page",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-16",
+    "wire": "panel:watchDwarfFeed",
+    "kind": "send",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-17",
+    "wire": "dwarf:refreshTelemetry",
+    "kind": "send",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-18",
+    "wire": "dwarf:setTuning",
+    "kind": "invoke",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-19",
+    "wire": "mine:history",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-20",
+    "wire": "mine:openPath",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "split",
+    "sensitive": false
+  },
+  {
+    "id": "A-21",
+    "wire": "shell:openExternalLink",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-22",
+    "wire": "shell:copyText",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-23",
+    "wire": "dwarf:sendText",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-24",
+    "wire": "dwarf:attachments:choose",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-25",
+    "wire": "dwarf:attachments:describe",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-26",
+    "wire": "dwarf:kick",
+    "kind": "invoke",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-27",
+    "wire": "dwarf:retire",
+    "kind": "send",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-28",
+    "wire": "app:build",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-29",
+    "wire": "app:features",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-30",
+    "wire": "mine:declare",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "split",
+    "sensitive": false
+  },
+  {
+    "id": "A-31",
+    "wire": "mine:declare-main",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-32",
+    "wire": "mine:undeclare",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-33",
+    "wire": "metrics:reset",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-34",
+    "wire": "projects:query",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-35",
+    "wire": "agent:launch",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-36",
+    "wire": "agent:providers",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-37",
+    "wire": "agent:models",
+    "kind": "invoke",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-38",
+    "wire": "agent:launchHeld",
+    "kind": "invoke",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-39",
+    "wire": "agent:launchHosted",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-40",
+    "wire": "agent:answerQuestion",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-41",
+    "wire": "agent:answerPermission",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-42",
+    "wire": "notifications:enabled:get",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-43",
+    "wire": "notifications:enabled:set",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-44",
+    "wire": "presence:visibleMines",
+    "todayWire": "panel:openMine",
+    "kind": "send",
+    "status": "CHANGE",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-45",
+    "wire": "typography:preferences:get",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-46",
+    "wire": "typography:preferences:set",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-47",
+    "wire": "jev:settings:get",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-48",
+    "wire": "jev:apiKey:set",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": true
+  },
+  {
+    "id": "A-49",
+    "wire": "jev:apiKey:clear",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-50",
+    "wire": "jev:route",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-51",
+    "wire": "jev:preferences:set",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-52",
+    "wire": "opencode:settings:get",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-53",
+    "wire": "opencode:plugin:set",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-54",
+    "wire": "opencode:password:set",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": true
+  },
+  {
+    "id": "A-55",
+    "wire": "opencode:password:clear",
+    "kind": "invoke",
+    "status": "CHANGE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-56",
+    "wire": "launch-view:get",
+    "kind": "invoke",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-57",
+    "wire": "launch-view:set",
+    "kind": "send",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-P1",
+    "wire": "panel:visible:changed",
+    "kind": "push",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-P2",
+    "wire": "mines:update",
+    "kind": "push",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-P3",
+    "wire": "agent:launchFailed",
+    "kind": "push",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-P4",
+    "wire": "dwarf:sendText:settled",
+    "kind": "push",
+    "status": "RETIRE",
+    "placement": "host",
+    "sensitive": false
+  },
+  {
+    "id": "A-P5",
+    "wire": "panel:mine:show",
+    "kind": "push",
+    "status": "RETIRE",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-P6",
+    "wire": "typography:preferences:changed",
+    "kind": "push",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  },
+  {
+    "id": "A-X1",
+    "wire": null,
+    "member": "pathForDroppedFile",
+    "kind": "sync helper",
+    "status": "KEEP",
+    "placement": "ui-local",
+    "sensitive": false
+  }
+]

@@ -1,0 +1,63 @@
+{
+  "case": "C-23",
+  "description": "ISSUE-202, ADR-013 items 2-3 and 8, 15 §4.4: a launch with both delegation gates on (the request carries a ticket-file DelegationInjection; row X1 mcpInjection ticket-file, SP-12 partial). The Jev entry travels only in codex's argv as -c overrides: the relay command, its args, and its own env holding ELECTRON_RUN_AS_NODE and the credential file PATH (the relay form of 15 §4), then approval_mode approve scoped to exactly delegate_subtask and subtask_result inside that entry (ADR-008 item 3's named exception, C-24). No credential value and no DWARFAI_DELEGATION_TOKEN string is in any argv, env or frame (C-23, INV-59, INV-83); thread/start carries no MCP configuration (the entry never goes through the protocol while SP-12 is partial). The provider side is the c-20 first turn (the recorded Codex 0.153.4 shapes): Codex's answers do not depend on the -c overrides. `argv` is the spawned argv without the executable.",
+  "script": [{ "do": "launch", "delegation": true }],
+  "outcomes": [{ "resolved": true }],
+  "argv": [
+    "app-server",
+    "-c",
+    "mcp_servers.jev.command=\"/opt/dwarfai/host/dwarfai\"",
+    "-c",
+    "mcp_servers.jev.args=[\"dwarfai-mcp-relay\"]",
+    "-c",
+    "mcp_servers.jev.env={ELECTRON_RUN_AS_NODE=\"1\",DWARFAI_MCP_CREDENTIAL_FILE=\"/home/j/.dwarfai/run/mcp/launch-1.cred\"}",
+    "-c",
+    "mcp_servers.jev.tools.delegate_subtask.approval_mode=\"approve\"",
+    "-c",
+    "mcp_servers.jev.tools.subtask_result.approval_mode=\"approve\""
+  ],
+  "events": [
+    { "t": "status", "value": "working" },
+    {
+      "t": "message",
+      "record": {
+        "sourceKey": "codex:codex:{session}:0000000b-0000-4000-8000-000000000001",
+        "role": "person",
+        "text": "first prompt",
+        "providerTime": 1792225108645
+      }
+    },
+    {
+      "t": "turn.ended",
+      "end": {
+        "turnKey": "0000000a-0000-4000-8000-000000000001",
+        "kind": "concluded",
+        "at": 0,
+        "reliability": "reliable",
+        "cancelledFromApp": false
+      }
+    },
+    { "t": "status", "value": "idle" }
+  ],
+  "sent": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "clientInfo": { "name": "dwarfai", "version": "0.0.0" } }
+    },
+    { "jsonrpc": "2.0", "method": "initialized", "params": {} },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "thread/start",
+      "params": { "cwd": "/work/mine", "approvalPolicy": "on-request" }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "turn/start",
+      "params": { "threadId": "{session}", "input": [{ "type": "text", "text": "first prompt" }] }
+    }
+  ]
+}

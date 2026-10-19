@@ -1,0 +1,15 @@
+{
+  "catalog": "acs",
+  "source": "02-requirements.md",
+  "revision": "0000000000000000000000000000000000000000",
+  "ids": {
+    "US-MSG-001.AC03": {
+      "story": "US-MSG-001",
+      "tag": "happy"
+    },
+    "US-MSG-001.AC04": {
+      "story": "US-MSG-001",
+      "tag": "happy"
+    }
+  }
+}

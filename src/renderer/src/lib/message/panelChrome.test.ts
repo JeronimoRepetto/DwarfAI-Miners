@@ -168,9 +168,12 @@ describe('messagePanelOutcome', () => {
     expect(ended('interrupted')).toBe('Turn interrupted · 5 steps · idle for 5m')
   })
 
-  it('reads a leaving dwarf as a finished turn, under the resting square', () => {
+  // AMENDED for ISSUE-259 (was: status 'asleep', the resting square): a leaving dwarf is idle in
+  // the renderer's four-value status (sceneDwarfStatus), and idle shows the working green
+  // (US-MSG-011.AC08). The text is unchanged.
+  it('reads a leaving dwarf as a finished turn, under the idle square', () => {
     expect(messagePanelOutcome(defaultDwarf({ status: 'leaving' }), undefined, NOW)).toEqual({
-      status: 'asleep',
+      status: 'idle',
       text: 'Turn finished'
     })
   })
@@ -406,3 +409,45 @@ describe('messagePanelOutcome, past a day and in its tooltip', () => {
     ).toBeUndefined()
   })
 })
+
+/* --- ISSUE-259: the outcome line's square and tooltip — one block, appended ------------------- */
+
+/*
+ * The outcome line's square and what its tooltip carries (US-MSG-011.AC08, US-MSG-012.AC01,
+ * AC02, AC07). The 200-character trim counts grapheme clusters, the way the app counts a custom
+ * dwarf name, so an accented letter written as a letter and a combining mark is one character.
+ */
+describe('messagePanelOutcome, its square and its tooltip (ISSUE-259)', () => {
+  const NOW = 1_800_000_000_000
+  const resting = (lastTurn: Dwarf['lastTurn']) => defaultDwarf({ status: 'waiting', lastTurn })
+
+  it('[US-MSG-011.AC08] an idle dwarf’s status square shows the same green as working', () => {
+    // The renderer's four-value status reads a dwarf neither working, asking nor asleep as idle
+    // (sceneDwarfStatus); idle has no colour of its own, so its square is the working one.
+    const idle = messagePanelOutcome(defaultDwarf({ status: 'leaving' }), undefined, NOW)
+    expect(idle.status).toBe('idle')
+    expect(messagePanelOutcome(defaultDwarf({ status: 'working' }), undefined, NOW).status).toBe(
+      'working'
+    )
+    expect(messagePanelOutcome(resting(undefined), undefined, NOW).status).toBe('asleep')
+  })
+
+  it('[US-MSG-012.AC01] a bad ending’s tooltip reads its sentence, a colon and the provider detail verbatim', () => {
+    const tip = (kind: 'capped' | 'errored' | 'interrupted', detail: string) =>
+      messagePanelOutcome(resting({ kind, detail, endedAt: NOW }), undefined, NOW).tip
+    expect(tip('capped', 'error_max_turns')).toBe('Stopped at a limit: error_max_turns')
+    expect(tip('errored', '  Rate <b>limit</b>  ')).toBe('Failed:   Rate <b>limit</b>  ')
+    expect(tip('interrupted', 'user_cancelled')).toBe('Interrupted: user_cancelled')
+  })
+
+  it('[US-MSG-012.AC02, US-MSG-012.AC07] closing words are trimmed to 200 grapheme clusters with an ellipsis', () => {
+    const accented = 'e\u0301' // "é" as a letter and a combining acute: one character
+    const tip = (text: string) =>
+      messagePanelOutcome(resting({ kind: 'concluded', text, endedAt: NOW }), undefined, NOW).tip
+    expect(tip(accented.repeat(OUTCOME_TIP_MAX_CHARS))).toBe(accented.repeat(200))
+    expect(tip(accented.repeat(OUTCOME_TIP_MAX_CHARS + 1))).toBe(accented.repeat(200) + '…')
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'
+    expect(tip('a'.repeat(199) + family + family)).toBe('a'.repeat(199) + family + '…')
+  })
+})
+/* --- end of the ISSUE-259 block ---------------------------------------------------------------- */

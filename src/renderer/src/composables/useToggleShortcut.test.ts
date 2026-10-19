@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
+import { DEFAULT_TOGGLE_ACCELERATOR } from '@dwarfai/contracts'
 import type { ShortcutState } from '../types'
 import { useToggleShortcut } from './useToggleShortcut'
 
@@ -17,7 +18,11 @@ function stubApi(api: {
   getToggleShortcut?: () => Promise<ShortcutState>
   setToggleShortcut?: (accelerator: string) => Promise<ShortcutState>
 }): void {
-  Object.defineProperty(window, 'api', { configurable: true, value: api })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi(api)
+  })
 }
 
 /** A keydown as the recorder receives it, so preventDefault can be observed. */

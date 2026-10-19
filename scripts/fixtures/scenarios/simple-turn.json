@@ -1,0 +1,8 @@
+{
+  "case": "simple-turn",
+  "description": "The smallest session: launch, one prompt answered without any tool, then idle.",
+  "repoFiles": {
+    "README.md": "# Throwaway repository\n\nCreated and deleted by the DwarfAI fixture recorder.\n"
+  },
+  "turns": [{ "text": "Reply with the single word hello and nothing else. Do not use any tool." }]
+}

@@ -14,7 +14,7 @@ import {
   type LaunchPhase
 } from '../../lib/launch/launchState'
 import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
-import { truncateTail } from '../../../../shared/truncate'
+import { truncateTail } from '@dwarfai/contracts'
 import type { JevState, LaunchFailure } from '../../lib/launch/launchState'
 import {
   MODEL_HISTORY_SOURCE,
@@ -25,6 +25,29 @@ import {
 import { providerChips } from '../../lib/launch/providerChips'
 import type { AgentProviderOption, HeldPermissionMode } from '../../types'
 import AddPanel from './AddPanel.vue'
+import type { IntegrationNotice } from '../../composables/useAgentLaunch'
+// APPENDED for ISSUE-261: the launch model's transitions the story cases below drive the panel with.
+import {
+  chooseModel,
+  clearJevDecision,
+  composerEnabled,
+  jevAnswered,
+  jevAsked,
+  launchPhase,
+  setJevSettings,
+  shouldAskJev,
+  submitFailed,
+  toggleJev,
+  toggleJevAutoAccept,
+  typeCommand,
+  type JevDecision,
+  type LaunchState
+} from '../../lib/launch/launchState'
+import { jevCardTip } from '../../lib/launch/jevCardCopy'
+import { DEFAULT_JEV_PREFERENCES } from '../../types'
+// APPENDED for AMENDMENT-22: the A-50 suggestion's transitions (ISSUE-195) the suggestion card cases drive.
+import type { JevSuggestionView } from '@dwarfai/contracts'
+import { jevSuggestAnswered, jevSuggestAsked } from '../../lib/launch/launchState'
 
 const HIDDEN_MODEL_PICKER: ModelPicker = { visible: false, models: [], disabled: true, note: null }
 const HIDDEN_EFFORT_PICKER: EffortPicker = { visible: false, efforts: [] }
@@ -46,6 +69,12 @@ const CODEX: AgentProviderOption = {
   launchable: false,
   reason: 'Only Claude can be started from the panel today.'
 }
+/*
+ * AMENDED for ISSUE-267 (BR-19): a detected provider whose launch is not offered has no chip any
+ * more, so the row's second chip is a Codex this build can launch. CODEX stays for the refusal
+ * case, whose reason the panel repeats.
+ */
+const CODEX_OFFERED: AgentProviderOption = { provider: 'codex', installed: true, launchable: true }
 
 /*
  * AMENDED for #635: the redesigned panel (organisms/add-panel) names its mine, and draws the
@@ -58,7 +87,7 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
   return mount(AddPanel, {
     props: {
       mineName: 'DwarfAI-Miners',
-      chips: providerChips([CLAUDE, CODEX], chosen),
+      chips: providerChips([CLAUDE, CODEX_OFFERED], chosen),
       phase: (overrides.phase ?? 'provider-selection') as LaunchPhase,
       enabled: (overrides.enabled ?? false) as boolean,
       command: (overrides.command ?? '') as string,
@@ -75,6 +104,13 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
       permissionMode: (overrides.permissionMode ?? null) as HeldPermissionMode | null,
       // APPENDED for #635 (MESSAGE-QUESTIONS 14/16/17): the launch-failure notice's cause.
       failure: (overrides.failure ?? null) as LaunchFailure | null,
+      // APPENDED for ISSUE-235: the OpenCode notice and the eyebrow's reading, passed only by the cases that set them.
+      ...(overrides.integrationNotice === undefined
+        ? {}
+        : { integrationNotice: overrides.integrationNotice as IntegrationNotice }),
+      ...(overrides.jevAccepted === undefined
+        ? {}
+        : { jevAccepted: overrides.jevAccepted as boolean }),
       // APPENDED for #635: `onCommit`-style listeners, for the cases that read the ORDER in which
       // the panel reports two gestures, which `emitted()` keeps per event and cannot show.
       ...((overrides.listeners ?? {}) as Record<string, unknown>)
@@ -1361,6 +1397,17 @@ describe('the Jev option', () => {
       expect(wrapper.get('.dm-add__jev .t-meta').text()).toBe('JEV · ACCEPTED AUTOMATICALLY')
     })
 
+    // APPENDED for ISSUE-235 (ISSUE-228 leftover, #1404): auto-accept paused on a pick whose permission requests cannot
+    // be answered reads as a suggestion (PO #108; 07 S5.25): the eyebrow follows the launch model's `jevAccepted`.
+    it('[US-LAUNCH-001.AC13, S5.25] with auto-accept paused for the notice the eyebrow says Jev suggests', () => {
+      const wrapper = withDecision({
+        jev: { ...READY_JEV, enabled: true, autoAccept: true, routing: DECISION },
+        jevAccepted: false
+      })
+
+      expect(wrapper.get('.dm-add__jev .t-meta').text()).toBe('JEV SUGGESTS')
+    })
+
     /*
      * APPENDED for #635 (MESSAGE-QUESTIONS 15; components.md, Add a dwarf, Accessibility): the
      * pick takes keyboard focus and shows its tooltip at once on it, one line per sentence, in
@@ -2114,5 +2161,605 @@ describe('the launch-failure notice (#635)', () => {
       wrapper.unmount()
       host.remove()
     })
+  })
+})
+
+/*
+ * APPENDED for ISSUE-261: the Add panel against machine 5A (07 §5A) and the launch stories
+ * (US-LAUNCH-001 to 006, 008), driven through the launch model's own transitions (launchState)
+ * so each case reads the panel the person would see after the gestures it names.
+ */
+describe('ISSUE-261: the Add panel form and the Jev card', () => {
+  const CATALOG: AgentProviderOption[] = (
+    ['claude', 'codex', 'opencode', 'antigravity'] as const
+  ).map((provider) => ({ provider, installed: true, launchable: true }))
+  const MODELS: ModelPicker = {
+    visible: true,
+    models: [
+      { value: 'sonnet', label: 'sonnet' },
+      { value: 'opus', label: 'opus' }
+    ],
+    disabled: false,
+    note: null
+  }
+  const EFFORTS: EffortPicker = { visible: true, efforts: ['low', 'high'] }
+  const JEV_PICK: JevDecision = {
+    kind: 'decision',
+    provider: 'claude',
+    model: 'opus',
+    effort: 'high',
+    confidence: 0.74,
+    truncated: false,
+    tier: 'frontier',
+    parts: {
+      provider: { value: 'claude', confidence: 0.91, applied: 'answered' },
+      tier: { value: 'frontier', confidence: 0.88, applied: 'answered' },
+      trivial: { value: false, probability: 0.05 },
+      largeContext: { value: false, probability: 0.05 },
+      model: { value: 'opus', applied: 'answered', probability: 0.74 }
+    }
+  }
+  const SELECTS = '.dm-add__row select'
+  const JEV_CARD = '.dm-add__jev'
+  const DISMISS = '.jev-dismiss'
+
+  const opened = (): LaunchState => openLaunch(closedLaunch())
+  const withJev = (state: LaunchState): LaunchState =>
+    toggleJev(setJevSettings(state, { configured: true, preferences: DEFAULT_JEV_PREFERENCES }))
+  /** Jev asked about the prompt and answered with its pick, as a launch with Jev on does. */
+  const answered = (state: LaunchState): LaunchState => jevAnswered(jevAsked(state), JEV_PICK)
+
+  /** The panel's props as useAgentLaunch derives them from the launch model. */
+  function drawn(state: LaunchState, attachTo?: HTMLElement) {
+    const tuned = state.choice !== null && state.choice !== OTHER_CHOICE
+    return mount(AddPanel, {
+      props: {
+        mineName: 'DwarfAI-Miners',
+        chips: providerChips(CATALOG, state.choice),
+        phase: launchPhase(state),
+        enabled: composerEnabled(state),
+        command: state.command,
+        prompt: state.prompt,
+        refusal: null,
+        error: state.error,
+        modelPicker: tuned ? MODELS : HIDDEN_MODEL_PICKER,
+        effortPicker: tuned ? EFFORTS : HIDDEN_EFFORT_PICKER,
+        permissionsVisible: tuned,
+        jev: state.jev,
+        model: state.model,
+        effort: state.effort,
+        permissionMode: state.permissionMode,
+        failure: state.failure
+      },
+      ...(attachTo === undefined ? {} : { attachTo })
+    })
+  }
+
+  const shownSelects = (wrapper: ReturnType<typeof drawn>) =>
+    wrapper.findAll(SELECTS).map((select) => {
+      const element = select.element as HTMLSelectElement
+      return {
+        text: element.selectedOptions[0]?.text.trim() ?? '',
+        disabled: element.disabled
+      }
+    })
+  const checkedChip = (wrapper: ReturnType<typeof drawn>) =>
+    wrapper
+      .findAll(CHIPS)
+      .filter((chip) => chip.attributes('aria-checked') === 'true')
+      .map((chip) => chip.text())
+
+  describe('suppliers and selects', () => {
+    it('[US-LAUNCH-001.AC01] the supplier group reads Choose your dwarf supplier with Claude, Codex, OpenCode, Antigravity and Other… in that order', () => {
+      const wrapper = drawn(opened())
+
+      expect(wrapper.findAll('.dm-add__label')[0]?.text()).toBe('Choose your dwarf supplier')
+      expect(wrapper.findAll(CHIPS).map((chip) => chip.text())).toEqual([
+        'Claude',
+        'Codex',
+        'OpenCode',
+        'Antigravity',
+        'Other…'
+      ])
+    })
+
+    it('[US-LAUNCH-001.AC02, US-LAUNCH-001.AC03, US-LAUNCH-005.AC02] with no supplier and Jev off the selects read Choose a supplier and are disabled, the helper names the missing way to run and Send the dwarf in is disabled', () => {
+      const wrapper = drawn(opened())
+
+      expect(shownSelects(wrapper)).toEqual([
+        { text: 'Model: Choose a supplier', disabled: true },
+        { text: 'Effort: Choose a supplier', disabled: true },
+        { text: 'Permissions: Choose a supplier', disabled: true }
+      ])
+      expect(wrapper.get(WHY).text()).toBe('Choose a supplier, or let Jev choose.')
+      expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
+    })
+
+    it('[US-LAUNCH-001.AC05, US-LAUNCH-005.AC03] with a supplier and no prompt the helper asks for the task and Send stays disabled', () => {
+      const wrapper = drawn(chooseProvider(opened(), 'claude'))
+
+      expect(wrapper.get(WHY).text()).toBe('Tell the dwarf what to work on.')
+      expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
+    })
+
+    it('[US-LAUNCH-005.AC04] with a way to run and a prompt Send is enabled and the helper reads Ready with the mine name', () => {
+      const wrapper = drawn(typePrompt(chooseProvider(opened(), 'claude'), 'dig the north tunnel'))
+
+      expect(wrapper.get(WHY).text()).toBe('Ready. The dwarf walks into DwarfAI-Miners.')
+      expect(wrapper.get(LAUNCH).attributes('disabled')).toBeUndefined()
+    })
+
+    it('[US-LAUNCH-001.AC06] a picked select value shows prefixed by the select’s name', async () => {
+      const state = chooseProvider(opened(), 'claude')
+      const wrapper = drawn(state)
+      await wrapper.findAll(SELECTS)[0]?.setValue('opus')
+      expect(wrapper.emitted('model')).toEqual([['opus']])
+
+      await wrapper.setProps({ model: chooseModel(state, 'opus').model })
+
+      expect(shownSelects(wrapper)[0]).toEqual({ text: 'Model: opus', disabled: false })
+    })
+
+    it('[US-LAUNCH-001.AC08, US-LAUNCH-001.AC09] another supplier redraws the selects to its first values and empties a typed custom command', () => {
+      const tuned = chooseModel(chooseProvider(opened(), 'claude'), 'opus')
+      const switched = drawn(chooseProvider(tuned, 'codex'))
+      expect(checkedChip(switched)).toEqual(['Codex'])
+      expect(shownSelects(switched).map((select) => select.text)).toEqual([
+        'Model: sonnet',
+        'Effort: low',
+        'Permissions: Codex default'
+      ])
+
+      const typed = typeCommand(chooseProvider(opened(), OTHER_CHOICE), 'my-agent --yes')
+      const left = chooseProvider(typed, 'claude')
+      expect(left.command).toBe('')
+      const wrapper = drawn(left)
+      expect(wrapper.get('.dm-add__command').attributes('hidden')).toBeDefined()
+      expect((wrapper.get(COMMAND).element as HTMLInputElement).value).toBe('')
+    })
+
+    /*
+     * One design sentence is allowed by name: "Run it once in a terminal to see why, then retry."
+     * (copy.md, Add a dwarf) tells the person where to run the supplier's command by hand; it
+     * names no transport the app reaches the provider over.
+     */
+    it('[BR-09] no supplier chip, select, helper line or notice text names a transport such as HTTP, subscription, terminal, ACP or stream-json', () => {
+      const TRANSPORT = /\bHTTPS?\b|subscription|terminal|\bACP\b|stream-json|\bPTY\b/i
+      const RUN_BY_HAND = 'Run it once in a terminal to see why, then retry.'
+      const claude = chooseProvider(opened(), 'claude')
+      const states: LaunchState[] = [
+        opened(),
+        claude,
+        typePrompt(claude, 'dig'),
+        chooseProvider(opened(), OTHER_CHOICE),
+        answered(typePrompt(withJev(opened()), 'dig')),
+        ...(['not-installed', 'exited-at-once', 'could-not-start'] as const).map((cause) =>
+          submitFailed(submitStarted(typePrompt(claude, 'dig')), cause)
+        ),
+        { ...typePrompt(opened(), 'dig'), failure: { cause: 'jev-unreachable' } },
+        {
+          ...typePrompt(opened(), 'dig'),
+          failure: { cause: 'jev-could-not-choose', reason: 'low-confidence', confidence: 0.41 }
+        }
+      ]
+      for (const state of states) {
+        const wrapper = drawn(state)
+        const seen = [
+          ...wrapper.findAll(CHIPS).map((chip) => chip.text()),
+          ...wrapper.findAll(`${SELECTS} option`).map((option) => option.text()),
+          wrapper.get(WHY).text(),
+          wrapper.find('.dm-add__fail').exists() ? wrapper.get('.dm-add__fail').text() : '',
+          wrapper.find(JEV_CARD).exists() ? wrapper.get(JEV_CARD).text() : ''
+        ].map((text) => text.replace(RUN_BY_HAND, ''))
+        for (const text of seen) expect(text).not.toMatch(TRANSPORT)
+      }
+    })
+  })
+
+  describe('Other…', () => {
+    it('[US-LAUNCH-002.AC01, US-LAUNCH-002.AC02, US-LAUNCH-002.AC03] Other… shows the Custom command field with its placeholder and name, and the selects read Custom, disabled', async () => {
+      const other = chooseProvider(opened(), OTHER_CHOICE)
+      const wrapper = drawn(other)
+      const field = wrapper.get(COMMAND)
+
+      expect(wrapper.get('.dm-add__command').attributes('hidden')).toBeUndefined()
+      expect(field.attributes('placeholder')).toBe('Custom command, e.g. my-agent --yes')
+      expect(field.attributes('aria-label')).toBe('Custom command')
+      expect(shownSelects(wrapper)).toEqual([
+        { text: 'Model: Custom', disabled: true },
+        { text: 'Effort: Custom', disabled: true },
+        { text: 'Permissions: Custom', disabled: true }
+      ])
+
+      await field.setValue('my-agent --yes')
+      expect(wrapper.emitted('command')?.at(-1)).toEqual(['my-agent --yes'])
+      await wrapper.setProps({ command: typeCommand(other, 'my-agent --yes').command })
+      expect((wrapper.get(COMMAND).element as HTMLInputElement).value).toBe('my-agent --yes')
+    })
+
+    it('[US-LAUNCH-002.AC04] Other… with an empty field shows the no-supplier helper line', () => {
+      const wrapper = drawn(typePrompt(chooseProvider(opened(), OTHER_CHOICE), 'dig'))
+
+      expect(wrapper.get(WHY).text()).toBe('Choose a supplier, or let Jev choose.')
+      expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
+    })
+
+    it('[US-LAUNCH-002.AC05, US-LAUNCH-002.AC06] leaving Other… discards its text and coming back shows an empty field', () => {
+      const typed = typeCommand(chooseProvider(opened(), OTHER_CHOICE), 'my-agent --yes')
+      const left = drawn(chooseProvider(typed, 'codex'))
+      expect(left.get('.dm-add__command').attributes('hidden')).toBeDefined()
+      expect(shownSelects(left)[0]).toEqual({ text: 'Model: sonnet', disabled: false })
+
+      const back = drawn(chooseProvider(chooseProvider(typed, 'codex'), OTHER_CHOICE))
+      expect(back.get('.dm-add__command').attributes('hidden')).toBeUndefined()
+      expect((back.get(COMMAND).element as HTMLInputElement).value).toBe('')
+    })
+  })
+
+  describe('Jev', () => {
+    /*
+     * The design wins over the story's wording here (screens/launch.md, As built; the prototype's
+     * add-panel.js drawSelects): with Jev on, not answered yet and no supplier picked, the selects
+     * read "Jev decides", where US-LAUNCH-003.AC01 says "Choose a supplier". Recorded in the PR.
+     */
+    it('[US-LAUNCH-003.AC01] Let Jev choose on with no prompt reads On while the selects read Jev decides, as the design draws it', () => {
+      const wrapper = drawn(withJev(opened()))
+
+      expect(wrapper.get(JEV_TOGGLE).attributes('aria-checked')).toBe('true')
+      expect(wrapper.get(`${JEV_TOGGLE} .dm-toggle__state`).text()).toBe('On')
+      expect(shownSelects(wrapper)).toEqual([
+        { text: 'Model: Jev decides', disabled: true },
+        { text: 'Effort: Jev decides', disabled: true },
+        { text: 'Permissions: Jev decides', disabled: true }
+      ])
+      expect(wrapper.find(JEV_CARD).exists()).toBe(false)
+    })
+
+    it('[US-LAUNCH-003.AC05, US-LAUNCH-003.AC06] an edit keeps the Jev card on screen and emptying the prompt hides it and restores the pickers', () => {
+      const card = answered(typePrompt(withJev(opened()), 'dig'))
+      expect(checkedChip(drawn(card))).toEqual(['Claude'])
+
+      const edited = chooseModel(chooseProvider(card, 'codex'), 'sonnet')
+      const kept = drawn(edited)
+      expect(kept.find(JEV_CARD).exists()).toBe(true)
+      expect(checkedChip(kept)).toEqual(['Codex'])
+      expect(shownSelects(kept)[0]?.text).toBe('Model: sonnet')
+
+      // useAgentLaunch.setPrompt: every prompt edit drops the answer it was about.
+      const emptied = drawn(clearJevDecision(typePrompt(edited, '')))
+      expect(emptied.find(JEV_CARD).exists()).toBe(false)
+      expect(checkedChip(emptied)).toEqual([])
+      expect(shownSelects(emptied)[0]?.text).toBe('Model: Jev decides')
+    })
+
+    it('[US-LAUNCH-003.AC09] switching Let Jev choose off leaves the card and the pick as they are', () => {
+      const card = answered(typePrompt(withJev(opened()), 'dig'))
+      const off = toggleJev(card)
+      const wrapper = drawn(off)
+
+      expect(off.jev.enabled).toBe(false)
+      expect(wrapper.get(JEV_TOGGLE).attributes('aria-checked')).toBe('false')
+      expect(wrapper.get('.dm-add__jev-pick').text()).toBe('Claude · opus · high.')
+      expect(checkedChip(wrapper)).toEqual(['Claude'])
+      expect(
+        shownSelects(wrapper)
+          .slice(0, 2)
+          .map((select) => select.text)
+      ).toEqual(['Model: opus', 'Effort: high'])
+    })
+
+    it('[US-LAUNCH-004.AC01, US-LAUNCH-004.AC02, US-LAUNCH-004.AC03] Dismiss restores the pickers to before Jev answered, with Jev decides values or an empty Other…, keeps both toggles and focuses Let Jev choose', async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      try {
+        // AC01, AC02: nothing picked by hand before Jev answered.
+        const card = answered(typePrompt(toggleJevAutoAccept(withJev(opened())), 'dig'))
+        const wrapper = drawn(card, host)
+        // The panel takes the keyboard on its first chip once mounted; let that settle first.
+        await flushPromises()
+        await wrapper.get(DISMISS).trigger('click')
+        expect(wrapper.emitted('dismiss-jev')).toHaveLength(1)
+        expect(wrapper.emitted('submit')).toBeUndefined()
+        expect(document.activeElement).toBe(wrapper.get(JEV_TOGGLE).element)
+
+        const dismissed = clearJevDecision(card)
+        await wrapper.setProps({
+          chips: providerChips(CATALOG, dismissed.choice),
+          jev: dismissed.jev,
+          model: dismissed.model,
+          effort: dismissed.effort,
+          modelPicker: HIDDEN_MODEL_PICKER,
+          effortPicker: HIDDEN_EFFORT_PICKER,
+          permissionsVisible: false
+        })
+        expect(wrapper.find(JEV_CARD).exists()).toBe(false)
+        expect(checkedChip(wrapper)).toEqual([])
+        expect(shownSelects(wrapper).map((select) => select.text)).toEqual([
+          'Model: Jev decides',
+          'Effort: Jev decides',
+          'Permissions: Jev decides'
+        ])
+        expect(wrapper.get(JEV_TOGGLE).attributes('aria-checked')).toBe('true')
+        expect(wrapper.get(JEV_AUTO).attributes('aria-checked')).toBe('true')
+        wrapper.unmount()
+
+        // AC03: Other… stood picked, with a command Jev's pick then emptied.
+        const other = typeCommand(chooseProvider(opened(), OTHER_CHOICE), 'my-agent --yes')
+        const restored = drawn(clearJevDecision(answered(typePrompt(withJev(other), 'dig'))))
+        expect(checkedChip(restored)).toEqual(['Other…'])
+        expect((restored.get(COMMAND).element as HTMLInputElement).value).toBe('')
+      } finally {
+        host.remove()
+      }
+    })
+
+    it('[US-LAUNCH-004.AC04, S5.04] while sending, Dismiss and every control but Close are disabled', () => {
+      const sending = submitStarted(answered(typePrompt(withJev(opened()), 'dig')))
+      const wrapper = drawn(sending)
+      const live = wrapper
+        .findAll('button, input, select, textarea')
+        .filter((control) => !(control.element as HTMLButtonElement).disabled)
+
+      expect(wrapper.find(DISMISS).attributes('disabled')).toBeDefined()
+      expect(wrapper.get(WHY).text()).toBe('Sending the dwarf in…')
+      expect(live.map((control) => control.attributes('title'))).toEqual(['Close'])
+      expect(
+        shownSelects(wrapper)
+          .slice(0, 2)
+          .map((select) => select.text)
+      ).toEqual(['Model: opus', 'Effort: high'])
+    })
+
+    it('[US-LAUNCH-004.AC05, US-LAUNCH-004.AC06, US-LAUNCH-004.AC07] a dismissed card returns only after a prompt change, the toggle switched on again, or a launch attempt with Jev on', () => {
+      const dismissed = clearJevDecision(answered(typePrompt(withJev(opened()), 'dig')))
+
+      // AC05: left as it is, nothing brings the card back.
+      expect(dismissed.jev.routing).toEqual({ phase: 'idle' })
+      expect(drawn(dismissed).find(JEV_CARD).exists()).toBe(false)
+
+      // AC07: a launch attempt with Jev still on asks Jev again, and the card returns.
+      expect(shouldAskJev(dismissed)).toBe(true)
+      expect(drawn(answered(dismissed)).find(JEV_CARD).exists()).toBe(true)
+
+      // AC06: a changed prompt, or the toggle switched on again after off, may ask again too.
+      const reprompted = clearJevDecision(typePrompt(dismissed, 'dig deeper'))
+      expect(shouldAskJev(reprompted)).toBe(true)
+      expect(shouldAskJev(toggleJev(dismissed))).toBe(false)
+      expect(shouldAskJev(toggleJev(toggleJev(dismissed)))).toBe(true)
+    })
+
+    it('[US-LAUNCH-008.AC01, US-LAUNCH-008.AC02, US-LAUNCH-008.AC03, NFR-TIM-01] the Jev card paragraph’s tooltip opens below it after 300 ms or at once on focus and closes when pointer or focus leaves', async () => {
+      vi.useFakeTimers()
+      const host = document.createElement('div')
+      document.body.append(host)
+      try {
+        const wrapper = drawn(answered(typePrompt(withJev(opened()), 'dig')), host)
+        const pick = wrapper.get('.dm-add__jev-pick')
+        pick.element.getBoundingClientRect = () =>
+          ({ left: 40, top: 100, width: 200, height: 20, right: 240, bottom: 120 }) as DOMRect
+        const card = () => document.body.querySelector<HTMLElement>('.dm-tip')
+
+        expect(TIP_DELAY_MS).toBe(300)
+        await pick.trigger('pointerenter')
+        await vi.advanceTimersByTimeAsync(TIP_DELAY_MS - 1)
+        expect(card()).toBeNull()
+        await vi.advanceTimersByTimeAsync(1)
+        await flushPromises()
+        expect(card()).not.toBeNull()
+        // Below the paragraph, aligned to its start: its left edge, past its bottom edge.
+        expect(card()?.style.left).toBe('40px')
+        expect(Number.parseFloat(card()?.style.top ?? '')).toBeGreaterThan(120)
+        expect(card()?.style.getPropertyValue('--tip-rise')).toBe('-6px')
+
+        await pick.trigger('pointerleave')
+        await flushPromises()
+        expect(card()).toBeNull()
+
+        await pick.trigger('focus')
+        await flushPromises()
+        expect(card()).not.toBeNull()
+        await pick.trigger('blur')
+        await flushPromises()
+        expect(card()).toBeNull()
+        wrapper.unmount()
+      } finally {
+        host.remove()
+        vi.useRealTimers()
+      }
+    })
+
+    it('[US-LAUNCH-008.AC05, US-LAUNCH-008.AC06] the tooltip shows no flag line for an unflagged decision and never repeats the bold pick', () => {
+      const wrapper = drawn(answered(typePrompt(withJev(opened()), 'dig')))
+      const bold = wrapper.get('.dm-add__jev-pick b').text()
+      const lines = jevCardTip(JEV_PICK, 'Claude')
+      const described = wrapper
+        .get(`#${wrapper.get('.dm-add__jev-pick').attributes('aria-describedby') ?? ''}`)
+        .text()
+
+      expect(described).toBe(lines.join(' '))
+      expect(lines).toHaveLength(2)
+      for (const flag of [
+        'Treated as a trivial prompt.',
+        'Large-context model preferred.',
+        'The prompt sent to Jev was trimmed to fit its request budget.'
+      ]) {
+        expect(described).not.toContain(flag)
+      }
+      expect(bold).toBe('Claude · opus · high')
+      expect(described).not.toContain(bold)
+    })
+  })
+
+  it('[US-LAUNCH-006.AC12, S5.06] the failure notice stays in the footer above Send the dwarf in whatever the panel’s scroll', () => {
+    const failed = submitFailed(
+      submitStarted(typePrompt(chooseProvider(opened(), 'claude'), 'dig')),
+      'not-installed'
+    )
+    const wrapper = drawn(failed)
+    const body = wrapper.get('.dm-add__body').element
+    body.scrollTop = 900
+    const notice = wrapper.get('.dm-add__fail').element
+    const send = wrapper.get(LAUNCH).element
+
+    expect(notice.parentElement).toBe(wrapper.get('.dm-add__foot').element)
+    expect(body.contains(notice)).toBe(false)
+    expect(notice.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(wrapper.get('.dm-add__fail-title').text()).toBe('Claude is not installed')
+  })
+})
+
+/*
+ * APPENDED for ISSUE-235 (ISSUE-228 leftover, #1404; ADR-011 item 7, O-14; 07 S5.02, S5.26; owner-approved copy
+ * 2026-10-18): the Add panel's OpenCode notice. A supplier whose permission requests wait for an integration that is
+ * off shows the notice and its "Turn on" action, which only reports the gesture (the launch model turns the option on,
+ * `useAgentLaunch.enableIntegration`); while it runs the action is disabled, and a failure shows its own line.
+ */
+describe('the OpenCode notice', () => {
+  const NOTICE = '.dm-add__integration'
+
+  it('[US-LAUNCH-001.AC13, S5.02] a gated supplier shows the notice with its Turn on action, which reports the gesture', async () => {
+    const wrapper = panel({ integrationNotice: { shown: true, state: 'offered' } })
+
+    const notice = wrapper.get(NOTICE)
+    expect(notice.get('.dm-add__integration-text').text()).toBe(
+      "OpenCode permission requests are off, so its asks won't show here."
+    )
+    const action = notice.get('button')
+    expect(action.text()).toBe('Turn on')
+    await action.trigger('click')
+    expect(wrapper.emitted('enable-integration')).toEqual([[]])
+    expect(notice.find('.dm-add__integration-failed').exists()).toBe(false)
+  })
+
+  it('[US-LAUNCH-001.AC13, S5.26] the action is disabled while it runs, and a failure shows its own line', async () => {
+    const enabling = panel({ integrationNotice: { shown: true, state: 'enabling' } })
+    expect(enabling.get(`${NOTICE} button`).attributes('disabled')).toBeDefined()
+
+    const failed = panel({ integrationNotice: { shown: true, state: 'failed' } })
+    expect(failed.get('.dm-add__integration-failed').text()).toBe(
+      "Couldn't turn on OpenCode permission requests. Try again from Settings."
+    )
+  })
+
+  it('[US-LAUNCH-001.AC13] no notice is drawn while the chosen supplier needs none', () => {
+    expect(
+      panel({ integrationNotice: { shown: false } })
+        .find(NOTICE)
+        .exists()
+    ).toBe(false)
+    expect(panel().find(NOTICE).exists()).toBe(false)
+  })
+})
+
+/*
+ * APPENDED for AMENDMENT-22 (owner-approved 2026-10-18; ISSUE-195's "Remaining": the card for the `suggested`
+ * phase): from step 3a Jev's pick arrives as A-50's suggestion in its 14 shape, so the card draws it the same way as
+ * a decision — the eyebrow, the bold pick and Dismiss — and its tooltip reads the reasoning, Jev's least certain
+ * answer, then each flag the suggestion carries in the fixed order of US-LAUNCH-008.AC04.
+ */
+describe('the Jev card of an A-50 suggestion', () => {
+  const CATALOG: AgentProviderOption[] = (['claude', 'codex'] as const).map((provider) => ({
+    provider,
+    installed: true,
+    launchable: true
+  }))
+  const MODELS: ModelPicker = {
+    visible: true,
+    models: [
+      { value: 'sonnet', label: 'sonnet' },
+      { value: 'opus', label: 'opus' }
+    ],
+    disabled: false,
+    note: null
+  }
+  const EFFORTS: EffortPicker = { visible: true, efforts: ['low', 'high'] }
+  const FLAGS = [
+    'Treated as a trivial prompt.',
+    'Large-context model preferred.',
+    'The prompt sent to Jev was trimmed to fit its request budget.'
+  ]
+
+  function suggested(view: Partial<JevSuggestionView> = {}): LaunchState {
+    const opened = toggleJev(
+      setJevSettings(openLaunch(closedLaunch()), {
+        configured: true,
+        preferences: DEFAULT_JEV_PREFERENCES
+      })
+    )
+    const asking = jevSuggestAsked(typePrompt(opened, 'dig'), 1)
+    return jevSuggestAnswered(asking, 1, {
+      ok: true,
+      value: {
+        ok: true,
+        value: {
+          providerId: 'claude',
+          model: 'opus',
+          effort: 'high',
+          tier: 'frontier',
+          confidence: { providerId: 0.91, model: 0.74, tier: 0.88 },
+          truncated: false,
+          parts: {
+            providerId: 'answered',
+            model: 'answered',
+            effort: 'answered',
+            tier: 'answered'
+          },
+          ...view
+        }
+      }
+    })
+  }
+
+  function drawn(state: LaunchState) {
+    return mount(AddPanel, {
+      props: {
+        mineName: 'DwarfAI-Miners',
+        chips: providerChips(CATALOG, state.choice),
+        phase: launchPhase(state),
+        enabled: composerEnabled(state),
+        command: state.command,
+        prompt: state.prompt,
+        refusal: null,
+        error: state.error,
+        modelPicker: MODELS,
+        effortPicker: EFFORTS,
+        permissionsVisible: true,
+        jev: state.jev,
+        model: state.model,
+        effort: state.effort,
+        permissionMode: state.permissionMode,
+        failure: state.failure
+      }
+    })
+  }
+
+  const described = (wrapper: ReturnType<typeof drawn>) =>
+    wrapper.get(`#${wrapper.get('.dm-add__jev-pick').attributes('aria-describedby') ?? ''}`).text()
+
+  it('[US-LAUNCH-008.AC04, US-LAUNCH-008.AC06] the card shows the pick, and its tooltip reads the reasoning, the least certain answer, then each flag in the fixed order', () => {
+    const state = suggested({ truncated: true, flags: { trivial: true, largeContext: true } })
+    expect(state.jev.routing.phase).toBe('suggested')
+    const wrapper = drawn(state)
+
+    expect(wrapper.find('.dm-add__jev-pick').exists()).toBe(true)
+    const bold = wrapper.get('.dm-add__jev-pick b').text()
+    expect(bold).toBe('Claude · opus · high')
+    expect(described(wrapper)).toBe(
+      [
+        'Jev chose the frontier tier (88% sure) and Claude (91% sure). Jev picked the model (74% fit).',
+        "Jev's least certain answer was 74%.",
+        ...FLAGS
+      ].join(' ')
+    )
+    expect(described(wrapper)).not.toContain(bold)
+    expect(wrapper.find('.jev-dismiss').exists()).toBe(true)
+  })
+
+  it('[US-LAUNCH-008.AC05] a suggestion that carries no flag shows no flag line at all', () => {
+    for (const view of [{}, { flags: { trivial: false, largeContext: false } }]) {
+      const wrapper = drawn(suggested(view))
+      expect(wrapper.find('.dm-add__jev-pick').exists()).toBe(true)
+      for (const flag of FLAGS) expect(described(wrapper)).not.toContain(flag)
+    }
   })
 })

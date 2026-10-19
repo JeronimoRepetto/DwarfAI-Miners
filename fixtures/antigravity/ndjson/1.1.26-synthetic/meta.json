@@ -1,0 +1,19 @@
+{
+  "providerVersion": "1.1.26-synthetic",
+  "capturedAt": "2026-10-18",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "status": "synthetic — real recording pending (owner waiver 2026-10-18)",
+  "source": "Hand-written from 15-provider-driver.md §4.8 and §6 and the official headless page (antigravity.google/docs/cli/headless, read 2026-10-18); no CLI session was run and no login was used. c-01-launch, c-05-send-turn and drift-edges carry, line for line, the stdout lines of the sanitized agy 1.1.26 recording re-homed from src/main/providers/__fixtures__/antigravity/held-stream.jsonl and held-stream-edges.jsonl (captured 2026-09-07); their timing streams, every -with-extra and CRLF variant, and the c-16, c-20, c-25 and c-28 streams are synthetic. Replace each with a scrubbed maintainer recording once a recording run with the person's own login is possible.",
+  "versions": {
+    "shapesFrom": "agy 1.1.26 (the re-homed recording)",
+    "installedHere": "agy 1.4.2 (official installer, Windows); only --version and --help were run",
+    "argvCheckedAgainst": "agy 1.4.2 --help: --input-format (text, stream-json) 'reads one NDJSON message per line from stdin and runs a turn for each; it requires --output-format stream-json', --output-format (text, json, stream-json), --conversation 'Resume a previous conversation by ID', --model, --effort (low|medium|high|xhigh|max); -p/--print/--prompt run a single prompt and are never passed"
+  },
+  "capabilities": {
+    "driver": "ndjson",
+    "note": "15 §3 row A1 as AntigravityNdjsonDriver reports it: every UNVERIFIED value at its in-force one (interrupt false, permission none, turnEnd none, usage fidelity 0); resume cli-flag (AMENDMENT-13) when the help lists --conversation; earlyFailure exit-only. SP-10 (Antigravity part) records no deny policy: no policy-only mode is offered."
+  }
+}

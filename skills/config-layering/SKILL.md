@@ -16,6 +16,15 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 # Three layers, most specific first
 
+**Scope.** This skill described the legacy configuration code (`src/main/config/` and the
+`jevApiKey.ts` secret path), which the rebuild replaced and cut 5 deleted (ISSUE-338, ISSUE-341). Rebuild work
+follows the rebuild manual and the architecture package instead. The config parser moves to
+`contracts/config` plus the preferences `FeatureFlagReader` at cut 0 (`21-migration-plan.md` §6,
+row "Config + config file"). There an invalid value becomes a logged default (`16-internal-ports.md`,
+`FeatureFlagReader`), not the fail-fast described below. Secrets go through the `SecretStore` port
+backed by the OS keyring (ADR-017), not through a ciphertext file. The legacy tree is gone since
+ISSUE-341; what follows is kept as the record of the layering rule the successors keep.
+
 Configuration resolves **environment, then a JSON file under Electron's `userData`, then
 defaults**. The file layer is stored _underneath_ a real environment, so `pnpm dev` with a repo
 `.env` behaves exactly as it always did — dotenv has already populated the environment by the time
@@ -73,7 +82,8 @@ different reason than the simulated valley's switch: a TypeSafe API key is not a
 preference at all — it is a secret the person types into Settings themselves, and this app never
 ships or generates one. It lives in its own tiny userData document, exactly like every preference
 above, except that the document may never hold the key itself — only ciphertext, behind an
-injected `safeStorage` port (`src/main/adapters/safeStorageLike.ts`), the same "real thing behind
+injected `safeStorage` port (the legacy `safeStorageLike.ts`, deleted with
+`SecretMigrationBridge` in ISSUE-247), the same "real thing behind
 an interface" discipline `FsLike` holds for the filesystem.
 
 A secret earns two rules the ordinary shape/value asymmetry above does not need, because failing a

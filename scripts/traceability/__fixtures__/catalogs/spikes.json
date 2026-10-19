@@ -1,0 +1,6 @@
+{
+  "catalog": "spikes",
+  "source": "03-adr/spike-register.md",
+  "revision": "0000000000000000000000000000000000000000",
+  "ids": ["SP-02"]
+}

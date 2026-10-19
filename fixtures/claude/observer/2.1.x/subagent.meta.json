@@ -1,0 +1,6 @@
+{
+  "agentType": "general-purpose",
+  "description": "Review the diff",
+  "toolUseId": "toolu_01SubagentSpawnA",
+  "spawnDepth": 1
+}
