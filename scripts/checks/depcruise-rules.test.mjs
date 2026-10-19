@@ -547,6 +547,14 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
     }
   })
 
+  // ISSUE-248 (21 §1 item 7, §2 cut 5 exit; 17 §1.7 "Legacy window"): with the legacy trees gone the exclusion is
+  // empty, and so is its ratchet, so the subset case above fails for any path added to it.
+  it('[ADR-004] after cut 5 the legacy exclude list and its baseline are empty', () => {
+    const config = createRequire(import.meta.url)(configPath)
+    expect(excludeList(config)).toEqual([])
+    expect(JSON.parse(readFileSync(baselinePath, 'utf8'))).toEqual([])
+  })
+
   it(
     '[R1, R9] a domain test and a contracts test importing vitest and a fake report nothing',
     async () => {
