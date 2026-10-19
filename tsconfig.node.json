@@ -23,7 +23,6 @@
   },
   "include": [
     "src/preload/**/*.ts",
-    "src/shared/**/*.ts",
     "src/contracts/**/*.ts",
     "src/host/**/*.ts",
     "src/ui-main/**/*.ts",

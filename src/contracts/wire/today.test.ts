@@ -6,7 +6,7 @@ import type {
   DwarfProvider,
   DwarfQuestion,
   DwarfRole
-} from './contracts'
+} from './today'
 import {
   DEFAULT_OPENCODE_SETTINGS,
   MAX_OPENCODE_SERVER_PASSWORD_CHARS,
@@ -83,7 +83,7 @@ import {
   SHELL_AREAS,
   parseLaunchView
   /* --- end of the #635 launch view block --------------------------------------- */
-} from './contracts'
+} from './today'
 
 /*
  * Issue #78. Adding a provider used to mean editing the union here and then

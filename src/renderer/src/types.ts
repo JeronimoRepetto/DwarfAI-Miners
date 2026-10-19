@@ -4,8 +4,8 @@ import type {
   Mine,
   ProjectSummary,
   LaunchView
-} from '../../shared/contracts'
-import { DEFAULT_LAUNCH_VIEW } from '../../shared/contracts'
+} from '../../contracts/wire/today'
+import { DEFAULT_LAUNCH_VIEW } from '../../contracts/wire/today'
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
@@ -147,7 +147,7 @@ export type {
   OpenCodePasswordUnavailableReason,
   OpenCodeSettings
   /* --- end of the #588 T6 block ------------------------------------------------ */
-} from '../../shared/contracts'
+} from '../../contracts/wire/today'
 
 /**
  * The wire constants and helpers the renderer reads as VALUES, not just types,
@@ -257,7 +257,7 @@ export {
   MAX_OPENCODE_SERVER_PASSWORD_CHARS,
   parseOpenCodeServerPasswordInput
   /* --- end of the #588 T6 block ------------------------------------------------ */
-} from '../../shared/contracts'
+} from '../../contracts/wire/today'
 
 /** Root state for the mines store. */
 export interface MinesState {

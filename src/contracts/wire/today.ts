@@ -1,9 +1,13 @@
 /**
- * Data crossing the Electron process boundary. Keep this module free from
- * Electron and Node imports so it can be shared by main, preload and renderer.
+ * Data crossing the Electron process boundary in today's seam-A shapes: the types and values the
+ * renderer barrel (`src/renderer/src/types.ts`) re-exports. Re-homed unchanged from the deleted
+ * `src/shared/contracts.ts` (ISSUE-246; 05 §2.1 `wire/` is the successor of its types; R9: it imports
+ * only `src/contracts` and nothing of Electron or Node). It is deliberately not re-exported by the
+ * `wire` barrel: several of its names (`Material`, `DwarfStatus`, `TurnOutcomeKind` …) are today's
+ * shapes, not the target types of the same name, so the renderer imports it by path.
  */
 
-import type { ShortcutPlatform } from './accelerator'
+import type { ShortcutPlatform } from '../text/accelerator'
 
 export type { ShortcutPlatform }
 

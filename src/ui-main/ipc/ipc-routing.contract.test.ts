@@ -1340,9 +1340,9 @@ describe('cut-0 retirement', () => {
   const SRC = resolve(import.meta.dirname, '../..')
   const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
 
-  /** `IPC_CHANNELS` member names by wire, read from the shared constants' own text (a test may not import src/shared). */
+  /** `IPC_CHANNELS` member names by wire, read from the text of `contracts/wire/today.ts` (ISSUE-246). */
   function memberOfWire(wire: string): string {
-    const block = read('shared/contracts.ts').split('export const IPC_CHANNELS = {')[1] ?? ''
+    const block = read('contracts/wire/today.ts').split('export const IPC_CHANNELS = {')[1] ?? ''
     const match = new RegExp(`^ {2}([A-Za-z]+): '${wire}'`, 'm').exec(block)
     if (match?.[1] === undefined) throw new Error(`no IPC_CHANNELS member for ${wire}`)
     return match[1]
