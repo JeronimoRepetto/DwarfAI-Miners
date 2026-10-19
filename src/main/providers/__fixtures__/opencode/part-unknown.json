@@ -1,4 +1,0 @@
-{
-  "type": "synthetic-unknown-part-kind",
-  "data": "This shape does not exist on the measured build; it proves parse.ts degrades to null."
-}

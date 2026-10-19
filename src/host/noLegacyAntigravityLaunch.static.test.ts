@@ -23,7 +23,10 @@ describe('step-3e deletion (21 §2 row 3e)', () => {
     )
     expect(existsSync(resolve(SRC, 'main/sessionLaunch/antigravityHeldSession.ts'))).toBe(false)
     // Today's detached launch: no `agy` argv, and Antigravity is no launchable provider of today's launcher.
-    expect(read('main/sessionLaunch/launch.ts')).not.toMatch(/\bbuildAntigravityLaunchArgs\b/)
+    // AMENDED for ISSUE-245: today's launcher itself left the tree (21 §2 cut 5); while it existed it built no agy argv.
+    const launchPath = resolve(SRC, 'main/sessionLaunch/launch.ts')
+    const launch = existsSync(launchPath) ? readFileSync(launchPath, 'utf8') : ''
+    expect(launch).not.toMatch(/\bbuildAntigravityLaunchArgs\b/)
     const launchable = /export const LAUNCHABLE_PROVIDERS[^=]*=\s*\[([^\]]*)\]/.exec(
       read('main/domain/launchProviders.ts')
     )

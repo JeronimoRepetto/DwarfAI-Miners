@@ -1,7 +1,0 @@
-{
-  "role": "user",
-  "time": { "created": 1757900000000 },
-  "agent": "sample-agent",
-  "model": { "providerID": "opencode-go", "modelID": "qwen3.6-plus" },
-  "summary": false
-}
