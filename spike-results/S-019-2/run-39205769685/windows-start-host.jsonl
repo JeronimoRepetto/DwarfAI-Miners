@@ -1,0 +1,29 @@
+{"ts":"2026-10-19T05:51:01.331Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.start","subsystem":"host","outcome":"ok","msg":"boot sequence started, win32 x64 node 24.18.1 electron 44.0.0"}
+{"ts":"2026-10-19T05:51:01.392Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.job-status","subsystem":"host","outcome":"ok","msg":"outside every job"}
+{"ts":"2026-10-19T05:51:01.729Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"bind-endpoint","msg":"step bind-endpoint done","durationMs":335}
+{"ts":"2026-10-19T05:51:01.731Z","level":"warn","proc":"host","pid":5024,"appVersion":"0.13.1","event":"channel.hello.refused","subsystem":"transport","causeClass":"AUTH_FAILED"}
+{"ts":"2026-10-19T05:51:01.737Z","level":"warn","proc":"host","pid":5024,"appVersion":"0.13.1","event":"db.file-mode","subsystem":"host","outcome":"ok","causeClass":"data-dir","msg":"a looser mode was found and narrowed","count":1}
+{"ts":"2026-10-19T05:51:01.808Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"db.migration","subsystem":"host","outcome":"ok","msg":"v0→v2","durationMs":27}
+{"ts":"2026-10-19T05:51:01.808Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"db.open","subsystem":"host","outcome":"ok"}
+{"ts":"2026-10-19T05:51:01.816Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"channel.attach","subsystem":"transport","connId":"01a152b6-9cb8-7725-b1ca-665582e21661","role":"notifier"}
+{"ts":"2026-10-19T05:51:01.817Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"channel.detach","subsystem":"transport","connId":"01a152b6-9cb8-7725-b1ca-665582e21661","role":"notifier"}
+{"ts":"2026-10-19T05:51:02.345Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"open-db-and-migrate","msg":"step open-db-and-migrate done","durationMs":616}
+{"ts":"2026-10-19T05:51:02.345Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.migrating","subsystem":"host","durationMs":564}
+{"ts":"2026-10-19T05:51:02.355Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"resume-reset-saga","msg":"step resume-reset-saga done","durationMs":10}
+{"ts":"2026-10-19T05:51:02.453Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"construct-modules","msg":"step construct-modules done","durationMs":97}
+{"ts":"2026-10-19T05:51:02.689Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"recover-sessions","msg":"step recover-sessions done","durationMs":236}
+{"ts":"2026-10-19T05:51:02.698Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"ingress.port","subsystem":"transport","outcome":"ok"}
+{"ts":"2026-10-19T05:51:02.721Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"start-endpoints","msg":"step start-endpoints done","durationMs":31}
+{"ts":"2026-10-19T05:51:02.722Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"start-observation","msg":"step start-observation done","durationMs":1}
+{"ts":"2026-10-19T05:51:02.723Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"answer-ready","msg":"step answer-ready done","durationMs":1}
+{"ts":"2026-10-19T05:51:02.723Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"host.ready","subsystem":"host","durationMs":1392}
+{"ts":"2026-10-19T05:51:02.724Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"ledger.backfill","subsystem":"ledger","outcome":"ok","causeClass":"running","count":0}
+{"ts":"2026-10-19T05:51:02.726Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"ledger.backfill","subsystem":"ledger","outcome":"ok","causeClass":"done","count":0}
+{"ts":"2026-10-19T05:51:04.533Z","level":"info","proc":"host","pid":5024,"appVersion":"0.13.1","event":"notifier.respawn","subsystem":"attention","count":1}
+{"ts":"2026-10-19T05:51:14.506Z","level":"info","proc":"host","pid":764,"appVersion":"0.13.1","event":"host.start","subsystem":"host","outcome":"ok","msg":"boot sequence started, win32 x64 node 24.18.1 electron 44.0.0"}
+{"ts":"2026-10-19T05:51:14.576Z","level":"info","proc":"host","pid":764,"appVersion":"0.13.1","event":"host.job-status","subsystem":"host","outcome":"ok","msg":"outside every job"}
+{"ts":"2026-10-19T05:51:14.921Z","level":"info","proc":"host","pid":764,"appVersion":"0.13.1","event":"host.boot.step","subsystem":"host","outcome":"ok","causeClass":"bind-endpoint","msg":"step bind-endpoint done","durationMs":342}
+{"ts":"2026-10-19T05:51:14.923Z","level":"warn","proc":"host","pid":764,"appVersion":"0.13.1","event":"channel.hello.refused","subsystem":"transport","causeClass":"AUTH_FAILED"}
+{"ts":"2026-10-19T05:51:14.931Z","level":"info","proc":"host","pid":764,"appVersion":"0.13.1","event":"db.open","subsystem":"host","outcome":"ok"}
+{"ts":"2026-10-19T05:51:14.993Z","level":"info","proc":"host","pid":764,"appVersion":"0.13.1","event":"channel.attach","subsystem":"transport","connId":"01a152b6-d031-70b0-b314-6c1b32d0a6c8","role":"notifier"}
+{"ts":"2026-10-19T05:51:14.995Z","level":"info","proc":"host","pid":764,"appVersion":"0.13.1","event":"channel.detach","subsystem":"transport","connId":"01a152b6-d031-70b0-b314-6c1b32d0a6c8","role":"notifier"}

@@ -1,0 +1,24 @@
+{
+  "spike": "S-019-3",
+  "part": "packaged",
+  "environment": {
+    "date": "2026-10-19T05:52:20.502Z",
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Windows",
+    "imageOs": "win25-vs2026",
+    "imageVersion": "20261007.264.1"
+  },
+  "app": "DwarfAI-Miners.exe",
+  "seconds": 30,
+  "hostStarted": true,
+  "cleared": [],
+  "netLog": {
+    "written": true,
+    "urls": 0,
+    "hosts": [],
+    "dictionaryRequests": []
+  },
+  "clearedAfter": ["<home>\\AppData\\Roaming\\DwarfAI-Miners", "<home>\\AppData\\Local\\DwarfAI"]
+}

@@ -1,0 +1,599 @@
+{
+  "spike": "S-019-2",
+  "label": "release",
+  "environment": {
+    "date": "2026-10-19T05:44:24.494Z",
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "v24.22.0",
+    "runnerOs": "macOS",
+    "imageOs": "macos15",
+    "imageVersion": "20260907.0337.1"
+  },
+  "recordedSet": {
+    "RunAsNode": "enabled",
+    "EnableCookieEncryption": "enabled",
+    "EnableNodeOptionsEnvironmentVariable": "disabled",
+    "EnableNodeCliInspectArguments": "disabled",
+    "EnableEmbeddedAsarIntegrityValidation": "enabled",
+    "OnlyLoadAppFromAsar": "enabled"
+  },
+  "apps": [
+    {
+      "root": "release",
+      "app": "mac/DwarfAI-Miners.app",
+      "os": "darwin",
+      "fuseFile": "Contents/Frameworks/Electron Framework.framework/Electron Framework",
+      "wire": {
+        "found": true,
+        "version": 1,
+        "sentinels": 1,
+        "fuses": [
+          {
+            "index": 0,
+            "name": "RunAsNode",
+            "state": "enabled"
+          },
+          {
+            "index": 1,
+            "name": "EnableCookieEncryption",
+            "state": "disabled"
+          },
+          {
+            "index": 2,
+            "name": "EnableNodeOptionsEnvironmentVariable",
+            "state": "enabled"
+          },
+          {
+            "index": 3,
+            "name": "EnableNodeCliInspectArguments",
+            "state": "enabled"
+          },
+          {
+            "index": 4,
+            "name": "EnableEmbeddedAsarIntegrityValidation",
+            "state": "disabled"
+          },
+          {
+            "index": 5,
+            "name": "OnlyLoadAppFromAsar",
+            "state": "disabled"
+          },
+          {
+            "index": 6,
+            "name": "LoadBrowserProcessSpecificV8Snapshot",
+            "state": "disabled"
+          },
+          {
+            "index": 7,
+            "name": "GrantFileProtocolExtraPrivileges",
+            "state": "enabled"
+          },
+          {
+            "index": 8,
+            "name": "fuse-8",
+            "state": "enabled"
+          }
+        ]
+      },
+      "differencesFromAdr019": [
+        {
+          "name": "EnableCookieEncryption",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "EnableNodeOptionsEnvironmentVariable",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableNodeCliInspectArguments",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableEmbeddedAsarIntegrityValidation",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "OnlyLoadAppFromAsar",
+          "expected": "enabled",
+          "actual": "disabled"
+        }
+      ],
+      "asarIntegrity": {
+        "headerSha256": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd",
+        "recorded": [
+          {
+            "file": "Resources/app.asar",
+            "alg": "SHA256",
+            "value": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd"
+          }
+        ],
+        "matches": true
+      }
+    },
+    {
+      "root": "release",
+      "app": "mac-arm64/DwarfAI-Miners.app",
+      "os": "darwin",
+      "fuseFile": "Contents/Frameworks/Electron Framework.framework/Electron Framework",
+      "wire": {
+        "found": true,
+        "version": 1,
+        "sentinels": 1,
+        "fuses": [
+          {
+            "index": 0,
+            "name": "RunAsNode",
+            "state": "enabled"
+          },
+          {
+            "index": 1,
+            "name": "EnableCookieEncryption",
+            "state": "disabled"
+          },
+          {
+            "index": 2,
+            "name": "EnableNodeOptionsEnvironmentVariable",
+            "state": "enabled"
+          },
+          {
+            "index": 3,
+            "name": "EnableNodeCliInspectArguments",
+            "state": "enabled"
+          },
+          {
+            "index": 4,
+            "name": "EnableEmbeddedAsarIntegrityValidation",
+            "state": "disabled"
+          },
+          {
+            "index": 5,
+            "name": "OnlyLoadAppFromAsar",
+            "state": "disabled"
+          },
+          {
+            "index": 6,
+            "name": "LoadBrowserProcessSpecificV8Snapshot",
+            "state": "disabled"
+          },
+          {
+            "index": 7,
+            "name": "GrantFileProtocolExtraPrivileges",
+            "state": "enabled"
+          },
+          {
+            "index": 8,
+            "name": "fuse-8",
+            "state": "enabled"
+          }
+        ]
+      },
+      "differencesFromAdr019": [
+        {
+          "name": "EnableCookieEncryption",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "EnableNodeOptionsEnvironmentVariable",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableNodeCliInspectArguments",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableEmbeddedAsarIntegrityValidation",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "OnlyLoadAppFromAsar",
+          "expected": "enabled",
+          "actual": "disabled"
+        }
+      ],
+      "asarIntegrity": {
+        "headerSha256": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd",
+        "recorded": [
+          {
+            "file": "Resources/app.asar",
+            "alg": "SHA256",
+            "value": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd"
+          }
+        ],
+        "matches": true
+      }
+    },
+    {
+      "root": "extracted",
+      "app": "DwarfAI-Miners-0.13.1-arm64.dmg/DwarfAI-Miners.app",
+      "os": "darwin",
+      "fuseFile": "Contents/Frameworks/Electron Framework.framework/Electron Framework",
+      "wire": {
+        "found": true,
+        "version": 1,
+        "sentinels": 1,
+        "fuses": [
+          {
+            "index": 0,
+            "name": "RunAsNode",
+            "state": "enabled"
+          },
+          {
+            "index": 1,
+            "name": "EnableCookieEncryption",
+            "state": "disabled"
+          },
+          {
+            "index": 2,
+            "name": "EnableNodeOptionsEnvironmentVariable",
+            "state": "enabled"
+          },
+          {
+            "index": 3,
+            "name": "EnableNodeCliInspectArguments",
+            "state": "enabled"
+          },
+          {
+            "index": 4,
+            "name": "EnableEmbeddedAsarIntegrityValidation",
+            "state": "disabled"
+          },
+          {
+            "index": 5,
+            "name": "OnlyLoadAppFromAsar",
+            "state": "disabled"
+          },
+          {
+            "index": 6,
+            "name": "LoadBrowserProcessSpecificV8Snapshot",
+            "state": "disabled"
+          },
+          {
+            "index": 7,
+            "name": "GrantFileProtocolExtraPrivileges",
+            "state": "enabled"
+          },
+          {
+            "index": 8,
+            "name": "fuse-8",
+            "state": "enabled"
+          }
+        ]
+      },
+      "differencesFromAdr019": [
+        {
+          "name": "EnableCookieEncryption",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "EnableNodeOptionsEnvironmentVariable",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableNodeCliInspectArguments",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableEmbeddedAsarIntegrityValidation",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "OnlyLoadAppFromAsar",
+          "expected": "enabled",
+          "actual": "disabled"
+        }
+      ],
+      "asarIntegrity": {
+        "headerSha256": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd",
+        "recorded": [
+          {
+            "file": "Resources/app.asar",
+            "alg": "SHA256",
+            "value": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd"
+          }
+        ],
+        "matches": true
+      }
+    },
+    {
+      "root": "extracted",
+      "app": "DwarfAI-Miners-0.13.1-arm64.zip/DwarfAI-Miners.app",
+      "os": "darwin",
+      "fuseFile": "Contents/Frameworks/Electron Framework.framework/Electron Framework",
+      "wire": {
+        "found": true,
+        "version": 1,
+        "sentinels": 1,
+        "fuses": [
+          {
+            "index": 0,
+            "name": "RunAsNode",
+            "state": "enabled"
+          },
+          {
+            "index": 1,
+            "name": "EnableCookieEncryption",
+            "state": "disabled"
+          },
+          {
+            "index": 2,
+            "name": "EnableNodeOptionsEnvironmentVariable",
+            "state": "enabled"
+          },
+          {
+            "index": 3,
+            "name": "EnableNodeCliInspectArguments",
+            "state": "enabled"
+          },
+          {
+            "index": 4,
+            "name": "EnableEmbeddedAsarIntegrityValidation",
+            "state": "disabled"
+          },
+          {
+            "index": 5,
+            "name": "OnlyLoadAppFromAsar",
+            "state": "disabled"
+          },
+          {
+            "index": 6,
+            "name": "LoadBrowserProcessSpecificV8Snapshot",
+            "state": "disabled"
+          },
+          {
+            "index": 7,
+            "name": "GrantFileProtocolExtraPrivileges",
+            "state": "enabled"
+          },
+          {
+            "index": 8,
+            "name": "fuse-8",
+            "state": "enabled"
+          }
+        ]
+      },
+      "differencesFromAdr019": [
+        {
+          "name": "EnableCookieEncryption",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "EnableNodeOptionsEnvironmentVariable",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableNodeCliInspectArguments",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableEmbeddedAsarIntegrityValidation",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "OnlyLoadAppFromAsar",
+          "expected": "enabled",
+          "actual": "disabled"
+        }
+      ],
+      "asarIntegrity": {
+        "headerSha256": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd",
+        "recorded": [
+          {
+            "file": "Resources/app.asar",
+            "alg": "SHA256",
+            "value": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd"
+          }
+        ],
+        "matches": true
+      }
+    },
+    {
+      "root": "extracted",
+      "app": "DwarfAI-Miners-0.13.1-x64.dmg/DwarfAI-Miners.app",
+      "os": "darwin",
+      "fuseFile": "Contents/Frameworks/Electron Framework.framework/Electron Framework",
+      "wire": {
+        "found": true,
+        "version": 1,
+        "sentinels": 1,
+        "fuses": [
+          {
+            "index": 0,
+            "name": "RunAsNode",
+            "state": "enabled"
+          },
+          {
+            "index": 1,
+            "name": "EnableCookieEncryption",
+            "state": "disabled"
+          },
+          {
+            "index": 2,
+            "name": "EnableNodeOptionsEnvironmentVariable",
+            "state": "enabled"
+          },
+          {
+            "index": 3,
+            "name": "EnableNodeCliInspectArguments",
+            "state": "enabled"
+          },
+          {
+            "index": 4,
+            "name": "EnableEmbeddedAsarIntegrityValidation",
+            "state": "disabled"
+          },
+          {
+            "index": 5,
+            "name": "OnlyLoadAppFromAsar",
+            "state": "disabled"
+          },
+          {
+            "index": 6,
+            "name": "LoadBrowserProcessSpecificV8Snapshot",
+            "state": "disabled"
+          },
+          {
+            "index": 7,
+            "name": "GrantFileProtocolExtraPrivileges",
+            "state": "enabled"
+          },
+          {
+            "index": 8,
+            "name": "fuse-8",
+            "state": "enabled"
+          }
+        ]
+      },
+      "differencesFromAdr019": [
+        {
+          "name": "EnableCookieEncryption",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "EnableNodeOptionsEnvironmentVariable",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableNodeCliInspectArguments",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableEmbeddedAsarIntegrityValidation",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "OnlyLoadAppFromAsar",
+          "expected": "enabled",
+          "actual": "disabled"
+        }
+      ],
+      "asarIntegrity": {
+        "headerSha256": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd",
+        "recorded": [
+          {
+            "file": "Resources/app.asar",
+            "alg": "SHA256",
+            "value": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd"
+          }
+        ],
+        "matches": true
+      }
+    },
+    {
+      "root": "extracted",
+      "app": "DwarfAI-Miners-0.13.1-x64.zip/DwarfAI-Miners.app",
+      "os": "darwin",
+      "fuseFile": "Contents/Frameworks/Electron Framework.framework/Electron Framework",
+      "wire": {
+        "found": true,
+        "version": 1,
+        "sentinels": 1,
+        "fuses": [
+          {
+            "index": 0,
+            "name": "RunAsNode",
+            "state": "enabled"
+          },
+          {
+            "index": 1,
+            "name": "EnableCookieEncryption",
+            "state": "disabled"
+          },
+          {
+            "index": 2,
+            "name": "EnableNodeOptionsEnvironmentVariable",
+            "state": "enabled"
+          },
+          {
+            "index": 3,
+            "name": "EnableNodeCliInspectArguments",
+            "state": "enabled"
+          },
+          {
+            "index": 4,
+            "name": "EnableEmbeddedAsarIntegrityValidation",
+            "state": "disabled"
+          },
+          {
+            "index": 5,
+            "name": "OnlyLoadAppFromAsar",
+            "state": "disabled"
+          },
+          {
+            "index": 6,
+            "name": "LoadBrowserProcessSpecificV8Snapshot",
+            "state": "disabled"
+          },
+          {
+            "index": 7,
+            "name": "GrantFileProtocolExtraPrivileges",
+            "state": "enabled"
+          },
+          {
+            "index": 8,
+            "name": "fuse-8",
+            "state": "enabled"
+          }
+        ]
+      },
+      "differencesFromAdr019": [
+        {
+          "name": "EnableCookieEncryption",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "EnableNodeOptionsEnvironmentVariable",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableNodeCliInspectArguments",
+          "expected": "disabled",
+          "actual": "enabled"
+        },
+        {
+          "name": "EnableEmbeddedAsarIntegrityValidation",
+          "expected": "enabled",
+          "actual": "disabled"
+        },
+        {
+          "name": "OnlyLoadAppFromAsar",
+          "expected": "enabled",
+          "actual": "disabled"
+        }
+      ],
+      "asarIntegrity": {
+        "headerSha256": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd",
+        "recorded": [
+          {
+            "file": "Resources/app.asar",
+            "alg": "SHA256",
+            "value": "471384f7290acd657b1c29474291798737678758e9c94a44c651b914a687b0bd"
+          }
+        ],
+        "matches": true
+      }
+    }
+  ]
+}

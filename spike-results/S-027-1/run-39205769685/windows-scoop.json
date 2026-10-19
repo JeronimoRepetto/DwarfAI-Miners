@@ -1,0 +1,211 @@
+{
+  "spike": "S-027-1",
+  "part": "scoop",
+  "environment": {
+    "date": "2026-10-19T06:06:13.639Z",
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "runnerOs": "Windows",
+    "imageOs": "win25-vs2026",
+    "imageVersion": "20261007.264.1"
+  },
+  "scoopInstall": {
+    "exitCode": 0,
+    "ms": 19294,
+    "output": "Initializing...\nDownloading...\nCreating shim...\nAdding ~\\scoop\\shims to your path.\nScoop was installed successfully!\nType 'scoop help' for instructions.\n"
+  },
+  "scoopVersion": {
+    "exitCode": 0,
+    "ms": 834,
+    "output": "Current Scoop version:\nv0.6.0 - Released at 2026-09-30\n\n'main' bucket:\n40d78ed403 twg: Update to version 1.3.8\n\n"
+  },
+  "cleared": [],
+  "baseVersion": "0.13.1",
+  "install": {
+    "exitCode": 0,
+    "ms": 15242,
+    "output": "Installing 'dwarfai-miners-spike' (0.13.1) [64bit] from '<temp>\\dwarfai-s0271-tc6bcn\\dwarfai-miners-spike.json'\nDownloading http://127.0.0.1:51939/DwarfAI-Miners-0.13.1-win-x64.zip (-1 B)...\nChecking hash of \u001b[36mDwarfAI-Miners-0.13.1-win-x64.zip\u001b[0m... OK.\nExtracting \u001b[36mDwarfAI-Miners-0.13.1-win-x64.zip\u001b[0m... Done.\nRunning pre_install script... Done.\nLinking ~\\scoop\\apps\\dwarfai-miners-spike\\current => ~\\scoop\\apps\\dwarfai-miners-spike\\0.13.1\nCreating shortcut for DwarfAI-Miners (DwarfAI-Miners.exe)\nRunning post_install script... Done.\n'dwarfai-miners-spike' (0.13.1) was installed successfully!\n",
+    "appDir": ["0.13.1", "current"],
+    "current": [
+      "DwarfAI-Miners.exe",
+      "LICENSE.electron.txt",
+      "LICENSES.chromium.html",
+      "chrome_100_percent.pak",
+      "chrome_200_percent.pak",
+      "d3dcompiler_47.dll",
+      "dxcompiler.dll",
+      "dxil.dll",
+      "ffmpeg.dll",
+      "icudtl.dat",
+      "locales",
+      "resources",
+      "resources.pak",
+      "scoop-install.json",
+      "scoop-manifest.json",
+      "snapshot_blob.bin",
+      "v8_context_snapshot.bin",
+      "vk_swiftshader.dll",
+      "vk_swiftshader_icd.json",
+      "vulkan-1.dll"
+    ],
+    "hooks": [
+      {
+        "hook": "pre_install",
+        "cmd": "install",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.1",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\0.13.1",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' install '<temp>\\dwarfai-s0271-tc6bcn\\dwarfai-miners-spike.json'\"",
+        "at": "2026-10-19T06:06:50.2204853Z"
+      },
+      {
+        "hook": "post_install",
+        "cmd": "install",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.1",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\current",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' install '<temp>\\dwarfai-s0271-tc6bcn\\dwarfai-miners-spike.json'\"",
+        "at": "2026-10-19T06:06:51.2029143Z"
+      }
+    ]
+  },
+  "host": {
+    "pid": 1968,
+    "ms": 7754,
+    "executable": "<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe",
+    "copyRoot": ["0.13.1"]
+  },
+  "hostWait": {
+    "copyRoot": ["0.13.1"],
+    "appProcesses": [
+      "<home>\\scoop\\apps\\dwarfai-miners-spike\\current\\DwarfAI-Miners.exe --background",
+      "\"<home>\\scoop\\apps\\dwarfai-miners-spike\\current\\DwarfAI-Miners.exe\" --type=gpu-process --user-data-dir=\"<home>\\AppData\\Roaming\\DwarfAI-Miners\" --gpu-preferences=WAAAAAAAAADgA",
+      "\"<home>\\scoop\\apps\\dwarfai-miners-spike\\current\\DwarfAI-Miners.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --user-data-dir",
+      "\"<home>\\scoop\\apps\\dwarfai-miners-spike\\current\\DwarfAI-Miners.exe\" --type=renderer --user-data-dir=\"<home>\\AppData\\Roaming\\DwarfAI-Miners\" --app-path=\"<home>\\sc",
+      "\"<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe\" \"<home>\\AppData\\Local\\DwarfAI\\host\\0.13.1\\resources\\app.asar\\out\\host\\main.js\""
+    ]
+  },
+  "nextVersion": "0.13.2",
+  "update": {
+    "exitCode": 0,
+    "ms": 1231,
+    "output": "dwarfai-miners-spike: 0.13.1 -> 0.13.2\nUpdating one outdated app:\nUpdating 'dwarfai-miners-spike' (0.13.1 -> 0.13.2)\nERROR The following instances of \"dwarfai-miners-spike\" are still running. Close them and try again.\n\nHandles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName                                                  \n-------  ------    -----      -----     ------     --  -- -----------                                                  \n    905      65   134624     158540       4.36   2564   2 DwarfAI-Miners                                               \n    378      18    13992      52756       0.06   3152   2 DwarfAI-Miners                                               \n    315      16    11472      49076       0.08   6280   2 DwarfAI-Miners                                               \n    236      18    19248      54852       0.08   7532   2 DwarfAI-Miners                                               \n\n\n\nRunning process detected, skip updating.\n",
+    "hooks": [],
+    "hostAlive": true,
+    "appDir": ["0.13.1", "current"],
+    "revertIntegrationsRan": false
+  },
+  "uninstall": {
+    "exitCode": 0,
+    "ms": 1043,
+    "output": "Uninstalling 'dwarfai-miners-spike' (0.13.1).\nRunning pre_uninstall script... Done.\nERROR The following instances of \"dwarfai-miners-spike\" are still running. Close them and try again.\n\nHandles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName                                                  \n-------  ------    -----      -----     ------     --  -- -----------                                                  \n    905      65   134624     158552       4.36   2564   2 DwarfAI-Miners                                               \n    378      18    13992      52756       0.06   3152   2 DwarfAI-Miners                                               \n    315      16    11480      49104       0.08   6280   2 DwarfAI-Miners                                               \n    236      18    18824      54456       0.08   7532   2 DwarfAI-Miners                                               \n\n\n\n",
+    "hooks": [
+      {
+        "hook": "pre_uninstall",
+        "cmd": "uninstall",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.1",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\0.13.1",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' uninstall dwarfai-miners-spike\"",
+        "at": "2026-10-19T06:07:02.5158918Z"
+      }
+    ],
+    "hostAlive": true,
+    "leftovers": {
+      "appDir": ["0.13.1", "current"],
+      "persist": null,
+      "copyRoot": ["0.13.1"],
+      "appData": ["DwarfAI-Miners"]
+    }
+  },
+  "uiEnded": 1,
+  "updateUiEnded": {
+    "exitCode": 0,
+    "ms": 14651,
+    "output": "dwarfai-miners-spike: 0.13.1 -> 0.13.2\nUpdating one outdated app:\nUpdating 'dwarfai-miners-spike' (0.13.1 -> 0.13.2)\nDownloading new version\nDownloading http://127.0.0.1:51939/DwarfAI-Miners-0.13.2-win-x64.zip (-1 B)...\nChecking hash of \u001b[36mDwarfAI-Miners-0.13.2-win-x64.zip\u001b[0m... OK.\nRunning pre_uninstall script... Done.\nUninstalling 'dwarfai-miners-spike' (0.13.1)\nUnlinking ~\\scoop\\apps\\dwarfai-miners-spike\\current\nRunning post_uninstall script... Done.\nInstalling 'dwarfai-miners-spike' (0.13.2) [64bit] from '<temp>\\dwarfai-s0271-tc6bcn\\dwarfai-miners-spike.json'\nLoading DwarfAI-Miners-0.13.2-win-x64.zip from cache\nExtracting \u001b[36mDwarfAI-Miners-0.13.2-win-x64.zip\u001b[0m... Done.\nRunning pre_install script... Done.\nLinking ~\\scoop\\apps\\dwarfai-miners-spike\\current => ~\\scoop\\apps\\dwarfai-miners-spike\\0.13.2\nCreating shortcut for DwarfAI-Miners (DwarfAI-Miners.exe)\nRunning post_install script... Done.\n'dwarfai-miners-spike' (0.13.2) was installed successfully!\n",
+    "hooks": [
+      {
+        "hook": "pre_uninstall",
+        "cmd": "update",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.2",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\0.13.1",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' update dwarfai-miners-spike\"",
+        "at": "2026-10-19T06:07:09.1870886Z"
+      },
+      {
+        "hook": "post_uninstall",
+        "cmd": "update",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.2",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\0.13.1",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' update dwarfai-miners-spike\"",
+        "at": "2026-10-19T06:07:09.2501481Z"
+      },
+      {
+        "hook": "pre_install",
+        "cmd": "update",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.2",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\0.13.2",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' update dwarfai-miners-spike\"",
+        "at": "2026-10-19T06:07:19.7587820Z"
+      },
+      {
+        "hook": "post_install",
+        "cmd": "update",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.2",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\current",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' update dwarfai-miners-spike\"",
+        "at": "2026-10-19T06:07:20.0026556Z"
+      }
+    ],
+    "hostAlive": true,
+    "appDir": ["0.13.1", "0.13.2", "current"],
+    "revertIntegrationsRan": false
+  },
+  "uninstallUiEnded": {
+    "exitCode": 0,
+    "ms": 1212,
+    "output": "Uninstalling 'dwarfai-miners-spike' (0.13.2).\nRunning pre_uninstall script... Done.\nRemoving shortcut ~\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Scoop Apps\\DwarfAI-Miners.lnk\nUnlinking ~\\scoop\\apps\\dwarfai-miners-spike\\current\nRunning post_uninstall script... Done.\nRemoving older version (0.13.1).\n'dwarfai-miners-spike' was uninstalled.\n",
+    "hooks": [
+      {
+        "hook": "pre_uninstall",
+        "cmd": "uninstall",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.2",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\0.13.2",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' uninstall dwarfai-miners-spike\"",
+        "at": "2026-10-19T06:07:20.9289139Z"
+      },
+      {
+        "hook": "post_uninstall",
+        "cmd": "uninstall",
+        "app": "dwarfai-miners-spike",
+        "version": "0.13.2",
+        "global": "False",
+        "dir": "<home>\\scoop\\apps\\dwarfai-miners-spike\\0.13.2",
+        "commandLine": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '<home>\\scoop\\shims\\scoop.ps1' uninstall dwarfai-miners-spike\"",
+        "at": "2026-10-19T06:07:21.1573885Z"
+      }
+    ],
+    "hostAlive": true,
+    "leftovers": {
+      "appDir": null,
+      "persist": null,
+      "copyRoot": ["0.13.1"],
+      "appData": ["DwarfAI-Miners"]
+    }
+  },
+  "clearedAfter": ["<home>\\AppData\\Roaming\\DwarfAI-Miners", "<home>\\AppData\\Local\\DwarfAI"]
+}
