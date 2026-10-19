@@ -7,10 +7,8 @@
 <div align="center">
 
 [![CI](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml/badge.svg)](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/JeronimoRepetto/DwarfAI-Miners?style=flat-square)](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/JeronimoRepetto/DwarfAI-Miners/total?style=flat-square)](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-4a5568?style=flat-square)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4a5568?style=flat-square)
-[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-4a5568?style=flat-square)](LICENSE)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-support%20the%20project-FF5E5B?style=flat-square&logo=kofi&logoColor=white)](https://ko-fi.com/jeronimorepetto)
 
 ![Electron](https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white)
@@ -21,63 +19,32 @@
 
 </div>
 
-DwarfAI-Miners is a floating desktop panel that turns active AI coding sessions into mines and
-dwarfs. A mine represents one project; workers and foremen represent the agents currently
-operating in that project.
+DwarfAI-Miners shows the AI coding sessions on your computer as dwarfs working in mines. A **mine**
+is one project folder; a **dwarf** is one AI coding session in it, ranked foreman, worker or
+worker2 by how deep it sits below the mine's root session.
 
-**Status:** functional MVP. Session detection for Claude Code, Codex, Antigravity and OpenCode;
-live IPC updates; mine tiers; animated dwarfs; a floating message panel you can send into, attach
-files to, kick from and read history in; terminal focus with a transcript fallback; background
-music, mine ambience and dwarf voices; autostart; and packaging are all implemented. Windows is
-the platform verified end to end; macOS and Linux have been run on real hardware with lighter
-coverage — the [support matrix](#platform-support) says which is which.
+It is an **observer**: start Claude Code, Codex, OpenCode or Antigravity in your own terminal, and
+the mine and its dwarf appear on their own, with no setup. It is also a **launcher**: from the app
+you can start a session in a mine you added, with a supplier, model and effort you pick, or let
+Jev pick them.
 
-<p align="center"><img src="docs/readme/plates/feature-tour.png" width="644" alt="Section plate: Feature tour"></p>
+## Status
 
-## Feature tour
+DwarfAI-Miners has been rebuilt from the ground up. The app is now two parts:
 
-The panel is designed to be understood at a glance: the map answers **where work is happening**, and
-the mine answers **what each agent is doing**.
+- the **DwarfAI Host**, one background process per OS user, which owns every session the app
+  launched, reads the providers' own files, answers questions and permissions, keeps the database
+  and keeps the secrets;
+- the **window**, an Electron client of the Host. Closing it never ends a session; the Host keeps
+  running, with its tray icon, until you choose **Stop everything and quit…** in the tray menu.
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/assets/feature-tour/map.png" width="260" alt="World map with mine markers scattered across the terrain and live resource counters at the top"></td>
-    <td align="center"><img src="docs/assets/feature-tour/mines.png" width="260" alt="Mines list with search, tier filters, and a progress bar to the next level for each project"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Map</strong><br>See every active project at once.</td>
-    <td align="center"><strong>Mines</strong><br>Search, filter by tier, and open a project directly.</td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/assets/feature-tour/mine.png" width="260" alt="Mine interior across several levels, with dwarfs working, sleeping, and mid-turn"></td>
-    <td align="center"><img src="docs/assets/feature-tour/messages.png" width="260" alt="Message panel with a full conversation between the user and an agent, dwarf portraits beside each turn"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Mine interior</strong><br>Watch the crew and their status.</td>
-    <td align="center"><strong>Messages</strong><br>Read history, send, kick, and follow a session's own words.</td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/assets/feature-tour/launch.png" width="260" alt="Launch panel choosing a provider, with Let Jev choose and Auto-accept toggles"></td>
-    <td align="center"><img src="docs/assets/feature-tour/settings.png" width="260" alt="Settings panel with the shortcut, panel position, typography, audio, and notification preferences"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Launch</strong><br>Start a session in a project mine, with a model and effort — or let Jev pick.</td>
-    <td align="center"><strong>Settings</strong><br>Configure the shortcut, the panel's side, and sound.</td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/assets/feature-tour/jev.png" width="260" alt="Settings panel's Jev section, highlighted, with the routing profile and each provider's default launch"></td>
-    <td align="center"><img src="docs/assets/feature-tour/questions.png" width="260" alt="Map, mine interior, and message panel together, with a question card presenting delivery options"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Jev</strong><br>An optional routing assist that chooses the provider, model, and effort for you.</td>
-    <td align="center"><strong>Questions</strong><br>Answer a blocked agent's question straight from the panel.</td>
-  </tr>
-</table>
+**There is no public release of the rebuilt app yet.** The first public release is v1, and the
+work it still needs is open in EPIC-17 (packaging and distribution): the release job with
+`SHA256SUMS`, macOS signing and notarization in the release pipeline, and the release checklist.
+Until then every build is internal. To try the app today, [run it from source](#run-from-source).
 
-<!-- TODO(maintainer): the tour needs a capture of the message panel as its own floating window, dragged clear of the shell (#296). `messages.png` still shows the older docked panel. -->
-
-The [art pipeline](docs/architecture.md#art-pipeline) explains how the shipped assets are
-processed.
+The releases on the [Releases page](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases),
+v0.13.1 and earlier, are the previous app, not this one. No new release is published before v1.
 
 <p align="center"><img src="docs/readme/plates/highlights.png" width="644" alt="Section plate: Highlights"></p>
 
@@ -85,314 +52,293 @@ processed.
 
 <table>
   <tr>
-    <td rowspan="2" align="center" valign="top"><img src="docs/readme/cards/mine-interior.png" width="320" alt="A mine interior: the DwarfAI-Miners mine's painted shaft with four dwarfs at work, one named dwarfai-53, one asking a question, one asleep, over the crew's portraits, the mine's ore and a + Dwarf button"><br><strong>Mine interior</strong><br>The crew at work, one asking, one asleep.</td>
-    <td align="center" valign="top"><img src="docs/readme/cards/mines.png" width="384" alt="Two mine cards: DwarfAI-Miners, Silver tier, outlined because a dwarf needs you, with its ore and progress to Gold; and deep-vault at Uranium, the maximum tier"><br><strong>Mines</strong><br>Every project is a mine, with its tier, crew and ore.</td>
+    <td align="center" valign="top" rowspan="2"><img src="docs/readme/cards/mine-interior.png" width="320" alt="A mine column: the tier chip and mine name with the ambience, history and close buttons, the mine interior with four dwarfs working, asking and asleep, the crew roster, the ore strip and the + Dwarf button"></td>
+    <td align="center" valign="top"><img src="docs/readme/cards/mines.png" width="384" alt="Two mine cards: a Silver mine with its ore counts, two dwarfs working, one that needs you, one asleep and its progress toward Gold, and a Uranium mine at max tier"></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="docs/readme/cards/question.png" width="384" alt="A conversation and a question card: your message with its double-tick mark, the dwarf asking for three decisions, and the first question, Which database should the migration target, with four numbered options"><br><strong>Questions</strong><br>Answer a blocked agent straight from the panel.</td>
+    <td align="center" valign="top"><img src="docs/readme/cards/question.png" width="384" alt="A conversation: the person's message with its delivery mark, the dwarf's reply, and a question card on step 1 of 3 with four numbered options, the last one Other thing…, then Back, Jump to terminal and Next"></td>
   </tr>
 </table>
 
-<sub>These pictures are drawn with the redesigned interface's own components and sample data; the
-[feature tour](#feature-tour) above shows the app as it ships today.</sub>
+<sub>Rendered from the interface design's own components, with sample data.</sub>
 
-- **Live session detection** — Claude Code, Codex, Antigravity and OpenCode sessions become dwarfs
-  the moment they appear, no configuration required.
-- **Every worktree, one mine** — start a session in any git worktree of a project and it lands in
-  that project's own mine, not a new one; a dwarf's message panel names which worktree it is
-  actually in whenever a crew is spread across more than one.
-- **Two illustrated views** — a world map that follows the time of day, with one tier-coloured
-  marker per project, and a mine interior where the crew swings pickaxes, naps, or walks out.
-- **A message panel that floats** — click a dwarf and its conversation opens in a window of its
-  own, which you can drag anywhere on the desktop and which stays where you left it. The composer
-  already has the cursor, so there is no extra click before you can type (#409).
-- **Send, with an honest verdict** — your message is drawn in the panel the instant you press
-  Enter, and its own bubble carries the delivery mark: ✓ handed over, ✓✓ the session was seen
-  acting, ✕ with the reason and a **Send again** beside it.
-- **Attach files to a message** — drop them on the composer or press the paperclip. An image
-  travels as the image itself; anything else, as its path for the session to open with its own
-  tools. A Windows console, a macOS Terminal.app tab or tmux pane, a Linux tmux pane, and any
-  session this panel holds can all take one, capped at 5 files and 30 MB of images per message
-  (#408, #417).
-- **Markdown, in agent and person bubbles alike** — bold text, lists, quotes, tables, strikethrough,
-  horizontal rules, inline and fenced code draw as such instead of raw asterisks, backticks and
-  pipes; an image draws as its alt text, and a link — or that alt text — opens in your system
-  browser (#412).
-- **Read back through the conversation** — scroll to the top of a dwarf's panel and the twelve
-  things said before those load in place, twelve at a time, as far back as its transcript goes.
-- **Answer an agent's question** — click the option it offered, or toggle several and press
-  **Answer**; the panel presses that at the session's own console. Verified on Windows; on macOS a
-  permission or single-select answer reaches a Terminal.app tab or a tmux pane the same way, and a
-  multi-select or "Other Thing" answer instead types the keys, which needs the foreground window
-  and Accessibility permission. Not Codex.
-- **Talk to a macOS or Linux session without touching its window** — a message written into a
-  Terminal.app tab (macOS) or a tmux pane (either platform) lands by tty, not by focus: a session
-  in a background tab or an unfocused pane receives it exactly as the console-write path already
-  does on Windows.
-- **Kick in one click** — one press ends a session running in a terminal, interrupts one the panel
-  is holding, and otherwise sends the dwarf off the rock instead — and says which it did.
-- **Sound** — eight shuffled background tracks, a mine ambience that follows whether the crew is
-  actually mining, and a voice per dwarf rank on click plus the shell's own interface sounds. All
-  of it optional, from [Settings](docs/guide.md#settings).
-- **Panel motion** — pages and floating panels open and close in 250 ms, independent of display
-  scale. The system's reduced-motion preference makes these transitions instantaneous.
-- **Instant updates** — an opt-in Claude-hooks push channel turns the 2-second poll into tens of
-  milliseconds.
-- **Terminal focus** — clicking a dwarf focuses its terminal window, with a live transcript
-  viewer as the fallback.
-- **Autostart and tray** — starts at login, lives in the tray, and hides instead of closing.
-
-Every screen and control is described in the [user guide](docs/guide.md).
+- **Sessions appear on their own.** A new folder becomes a mine on the first message sent to a
+  session in it; a new session in a known mine appears at once. A git worktree of a known project
+  folds into that project's mine.
+- **A dwarf you can read.** Its status is working, asking, idle or asleep. Its chat shows the
+  conversation, the folded tool steps of each turn and a one-line outcome of the last one.
+- **Send, with an honest mark.** A message you send shows … while it is sent, ✓ once the session
+  has it, ✓✓ once the dwarf is seen acting on it, and ✕ with Retry and Copy when it could not be
+  delivered. Nothing retries on its own. You can attach files, rename a dwarf (the name never
+  reaches the provider), open its console and stop it.
+- **Questions and permissions in the panel.** A multi-step question or an Allow/Deny permission
+  replaces the composer with a card. There is no "always allow". An ask answered in the
+  provider's own terminal closes in the app without a notice.
+- **Launch a dwarf.** The Add panel offers the installed suppliers, with their models, efforts and
+  permission modes, plus **Other…** for an agent you name by its command. Turn on **Let Jev
+  choose** and Jev, the app's launch advisor, picks the supplier, model and effort for your prompt.
+- **Subagent delegation · beta.** When it is on in Settings and a dwarf was launched with Let Jev
+  choose, that dwarf can hand a subtask to Jev, which starts a worker dwarf in the same mine.
+- **Map and Mines.** The Map shows every mine as a marker on a painting that follows your local
+  hour. The Mines page searches, filters by tier, sorts, adds and removes mines. Each mine earns
+  six materials (Coal, Bronze, Copper, Silver, Gold, Uranium), never converted into each other,
+  and its tier (Bronze to Uranium) comes from the size of its source code.
+- **It tells you when a dwarf needs you.** A pose and a badge always; a sound and a system
+  notification if you leave them on in Settings.
+- **It survives restarts.** Reopening the app brings back every session still alive, with what it
+  did while the app was closed. If the Host stops unexpectedly it starts again and resumes every
+  session it can; only what could not be recovered gets one message, with a retry.
+- **Settings.** General, Appearance, Sound, Notifications, Integrations, Data and About. On the
+  first open, one step asks whether to connect with Claude Code and OpenCode; nothing is written
+  into their configuration before you choose **Activate**.
 
 <p align="center">
-  <img src="docs/readme/crew.svg" width="644" alt="The crew, animated: two workers swinging their pickaxes, a foreman standing idle and a foreman asleep, each on a wooden board above a name plate">
+  <img src="docs/readme/crew.svg" width="644" alt="The crew at work: two workers swinging pickaxes, a foreman standing by and a foreman asleep">
 </p>
-
-<p align="center"><img src="docs/readme/plates/install.png" width="644" alt="Section plate: Install"></p>
-
-## Install
-
-Download the installer for your OS from the
-[latest release](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/latest):
-
-| Platform | File                                                          |
-| -------- | ------------------------------------------------------------- |
-| Windows  | `DwarfAI-Miners-Setup-*.exe` (installer) or `-Portable-*.exe` |
-| macOS    | `DwarfAI-Miners-*.dmg` (arm64 or x64, matching your Mac)      |
-| Linux    | `DwarfAI-Miners-*.AppImage` or the `.deb` package             |
-
-Signing, honestly: **macOS installers are signed and notarized from v0.8.0 onward.** v0.7.0 and
-earlier were not, which is what the macOS note below is about. Windows and Linux are never signed —
-[`docs/signing.md`](docs/signing.md) records what is signed, what is not, and what fixing the rest
-would take. So:
-
-- **macOS**: an installer from v0.7.0 or earlier still gets blocked by Gatekeeper on a normal
-  double-click. Right-click (or Control-click) the app and choose **Open**, then confirm in the
-  dialog — only needed once — or clear the quarantine attribute:
-  `xattr -cr "/Applications/DwarfAI-Miners.app"`. Neither is needed for a signed release.
-- **Windows**: SmartScreen shows "Windows protected your PC" and an unverified publisher on a
-  fresh machine. Click **More info** → **Run anyway**.
-- **Linux**: make the AppImage executable before running it: `chmod +x DwarfAI-Miners-*.AppImage`.
-
-Every release is built and packaged on the target OS. Windows is verified end to end; macOS and
-Linux have been run with lighter coverage — see the support matrix below.
-
-### First run
-
-Launch DwarfAI-Miners and it will start minimized to the tray. Use **Ctrl+Alt+Shift+P** (or the
-tray menu) to open the panel. Once packaged, the app enables start-at-login by default; you can
-change that choice from the tray menu. The first run never sends session data anywhere — see
-[Privacy](docs/privacy.md).
-
-Three things worth knowing on that first run:
-
-- **You need nothing to configure.** Start a Claude Code, Codex, Antigravity or OpenCode session in
-  any project and its dwarf appears within about two seconds. Claude, Codex and OpenCode turn that
-  session's tokens into mined coal and ore as it runs; Antigravity's dwarf appears and works the
-  mine too, but its CLI records no token figure to mine from (verified on 1.1.26), so it never adds
-  material — see [Provider support](#provider-support).
-- **Music starts playing.** That is the shipped default; the note button at the bottom of the
-  navigation column silences it for this run, and Settings' **Music at startup** is where you say
-  it should stay off. See [Sound](docs/guide.md#sound).
-- **The first few launches do a one-time history scan** of your existing transcripts, to fill the
-  coal pile with the tokens you burned before installing this. It is bounded, resumable, and
-  described in full in [`docs/privacy.md`](docs/privacy.md#the-one-time-history-scan).
-
-<p align="center"><img src="docs/readme/plates/run-from-source.png" width="644" alt="Section plate: Run from source"></p>
-
-## Run from source
-
-```bash
-pnpm install
-pnpm dev
-```
-
-The panel starts hidden. Press **Ctrl+Alt+Shift+P** or click the tray icon to show it. The
-combination is configurable: open the gear in the panel titlebar and record a new one. If
-another application already owns a combination, registration fails, the previous shortcut is
-re-claimed, and the settings panel says so rather than showing a shortcut that does nothing.
-
-> Electron 42+ ships no postinstall; `pnpm dev` runs `install-electron` first. If the
-> binary is ever missing (an interrupted download, say), run `pnpm exec install-electron`.
-
-The checks CI runs, the testing philosophy and the rest of the contribution workflow are in
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-<p align="center"><img src="docs/readme/plates/platform-support.png" width="644" alt="Section plate: Platform support"></p>
-
-## Platform support
-
-Every operating-system-specific behavior sits behind a port selected in the two composition
-roots (`src/host/main.ts` for the Host, `src/ui-main/index.ts` for the window), and each
-adapter's commands and file contents are unit-tested as pure builders. macOS and Linux have been run on real hardware, but with far less
-mileage than Windows, so the table keeps the distinction between verified and expected.
-
-<details>
-<summary><strong>Full support matrix</strong> (Windows verified; macOS/Linux run, lighter coverage)</summary>
-
-| Capability                                     | Windows                                                   | macOS                                                                                                                                                                                    | Linux                                                           |
-| ---------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Overall                                        | **Verified**                                              | Run, lighter coverage                                                                                                                                                                    | Run, lighter coverage                                           |
-| Session detection (Claude Code / Codex)        | Verified                                                  | Expected to work (home-relative paths)                                                                                                                                                   | Expected to work                                                |
-| Antigravity session detection                  | Verified                                                  | Expected to work (home-relative paths)                                                                                                                                                   | Expected to work                                                |
-| OpenCode session detection                     | Verified                                                  | Expected to work (no per-OS branch — one SQLite store, `~/.local/share/opencode`)                                                                                                        | Expected to work                                                |
-| Codex liveness probe                           | PowerShell `Win32_Process`                                | `pgrep -fl codex`                                                                                                                                                                        | `pgrep -fa codex`                                               |
-| Click-to-focus a terminal                      | user32 via PowerShell                                     | `ps` + System Events (`osascript`)                                                                                                                                                       | **Unsupported** — falls back to viewer                          |
-| Live transcript viewer                         | Windows Terminal / PowerShell                             | Terminal.app via `osascript`                                                                                                                                                             | `x-terminal-emulator` → … → `xterm`                             |
-| Write a message into a session's console       | **Verified — the default**                                | Terminal.app tab, or a tmux pane for any other host (on by default); everything else relays                                                                                              | tmux pane write (built, unmeasured); other hosts relay          |
-| Relay a message to a named session             | Supported — the fallback                                  | Supported — the fallback for a host that is neither a Terminal.app tab nor a tmux pane                                                                                                   | Supported — the fallback for a session outside tmux             |
-| Queue a message to a Codex CLI session         | **Verified** — a native, npm or pnpm install alike (#413) | Expected to work (spawns `codex`)                                                                                                                                                        | Expected to work (spawns `codex`)                               |
-| Answer a permission or question at the console | **Verified**                                              | Terminal.app tab, or a tmux pane: permission and single-select answers; multi-select and "Other Thing" answers take keystrokes (Accessibility, window in front); other hosts unsupported | tmux pane write (built, unmeasured); other hosts relay          |
-| Attach files to a message                      | **Verified** — console or held Claude session             | Terminal.app console, a tmux pane, or held Claude session; other hosts held only                                                                                                         | tmux pane write (built, unmeasured); held Claude session        |
-| Kick a session running in a terminal           | **Verified** — clean exit, then force                     | Implemented (SIGTERM, then SIGKILL); unreachable until measured                                                                                                                          | Implemented (SIGTERM, then SIGKILL); unreachable until measured |
-| Start at login                                 | HKCU Run key                                              | `~/Library/LaunchAgents` plist                                                                                                                                                           | `~/.config/autostart` desktop entry                             |
-| Packaging                                      | NSIS + portable                                           | dmg + zip (arm64 & x64)                                                                                                                                                                  | AppImage + deb                                                  |
-
-The two message rows are one decision seen from two sides, and it reversed twice —
-[`docs/console-hosting.md` §4b](docs/console-hosting.md) records every reversal. Where the panel can
-reach a console (Windows today), a message is **written straight into the input of the console that
-session's own process is attached to**, addressed by verified process id: no window is raised,
-nothing goes on your clipboard, and which tab of a terminal is in front stops mattering — a session
-in a background tab receives its message and the tab you are working in sees nothing (#371). Where
-it cannot (macOS, Linux), a Claude session with a registry name takes the relay instead, which
-touches no window either. The relay is also the fallback on Windows, and only for the failures that
-prove nothing was written: an attach the console refused, or a console input that would not open.
-Kick is no longer a keystroke at all: it ends the session's own process by verified pid,
-which needs no window, so its row above is about a signal rather than about reaching a console. What
-macOS and Linux still lack there is not the signal but the reading that verifies a pid — no Claude
-session registry entry has been measured for a process creation time on either — so a kick with no
-verified pid is refused with that reason rather than sent.
-
-Notes on the three honest gaps:
-
-- **Linux window focus** is unsupported on purpose. `wmctrl`/`xdotool` are X11-only, absent by
-  default, and blocked outright under Wayland; guessing would mean hanging on a tool that is not
-  there. Clicking a dwarf goes straight to the transcript viewer instead.
-- **macOS console input** is on, as the matrix above says, and lives in the Host's
-  observed-session relay (`src/host/modules/conversation/adapters/observed-send/`); the legacy
-  `DARWIN_CONSOLE_INPUT_ENABLED` gate left with the legacy tree in cut 5. It is two mechanisms,
-  and they ask for different things. A **message** is written into the Terminal.app tab the session's
-  own tty names: no window is raised, no keystroke is synthesized, and macOS asks only for
-  Automation permission to control Terminal. A **permission or question key** must not carry a
-  Return, so it stays a System Events keystroke at the foreground and still needs Accessibility
-  permission, which the app cannot detect. Only Terminal.app has been measured; a session in
-  iTerm2, WezTerm, Alacritty, kitty, Ghostty, Hyper or Warp is refused by name rather than guessed
-  at. The measurements are in
-  [`docs/console-hosting.md`](docs/console-hosting.md); Linux has no console-write path yet.
-- **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`,
-  `~/.local/share/opencode`) are assumed platforms. They are home-relative already and nothing in
-  the formats is Windows-specific, but this has not been confirmed against real macOS/Linux
-  fixtures.
-
-</details>
 
 <p align="center"><img src="docs/readme/plates/provider-support.png" width="644" alt="Section plate: Provider support"></p>
 
 ## Provider support
 
-Three questions get three separate answers, because they are three different bars: can this app
-**read** a provider's sessions, can it **launch** one, and can it **hold** one open so its words
-arrive live.
+DwarfAI-Miners runs each provider's own command-line tool, installed by you and logged in with that
+tool's own login. It ships no provider binary, never reads or stores your provider credentials, and
+never passes a flag that skips your permission decisions. A provider that is not installed has no
+chip in the Add panel.
 
-| Provider    | Read | Launch | Hold   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ----------- | ---- | ------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code | yes  | yes    | yes    | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported. The one provider with a complete held-session surface: interrupt, context reading, and answers to its own question and permission prompts.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Codex       | yes  | yes    | no     | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` gives verified worker/foreman relationships. A launch is detached — `codex exec` in the mine's folder, discovered afterwards by the poll. Messages go to Codex's own queue, reached through the same npm/pnpm `.cmd`-shim resolution the launcher already had, so an npm or pnpm install works and `CODEX_CLI_PATH` is no longer needed for it (#413).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Antigravity | yes  | yes    | partly | Reads the `agy` CLI's own store under `~/.gemini/antigravity-cli`: a presence lock per running conversation, `history.jsonl` for the workspace, and the conversation's `transcript.jsonl` for the feed and for whether a turn is open. A held `agy` session can be spoken to; see [Providers in depth](docs/guide.md#providers-in-depth) for what its protocol does not offer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| OpenCode    | yes  | yes    | no     | Reads `opencode.db` (SQLite) under `~/.local/share/opencode` read-only: session rows, an event log for liveness, and message/part rows for the feed. A subagent spawned with the `task` tool is drawn as a worker beside its foreman. Launch is detached — `opencode run` in the mine's folder, with a live model catalogue and a per-model effort picker read straight from `opencode models --verbose`, verified on Windows. Sending a message to a launched or observed ROOT session works, through a new `opencode run --session <id>` process per turn — a message typed while one is already running waits and is sent when that turn ends, since a concurrent call was measured to race rather than refuse. A worker session still takes no message — no held session either. **Permission asks can be answered from the panel too** (#588), for a session the panel launched or one you started yourself: an opt-in plugin in Settings' OpenCode section forwards each ask over a loopback listener and posts the decision back to that session's own server — off by default, and independent of every other provider's own toggle; see [`docs/privacy.md`](docs/privacy.md#the-opencode-permission-relay). See [Providers in depth](docs/guide.md#providers-in-depth). |
+| Provider    | Observed | Launched from the app   | Through                                                                                      |
+| ----------- | -------- | ----------------------- | -------------------------------------------------------------------------------------------- |
+| Claude Code | yes      | yes                     | your `claude` (`claude -p` with stream-json), or a `claude-agent-acp` you installed yourself |
+| Codex       | yes      | yes                     | your `codex` (`codex app-server`)                                                            |
+| OpenCode    | yes      | yes                     | your `opencode` (`opencode acp`)                                                             |
+| Antigravity | yes      | development builds only | your `agy`                                                                                   |
+| Other…      | —        | yes                     | the command you type, run without a shell                                                    |
 
-Each provider's limits, effort levels and how foremen and workers are told apart are in the
-[user guide](docs/guide.md#providers-in-depth).
+- **Antigravity** is launched only in development builds until a written review of its terms
+  exists ([`docs/provider-terms.md`](docs/provider-terms.md)). Its sessions are observed in every
+  build, with usage read from its own local conversations database.
+- **OpenCode permission requests** reach the app only while the "OpenCode · permission requests"
+  integration is on (Settings › Integrations), because the app writes a plugin file into OpenCode's
+  plugin folder for it.
+- **Claude Code · instant updates** (Settings › Integrations) writes one hook entry into Claude
+  Code's `settings.json`, so an observed Claude session reports to the app as it acts.
+
+<!-- release:R-01 -->
+
+### Risk notice
+
+<!-- Wording approved by the owner on 2026-10-19 (20 §8 R-01; ADR-008 item 5). -->
+
+Running a provider's tool with your subscription is governed by that provider's terms, which may change. Usage counts against your plan's quota, and the provider may limit or suspend your account. DwarfAI never reads, stores or forwards your provider credentials: each tool logs in with its own official flow. If you prefer, use the provider's API with your own API key instead.
+
+<!-- release:R-21 -->
+
+### Connections to Claude Code and OpenCode
+
+⟦COPY NEEDED: R-21 connections to Claude Code and OpenCode⟧
+
+<!-- Required content (20 §8 R-21; OQ-68; ADR-016 items 5, 7), wording to be approved by
+     design/owner: what "Claude Code · instant updates" (a hook entry in ~/.claude/settings.json)
+     and "OpenCode · permission requests" (a plugin file in OpenCode's plugin folder) do; that
+     DwarfAI asks once, on the first open, with both pre-selected, and writes nothing before
+     "Activate"; how to turn either off later (Settings › Integrations), which removes exactly
+     DwarfAI's entry and keeps everything else; that the first rebuilt release replaces or removes
+     entries written by the old app, according to the person's answer; that uninstall removes
+     them (R-19). -->
+
+<p align="center"><img src="docs/readme/plates/run-from-source.png" width="644" alt="Section plate: Run from source"></p>
+
+## Run from source
+
+You need Node and [pnpm](https://pnpm.io/):
+
+```bash
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+Press **Ctrl+Alt+Shift+P**, the default panel shortcut, or choose **Open DwarfAI-Miners** in the
+tray menu to show the window. A development build keeps its data in a folder of its own,
+`DwarfAI-dev`, never in the installed app's folder.
+
+> Electron 42+ ships no postinstall; `pnpm dev` runs `install-electron` first. If the binary is
+> ever missing (an interrupted download, say), run `pnpm exec install-electron`.
+
+The checks CI runs, the testing philosophy and the rest of the contribution workflow are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+### Internal builds
+
+Installers of an internal build come from the **Internal build** workflow
+([`.github/workflows/internal-build.yml`](.github/workflows/internal-build.yml)), dispatched by
+hand. It publishes no release: its artifacts are kept one day, and every installer is unsigned, so
+macOS asks for **Open Anyway** in System Settings › Privacy & Security and Windows shows the
+SmartScreen warning.
+
+<!-- release:R-18 -->
+
+⟦COPY NEEDED: R-18 SmartScreen note⟧
+
+<!-- Required content (20 §8 R-18, §5; OQ-53), wording to be approved by design/owner and to match
+     what the R-11 clean-machine check observes: what the unknown-publisher warning looks like on the
+     unsigned Windows build, how to check the download came from the Releases page or the DwarfAI
+     Scoop bucket, and how to continue. -->
+
+<!-- release:R-19 -->
+
+### Stopping and uninstalling
+
+- **Quit (dwarfs keep running)** in the tray menu closes the window; the Host and every session go
+  on.
+- **Stop everything and quit…** asks first, then ends every session DwarfAI launched and stops the
+  Host. Sessions you started in your own terminal are not ended.
+- Before you delete the app, run `DwarfAI-Miners --revert-integrations`. It stops a running Host
+  (ending the sessions it launched) and removes DwarfAI's own entries from Claude Code's and
+  OpenCode's configuration, leaving everything else in those files as it was. It keeps your data:
+  the database, the logs, the preferences and the secrets. The installers do not run it for you
+  yet; that, and removing the login entry, are open in EPIC-17.
+
+<p align="center"><img src="docs/readme/plates/platform-support.png" width="644" alt="Section plate: Platform support"></p>
+
+## Platform support
+
+The app targets Windows, macOS and Linux. On every pull request CI runs typecheck, lint, the test
+suite and the OS-level tests on all three. Its packaging job, run for tags and by hand, builds:
+
+| Platform | Packages                               |
+| -------- | -------------------------------------- |
+| Windows  | x64 `.zip` and per-user NSIS installer |
+| macOS    | `.dmg` and `.zip`, arm64 and x64       |
+| Linux    | x64 `.AppImage` and `.deb`             |
+
+The Host listens on a named pipe on Windows and a Unix socket on macOS and Linux, reachable only by
+your own OS user, and keeps its secrets in the OS secret store: Credential Manager, Keychain or
+libsecret.
 
 <p align="center"><img src="docs/readme/plates/configuration.png" width="644" alt="Section plate: Configuration"></p>
 
 ## Configuration
 
-Everything below is optional — the defaults work out of the box. **Which mechanism you use
-depends on how you are running DwarfAI-Miners**, because `dotenv` resolves `.env` relative to the
-working directory, and an installed app never runs from this repository.
+Everything is optional; the defaults work out of the box. A development checkout reads a `.env`
+file in the repository root (copy [`.env.example`](.env.example)); an installed app reads
+`config-v1.json` in its user-data folder instead. A real environment variable wins over both.
 
-| How you run it                    | Where settings go                                                                                                                    |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Development checkout (`pnpm dev`) | Copy `.env.example` to `.env` in the repo root.                                                                                      |
-| Installed app                     | A `config-v1.json` file in the app's user-data directory (see the [configuration reference](docs/guide.md#configuration-reference)). |
+Your preferences (dock side, shortcut, typography, sound, notifications) are set in the app, in
+Settings. Your Jev key and the OpenCode server password are typed into Settings › Integrations and
+stored in the OS secret store, never in a file.
 
-Settings are resolved most specific first: **real environment variables → the user-data config
-file → built-in defaults.** A real environment variable therefore always wins, on either setup,
-and a development checkout with a `.env` behaves exactly as it always has.
+<!-- release:R-15 -->
 
-The config file's location per platform, every setting with its default, and the diagnostic
-switches are in the [configuration reference](docs/guide.md#configuration-reference).
+## Security
 
-**Features that ship hidden** are flags in those same layers, off by default and never a Settings
-row: `GUILD_AREAS_ENABLED` shows the nav's Guild group and the Lab, Market and Laboral Union pages
-while they are being built. The configuration reference has the accepted values.
+Your provider credentials are never read, copied, stored or forwarded: each tool logs in with its
+own flow. DwarfAI's own two secrets, the Jev key and the OpenCode server password, live in the OS
+secret store, never in plain text, and there is no plain-text fallback. No DwarfAI secret or
+delegation credential is ever put in a process's command line or inherited environment. The app
+listens on nothing beyond `127.0.0.1` and your own OS user's pipe or socket, and it sends no
+telemetry.
 
-**A new mine is scored on its own** a few seconds after it appears: `MINE_MEASURE_DELAY_MS`
-(default `5000`, `0` scores it at once) sets how long it shows "not recorded yet" first.
+What it cannot do: no desktop app protects you from malware already running as your own OS user.
+Concretely:
 
-**The Jev API key is not one of those layers.** It is a secret you type into Settings, not an
-operator value, so it is never read from `.env` or written into `config-v1.json` — enter, replace
-or clear it from the Jev section of Settings only, on either setup. It is stored encrypted on this
-machine rather than as plain configuration; [`docs/privacy.md`](docs/privacy.md#what-it-transmits)
-says what it is used for and what leaves the machine once it is set.
+- On Windows and Linux the OS secret store protects the Jev key and the OpenCode password per OS
+  user, not per application, so another process running as you can read them. macOS offers
+  per-application isolation.
+- The token and credential files the app creates are readable only by your OS user, and by any
+  process running as you while they exist.
+- The install folder and the Host's own copy of the app are writable by your OS user, and the
+  unsigned Windows build gives no publisher check.
+- The Claude Code hook token is visible in the process list while a hook's `curl` runs; it can only
+  report hook events.
 
-**Once a key is set**, the Jev section of Settings also shows a routing profile and a default
-launch — both plain preferences, both set from Settings only, and both hidden along with the rest
-of the section until a key is configured. The profile is one of **economy** (cheapest model that
-can do the job), **balanced** (cost and capability weighed per prompt), or **premium** (most
-capable model when the task warrants it — trivial prompts still go cheap on every profile). The
-default launch is the provider, model and effort a session falls back to when Jev cannot decide;
-leaving any of the three unset keeps that part of a launch on the CLI's own default, exactly like
-an ordinary untuned launch. Neither is ever a guess this app makes for you — see
-[`docs/privacy.md`](docs/privacy.md#what-it-transmits) for what changed on the wire, and the
-[`src/host/modules/jev/domain/capabilities/modelCapability.ts`](src/host/modules/jev/domain/capabilities/modelCapability.ts) header for
-how a model earns a place in the table the profile routes through.
+To report a vulnerability, use the private flow in [`SECURITY.md`](SECURITY.md), never a public
+issue. What the app reads, stores and sends is in [`docs/privacy.md`](docs/privacy.md); where its
+log lives and what the log never contains is under [Diagnostic log](#diagnostic-log).
+
+<!-- release:R-07 -->
+
+<!-- Wording approved by the owner on 2026-10-19 (20 §8 R-07, verbatim). -->
+
+DwarfAI sends no telemetry and no crash reports. Nothing leaves your machine except what the AI tools you run send themselves and, if you turn Jev on, your prompt and the list of available providers/models (and, with subagent delegation, the subtask text and context) sent to TypeSafe (api.typesafe.ai). DwarfAI does not check for updates; your package manager does.
+
+<!-- release:R-10 -->
+<!-- 19 §13, verbatim. The folder paths are those of productName "DwarfAI-Miners" (package.json);
+     the release checklist confirms them on a packaged build of each OS (P-06) before v1. -->
+<!-- prettier-ignore-start -->
+
+## Diagnostic log
+
+DwarfAI-Miners sends nothing about you or your use of the app anywhere: no telemetry, no crash reports, no update
+checks. When something goes wrong it writes a short technical note to a log file on your own computer, so that you
+can send it to us if you report a problem.
+
+### Where the log is
+
+| System | Folder |
+|---|---|
+| Windows | `%APPDATA%\DwarfAI-Miners\logs` — press Win+R, paste the path, press Enter |
+| macOS | `~/Library/Application Support/DwarfAI-Miners/logs` — in Finder choose Go › Go to Folder… and paste the path |
+| Linux | `~/.config/DwarfAI-Miners/logs` (or `$XDG_CONFIG_HOME/DwarfAI-Miners/logs` if you set `XDG_CONFIG_HOME`) |
+
+The app itself has no button to open or export the log. If you open an issue, zip the whole `logs` folder and attach
+it, or send it to us when we ask for it.
+
+### What it contains
+
+Times, the app version, which part of the app was involved, what happened (for example "a launch failed: the
+command exited at once"), the name and version of the AI tool involved, and random internal ids for mines and dwarfs.
+
+### What it never contains
+
+Your prompts, messages or answers; anything an AI tool wrote or printed; your API key or passwords; tokens; your
+dwarfs' custom names; the names or paths of your project folders or files; notification text. Your home folder is
+shown as `~`.
+
+### Size
+
+The log never grows beyond 100 MB. When it reaches that size, the oldest part is deleted first. You can delete the
+`logs` folder at any time; the app starts a new one.
+
+<!-- prettier-ignore-end -->
 
 <p align="center"><img src="docs/readme/plates/reporting-a-problem.png" width="644" alt="Section plate: Reporting a problem"></p>
 
 ## Reporting a problem
 
-- **Bugs, features and roadmap** → [GitHub issues](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues).
-  Name your platform, the version the Settings panel shows (the `-dev` suffix matters), and how to
-  reproduce it. Check your platform's row in the [support matrix](#platform-support) first — a
-  row marked expected rather than verified is often the whole explanation.
+- **Bugs and features** → [GitHub issues](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues).
+  Name your platform, the version Settings › About shows, and how to reproduce it; attach the
+  [diagnostic log](#diagnostic-log) if you can.
 - **Vulnerabilities** → privately, through the flow in [`SECURITY.md`](SECURITY.md). Never a public
   issue.
-- **Questions about what the app reads or stores** → [`docs/privacy.md`](docs/privacy.md) answers
-  those with the source file behind each claim.
-
-If you run macOS or Linux, the single most useful thing you can file is what happened when you
-walked the support matrix on real hardware — including "it all worked". See
-[CONTRIBUTING.md](CONTRIBUTING.md#platform-validation--help-wanted).
+- **Questions about what the app reads, stores or sends** →
+  [`docs/privacy.md`](docs/privacy.md).
 
 <p align="center"><img src="docs/readme/plates/documentation.png" width="644" alt="Section plate: Documentation"></p>
 
 ## Documentation
 
-**Start here:**
-
-- [`docs/guide.md`](docs/guide.md) — every screen and control, the message panel, sound, settings,
-  the hooks channel, and the full configuration reference.
-- [`docs/architecture.md`](docs/architecture.md) — how main, preload and renderer fit together, the
-  platform ports, security posture, the art pipeline and packaging.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — development setup, verification commands, testing
-  philosophy, commit conventions, and where help is wanted.
+  philosophy, commit conventions.
 - [`SECURITY.md`](SECURITY.md) — supported versions, private vulnerability reporting, scope.
-- [`docs/privacy.md`](docs/privacy.md) — the data boundary: what the app reads, stores, and
-  transmits.
-- [`docs/signing.md`](docs/signing.md) — what is signed, what is not, and what fixing the rest
-  takes.
-- [`docs/README.md`](docs/README.md) — **the index to every other document in `docs/`**, including
-  the provider-format research, the design and evaluation notes, and the measurement records.
+- [`docs/privacy.md`](docs/privacy.md) — the data boundary: what the app reads, stores and sends.
+- [`docs/provider-terms.md`](docs/provider-terms.md) — the written provider confirmations and the
+  Antigravity terms review.
+- [`docs/README.md`](docs/README.md) — the index to the rest of `docs/`. Many of those documents,
+  the user guide among them, still describe the previous app.
 
-- [`LICENSE`](LICENSE) — GPLv3 license for the code.
-- [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md) — proprietary terms for the project's visual and
-  audio assets.
-- [`AUDIO-CREDITS.md`](AUDIO-CREDITS.md) — where every bundled sound comes from; the sound
-  effects are CC0.
-- [`FONT-CREDITS.md`](FONT-CREDITS.md) — the four bundled typefaces, their authors and their SIL
-  Open Font License.
+<p align="center"><img src="docs/readme/plates/license.png" width="644" alt="Section plate: License"></p>
+
+<!-- release:R-17 -->
+
+## License
+
+DwarfAI-Miners' code is licensed under the **GNU General Public License, version 3 or (at your
+option) any later version** (GPL-3.0-or-later): see [`LICENSE`](LICENSE). © 2026 Jeronimo
+Repetto. The visual and audio assets are protected by copyright and covered separately by
+[`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md); they may not be reused without prior written
+authorization.
+
+- [`AUDIO-CREDITS.md`](AUDIO-CREDITS.md) — where every bundled sound comes from.
+- [`FONT-CREDITS.md`](FONT-CREDITS.md) — the bundled typefaces, their authors and their licenses.
 
 <p align="center"><img src="docs/readme/plates/support-the-project.png" width="644" alt="Section plate: Support the project"></p>
 
@@ -400,22 +346,13 @@ walked the support matrix on real hardware — including "it all worked". See
   Support the project
 </h2>
 
-DwarfAI-Miners' code is free and GPLv3-licensed. The artwork remains the creator's property and is
-not separately reusable without authorization. If the project has earned a spot on your desktop,
-you can support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
-nothing in the app is, or will be, gated on it.
+If the project has earned a spot on your desktop, you can support its development on
+[Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional — nothing in the app is, or will be,
+gated on it.
 
 <a href="https://ko-fi.com/jeronimorepetto" target="_blank" rel="noopener noreferrer">
   <img height="36" src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi" />
 </a>
-
-<p align="center"><img src="docs/readme/plates/license.png" width="644" alt="Section plate: License"></p>
-
-## License
-
-[GPLv3](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
-copyright and covered separately by [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md); they may not be
-reused without prior written authorization.
 
 <a href="https://github.com/Gentleman-Programming/gentle-ai">
   <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
