@@ -60,8 +60,7 @@ const plugin = rehearsalBuildPlugin({ outRoot, protocolVersion, appVersion })
 for (const config of [
   'electron.vite.config.ts',
   'electron.vite.host.config.ts',
-  'electron.vite.relay.config.ts',
-  'electron.vite.jevMcpServer.config.ts'
+  'electron.vite.relay.config.ts'
 ]) {
   await build({
     configFile: path.join(REPO_ROOT, config),

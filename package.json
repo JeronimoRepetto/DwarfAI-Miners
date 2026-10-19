@@ -24,7 +24,6 @@
       "!**/*.test.*"
     ],
     "asarUnpack": [
-      "out/main/jevMcpServer.mjs",
       "prebuilds/**"
     ],
     "extraResources": [
@@ -117,9 +116,8 @@
     "art:build": "node scripts/build-art.mjs",
     "icons": "node scripts/build-icons.mjs",
     "interior:map": "node scripts/build-interior-map.mjs",
-    "dev": "install-electron && pnpm build:mcp-server && electron-vite dev",
-    "build": "electron-vite build && node scripts/build/write-host-manifest.mjs && electron-vite build --config electron.vite.host.config.ts && electron-vite build --config electron.vite.relay.config.ts && electron-vite build --config electron.vite.viewer.config.ts && pnpm build:mcp-server",
-    "build:mcp-server": "electron-vite build --config electron.vite.jevMcpServer.config.ts",
+    "dev": "install-electron && electron-vite dev",
+    "build": "electron-vite build && node scripts/build/write-host-manifest.mjs && electron-vite build --config electron.vite.host.config.ts && electron-vite build --config electron.vite.relay.config.ts && electron-vite build --config electron.vite.viewer.config.ts",
     "build:native": "node scripts/native/build-win-pipe.mjs",
     "package": "electron-builder --publish never",
     "test:packaged": "node scripts/release/packaged/run.mjs",
