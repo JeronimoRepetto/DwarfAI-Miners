@@ -172,12 +172,12 @@ pnpm test:golden
 - **Every real-world bug becomes a regression test.** If you fix something that broke on a
   real machine, the fix includes a test that fails without it.
 - **Deterministic fakes, no network, no credentials.** Unit tests use in-memory fakes —
-  `FakeFs` (`src/main/adapters/fakeFs.ts`), `FakeHookFs` (`src/main/hooks/fakeHookFs.ts`),
-  an in-memory SQLite (`src/main/adapters/memorySqlite.ts`) — never the real home directory,
-  a live CLI, or the network.
+  `FakeFs` (`src/host/kernel/fakes/FakeFs.ts`), the other port doubles under
+  `src/host/kernel/fakes/`, an in-memory SQLite (`src/host/platform/sqlite/testing/MemoryWritableSqlite.ts`)
+  — never the real home directory, a live CLI, or the network.
 - **Per-platform code is pure builders plus a thin runner.** Everything OS-specific produces
-  a testable value (a command's argv, a plist's exact bytes) and is selected in one place,
-  `src/main/platform/platformAdapters.ts`. Tests pass the platform explicitly, which is how
+  a testable value (a command's argv, a plist's exact bytes) and is composed in the two roots,
+  `src/host/main.ts` and `src/ui-main/index.ts`. Tests pass the platform explicitly, which is how
   macOS and Linux assertions run on a Windows host and vice versa.
 
 ## Commit conventions

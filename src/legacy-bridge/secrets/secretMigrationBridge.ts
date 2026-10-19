@@ -21,8 +21,8 @@
 // The decrypted value lives only inside one run and goes only into the B-M10 params (14 §3.5 SENSITIVE_METHODS): it is
 // never logged; the `secret.migration` record carries `outcome` only (19 §9.5; NFR-SEC-12).
 //
-// Candidate decision (21 §6): today's `SafeStorageLike` port (`src/main/adapters/safeStorageLike.ts`) and its
-// `fakeSafeStorage` double are kept, used only here; today's `jevApiKey.ts` and `openCodeServerPassword.ts` stores are
+// Candidate decision (21 §6): today's `SafeStorageLike` port (`./safeStorageLike.ts`, moved here from
+// `src/main/adapters` by ISSUE-340) and its `fakeSafeStorage` double are kept, used only here; today's `jevApiKey.ts` and `openCodeServerPassword.ts` stores are
 // not reused (they cannot tell a missing file from an undecryptable one and never delete their file; the password store
 // wraps `safeStorage` as the store, 16 §4.12.1), only their file names and format are read.
 //
@@ -30,7 +30,7 @@
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SecretName } from '@dwarfai/contracts'
-import type { SafeStorageLike } from '../../main/adapters/safeStorageLike'
+import type { SafeStorageLike } from './safeStorageLike'
 import type { HostClient, HostConnection } from '../../ui-main/window/ports/hostClient'
 import type { LegacyLog } from '../legacyDiagnostics'
 

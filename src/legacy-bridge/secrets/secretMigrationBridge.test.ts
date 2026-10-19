@@ -16,7 +16,7 @@ import type {
   SecretSetParams,
   SecretStatusResult
 } from '@dwarfai/contracts'
-import { fakeSafeStorage } from '../../main/adapters/fakeSafeStorage'
+import { fakeSafeStorage } from './fakeSafeStorage'
 import type { HostClient, HostConnection } from '../../ui-main/window/ports/hostClient'
 import type { LegacyLogEntry } from '../legacyDiagnostics'
 import {

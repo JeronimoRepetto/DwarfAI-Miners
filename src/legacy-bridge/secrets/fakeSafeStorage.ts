@@ -1,3 +1,5 @@
+// Moved here from `src/main/adapters/fakeSafeStorage.ts` by ISSUE-340, beside the port it fakes; deleted with this
+// folder by ISSUE-247.
 import type { SafeStorageLike } from './safeStorageLike'
 
 /**

@@ -1,5 +1,7 @@
-import { safeStorage } from 'electron'
-
+// Moved here from `src/main/adapters/safeStorageLike.ts` by ISSUE-340 (21 §6 row Adapters: `safeStorageLike` only
+// inside `SecretMigrationBridge`); deleted with this folder by ISSUE-247. The running app passes Electron's own
+// `safeStorage` (composed in `src/ui-main/index.ts`), so the legacy `electronSafeStorage` constant, which nothing
+// imported, did not move (R7: `electron` only in `src/ui-main` and `src/preload`).
 /**
  * Tiny port over Electron's `safeStorage` (#509), the same "real disk/OS
  * behind an interface" discipline `FsLike` holds for the filesystem —
@@ -18,17 +20,3 @@ export interface SafeStorageLike {
   encryptString(plainText: string): Buffer
   decryptString(encrypted: Buffer): string
 }
-
-/**
- * Real Electron implementation used by the running app.
- *
- * Electron's own `safeStorage` is already a plain object shaped like this
- * port, so this is that module typed down to what this app uses rather than
- * a wrapper class. Deliberately never calls `safeStorage.setUsePlainTextEncryption`:
- * that call is what makes Linux's `isEncryptionAvailable()` answer true over
- * its unencrypted 'basic_text' backend when no real keyring (GNOME libsecret,
- * KWallet) is present — exactly the plaintext fallback this feature's
- * constraint forbids. Leaving it uncalled is what makes a Linux box with no
- * real keyring correctly read as unavailable rather than quietly obfuscated.
- */
-export const electronSafeStorage: SafeStorageLike = safeStorage
