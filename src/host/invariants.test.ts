@@ -10,7 +10,9 @@
 // guard and coal only via the backfill (INV-95). The legacy tests stay referenced while the legacy
 // code they cover exists (cut 5 deletes it); the Host's tests are their successors. ISSUE-337 and ISSUE-245
 // deleted src/main/providers and src/main/sessionLaunch, so their legacy entries are re-pointed at the successors
-// already pinned here (reconcile.test.ts, the ended-agent ledger contract, observationLoop.ended.test.ts).
+// already pinned here (reconcile.test.ts, the ended-agent ledger contract, observationLoop.ended.test.ts). ISSUE-341
+// deleted src/main/domain, so the legacy coal-only-via-backfill entry (ledger.test.ts) is re-pointed at its successors
+// already pinned here (credit.test.ts, ledgerTriggers.test.ts).
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -57,11 +59,6 @@ const PRESERVED_INVARIANT_TESTS: readonly Pinned[] = [
     titles: [
       '[ADR-029] a pid reused by another process within the tolerance is not taken for the recorded session'
     ]
-  },
-  {
-    invariant: 'coal only via the backfill (INV-95)',
-    file: 'src/main/domain/ledger.test.ts',
-    titles: ['never credits coal from live observation']
   },
   {
     invariant: 'coal only via the backfill (INV-95)',

@@ -13,8 +13,11 @@ import { describe, expect, it } from 'vitest'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '..', '..')
-/** This file's own samples are text, not imports. */
-const SELF = 'scripts/checks/legacy-trees.test.mjs'
+/** This file's own samples, and those of the legacy-importers check, are text, not imports. */
+const SAMPLE_FILES = new Set([
+  'scripts/checks/legacy-trees.test.mjs',
+  'scripts/checks/legacy-importers.test.mjs'
+])
 
 /** Roots that hold code; generated output and dependencies are not walked. The canaries import deleted files on purpose. */
 const ROOTS = ['src', 'e2e', 'scripts', 'perf', 'fixtures', 'spikes', 'testing']
@@ -63,7 +66,7 @@ function importsInto(file, text, dir) {
 function areaState(dir) {
   const left = filesUnder(dir)
   const importers = codeFiles()
-    .filter((file) => file !== SELF && !inside(file, dir))
+    .filter((file) => !SAMPLE_FILES.has(file) && !inside(file, dir))
     .flatMap((file) => importsInto(file, readFileSync(path.join(repoRoot, file), 'utf8'), dir))
   return { left, importers }
 }

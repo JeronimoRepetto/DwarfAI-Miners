@@ -43,7 +43,9 @@ describe('step-3d deletion (21 §2 row 3d)', () => {
     expect(runtime).not.toMatch(/sessionLaunch\/(hostedProcesses|nodeHostedProcess|hostedBoard)'/)
     expect(runtime).not.toMatch(/\bHostedProcessRegistry\b|\blaunchHostedProcess\b/)
     for (const file of DELETED) expect(existsSync(resolve(SRC, file)), file).toBe(false)
+    // AMENDED for ISSUE-341: src/main itself left the tree (21 §2 cut 5); a folder that is gone holds no handler.
     const handlers = [resolve(SRC, 'main'), resolve(SRC, 'legacy-bridge')]
+      .filter((folder) => existsSync(folder))
       .flatMap(productionFiles)
       .filter((path) => /IPC_CHANNELS\.launchHostedProcess\b/.test(readFileSync(path, 'utf8')))
       .map(relativeOf)

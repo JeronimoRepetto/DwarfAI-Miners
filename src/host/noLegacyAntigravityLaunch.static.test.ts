@@ -11,7 +11,6 @@ import { describe, expect, it } from 'vitest'
  * Antigravity as launchable nor builds an `agy` launch argv, so no legacy path starts an Antigravity session.
  */
 const SRC = resolve(import.meta.dirname, '..')
-const read = (relative: string): string => readFileSync(resolve(SRC, relative), 'utf8')
 
 describe('step-3e deletion (21 §2 row 3e)', () => {
   it('[ADR-001] runtime.ts composes no Antigravity held session and no legacy Antigravity launch path remains', () => {
@@ -27,10 +26,11 @@ describe('step-3e deletion (21 §2 row 3e)', () => {
     const launchPath = resolve(SRC, 'main/sessionLaunch/launch.ts')
     const launch = existsSync(launchPath) ? readFileSync(launchPath, 'utf8') : ''
     expect(launch).not.toMatch(/\bbuildAntigravityLaunchArgs\b/)
-    const launchable = /export const LAUNCHABLE_PROVIDERS[^=]*=\s*\[([^\]]*)\]/.exec(
-      read('main/domain/launchProviders.ts')
-    )
-    expect(launchable?.[1]).toBeDefined()
-    expect(launchable?.[1]).not.toMatch(/'antigravity'/)
+    // AMENDED for ISSUE-341: today's launchable-provider list itself left the tree (21 §2 cut 5); while it existed it
+    // did not list Antigravity.
+    const providersPath = resolve(SRC, 'main/domain/launchProviders.ts')
+    const providers = existsSync(providersPath) ? readFileSync(providersPath, 'utf8') : ''
+    const launchable = /export const LAUNCHABLE_PROVIDERS[^=]*=\s*\[([^\]]*)\]/.exec(providers)
+    expect(launchable?.[1] ?? '').not.toMatch(/'antigravity'/)
   })
 })
