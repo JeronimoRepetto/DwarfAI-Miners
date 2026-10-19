@@ -3403,8 +3403,11 @@ describe('release 4b (21 §2 cut 4b)', () => {
   const OTHER = 'other'
   const DEVELOPMENT = routesForBuild({ publicBuild: false })
   const PUBLIC = routesForBuild({ publicBuild: true })
+  // AMENDED for ISSUE-249 (was: `ROUTES_RELEASE`): the cut-5 switch moved only the release marker (21 §2 cut 5: no row
+  // changes owner), so the 4b table as it shipped is the release table's rows under the 4b marker.
+  const CUT_4B_RELEASE: StepId = 'cut-4b'
   const tableOf = (routes: readonly ChannelRoute[]): RouteTable => ({
-    release: ROUTES_RELEASE,
+    release: CUT_4B_RELEASE,
     routes,
     unrouted: UNROUTED,
     retired: RETIRED,
@@ -3483,7 +3486,7 @@ describe('release 4b (21 §2 cut 4b)', () => {
   })
 
   it('[ADR-001] in 4b A-35, A-36, A-23, A-13 and A-N29 route host with shape target for the OpenCode qualifier', async () => {
-    expect(ROUTES_RELEASE).toBe('cut-4b')
+    expect(CUT_4B_RELEASE).toBe('cut-4b')
     expect(checkRouteTable(cut4b, KEYS)).toEqual([])
     expect(checkRouteTable(tableOf(PUBLIC), KEYS)).toEqual([])
     // One owner per (channel, qualifier) (21 §1 item 2): the Host for every provider, OpenCode's routes born in 4b.
@@ -3646,7 +3649,7 @@ describe('release 4b (21 §2 cut 4b)', () => {
         const born = SEAM_B_METHODS_BORN[member]
         expect(born, `${member} has a birth release`).toBeDefined()
         expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
-          at(ROUTES_RELEASE)
+          at(CUT_4B_RELEASE)
         )
       }
     }
@@ -4281,8 +4284,10 @@ describe('after the 4b retirement', () => {
       expect(legacy.filter((route) => route.owner === 'legacy')).toEqual([])
     }
     // 4b rolls forward only: a rollback build would route OpenCode back to code that is gone (21 §2.1 item 4).
+    // AMENDED for ISSUE-249 (was: `ROUTES_RELEASE`): the cut-5 switch moved only the marker, so 4b's table is the
+    // release rows under the 4b marker.
     const cut4b: RouteTable = {
-      release: ROUTES_RELEASE,
+      release: 'cut-4b',
       routes: ROUTES,
       unrouted: UNROUTED,
       retired: RETIRED,

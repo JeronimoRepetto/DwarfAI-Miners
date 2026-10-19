@@ -2,7 +2,6 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { IsolatedProfile } from '../_harness/launchApp.ts'
-import { seedLegacyLaunch } from '../_harness/legacyLaunchedSessions.ts'
 import { processStartTimeMs } from '../_harness/processStart.ts'
 import { STUB_BIN } from '../_harness/stubs.ts'
 import { seedClaudeStubSession, STUB_SESSION_ID, type ClaudeStubWorld } from './claudeStubWorld.ts'
@@ -11,15 +10,15 @@ import { seedClaudeStubSession, STUB_SESSION_ID, type ClaudeStubWorld } from './
  * A legacy-launched Claude session of the cut-1 world (ISSUE-123 L9; ISSUE-090): the
  * claude stub's replayed transcript (`claudeStubWorld.ts`), a stub process standing for the session's CLI
  * (`fixtures/bin/sleeper`, never a provider CLI, 17 §1.8) named by Claude Code's own session registry
- * (`sessions/<pid>.json`, with the process's creation time as a Windows FILETIME), and the same process written down in
- * the profile's `launched_sessions` as a launch today's runtime made for that session. So the Host observes a present
- * dwarf whose process identity it can watch. AMENDED for ISSUE-241, the end of cut 4 (was: also today's runtime owning
+ * (`sessions/<pid>.json`, with the process's creation time as a Windows FILETIME). So the Host observes a present
+ * dwarf whose process identity it can watch. AMENDED for ISSUE-249, the cut-5 close (was: also the same process written
+ * down in the profile's `projects-v1.db` `launched_sessions` as a launch today's runtime made): today's runtime and every
+ * reader of that file left the tree (ISSUE-243, ISSUE-244; 21 §5.3), so no code touches the file. AMENDED for ISSUE-241, the end of cut 4 (was: also today's runtime owning
  * its identity-checked end, joined to the Host dwarf by `LegacyDwarfIdBridge` through `LegacyEndFirstAdapter`): both
  * bridges left the tree.
  */
 export interface LegacyLaunchedStubSession extends ClaudeStubWorld {
   readonly pid: number
-  readonly launchId: string
   alive(): boolean
   exitedAt(): number | null
   dispose(): void
@@ -64,20 +63,9 @@ export async function seedLegacyLaunchedStubSession(
       procStart: String(BigInt(Math.round(started)) * 10_000n + FILETIME_EPOCH_OFFSET)
     })
   )
-  const launchId = 'launch:e2e-cut-1-fixture'
-  seedLegacyLaunch(profile.userDataDir, {
-    launchId,
-    provider: 'claude',
-    sessionId: STUB_SESSION_ID,
-    minePath: world.minePath,
-    pid,
-    processStartTimeMs: started,
-    routedByJev: false
-  })
   return {
     ...world,
     pid,
-    launchId,
     alive: () => exitedAt === null,
     exitedAt: () => exitedAt,
     dispose: () => {

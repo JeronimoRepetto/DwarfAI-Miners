@@ -1,13 +1,16 @@
 // The router table (ADR-001 item 3; 21 §1 items 1, 2, 2a): exactly one `ChannelRoute` per (channel, qualifier) for
 // the release `ROUTES_RELEASE`, reviewed per cut and checked by `ipc-routing.contract.test.ts`. A hot spot (22 §5):
 // after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1,
-// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e, ISSUE-235 for step 4a, ISSUE-238 for step 4b), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
+// ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e, ISSUE-235 for step 4a, ISSUE-238 for step 4b, ISSUE-249 for cut 5), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
 // it is listed in `src/contracts/ipc/unrouted.ts` with that step.
 import { CATALOG_PROVIDER_IDS, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, IpcChannelName, LegacyBridgeAdapter } from './channelRoute'
 
-/** The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. */
-export const ROUTES_RELEASE: StepId = 'cut-4b'
+/**
+ * The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. ISSUE-249, the
+ * cut-5 switch, moved only this marker: no row changes owner in cut 5 (21 §2 cut 5).
+ */
+export const ROUTES_RELEASE: StepId = 'cut-5'
 
 /**
  * The legacy-bridge adapters of 21 §3 and the shape adapters of 21 §3.1, with the steps they live in ("1–4" is cut 1

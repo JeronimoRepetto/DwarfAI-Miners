@@ -41,8 +41,8 @@ test.describe('cut 0: Quit and Stop everything and quit from the tray (ISSUE-053
     launched = await launchApp({
       trayProbe: true,
       env: homeIn,
-      beforeLaunch: async (profile) => {
-        session = await seedLegacyFixtureSession(profile)
+      beforeLaunch: async () => {
+        session = await seedLegacyFixtureSession()
       },
       tracePath: test.info().outputPath('trace.zip')
     })
