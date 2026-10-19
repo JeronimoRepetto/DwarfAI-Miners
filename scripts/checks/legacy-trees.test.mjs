@@ -130,4 +130,12 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
   it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/shell', () => {
     expectNoInvariantIn(['src/main/shell'])
   })
+
+  it('[ADR-001] src/main/ledger holds no file and no source outside it imports it', () => {
+    expectAreaGone(['src/main/ledger'])
+  })
+
+  it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/ledger', () => {
+    expectNoInvariantIn(['src/main/ledger'])
+  })
 })
