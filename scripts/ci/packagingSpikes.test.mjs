@@ -4,12 +4,14 @@ import {
   dictionaryRequests,
   hostsOf,
   installDirOf,
+  logEntriesOf,
   netLogUrls,
   nextPatchVersion,
   scoopManifest,
   trayProcessesOf,
   uiRecordsOf,
   scrubText,
+  stepAsideOf,
   tarCommand
 } from './packagingSpikes.mjs'
 
@@ -162,5 +164,86 @@ describe('packaging spike lane helpers (ISSUE-328)', () => {
       { event: 'host.connection', outcome: 'ok', causeClass: 'connected' }
     ])
     expect(uiRecordsOf('', '0.13.2')).toEqual([])
+  })
+
+  it('[S-027-3] reads every record of a product log with its process, version, pid and time, skipping torn lines', () => {
+    const text = [
+      '{"ts":"2026-10-19T10:00:00.000Z","proc":"host","pid":5,"appVersion":"0.13.1","event":"notifier.respawn","outcome":"ok"}',
+      '{"ts":"2026-10-19T10:00:01.000Z","proc":"ui","pid":7,"appVersion":"0.13.2","event":"host.upgrade","outcome":"ok","causeClass":"attach","msg":"x"}',
+      '{"ts":"2026-10-19T10:00:02.000Z","proc":"ui","pid":7,"appVe',
+      '',
+      'not json'
+    ].join('\r\n')
+    expect(logEntriesOf(text)).toEqual([
+      {
+        proc: 'host',
+        appVersion: '0.13.1',
+        pid: 5,
+        ts: '2026-10-19T10:00:00.000Z',
+        event: 'notifier.respawn',
+        outcome: 'ok',
+        causeClass: undefined
+      },
+      {
+        proc: 'ui',
+        appVersion: '0.13.2',
+        pid: 7,
+        ts: '2026-10-19T10:00:01.000Z',
+        event: 'host.upgrade',
+        outcome: 'ok',
+        causeClass: 'attach'
+      }
+    ])
+    expect(logEntriesOf('')).toEqual([])
+  })
+
+  // AMENDMENT-25: a newer launch makes the older UI step aside; the relaunched newer UI takes the lock and runs the
+  // ADR-002 D8 decision at its own start.
+  const entry = (ts, proc, pid, appVersion, event, causeClass) => ({
+    ts: `2026-10-19T10:00:${ts}Z`,
+    proc,
+    pid,
+    appVersion,
+    event,
+    outcome: 'ok',
+    causeClass
+  })
+  const versions = {
+    olderVersion: '0.13.1',
+    newerVersion: '0.13.2',
+    since: '2026-10-19T10:00:00.000Z'
+  }
+
+  it('[S-027-3] sees the older UI step aside and the newer UI then run the D8 decision', () => {
+    const entries = [
+      entry('00.500', 'ui', 11, '0.13.1', 'ui.single-instance', 'replaced-by-newer-launch'),
+      entry('01.000', 'host', 5, '0.13.1', 'notifier.respawn', undefined),
+      entry('01.700', 'ui', 21, '0.13.2', 'host.upgrade', 'attach')
+    ]
+    expect(stepAsideOf(entries, versions)).toEqual({
+      steppedAside: { ts: '2026-10-19T10:00:00.500Z', pid: 11 },
+      upgrade: { ts: '2026-10-19T10:00:01.700Z', pid: 21, decision: 'attach' },
+      respawns: [{ ts: '2026-10-19T10:00:01.000Z', pid: 5 }],
+      stepAside: true,
+      msToDecision: 1200
+    })
+  })
+
+  it('[S-027-3] is no step-aside without the older record, with records from before the step, or out of order', () => {
+    const upgrade = entry('01.700', 'ui', 21, '0.13.2', 'host.upgrade', 'attach')
+    const aside = (ts, version = '0.13.1') =>
+      entry(ts, 'ui', 11, version, 'ui.single-instance', 'replaced-by-newer-launch')
+    expect(stepAsideOf([upgrade], versions).stepAside).toBe(false)
+    expect(stepAsideOf([aside('00.500')], versions)).toMatchObject({
+      stepAside: false,
+      upgrade: null,
+      msToDecision: null
+    })
+    const early = { ...aside('00.500'), ts: '2026-10-19T09:59:59.000Z' }
+    expect(stepAsideOf([early, upgrade], versions).steppedAside).toBeNull()
+    expect(stepAsideOf([aside('00.500', '0.13.2'), upgrade], versions).steppedAside).toBeNull()
+    expect(stepAsideOf([aside('02.000'), upgrade], versions).stepAside).toBe(false)
+    const otherCause = { ...aside('00.500'), causeClass: 'other' }
+    expect(stepAsideOf([otherCause, upgrade], versions).steppedAside).toBeNull()
   })
 })
