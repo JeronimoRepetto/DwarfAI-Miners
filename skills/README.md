@@ -98,10 +98,10 @@ components with different languages, toolchains and test runners, so a rule that
 Django API is meaningless in the Next.js UI.
 
 This project is **one Electron app**: one `package.json`, one `tsconfig` set, one `vitest.config.ts`,
-one lint config, one build. Today, `src/main/` and `src/renderer/` are process boundaries, not
-component boundaries — they share `src/shared/contracts.ts` as a contract and ship as a single
-artifact. That is the legacy shape the rebuild replaces; the target layout is the rebuild manual
-§3.2 and the architecture package's `05` §2.1. A second level would carry the same toolchain twice
+one lint config, one build. `src/host/`, `src/ui-main/`, `src/preload/` and `src/renderer/` are
+process boundaries, not component boundaries — they share `src/contracts/` as a contract and ship as a
+single artifact (the rebuild manual §3.2 and the architecture package's `05` §2.1; the legacy
+`src/main/` and `src/shared/` were deleted in cut 5). A second level would carry the same toolchain twice
 and earn nothing, in either shape.
 
 Two further reasons this is a decision rather than laziness:

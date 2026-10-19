@@ -25,8 +25,8 @@ are standing in.
 **The rule the maintainer set, in their own words:** "the whole painting must be visible, aspect
 preserved, no crop — full height of the shell content area, width follows". So a painting's column
 does not have a width of its own; the display's height gives it one. `interiorColumnWidth`
-(`sceneSizing.ts`) and `mineColumnWidth` / `secondaryColumnWidth` (`main/shell/panelBounds.ts`) are
-that rule evaluated, and `panelBounds.test.ts` holds the renderer's copy and main's equal. The
+(`sceneSizing.ts`) and `mineColumnWidth` / `secondaryColumnWidth` (`ui-main/window/domain/panelBounds.ts`) are
+that rule evaluated, and `panelBounds.test.ts` holds the renderer's copy and UI main's equal. The
 design's `245px` interior is what the rule returns at the mock's own 768-tall composition; it was
 never a constant, and reserving it on a 1392-tall display is what made the interior read tiny.
 

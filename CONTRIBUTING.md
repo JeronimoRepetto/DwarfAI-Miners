@@ -21,7 +21,7 @@ binary is ever missing (an interrupted download, say), run `pnpm exec install-el
 
 Configuration in a checkout is env-based: copy `.env.example` to `.env` if you want to override
 defaults. Every key is optional and invalid values fail fast at startup
-(`src/main/config/config.ts`). One thing to know before adding a setting: **an installed app never
+(`src/contracts/config/config.ts`). One thing to know before adding a setting: **an installed app never
 sees `.env`**, because `dotenv` resolves it against the working directory. It reads a
 `config-v1.json` under Electron's `userData` instead, layered underneath the real environment. So a
 new setting that is only reachable from `.env` is unreachable from the product — see
