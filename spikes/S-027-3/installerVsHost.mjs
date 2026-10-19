@@ -13,13 +13,14 @@
 //      runs `--next` silently with that Host running, watching every process the installer starts, and records whether
 //      it finished or blocked, whether the Host survived, the command line the old uninstaller received (the upgrade
 //      flag, UNVERIFIED in the register) and whether anything ran `--revert-integrations`;
-//   3. ends the older tray process the Host started from its own copy (ADR-018 D5: the Host starts the app
-//      `--background` once no UI is attached; it holds the single-instance lock, so a launch of the upgraded app would
-//      only hand itself over to it and quit, ADR-002 D3, as run 39205769685 showed), starts the upgraded app with
-//      `--background` and records the ADR-002 D8 upgrade handshake: the upgraded UI's own log records (`host.upgrade`
-//      names the decision: `attach` for two builds of one protocol version, D8 item 1), what happened to the running
-//      older Host, the copies under the copy root. A tray the Host started again first takes the lock back: the step
-//      is tried at most three times;
+//   3. starts the upgraded app `--background` while the older tray the Host started from its own copy (ADR-018 D5)
+//      holds the single-instance lock, and records AMENDMENT-25: the older UI steps aside (`ui.single-instance`
+//      `replaced-by-newer-launch`), relaunches the upgraded program and quits, and the relaunched upgraded UI takes the
+//      lock and records the ADR-002 D8 decision (`host.upgrade`: `attach` for two builds of one protocol version, D8
+//      item 1), each with its time and pid, and whether the Host's tray respawn raced it. Only when that did not happen
+//      does the old path run, as a recorded fallback (`stepAside: false`, `fallbackUsed: true`): end the older tray and
+//      start the upgraded app, at most three times. Then what happened to the running older Host, the copies under the
+//      copy root;
 //   4. ends the upgraded app's own processes again and uninstalls silently with a Host running, with the same watch, and records what is left: install folder, Host
 //      copies, app data, the uninstall registry key, shortcuts.
 // The install folder is the uninstall key's `InstallLocation` or, as electron-builder's per-user installer writes none,
@@ -28,7 +29,13 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { installDirOf, trayProcessesOf, uiRecordsOf } from '../../scripts/ci/packagingSpikes.mjs'
+import {
+  installDirOf,
+  logEntriesOf,
+  stepAsideOf,
+  trayProcessesOf,
+  uiRecordsOf
+} from '../../scripts/ci/packagingSpikes.mjs'
 import {
   assertDisposable,
   clearState,
@@ -190,10 +197,70 @@ function uiRecords(version) {
   return records
 }
 
+/** Every record of every product log (ADR-026 `<app data>/logs/*.jsonl`): the UIs' and the Host's. */
+function logEntries() {
+  const entries = []
+  for (const dir of dwarfaiDataDirs()) {
+    const logs = path.join(dir, 'logs')
+    if (!existsSync(logs)) continue
+    for (const name of readdirSync(logs).sort()) {
+      if (!/\.jsonl$/.test(name)) continue
+      try {
+        entries.push(...logEntriesOf(readFileSync(path.join(logs, name), 'utf8')))
+      } catch {
+        // Being rotated.
+      }
+    }
+  }
+  return entries
+}
+
 /**
- * Step 3: ends the older tray, starts the upgraded app `--background` and waits until its UI logged the D8 decision
- * (`host.upgrade`), a new Host answered, or it exited. Tried again (at most three times in all) when it exited without
- * a record, which is the hand-over to a tray the Host started again in between.
+ * Step 3, the product path (AMENDMENT-25): starts the upgraded app `--background` while the older tray holds the
+ * single-instance lock and waits until the older UI stepped aside (`ui.single-instance` `replaced-by-newer-launch`)
+ * and the relaunched upgraded UI ran the D8 decision (`host.upgrade`), or a new Host answered, or `timeoutMs` passed.
+ * Records the tray processes from the Host's copy before and during the wait: a tray pid that appears is the Host's
+ * respawn (ADR-018 D5) racing the relaunched UI.
+ */
+async function stepAside(exe, out, versions, oldHostPid, timeoutMs = 90000) {
+  const since = new Date().toISOString()
+  const trays = () => trayProcessesOf(processes(), { copyRoot: copyRoot(), hostPid: oldHostPid })
+  const traysBefore = trays().map((tray) => tray.pid)
+  const traysSeen = new Set(traysBefore)
+  const started = Date.now()
+  const run = launch(exe, ['--background'], {
+    logFile: path.join(out, 'logs', 'S-027-3-next-step-aside.log')
+  })
+  const outcome = await waitFor(() => {
+    for (const tray of trays()) traysSeen.add(tray.pid)
+    const seen = stepAsideOf(logEntries(), { ...versions, since })
+    if (seen.upgrade) return seen.stepAside ? 'stepped-aside' : 'decided-without-step-aside'
+    const identity = readHostIdentity()
+    if (identity && identity.pid !== oldHostPid && isAlive(identity.pid)) return 'new-host'
+    return null
+  }, timeoutMs)
+  const seen = stepAsideOf(logEntries(), { ...versions, since })
+  return {
+    run,
+    record: {
+      since,
+      outcome: outcome ?? 'timed-out',
+      ms: Date.now() - started,
+      launchedPid: run.child.pid,
+      launchedExit: await exitOf(run),
+      ...seen,
+      traysBefore,
+      traysRespawned: [...traysSeen].filter((pid) => !traysBefore.includes(pid)),
+      respawnRaced: seen.respawns.length > 0
+    }
+  }
+}
+
+/**
+ * Step 3, the fallback when the step-aside did not happen: ends the older tray, starts the upgraded app
+ * `--background` and waits until its UI logged the D8 decision (`host.upgrade`), a new Host answered, or it exited.
+ * Tried again (at most three times in all) when it exited without a record, which is the hand-over to a tray the Host
+ * started again in between.
  */
 async function startUpgraded(exe, out, version, oldHostPid) {
   const attempts = []
@@ -293,18 +360,29 @@ async function main() {
 
     const upgradedApp = findPackedApps(installLocation, 1)[0]
     const nextVersion = evidence.upgrade.entryAfter?.DisplayVersion
+    const baseVersion = entry?.DisplayVersion
     if (upgradedApp && nextVersion) {
-      const attempts = await startUpgraded(
+      const aside = await stepAside(
         upgradedApp.executable,
         args.out,
-        nextVersion,
+        { olderVersion: baseVersion, newerVersion: nextVersion },
         first.identity.pid
       )
+      runs.push(aside.run)
+      // The tray-ending path runs only when the product path did not: recorded as the fallback, never silently.
+      const attempts = aside.record.stepAside
+        ? []
+        : await startUpgraded(upgradedApp.executable, args.out, nextVersion, first.identity.pid)
       runs.push(...attempts.map((attempt) => attempt.run))
       const records = uiRecords(nextVersion)
       const identity = readHostIdentity()
       evidence.upgradeHandshake = {
         version: nextVersion,
+        baseVersion,
+        // AMENDMENT-25: the older UI stepped aside and the relaunched upgraded UI ran the D8 decision.
+        stepAside: aside.record.stepAside,
+        fallbackUsed: attempts.length > 0,
+        stepAsideRun: aside.record,
         attempts: attempts.map(({ run: _run, ...attempt }) => attempt),
         // ADR-002 D8: `attach` (same protocol version, item 1), `compat` (item 2), or the refusals of items 4-5.
         decision: records.find((record) => record.event === 'host.upgrade')?.causeClass ?? null,
@@ -341,6 +419,7 @@ async function main() {
     }
     evidence.clearedAfter = await clearState({ logsTo: { outDir: args.out, label: 'S-027-3' } })
     writeEvidence(args.out, 'S-027-3', evidence)
+    const aside = evidence.upgradeHandshake?.stepAsideRun
     console.log(
       `S-027-3: install exit ${evidence.install?.exitCode}; Host started: ${Boolean(evidence.firstHost?.alive)}; ` +
         `upgrade exit ${evidence.upgrade?.exitCode}, blocked ${evidence.upgrade?.blocked}, Host survived ` +
@@ -348,8 +427,13 @@ async function main() {
         `${JSON.stringify(evidence.upgrade?.uninstallerCommandLines ?? [])}, revert ran ` +
         `${evidence.upgrade?.revertIntegrationsRan}; uninstall blocked ${evidence.uninstall?.blocked}, revert ran ` +
         `${evidence.uninstall?.revertIntegrationsRan}; upgraded UI decision ` +
-        `${evidence.upgradeHandshake?.decision ?? 'none'} after ` +
-        `${evidence.upgradeHandshake?.attempts?.length ?? 0} start(s), old Host alive ` +
+        `${evidence.upgradeHandshake?.decision ?? 'none'}; step-aside ` +
+        `${evidence.upgradeHandshake?.stepAside ?? 'not run'} (older UI pid ` +
+        `${aside?.steppedAside?.pid ?? '-'} at ${aside?.steppedAside?.ts ?? '-'}, upgraded UI pid ` +
+        `${aside?.upgrade?.pid ?? '-'} at ${aside?.upgrade?.ts ?? '-'}, ${aside?.msToDecision ?? '-'} ms, ` +
+        `respawn raced ${aside?.respawnRaced ?? '-'}); fallback used ` +
+        `${evidence.upgradeHandshake?.fallbackUsed ?? '-'} after ` +
+        `${evidence.upgradeHandshake?.attempts?.length ?? 0} start(s); old Host alive ` +
         `${evidence.upgradeHandshake?.oldHostAlive}`
     )
   }
