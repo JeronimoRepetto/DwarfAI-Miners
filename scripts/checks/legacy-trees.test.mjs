@@ -89,6 +89,9 @@ function expectAreaGone(dirs) {
   }
 }
 
+/** The ISSUE-341 area: the last folders under src/main. */
+const LAST_MAIN_FOLDERS = ['src/main/domain', 'src/main/config', 'src/main/runtime']
+
 function expectNoInvariantIn(dirs) {
   for (const dir of dirs) expect(invariantReferencesInto(dir)).toEqual([])
 }
@@ -213,5 +216,22 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
 
   it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/platform, src/main/adapters', () => {
     expectNoInvariantIn(['src/main/platform', 'src/main/adapters'])
+  })
+
+  // ISSUE-341: the last src/main folders, then src/main itself.
+  it('[ADR-001] src/main/domain, src/main/config, src/main/runtime hold no file and no source outside them imports them', () => {
+    expectAreaGone(LAST_MAIN_FOLDERS)
+  })
+
+  it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/domain, src/main/config, src/main/runtime', () => {
+    expectNoInvariantIn(LAST_MAIN_FOLDERS)
+  })
+
+  it('[ADR-001] src/main holds no file', () => {
+    expectAreaGone(['src/main'])
+  })
+
+  it('[ADR-029] every preserved-invariant test referenced by invariants.test.ts lives outside src/main', () => {
+    expectNoInvariantIn(['src/main'])
   })
 })
