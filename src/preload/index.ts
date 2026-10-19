@@ -9,7 +9,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { z } from 'zod'
 import type { CHANNELS, ChannelKey } from '@dwarfai/contracts'
-import type { TODAY } from '../contracts/ipc/todayShapes'
 
 /** A request as the renderer hands it over: the preload never mutates it, so an array may be readonly. */
 type Accepted<T> = T extends readonly (infer I)[]
@@ -19,12 +18,6 @@ type Accepted<T> = T extends readonly (infer I)[]
     : T extends object
       ? { [P in keyof T]: Accepted<T[P]> }
       : T
-/** A row's today shape (21 §1 item 2a): its TODAY_SHAPES entry, or its registry entry for a KEEP row. */
-type TodayRow<K extends ChannelKey> = K extends keyof typeof TODAY
-  ? (typeof TODAY)[K]
-  : (typeof CHANNELS)[K]
-type TodayRequest<K extends ChannelKey> = Accepted<z.input<TodayRow<K>['request']>>
-type TodayResult<K extends ChannelKey> = z.output<TodayRow<K>['response']>
 /** A row's target shape (14): its registry entry. */
 type TargetRequest<K extends ChannelKey> = Accepted<z.input<(typeof CHANNELS)[K]['request']>>
 type TargetResult<K extends ChannelKey> = z.output<(typeof CHANNELS)[K]['response']>
@@ -222,12 +215,6 @@ export interface DwarfAiMinersApi {
   pathForDroppedFile: (
     file: TargetRequest<'pathForDroppedFile'>
   ) => TargetResult<'pathForDroppedFile'>
-  /** §8 I-21 · `dwarf:setName` · invoke · RETIRE · today shape */
-  setDwarfName: (request: TodayRequest<'dwarf:setName'>) => Promise<TodayResult<'dwarf:setName'>>
-  /** §8 I-21 · `dwarf:resetName` · invoke · RETIRE · today shape */
-  resetDwarfNameToday: (
-    request: TodayRequest<'dwarf:resetName'>
-  ) => Promise<TodayResult<'dwarf:resetName'>>
   /** A-N30 · `diag:renderer:report` · send · NEW · target shape */
   reportRendererDiagnostic: (request: TargetRequest<'diag:renderer:report'>) => void
   /** A-N25 · `tray:stopEverything:requested` · push · NEW · target shape */
@@ -440,15 +427,6 @@ const api: DwarfAiMinersApi = {
       return ''
     }
   },
-  setDwarfName: (request) =>
-    invokeOrReject(() =>
-      ipcRenderer.invoke('dwarf:setName', {
-        dwarfId: textOf(request?.dwarfId),
-        ...(typeof request?.name === 'string' ? { name: request.name } : {})
-      })
-    ),
-  resetDwarfNameToday: (request) =>
-    invokeOrReject(() => ipcRenderer.invoke('dwarf:resetName', textOf(request))),
   reportRendererDiagnostic: (request) =>
     sendOrDrop(() => ipcRenderer.send('diag:renderer:report', request)),
   onStopEverythingRequested: (listener) => {

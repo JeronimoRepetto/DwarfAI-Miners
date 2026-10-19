@@ -174,8 +174,12 @@ const BASE_NAME = 'dwarfai-55'
 
 function messagePanel() {
   const api = {
-    setDwarfName: vi.fn(async ({ name }: { name: string }) => ({ saved: true, customName: name })),
-    resetDwarfNameToday: vi.fn().mockResolvedValue({ saved: true })
+    // AMENDED for ISSUE-243 (was: today's `setDwarfName` and `resetDwarfNameToday`): every rename is A-N08's.
+    renameDwarf: vi.fn(async ({ name }: { name: string }) => ({
+      ok: true,
+      value: { ok: true, value: { customName: name } }
+    })),
+    resetDwarfName: vi.fn().mockResolvedValue({ ok: true, value: undefined })
   }
   // The generated fake refuses any member the channel registry lacks (ADR-033 item 7).
   ;(window as unknown as { api: unknown }).api = createFakeWindowApi(
@@ -479,7 +483,9 @@ const DRIVERS: Record<string, () => Promise<void>> = {
     field.dispatchEvent(new Event('input'))
     await flushPromises()
     await press(field, 'Enter')
-    expect(api.setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: 'Watcher' })
+    expect(api.renameDwarf).toHaveBeenCalledWith(
+      expect.objectContaining({ dwarfId: 'd55', name: 'Watcher' })
+    )
     expect(nameField(wrapper)).toBeNull()
     expect(active()).toBe(wrapper.get('.dm-msg__rename').element)
   },
@@ -492,7 +498,7 @@ const DRIVERS: Record<string, () => Promise<void>> = {
     await flushPromises()
     await press(field, 'Escape')
     // Cancelled, and the panel stays open: only the next Esc closes it.
-    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(api.renameDwarf).not.toHaveBeenCalled()
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(active()).toBe(wrapper.get('.dm-msg__rename').element)
     await press(active()!, 'Escape')

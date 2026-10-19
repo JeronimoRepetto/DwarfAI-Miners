@@ -3,16 +3,11 @@
 // after this file is created only a step's route-switch issue changes it (ISSUE-056 for cut 0, ISSUE-123 for cut 1,
 // ISSUE-141 for cut 2, ISSUE-001 for step 3a, ISSUE-002 for step 3b, ISSUE-186 for step 3d, ISSUE-188 for step 3e, ISSUE-235 for step 4a, ISSUE-238 for step 4b), with the two exceptions 22 §5 names. A NEW row whose route is born in a later step is not here:
 // it is listed in `src/contracts/ipc/unrouted.ts` with that step.
-import { CATALOG_PROVIDER_IDS, STEP_ORDER, type HostMethod, type StepId } from '@dwarfai/contracts'
+import { CATALOG_PROVIDER_IDS, type HostMethod, type StepId } from '@dwarfai/contracts'
 import type { ChannelRoute, IpcChannelName, LegacyBridgeAdapter } from './channelRoute'
 
 /** The release step this table is for (a `STEP_ORDER` value); each route-switch issue sets it to its step. */
 export const ROUTES_RELEASE: StepId = 'cut-4b'
-
-/** The steps from `from` to `to`, both included, in `STEP_ORDER`. */
-function span(from: StepId, to: StepId): StepId[] {
-  return STEP_ORDER.slice(STEP_ORDER.indexOf(from), STEP_ORDER.indexOf(to) + 1)
-}
 
 /**
  * The legacy-bridge adapters of 21 §3 and the shape adapters of 21 §3.1, with the steps they live in ("1–4" is cut 1
@@ -29,20 +24,13 @@ function span(from: StepId, to: StepId): StepId[] {
  * §5, §6.5 AMENDMENT-8).
  * AMENDED for ISSUE-242, the first cut-5 deletion (was: also `BoardFacadeAdapter`, cuts 1–4b): a test proved it had no
  * consumer, so it left the tree with A-12 and A-P2 (21 §2 cut 5 entry, §3).
+ * AMENDED for ISSUE-243, the deletion of today's runtime (was: also `LegacyRuntimeRoute`, cuts 0–5, the one door to
+ * today's runtime): no row of this table is `legacy` any more, so the door left the tree with the runtime it composed
+ * (21 §2 cut 5, §3); the releases that shipped it list it as they shipped it (`testing/adaptersAsShipped.ts`).
  */
 export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
-  { name: 'LegacyRuntimeRoute', cuts: span('cut-0', 'cut-5'), shapeAdapter: false },
   { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false }
 ]
-
-/** A row served by today's runtime through `LegacyRuntimeRoute` with today's shape, unmoved since before cut 0. */
-const legacyToday = (channel: IpcChannelName): ChannelRoute => ({
-  channel,
-  owner: 'legacy',
-  since: 'pre-cut-0',
-  parity: 'n/a',
-  shape: 'today'
-})
 
 /**
  * A KEEP row the cut-0 switch moved to the rebuilt window module (21 §2 cut 0 "New core serves" U). Its target shape is
@@ -342,7 +330,12 @@ const perProviderCut4b = (channel: IpcChannelName): ChannelRoute[] => [
  * First cut-5 deletion (21 §2 cut 5 entry; ISSUE-242): A-12 and A-P2 leave with `BoardFacadeAdapter`, retired at the
  * end of its 4b lifetime (`RETIRED`, `MEMBER_REMOVED`); the renderer reads the board through A-N01/A-N02 alone.
  *
- * Every other today row of 14 §2.1 and the two legacy rows of 14 §8 I-21 stay `legacy` with today's shape. A-N33 stays
+ * Deletion of today's runtime (21 §2 cut 5; ISSUE-243, foreman decision D2): the two legacy rows of 14 §8 I-21,
+ * `dwarf:setName` and `dwarf:resetName` (RETIRE, successors A-N08 and A-N09), leave with `LegacyRuntimeRoute` and today's
+ * runtime, retired at the end of 4b (`RETIRED`, `MEMBER_REMOVED`), since the board is the Host's alone (ISSUE-242). No
+ * row of the table is `legacy`.
+ *
+ * A-N33 stays
  * unrouted (`unrouted.ts`, 'generation-2'). A push row is routed like any other (its owner sends it); the router
  * registers no listener for a push or for the A-X1 preload helper.
  */
@@ -404,8 +397,6 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalKept('panel:visible:changed'), // A-P1
   uiLocalKept('typography:preferences:changed'), // A-P6
   uiLocalKept('pathForDroppedFile'), // A-X1
-  legacyToday('dwarf:setName'), // 14 §8 I-21 (no §2 id)
-  legacyToday('dwarf:resetName'), // 14 §8 I-21 (no §2 id)
   uiLocalNew('host:connection:get'), // A-N03
   uiLocalNew('host:connection:changed'), // A-N04
   uiLocalNew('host:connection:retry'), // A-N05

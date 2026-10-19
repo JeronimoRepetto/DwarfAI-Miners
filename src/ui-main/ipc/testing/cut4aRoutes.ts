@@ -11,6 +11,9 @@
 // AMENDED for ISSUE-242, the first cut-5 deletion: the release table no longer has A-12 and A-P2, which every release
 // from cut 1 to 4b routed `host` through `BoardFacadeAdapter`, so they are back where 4a routed them
 // (`REMOVED_BY_BOARD_FACADE_DELETION`), with their seam B members (`HOST_ROUTE_MEMBERS_AS_SHIPPED`).
+// AMENDED for ISSUE-243, the deletion of today's runtime: the release table no longer has 14 §8 I-21's `dwarf:setName`
+// and `dwarf:resetName`, which every release up to 4b served `legacy` with today's shape, so they are back where 4a
+// routed them (`REMOVED_BY_RUNTIME_DELETION`).
 import {
   CATALOG_PROVIDER_IDS,
   RETIRED,
@@ -98,6 +101,27 @@ const REMOVED_BY_BOARD_FACADE_DELETION = [
   }
 ]
 
+/** 14 §8 I-21's legacy rename or reset as every release up to 4b served it: today's runtime, today's shape. */
+const servedToday = (channel: ChannelKey): ChannelRoute => ({
+  channel,
+  owner: 'legacy',
+  since: 'pre-cut-0',
+  parity: 'n/a',
+  shape: 'today'
+})
+
+/** The routes the ISSUE-243 deletion removed: `dwarf:setName` after A-X1, `dwarf:resetName` after it. */
+const REMOVED_BY_RUNTIME_DELETION = [
+  {
+    after: (route: ChannelRoute) => route.channel === 'pathForDroppedFile',
+    route: servedToday('dwarf:setName')
+  },
+  {
+    after: (route: ChannelRoute) => route.channel === 'dwarf:setName',
+    route: servedToday('dwarf:resetName')
+  }
+]
+
 /**
  * The seam B members of every `host` route the releases up to 4b shipped: the release's, and A-12 and A-P2's, the
  * facade's reading of the Host board (the snapshot, then the frames).
@@ -139,7 +163,8 @@ const REMOVED_BY_4B: ReadonlyArray<{
     route: openCodeNotMoved('dwarf:sendText:settled') // A-P4
   },
   ...LEGACY_ANSWER_ROUTES,
-  ...REMOVED_BY_BOARD_FACADE_DELETION
+  ...REMOVED_BY_BOARD_FACADE_DELETION,
+  ...REMOVED_BY_RUNTIME_DELETION
 ]
 
 const sameRoute = (a: ChannelRoute, b: ChannelRoute): boolean =>

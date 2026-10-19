@@ -12,6 +12,9 @@
 // 1–4b), `LegacyEndFirstAdapter` (cuts 0–4b) and `LegacyAnswerShapeAdapter` (2–4b) left with the same rule.
 //
 // AMENDED for ISSUE-242, the first cut-5 deletion: `BoardFacadeAdapter` (cuts 1–4b) left with the same rule.
+//
+// AMENDED for ISSUE-243, the deletion of today's runtime: `LegacyRuntimeRoute` (21 §3: cuts 0–5) left with the same
+// rule. The releases that shipped it are cut 0 up to 4b, so it is listed for those.
 import type { StepId } from '@dwarfai/contracts'
 import { STEP_ORDER } from '@dwarfai/contracts'
 import type { LegacyBridgeAdapter } from '../channelRoute'
@@ -22,6 +25,8 @@ const span = (from: StepId, to: StepId): StepId[] =>
 
 /** The bridges a retirement deleted, with the cuts they lived in (21 §3, §3.1). */
 export const RETIRED_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
+  // First, where today's listing had it.
+  { name: 'LegacyRuntimeRoute', cuts: span('cut-0', 'cut-4b'), shapeAdapter: false },
   { name: 'ResetFanout', cuts: span('cut-1', 'cut-3e'), shapeAdapter: true },
   { name: 'SettingsMirrorBridge', cuts: span('cut-1', 'cut-3e'), shapeAdapter: false },
   { name: 'JevSettingsShapeAdapter', cuts: span('cut-3a', 'cut-4a'), shapeAdapter: true },

@@ -37,7 +37,9 @@ const relativeOf = (path: string): string =>
 
 describe('step-3d deletion (21 §2 row 3d)', () => {
   it('[ADR-001] runtime.ts composes no hosted-process launch and no legacy A-39 handler remains', () => {
-    const runtime = readFileSync(resolve(SRC, 'main/runtime/runtime.ts'), 'utf8')
+    // AMENDED for ISSUE-243: today's runtime itself left the tree (21 §2 cut 5); while it existed it composed none.
+    const runtimePath = resolve(SRC, 'main/runtime/runtime.ts')
+    const runtime = existsSync(runtimePath) ? readFileSync(runtimePath, 'utf8') : ''
     expect(runtime).not.toMatch(/sessionLaunch\/(hostedProcesses|nodeHostedProcess|hostedBoard)'/)
     expect(runtime).not.toMatch(/\bHostedProcessRegistry\b|\blaunchHostedProcess\b/)
     for (const file of DELETED) expect(existsSync(resolve(SRC, file)), file).toBe(false)

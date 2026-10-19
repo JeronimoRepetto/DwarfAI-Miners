@@ -151,8 +151,7 @@ export function goldenApi(sample: GoldenSample): Api {
     refreshDwarfTelemetry: none,
     setDwarfTuning: refuse('setDwarfTuning'),
     // Dwarf names (#635): the golden stage renames nothing.
-    setDwarfName: refuse('setDwarfName'),
-    resetDwarfNameToday: refuse('resetDwarfNameToday'),
+    // AMENDED for ISSUE-243 (was: also today's `setDwarfName` and `resetDwarfNameToday`, which left with today's runtime).
     // A-19 reads the Host's message log from the cut-1 switch (ISSUE-123), keyed by Host ids the sample does not carry:
     // a full-screen history state is one this fake does not model yet, and the page's error list says so.
     getMineHistory: refuse('getMineHistory'),

@@ -22,12 +22,6 @@ import {
   type NativeImage
 } from 'electron'
 import {
-  composeLegacyRuntime,
-  createLegacyRuntimeRoute,
-  type LegacyPanelSurface,
-  type LegacyRuntimeRoute
-} from '../legacy-bridge/LegacyRuntimeRoute'
-import {
   createStopEverything,
   STOP_EVERYTHING_REQUESTED,
   type StopEverything
@@ -118,6 +112,7 @@ import {
   ElectronGlobalShortcut
 } from './window/adapters/ElectronGlobalShortcut'
 import { ElectronTray } from './window/adapters/ElectronTray'
+import { APP_USER_MODEL_ID } from './window/adapters/appUserModelId'
 import { ElectronNotificationDisplay } from './window/adapters/ElectronNotificationDisplay'
 import { startNotificationPresenter } from './window/application/notificationPresenter'
 import { createDepartedDwarfs, createRevealDwarfChat } from './window/application/revealDwarfChat'
@@ -966,7 +961,7 @@ export function windowFamilyOwner(routes: readonly ChannelRoute[]): 'legacy' | '
 }
 
 /** The steps of the start once Electron is ready, as `ui.start` names the one that failed. */
-export type UiStartStep = 'ready' | 'panel-load' | 'shortcut' | 'tray' | 'shell' | 'legacy-compose'
+export type UiStartStep = 'ready' | 'panel-load' | 'shortcut' | 'tray' | 'shell'
 
 /** What `errCode` may hold (19 §9.6; the UI writer's own shape): a code or a class name, never a sentence. */
 const ERROR_CODE = /^[A-Za-z0-9_.:-]{1,64}$/
@@ -1014,9 +1009,9 @@ export interface UiMainLifecycle {
 export interface UiMainDeps {
   lock: SingleInstanceLock
   lifecycle: UiMainLifecycle
-  // AMENDED for ISSUE-241 (was: also `liveLaunches`, `endLaunch` and `launchIdOfDwarf`, today's launched register for
-  // `LegacyEndFirstAdapter`): the adapter left the tree at the end of cut 4.
-  legacyRuntime: Pick<LegacyRuntimeRoute, 'compose' | 'serve' | 'beforeQuit' | 'willQuit'>
+  // AMENDED for ISSUE-243, the deletion of today's runtime (was: `legacyRuntime`, today's runtime composed through
+  // `LegacyRuntimeRoute`, which served the `legacy` rows and was torn down on quit; until ISSUE-241 also today's
+  // launched register for `LegacyEndFirstAdapter`): no row is `legacy` any more, and the runtime left the tree.
   /** The route table (default `ROUTES`, the release's own); a test or a rollback table is passed here. */
   routes?: readonly ChannelRoute[]
   /** The release the table is for (default `ROUTES_RELEASE`): which legacy-bridge adapters live (21 §3). */
@@ -1100,8 +1095,8 @@ export interface UiMainDeps {
   startWithSystem?: StartWithSystem
   /**
    * The shell's own start work (window/application/shellStart.ts; 21 §2 cut 5 preparation for ISSUE-243): the macOS
-   * Dock tile hidden, the `.env` file read, and the candidate login entry where it is composed. It runs once per start,
-   * right before today's runtime is composed, where today's composition did the same work.
+   * Dock tile hidden, the `.env` file read, the candidate login entry where it is composed, and the app's identity on
+   * Windows. It runs once per start, last, where today's composition did the same work before ISSUE-243 deleted it.
    */
   shellStart?: UiShellStart
 }
@@ -1125,10 +1120,11 @@ export interface UiMainStarted {
  *   built hidden with its page loading, as today's start did; the rebuilt shortcut is claimed, the
  *   rebuilt tray shows Open, Quit and Stop everything and quit (ADR-018 item 5; ADR-002 D7), and
  *   A-N26 reaches the Host (through `LegacyEndFirstAdapter` until ISSUE-241, 21 §3); A-N04 is pushed on every Host
- *   connection change. Today's runtime is composed through `LegacyRuntimeRoute` without its window,
- *   tray or shortcut, and a second launch shows the rebuilt Panel.
- * - The window family served `legacy` (before cut 0, or a rollback build, 21 §2.1): today's runtime
- *   is composed with its own window, tray and shortcut, and a second launch shows its Panel.
+ *   connection change, and a second launch shows the rebuilt Panel.
+ * - The window family served `legacy` (before cut 0, or a rollback build, 21 §2.1): nothing serves it any more.
+ *   AMENDED for ISSUE-243 (was: today's runtime composed with its own window, tray and shortcut, through
+ *   `LegacyRuntimeRoute`): today's runtime left the tree (21 §2 cut 5), so such a table is refused, as is any table
+ *   with a `legacy` row (the router binds no `legacy` target).
  *
  * The answer settles when the start has finished: at once (undefined) for a process that quit,
  * after the composition (or the exit it caused) for the lock holder, with its reopen state.
@@ -1136,7 +1132,6 @@ export interface UiMainStarted {
 export async function startUiMain({
   lock,
   lifecycle,
-  legacyRuntime,
   ipc,
   appEntry,
   routes = ROUTES,
@@ -1174,9 +1169,16 @@ export async function startUiMain({
       windowClosed(webContentsId)
     })
   })
-  const rebuilt = windowFamilyOwner(routes) === 'ui-local'
+  // AMENDED for ISSUE-243 (was: a table that serves the window family `legacy`, before cut 0 or in a rollback build,
+  // started today's runtime with its own window, tray and shortcut): today's runtime left the tree (21 §2 cut 5), so
+  // nothing can serve that family and such a table is refused, as a table that splits the family is.
+  if (windowFamilyOwner(routes) === 'legacy') {
+    throw new Error(
+      'the route table serves the window family legacy, and no legacy runtime is left'
+    )
+  }
   const panel = panelWindow?.(modeWindows)
-  if (rebuilt && panel === undefined) {
+  if (panel === undefined) {
     throw new Error(
       'the route table serves the window family ui-local but no rebuilt Panel was composed'
     )
@@ -1226,9 +1228,9 @@ export async function startUiMain({
   // left the tree together; every row that carries a dwarf id is the Host's.
 
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
-  const toggle = rebuilt && panel !== undefined ? shortcut?.(panel) : undefined
+  const toggle = panel !== undefined ? shortcut?.(panel) : undefined
   const stop =
-    rebuilt && panel !== undefined && host !== undefined && tray !== undefined
+    panel !== undefined && host !== undefined && tray !== undefined
       ? createStopEverything({
           host: host.client,
           // The confirmation shows in the Panel: a hidden Panel is shown first (US-RES-002.AC08; S10.18).
@@ -1384,7 +1386,6 @@ export async function startUiMain({
   // brings up a Panel that could not be told what to reveal nor counts a reveal that did not happen (hidden until
   // built, 21 §1 item 8). A dwarf counts as present until its `dwarf.departed` frame was heard (`createDepartedDwarfs`).
   const departedDwarfs =
-    rebuilt &&
     panel !== undefined &&
     host !== undefined &&
     notifications !== undefined &&
@@ -1392,11 +1393,7 @@ export async function startUiMain({
       ? createDepartedDwarfs(host.client)
       : undefined
   const notificationPresenter =
-    rebuilt &&
-    panel !== undefined &&
-    host !== undefined &&
-    uiLog !== undefined &&
-    notifications !== undefined
+    panel !== undefined && host !== undefined && uiLog !== undefined && notifications !== undefined
       ? startNotificationPresenter({
           onAttentionFrame: (handler) => {
             const ready = lifecycle.whenReady()
@@ -1448,9 +1445,10 @@ export async function startUiMain({
     ...(presence === undefined ? {} : { presence: presence.part }),
     modeWindows
   })
+  // AMENDED for ISSUE-243 (was: also `legacy: legacyRuntime`, today's runtime through `LegacyRuntimeRoute`): no route
+  // is `legacy` (21 §2 cut 5), so the router has no legacy target; a `legacy` route would stop it from starting.
   createRouter({
     routes,
-    legacy: legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
     // A-13, A-23 and A-35's qualifier, from the step-3a switch: the call's provider (21 §1 item 2). AMENDED for
     // ISSUE-241 (was: also A-40/A-41's, the relay's origin of a `legacy:` AskId): the relay left the tree.
@@ -1472,7 +1470,8 @@ export async function startUiMain({
       : undefined
   let trayProcess: TrayProcess | null = null
   lifecycle.onResume?.(() => host?.client.wake())
-  lifecycle.onBeforeQuit(() => legacyRuntime.beforeQuit())
+  // AMENDED for ISSUE-243 (was: `before-quit` tore down today's runtime, `LegacyRuntimeRoute.beforeQuit`): nothing of
+  // today's runtime is composed to tear down.
   lifecycle.onWillQuit(() => {
     toggle?.dispose()
     trayProcess?.dispose()
@@ -1489,7 +1488,6 @@ export async function startUiMain({
     hostReads?.dispose()
     stopHearingVisibility?.()
     host?.client.dispose()
-    legacyRuntime.willQuit()
   })
   // The app lives in the tray with every window hidden: closing the last window never quits it
   // (only Stop everything and quit does; before cut 0, today's tray Quit), as today. It enters tray-only, so the UI
@@ -1501,10 +1499,10 @@ export async function startUiMain({
     await lifecycle.whenReady()
     // "Start with the system" is applied before any window (S40.01, S40.02); a refusal is logged, never shown (S40.07).
     startWithSystem?.applyAtStart()
-    if (rebuilt && panel !== undefined) {
+    if (panel !== undefined) {
       // A second launch shows the rebuilt Panel from now on; it is built hidden with its page loading, as today's
-      // start built today's (`LegacyRuntimeRoute` serves the legacy rows once today's runtime is composed). A
-      // `--background` start builds no window: the Panel is built when the person opens the app (S10.03, S10.13).
+      // start built today's. A `--background` start builds no window: the Panel is built when the person opens the app
+      // (S10.03, S10.13).
       secondLaunch.attach(panel)
       step = 'panel-load'
       if (launch.window) panel.load()
@@ -1531,24 +1529,14 @@ export async function startUiMain({
           offerFromWindow: () => panel.show()
         })
       }
-      // The Dock, the `.env` file and the candidate login entry, where today's composition did them (shellStart.ts).
+      // The Dock, the `.env` file, the candidate login entry and the app's identity, where today's composition did
+      // them (shellStart.ts).
       step = 'shell'
       await shellStart?.start()
-      step = 'legacy-compose'
-      await legacyRuntime.compose()
-    } else {
-      step = 'shell'
-      await shellStart?.start()
-      step = 'legacy-compose'
-      const legacyPanel = await legacyRuntime.compose()
-      if (legacyPanel === null) throw new Error('today’s runtime composed no Panel window')
-      // Today's Panel window answers a second launch (before cut 0, or a rollback build).
-      secondLaunch.attach(legacyPanel)
     }
   } catch (error) {
     // The start cannot go on. The UI log says which step failed and the error's class or code, never its message
-    // (ADR-026 items 3-4), and is written out before the process ends; today's composition also reports its own
-    // failure before it rethrows (LegacyRuntimeRoute).
+    // (ADR-026 items 3-4), and is written out before the process ends.
     uiLog?.record(uiStartFailed(step, error))
     await uiLog?.flush?.().catch(() => {})
     lifecycle.exit(1)
@@ -1815,7 +1803,8 @@ function electronStartWithSystem(
  * did it: macOS's Dock tile hidden (`app.dock` exists there only), the working folder's `.env` read quietly, and the
  * candidate login entry (candidateAutostart.ts; 21 §2 cut 1) in a packaged build of an OS where S-027-4 has not passed
  * (`loginEntryGate.ts`), the old writer of the entry until v1. It writes today's entry: the packaged executable with no
- * arguments, the once-only default marker in Electron's userData.
+ * arguments, the once-only default marker in Electron's userData. Then the app's identity (`APP_USER_MODEL_ID`), as
+ * today's composition set it at every start until ISSUE-243 deleted it.
  */
 function electronShellStart(uiLog: UiLog): UiShellStart {
   const platform = currentUiPlatform()
@@ -1838,7 +1827,9 @@ function electronShellStart(uiLog: UiLog): UiShellStart {
   return createUiShellStart({
     dock: app.dock,
     loadEnvironmentFile: () => void loadDotenv({ quiet: true }),
-    ...(candidateAutostart === undefined ? {} : { candidateAutostart })
+    ...(candidateAutostart === undefined ? {} : { candidateAutostart }),
+    // Every OS, as today's composition called it (Electron applies it on Windows only).
+    setAppUserModelId: () => app.setAppUserModelId(APP_USER_MODEL_ID)
   })
 }
 
@@ -1929,37 +1920,12 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
   const panelBrowserWindow = (): BrowserWindow | undefined =>
     BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
   const rebuiltPanel = electronPanelWindow(uiPreferenceStore)
-  // Today's runtime, without its window, tray and shortcut once the table serves the window family `ui-local`: its
-  // pushes and pickers reach the rebuilt Panel (21 §2 cut 0; LegacyRuntimeRoute). AMENDED for ISSUE-241 (was: its
-  // pushes passed through the tap where `LegacyDwarfIdBridge` mapped A-P4): the bridge left the tree.
-  const legacyPanel: LegacyPanelSurface = {
-    send: (channel, payload) => {
-      for (const window of appWindows()) window.send(channel, payload)
-    },
-    showOpenDialog: (options) => {
-      const parent = panelBrowserWindow()
-      return parent === undefined
-        ? dialog.showOpenDialog(options)
-        : dialog.showOpenDialog(parent, options)
-    }
-  }
-  // AMENDED for ISSUE-236, the 4a retirement (was: wrapped by `reportSettingsMirrorWrites` for `SettingsMirrorBridge`,
-  // which left the tree with its 4a lifetime).
-  const legacyRuntime = createLegacyRuntimeRoute(
-    composeLegacyRuntime(
-      { app, dialog, nativeImage, shell, clipboard, globalShortcut },
-      {
-        ...(windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}),
-        // AMENDED for ISSUE-241 (was: today's OpenCode plugin half while A-53 kept its pre-4a route, ISSUE-235): no
-        // release left composes it.
-        log: uiLog
-      }
-    )
-  )
+  // AMENDED for ISSUE-243, the deletion of today's runtime (was: today's runtime composed here through
+  // `LegacyRuntimeRoute`, without its window, tray and shortcut, its pushes and pickers reaching the rebuilt Panel): no
+  // row is `legacy` any more (21 §2 cut 5), so nothing of it is composed.
   void startUiMain({
     lock: new ElectronSingleInstanceLock(app),
     lifecycle: electronLifecycle(),
-    legacyRuntime,
     // The release's table for this build (ISSUE-188; 21 §2 row 3e; ADR-009 D6): a development build adds its
     // development-only rows (Antigravity's launch), a packaged build is a public one, as the Host's `isPublicBuild`.
     routes: routesForBuild({ publicBuild: app.isPackaged }),

@@ -1423,54 +1423,12 @@ describe('preload launch view contract (#635)', () => {
  * shape rather than reading it as a reset. Only a real empty string removes a custom name.
  */
 describe('preload dwarf-name contract (#635)', () => {
-  it('sends a rename on the dwarf:setName channel and answers the verdict', async () => {
-    invoke.mockResolvedValueOnce({ saved: true, customName: 'Stonebeard' })
-    await expect(api.setDwarfName({ dwarfId: 'claude:s1', name: 'Stonebeard' })).resolves.toEqual({
-      saved: true,
-      customName: 'Stonebeard'
-    })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', {
-      dwarfId: 'claude:s1',
-      name: 'Stonebeard'
-    })
-  })
-
-  it('rebuilds the rename rather than forwarding whatever the caller attached', async () => {
-    invoke.mockResolvedValueOnce({ saved: true })
-    await api.setDwarfName({
-      dwarfId: 'claude:s1',
-      name: 'Stonebeard',
-      provider: 'codex'
-    } as unknown as Parameters<typeof api.setDwarfName>[0])
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', {
-      dwarfId: 'claude:s1',
-      name: 'Stonebeard'
-    })
-
-    // AMENDED for #635 (verifier finding; was: a non-string name crossed as '', which main read as
-    // a reset and answered saved: true, erasing the kept name). It crosses with no name at all
-    // now, a shape main refuses, so a malformed call can never remove a name.
-    await api.setDwarfName({ dwarfId: 7, name: null } as unknown as Parameters<
-      typeof api.setDwarfName
-    >[0])
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: '' })
-  })
-
-  it('still sends a real empty name, which removes the custom name', async () => {
-    invoke.mockResolvedValueOnce({ saved: true })
-    await api.setDwarfName({ dwarfId: 'claude:s1', name: '' })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: 'claude:s1', name: '' })
-  })
-
-  // AMENDED for ISSUE-172 (was: `api.resetDwarfName`): the legacy member is `resetDwarfNameToday` now, so it never
-  // shares its name with A-N09 `resetDwarfName` / `dwarf:name:reset` (14 §2.2, §8 I-21).
-  it('sends a reset on the dwarf:resetName channel, naming the dwarf alone', async () => {
-    invoke.mockResolvedValueOnce({ saved: true })
-    await expect(api.resetDwarfNameToday('claude:s1')).resolves.toEqual({ saved: true })
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', 'claude:s1')
-
-    await api.resetDwarfNameToday(undefined as unknown as string)
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', '')
+  // AMENDED for ISSUE-243 (was: four cases of 14 §8 I-21's legacy rows, `setDwarfName` on `dwarf:setName` and
+  // `resetDwarfNameToday` on `dwarf:resetName`): both rows left with today's runtime (`MEMBER_REMOVED`, 21 §2 cut 5), so
+  // the facade has neither member; A-N08 and A-N09 below are the only rename and reset.
+  it('[ADR-001] the facade has no member for the legacy rename and reset rows', () => {
+    expect('setDwarfName' in api).toBe(false)
+    expect('resetDwarfNameToday' in api).toBe(false)
   })
 
   it('[ADR-019, US-MSG-005.AC02, US-MSG-006.AC03] A-N08 and A-N09 send their payloads unchanged on dwarf:rename and dwarf:name:reset', async () => {

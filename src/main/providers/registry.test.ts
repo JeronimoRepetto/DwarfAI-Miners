@@ -4,12 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import { MemorySqlite } from '../adapters/memorySqlite'
 import { defaultConfig } from '../config/config'
-import { DWARF_PROVIDERS, type Mine } from '../domain/types'
-import { AgentRuntime } from '../runtime/runtime'
-// #477: platformAdapters has no default any more, so every construction below
-// borrows the same named fake `runtime.test.ts` uses, rather than this file
-// growing a second one.
-import { worktreePlatformAdapters } from '../platform/fakePlatformAdapters'
+import { DWARF_PROVIDERS } from '../domain/types'
 import type { Provider } from './provider'
 import {
   PROVIDER_REGISTRY,
@@ -27,8 +22,8 @@ import {
  * are the two things that has to buy: the table is exhaustive over the shared
  * provider table (a member added to DWARF_PROVIDERS stops it compiling until
  * its factory row exists), and ONE entry is all it takes for a provider to be
- * built, scanned and published — asserted end to end through the real runtime
- * below, not against a seam that only the test can see.
+ * built. (The end-to-end half, through today's runtime, left with that runtime:
+ * ISSUE-243.)
  */
 
 function context(): ProviderContext {
@@ -120,42 +115,8 @@ function stubProvider(mineName: string): Provider {
   }
 }
 
-describe('registering a provider', () => {
-  it('takes one entry to reach the panel, through the runtime that owns the loop', async () => {
-    // #78's acceptance. The runtime builds the context and the providers
-    // itself — this test adds a row and nothing else, then reads what the
-    // panel would be sent. A FakeFs is what keeps the two real backends
-    // finding nothing, so the mine that arrives can only be the new row's.
-    const published: Mine[][] = []
-    const runtime = new AgentRuntime({
-      platformAdapters: worktreePlatformAdapters(),
-      config: defaultConfig(),
-      home: 'C:\\Users\\j',
-      fs: new FakeFs(),
-      providerRegistry: { ...PROVIDER_REGISTRY, arrival: () => stubProvider('newcomer') },
-      onMinesUpdated: (mines) => published.push(mines)
-    })
-    await runtime.refresh()
-
-    expect(published.at(-1)?.map((mine) => mine.path)).toEqual(['C:\\work\\newcomer'])
-  })
-
-  it('is the only edit: the same runtime without that entry publishes nothing', async () => {
-    // The other half of the claim. If the two real backends were finding
-    // anything against a FakeFs, the assertion above would prove nothing.
-    const published: Mine[][] = []
-    const runtime = new AgentRuntime({
-      platformAdapters: worktreePlatformAdapters(),
-      config: defaultConfig(),
-      home: 'C:\\Users\\j',
-      fs: new FakeFs(),
-      onMinesUpdated: (mines) => published.push(mines)
-    })
-    await runtime.refresh()
-
-    expect(published.at(-1)).toEqual([])
-  })
-})
+// AMENDED for ISSUE-243 (was: describe('registering a provider'), one registry entry reaching the panel through today's
+// runtime's poll loop, and the same runtime without it publishing nothing): today's runtime left the tree (21 §2 cut 5).
 
 /*
  * Issue #540. `PROVIDER_TOKEN_DECLARATION` is the one pin: every provider

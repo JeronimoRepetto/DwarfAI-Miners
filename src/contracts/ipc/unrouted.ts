@@ -84,7 +84,11 @@ export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
   // A-12 and A-P2 (successors A-N01/A-N02): served from the Host board by `BoardFacadeAdapter`, whose lifetime ended
   // with 4b (21 §3, cuts 1–4b), until the first cut-5 deletion proved it had no consumer (ISSUE-242)
   'mines:get': 'cut-4b',
-  'mines:update': 'cut-4b'
+  'mines:update': 'cut-4b',
+  // 14 §8 I-21's legacy rename and reset (successors A-N08/A-N09): served `legacy` for a board still fed by today's feed
+  // until 4b; that feed ended with `BoardFacadeAdapter` (ISSUE-242), so they leave with today's runtime (ISSUE-243)
+  'dwarf:setName': 'cut-4b',
+  'dwarf:resetName': 'cut-4b'
 }
 
 /**
@@ -99,6 +103,9 @@ export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
  *
  * AMENDED for ISSUE-242, the first cut-5 deletion: A-12 `getMines` and A-P2 `onMinesUpdated` leave with
  * `BoardFacadeAdapter` (21 §2 cut 5 entry); the renderer reads the board through A-N01/A-N02 alone.
+ *
+ * AMENDED for ISSUE-243, the deletion of today's runtime: 14 §8 I-21's `setDwarfName` and `resetDwarfNameToday` leave
+ * with their handlers; every rename and reset is A-N08 `renameDwarf` / A-N09 `resetDwarfName`.
  */
 export const MEMBER_REMOVED: Partial<Record<ChannelKey, StepId>> = {
   'dwarf:kick': 'cut-3a',
@@ -106,5 +113,7 @@ export const MEMBER_REMOVED: Partial<Record<ChannelKey, StepId>> = {
   'agent:launchFailed': 'cut-4b',
   'dwarf:sendText:settled': 'cut-4b',
   'mines:get': 'cut-4b',
-  'mines:update': 'cut-4b'
+  'mines:update': 'cut-4b',
+  'dwarf:setName': 'cut-4b',
+  'dwarf:resetName': 'cut-4b'
 }

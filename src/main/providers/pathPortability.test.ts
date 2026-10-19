@@ -2,8 +2,6 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
-import { defaultConfig } from '../config/config'
-import { expandHomePath } from '../runtime/runtime'
 import { ClaudeProvider } from './claude/claudeProvider'
 import { CodexProvider } from './codex/codexProvider'
 import { opencodeDbPath, opencodeWalPath } from './opencode/store'
@@ -173,18 +171,6 @@ describe('OpenCodeProvider path building', () => {
     expect(opencodeDbPath(root)).toBe(join(root, 'opencode.db'))
     expect(opencodeWalPath(root)).toBe(join(root, 'opencode.db-wal'))
   })
-
-  /*
-   * DET-R1 ("The default shape is the same on every OS"): config.test.ts
-   * pins the unexpanded default string; this expands it with a FIXED home
-   * through the real expandHomePath, asserted via node:path.join like every
-   * case above, so the same expectation holds whichever host runs the suite
-   * — proving the expansion itself rather than only the string before it.
-   */
-  it('expands the default OpenCode store root identically, given a fixed home', () => {
-    const home = '/home/j'
-    expect(expandHomePath(defaultConfig().providers.opencode.storeRoot, home)).toBe(
-      join(home, '.local', 'share', 'opencode')
-    )
-  })
+  // AMENDED for ISSUE-243 (was: the default OpenCode store root expanded through today's runtime's `expandHomePath`):
+  // that helper left the tree with today's runtime (21 §2 cut 5); config.test.ts still pins the unexpanded default.
 })

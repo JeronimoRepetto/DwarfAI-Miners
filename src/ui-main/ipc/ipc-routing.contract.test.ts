@@ -80,6 +80,13 @@ import {
 import { dwarfWire, hostEntry, providerRowsWorld, WORLD_MINE } from './testing/providerRowsWorld'
 
 /**
+ * A legacy composition file's text, or nothing once it left the tree. ADDED for ISSUE-243, the deletion of today's
+ * runtime (21 §2 cut 5): `LegacyRuntimeRoute` and `src/main/index.ts` are gone, so each retirement check below that
+ * reads them for a handler, a module or a composition holds by their absence.
+ */
+const legacySource = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '')
+
+/**
  * The router's contract (ADR-001 item 3; 21 §1 items 1, 2, 2a; 14 §6.5 "Router"): every registry row has exactly one
  * route per (channel, qualifier) in a release, or one unrouted entry naming a later step (22 §5); every `legacy` +
  * `target` route names a listed shape adapter (21 §3.1); no `host` route has `shape: 'today'` or, in a release
@@ -324,10 +331,12 @@ describe('pre-cut table', () => {
     const cuts = Object.fromEntries(LEGACY_BRIDGE_ADAPTERS.map((a) => [a.name, a.cuts]))
     const span = (from: StepId, to: StepId): StepId[] =>
       STEP_ORDER.slice(STEP_ORDER.indexOf(from), STEP_ORDER.indexOf(to) + 1)
-    expect(cuts).toEqual({
-      LegacyRuntimeRoute: span('cut-0', 'cut-5'),
-      SecretMigrationBridge: ['cut-3a', 'cut-4a']
-    })
+    // AMENDED for ISSUE-243 (was: also `LegacyRuntimeRoute`, cuts 0–5): the door left the tree with today's runtime
+    // (21 §2 cut 5); the releases that shipped it list it as they shipped it (`testing/adaptersAsShipped.ts`, cuts 0–4b).
+    expect(cuts).toEqual({ SecretMigrationBridge: ['cut-3a', 'cut-4a'] })
+    expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'LegacyRuntimeRoute')?.cuts).toEqual(
+      span('cut-0', 'cut-4b')
+    )
     // AMENDED for ISSUE-236, the 4a retirement (was: also `ResetFanout` and `SettingsMirrorBridge`, cuts 1–3e, and
     // `JevSettingsShapeAdapter`, 3a–4a): they left the tree with their 4a lifetime (`testing/adaptersAsShipped.ts`
     // keeps them for the earlier releases' tables). AMENDED for ISSUE-240, the 4b deletion (was: also
@@ -1351,7 +1360,7 @@ describe('cut-0 retirement', () => {
     // No composition of today's runtime names a window-family wire: neither the bridge nor the legacy root.
     const composers = ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']
     for (const file of composers) {
-      const source = read(file)
+      const source = legacySource(resolve(SRC, file))
       for (const wire of WINDOW_FAMILY_WIRES) {
         expect(source, `${file} ${wire}`).not.toMatch(
           new RegExp(String.raw`IPC_CHANNELS\.${memberOfWire(wire)}\b`)
@@ -1374,7 +1383,7 @@ describe('cut-1 retirement (21 §2 cut 1)', () => {
   const cut1: RouteTable = CUT_1_TABLE
   const SRC = resolve(import.meta.dirname, '../..')
   const legacyRoute = (): string =>
-    readFileSync(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'), 'utf8')
+    legacySource(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'))
 
   it('[ADR-001] after the cut-1 retirement LegacyRuntimeRoute composes no poller, scan wiring, publish gate, ledger crediting or projects-store board path, whatever the route table', () => {
     // AMENDED for ISSUE-125 (was: each table's `legacyObserverComposition` had none of the four retired sinks): the
@@ -1389,9 +1398,9 @@ describe('cut-1 retirement (21 §2 cut 1)', () => {
     expect(source).not.toMatch(/IPC_CHANNELS\.minesUpdated\b/)
     // No ledger crediting: no vault store and no coal backfill; today's ledger is a vault that remembers nothing.
     expect(source).not.toMatch(/openLedgerStore|runCoalBackfill/)
-    expect(source).toMatch(/store: nullLedgerStore\(\)/)
-    // No projects-store board path: what a tick observes is written nowhere, every read and person's act stays.
-    expect(source).toMatch(/withoutObserverWrites\(openedProjects\.store/)
+    // No projects-store board path. AMENDED for ISSUE-243 (was: also today's ledger a vault that remembers nothing,
+    // `nullLedgerStore()`, and today's projects store composed without the observer's writes): today's runtime, which
+    // needed both, left the tree with `LegacyRuntimeRoute`.
     expect(source).not.toMatch(
       /observer\.(pollTimer|boardPublish|ledgerCrediting|projectsObserverWrites)\b/
     )
@@ -1417,7 +1426,7 @@ describe('cut-1 notifier retirement (21 §2 cut 1)', () => {
     })
 
   it('[ADR-018] after the cut-1 retirement no legacy notifier is composed, whatever the route table, and only the Host attention policy reaches an OS notification', () => {
-    const route = read('legacy-bridge/LegacyRuntimeRoute.ts')
+    const route = legacySource(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'))
     expect(route).not.toMatch(
       /createNotifier|createElectronNotifications|notifyDecision|main\/notifications\/(notifier|notifyDecision|electronNotifications|appUserModelId)'/
     )
@@ -1787,7 +1796,7 @@ describe('cut-2 retirement (21 §2 cut 2)', () => {
     for (const table of [cut2, rollbackOf(cut2, 'cut-2')]) {
       expect(checkRouteTable(table, KEYS)).toEqual([])
     }
-    const route = read('legacy-bridge/LegacyRuntimeRoute.ts')
+    const route = legacySource(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'))
     // No hook installer: today's `HookChannel` (installer and restore) is neither imported nor built.
     expect(route).not.toMatch(/\bHookChannel\b|main\/hooks\/(hookChannel|hookInstaller)'/)
     // No Claude hook route and no prompt registry: nothing hands a Claude hook event to today's runtime.
@@ -1804,7 +1813,7 @@ describe('cut-2 retirement (21 §2 cut 2)', () => {
   // any release left to compose reaches today's plugin half, so neither the listener nor the channel is composed, and
   // neither is today's delegation service (the Host owns delegation, ADR-013).
   it('[ADR-016] after the end of cut 4 today’s runtime composes no loopback hook listener, OpenCode plugin channel or delegation service', () => {
-    const route = read('legacy-bridge/LegacyRuntimeRoute.ts')
+    const route = legacySource(resolve(SRC, 'legacy-bridge/LegacyRuntimeRoute.ts'))
     expect(route).not.toMatch(
       /new HookListener\(|new OpenCodePluginChannel\(|new DelegationService\(/
     )
@@ -4381,7 +4390,7 @@ describe('after the 4a retirement', () => {
   it('[ADR-001] no settings, secret or reset row has a legacy handler', () => {
     const legacyHandlers = ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts'].flatMap(
       (file) => {
-        const text = readFileSync(resolve(SRC, file), 'utf8')
+        const text = legacySource(resolve(SRC, file))
         return Object.values(RETIRED_HANDLERS)
           .filter((member) =>
             new RegExp(String.raw`(handle|ipcMain\.handle)\(\s*IPC_CHANNELS\.${member}\b`).test(
@@ -4435,7 +4444,7 @@ describe('after the 4b retirement', () => {
     )
   const legacyUses = (members: readonly string[]) =>
     LEGACY_ROOTS.flatMap((file) => {
-      const text = readFileSync(resolve(SRC, file), 'utf8')
+      const text = legacySource(resolve(SRC, file))
       return members
         .filter((member) => registered(member).test(text))
         .map((member) => `${file} ${member}`)
@@ -4596,7 +4605,7 @@ describe('release 5 (21 §2 cut 5)', () => {
 
   it('[ADR-001] A-12 and A-P2 have no route and no handler', () => {
     for (const file of ['legacy-bridge/LegacyRuntimeRoute.ts', 'main/index.ts']) {
-      const text = readFileSync(resolve(SRC, file), 'utf8')
+      const text = legacySource(resolve(SRC, file))
       for (const member of Object.values(FACADE_ROWS)) {
         expect(registered(member).test(text), `${file} ${member}`).toBe(false)
       }
@@ -4619,6 +4628,18 @@ describe('release 5 (21 §2 cut 5)', () => {
     }
     const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
     expect(root).not.toMatch(/'mines:get'|'mines:update'/)
+  })
+
+  // ADDED for ISSUE-243 (21 §2 cut 5: nothing routed `legacy`; ADR-001 item 4 step 5): the guard of the deletion of
+  // today's runtime and its one door, `LegacyRuntimeRoute`. It fails if a later change re-adds a `legacy` row.
+  it('[ADR-001] before the legacy door is removed, no route of the table has owner legacy', () => {
+    for (const build of [{ publicBuild: false }, { publicBuild: true }]) {
+      expect(
+        routesForBuild(build)
+          .filter((route) => route.owner === 'legacy')
+          .map((route) => route.channel)
+      ).toEqual([])
+    }
   })
 
   it('[ADR-001] the adapter list of the router test no longer names BoardFacadeAdapter', () => {

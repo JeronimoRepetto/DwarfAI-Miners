@@ -34,7 +34,6 @@ import type { IpcSenderEvent } from './ipc/senderCheck'
 import { createPanelWindow, type PanelWindowUseCases } from './window/application/panelWindow'
 import { createToggleShortcut } from './window/application/toggleShortcut'
 import { FakeGlobalShortcutRegistry } from './window/ports/fakes/FakeGlobalShortcutRegistry'
-import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
 import { FakeScreenAreaProvider } from './window/ports/fakes/FakeScreenAreaProvider'
 import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceLock'
 import { FakeTrayController } from './window/ports/fakes/FakeTrayController'
@@ -125,32 +124,13 @@ class RecordingIpcMain implements IpcMainRegistrar {
 }
 
 /**
- * Today's runtime as the root reaches it: no window of its own in cut 0. AMENDED for ISSUE-123
- * (was: every row answered `undefined`): a row named in `answers` answers that, so a case can pin a legacy answer.
+ * The earlier release tables as a root of this tree runs them. AMENDED for ISSUE-243, the deletion of today's runtime
+ * (was: `legacyWithoutWindow`, today's runtime composed without a window through `LegacyRuntimeRoute`, serving the
+ * `legacy` rows): today's runtime and its door left the tree (21 §2 cut 5), so the root binds no `legacy` target and a
+ * table it starts has no `legacy` row; the cases below pin what the root itself composes over each table.
  */
-function legacyWithoutWindow(
-  composeFails = false,
-  answers: Readonly<Record<string, unknown>> = {}
-) {
-  const events: string[] = []
-  const counts = { composed: 0 }
-  const legacyRuntime: UiMainDeps['legacyRuntime'] = {
-    async compose() {
-      counts.composed += 1
-      if (composeFails) throw new Error(String.raw`today’s runtime could not start at C:\Users\j\x`)
-      return null
-    },
-    async serve(channel) {
-      events.push(`legacy serve ${channel}`)
-      return answers[channel]
-    },
-    beforeQuit() {},
-    willQuit() {}
-    // AMENDED for ISSUE-241 (was: also one live legacy launch in today's launched register, for the A-N26 relay
-    // through `LegacyEndFirstAdapter`): the bridge ended with cut 4.
-  }
-  return { legacyRuntime, events, counts }
-}
+const withoutLegacyRows = (routes: readonly ChannelRoute[]): readonly ChannelRoute[] =>
+  routes.filter((route) => route.owner !== 'legacy')
 
 /** The app's open windows as the root sees them: what each was pushed, and whether it was closed. */
 class FakeAppWindows {
@@ -229,24 +209,21 @@ async function connectedClient(host: FakeHost): Promise<HostClientService> {
 async function cut0App(
   options: {
     routes?: readonly ChannelRoute[]
-    composeFails?: boolean
     /** The level-3 notification display and the S-018-1 gate (ISSUE-113); absent, no presenter is composed. */
     notifications?: { display: RecordingNotificationDisplay; drawsWithoutWindow: boolean }
     launch?: UiMainDeps['launch']
     startWithSystem?: UiMainDeps['startWithSystem']
     shellStart?: UiMainDeps['shellStart']
     onPanelBuilt?: () => void
-    // AMENDED for ISSUE-123 (was: none of the three): the release the table is for (default the cut-0 table's), the
-    // Host methods advertised beyond the cut-0 ones, and the answers of today's rows.
+    // AMENDED for ISSUE-123 (was: none of the three): the release the table is for (default the cut-0 table's) and the
+    // Host methods advertised beyond the cut-0 ones. AMENDED for ISSUE-243 (was: also the answers of today's rows).
     release?: StepId
     capabilities?: readonly string[]
-    legacyAnswers?: Readonly<Record<string, unknown>>
   } = {}
 ) {
   const lifecycle = new RecordingLifecycle()
   const ipc = new RecordingIpcMain()
   const lock = new FakeSingleInstanceLock(true)
-  const legacy = legacyWithoutWindow(options.composeFails === true, options.legacyAnswers)
   // The UI log, in the lifecycle's own order: a record made before an exit shows before it.
   const log: UiLogEntry[] = []
   const uiLog = {
@@ -295,10 +272,9 @@ async function cut0App(
   const started = startUiMain({
     lock,
     lifecycle,
-    legacyRuntime: legacy.legacyRuntime,
     ipc,
     appEntry: APP_ENTRY,
-    routes: options.routes ?? ROUTES,
+    routes: withoutLegacyRows(options.routes ?? ROUTES),
     release: options.release ?? 'cut-0',
     panelWindow: panel.factory,
     uiLog,
@@ -324,7 +300,6 @@ async function cut0App(
     lifecycle,
     ipc,
     lock,
-    legacy,
     host,
     client,
     appWindows,
@@ -337,10 +312,10 @@ async function cut0App(
 }
 
 describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
-  it('[ADR-001] in cut 0 the root loads the rebuilt Panel hidden once the app is ready, a second launch shows it, and today’s runtime is composed without a window', async () => {
-    const { factory, panel, lock, legacy, lifecycle } = await cut0App()
+  // AMENDED for ISSUE-243 (was: "…, and today’s runtime is composed without a window"): today's runtime left the tree.
+  it('[ADR-001] in cut 0 the root loads the rebuilt Panel hidden once the app is ready and a second launch shows it', async () => {
+    const { factory, panel, lock, lifecycle } = await cut0App()
 
-    expect(legacy.counts.composed).toBe(1)
     expect(factory.built).toEqual([{ kind: 'panel' }])
     expect(factory.panel().visible).toBe(false)
     lock.launchAgain()
@@ -351,7 +326,7 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
   // AMENDED for ISSUE-241, the end of cut 4 (was: "… ends a legacy-launched session before host.shutdown stop-all is
   // relayed", through `LegacyEndFirstAdapter`): A-N26 reaches the Host alone, and today's runtime is not asked.
   it('[ADR-002] in cut 0 the rebuilt tray’s Stop everything and quit relays host.shutdown stop-all to the Host alone', async () => {
-    const { tray, host, ipc, legacy, appWindows } = await cut0App()
+    const { tray, host, ipc, appWindows } = await cut0App()
     expect(tray.entries).toEqual(['open', 'quit', '—', 'stop-everything'])
     const outcome: StopAllOutcome = { ended: [HOST_DWARF], failed: [] }
     host.handle('host.shutdown', () => ({ mode: 'stop-all', outcome }))
@@ -366,7 +341,6 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     const answer = await confirm?.(FROM_PANEL, { confirmationId: CONFIRMATION, requestId: REQUEST })
 
     expect(answer).toEqual({ ok: true, value: outcome })
-    expect(legacy.events).toEqual([])
     expect(host.received.filter((r) => r.method === 'host.shutdown').map((r) => r.params)).toEqual([
       { mode: 'stop-all', requestId: REQUEST }
     ])
@@ -406,23 +380,19 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     expect(() => windowFamilyOwner(split)).toThrow(/window family/)
   })
 
-  it('[ADR-001] with the window family served legacy (a rollback build) the root keeps today’s Panel and composes no rebuilt Panel, tray or shortcut', async () => {
+  // AMENDED for ISSUE-243 (was: '[ADR-001] with the window family served legacy (a rollback build) the root keeps
+  // today’s Panel and composes no rebuilt Panel, tray or shortcut'): today's runtime, which served that family, left the
+  // tree (21 §2 cut 5), so no build can serve it: such a table is refused, as a split one is.
+  it('[ADR-001] a table that serves the window family legacy is refused and builds no Panel, tray or shortcut', async () => {
     const lifecycle = new RecordingLifecycle()
-    const legacyPanel = new FakePanelWindowController({ visible: false })
-    const lock = new FakeSingleInstanceLock(true)
     const factory = new FakeWindowFactory()
     const tray = new FakeTrayController()
     const shortcuts = new FakeGlobalShortcutRegistry()
+    const ipc = new RecordingIpcMain()
     const started = startUiMain({
-      lock,
+      lock: new FakeSingleInstanceLock(true),
       lifecycle,
-      legacyRuntime: {
-        compose: async () => legacyPanel,
-        serve: async () => undefined,
-        beforeQuit() {},
-        willQuit() {}
-      },
-      ipc: new RecordingIpcMain(),
+      ipc,
       appEntry: APP_ENTRY,
       routes: PRE_CUT_0_ROUTES,
       panelWindow: rebuiltPanel(factory, () => {}).factory,
@@ -436,10 +406,9 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
         })
     })
     lifecycle.becomeReady()
-    await started
-    lock.launchAgain()
 
-    expect(legacyPanel.calls).toEqual(['show'])
+    await expect(started).rejects.toThrow(/window family legacy/)
+    expect([...ipc.handled.keys(), ...ipc.listened.keys()]).toEqual([])
     expect(factory.built).toEqual([])
     expect(tray.createCalls).toEqual([])
     expect(shortcuts.registerCalls).toEqual([])
@@ -483,14 +452,13 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
   })
 
   it('[S10.03, US-RES-002.AC13] a --background start builds no window and starts the tray; the person opening the app shows the Panel', async () => {
-    const { factory, panel, lock, tray, legacy } = await cut0App({
+    const { factory, panel, lock, tray } = await cut0App({
       launch: uiStartPlanOf(['DwarfAI-Miners.exe', '--background'])
     })
 
-    // Tray-only (S10.03): the tray and today's runtime, no window built.
+    // Tray-only (S10.03): the tray, no window built. AMENDED for ISSUE-243 (was: also today's runtime composed).
     expect(factory.built).toEqual([])
     expect(tray.entries).toEqual(['open', 'quit', '—', 'stop-everything'])
-    expect(legacy.counts.composed).toBe(1)
     // The person opens the app (a second launch, S10.13): the Panel is built and shown.
     lock.launchAgain()
     expect(factory.built).toEqual([{ kind: 'panel' }])
@@ -522,9 +490,11 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     }
   })
 
-  it('[ADR-001] the shell start (the Dock, the .env file, the candidate login entry) runs once, after the Panel is built, and today’s runtime is composed after it', async () => {
+  // AMENDED for ISSUE-243 (was: "…, and today’s runtime is composed after it"): today's runtime left the tree, so the
+  // shell start is the last of the start.
+  it('[ADR-001] the shell start (the Dock, the .env file, the candidate login entry) runs once, after the Panel is built', async () => {
     const order: string[] = []
-    const { legacy } = await cut0App({
+    const { lifecycle } = await cut0App({
       onPanelBuilt: () => order.push('panel built'),
       shellStart: {
         start: async () => {
@@ -534,11 +504,12 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     })
 
     expect(order).toEqual(['panel built', 'shell start'])
-    expect(legacy.counts.composed).toBe(1)
+    expect(lifecycle.calls.filter((call) => call.startsWith('exit'))).toEqual([])
   })
 
-  it('[ADR-026] a shell start that fails records ui.start failed at the shell step and composes nothing of today’s runtime', async () => {
-    const { log, legacy, lifecycle } = await cut0App({
+  // AMENDED for ISSUE-243 (was: "… and composes nothing of today’s runtime"): today's runtime left the tree.
+  it('[ADR-026] a shell start that fails records ui.start failed at the shell step', async () => {
+    const { log, lifecycle } = await cut0App({
       shellStart: {
         start: async () => {
           throw Object.assign(new Error(String.raw`no .env at C:\Users\j\x`), { code: 'EACCES' })
@@ -556,12 +527,19 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
         errCode: 'EACCES'
       }
     ])
-    expect(legacy.counts.composed).toBe(0)
     expect(lifecycle.calls).toContain('exit 1')
   })
 
   it('[ADR-026] a start that fails records ui.start failed with its step and error class, never its message, before it exits with code 1', async () => {
-    const { log, lifecycle } = await cut0App({ composeFails: true })
+    // AMENDED for ISSUE-243 (was: today's runtime failing to compose, step `legacy-compose`, whose message named a
+    // path): that step left with today's runtime, so a shell start fails here with a message naming a path.
+    const { log, lifecycle } = await cut0App({
+      shellStart: {
+        start: async () => {
+          throw new Error(String.raw`the shell could not start at C:\Users\j\x`)
+        }
+      }
+    })
 
     expect(log.filter((entry) => entry.event === 'ui.start')).toEqual([
       {
@@ -569,7 +547,7 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
         event: 'ui.start',
         subsystem: 'ui-main',
         outcome: 'failed',
-        causeClass: 'legacy-compose',
+        causeClass: 'shell',
         errCode: 'Error'
       }
     ])
@@ -676,19 +654,10 @@ describe('the cut-1 composition of UI main (21 §2 cut 1)', () => {
     'preferences.resetMetrics'
   ]
   // AMENDED for ISSUE-236, the 4a retirement (was: the cut-1 table as it shipped, A-33 through `ResetFanout`): the
-  // adapter left the tree, so the root of this tree cannot bind it; A-33 keeps its pre-cut row here and the other cut-1
-  // rows run as they shipped.
-  const cut1Routes = RELEASE_ROUTES.map((route): ChannelRoute =>
-    route.channel === 'metrics:reset'
-      ? {
-          channel: 'metrics:reset',
-          owner: 'legacy',
-          since: 'pre-cut-0',
-          parity: 'n/a',
-          shape: 'today'
-        }
-      : route
-  )
+  // adapter left the tree, so the root of this tree cannot bind it. AMENDED for ISSUE-243 (was: A-33 kept its pre-cut
+  // `legacy` row here): today's runtime left the tree too, so A-33 has no row and the other cut-1 rows run as they
+  // shipped, without their `legacy` rows (`withoutLegacyRows`).
+  const cut1Routes = RELEASE_ROUTES.filter((route) => route.channel !== 'metrics:reset')
   const cut1App = (options: Parameters<typeof cut0App>[0] = {}) =>
     cut0App({
       routes: cut1Routes,
@@ -743,8 +712,9 @@ describe('the cut-1 composition of UI main (21 §2 cut 1)', () => {
     expect(sent.at(-1)).toMatchObject({ onScreenMineIds: [MINE], anyWindowVisible: true })
   })
 
-  it('[ADR-001] in cut 1 the retired rows reach neither today’s runtime nor the Host', async () => {
-    const { ipc, host, legacy } = await cut1App()
+  // AMENDED for ISSUE-243 (was: "… reach neither today’s runtime nor the Host"): today's runtime left the tree.
+  it('[ADR-001] in cut 1 the retired rows do not reach the Host', async () => {
+    const { ipc, host } = await cut1App()
     const before = host.received.length
     for (const wire of ['dwarf:feed', 'dwarf:setTuning']) {
       expect(await ipc.handled.get(wire)?.(FROM_PANEL, 'claude:s1'), wire).toMatchObject({
@@ -755,7 +725,6 @@ describe('the cut-1 composition of UI main (21 §2 cut 1)', () => {
     ipc.listened.get('panel:watchDwarfFeed')?.(FROM_PANEL, 'claude:s1')
     ipc.listened.get('dwarf:refreshTelemetry')?.(FROM_PANEL, 'claude:s1')
     await settle()
-    expect(legacy.events.filter((e) => e.startsWith('legacy serve'))).toEqual([])
     expect(host.received.length).toBe(before)
   })
 })

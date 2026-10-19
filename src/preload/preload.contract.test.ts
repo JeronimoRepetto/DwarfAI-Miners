@@ -379,13 +379,11 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // `legacy` with today's shape.
     // AMENDED for ISSUE-238 (was: A-P3 `agent:launchFailed` too): the step-4b switch retires A-P3 with no route
     // (`RETIRED`), so the 14 §8 I-21 rows are the ones still `today`.
-    const today = ['dwarf:setName', 'dwarf:resetName']
-    for (const key of today) {
-      expect(
-        [...new Set(ROUTES.filter((route) => route.channel === key).map((route) => route.shape))],
-        key
-      ).toEqual(['today'])
-    }
+    // AMENDED for ISSUE-243 (was: those two rows' routes keep `shape: 'today'`): they left with today's runtime (21 §2
+    // cut 5), so no route of the table keeps today's shape.
+    expect(ROUTES.filter((route) => route.shape === 'today').map((route) => route.channel)).toEqual(
+      []
+    )
     // A-39 from 3d: the target `LaunchCustomParams` → `IpcResult<LaunchAccepted>`, no longer today's
     // `AgentLaunchResult`.
     expectTypeOf<LaunchCustomParams>().toExtend<
@@ -394,17 +392,10 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     expectTypeOf<DwarfAiMinersApi['launchHostedProcess']>().returns.resolves.toEqualTypeOf<
       IpcResult<LaunchAccepted>
     >()
-    // A request of a row still `today` is accepted as today's types have it (the preload never mutates it).
-    // AMENDED for ISSUE-235 (was: A-43 `setNotificationsEnabled` and A-52 `getOpenCodeSettings`): the step-4a switch
-    // routes both `host` with their target shape, so the rows still `today` are the 14 §8 I-21 legacy rows.
-    expectTypeOf<TodayRequest<'dwarf:setName'>>().toExtend<
-      Parameters<DwarfAiMinersApi['setDwarfName']>[0]
-    >()
+    // AMENDED for ISSUE-243 (was: a request and a result of a row still `today`, the 14 §8 I-21 legacy rows since
+    // ISSUE-235): those rows left with today's runtime, so no row is `today` any more.
     expectTypeOf<readonly string[]>().toExtend<
       Parameters<DwarfAiMinersApi['describeDwarfAttachments']>[0]
-    >()
-    expectTypeOf<DwarfAiMinersApi['setDwarfName']>().returns.resolves.toEqualTypeOf<
-      TodayResult<'dwarf:setName'>
     >()
     // KEEP row. AMENDED for ISSUE-242 (was: also A-12 `getMines` as the RETIRE row, its target shape today's
     // `MinesSnapshot`): A-12 left the facade with `BoardFacadeAdapter` (`MEMBER_REMOVED`).
@@ -427,7 +418,6 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
 type TodayRow<K extends ChannelKey> = K extends keyof typeof TODAY
   ? (typeof TODAY)[K]
   : (typeof CHANNELS)[K]
-type TodayRequest<K extends ChannelKey> = z.input<TodayRow<K>['request']>
 type TodayResult<K extends ChannelKey> = z.output<TodayRow<K>['response']>
 
 describe('built preload (ADR-019 item 1; S-019-1 Decision)', () => {

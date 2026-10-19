@@ -11,37 +11,33 @@ import {
   startUiMain as startUiMainOn,
   startUiProcess,
   type CreatedWindow,
-  type UiMainDeps,
   type UiMainLifecycle
 } from './index'
 import type { HostClientService } from './host-client/HostClient'
 import type { IpcMainRegistrar } from './ipc/router'
 import type { IpcSenderEvent } from './ipc/senderCheck'
-import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
 import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceLock'
 import { JsonUiPreferenceStore, type UiPreferenceFs } from './window/adapters/JsonUiPreferenceStore'
 import { createModeWindowRegistry } from './window/application/modeWindowRegistry'
 import { defaultsOf } from './window/domain/uiPreferenceValues'
-import {
-  createInMemoryUiPreferenceStorage,
-  InMemoryUiPreferenceStore
-} from './window/ports/fakes/InMemoryUiPreferenceStore'
-import { createPanelWindow } from './window/application/panelWindow'
-import { FakeScreenAreaProvider } from './window/ports/fakes/FakeScreenAreaProvider'
+import { InMemoryUiPreferenceStore } from './window/ports/fakes/InMemoryUiPreferenceStore'
 import { FakeWindowFactory } from './window/ports/fakes/FakeWindowFactory'
-import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
 import { REVERT_INTEGRATIONS_FLAG } from './hostLauncher'
+import { ROUTES } from './ipc/routes'
+import { fakeRebuiltPanel } from './window/testing/fakeRebuiltPanel'
 
-// AMENDED for ISSUE-056 (was: `startUiMain` on the release's own table, which was the pre-cut table): these cases pin
-// the root with the window family served `legacy`, today's Panel window included, as before the cut-0 switch and in a
-// rollback build (21 §2.1); the cut-0 composition is pinned by index.cut0.test.ts.
+// AMENDED for ISSUE-056 (was: `startUiMain` on the release's own table, which was the pre-cut table): these cases
+// pinned the root with the window family served `legacy`, today's Panel window included. AMENDED for ISSUE-243 (was:
+// that pre-cut table, with today's runtime composed through `LegacyRuntimeRoute`): today's runtime left the tree (21 §2
+// cut 5), so these cases run on the release's own `ui-local` rows (the window module's, with no Host target to bind)
+// and the rebuilt Panel; the cut-0 composition is pinned by index.cut0.test.ts.
+const UI_LOCAL_ROUTES = ROUTES.filter((route) => route.owner === 'ui-local')
 const startUiMain = (deps: Parameters<typeof startUiMainOn>[0]) =>
-  startUiMainOn({ routes: PRE_CUT_0_ROUTES, ...deps })
+  startUiMainOn({ routes: UI_LOCAL_ROUTES, panelWindow: fakeRebuiltPanel(), ...deps })
 
 /**
  * The Electron composition root (05 §2.3, 16 §8.4): the single-instance lock is the first thing it
- * takes; only a process that holds it composes today's runtime and its Panel window (ADR-001, ADR-002
- * D3, PO #73).
+ * takes; only a process that holds it composes its Panel window (ADR-001, ADR-002 D3, PO #73).
  */
 /** A HostClient that never attaches: what the composition root reads of it, and how often it was woken. */
 function quietHostClient(): { client: HostClientService; wakes: () => number } {
@@ -132,33 +128,6 @@ describe('ui-main composition root (05 §2.3)', () => {
     }
   }
 
-  /** A stand-in for LegacyRuntimeRoute that counts compositions and quit teardowns. */
-  function countingLegacyRuntime(outcome: 'composes' | 'fails' = 'composes') {
-    const panel = new FakePanelWindowController({ visible: false })
-    const counts = { composed: 0, beforeQuit: 0, willQuit: 0 }
-    const served: [string, unknown][] = []
-    const legacyRuntime: UiMainDeps['legacyRuntime'] = {
-      async compose() {
-        counts.composed += 1
-        if (outcome === 'fails') throw new Error('today’s runtime could not start')
-        return panel
-      },
-      async serve(channel, payload) {
-        served.push([channel, payload])
-        return channel === 'app:build' ? { version: '0.0.0-test' } : undefined
-      },
-      beforeQuit() {
-        counts.beforeQuit += 1
-      },
-      willQuit() {
-        counts.willQuit += 1
-      }
-      // AMENDED for ISSUE-241 (was: also today's launched register, for the A-N26 relay through
-      // `LegacyEndFirstAdapter`): A-N26 reaches the Host alone since the end of cut 4.
-    }
-    return { legacyRuntime, counts, panel, served }
-  }
-
   const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
   const appEntry = APP_ENTRY
   const eventFrom = (id: number, url = APP_ENTRY): IpcSenderEvent => ({
@@ -166,125 +135,67 @@ describe('ui-main composition root (05 §2.3)', () => {
     senderFrame: { url }
   })
 
-  it('[ADR-001] when the single-instance lock is not acquired the root quits before composing the legacy runtime or any window', async () => {
+  // AMENDED for ISSUE-243 (was: "… before composing the legacy runtime or any window", counting today's runtime's
+  // compositions): today's runtime left the tree, so the case counts the Panel windows built.
+  it('[ADR-001] when the single-instance lock is not acquired the root quits before composing any window', async () => {
     const lock = new FakeSingleInstanceLock(false)
     const lifecycle = new RecordingLifecycle()
-    const { legacyRuntime, counts, panel } = countingLegacyRuntime()
+    const windows = new FakeWindowFactory()
 
     await startUiMain({
       lock,
       lifecycle,
-      legacyRuntime,
       ipc: new RecordingIpcMain(),
-      appEntry
+      appEntry,
+      panelWindow: fakeRebuiltPanel(windows)
     })
     lifecycle.becomeReady()
     await Promise.resolve()
 
     expect(lock.acquireCalls).toBe(1)
     expect(lifecycle.calls).toEqual(['quit'])
-    expect(counts.composed).toBe(0)
-    expect(panel.calls).toEqual([])
+    expect(windows.built).toEqual([])
     expect(lock.listenerCount).toBe(0)
   })
 
-  it('[US-RES-008.AC01, S10.01] when the lock is acquired the root composes the legacy runtime once the app is ready and a second launch brings its Panel window forward', async () => {
+  // AMENDED for ISSUE-243 (was: '[US-RES-008.AC01, S10.01] when the lock is acquired the root composes the legacy
+  // runtime once the app is ready and a second launch brings its Panel window forward', '[ADR-001] the root hands the app
+  // quit to today’s teardown and keeps running with every window closed' and '[ADR-001] a start whose legacy runtime
+  // cannot be composed exits with code 1'): today's runtime and its Panel window left the tree (21 §2 cut 5). The
+  // rebuilt Panel's start, second launch, quit and failed start are pinned by index.cut0.test.ts.
+
+  // AMENDED for ISSUE-243 (was: "… before composing, and a renderer call is served by today’s handler through
+  // LegacyRuntimeRoute"): no row is served by today's runtime any more; the Panel's own row answers the call.
+  it('[ADR-001] the lock holder registers the router’s seam A listeners before the app is ready, and a renderer call is served by its route', async () => {
     const lock = new FakeSingleInstanceLock(true)
     const lifecycle = new RecordingLifecycle()
-    const { legacyRuntime, counts, panel } = countingLegacyRuntime()
-
-    const started = startUiMain({
-      lock,
-      lifecycle,
-      legacyRuntime,
-      ipc: new RecordingIpcMain(),
-      appEntry
-    })
-    lock.launchAgain() // the lock is taken but the window does not exist yet (UC-033)
-    expect(counts.composed).toBe(0)
-
-    lifecycle.becomeReady()
-    await started
-
-    expect(counts.composed).toBe(1)
-    expect(panel.calls).toEqual(['show'])
-    lock.launchAgain()
-    expect(panel.calls).toEqual(['show', 'show'])
-    expect(lifecycle.calls).not.toContain('quit')
-  })
-
-  it('[ADR-001] the root hands the app quit to today’s teardown and keeps running with every window closed', async () => {
-    const lock = new FakeSingleInstanceLock(true)
-    const lifecycle = new RecordingLifecycle()
-    const { legacyRuntime, counts } = countingLegacyRuntime()
-
-    const started = startUiMain({
-      lock,
-      lifecycle,
-      legacyRuntime,
-      ipc: new RecordingIpcMain(),
-      appEntry
-    })
-    lifecycle.becomeReady()
-    await started
-    lifecycle.handlers.get('window-all-closed')?.()
-    lifecycle.handlers.get('before-quit')?.()
-    lifecycle.handlers.get('will-quit')?.()
-
-    expect(counts).toEqual({ composed: 1, beforeQuit: 1, willQuit: 1 })
-    expect(lifecycle.calls).not.toContain('quit')
-    expect(lifecycle.calls.filter((call) => call.startsWith('exit'))).toEqual([])
-  })
-
-  it('[ADR-001] a start whose legacy runtime cannot be composed exits with code 1', async () => {
-    const lock = new FakeSingleInstanceLock(true)
-    const lifecycle = new RecordingLifecycle()
-    const { legacyRuntime } = countingLegacyRuntime('fails')
-
-    const started = startUiMain({
-      lock,
-      lifecycle,
-      legacyRuntime,
-      ipc: new RecordingIpcMain(),
-      appEntry
-    })
-    lifecycle.becomeReady()
-    await started
-
-    expect(lifecycle.calls).toContain('exit 1')
-  })
-
-  it('[ADR-001] the lock holder registers the router’s seam A listeners before composing, and a renderer call is served by today’s handler through LegacyRuntimeRoute', async () => {
-    const lock = new FakeSingleInstanceLock(true)
-    const lifecycle = new RecordingLifecycle()
-    const { legacyRuntime, counts, served } = countingLegacyRuntime()
     const ipc = new RecordingIpcMain()
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc, appEntry })
-    expect(counts.composed).toBe(0)
+    const started = startUiMain({ lock, lifecycle, ipc, appEntry })
+    expect(lifecycle.calls).not.toContain('quit')
     expect(ipc.handled.has('app:build')).toBe(true)
-    expect(ipc.listened.has('panel:openMine')).toBe(true)
+    expect(ipc.listened.has('panel:hide')).toBe(true)
 
     lifecycle.becomeReady()
-    lifecycle.createWindow(1) // today's Panel window, created by the composition
+    lifecycle.createWindow(1) // the Panel window
     await started
-    expect(await ipc.handled.get('app:build')?.(eventFrom(1), undefined)).toEqual({
-      version: '0.0.0-test'
+    expect(await ipc.handled.get('panel:layout:get')?.(eventFrom(1), undefined)).toEqual({
+      edge: 'right',
+      mineOpen: false,
+      dockOpen: false
     })
-    expect(served).toEqual([['app:build', undefined]])
   })
 
   it('[ADR-019] the root registers each window it creates as a mode window: its app entry is served, a window it never created or one that closed is ignored', async () => {
     const lock = new FakeSingleInstanceLock(true)
     const lifecycle = new RecordingLifecycle()
-    const { legacyRuntime, served } = countingLegacyRuntime()
     const ipc = new RecordingIpcMain()
     const rejected = {
       ok: false,
       error: { code: 'SENDER_REJECTED', message: expect.any(String), retryable: false }
     }
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc, appEntry })
+    const started = startUiMain({ lock, lifecycle, ipc, appEntry })
     // Registered before anything is composed, so the first window the composition creates is known at once.
     expect(lifecycle.calls.indexOf('onWindowCreated')).toBeLessThan(
       lifecycle.calls.indexOf('whenReady')
@@ -292,14 +203,15 @@ describe('ui-main composition root (05 §2.3)', () => {
     lifecycle.becomeReady()
     const panel = lifecycle.createWindow(4)
     await started
-    const build = ipc.handled.get('app:build')
+    // AMENDED for ISSUE-243 (was: A-28 `app:build`, served by today's runtime): A-08, served by the Panel's own row.
+    const layout = ipc.handled.get('panel:layout:get')
+    const served = { edge: 'right', mineOpen: false, dockOpen: false }
 
-    expect(await build?.(eventFrom(4), undefined)).toEqual({ version: '0.0.0-test' })
-    expect(await build?.(eventFrom(5), undefined)).toEqual(rejected)
-    expect(await build?.(eventFrom(4, 'https://attacker.example/'), undefined)).toEqual(rejected)
+    expect(await layout?.(eventFrom(4), undefined)).toEqual(served)
+    expect(await layout?.(eventFrom(5), undefined)).toEqual(rejected)
+    expect(await layout?.(eventFrom(4, 'https://attacker.example/'), undefined)).toEqual(rejected)
     panel.close()
-    expect(await build?.(eventFrom(4), undefined)).toEqual(rejected)
-    expect(served).toEqual([['app:build', undefined]])
+    expect(await layout?.(eventFrom(4), undefined)).toEqual(rejected)
   })
 
   it('[FM-109] an OS resume from sleep after the app is ready wakes the Host client, which pings at once', async () => {
@@ -315,7 +227,6 @@ describe('ui-main composition root (05 §2.3)', () => {
     const started = startUiMain({
       lock: new FakeSingleInstanceLock(true),
       lifecycle,
-      legacyRuntime: countingLegacyRuntime().legacyRuntime,
       ipc: new RecordingIpcMain(),
       appEntry,
       host: { client: host.client }
@@ -330,12 +241,10 @@ describe('ui-main composition root (05 §2.3)', () => {
 
   it('[ADR-001] a process that does not hold the single-instance lock registers no seam A listener', async () => {
     const ipc = new RecordingIpcMain()
-    const { legacyRuntime } = countingLegacyRuntime()
 
     await startUiMain({
       lock: new FakeSingleInstanceLock(false),
       lifecycle: new RecordingLifecycle(),
-      legacyRuntime,
       ipc,
       appEntry
     })
@@ -343,72 +252,9 @@ describe('ui-main composition root (05 §2.3)', () => {
     expect([...ipc.handled.keys(), ...ipc.listened.keys()]).toEqual([])
   })
 
-  it('[ADR-001] the Panel window rows join the ui-local target but stay legacy until the cut-0 switch: no second Panel window, no preference write', async () => {
-    const lock = new FakeSingleInstanceLock(true)
-    const lifecycle = new RecordingLifecycle()
-    const { legacyRuntime, served } = countingLegacyRuntime()
-    const ipc = new RecordingIpcMain()
-    const storage = createInMemoryUiPreferenceStorage()
-    const windows = new FakeWindowFactory()
-    const displayHandlers: Array<() => void> = []
-    let composed: ReturnType<typeof createPanelWindow> | undefined
-    const panelWindow: UiMainDeps['panelWindow'] = () =>
-      (composed = createPanelWindow({
-        windows,
-        surface: {
-          applyZoom: (factor) => factor,
-          bounds: () => windows.panel().bounds ?? { x: 0, y: 0, width: 0, height: 0 },
-          setAlwaysOnTop: (on) => on,
-          isAlwaysOnTop: () => false,
-          raise: () => undefined,
-          isMinimized: () => false,
-          // AMENDED for ISSUE-056 (was: absent): the visibility read-back of the 2026-10-01 amendment.
-          isVisible: () => windows.built.length > 0 && windows.panel().visible,
-          onMinimizedChanged: () => undefined
-        },
-        screen: new FakeScreenAreaProvider([
-          {
-            displayKey: 'primary',
-            bounds: { x: 0, y: 0, width: 1920, height: 1080 },
-            workArea: { x: 0, y: 0, width: 1920, height: 1040 },
-            primary: true
-          }
-        ]),
-        store: new InMemoryUiPreferenceStore(storage),
-        floor: 32,
-        onDisplaysChanged: (h) => displayHandlers.push(h)
-      }))
-
-    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc, appEntry, panelWindow })
-    lifecycle.becomeReady()
-    lifecycle.createWindow(1) // today's Panel window, created by the composition
-    await started
-
-    // The rows are `legacy` in the route table (21 §1 item 4): today's runtime serves them, the rebuilt Panel nothing.
-    await ipc.handled.get('panel:setAlwaysOnTop')?.(eventFrom(1), false)
-    await ipc.handled.get('panel:layout:set')?.(eventFrom(1), { mineOpen: true, dockOpen: false })
-    ipc.listened.get('panel:hide')?.(eventFrom(1), undefined)
-    for (const h of displayHandlers) h()
-    expect(served.map(([channel]) => channel)).toEqual([
-      'panel:setAlwaysOnTop',
-      'panel:layout:set',
-      'panel:hide'
-    ])
-    expect(windows.built, 'no second Panel window').toEqual([])
-    expect(storage.stored, 'no preference write').toEqual({})
-
-    // The part is composed and joins the one ui-local target, ready for the cut-0 switch (ISSUE-056).
-    expect(composed).toBeDefined()
-    const uiLocal = composeUiLocal({
-      panelWindow: composed,
-      modeWindows: createModeWindowRegistry()
-    })
-    expect(await uiLocal?.serve('panel:layout:get', undefined, eventFrom(1))).toEqual({
-      edge: 'right',
-      mineOpen: false,
-      dockOpen: false
-    })
-  })
+  // AMENDED for ISSUE-243 (was: '[ADR-001] the Panel window rows join the ui-local target but stay legacy until the
+  // cut-0 switch: no second Panel window, no preference write'): no table of this tree serves those rows `legacy` any
+  // more (21 §2 cut 5); the part joining the ui-local target is pinned below and in index.cut0.test.ts.
 
   describe('the ui-local route target (ADR-001 item 3; 21 §1 item 1)', () => {
     class RecordingUiLog implements UiLog {

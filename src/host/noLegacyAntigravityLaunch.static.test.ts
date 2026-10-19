@@ -15,7 +15,9 @@ const read = (relative: string): string => readFileSync(resolve(SRC, relative), 
 
 describe('step-3e deletion (21 §2 row 3e)', () => {
   it('[ADR-001] runtime.ts composes no Antigravity held session and no legacy Antigravity launch path remains', () => {
-    const runtime = read('main/runtime/runtime.ts')
+    // AMENDED for ISSUE-243: today's runtime itself left the tree (21 §2 cut 5); while it existed it composed none.
+    const runtimePath = resolve(SRC, 'main/runtime/runtime.ts')
+    const runtime = existsSync(runtimePath) ? readFileSync(runtimePath, 'utf8') : ''
     expect(runtime).not.toMatch(
       /sessionLaunch\/antigravityHeldSession'|\bcreateAntigravityHeldSession\b/
     )

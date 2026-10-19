@@ -65,8 +65,6 @@ export const WINDOW_API_MEMBERS = {
   onShowMine: 'push',
   onTypographyPreferences: 'push',
   pathForDroppedFile: 'helper',
-  setDwarfName: 'invoke',
-  resetDwarfNameToday: 'invoke',
   reportRendererDiagnostic: 'send',
   onStopEverythingRequested: 'push',
   confirmStopEverything: 'invoke',

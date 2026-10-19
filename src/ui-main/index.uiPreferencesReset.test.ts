@@ -4,18 +4,18 @@ import { RecordingUiLog } from './hostLauncher/fakes/RecordingUiLog'
 import { createHostClient, type HostClientService } from './host-client/HostClient'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from './host-client/testing/FakeHost'
 import { FakeHostClientTimers } from './host-client/testing/FakeHostClientTimers'
-import { startUiMain, type UiMainDeps, type UiMainLifecycle } from './index'
+import { startUiMain, type UiMainLifecycle } from './index'
 import type { IpcMainRegistrar } from './ipc/router'
-import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
-import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
 import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceLock'
 import { InMemoryUiPreferenceStore } from './window/ports/fakes/InMemoryUiPreferenceStore'
+import { fakeRebuiltPanel } from './window/testing/fakeRebuiltPanel'
 
 // L2 (17 §1; ADR-024 item 8; ADR-023 item 4 step 5; 14 §4.3 rule 4): the composition root hears the Reset metrics UI
 // step on its Host attach, the snapshot's `meta.resetEpoch` at attach and the `ui.resetPreferences` frame after it, and
 // acknowledges each on the window's `ui` connection. Fakes: the host launcher, the Host (FakeHost behind the real
-// HostClient) and the UI preference store. The window family is served `legacy` here (no rebuilt Panel to compose);
-// the reset is composed with the Host attach whatever the table serves, so the saga never waits on this UI.
+// HostClient) and the UI preference store. AMENDED for ISSUE-243 (was: the window family served `legacy`, today's
+// runtime composed, so no rebuilt Panel): today's runtime left the tree, so the release's table runs with the rebuilt
+// Panel; the reset is composed with the Host attach, so the saga never waits on this UI.
 
 const clients: HostClientService[] = []
 afterEach(() => {
@@ -71,21 +71,14 @@ describe('UI main start: the Reset metrics UI step on the Host attach (ADR-024 i
       onWindowAllClosed: () => {},
       onWindowCreated: () => {}
     }
-    const legacyRuntime: UiMainDeps['legacyRuntime'] = {
-      compose: async () => new FakePanelWindowController({ visible: false }),
-      serve: async () => undefined,
-      beforeQuit: () => {},
-      willQuit: () => {}
-    }
     const ipc: IpcMainRegistrar = { handle: () => {}, on: () => {} }
 
     await startUiMain({
       lock: new FakeSingleInstanceLock(true),
       lifecycle,
-      legacyRuntime,
       ipc,
       appEntry: 'file:///opt/DwarfAI/out/renderer/index.html',
-      routes: PRE_CUT_0_ROUTES,
+      panelWindow: fakeRebuiltPanel(),
       uiPreferences: { store, windows: () => [] },
       host: { client }
     })
