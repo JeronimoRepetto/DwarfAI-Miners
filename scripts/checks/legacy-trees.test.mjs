@@ -173,4 +173,12 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
     expect(JSON.stringify(pkg.scripts)).not.toMatch(/jevMcpServer|build:mcp-server/)
     expect(pkg.build.asarUnpack).not.toContain('out/main/jevMcpServer.mjs')
   })
+
+  it('[ADR-001] src/main/providers holds no file and no source outside it imports it', () => {
+    expectAreaGone(['src/main/providers'])
+  })
+
+  it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/providers', () => {
+    expectNoInvariantIn(['src/main/providers'])
+  })
 })
