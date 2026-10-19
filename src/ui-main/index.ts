@@ -1605,6 +1605,12 @@ export interface UiMainLifecycle {
 
 export interface UiMainDeps {
   lock: SingleInstanceLock
+  /**
+   * The app's own version (AMENDMENT-25; 16 §4.14 as amended): the lock carries it to a running instance, and a later
+   * launch of a newer build makes this instance replace itself with that launch (window/application/secondLaunch.ts).
+   * Absent, the lock carries no version and no later launch is taken as newer.
+   */
+  appVersion?: string
   lifecycle: UiMainLifecycle
   legacyRuntime: Pick<
     LegacyRuntimeRoute,
@@ -1769,9 +1775,10 @@ export async function startUiMain({
   notifications,
   launch = { kind: 'normal', tray: true, window: true },
   startWithSystem,
+  appVersion,
   shellStart
 }: UiMainDeps): Promise<UiMainStarted | undefined> {
-  if (!lock.acquire()) {
+  if (!lock.acquire(appVersion === undefined ? undefined : { appVersion })) {
     lifecycle.quit()
     return undefined
   }
@@ -2144,7 +2151,14 @@ export async function startUiMain({
     ...(hostTarget === undefined ? {} : { host: hostTarget }),
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
   }).register(ipc)
-  const secondLaunch = wireSecondLaunch(lock)
+  // A later launch brings this instance forward, or, when it is of a newer build, this instance replaces itself with
+  // it; the Host is never touched (AMENDMENT-25; ADR-002 D3, D7).
+  const secondLaunch = wireSecondLaunch(
+    lock,
+    appVersion === undefined
+      ? undefined
+      : { appVersion, ...(uiLog === undefined ? {} : { log: uiLog }) }
+  )
   // The launch view, then the Host attach in parallel: neither waits for the other or holds the window back.
   const reopen =
     host === undefined ? null : startReopen({ store: uiPreferences?.store, host: host.client })
@@ -2672,6 +2686,7 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
   )
   void startUiMain({
     lock: new ElectronSingleInstanceLock(app),
+    appVersion: app.getVersion(),
     lifecycle: electronLifecycle(),
     legacyRuntime,
     // The release's table for this build (ISSUE-188; 21 §2 row 3e; ADR-009 D6): a development build adds its

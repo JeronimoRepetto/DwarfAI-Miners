@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest'
 import { FakePanelWindowController } from '../ports/fakes/FakePanelWindowController'
 import { FakeSingleInstanceLock } from '../ports/fakes/FakeSingleInstanceLock'
+import type { UiLogEntry } from '../../diagnostics/uiLogger'
+import { uiRecordRefusal } from '../../diagnostics/uiRecordRules'
 import { wireSecondLaunch } from './secondLaunch'
 
 /**
@@ -76,5 +78,115 @@ describe('second launch (S10.02)', () => {
 
     expect(panel.calls).toEqual(['show'])
     expect(panel.visible).toBe(true)
+  })
+})
+
+/**
+ * A newer build launched while an older one runs (AMENDMENT-25, 16 §4.14 as amended; ADR-002 D3, D7): the running
+ * instance replaces itself with that launch — the lock released, the launch's own program started, this UI process
+ * quit — and never touches the Host. An equal or older launch, or one without a version, keeps today's behaviour.
+ */
+describe('a newer launch replaces the running instance (AMENDMENT-25)', () => {
+  const RUNNING = '0.13.1'
+
+  function recordingLog() {
+    const records: UiLogEntry[] = []
+    const order: string[] = []
+    return {
+      records,
+      order,
+      log: {
+        record: (entry: UiLogEntry) => {
+          records.push(entry)
+          order.push('record')
+        },
+        flush: async () => {
+          order.push('flush')
+        }
+      }
+    }
+  }
+
+  function runningInstance(log = recordingLog()) {
+    const lock = new FakeSingleInstanceLock(true)
+    const panel = new FakePanelWindowController({ visible: false })
+    const secondLaunch = wireSecondLaunch(lock, { appVersion: RUNNING, log: log.log })
+    return { lock, panel, secondLaunch, log }
+  }
+
+  /** Lets the use case finish what it does after the event (the log is written out first). */
+  const settled = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+  it('[ADR-002, US-RES-008.AC03] a launch of a newer version makes the running instance replace itself with it and shows nothing', async () => {
+    const { lock, panel, secondLaunch } = runningInstance()
+    secondLaunch.attach(panel)
+
+    lock.launchAgain({ appVersion: '0.13.2', program: ['DwarfAI-Miners.exe'] })
+    await settled()
+
+    expect(lock.effects).toEqual(['release', 'relaunch DwarfAI-Miners.exe', 'quit'])
+    expect(panel.calls).toEqual([])
+  })
+
+  it('[ADR-002, US-RES-008.AC01, US-RES-008.AC03] an equal or older launch, or one without a version, only brings the window forward', async () => {
+    const { lock, panel, secondLaunch } = runningInstance()
+    secondLaunch.attach(panel)
+
+    lock.launchAgain({ appVersion: RUNNING })
+    lock.launchAgain({ appVersion: '0.13.0' })
+    lock.launchAgain({})
+    lock.launchAgain({ appVersion: 'dev' })
+    await settled()
+
+    expect(lock.effects).toEqual([])
+    expect(lock.replacedItself).toBe(false)
+    expect(panel.calls).toEqual(['show', 'show', 'show', 'show'])
+  })
+
+  it('[ADR-002, US-RES-008.AC03] a newer launch while the running instance is still starting replaces it at once, and the window never shows', async () => {
+    const { lock, panel, secondLaunch } = runningInstance()
+
+    lock.launchAgain({ appVersion: '0.14.0' })
+    await settled()
+    secondLaunch.attach(panel)
+
+    expect(lock.replacedItself).toBe(true)
+    expect(panel.calls).toEqual([])
+  })
+
+  it('[ADR-002, US-RES-008.AC03] once the instance is replacing itself, a further launch neither shows the window nor replaces it again', async () => {
+    const { lock, panel, secondLaunch } = runningInstance()
+    secondLaunch.attach(panel)
+
+    lock.launchAgain({ appVersion: '0.13.2' })
+    lock.launchAgain({ appVersion: RUNNING })
+    lock.launchAgain({ appVersion: '0.13.3' })
+    await settled()
+
+    expect(lock.effects).toEqual(['release', 'relaunch DwarfAI-Miners', 'quit'])
+    expect(panel.calls).toEqual([])
+  })
+
+  it('[ADR-002, ADR-026] stepping aside is logged with allowlisted fields only, and written out before the process quits', async () => {
+    const log = recordingLog()
+    const { lock } = runningInstance(log)
+
+    lock.launchAgain({ appVersion: '0.13.2' })
+    expect(lock.replacedItself).toBe(false)
+    await settled()
+
+    expect(log.records).toEqual([
+      {
+        level: 'info',
+        event: 'ui.single-instance',
+        subsystem: 'window',
+        outcome: 'ok',
+        causeClass: 'replaced-by-newer-launch',
+        msg: 'stepped aside for a newer launch'
+      }
+    ])
+    expect(log.records.map((entry) => uiRecordRefusal(entry))).toEqual([null])
+    expect(log.order).toEqual(['record', 'flush'])
+    expect(lock.replacedItself).toBe(true)
   })
 })
