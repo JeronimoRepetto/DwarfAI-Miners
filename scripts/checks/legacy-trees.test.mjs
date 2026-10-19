@@ -185,4 +185,12 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
   it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/textDelivery', () => {
     expectNoInvariantIn(['src/main/textDelivery'])
   })
+
+  it('[ADR-001] src/main/hooks, src/main/opencodePermissions hold no file and no source outside them imports them', () => {
+    expectAreaGone(['src/main/hooks', 'src/main/opencodePermissions'])
+  })
+
+  it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/hooks, src/main/opencodePermissions', () => {
+    expectNoInvariantIn(['src/main/hooks', 'src/main/opencodePermissions'])
+  })
 })
