@@ -114,4 +114,12 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
   it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/jev', () => {
     expectNoInvariantIn(['src/main/jev'])
   })
+
+  it('[ADR-001] src/main/notifications holds no file and no source outside it imports it', () => {
+    expectAreaGone(['src/main/notifications'])
+  })
+
+  it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/notifications', () => {
+    expectNoInvariantIn(['src/main/notifications'])
+  })
 })
