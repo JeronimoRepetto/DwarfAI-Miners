@@ -1,0 +1,155 @@
+{
+  "spike": "S-019-3",
+  "part": "probe",
+  "environment": {
+    "date": "2026-10-19T05:47:50.929Z",
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "v24.22.0",
+    "runnerOs": "macOS",
+    "imageOs": "macos15",
+    "imageVersion": "20260907.0337.1"
+  },
+  "runs": [
+    {
+      "mode": "off",
+      "exitCode": 0,
+      "stderrTail": "2026-10-19 05:47:23.965 Electron Helper[10757:34151] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n2026-10-19 05:47:23.966 Electron Helper[10757:34150] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n2026-10-19 05:47:23.969 Electron Helper[10757:34150] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n",
+      "report": {
+        "mode": "off",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "darwin",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "",
+          "dictionarySuggestions": []
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    },
+    {
+      "mode": "on",
+      "exitCode": 0,
+      "stderrTail": "2026-10-19 05:47:30.873 Electron Helper[11082:35107] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n2026-10-19 05:47:30.874 Electron Helper[11082:35106] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n2026-10-19 05:47:30.920 Electron Helper[11082:35106] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n",
+      "report": {
+        "mode": "on",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "darwin",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "Thiss",
+          "dictionarySuggestions": ["This", "This's", "Thins", "Hiss", "This'd"]
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    },
+    {
+      "mode": "on-unreachable",
+      "exitCode": 0,
+      "stderrTail": "2026-10-19 05:47:38.123 Electron Helper[11156:35675] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n2026-10-19 05:47:38.123 Electron Helper[11156:35676] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n2026-10-19 05:47:38.140 Electron Helper[11156:35675] XPC error for connection com.apple.backupd.sandbox.xpc: Connection invalid\n",
+      "report": {
+        "mode": "on-unreachable",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "darwin",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "Thiss",
+          "dictionarySuggestions": ["This", "This's", "Hiss", "Thins", "Thijs"]
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    },
+    {
+      "mode": "cached-unreachable",
+      "exitCode": 0,
+      "stderrTail": "",
+      "report": {
+        "mode": "cached-unreachable",
+        "electron": "44.0.0",
+        "chrome": "152.0.7977.54",
+        "platform": "darwin",
+        "requests": 1,
+        "dictionaryEvents": [
+          {
+            "event": "spellcheck-dictionary-initialized",
+            "languageCode": "en-US"
+          }
+        ],
+        "languages": ["en-US"],
+        "availableLanguages": 57,
+        "contextMenu": {
+          "misspelledWord": "Thiss",
+          "dictionarySuggestions": ["This", "This's", "Hiss", "Thins", "Thijs"]
+        },
+        "errors": [],
+        "languagesAfter": ["en-US"],
+        "finished": true,
+        "requestHosts": [],
+        "dictionaryRequests": []
+      },
+      "netLog": {
+        "written": true,
+        "urls": 0,
+        "hosts": [],
+        "dictionaryRequests": []
+      }
+    }
+  ]
+}
