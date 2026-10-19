@@ -242,6 +242,11 @@ a `legacy` row, a window family served `legacy` included, cannot start. 14 §8 I
 this tree; the earlier tables are kept only as they shipped, for the router tests (`testing/adaptersAsShipped.ts` lists
 `LegacyRuntimeRoute` for cuts 0–4b, `testing/cut4aRoutes.ts` the two I-21 rows).
 
+**Legacy-area deletions (ISSUE-333 onward): no rollback rule changes.** Each later cut-5 issue deletes one legacy area
+under `src/main/**` that no route, handler or composition reaches any more (`scripts/checks/legacy-trees.test.mjs`):
+ISSUE-333 the Jev tree (`src/main/jev`). The route table and `rollbackOf` are unchanged by these commits; the area is
+past its rollback point since ISSUE-243, and one revert of the issue's commits restores that area alone.
+
 ## 2. Older artifact (maintainers only, last resort)
 
 Only **cut 0 may roll back to an older artifact**: the pre-cut build, which knows no Host (`21` §2 cut 0 "Rollback").
