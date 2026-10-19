@@ -105,6 +105,11 @@ complete in time (`07` machine 5B S5.19).
 | The Jev key status                          | A-47, and every Jev row that answers the state in force (A-51 on a refused payload), read today's key file through `safeStorage` | A-47 answers the Host's `SecretStatus('jev-key')` through `JevSettingsShapeAdapter`, so a refused A-51 (answered with A-47, `LEGACY_REFUSALS`) does too: with no usable OS secret store for the Host (`secretBackend: 'unavailable'`) it reads `encryption-unavailable` even where Electron's `safeStorage` could encrypt (seen on the macOS CI runner). The seam-A replay leaves such a row out by reading `ROUTES` | ADR-017 items 1, 5; `21` §3.1                                                     |
 | The Host's `toast` frame (B-F28)            | —                                                                                                                                | named, not routed: `14` §2 gives the frame (`HostToast`, for example `dwarf-stop-failed`, `session-crashed`) no seam-A member of its own, and this step adds no row for it (a channel `14` does not list is an amendment, never a silent addition)                                                                                                                                                                   | `14` §2; `21` §2 pre-cut 0 P-3                                                    |
 
+Recorded later (ISSUE-249, 2026-10-19): from this step the chat shows transcript text without display redaction;
+`redactSecrets` covers log lines and activity summaries only, as the package requires. The row is in
+[`parity-cut-5.md`](parity-cut-5.md) "Intended differences" (the owner may ask to restore it; the package does not
+require it).
+
 ## Foreman decision: the credential file names the MCP endpoint (2026-10-18)
 
 Owner-approved in place of the rejected AMENDMENT-24; ADR-013 (not frozen) is the only document whose reading changes,

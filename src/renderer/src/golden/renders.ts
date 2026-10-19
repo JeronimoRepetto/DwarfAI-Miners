@@ -1522,12 +1522,7 @@ const LaunchStage = defineComponent({
                   ? { launched: true, provider: request.provider, launchId: 'golden-launch' }
                   : { launched: false, provider: request.provider, cause: cliCause }
               ),
-            launchHeldSession: () =>
-              Promise.resolve(
-                pushed
-                  ? { launched: true, launchId: 'golden-launch' }
-                  : { launched: false, cause: cliCause }
-              ),
+            // AMENDED for ISSUE-249 (was: also A-38 `launchHeldSession`): A-38 left the facade at cut 5.
             launchHostedProcess: () => Promise.resolve({ launched: false, cause: cliCause })
           }
     Object.defineProperty(window, 'api', {
@@ -1558,7 +1553,6 @@ const LaunchStage = defineComponent({
                   }
                 }),
               launchAgent: never,
-              launchHeldSession: never,
               launchHostedProcess: never
             })
       }

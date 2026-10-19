@@ -106,8 +106,20 @@ export const RETIRED: Partial<Record<ChannelKey, StepId>> = {
  *
  * AMENDED for ISSUE-243, the deletion of today's runtime: 14 §8 I-21's `setDwarfName` and `resetDwarfNameToday` leave
  * with their handlers; every rename and reset is A-N08 `renameDwarf` / A-N09 `resetDwarfName`.
+ *
+ * AMENDED for ISSUE-249, the close of cut 5 (TC-249-02: no RETIRE row keeps a handler or a preload member): the rows
+ * retired with no successor route keep no member either — A-14 `getDwarfFeed`, A-16 `setWatchedDwarf`, A-17
+ * `refreshDwarfTelemetry`, A-18 `setDwarfTuning`, A-P5 `onShowMine` (retired at cut 1), A-37 `listAgentModels` and A-38
+ * `launchHeldSession` (retired at 3a). No renderer code calls them; 14 §7 counts the facade without the 13 RETIRE rows.
  */
 export const MEMBER_REMOVED: Partial<Record<ChannelKey, StepId>> = {
+  'dwarf:feed': 'cut-5',
+  'panel:watchDwarfFeed': 'cut-5',
+  'dwarf:refreshTelemetry': 'cut-5',
+  'dwarf:setTuning': 'cut-5',
+  'panel:mine:show': 'cut-5',
+  'agent:models': 'cut-5',
+  'agent:launchHeld': 'cut-5',
   'dwarf:kick': 'cut-3a',
   'dwarf:retire': 'cut-4b',
   'agent:launchFailed': 'cut-4b',

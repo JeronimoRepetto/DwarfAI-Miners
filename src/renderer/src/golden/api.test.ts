@@ -143,7 +143,8 @@ describe('goldenApi — the window and the app', () => {
     expect(sources.catalogs.map((entry) => entry.models.map((model) => model.value))).toEqual(
       sample.catalogs.map((entry) => entry.models.map((model) => model.value))
     )
-    expect(await api.listAgentModels()).toEqual({ catalogs: sample.catalogs })
+    // AMENDED for ISSUE-249 (was: also A-37 `listAgentModels` answering the sample's catalogues): A-37 left the facade
+    // at cut 5 with its RETIRE row (`MEMBER_REMOVED`); the catalogues reach the Add panel through A-36 above.
   })
 })
 
@@ -170,28 +171,9 @@ describe('goldenApi — the launch view', () => {
   })
 })
 
-/*
- * APPENDED (#635, the MessagePanel slice): a full-screen MessagePanel state reads the open dwarf's
- * conversation, so the bridge answers each dwarf's feed from the sample, and refuses a dwarf the
- * sample does not carry rather than answering it with a guess.
- */
-describe('goldenApi — a dwarf feed', () => {
-  const talker = {
-    id: 'a1',
-    name: 'digger-1',
-    mine: 'north-shaft',
-    role: 'worker',
-    provider: 'Claude',
-    status: 'working',
-    conversation: [{ from: 'dwarf', md: 'Done.', time: '09:07' }]
-  }
-
-  it("answers the dwarf's feed from the sample", async () => {
-    const sample = sampleOf({ mines: [shaft], dwarfs: [talker] })
-    expect(await goldenApi(sample).getDwarfFeed('a1')).toEqual(sample.feeds.a1)
-  })
-
-  it('refuses a dwarf the sample does not carry', async () => {
-    await expect(goldenApi(sampleOf()).getDwarfFeed('nobody')).rejects.toThrow(/nobody/)
-  })
-})
+// REMOVED for ISSUE-249, stated rather than passing unseen (docs/test-removals.md): 'goldenApi — a dwarf feed', its two
+// cases ("answers the dwarf's feed from the sample", "refuses a dwarf the sample does not carry"). A-14 `getDwarfFeed`
+// left the facade at cut 5 with its RETIRE row (`MEMBER_REMOVED`); a full-screen MessagePanel state reads the Host's
+// conversation, which the golden page seeds itself. Coverage of the removal lives in
+// `src/preload/preload.contract.test.ts` ("[ADR-019, ADR-001] every RETIRE row of 14 §2.1 has no handler and no
+// preload member in the release-5 build").

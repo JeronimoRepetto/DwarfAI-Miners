@@ -81,20 +81,10 @@ export interface DwarfAiMinersApi {
   activateDwarf: (
     request: TargetRequest<'dwarf:activate'>
   ) => Promise<TargetResult<'dwarf:activate'>>
-  /** A-14 · `dwarf:feed` · invoke · RETIRE · target shape */
-  getDwarfFeed: (request: TargetRequest<'dwarf:feed'>) => Promise<TargetResult<'dwarf:feed'>>
   /** A-15 · `dwarf:feed:page` · invoke · CHANGE · target shape */
   getDwarfFeedPage: (
     request: TargetRequest<'dwarf:feed:page'>
   ) => Promise<TargetResult<'dwarf:feed:page'>>
-  /** A-16 · `panel:watchDwarfFeed` · send · RETIRE · target shape */
-  setWatchedDwarf: (request: TargetRequest<'panel:watchDwarfFeed'>) => void
-  /** A-17 · `dwarf:refreshTelemetry` · send · RETIRE · target shape */
-  refreshDwarfTelemetry: (request: TargetRequest<'dwarf:refreshTelemetry'>) => void
-  /** A-18 · `dwarf:setTuning` · invoke · RETIRE · target shape */
-  setDwarfTuning: (
-    request: TargetRequest<'dwarf:setTuning'>
-  ) => Promise<TargetResult<'dwarf:setTuning'>>
   /** A-19 · `mine:history` · invoke · CHANGE · target shape */
   getMineHistory: (request: TargetRequest<'mine:history'>) => Promise<TargetResult<'mine:history'>>
   /** A-20 · `mine:openPath` · invoke · KEEP · target shape */
@@ -139,12 +129,6 @@ export interface DwarfAiMinersApi {
   listAgentProviders: (
     request: TargetRequest<'agent:providers'>
   ) => Promise<TargetResult<'agent:providers'>>
-  /** A-37 · `agent:models` · invoke · RETIRE · target shape */
-  listAgentModels: () => Promise<TargetResult<'agent:models'>>
-  /** A-38 · `agent:launchHeld` · invoke · RETIRE · target shape */
-  launchHeldSession: (
-    request: TargetRequest<'agent:launchHeld'>
-  ) => Promise<TargetResult<'agent:launchHeld'>>
   /** A-39 · `agent:launchHosted` · invoke · CHANGE · target shape */
   launchHostedProcess: (
     request: TargetRequest<'agent:launchHosted'>
@@ -205,8 +189,6 @@ export interface DwarfAiMinersApi {
   onPanelVisibility: (
     listener: (payload: TargetResult<'panel:visible:changed'>) => void
   ) => () => void
-  /** A-P5 · `panel:mine:show` · push · RETIRE · target shape */
-  onShowMine: (listener: (payload: TargetResult<'panel:mine:show'>) => void) => () => void
   /** A-P6 · `typography:preferences:changed` · push · KEEP · target shape */
   onTypographyPreferences: (
     listener: (payload: TargetResult<'typography:preferences:changed'>) => void
@@ -324,13 +306,8 @@ const api: DwarfAiMinersApi = {
   setToggleShortcut: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('shortcut:set', textOf(request))),
   activateDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:activate', request)),
-  getDwarfFeed: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:feed', request)),
   getDwarfFeedPage: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('dwarf:feed:page', request)),
-  setWatchedDwarf: (request) => sendOrDrop(() => ipcRenderer.send('panel:watchDwarfFeed', request)),
-  refreshDwarfTelemetry: (request) =>
-    sendOrDrop(() => ipcRenderer.send('dwarf:refreshTelemetry', request)),
-  setDwarfTuning: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:setTuning', request)),
   getMineHistory: (request) => invokeOrReject(() => ipcRenderer.invoke('mine:history', request)),
   openMinePath: (request) =>
     invokeOrReject(() =>
@@ -365,9 +342,6 @@ const api: DwarfAiMinersApi = {
   launchAgent: (request) => invokeOrReject(() => ipcRenderer.invoke('agent:launch', request)),
   listAgentProviders: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('agent:providers', request)),
-  listAgentModels: () => invokeOrReject(() => ipcRenderer.invoke('agent:models')),
-  launchHeldSession: (request) =>
-    invokeOrReject(() => ipcRenderer.invoke('agent:launchHeld', request)),
   launchHostedProcess: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('agent:launchHosted', request)),
   answerDwarfQuestion: (request) =>
@@ -405,13 +379,6 @@ const api: DwarfAiMinersApi = {
     }
     ipcRenderer.on('panel:visible:changed', wrapped)
     return () => ipcRenderer.removeListener('panel:visible:changed', wrapped)
-  },
-  onShowMine: (listener) => {
-    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
-      listener(payload as TargetResult<'panel:mine:show'>)
-    }
-    ipcRenderer.on('panel:mine:show', wrapped)
-    return () => ipcRenderer.removeListener('panel:mine:show', wrapped)
   },
   onTypographyPreferences: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {

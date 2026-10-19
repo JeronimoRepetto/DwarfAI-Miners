@@ -1305,10 +1305,9 @@ describe('useDwarfMessaging chat from the Host read model', () => {
         return () => {
           listener = null
         }
-      }) as unknown as Api['onHostEvent'],
-      getDwarfFeed: vi.fn() as unknown as Api['getDwarfFeed'],
-      setWatchedDwarf: vi.fn() as unknown as Api['setWatchedDwarf'],
-      refreshDwarfTelemetry: vi.fn() as unknown as Api['refreshDwarfTelemetry']
+      }) as unknown as Api['onHostEvent']
+      // AMENDED for ISSUE-249 (was: spies for A-14, A-16 and A-17): those RETIRE rows left the facade at cut 5
+      // (`MEMBER_REMOVED`), and the fake refuses a read of a member the registry does not have.
     })
     Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     return {
@@ -1349,9 +1348,7 @@ describe('useDwarfMessaging chat from the Host read model', () => {
       ]
     })
     expect(useDwarfMessaging().hostOldestMessageId(BORIN)).toBe(id(1))
-    expect(host.api.getDwarfFeed).not.toHaveBeenCalled()
-    expect(host.api.setWatchedDwarf).not.toHaveBeenCalled()
-    expect(host.api.refreshDwarfTelemetry).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-14, A-16 and A-17 never called): those members no longer exist (`MEMBER_REMOVED`).
   })
 
   it('[ADR-033] a frame with seq at or below the snapshot seq is ignored, and resync-required re-reads the snapshot', async () => {

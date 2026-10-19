@@ -138,12 +138,12 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockResolvedValue({ ok: true, value: { outcome: 'raised', mode: 'focus-terminal' } }),
     // An observed session's transcript, read on selection (#159): readable and empty.
-    getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
+    // AMENDED for ISSUE-249 (was: also mocks of the RETIRE rows' members): A-14, A-16, A-17, A-18, A-P5, A-37 and
+    // A-38 left the facade at cut 5 (`MEMBER_REMOVED`), and the fake refuses a member the registry does not have.
     // One page of scrollback (#364): readable, with nothing older.
     getDwarfFeedPage: vi
       .fn()
       .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),
-    setWatchedDwarf: vi.fn(),
     // AMENDED for ISSUE-001 (was: today's `{ delivered, via }`): A-23's 14 answer.
     sendDwarfText: vi.fn(() => Promise.resolve(accepted())),
     // The verdict of a message main HELD (#457), subscribed unconditionally on mount.
@@ -155,8 +155,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // The launch surface (#86): Claude detected and launchable; a launch answers "started". AMENDED for ISSUE-001
     // (was: today's A-36 and A-38): A-36's 14 entries, and A-35 accepted under its `LaunchId`.
     listAgentProviders: vi.fn().mockResolvedValue({ ok: true, value: [supplier('claude')] }),
-    listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
-    launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
     launchAgent: vi.fn().mockResolvedValue({ ok: true, value: { launchId: LAUNCH_ID } }),
     openMinePath: vi.fn().mockResolvedValue({ opened: true }),
     openExternalLink: vi.fn().mockResolvedValue({ opened: true }),
@@ -186,7 +184,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     getAppBuild: vi.fn().mockResolvedValue({ version: '1.2.3', packaged: true }),
     getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnabled: false }),
     queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [] }),
-    refreshDwarfTelemetry: vi.fn(),
     getAudioPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES }),
     setAudioPreferences: vi.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
     // Hidden, as main creates the window: nothing opens a media element jsdom cannot play.
@@ -194,7 +191,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     onPanelVisibility: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-123 (was: `setOpenMine`): A-44 under its 14 name.
     reportVisibleMines: vi.fn(),
-    onShowMine: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-114 (was: absent): the shell also hears A-N16.
     onRevealDwarfChat: vi.fn().mockReturnValue(() => undefined),
     getNotificationsEnabled: vi.fn().mockResolvedValue(true),
@@ -561,7 +557,7 @@ describe('the docked message panel', () => {
     const { wrapper, api } = await openOn([HOST_DWARF], HOST_DWARF_ID, chats.overrides)
 
     expect(api.getHostSnapshot).toHaveBeenCalledWith({ sections: ['tails'] })
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-14 `getDwarfFeed` never called): the member left the facade at cut 5.
     expect(wrapper.find('.dm-bubble__text').text()).toBe('Blasting the last metre')
     expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('Latest activity')
   })
@@ -1065,15 +1061,15 @@ describe('the chat from the Host (ISSUE-123)', () => {
     const chats = hostChats({
       [HOST_DWARF_ID]: [hostRow(HOST_DWARF_ID, 'assistant', 'Halfway down the shaft')]
     })
-    const { wrapper, api } = await openOn([HOST_DWARF], HOST_DWARF_ID, chats.overrides)
+    const { wrapper } = await openOn([HOST_DWARF], HOST_DWARF_ID, chats.overrides)
     const texts = () => wrapper.findAll('.dm-bubble__text').map((bubble) => bubble.text())
     expect(texts()).toEqual(['Halfway down the shaft'])
 
     await chats.append(HOST_DWARF_ID, hostRow(HOST_DWARF_ID, 'assistant', 'Seam exhausted'))
     expect(texts()).toEqual(['Halfway down the shaft', 'Seam exhausted'])
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
-    expect(api.setWatchedDwarf).not.toHaveBeenCalled()
-    expect(api.refreshDwarfTelemetry).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-14 `getDwarfFeed` never called): the member left the facade at cut 5.
+    // AMENDED for ISSUE-249 (was: A-16 `setWatchedDwarf` never called): the member left the facade at cut 5.
+    // AMENDED for ISSUE-249 (was: A-17 `refreshDwarfTelemetry` never called): the member left the facade at cut 5.
   })
 
   it('[ADR-033] a delivered send asks main for nothing more: the words the session took arrive as Host frames', async () => {
@@ -1090,7 +1086,7 @@ describe('the chat from the Host (ISSUE-123)', () => {
 
     expect(api.sendDwarfText).toHaveBeenCalledOnce()
     expect(api.getHostSnapshot.mock.calls.length).toBe(snapshotReads)
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-14 `getDwarfFeed` never called): the member left the facade at cut 5.
   })
 
   it('[ADR-033] a switch to another dwarf draws that dwarf’s chat at once, from the same read model', async () => {

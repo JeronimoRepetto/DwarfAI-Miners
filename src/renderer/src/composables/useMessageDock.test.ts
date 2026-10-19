@@ -126,10 +126,8 @@ describe('useMessageDock on a departure', () => {
         return () => {
           listeners.delete(follow)
         }
-      }) as unknown as Api['onHostEvent'],
-      getDwarfFeed: vi.fn(() =>
-        Promise.resolve({ readable: true, messages: [] })
-      ) as unknown as Api['getDwarfFeed']
+      }) as unknown as Api['onHostEvent']
+      // AMENDED for ISSUE-249: A-14 `getDwarfFeed` left the facade at cut 5 (`MEMBER_REMOVED`).
     })
     Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     await useMines().start()
@@ -458,9 +456,7 @@ describe('useMessageDock answers the card the panel draws (ISSUE-141)', () => {
     const api = createFakeWindowApi({
       getHostSnapshot: vi.fn(() => Promise.resolve(snapshot)) as unknown as Api['getHostSnapshot'],
       onHostEvent: vi.fn(() => () => {}) as unknown as Api['onHostEvent'],
-      getDwarfFeed: vi.fn(() =>
-        Promise.resolve({ readable: true, messages: [] })
-      ) as unknown as Api['getDwarfFeed'],
+      // AMENDED for ISSUE-249: A-14 `getDwarfFeed` left the facade at cut 5 (`MEMBER_REMOVED`).
       getUiSession: vi.fn(() =>
         Promise.resolve({
           drafts: {},

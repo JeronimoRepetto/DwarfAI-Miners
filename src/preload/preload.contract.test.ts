@@ -13,6 +13,7 @@ import type { z } from 'zod'
 import {
   CHANNELS,
   MEMBER_REMOVED,
+  RETIRED,
   PRELOAD_HELPERS,
   ROW_IDS,
   STEP_ORDER,
@@ -412,6 +413,38 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
       .parameter(0)
       .toEqualTypeOf<TodayResult<'panel:visible:changed'>>()
     expectTypeOf<DwarfAiMinersApi['pathForDroppedFile']>().returns.toEqualTypeOf<string>()
+  })
+})
+
+// ISSUE-249 TC-249-02 (ADR-019 item 6, ADR-001): the release-5 build has no handler and no preload member for a RETIRE
+// row, and the facade holds the after-cut-5 member count.
+describe('release-5 facade (14 §2.1 RETIRE rows, §7 counts; 21 §2 cut 5)', () => {
+  it('[ADR-019, ADR-001] every RETIRE row of 14 §2.1 has no handler and no preload member in the release-5 build', () => {
+    expect(ROUTES_RELEASE).toBe('cut-5')
+    const retired = Object.keys(RETIRED) as ChannelKey[]
+    // The 13 RETIRE rows of 14 §2.1, plus the two 14 §8 I-21 legacy rows retired with today's runtime.
+    expect(retired.filter((key) => ROW_IDS[key] !== I21)).toHaveLength(13)
+    const members = new Set(Object.keys(api))
+    const left = retired.flatMap((key) => {
+      const member = memberOf(key) ?? key
+      const problems: string[] = []
+      if (ROUTES.some((route) => route.channel === key)) problems.push(`${key}: has a route`)
+      if (members.has(member)) problems.push(`${key}: preload member ${member}`)
+      return problems
+    })
+    expect(left).toEqual([])
+  })
+
+  it('[ADR-019] the release-5 facade holds the members 14 §7 counts after cut 5', () => {
+    // 14 §7 counts 84 members after cut 5 (35 KEEP + 16 CHANGE + 33 NEW, A-N33 included). The registry holds 78:
+    // - the seven ADR-025 mode/Veta NEW rows A-N13, A-N14, A-N15, A-N22, A-N23, A-N24 and A-N28 are declared by the
+    //   EPIC-19 issues 284–286, which depend on ISSUE-249, so no cut-5 build has them yet (84 − 7 = 77);
+    // - A-N34 `tray:stopEverything:request` (owner amendment 2026-10-01, ISSUE-316) is a NEW row 14 §7 does not
+    //   count (77 + 1 = 78).
+    // Recorded for the lead as a package inconsistency in docs/strangler/parity-cut-5.md; no row is invented here.
+    expect(Object.keys(api)).toHaveLength(84 - 7 + 1)
+    expect(Object.values(ROW_IDS)).not.toContain('A-N13')
+    expect(Object.values(ROW_IDS)).toContain('A-N34')
   })
 })
 

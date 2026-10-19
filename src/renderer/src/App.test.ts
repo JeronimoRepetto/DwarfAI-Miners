@@ -172,10 +172,10 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .mockResolvedValue({ ok: true, value: { outcome: 'raised', mode: 'focus-terminal' } }),
     // The message panel reads an observed session's transcript on selection
     // (#159); a readable-but-empty answer is the quiet default.
-    getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
+    // AMENDED for ISSUE-249 (was: also mocks of the RETIRE rows' members): A-14, A-16, A-17, A-18, A-P5, A-37 and
+    // A-38 left the facade at cut 5 (`MEMBER_REMOVED`), and the fake refuses a member the registry does not have.
     // One-way, like retireDwarf: the panel reports which observed dwarf it
     // has open so main can push that dwarf's feed with the poll (#196).
-    setWatchedDwarf: vi.fn(),
     // The Mine History panel reads the mine's transcripts on open (#192); a
     // readable mine nobody has spoken in is the quiet default.
     // AMENDED for ISSUE-123 (was: today's `{ readable, speakers }`): A-19 reads the Host's message log from the cut-1
@@ -259,7 +259,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
         }
       ]
     }),
-    launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
     launchAgent: vi
       .fn()
       .mockResolvedValue({ ok: true, value: { launchId: '01920000-0000-7000-8000-0000000005b1' } }),
@@ -270,7 +269,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * plain spy, like `retireDwarf`: it is `ipcRenderer.send` with no verdict
      * to await. No existing assertion changed.
      */
-    refreshDwarfTelemetry: vi.fn(),
     /*
      * AMENDED for #96's mutating slice (was: absent). The strip's two selects
      * are fed by #239's catalogue channel and answered through the tuning
@@ -279,20 +277,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * accepted — the verdict that leaves nothing on the strip to say. No
      * existing assertion changed.
      */
-    listAgentModels: vi.fn().mockResolvedValue({
-      catalogs: [
-        {
-          provider: 'claude',
-          models: [
-            { value: 'claude-haiku-4-5' },
-            { value: 'claude-sonnet-5', effortLevels: ['low', 'high'] }
-          ],
-          efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-          source: 'provider'
-        }
-      ]
-    }),
-    setDwarfTuning: vi.fn().mockResolvedValue({ applied: true }),
     /*
      * AMENDED for #174/#173 (was: absent). The shell owns the audio engine, so
      * all four members have to exist even in tests that never make a sound:
@@ -324,7 +308,6 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      */
     // AMENDED for ISSUE-123 (was: `setOpenMine`): A-44 under its 14 name, `reportVisibleMines`, a plain spy too.
     reportVisibleMines: vi.fn(),
-    onShowMine: vi.fn().mockReturnValue(() => undefined),
     // AMENDED for ISSUE-114 (was: absent): the shell also hears A-N16, the reveal a notification click runs.
     onRevealDwarfChat: vi.fn().mockReturnValue(() => undefined),
     getNotificationsEnabled: vi.fn().mockResolvedValue(true),
@@ -2918,7 +2901,7 @@ describe('App system notifications (#316)', () => {
   it('[ADR-019] after the cut-1 switch the notification composable subscribes to onRevealDwarfChat only and no longer to onShowMine', async () => {
     const { api } = await notifiedApp()
     expect(api.onRevealDwarfChat).toHaveBeenCalledOnce()
-    expect(api.onShowMine).not.toHaveBeenCalled()
+    // AMENDED for ISSUE-249 (was: A-P5 `onShowMine` never called): the member left the facade at cut 5.
   })
 
   type Reveal = (t: { mineId: string; dwarfId: string | null }) => void

@@ -294,7 +294,7 @@ describe('useHostConnection', () => {
             ]
           })
         ),
-        listAgentModels: vi.fn(() => Promise.resolve({ catalogs: [] })),
+        // AMENDED for ISSUE-249: A-37 `listAgentModels` left the facade at cut 5 (`MEMBER_REMOVED`).
         getJevSettings: vi.fn(() => Promise.resolve(DEFAULT_JEV_SETTINGS)),
         getNotificationsEnabled: vi.fn(() => Promise.resolve(true)),
         // AMENDED for ISSUE-234 (was: today's `OpenCodeSettings`): A-52 answers the Host's view from the 4a switch.

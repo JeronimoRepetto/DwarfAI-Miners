@@ -141,9 +141,7 @@ async function openDock(
         listeners.delete(follow)
       }
     }) as unknown as Api['onHostEvent'],
-    getDwarfFeed: vi.fn(() =>
-      Promise.resolve({ readable: true, messages: [] })
-    ) as unknown as Api['getDwarfFeed'],
+    // AMENDED for ISSUE-249: A-14 `getDwarfFeed` left the facade at cut 5 (`MEMBER_REMOVED`), so the fake no longer has it.
     ...overrides
   })
   Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
