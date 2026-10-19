@@ -238,3 +238,44 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
     expectNoInvariantIn(['src/main'])
   })
 })
+
+/**
+ * The pure src/shared modules ISSUE-011 re-homed in src/contracts/text, each with the number of test statements its
+ * src/shared test file held when ISSUE-246 deleted it (05 §2.1 `contracts/text/`).
+ */
+const SHARED_REHOMED = {
+  accelerator: 38,
+  consoleText: 15,
+  dwarfName: 56,
+  externalLink: 5,
+  heldSessionText: 2,
+  truncate: 15
+}
+
+/** The `it` / `test` statements of a test file, counted as the census counts them. */
+function statementCount(text) {
+  return [...text.matchAll(/^\s*(?:it|test)(?:\.\w+)*\(/gm)].length
+}
+
+describe('src/shared re-homed (21 §2 cut 5)', () => {
+  it('[ADR-001] no file under src imports src/shared', () => {
+    expect(areaState('src/shared').importers).toEqual([])
+  })
+
+  it('[R9] every src/shared module of the re-home list has its twin in src/contracts/text with a test file of at least the same statement count', () => {
+    for (const [module, statements] of Object.entries(SHARED_REHOMED)) {
+      expect(existsSync(path.join(repoRoot, 'src/contracts/text', `${module}.ts`)), module).toBe(
+        true
+      )
+      const testFile = path.join(repoRoot, 'src/contracts/text', `${module}.test.ts`)
+      expect(existsSync(testFile), `${module}.test.ts`).toBe(true)
+      expect(statementCount(readFileSync(testFile, 'utf8')), module).toBeGreaterThanOrEqual(
+        statements
+      )
+    }
+  })
+
+  it('[ADR-001] src/shared holds no file', () => {
+    expect(filesUnder('src/shared')).toEqual([])
+  })
+})
