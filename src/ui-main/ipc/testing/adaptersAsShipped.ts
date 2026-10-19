@@ -15,6 +15,9 @@
 //
 // AMENDED for ISSUE-243, the deletion of today's runtime: `LegacyRuntimeRoute` (21 §3: cuts 0–5) left with the same
 // rule. The releases that shipped it are cut 0 up to 4b, so it is listed for those.
+//
+// AMENDED for ISSUE-247, the last legacy-bridge deletion: `SecretMigrationBridge` (cuts 3a and 4a) left with the same
+// rule, so today's listing is empty and the shipped listing is the retired one.
 import type { StepId } from '@dwarfai/contracts'
 import { STEP_ORDER } from '@dwarfai/contracts'
 import type { LegacyBridgeAdapter } from '../channelRoute'
@@ -38,7 +41,8 @@ export const RETIRED_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
   { name: 'LegacyAskRelay', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyEndFirstAdapter', cuts: span('cut-0', 'cut-4b'), shapeAdapter: false },
   { name: 'LegacyAnswerShapeAdapter', cuts: span('cut-2', 'cut-4b'), shapeAdapter: true },
-  { name: 'BoardFacadeAdapter', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false }
+  { name: 'BoardFacadeAdapter', cuts: span('cut-1', 'cut-4b'), shapeAdapter: false },
+  { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false }
 ]
 
 /** The listing as the releases up to 4b shipped it: today's listing plus the retired bridges. */

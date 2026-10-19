@@ -27,10 +27,10 @@ export const ROUTES_RELEASE: StepId = 'cut-4b'
  * AMENDED for ISSUE-243, the deletion of today's runtime (was: also `LegacyRuntimeRoute`, cuts 0–5, the one door to
  * today's runtime): no row of this table is `legacy` any more, so the door left the tree with the runtime it composed
  * (21 §2 cut 5, §3); the releases that shipped it list it as they shipped it (`testing/adaptersAsShipped.ts`).
+ * AMENDED for ISSUE-247, the strangler's last door (was: `SecretMigrationBridge`, cuts 3a and 4a): the one-time secret
+ * migration left the tree with src/legacy-bridge, so no adapter is listed (21 §2 cut 5, §3; 14 §6.5 "Router").
  */
-export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = [
-  { name: 'SecretMigrationBridge', cuts: ['cut-3a', 'cut-4a'], shapeAdapter: false }
-]
+export const LEGACY_BRIDGE_ADAPTERS: readonly LegacyBridgeAdapter[] = []
 
 /**
  * A KEEP row the cut-0 switch moved to the rebuilt window module (21 §2 cut 0 "New core serves" U). Its target shape is

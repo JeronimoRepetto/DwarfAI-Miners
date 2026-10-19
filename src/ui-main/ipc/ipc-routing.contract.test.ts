@@ -1,5 +1,5 @@
 // layer: L6
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   CATALOG_PROVIDER_IDS,
   CHANNELS,
@@ -32,9 +32,7 @@ import {
 } from '../index'
 import type { HostEvent } from '../window/ports/hostClient'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { CUT_1_ROLLBACK, CUT_2_ROLLBACK } from '../../contracts/strangler'
 import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
@@ -333,7 +331,13 @@ describe('pre-cut table', () => {
       STEP_ORDER.slice(STEP_ORDER.indexOf(from), STEP_ORDER.indexOf(to) + 1)
     // AMENDED for ISSUE-243 (was: also `LegacyRuntimeRoute`, cuts 0–5): the door left the tree with today's runtime
     // (21 §2 cut 5); the releases that shipped it list it as they shipped it (`testing/adaptersAsShipped.ts`, cuts 0–4b).
-    expect(cuts).toEqual({ SecretMigrationBridge: ['cut-3a', 'cut-4a'] })
+    // AMENDED for ISSUE-247 (was: `SecretMigrationBridge`, cuts 3a and 4a): the last bridge left the tree (21 §2 cut 5,
+    // §3), so nothing is listed; the releases that shipped it list it as they shipped it (`testing/adaptersAsShipped.ts`).
+    expect(cuts).toEqual({})
+    expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'SecretMigrationBridge')?.cuts).toEqual([
+      'cut-3a',
+      'cut-4a'
+    ])
     expect(ADAPTERS_AS_SHIPPED.find((a) => a.name === 'LegacyRuntimeRoute')?.cuts).toEqual(
       span('cut-0', 'cut-4b')
     )
@@ -899,7 +903,9 @@ describe('cut-1 rollback (21 §2 cut 1)', () => {
       ...files(resolve(SRC, 'renderer')),
       ...files(resolve(SRC, 'preload')),
       ...files(resolve(SRC, 'host/modules/preferences')),
+      // AMENDED for ISSUE-247: src/legacy-bridge left the tree (21 §2 cut 5); a folder that is gone holds no reader.
       ...[resolve(SRC, 'ui-main'), resolve(SRC, 'legacy-bridge')]
+        .filter((folder) => existsSync(folder))
         .flatMap((folder) => files(folder))
         .filter((path) => /settings|preferences/i.test(relativeOf(path)))
     ]
@@ -1435,10 +1441,8 @@ describe('cut-1 notifier retirement (21 §2 cut 1)', () => {
     expect(root).not.toMatch(/legacyObserver(Owner|Composition)\b/)
     expect(route).not.toMatch(/observer\.notifier\b/)
     // The only Electron `Notification` of the UI process is the one handed to the Host policy's display adapter.
-    const notificationImporters = [
-      ...productionFiles('ui-main'),
-      ...productionFiles('legacy-bridge')
-    ].filter((file) =>
+    // AMENDED for ISSUE-247 (was: also every production file of src/legacy-bridge): that folder left the tree.
+    const notificationImporters = [...productionFiles('ui-main')].filter((file) =>
       /import\s*\{[^}]*\bNotification\b[^}]*\}\s*from\s*'electron'/.test(read(file))
     )
     expect(notificationImporters).toEqual(['ui-main/index.ts'])
@@ -2120,10 +2124,7 @@ describe('release 3a (21 §2 cut 3a)', () => {
     // left the tree with the 4a retirement.
     const jev = composeJevKeyRows({
       routes: CUT_3A_ROUTES,
-      release: CUT_3A_RELEASE,
       client: client as unknown as Parameters<typeof composeJevKeyRows>[0]['client'],
-      migration: undefined,
-      log: { record: () => {} },
       mintId: () => MINTED
     })
     expect(jev?.part?.channels).toEqual(['jev:apiKey:set', 'jev:apiKey:clear'])
@@ -3236,33 +3237,20 @@ describe('release 4a (21 §2 cut 4a)', () => {
     }
     return {
       calls,
-      client: client as unknown as NonNullable<Parameters<typeof composeJevKeyRows>[0]['client']>
+      client: client as unknown as NonNullable<Parameters<typeof composeJevKeyRows>[0]['client']> &
+        Parameters<typeof composeResetMetricsRow>[0]['client']
     }
   }
 
   /** The Settings parts of the `host` target as the root composes them over `routes`. */
-  function settingsParts(routes: readonly ChannelRoute[], release: StepId) {
+  function settingsParts(routes: readonly ChannelRoute[]) {
     const { client, calls } = settingsHost()
-    const jev = composeJevKeyRows({
-      routes,
-      release,
-      client,
-      migration: undefined,
-      log: { record: () => {} },
-      mintId: () => REQUEST
-    })
+    const jev = composeJevKeyRows({ routes, client, mintId: () => REQUEST })
     const parts = [
       composeSystemNotificationRows({ routes, client, mintId: () => REQUEST }),
       jev?.part,
       composeOpenCodeSettingsRows({ routes, client }),
-      composeOpenCodePasswordRows({
-        routes,
-        release,
-        client,
-        migration: undefined,
-        log: { record: () => {} },
-        mintId: () => REQUEST
-      })?.part,
+      composeOpenCodePasswordRows({ routes, client, mintId: () => REQUEST })?.part,
       composeResetMetricsRow({ routes, client })
     ].filter((part) => part !== undefined)
     return { parts, calls, jev, client }
@@ -3281,7 +3269,7 @@ describe('release 4a (21 §2 cut 4a)', () => {
     }
 
     // Through the root's compositions: every row is a part of the `host` target, and A-33 runs the Host saga alone.
-    const { parts, calls } = settingsParts(DEVELOPMENT, CUT_4A_RELEASE)
+    const { parts, calls } = settingsParts(DEVELOPMENT)
     const served = parts.flatMap((part) => part.channels)
     expect(served.filter((key) => SETTINGS_ROWS.includes(key)).sort()).toEqual(
       [...SETTINGS_ROWS].sort()
@@ -3750,7 +3738,9 @@ describe('legacy-bridge importers (05 R16)', () => {
       ([path, text]) =>
         !path.startsWith('legacy-bridge/') && /(from|import\()\s*'[^']*legacy-bridge\//.test(text)
     )
-    expect(outside.map(([path]) => path)).toEqual(['ui-main/index.ts'])
+    // AMENDED for ISSUE-247 (was: `['ui-main/index.ts']`, the root composing `SecretMigrationBridge`): the last
+    // bridge left the tree, so nothing at all imports src/legacy-bridge (21 §2 cut 5).
+    expect(outside.map(([path]) => path)).toEqual([])
   })
 })
 
@@ -3783,17 +3773,6 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
     hostRoute(SET),
     hostRoute(CLEAR)
   ]
-
-  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
-  const safeStorage = {
-    isEncryptionAvailable: () => true,
-    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
-    decryptString: (data: Buffer) => {
-      const text = data.toString('utf8')
-      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
-      return text.slice('enc:'.length)
-    }
-  }
 
   /** The Host over an in-memory Jev key: B-M10, B-M11 and B-M12, recording each call. */
   function jevHost() {
@@ -3839,25 +3818,16 @@ describe('Jev key rows (21 §2 cut 3a)', () => {
 
   // AMENDED for ISSUE-001 (was: "the release table composes no Jev key row…", over `ROUTES`): from the step-3a switch the
   // release table routes the Jev key rows (`describe('release 3a')`), so the table that composes none is cut 2's.
-  it('[ADR-001] the cut-2 table composes no Jev key row and no migration; a release the adapters do not live in binds neither', async () => {
-    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-217-'))
-    try {
-      const base = {
-        client: jevHost().client,
-        migration: { userDataDir: userData, safeStorage },
-        log: { record: () => {} },
-        mintId: () => MINTED
-      }
-      expect(composeJevKeyRows({ ...base, routes: CUT_2_ROUTES, release: 'cut-2' })).toBeUndefined()
-      const late = composeJevKeyRows({ ...base, routes: JEV_3A, release: 'cut-5' })
-      expect(late?.migration).toBeUndefined()
-      // Without the Host attach nothing is composed.
-      expect(
-        composeJevKeyRows({ ...base, client: undefined, routes: JEV_3A, release: 'cut-3a' })
-      ).toBeUndefined()
-    } finally {
-      await rm(userData, { recursive: true, force: true })
-    }
+  // AMENDED for ISSUE-247 (was: a temp legacy `userData` and a release the bridge does not live in, cut 5): the bridge
+  // left the tree, so no release composes a migration and the composition takes no legacy file at all.
+  it('[ADR-001] the cut-2 table composes no Jev key row and no migration; a release the adapters do not live in binds neither', () => {
+    const base = { client: jevHost().client, mintId: () => MINTED }
+    expect(composeJevKeyRows({ ...base, routes: CUT_2_ROUTES })).toBeUndefined()
+    const late = composeJevKeyRows({ ...base, routes: JEV_3A })
+    expect(late?.part?.channels).toEqual([SET, CLEAR])
+    expect(late).not.toHaveProperty('migration')
+    // Without the Host attach nothing is composed.
+    expect(composeJevKeyRows({ ...base, client: undefined, routes: JEV_3A })).toBeUndefined()
   })
 })
 
@@ -4004,15 +3974,14 @@ describe('step 4a A-52 and A-53 (21 §2 step 4a)', () => {
 
 // ADDED for ISSUE-231: the OpenCode server password rows of step 4a (21 §2 cut 4a, §3 `SecretMigrationBridge`, §4 row
 // "OpenCode server password"). The route rows are the step-4a switch's (later: ISSUE-235); these cases drive a 4a table
-// built here, over a temp legacy `userData` holding today's encrypted password file.
+// built here.
+// AMENDED for ISSUE-247, the cut-5 deletion of `SecretMigrationBridge` (was: also a temp legacy `userData` holding
+// today's encrypted password file, and the cases "[ADR-017, C-23] in a 4a table the legacy password file moves to the
+// Host once before A-54/A-55 answer, and they round-trip through B-M10 and B-M11" and "[NFR-SEC-12] the migrated or typed
+// password never reaches a log line"): the one-time migration left the tree with its bridge (ADR-017 item 8); the rows'
+// own round trip, cap and no-echo cases are in handlers/openCodePassword.contract.test.ts.
 describe('OpenCode server password rows (21 §2 cut 4a)', () => {
-  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
-  const FROM_PANEL = { sender: { id: 7 }, senderFrame: { url: APP_ENTRY } }
-  const senders = { appEntry: APP_ENTRY, isModeWindow: (id: number) => id === 7 }
-  const PASSWORD = ' migrated pass 0231 '
-  const TYPED = 'typed-pass-4a-0231'
   const MINTED = '01920000-0000-7000-a000-000000000231'
-  const PASSWORD_FILE = 'opencode-server-password-v1.json'
   const SET: ChannelKey = 'opencode:password:set' // A-54
   const CLEAR: ChannelKey = 'opencode:password:clear' // A-55
 
@@ -4026,194 +3995,25 @@ describe('OpenCode server password rows (21 §2 cut 4a)', () => {
   /** A-54/A-55 `host`, as ISSUE-235's 4a rows will read. */
   const PASSWORD_4A: ChannelRoute[] = [hostRoute(SET), hostRoute(CLEAR)]
 
-  /** Electron's `safeStorage` as the bridge sees it: a reversible stand-in, never real cryptography. */
-  const safeStorage = {
-    isEncryptionAvailable: () => true,
-    encryptString: (text: string) => Buffer.from(`enc:${text}`, 'utf8'),
-    decryptString: (data: Buffer) => {
-      const text = data.toString('utf8')
-      if (!text.startsWith('enc:')) throw new Error('not ciphertext')
-      return text.slice('enc:'.length)
-    }
-  }
+  /** The Host as the composition sees it: it is never called while the rows are only composed. */
+  const client = {
+    call: () => Promise.reject(new Error('never called'))
+  } as unknown as Parameters<typeof composeOpenCodePasswordRows>[0]['client']
 
-  /** The Host over an in-memory password: B-M10, B-M11 and B-M12, recording each call. */
-  function passwordHost(backend: 'os-secret-store' | 'unavailable' = 'os-secret-store') {
-    const calls: Array<[string, unknown]> = []
-    let password: string | undefined
-    const call = (method: string, params: unknown): Promise<unknown> => {
-      calls.push([method, params])
-      if (method === 'settings.secret.set') {
-        if (backend === 'unavailable') {
-          return Promise.resolve({ ok: false, error: 'backend-unavailable' })
-        }
-        password = (params as { value: string }).value
-        return Promise.resolve({ ok: true, value: { name: 'opencode-password', configured: true } })
-      }
-      if (method === 'settings.secret.clear') {
-        password = undefined
-        return Promise.resolve({
-          ok: true,
-          value: { name: 'opencode-password', configured: false }
-        })
-      }
-      if (method === 'preferences.get') {
-        return Promise.resolve({
-          preferences: {},
-          secrets: [{ name: 'opencode-password', configured: password !== undefined }],
-          secretBackend: backend,
-          integrations: [],
-          welcome: { due: false, legacyFound: [], offered: [] }
-        })
-      }
-      return Promise.reject(new Error(`unexpected ${method}`))
-    }
-    const client = {
-      call,
-      state: () => ({ state: 'connected', hostVersion: '0.0.0-test', compat: false }),
-      onStateChange: () => () => {},
-      withUiConnection: <T>(work: (c: { call: typeof call }) => Promise<T>) => work({ call })
-    }
-    return {
-      calls,
-      password: () => password,
-      client: client as unknown as Parameters<typeof composeOpenCodePasswordRows>[0]['client']
-    }
-  }
-
-  async function seedPassword(userData: string): Promise<void> {
-    const encrypted = safeStorage.encryptString(PASSWORD).toString('base64')
-    await writeFile(join(userData, PASSWORD_FILE), `${JSON.stringify({ encrypted })}\n`)
-  }
-
-  it('[ADR-001] the release table composes no password row and no migration; a release the bridge does not live in runs none', async () => {
-    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
-    try {
-      const base = {
-        client: passwordHost().client,
-        migration: { userDataDir: userData, safeStorage },
-        log: { record: () => {} },
-        mintId: () => MINTED
-      }
-      // AMENDED for ISSUE-235 (was: the release table `ROUTES` / `ROUTES_RELEASE`): the step-4a switch routes
-      // A-54/A-55 `host`, so the table that composes none is the 3e table as it shipped.
-      expect(
-        composeOpenCodePasswordRows({ ...base, routes: CUT_3E_ROUTES, release: CUT_3E_RELEASE })
-      ).toBeUndefined()
-      const late = composeOpenCodePasswordRows({ ...base, routes: PASSWORD_4A, release: 'cut-5' })
-      expect(late?.part.channels).toEqual([SET, CLEAR])
-      expect(late?.migration).toBeUndefined()
-      // Without the Host attach nothing is composed.
-      expect(
-        composeOpenCodePasswordRows({
-          ...base,
-          client: undefined,
-          routes: PASSWORD_4A,
-          release: 'cut-4a'
-        })
-      ).toBeUndefined()
-    } finally {
-      await rm(userData, { recursive: true, force: true })
-    }
-  })
-
-  it('[ADR-017, C-23] in a 4a table the legacy password file moves to the Host once before A-54/A-55 answer, and they round-trip through B-M10 and B-M11', async () => {
-    // TC-231-01, TC-231-02
-    const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
-    try {
-      await seedPassword(userData)
-      const host = passwordHost()
-      const rows = composeOpenCodePasswordRows({
-        routes: PASSWORD_4A,
-        release: 'cut-4a',
-        client: host.client,
-        migration: { userDataDir: userData, safeStorage },
-        log: { record: () => {} },
-        mintId: () => MINTED
-      })
-      expect(rows?.part.channels).toEqual([SET, CLEAR])
-      const router = createRouter({
-        routes: PASSWORD_4A,
-        legacy: { serve: () => Promise.reject(new Error('no legacy password row from 4a')) },
-        ...(rows === undefined ? {} : { host: rows.part.target }),
-        senders
-      })
-      const response = CHANNELS[SET].response
-
-      // A-55 waits for the run: the migrated password was in the Host before the clear, and today's file is gone.
-      expect(response.parse(await router.dispatch(CLEAR, FROM_PANEL as never, undefined))).toEqual({
-        ok: true,
-        value: { permissions: 'off', passwordConfigured: false, secretBackend: 'os-secret-store' }
-      })
-      expect(await readdir(userData)).toEqual([])
-
-      // Over the cap: refused in main, it never crosses.
-      const refused = await router.dispatch(SET, FROM_PANEL as never, 'a'.repeat(1025))
-      expect(JSON.stringify(refused)).not.toContain('a'.repeat(1025))
-
-      const saved = response.parse(await router.dispatch(SET, FROM_PANEL as never, TYPED))
-      expect(saved).toEqual({
-        ok: true,
-        value: { permissions: 'off', passwordConfigured: true, secretBackend: 'os-secret-store' }
-      })
-      expect(JSON.stringify(saved)).not.toContain(TYPED)
-      expect(host.password()).toBe(TYPED)
-      expect(host.calls.filter(([method]) => method.startsWith('settings.secret.'))).toEqual([
-        [
-          'settings.secret.set',
-          { name: 'opencode-password', value: PASSWORD, requestId: MINTED, origin: 'migration' }
-        ],
-        ['settings.secret.clear', { name: 'opencode-password', requestId: MINTED }],
-        [
-          'settings.secret.set',
-          { name: 'opencode-password', value: TYPED, requestId: MINTED, origin: 'settings' }
-        ]
-      ])
-      rows?.migration?.dispose()
-    } finally {
-      await rm(userData, { recursive: true, force: true })
-    }
-  })
-
-  it('[NFR-SEC-12] the migrated or typed password never reaches a log line', async () => {
-    // L7 (17 §1.7 log redaction): the UI log and every console method, over a migration that succeeds, one the Host
-    // refuses, and a typed save.
-    const consoleLines: unknown[][] = []
-    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
-      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
-        consoleLines.push(args)
-      })
-    )
-    const logged: unknown[] = []
-    try {
-      for (const backend of ['os-secret-store', 'unavailable'] as const) {
-        const userData = await mkdtemp(join(tmpdir(), 'dwarfai-231-'))
-        try {
-          await seedPassword(userData)
-          const host = passwordHost(backend)
-          const rows = composeOpenCodePasswordRows({
-            routes: PASSWORD_4A,
-            release: 'cut-4a',
-            client: host.client,
-            migration: { userDataDir: userData, safeStorage },
-            log: { record: (entry) => logged.push(entry) },
-            mintId: () => MINTED
-          })
-          await rows?.part.target.serve(SET, TYPED, FROM_PANEL as never)
-          rows?.migration?.dispose()
-        } finally {
-          await rm(userData, { recursive: true, force: true })
-        }
-      }
-    } finally {
-      for (const spy of spies) spy.mockRestore()
-    }
-
-    expect(logged.length).toBeGreaterThan(0)
-    for (const line of [...logged, ...consoleLines]) {
-      expect(JSON.stringify(line)).not.toContain(PASSWORD.trim())
-      expect(JSON.stringify(line)).not.toContain(TYPED)
-    }
+  // AMENDED for ISSUE-247 (was: over a temp legacy `userData` and a release the bridge does not live in, cut 5): the
+  // bridge left the tree, so no release composes a migration and the composition takes no legacy file at all.
+  it('[ADR-001] the release table composes no password row and no migration; a release the bridge does not live in runs none', () => {
+    const base = { client, mintId: () => MINTED }
+    // AMENDED for ISSUE-235 (was: the release table `ROUTES` / `ROUTES_RELEASE`): the step-4a switch routes
+    // A-54/A-55 `host`, so the table that composes none is the 3e table as it shipped.
+    expect(composeOpenCodePasswordRows({ ...base, routes: CUT_3E_ROUTES })).toBeUndefined()
+    const late = composeOpenCodePasswordRows({ ...base, routes: PASSWORD_4A })
+    expect(late?.part.channels).toEqual([SET, CLEAR])
+    expect(late).not.toHaveProperty('migration')
+    // Without the Host attach nothing is composed.
+    expect(
+      composeOpenCodePasswordRows({ ...base, client: undefined, routes: PASSWORD_4A })
+    ).toBeUndefined()
   })
 })
 
@@ -4309,10 +4109,7 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
     ).toBeUndefined()
     const jev = composeJevKeyRows({
       routes: CUT_3E_ROUTES,
-      release: CUT_3E_RELEASE,
       client,
-      migration: undefined,
-      log: { record: () => {} },
       mintId: () => MINTED
     })
     expect(jev?.part?.channels ?? []).not.toContain(JEV_GET)
@@ -4323,10 +4120,7 @@ describe('Settings rows served by the Host (21 §2 cut 4a)', () => {
     const host = settingsHost()
     const jev = composeJevKeyRows({
       routes: SETTINGS_4A,
-      release: 'cut-4a',
       client: host.client,
-      migration: undefined,
-      log: { record: () => {} },
       mintId: () => MINTED
     })
     const notifications = composeSystemNotificationRows({

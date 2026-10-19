@@ -246,6 +246,15 @@ this tree; the earlier tables are kept only as they shipped, for the router test
 under `src/main/**` that no route, handler or composition reaches any more (`scripts/checks/legacy-trees.test.mjs`):
 ISSUE-333 the Jev tree (`src/main/jev`), ISSUE-334 the notifications tree (`src/main/notifications`), ISSUE-335 the shell tree (`src/main/shell`), ISSUE-339 the ledger tree (`src/main/ledger`), ISSUE-338 the projects, mine-history and tier trees (`src/main/projects`, `src/main/history`, then `src/main/tier` with `src/main/config`, the ISSUE-341 area that was its last importer), ISSUE-332 the delegation tree (`src/main/mcp`; its last three modules left with `src/main/sessionLaunch`) with the standalone `jevMcpServer` build, and ISSUE-337, ISSUE-245 and ISSUE-336 the provider, session-launch and text-delivery trees (`src/main/providers`, `src/main/sessionLaunch`, `src/main/textDelivery`, with the stranded `src/main/platform/cliDetection.ts`, `platformAdapters.ts` and `fakePlatformAdapters.ts`), ISSUE-331 the hook and OpenCode-permission trees (`src/main/hooks`, `src/main/opencodePermissions`), ISSUE-244 every code path that opens `projects-v1.db` (`src/main/appDatabase`, `src/main/dwarfNames` and the writable SQLite adapter of `src/main/adapters`; `scripts/checks/no-legacy-db.mjs` keeps it out, and the file itself stays on the person's disk untouched), ISSUE-340 the platform and adapter trees (`src/main/platform`, `src/main/adapters`, with the stranded `src/main/domain/aggregate.ts`; `safeStorageLike.ts` and `fakeSafeStorage.ts` moved into `src/legacy-bridge/secrets/` until ISSUE-247). The route table and `rollbackOf` are unchanged by these commits; the area is
 past its rollback point since ISSUE-243, and one revert of the issue's commits restores that area alone, except inside the import cycle of foreman decision D1: the provider, session-launch and text-delivery trees import each other, so they left in one commit and one revert restores the three together (each issue keeps its own static test and census rows; an accepted difference for `docs/strangler/parity-cut-5.md`, ISSUE-249).
+ISSUE-341 then deleted the last folders (`src/main/domain`, `src/main/runtime`), so `src/main` holds no file, and
+ISSUE-246 deleted `src/shared` (its pure modules already lived in `src/contracts/text`; `contracts.ts` moved unchanged to
+`src/contracts/wire/today.ts`). Neither changes a route or `rollbackOf`.
+
+**Last legacy-bridge deletion (ISSUE-247): no rollback past this point.** From the ISSUE-247 commits
+`SecretMigrationBridge` and the whole `src/legacy-bridge` folder are gone: `LEGACY_BRIDGE_ADAPTERS` is empty, the
+composition root composes no adapter and no build reads a legacy `safeStorage` secret file again. A rollback build of
+step 3a or 4a, which ran the one-time migration, cannot be made from this tree; the tables that shipped with it are kept
+only as they shipped (`testing/adaptersAsShipped.ts` lists `SecretMigrationBridge` for cuts 3a and 4a).
 
 ## 2. Older artifact (maintainers only, last resort)
 

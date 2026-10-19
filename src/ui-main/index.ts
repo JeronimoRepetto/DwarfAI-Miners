@@ -14,7 +14,6 @@ import {
   nativeImage,
   Notification,
   powerMonitor,
-  safeStorage,
   screen,
   session,
   shell,
@@ -27,9 +26,8 @@ import {
   type StopEverything
 } from './window/application/stopEverything'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './ipc/router'
-import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE, routesForBuild } from './ipc/routes'
+import { ROUTES, routesForBuild } from './ipc/routes'
 import type { ChannelRoute, RouteQualifier } from './ipc/channelRoute'
-import type { LegacyLog } from '../legacy-bridge/legacyDiagnostics'
 import type { TrayController } from './window/ports/trayController'
 import type { PanelWindowController } from './window/ports/panelWindowController'
 import type { ToggleShortcut } from './window/application/toggleShortcut'
@@ -87,12 +85,7 @@ import {
 } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
 import { uiDataDirectory } from './dataDirectory'
-import {
-  DEFAULT_TOGGLE_ACCELERATOR,
-  PROTOCOL_VERSION,
-  type ChannelKey,
-  type StepId
-} from '@dwarfai/contracts'
+import { DEFAULT_TOGGLE_ACCELERATOR, PROTOCOL_VERSION, type ChannelKey } from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
 import { createNativeActions, type ServedNativeActions } from './window/application/nativeActions'
@@ -264,14 +257,6 @@ import {
   ANSWER_WELCOME_ROWS,
   createAnswerWelcomeRow
 } from './ipc/handlers/answerWelcome.host'
-import {
-  createSecretMigrationBridge,
-  LEGACY_JEV_KEY,
-  LEGACY_OPENCODE_PASSWORD,
-  type MigrationHostClient,
-  type SecretMigrationBridge,
-  type SecretMigrationBridgeDeps
-} from '../legacy-bridge/secrets/secretMigrationBridge'
 import { createJevApiKeyRows, JEV_API_KEY_ROWS } from './ipc/handlers/jevApiKey.host'
 import {
   createHostJevSettings,
@@ -538,13 +523,6 @@ export function composePresence(deps: {
   }
 }
 
-/** Whether the legacy-bridge adapter `name` lives in `release`: composed exactly in the steps 21 §3 lists it for. */
-function bridgeLivesIn(name: string, release: StepId): boolean {
-  return LEGACY_BRIDGE_ADAPTERS.some(
-    (adapter) => adapter.name === name && adapter.cuts.includes(release)
-  )
-}
-
 /** The A-40/A-41 answer path as the root composes it from the cut-2 switch (ISSUE-141). */
 export interface AskAnswersComposition {
   /** The A-40/A-41 `host` handlers, for the Host's own AskIds (ISSUE-128); none where no row routes `host`. */
@@ -601,8 +579,6 @@ export function composeAskStepAndIntegrationRows(deps: {
 export interface JevKeyComposition {
   /** A-48/A-49's and, from 4a, A-47/A-51's `host` target part, where the table routes them `host`. */
   part: RouteTargetPart | undefined
-  /** The one-time Jev-key migration, running over the Host attach; disposed at will-quit. */
-  migration: SecretMigrationBridge | undefined
 }
 
 /**
@@ -621,40 +597,22 @@ export interface JevKeyComposition {
  *
  * AMENDED for ISSUE-236, the 4a retirement (was: A-47 through `JevSettingsShapeAdapter` where a route named it, over
  * today's runtime as `legacy`): the adapter left the tree, so A-48/A-49 always answer the `JevSettings` the Host holds.
+ *
+ * AMENDED for ISSUE-247, the cut-5 deletion of `SecretMigrationBridge` (was: in the releases 3a and 4a the bridge moved
+ * today's `safeStorage` Jev-key file into the Host once, and the rows waited for that run): the one-time migration
+ * ended with its releases (21 §3; ADR-017 item 8), so the rows are served at once and no legacy secret file is read.
  */
 export function composeJevKeyRows(deps: {
   routes: readonly ChannelRoute[]
-  release: StepId
-  client: (MigrationHostClient & Pick<HostClient, 'call'>) | undefined
-  migration: Pick<SecretMigrationBridgeDeps, 'userDataDir' | 'safeStorage'> | undefined
-  log: LegacyLog
+  client: Pick<HostClient, 'call'> | undefined
   mintId: () => string
 }): JevKeyComposition | undefined {
-  const { routes, release, client } = deps
+  const { routes, client } = deps
   const rows = JEV_API_KEY_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
   const settingsRows = JEV_SETTINGS_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
   if (client === undefined || (rows.length === 0 && settingsRows.length === 0)) {
     return undefined
   }
-  const migration =
-    rows.length > 0 &&
-    deps.migration !== undefined &&
-    bridgeLivesIn('SecretMigrationBridge', release)
-      ? createSecretMigrationBridge({
-          ...deps.migration,
-          secret: LEGACY_JEV_KEY,
-          hostClient: client,
-          newRequestId: deps.mintId,
-          log: deps.log
-        })
-      : undefined
-  const afterMigration = (target: RouteTarget): RouteTarget =>
-    migration === undefined
-      ? target
-      : {
-          serve: (channel, payload, sender) =>
-            migration.idle().then(() => target.serve(channel, payload, sender))
-        }
   // The `JevSettings` A-48/A-49 answer: the Host's (ISSUE-236: today's preferences through the adapter are gone).
   const settings = createHostJevSettings(client)
   const parts: RouteTargetPart[] = []
@@ -676,9 +634,8 @@ export function composeJevKeyRows(deps: {
         ? undefined
         : {
             channels: parts.flatMap((part) => part.channels),
-            target: afterMigration(composeRouteTargets(parts))
-          },
-    migration
+            target: composeRouteTargets(parts)
+          }
   }
 }
 
@@ -686,8 +643,6 @@ export function composeJevKeyRows(deps: {
 export interface OpenCodePasswordComposition {
   /** A-54/A-55's `host` target part. */
   part: RouteTargetPart
-  /** The one-time password migration, running over the Host attach; disposed at will-quit. */
-  migration: SecretMigrationBridge | undefined
 }
 
 /**
@@ -697,41 +652,21 @@ export interface OpenCodePasswordComposition {
  * Host once (in the releases it is listed for), and both rows are served after the run started so far has settled, so
  * the password is never stored twice (C-23). `undefined` before the step-4a switch (later: ISSUE-235), which routes
  * neither so, or without the Host attach.
+ *
+ * AMENDED for ISSUE-247, the cut-5 deletion of `SecretMigrationBridge` (was: in the release 4a the bridge moved today's
+ * `safeStorage` password file into the Host once, and both rows waited for that run): the one-time migration ended with
+ * its release (21 §3; ADR-017 item 8), so the rows are served at once and no legacy secret file is read.
  */
 export function composeOpenCodePasswordRows(deps: {
   routes: readonly ChannelRoute[]
-  release: StepId
-  client: (MigrationHostClient & Pick<HostClient, 'call'>) | undefined
-  migration: Pick<SecretMigrationBridgeDeps, 'userDataDir' | 'safeStorage'> | undefined
-  log: LegacyLog
+  client: Pick<HostClient, 'call'> | undefined
   mintId: () => string
 }): OpenCodePasswordComposition | undefined {
-  const { routes, release, client } = deps
+  const { routes, client } = deps
   const rows = OPENCODE_PASSWORD_ROWS.filter((channel) => routedTo(routes, channel, 'host'))
   if (client === undefined || rows.length === 0) return undefined
-  const migration =
-    deps.migration !== undefined && bridgeLivesIn('SecretMigrationBridge', release)
-      ? createSecretMigrationBridge({
-          ...deps.migration,
-          secret: LEGACY_OPENCODE_PASSWORD,
-          hostClient: client,
-          newRequestId: deps.mintId,
-          log: deps.log
-        })
-      : undefined
-  const target = createOpenCodePasswordRows({ client, mintId: deps.mintId })
   return {
-    part: {
-      channels: rows,
-      target:
-        migration === undefined
-          ? target
-          : {
-              serve: (channel, payload, sender) =>
-                migration.idle().then(() => target.serve(channel, payload, sender))
-            }
-    },
-    migration
+    part: { channels: rows, target: createOpenCodePasswordRows({ client, mintId: deps.mintId }) }
   }
 }
 
@@ -1014,8 +949,8 @@ export interface UiMainDeps {
   // launched register for `LegacyEndFirstAdapter`): no row is `legacy` any more, and the runtime left the tree.
   /** The route table (default `ROUTES`, the release's own); a test or a rollback table is passed here. */
   routes?: readonly ChannelRoute[]
-  /** The release the table is for (default `ROUTES_RELEASE`): which legacy-bridge adapters live (21 §3). */
-  release?: StepId
+  // AMENDED for ISSUE-247 (was: `release`, the release the table is for, which chose the legacy-bridge adapters living
+  // in it, 21 §3): no adapter is left, so nothing is chosen by release.
   /** Every open window of the app (A-N04, A-N25 pushes; the tray's Quit closes them). */
   appWindows?: () => readonly AppWindow[]
   /** The rebuilt tray (ISSUE-053): its icon and the id of each new confirmation. */
@@ -1060,12 +995,8 @@ export interface UiMainDeps {
    * resume wakes it (13 FM-109). Disposed at will-quit, so a closing app never reconnects or respawns.
    */
   host?: { client: HostClientService }
-  /**
-   * `SecretMigrationBridge` (21 §3, steps 3a and 4a; ADR-017 item 8; ISSUE-217): where today's `safeStorage` files live
-   * and Electron's `safeStorage` to decrypt them with. Run over the Host attach only where the table routes A-48 `host`
-   * (`composeJevKeyRows`, the Jev key) or A-54/A-55 `host` (`composeOpenCodePasswordRows`, the OpenCode password).
-   */
-  secretMigration?: Pick<SecretMigrationBridgeDeps, 'userDataDir' | 'safeStorage'>
+  // AMENDED for ISSUE-247 (was: `secretMigration`, today's `safeStorage` files for `SecretMigrationBridge`, steps 3a and
+  // 4a; ADR-017 item 8): the bridge left the tree with the last adapter of src/legacy-bridge (21 §3).
   /**
    * Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the display adapter and whether S-018-1 passed on this OS.
    * With the rebuilt window family, the Host attach and the UI log, the root draws the `notifier` connection's
@@ -1135,7 +1066,6 @@ export async function startUiMain({
   ipc,
   appEntry,
   routes = ROUTES,
-  release = ROUTES_RELEASE,
   appWindows = () => [],
   tray,
   shortcut,
@@ -1146,7 +1076,6 @@ export async function startUiMain({
   uiLog,
   panelWindow,
   host,
-  secretMigration,
   notifications,
   launch = { kind: 'normal', tray: true, window: true },
   startWithSystem,
@@ -1295,17 +1224,10 @@ export async function startUiMain({
   // A-52/A-53 once the step-4a switch routes them `host` (ISSUE-235; ISSUE-228).
   const openCodeRows =
     host === undefined ? undefined : composeOpenCodeSettingsRows({ routes, client: host.client })
-  // A-47…A-49 and the one-time Jev-key migration, once the step-3a switch routes them (ISSUE-001; ISSUE-217); A-47 and
+  // A-47…A-49, once the step-3a switch routes them (ISSUE-001; ISSUE-217); A-47 and
   // A-51 from the Host once the step-4a switch routes them `host` (ISSUE-235; ISSUE-230).
 
-  const jevKey = composeJevKeyRows({
-    routes,
-    release,
-    client: host?.client,
-    migration: secretMigration,
-    log: uiLog ?? { record: () => {} },
-    mintId: mintSettingsId
-  })
+  const jevKey = composeJevKeyRows({ routes, client: host?.client, mintId: mintSettingsId })
   // A-50, once the step-3a switch routes it `host` (ISSUE-001; ISSUE-192).
   const jevRouteRow =
     host === undefined ? undefined : composeJevRouteRow({ routes, client: host.client })
@@ -1321,13 +1243,10 @@ export async function startUiMain({
   // item 2); the router picks the Host's or the shape adapter's route by it.
   const providerRouting =
     host === undefined ? undefined : composeProviderRouting({ routes, client: host.client })
-  // A-54/A-55 and the one-time OpenCode password migration, once the step-4a switch routes them (ISSUE-235; ISSUE-231).
+  // A-54/A-55, once the step-4a switch routes them (ISSUE-235; ISSUE-231).
   const openCodePassword = composeOpenCodePasswordRows({
     routes,
-    release,
     client: host?.client,
-    migration: secretMigration,
-    log: uiLog ?? { record: () => {} },
     mintId: () => mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
   })
   // A-42/A-43 from the Host once the step-4a switch routes them `host` (ISSUE-235; ISSUE-230).
@@ -1480,10 +1399,8 @@ export async function startUiMain({
     stopConnectionPush?.()
     uiSession?.dispose()
     stopResetListening?.()
-    jevKey?.migration?.dispose()
     stopDwarf?.dispose()
     providerRouting?.dispose()
-    openCodePassword?.migration?.dispose()
     minesAdmin?.dispose()
     hostReads?.dispose()
     stopHearingVisibility?.()
@@ -1973,9 +1890,6 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     },
     launch: uiStartPlanOf(process.argv),
     ...electronStartWithSystem(uiPreferenceStore, uiLog),
-    shellStart: electronShellStart(uiLog),
-    // Today's Jev-key and OpenCode password files live where today's stores wrote them (`src/main/shell/jevApiKey.ts`,
-    // `src/main/opencodePermissions/openCodeServerPassword.ts`, under `userData`).
-    secretMigration: { userDataDir: app.getPath('userData'), safeStorage }
+    shellStart: electronShellStart(uiLog)
   })
 }

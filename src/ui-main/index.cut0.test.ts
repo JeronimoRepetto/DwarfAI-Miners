@@ -275,7 +275,6 @@ async function cut0App(
     ipc,
     appEntry: APP_ENTRY,
     routes: withoutLegacyRows(options.routes ?? ROUTES),
-    release: options.release ?? 'cut-0',
     panelWindow: panel.factory,
     uiLog,
     host: { client },
