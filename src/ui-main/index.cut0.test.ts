@@ -219,6 +219,8 @@ async function cut0App(
     // Host methods advertised beyond the cut-0 ones. AMENDED for ISSUE-243 (was: also the answers of today's rows).
     release?: StepId
     capabilities?: readonly string[]
+    // AMENDMENT-25: the app's own version, which the lock carries and a later launch is compared with.
+    appVersion?: string
   } = {}
 ) {
   const lifecycle = new RecordingLifecycle()
@@ -290,7 +292,8 @@ async function cut0App(
       }),
     ...(options.launch === undefined ? {} : { launch: options.launch }),
     ...(options.startWithSystem === undefined ? {} : { startWithSystem: options.startWithSystem }),
-    ...(options.shellStart === undefined ? {} : { shellStart: options.shellStart })
+    ...(options.shellStart === undefined ? {} : { shellStart: options.shellStart }),
+    ...(options.appVersion === undefined ? {} : { appVersion: options.appVersion })
   })
   lifecycle.becomeReady()
   await started
@@ -725,5 +728,35 @@ describe('the cut-1 composition of UI main (21 §2 cut 1)', () => {
     ipc.listened.get('dwarf:refreshTelemetry')?.(FROM_PANEL, 'claude:s1')
     await settle()
     expect(host.received.length).toBe(before)
+  })
+
+  // AMENDMENT-25 (owner-approved 2026-10-19; 16 §4.14 as amended; ADR-002 D3, D7).
+  it('[ADR-002, US-RES-008.AC03] the lock carries the app’s version, and a launch of a newer build makes the running UI replace itself with it without touching the Host', async () => {
+    const app = await cut0App({ appVersion: '0.13.1' })
+    const before = app.host.received.length
+
+    app.lock.launchAgain({ appVersion: '0.13.2', program: ['DwarfAI-Miners.exe'] })
+    await settle()
+
+    expect(app.lock.acquiredWith).toEqual([{ appVersion: '0.13.1' }])
+    expect(app.lock.effects).toEqual(['release', 'relaunch DwarfAI-Miners.exe', 'quit'])
+    // The Host is never touched (ADR-002 D7): no request, so no host.shutdown and no Stop everything and quit.
+    expect(app.host.received.slice(before)).toEqual([])
+    expect(app.lifecycle.calls.filter((call) => call.startsWith('exit'))).toEqual([])
+    expect(app.lifecycle.calls.slice(-2)).toEqual(['log ui.single-instance', 'log flushed'])
+  })
+
+  it('[ADR-002, US-RES-008.AC01] a launch of the same build only brings the rebuilt Panel forward', async () => {
+    const app = await cut0App({ appVersion: '0.13.1' })
+    const before = app.host.received.length
+
+    app.lock.launchAgain({ appVersion: '0.13.1' })
+    await settle()
+
+    expect(app.lock.effects).toEqual([])
+    expect(app.panel.panel()?.visible()).toBe(true)
+    expect(app.host.received.slice(before).map((request) => request.method)).not.toContain(
+      'host.shutdown'
+    )
   })
 })

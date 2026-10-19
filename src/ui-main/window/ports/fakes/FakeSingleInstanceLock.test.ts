@@ -3,5 +3,5 @@ import { FakeSingleInstanceLock } from './FakeSingleInstanceLock'
 
 runSingleInstanceLockContract('FakeSingleInstanceLock', ({ holdsLock }) => {
   const lock = new FakeSingleInstanceLock(!holdsLock)
-  return { lock, launchAgain: () => lock.launchAgain() }
+  return { lock, launchAgain: (launch) => lock.launchAgain(launch), effects: () => lock.effects }
 })
