@@ -193,4 +193,17 @@ describe('legacy trees removed (21 §2 cut 5)', () => {
   it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/hooks, src/main/opencodePermissions', () => {
     expectNoInvariantIn(['src/main/hooks', 'src/main/opencodePermissions'])
   })
+
+  it('[ADR-001] src/main/tier holds no file and no source outside it imports it', () => {
+    expectAreaGone(['src/main/tier'])
+  })
+
+  it('[ADR-029] no preserved-invariant test referenced by invariants.test.ts lives in src/main/tier', () => {
+    expectNoInvariantIn(['src/main/tier'])
+  })
+
+  // src/main/config is the ISSUE-341 area, but it was the last importer of src/main/tier, so it left with tier (D1).
+  it('[ADR-001] src/main/config, the importer src/main/tier stranded, holds no file and no source outside it imports it', () => {
+    expectAreaGone(['src/main/config'])
+  })
 })
