@@ -399,6 +399,7 @@ describe('ensureHostRunning starts the Host from the versioned copy (ADR-002 D5)
     h.copy.outcome = {
       ok: true,
       sourceDir: '/opt/DwarfAI-Miners',
+      sourceRealDir: '/opt/DwarfAI-Miners',
       contentDir: '/home/j/.local/share/dwarfai/host/1.4.0'
     }
     h.spawner.onLaunch = () => {

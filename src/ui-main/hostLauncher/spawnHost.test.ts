@@ -19,6 +19,7 @@ describe('hostSpawnInputFromCopy (ADR-002 D5)', () => {
     expect(
       hostSpawnInputFromCopy(WINDOWS_HOST, {
         sourceDir: 'C:\\Apps\\DwarfAI-Miners',
+        sourceRealDir: 'C:\\Apps\\DwarfAI-Miners',
         contentDir: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host\\1.4.0'
       })
     ).toEqual({
@@ -39,6 +40,7 @@ describe('hostSpawnInputFromCopy (ADR-002 D5)', () => {
         },
         {
           sourceDir: '/Applications/DwarfAI-Miners.app',
+          sourceRealDir: '/Applications/DwarfAI-Miners.app',
           contentDir: '/Users/j/Library/Application Support/DwarfAI/host/1.4.0/DwarfAI-Miners.app'
         }
       )
@@ -60,6 +62,7 @@ describe('hostSpawnInputFromCopy (ADR-002 D5)', () => {
       },
       {
         sourceDir: '/repo/node_modules/electron/dist',
+        sourceRealDir: '/repo/node_modules/electron/dist',
         contentDir: '/home/j/.local/share/dwarfai/host/0.13.1'
       }
     )
@@ -72,10 +75,41 @@ describe('hostSpawnInputFromCopy (ADR-002 D5)', () => {
     })
   })
 
+  // GitHub #1439 follow-up: a Scoop install starts the app through its `current` junction. The
+  // executable path keeps the junction (`process.execPath`), while Electron resolves the app
+  // archive's real path, so the entry UI main derives from `import.meta.dirname` names the real
+  // version folder. Both must land inside the copy, or the copied executable runs the install's
+  // entry, its resources folder is not the entry's, and the Host takes itself for a dev build.
+  it('[ADR-002, ADR-027, SP-03] an install reached through a link: the executable under the link and the entry under its real folder both land inside the copy', () => {
+    expect(
+      hostSpawnInputFromCopy(
+        {
+          ...WINDOWS_HOST,
+          execPath: 'C:\\Users\\j\\scoop\\apps\\dwarfai-miners\\current\\DwarfAI-Miners.exe',
+          hostEntry:
+            'C:\\Users\\j\\scoop\\apps\\dwarfai-miners\\0.13.1\\resources\\app.asar\\out\\host\\main.js'
+        },
+        {
+          sourceDir: 'C:\\Users\\j\\scoop\\apps\\dwarfai-miners\\current',
+          sourceRealDir: 'C:\\Users\\j\\scoop\\apps\\dwarfai-miners\\0.13.1',
+          contentDir: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host\\0.13.1'
+        }
+      )
+    ).toMatchObject({
+      ok: true,
+      value: {
+        execPath: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host\\0.13.1\\DwarfAI-Miners.exe',
+        hostEntry:
+          'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host\\0.13.1\\resources\\app.asar\\out\\host\\main.js'
+      }
+    })
+  })
+
   it('[ADR-002, ADR-027] an executable outside the copied directory is refused: the Host never runs from the install folder', () => {
     expect(
       hostSpawnInputFromCopy(WINDOWS_HOST, {
         sourceDir: 'C:\\Apps\\Other',
+        sourceRealDir: 'C:\\Apps\\Other',
         contentDir: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host\\1.4.0'
       })
     ).toEqual({ ok: false, errCode: 'EXEC_OUTSIDE_COPY' })
@@ -83,7 +117,11 @@ describe('hostSpawnInputFromCopy (ADR-002 D5)', () => {
     expect(
       hostSpawnInputFromCopy(
         { ...WINDOWS_HOST, execPath: 'C:\\Apps\\DwarfAI-Miners-old\\DwarfAI-Miners.exe' },
-        { sourceDir: 'C:\\Apps\\DwarfAI-Miners', contentDir: 'C:\\copy' }
+        {
+          sourceDir: 'C:\\Apps\\DwarfAI-Miners',
+          sourceRealDir: 'C:\\Apps\\DwarfAI-Miners',
+          contentDir: 'C:\\copy'
+        }
       )
     ).toEqual({ ok: false, errCode: 'EXEC_OUTSIDE_COPY' })
   })
