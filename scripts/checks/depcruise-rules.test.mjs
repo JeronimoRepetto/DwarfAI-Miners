@@ -474,11 +474,10 @@ describe('dependency-cruiser rules (05 §5.2)', () => {
     CRUISE_TIMEOUT_MS
   )
 
-  // R16 (only src/legacy-bridge imports src/main or src/shared) is not proven here. The legacy
-  // `exclude` drops every dependency whose resolved path matches it
-  // (dependency-cruiser 18.4.0 src/extract/extract-dependencies.mjs:180-181), so an import of an
-  // excluded legacy file never reaches R16-legacy-only-through-bridge. The ISSUE-005 canary suite
-  // owns that proof, through ESLint's IMP.legacy group (05 §5.2 notes, §5.3).
+  // R16 (only src/legacy-bridge imports src/main or src/shared) is not proven here. Until ISSUE-248 the legacy
+  // `exclude` dropped every dependency whose resolved path matched it (dependency-cruiser 18.4.0
+  // src/extract/extract-dependencies.mjs:180-181), so the rule could not fire; the canary suite owns the proof: the
+  // R16 canary (ESLint's mirror, ISSUE-005) and the R16-runtime canary (dependency-cruiser, ISSUE-248).
 
   it(
     '[R17] node:child_process outside the three allowed paths is reported as R17-spawn-containment',

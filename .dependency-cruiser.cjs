@@ -1,7 +1,8 @@
 // The dependency rules of record: 05 §5.1 (R1–R11, R14–R17) as configured in 05 §5.2, unchanged in
 // rule names and semantics (ADR-004 item 3: every rule is an error, no warning level). The legacy
-// exclude below may only shrink: scripts/checks/legacy-exclude.baseline.json is its ratchet (21 §1
-// item 7, 17 §1.7 "Legacy window"), checked by scripts/checks/depcruise-rules.test.mjs.
+// exclude only shrank, cut by cut, and is gone since cut 5 (ISSUE-248): scripts/checks/legacy-exclude.baseline.json,
+// its ratchet (21 §1 item 7, 17 §1.7 "Legacy window"), is empty, so every rule covers all of src/; checked by
+// scripts/checks/depcruise-rules.test.mjs.
 //
 // Deviations from 05 §5.2 (package detail gaps resolved in development, owner ruling for ISSUE-004):
 // 1. options.preserveSymlinks: true — pnpm links node_modules/<pkg> into node_modules/.pnpm/, so without
@@ -10,10 +11,10 @@
 //    aggregate (17 §1.1) import vitest and fakes (16 §2.8).
 // 3. R8-renderer-no-node: the same test-file `pathNot` — renderer tests read files with node:fs/path/url;
 //    production renderer code stays covered, and R8-renderer-isolated is unchanged.
-// 4. R16-legacy-only-through-bridge is kept but cannot fire against excluded legacy targets (`exclude`
-//    drops those dependencies, dependency-cruiser src/extract/extract-dependencies.mjs:180-181); the
-//    ISSUE-005 canary suite proves R16 through ESLint's arch/legacy-only-through-bridge rule
-//    (eslint.config.mjs, which replaces 05 §5.3's IMP.legacy group).
+// 4. R16-legacy-only-through-bridge could not fire against excluded legacy targets while the legacy
+//    `exclude` stood (it drops those dependencies, dependency-cruiser src/extract/extract-dependencies.mjs:180-181);
+//    ISSUE-248 removed the exclude after cut 5, and the R16-runtime canary proves the rule fires on an import of
+//    src/main/runtime/runtime.ts. The ISSUE-005 canary R16 proves ESLint's arch/legacy-only-through-bridge mirror.
 // 5. R9 split, owner-approved 2026-10-15, ISSUE-200 (deviation from 05 §5.1 R9, which lets the relay
 //    shim import contracts/logging only): the relay `host/modules/delegation/adapters/mcp/relay/**`
 //    may also import `contracts/host-protocol/**` by relative path (the ADR-003 item 4 frame codec,
@@ -387,7 +388,6 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '^src/(main|shared)/' }, // legacy during the strangler; shrink per cut (ADR-001)
     builtInModules: { add: ['electron'] }, // so `electron` resolves to "electron" (core), not node_modules/…
     tsConfig: { fileName: 'tsconfig.node.json' },
     tsPreCompilationDeps: true, // so `import type` edges exist and carry 'type-only' (R2)
