@@ -4642,6 +4642,15 @@ describe('release 5 (21 §2 cut 5)', () => {
     }
   })
 
+  // ADDED for ISSUE-247 (21 §2 cut 5, §3; 14 §6.5 "Router"): the strangler's last door closes, so the release listing
+  // is empty and the composition root imports and composes no adapter of src/legacy-bridge.
+  it('[ADR-001] the router test lists no legacy-bridge adapter and ui-main composes none', () => {
+    expect(LEGACY_BRIDGE_ADAPTERS).toEqual([])
+    const root = readFileSync(resolve(SRC, 'ui-main/index.ts'), 'utf8')
+    expect(root).not.toMatch(/(\bfrom|\bimport\(?)\s*['"][^'"]*legacy-bridge\//)
+    expect(root).not.toMatch(/\bcreateSecretMigrationBridge\b|\bbridgeLivesIn\b/)
+  })
+
   it('[ADR-001] the adapter list of the router test no longer names BoardFacadeAdapter', () => {
     expect(LEGACY_BRIDGE_ADAPTERS.map((adapter) => adapter.name)).not.toContain(
       'BoardFacadeAdapter'

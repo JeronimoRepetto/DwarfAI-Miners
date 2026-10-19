@@ -279,3 +279,29 @@ describe('src/shared re-homed (21 §2 cut 5)', () => {
     expect(filesUnder('src/shared')).toEqual([])
   })
 })
+
+/** Today's `safeStorage`-encrypted secret files that `SecretMigrationBridge` moved into the Host once (ADR-017 item 8). */
+const LEGACY_SECRET_FILES = ['jev-api-key-v1.json', 'opencode-server-password-v1.json']
+/** A test, contract, testing or fixture file: it may name a legacy file without reading it. */
+const NOT_PRODUCTION = /(\.(test|contract|spec)\.[cm]?[jt]s$|\/(testing|fixtures|__fixtures__)\/)/
+
+describe('src/legacy-bridge removed (21 §2 cut 5)', () => {
+  it('[ADR-004, R16] src/legacy-bridge holds no file and nothing references it', () => {
+    const { left, importers } = areaState('src/legacy-bridge')
+    expect(left, 'src/legacy-bridge still holds files').toEqual([])
+    expect(importers, 'sources import src/legacy-bridge').toEqual([])
+  })
+
+  it('[ADR-017] no file under src reads a legacy safeStorage secret file', () => {
+    const readers = filesUnder('src', (name) => CODE_FILE.test(name))
+      .filter((file) => !NOT_PRODUCTION.test(file))
+      .filter((file) => {
+        const text = readFileSync(path.join(repoRoot, file), 'utf8')
+        return (
+          LEGACY_SECRET_FILES.some((name) => text.includes(name)) ||
+          /\bdecryptString\s*\(/.test(text)
+        )
+      })
+    expect(readers).toEqual([])
+  })
+})
