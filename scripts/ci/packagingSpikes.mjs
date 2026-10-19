@@ -155,3 +155,60 @@ export function uiRecordsOf(text, version) {
   }
   return records
 }
+
+/**
+ * Every record of a product log's text (ADR-026 JSON lines), each as
+ * `{ proc, appVersion, pid, ts, event, outcome, causeClass }`. A torn last line or a blank one is skipped.
+ */
+export function logEntriesOf(text) {
+  const entries = []
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim() === '') continue
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (entry === null || typeof entry !== 'object') continue
+    const { proc, appVersion, pid, ts, event, outcome, causeClass } = entry
+    entries.push({ proc, appVersion, pid, ts, event, outcome, causeClass })
+  }
+  return entries
+}
+
+/**
+ * What AMENDMENT-25 shows in the product logs of S-027-3 step 3, from `since` (an ISO time) on: the older UI's
+ * `ui.single-instance` `replaced-by-newer-launch` record (`steppedAside`), the newer UI's `host.upgrade` record
+ * (`upgrade`, with the D8 `decision`), and the Host's `notifier.respawn` records (`respawns`: a tray the Host started
+ * again raced the relaunched newer UI). `stepAside` holds when the older UI stepped aside and the newer UI then ran the
+ * D8 decision; `msToDecision` is the time between the two records.
+ */
+export function stepAsideOf(entries, { olderVersion, newerVersion, since }) {
+  const from = Date.parse(since)
+  const recent = entries
+    .filter((entry) => Date.parse(entry.ts) >= from)
+    .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
+  const aside = recent.find(
+    (entry) =>
+      entry.proc === 'ui' &&
+      entry.appVersion === olderVersion &&
+      entry.event === 'ui.single-instance' &&
+      entry.causeClass === 'replaced-by-newer-launch'
+  )
+  const upgrade = recent.find(
+    (entry) =>
+      entry.proc === 'ui' && entry.appVersion === newerVersion && entry.event === 'host.upgrade'
+  )
+  const respawns = recent
+    .filter((entry) => entry.proc === 'host' && entry.event === 'notifier.respawn')
+    .map(({ ts, pid }) => ({ ts, pid }))
+  const ms = aside && upgrade ? Date.parse(upgrade.ts) - Date.parse(aside.ts) : null
+  return {
+    steppedAside: aside ? { ts: aside.ts, pid: aside.pid } : null,
+    upgrade: upgrade ? { ts: upgrade.ts, pid: upgrade.pid, decision: upgrade.causeClass } : null,
+    respawns,
+    stepAside: ms !== null && ms >= 0,
+    msToDecision: ms
+  }
+}

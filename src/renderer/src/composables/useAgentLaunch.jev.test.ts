@@ -11,6 +11,10 @@ import { useAgentLaunch } from './useAgentLaunch'
  * choose on (UC-009 a). The card is a request result held in the composable's memory, never a frame and never persisted
  * (INV-87; 11 §6 O-11-11); a late answer after Dismiss, an emptied prompt or a newer ask is dropped. Tested against the
  * generated fake `window.api` (ADR-033 item 7).
+ *
+ * Acceptance: TC-195-01 (AC02 below), TC-195-02 (the AC07 changed and emptied prompt, and the US-LAUNCH-004.AC01
+ * Dismiss cases), TC-195-03 (the AC08 cases). TC-195-04 (R13: `window.api` only in composables, App.vue and main.ts) is
+ * proven by `src/renderer/src/windowApiPlacement.test.ts` and the R13 lint canary.
  */
 
 const MINE = '01920000-0000-7000-8000-0000000004a1'
@@ -92,6 +96,7 @@ beforeEach(() => {
 })
 
 describe('useAgentLaunch: the Jev card from A-50 (ISSUE-195)', () => {
+  // TC-195-01
   it('[US-LAUNCH-003.AC02] an answered routeJevLaunch fills the card and the pickers with the pick', async () => {
     const { asks, launch } = await writing('add a field to this form')
     expect(asks.map((ask) => ask.params)).toEqual([
@@ -112,6 +117,7 @@ describe('useAgentLaunch: the Jev card from A-50 (ISSUE-195)', () => {
     ]).toEqual(['codex', 'gpt-5.6-sol', 'high'])
   })
 
+  // TC-195-02
   it('[US-LAUNCH-003.AC07, INV-87] a changed prompt hides the card, restores the pickers and asks again with the new prompt; the older result is dropped when it arrives', async () => {
     const { asks, launch } = await writing('add a field')
     asks[0]!.answer(suggestion('codex'))
@@ -139,6 +145,32 @@ describe('useAgentLaunch: the Jev card from A-50 (ISSUE-195)', () => {
     expect(launch.state.value.model).toBe('gpt-5.6-sol')
   })
 
+  // TC-195-02
+  it('[US-LAUNCH-003.AC07, INV-87] an emptied prompt hides the card, restores the pickers and asks nothing; the late result is dropped', async () => {
+    const { asks, launch } = await writing('add a field')
+    asks[0]!.answer(suggestion('codex'))
+    await settle()
+    expect(launch.jev.value.routing.phase).toBe('suggested')
+
+    launch.setPrompt('rename the module')
+    launch.setPrompt('   ')
+    await settle()
+
+    expect(asks).toHaveLength(2)
+    expect(launch.jev.value.routing).toEqual({ phase: 'idle' })
+    expect([
+      launch.state.value.choice,
+      launch.state.value.model,
+      launch.state.value.effort
+    ]).toEqual(['claude', 'opus', 'low'])
+
+    asks[1]!.answer(suggestion('codex', 'gpt-5.6-mini', 'medium'))
+    await settle()
+    expect(launch.jev.value.routing).toEqual({ phase: 'idle' })
+    expect(launch.state.value.choice).toBe('claude')
+  })
+
+  // TC-195-03
   it('[US-LAUNCH-003.AC08] a jev-unreachable result shows no card and restores the pickers that stood before', async () => {
     const { asks, launch } = await writing('add a field')
 
@@ -153,6 +185,30 @@ describe('useAgentLaunch: the Jev card from A-50 (ISSUE-195)', () => {
     ]).toEqual(['claude', 'opus', 'low'])
   })
 
+  // TC-195-03
+  it('[US-LAUNCH-003.AC08] a call error, jev-could-not-choose or not-configured shows no card and restores the pickers that stood before', async () => {
+    const answers: Answer[] = [
+      { ok: false, error: { code: 'INTERNAL', message: 'the Host is gone', retryable: true } },
+      { ok: true, value: { ok: false, error: 'jev-could-not-choose' } },
+      { ok: true, value: { ok: false, error: 'not-configured' } }
+    ]
+    for (const answer of answers) {
+      useAgentLaunch().close()
+      const { asks, launch } = await writing('add a field')
+
+      asks[0]!.answer(answer)
+      await settle()
+
+      expect(launch.jev.value.routing).toEqual({ phase: 'idle' })
+      expect([
+        launch.state.value.choice,
+        launch.state.value.model,
+        launch.state.value.effort
+      ]).toEqual(['claude', 'opus', 'low'])
+    }
+  })
+
+  // TC-195-02
   it('[US-LAUNCH-004.AC01, INV-87] after Dismiss a late result is dropped and no card returns', async () => {
     const { asks, launch } = await writing('add a field')
 
