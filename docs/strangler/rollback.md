@@ -244,7 +244,7 @@ this tree; the earlier tables are kept only as they shipped, for the router test
 
 **Legacy-area deletions (ISSUE-333 onward): no rollback rule changes.** Each later cut-5 issue deletes one legacy area
 under `src/main/**` that no route, handler or composition reaches any more (`scripts/checks/legacy-trees.test.mjs`):
-ISSUE-333 the Jev tree (`src/main/jev`), ISSUE-334 the notifications tree (`src/main/notifications`), ISSUE-335 the shell tree (`src/main/shell`), ISSUE-339 the ledger tree (`src/main/ledger`). The route table and `rollbackOf` are unchanged by these commits; the area is
+ISSUE-333 the Jev tree (`src/main/jev`), ISSUE-334 the notifications tree (`src/main/notifications`), ISSUE-335 the shell tree (`src/main/shell`), ISSUE-339 the ledger tree (`src/main/ledger`), ISSUE-338 the projects and mine-history trees (`src/main/projects`, `src/main/history`; `src/main/tier` stays until `src/main/config` leaves). The route table and `rollbackOf` are unchanged by these commits; the area is
 past its rollback point since ISSUE-243, and one revert of the issue's commits restores that area alone.
 
 ## 2. Older artifact (maintainers only, last resort)
