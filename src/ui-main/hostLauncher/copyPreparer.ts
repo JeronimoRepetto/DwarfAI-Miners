@@ -2,13 +2,20 @@
 // versioned copy `<copy root>/<version>/` of the app directory that holds the executable (versionedCopy.ts), then
 // collects the old copies (versionedCopyGc.ts). The launcher calls it only with the spawn gate held, right before
 // the spawn (UC-002). Its contract is testing/copyPreparer.contract.ts.
+//
+// It answers the app directory under both its names: the one the executable is started from and its real path. They
+// differ when the install is reached through a link (a Scoop `current` junction): Electron resolves the app archive's
+// real path, so the Host entry is named under the real folder while the executable keeps the link's name, and the
+// launcher must find both inside the copy (spawnHost.ts `hostSpawnInputFromCopy`).
 import { homedir } from 'node:os'
 import type { CopyRootBuild } from '@dwarfai/contracts'
 import type { UiLog } from '../diagnostics/uiLogger'
+import { plainFs } from './plainFs'
 import type { HostCopyPreparer } from './ports'
 import {
   copySourceOf,
   ensureVersionedCopy,
+  errnoOf,
   nodeCopyOps,
   versionedCopyRoot,
   type CopyPlatform
@@ -61,6 +68,12 @@ export function createCopyPreparer(options: CopyPreparerOptions): HostCopyPrepar
       ops: nodeCopyOps,
       log: options.log
     })
-    return { ok: true, sourceDir, contentDir: copy.contentDir }
+    let sourceRealDir: string
+    try {
+      sourceRealDir = await plainFs.promises.realpath(sourceDir)
+    } catch (error) {
+      return { ok: false, errCode: `COPY_${errnoOf(error)}` }
+    }
+    return { ok: true, sourceDir, sourceRealDir, contentDir: copy.contentDir }
   }
 }

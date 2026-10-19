@@ -88,6 +88,11 @@ export type PreparedHostCopy =
       ok: true
       /** The app directory the copy was made from. */
       sourceDir: string
+      /**
+       * The real path of `sourceDir`: the same folder unless the install is reached through a link (a Scoop `current`
+       * junction). Electron resolves the app archive's real path, so a packaged entry is named under this one.
+       */
+      sourceRealDir: string
       /** Where that directory's copy is: the executable and a packaged entry are found inside it. */
       contentDir: string
     }

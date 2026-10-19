@@ -30,7 +30,7 @@ import { buildManifest, serializeManifest } from './hostManifest'
 import { createNodeHostLauncher } from './index'
 import { IDENTITY_TOLERANCE_MS, createProcessStartReader } from './processStart'
 import { osQueryRunner, thisPlatform } from './testing/osQueryRunner'
-import { copySourceOf, type CopyPlatform } from './versionedCopy'
+import { copySourceOf, packagedResourcesDirOf, type CopyPlatform } from './versionedCopy'
 
 const WINDOWS = process.platform === 'win32'
 const PLATFORM: CopyPlatform =
@@ -269,6 +269,79 @@ describe('the Host runs from its versioned copy (ADR-002 D5, ADR-027 item 2)', (
           'install.json'
         )
         expect(log.byEvent('versioned-copy')).toMatchObject([{ outcome: 'ok', causeClass: 'copy' }])
+      } finally {
+        for (const host of hostRecords(world.hostDataDir)) {
+          if (!(await endProcess(host.pid, host.recordedAtMs))) survivors.push(host.pid)
+        }
+        const removed = await removeFolder(world.root)
+        expect(survivors, 'no Host process is left running').toEqual([])
+        expect(removed, 'the temporary folder is removed').toBe(true)
+      }
+    },
+    CASE_TIMEOUT_MS
+  )
+
+  // GitHub #1439 follow-up (spike lane run 39179212245): a Scoop install starts the app through its
+  // `current` junction. Electron keeps the junction in `process.execPath` but resolves the app
+  // archive's real path, so UI main names the Host entry under the real version folder. That entry
+  // must run from the copy too: run from the install, its resources folder is not the copied
+  // executable's, and the Host takes itself for a development build (DEV_BUILD_ON_RELEASE_DATA).
+  it(
+    '[SP-03, ADR-002, ADR-027] an install reached through a link: the packaged entry, named under the real folder as Electron names it, runs from the copy',
+    async () => {
+      const world = newWorld()
+      const survivors: number[] = []
+      try {
+        const electronSource = copySourceOf(ELECTRON, PLATFORM)
+        const realSource = path.join(world.root, 'apps', 'real', path.basename(electronSource))
+        cpSync(electronSource, realSource, { recursive: true, verbatimSymlinks: true })
+        // A packaged entry inside the app's resources folder: it records the file it runs from,
+        // then is the fake Host.
+        const entryName = 'host-entry.cjs'
+        writeFileSync(
+          path.join(packagedResourcesDirOf(realSource, PLATFORM), entryName),
+          [
+            "const fs = require('node:fs')",
+            "const path = require('node:path')",
+            "fs.writeFileSync(path.join(process.env.DWARFAI_HOST_DATA_DIR, 'entry-ran-from.txt'), __filename)",
+            `require(${JSON.stringify(FAKE_HOST)})`,
+            ''
+          ].join('\n')
+        )
+        mkdirSync(path.dirname(world.manifest), { recursive: true })
+        writeFileSync(world.manifest, serializeManifest(await buildManifest(realSource)))
+        const linkedSource = path.join(world.root, 'apps', 'current', path.basename(electronSource))
+        mkdirSync(path.dirname(linkedSource), { recursive: true })
+        symlinkSync(realSource, linkedSource, 'junction')
+        const log = new RecordingUiLog()
+        const launcher = createNodeHostLauncher({
+          hostDataDir: world.hostDataDir,
+          execPath: path.join(linkedSource, path.relative(electronSource, ELECTRON)),
+          hostEntry: path.join(
+            packagedResourcesDirOf(realpathSync.native(realSource), PLATFORM),
+            entryName
+          ),
+          hostManifest: world.manifest,
+          log,
+          client: { appVersion: VERSION, buildId: 'os-test' },
+          endpoint: world.endpoint,
+          build: 'dev',
+          copyRoot: world.copyRoot,
+          prebuildsDir: path.join(REPO_ROOT, 'prebuilds')
+        })
+
+        expect(await launcher.ensureHostRunning(), JSON.stringify(log.entries)).toBe('spawned')
+
+        const copyDir = path.join(world.copyRoot, VERSION)
+        const ranFrom = readFileSync(path.join(world.hostDataDir, 'entry-ran-from.txt'), 'utf8')
+        expect(isInside(ranFrom, copyDir), `the entry runs from host/<version>/: ${ranFrom}`).toBe(
+          true
+        )
+        expect(isInside(ranFrom, realSource), 'not from the install').toBe(false)
+        const [host] = hostReports(world.hostDataDir)
+        expect(isInside(host?.execPath ?? '', copyDir), 'the executable runs from the copy').toBe(
+          true
+        )
       } finally {
         for (const host of hostRecords(world.hostDataDir)) {
           if (!(await endProcess(host.pid, host.recordedAtMs))) survivors.push(host.pid)

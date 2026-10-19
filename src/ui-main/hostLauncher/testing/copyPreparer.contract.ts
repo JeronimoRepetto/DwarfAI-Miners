@@ -11,6 +11,8 @@ export interface CopyPreparerSubject {
   prepare: HostCopyPreparer
   /** The app directory that holds the executable. */
   sourceDir: string
+  /** The real path of that directory: itself unless it is reached through a link. */
+  sourceRealDir: string
   /** Where this build's copy belongs: `<copy root>/<version>`. */
   copyDir: string
   /** From now on no copy can be made (for the real preparer, this build's manifest is gone). */
@@ -35,6 +37,7 @@ export function runCopyPreparerContract(
 
       if (!prepared.ok) throw new Error(`not prepared: ${prepared.errCode}`)
       expect(prepared.sourceDir).toBe(subject.sourceDir)
+      expect(prepared.sourceRealDir).toBe(subject.sourceRealDir)
       expect(within(prepared.contentDir, subject.copyDir)).toBe(true)
       expect(within(prepared.contentDir, subject.sourceDir)).toBe(false)
     })
