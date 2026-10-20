@@ -217,7 +217,10 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
 
   /** Moves the ladder for a run that landed in `to`. */
   function climbTo(request: Request): void {
-    if (request.open !== undefined && request.mode !== 'hidden') {
+    if (ladder.state === 'not-running' && request.mode !== 'hidden') {
+      // S10.01: the first window after a crash opens as a launch does.
+      climb({ type: 'launch', mode: request.mode })
+    } else if (request.open !== undefined && request.mode !== 'hidden') {
       climb({ type: 'open', to: request.mode, reveal: request.open.reveal })
     } else climb({ type: 'move', to: request.mode })
   }
@@ -535,8 +538,19 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       return { ok: true, value: undefined }
     },
     crashed() {
+      // S27.12, S10.17: whatever ran is lost; the machine starts again from no window, so a later move recovers.
+      current?.cancelWatchdog()
+      const pending = [...(current?.request.answers ?? []), ...(held?.answers ?? [])]
+      current = null
+      held = null
       step({ type: 'crashed' })
+      node = { state: 'settled', mode: 'hidden' }
       climb({ type: 'crashed' })
+      for (const answer of pending) answer(failed('the UI process crashed'))
+      const reveal = heldReveal
+      heldReveal = null
+      const lost = new Error('the UI process crashed before the reveal could run')
+      for (const answer of reveal?.answers ?? []) answer.reject(lost)
     },
     mode: shown,
     offered: () => [...built],

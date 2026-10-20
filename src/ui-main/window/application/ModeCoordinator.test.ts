@@ -452,6 +452,19 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(s.coordinator.mode()).toBe('panel')
   })
 
+  it('[S27.12, S10.17, S10.01] a crash mid-run does not dead-end the coordinator: a later move recovers', async () => {
+    const s = setup({ start: 'panel' })
+    void s.coordinator.moveToMode({ mode: 'veta' })
+    s.coordinator.crashed()
+    expect(s.coordinator.ladder()).toEqual({ state: 'not-running', lastId: 'S10.17' })
+    const back = s.coordinator.moveToMode({ mode: 'panel' })
+    bothDone(s, null, 'panel')
+    s.timing.advance(1_000)
+    expect(await back).toEqual({ ok: true, value: undefined })
+    expect(s.coordinator.mode()).toBe('panel')
+    expect(s.coordinator.ladder()).toEqual({ state: 'panel', lastId: 'S10.01' })
+  })
+
   it('[INV-116] exactly one mode window is shown after every run', async () => {
     const s = setup({ start: 'panel' })
     const path: [AppMode, AppMode][] = [
