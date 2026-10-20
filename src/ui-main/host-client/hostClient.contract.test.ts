@@ -234,6 +234,67 @@ describe('HostClient against FakeHost (16 §4.14.1)', () => {
     expect(host.received).toHaveLength(0)
   })
 
+  it('[ADR-002 D9, 14 §3.10] a query asked while the Host is being spawned answers once the first attach completes', async () => {
+    let release: (r: EnsureHostResult) => void = () => {}
+    const spawning = new Promise<EnsureHostResult>((resolve) => {
+      release = resolve
+    })
+    const { host, client, handler } = world({ launcher: () => spawning })
+    host.board = [meta]
+    client.subscribe(handler)
+    const attach = client.ensureHost()
+    await settle()
+
+    let outcome: unknown = 'pending'
+    const query = client.snapshot({ sections: ['meta'] }).then(
+      (page) => (outcome = page),
+      (error: unknown) => (outcome = error)
+    )
+    await settle()
+    expect(outcome).toBe('pending')
+
+    release('attached')
+    expect(await attach).toBe('available')
+    await query
+
+    expect(outcome).not.toBeInstanceOf(Error)
+    expect(outcome).toMatchObject({ chunks: [meta] })
+  })
+
+  it('[14 §3.10] a query still waiting at its deadline rejects with TIMEOUT', async () => {
+    const spawning = new Promise<EnsureHostResult>(() => {})
+    const { client, timers, handler } = world({ launcher: () => spawning })
+    client.subscribe(handler)
+    void client.ensureHost()
+    await settle()
+
+    const query = client.snapshot({ sections: ['meta'] }).catch((e: unknown) => e)
+    await settle()
+    timers.advance(deadlineOf('session.snapshot', { sections: ['meta'] }))
+    const error = await query
+
+    expect(error).toBeInstanceOf(HostCallError)
+    expect((error as HostCallError).error).toMatchObject({ code: 'TIMEOUT', retryable: true })
+  })
+
+  it('[ADR-002 D9] a mutation before the first attach still rejects HOST_UNAVAILABLE (guard: holds before and after the change)', async () => {
+    const spawning = new Promise<EnsureHostResult>(() => {})
+    const { client, handler } = world({ launcher: () => spawning })
+    client.subscribe(handler)
+    void client.ensureHost()
+    await settle()
+
+    const error = await client
+      .call('host.shutdown', { mode: 'stop-all', requestId: R1 })
+      .catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(HostCallError)
+    expect((error as HostCallError).error).toMatchObject({
+      code: 'HOST_UNAVAILABLE',
+      retryable: true
+    })
+  })
+
   it('[ADR-003, S12.B01] a snapshot asked once connected, while the ui connection is still opening, waits for it and is answered on it', async () => {
     const { host, client, handler } = world()
     host.board = [meta, dwarfs('d1')]

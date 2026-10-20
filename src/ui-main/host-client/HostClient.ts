@@ -797,6 +797,15 @@ class NodeHostClient implements HostClientService {
   private callOn(fixed: HostChannel | null, method: string, params: unknown): Promise<unknown> {
     const capabilities = fixed?.helloOk.capabilities ?? this.advertised
     if (capabilities === null) {
+      const { state } = this.machine.state
+      if (
+        fixed === null &&
+        !isMutation(params) &&
+        this.run !== null &&
+        (state === 'connecting' || state === 'retrying')
+      ) {
+        return this.queryAfterFirstAttach(this.run, method, params)
+      }
       return Promise.reject(new HostCallError(unavailable('no Host has attached yet')))
     }
     if (!isAdvertised(capabilities, method)) {
@@ -839,6 +848,36 @@ class NodeHostClient implements HostClientService {
       )
       this.calls.add(call)
       this.send(call, channel)
+    })
+  }
+
+  /**
+   * A query asked before the first `hello.ok` while the Host is being spawned or reached waits for that attach
+   * (ADR-002 D9: only mutations are disabled while connecting), bounded by its own deadline (14 §3.10). When the
+   * attach settles without a Host, the call is asked again and answers as it would with none.
+   */
+  private queryAfterFirstAttach(
+    run: Promise<HostAvailability>,
+    method: string,
+    params: unknown
+  ): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      let over = false
+      const cancel = this.deps.timers.after(deadlineOf(method, params), () => {
+        over = true
+        reject(
+          new HostCallError({
+            code: 'TIMEOUT',
+            message: 'the call passed its deadline; the Host may still settle it',
+            retryable: true
+          })
+        )
+      })
+      void run.then(() => {
+        cancel()
+        if (over) return
+        this.callOn(null, method, params).then(resolve, reject)
+      })
     })
   }
 
