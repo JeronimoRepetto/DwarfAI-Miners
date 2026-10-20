@@ -48,7 +48,8 @@
 // read) is closed (S4.33), because an `active` session is never in the ledger (07 §4B). A subagent
 // its notification ended that its coordinator resumes while its session runs comes back as its
 // resumed generation, a new identity (`resumedSubagentOf`; owner amendment I): the ended identity
-// itself still never arrives.
+// itself still never arrives. A coordinator's message read while its session is not judged live
+// holds its stream until it is, so a wrong not-live never loses the resume (#1468).
 //
 // Provider errors (ISSUE-084; 13 FM-067, FM-068; ADR-026 item 6): every read of a stream is
 // counted by the `ProviderErrorFold` of domain/providerError.ts, opened once per poll cycle. A read
@@ -530,6 +531,11 @@ export class ObservationLoop {
         alreadyEnded && session !== null && session.closedAt !== null
           ? this.resumedSubagentOf(identity, session, records)
           : null
+      if (generation === 'wait') {
+        // Its coordinator's message waits for the session to run: the cursor stays before it.
+        plan.held = true
+        continue
+      }
       if (generation !== null) {
         if (generation.events.length > 0) {
           const generationKey = providerIdentityKey(generation.identity)
@@ -810,6 +816,10 @@ export class ObservationLoop {
    *   the session's process `live`. The tail of an ending (its last records, read after the
    *   notification) states no such fact, so it brings nothing back. A generation whose session
    *   ended is ended too (`hasEnded`): it never arrives, and a present one is closed (S4.33).
+   * - `wait` when that fact is read while no adapter reports the session `live` and the session
+   *   has not ended: the batch is held, so the cursor stays before the message and the next cycle
+   *   reads it again; it resumes once the session is judged live (#1468: a wrong not-live is not
+   *   final). Nothing is kept in memory, so a Host restart reads the same message again.
    *
    * The names derive from the stored departures alone, so a Host restart derives the same ones;
    * when a restart lost when the present generation resumed, its predecessor's departure stands in.
@@ -818,7 +828,7 @@ export class ObservationLoop {
     identity: ProviderIdentity,
     session: ObservedSession,
     records: ObservedEvent[]
-  ): IdentityRecords | null {
+  ): IdentityRecords | 'wait' | null {
     const ended = this.deps.ended
     if (identity.providerAgentId === undefined || ended === undefined || !ended.has(identity)) {
       return null
@@ -847,7 +857,17 @@ export class ObservationLoop {
       const live = (this.deps.presence ?? []).some((p) => p.presenceOf(identity) === 'live')
       const after = Math.max(departedAt, this.lastEnding.get(key) ?? departedAt)
       const resume = records.find((r) => r.kind === 'session' && r.at > after)
-      if (!live || resume?.kind !== 'session') return null
+      if (resume?.kind !== 'session') return null
+      if (!live) {
+        // A wrong not-live is not final (#1468): the message waits until the session runs. Once
+        // the session itself ended, nothing will ever run it again: the cursor moves on.
+        return this.hasEnded({
+          providerId: identity.providerId,
+          providerSessionId: identity.providerSessionId
+        })
+          ? null
+          : 'wait'
+      }
       this.resumedAt.set(nextKey, resume.at)
       return taken(next, resume.at)
     }
