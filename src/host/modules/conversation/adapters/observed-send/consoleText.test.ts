@@ -5,10 +5,14 @@
 // argument — never inside a script or a command line a shell would parse.
 import { describe, expect, it } from 'vitest'
 import {
+  BRACKETED_PASTE_END,
+  BRACKETED_PASTE_START,
   MAX_CONSOLE_CHUNK_CODE_POINTS,
   MAX_RELAY_TEXT_CODE_POINTS,
   TMUX_BUFFER_NAME,
   boundedChunks,
+  pastedPathOf,
+  relayPayloadOf,
   relayTextOf,
   terminalTabTextArgs,
   tmuxLoadBufferArgs,
@@ -111,5 +115,71 @@ describe('tmux and Terminal.app: the text as data, never a command line', () => 
     expect(args[1]).toContain('do script "" in t')
     expect(terminalTabTextArgs('ttys004', text)).toBeNull()
     expect(terminalTabTextArgs('/dev/ttys004', '')).toBeNull()
+  })
+})
+
+/*
+ * APPENDED for #1463: an observed Claude session's files, the way legacy measured them (#408,
+ * `attachmentDelivery.ts` `consoleChunksFor`, the console-hosting research §6): each path inside
+ * bracketed-paste markers, so the receiving CLI attaches it as if it were dropped on the terminal,
+ * then the words, then Enter in a call of its own.
+ */
+describe('relayPayloadOf: the files and the words a terminal is handed', () => {
+  it('[US-MSG-002.AC03] wraps each path in bracketed-paste markers, in the order sent, ahead of the relay text', () => {
+    expect(BRACKETED_PASTE_START).toBe('\u001b[200~')
+    expect(BRACKETED_PASTE_END).toBe('\u001b[201~')
+    expect(relayPayloadOf(' look\n at  this ', ['C:\\work\\red.png', '/work/notes.txt'])).toEqual({
+      pastes: ['\u001b[200~C:\\work\\red.png\u001b[201~', '\u001b[200~/work/notes.txt\u001b[201~'],
+      words: 'look at this'
+    })
+  })
+
+  it('[US-MSG-002.AC03] carries files with no words, and is nothing at all with neither', () => {
+    expect(relayPayloadOf('  ', ['/work/red.png'])).toEqual({
+      pastes: ['\u001b[200~/work/red.png\u001b[201~'],
+      words: ''
+    })
+    expect(relayPayloadOf(' \n ', [])).toBeNull()
+    expect(relayPayloadOf('dig', [])).toEqual({ pastes: [], words: 'dig' })
+  })
+
+  it('[ADR-012] refuses the whole message for a path a terminal cannot take whole: a control character, or past one chunk', () => {
+    for (const path of [
+      '/work/a\nb.png',
+      '/work/a\rb.png',
+      '/work/\u001b[201~x',
+      '/work/\u0007.png'
+    ]) {
+      expect(pastedPathOf(path)).toBeNull()
+      expect(relayPayloadOf('dig', ['/work/ok.png', path])).toBeNull()
+    }
+    const fits = `/${'p'.repeat(MAX_CONSOLE_CHUNK_CODE_POINTS - BRACKETED_PASTE_START.length - BRACKETED_PASTE_END.length - 1)}`
+    expect(pastedPathOf(fits)).toBe(`${BRACKETED_PASTE_START}${fits}${BRACKETED_PASTE_END}`)
+    expect(pastedPathOf(`${fits}p`)).toBeNull()
+    expect(pastedPathOf('')).toBeNull()
+  })
+
+  it('[ADR-012] refuses a message whose files and words together pass the relay bound', () => {
+    const paste = `${BRACKETED_PASTE_START}/work/a.png${BRACKETED_PASTE_END}`
+    const words = 'x'.repeat(MAX_RELAY_TEXT_CODE_POINTS - paste.length)
+    expect(relayPayloadOf(words, ['/work/a.png'])).toEqual({ pastes: [paste], words })
+    expect(relayPayloadOf(words, ['/work/ab.png'])).toBeNull()
+  })
+})
+
+describe('windowsTextWriteScript with files (#1463)', () => {
+  it('[US-MSG-002.AC03] writes each paste in a call of its own, then the words, then Enter alone', () => {
+    const paste = '\u001b[200~C:\\work\\red.png\u001b[201~'
+    const script = windowsTextWriteScript(4242, 'look', [paste])!
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)).toHaveLength(3)
+    expect(script).not.toContain('red.png')
+    expect(script.indexOf(utf16(paste))).toBeGreaterThan(-1)
+    expect(script.indexOf(utf16(paste))).toBeLessThan(script.indexOf(utf16('look')))
+    expect(script.indexOf(utf16('look'))).toBeLessThan(script.indexOf(utf16('\r')))
+  })
+
+  it('[US-MSG-002.AC03] a message of files alone is the pastes and Enter, with no empty call', () => {
+    const script = windowsTextWriteScript(7, '', ['\u001b[200~/a.png\u001b[201~'])!
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)).toHaveLength(2)
   })
 })

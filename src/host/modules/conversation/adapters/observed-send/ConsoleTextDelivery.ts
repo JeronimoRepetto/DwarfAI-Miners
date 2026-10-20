@@ -20,6 +20,11 @@
 //   argument, as legacy measured it). Anything else cannot be positively targeted: nothing is typed and
 //   nothing is synthesized into a foreground window.
 //
+// Files (#1463): each Host-revalidated path is a bracketed paste ahead of the relay text
+// (consoleText.ts `relayPayloadOf`, legacy #408): on Windows each paste in a write of its own, on
+// tmux and Terminal.app the pastes and the words as one payload; a path no terminal can take whole
+// means nothing is written (`not-targeted`).
+//
 // Outcomes: `written`; `not-targeted` (nothing was written: no relay text, no terminal found, the
 // identity unreadable, the attach or `CONIN$` refused, a tool that would not start); `gone` (the
 // session's process is not the recorded one any more, nothing written); `incomplete` (a write began
@@ -39,7 +44,8 @@ import {
 } from './consoleKeys'
 import {
   SUBMIT_SPLIT_DELAY_MS,
-  relayTextOf,
+  relayPayloadOf,
+  type RelayPayload,
   terminalTabTextArgs,
   tmuxLoadBufferArgs,
   tmuxPasteArgs,
@@ -82,17 +88,26 @@ const STOPPED = { gone: 'gone', unreadable: 'not-targeted' } as const
 export class ConsoleTextDelivery {
   constructor(private readonly deps: ConsoleTextDeliveryDeps) {}
 
-  /** Types `text` into the terminal of the process `target` and submits it, or writes nothing. */
-  async write(target: ProcessIdentity, text: string): Promise<TextWriteOutcome> {
-    const relay = relayTextOf(text)
-    if (relay === null) return 'not-targeted'
+  /**
+   * Types `text` into the terminal of the process `target` and submits it, or writes nothing. Each
+   * of `paths` (Host-revalidated, #1463) goes first as a bracketed paste (`relayPayloadOf`); one
+   * that no terminal can take whole means nothing at all is written.
+   */
+  async write(
+    target: ProcessIdentity,
+    text: string,
+    paths: readonly string[] = []
+  ): Promise<TextWriteOutcome> {
+    const payload = relayPayloadOf(text, paths)
+    if (payload === null) return 'not-targeted'
     try {
       switch (this.deps.platform) {
         case 'win32':
-          return await this.writeToConsole(target, relay)
+          return await this.writeToConsole(target, payload)
         case 'darwin':
         case 'linux':
-          return await this.writeToTerminalOfTty(target, relay)
+          // One paste carries both: the files' markers, then the words (legacy, #408).
+          return await this.writeToTerminalOfTty(target, payload.pastes.join('') + payload.words)
         default:
           return 'not-targeted'
       }
@@ -101,8 +116,11 @@ export class ConsoleTextDelivery {
     }
   }
 
-  private async writeToConsole(target: ProcessIdentity, relay: string): Promise<TextWriteOutcome> {
-    const script = windowsTextWriteScript(target.pid, relay)
+  private async writeToConsole(
+    target: ProcessIdentity,
+    payload: RelayPayload
+  ): Promise<TextWriteOutcome> {
+    const script = windowsTextWriteScript(target.pid, payload.words, payload.pastes)
     if (script === null) return 'not-targeted'
     const now = await targetNow(this.deps.processes, target)
     if (now !== 'same') return STOPPED[now]

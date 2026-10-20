@@ -132,11 +132,13 @@ runTurnSenderContract('ObservedSessionTurnSender (FakeProcessControl)', realWorl
 function mapped(write: TextWriteOutcome = 'written', queued: CodexQueueOutcome = 'queued') {
   const writes: Array<[ProcessIdentity, string]> = []
   const queues: Array<[string, string]> = []
+  const pasted: Array<readonly string[]> = []
   const sender = new ObservedSessionTurnSender({
     targets: { targetOf: (dwarfId) => TARGETS.get(dwarfId) ?? null },
     terminal: {
-      write: async (target, text) => {
+      write: async (target, text, paths = []) => {
         writes.push([target, text])
+        pasted.push([...paths])
         return write
       }
     },
@@ -147,7 +149,7 @@ function mapped(write: TextWriteOutcome = 'written', queued: CodexQueueOutcome =
       }
     }
   })
-  return { sender, writes, queues }
+  return { sender, writes, queues, pasted }
 }
 
 describe('ObservedSessionTurnSender: each outcome is an honest delivery failure', () => {
@@ -218,14 +220,14 @@ describe('ObservedSessionTurnSender: each outcome is an honest delivery failure'
     expect(queues).toEqual([])
   })
 
-  it('[ADR-012, ADR-013] an attachment or a delegation hand-off is not relayed into an observed session', async () => {
+  /*
+   * AMENDED for #1463 (was: an attachment refused on both paths, with 'an observed session takes no
+   * attachment'): an observed Claude session takes its files as bracketed pastes, as legacy
+   * measured (#408); a Codex thread's queue carries text only, as it did in legacy, and says so.
+   */
+  it('[ADR-012, ADR-013] a delegation hand-off is not relayed into an observed session', async () => {
     const { sender, writes, queues } = mapped()
-    const attached = turn('dig', { attachments: [{ path: '/tmp/a.png', name: 'a.png', bytes: 1 }] })
     for (const dwarfId of [CLAUDE, CODEX]) {
-      expect(await sender.send(dwarfId, attached)).toEqual({
-        ok: false,
-        error: { kind: 'channel-error', reason: 'an observed session takes no attachment' }
-      })
       expect(await sender.send(dwarfId, turn('result', { kind: 'handoff' }))).toEqual({
         ok: false,
         error: {
@@ -236,6 +238,44 @@ describe('ObservedSessionTurnSender: each outcome is an honest delivery failure'
     }
     expect(writes).toEqual([])
     expect(queues).toEqual([])
+  })
+
+  it('[US-MSG-002.AC03] an observed Claude session gets the revalidated paths with the message, through its terminal relay', async () => {
+    const { sender, writes, pasted } = mapped()
+    const attached = turn('dig', {
+      attachments: [
+        { path: '/tmp/a.png', name: 'a.png', bytes: 1 },
+        { path: '/tmp/notes.txt', name: 'notes.txt', bytes: 2 }
+      ]
+    })
+    expect((await sender.send(CLAUDE, attached)).ok).toBe(true)
+    expect(writes).toEqual([[PROCESS, 'dig']])
+    expect(pasted).toEqual([['/tmp/a.png', '/tmp/notes.txt']])
+  })
+
+  it('[US-MSG-002.AC03, ADR-022] a Codex thread queue carries no file: the message is refused whole, never queued without them', async () => {
+    const { sender, queues } = mapped()
+    const attached = turn('dig', { attachments: [{ path: '/tmp/a.png', name: 'a.png', bytes: 1 }] })
+    expect(await sender.send(CODEX, attached)).toEqual({
+      ok: false,
+      error: { kind: 'channel-error', reason: "an observed Codex thread's queue takes no files" }
+    })
+    expect(queues).toEqual([])
+  })
+
+  it('[ADR-012] a path no terminal can take whole is refused before anything is typed', async () => {
+    const { sender, writes } = mapped()
+    const attached = turn('dig', {
+      attachments: [{ path: '/tmp/a\nb.png', name: 'a\nb.png', bytes: 1 }]
+    })
+    expect(await sender.send(CLAUDE, attached)).toEqual({
+      ok: false,
+      error: {
+        kind: 'channel-error',
+        reason: "an attached file's path cannot be typed into a terminal"
+      }
+    })
+    expect(writes).toEqual([])
   })
 
   it('[ADR-012] a path that throws is a channel error, never a silent loss', async () => {
