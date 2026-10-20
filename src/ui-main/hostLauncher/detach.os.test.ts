@@ -445,7 +445,7 @@ function launchedHow(report: UiReport): string | undefined {
   return report.entries?.find((entry) => entry.event === 'host.spawn')?.causeClass
 }
 
-/** SP-02's job holder and job query (spikes/SP-02/hostSurvivesJob.os.test.ts). */
+/** SP-02's job holder and job query (the SP-02 spike harness). */
 const JOB_TOOL = String.raw`
 using System;
 using System.Runtime.InteropServices;

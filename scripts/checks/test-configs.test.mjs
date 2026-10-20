@@ -9,9 +9,9 @@ import { OS_LANE_REPORT } from './os-lane-guard.mjs'
 /**
  * L7 check of the lane split (testing strategy `17` §1.8, §5.4; ADR-004).
  *
- * `*.os.test.{ts,mjs}` files under `src/`, `spikes/`, `scripts/` and `fixtures/` run only in the
+ * `*.os.test.{ts,mjs}` files under `src/`, `scripts/` and `fixtures/` run only in the
  * OS lane (`pnpm test:os`, `vitest.os.config.ts`), never in the default `pnpm test`, which must
- * also run on a machine that cannot run them. The kept spike harnesses under `spikes/` type-check with the
+ * also run on a machine that cannot run them. The `src/` tests type-check with the
  * rest (`tsconfig.node.json`).
  */
 
@@ -20,8 +20,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const OS_TEST_SAMPLES = [
   'src/contracts/__os_smoke__.os.test.ts',
   'src/host/platform/process/tree-kill.os.test.ts',
-  'spikes/sp-05/pipe-acl.os.test.ts',
-  'spikes/sp-02/host-survival.os.test.mjs',
+  'src/host/transport/endpoint/server.os.test.ts',
   'scripts/packaged/fuses.os.test.mjs',
   'fixtures/bin/_kit/stubCli.os.test.mjs'
 ]
@@ -45,7 +44,7 @@ function selects(testConfig, file) {
 }
 
 describe('test lane configs (17 §1.8)', () => {
-  it('[ADR-004] the OS-lane config includes the os.test files under src, spikes and scripts, the default config excludes every os.test file, and tsconfig.node.json includes spikes', () => {
+  it('[ADR-004] the OS-lane config includes the os.test files under src, scripts and fixtures, the default config excludes every os.test file, and tsconfig.node.json includes src', () => {
     for (const file of OS_TEST_SAMPLES) {
       expect(selects(osConfig.test, file), `the OS lane runs ${file}`).toBe(true)
       expect(selects(defaultConfig.test, file), `pnpm test never runs ${file}`).toBe(false)
@@ -66,8 +65,8 @@ describe('test lane configs (17 §1.8)', () => {
     const tsconfig = JSON.parse(readFileSync(path.join(repoRoot, 'tsconfig.node.json'), 'utf8'))
     const typeChecked = (file) => tsconfig.include.some((glob) => path.matchesGlob(file, glob))
     expect(
-      typeChecked('spikes/sp-05/pipe-acl.os.test.ts'),
-      'tsconfig.node.json includes spikes'
+      typeChecked('src/host/transport/endpoint/server.os.test.ts'),
+      'tsconfig.node.json includes src'
     ).toBe(true)
   })
 

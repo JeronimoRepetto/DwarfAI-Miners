@@ -20,7 +20,7 @@ export const REPLIES = {
   next: 'Noted.'
 }
 
-/** `opencode --help` lines of OpenCode 1.18.32 (spike-results/S-031-3/help/help-root.txt), as the probe reads them. */
+/** `opencode --help` lines of OpenCode 1.18.32 (spike S-031-3, help-root output), as the probe reads them. */
 const HELP = [
   'Commands:',
   '  opencode acp                 start ACP (Agent Client Protocol) server',

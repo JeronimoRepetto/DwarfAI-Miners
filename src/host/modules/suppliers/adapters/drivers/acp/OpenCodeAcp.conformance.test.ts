@@ -4,7 +4,7 @@
 // its meta and location) plus the hand-written cases of `1.18.32-synthetic/`, whose agent side is
 // that recording's handshake. Every `*.expected.json` is written by hand from the contract.
 //
-// S-031-3 failed (`spike-results/S-031-3.md`), so ADR-009 D4 option (c) is the launched OpenCode
+// S-031-3 failed (spike S-031-3), so ADR-009 D4 option (c) is the launched OpenCode
 // driver: this suite is the one that must pass C-01…C-29 (TC-155-01).
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -55,9 +55,7 @@ const INSTALL: InstalledProvider = {
 
 /** `opencode --help` as OpenCode 1.18.32 printed it (the S-031-3 record's raw output). */
 const HELP = readFileSync(
-  fileURLToPath(
-    new URL('../../../../../../../spike-results/S-031-3/help/help-root.txt', import.meta.url)
-  ),
+  fileURLToPath(new URL('./__fixtures__/opencode-help-root.txt', import.meta.url)),
   'utf8'
 )
 

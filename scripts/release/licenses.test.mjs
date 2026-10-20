@@ -208,7 +208,7 @@ describe('licence report and notices (20 §2.4)', () => {
 
   it('[ADR-008, S-008-1] the committed S-008-1 record parses into one closed row per package it decided', () => {
     const rows = parseS008Rows(
-      readFileSync(path.join(repoRoot, 'spike-results', 'S-008-1.md'), 'utf8')
+      readFileSync(path.join(repoRoot, 'docs', 'licenses', 'S-008-1.md'), 'utf8')
     )
     expect(rows.map((r) => [`${r.name}@${r.version}`, r.licence, r.compatible, r.bundle])).toEqual([
       ['@agentclientprotocol/sdk@1.6.0', 'Apache-2.0', true, true],

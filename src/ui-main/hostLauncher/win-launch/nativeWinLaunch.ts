@@ -1,4 +1,4 @@
-// The UI's launch helper on Windows (ADR-002 D6 items 1 and 2; spike-results/SP-02.md): the loader
+// The UI's launch helper on Windows (ADR-002 D6 items 1 and 2; spike SP-02): the loader
 // of the native module win_launch.c in this folder, which starts the Host with job breakaway, or
 // through WMI when breakaway is refused, from inside UI main, so no PowerShell or compiler process
 // stands between the UI and the Host (windows.ts).

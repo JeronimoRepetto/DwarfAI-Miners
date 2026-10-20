@@ -1,6 +1,6 @@
 // Test support for the Windows OS lane (L8): who may open a named pipe, asked of Windows itself.
 //
-// The method is spike SP-05's (spike-results/SP-05.md; spikes/SP-05/pipeAcl.os.test.ts): read the
+// The method is spike SP-05's (its harness is no longer tracked): read the
 // pipe's real security descriptor and ask `AuthzAccessCheck` (MAXIMUM_ALLOWED) what each principal
 // would be granted. The principals are synthesized for the check (AUTHZ_SKIP_TOKEN_GROUPS), so no
 // second account and no second machine are needed:

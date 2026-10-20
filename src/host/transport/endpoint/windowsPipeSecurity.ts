@@ -1,5 +1,5 @@
 // The Windows half of ADR-003 item 2 (frozen): the hand-off between the endpoint server and the
-// native pipe helper that spike SP-05 made mandatory (spike-results/SP-05.md).
+// native pipe helper that spike SP-05 made mandatory (spike SP-05).
 //
 // SP-05 measured that a pipe created by Node gets libuv's default security descriptor, which
 // grants read to Everyone and to Anonymous, and that Node cannot serve a pipe another process

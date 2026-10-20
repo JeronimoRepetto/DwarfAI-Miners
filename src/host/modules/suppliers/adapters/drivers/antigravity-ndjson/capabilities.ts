@@ -3,7 +3,7 @@
 // (the stream has no cancel), `turnEnd` none (the `result` line ends a turn as an inferred end),
 // `subagents` none, `usage` fidelity 0 (stream-json usage, SP-10). `permission` and `question`
 // are none: this driver answers no ask, and SP-10 (Antigravity part) has recorded no deny policy
-// (`spike-results/SP-10.md`), so no policy-only mode is offered (15 §2.8). `resume` is
+// (spike SP-10), so no policy-only mode is offered (15 §2.8). `resume` is
 // `cli-flag` (AMENDMENT-13) when the help lists `--conversation`.
 import type { ProviderCapabilities } from '../../../domain/capabilities'
 
