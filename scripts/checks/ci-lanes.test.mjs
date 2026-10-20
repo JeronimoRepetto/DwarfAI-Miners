@@ -393,11 +393,13 @@ describe('package job in CI (20 §2.1, §3.2; 18 C-33, C-34)', () => {
     for (const name of SIGNING_SECRETS) expect(job).not.toContain(name)
   })
 
-  it('[ADR-027] publishes nothing: no release job, no release action and workflow artifacts kept one day', () => {
-    for (const id of ['release', 'release-mac']) {
-      expect(workflow, `ci.yml has no "${id}" job`).not.toContain(`\n  ${id}:\n`)
-    }
-    expect(workflow).not.toMatch(/softprops|action-gh-release|gh release/i)
+  // AMENDED for ISSUE-278/280: the `release` job publishes the GitHub Release from these artifacts
+  // (scripts/release/release.test.mjs). The package job itself still publishes nothing, and no `release-mac` job
+  // returns: the signed macOS build (ISSUE-280) is deferred.
+  it('[ADR-027] publishes nothing itself: no release step in the package job, no release-mac job and workflow artifacts kept one day', () => {
+    expect(workflow, 'ci.yml has no "release-mac" job').not.toContain('\n  release-mac:\n')
+    expect(workflow, 'no third-party release action').not.toMatch(/softprops|action-gh-release/i)
+    expect(packageCode()).not.toMatch(/gh release/i)
     const job = packageCode()
     expect(job).not.toMatch(/GH_TOKEN|GITHUB_TOKEN/)
     expect(job).toMatch(

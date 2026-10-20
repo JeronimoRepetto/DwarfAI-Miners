@@ -1,17 +1,27 @@
 # Code signing
 
 **No build is signed today.** The macOS config below (`build.mac` in `package.json`) is still wired
-for a Developer ID signature and notarization, but since ISSUE-268 no CI job holds the credentials:
-the `package` job of `.github/workflows/ci.yml` (on a `v*` tag or a manual dispatch) and the
-internal build of `.github/workflows/internal-build.yml` both package macOS unsigned, and neither
-publishes anything. The signed, notarized macOS release returns with ISSUE-280, and the upload to a
-GitHub Release with ISSUE-278; no public build exists before cut 5 (OQ-66). Windows and Linux stay
-unsigned. This is a factual note on what that means for each platform, what each would take to
-sign, and the macOS config that is already in `package.json`.
+for a Developer ID signature and notarization, but no CI job holds the credentials: the `package`
+job of `.github/workflows/ci.yml` (on a `v*` tag or a manual dispatch) and the internal build of
+`.github/workflows/internal-build.yml` both package macOS unsigned. On a pushed `v*` tag the
+`release` job of `ci.yml` (ISSUE-278) publishes those unsigned installers as the GitHub Release of
+the tag, with a `SHA256SUMS` file over every asset; the Release notes say the builds are unsigned.
+Windows and Linux stay unsigned. This is a factual note on what that means for each platform, what
+each would take to sign, and the macOS config that is already in `package.json`.
+
+**Why the signed macOS build is deferred (ISSUE-280).** The packaged app starts its Host from a
+versioned copy that it checks file by file, size and SHA-256, against `host-manifest.json` in its
+resources (ADR-002 D5; `src/ui-main/hostLauncher/versionedCopy.ts`). electron-builder's afterPack
+hook writes that manifest before signing, and `codesign` then rewrites every Mach-O file it lists. A
+signed bundle also seals every file in it, so the manifest cannot be written again afterwards
+(`scripts/build/afterSign.mjs`). A signed app would therefore fail its Host copy check with
+`MANIFEST_MISMATCH`, and `verify-packaged-host-manifest.mjs` fails such a build in CI. Signing
+returns once the signed macOS layout (ISSUE-270, behind SP-03) gives the manifest a form that
+survives signing and stapling.
 
 ## What's signed today
 
-- **macOS** (`pnpm build && pnpm package` on a Mac): unsigned. The CI jobs pass
+- **macOS** (`pnpm build && pnpm package` on a Mac, and the Release's dmg and zip): unsigned. The CI jobs pass
   `-c.mac.identity=null` and `CSC_IDENTITY_AUTO_DISCOVERY=false`, so electron-builder signs
   nothing and skips notarization with it. On first launch macOS refuses the app until it is opened
   once through System Settings > Privacy & Security > "Open Anyway". A local run with a Developer
@@ -212,10 +222,13 @@ and nothing else:
   password)
 - `APPLE_TEAM_ID` — the Developer Team ID
 
-No job uses that environment since ISSUE-268 replaced the `release-mac` job with the unsigned
-`package` job. The signed macOS release job (ISSUE-280) attaches it again, exporting the secrets
-as `env` on its packaging step only; the environment's `v*` tag deployment rule then keeps that
-job from running for any ref that isn't a `v*` tag, independent of the job's own `if:`.
+No job reads them today. The `release` job of `ci.yml` (ISSUE-278) runs in that environment for
+its `contents: write` and its `v*` deployment rule, but uses only its own `github.token` and reads
+no secret. When the signed macOS build returns (ISSUE-280), its macOS packaging step gets the
+secrets as `env` on that step only, in that environment, on a pushed `v*` tag; a pull request or
+a manual dispatch never does. The environment's deployment rule keeps any job that uses it from
+running for a ref that isn't a `v*` tag, independent of the job's own `if:`. (The environment also
+holds a branch-type `v*` rule beside the tag-type one; the jobs' `if:` conditions admit tags only.)
 
 **Windows/Linux (when wired in).** None of the values in the sections above — `.pfx` files,
 passwords, Azure secrets — belong in `package.json` or the repo either. They would be read from
@@ -224,7 +237,8 @@ every other credential this project already keeps out of source (see `.env.examp
 
 ## Verification checklist for the signed macOS release (ISSUE-280)
 
-None of this runs today; it is what the signed release job has to prove once it exists, and a
+None of this runs today (ISSUE-280 is deferred, see the top of this page); it is what the signed
+release job has to prove once it exists, beside a Host that starts from its versioned copy, and a
 maintainer with a Mac should separately confirm the local case:
 
 - [ ] Its "Package" step actually signs: the log shows a Developer ID Application identity found
