@@ -64,6 +64,16 @@ export interface ModeWindowPlacement {
   window(mode: AppMode): ModeWindow
   /** Where `mode`'s window sits once shown: its final bounds; throws when they cannot be resolved. */
   bounds(mode: AppMode): Rect
+  /**
+   * S10.02: brings the window of `mode`, already shown, to the front and un-minimized — a second launch, the tray's
+   * Open, Stop everything's confirmation. Not a run: nothing moves between windows.
+   */
+  bringForward(mode: AppMode): void
+  /**
+   * Whether the window of `mode` is on screen as the OS has it, read back without building one: a hide the coordinator
+   * did not run (macOS Cmd+H, `app.hide()`) reads `false`.
+   */
+  isShown(mode: AppMode): boolean
 }
 
 export interface ModeCoordinatorDeps {
@@ -79,6 +89,11 @@ export interface ModeCoordinatorDeps {
   newTransitionId(): string
   /** The person asked for reduced motion (S27.06, NFR-TIM-02). */
   reducedMotion(): boolean
+  /**
+   * NFR-PERF-02: told `true` once a run's motion starts (`t0` sent) and `false` once it lands, so a window that would
+   * place itself meanwhile (a display change, a layout request) holds that placement until the run is over.
+   */
+  onRunChanged?(playing: boolean): void
   start: ModeCoordinatorStart
 }
 
@@ -369,7 +384,12 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
   }
 
   function restore(): Promise<IpcResult<void>> {
-    if (!running() && shown() !== 'hidden') return Promise.resolve(OK)
+    const now = shown()
+    if (!running() && now !== 'hidden') {
+      // S10.02: the mode is shown; the request is to see it, so it comes forward, un-minimized. Not a run.
+      windows.bringForward(now)
+      return Promise.resolve(OK)
+    }
     // From tray-only the window opens as a launch does (S10.13); the Panel alone resolves "Mode at launch" to itself.
     const open = ladder.state === 'tray-only' ? { open: { reveal: false } } : {}
     return request({ mode: lastShown(), answers: [], ...open })

@@ -63,7 +63,10 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
         if (mode !== 'panel') throw new Error(`the ${mode} window is not built`)
         return panelWindow
       },
-      bounds: () => panel.panelStart().bounds
+      bounds: () => panel.panelStart().bounds,
+      // The Panel's own show re-fits it, shows it inactive and raises it, which also un-minimizes it (#165).
+      bringForward: () => panel.show(),
+      isShown: () => panel.visible()
     },
     timing: deps.timing,
     lastMode: deps.lastMode,
