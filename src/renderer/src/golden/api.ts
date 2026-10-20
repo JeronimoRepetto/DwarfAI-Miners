@@ -247,6 +247,10 @@ export function goldenApi(sample: GoldenSample): Api {
     onHostEvent: unsubscribe,
     // A-N16: a golden draws a fixed sample and shows no OS notification, so no reveal is ever pushed.
     onRevealDwarfChat: unsubscribe,
+    // A-N13…A-N15: a golden renders one window in one mode, so no mode move runs; a move settles where it is.
+    moveToMode: () => Promise.resolve({ ok: true, value: undefined }),
+    onModeTransition: unsubscribe,
+    modeTransitionDone: none,
     // A-N31: a golden draws a fixed sample and never writes another tool's configuration.
     setClaudeHooksEnabled: refuse('setClaudeHooksEnabled'),
     // A-N07: a golden draws a fixed sample and never moves an ask.

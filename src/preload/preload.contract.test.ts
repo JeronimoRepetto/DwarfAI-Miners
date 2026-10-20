@@ -436,14 +436,16 @@ describe('release-5 facade (14 §2.1 RETIRE rows, §7 counts; 21 §2 cut 5)', ()
   })
 
   it('[ADR-019] the release-5 facade holds the members 14 §7 counts after cut 5', () => {
-    // 14 §7 counts 84 members after cut 5 (35 KEEP + 16 CHANGE + 33 NEW, A-N33 included). The registry holds 78:
-    // - the seven ADR-025 mode/Veta NEW rows A-N13, A-N14, A-N15, A-N22, A-N23, A-N24 and A-N28 are declared by the
-    //   EPIC-19 issues 284–286, which depend on ISSUE-249, so no cut-5 build has them yet (84 − 7 = 77);
+    // 14 §7 counts 84 members after cut 5 (35 KEEP + 16 CHANGE + 33 NEW, A-N33 included). The registry holds 81:
+    // - AMENDED for ISSUE-284 (was: seven): the four ADR-025 Veta NEW rows A-N22, A-N23, A-N24 and A-N28 are declared
+    //   by the EPIC-19 issues 285–286, so this build does not have them yet (84 − 4 = 80); A-N13, A-N14 and A-N15
+    //   are declared by ISSUE-284 with their `ui-local` routes (22 §5);
     // - A-N34 `tray:stopEverything:request` (owner amendment 2026-10-01, ISSUE-316) is a NEW row 14 §7 does not
-    //   count (77 + 1 = 78).
+    //   count (80 + 1 = 81).
     // Recorded for the lead as a package inconsistency in docs/strangler/parity-cut-5.md; no row is invented here.
-    expect(Object.keys(api)).toHaveLength(84 - 7 + 1)
-    expect(Object.values(ROW_IDS)).not.toContain('A-N13')
+    expect(Object.keys(api)).toHaveLength(84 - 4 + 1)
+    expect(Object.values(ROW_IDS)).toEqual(expect.arrayContaining(['A-N13', 'A-N14', 'A-N15']))
+    expect(Object.values(ROW_IDS)).not.toContain('A-N22')
     expect(Object.values(ROW_IDS)).toContain('A-N34')
   })
 })

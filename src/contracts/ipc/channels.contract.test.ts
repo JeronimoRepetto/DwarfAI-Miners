@@ -251,6 +251,32 @@ const NEW_ROWS = [
     placement: 'ui-local',
     sensitive: false
   },
+  // ISSUE-284: the ModeCoordinator's run (ADR-025 item 3; AMENDMENT-10), born `ui-local` in the PR that declares it
+  // (22 §5); modes and ids only
+  {
+    id: 'A-N13',
+    wire: 'mode:move',
+    member: 'moveToMode',
+    kind: 'invoke',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N14',
+    wire: 'mode:transition',
+    member: 'onModeTransition',
+    kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N15',
+    wire: 'mode:transition:done',
+    member: 'modeTransitionDone',
+    kind: 'send',
+    placement: 'ui-local',
+    sensitive: false
+  },
   // ISSUE-221: Settings → Integrations "Claude Code · instant updates" (AMENDMENT-7, OQ-68; ADR-016 items 5–7), born
   // `host` in cut 2; a boolean and a requestId, nothing a person or a provider said
   {
@@ -511,6 +537,8 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'host:connection:confirm-restart': undefined,
   'ui:session:get': undefined,
   'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' },
+  'mode:move': { mode: 'hidden' },
+  'mode:transition:done': { transitionId: '0190a1b2-c3d4-7e5f-8a6b-7c8d9e0f1b01' },
   'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
   'ui:preferences:set': { key: 'startWithSystem', value: false },
   'host:snapshot': { sections: ['mines', 'dwarfs'] },

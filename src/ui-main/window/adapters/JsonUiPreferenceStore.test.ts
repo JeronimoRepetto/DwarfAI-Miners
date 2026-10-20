@@ -106,7 +106,9 @@ describe('JsonUiPreferenceStore', () => {
       // NEW with ISSUE-060, no store of today's: the document this store writes.
       startWithSystem: { on: false },
       // NEW with ISSUE-061, no store of today's: the document this store writes.
-      resetEpochApplied: { epoch: 2 }
+      resetEpochApplied: { epoch: 2 },
+      // NEW with ISSUE-284, no store of today's: the document this store writes.
+      lastMode: { mode: 'veta' }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), `${JSON.stringify(legacy[key])}\n`)
@@ -131,7 +133,9 @@ describe('JsonUiPreferenceStore', () => {
       shortcut: { accelerator: 'K' },
       startWithSystem: { on: 'yes' },
       // An epoch is a whole count from 0.
-      resetEpochApplied: { epoch: -1 }
+      resetEpochApplied: { epoch: -1 },
+      // `hidden` is a window state, never the mode shown last (14 §3.9 `Exclude<WindowMode, 'hidden'>`).
+      lastMode: { mode: 'hidden' }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), JSON.stringify(nonConforming[key]))

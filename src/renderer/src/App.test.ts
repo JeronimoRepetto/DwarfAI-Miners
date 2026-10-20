@@ -5150,3 +5150,14 @@ describe('App recovery message (ISSUE-330)', () => {
   })
 })
 /* --- end of the ISSUE-330 block ------------------------------------------------------------------ */
+
+describe('the window part of a mode transition run (ISSUE-284; 05 §2.3)', () => {
+  it('[S27.05, S10.08, S10.09] the renderer composition root starts the window part of every run before it mounts the shell', () => {
+    // main.ts is the renderer's composition root (05 §2.3): the window answers every run and veils its content even
+    // with no chat open, so no run of this window waits for the coordinator's watchdog (S27.04).
+    const source = readFileSync(join(import.meta.dirname, 'main.ts'), 'utf8')
+    const started = source.indexOf('modeTransitionPart()')
+    expect(started, 'main.ts starts the window part').toBeGreaterThan(-1)
+    expect(started).toBeLessThan(source.indexOf('createApp(App)'))
+  })
+})
