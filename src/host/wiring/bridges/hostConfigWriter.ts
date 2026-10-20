@@ -145,7 +145,7 @@ export interface ClaudeHookEntryFollowerDeps {
  * token minted here (lead decision 2026-09-30, ISSUE-198: the transport mints, never the module).
  * A cut-2 rollback build writes nothing: today's installer is the entry's one writer there (21 §1
  * item 4; wiring/cut2Rollback.ts), and the entry this Host wrote was removed before that build
- * started (`--revert-integrations`, docs/strangler/rollback.md).
+ * started (`--revert-integrations`, the cut rollback record).
  */
 export function claudeHookEntryFollower(deps: ClaudeHookEntryFollowerDeps): () => Promise<void> {
   if (deps.rolledBack) return () => Promise.resolve()

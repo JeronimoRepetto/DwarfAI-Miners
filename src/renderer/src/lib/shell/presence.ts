@@ -94,7 +94,7 @@ export const REDUCED_MOTION_TRANSITION = { duration: 0 } as const
  * literal, and a control that has one is a control that drifted.
  *
  * The design source marks hover, focus and active states **Unspecified**
- * (`ui-rebuild`'s own "Unspecified means ask, not invent"), so the numbers are
+ * (the design docs' own "Unspecified means ask, not invent"), so the numbers are
  * deliberately the smallest thing that still reads as an answer rather than a
  * style: a hover that grows enough to say "this is the thing under you" and a
  * press that gives enough to say "and it heard you", with no colour, no shadow

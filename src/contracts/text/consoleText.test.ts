@@ -27,7 +27,7 @@ describe('normalizeConsoleText', () => {
  * Issue #425: one `WriteConsoleInput` call carrying a long message loses its
  * own beginning somewhere between ConPTY's translation and a live Claude Code
  * TUI's reader, and a bounded chunk does not — measured 2026-09-16,
- * `docs/console-hosting.md` §6. `MAX_CONSOLE_CHUNK_CODE_POINTS` is the ceiling
+ * the console-hosting research §6. `MAX_CONSOLE_CHUNK_CODE_POINTS` is the ceiling
  * that measurement settled on: below the largest size (800 code points) that
  * arrived whole 3/3, since three runs on one machine cannot stand in for every
  * load and terminal condition a real delivery meets.
@@ -98,7 +98,7 @@ describe('boundedChunks', () => {
  * What was NOT fine was downstream, and it gave the console a tighter ceiling
  * than the wire for one release: every chunk becomes six lines of PowerShell
  * carrying its text as base64 of UTF-16, and the whole script was spawned in a
- * COMMAND LINE. Measured live 2026-09-16 (docs/console-hosting.md §6), a 29,323
+ * COMMAND LINE. Measured live 2026-09-16 (the console-hosting research §6), a 29,323
  * code-point message built a 109,152-character command line and the spawn was
  * refused with ENAMETOOLONG. #433 hands that script to PowerShell on the child's
  * stdin instead, so the plan this file pins is the only bound left on the tier

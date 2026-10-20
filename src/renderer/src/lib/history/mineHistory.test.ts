@@ -204,7 +204,7 @@ describe('historyNote', () => {
 
 /*
  * #227: `screens/history.md` never asked for this notice — the design source
- * is silent on it (see `skills/ui-rebuild/SKILL.md`) — so both the placement
+ * is silent on it (see the design docs) — so both the placement
  * (top of the tab, in MineHistoryPanel.vue) and this copy are the issue's own,
  * the way `panelHeight.ts` names the constants the design left it to invent.
  * Absent means unknown and unknown says nothing, exactly like a known `true`:

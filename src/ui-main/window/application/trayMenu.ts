@@ -7,7 +7,7 @@
 //   nothing ends, launched or observed. From tray-only it changes nothing. ADR-018's Quit closes every window and so
 //   the `ui` connection; in cut 0 the composition root binds `closeAll` to hiding the one mode window, the Panel, whose
 //   page stays loaded, because the `ui` connection is not bound to a window yet (ADR-003 item 12).
-//   `docs/strangler/parity-cut-0.md` records it as an intended difference. The root binds `sessionStore.clear`
+//   the cut's parity record records it as an intended difference. The root binds `sessionStore.clear`
 //   to the UI-main session store (ISSUE-059).
 // - Stop everything and quit hands over to the confirmation flow (`stopEverything.ts`, S10.18).
 // - The icon is removed only when the Host exits cleanly (`host.closing`, ADR-003 item 12 as revised): for

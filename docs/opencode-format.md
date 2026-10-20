@@ -3,9 +3,7 @@
 Measured 2026-09-17 against a native Windows install, `npx opencode-ai` (build string
 **1.18.31**), on the maintainer's machine. Read-only throughout: the database was opened with
 `node:sqlite` `DatabaseSync(..., { readOnly: true })`; nothing under OpenCode's own store was
-written by this investigation. Full detail lives in `openspec/changes/opencode-observer/
-measurements-2026-09-17.md` — this document is the versioned, redacted summary a parser is
-written against.
+written by this investigation. This document is the versioned, redacted summary a parser is written against.
 
 Legend: **[V]** verified directly against this machine's live store. **[I]** inferred from public
 sources (an issue, a changelog) and never observed here; a field or shape marked `[I]` MUST NOT be
