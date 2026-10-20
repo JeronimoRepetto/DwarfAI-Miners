@@ -55,9 +55,7 @@ const INSTALL: InstalledProvider = {
 
 /** `opencode --help` as OpenCode 1.18.32 printed it (the S-031-3 record's raw output). */
 const HELP = readFileSync(
-  fileURLToPath(
-    new URL('../../../../../../../spike-results/S-031-3/help/help-root.txt', import.meta.url)
-  ),
+  fileURLToPath(new URL('./__fixtures__/opencode-help-root.txt', import.meta.url)),
   'utf8'
 )
 

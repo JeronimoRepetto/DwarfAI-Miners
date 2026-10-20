@@ -19,7 +19,10 @@ import { bootHost, cleanUp, evts, world } from './testing/cut3aHost'
 const FIXTURES = new URL('../../../../fixtures/opencode/acp/1.18.32-synthetic/', import.meta.url)
 /** `opencode --help` as OpenCode 1.18.32 printed it (the S-031-3 record): it lists `acp` and `serve`. */
 const HELP = readFileSync(
-  new URL('../../../../spike-results/S-031-3/help/help-root.txt', import.meta.url),
+  new URL(
+    '../../modules/suppliers/adapters/drivers/acp/__fixtures__/opencode-help-root.txt',
+    import.meta.url
+  ),
   'utf8'
 )
 

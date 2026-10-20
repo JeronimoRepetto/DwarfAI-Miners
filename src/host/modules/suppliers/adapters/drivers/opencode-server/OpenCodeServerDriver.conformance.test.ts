@@ -51,7 +51,12 @@ const fixtures = readFixtureSet(
   fileURLToPath(new URL('fixtures/opencode/http-server/1.18.32/', ROOT))
 )
 const HELP = readFileSync(
-  fileURLToPath(new URL('spike-results/S-031-3/help/help-root.txt', ROOT)),
+  fileURLToPath(
+    new URL(
+      'src/host/modules/suppliers/adapters/drivers/acp/__fixtures__/opencode-help-root.txt',
+      ROOT
+    )
+  ),
   'utf8'
 )
 

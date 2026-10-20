@@ -6,14 +6,14 @@
 //
 // A provider adapter or library is bundled only when its S-008-1 row, for the exact version the lockfile pins,
 // records it as GPL-3.0-or-later compatible and the owner decided to bundle it. The rows are the results table of
-// spike-results/S-008-1.md, the record release/legal keeps (lead decision 2026-10-16; docs/licenses/README.md).
+// docs/licenses/S-008-1.md, the record release/legal keeps (lead decision 2026-10-16; docs/licenses/README.md).
 // Exits 1 when a production package in scope has no such row. Reads the lockfile and installed metadata only.
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildLicenceReport, DENIED_FILE, parseArgs, readDenied } from './licenses.mjs'
 
-export const S008_RECORD = path.join('spike-results', 'S-008-1.md')
+export const S008_RECORD = path.join('docs', 'licenses', 'S-008-1.md')
 
 /**
  * The packages S-008-1 governs (its Question: each bundled provider adapter or library, and the keyring library of
