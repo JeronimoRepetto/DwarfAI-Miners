@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type {
   ChatViewState,
   DwarfId,
@@ -7,9 +8,15 @@ import type {
   UiSessionPatch,
   UiSessionSnapshot
 } from '@dwarfai/contracts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowApi'
 import type { MotionTrack } from '../lib/mode/transitionMotion'
-import { useModeTransition, type ChatHandoff, type ModeTransitionDeps } from './useModeTransition'
+import {
+  modeTransitionPart,
+  useModeTransition,
+  type ChatHandoff,
+  type ModeTransitionDeps
+} from './useModeTransition'
 
 const DWARF = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a01' as DwarfId
 const MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
@@ -92,7 +99,7 @@ function setup(options: { reduced?: boolean; session?: Partial<UiSessionSnapshot
   }
   const transition = useModeTransition(deps)
   const handoff: ChatHandoff = {
-    open: () => ({ dwarfId: DWARF, mineId: MINE }),
+    open: () => DWARF,
     draft: () => 'half a thought',
     view: () => VIEW,
     restore(state) {
@@ -183,5 +190,63 @@ describe('useModeTransition (ADR-025 item 3; 07 machines 9 and 27)', () => {
     s.finish()
     await flush()
     expect(s.done).toEqual(['t-1', 't-2'])
+  })
+})
+
+describe('the window part of a run (ISSUE-284)', () => {
+  it('[S27.05, S10.08, S10.09] one part per window speaks window.api, veils the content after its source half and unveils it at its target t0', async () => {
+    vi.useFakeTimers({ now: 10_000 })
+    let listener: ((t: ModeTransition) => void) | null = null
+    const done: string[] = []
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      writable: true,
+      value: createFakeWindowApi({
+        onModeTransition: (h) => {
+          listener = h
+          return () => (listener = null)
+        },
+        modeTransitionDone: (p) => void done.push(p.transitionId),
+        patchUiSession: () => {},
+        getUiSession: () =>
+          Promise.resolve({
+            drafts: {},
+            chatViews: {},
+            askPicks: {},
+            openChat: {},
+            currentMine: {},
+            valle: {}
+          })
+      })
+    })
+    try {
+      const part = modeTransitionPart()
+      expect(modeTransitionPart()).toBe(part)
+      // Hide: the Panel is the source of a run to hidden, with no half to play; it answers at t0, veiled.
+      listener!({
+        transitionId: 'run-1',
+        from: 'panel',
+        to: 'hidden',
+        t0: Date.now() + 16,
+        role: 'source'
+      })
+      await vi.advanceTimersByTimeAsync(16)
+      expect(done).toEqual(['run-1'])
+      expect(document.documentElement.style.opacity).toBe('0')
+      // Restore: the target of a run from hidden; unveiled at its t0.
+      listener!({
+        transitionId: 'run-2',
+        from: 'hidden',
+        to: 'panel',
+        t0: Date.now() + 16,
+        role: 'target'
+      })
+      await vi.advanceTimersByTimeAsync(16)
+      expect(done).toEqual(['run-1', 'run-2'])
+      expect(document.documentElement.style.opacity).toBe('')
+    } finally {
+      modeTransitionPart().dispose()
+      vi.useRealTimers()
+    }
   })
 })

@@ -22,12 +22,14 @@
 import type {
   ChatViewState,
   DwarfId,
-  MineId,
   ModeTransition,
   UiSessionPatch,
   UiSessionSnapshot
 } from '@dwarfai/contracts'
-import type { MotionTrack } from '../lib/mode/transitionMotion'
+import { transitionHalf, type MotionTrack } from '../lib/mode/transitionMotion'
+import { prefersReducedMotion } from '../lib/scene/sceneMotion'
+import { createBoundedMotion } from '../lib/shell/boundedMotion'
+import type { MotionTransition } from '../lib/shell/motionTiming'
 
 /** The seam A members a run uses (14 §2.2 A-N14, A-N15, A-N17, A-N18). */
 export interface ModeTransitionBridge {
@@ -45,8 +47,8 @@ export interface ModeTransitionClock {
 
 /** What the open chat of this window hands over and takes back (registered by the message panel). */
 export interface ChatHandoff {
-  /** The chat open in this window, or `null` when none is. */
-  open(): { dwarfId: DwarfId; mineId: MineId } | null
+  /** The dwarf whose chat is open in this window, or `null` when none is. */
+  open(): DwarfId | null
   draft(): string
   view(): ChatViewState
   /** Shows the carried chat as it was: its draft, and its view state when it has one. */
@@ -79,10 +81,10 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   const timers = new Set<() => void>()
 
   function flush(): void {
-    const chat = handoff?.open() ?? null
-    if (handoff === null || chat === null) return
-    bridge.patchUiSession({ kind: 'draft', dwarfId: chat.dwarfId, text: handoff.draft() })
-    bridge.patchUiSession({ kind: 'chat-view', dwarfId: chat.dwarfId, view: handoff.view() })
+    const dwarfId = handoff?.open() ?? null
+    if (handoff === null || dwarfId === null) return
+    bridge.patchUiSession({ kind: 'draft', dwarfId, text: handoff.draft() })
+    bridge.patchUiSession({ kind: 'chat-view', dwarfId, view: handoff.view() })
   }
 
   async function restore(t: ModeTransition): Promise<void> {
@@ -148,4 +150,68 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
       timers.clear()
     }
   }
+}
+
+/** The part this window plays, once started (`modeTransitionPart`). */
+let shared: ModeTransitionPart | null = null
+
+/**
+ * The defaults of a window's part: `window.api` (A-N14, A-N15, A-N17, A-N18), the wall clock UI main's `t0` is read on,
+ * the viewer's reduced-motion answer, and the bounded runner over the window's content. The Panel's content is its
+ * dock, so each track plays on the document root; the Veta parts are ISSUE-287's.
+ */
+function defaultDeps(): ModeTransitionDeps {
+  const runner = createBoundedMotion()
+  const root = (): HTMLElement => document.documentElement
+  return {
+    bridge: window.api,
+    clock: {
+      now: () => Date.now(),
+      after: (ms, fire) => {
+        const timer = setTimeout(fire, ms)
+        return () => clearTimeout(timer)
+      }
+    },
+    reducedMotion: () => prefersReducedMotion(),
+    // The Panel's docked edge orients the Veta ⇄ Panel halves; with the Panel the one mode built (ADR-034), every run
+    // is to or from `hidden`, which has no half. The Veta renderer passes its own dock and parts (ISSUE-287).
+    half: (t) => transitionHalf(t, 'right', 0),
+    veil: (hidden) => {
+      if (hidden) root().style.opacity = '0'
+      else root().style.removeProperty('opacity')
+    },
+    play: async (half) => {
+      await Promise.all(
+        half.map((track) =>
+          runner.run(
+            root(),
+            { opacity: track.keyframes.opacity, x: track.keyframes.x, y: track.keyframes.y },
+            undefined,
+            { duration: track.durationMs / 1000, delay: track.delayMs / 1000 } as MotionTransition
+          )
+        )
+      )
+    }
+  }
+}
+
+/**
+ * This window's part of every run, started once with `window.api` and shared by whoever registers a chat hand-off
+ * (the message panel). Disposing it lets the next call start a fresh one.
+ */
+export function modeTransitionPart(): ModeTransitionPart {
+  if (shared !== null) return shared
+  // A window with no bridge for runs (a golden render, a component test) plays no part.
+  if (typeof window === 'undefined' || typeof window.api?.onModeTransition !== 'function') {
+    return { register: () => () => {}, dispose: () => {} }
+  }
+  const part = useModeTransition(defaultDeps())
+  shared = {
+    register: (handoff) => part.register(handoff),
+    dispose: () => {
+      part.dispose()
+      shared = null
+    }
+  }
+  return shared
 }
