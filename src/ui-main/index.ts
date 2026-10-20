@@ -108,7 +108,15 @@ import { ElectronTray } from './window/adapters/ElectronTray'
 import { APP_USER_MODEL_ID } from './window/adapters/appUserModelId'
 import { ElectronNotificationDisplay } from './window/adapters/ElectronNotificationDisplay'
 import { startNotificationPresenter } from './window/application/notificationPresenter'
-import { createDepartedDwarfs, createRevealDwarfChat } from './window/application/revealDwarfChat'
+import {
+  createDepartedDwarfs,
+  createRevealDwarfChat,
+  type DwarfChatRevealer,
+  type RevealWindows
+} from './window/application/revealDwarfChat'
+import { composeModeShell, type ModeShell } from './window/application/modeShell'
+import { SystemModeTiming } from './window/adapters/SystemModeTiming'
+import { createModeRows, MODE_MOVE, MODE_TRANSITION_DONE } from './ipc/mode'
 import { createPanelReveal, REVEAL_DWARF_CHAT_PUSH } from './window/adapters/panelReveal'
 import { drawsWithoutWindow } from './window/domain/trayNotificationGate'
 import type {
@@ -297,6 +305,7 @@ export function composeUiLocal({
   uiSession,
   startWithSystem,
   presence,
+  mode,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
@@ -312,6 +321,8 @@ export function composeUiLocal({
   startWithSystem?: Pick<StartWithSystem, 'stored' | 'toggle'>
   /** A-44 `reportVisibleMines` feeding the PresenceTracker, once the table routes it `ui-local` (ISSUE-123). */
   presence?: RouteTargetPart
+  /** A-N13, A-N15 to the `ModeCoordinator` (ISSUE-284), routed `ui-local` in the PR that declares them (22 §5). */
+  mode?: RouteTargetPart
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -387,6 +398,7 @@ export function composeUiLocal({
     })
   }
   if (presence !== undefined) parts.push(presence)
+  if (mode !== undefined) parts.push(mode)
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
 
@@ -1123,6 +1135,38 @@ export async function startUiMain({
   const modeWindowList = (): readonly AppWindow[] =>
     appWindows().filter((window) => modeWindows.has(window.webContentsId))
   const routed = (channel: ChannelKey): boolean => routes.some((r) => r.channel === channel)
+  // The ModeCoordinator (ISSUE-284; ADR-025 item 3), once the table routes A-N13: every hide and show of the Panel (the
+  // global shortcut, Settings "Hide panel", the tray, a second launch, Stop everything's confirmation, a notification
+  // click) is one of its runs (S10.08, S10.09), and it alone writes `lastMode`. The click's per-mode reveal is bound
+  // below, once the notification presenter composes it.
+  let clickReveal: DwarfChatRevealer | null = null
+  let shellRevealWindows: RevealWindows | null = null
+  const shell: ModeShell | undefined =
+    routed(MODE_MOVE) && uiPreferences !== undefined
+      ? composeModeShell({
+          panel,
+          pushToPanel: (push, payload) => {
+            for (const window of modeWindowList()) window.send(push, payload)
+          },
+          lastMode: createUiPreferences({ store: uiPreferences.store, modeWindows: () => [] }),
+          timing: new SystemModeTiming(),
+          log: uiLog ?? { record: () => {} },
+          newTransitionId: () => randomUUID(),
+          start: launch.window ? 'hidden' : 'tray-only',
+          revealer: (windows) => {
+            shellRevealWindows = windows
+            return {
+              revealDwarfChat: (t) =>
+                clickReveal === null ? Promise.resolve('mine-only') : clickReveal.revealDwarfChat(t)
+            }
+          },
+          ...(notifications?.windowFocused === undefined
+            ? {}
+            : { focused: () => notifications.windowFocused?.() ?? false })
+        })
+      : undefined
+  /** The Panel as the rest of UI main moves it: through the coordinator when it is composed. */
+  const shownPanel = shell?.panel ?? panel
   // The UI-main session store (ISSUE-059; ADR-024 items 1, 3): in memory, shared by the mode windows, pushed to them
   // (A-N19) once the table routes the push, and cleared on every entry into tray-only (below).
   const uiSession =
@@ -1164,7 +1208,7 @@ export async function startUiMain({
   // left the tree together; every row that carries a dwarf id is the Host's.
 
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
-  const toggle = panel !== undefined ? shortcut?.(panel) : undefined
+  const toggle = panel !== undefined ? shortcut?.(shownPanel) : undefined
   const stop =
     panel !== undefined && host !== undefined && tray !== undefined
       ? createStopEverything({
@@ -1172,7 +1216,7 @@ export async function startUiMain({
           // The confirmation shows in the Panel: a hidden Panel is shown first (US-RES-002.AC08; S10.18).
           windows: {
             anyOpen: () => panel.visible(),
-            open: () => panel.show(),
+            open: () => shownPanel.show(),
             push: (channel, payload) => {
               for (const window of modeWindowList()) window.send(channel, payload)
             }
@@ -1334,23 +1378,28 @@ export async function startUiMain({
             : {
                 click: {
                   host: host.client,
-                  reveal: createRevealDwarfChat({
-                    windows: {
-                      existing: () => (modeWindowList().length > 0 ? 'panel' : null),
-                      restore: () => panel.show(),
-                      openAtLaunch: () => {
-                        panel.show()
-                        return Promise.resolve('panel')
+                  reveal: (() => {
+                    const reveal = createRevealDwarfChat({
+                      windows: shellRevealWindows ?? {
+                        existing: () => (modeWindowList().length > 0 ? 'panel' : null),
+                        restore: () => panel.show(),
+                        openAtLaunch: () => {
+                          panel.show()
+                          return Promise.resolve('panel')
+                        },
+                        raise: () => {
+                          panel.raise()
+                          return Promise.resolve(notifications.windowFocused?.() ?? false)
+                        }
                       },
-                      raise: () => {
-                        panel.raise()
-                        return Promise.resolve(notifications.windowFocused?.() ?? false)
-                      }
-                    },
-                    reveals: { panel: createPanelReveal(modeWindowList) },
-                    dwarfPresent: (t) => departedDwarfs.present(t),
-                    log: uiLog
-                  })
+                      reveals: { panel: createPanelReveal(modeWindowList) },
+                      dwarfPresent: (t) => departedDwarfs.present(t),
+                      log: uiLog
+                    })
+                    // With the coordinator, a click mid-run is held and revealed in the target mode (S27.14).
+                    clickReveal = reveal
+                    return shell?.coordinator ?? reveal
+                  })()
                 }
               })
         })
@@ -1361,7 +1410,7 @@ export async function startUiMain({
   const uiLocal = composeUiLocal({
     uiPreferences,
     uiLog,
-    ...(panel === undefined ? {} : { panelWindow: panel }),
+    ...(panel === undefined ? {} : { panelWindow: shownPanel }),
     ...(host === undefined ? {} : { hostConnection: host.client }),
     ...(nativeRows === undefined ? {} : { nativeRows }),
     ...(toggle === undefined ? {} : { shortcut: toggle }),
@@ -1369,6 +1418,16 @@ export async function startUiMain({
     ...(uiSession === undefined ? {} : { uiSession }),
     ...(startWithSystem === undefined ? {} : { startWithSystem }),
     ...(presence === undefined ? {} : { presence: presence.part }),
+    ...(shell === undefined
+      ? {}
+      : {
+          mode: {
+            channels: [MODE_MOVE, MODE_TRANSITION_DONE],
+            target: createModeRows(shell.coordinator, (id) =>
+              modeWindows.has(id) ? 'panel' : undefined
+            )
+          } satisfies RouteTargetPart
+        }),
     modeWindows
   })
   // AMENDED for ISSUE-243 (was: also `legacy: legacyRuntime`, today's runtime through `LegacyRuntimeRoute`): no route
@@ -1423,7 +1482,10 @@ export async function startUiMain({
   // The app lives in the tray with every window hidden: closing the last window never quits it
   // (only Stop everything and quit does; before cut 0, today's tray Quit), as today. It enters tray-only, so the UI
   // session store is cleared (S10.14; ADR-024 item 3).
-  lifecycle.onWindowAllClosed(() => uiSession?.clear())
+  lifecycle.onWindowAllClosed(() => {
+    shell?.coordinator.closed('windows-closed')
+    uiSession?.clear()
+  })
   /** The step of the start running now, recorded when the start fails (`ui.start`). */
   let step: UiStartStep = 'ready'
   try {
@@ -1434,7 +1496,7 @@ export async function startUiMain({
       // A second launch shows the rebuilt Panel from now on; it is built hidden with its page loading, as today's
       // start built today's. A `--background` start builds no window: the Panel is built when the person opens the app
       // (S10.03, S10.13).
-      secondLaunch.attach(panel)
+      secondLaunch.attach(shownPanel)
       step = 'panel-load'
       if (launch.window) panel.load()
       step = 'shortcut'
@@ -1447,8 +1509,9 @@ export async function startUiMain({
           // case no close of its window, so it is hidden as today's close did); nothing ends (S10.13, S10.15).
           windows: {
             anyOpen: () => panel.visible(),
-            open: () => panel.show(),
-            closeAll: () => panel.hide()
+            open: () => shownPanel.show(),
+            // With the coordinator, Quit is S27.10 and S10.15: a run in progress ends and the ladder is tray-only.
+            closeAll: () => (shell === undefined ? panel.hide() : shell.coordinator.closed('quit'))
           },
           // Quit enters tray-only: the UI-main session store is cleared (S10.15; ADR-024 item 3).
           sessionStore: { clear: () => uiSession?.clear() },
@@ -1457,7 +1520,7 @@ export async function startUiMain({
           exit: () => lifecycle.quit(),
           // No system tray (13 FM-050): the Panel is the only way back to the app, so it is shown; the renderer
           // offers Stop everything and quit there (A-N34).
-          offerFromWindow: () => panel.show()
+          offerFromWindow: () => shownPanel.show()
         })
       }
       // The Dock, the `.env` file, the candidate login entry and the app's identity, where today's composition did

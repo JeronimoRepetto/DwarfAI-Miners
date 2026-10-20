@@ -91,8 +91,11 @@ export interface ModeCoordinator {
   revealDwarfChat(t: { mineId: MineId; dwarfId: DwarfId }): Promise<RevealOutcome>
   /** S10.12: a notification click with no window open, after "Mode at launch" resolved `mode`. */
   revealAtLaunch(mode: AppMode, t: { mineId: MineId; dwarfId: DwarfId }): Promise<RevealOutcome>
-  /** S10.13: tray Open or a normal launch from `tray-only`, in the mode "Mode at launch" resolved. */
-  openAtLaunch(mode: AppMode): Promise<IpcResult<void>>
+  /**
+   * S10.13: tray Open or a normal launch from `tray-only`, in the mode "Mode at launch" resolved; S10.12 when a
+   * notification click opens it (`reveal`).
+   */
+  openAtLaunch(mode: AppMode, reason?: { reveal: boolean }): Promise<IpcResult<void>>
   /** S10.08 (app mark, global shortcut, Settings "Hide panel", grip "Hide window"); S27.08 mid-run. */
   hide(): Promise<IpcResult<void>>
   /** S10.09: back from `hidden` to `lastMode`. */
@@ -367,7 +370,9 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
 
   function restore(): Promise<IpcResult<void>> {
     if (!running() && shown() !== 'hidden') return Promise.resolve(OK)
-    return request({ mode: lastShown(), answers: [] })
+    // From tray-only the window opens as a launch does (S10.13); the Panel alone resolves "Mode at launch" to itself.
+    const open = ladder.state === 'tray-only' ? { open: { reveal: false } } : {}
+    return request({ mode: lastShown(), answers: [], ...open })
   }
 
   return {
@@ -395,8 +400,8 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       await request({ mode, answers: [], open: { reveal: true } })
       return revealer.revealDwarfChat(t)
     },
-    openAtLaunch(mode) {
-      return request({ mode, answers: [], open: { reveal: false } })
+    openAtLaunch(mode, reason = { reveal: false }) {
+      return request({ mode, answers: [], open: reason })
     },
     hide,
     restore,

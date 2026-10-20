@@ -314,6 +314,18 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(shownWindows(s)).toEqual(['veta'])
   })
 
+  it('[S10.13] tray Open from tray-only opens the mode shown last as a launch does, and a restore when shown changes nothing', async () => {
+    const s = setup({ start: 'tray-only' })
+    const opened = s.coordinator.restore()
+    bothDone(s, null, 'panel')
+    expect(await opened).toEqual({ ok: true, value: undefined })
+    expect(s.coordinator.ladder()).toEqual({ state: 'panel', lastId: 'S10.13' })
+    expect(shownWindows(s)).toEqual(['panel'])
+    const calls = s.win.panel.calls.length
+    expect(await s.coordinator.restore()).toEqual({ ok: true, value: undefined })
+    expect(s.win.panel.calls).toHaveLength(calls)
+  })
+
   it('[BR-19, ADR-034] a mode that is not built is never offered, and a move to it starts no run', async () => {
     const s = setup({ start: 'panel', built: ['panel'] })
     expect(s.coordinator.offered()).toEqual(['panel'])
