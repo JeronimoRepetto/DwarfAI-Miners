@@ -35,6 +35,12 @@ interface Setup {
   failing: Set<AppMode>
   reveals: { mineId: MineId; dwarfId: DwarfId; shown: string }[]
   reduced: { on: boolean }
+  /** The windows brought forward while already shown (S10.02). */
+  forwards: AppMode[]
+  /** Each start (`true`) and end (`false`) of a run's motion, as the coordinator reports it (NFR-PERF-02). */
+  runs: boolean[]
+  /** The next reveal fails with this error. */
+  revealFails: { error: Error | null }
 }
 
 function setup(
@@ -54,6 +60,9 @@ function setup(
   const failing = new Set<AppMode>()
   const reveals: Setup['reveals'] = []
   const reduced = { on: false }
+  const forwards: AppMode[] = []
+  const runs: boolean[] = []
+  const revealFails: Setup['revealFails'] = { error: null }
   let next = 0
   const start = options.start ?? 'panel'
   if (start !== 'tray-only' && start !== 'hidden') win[start].showInactive()
@@ -64,13 +73,16 @@ function setup(
         if (failing.has(mode)) throw new Error(`the ${mode} window cannot be shown`)
         return win[mode]
       },
-      bounds: (mode) => BOUNDS[mode]
+      bounds: (mode) => BOUNDS[mode],
+      bringForward: (mode) => void forwards.push(mode),
+      isShown: (mode) => win[mode].visible
     },
     timing,
     lastMode: prefs,
     built: options.built ?? ['panel', 'veta', 'valle'],
     revealer: {
       revealDwarfChat(t) {
+        if (revealFails.error !== null) return Promise.reject(revealFails.error)
         reveals.push({ ...t, shown: coordinator.mode() })
         return Promise.resolve('chat-open')
       }
@@ -78,9 +90,22 @@ function setup(
     log,
     newTransitionId: () => `t-${(next += 1)}`,
     reducedMotion: () => reduced.on,
+    onRunChanged: (playing) => void runs.push(playing),
     start
   })
-  return { coordinator, timing, store, log, win, failing, reveals, reduced }
+  return {
+    coordinator,
+    timing,
+    store,
+    log,
+    win,
+    failing,
+    reveals,
+    reduced,
+    forwards,
+    runs,
+    revealFails
+  }
 }
 
 /** The `mode.transition` pushes `window` got, in order. */
@@ -314,7 +339,7 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(shownWindows(s)).toEqual(['veta'])
   })
 
-  it('[S10.13] tray Open from tray-only opens the mode shown last as a launch does, and a restore when shown changes nothing', async () => {
+  it('[S10.13, S10.02] tray Open from tray-only opens the mode shown last as a launch does, and a restore when shown brings it forward with no run', async () => {
     const s = setup({ start: 'tray-only' })
     const opened = s.coordinator.restore()
     bothDone(s, null, 'panel')
@@ -323,6 +348,10 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(shownWindows(s)).toEqual(['panel'])
     const calls = s.win.panel.calls.length
     expect(await s.coordinator.restore()).toEqual({ ok: true, value: undefined })
+    // CORRECTED (independent review, finding 1): a restore of the mode already shown is still a request to see it —
+    // a second launch (S10.02), the tray's Open or Stop everything's confirmation — so the window comes forward,
+    // un-minimized, as the Panel's own show did before the coordinator; it is not a run.
+    expect(s.forwards).toEqual(['panel'])
     expect(s.win.panel.calls).toHaveLength(calls)
   })
 
