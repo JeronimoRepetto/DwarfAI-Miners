@@ -63,6 +63,17 @@ describe('echoesTypedSend', () => {
     )
   })
 
+  // APPENDED for #1463: a send that carried files is echoed by a row carrying their tokens.
+  it('[US-MSG-002.AC03, INV-60] the transcript echo of a send with files is its words once the files’ tokens are taken off', () => {
+    const files = [{ path: '/work/red.png', name: 'red.png' }]
+    const withImage = echo({ text: '[Image #1] Dig the north seam' })
+    expect(echoesTypedSend(withImage, 'transcript', row, 0, files)).toBe(true)
+    expect(echoesTypedSend(withImage, 'transcript', row, 0)).toBe(false)
+    expect(
+      echoesTypedSend(echo({ text: '[Image #1] Dig the south seam' }), 'transcript', row, 0, files)
+    ).toBe(false)
+  })
+
   it('[INV-60, ADR-007] an observed person entry echoes a waiting row only with the exact text inside the typed-echo window', () => {
     expect(at(WRITTEN_AT + TYPED_ECHO_WINDOW_MS)).toBe(true)
     expect(at(WRITTEN_AT + TYPED_ECHO_WINDOW_MS + 1)).toBe(false)

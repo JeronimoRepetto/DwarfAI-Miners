@@ -558,6 +558,33 @@ describe('ConversationSender: a message with files (#1463)', () => {
     })
   })
 
+  it('[US-MSG-002.AC03, INV-62] an observed Claude row carrying [Image #1] and the typed words confirms the send with files', async () => {
+    const h = harness(files())
+    const sent = await h.sender.send(DWARF, TEXT, [PNG], request(37))
+    if (!sent.ok) throw new Error('refused')
+    await settle()
+    h.turns.answer({ ok: true, value: TRANSCRIPT_RECEIPT })
+    await settle()
+
+    h.ingest([person(`[Image #1] ${TEXT}`, T0 + 5), dwarf()])
+    expect(h.stored()).toMatchObject({ phase: 'reacted' })
+    expect(h.bus.ofType('MessageReactedTo').map((e) => e.payload.messageId)).toEqual([sent.value])
+  })
+
+  it('[US-MSG-002.AC03] a row with the files’ tokens but different words does not confirm the send', async () => {
+    const h = harness(files())
+    const sent = await h.sender.send(DWARF, TEXT, [PNG, NOTES], request(38))
+    if (!sent.ok) throw new Error('refused')
+    await settle()
+    h.turns.answer({ ok: true, value: TRANSCRIPT_RECEIPT })
+    await settle()
+
+    h.ingest([person(`${NOTES}[Image #1] another line entirely`, T0 + 5), dwarf()])
+    h.ingest([person(TEXT, T0 + 6), dwarf()])
+    expect(h.stored()?.phase).toBe('delivered')
+    expect(h.bus.ofType('MessageReactedTo')).toEqual([])
+  })
+
   it('[US-MSG-003.AC02, S7.09] a retried message that carried no file is handed over with none', async () => {
     const h = harness()
     const messageId = await h.send(35)

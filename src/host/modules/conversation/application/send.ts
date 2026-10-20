@@ -67,7 +67,7 @@ import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { ConversationEntry } from '../../suppliers'
-import { echoesSentText } from '../domain/consoleText'
+import { echoesSentText, type EchoedFile } from '../domain/consoleText'
 import { advance, startDelivery, type DeliveryFact } from '../domain/delivery'
 import type { MessagesAppended } from '../domain/events'
 import type { Delivery, MessageView } from '../domain/messages'
@@ -145,6 +145,8 @@ const EARLY_ECHOES_KEPT = 16
 interface EchoWatch {
   dwarfId: DwarfId
   text: string
+  /** #1463: the files the send carried, whose tokens the transcript row carries too (memory only). */
+  files: readonly EchoedFile[]
   sentAt: Instant
   correlation: string | null
   echoSeen: boolean
@@ -243,7 +245,7 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
     if (written.existing) return { ok: true, value: messageId }
 
     const { delivery } = startDelivery({ messageId, dwarfId, kind: 'message', at })
-    this.track(delivery, text)
+    this.track(delivery, text, files ?? [])
     const view: MessageView = {
       id: messageId,
       dwarfId,
@@ -272,8 +274,8 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
    * them (known risk, recorded in the #1463 hand-off).
    */
   resume(delivery: Delivery, text: string): void {
-    this.track(delivery, text)
     const kept = this.files.get(delivery.messageId)
+    this.track(delivery, text, kept?.files ?? [])
     this.handOverLater(delivery, text, kept?.files ?? [], kept !== undefined)
   }
 
@@ -290,13 +292,14 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
   }
 
   /** The Host-memory tracking of a delivery just put in `sending`, sent at `delivery.phaseAt`. */
-  private track(delivery: Delivery, text: string): void {
+  private track(delivery: Delivery, text: string, files: readonly RevalidatedAttachment[]): void {
     const { messageId, dwarfId } = delivery
     this.deliveries.set(messageId, delivery)
     this.inFlight.set(messageId, { dwarfId, endsSeen: [], sessionEnded: false })
     this.echoes.set(messageId, {
       dwarfId,
       text,
+      files: files.map(({ path, name }) => ({ path, name })),
       sentAt: delivery.phaseAt,
       correlation: null,
       echoSeen: false,
@@ -644,7 +647,7 @@ function noteEcho(
   if (origin !== 'transcript') return
   const at = entry.providerTime ?? now
   const claimed = watching.find(
-    (w) => !w.echoSeen && echoesSentText(entry.text, w.text) && at >= w.sentAt
+    (w) => !w.echoSeen && echoesSentText(entry.text, w.text, w.files) && at >= w.sentAt
   )
   if (claimed !== undefined) claimed.echoSeen = true
 }
