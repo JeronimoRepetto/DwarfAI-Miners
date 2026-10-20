@@ -158,6 +158,24 @@ export const hostConnectionViewSchema = z
 // it, ADR-024 item 3 defines it).
 export type WindowMode = 'panel' | 'veta' | 'valle' | 'hidden' // 06 §15
 
+// A-N13 `moveToMode`, A-N14 `onModeTransition` (14 §2.2, §3.9; ADR-025 item 3): the `ModeCoordinator`'s run, as
+// 14 §3.9 writes them (ISSUE-284).
+export interface MoveToModeParams {
+  mode: WindowMode
+  mineId?: MineId
+  dwarfId?: DwarfId
+  slot?: 'chat' | 'history' // 07 N-23: 'history' opens the Panel on the mine's history for that dwarf (S24.13)
+}
+export interface ModeTransition {
+  // ADR-025 D3 step 2
+  transitionId: string
+  from: WindowMode
+  to: WindowMode
+  t0: number // UI-main clock, shared start
+  chat?: { dwarfId: DwarfId; mineId: MineId }
+  role: 'source' | 'target' // what this renderer plays
+}
+
 export interface ChatViewState {
   scrollAnchor: { messageId: MessageId; offsetPx: number } | 'bottom' // anchored to a message, not a pixel offset
   selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } // composer caret/selection
