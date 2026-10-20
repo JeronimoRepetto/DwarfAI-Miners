@@ -465,7 +465,7 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(s.coordinator.ladder()).toEqual({ state: 'panel', lastId: 'S10.01' })
   })
 
-  it('[INV-116] exactly one mode window is shown after every run', async () => {
+  it('[INV-116, S27.04, S27.07, S27.08, S27.09] exactly one mode window is shown after every run, however it ends', async () => {
     const s = setup({ start: 'panel' })
     const path: [AppMode, AppMode][] = [
       ['panel', 'veta'],
@@ -481,6 +481,29 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
       await moved
       expect(shownWindows(s)).toEqual([to])
     }
+    // Ended by the watchdog (S27.04): no renderer answered.
+    const byWatchdog = s.coordinator.moveToMode({ mode: 'veta' })
+    s.timing.advance(1_000)
+    await byWatchdog
+    expect(shownWindows(s), 'after the watchdog').toEqual(['veta'])
+    // Ended by a target that cannot be shown (S27.07).
+    s.failing.add('valle')
+    await s.coordinator.moveToMode({ mode: 'valle' })
+    expect(shownWindows(s), 'after a failed target').toEqual(['veta'])
+    s.failing.clear()
+    // Ended by a hide mid-motion (S27.08): no window at all, the hidden rung.
+    const hiddenMidway = s.coordinator.moveToMode({ mode: 'panel' })
+    await s.coordinator.hide()
+    await hiddenMidway
+    expect(shownWindows(s), 'after a hide mid-motion').toEqual([])
+    // Ended by a held request (S27.09): the restore runs, then the request held during it.
+    const restored = s.coordinator.restore()
+    const heldMove = s.coordinator.moveToMode({ mode: 'valle' })
+    bothDone(s, null, 'panel')
+    await restored
+    bothDone(s, 'panel', 'valle')
+    await heldMove
+    expect(shownWindows(s), 'after a held request').toEqual(['valle'])
   })
 
   it('[S10.06, S10.07, S10.12, S10.16, S10.17] every machine 10 transition reaches its target: Open Valle from Veta, Panel or Veta from Valle, a notification click with no window opening per Mode at launch and then revealing, a clean Host close from tray-only, and a UI crash to not-running; a transition 07 does not list is rejected', async () => {
