@@ -85,7 +85,13 @@ import {
 } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
 import { uiDataDirectory } from './dataDirectory'
-import { DEFAULT_TOGGLE_ACCELERATOR, PROTOCOL_VERSION, type ChannelKey } from '@dwarfai/contracts'
+import {
+  DEFAULT_TOGGLE_ACCELERATOR,
+  dwarfIdSchema,
+  PROTOCOL_VERSION,
+  type ChannelKey,
+  type DwarfId
+} from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
 import { createNativeActions, type ServedNativeActions } from './window/application/nativeActions'
@@ -1162,7 +1168,22 @@ export async function startUiMain({
           },
           ...(notifications?.windowFocused === undefined
             ? {}
-            : { focused: () => notifications.windowFocused?.() ?? false })
+            : { focused: () => notifications.windowFocused?.() ?? false }),
+          // S27.11 and S10.16 from the Host (ISSUE-284). A UI-process crash (S10.17, S27.12) is not heard by the
+          // process that crashed: the Host respawns the tray process (S12.C02), which starts a fresh coordinator.
+          ...(host === undefined
+            ? {}
+            : {
+                departures: (h: (dwarfId: DwarfId) => void) =>
+                  host.client.subscribe((event) => {
+                    if (event.kind !== 'frame' || event.frame.name !== 'dwarf.departed') return
+                    const dwarfId = dwarfIdSchema.safeParse(
+                      (event.frame.data as { dwarfId?: unknown } | null)?.dwarfId
+                    )
+                    if (dwarfId.success) h(dwarfId.data)
+                  }),
+                hostClosing: (h: () => void) => host.client.onClosing(() => h())
+              })
         })
       : undefined
   /** The Panel as the rest of UI main moves it: through the coordinator when it is composed. */
@@ -1477,6 +1498,7 @@ export async function startUiMain({
     minesAdmin?.dispose()
     hostReads?.dispose()
     stopHearingVisibility?.()
+    shell?.dispose()
     host?.client.dispose()
   })
   // The app lives in the tray with every window hidden: closing the last window never quits it

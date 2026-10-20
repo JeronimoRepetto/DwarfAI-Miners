@@ -49,7 +49,17 @@ function setup(start: 'hidden' | 'tray-only', shown = false) {
   const reveals: { mineId: MineId; dwarfId: DwarfId; existing: string | null }[] = []
   let ids = 0
   let revealWindows: RevealWindows | null = null
+  const departures: ((dwarfId: DwarfId) => void)[] = []
+  const closings: (() => void)[] = []
   const shell = composeModeShell({
+    departures: (h) => {
+      departures.push(h)
+      return () => {}
+    },
+    hostClosing: (h) => {
+      closings.push(h)
+      return () => {}
+    },
     panel,
     pushToPanel: (push, payload) => pushes.push({ push, payload }),
     lastMode: createUiPreferences({ store, modeWindows: () => [] }),
@@ -87,7 +97,9 @@ function setup(start: 'hidden' | 'tray-only', shown = false) {
     reveals,
     store,
     timing,
-    windows: () => revealWindows
+    windows: () => revealWindows,
+    depart: (dwarfId: DwarfId) => departures.forEach((h) => h(dwarfId)),
+    hostClose: () => closings.forEach((h) => h())
   }
 }
 
@@ -141,5 +153,19 @@ describe('the mode shell over the Panel (ISSUE-284; ADR-025 item 3; 07 S10.08, S
     s.shell.coordinator.closed('windows-closed')
     expect(s.shell.coordinator.ladder()).toEqual({ state: 'tray-only', lastId: 'S10.14' })
     expect(s.state.shown).toBe(false)
+  })
+
+  it('[S27.11, S10.16] the Host dwarf.departed frame and its clean close reach the coordinator from the composition', async () => {
+    const s = setup('hidden')
+    const moved = s.shell.coordinator.moveToMode({ mode: 'panel', mineId: MINE, dwarfId: DWARF })
+    expect(s.shell.coordinator.mode()).toBe('hidden')
+    // The carried dwarf left mid-run: the run completes at once (S27.11), no renderer answer needed.
+    s.depart(DWARF)
+    expect(s.shell.coordinator.mode()).toBe('panel')
+    expect(await moved).toEqual({ ok: true, value: undefined })
+
+    const tray = setup('tray-only')
+    tray.hostClose()
+    expect(tray.shell.coordinator.ladder()).toEqual({ state: 'not-running', lastId: 'S10.16' })
   })
 })

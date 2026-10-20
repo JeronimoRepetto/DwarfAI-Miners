@@ -9,6 +9,7 @@
 //   the Panel those parts get answers `hide`, `show` and `toggleVisible` through it. Everything else is the Panel's own.
 // - A notification click reaches the per-mode reveal through the coordinator (S27.14), and the reveal's own restore
 //   and launch-open are runs too (S10.11, S10.12).
+import type { DwarfId } from '@dwarfai/contracts'
 import type { UiLog } from '../../diagnostics/uiLogger'
 import type { ModeTiming } from '../ports/modeTiming'
 import type { ModeWindow } from '../ports/windowFactory'
@@ -38,10 +39,16 @@ export interface ModeShellDeps {
   revealer(windows: RevealWindows): DwarfChatRevealer
   /** Whether the raised window took the foreground (S-018-2); the Panel's visibility when none is given. */
   focused?(): boolean
+  /** The Host's `dwarf.departed` frames, as dwarf ids: a run carrying that dwarf's chat completes (S27.11). */
+  departures?(h: (dwarfId: DwarfId) => void): () => void
+  /** The Host closed on purpose (`host.closing`): from tray-only the UI process ends with it (S10.16). */
+  hostClosing?(h: () => void): () => void
 }
 
 export interface ModeShell {
   coordinator: ModeCoordinator
+  /** Stops hearing the Host's departures and close. */
+  dispose(): void
   /** The Panel whose hide, show and toggle are the coordinator's runs. */
   panel: PanelWindowUseCases
 }
@@ -96,8 +103,14 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
       return Promise.resolve(deps.focused?.() ?? panel.visible())
     }
   })
+  const stopDepartures = deps.departures?.((dwarfId) => coordinator.departed(dwarfId))
+  const stopClosing = deps.hostClosing?.(() => void coordinator.hostClosed())
   return {
     coordinator,
+    dispose: () => {
+      stopDepartures?.()
+      stopClosing?.()
+    },
     panel: {
       ...panel,
       hide: () => void coordinator.hide(),
