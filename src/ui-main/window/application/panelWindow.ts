@@ -77,6 +77,11 @@ export interface PanelWindowUseCases extends PanelWindowController {
   /** A-05: whether the Panel window is on screen (shown and not minimized). */
   visible(): boolean
   /**
+   * NFR-PERF-02 (ISSUE-284): while a mode run plays (`true`), no fit places the window — a display change or a layout
+   * request is held — and the held fit runs once the run lands (`false`). Nothing is resized between `t0` and done.
+   */
+  holdPlacement(held: boolean): void
+  /**
    * Whether the Panel window is shown (S10 `panel` vs `hidden`), minimized or not, read back from the window without
    * building one (ISSUE-284: the `ModeCoordinator` reads it before a toggle).
    */
@@ -191,7 +196,15 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
     return screen.workArea(display.displayKey)
   }
 
+  /** NFR-PERF-02: a mode run is playing, and a fit asked meanwhile waits for its end. */
+  let placementHeld = false
+  let fitHeld = false
+
   const fit = (): void => {
+    if (placementHeld) {
+      fitHeld = true
+      return
+    }
     const window = panel()
     const target: PanelFitTarget = {
       placeAt: (bounds) => window.placeAt(bounds),
@@ -300,6 +313,12 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
     alwaysOnTop: () => (built ? surface.isAlwaysOnTop() : store.load('alwaysOnTop')),
     visible,
     isShown: shown,
+    holdPlacement(on) {
+      placementHeld = on
+      if (on || !fitHeld) return
+      fitHeld = false
+      if (built) fit()
+    },
     load: () => {
       panel()
     },

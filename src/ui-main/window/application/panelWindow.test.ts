@@ -599,3 +599,19 @@ describe('the Panel window closing (ISSUE-284; 07 S27.10, S10.14)', () => {
     expect(builds, 'a closed Panel is not built again to be hidden').toBe(1)
   })
 })
+
+describe('the Panel window during a mode run (ISSUE-284; NFR-PERF-02)', () => {
+  it('[NFR-PERF-02, ADR-025] while a run plays a display change or a layout request places the Panel nowhere, and the held fit runs once it lands', () => {
+    const { panel, window, displayChanged } = subject()
+    panel.show()
+    const placed = (): number => window().calls.filter((c) => c.member === 'placeAt').length
+    const before = placed()
+    panel.holdPlacement(true)
+    displayChanged()
+    panel.setLayout({ mineOpen: true, dockOpen: false })
+    expect(placed(), 'no setBounds between t0 and the landing').toBe(before)
+    panel.holdPlacement(false)
+    expect(placed()).toBeGreaterThan(before)
+    expect(panel.layout()).toMatchObject({ mineOpen: true })
+  })
+})

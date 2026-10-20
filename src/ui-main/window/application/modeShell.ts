@@ -77,6 +77,8 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
     newTransitionId: deps.newTransitionId,
     // UI main reads no reduced-motion preference: each renderer reads its own and answers at t0 (S27.06).
     reducedMotion: () => false,
+    // NFR-PERF-02: the Panel places itself nowhere while a run plays (a display change, a layout request).
+    onRunChanged: (playing) => panel.holdPlacement(playing),
     start: deps.start
   })
   revealer = deps.revealer({

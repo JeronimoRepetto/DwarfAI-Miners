@@ -175,6 +175,14 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     answers: RevealAnswer[]
   } | null = null
   let revealCount = 0
+  /** Whether the windows were told a run's motion is playing (NFR-PERF-02), so each start gets one end. */
+  let playingTold = false
+
+  function tellPlaying(playing: boolean): void {
+    if (playingTold === playing) return
+    playingTold = playing
+    deps.onRunChanged?.(playing)
+  }
   /** The mode windows a run has shown so far (and the one UI main started on): the ones a close hides. */
   const opened = new Set<AppMode>(
     deps.start === 'tray-only' || deps.start === 'hidden' ? [] : [deps.start]
@@ -249,6 +257,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     const request = current?.request
     current?.cancelWatchdog()
     current = null
+    tellPlaying(false)
     // Every path settles: a window that throws here is logged, never left holding the machine in `playing`.
     safely(from, to, () => windowOf(from)?.hide())
     safely(from, to, () => windowOf(to)?.focus())
@@ -354,6 +363,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       return
     }
     step({ type: 'prepared' })
+    tellPlaying(true)
     const run = current
     run.cancelWatchdog = timing.after(
       MODE_T0_LEAD_MS + MODE_MOTION_MS + MODE_WATCHDOG_MARGIN_MS,
@@ -427,6 +437,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       current?.cancelWatchdog()
       current = null
       step({ type: 'hidden' })
+      tellPlaying(false)
       safely(from, to, () => windowOf(from)?.hide())
       safely(from, to, () => windowOf(to)?.hide())
       if (to !== 'hidden') safely(from, to, () => deps.lastMode.set('lastMode', to))
@@ -514,6 +525,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       const pending = [...(current?.request.answers ?? []), ...(held?.answers ?? [])]
       current = null
       held = null
+      tellPlaying(false)
       step({ type: 'closed' })
       for (const mode of opened) windows.window(mode).hide()
       node = { state: 'settled', mode: 'hidden' }
@@ -543,6 +555,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       const pending = [...(current?.request.answers ?? []), ...(held?.answers ?? [])]
       current = null
       held = null
+      tellPlaying(false)
       step({ type: 'crashed' })
       node = { state: 'settled', mode: 'hidden' }
       climb({ type: 'crashed' })

@@ -34,6 +34,7 @@ function fakePanel(shown: boolean) {
     alwaysOnTop: () => true,
     visible: () => state.shown,
     isShown: () => state.shown,
+    holdPlacement: () => {},
     panelStart: () => ({ alwaysOnTop: true, bounds: { x: 0, y: 0, width: 420, height: 900 } }),
     load: () => calls.push('load')
   }

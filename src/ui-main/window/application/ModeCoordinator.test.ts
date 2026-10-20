@@ -180,6 +180,24 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(s.win.veta.focused).toBe(true)
   })
 
+  it('[NFR-PERF-02, ADR-025] the coordinator reports a run as playing from t0 until it lands, and only then', async () => {
+    const s = setup({ start: 'panel' })
+    const moved = s.coordinator.moveToMode({ mode: 'veta' })
+    expect(s.runs).toEqual([true])
+    bothDone(s, 'panel', 'veta')
+    await moved
+    expect(s.runs).toEqual([true, false])
+    // A target that cannot be shown never starts playing.
+    s.failing.add('valle')
+    await s.coordinator.moveToMode({ mode: 'valle' })
+    expect(s.runs).toEqual([true, false])
+    // A hide mid-motion ends the playing at once (S27.08).
+    const toPanel = s.coordinator.moveToMode({ mode: 'panel' })
+    await s.coordinator.hide()
+    await toPanel
+    expect(s.runs).toEqual([true, false, true, false])
+  })
+
   it('[S27.03, S27.04, NFR-TIM-16] the source hides and the target focuses on both done or at the M plus 40 ms watchdog, and lastMode becomes the target', async () => {
     const byDone = setup({ start: 'panel' })
     const answered = byDone.coordinator.moveToMode({ mode: 'veta' })
