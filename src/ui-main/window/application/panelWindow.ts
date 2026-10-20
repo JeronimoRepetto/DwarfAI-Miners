@@ -76,6 +76,11 @@ export interface PanelWindowUseCases extends PanelWindowController {
   alwaysOnTop(): boolean
   /** A-05: whether the Panel window is on screen (shown and not minimized). */
   visible(): boolean
+  /**
+   * Whether the Panel window is shown (S10 `panel` vs `hidden`), minimized or not, read back from the window without
+   * building one (ISSUE-284: the `ModeCoordinator` reads it before a toggle).
+   */
+  isShown(): boolean
   /** Where a new Panel window opens, pinned as stored (#35) and docked to the stored edge (#138). */
   panelStart(): { alwaysOnTop: boolean; bounds: Rect }
   /**
@@ -294,6 +299,7 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
     },
     alwaysOnTop: () => (built ? surface.isAlwaysOnTop() : store.load('alwaysOnTop')),
     visible,
+    isShown: shown,
     load: () => {
       panel()
     },

@@ -33,6 +33,7 @@ function fakePanel(shown: boolean) {
     raise: () => calls.push('raise'),
     alwaysOnTop: () => true,
     visible: () => state.shown,
+    isShown: () => state.shown,
     panelStart: () => ({ alwaysOnTop: true, bounds: { x: 0, y: 0, width: 420, height: 900 } }),
     load: () => calls.push('load')
   }

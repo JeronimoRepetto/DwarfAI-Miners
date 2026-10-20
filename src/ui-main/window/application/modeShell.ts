@@ -66,7 +66,7 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
       bounds: () => panel.panelStart().bounds,
       // The Panel's own show re-fits it, shows it inactive and raises it, which also un-minimizes it (#165).
       bringForward: () => panel.show(),
-      isShown: () => panel.visible()
+      isShown: () => panel.isShown()
     },
     timing: deps.timing,
     lastMode: deps.lastMode,

@@ -339,6 +339,33 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(shownWindows(s)).toEqual(['veta'])
   })
 
+  it('[S27.08] the shortcut during a run from hidden hides the window at once instead of restoring it', async () => {
+    const s = setup({ start: 'hidden' })
+    void s.coordinator.restore()
+    expect(transitions(s.win.panel).at(-1)).toMatchObject({ from: 'hidden', to: 'panel' })
+    // The press lands mid-motion: the person asked for the opposite of where the run is going.
+    const pressed = s.coordinator.toggle()
+    s.timing.advance(400)
+    expect(shownWindows(s)).toEqual([])
+    expect(s.coordinator.mode()).toBe('hidden')
+    expect(await pressed).toEqual({ ok: true, value: undefined })
+  })
+
+  it('[S10.08, S10.09] a hide the coordinator did not run is read back before the shortcut decides, so one press shows the window', async () => {
+    const s = setup({ start: 'panel' })
+    // macOS Cmd+H or app.hide(): the window went off screen without a run.
+    s.win.panel.visible = false
+    const pressed = s.coordinator.toggle()
+    expect(transitions(s.win.panel).at(-1)).toMatchObject({
+      from: 'hidden',
+      to: 'panel',
+      role: 'target'
+    })
+    bothDone(s, null, 'panel')
+    expect(await pressed).toEqual({ ok: true, value: undefined })
+    expect(shownWindows(s)).toEqual(['panel'])
+  })
+
   it('[S10.13, S10.02] tray Open from tray-only opens the mode shown last as a launch does, and a restore when shown brings it forward with no run', async () => {
     const s = setup({ start: 'tray-only' })
     const opened = s.coordinator.restore()

@@ -383,6 +383,16 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     return request({ mode: 'hidden', answers: [] })
   }
 
+  /**
+   * A hide the coordinator did not run (macOS Cmd+H, `app.hide()`) leaves the mode window off screen while the model
+   * still shows it: read the window back, and take it as hidden (S10.08) before deciding a press.
+   */
+  function reconcile(): void {
+    if (node.state !== 'settled' || node.mode === 'hidden' || windows.isShown(node.mode)) return
+    node = { state: 'settled', mode: 'hidden' }
+    climb({ type: 'move', to: 'hidden' })
+  }
+
   function restore(): Promise<IpcResult<void>> {
     const now = shown()
     if (!running() && now !== 'hidden') {
@@ -426,8 +436,12 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     hide,
     restore,
     toggle() {
-      const run = 'run' in node ? node.run : null
-      return shown() === 'hidden' || run?.to === 'hidden' ? restore() : hide()
+      // During a run the press asks for the opposite of where the run is going (S27.08 when it is going to a mode).
+      if (node.state === 'preparing' || node.state === 'playing' || node.state === 'completing') {
+        return node.run.to === 'hidden' ? restore() : hide()
+      }
+      reconcile()
+      return shown() === 'hidden' ? restore() : hide()
     },
     input() {
       // S27.09: a click or a key that is not a mode request is ignored during a run, never queued.
