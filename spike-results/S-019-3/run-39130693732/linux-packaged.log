@@ -1,1 +1,0 @@
-[3749:1018/132226.170588:FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:166] The SUID sandbox helper binary was found, but is not configured correctly. Rather than run without sandboxing I'm aborting now. You need to make sure that <home>/work/DwarfAI-Miners/DwarfAI-Miners/release/linux-unpacked/chrome-sandbox is owned by root and has mode 4755.

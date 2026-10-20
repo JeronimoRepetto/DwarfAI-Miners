@@ -1,5 +1,5 @@
 // L4 conformance of the OpenCode `http-server` driver (15 §4.6, §6; 17 §1.4, §2.3; ISSUE-155), with
-// the protection mode S-031-3 recorded: none (`spike-results/S-031-3.md`, OpenCode 1.18.32). The
+// the protection mode S-031-3 recorded: none (spike S-031-3, OpenCode 1.18.32). The
 // driver therefore launches nothing (FM-084, option (c) is the `acp` entry), and the 15 §6 cases
 // that the harness drives over a launched session (C-01, C-05…C-21, C-23…C-25, C-28, C-29) have no
 // session to run on: their launched-side proof is `OpenCodeAcp.conformance.test.ts`. What this
@@ -51,7 +51,12 @@ const fixtures = readFixtureSet(
   fileURLToPath(new URL('fixtures/opencode/http-server/1.18.32/', ROOT))
 )
 const HELP = readFileSync(
-  fileURLToPath(new URL('spike-results/S-031-3/help/help-root.txt', ROOT)),
+  fileURLToPath(
+    new URL(
+      'src/host/modules/suppliers/adapters/drivers/acp/__fixtures__/opencode-help-root.txt',
+      ROOT
+    )
+  ),
   'utf8'
 )
 

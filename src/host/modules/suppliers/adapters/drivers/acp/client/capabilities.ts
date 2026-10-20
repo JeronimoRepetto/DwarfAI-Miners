@@ -7,12 +7,12 @@ import type { NegotiatedCapabilities } from '../../../../domain/mergeCapabilitie
 
 /** The S-008-1 record of the ACP TS SDK this build carries. */
 export interface AcpLibraryRecord {
-  /** `spike-results/S-008-1.md`: a closed, GPL-compatible "bundle: yes" row for the pinned SDK. */
+  /** spike S-008-1: a closed, GPL-compatible "bundle: yes" row for the pinned SDK. */
   readonly s0081: boolean
 }
 
 /**
- * `spike-results/S-008-1.md` (owner, 2026-10-16): `@agentclientprotocol/sdk` 1.6.0, Apache-2.0,
+ * spike S-008-1 (owner, 2026-10-16): `@agentclientprotocol/sdk` 1.6.0, Apache-2.0,
  * GPL-3.0-or-later compatible, **bundle: yes**, pinned exactly. `scripts/release/s008-records.mjs`
  * fails the release when the lockfile pins a version without such a row.
  */

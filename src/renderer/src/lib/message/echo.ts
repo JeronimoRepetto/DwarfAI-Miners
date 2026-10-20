@@ -178,7 +178,7 @@ function recordIndex(entries: readonly PanelEntry<PanelMessage>[], sentAt: numbe
 /**
  * The console's own marker for one pasted image, whatever digit Claude
  * Code's own session counter assigned it (#408, measured in
- * docs/console-hosting.md §6) — never a number this app predicts, only a
+ * the console-hosting research §6) — never a number this app predicts, only a
  * shape it recognizes. Not anchored to the start of the string: reopened by
  * #419, the placeholder is inserted at the cursor only once Claude Code
  * finishes READING the pasted file, while a plain path or the words that
@@ -331,7 +331,7 @@ function stripAttachmentTokens(
  * anywhere relative to the rest (`stripAttachmentTokens`, #419 reopened). A
  * row missing even one token never accounts for this echo, and an
  * attachments-only echo (no words at all) matches a row that is exactly those
- * tokens. See docs/console-hosting.md §6 for the transcript shape this was
+ * tokens. See the console-hosting research §6 for the transcript shape this was
  * measured against.
  *
  * Which tokens a row is expected to carry now depends on how THIS message was

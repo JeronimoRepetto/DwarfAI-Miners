@@ -10,7 +10,7 @@
 //
 // The text travels as ONE argv element: `codex queue` has no stdin form (`codex queue --help`,
 // codex-cli 0.153.4, read 2026-09-16: `--thread <THREAD> --message <TEXT>`, no `-`, no file; legacy
-// docs/console-hosting.md "The Codex queue keeps a real command-line bound"). That departs from 15
+// the console-hosting research "The Codex queue keeps a real command-line bound"). That departs from 15
 // §1.2 `TurnInput.text` "never argv", which the X3 row itself requires; recorded as a known risk.
 //
 // Candidate decisions (21 §6; evidence: CodexThreadQueue.test.ts and the TurnSender contract run in

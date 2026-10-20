@@ -724,7 +724,7 @@ describe('the docked message panel', () => {
  * out loud main's fixed refusal when the path could not be opened" and "says nothing when the file opened
  * successfully". The chat is the Host's from the cut-1 switch, and a Host row carries no activity step to press (14
  * §3.6 `MessageView`): an activity line is not clickable from cut 1 (owner answer 2026-10-07, recorded in
- * docs/strangler/parity-cut-1.md). A-20 itself is still pinned by `ipc-routing.contract.test.ts` ("[ADR-001] in cut 1
+ * the cut's parity record). A-20 itself is still pinned by `ipc-routing.contract.test.ts` ("[ADR-001] in cut 1
  * A-20 and A-30 are split between host and ui-local, and A-32 composes LegacyEndFirstAdapter") and the history's own
  * path press by App.test.ts.
  */
@@ -1612,7 +1612,7 @@ describe('the sent message, drawn at once (#309)', () => {
 
   // AMENDED for ISSUE-123 (was: the transcript's row through a second A-14 `getDwarfFeed` read after the send): the
   // Host's row arrives as a `conversation.appended` frame. At cut 1 the send is today's (A-23 `legacy`), so the Host
-  // knows the words only once it observes them, and the echo stands until then (docs/strangler/parity-cut-1.md).
+  // knows the words only once it observes them, and the echo stands until then (the cut's parity record).
   it('shows the words once, not twice, when the transcript catches up', async () => {
     // The reconciliation (#309): a `user` turn with the same words, stamped
     // after the send, IS this message — so the feed's row replaces the echo

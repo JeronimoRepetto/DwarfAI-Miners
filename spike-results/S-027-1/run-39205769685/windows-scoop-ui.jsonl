@@ -1,6 +1,0 @@
-{"ts":"2026-10-19T06:06:55.040Z","level":"info","proc":"ui","pid":2564,"appVersion":"0.13.1","event":"versioned-copy","subsystem":"host-launcher","outcome":"ok","causeClass":"copy","durationMs":2668}
-{"ts":"2026-10-19T06:06:59.599Z","level":"info","proc":"ui","pid":2564,"appVersion":"0.13.1","event":"host.spawn","subsystem":"host-launcher","outcome":"ok","causeClass":"wmi","durationMs":7226}
-{"ts":"2026-10-19T06:06:59.640Z","level":"info","proc":"ui","pid":2564,"appVersion":"0.13.1","event":"host.upgrade","subsystem":"host-launcher","outcome":"ok","causeClass":"attach"}
-{"ts":"2026-10-19T06:06:59.677Z","level":"info","proc":"ui","pid":2564,"appVersion":"0.13.1","event":"host.connection","subsystem":"host-client","outcome":"ok","causeClass":"connected"}
-{"ts":"2026-10-19T06:07:06.027Z","level":"info","proc":"ui","pid":1996,"appVersion":"0.13.1","event":"host.upgrade","subsystem":"host-launcher","outcome":"ok","causeClass":"attach"}
-{"ts":"2026-10-19T06:07:06.061Z","level":"info","proc":"ui","pid":1996,"appVersion":"0.13.1","event":"host.connection","subsystem":"host-client","outcome":"ok","causeClass":"connected"}

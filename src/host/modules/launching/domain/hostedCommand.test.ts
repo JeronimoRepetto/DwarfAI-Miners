@@ -64,7 +64,7 @@ describe('parseHostedCommand', () => {
   })
 
   /*
-   * The posture docs/custom-launch-command.md described as buildable and never
+   * The posture the custom-launch-command ruling described as buildable and never
    * built: no shell anywhere, the command resolved as a program name plus an
    * argv array, anything carrying shell metacharacters refused. A refusal is
    * the whole point — `spawn` is called with `shell: false`, so a pipeline

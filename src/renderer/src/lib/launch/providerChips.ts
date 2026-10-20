@@ -20,7 +20,7 @@ export const OTHER_CHIP_LABEL = 'Other'
  * ## Other launches, and what it does not promise (#194)
  *
  * This file used to hold `OTHER_NOT_LAUNCHABLE`, the refusal #168 ruled and
- * `docs/custom-launch-command.md` argued at length: a launched command of the
+ * the custom-launch-command ruling argued at length: a launched command of the
  * user's own writes no session store, every dwarf is read out of one, so a
  * custom process is one the poll can never find and the panel would sit in its
  * spawning state forever. The reasoning was sound and the conclusion was

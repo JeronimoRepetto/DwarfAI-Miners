@@ -99,7 +99,7 @@ const OPENCODE_CEILING: CapabilityCeiling = {
 /**
  * OpenCode's `acp` entry (15 §4.7; ADR-009 D4 option (c)): the generic `AcpDriver` over the
  * person's own `opencode acp`, configured by this data alone. S-031-3 failed at OpenCode 1.18.32
- * (`spike-results/S-031-3.md`: a server password goes only through argv or env, and `opencode
+ * (spike S-031-3: a server password goes only through argv or env, and `opencode
  * serve` has no owner-only endpoint), so this is the entry that launches OpenCode; the
  * `http-server` driver reports `launch: false` (FM-084). Its row is 15 §3 row O2, every UNVERIFIED
  * value at its in-force one: no question channel (HR D8), resume none (U→none). The relay entry is
@@ -124,7 +124,7 @@ export const OPENCODE_ACP: { readonly row: AcpRow; readonly agentArgs: readonly 
     reactionEvidence: 'turn-id',
     subagents: 'none',
     usage: { fidelity: 1, rateLimits: false },
-    // SP-12 (`spike-results/SP-12.md`, foreman ruling 2026-10-17): OpenCode 1.18.32 accepted the
+    // SP-12 (spike SP-12, foreman ruling 2026-10-17): OpenCode 1.18.32 accepted the
     // path-only relay entry in `session/new.mcpServers`, started it, and put no credential path in
     // any descendant's argv or in a config file. Never `protocol` (ADR-013 item 3).
     mcpInjection: 'ticket-file',

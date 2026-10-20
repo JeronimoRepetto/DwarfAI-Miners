@@ -24,7 +24,7 @@ export function normalizeConsoleText(text: string): string {
  * One `WriteConsoleInput` call carrying a long message loses its own
  * beginning somewhere between ConPTY's translation and a live Claude Code
  * TUI's reader — a defect no raw-mode receiver can show, which is why
- * `docs/console-hosting.md` §6's earlier 16 384-character reading never
+ * the console-hosting research §6's earlier 16 384-character reading never
  * settled this. A BOUNDED chunk, one `WriteConsoleInputW` call each with the
  * builder's own pause between them, does not lose anything: measured live
  * 2026-09-16 at 200, 400 and 800 code points, three runs each, every run
@@ -32,7 +32,7 @@ export function normalizeConsoleText(text: string): string {
  * rather than at its edge — three quick runs on one machine cannot stand in
  * for every load and terminal condition a real delivery meets — and still
  * three times the original known-safe 200. Full table in
- * `docs/console-hosting.md` §6.
+ * the console-hosting research §6.
  */
 export const MAX_CONSOLE_CHUNK_CODE_POINTS = 500
 

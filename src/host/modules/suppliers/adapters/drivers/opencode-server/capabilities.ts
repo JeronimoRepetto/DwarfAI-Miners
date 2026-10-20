@@ -4,7 +4,7 @@ import type { ProviderCapabilities } from '../../../domain/capabilities'
 
 /**
  * How a Host-launched `opencode serve` is protected (ADR-009 D4): (a) an owner-only endpoint, (b) a
- * per-launch password delivered by an allowed means. S-031-3 (`spike-results/S-031-3.md`, OpenCode
+ * per-launch password delivered by an allowed means. S-031-3 (spike S-031-3, OpenCode
  * 1.18.32) verified neither: the password goes only through argv or env, both forbidden by ADR-017
  * item 3, and `serve` listens on TCP only. `null` is that outcome: the driver never starts a
  * server, so no loopback listener without a password can exist (FM-084), and option (c), the
@@ -13,7 +13,7 @@ import type { ProviderCapabilities } from '../../../domain/capabilities'
 export const SERVER_PROTECTION: 'owner-only-endpoint' | 'password' | null = null
 
 /**
- * SP-14 (`spike-results/SP-14.md`, passed at 1.18.32): `POST /session/{id}/abort?directory=<cwd>`
+ * SP-14 (spike SP-14, passed at 1.18.32): `POST /session/{id}/abort?directory=<cwd>`
  * ends one session's turn and leaves the shared server running. Without it a close would fall to
  * the tree kill of the Host's own server (15 §4.6 End / kill).
  */

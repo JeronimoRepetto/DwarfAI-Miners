@@ -3,7 +3,7 @@
 //
 // A rollback build differs from the faulty build in its app version (a new versioned copy, ADR-002 D5) and in its
 // `protocolVersion`: with an equal one D8 item 1 attaches normally and the running Host is never replaced
-// (`docs/strangler/rollback.md` §1). The rehearsal makes such a build of this tree, without changing what any other build
+// (the cut rollback record §1). The rehearsal makes such a build of this tree, without changing what any other build
 // contains:
 //
 // - `load` answers the contracts module `src/contracts/host-protocol/protocolVersion.ts` with the rehearsal's own

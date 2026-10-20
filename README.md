@@ -385,8 +385,7 @@ The log never grows beyond 100 MB. When it reaches that size, the oldest part is
 - [`docs/privacy.md`](docs/privacy.md) — the data boundary: what the app reads, stores and sends.
 - [`docs/provider-terms.md`](docs/provider-terms.md) — the written provider confirmations and the
   Antigravity terms review.
-- [`docs/README.md`](docs/README.md) — the index to the rest of `docs/`. Many of those documents,
-  the user guide among them, still describe the previous app.
+- [`docs/README.md`](docs/README.md) — the index to the rest of `docs/`.
 
 <p align="center"><img src="docs/readme/plates/license.png" width="644" alt="Section plate: License"></p>
 

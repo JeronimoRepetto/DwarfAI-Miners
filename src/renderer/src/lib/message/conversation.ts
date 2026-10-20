@@ -9,7 +9,7 @@ import type { Dwarf, DwarfFeedResult, FeedActivity, FeedMessage, MessageIssuer }
  * of what the panel claims it is, is made here rather than in the component:
  * a session type with nothing to show gets an empty state, never an invented
  * exchange (the capability-matrix discipline of
- * `docs/question-capture-evaluation.md`).
+ * the question-capture evaluation).
  *
  * Two sources, and the difference between them is a difference in evidence:
  *

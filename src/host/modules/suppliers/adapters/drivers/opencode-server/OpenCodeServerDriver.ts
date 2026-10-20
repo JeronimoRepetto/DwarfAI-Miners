@@ -1,5 +1,5 @@
 // OpenCodeServerDriver (`http-server`, 15 §4.6; ADR-009 D4): OpenCode's preferred driver, gated by
-// S-031-3. S-031-3 failed at OpenCode 1.18.32 (`spike-results/S-031-3.md`): the server password
+// S-031-3. S-031-3 failed at OpenCode 1.18.32 (spike S-031-3): the server password
 // goes only through argv or env (ADR-017 item 3 forbids both) and `opencode serve` has no
 // owner-only endpoint. So the selected launch mode is none (`SERVER_PROTECTION`): the driver
 // starts no server, its probe reports `launch: false`, and option (c), OpenCode's `acp` entry

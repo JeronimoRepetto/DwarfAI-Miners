@@ -106,7 +106,7 @@ export interface ReplayRoute {
  * The part of a recorded scenario a later release still routes `legacy` with today's shape: the replay proves the
  * router serves today's answers for exactly those rows, so a row the release moved (to the Host or `ui-local`),
  * reshaped (a `target` shape adapter) or retired (no route) leaves both the scenario and the recording. Its parity is
- * the release's own record (`docs/strangler/parity-cut-<n>.md`). The recording keeps the steps of the build it was made
+ * the release's own record (the cut's parity record). The recording keeps the steps of the build it was made
  * on, so its calls must follow the scenario one for one; a recording out of step is refused, never compared.
  */
 export function legacyTodayPart(
@@ -165,7 +165,7 @@ export function recordingFile(release: string, platform: string = process.platfo
 /**
  * The fields whose values are the wall clock of the run, not an answer of the seam (the simulated world dates its
  * mines by the time it started): each is compared as the marker `<wall-clock>`, and this list is recorded in
- * `docs/strangler/parity-cut-0.md`. Nothing else is masked.
+ * the cut's parity record. Nothing else is masked.
  */
 export const WALL_CLOCK_KEYS: readonly string[] = ['updatedAt']
 

@@ -946,7 +946,7 @@ describe('the message ceilings', () => {
    * The relay was the channel that made a command line the wire's bound, and it
    * does not carry the courier instruction in argv any more: the instruction is
    * written to the `claude -p` child's stdin, where length costs time and
-   * nothing else. Measured live on 2026-09-16 (docs/console-hosting.md §6) — a
+   * nothing else. Measured live on 2026-09-16 (the console-hosting research §6) — a
    * 40,000-character message reached the target session as ONE SendMessage,
    * whole and with the provenance line. So the wire ceiling stopped being an
    * argv derivation at all, and the test in its place says what it is instead.
@@ -979,7 +979,7 @@ describe('the message ceilings', () => {
    * is what the two tests below say in the place these two stood.
    */
   it('leaves the console tier no ceiling of its own, since its script rides stdin', () => {
-    // Measured live 2026-09-16 over that transport (docs/console-hosting.md §6):
+    // Measured live 2026-09-16 over that transport (the console-hosting research §6):
     // a 30,000-code-point message — where 8,409 was refused before — was written
     // whole in 4,277 ms and the session's transcript carried all 30,000 points.
     expect(maxTextCharsFor('terminal')).toBe(MAX_DWARF_TEXT_CHARS)
@@ -1137,7 +1137,7 @@ describe('boundTurnText', () => {
  * 40,000 characters was over it; the relay hands its instruction to `claude -p`
  * on stdin now, so the only thing left to refuse at the wire is a payload big
  * enough to be a mistake. The measurement that licensed this is in
- * docs/console-hosting.md §6.
+ * the console-hosting research §6.
  */
 describe('a 40,000-character message', () => {
   const long = 'x'.repeat(40_000)
@@ -1181,7 +1181,7 @@ describe('a 40,000-character message', () => {
  *
  * Measured by the maintainer on Claude Code 2.1.276, Windows Terminal,
  * 2026-09-18 — see main's textDelivery/questionKeys.ts for the gestures and
- * docs/console-hosting.md §6 for the register entry.
+ * the console-hosting research §6 for the register entry.
  */
 /*
  * AMENDED for #443 (was: `Partial<DwarfQuestion>` over a flat ask with

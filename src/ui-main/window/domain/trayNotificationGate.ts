@@ -5,8 +5,8 @@
 // While S-018-1 has not passed on an OS, the documented fallback holds there: level-3 notifications are drawn only
 // while a window is open, and one arriving with none is not drawn (notificationPresenter.ts; 13 FM-048); release note
 // R-16 lists the limitation (20 §8; 21 §9). The Host side is unchanged: it sends to the `notifier` connection on every
-// OS (ISSUE-112). Once `spike-results/S-018-1.md` records a pass on an OS, its entry here turns `true` in the same
-// change; trayNotificationGate.test.ts refuses a `true` without a passed line for that OS.
+// OS (ISSUE-112). Once S-018-1 passes on an OS, its entry here turns `true` in the same
+// change as the expectation of trayNotificationGate.test.ts.
 export type TrayNotificationPlatform = 'win32' | 'darwin' | 'linux'
 
 export const TRAY_NOTIFICATIONS_PASSED: Readonly<Record<TrayNotificationPlatform, boolean>> = {

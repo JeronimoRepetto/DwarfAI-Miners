@@ -571,7 +571,7 @@ export function launchFailed(state: LaunchState, failure: LaunchFailedPush): Lau
  *
  * Generous on purpose, past both of the ordinary paths out of this state: a
  * receipt normally proves a dwarf within a poll or two of it appearing (see
- * `docs/console-hosting.md` on `#191`), and a genuine failure reports itself
+ * the console-hosting research on `#191`), and a genuine failure reports itself
  * within `EARLY_FAILURE_WINDOW_MS` (3s, main-side). Sixty seconds is
  * comfortably beyond either, so reaching it means something this app cannot
  * name went wrong — a hung CLI, a stalled poll — and the honest answer is a

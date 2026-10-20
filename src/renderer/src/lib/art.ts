@@ -438,7 +438,7 @@ let preloaded = false
  * DwarfSprite instance; only the first call does any work.
  *
  * Cheap: twelve rank strips, each a handful of kilobytes of pixel art rather
- * than a ~195 KB painted pose (see docs/animation-loops.md). The base dwarf's
+ * than a ~195 KB painted pose (see the animation-loops evaluation). The base dwarf's
  * strip is not among them — no dwarf in the scene plays it.
  */
 export function preloadDwarfArt(): void {

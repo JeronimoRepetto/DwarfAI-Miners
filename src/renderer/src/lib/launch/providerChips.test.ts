@@ -6,7 +6,7 @@ import { NOT_DETECTED, OTHER_CHIP_LABEL, launchRefusal, providerChips } from './
 /*
  * ## Two tests were REPLACED here, for #194
  *
- * `docs/custom-launch-command.md` ruled in #168 that the panel would not start
+ * the custom-launch-command decision (#168) ruled that the panel would not start
  * a command of your own, and two tests below pinned that ruling and its copy:
  *
  * - "refuses a custom command, because nothing could observe what it started"

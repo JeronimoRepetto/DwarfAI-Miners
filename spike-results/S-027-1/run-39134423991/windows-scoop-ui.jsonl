@@ -1,3 +1,0 @@
-{"ts":"2026-10-18T14:31:44.520Z","level":"error","proc":"ui","pid":9064,"appVersion":"0.13.1","event":"versioned-copy","subsystem":"host-launcher","outcome":"failed","causeClass":"copy","errCode":"MANIFEST_MISMATCH","durationMs":2221}
-{"ts":"2026-10-18T14:31:44.523Z","level":"error","proc":"ui","pid":9064,"appVersion":"0.13.1","event":"host.spawn","subsystem":"host-launcher","outcome":"failed","causeClass":"spawn-failed","errCode":"MANIFEST_MISMATCH"}
-{"ts":"2026-10-18T14:31:44.573Z","level":"warn","proc":"ui","pid":9064,"appVersion":"0.13.1","event":"host.connection","subsystem":"host-client","outcome":"failed","causeClass":"unavailable:spawn-failed"}

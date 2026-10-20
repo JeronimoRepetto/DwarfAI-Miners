@@ -10,7 +10,7 @@
 // SP-12 (partial, 2026-10-17): Codex accepts the entry through `thread/start.config` without
 // putting it in any descendant's argv, but the env half was not shown, so `mcpInjection` stays
 // `ticket-file`: the path-only entry travels in argv as 15 §4.4 specifies, never through the
-// protocol (`spike-results/SP-12.md` Decision).
+// protocol (spike SP-12 Decision).
 import { assertNoForbidden, type DelegationGate } from '../shared/forbiddenFlags'
 import { relayEntry, type RelayEntry } from '../shared/relayEntry'
 

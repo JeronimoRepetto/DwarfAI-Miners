@@ -27,7 +27,6 @@
     "src/host/**/*.ts",
     "src/ui-main/**/*.ts",
     "src/legacy-bridge/**/*.ts",
-    "spikes/**/*.ts",
     "e2e/**/*.ts",
     "playwright.config.ts",
     "electron.vite.config.ts",

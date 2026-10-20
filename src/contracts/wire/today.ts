@@ -230,7 +230,7 @@ export function isPanelObserved(observer: DwarfObserver): observer is typeof PAN
  *
  * Membership is a capability rather than a preference: holding a session IS
  * such a stream. Codex has no held-session engine in this app at all —
- * `docs/command-surface-evaluation.md` records it, and the question-capture
+ * the command-surface evaluation records it, and the question-capture
  * matrix marks the `codex exec` row No for live capture and No for answering.
  * A provider missing here can still be LAUNCHED; it is started detached and
  * discovered by the ordinary poll, which is a real launch and simply not a
@@ -299,7 +299,7 @@ export function isMcpConnectionStatus(value: unknown): value is McpConnectionSta
  * One MCP server a held session's own protocol messages named, and the CLI's
  * own connection state for it (issue #96) — never text this app parsed out
  * of `/mcp`'s prose output, which has no structured route for a session this
- * app does not hold (see docs/command-surface-evaluation.md §2a).
+ * app does not hold (see the command-surface evaluation §2a).
  */
 export interface DwarfMcpServerStatus {
   name: string
@@ -354,7 +354,7 @@ export interface DwarfContextUsage {
  *
  * Held sessions ONLY, on the same terms as `mcpServers` and `contextUsage`:
  * every other session type this app runs has no structured route to change
- * anything mid-run (docs/command-surface-evaluation.md §2b), so the field's
+ * anything mid-run (the command-surface evaluation §2b), so the field's
  * absence means "no such control here" and the panel disables rather than
  * hides — the idiom the dwarf action bar already holds.
  */
@@ -1132,7 +1132,7 @@ export const OPENCODE_PERMISSION_ANSWERED_ABOVE =
  * number now (see `askHasAReachableOtherRow`), and a second spelling of a
  * measured nine is how the card and the keys would come to disagree about which
  * ask can be typed into. The measurement itself stays where it was taken —
- * main's `textDelivery/questionKeys.ts` and docs/console-hosting.md §§4c, 6.
+ * main's `textDelivery/questionKeys.ts` and the console-hosting research.
  */
 export const MAX_PICKER_NUMBERED_ROWS = 9
 
@@ -1374,7 +1374,7 @@ export interface Dwarf {
    * parent EDGE (#189, #218). Always a `Dwarf.id`, never a raw provider
    * session or task id, so one board lookup crosses no translation.
    *
-   * The field docs/session-topology-and-roles.md §6 proposed, landed early
+   * The field the session-topology note §6 proposed, landed early
    * because two issues needed the edge before the rank redesign around it
    * does. That design pairs it with a `topology` verdict; nothing here reads
    * one, and whoever lands `topology` should read THIS field rather than add a
@@ -1561,7 +1561,7 @@ export interface Dwarf {
    * structured route to a server's connection health — an observed session's
    * transcript never carries it, and the CLI's own text commands are the
    * "screen-scraping wearing a different hat" #96 explicitly declined
-   * (docs/command-surface-evaluation.md §2a). Absent means one of two things
+   * (the command-surface evaluation §2a). Absent means one of two things
    * and deliberately does not distinguish them: this is not a held session, or
    * it is one whose first `init` has not arrived yet — the same asymmetry
    * DwarfQuestion's own doc comment draws for its absence.
@@ -1581,7 +1581,7 @@ export interface Dwarf {
    *
    * Held sessions ONLY, for the same reason `mcpServers` is: every other
    * session type this app runs has tokens at best, never a dollar figure (see
-   * docs/command-surface-evaluation.md §2a). A different unit from every
+   * the command-surface evaluation §2a). A different unit from every
    * material the vault tracks (see MATERIAL_TOKENS_PER_UNIT) — additive,
    * never converted into materials or vice versa, for the reason materials
    * never convert into one another.
@@ -2375,7 +2375,7 @@ export const MAX_CODEX_QUEUE_TEXT_CHARS = Math.floor(
  * channel that made an argv the wire's bound, and `claude -p` reads its prompt
  * from stdin when no positional prompt is given (`claude --help`, 2.1.273:
  * "Print response and exit (useful for pipes)"). Measured live on 2026-09-16
- * against a throwaway target session (docs/console-hosting.md §6): a
+ * against a throwaway target session (the console-hosting research §6): a
  * 40,000-character message handed to the relay on stdin arrived as ONE whole
  * `SendMessage`, all 40,000 characters in order, with `RELAY_PROVENANCE_LINE`
  * ahead of them. Nothing on that path has a length bound left; it has a TIME
@@ -2592,7 +2592,7 @@ export const TIER_WEIGHT_THRESHOLDS_KB = {
  * `image` means the session will receive the BYTES; `file` means it will
  * receive the PATH and may open it with its own tools. That is not a taste: it
  * is what 2026-09-16's measurement found on both channels that can carry
- * anything at all (`docs/console-hosting.md` §6). A `.png` path inside a
+ * anything at all (the console-hosting research §6). A `.png` path inside a
  * bracketed paste becomes an image content block in the session's own
  * transcript; a `.txt` and a `.pdf` path arrive as ordinary text and the
  * session then reads them with an ordinary, permission-gated tool call. So the
@@ -3132,7 +3132,7 @@ export interface AgentLaunchRequest {
    * identity the poll reports a dwarf under, so a launched session and the
    * dwarf it becomes are named by one word rather than two that have to be kept
    * in step. It is therefore also why a custom command is NOT a value here —
-   * see docs/custom-launch-command.md for that ruling.
+   * see the custom-launch-command ruling.
    */
   provider: DwarfProvider
   /** The first thing to say to the new session. Capped like any delivered message. */
@@ -5146,7 +5146,7 @@ export const IPC_CHANNELS = {
    * DwarfTuningChange for why). Deliberately not folded into `dwarf:sendText`:
    * a control request is not text delivered into a session, and forcing it
    * through that shape would misrepresent what it is — the same ruling
-   * docs/command-surface-evaluation.md §6 item 3 already made for this pair.
+   * the command-surface evaluation §6 item 3 already made for this pair.
    */
   setDwarfTuning: 'dwarf:setTuning',
   /**
