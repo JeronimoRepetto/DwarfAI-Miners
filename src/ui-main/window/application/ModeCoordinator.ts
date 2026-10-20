@@ -307,7 +307,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
           : {
               ok: false,
               error: {
-                code: 'NOT_SUPPORTED',
+                code: 'INTERNAL',
                 message: `${request.mode} is not built`,
                 retryable: false
               }
@@ -390,7 +390,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       if (r.mode !== 'hidden' && !built.includes(r.mode)) {
         resolve({
           ok: false,
-          error: { code: 'NOT_SUPPORTED', message: `${r.mode} is not built`, retryable: false }
+          error: { code: 'INTERNAL', message: `${r.mode} is not built`, retryable: false }
         })
         return
       }
