@@ -208,7 +208,7 @@ not a report of zero. `sessionLaunch/heldCrew.ts` reads the SDK stream instead, 
 Three findings from the same pass, over 321 `agent-*.meta.json` sidecars on one machine:
 
 - **`spawnDepth` above 1 is common:** 278 at depth 1, **32 at depth 2, 11 at depth 3**.
-  `session-topology-and-roles.md` §7 says neither provider "has been observed producing anything
+  The session-topology research says neither provider "has been observed producing anything
   below 1"; that is now false, and #157's `worker2` rank is what the panel draws them as.
 - **The sidecar carries `parentAgentId`** for a nested agent — a fifth key §1.4's list does not
   name, present on the depth-2 sidecars and absent from the depth-1 ones.
@@ -276,7 +276,7 @@ agents (642 entries, the same shape `mineHistory.claudeSubagents` already lists 
 panel):
 
 - **One listing per poll: 0.28 ms median** (min 0.22, p90 0.36) — against the 1.66 ms the transcript
-  read and parse already cost at 256 KiB (`performance.md`).
+  read and parse already cost at 256 KiB.
 - **None at all for a session with no agents out**, which is most of them: a grandchild is reached
   only from a parent already on the board, so an empty crew can have none.
 - **One read per agent id for the life of the process**, never one per poll — the sidecar is written
