@@ -505,10 +505,52 @@ jobs:
           cache: true
           install: false
 
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # A perf case starts the built app through the E2E launch harness (perf/README.md), so this job builds and
+      # starts it the way the e2e job does: the Electron binary, the Windows native modules, the E2E build profile,
+      # Xvfb on Linux and the non-elevated test user on Windows. Without the build the harness refuses to start
+      # ("The build has no Electron main entry").
+      - name: Install the Electron binary
+        run: pnpm exec install-electron
+
+      - name: Build the Windows native modules (x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
+
+      - name: Build (E2E build profile)
+        env:
+          DWARFAI_BUILD_PROFILE: e2e
+        run: pnpm build
+
+      - name: Non-elevated test user (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs --probe
+
+      - name: Perf (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum pnpm test:perf
+
+      - name: Perf (Windows, as the non-elevated test user)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs -- pnpm test:perf
+
       - name: Perf
+        if: runner.os == 'macOS'
         run: pnpm test:perf
 
       - name: Upload perf results

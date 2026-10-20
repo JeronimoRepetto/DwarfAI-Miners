@@ -151,6 +151,25 @@ describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
     expect(condition, 'perf never runs on a push to main').not.toContain('refs/heads/main')
     expect(condition, 'perf never runs on a pull request').not.toContain('pull_request')
     expect(job).toContain('run: pnpm test:perf\n')
+    // AMENDED for ISSUE-278/280: the perf case starts the built app through the E2E launch harness, so the job
+    // builds it as the e2e job does (Electron binary, Windows native modules, E2E build profile) before it runs,
+    // and starts it under Xvfb on Linux and as the non-elevated test user on Windows.
+    const at = (text) => job.indexOf(text)
+    for (const step of [
+      'run: pnpm exec install-electron\n',
+      'run: pnpm build:native --arch x64\n',
+      'DWARFAI_BUILD_PROFILE: e2e\n'
+    ]) {
+      expect(at(step), `the perf job runs ${step.trim()}`).toBeGreaterThanOrEqual(0)
+    }
+    expect(at('run: pnpm build\n'), 'the perf job builds the app').toBeGreaterThanOrEqual(0)
+    expect(at('run: pnpm build\n'), 'it builds before it measures').toBeLessThan(
+      at('pnpm test:perf\n')
+    )
+    expect(job).toMatch(
+      /if: runner\.os == 'Linux'\n\s+run: xvfb-run --auto-servernum pnpm test:perf\n/
+    )
+    expect(job).toContain('run: node scripts/ci/run-unelevated.mjs -- pnpm test:perf\n')
     expect(job).toMatch(/uses: actions\/upload-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+\n/)
     expect(job).toMatch(/\n\s+path: perf-results\/\*\*\n/)
     expect(jobText('checks')).not.toContain('pnpm test:perf')
