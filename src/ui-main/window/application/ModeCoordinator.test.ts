@@ -442,9 +442,11 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
   it('[BR-19, ADR-034] a mode that is not built is never offered, and a move to it starts no run', async () => {
     const s = setup({ start: 'panel', built: ['panel'] })
     expect(s.coordinator.offered()).toEqual(['panel'])
+    // CORRECTED (independent review, finding 8a): AMENDMENT-10 and 14 §2.2 Notes allow A-N13 only `{ ok: true }` or
+    // `INTERNAL`, not retryable; the contract wins over the earlier NOT_SUPPORTED reading.
     expect(await s.coordinator.moveToMode({ mode: 'veta' })).toEqual({
       ok: false,
-      error: { code: 'NOT_SUPPORTED', message: 'veta is not built', retryable: false }
+      error: { code: 'INTERNAL', message: 'veta is not built', retryable: false }
     })
     expect(Object.values(s.win).flatMap((w) => w.calls)).toEqual([])
     expect(s.coordinator.mode()).toBe('panel')
