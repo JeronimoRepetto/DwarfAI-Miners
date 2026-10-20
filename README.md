@@ -96,6 +96,69 @@ v0.13.1 and earlier, are the previous app, not this one. No new release is publi
   <img src="docs/readme/crew.svg" width="644" alt="The crew at work: two workers swinging pickaxes, a foreman standing by and a foreman asleep">
 </p>
 
+## How it works
+
+DwarfAI-Miners sits between you and the coding agents you already use. It starts and talks to each
+provider's own command-line tool, and it reads the files those tools write to find the sessions you
+started yourself.
+
+```mermaid
+flowchart TB
+  person["You"]
+  app["DwarfAI-Miners<br/>(window + DwarfAI Host)"]
+
+  subgraph clis["Provider command-line tools, installed and logged in by you"]
+    claude["Claude Code"]
+    codex["Codex"]
+    opencode["OpenCode"]
+    agy["Antigravity"]
+    other["Other… (a command you name)"]
+  end
+
+  files[("Provider files on disk<br/>(transcripts, session state)")]
+  cloud["Provider cloud services"]
+  jev["Jev launch advisor"]
+
+  person -- "mouse, keyboard, prompts" --> app
+  app -- "launch, send, answer, stop" --> clis
+  clis -- "events, questions, usage" --> app
+  clis -- "write their own transcripts" --> files
+  app -- "reads" --> files
+  clis -- "their own login and traffic" --> cloud
+  app -. "only with Let Jev choose on" .-> jev
+```
+
+- Your provider traffic goes from each tool to its own cloud. The app never proxies it.
+- The app reads the providers' transcripts and session state. It writes into their configuration
+  only for the integrations you turn on (see [Provider support](#provider-support)).
+
+The app has two parts. The window is a client that can close and reopen at any time. The DwarfAI
+Host runs in the background, one per OS user. It owns the sessions, the questions, the observation
+and the local database. That is why closing the window leaves every dwarf working, and why
+**Stop everything and quit…** is the only way to end them all.
+
+```mermaid
+flowchart LR
+  subgraph window["Desktop app (closes and reopens freely)"]
+    ui["Panel"]
+    main["Electron main"]
+  end
+
+  subgraph host["DwarfAI Host (background, one per OS user)"]
+    core["Sessions, questions,<br/>observation, notifications"]
+    db[("Local database")]
+  end
+
+  prov["Provider processes"]
+  pfiles[("Provider files")]
+
+  ui <--> main
+  main <-->|local channel| core
+  core --> db
+  core <-->|structured protocol| prov
+  core -- "reads" --> pfiles
+```
+
 <p align="center"><img src="docs/readme/plates/provider-support.png" width="644" alt="Section plate: Provider support"></p>
 
 ## Provider support
