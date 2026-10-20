@@ -2,9 +2,9 @@
 // path rules and the S-030-1 detection, over folders made in a temporary directory. One describe
 // per OS; runs only in `pnpm test:os`.
 //
-// S-030-1 passed (spike-results/S-030-1.md): a mine key folds case only where the folder folds.
+// S-030-1 passed (spike S-030-1): a mine key folds case only where the folder folds.
 // Each OS asserts a folding folder and a non-folding folder, built the way the spike harness
-// (`spikes/S-030-1/caseFolding.os.test.ts`) builds them wherever that needs no elevation:
+// (the S-030-1 spike harness) builds them wherever that needs no elevation:
 // - Windows: an NTFS temp folder folds; a temp folder with the per-directory case-sensitive flag
 //   (`fsutil file setCaseSensitiveInfo`, not elevated) does not;
 // - macOS: two disk images attached with `hdiutil` (not elevated), `APFS` (folds) and

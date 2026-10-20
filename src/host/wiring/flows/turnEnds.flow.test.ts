@@ -18,7 +18,7 @@
 //
 // The expectations are the hand-written `<case>.expected.json` `turnEnds` of each fixture (the
 // `-crlf` and `-with-extra` variants share their case's). S-021-1, S-021-2 and S-032-1 have not
-// passed (spike-results/): transcript-only Claude keeps `turnEnd: 'none'`, so its ends are inferred.
+// passed (the spike records): transcript-only Claude keeps `turnEnd: 'none'`, so its ends are inferred.
 //
 // TC-100-03.
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'

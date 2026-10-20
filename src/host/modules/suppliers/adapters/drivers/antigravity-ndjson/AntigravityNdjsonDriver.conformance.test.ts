@@ -246,7 +246,7 @@ describe('AntigravityNdjsonDriver', () => {
   })
 
   it('[C-22, SP-10] a policy-only launch has permission none and no deny flag until SP-10 records one', async () => {
-    // 15 §2.8 row Antigravity: UNVERIFIED (SP-10 Antigravity part not run, spike-results/SP-10.md).
+    // 15 §2.8 row Antigravity: UNVERIFIED (SP-10 Antigravity part not run, spike SP-10).
     expect(ANTIGRAVITY.modes).toBeUndefined()
     expect(publicLaunchOf(ANTIGRAVITY.ceiling, ANTIGRAVITY.modes)).toBe('gated')
     const run = await runScript(

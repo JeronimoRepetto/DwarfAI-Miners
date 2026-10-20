@@ -17,7 +17,7 @@ describe('canonicalMinePath (ADR-030 item 1, 06 §3)', () => {
   })
 
   it('[ADR-030, S-030-1] case is folded only where the folder is known to fold, on every OS', () => {
-    // The fold decision follows the S-030-1 detection alone (spike-results/S-030-1.md, Decision):
+    // The fold decision follows the S-030-1 detection alone (spike S-030-1, Decision):
     // a folder known to be case-insensitive folds, and an unknown one never does. Windows follows
     // the same rule: an NTFS folder with the per-directory case-sensitive flag does not fold.
     expect(caseFoldFor('case-insensitive')).toBe(true)

@@ -8,7 +8,7 @@ import type { ServerRequest } from './permissionMapping'
 const RELAY_NAME = 'dwarfai'
 
 /**
- * SP-14 (`spike-results/SP-14.md`, OpenCode 1.18.32): `POST /session/{id}/abort?directory=<cwd>`,
+ * SP-14 (spike SP-14, OpenCode 1.18.32): `POST /session/{id}/abort?directory=<cwd>`,
  * no body, answered 200 `true`; it ends the session's turn and never signals the server.
  */
 export function abortRequest(sessionId: string, directory: string): ServerRequest {

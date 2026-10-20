@@ -536,7 +536,7 @@ describe('CodexAcpDriver', () => {
 
 describe('CodexAcpDriver conformance', () => {
   it('[C-23] the codex-acp launch injects no delegation entry and carries no credential while SP-12 does not cover it', async () => {
-    // SP-12 (`spike-results/SP-12.md`) probed codex app-server, opencode and kimi, not codex-acp:
+    // SP-12 (spike SP-12) probed codex app-server, opencode and kimi, not codex-acp:
     // row X2 keeps `mcpInjection: 'none'` (15 §4.5), so even an offered entry is not injected.
     expect(X2_ROW.mcpInjection).toBe('none')
     const run = await runScript(

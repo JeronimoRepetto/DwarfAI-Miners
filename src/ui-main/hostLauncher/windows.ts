@@ -1,4 +1,4 @@
-// Windows detach (ADR-002 D6; 13 FM-012, FM-114; spike-results/SP-02.md): the Host MUST start
+// Windows detach (ADR-002 D6; 13 FM-012, FM-114; spike SP-02): the Host MUST start
 // outside every job object the UI may be in and without a console window. Node's own spawn cannot
 // (SP-02 finding 1: a `detached` child stays in the UI's job and carries DETACHED_PROCESS), so:
 //

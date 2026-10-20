@@ -7,7 +7,7 @@
 // and remote clients would be granted on that pipe (SP-05's method: synthesized principals, so the
 // runner needs no second account), and a real remote client is tried through the SMB loopback. The
 // run with a real second account and a real second machine is the owner's manual step in
-// spike-results/SP-05.md.
+// spike SP-05.
 import { randomBytes } from 'node:crypto'
 import { lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs'
 import { connect, createServer, type Server, type Socket } from 'node:net'
