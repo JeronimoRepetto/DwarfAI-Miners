@@ -358,7 +358,7 @@ describe('design-tokens.css against the design foundations', () => {
    * This is not a palette taste correction. `foundations.md`'s own gap table
    * marks accessibility — "no focus, keyboard traversal, contrast rationale" —
    * as "Requires design/product definition", so the contrast floor was never
-   * specified and asking was the documented route (`ui-rebuild`). The ruling
+   * specified and asking was the documented route (the design docs). The ruling
    * fills that gap, the way #198's did for the type scale.
    *
    * `--color-control` KEEPS its value: 18 surfaces are painted with it and it

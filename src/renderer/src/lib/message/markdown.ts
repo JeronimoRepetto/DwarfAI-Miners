@@ -33,7 +33,7 @@ import { externalLinkOf } from '@dwarfai/contracts'
  * image address is untrusted and a local path could not be shown from the
  * renderer anyway, so an image is drawn as its alt text in the link treatment
  * below rather than fetched — nothing is ever loaded on the person's behalf.
- * Drawing UI the design does not specify is still what `ui-rebuild` refuses;
+ * Drawing UI the design does not specify is still what the design docs refuse;
  * #412 only changes how much of it the design now specifies.
  */
 

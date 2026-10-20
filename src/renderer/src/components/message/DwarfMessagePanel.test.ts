@@ -3752,7 +3752,7 @@ describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
 })
 
 /*
- * RENAME HIDDEN UNTIL BUILT (BR-19; 21 §1 item 8; 14 §8 I-21; docs/strangler/parity-cut-1.md).
+ * RENAME HIDDEN UNTIL BUILT (BR-19; 21 §1 item 8; 14 §8 I-21; the cut's parity record).
  *
  * The rename rows stay `legacy` until the step-3a switch (ISSUE-001) routes A-N08 / A-N09 (ISSUE-172), and today's
  * runtime renames only the dwarfs on its own board. A dwarf the Host's board carries therefore has no Rename and no

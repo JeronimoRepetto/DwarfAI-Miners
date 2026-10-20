@@ -368,7 +368,7 @@ export function parseConsoleWindowProbe(stdout: string): ConsoleWindowProbe {
 /**
  * The window class of a ConPTY console phantom, measured live rather than
  * documented anywhere: 2026-09-10, three of them under one Windows Terminal
- * window (see `docs/console-hosting.md` §6). One phantom is one console, so
+ * window (see the console-hosting research §6). One phantom is one console, so
  * counting them under a host counts its tabs.
  */
 export const CONSOLE_PHANTOM_WINDOW_CLASS = 'PseudoConsoleWindow'

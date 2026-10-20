@@ -83,7 +83,7 @@ export function feedPageCursorOf(messages: readonly FeedMessage[]): FeedPageCurs
  *   that can differ, and since #428 the conversation carries those too: a send
  *   with an image publishes `[Image]` beside the words here, while the
  *   transcript's own `user` record for it keeps only the text blocks (see
- *   `heldMessageEntries`, and `docs/console-hosting.md` §6 for what a typed
+ *   `heldMessageEntries`, and the console-hosting research §6 for what a typed
  *   send looks like instead). Anchoring on the agent's turn costs at most a
  *   repeat of the person's row above it — visible, where a gap would not be.
  *

@@ -6,8 +6,8 @@
 // A rollback of cut 2 is a new internal build whose table is `rollbackOf(cut-2 table, 'cut-2')`, reached by the ADR-002
 // D8 upgrade handshake: A-40/A-41 route `legacy` again with today's Claude hook installer composed again, and A-N31
 // `setClaudeHooksEnabled` and A-N32 `answerWelcome` are withdrawn (`WRITES_A_FOREIGN_ENTRY`, no route in that build).
-// Before it starts, the newer build's `--revert-integrations` removed the entry the Host wrote (docs/strangler/
-// rollback.md). The setting turns off, in the Host:
+// Before it starts, the newer build's `--revert-integrations` removed the entry the Host wrote (the rollback
+// procedure). The setting turns off, in the Host:
 //
 // - the first-run step: its installed tools are none, so no option is offered and the step is not due (07 S41.09:
 //   nothing shown, written or reverted, and `welcome_answered_at` stays as it was, so a later build that routes A-N32

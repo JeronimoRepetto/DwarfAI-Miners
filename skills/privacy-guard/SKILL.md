@@ -64,7 +64,7 @@ Be precise about this; it is narrower than it sounds.
   is already a plaintext index. Issue #51 chose to publish the history as is, so adding the names
   would publish them a second time and buy nothing. **Project names are unchecked on purpose: they
   come out by reading, never by CI.** Treat that as routine rather than rare — one reached HEAD in
-  a measurement table (`docs/performance.md`) and four more in `src/**` comments, fixed in
+  a measurement table (the performance measurements) and four more in `src/**` comments, fixed in
   `3a8b0e3`.
 - It skips **binary files**. A path baked into PNG metadata, or a project name legible in a
   committed screenshot, cannot be caught — see the next section.
@@ -147,5 +147,4 @@ Describe the patterns; never reproduce them. That is why this page names none of
 ## References
 
 - [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — the step and the reasoning above it
-- [`docs/privacy-audit.md`](../../docs/privacy-audit.md) — the audit that produced the placeholders
 - [`SECURITY.md`](../../SECURITY.md) — where an actual disclosure goes

@@ -216,7 +216,7 @@ describe('reconcileEchoes', () => {
    * #419. `toConsoleLine` flattens whitespace runs to a single space before the
    * pid write, and a console write of files pastes one token per attachment —
    * `[Image #<digits>]` for an image, the exact path for a file — with no
-   * separator (measured in docs/console-hosting.md §6, #408). An echo's own
+   * separator (measured in the console-hosting research §6, #408). An echo's own
    * comparison has to read both, or the transcript row for exactly the
    * message somebody sent never accounts for it.
    *
@@ -242,7 +242,7 @@ describe('reconcileEchoes', () => {
 
     it('accounts for an echo sent with five attachments — two images and three files, tokens in send order', () => {
       // The exact shape #419 was originally filed over: two images and three
-      // plain files, read back from a real transcript (docs/console-hosting.md
+      // plain files, read back from a real transcript (the console-hosting research
       // §6). Tokens happening to read back in send order is one instance of
       // the general "each token once, anywhere" rule below, not a stricter
       // requirement of it — see the reordered cases beneath this one.
