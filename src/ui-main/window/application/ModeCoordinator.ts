@@ -142,7 +142,8 @@ const failed = (message: string): IpcResult<void> => ({
 })
 
 type Answer = (r: IpcResult<void>) => void
-type RevealAnswer = (r: RevealOutcome) => void
+/** A caller of a held reveal: settled with the reveal's outcome, or with its failure. */
+type RevealAnswer = { resolve: (r: RevealOutcome) => void; reject: (error: unknown) => void }
 
 /** A move waiting for its run: the request and every caller it answers. */
 interface Request {
@@ -243,14 +244,31 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     if (node.state === 'settled') node = { state: 'settled', mode: node.mode }
     const reveal = heldReveal
     heldReveal = null
-    if (reveal !== null) {
-      void revealer.revealDwarfChat(reveal.t).then((outcome) => {
-        for (const answer of reveal.answers) answer(outcome)
-      })
-    }
+    if (reveal !== null) replay(reveal)
     const next = held
     held = null
     if (next !== null) begin(next)
+  }
+
+  /** Runs a held reveal and settles every caller it answers with its outcome or its failure. */
+  function replay(reveal: {
+    t: { mineId: MineId; dwarfId: DwarfId }
+    answers: RevealAnswer[]
+  }): void {
+    let revealing: Promise<RevealOutcome>
+    try {
+      revealing = revealer.revealDwarfChat(reveal.t)
+    } catch (error) {
+      revealing = Promise.reject(error)
+    }
+    revealing.then(
+      (outcome) => {
+        for (const answer of reveal.answers) answer.resolve(outcome)
+      },
+      (error: unknown) => {
+        for (const answer of reveal.answers) answer.reject(error)
+      }
+    )
   }
 
   function begin(request: Request): void {
@@ -419,10 +437,10 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     },
     revealDwarfChat(t) {
       if (!running()) return revealer.revealDwarfChat(t)
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         revealCount += 1
         step({ type: 'reveal', revealId: revealCount })
-        const answers = [...(heldReveal?.answers ?? []), resolve]
+        const answers = [...(heldReveal?.answers ?? []), { resolve, reject }]
         heldReveal = { t, answers }
       })
     },
@@ -466,11 +484,15 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       for (const answer of pending) answer(failed('the mode windows closed'))
       const reveal = heldReveal
       heldReveal = null
-      if (reveal !== null) {
-        void revealer.revealDwarfChat(reveal.t).then((outcome) => {
-          for (const answer of reveal.answers) answer(outcome)
-        })
+      if (reveal === null) return
+      if (kind === 'quit') {
+        // Quit closes the app for the person (S10.15): a click held mid-run reopens nothing.
+        const dropped = new Error('the app quit before the reveal could run')
+        for (const answer of reveal.answers) answer.reject(dropped)
+        return
       }
+      // The last window closed (S10.14): the click still opens the app, per "Mode at launch" (S10.12).
+      replay(reveal)
     },
     hostClosed() {
       const next = nextWindowLadder(ladder.state, { type: 'host-closed' }, built)

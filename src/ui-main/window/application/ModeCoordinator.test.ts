@@ -297,6 +297,35 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(s.store.load('lastMode')).toBe('panel')
   })
 
+  it('[S27.14] a held reveal whose reveal fails settles its callers with that failure', async () => {
+    const s = setup({ start: 'panel' })
+    const moved = s.coordinator.moveToMode({ mode: 'veta' })
+    const held = s.coordinator.revealDwarfChat({ mineId: MINE, dwarfId: DWARF })
+    const settled = held.then(
+      () => 'resolved',
+      (error: Error) => error.message
+    )
+    s.revealFails.error = new Error('the reveal failed')
+    bothDone(s, 'panel', 'veta')
+    await moved
+    expect(await settled).toBe('the reveal failed')
+  })
+
+  it('[S10.15, S27.10] Quit drops a held reveal and opens nothing', async () => {
+    const s = setup({ start: 'panel' })
+    void s.coordinator.moveToMode({ mode: 'veta' })
+    const held = s.coordinator.revealDwarfChat({ mineId: MINE, dwarfId: DWARF })
+    const settled = held.then(
+      () => 'revealed',
+      () => 'dropped'
+    )
+    s.coordinator.closed('quit')
+    expect(await settled).toBe('dropped')
+    expect(s.reveals).toEqual([])
+    expect(shownWindows(s)).toEqual([])
+    expect(s.coordinator.ladder()).toEqual({ state: 'tray-only', lastId: 'S10.15' })
+  })
+
   it('[S10.08, S10.09] hide and restore run as ModeTransitions to and from hidden, and restore shows lastMode', async () => {
     const s = setup({ start: 'panel' })
     const hidden = s.coordinator.hide()
