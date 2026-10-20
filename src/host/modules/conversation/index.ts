@@ -391,6 +391,11 @@ export function createConversation(deps: ConversationDeps): Conversation {
         echoes.trackLaunch(dwarfId, launchId, entry.text)
         return entry
       }
+      // GitHub #1463, #1464: the transcript echo of a message relayed into an observed terminal,
+      // claimed by the send it echoes, keeps its key with no second bubble (send.ts).
+      if (origin === 'transcript' && sender?.claimTranscriptEcho(dwarfId, entry) === true) {
+        return { ...entry, controlPlane: true }
+      }
       return echoes.claim(dwarfId, entry, origin) === null
         ? entry
         : { ...entry, controlPlane: true }

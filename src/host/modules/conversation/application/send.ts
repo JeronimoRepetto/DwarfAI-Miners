@@ -70,7 +70,7 @@ import type { ConversationEntry } from '../../suppliers'
 import { echoesSentText, type EchoedFile } from '../domain/consoleText'
 import { advance, startDelivery, type DeliveryFact } from '../domain/delivery'
 import type { MessagesAppended } from '../domain/events'
-import type { Delivery, MessageView } from '../domain/messages'
+import { mayEchoTypedSend, type Delivery, type MessageView } from '../domain/messages'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { AttachmentReader } from '../ports/attachmentReader'
 import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
@@ -152,6 +152,8 @@ interface EchoWatch {
   echoSeen: boolean
   repliedAfterEcho: boolean
   earlyEchoes: Array<{ echoOf: string; replied: boolean }>
+  /** #1463/#1464: ingest already claimed a transcript row as this send's echo (once per send). */
+  claimed: boolean
   /** The receipt said `transcript-match`: a reply after the echo is ✓✓ now. */
   live: boolean
 }
@@ -305,6 +307,7 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
       echoSeen: false,
       repliedAfterEcho: false,
       earlyEchoes: [],
+      claimed: false,
       live: false
     })
   }
@@ -353,6 +356,30 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
     for (const [messageId, watched] of [...this.watched]) {
       if (watched.dwarfId === dwarfId) this.forget(messageId)
     }
+  }
+
+  /**
+   * Whether an observed transcript row is the echo of a message this Host relayed and still waits
+   * on (INV-60; GitHub #1463, #1464): a person row with no echo correlation (the relay cannot carry
+   * one, S-022-1), whose text is the send's as typed — its files' tokens taken off
+   * (`echoesSentText`) — at or after the send. The oldest such send claims it, once; ingest then
+   * keeps the row's key and writes no second bubble, as ISSUE-182 does for a live-stream echo. The
+   * send path still hears the row itself for its marks (`entriesIngested`). Host memory only: after
+   * a restart nothing waits, and the row is a message of its own (known risk).
+   */
+  claimTranscriptEcho(dwarfId: DwarfId, entry: ConversationEntry): boolean {
+    if (!mayEchoTypedSend(entry, 'transcript')) return false
+    const at = entry.providerTime ?? this.deps.clock.now()
+    const claimed = [...this.echoes.values()].find(
+      (w) =>
+        w.dwarfId === dwarfId &&
+        !w.claimed &&
+        at >= w.sentAt &&
+        echoesSentText(entry.text, w.text, w.files)
+    )
+    if (claimed === undefined) return false
+    claimed.claimed = true
+    return true
   }
 
   /**
