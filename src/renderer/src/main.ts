@@ -19,6 +19,7 @@ import './assets/base.css'
 import './assets/design-tokens.css'
 import './assets/theme.css'
 import { restoreLaunchView } from './composables/useView'
+import { modeTransitionPart } from './composables/useModeTransition'
 
 /*
  * One window, one root (#635). The message panel had a window of its own beside the shell (#162),
@@ -30,4 +31,9 @@ import { restoreLaunchView } from './composables/useView'
  * before it mounts so its first paint is that page, never the Map corrected a frame later.
  * restoreLaunchView never rejects: a bridge that cannot answer opens the default view.
  */
+//
+// This window plays its part in every mode transition run from its first frame (ISSUE-284; ADR-025 item 3): it answers
+// each run and veils its content after a source half even with no chat open, so no run waits for the coordinator's
+// watchdog. An open chat registers its hand-off with the same part.
+modeTransitionPart()
 void restoreLaunchView(window.api).then(() => createApp(App).mount('#app'))
