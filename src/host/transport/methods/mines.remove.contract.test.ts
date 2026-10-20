@@ -37,7 +37,7 @@ import {
   type EndReason,
   type SessionTerminator
 } from '../../modules/crew'
-import { createMines, type MinesEvent } from '../../modules/mines'
+import { createMines, DEFAULT_TIER_THRESHOLDS, type MinesEvent } from '../../modules/mines'
 import type { ObservationEvent } from '../../modules/observation'
 import { NodeFs } from '../../platform/fs/NodeFs'
 import { SqliteLifecycleFactLog } from '../../platform/sqlite/SqliteLifecycleFactLog'
@@ -237,7 +237,7 @@ async function host() {
     await ui.settle()
     return { mineId, dwarfs }
   }
-  return { ui, bus, crew, mines, terminator, aborted, mineWith }
+  return { ui, bus, crew, mines, terminator, aborted, mineWith, scheduler }
 }
 
 let nextId = 0
@@ -357,5 +357,29 @@ describe('mines.remove over seam B (14 §2.3 B-M18)', () => {
     expect(h.terminator.calls).toHaveLength(1)
     expect(h.bus.ofType('MineRemoved')).toHaveLength(1)
     expect(wire(h.ui, from)).toEqual([{ name: `res ${again}` }])
+  })
+
+  it('[S3.16, INV-08] mines.remove removes an unenterable mine', async () => {
+    const h = await host()
+    const { mineId } = await h.mineWith([])
+    // The walk finds the folder unreadable: S3.11 makes the mine unenterable, with its reason.
+    const walks = h.mines.measurement({
+      scanner: { measure: () => Promise.resolve({ unenterable: 'not-found' }) },
+      scheduler: h.scheduler,
+      thresholds: DEFAULT_TIER_THRESHOLDS,
+      automaticWalkDelayMs: 0
+    })
+    walks.remeasure(mineId)
+    await walks.idle()
+    expect(h.mines.queries.get(mineId)?.state).toBe('unenterable')
+
+    const res = await response(h.ui, request(h.ui, 'mines.remove', { mineId, requestId: uuid(4) }))
+
+    expect(resultOf(res)).toEqual({ ok: true, value: {} })
+    expect(h.mines.queries.get(mineId)).toBeNull()
+    expect(
+      h.mines.queries.list({ sortBy: 'name', direction: 'asc' }).map((mine) => mine.mineId)
+    ).not.toContain(mineId)
+    expect(h.bus.handlerErrors).toEqual([])
   })
 })

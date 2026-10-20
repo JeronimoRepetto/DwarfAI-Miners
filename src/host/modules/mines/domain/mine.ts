@@ -233,7 +233,8 @@ export function transition(mine: Mine, input: MineInput, now: Instant): MineStep
       if (mine.state === 'removed') return none(mine)
       // INV-06: removed only when every dwarf ended; otherwise the prior state stays.
       if (!input.everyDwarfEnded) return step(mine, 'S3.17')
-      return step({ ...mine, state: 'removed', removedAt: now }, 'S3.16')
+      // INV-08: the reason ends with the `unenterable` state, so a removed mine keeps none.
+      return step({ ...withState(mine, 'removed'), removedAt: now }, 'S3.16')
     case 'metrics-reset':
       if (!input.hasPresentDwarf) return { mine: null, transition: 'S3.23' }
       return step(recreated(mine, now), 'S3.24')
@@ -306,7 +307,7 @@ function recreated(mine: Mine, now: Instant): Mine {
 }
 
 /** A mine leaving `unenterable`, its reason dropped (INV-08). */
-function withState(mine: Mine, state: 'active' | 'measuring'): Mine {
+function withState(mine: Mine, state: 'active' | 'measuring' | 'removed'): Mine {
   const next: Draft = { ...mine, state }
   delete next.unenterableReason
   return next
