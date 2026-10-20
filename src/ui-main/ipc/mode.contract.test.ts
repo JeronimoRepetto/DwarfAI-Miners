@@ -147,7 +147,7 @@ describe('the mode rows over seam A (14 §2.2 A-N13…A-N15)', () => {
     }
   })
 
-  it('[ADR-025, TC-284-05] lastMode has no writer other than the ModeCoordinator', () => {
+  it('[ADR-025, ADR-019] lastMode has no writer other than the ModeCoordinator', () => {
     const root = join(process.cwd(), 'src')
     const writers: string[] = []
     const walk = (dir: string): void => {
