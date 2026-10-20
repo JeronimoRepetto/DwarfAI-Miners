@@ -46,7 +46,12 @@ export const CUT_0_UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   'dwarf:name:reset': 'cut-2',
   // A-N10, A-N11 were declared after cut 0 shipped (ISSUE-174), born `host` in 3a: the cut-0 table never routed them.
   'host:recovery:retry': 'cut-3a',
-  'host:recovery:dismiss': 'cut-3a'
+  'host:recovery:dismiss': 'cut-3a',
+  // A-N13…A-N15 were declared after cut 0 shipped (ISSUE-284), born `ui-local` in the release that declares them (22
+  // §5): the cut-0 table never routed them.
+  'mode:move': 'cut-5',
+  'mode:transition': 'cut-5',
+  'mode:transition:done': 'cut-5'
 }
 
 function cut0Route(channel: ChannelKey): ChannelRoute {

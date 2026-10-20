@@ -444,3 +444,28 @@ export const revealDwarfChatPushSchema = z
 export const uiPreferenceWriteSchema = z.discriminatedUnion('key', [
   z.object({ key: z.literal('startWithSystem'), value: z.boolean() }).strict()
 ]) satisfies z.ZodType<UiPreferenceWrite>
+
+// A-N13 `moveToMode`, A-N14 `onModeTransition`, A-N15 `modeTransitionDone` (14 §2.2, §3.9; ADR-025 item 3;
+// ISSUE-284): the `ModeCoordinator`'s run. The `transitionId` is issued by UI main (a UUID), as A-N25's
+// `confirmationId` is.
+export const moveToModeParamsSchema = z
+  .object({
+    mode: windowModeSchema,
+    mineId: mineIdSchema.optional(),
+    dwarfId: dwarfIdSchema.optional(),
+    slot: z.enum(['chat', 'history']).optional()
+  })
+  .strict() satisfies z.ZodType<MoveToModeParams>
+
+export const modeTransitionSchema = z
+  .object({
+    transitionId: z.string().uuid(),
+    from: windowModeSchema,
+    to: windowModeSchema,
+    t0: z.number(),
+    chat: z.object({ dwarfId: dwarfIdSchema, mineId: mineIdSchema }).strict().optional(),
+    role: z.enum(['source', 'target'])
+  })
+  .strict() satisfies z.ZodType<ModeTransition>
+
+export const modeTransitionDoneSchema = z.object({ transitionId: z.string().uuid() }).strict()
