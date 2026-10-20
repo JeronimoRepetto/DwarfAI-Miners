@@ -1,0 +1,64 @@
+{
+  "label": "windows-same-boot-2",
+  "takenAt": "2026-10-20T17:17:41.867Z",
+  "platform": "win32",
+  "osRelease": "10.0.26200",
+  "electron": "44.0.0",
+  "sessionType": null,
+  "displays": [
+    {
+      "id": "405689602",
+      "label": "Q27G2WG4",
+      "primary": true,
+      "internal": false,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 2560,
+        "height": 1440
+      },
+      "workArea": {
+        "x": 0,
+        "y": 0,
+        "width": 2560,
+        "height": 1392
+      },
+      "size": {
+        "width": 2560,
+        "height": 1440
+      },
+      "scaleFactor": 1,
+      "rotation": 0,
+      "displayFrequency": 59,
+      "colorDepth": 24,
+      "detected": true
+    },
+    {
+      "id": "3709332974",
+      "label": "PHL 243V7",
+      "primary": false,
+      "internal": false,
+      "bounds": {
+        "x": 2560,
+        "y": 357,
+        "width": 1920,
+        "height": 1080
+      },
+      "workArea": {
+        "x": 2560,
+        "y": 357,
+        "width": 1920,
+        "height": 1032
+      },
+      "size": {
+        "width": 1920,
+        "height": 1080
+      },
+      "scaleFactor": 1,
+      "rotation": 0,
+      "displayFrequency": 60,
+      "colorDepth": 24,
+      "detected": true
+    }
+  ]
+}

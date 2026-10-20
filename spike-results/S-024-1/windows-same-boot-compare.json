@@ -1,0 +1,21 @@
+{
+  "from": "windows-same-boot-1",
+  "to": "windows-same-boot-2",
+  "rows": [
+    {
+      "before": "405689602",
+      "after": "405689602",
+      "label": "Q27G2WG4",
+      "matchedBy": "id",
+      "changed": []
+    },
+    {
+      "before": "3709332974",
+      "after": "3709332974",
+      "label": "PHL 243V7",
+      "matchedBy": "id",
+      "changed": []
+    }
+  ],
+  "newDisplays": []
+}
