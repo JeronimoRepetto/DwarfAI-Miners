@@ -167,6 +167,7 @@ function world() {
   return {
     deps,
     dwarfs,
+    cursors,
     sessions,
     ended,
     sink,
@@ -268,6 +269,45 @@ describe('ObservationLoop brings a resumed subagent back as its resumed generati
     child.write([started(WORKER, RESUMED, 'r'), ...work(WORKER, RESUMED + 1_000, 'r')])
     await poll()
     expect(w.announced().map((a) => a.identity)).toEqual([SESSION, WORKER])
+  })
+
+  it('[S4.41, INV-36] a coordinator message read while the session is not live still resumes the ended subagent once it is live', async () => {
+    const { w, child, poll } = await endedWorker()
+    // A wrong not-live verdict (#1468): the coordinator's message is read while it stands.
+    w.presence.says = 'not-live'
+    child.write([started(WORKER, RESUMED, 'r'), ...work(WORKER, RESUMED + 1_000, 'r')])
+    await poll()
+    w.presence.says = 'live'
+    child.write(work(WORKER, RESUMED + 5_000, 'r-more'))
+    await poll()
+
+    const resumed = generation(ENDED)
+    expect(w.announced().map((a) => [a.identity, a.parentIdentity])).toEqual([
+      [SESSION, undefined],
+      [WORKER, SESSION],
+      [resumed, SESSION]
+    ])
+    const second = w.dwarfs.bind(resumed, MINE, RESUMED)
+    await poll()
+    await poll()
+    expect(w.sink.applied.filter((b) => b.dwarfId === second).flatMap((b) => b.usage)).toEqual([
+      expect.objectContaining({ unitKey: 'r-unit' }),
+      expect.objectContaining({ unitKey: 'r-more-unit' })
+    ])
+    expect(w.closings()).toEqual([WORKER])
+  })
+
+  it('[S4.41, INV-36] while the session is not live, a coordinator message resumes nothing and the cursor stays before it', async () => {
+    const { w, child, poll } = await endedWorker()
+    const before = w.cursors.get('s1-worker')
+    w.presence.says = 'not-live'
+    child.write([started(WORKER, RESUMED, 'r'), ...work(WORKER, RESUMED + 1_000, 'r')])
+    await poll()
+    await poll()
+
+    expect(w.announced().map((a) => a.identity)).toEqual([SESSION, WORKER])
+    expect(w.cursors.get('s1-worker')).toEqual(before)
+    expect(w.sink.applied.flatMap((b) => b.usage.map((u) => u.unitKey))).not.toContain('r-unit')
   })
 
   it('[INV-36, S4.41] a resumed generation ends on its own next notification, not on a late copy of the one before, and the next resume is the next generation', async () => {
