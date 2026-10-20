@@ -290,8 +290,23 @@ describe('Mine aggregate: machine 3 (07 §3, 06 §4.1–§4.2)', () => {
       expect(failed).toEqual({ mine, transition: 'S3.17' })
       const done = transition(mine, { type: 'removal-settled', everyDwarfEnded: true }, LATER)
       expect(done.transition).toBe('S3.16')
-      expect(done.mine).toEqual({ ...mine, state: 'removed', removedAt: LATER })
+      // INV-08: the reason lives only while the state is `unenterable` (the schema CHECK too).
+      expect(done.mine).toEqual({
+        ...mine,
+        state: 'removed',
+        unenterableReason: undefined,
+        removedAt: LATER
+      })
     }
+  })
+
+  it('[S3.16, INV-08] a removed unenterable mine keeps no unenterable reason', () => {
+    const mine = mineIn('unenterable')
+    expect(mine.unenterableReason).toBeDefined()
+    const done = transition(mine, { type: 'removal-settled', everyDwarfEnded: true }, LATER)
+    expect(done.transition).toBe('S3.16')
+    expect(done.mine?.state).toBe('removed')
+    expect(done.mine).not.toHaveProperty('unenterableReason')
   })
 
   it('[S3.19, S3.20, INV-07] a removed mine found again keeps its id and returns unrecorded or active', () => {
