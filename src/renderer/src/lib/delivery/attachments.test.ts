@@ -3,11 +3,16 @@ import {
   MAX_DWARF_ATTACHMENTS,
   MAX_DWARF_ATTACHMENT_BYTES,
   MAX_DWARF_ATTACHMENTS_TOTAL_BYTES,
-  type Dwarf,
   type DwarfAttachment,
   type DwarfAttachmentPick
 } from '../../types'
-import { acceptAttachments, attachHint, refusalSentence } from './attachments'
+import {
+  ATTACH_HINT,
+  NO_ATTACH_AT_ALL_HINT,
+  acceptAttachments,
+  attachHint,
+  refusalSentence
+} from './attachments'
 
 /*
  * Issue #408. The design's rule for the composer's alert ink: the sentence NAMES
@@ -25,16 +30,6 @@ const pick = (name = 'red.png', over: Partial<DwarfAttachment> = {}): DwarfAttac
   }
   return { path: attachment.path, attachment }
 }
-
-const dwarf = (over: Partial<Dwarf> = {}): Dwarf => ({
-  id: 'claude:s1',
-  provider: 'claude',
-  role: 'foreman',
-  name: 'Scout',
-  status: 'working',
-  sessionId: 's1',
-  ...over
-})
 
 describe('refusalSentence', () => {
   it('names the count limit with its number, not a bare refusal', () => {
@@ -141,39 +136,18 @@ describe('acceptAttachments', () => {
 })
 
 describe('attachHint', () => {
-  it('says what the control does where a file can travel', () => {
-    const hint = attachHint(
-      dwarf({
-        capabilities: {
-          sendText: 'terminal',
-          cancel: 'terminal',
-          adjustEffort: null,
-          attach: 'terminal'
-        }
-      })
-    )
-    expect(hint).toBeTruthy()
+  /*
+   * AMENDED for #1463 (was: three cases reading `capabilities.attach` and `capabilities.sendText`):
+   * the Host board carries no capability record, and US-MSG-002.AC04 makes a file follow text, so
+   * the hint reads the one fact the composer reads — whether the session can receive a message.
+   */
+  it('[US-MSG-002.AC01] says what the control does where a message, and so a file, can travel', () => {
+    const hint = attachHint(true)
+    expect(hint).toBe(ATTACH_HINT)
     expect(hint.toLowerCase()).not.toContain("can't")
   })
 
-  it("names the fact and the way out where it can't, in the kick hint's idiom", () => {
-    const hint = attachHint(
-      dwarf({
-        capabilities: {
-          sendText: 'claude-relay',
-          cancel: 'claude-relay',
-          adjustEffort: null,
-          attach: null
-        }
-      })
-    )
-    // The fact: this channel carries text. The way out: the session's console.
-    expect(hint).toMatch(/text/i)
-    expect(hint).toMatch(/console|terminal/i)
-  })
-
-  it('says a dwarf with no channel at all takes nothing, rather than naming a way out', () => {
-    const hint = attachHint(dwarf())
-    expect(hint).toBeTruthy()
+  it('[US-MSG-002.AC04] says a session that cannot be written to takes no files, naming no way out', () => {
+    expect(attachHint(false)).toBe(NO_ATTACH_AT_ALL_HINT)
   })
 })

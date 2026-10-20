@@ -407,9 +407,12 @@ const pending = ref<readonly DwarfAttachment[]>([])
 /** The one sentence a refused file left behind, cleared by the next attempt. */
 const attachRefusal = ref<string | null>(null)
 
-/** Whether this dwarf's channel can carry a file at all — a capability, not a guess. */
-const canAttach = computed(() => canReceive.value && props.dwarf.capabilities?.attach != null)
-const attachTitle = computed(() => attachHint(props.dwarf))
+/**
+ * Whether this dwarf takes a file: exactly when it takes a message (US-MSG-002.AC04, #1463). The
+ * Host re-validates every path and its route carries the files, or answers why it could not.
+ */
+const canAttach = computed(() => canReceive.value)
+const attachTitle = computed(() => attachHint(canAttach.value))
 
 /* --- Message length (#431) — one block, appended -------------------------- */
 
