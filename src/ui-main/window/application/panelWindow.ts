@@ -239,7 +239,15 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   }
 
   const hide = (): void => {
-    if (!built) return
+    // A Panel never built, closed (destroyed) or already off screen has nothing to hide: asking the factory for it
+    // would build a new window and spawn its renderer (the last window closed, S10.14; Quit mid-run, S27.10).
+    if (!built || !surface.isVisible()) {
+      if (told) {
+        told = false
+        for (const listener of visibilityListeners) listener()
+      }
+      return
+    }
     panel().hide()
     publish()
   }

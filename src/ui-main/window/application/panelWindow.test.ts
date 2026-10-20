@@ -552,3 +552,50 @@ describe('the Panel window built again after it closed (ISSUE-056)', () => {
     expect(heard).toHaveLength(4)
   })
 })
+
+describe('the Panel window closing (ISSUE-284; 07 S27.10, S10.14)', () => {
+  it('[S10.14, S27.10] hiding a Panel that is closed or never built builds no window', () => {
+    // As ElectronWindows does: asking the factory for the Panel builds one when the window is gone. A hide is not a
+    // request to see the Panel: the last window closed (S10.14) or Quit mid-run (S27.10) must not spawn a renderer.
+    let builds = 0
+    let alive = false
+    const fakeWindow = new FakeWindowFactory()
+    const windows = {
+      panel: () => {
+        if (!alive) {
+          builds += 1
+          alive = true
+        }
+        return fakeWindow.panel()
+      },
+      veta: (key: string) => fakeWindow.veta(key),
+      valle: (from: string) => fakeWindow.valle(from)
+    }
+    const surface = new FakePanelSurface(fakeWindow)
+    const use = createPanelWindow({
+      windows,
+      surface: {
+        applyZoom: (factor) => surface.applyZoom(factor),
+        bounds: () => surface.bounds(),
+        setAlwaysOnTop: (on) => surface.setAlwaysOnTop(on),
+        isAlwaysOnTop: () => surface.isAlwaysOnTop(),
+        raise: () => surface.raise(),
+        isMinimized: () => surface.isMinimized(),
+        isVisible: () => alive && fakeWindow.panel().visible,
+        onMinimizedChanged: (h) => surface.onMinimizedChanged(h)
+      },
+      screen: new FakeScreenAreaProvider([PRIMARY]),
+      store: new InMemoryUiPreferenceStore(createInMemoryUiPreferenceStorage()),
+      floor: 32,
+      onDisplaysChanged: () => undefined
+    })
+    use.hide()
+    expect(builds, 'a Panel never built is not built to be hidden').toBe(0)
+    use.show()
+    expect(builds).toBe(1)
+    // The window closed (destroyed): a hide asks the factory for nothing.
+    alive = false
+    use.hide()
+    expect(builds, 'a closed Panel is not built again to be hidden').toBe(1)
+  })
+})
