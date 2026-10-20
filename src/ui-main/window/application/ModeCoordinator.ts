@@ -222,14 +222,34 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     } else climb({ type: 'move', to: request.mode })
   }
 
+  /** `window.transition-failed` (19 §9.6): `msg` is the source and the target mode, never an error's text. */
+  function logFailed(from: WindowMode, to: WindowMode): void {
+    log.record({
+      level: 'warn',
+      event: 'window.transition-failed',
+      subsystem: 'window',
+      msg: `${from}->${to}`
+    })
+  }
+
+  /** Runs one window action of a run; a window that throws is logged and the run goes on to settle. */
+  function safely(from: WindowMode, to: WindowMode, act: () => void): void {
+    try {
+      act()
+    } catch {
+      logFailed(from, to)
+    }
+  }
+
   /** S27.03/S27.04/S27.06/S27.11 → S27.05: hide the source, focus the target, write `lastMode`, settle. */
   function land(from: WindowMode, to: WindowMode): void {
     const request = current?.request
     current?.cancelWatchdog()
     current = null
-    windowOf(from)?.hide()
-    windowOf(to)?.focus()
-    if (to !== 'hidden') deps.lastMode.set('lastMode', to)
+    // Every path settles: a window that throws here is logged, never left holding the machine in `playing`.
+    safely(from, to, () => windowOf(from)?.hide())
+    safely(from, to, () => windowOf(to)?.focus())
+    if (to !== 'hidden') safely(from, to, () => deps.lastMode.set('lastMode', to))
     if (node.state === 'completing') step({ type: 'landed' })
     if (request !== undefined) {
       climbTo(request)
@@ -306,23 +326,23 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
         target.showInactive()
       }
     } catch {
-      // S27.07, FM-046: the source mode stays; the details go to the log only (14 §1.5).
-      step({ type: 'target-failed' })
-      log.record({
-        level: 'warn',
-        event: 'window.transition-failed',
-        subsystem: 'window',
-        msg: `${from}->${to}`
-      })
-      for (const answer of request.answers) answer(failed('the mode window could not be shown'))
-      afterSettle()
+      targetFailed(request, from, to, null)
       return
     }
     const t0 = timing.now() + MODE_T0_LEAD_MS
     const base: Omit<ModeTransition, 'role'> = { transitionId, from, to, t0 }
     if (request.chat !== undefined) base.chat = request.chat
-    windowOf(from)?.send(MODE_TRANSITION_PUSH, { ...base, role: 'source' } satisfies ModeTransition)
-    target?.send(MODE_TRANSITION_PUSH, { ...base, role: 'target' } satisfies ModeTransition)
+    try {
+      windowOf(from)?.send(MODE_TRANSITION_PUSH, {
+        ...base,
+        role: 'source'
+      } satisfies ModeTransition)
+      target?.send(MODE_TRANSITION_PUSH, { ...base, role: 'target' } satisfies ModeTransition)
+    } catch {
+      // A window that cannot be told the run cannot play it: the target is put away again (S27.07).
+      targetFailed(request, from, to, target)
+      return
+    }
     current = { request, cancelWatchdog: () => {} }
     if (deps.reducedMotion()) {
       // S27.06: durations 0 ms, the same state transfer.
@@ -341,6 +361,20 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     // An end with no window has nothing to play: its answer is the coordinator's own.
     if (from === 'hidden') answerDone('source')
     if (to === 'hidden') answerDone('target')
+  }
+
+  /** S27.07, FM-046: the source mode stays; the details go to the log only (14 §1.5); a held request then runs. */
+  function targetFailed(
+    request: Request,
+    from: WindowMode,
+    to: WindowMode,
+    shownTarget: ModeWindow | null
+  ): void {
+    if (shownTarget !== null) safely(from, to, () => shownTarget.hide())
+    step({ type: 'target-failed' })
+    logFailed(from, to)
+    for (const answer of request.answers) answer(failed('the mode window could not be shown'))
+    afterSettle()
   }
 
   function answerDone(role: 'source' | 'target'): void {
@@ -390,9 +424,9 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       current?.cancelWatchdog()
       current = null
       step({ type: 'hidden' })
-      windowOf(from)?.hide()
-      windowOf(to)?.hide()
-      if (to !== 'hidden') deps.lastMode.set('lastMode', to)
+      safely(from, to, () => windowOf(from)?.hide())
+      safely(from, to, () => windowOf(to)?.hide())
+      if (to !== 'hidden') safely(from, to, () => deps.lastMode.set('lastMode', to))
       climb({ type: 'move', to: 'hidden' })
       for (const answer of carried?.answers ?? []) answer(OK)
       afterSettle()

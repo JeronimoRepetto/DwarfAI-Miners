@@ -243,6 +243,34 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(s.coordinator.mode()).toBe('panel')
   })
 
+  it('[S27.07, FM-046] a window that throws while it is told the run, or while it lands, leaves the coordinator settled', async () => {
+    const s = setup({ start: 'panel' })
+    // Told the run: the target cannot take it, so the source stays (S27.07) and the request is answered INTERNAL.
+    s.win.veta.send = () => {
+      throw new Error('the Veta renderer is gone')
+    }
+    expect(await s.coordinator.moveToMode({ mode: 'veta' })).toMatchObject({
+      ok: false,
+      error: { code: 'INTERNAL', retryable: false }
+    })
+    expect(shownWindows(s)).toEqual(['panel'])
+    expect(s.log.byEvent('window.transition-failed')).toHaveLength(1)
+
+    // Landing: the source cannot be hidden; the run still settles in the target and the next move runs.
+    s.win.panel.hide = () => {
+      throw new Error('the Panel window is gone')
+    }
+    const moved = s.coordinator.moveToMode({ mode: 'valle' })
+    bothDone(s, 'panel', 'valle')
+    expect(await moved).toEqual({ ok: true, value: undefined })
+    expect(s.coordinator.mode()).toBe('valle')
+    s.win.veta.send = () => {}
+    const next = s.coordinator.moveToMode({ mode: 'veta' })
+    expect(transitions(s.win.valle).at(-1)).toMatchObject({ from: 'valle', to: 'veta' })
+    s.timing.advance(1_000)
+    expect(await next).toEqual({ ok: true, value: undefined })
+  })
+
   it('[S27.09] a click or a key during a run that is not a mode request is ignored, never queued', async () => {
     const s = setup({ start: 'panel' })
     const moved = s.coordinator.moveToMode({ mode: 'veta' })
