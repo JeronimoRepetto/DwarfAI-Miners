@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { DwarfId, MineId } from '@dwarfai/contracts'
 import { flushPromises } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -181,6 +182,104 @@ describe('the window risen above the Veta strip', () => {
     await flushPromises()
     expect(folds).toEqual(['after the pointer left'])
     expect(shownList()).toBe('no list')
+  })
+})
+
+// APPENDED for ISSUE-293: the chat hand-off between Veta and the Panel (07 S24.12, S24.18, machine 9; UC-051).
+describe('the risen chat hand-off (ISSUE-293)', () => {
+  it("[US-MSG-010.AC01, US-DLG-006.AC01, S24.12] Open in the Panel moves to the Panel with this dwarf's mine and chat and keeps the draft", async () => {
+    world = await mountVeta(TWO_MINES, { runs: true })
+    dwarf(BORIN).click()
+    await flushPromises()
+    const box = world.root.get('[data-veta-risen] textarea')
+    await box.setValue('typed in Veta')
+    ;(box.element as HTMLTextAreaElement).setSelectionRange(2, 7, 'backward')
+    const before = world.patches.length
+
+    const tool = world.root.find('[data-veta-risen] [data-open-in-panel]')
+    expect(tool.exists()).toBe(true)
+    await tool.trigger('click')
+    await flushPromises()
+    // One move, naming the chat's mine and dwarf: the Panel opens on them (S27.01).
+    expect(world.moves).toEqual([{ mode: 'panel', mineId: MORIA, dwarfId: BORIN }])
+    // The run's flush carries the draft and the caret to the session store before t0, for the Panel to show them.
+    expect(world.patches.slice(before)).toEqual(
+      expect.arrayContaining([
+        { kind: 'draft', dwarfId: BORIN, text: 'typed in Veta' },
+        {
+          kind: 'chat-view',
+          dwarfId: BORIN,
+          view: { scrollAnchor: 'bottom', selection: { start: 2, end: 7, direction: 'backward' } }
+        }
+      ])
+    )
+  })
+
+  it('[US-MSG-010.AC03] a chat risen from Veta labels its tool Open in the Panel', async () => {
+    world = await mountVeta(TWO_MINES)
+    dwarf(BORIN).click()
+    await flushPromises()
+    const tool = world.root.find('[data-veta-risen] .dm-msg__tools [data-open-in-panel]')
+    expect(tool.exists()).toBe(true)
+    expect(tool.attributes('title')).toBe('Open in the Panel')
+    // The ▢ promote glyph, first among the header's tools.
+    expect(tool.find('.dm-icon').exists()).toBe(true)
+    expect(world.root.findAll('[data-veta-risen] .dm-msg__tools button')[0]!.element).toBe(
+      tool.element
+    )
+  })
+
+  it('[US-DLG-006.AC05, BR-21] dragging or resizing the anchored panel never moves the chat', async () => {
+    world = await mountVeta(TWO_MINES)
+    dwarf(BORIN).click()
+    await flushPromises()
+    const card = world.root.get('[data-veta-risen]')
+    const placed = card.attributes('style')
+    const layouts = world.layouts.length
+    const head = card.get('.dm-msg__head').element
+    // A press on the header dragged 200 px away and released, then a double-click: no drag, no move to another host.
+    head.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100 })
+    )
+    head.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, clientX: 300, clientY: 60 })
+    )
+    head.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 300, clientY: 60 }))
+    head.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    await flushPromises()
+    expect(card.attributes('style')).toBe(placed)
+    expect(world.layouts.slice(layouts)).toEqual([])
+    expect(world.moves).toEqual([])
+    expect(shownRisen()).toBe('shown')
+    // Nothing offers to resize it: no handle, and the panel is not a resizable box.
+    expect(card.find('[data-resize], .dm-resize').exists()).toBe(false)
+    expect(card.element.style.resize).toBe('')
+  })
+
+  it('[S24.18] a run into Veta carrying a chat rises it once the window landed, with the draft from the session store', async () => {
+    world = await mountVeta(TWO_MINES, {
+      session: { drafts: { [BORIN]: 'carried from the Panel' }, chatViews: {} } as never
+    })
+    expect(shownRisen()).toBe('none')
+    await world.transition({
+      transitionId: 'run-in',
+      from: 'panel',
+      to: 'veta',
+      t0: Date.now() + 16,
+      role: 'target',
+      chat: { dwarfId: BORIN as DwarfId, mineId: MORIA as MineId }
+    })
+    // Not before the shell motion: nothing has risen yet.
+    expect(shownRisen()).toBe('none')
+    // Under reduced motion the shell motion lasts 0 ms: the chat rises at t0.
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await flushPromises()
+    expect(shownRisen()).toBe('shown')
+    expect(world.root.getComponent(DwarfMessagePanel).props('draft')).toBe('carried from the Panel')
+    expect(world.layouts.filter((r) => r.kind === 'rise').at(-1)).toMatchObject({
+      kind: 'rise',
+      dwarfId: BORIN
+    })
   })
 })
 

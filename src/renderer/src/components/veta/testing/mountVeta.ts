@@ -5,6 +5,7 @@
  */
 import type {
   HostFrame,
+  ModeTransition,
   MoveToModeParams,
   UiSessionPatch,
   UiSessionSnapshot,
@@ -14,6 +15,7 @@ import type {
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createFakeWindowApi } from '../../../../../contracts/ipc/testing/fakeWindowApi'
 import { FRAME_CLOCK_KEY } from '../../../composables/useFramePlayer'
+import { modeTransitionPart } from '../../../composables/useModeTransition'
 import { createFrameClock } from '../../../lib/sprite/frameClock'
 import { FakeTickSource, fakeFrameClockEnv } from '../../../lib/sprite/testing/FakeTickSource'
 import { snapshotPage, type VetaSnapshotData } from '../../../lib/veta/testing/vetaFixtures'
@@ -46,6 +48,11 @@ export interface VetaWorldOptions {
   session?: Partial<UiSessionSnapshot>
   /** Called with each A-N23 request as UI main receives it, before it answers (ISSUE-291). */
   onLayout?: (request: VetaLayoutRequest) => void
+  /**
+   * Plays UI main's part of a mode run on each A-N13 (ISSUE-293): this window is told it is the run's source
+   * (`mode.transition`, role `source`, the chat a move names), as the `ModeCoordinator` tells it before `t0`.
+   */
+  runs?: boolean
 }
 
 export interface VetaWorld {
@@ -65,6 +72,8 @@ export interface VetaWorld {
   patches: UiSessionPatch[]
   /** Relays Host frames to the page as UI main does over A-N02 (ISSUE-292), then lets it settle. */
   push(frames: HostFrame[]): Promise<void>
+  /** Tells the page a mode run as UI main does over A-N14 (ISSUE-293), then lets it settle. */
+  transition(t: ModeTransition): Promise<void>
   unmount(): void
 }
 
@@ -97,6 +106,8 @@ export async function mountVeta(
   const risenAtLayout: string[] = []
   const patches: UiSessionPatch[] = []
   const hostListeners = new Set<(frames: HostFrame[]) => void>()
+  const runListeners = new Set<(t: ModeTransition) => void>()
+  let runs = 0
   const matchMedia = window.matchMedia
   if (options.motion !== true) {
     window.matchMedia = ((query: string) => ({
@@ -130,9 +141,28 @@ export async function mountVeta(
       patches.push(patch as UiSessionPatch)
     },
     moveToMode: (request) => {
-      moves.push(request as MoveToModeParams)
+      const move = request as MoveToModeParams
+      moves.push(move)
+      if (options.runs === true) {
+        const t: ModeTransition = {
+          transitionId: `run-${(runs += 1)}`,
+          from: 'veta',
+          to: move.mode,
+          t0: Date.now() + 16,
+          role: 'source'
+        }
+        if (move.mineId !== undefined && move.dwarfId !== undefined) {
+          t.chat = { mineId: move.mineId, dwarfId: move.dwarfId }
+        }
+        for (const listener of [...runListeners]) listener(t)
+      }
       return Promise.resolve({ ok: true, value: undefined })
     },
+    onModeTransition: (listener) => {
+      runListeners.add(listener)
+      return () => runListeners.delete(listener)
+    },
+    modeTransitionDone: () => undefined,
     layoutVeta: (request) => {
       const place = options.place ?? VETA_PLACE
       layouts.push(request as VetaLayoutRequest)
@@ -187,8 +217,14 @@ export async function mountVeta(
       for (const listener of [...hostListeners]) listener(frames)
       await flushPromises()
     },
+    async transition(t) {
+      for (const listener of [...runListeners]) listener(t)
+      await flushPromises()
+    },
     unmount() {
       root.unmount()
+      // The window's part of every run is shared by the page: the next mount starts its own over its own bridge.
+      modeTransitionPart().dispose()
       clock.dispose()
       window.matchMedia = matchMedia
       delete (window as unknown as { api?: unknown }).api

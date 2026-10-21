@@ -23,6 +23,10 @@
  *   OQ-76): the last one this window opened there, else the session store's record of one in that mine (Valle's
  *   `talkedTo`, then the open chat of Veta, the Panel or Valle).
  *
+ * - "▢ Open in the Panel" asks UI main for the Panel on the chat's mine and dwarf (A-N13, S24.12; ISSUE-293): the run
+ *   flushes the chat (S9.02) and the window hiding folds it (S24.14). A run into Veta carrying a chat rises it once
+ *   landed (S24.18), as a click does.
+ *
  * Each step stamps the effects it starts: a later step (a fold mid-rise, a drag) stops the earlier one's remaining
  * effects, so a motion that ends late never steps a machine that has moved on. The bridge and the host are injected
  * (the house idiom over `vi.mock`).
@@ -31,6 +35,7 @@ import type {
   ChatViewState,
   DwarfId,
   MineId,
+  MoveToModeParams,
   RevealDwarfChatPush,
   UiSessionPatch,
   UiSessionSnapshot,
@@ -53,8 +58,9 @@ import {
   type RisenWindow
 } from '../lib/veta/risenWindow'
 
-/** The seam A members the risen window uses (14 §2.2 A-N16, A-N17, A-N18, A-N23, A-N28). */
+/** The seam A members the risen window uses (14 §2.2 A-N13, A-N16, A-N17, A-N18, A-N23, A-N28). */
 export interface VetaRisenBridge {
+  moveToMode(params: MoveToModeParams): Promise<unknown>
   layoutVeta(request: VetaLayoutRequest): Promise<VetaLayoutResult>
   patchUiSession(patch: UiSessionPatch): void
   getUiSession(): Promise<UiSessionSnapshot>
@@ -255,6 +261,12 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
         return true
       case 'bring-mine':
         host.bringMine(effect.mineId)
+        return true
+      case 'move-to-panel':
+        // S24.12: machine 27 runs the move and machine 9 carries the chat; UI main out of reach moves nothing.
+        void bridge
+          .moveToMode({ mode: 'panel', mineId: effect.mineId, dwarfId: effect.dwarfId })
+          .catch(() => undefined)
         return true
       case 'log-refused':
         // UI main logged the refusal it answered (`veta.placement`, `unplaced`); nothing shows here.

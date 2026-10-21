@@ -59,6 +59,10 @@
  * take the focus the same way, and would fold the chat under the person's hands. Hovering a dwarf shows its one-line
  * label, whose room the band holds for good with the tabs', so a hover never resizes the window.
  *
+ * The chat hand-off (ISSUE-293; 07 machine 9, S24.12, S24.18; UC-051): the risen chat's "▢ Open in the Panel" asks for
+ * the Panel on its mine and dwarf, the run flushing its draft, scroll anchor and caret; a run into Veta carrying a chat
+ * rises it once the shell motion landed, M + 60 ms after `t0`, its draft and view given back by the session store.
+ *
  * Arrivals and departures (ISSUE-292; 07 machine 26; UC-050), carried out by `useVetaChoreography` while Veta is the
  * shown mode, from the `dwarf.arrived` and `dwarf.departed` frames alone: the strip drawn is its staged one, so an
  * arrival is held back until the window has grown for it and a departed dwarf stands until it has walked out. From the
@@ -93,6 +97,7 @@ import { useWindowVetaLife, useWindowVetaOverflow } from '../../composables/useV
 import { useWindowVetaOverlay } from '../../composables/useVetaOverlay'
 import { useWindowVetaPresence } from '../../composables/useVetaPresence'
 import { useWindowVetaRisen } from '../../composables/useVetaRisen'
+import { modeTransitionPart } from '../../composables/useModeTransition'
 import { prefersReducedMotion } from '../../lib/scene/sceneMotion'
 import { SHIPPED_MODES } from '../../lib/shell/builtDestinations'
 import {
@@ -1050,6 +1055,9 @@ const risen = useWindowVetaRisen({
   unhovered: whenUnhovered
 })
 
+/** Stops hearing runs into Veta that carry a chat (S24.18). */
+let stopLanding: (() => void) | null = null
+
 const risenOpen = computed(() => {
   const now = risen.machine.value.state
   return now === 'risen-chat' || now === 'risen-add' || now === 'read-only'
@@ -1207,6 +1215,17 @@ onMounted(() => {
   void life.start()
   void board.start()
   risen.start()
+  // S24.18 (ISSUE-293): a run into Veta carrying a chat rises it once the shell motion landed, as a click does.
+  stopLanding = modeTransitionPart().onLanded((carried) => {
+    void risen.dispatch({
+      type: 'arrive',
+      mineId: carried.mineId,
+      dwarfId: carried.dwarfId,
+      present: chambers.value.some(
+        (c) => c.mine.id === carried.mineId && c.dwarfs.some((d) => d.id === carried.dwarfId)
+      )
+    })
+  })
   document.addEventListener('keydown', escape)
   window.addEventListener('resize', resized)
 })
@@ -1218,6 +1237,7 @@ onBeforeUnmount(() => {
   dock.dispose()
   life.stop()
   risen.stop()
+  stopLanding?.()
   choreo.stop()
   motion.dispose()
   board.stop()
@@ -1380,6 +1400,7 @@ onBeforeUnmount(() => {
       :add-mine-name="addMineName"
       @draft="risenDraft"
       @close="risen.dispatch({ type: 'esc', renaming: false })"
+      @open-in-panel="risen.dispatch({ type: 'open-in-panel' })"
     />
     <WorktreeDialog
       :question="question"

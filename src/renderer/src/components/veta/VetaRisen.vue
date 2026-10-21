@@ -12,7 +12,9 @@
  * transition's end or on its watchdog (NFR-TIM-16); under reduced motion none plays. The window around it is grown
  * before a rise and shrunk after a fold, never during one (`useVetaRisen`).
  *
- * "▢ Open in the Panel" and the history request inside the chat are ISSUE-293's (S24.12, S24.13).
+ * The chat is hosted as Veta's (`hostedIn: 'veta'`), so its header offers "▢ Open in the Panel" (S24.12; ISSUE-293),
+ * relayed as `open-in-panel`; its mine-history request stays hidden until the Panel can be opened on the history
+ * (S24.13, pending `ModeTransition.slot`).
  */
 import type { ChatViewState } from '@dwarfai/contracts'
 import { computed, nextTick, onBeforeUnmount, ref, type CSSProperties } from 'vue'
@@ -44,6 +46,8 @@ const emit = defineEmits<{
   draft: [dwarfId: string, text: string]
   /** The panel's own close (its ×, or Esc inside it). */
   close: []
+  /** "▢ Open in the Panel" in the chat header (S24.12). */
+  'open-in-panel': []
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -201,6 +205,8 @@ defineExpose({ play, focusContent, captureView, restoreView })
       :echo-attachments="dock.sentEchoAttachments[dock.selectedDwarf.value.id]"
       :stop-disabled="dock.stopDisabled(dock.selectedDwarf.value.id)"
       :answer-state="dock.questionState.byDwarfId[dock.selectedDwarf.value.id]"
+      hosted-in="veta"
+      @open-in-panel="emit('open-in-panel')"
       @draft="emit('draft', dock.selectedDwarf.value.id, $event)"
       @send="dock.sendText(dock.selectedDwarf.value, $event)"
       @retry="dock.retryMessage(dock.selectedDwarf.value, $event)"
