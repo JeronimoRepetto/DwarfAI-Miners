@@ -109,6 +109,19 @@ import {
   type MineTier
 } from '../types'
 import { at as sampleTime, silenceMs, type GoldenSample } from './sample'
+import VetaChamber from '../components/veta/VetaChamber.vue'
+import VetaEntrance from '../components/veta/VetaEntrance.vue'
+import VetaIsland from '../components/veta/VetaIsland.vue'
+import type {
+  DwarfId,
+  DwarfRank,
+  DwarfStatus,
+  DwarfWire,
+  FolderPath,
+  MineId,
+  MineWire,
+  Tier
+} from '@dwarfai/contracts'
 import {
   EnterFrame,
   IconRow,
@@ -1822,6 +1835,83 @@ const settings: Render = (sample, _texts, attributes) => {
   }
 }
 
+/*
+ * Veta (ISSUE-287). The strip with no sessions is the island holding the closed entrance alone, "+" on first run. A
+ * chamber is drawn from its state's own tree: the mine its group names (`data-mine`, `data-tier` and the name in its
+ * label), and each dwarf's status and rank (`data-status`, its sprite's `data-sheet`), as the Host's wire would carry
+ * them. The design text stays in the tree; nothing here restates it.
+ */
+const VetaStripStage = defineComponent({
+  props: { first: { type: Boolean, default: false } },
+  setup(props) {
+    return () =>
+      h(VetaIsland, { mode: props.first ? 'first' : 'empty', vertical: false }, () =>
+        h(VetaEntrance, { first: props.first, vertical: false })
+      )
+  }
+})
+const vetaStrip =
+  (first: boolean): Render =>
+  () => ({ component: VetaStripStage, props: { first } })
+
+const RANKS: readonly DwarfRank[] = ['foreman', 'worker2', 'worker']
+const vetaChamber: Render = (_sample, _texts, attributes) => {
+  const group = elementsOf(attributes, 'div.dm-chamber')[0] ?? {}
+  const sheets = elementsOf(attributes, 'span.dm-sprite')
+  const name = /^Mine (.*?), /.exec(group['aria-label'] ?? '')?.[1] ?? ''
+  const mineId = (group['data-mine'] ?? 'mine') as MineId
+  const mine: MineWire = {
+    id: mineId,
+    path: `/${mineId}` as FolderPath,
+    name,
+    state: 'active',
+    tier: (group['data-tier'] ?? null) as Tier | null,
+    hasBeenMeasured: true,
+    lastUsedAt: 0,
+    totals: {
+      coal: { tokens: 0 },
+      bronze: { tokens: 0 },
+      copper: { tokens: 0 },
+      silver: { tokens: 0 },
+      gold: { tokens: 0 },
+      uranium: { tokens: 0 }
+    }
+  }
+  const dwarfs = elementsOf(attributes, 'button.dm-vdwarf').map((a, i): DwarfWire => {
+    const sheet = sheets[i]?.['data-sheet'] ?? ''
+    return {
+      id: (a['data-dwarf'] ?? `d${i}`) as DwarfId,
+      mineId,
+      providerId: 'claude',
+      baseName: (a['aria-label'] ?? '').split(',')[0] ?? '',
+      customName: null,
+      rank: RANKS.find((rank) => sheet.startsWith(rank + '/')) ?? 'worker',
+      parentDwarfId: null,
+      delegated: false,
+      sessionProfile: { providerId: 'claude' },
+      presence: 'present',
+      processState: 'running',
+      status: (a['data-status'] ?? 'idle') as DwarfStatus,
+      needsYou: a['data-status'] === 'asking',
+      canReceiveMessages: true,
+      stopInFlight: false,
+      stopUnavailableReason: null,
+      owned: true,
+      arrivedAt: 0
+    } as DwarfWire
+  })
+  return {
+    component: VetaChamber,
+    props: {
+      mine,
+      dwarfs,
+      attention: group['data-attention'] === 'true',
+      vertical: group['data-orient'] === 'col',
+      reverse: group['data-align'] === 'end'
+    }
+  }
+}
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -1841,6 +1931,11 @@ export const RENDERS: Record<string, Render> = {
   'organisms/mines-list#live': minesList,
   'organisms/mines-list#empty-first-run': minesList,
   // The mine card in each of its states, every prop read off the state's own tree.
+  // Veta (ISSUE-287): the closed entrance, and a chamber lit or asleep.
+  'organisms/veta-strip#first-run': vetaStrip(true),
+  'organisms/veta-strip#no-sessions': vetaStrip(false),
+  'molecules/mine-chamber#needs-you': vetaChamber,
+  'molecules/mine-chamber#all-idle': vetaChamber,
   'molecules/mine-card#needs-you': mineCard,
   'molecules/mine-card#default': mineCard,
   'molecules/mine-card#hover': mineCard,
