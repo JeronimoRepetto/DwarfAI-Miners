@@ -431,6 +431,9 @@ describe('ClaudeAcpDriver', () => {
       correlation: 'm-held',
       providerTurnId: '2'
     })
+    // AMENDED for #1463 (was: a turn with attachments refused as a channel error): the ACP client
+    // now sends each Host-revalidated file as a `resource_link` block (US-MSG-002.AC03; the encoding
+    // is proven in `AcpDriver.conformance.test.ts`), so a turn with files is held like any other.
     await expect(
       session.sendTurn({
         messageId: 'm-2' as never,
@@ -438,7 +441,12 @@ describe('ClaudeAcpDriver', () => {
         text: 'look at this',
         attachments: [{ path: '/work/mine/a.png', name: 'a.png', bytes: 3 }]
       })
-    ).rejects.toEqual({ kind: 'channel-error', reason: expect.any(String) })
+    ).resolves.toEqual({
+      confidence: 'unconfirmed',
+      heldUntilTurnEnd: true,
+      correlation: 'm-2',
+      providerTurnId: '3'
+    })
   })
 
   // ---------- AMENDMENT-19 (owner, 2026-10-17): the permission mode is pinned ----------

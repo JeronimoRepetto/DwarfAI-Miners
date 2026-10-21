@@ -60,6 +60,7 @@ import type {
 } from '../../../ports/providerDriver'
 import { probeEnv } from '../../install/searchDirs'
 import { adapterLaunch, type LaunchTarget } from '../acp/client/adapterLaunch'
+import { userContentOf, type AttachedFile } from '../attachedFiles'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
 import { buildArgv } from './argv'
 import { capabilitiesFromHelp } from './capabilities'
@@ -497,10 +498,7 @@ class NdjsonSession implements DriverSession {
     if (this.exited || this.closing) {
       throw sendError('session-closed', 'the session has ended')
     }
-    if (input.attachments.length > 0) {
-      throw sendError('channel-error', 'this driver does not send attachments')
-    }
-    const held = this.writeUser(input.text, input.messageId)
+    const held = this.writeUser(input.text, input.messageId, input.attachments)
     if (held === null) throw sendError('channel-error', 'the stdin of agy refused the line')
     // The stream acknowledges no stdin line: written, not confirmed (row A1 reactionEvidence none).
     return { confidence: 'unconfirmed', heldUntilTurnEnd: held, correlation: input.messageId }
@@ -529,8 +527,17 @@ class NdjsonSession implements DriverSession {
   /**
    * One user line (15 §4.8): `JSON.stringify` keeps a multi-line text on one line. Returns whether
    * it queues behind a running turn, or null when the pipe refused it (nothing is opened then).
+   *
+   * Files (#1463; 15 §1.2 `TurnInput.attachments`; US-MSG-002.AC03; package gap): agy 1.1.26 shows
+   * no file input of its own (its `--help` and this line's one `content` field), so each
+   * Host-revalidated path is named ahead of the words (`userContentOf`) and agy opens it with its
+   * own tools. Only paths travel, on stdin; the echo waiting for the line is the person's words.
    */
-  private writeUser(text: string, echoOf: string | null): boolean | null {
+  private writeUser(
+    text: string,
+    echoOf: string | null,
+    attachments: readonly AttachedFile[] = []
+  ): boolean | null {
     const stdin = this.options.child.stdin
     if (stdin === null) return null
     // The turn opens before the write: agy's answer may arrive while the write is still on the stack.
@@ -541,7 +548,8 @@ class NdjsonSession implements DriverSession {
     this.openTurns += 1
     if (!held) this.emit({ t: 'status', value: 'working' })
     try {
-      stdin.write(`${JSON.stringify({ event: 'user', message: { content: text } })}\n`)
+      const content = userContentOf(text, attachments)
+      stdin.write(`${JSON.stringify({ event: 'user', message: { content } })}\n`)
     } catch {
       // A refused line opened nothing: no echo waits for it and no turn is counted.
       const at = this.pending.indexOf(pending)

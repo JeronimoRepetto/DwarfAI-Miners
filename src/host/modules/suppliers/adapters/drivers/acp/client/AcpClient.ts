@@ -18,6 +18,7 @@ import {
   RequestError,
   type AnyMessage,
   type Client,
+  type ContentBlock,
   type CreateElicitationRequest,
   type CreateElicitationResponse,
   type InitializeResponse,
@@ -47,9 +48,11 @@ import type {
   SessionRef,
   TurnInput
 } from '../../../../ports/providerDriver'
+import type { AttachedFile } from '../../attachedFiles'
 import { turnEndOf } from '../stopReason'
 import { answerReply, CANCEL, DECLINE, formOf, type ElicitationForm } from './elicitation'
 import { EventChannel } from './eventChannel'
+import { fileUriOf } from './fileUri'
 import {
   optionSet,
   optionsOf,
@@ -248,7 +251,11 @@ export class AcpSession implements DriverSession {
   private handshakeTimer: { cancel(): void } | null = null
   private stderrTail = ''
   private turn: OpenTurn | null = null
-  private readonly queue: { text: string; echoOf: string }[] = []
+  private readonly queue: {
+    text: string
+    echoOf: string
+    attachments: readonly AttachedFile[]
+  }[] = []
   private turnCount = 0
   private seq = 0
   private segment: Segment | null = null
@@ -527,13 +534,11 @@ export class AcpSession implements DriverSession {
     if (this.exited || this.closing || this.outputEnded) {
       throw sendError('session-closed', 'the session has ended')
     }
-    if (input.attachments.length > 0) {
-      throw sendError('channel-error', 'this driver does not send attachments yet')
-    }
     const held = this.turn !== null
     const n = this.turnCount + this.queue.length + 1
-    if (held) this.queue.push({ text: input.text, echoOf: input.messageId })
-    else this.startTurn(input.text, input.messageId)
+    if (held) {
+      this.queue.push({ text: input.text, echoOf: input.messageId, attachments: input.attachments })
+    } else this.startTurn(input.text, input.messageId, input.attachments)
     // A prompt is acknowledged only by its stopReason, at the turn's end: written, not confirmed.
     return {
       confidence: 'unconfirmed',
@@ -543,7 +548,11 @@ export class AcpSession implements DriverSession {
     }
   }
 
-  private startTurn(text: string, echoOf: string | null): void {
+  private startTurn(
+    text: string,
+    echoOf: string | null,
+    attachments: readonly AttachedFile[] = []
+  ): void {
     const connection = this.connection
     if (connection === null) return
     this.turnCount += 1
@@ -567,7 +576,7 @@ export class AcpSession implements DriverSession {
       }
     })
     connection
-      .prompt({ sessionId: this.ref.providerSessionId, prompt: [{ type: 'text', text }] })
+      .prompt({ sessionId: this.ref.providerSessionId, prompt: promptOf(text, attachments) })
       .then(
         (response) => this.endTurn(turn, response),
         (error: unknown) => this.turnRefused(turn, error)
@@ -611,7 +620,7 @@ export class AcpSession implements DriverSession {
     turn.markEnded()
     const next = this.queue.shift()
     if (next === undefined) this.emit({ t: 'status', value: 'idle' })
-    else this.startTurn(next.text, next.echoOf)
+    else this.startTurn(next.text, next.echoOf, next.attachments)
   }
 
   /**
@@ -971,4 +980,24 @@ function nonEmpty(value: string | null | undefined): string | null {
 
 function sendError(kind: DriverSendError['kind'], reason: string): DriverSendError {
   return { kind, reason }
+}
+
+/**
+ * A `session/prompt`'s blocks (15 §1.2 `TurnInput.attachments`; US-MSG-002.AC03; package gap,
+ * recorded in the #1463 hand-off): the words as a `text` block, then each Host-revalidated file as
+ * a `resource_link` block (`uri`, `name`), which the pinned schema's `PromptCapabilities` names,
+ * with text, as the baseline every agent accepts; the agent opens the file itself. Only the path
+ * travels, as a `file://` URI, never the bytes (INV-62); no mimeType, as nothing verifies one. A
+ * turn of files alone carries no empty text block; a turn with no file is its text block as before.
+ */
+function promptOf(text: string, attachments: readonly AttachedFile[]): ContentBlock[] {
+  if (attachments.length === 0) return [{ type: 'text', text }]
+  return [
+    ...(text === '' ? [] : [{ type: 'text' as const, text }]),
+    ...attachments.map((file) => ({
+      type: 'resource_link' as const,
+      uri: fileUriOf(file.path),
+      name: file.name
+    }))
+  ]
 }
