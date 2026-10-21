@@ -58,6 +58,17 @@
  * fold it at once. A click in another app does not fold it: the OS file picker and the console the chat itself opens
  * take the focus the same way, and would fold the chat under the person's hands. Hovering a dwarf shows its one-line
  * label, whose room the band holds for good with the tabs', so a hover never resizes the window.
+ *
+ * Arrivals and departures (ISSUE-292; 07 machine 26; UC-050), carried out by `useVetaChoreography` while Veta is the
+ * shown mode, from the `dwarf.arrived` and `dwarf.departed` frames alone: the strip drawn is its staged one, so an
+ * arrival is held back until the window has grown for it and a departed dwarf stands until it has walked out. From the
+ * closed entrance the lamp lights, the island is built at its final size with its parts fading in from the anchor side,
+ * then the dwarfs walk in; into a drawn chamber only the dwarf walks in, its chamber's lamp brightening; a new chamber
+ * opens last, by "+N"; a departure walks out away from the anchor while fading, an emptied chamber fades and what lay
+ * beyond slides back, and the last one contracts the strip to the entrance. The window grows before a growth and
+ * shrinks after the motion, never during one: the length and the tab band wait while anything moves. This window plays
+ * the motion (`play`) on the bounded runner (`createVetaMotion`), transform and opacity only, 0 ms under reduced motion
+ * and with the lantern steady. A departing dwarf's risen chat follows S24.10 / S24.11 as it walks out. No sound plays.
  */
 import { VETA_ISLAND, type DwarfId, type DwarfWire, type MineId } from '@dwarfai/contracts'
 import type { MineWorktreeOf } from '../../types'
@@ -75,19 +86,35 @@ import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
 import { useMessageDock } from '../../composables/useMessageDock'
 import { useMines } from '../../composables/useMines'
 import { useWindowMinePicker } from '../../composables/useMinePicker'
+import { useVetaChoreography, type VetaCue } from '../../composables/useVetaChoreography'
 import { useWindowVetaClickThrough, vetaTakesPointer } from '../../composables/useVetaClickThrough'
 import { useWindowVetaDock } from '../../composables/useVetaDock'
 import { useWindowVetaLife, useWindowVetaOverflow } from '../../composables/useVetaLife'
 import { useWindowVetaOverlay } from '../../composables/useVetaOverlay'
 import { useWindowVetaPresence } from '../../composables/useVetaPresence'
 import { useWindowVetaRisen } from '../../composables/useVetaRisen'
+import { prefersReducedMotion } from '../../lib/scene/sceneMotion'
 import { SHIPPED_MODES } from '../../lib/shell/builtDestinations'
+import {
+  VETA_MOTION,
+  chamberOpenFrames,
+  enterFrames,
+  fadeOutFrames,
+  flipFrames,
+  opensChamber,
+  outwardOf,
+  partFrames,
+  walkInFrames,
+  walkOutFrames
+} from '../../lib/veta/choreography'
 import { snapRect } from '../../lib/veta/dockGesture'
 import { dwarfLabels, labelBox, silenceOf } from '../../lib/veta/dwarfLabel'
 import { gripMenuEntries, type GripMenuItemId, type Opener } from '../../lib/veta/gripMenu'
 import { islandLength } from '../../lib/veta/island'
 import { entranceIntent } from '../../lib/veta/lifeState'
-import { dwarfToOpen, partAt } from '../../lib/veta/overflow'
+import { drawnRun, dwarfToOpen, fitRun, islandOf, partAt } from '../../lib/veta/overflow'
+import { createVetaMotion } from '../../lib/veta/vetaMotion'
+import type { VetaChamberView } from '../../lib/veta/lifeState'
 import {
   PLAIN_MINE_TAB,
   aimOf,
@@ -113,8 +140,42 @@ import type { RisenContent } from '../../lib/veta/risenWindow'
 const life = useWindowVetaLife()
 const { state, chambers } = life
 
-const closed = computed(() => state.value === 'first-run' || state.value === 'no-sessions')
-const sessions = computed(() => state.value === 'all-idle' || state.value === 'sessions-working')
+/*
+ * Machine 26 (ISSUE-292): the strip drawn is the choreography's staged one. The closed entrance shows while no chamber
+ * is drawn and either no dwarf is present or the first arrivals are still held back behind the lit lamp; a departed
+ * last dwarf keeps the strip drawn until it has walked out.
+ */
+const choreo = useVetaChoreography({
+  facts: () => chambers.value,
+  onFacts: (listener) => life.onFacts(listener),
+  shown: () => life.shown.value,
+  reduced: () =>
+    prefersReducedMotion() ||
+    document.hidden ||
+    typeof HTMLElement.prototype.animate !== 'function',
+  drawn: () => drawnChambers.value.map((c) => c.mine.id),
+  opens: (_mineId, crew) => opens(crew),
+  fit: (now) => overflow.measureFor(now),
+  grow: (now) => growFor(now),
+  shrink: () => {
+    held = null
+    void placeAfterMotion()
+    return Promise.resolve()
+  },
+  fold: () => overflow.measure(),
+  play: (cue) => play(cue),
+  cancel: (dwarfIds) => cancelMotion(dwarfIds),
+  chat: (dwarfId, cause) => void risen.dispatch({ type: 'departed', dwarfId, cause })
+})
+const staged = choreo.chambers
+
+const closed = computed(
+  () =>
+    state.value !== null &&
+    staged.value.length === 0 &&
+    (state.value === 'first-run' || state.value === 'no-sessions' || choreo.holding.value)
+)
+const sessions = computed(() => state.value !== null && !closed.value)
 
 const root = ref<HTMLElement | null>(null)
 
@@ -145,12 +206,14 @@ let swallow = false
 let growing: number | null = null
 /** The length a growth already placed the window for, so drawing it asks for nothing more. */
 let grown: number | null = null
+/** The length machine 26 placed the window for before its motion, held until the motion has ended. */
+let held: number | null = null
 /** The dock has placed the island once: a length change re-places it from then on. */
 let started = false
 
 // The dock reads the island's length only once mounted, after `length` below exists.
 const dock = useWindowVetaDock(
-  () => growing ?? length.value,
+  () => growing ?? held ?? length.value,
   () => {
     if (swallow) swallow = false
     else picker.dispatch({ type: 'grip-click', dragging: false })
@@ -164,7 +227,7 @@ function stageLength(): number {
 }
 
 const overflow = useWindowVetaOverflow({
-  chambers: () => chambers.value,
+  chambers: () => staged.value,
   available: stageLength,
   vertical: () => vertical.value,
   async grow(to) {
@@ -197,6 +260,96 @@ const length = computed(() =>
 const anchorEnd = computed(() => dock.dock.value.end === 'end')
 const ordered = computed(() =>
   anchorEnd.value ? [...drawnChambers.value].reverse() : drawnChambers.value
+)
+
+/** The island these chambers would draw, with the overflow's run as it would be measured for them (S25.02, S25.03). */
+function lengthFor(now: readonly VetaChamberView[]): number {
+  const layout = {
+    crews: now.map((c) => c.dwarfs.length),
+    available: stageLength(),
+    vertical: vertical.value
+  }
+  if (layout.crews.length === 0) return VETA_ISLAND.length
+  const machine = overflow.machine.value
+  const run =
+    machine.state === null || machine.state === 'fits'
+      ? fitRun(layout, machine.first)
+      : drawnRun(machine, layout.crews.length)
+  return islandOf(layout, run)
+}
+
+/** S26.05 or S26.18: a new chamber of `crew` dwarfs opens last, unless four are drawn or the edge has no room. */
+function opens(crew: number): boolean {
+  const total = staged.value.length + 1
+  const run = drawnRun(overflow.machine.value, total)
+  if (run.first + run.count < total) return false
+  return opensChamber(
+    {
+      drawnCrews: drawnChambers.value.map((c) => c.dwarfs.length),
+      folded: folded.value.length > 0,
+      available: stageLength(),
+      vertical: vertical.value
+    },
+    crew
+  )
+}
+
+/** Before a growth (S26.01, S26.04, S26.05; S21.19): the window is placed for the final island, anchor fixed. */
+async function growFor(now: readonly VetaChamberView[]): Promise<void> {
+  if (!started) return
+  const to = lengthFor(now)
+  if (to <= (held ?? length.value)) return
+  held = to
+  await placeIsland()
+}
+
+/** The length UI main placed the window for last. */
+let placed: number | null = null
+
+/** Places the window for the island (`layoutVeta {island-resize}`): the held length while a growth waits for it. */
+function placeIsland(): Promise<void> {
+  if (!started) return Promise.resolve()
+  if (!choreo.moving.value) held = null
+  placed = growing ?? held ?? length.value
+  return dock.resized()
+}
+
+/*
+ * The one hover gate (ISSUE-292): a window resized under the pointer closes what it hovers (the "+N" list, ISSUE-291),
+ * so every shrink waits for the pointer to leave it: machine 26's after a motion, and machine 24's after a fold.
+ */
+let unhovered: Array<() => void> = []
+/** While the "+N" list is under the pointer, resolves once it has left it; `undefined` when nothing is hovered. */
+function whenUnhovered(): Promise<void> | undefined {
+  if (!listShown.value) return undefined
+  return new Promise((resolve) => unhovered.push(resolve))
+}
+watch(
+  () => listShown.value,
+  (shown) => {
+    if (shown) return
+    const waiting = unhovered
+    unhovered = []
+    for (const resolve of waiting) resolve()
+  }
+)
+
+/** After a motion (S26.09, S26.11): the window is placed for the island as drawn, once nothing hovered is under it. */
+async function placeAfterMotion(): Promise<void> {
+  await whenUnhovered()
+  // Another shrink already placed it meanwhile, or a new motion will place it after it ends.
+  if (choreo.moving.value || placed === length.value) return
+  await placeIsland()
+}
+
+// Once nothing moves, the window is placed for the island as drawn, when that changed meanwhile (never mid-motion).
+watch(
+  () => choreo.moving.value,
+  (now) => {
+    if (now) return
+    held = null
+    if (started && placed !== length.value) void placeAfterMotion()
+  }
 )
 
 useWindowVetaPresence(() => ({
@@ -525,7 +678,8 @@ const tabSide = computed(() => TAB_SIDE[dock.dock.value.edge])
  * the strip's parts, its edge or its anchored end change, and once the island has landed after a drag.
  */
 function measureBand(): Promise<void> {
-  if (dragging.value) return Promise.resolve()
+  // A dragged island, or one whose strip is moving (machine 26): the band is measured once it has landed.
+  if (dragging.value || choreo.moving.value) return Promise.resolve()
   const island = root.value?.querySelector<HTMLElement>('[data-veta-island]')
   if (island == null || !sessions.value) return overlay.band(null)
   const tabs: TabBox[] = [...island.querySelectorAll<HTMLElement>('[data-veta-tab]')].map((box) => {
@@ -600,6 +754,7 @@ watch(
   () => [
     sessions.value,
     dragging.value,
+    choreo.moving.value,
     dock.dock.value.edge,
     dock.dock.value.end,
     folded.value
@@ -634,6 +789,177 @@ function visibility(): void {
 }
 
 /*
+ * Machine 26's motion (ISSUE-292; `DS/docs/motion.md`, "Veta, no sessions → working", "Veta, a dwarf arrives or
+ * leaves"), played on the island's own elements by the bounded runner: transform and opacity only, every entry eased
+ * out and every exit eased in, each resolving on its end or its watchdog at its duration + 40 ms. "Beyond" is further
+ * from the anchor than a chamber; what lies there slides by FLIP when the chamber opens, widens, narrows or closes.
+ */
+const motion = createVetaMotion({
+  onHidden(listener) {
+    document.addEventListener('visibilitychange', listener)
+    return () => document.removeEventListener('visibilitychange', listener)
+  }
+})
+
+/** The island's parts from the anchor outward: expand, the chambers, "+N", the grip. */
+function partsFromAnchor(): HTMLElement[] {
+  const island = root.value?.querySelector<HTMLElement>('[data-veta-island]')
+  if (island == null) return []
+  const parts = [
+    ...island.querySelectorAll<HTMLElement>('[data-veta-part]:not([data-veta-part="entrance"])')
+  ]
+  return anchorEnd.value ? parts.reverse() : parts
+}
+
+const chamberEl = (mineId: string): HTMLElement | null =>
+  root.value?.querySelector<HTMLElement>(`[data-veta-chamber][data-mine-id="${mineId}"]`) ?? null
+const dwarfEl = (dwarfId: string): HTMLElement | null =>
+  root.value?.querySelector<HTMLElement>(`[data-veta-dwarf][data-dwarf-id="${dwarfId}"]`) ?? null
+
+/** Where every part stands now, for a FLIP after the strip changes. */
+function measureParts(): Map<HTMLElement, DOMRect> {
+  return new Map(partsFromAnchor().map((part) => [part, part.getBoundingClientRect()]))
+}
+
+/** FLIP: each part that moved plays from where it was to where it is (translate only); `keep` stays put. */
+function slide(
+  before: Map<HTMLElement, DOMRect>,
+  keep: readonly (Element | null)[]
+): Promise<void>[] {
+  const runs: Promise<void>[] = []
+  for (const part of partsFromAnchor()) {
+    const was = before.get(part)
+    if (was === undefined || keep.includes(part)) continue
+    const now = part.getBoundingClientRect()
+    const dx = was.left - now.left
+    const dy = was.top - now.top
+    if ((dx === 0 && dy === 0) || now.width === 0) continue
+    runs.push(
+      motion.run(part, flipFrames(dx, dy), {
+        duration: VETA_MOTION.flipMs,
+        easing: VETA_MOTION.easeOut,
+        fill: 'backwards'
+      })
+    )
+  }
+  return runs
+}
+
+/** The walkers' buttons, each with its place among its chamber's walkers: 70 ms apart within a chamber. */
+function walkersOf(dwarfIds: readonly string[]): Array<{ button: HTMLElement; at: number }> {
+  const seen = new Map<Element | null, number>()
+  const walkers: Array<{ button: HTMLElement; at: number }> = []
+  for (const id of dwarfIds) {
+    const button = dwarfEl(id)
+    if (button === null) continue
+    const chamber = button.closest('[data-veta-chamber]')
+    const at = seen.get(chamber) ?? 0
+    seen.set(chamber, at + 1)
+    walkers.push({ button, at })
+  }
+  return walkers
+}
+
+async function play(cue: VetaCue): Promise<void> {
+  const m = VETA_MOTION
+  const away = outwardOf(vertical.value, anchorEnd.value)
+  const entry = { easing: m.easeOut, fill: 'backwards' } as const
+  const exit = { easing: m.easeIn, fill: 'forwards' } as const
+  switch (cue.kind) {
+    case 'build': {
+      cue.mutate?.()
+      await nextTick()
+      await Promise.all(
+        partsFromAnchor().map((part, i) =>
+          motion.run(part, partFrames(away), {
+            ...entry,
+            duration: m.part.ms,
+            delay: i * m.part.staggerMs
+          })
+        )
+      )
+      return
+    }
+    case 'open-chamber': {
+      const before = measureParts()
+      cue.mutate?.()
+      await nextTick()
+      const opened = chamberEl(cue.mineId)
+      await Promise.all([
+        ...slide(before, [opened]),
+        opened === null
+          ? Promise.resolve()
+          : motion.run(opened, chamberOpenFrames(away), { ...entry, duration: m.chamberOpen.ms })
+      ])
+      return
+    }
+    case 'walk-in': {
+      const before = measureParts()
+      cue.mutate?.()
+      await nextTick()
+      // Only the dwarf walks in: its own chamber stays where it is; what lies beyond a widened one slides.
+      await Promise.all([
+        ...slide(before, [chamberEl(cue.mineId)]),
+        ...walkersOf(cue.dwarfIds).map(({ button, at }) =>
+          motion.run(button, walkInFrames(away), {
+            ...entry,
+            duration: m.walkIn.ms,
+            delay: at * m.walkIn.staggerMs
+          })
+        )
+      ])
+      return
+    }
+    case 'walk-out': {
+      cue.mutate?.()
+      await nextTick()
+      const button = dwarfEl(cue.dwarfId)
+      if (button !== null) {
+        await motion.run(button, walkOutFrames(away), { ...exit, duration: m.walkOut.ms })
+      }
+      return
+    }
+    case 'close-chamber': {
+      const closing = chamberEl(cue.mineId)
+      if (closing !== null) {
+        await motion.run(closing, fadeOutFrames(), { ...exit, duration: m.chamberClose.ms })
+      }
+      if (!cue.slideBack) {
+        cue.mutate?.()
+        return
+      }
+      const before = measureParts()
+      cue.mutate?.()
+      await nextTick()
+      await Promise.all(slide(before, []))
+      return
+    }
+    case 'slide-back': {
+      const before = measureParts()
+      cue.mutate?.()
+      await nextTick()
+      await Promise.all(slide(before, [chamberEl(cue.mineId)]))
+      return
+    }
+    case 'contract': {
+      cue.mutate?.()
+      await nextTick()
+      const entrance = root.value?.querySelector<HTMLElement>('[data-veta-entrance]') ?? null
+      if (entrance !== null) {
+        await motion.run(entrance, enterFrames(), { ...entry, duration: m.contract.ms })
+      }
+      return
+    }
+  }
+}
+
+/** Ends the motion on these dwarfs' buttons, or every motion in the window (S26.12, S26.13, S26.14). */
+function cancelMotion(dwarfIds?: readonly string[]): void {
+  if (dwarfIds === undefined) motion.cancel()
+  else motion.cancel(dwarfIds.map(dwarfEl).filter((b): b is HTMLElement => b !== null))
+}
+
+/*
  * The risen window (07 machine 24; ISSUE-290). The Panel's own conversation and launch, over this window's own board,
  * feed the hosted panels (BR-21); this window measures where the risen window stands and plays its motion.
  */
@@ -641,7 +967,6 @@ const board = useMines()
 const chat = useMessageDock()
 const { chatFeedOf } = useDwarfMessaging()
 const risenRef = ref<InstanceType<typeof VetaRisen> | null>(null)
-let unlistenWalks: (() => void) | null = null
 
 const sideways = (): boolean => dock.dock.value.edge === 'left' || dock.dock.value.edge === 'right'
 
@@ -721,7 +1046,8 @@ const risen = useWindowVetaRisen({
   // A folded mine's chamber was unfolded before the reveal stepped (S25.08): it is in view already.
   bringMine: () => undefined,
   unfold: (mineId) => overflow.reveal(mineId),
-  dragging: () => dragging.value
+  dragging: () => dragging.value,
+  unhovered: whenUnhovered
 })
 
 const risenOpen = computed(() => {
@@ -851,9 +1177,11 @@ watch(hoveredDwarf, async (dwarfId) => {
 // A new length re-places the window for it (S21.19); the first is sent by the dock's start, and a growth asked for
 // before it was drawn has placed it already.
 watch(length, (now) => {
-  const placed = grown === now
+  // Machine 26 resizes the window itself: before a growth, and after the motion (ADR-025 item 2).
+  if (choreo.moving.value) return
+  const already = grown === now
   grown = null
-  if (started && !placed) void dock.resized()
+  if (started && !already) void placeIsland()
 })
 
 // The fit is measured again on an edge or display change (S21.09, S21.11, S21.12, S25.03).
@@ -879,11 +1207,6 @@ onMounted(() => {
   void life.start()
   void board.start()
   risen.start()
-  unlistenWalks = board.onWalk((walk) => {
-    if (walk.kind === 'walk-out') {
-      void risen.dispatch({ type: 'departed', dwarfId: walk.dwarfId, cause: walk.cause })
-    }
-  })
   document.addEventListener('keydown', escape)
   window.addEventListener('resize', resized)
 })
@@ -895,7 +1218,8 @@ onBeforeUnmount(() => {
   dock.dispose()
   life.stop()
   risen.stop()
-  unlistenWalks?.()
+  choreo.stop()
+  motion.dispose()
   board.stop()
   document.removeEventListener('keydown', escape)
   window.removeEventListener('resize', resized)
@@ -934,6 +1258,7 @@ onBeforeUnmount(() => {
         v-if="closed"
         :first="state === 'first-run'"
         :vertical="vertical"
+        :lit="choreo.lit.value"
         @activate="enter"
       />
       <template v-else-if="sessions">
@@ -974,6 +1299,8 @@ onBeforeUnmount(() => {
           :labels-of="labelsOf"
           :label-on="labelOn"
           :pointer-dwarf="pointerDwarf"
+          :walking="choreo.walking.value"
+          :arrived="choreo.arrived.value"
           @dwarf="dwarfHit(chamber.mine.id, $event)"
           @dwarf-hover="dwarfHover"
           @hover="chamberHover(chamber.mine.id, $event)"

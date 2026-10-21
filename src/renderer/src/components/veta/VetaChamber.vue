@@ -23,6 +23,13 @@
  * opens nothing (S24.20). A mouse press does not take the keyboard focus, so it raises no tab. Hovering a dwarf shows
  * its one-line label (`DwarfLabel`), centred on that dwarf on every edge and beyond the raised tab (S24.19); the window
  * holds the label's room before it shows (`labelOn`). The open chat's dwarf is drawn pressed.
+ *
+ * Arrivals and departures (07 machine 26; ISSUE-292), played by the root's choreography: each dwarf's walk is stamped on
+ * its button (`walking`, `data-walk`), so the root moves the whole button (sprite, "?", "z") and nothing inside it
+ * moves on its own. Placed but not walked in yet, it is not seen. While walking it plays its idle sheet; once arrived
+ * (`arrived`) its status sheet starts from the top, `start-working` first for a working dwarf (decision "Walk-in
+ * interim"). Walking out, it turns to face away from the anchor. The chamber's lamp brightens while a dwarf walks in
+ * (US-OBS-002.AC06). No sound plays: Veta has none of a mine's or a crew's (NFR-SND-03).
  */
 import { t, type DwarfId, type DwarfWire, type MineWire } from '@dwarfai/contracts'
 import { computed, ref, watch } from 'vue'
@@ -30,7 +37,7 @@ import { INTERIOR_SRC } from '../../lib/art'
 import { labelPlace, type LabelBox } from '../../lib/veta/dwarfLabel'
 import { portraitMark } from '../../lib/dwarf/portrait'
 import { designTierLabel } from '../../lib/presentation'
-import { settledClips } from '../../lib/sprite/dwarfSequence'
+import { dwarfClips, settledClips } from '../../lib/sprite/dwarfSequence'
 import { loopOf, type SpriteClip } from '../../lib/sprite/spriteSheet'
 import type { MineTier } from '../../types'
 import SpriteStrip from '../dwarf/SpriteStrip.vue'
@@ -59,6 +66,10 @@ const props = defineProps<{
    * pointerenter or pointerleave fires then, so the label follows it from here, or goes when it is not one of these.
    */
   pointerDwarf?: { dwarfId: DwarfId | null; stamp: number }
+  /** Each walking dwarf's walk (machine 26): placed and not walked in yet, walking in, walking out. */
+  walking?: ReadonlyMap<DwarfId, 'waiting' | 'in' | 'out'>
+  /** The dwarfs that walked in: their status sheets start from the top. */
+  arrived?: ReadonlySet<DwarfId>
 }>()
 
 const emit = defineEmits<{
@@ -151,12 +162,37 @@ const label = computed(() => {
 
 const rockStyle = computed(() => ({ backgroundImage: `url("${INTERIOR_SRC[tier.value]}")` }))
 
-/** The sheet a dwarf plays for its Host status; a worker asleep is held on one frame. */
+const walkOf = (dwarf: DwarfWire): 'waiting' | 'in' | 'out' | undefined =>
+  props.walking?.get(dwarf.id)
+
+/** A dwarf walking in brightens its chamber's lamp (US-OBS-002.AC06). */
+const arriving = computed(() =>
+  props.dwarfs.some((d) => {
+    const walk = walkOf(d)
+    return walk === 'waiting' || walk === 'in'
+  })
+)
+
+/**
+ * The sheet a dwarf plays: its idle sheet while it walks; once it walked in, its status sheet from the top
+ * (`start-working` first for a working dwarf); otherwise the sheet its Host status plays. A worker asleep is held on one
+ * frame.
+ */
 function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
   const asleep = dwarf.status === 'asleep'
-  const clips = settledClips(dwarf.rank, asleep, dwarf.status === 'working')
+  const working = dwarf.status === 'working'
+  if (walkOf(dwarf) !== undefined) return settledClips(dwarf.rank, false, false)
+  const clips =
+    props.arrived?.has(dwarf.id) === true && !asleep
+      ? dwarfClips(dwarf.rank, false, undefined, working, undefined, true)
+      : settledClips(dwarf.rank, asleep, working)
   if (!asleep || dwarf.rank === 'foreman') return clips
   return [loopOf({ ...clips[0]!.sheet, frames: 1 })]
+}
+
+/** Mirrored to face right, as a dwarf with no station is; walking out it turns away from the anchor. */
+function facesRight(dwarf: DwarfWire): boolean {
+  return !(walkOf(dwarf) === 'out' && props.reverse && !props.vertical)
 }
 </script>
 
@@ -183,7 +219,7 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
     <span class="veta-chamber__rock" :style="rockStyle" aria-hidden="true" />
     <span
       class="veta-chamber__lamp"
-      :class="{ 'is-lit': attention }"
+      :class="{ 'is-lit': attention || arriving }"
       aria-hidden="true"
       data-veta-lamp
     />
@@ -197,13 +233,14 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
         :aria-pressed="openDwarf === dwarf.id ? 'true' : 'false'"
         :data-status="dwarf.status"
         :data-dwarf-id="dwarf.id"
+        :data-walk="walkOf(dwarf)"
         data-veta-dwarf
         @mousedown.prevent
         @click="emit('dwarf', dwarf.id)"
         @pointerenter="hoverDwarf(dwarf.id, $event)"
         @pointerleave="hoverDwarf(null)"
       >
-        <SpriteStrip :clips="clipsOf(dwarf)" :phase-clips="1" flip />
+        <SpriteStrip :clips="clipsOf(dwarf)" :phase-clips="1" :flip="facesRight(dwarf)" />
         <span v-if="dwarf.status === 'asking'" class="veta-dwarf__ask" data-veta-ask>{{
           portraitMark('asking')
         }}</span>
@@ -415,6 +452,11 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
   cursor: pointer;
   background: none;
   border: 0;
+}
+
+/* Placed for its walk-in, not walked in yet: unseen until its motion takes it from the chamber's far end. */
+.veta-dwarf[data-walk='waiting'] {
+  opacity: 0;
 }
 
 .veta-dwarf::after {
