@@ -2,10 +2,18 @@
 import { flushPromises } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  BALIN,
+  BELEGOST,
   BORIN,
   DAIN,
+  DWALIN,
   EREBOR,
+  FLOI,
+  IRONHILLS,
+  KHAZAD,
   MORIA,
+  NALI,
+  NOGROD,
   dwarfWire,
   mineWire,
   type VetaSnapshotData
@@ -134,4 +142,50 @@ describe('the window risen above the Veta strip', () => {
     const drafts = world.patches.filter((patch) => patch.kind === 'draft')
     expect(drafts.at(-1)).toEqual({ kind: 'draft', dwarfId: BORIN, text: 'typed in Veta' })
   })
+
+  // APPENDED for ISSUE-292: a window resized under the pointer closes the "+N" list (ISSUE-291), as machine 26's own shrink.
+  it('[S24.09, S25.06] the window shrinks after a chat fold only once the pointer has left the "+N" list it rests on', async () => {
+    const six = [MORIA, EREBOR, KHAZAD, IRONHILLS, BELEGOST, NOGROD] as const
+    const crew = [BORIN, DAIN, NALI, BALIN, DWALIN, FLOI] as const
+    const folds: string[] = []
+    let left = false
+    world = await mountVeta(
+      {
+        minesEverKnown: true,
+        mines: six.map((id) => mineWire(id)),
+        dwarfs: six.map((id, i) => dwarfWire(crew[i]!, id))
+      },
+      {
+        onLayout(request) {
+          if (request.kind === 'fold') folds.push(left ? 'after the pointer left' : 'while hovered')
+        }
+      }
+    )
+    dwarf(BORIN).click()
+    await flushPromises()
+    expect(shownRisen()).toBe('shown')
+
+    // The pointer rests on "+N", its list open; Esc folds the chat.
+    const slot = document.querySelector<HTMLElement>('[data-veta-more-slot]')!
+    slot.dispatchEvent(new PointerEvent('pointerenter'))
+    await flushPromises()
+    expect(shownList()).toBe('list')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(shownRisen()).toBe('none')
+    // The room is not given back while the list is under the pointer.
+    expect(folds).toEqual([])
+
+    left = true
+    slot.dispatchEvent(new PointerEvent('pointerleave'))
+    await flushPromises()
+    expect(folds).toEqual(['after the pointer left'])
+    expect(shownList()).toBe('no list')
+  })
 })
+
+/** Whether the "+N" list shows. */
+function shownList(): string {
+  const list = document.querySelector<HTMLElement>('[data-veta-more-list]')
+  return list?.dataset.shown === 'true' ? 'list' : 'no list'
+}

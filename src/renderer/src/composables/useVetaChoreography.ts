@@ -94,6 +94,8 @@ export interface VetaChoreographyDeps {
   drawn(): readonly MineId[]
   /** A new chamber for this mine, with this many dwarfs, opens (S26.05) rather than folding into "+N" (S26.18). */
   opens(mineId: MineId, crew: number): boolean
+  /** Fits the overflow's run to these chambers before they are drawn: one without room folds into "+N" at once. */
+  fit(chambers: readonly VetaChamberView[]): Promise<void>
   /** Places the window for the island these chambers draw, before they are drawn, when it is longer. */
   grow(chambers: readonly VetaChamberView[]): Promise<void>
   /** Places the window for the island as drawn now, once nothing moves. */
@@ -286,6 +288,7 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
           hidden: without(hidden.value, ids),
           leaving: leaving.value
         })
+        await deps.fit(staged)
         await deps.grow(staged)
         return
       }

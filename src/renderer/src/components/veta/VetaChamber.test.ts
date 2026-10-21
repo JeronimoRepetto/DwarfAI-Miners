@@ -277,4 +277,40 @@ describe('VetaChamber in the shown Veta window (machine 26)', () => {
     await flushPromises()
     expect(resizes).toHaveLength(1)
   })
+
+  it('[US-VETA-007.AC03, S26.18, S25.02] an arrival with no room for its chamber folds it into +N at once and never draws it, not even for one frame', async () => {
+    // The stage holds 300 px along the bottom edge: three chambers of one (250 px) fit; a fourth (308 px) does not, and
+    // with "+N" the strip is 294 px.
+    const width = Object.getOwnPropertyDescriptor(window.screen, 'availWidth')
+    Object.defineProperty(window.screen, 'availWidth', { configurable: true, value: 300 })
+    try {
+      world = await mountVeta({
+        minesEverKnown: true,
+        mines: [mineWire(MORIA), mineWire(EREBOR), mineWire(KHAZAD), mineWire(IRONHILLS)],
+        dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR), dwarfWire(NALI, KHAZAD)]
+      })
+      expect(document.querySelectorAll('[data-veta-chamber]')).toHaveLength(3)
+      expect(document.querySelector('[data-veta-more]')).toBeNull()
+
+      const drawnEver: string[] = []
+      const watch = new MutationObserver(() => {
+        if (chamberOf(IRONHILLS) !== null) drawnEver.push('ironhills')
+      })
+      watch.observe(document.body, { subtree: true, childList: true, attributes: true })
+      await world.push([
+        frame(11, 'dwarf.arrived', { dwarf: dwarfWire(BALIN, IRONHILLS), announce: true })
+      ])
+      await flushPromises()
+      watch.disconnect()
+
+      // Folded into "+N" in the same step: the count shows it, its chamber was never drawn.
+      expect(drawnEver).toEqual([])
+      expect(chamberOf(IRONHILLS)).toBeNull()
+      expect(document.querySelectorAll('[data-veta-chamber]')).toHaveLength(3)
+      expect(document.querySelector('[data-veta-more]')?.textContent).toContain('+1')
+    } finally {
+      if (width === undefined) delete (window.screen as { availWidth?: number }).availWidth
+      else Object.defineProperty(window.screen, 'availWidth', width)
+    }
+  })
 })

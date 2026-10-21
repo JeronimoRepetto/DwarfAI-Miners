@@ -271,6 +271,11 @@ export interface VetaOverflowPart {
   remeasure(): void
   /** Measures at once: an arrival folded into "+N" (S26.18; ISSUE-292) never shows its chamber first. */
   measure(): Promise<void>
+  /**
+   * Fits the run to these chambers before they are drawn (ISSUE-292): an arrival's chamber that has no room folds into
+   * "+N" in the same step as it is placed, never after the debounce. Measured from the design lengths alone.
+   */
+  measureFor(chambers: readonly VetaChamberView[]): Promise<void>
   /** A wheel notch over the strip (S25.04, S25.09). */
   wheel(delta: number): Promise<void>
   /** The pointer enters "+N" (S25.05) or leaves it and its list (S25.06). */
@@ -312,9 +317,9 @@ export function useVetaOverflow(deps: VetaOverflowDeps): VetaOverflowPart {
     }
   }
 
-  function enqueue(event: OverflowEvent): Promise<boolean> {
+  function enqueue(event: OverflowEvent, upcoming?: readonly VetaChamberView[]): Promise<boolean> {
     const done = queue.then(async () => {
-      const chambers = deps.chambers()
+      const chambers = upcoming ?? deps.chambers()
       const next = stepOverflow(machine.value, event, {
         crews: chambers.map((chamber) => chamber.dwarfs.length),
         available: deps.available(),
@@ -377,6 +382,9 @@ export function useVetaOverflow(deps: VetaOverflowDeps): VetaOverflowPart {
     async measure() {
       remeasure.cancel()
       await enqueue({ type: 'measure' })
+    },
+    async measureFor(chambers) {
+      await enqueue({ type: 'measure' }, chambers)
     },
     wheel: async (delta) => {
       await enqueue({ type: 'wheel', delta })

@@ -155,10 +155,12 @@ const choreo = useVetaChoreography({
     typeof HTMLElement.prototype.animate !== 'function',
   drawn: () => drawnChambers.value.map((c) => c.mine.id),
   opens: (_mineId, crew) => opens(crew),
+  fit: (now) => overflow.measureFor(now),
   grow: (now) => growFor(now),
   shrink: () => {
     held = null
-    return placeAfterMotion()
+    void placeAfterMotion()
+    return Promise.resolve()
   },
   fold: () => overflow.measure(),
   play: (cue) => play(cue),
@@ -312,25 +314,33 @@ function placeIsland(): Promise<void> {
   return dock.resized()
 }
 
-/** A shrink owed while the pointer rests on the "+N" list: a resize under the pointer would close it (ISSUE-291). */
-let owed = false
-
-/** After a motion (S26.09, S26.11): the window is placed for the island as drawn, once no list is under the pointer. */
-function placeAfterMotion(): Promise<void> {
-  if (listShown.value) {
-    owed = true
-    return Promise.resolve()
-  }
-  owed = false
-  return placeIsland()
+/*
+ * The one hover gate (ISSUE-292): a window resized under the pointer closes what it hovers (the "+N" list, ISSUE-291),
+ * so every shrink waits for the pointer to leave it: machine 26's after a motion, and machine 24's after a fold.
+ */
+let unhovered: Array<() => void> = []
+/** While the "+N" list is under the pointer, resolves once it has left it; `undefined` when nothing is hovered. */
+function whenUnhovered(): Promise<void> | undefined {
+  if (!listShown.value) return undefined
+  return new Promise((resolve) => unhovered.push(resolve))
 }
-
 watch(
   () => listShown.value,
   (shown) => {
-    if (!shown && owed && !choreo.moving.value) void placeAfterMotion()
+    if (shown) return
+    const waiting = unhovered
+    unhovered = []
+    for (const resolve of waiting) resolve()
   }
 )
+
+/** After a motion (S26.09, S26.11): the window is placed for the island as drawn, once nothing hovered is under it. */
+async function placeAfterMotion(): Promise<void> {
+  await whenUnhovered()
+  // Another shrink already placed it meanwhile, or a new motion will place it after it ends.
+  if (choreo.moving.value || placed === length.value) return
+  await placeIsland()
+}
 
 // Once nothing moves, the window is placed for the island as drawn, when that changed meanwhile (never mid-motion).
 watch(
@@ -338,7 +348,7 @@ watch(
   (now) => {
     if (now) return
     held = null
-    if (started && (owed || placed !== length.value)) void placeAfterMotion()
+    if (started && placed !== length.value) void placeAfterMotion()
   }
 )
 
@@ -1036,7 +1046,8 @@ const risen = useWindowVetaRisen({
   // A folded mine's chamber was unfolded before the reveal stepped (S25.08): it is in view already.
   bringMine: () => undefined,
   unfold: (mineId) => overflow.reveal(mineId),
-  dragging: () => dragging.value
+  dragging: () => dragging.value,
+  unhovered: whenUnhovered
 })
 
 const risenOpen = computed(() => {

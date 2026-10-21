@@ -66,6 +66,7 @@ function world(
     reduced: () => options.reduced ?? false,
     drawn: () => staged().map((c) => c.mine.id),
     opens: () => true,
+    fit: async () => undefined,
     grow: async (chambers) => {
       log.push(`grow:${chambers.map((c) => c.dwarfs.length).join(',')}`)
     },

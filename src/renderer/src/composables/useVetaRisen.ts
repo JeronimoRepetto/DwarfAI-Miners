@@ -101,6 +101,11 @@ export interface VetaRisenHost {
   unfold?(mineId: MineId): Promise<void>
   /** A grip drag is under way. */
   dragging(): boolean
+  /**
+   * While a hover target is under the pointer, resolves once it has left it; `undefined` when none is (ISSUE-292): a
+   * window resized under the pointer closes what it hovers (the "+N" list, ISSUE-291), so the room is given back only then.
+   */
+  unhovered?(): Promise<void> | undefined
 }
 
 export interface VetaRisenDeps {
@@ -233,6 +238,12 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
         host.dropDraft(effect.dwarfId)
         return true
       case 'layout-fold':
+        // Never resized under a hover target: the fold waits for the pointer to leave it; a later step takes over.
+        const hovered = heldBy === null ? undefined : host.unhovered?.()
+        if (hovered !== undefined) {
+          await hovered
+          if (mine !== stamp) return false
+        }
         if (heldBy === 'rise') await grow({ kind: 'fold' })
         else if (heldBy === 'add') await host.addRoom(null)
         heldBy = null
