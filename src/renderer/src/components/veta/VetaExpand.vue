@@ -15,7 +15,7 @@ const emit = defineEmits<{ activate: [] }>()
 <template>
   <button
     type="button"
-    class="veta-expand m-mat"
+    class="veta-expand m-mat dm-focus-inset"
     :data-edge="edge"
     :aria-label="t('veta.expand.label')"
     :title="t('veta.expand.label')"

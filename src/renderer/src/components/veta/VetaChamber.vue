@@ -60,7 +60,7 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
 
 <template>
   <div
-    class="veta-chamber m-mat"
+    class="veta-chamber m-mat dm-focus-inset"
     role="group"
     :aria-label="label"
     :data-tier="tier"

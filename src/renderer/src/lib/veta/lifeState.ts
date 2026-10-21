@@ -96,7 +96,9 @@ const isActive = (dwarf: Pick<DwarfWire, 'status'>): boolean =>
 export function deriveLifeState(facts: VetaFacts): VetaLifeState {
   const present = facts.dwarfs.filter(isPresent)
   if (present.length > 0) return present.some(isActive) ? 'sessions-working' : 'all-idle'
-  // A mine the Host holds was declared or observed, so it is known whatever the meta says.
+  // A mine the Host holds was declared or observed, so it is known whatever the meta says. Load-bearing until
+  // ISSUE-082: the Host's `SnapshotMeta.minesEverKnown` is always false before then (host/main.ts), so with every mine
+  // removed and no dwarf this shows `first-run` where 07 asks for `no-sessions` (a known risk, closed by ISSUE-082).
   const known = facts.minesEverKnown || facts.mines.length > 0
   return known ? 'no-sessions' : 'first-run'
 }

@@ -263,4 +263,23 @@ describe('the Veta strip (07 machine 20; ISSUE-287)', () => {
     // Still sessions working, with both dwarfs on their one clock.
     expect(veta.root.get('[data-veta-root]').attributes('data-life')).toBe('sessions-working')
   })
+
+  it('[NFR-A11Y-01] every part of the island draws the shared focus ring inside its frame, since the window hugs the island', async () => {
+    // The design's precedent for a part flush with its container's edge: screens/valle.md, `.dm-vadd:focus-visible`.
+    const closed = await mountVeta({ minesEverKnown: true, mines: [mineWire(MORIA)], dwarfs: [] })
+    expect(closed.root.get('[data-veta-entrance]').classes()).toContain('dm-focus-inset')
+    closed.root.unmount()
+
+    const veta = await mountVeta({
+      minesEverKnown: true,
+      mines: [mineWire(MORIA)],
+      dwarfs: [dwarfWire(BORIN, MORIA, { status: 'working' })]
+    })
+    mounted = veta.root
+    const parts = veta.root.findAll('[data-veta-part]')
+    expect(parts.map((p) => p.attributes('data-veta-part'))).toEqual(['grip', 'chamber', 'expand'])
+    for (const part of parts) {
+      expect(part.classes(), part.attributes('data-veta-part')).toContain('dm-focus-inset')
+    }
+  })
 })

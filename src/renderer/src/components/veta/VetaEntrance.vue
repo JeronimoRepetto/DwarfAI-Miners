@@ -74,7 +74,7 @@ function key(event: KeyboardEvent): void {
 <template>
   <button
     type="button"
-    class="veta-entrance m-mat"
+    class="veta-entrance m-mat dm-focus-inset"
     :class="{ 'is-vertical': vertical }"
     :data-first="first ? 'true' : 'false'"
     :aria-label="first ? t('veta.entrance.firstRun.label') : t('veta.entrance.label')"

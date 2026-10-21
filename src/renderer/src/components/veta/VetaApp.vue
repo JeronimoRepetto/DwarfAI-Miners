@@ -21,7 +21,7 @@
  * display under the pointer): the island follows the pointer by transform and the dashed snap preview marks where it
  * would land.
  */
-import { t, VETA_ISLAND } from '@dwarfai/contracts'
+import { VETA_ISLAND } from '@dwarfai/contracts'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useWindowVetaDock } from '../../composables/useVetaDock'
 import { useWindowVetaLife } from '../../composables/useVetaLife'
@@ -33,6 +33,7 @@ import VetaChamber from './VetaChamber.vue'
 import VetaEntrance from './VetaEntrance.vue'
 import VetaExpand from './VetaExpand.vue'
 import VetaGrip from './VetaGrip.vue'
+import VetaIsland from './VetaIsland.vue'
 
 const life = useWindowVetaLife()
 const { state, chambers } = life
@@ -151,18 +152,12 @@ onBeforeUnmount(() => {
       aria-hidden="true"
       data-veta-snap
     />
-    <div
-      class="veta-island"
-      :class="{
-        'is-dragging': dragging,
-        'is-vertical': vertical,
-        'is-unknown': state === null
-      }"
+    <VetaIsland
+      class="veta-root__island"
+      :mode="closed ? (state === 'first-run' ? 'first' : 'empty') : sessions ? 'sessions' : null"
+      :vertical="vertical"
+      :dragging="dragging"
       :style="islandStyle"
-      role="region"
-      :aria-label="state === null ? undefined : t('veta.region.label')"
-      :data-mode="closed ? (state === 'first-run' ? 'first' : 'empty') : 'sessions'"
-      data-veta-island
     >
       <VetaEntrance
         v-if="closed"
@@ -204,7 +199,7 @@ onBeforeUnmount(() => {
           @key="key"
         />
       </template>
-    </div>
+    </VetaIsland>
   </div>
 </template>
 
@@ -216,32 +211,11 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-/* `.dm-veta`: content-sized, 2 px of rock-lo around its parts; a column on a side edge. */
-.veta-island {
+/* The island sits at the window's corner; the window hugs it. */
+.veta-root__island {
   position: absolute;
   left: 0;
   top: 0;
-  display: inline-flex;
-  flex-direction: row;
-  align-items: center;
-  box-sizing: border-box;
-  padding: 2px;
-  background: var(--rock-lo);
-  touch-action: none;
-}
-
-.veta-island.is-vertical {
-  flex-direction: column;
-}
-
-.veta-island.is-unknown {
-  padding: 0;
-  background: transparent;
-}
-
-.veta-island.is-dragging {
-  opacity: 0.85;
-  will-change: transform;
 }
 
 /* `.dm-veta-snap`: the island where it would land, a dashed brass outline over a hover wash. */

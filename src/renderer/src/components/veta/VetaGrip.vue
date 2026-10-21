@@ -28,7 +28,7 @@ function down(event: PointerEvent): void {
 <template>
   <button
     type="button"
-    class="veta-grip m-mat"
+    class="veta-grip m-mat dm-focus-inset"
     :class="{ 'is-vertical': vertical }"
     :aria-label="t('veta.grip.label')"
     :title="t('veta.grip.title')"
