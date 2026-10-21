@@ -178,7 +178,9 @@ describe('machine 20 diagram conformance', () => {
     expect(life.last).toMatchObject({ ok: true, id: 'S20.14' })
 
     // S20.06: from no sessions, a dwarf arrives working.
-    life.applyFrame(frame(5, 'dwarf.departed', { dwarfId: BORIN, mineId: MORIA, cause: 'ended' }))
+    life.applyFrame(
+      frame(5, 'dwarf.departed', { dwarfId: BORIN, mineId: MORIA, cause: 'closed-elsewhere' })
+    )
     expect(life.state).toBe('no-sessions')
     life.applyFrame(
       frame(6, 'dwarf.arrived', {
@@ -256,7 +258,9 @@ describe('machine 20 diagram conformance', () => {
     // Tracked, with no choreography while hidden.
     expect(life.state).toBe('sessions-working')
     expect(life.last).toMatchObject({ ok: true, id: 'S20.14', animate: false })
-    life.applyFrame(frame(4, 'dwarf.departed', { dwarfId: BORIN, mineId: MORIA, cause: 'ended' }))
+    life.applyFrame(
+      frame(4, 'dwarf.departed', { dwarfId: BORIN, mineId: MORIA, cause: 'closed-elsewhere' })
+    )
     expect(life.state).toBe('all-idle')
     expect(life.last).toMatchObject({ ok: true, id: 'S20.09', animate: false })
 

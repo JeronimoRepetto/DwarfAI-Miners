@@ -64,3 +64,8 @@ export function useVetaPresence(deps: VetaPresenceDeps): void {
     })
   }
 }
+
+/** The report over the page's own `window.api` (R13: `window.api` is read in composables only). */
+export function useWindowVetaPresence(facts: () => VetaPresenceFacts): void {
+  useVetaPresence({ bridge: window.api, facts })
+}

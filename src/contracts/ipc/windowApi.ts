@@ -516,10 +516,12 @@ export interface VetaDockChanged {
 }
 
 /**
- * The island's size until the Veta strip measures its own (ISSUE-287): a stand-in, never a design value, shared by UI
- * main (the window it places) and the Veta renderer (the length it reports with `island-resize`), so the two agree.
+ * The Veta island's size (ISSUE-287; `DS/docs/screens/veta.md` Layout), shared by UI main (the window it places) and
+ * the Veta renderer, so the two agree: `thickness` across its edge, 52 px on every edge (2 × 2 px island padding +
+ * 2 × 2 px chamber margin + the 44 px chamber); `length` along it before the strip reports its own with
+ * `island-resize`, the closed entrance's 80 px (2 × 2 px island padding + 2 × 2 px margin + the 72 px entrance).
  */
-export const VETA_ISLAND_STAND_IN = { length: 480, thickness: 72 } as const
+export const VETA_ISLAND = { length: 80, thickness: 52 } as const
 
 const vetaEdgeSchema = z.enum(['left', 'right', 'top', 'bottom'])
 export const vetaDockSchema = z

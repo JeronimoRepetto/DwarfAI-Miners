@@ -20,7 +20,15 @@
  *
  * Pure: no DOM, no clock, no `window.api`.
  */
-import type { DwarfId, DwarfWire, HostFrame, MineId, MineWire } from '@dwarfai/contracts'
+import {
+  HOST_FRAME_SCHEMAS,
+  type DwarfId,
+  type DwarfWire,
+  type HostFrame,
+  type HostFrames,
+  type MineId,
+  type MineWire
+} from '@dwarfai/contracts'
 
 export type VetaLifeState = 'first-run' | 'no-sessions' | 'all-idle' | 'sessions-working'
 
@@ -139,13 +147,15 @@ export function stepLifeState(
 }
 
 /** The frames that change Veta's facts (B-F06…B-F10). */
-const FACT_FRAMES: ReadonlySet<string> = new Set([
-  'mine.changed',
-  'mine.removed',
-  'dwarf.arrived',
-  'dwarf.changed',
-  'dwarf.departed'
-])
+type FactFrame =
+  'mine.changed' | 'mine.removed' | 'dwarf.arrived' | 'dwarf.changed' | 'dwarf.departed'
+
+/** A frame's data, checked against its 14 §3.5 shape; `null` for another frame or a malformed one. */
+function factOf<F extends FactFrame>(frame: HostFrame, name: F): HostFrames[F] | null {
+  if (frame.name !== name) return null
+  const parsed = HOST_FRAME_SCHEMAS[name].safeParse(frame.data)
+  return parsed.success ? (parsed.data as HostFrames[F]) : null
+}
 
 export function createVetaLife(): VetaLife {
   const mines = new Map<MineId, MineWire>()
@@ -222,25 +232,24 @@ export function createVetaLife(): VetaLife {
       settle('snapshot')
     },
     applyFrame(frame) {
-      if (!FACT_FRAMES.has(frame.name)) return
-      switch (frame.name) {
-        case 'mine.changed':
-          mines.set(frame.data.mine.id, frame.data.mine)
-          seeMine(frame.data.mine.id)
-          everKnown = true
-          break
-        case 'mine.removed':
-          // The record stays the Host's: `minesEverKnown` holds (07 machine 20 coverage).
-          mines.delete(frame.data.mineId)
-          break
-        case 'dwarf.arrived':
-        case 'dwarf.changed':
-          dwarfs.set(frame.data.dwarf.id, frame.data.dwarf)
-          seeDwarf(frame.data.dwarf.id)
-          break
-        case 'dwarf.departed':
-          dwarfs.delete(frame.data.dwarfId)
-          break
+      const changed = factOf(frame, 'mine.changed')
+      const removed = factOf(frame, 'mine.removed')
+      const dwarf = factOf(frame, 'dwarf.arrived') ?? factOf(frame, 'dwarf.changed')
+      const departed = factOf(frame, 'dwarf.departed')
+      if (changed !== null) {
+        mines.set(changed.mine.id, changed.mine)
+        seeMine(changed.mine.id)
+        everKnown = true
+      } else if (removed !== null) {
+        // The record stays the Host's: `minesEverKnown` holds (07 machine 20 coverage).
+        mines.delete(removed.mineId)
+      } else if (dwarf !== null) {
+        dwarfs.set(dwarf.dwarf.id, dwarf.dwarf)
+        seeDwarf(dwarf.dwarf.id)
+      } else if (departed !== null) {
+        dwarfs.delete(departed.dwarfId)
+      } else {
+        return
       }
       settle('frame')
     },

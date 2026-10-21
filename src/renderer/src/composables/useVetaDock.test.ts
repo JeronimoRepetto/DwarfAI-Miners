@@ -18,7 +18,13 @@ import { useVetaDock } from './useVetaDock'
 const KEY = 'Q27G2WG4|2560x1440|@1|0,0'
 const HOME: VetaDock = { edge: 'bottom', end: 'end', offset: 16 }
 
-function world(options: { place?: VetaLayoutResult; stored?: UiPreferencesMap['vetaDock'] } = {}) {
+function world(
+  options: {
+    place?: VetaLayoutResult
+    stored?: UiPreferencesMap['vetaDock']
+    length?: () => number
+  } = {}
+) {
   let place: VetaLayoutResult = options.place ?? { applied: true, displayKey: KEY, dock: HOME }
   const requests: VetaLayoutRequest[] = []
   const reads: UiPreferenceKey[][] = []
@@ -49,7 +55,7 @@ function world(options: { place?: VetaLayoutResult; stored?: UiPreferencesMap['v
   })
   const dock = useVetaDock({
     bridge: api,
-    islandLength: () => 480,
+    islandLength: options.length ?? (() => 480),
     windowOrigin: () => ({ x: 0, y: 0 })
   })
   return {
@@ -148,5 +154,17 @@ describe('useVetaDock (07 machine 21; 14 §2.2 A-N23, A-N28)', () => {
     dock.pointerUp(facts(5, 5))
     await settle()
     expect(requests.some((r) => r.kind === 'drag-end')).toBe(false)
+  })
+
+  it('[S21.19, US-VETA-001.AC03] a new island length re-places the island at its place, saving nothing', async () => {
+    let length = 80
+    const { dock, requests } = world({ length: () => length })
+    await dock.start()
+    expect(requests).toEqual([{ kind: 'island-resize', length: 80 }])
+    // The strip grew from the closed entrance to its chambers (ISSUE-287): UI main re-places it for that length.
+    length = 230
+    await dock.resized()
+    expect(requests.at(-1)).toEqual({ kind: 'island-resize', length: 230 })
+    expect(dock.dock.value).toEqual(HOME)
   })
 })
