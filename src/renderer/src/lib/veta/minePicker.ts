@@ -6,7 +6,9 @@
  *   `MineWire.lastUsedAt`, newest first; the rest keep data order (US-LAUNCH-007.AC09).
  * - A row's hint is "`<n>` at work" with a crew and "nobody here" without one; a mine that cannot be entered stays
  *   listed, disabled, with its reason ("Cannot be entered" when none is recorded) as both its hint and its title
- *   (US-LAUNCH-007.AC08; 07 §24 I-39).
+ *   (US-LAUNCH-007.AC08; 07 §24 I-39). The wire carries the Host's reason code (`MineWire.unenterableReason`), and
+ *   the row reads the Mines page's sentence for it: `not-found` is "Folder not found. It was moved or deleted."
+ *   (`MINE_UNENTERABLE_REASON`, FM-095); a code with no approved sentence in the app yet reads as none recorded.
  * - The search matches a mine's name ignoring case and accents (US-LAUNCH-007.AC13) and only filters: the rows keep
  *   the order above (AC09). It runs in memory and answers at once, never awaiting anything (NFR-PERF-05).
  * - ↑ ↓ cycle the search field, the enabled visible rows and "Add a mine", wrapping at both ends (AC10): a disabled
@@ -14,12 +16,16 @@
  */
 import { t, type MineId } from '@dwarfai/contracts'
 import type { MineTier } from '../../types'
+import { MINE_UNENTERABLE_REASON } from '../browse/mineCard'
 
 /**
  * How many mines count as "recently used" and come first (US-LAUNCH-007.AC09). Design request DR-04 fixes the number;
  * until it does, this is a PLACEHOLDER value (`_work/phase7/design-requests.md` DR-04), held in this one constant.
  */
 export const RECENT_MINES = 3
+
+/** The sentence for each unenterable reason code the app has approved copy for (the Mines page's). */
+const REASON_TEXT: Readonly<Record<string, string>> = { 'not-found': MINE_UNENTERABLE_REASON }
 
 /** A tier not measured yet draws as Bronze, the tier a new mine starts at (US-MINES-004.AC01). */
 const UNMEASURED_TIER: MineTier = 'bronze'
@@ -69,7 +75,9 @@ function rowOf({ mine, crew }: PickerMine): PickerRow {
     folded: foldForSearch(mine.name)
   }
   if (mine.state === 'unenterable') {
-    const reason = mine.unenterableReason ?? t('minePicker.cannotEnter')
+    const code = mine.unenterableReason
+    const reason =
+      (code === undefined ? undefined : REASON_TEXT[code]) ?? t('minePicker.cannotEnter')
     return { ...base, hint: reason, title: reason, disabled: true }
   }
   return {

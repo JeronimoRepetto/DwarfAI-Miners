@@ -31,7 +31,8 @@ function fixtureMines(): PickerMine[] {
         name: 'Khazad-dûm',
         lastUsedAt: 900,
         state: 'unenterable',
-        unenterableReason: 'Folder not found. It was moved or deleted.'
+        // The wire carries the Host's reason code (`FolderUnenterableReason`), never a sentence.
+        unenterableReason: 'not-found'
       }),
       crew: 0
     },
@@ -93,6 +94,18 @@ describe('the mine picker', () => {
       title: 'Folder not found. It was moved or deleted.'
     })
     expect(durin).toMatchObject({
+      disabled: true,
+      hint: 'Cannot be entered',
+      title: 'Cannot be entered'
+    })
+    // A code with no approved sentence here yet reads as no reason recorded, never as the raw code.
+    const [denied] = pickerRows([
+      {
+        mine: mineWire(EREBOR, { state: 'unenterable', unenterableReason: 'access-denied' }),
+        crew: 0
+      }
+    ])
+    expect(denied).toMatchObject({
       disabled: true,
       hint: 'Cannot be entered',
       title: 'Cannot be entered'
