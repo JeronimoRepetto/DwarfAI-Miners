@@ -74,3 +74,8 @@ export function useVetaOverlay(deps: VetaOverlayDeps): VetaOverlay {
     }
   }
 }
+
+/** The overlay room over the page's own `window.api` (R13: `window.api` is read in composables only). */
+export function useWindowVetaOverlay(): VetaOverlay {
+  return useVetaOverlay({ bridge: window.api })
+}

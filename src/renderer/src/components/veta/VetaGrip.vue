@@ -3,12 +3,13 @@
  * Veta's grip (US-VETA-002; 07 machine 21; `DS/docs/screens/veta.md` Layout): the handle the island is dragged by and
  * docked from with the arrow keys. Presentational: it captures the pointer on a primary press, so the drag keeps its
  * events wherever the pointer goes, and hands every pointer and key event to its container (`VetaApp`, through
- * `useVetaDock`). A right-click is the grip menu's (US-VETA-003, ISSUE-288), never a drag.
+ * `useVetaDock`). The grip menu (US-VETA-003; 07 machine 22; ISSUE-288) opens from a click that did not drag (the
+ * dock reports it, S22.01), and from a right-click, Enter or Space (`menu`, S22.02); a right-click is never a drag.
  */
 import { t } from '@dwarfai/contracts'
 import PixelIcon from '../icon/PixelIcon.vue'
 
-defineProps<{ vertical: boolean }>()
+defineProps<{ vertical: boolean; /** Whether its menu is open. */ expanded?: boolean }>()
 
 const emit = defineEmits<{
   press: [event: PointerEvent]
@@ -16,12 +17,29 @@ const emit = defineEmits<{
   release: [event: PointerEvent]
   cancel: [cause: 'pointer-cancel' | 'lost-capture']
   key: [event: KeyboardEvent]
+  /** A right-click, or Enter or Space: the grip menu (S22.02). */
+  menu: []
 }>()
 
 function down(event: PointerEvent): void {
   if (event.button !== 0) return
   ;(event.currentTarget as Element).setPointerCapture(event.pointerId)
   emit('press', event)
+}
+
+function key(event: KeyboardEvent): void {
+  if (event.key === 'Enter' || event.key === ' ') {
+    // The menu, once: the click a button fires for Enter or Space is cancelled.
+    event.preventDefault()
+    emit('menu')
+    return
+  }
+  emit('key', event)
+}
+
+function contextmenu(event: MouseEvent): void {
+  event.preventDefault()
+  emit('menu')
 }
 </script>
 
@@ -32,13 +50,16 @@ function down(event: PointerEvent): void {
     :class="{ 'is-vertical': vertical }"
     :aria-label="t('veta.grip.label')"
     :title="t('veta.grip.title')"
+    aria-haspopup="menu"
+    :aria-expanded="expanded === true ? 'true' : 'false'"
     data-veta-grip
     @pointerdown="down"
     @pointermove="emit('move', $event)"
     @pointerup="emit('release', $event)"
     @pointercancel="emit('cancel', 'pointer-cancel')"
     @lostpointercapture="emit('cancel', 'lost-capture')"
-    @keydown="emit('key', $event)"
+    @keydown="key"
+    @contextmenu="contextmenu"
   >
     <PixelIcon name="grip" :scale="2" />
   </button>

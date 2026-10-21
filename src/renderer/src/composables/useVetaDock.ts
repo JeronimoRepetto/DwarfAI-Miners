@@ -53,6 +53,8 @@ export interface VetaDockDeps {
   islandLength(): number
   /** The window's top-left corner on the screen (`window.screenX`, `window.screenY`). */
   windowOrigin(): Point
+  /** A grip press released under the drag threshold (S21.05): the grip menu's click (07 S22.01; ISSUE-288). */
+  onClick?(): void
 }
 
 /** A pointer event's positions on the screen and in the window. */
@@ -144,6 +146,8 @@ export function useVetaDock(deps: VetaDockDeps) {
         void replace()
         return
       case 'click':
+        deps.onClick?.()
+        return
       case 'none':
         return
     }
@@ -269,10 +273,11 @@ export function useVetaDock(deps: VetaDockDeps) {
 export type VetaDockPart = ReturnType<typeof useVetaDock>
 
 /** The dock over the page's own `window.api` and window (R13: `window.api` is read in composables only). */
-export function useWindowVetaDock(islandLength: () => number): VetaDockPart {
+export function useWindowVetaDock(islandLength: () => number, onClick?: () => void): VetaDockPart {
   return useVetaDock({
     bridge: window.api,
     islandLength,
+    ...(onClick === undefined ? {} : { onClick }),
     windowOrigin: () => ({ x: window.screenX, y: window.screenY })
   })
 }

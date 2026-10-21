@@ -41,3 +41,10 @@ export function useVetaClickThrough(deps: VetaClickThroughDeps): VetaClickThroug
     }
   }
 }
+
+/** Click-through over the page's own `window.api` (R13: `window.api` is read in composables only). */
+export function useWindowVetaClickThrough(
+  overIsland: VetaClickThroughDeps['overIsland']
+): VetaClickThrough {
+  return useVetaClickThrough({ bridge: window.api, overIsland })
+}

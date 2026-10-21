@@ -11,13 +11,21 @@
  *   project folds into that project's mine through A-31 `declareMainProject` (S22.14). A refusal, or UI main out of
  *   reach, goes back to the picker with the Mines page's own words for it (S22.15, US-MINES-004): the reason UI main
  *   answered (`declareFailureNotice`, the Mines page's), or the Mines page's line for a bridge that never answered.
- * - Esc or an outside click gives the focus back to what opened the overlay (S22.03, S22.16).
+ * - Esc or an outside click gives the focus back to what opened the overlay (S22.03, S22.16); a mode change (A-N14,
+ *   this window the source) closes it silently (S22.17).
  *
  * The picker lists every live mine (`mines`, the life state's read model), those with no chamber included. The bridge,
  * the mines and the focus and Add panel hooks are injected (the house idiom over `vi.mock`).
  */
-import type { BuiltMode, MineId, MoveToModeParams } from '@dwarfai/contracts'
-import { computed, shallowRef, type ComputedRef, type Ref } from 'vue'
+import type { BuiltMode, MineId, ModeTransition, MoveToModeParams } from '@dwarfai/contracts'
+import {
+  computed,
+  getCurrentScope,
+  onScopeDispose,
+  shallowRef,
+  type ComputedRef,
+  type Ref
+} from 'vue'
 import { declareFailureNotice } from '../lib/browse/addProject'
 import {
   CLOSED_GRIP_MENU,
@@ -43,6 +51,8 @@ export interface MinePickerBridge {
   declareMine(): Promise<MineDeclareResult>
   declareMainProject(): Promise<MineDeclareResult>
   moveToMode(params: MoveToModeParams): Promise<unknown>
+  /** A-N14: a mode change closes an open menu or picker silently (S22.17). */
+  onModeTransition(handler: (transition: ModeTransition) => void): () => void
 }
 
 export interface MinePickerDeps {
@@ -155,6 +165,11 @@ export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
     return next.step
   }
 
+  const unsubscribe = deps.bridge.onModeTransition((transition) => {
+    if (transition.role === 'source') dispatch({ type: 'interrupt' })
+  })
+  if (getCurrentScope() !== undefined) onScopeDispose(unsubscribe)
+
   return {
     machine,
     state: computed(() => machine.value.state),
@@ -172,7 +187,8 @@ export function useWindowMinePicker(deps: Omit<MinePickerDeps, 'bridge'>): MineP
     bridge: {
       declareMine: () => window.api.declareMine(),
       declareMainProject: () => window.api.declareMainProject(),
-      moveToMode: (params) => window.api.moveToMode(params)
+      moveToMode: (params) => window.api.moveToMode(params),
+      onModeTransition: (handler) => window.api.onModeTransition(handler)
     }
   })
 }

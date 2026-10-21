@@ -1,4 +1,4 @@
-import type { MineId, MoveToModeParams } from '@dwarfai/contracts'
+import type { MineId, ModeTransition, MoveToModeParams } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
 import { effectScope, shallowRef } from 'vue'
 import type { Opener } from '../lib/veta/gripMenu'
@@ -21,6 +21,7 @@ function world(answers: { declare?: MineDeclareResult | Error; main?: MineDeclar
   const moves: MoveToModeParams[] = []
   const focused: Opener[] = []
   const addPanels: MineId[] = []
+  const transitions: Array<(t: ModeTransition) => void> = []
   const mines = shallowRef<PickerMine[]>([
     { mine: mineWire(MORIA), crew: 1 },
     { mine: mineWire(EREBOR), crew: 0 }
@@ -38,6 +39,10 @@ function world(answers: { declare?: MineDeclareResult | Error; main?: MineDeclar
     moveToMode(params) {
       moves.push(params)
       return Promise.resolve({ ok: true, value: undefined })
+    },
+    onModeTransition(handler) {
+      transitions.push(handler)
+      return () => undefined
     }
   }
   const scope = effectScope()
@@ -50,7 +55,7 @@ function world(answers: { declare?: MineDeclareResult | Error; main?: MineDeclar
       addPanel: (mineId) => addPanels.push(mineId)
     })
   )!
-  return { picker, calls, moves, focused, addPanels, mines, scope }
+  return { picker, calls, moves, focused, addPanels, mines, scope, transitions }
 }
 
 /** Lets the declare's answers land. */
@@ -149,5 +154,27 @@ describe('useMinePicker', () => {
     picker.dispatch({ type: 'entrance' })
     picker.dispatch({ type: 'dismiss' })
     expect(focused).toEqual(['grip', 'entrance'])
+  })
+
+  it('[S22.17] a mode change with this window the source closes the menu or the picker silently', () => {
+    const { picker, transitions, focused, moves } = world()
+    picker.dispatch({ type: 'grip-open' })
+    picker.dispatch({ type: 'choose', item: 'new-dwarf' })
+    const change = (role: 'source' | 'target'): void => {
+      for (const handler of transitions)
+        handler({
+          transitionId: '00000000-0000-4000-8000-000000000001',
+          from: 'veta',
+          to: 'panel',
+          t0: 0,
+          role
+        })
+    }
+    change('target')
+    expect(picker.state.value).toBe('picker-open')
+    change('source')
+    expect(picker.state.value).toBe('closed')
+    expect(picker.last.value).toMatchObject({ ok: true, id: 'S22.17' })
+    expect([focused, moves]).toEqual([[], []])
   })
 })
