@@ -1,13 +1,21 @@
 // @vitest-environment jsdom
-import type { HostFrame } from '@dwarfai/contracts'
+import type { DwarfId, HostFrame } from '@dwarfai/contracts'
 import { flushPromises } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VETA_MOTION, outwardOf, walkInFrames, walkOutFrames } from '../../lib/veta/choreography'
 import {
+  BALIN,
+  BELEGOST,
   BORIN,
   DAIN,
+  DWALIN,
   EREBOR,
+  FLOI,
+  IRONHILLS,
+  KHAZAD,
   MORIA,
+  NALI,
+  NOGROD,
   dwarfWire,
   frame,
   mineWire,
@@ -51,6 +59,9 @@ const dwarf = (dwarfId: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-veta-dwarf][data-dwarf-id="${dwarfId}"]`)
 const chamberOf = (mineId: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-veta-chamber][data-mine-id="${mineId}"]`)
+
+/** A second dwarf of moria's crew. */
+const ORI_OF_MORIA = '01920000-0000-7000-8000-00000000d0aa' as DwarfId
 
 const arrives = (seq: number, dwarfId = DAIN, status: 'working' | 'idle' = 'working'): HostFrame =>
   frame(seq, 'dwarf.arrived', { dwarf: dwarfWire(dwarfId, MORIA, { status }), announce: true })
@@ -226,5 +237,44 @@ describe('VetaChamber in the shown Veta window (machine 26)', () => {
 
     // Not once was the window asked to change while anything moved.
     expect(asked.filter((a) => a.moving > 0)).toEqual([])
+  })
+
+  it('[S26.11, S25.06] the window shrinks after a departure only once the pointer has left the "+N" list it rests on', async () => {
+    const SIX = [MORIA, EREBOR, KHAZAD, IRONHILLS, BELEGOST, NOGROD] as const
+    const lone = [DAIN, NALI, BALIN, DWALIN, FLOI]
+    const resizes: number[] = []
+    world = await mountVeta(
+      {
+        minesEverKnown: true,
+        mines: SIX.map((id) => mineWire(id)),
+        dwarfs: [
+          dwarfWire(BORIN, MORIA),
+          dwarfWire(ORI_OF_MORIA, MORIA),
+          ...SIX.slice(1).map((id, i) => dwarfWire(lone[i]!, id))
+        ]
+      },
+      {
+        onLayout(request) {
+          if (request.kind === 'island-resize') resizes.push(request.length)
+        }
+      }
+    )
+    const slot = document.querySelector<HTMLElement>('[data-veta-more-slot]')!
+    slot.dispatchEvent(new PointerEvent('pointerenter'))
+    await flushPromises()
+    expect(document.querySelector<HTMLElement>('[data-veta-more-list]')).not.toBeNull()
+    resizes.length = 0
+
+    // A dwarf of the anchored chamber leaves (reduced motion: at once); the pointer still rests on the list.
+    await world.push([
+      frame(11, 'dwarf.departed', { dwarfId: ORI_OF_MORIA, mineId: MORIA, cause: 'stopped' })
+    ])
+    expect(dwarf(ORI_OF_MORIA)).toBeNull()
+    expect(resizes).toEqual([])
+
+    // The pointer leaves: the window shrinks for the narrower island.
+    slot.dispatchEvent(new PointerEvent('pointerleave'))
+    await flushPromises()
+    expect(resizes).toHaveLength(1)
   })
 })

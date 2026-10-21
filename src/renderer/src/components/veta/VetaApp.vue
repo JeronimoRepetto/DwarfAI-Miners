@@ -156,7 +156,10 @@ const choreo = useVetaChoreography({
   drawn: () => drawnChambers.value.map((c) => c.mine.id),
   opens: (_mineId, crew) => opens(crew),
   grow: (now) => growFor(now),
-  shrink: () => placeIsland(),
+  shrink: () => {
+    held = null
+    return placeAfterMotion()
+  },
   fold: () => overflow.measure(),
   play: (cue) => play(cue),
   cancel: (dwarfIds) => cancelMotion(dwarfIds),
@@ -309,13 +312,33 @@ function placeIsland(): Promise<void> {
   return dock.resized()
 }
 
+/** A shrink owed while the pointer rests on the "+N" list: a resize under the pointer would close it (ISSUE-291). */
+let owed = false
+
+/** After a motion (S26.09, S26.11): the window is placed for the island as drawn, once no list is under the pointer. */
+function placeAfterMotion(): Promise<void> {
+  if (listShown.value) {
+    owed = true
+    return Promise.resolve()
+  }
+  owed = false
+  return placeIsland()
+}
+
+watch(
+  () => listShown.value,
+  (shown) => {
+    if (!shown && owed && !choreo.moving.value) void placeAfterMotion()
+  }
+)
+
 // Once nothing moves, the window is placed for the island as drawn, when that changed meanwhile (never mid-motion).
 watch(
   () => choreo.moving.value,
   (now) => {
     if (now) return
     held = null
-    if (started && placed !== length.value) void placeIsland()
+    if (started && (owed || placed !== length.value)) void placeAfterMotion()
   }
 )
 

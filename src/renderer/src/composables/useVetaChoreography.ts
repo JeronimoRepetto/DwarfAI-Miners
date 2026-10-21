@@ -190,6 +190,9 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
     arrived.value = new Set([...arrived.value, ...ids])
   }
 
+  /** The item whose run is in flight: the arrivals being placed, or the departure walking. */
+  let current: Item | null = null
+
   /** Each step is stamped: the effects of a step a later one replaced stop where they are. */
   let stamp = 0
   let watchdog: unknown = null
@@ -208,7 +211,8 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
     return Math.max(1, ...perMine.values())
   }
 
-  function dispatch(event: ChoreographyEvent): ChoreographyStep {
+  /** One step for the item `item` (the run in flight's by default), carried out when taken. */
+  function dispatch(event: ChoreographyEvent, item: Item | null = current): ChoreographyStep {
     const before = machine.value
     const next = stepChoreography(before, event, { shown: deps.shown() })
     if (!next.step.ok) return next.step
@@ -216,6 +220,7 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
     disarm()
     machine.value = next.machine
     last.value = next.step
+    current = item
     const to = next.machine
     if (to.state !== 'settled' && !deps.reduced()) {
       const mine = stamp
@@ -234,7 +239,7 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
         if (mine === stamp) dispatch({ type: 'watchdog' })
       }, ms)
     }
-    void carry(next.step.effects, before, stamp)
+    void carry(next.step.effects, before, stamp, item)
     return next.step
   }
 
@@ -248,12 +253,13 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
   async function carry(
     effects: readonly ChoreographyEffect[],
     before: VetaChoreography,
-    mine: number
+    mine: number,
+    item: Item | null
   ): Promise<void> {
     carrying.value = true
     try {
       for (const effect of effects) {
-        await apply(effect, before)
+        await apply(effect, before, item)
         if (mine !== stamp) return
       }
       if (machine.value.state === 'settled') return
@@ -267,14 +273,15 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
     }
   }
 
-  /** The item in flight's dwarfs: the arrivals placed or the departure walking. */
-  let current: Item | null = null
-
-  async function apply(effect: ChoreographyEffect, before: VetaChoreography): Promise<void> {
+  async function apply(
+    effect: ChoreographyEffect,
+    before: VetaChoreography,
+    item: Item | null
+  ): Promise<void> {
     const still = deps.reduced()
     switch (effect.kind) {
       case 'grow': {
-        const ids = current?.kind === 'arrived' ? current.dwarfIds : []
+        const ids = item?.kind === 'arrived' ? item.dwarfIds : []
         const staged = stageChambers(deps.facts(), {
           hidden: without(hidden.value, ids),
           leaving: leaving.value
@@ -376,18 +383,18 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
         await deps.shrink()
         return
       case 'commit':
-        if (current?.kind === 'arrived') place(current.dwarfIds)
-        else if (current?.kind === 'departed') unleave([current.dwarfId])
+        if (item?.kind === 'arrived') place(item.dwarfIds)
+        else if (item?.kind === 'departed') unleave([item.dwarfId])
         return
       case 'fold':
-        if (current?.kind === 'arrived') place(current.dwarfIds)
+        if (item?.kind === 'arrived') place(item.dwarfIds)
         await deps.fold()
         return
       case 'end-state': {
         deps.cancel()
         lit.value = false
         const ids = before.dwarfIds
-        if (current?.kind === 'arrived') {
+        if (item?.kind === 'arrived') {
           place(ids)
           landed(ids)
         } else {
@@ -437,8 +444,7 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
     while (machine.value.state === 'settled' && !carrying.value && queue.value.length > 0) {
       const [item, ...rest] = queue.value
       queue.value = rest
-      current = item!
-      const step = dispatch(eventOf(item!))
+      const step = dispatch(eventOf(item!), item!)
       // No choreography for it (a dwarf not drawn): the facts are drawn as they stand.
       if (!step.ok) {
         if (item!.kind === 'arrived') place(item!.dwarfIds)
@@ -485,8 +491,10 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
         if (known || hidden.value.has(id)) continue
         if (!shown) {
           // S26.16: no choreography; the settled layout is what the next show draws.
-          current = { kind: 'arrived', mineId: fact.dwarf.mineId, dwarfIds: [id] }
-          dispatch({ type: 'arrived', mineId: fact.dwarf.mineId, dwarfIds: [id], where: 'closed' })
+          dispatch(
+            { type: 'arrived', mineId: fact.dwarf.mineId, dwarfIds: [id], where: 'closed' },
+            { kind: 'arrived', mineId: fact.dwarf.mineId, dwarfIds: [id] }
+          )
           continue
         }
         hidden.value = new Set([...hidden.value, id])
@@ -507,6 +515,7 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
       }
       if (fact.kind !== 'departed') continue
       const id = fact.dwarfId
+      if (arrived.value.has(id)) arrived.value = without(arrived.value, [id])
       if (hidden.value.has(id)) {
         // It never showed: it leaves no walk behind.
         hidden.value = without(hidden.value, [id])
@@ -525,16 +534,18 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
         )
       )[0]
       if (!shown || stood === undefined) {
-        current = { kind: 'departed', dwarfId: id, mineId: fact.mineId, cause: fact.cause }
-        dispatch({
-          type: 'departed',
-          dwarfId: id,
-          mineId: fact.mineId,
-          cause: fact.cause,
-          drawn: false,
-          emptied: false,
-          last: false
-        })
+        dispatch(
+          {
+            type: 'departed',
+            dwarfId: id,
+            mineId: fact.mineId,
+            cause: fact.cause,
+            drawn: false,
+            emptied: false,
+            last: false
+          },
+          { kind: 'departed', dwarfId: id, mineId: fact.mineId, cause: fact.cause }
+        )
         if (shown) deps.chat(id, fact.cause)
         continue
       }
@@ -542,8 +553,7 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
       const item: Item = { kind: 'departed', dwarfId: id, mineId: fact.mineId, cause: fact.cause }
       if (machine.value.state === 'walking-in' && machine.value.dwarfIds.includes(id)) {
         // S26.14: the walk-in resolves at once, then the walk-out plays.
-        current = item
-        dispatch(eventOf(item))
+        dispatch(eventOf(item), item)
         continue
       }
       items.push(item)
@@ -561,10 +571,7 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
       dispatch({ type: 'hidden' })
       const waiting = queue.value
       queue.value = []
-      for (const item of waiting) {
-        current = item
-        dispatch(eventOf(item))
-      }
+      for (const item of waiting) dispatch(eventOf(item), item)
       hidden.value = new Set()
       leaving.value = []
       walking.value = new Map()
