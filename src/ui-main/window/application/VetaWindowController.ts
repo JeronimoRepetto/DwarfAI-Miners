@@ -18,7 +18,7 @@
 // - OS show/hide animations stay as the platform has them: disabling them is UNVERIFIED until S-025-1 is recorded
 //   (ADR-025 item 1), so nothing here depends on it.
 import type { UiLog } from '../../diagnostics/uiLogger'
-import { VETA_ISLAND_STAND_IN, type VetaDock } from '@dwarfai/contracts'
+import { VETA_ISLAND, type VetaDock } from '@dwarfai/contracts'
 import { vetaBounds } from '../domain/vetaPlacement'
 import {
   windowingLimits,
@@ -51,12 +51,12 @@ export interface VetaWindowSurface {
 }
 
 /**
- * The island the Veta window hugs until the strip reports its own (ISSUE-287): a stand-in size so an empty, transparent
- * window has bounds to be placed at, never a design value.
+ * The island the Veta window hugs until the strip reports its own length (`island-resize`, ISSUE-287): the design's
+ * thickness, and the closed entrance's length (`VETA_ISLAND`).
  */
 export const VETA_ISLAND_PLACEHOLDER: IslandSize = {
-  width: VETA_ISLAND_STAND_IN.length,
-  height: VETA_ISLAND_STAND_IN.thickness
+  width: VETA_ISLAND.length,
+  height: VETA_ISLAND.thickness
 }
 
 /** The size of the Veta island the window hugs. */

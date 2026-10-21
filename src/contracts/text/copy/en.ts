@@ -132,5 +132,21 @@ export const en = {
   // The Veta grip (US-VETA-002; ISSUE-286): the design's own copy (DS/docs/copy.md, Veta strip, aria-label and title).
   'veta.grip.label':
     'Veta. Press for the menu; drag, or use the arrow keys, to move it to another edge',
-  'veta.grip.title': 'Drag to move · click for the menu'
+  'veta.grip.title': 'Drag to move · click for the menu',
+
+  // Veta's strip and its closed entrance (US-VETA-001, US-VETA-010, US-VETA-011; ISSUE-287): the design's own copy
+  // (DS/docs/copy.md, Veta strip, Mine chamber and Mine entrance; the first-run name is also 07 machine 20's). The
+  // chamber's name is the design's run-time `Mine {name}, {tier}, {count} dwarf[s][, {asking} needs | need you]`, its
+  // asking tail a second entry since one entry counts one number.
+  'veta.region.label': 'Veta',
+  'veta.expand.label': 'Open the Panel',
+  'veta.entrance.label': 'No sessions running. Open the Panel',
+  'veta.entrance.title': 'No sessions · open the Panel',
+  'veta.entrance.firstRun.label': 'No mines yet. Add your first mine',
+  'veta.entrance.firstRun.title': 'Add your first mine',
+  'veta.chamber.label': {
+    one: 'Mine {name}, {tier}, {count} dwarf',
+    other: 'Mine {name}, {tier}, {count} dwarfs'
+  },
+  'veta.chamber.asking': { one: '{count} needs you', other: '{count} need you' }
 } as const satisfies CopyCatalog

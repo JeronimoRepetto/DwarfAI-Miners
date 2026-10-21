@@ -636,5 +636,19 @@
     "key": "screens-full/message-panel#not-delivered",
     "red": "1.341% differing, none of it in the MessagePanel window, which draws as the reference (0.000%) now that the outcome line counts the open run (Working · 2 steps so far, MESSAGE-QUESTIONS 7): the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop",
     "at": 1.341
+  },
+  {
+    "key": "organisms/veta-strip#first-run"
+  },
+  {
+    "key": "organisms/veta-strip#no-sessions"
+  },
+  {
+    "key": "molecules/mine-chamber#needs-you",
+    "red": "the app's chamber mirrors every dwarf, as components.md (Mine chamber, Anatomy) rules for a dwarf with no station, and the Veta wire carries none, where the UI kit gives its sample dwarfs stations that face some of them left; the tab and label are ISSUE-289 and ISSUE-290's (hidden in the reference too). Not measured: this state was registered without a golden run (ISSUE-287)"
+  },
+  {
+    "key": "molecules/mine-chamber#all-idle",
+    "red": "the app's chamber mirrors every dwarf, as components.md (Mine chamber, Anatomy) rules for a dwarf with no station, and the Veta wire carries none, where the UI kit gives its sample dwarfs stations that face some of them left; the tab and label are ISSUE-289 and ISSUE-290's (hidden in the reference too). Not measured: this state was registered without a golden run (ISSUE-287)"
   }
 ]

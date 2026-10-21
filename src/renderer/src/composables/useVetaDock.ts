@@ -19,7 +19,6 @@
  * `vi.mock`).
  */
 import {
-  VETA_ISLAND_STAND_IN,
   type ModeTransition,
   type UiPreferenceKey,
   type UiPreferencesMap,
@@ -255,6 +254,11 @@ export function useVetaDock(deps: VetaDockDeps) {
 
     cancel,
 
+    /** The island's length changed (ISSUE-287): UI main re-places it at its place for the new length (S21.19). */
+    resized(): Promise<void> {
+      return replace()
+    },
+
     dispose(): void {
       for (const off of unsubscribe.splice(0)) off()
     }
@@ -265,10 +269,10 @@ export function useVetaDock(deps: VetaDockDeps) {
 export type VetaDockPart = ReturnType<typeof useVetaDock>
 
 /** The dock over the page's own `window.api` and window (R13: `window.api` is read in composables only). */
-export function useWindowVetaDock(): VetaDockPart {
+export function useWindowVetaDock(islandLength: () => number): VetaDockPart {
   return useVetaDock({
     bridge: window.api,
-    islandLength: () => VETA_ISLAND_STAND_IN.length,
+    islandLength,
     windowOrigin: () => ({ x: window.screenX, y: window.screenY })
   })
 }

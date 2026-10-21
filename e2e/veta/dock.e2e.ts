@@ -73,7 +73,9 @@ async function showVeta(app: ElectronApplication, panel: Page): Promise<Page> {
       { timeout: 15_000 }
     )
     .toBe(true)
-  await page!.waitForSelector('[data-veta-grip]')
+  // AMENDED for ISSUE-287 (was: waited for the grip): a fresh profile has no mine, so Veta shows the closed entrance,
+  // its one part (07 machine 20 `first-run`); the drops below are the grip's own seam A requests either way.
+  await page!.waitForSelector('[data-veta-entrance], [data-veta-grip]')
   return page!
 }
 

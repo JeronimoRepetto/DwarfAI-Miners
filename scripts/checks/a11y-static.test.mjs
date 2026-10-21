@@ -137,6 +137,21 @@ describe('L12 static accessibility audit (17 §1.12)', () => {
     ).toEqual([])
   })
 
+  it('[NFR-A11Y-01] the inset variant of the one ring, for parts flush with the window that hugs them, only moves its offset inside and lives beside the ring', () => {
+    // screens/valle.md, `.dm-vadd:focus-visible`: outline-offset -4px for a part flush with its container's edge
+    // (ISSUE-287, the Veta island's parts). It is shared, never a component's own rule.
+    const variants = styles.sheets.flatMap((sheet) =>
+      sheet.rules
+        .filter((rule) =>
+          rule.selector.split(',').some((part) => part.trim() === '.dm-focus-inset')
+        )
+        .map((rule) => ({ file: sheet.file, selector: rule.selector, decls: rule.decls }))
+    )
+    expect(variants).toEqual([
+      { file: 'assets/base.css', selector: '.dm-focus-inset', decls: [['outline-offset', '-4px']] }
+    ])
+  })
+
   it('[NFR-A11Y-01, NFR-A11Y-07, NFR-A11Y-12] the command line passes on the repository and fails on a planted failure', () => {
     const lines = { out: [], err: [] }
     const io = { out: (line) => lines.out.push(line), err: (line) => lines.err.push(line) }

@@ -109,6 +109,16 @@ ol {
 }
 
 /*
+ * The same ring drawn inside the frame, for a part flush with the edge of the window that hugs it, where a ring
+ * outside would be cut off: the Veta island's parts (ISSUE-287). The design's own precedent for a part flush with its
+ * container's edge: screens/valle.md, `.dm-vadd:focus-visible`, outline-offset -4px. Only the offset moves; it comes
+ * after the ring so it wins at equal specificity.
+ */
+.dm-focus-inset {
+  outline-offset: -4px;
+}
+
+/*
  * The scrollbar, once for every scrollable surface (#195): a brass thumb bevelled in gold on a
  * wood track. Both the standard properties and the WebKit pseudo-elements are set because
  * Electron's Chromium honours either, depending on version.
