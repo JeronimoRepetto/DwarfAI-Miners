@@ -178,14 +178,17 @@ describe('the Veta mine tab', () => {
       const now = tabbable()
       at = now[now.indexOf(at) + 1]
     }
-    // A dwarf is not a target before ISSUE-290 makes it the button that opens its chat; each chamber is the stop that
-    // raises its tab (the design's `.dm-chamber` holds tabindex 0), then the tab's two buttons.
+    // Each chamber is the stop that raises its tab (the design's `.dm-chamber` holds tabindex 0), then its dwarfs, then
+    // the tab's two buttons. AMENDED for ISSUE-290 (was: no dwarf stop): a dwarf is now the button that opens its chat
+    // (US-VETA-005.AC02, S25.07 "Tab reaches expand, each drawn dwarf, each drawn chamber's tab, the grip").
     expect(walked).toEqual([
       'expand',
       `chamber ${MORIA}`,
+      `dwarf ${BORIN}`,
       `open ${MORIA}`,
       `add ${MORIA}`,
       `chamber ${EREBOR}`,
+      `dwarf ${DAIN}`,
       `open ${EREBOR}`,
       `add ${EREBOR}`,
       'grip'

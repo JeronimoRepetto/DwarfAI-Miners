@@ -57,4 +57,18 @@ describe('useVetaClickThrough (ADR-025 item 4; 14 §2.2 A-N22)', () => {
     expect(vetaTakesPointer(at('[data-veta-overlay-card] button'))).toBe(true)
     document.body.innerHTML = ''
   })
+
+  it('[S24.01, ADR-025] the risen chat takes the pointer, and its gap to the strip lets it through', () => {
+    document.body.innerHTML = `
+      <div data-veta-root>
+        <div data-veta-island><span data-veta-dwarf></span></div>
+        <div data-veta-risen><section class="dm-msg"><textarea></textarea></section></div>
+      </div>`
+    const at = (selector: string): Element => document.querySelector(selector)!
+    expect(vetaTakesPointer(at('[data-veta-risen] textarea'))).toBe(true)
+    expect(vetaTakesPointer(at('[data-veta-risen]'))).toBe(true)
+    // The gap between the risen window and the strip is the window's transparent room.
+    expect(vetaTakesPointer(at('[data-veta-root]'))).toBe(false)
+    document.body.innerHTML = ''
+  })
 })

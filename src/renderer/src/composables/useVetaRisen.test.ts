@@ -3,6 +3,7 @@ import type {
   RevealDwarfChatPush,
   UiSessionPatch,
   UiSessionSnapshot,
+  VetaDockChanged,
   VetaLayoutRequest,
   VetaLayoutResult
 } from '@dwarfai/contracts'
@@ -31,6 +32,7 @@ const VIEW: ChatViewState = {
 function world(options: { applied?: boolean; drafts?: Record<string, string> } = {}) {
   const log: string[] = []
   const reveals: Array<(t: RevealDwarfChatPush) => void> = []
+  const replaced: Array<(e: VetaDockChanged) => void> = []
   const motions: Array<() => void> = []
   const session: UiSessionSnapshot = {
     drafts: { ...(options.drafts ?? {}) } as UiSessionSnapshot['drafts'],
@@ -90,6 +92,10 @@ function world(options: { applied?: boolean; drafts?: Record<string, string> } =
       onRevealDwarfChat(listener) {
         reveals.push(listener)
         return () => undefined
+      },
+      onVetaDockChanged(listener) {
+        replaced.push(listener)
+        return () => undefined
       }
     },
     host
@@ -99,7 +105,7 @@ function world(options: { applied?: boolean; drafts?: Record<string, string> } =
     for (const end of motions.splice(0)) end()
     await settle()
   }
-  return { risen, log, reveals, motionEnds, session }
+  return { risen, log, reveals, replaced, motionEnds, session }
 }
 
 async function settle(): Promise<void> {
@@ -244,5 +250,22 @@ describe('useVetaRisen', () => {
     expect(log.some((line) => line.startsWith('layoutVeta'))).toBe(false)
     expect(log.some((line) => line.startsWith('motion'))).toBe(false)
     expect(log).toContain('clear')
+  })
+
+  it("[S24.14, S21.13] Veta's display removed folds the risen chat at once and gives the room back", async () => {
+    const { risen, log, replaced, motionEnds } = world()
+    risen.start()
+    await risen.dispatch({ type: 'dwarf-hit', dwarfId: BORIN, mineId: MORIA })
+    await motionEnds()
+    log.length = 0
+    // Another reason re-places the island where it was: the chat stays.
+    replaced[0]!({ displayKey: PLACE.displayKey, dock: PLACE.dock, reason: 'work-area-changed' })
+    await settle()
+    expect(risen.machine.value.state).toBe('risen-chat')
+    replaced[0]!({ displayKey: 'other', dock: PLACE.dock, reason: 'display-removed' })
+    await settle()
+    expect(risen.machine.value.state).toBe('folded')
+    expect(log.filter((line) => line.startsWith('motion'))).toEqual([])
+    expect(log).toContain('layoutVeta {"kind":"fold"}')
   })
 })

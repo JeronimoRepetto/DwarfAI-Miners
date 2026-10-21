@@ -37,8 +37,19 @@
  * its chamber and closes when a drag starts. The window holds the band the tabs rise into for good while chambers are
  * drawn (07 §24 I-22, `layoutVeta {overlay}`, measured from the tabs' boxes), so a hover never resizes it, and the band
  * is click-through except over a risen tab (`vetaTakesPointer`).
+ *
+ * The risen window (ISSUE-290; 07 machine 24; UC-048, UC-066; BR-21), carried out by `useVetaRisen`: a click, Enter or
+ * Space on a dwarf's sprite rises its chat above the strip, anchored by its pointer to that dwarf; a mine tab's "+" or a
+ * picker pick rises the Add panel aimed at that mine, and a launch from it turns it into the new dwarf's chat where it
+ * stands. Both are the Panel's own components, fed by the Panel's own `useMessageDock` over this window's own board
+ * (`useMines`), so a chat in Veta has every feature it has in the Panel; only its anchor differs. A press outside it in
+ * this window (the strip included) or Esc folds it with the draft kept; a press on another dwarf replaces it. Its dwarf
+ * departing leaves it read-only or, for a removed mine, closes it; a drag, the display going away or the window hidden
+ * fold it at once. A click in another app does not fold it: the OS file picker and the console the chat itself opens
+ * take the focus the same way, and would fold the chat under the person's hands. Hovering a dwarf shows its one-line
+ * label, once the band the window holds has the label's room too.
  */
-import { VETA_ISLAND, type MineId } from '@dwarfai/contracts'
+import { VETA_ISLAND, type DwarfId, type DwarfWire, type MineId } from '@dwarfai/contracts'
 import type { MineWorktreeOf } from '../../types'
 import {
   computed,
@@ -50,14 +61,19 @@ import {
   watch,
   type CSSProperties
 } from 'vue'
+import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
+import { useMessageDock } from '../../composables/useMessageDock'
+import { useMines } from '../../composables/useMines'
 import { useWindowMinePicker } from '../../composables/useMinePicker'
 import { useWindowVetaClickThrough, vetaTakesPointer } from '../../composables/useVetaClickThrough'
 import { useWindowVetaDock } from '../../composables/useVetaDock'
 import { useWindowVetaLife } from '../../composables/useVetaLife'
 import { useWindowVetaOverlay } from '../../composables/useVetaOverlay'
 import { useWindowVetaPresence } from '../../composables/useVetaPresence'
+import { useWindowVetaRisen } from '../../composables/useVetaRisen'
 import { SHIPPED_MODES } from '../../lib/shell/builtDestinations'
 import { snapRect } from '../../lib/veta/dockGesture'
+import { dwarfLabels, silenceOf } from '../../lib/veta/dwarfLabel'
 import { gripMenuEntries, type GripMenuItemId, type Opener } from '../../lib/veta/gripMenu'
 import { islandLength } from '../../lib/veta/island'
 import { entranceIntent } from '../../lib/veta/lifeState'
@@ -78,6 +94,8 @@ import VetaExpand from './VetaExpand.vue'
 import VetaGrip from './VetaGrip.vue'
 import VetaGripMenu from './VetaGripMenu.vue'
 import VetaIsland from './VetaIsland.vue'
+import VetaRisen from './VetaRisen.vue'
+import type { RisenContent } from '../../lib/veta/risenWindow'
 
 const life = useWindowVetaLife()
 const { state, chambers } = life
@@ -93,15 +111,16 @@ function focusOpener(target: Opener): void {
   root.value?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
 }
 
-/** The mine the Add panel was asked to rise at (S22.09); the rise itself is ISSUE-290's. */
-const addPanelFor = ref<MineId | null>(null)
+/** What asked for the Add panel: a mine tab's "+", or a pick in the picker the grip or the entrance opened. */
+let addFrom: 'tab' | 'picker' = 'tab'
 
 const picker = useWindowMinePicker({
   mines: () => life.mines.value,
   built: SHIPPED_MODES,
   focus: focusOpener,
   addPanel: (mineId) => {
-    addPanelFor.value = mineId
+    addFrom = 'picker'
+    void risen.dispatch({ type: 'add', mineId })
   }
 })
 const menuEntries = gripMenuEntries(SHIPPED_MODES)
@@ -256,6 +275,8 @@ watch(overlayKind, async (kind) => {
     await overlay.close()
     return
   }
+  // The grip menu or the picker opened from the keyboard is a move outside the risen window too: it folds (S24.08).
+  if (risenOpen.value) void risen.dispatch({ type: 'outside' })
   // Drawn hidden first, so it can be measured; shown once the window has its room (ADR-025 item 2).
   await nextTick()
   await overlay.open(overlaySize())
@@ -308,6 +329,7 @@ watch(dragging, (now) => {
   if (!now) return
   swallow = false
   tabStep({ type: 'drag-start' })
+  void risen.dispatch({ type: 'interrupt', why: 'drag' })
   overlay.drop()
   if (overlayKind.value === null) return
   picker.dispatch({ type: 'interrupt' })
@@ -320,8 +342,16 @@ function chooseItem(id: GripMenuItemId): void {
 /** A press anywhere: outside the open overlay it closes it (S22.03, S22.16). */
 function pressed(event: PointerEvent): void {
   swallow = false
-  if (overlayKind.value === null) return
   const target = event.target as Element | null
+  // Outside the risen window, the strip included (S24.08); a press on a dwarf is its click's (S24.05).
+  if (
+    risenOpen.value &&
+    target?.closest('[data-veta-risen]') == null &&
+    target?.closest('[data-veta-dwarf]') == null
+  ) {
+    void risen.dispatch({ type: 'outside' })
+  }
+  if (overlayKind.value === null) return
   if (target?.closest('[data-veta-overlay-card]')) return
   const step = picker.dispatch({ type: 'dismiss' })
   // The press that closed it on the grip or the entrance does not open it again when released.
@@ -360,8 +390,12 @@ function tabStep(event: MineTabEvent): void {
   tab.value = next.machine
   if (!next.step.ok) return
   for (const effect of next.step.effects) {
-    if (effect.kind === 'move') life.openPanel(effect.mineId)
-    else addPanelFor.value = effect.mineId
+    if (effect.kind === 'move') {
+      life.openPanel(effect.mineId)
+    } else {
+      addFrom = 'tab'
+      void risen.dispatch({ type: 'add', mineId: effect.mineId })
+    }
   }
 }
 
@@ -400,13 +434,10 @@ const tabSide = computed(() => TAB_SIDE[dock.dock.value.edge])
  * (offsets leave out their resting 4 px slide), held in the window while chambers are drawn. Measured again whenever
  * the strip's parts, its edge or its anchored end change, and once the island has landed after a drag.
  */
-function measureBand(): void {
-  if (dragging.value) return
+function measureBand(): Promise<void> {
+  if (dragging.value) return Promise.resolve()
   const island = root.value?.querySelector<HTMLElement>('[data-veta-island]')
-  if (island == null || !sessions.value) {
-    void overlay.band(null)
-    return
-  }
+  if (island == null || !sessions.value) return overlay.band(null)
   const tabs: TabBox[] = [...island.querySelectorAll<HTMLElement>('[data-veta-tab]')].map((box) => {
     const chamber = box.parentElement!
     return {
@@ -416,8 +447,42 @@ function measureBand(): void {
       height: box.offsetHeight
     }
   })
+  // A dwarf's hover label stands beyond the tabs (ISSUE-290): the room of every label shown since the strip last changed
+  // is held too, so a hover never shrinks the window under a fading label.
+  const origin = island.getBoundingClientRect()
+  for (const label of island.querySelectorAll<HTMLElement>('[data-veta-dwarf-label]')) {
+    const box = label.getBoundingClientRect()
+    labelRoom = unionBox(labelRoom, {
+      x: box.left - origin.left,
+      y: box.top - origin.top,
+      width: box.width,
+      height: box.height
+    })
+  }
   const size = { width: island.offsetWidth, height: island.offsetHeight }
-  void overlay.band(tabBand(dock.dock.value, size, tabs))
+  const boxes = labelRoom === null ? tabs : [...tabs, labelRoom]
+  return overlay.band(tabBand(dock.dock.value, size, boxes))
+}
+
+/** The room every hover label shown since the strip last changed took, in the island's pixels. */
+let labelRoom: TabBox | null = null
+
+function unionBox(a: TabBox | null, b: TabBox): TabBox {
+  if (a === null) return b
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  return {
+    x,
+    y,
+    width: Math.max(a.x + a.width, b.x + b.width) - x,
+    height: Math.max(a.y + a.height, b.y + b.height) - y
+  }
+}
+
+/** The strip's parts, its edge or its anchored end changed: the labels' room is measured afresh. */
+function remeasureBand(): void {
+  labelRoom = null
+  void measureBand()
 }
 
 watch(
@@ -430,7 +495,7 @@ watch(
       .map((c) => `${c.mine.id}:${c.mine.name}:${c.mine.tier ?? ''}:${c.dwarfs.length}`)
       .join('|')
   ],
-  measureBand,
+  remeasureBand,
   { flush: 'post' }
 )
 
@@ -443,7 +508,196 @@ function visibility(): void {
   if (document.visibilityState !== 'hidden') return
   dock.cancel('hidden')
   picker.dispatch({ type: 'interrupt' })
+  void risen.dispatch({ type: 'interrupt', why: 'hidden' })
 }
+
+/*
+ * The risen window (07 machine 24; ISSUE-290). The Panel's own conversation and launch, over this window's own board,
+ * feed the hosted panels (BR-21); this window measures where the risen window stands and plays its motion.
+ */
+const board = useMines()
+const chat = useMessageDock()
+const { chatFeedOf } = useDwarfMessaging()
+const risenRef = ref<InstanceType<typeof VetaRisen> | null>(null)
+let unlistenWalks: (() => void) | null = null
+
+const sideways = (): boolean => dock.dock.value.edge === 'left' || dock.dock.value.edge === 'right'
+
+/** A box's centre along the island, from the island's start. */
+function centreAlong(island: DOMRect, box: DOMRect): number {
+  return sideways() ? box.top + box.height / 2 - island.top : box.left + box.width / 2 - island.left
+}
+
+/** The work area of the display (the stage) and the island on it, along its edge, in CSS pixels. */
+function measureStage(): {
+  size: { width: number; height: number }
+  island: { length: number; thickness: number; before: number; after: number }
+} {
+  const screen = window.screen as Screen & { availLeft?: number; availTop?: number }
+  const size = { width: screen.availWidth, height: screen.availHeight }
+  const island = root.value
+    ?.querySelector<HTMLElement>('[data-veta-island]')
+    ?.getBoundingClientRect()
+  const side = sideways()
+  const length = island === undefined ? 0 : side ? island.height : island.width
+  const at =
+    island === undefined
+      ? 0
+      : side
+        ? window.screenY + island.top - (screen.availTop ?? 0)
+        : window.screenX + island.left - (screen.availLeft ?? 0)
+  const stageLength = side ? size.height : size.width
+  return {
+    size,
+    island: {
+      length,
+      thickness: VETA_ISLAND.thickness,
+      before: at,
+      after: stageLength - at - length
+    }
+  }
+}
+
+/** The centre of what opened the risen window: the dwarf, the mine tab's "+", or the grip or the entrance. */
+function anchorOf(content: RisenContent): number {
+  const island = root.value?.querySelector<HTMLElement>('[data-veta-island]')
+  if (island == null) return 0
+  const islandBox = island.getBoundingClientRect()
+  const selector =
+    content.kind === 'chat'
+      ? `[data-veta-dwarf][data-dwarf-id="${content.dwarfId}"]`
+      : addFrom === 'tab'
+        ? `[data-veta-chamber][data-mine-id="${content.mineId}"] [data-tab-add]`
+        : '[data-veta-grip], [data-veta-entrance]'
+  const target = island.querySelector<HTMLElement>(selector)
+  if (target === null) return (sideways() ? islandBox.height : islandBox.width) / 2
+  return centreAlong(islandBox, target.getBoundingClientRect())
+}
+
+const risen = useWindowVetaRisen({
+  dock: () => dock.dock.value,
+  stage: measureStage,
+  anchor: anchorOf,
+  addRoom: (size) => overlay.hold(size),
+  capture: (dwarfId) =>
+    risenRef.value === null
+      ? null
+      : { draft: chat.drafts.value[dwarfId] ?? '', view: risenRef.value.captureView() },
+  async showChat(mineId, dwarfId, draft, view) {
+    chat.setDraft(dwarfId, draft)
+    chat.openMessage(mineId, dwarfId)
+    await nextTick()
+    await risenRef.value?.restoreView(view)
+  },
+  showAdd: (mineId) => chat.openLaunch(mineId),
+  dropDraft: (dwarfId) => chat.setDraft(dwarfId, ''),
+  clear: () => chat.close(),
+  motion: (kind) => risenRef.value?.play(kind) ?? Promise.resolve(),
+  focus: (target) => risenRef.value?.focusContent(target),
+  present: (mineId, dwarfId) =>
+    chambers.value.some((c) => c.mine.id === mineId && c.dwarfs.some((d) => d.id === dwarfId)),
+  // Every mine at work has its chamber drawn until "+N" folds some (ISSUE-291, S25.08): nothing to bring into view.
+  bringMine: () => undefined,
+  dragging: () => dragging.value
+})
+
+const risenOpen = computed(() => {
+  const now = risen.machine.value.state
+  return now === 'risen-chat' || now === 'risen-add' || now === 'read-only'
+})
+/** The mine the risen Add panel is aimed at. */
+const addPanelFor = computed<MineId | null>(() => {
+  const { state: now, content } = risen.machine.value
+  return content?.kind === 'add' && now !== 'folding' ? content.mineId : null
+})
+const addMineName = computed(
+  () => life.mines.value.find((m) => m.mine.id === addPanelFor.value)?.mine.name ?? ''
+)
+/** The dwarf whose chat is risen, drawn pressed in its chamber. */
+const openDwarf = computed<DwarfId | null>(() => {
+  const { state: now, content } = risen.machine.value
+  return content?.kind === 'chat' && now !== 'folding' ? content.dwarfId : null
+})
+
+function dwarfHit(mineId: MineId, dwarfId: DwarfId): void {
+  void risen.dispatch({ type: 'dwarf-hit', dwarfId, mineId })
+}
+
+function risenDraft(dwarfId: string, text: string): void {
+  risen.draft(dwarfId as DwarfId, text)
+}
+
+/** Esc outside the risen window folds it (S24.08); inside it the panel's own Esc closes it, the rename's first. */
+function escape(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || !risenOpen.value) return
+  const target = event.target as Element | null
+  if (typeof target?.closest === 'function' && target.closest('[data-veta-risen]') !== null) return
+  void risen.dispatch({ type: 'esc', renaming: false })
+}
+
+// The launch sent from the risen Add panel: its dwarf, or its failure shown inside it (S24.06, S24.07).
+watch(
+  () => chat.launch.state.value.launchedDwarfId,
+  (dwarfId) => {
+    if (dwarfId !== null && risen.machine.value.state === 'risen-add') {
+      void risen.dispatch({ type: 'launched', dwarfId: dwarfId as DwarfId })
+    }
+  }
+)
+watch(
+  () => chat.launch.state.value.failure,
+  (failure) => {
+    if (failure != null) void risen.dispatch({ type: 'launch-failed' })
+  }
+)
+// The Add panel's mine removed: it closes outright (S24.11).
+watch(
+  () => life.mines.value.map((m) => m.mine.id),
+  (live) => {
+    const aimed = addPanelFor.value
+    if (aimed !== null && !live.includes(aimed)) {
+      void risen.dispatch({ type: 'mine-removed', mineId: aimed })
+    }
+  }
+)
+
+/*
+ * A dwarf's hover label (S24.19): its silence counted a second at a time while one is hovered, from its newest message
+ * in this window's chat feed; shown once the window holds its room.
+ */
+const hoveredDwarf = ref<DwarfId | null>(null)
+const labelOn = ref(false)
+const now = ref(Date.now())
+let ticking: ReturnType<typeof setInterval> | null = null
+
+function stopTicking(): void {
+  if (ticking !== null) clearInterval(ticking)
+  ticking = null
+}
+
+function labelsOf(dwarf: DwarfWire): { tip: string; aria: string } {
+  return dwarfLabels(dwarf, silenceOf(chatFeedOf(dwarf.id)?.messages, now.value))
+}
+
+function dwarfHover(dwarfId: DwarfId | null): void {
+  hoveredDwarf.value = dwarfId
+  if (dwarfId === null) {
+    stopTicking()
+    return
+  }
+  now.value = Date.now()
+  ticking ??= setInterval(() => {
+    now.value = Date.now()
+  }, 1_000)
+}
+
+watch(hoveredDwarf, async (dwarfId) => {
+  labelOn.value = false
+  if (dwarfId === null) return
+  await nextTick()
+  await measureBand()
+  labelOn.value = hoveredDwarf.value === dwarfId
+})
 
 let started = false
 // A new length re-places the window for it (S21.19); the first is sent by the dock's start.
@@ -461,6 +715,14 @@ onMounted(() => {
   // A name measures its true width once the pixel faces have loaded.
   void document.fonts?.ready.then(measureBand)
   void life.start()
+  void board.start()
+  risen.start()
+  unlistenWalks = board.onWalk((walk) => {
+    if (walk.kind === 'walk-out') {
+      void risen.dispatch({ type: 'departed', dwarfId: walk.dwarfId, cause: walk.cause })
+    }
+  })
+  document.addEventListener('keydown', escape)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', visibility)
@@ -469,6 +731,11 @@ onBeforeUnmount(() => {
   resizes?.disconnect()
   dock.dispose()
   life.stop()
+  risen.stop()
+  unlistenWalks?.()
+  board.stop()
+  document.removeEventListener('keydown', escape)
+  stopTicking()
 })
 </script>
 
@@ -527,6 +794,11 @@ onBeforeUnmount(() => {
           :reverse="anchorEnd"
           :side="tabSide"
           :risen="tab.state === 'risen' && tab.mineId === chamber.mine.id"
+          :open-dwarf="openDwarf"
+          :labels-of="labelsOf"
+          :label-on="labelOn"
+          @dwarf="dwarfHit(chamber.mine.id, $event)"
+          @dwarf-hover="dwarfHover"
           @hover="chamberHover(chamber.mine.id, $event)"
           @focus="chamberFocus(chamber.mine.id, $event)"
           @open="tabAction(chamber.mine.id, 'open')"
@@ -576,6 +848,18 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
+    <VetaRisen
+      ref="risenRef"
+      :machine="risen.machine.value"
+      :geometry="risen.geometry.value"
+      :edge="dock.dock.value.edge"
+      :end="dock.dock.value.end"
+      :thickness="VETA_ISLAND.thickness"
+      :dock="chat"
+      :add-mine-name="addMineName"
+      @draft="risenDraft"
+      @close="risen.dispatch({ type: 'esc', renaming: false })"
+    />
     <WorktreeDialog
       :question="question"
       :adding="picker.adopting.value"

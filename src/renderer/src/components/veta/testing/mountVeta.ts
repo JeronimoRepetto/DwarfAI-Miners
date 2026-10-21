@@ -3,7 +3,13 @@
  * §2.2): fixture snapshots stand in for the Host, and UI main's answers are scripted. `layoutVeta {overlay}` answers
  * can be held back to see what shows before the window has grown. Never imported by production code (R14).
  */
-import type { MoveToModeParams, VetaLayoutRequest, VetaLayoutResult } from '@dwarfai/contracts'
+import type {
+  MoveToModeParams,
+  UiSessionPatch,
+  UiSessionSnapshot,
+  VetaLayoutRequest,
+  VetaLayoutResult
+} from '@dwarfai/contracts'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createFakeWindowApi } from '../../../../../contracts/ipc/testing/fakeWindowApi'
 import { FRAME_CLOCK_KEY } from '../../../composables/useFramePlayer'
@@ -28,6 +34,15 @@ export interface VetaWorldOptions {
   holdOverlays?: boolean
   /** Where UI main answers the island is docked; `VETA_PLACE` by default. */
   place?: VetaLayoutResult
+  /**
+   * Plays the risen window's motion for real (ISSUE-290). By default the page prefers reduced motion, so a rise or a
+   * fold settles within the promises a test flushes instead of on a transition jsdom never ends.
+   */
+  motion?: boolean
+  /** Holds back each `rise` answer until `answerRises` is called. */
+  holdRises?: boolean
+  /** UI main's session store, as A-N17 answers it (ISSUE-290); its drafts and chat views. */
+  session?: Pick<UiSessionSnapshot, 'drafts' | 'chatViews'>
 }
 
 export interface VetaWorld {
@@ -39,6 +54,12 @@ export interface VetaWorld {
   shownAtLayout: string[]
   /** Answers every held `overlay` request. */
   answerOverlays(): Promise<void>
+  /** Answers every held `rise` request. */
+  answerRises(): Promise<void>
+  /** Whether the risen window showed each time UI main was asked for a `rise` or a `fold`. */
+  risenAtLayout: string[]
+  /** Every A-N18 patch the page sent. */
+  patches: UiSessionPatch[]
   unmount(): void
 }
 
@@ -51,6 +72,13 @@ export function shownOverlay(): string {
   return 'none'
 }
 
+/** What the risen window shows now: `shown`, `hidden` (drawn, not shown) or `none`. */
+export function shownRisen(): string {
+  const box = document.querySelector<HTMLElement>('[data-veta-risen]')
+  if (box === null) return 'none'
+  return box.dataset.shown === 'true' ? 'shown' : 'hidden'
+}
+
 export async function mountVeta(
   data: VetaSnapshotData,
   options: VetaWorldOptions = {}
@@ -60,9 +88,38 @@ export async function mountVeta(
   const declares: string[] = []
   const shownAtLayout: string[] = []
   const held: Array<() => void> = []
+  const heldRises: Array<() => void> = []
+  const risenAtLayout: string[] = []
+  const patches: UiSessionPatch[] = []
+  const matchMedia = window.matchMedia
+  if (options.motion !== true) {
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('prefers-reduced-motion: reduce'),
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false
+    })) as unknown as typeof window.matchMedia
+  }
   ;(window as unknown as { api: unknown }).api = createFakeWindowApi({
     getHostSnapshot: () => Promise.resolve(snapshotPage(10, data)) as never,
     onHostEvent: () => () => undefined,
+    getUiSession: () =>
+      Promise.resolve({
+        drafts: {},
+        chatViews: {},
+        askPicks: {},
+        openChat: {},
+        currentMine: {},
+        valle: {},
+        ...options.session
+      } as UiSessionSnapshot) as never,
+    patchUiSession: (patch) => {
+      patches.push(patch as UiSessionPatch)
+    },
     moveToMode: (request) => {
       moves.push(request as MoveToModeParams)
       return Promise.resolve({ ok: true, value: undefined })
@@ -70,6 +127,13 @@ export async function mountVeta(
     layoutVeta: (request) => {
       const place = options.place ?? VETA_PLACE
       layouts.push(request as VetaLayoutRequest)
+      if (request.kind === 'rise' || request.kind === 'fold') {
+        risenAtLayout.push(`${request.kind}:${shownRisen()}`)
+        if (request.kind === 'rise' && options.holdRises === true) {
+          return new Promise((resolve) => heldRises.push(() => resolve(place)))
+        }
+        return Promise.resolve(place)
+      }
       if (request.kind !== 'overlay') return Promise.resolve(place)
       shownAtLayout.push(shownOverlay())
       if (options.holdOverlays !== true) return Promise.resolve(place)
@@ -103,9 +167,16 @@ export async function mountVeta(
       for (const answer of held.splice(0)) answer()
       await flushPromises()
     },
+    async answerRises() {
+      for (const answer of heldRises.splice(0)) answer()
+      await flushPromises()
+    },
+    risenAtLayout,
+    patches,
     unmount() {
       root.unmount()
       clock.dispose()
+      window.matchMedia = matchMedia
       delete (window as unknown as { api?: unknown }).api
     }
   }

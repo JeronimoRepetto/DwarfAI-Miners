@@ -17,17 +17,24 @@
  * The tab floats in the band the window always holds (07 §24 I-22): rising it never widens the strip or moves a dwarf.
  * The chamber body has no click handler: a container, never a target (S23.06).
  *
- * Opening a dwarf's chat (ISSUE-290) is not built: the dwarfs are figures, the chamber's name says who is in it.
+ * Each dwarf is its own target at its full sprite size (US-VETA-005; 07 machine 24; ISSUE-290): a button, so a click,
+ * Enter or Space on it asks for its chat (`dwarf`), and a keyboard stop after its chamber. The hit is the sprite
+ * itself: the chamber around it and the crew row between dwarfs take no press, so a press near a dwarf that misses it
+ * opens nothing (S24.20). A mouse press does not take the keyboard focus, so it raises no tab. Hovering a dwarf shows
+ * its one-line label (`DwarfLabel`), centred on that dwarf on every edge and beyond the raised tab (S24.19); the window
+ * holds the label's room before it shows (`labelOn`). The open chat's dwarf is drawn pressed.
  */
-import { t, type DwarfWire, type MineWire } from '@dwarfai/contracts'
-import { computed } from 'vue'
+import { t, type DwarfId, type DwarfWire, type MineWire } from '@dwarfai/contracts'
+import { computed, ref } from 'vue'
 import { INTERIOR_SRC } from '../../lib/art'
+import { labelPlace, type LabelBox } from '../../lib/veta/dwarfLabel'
 import { portraitMark } from '../../lib/dwarf/portrait'
 import { designTierLabel } from '../../lib/presentation'
 import { settledClips } from '../../lib/sprite/dwarfSequence'
 import { loopOf, type SpriteClip } from '../../lib/sprite/spriteSheet'
 import type { MineTier } from '../../types'
 import SpriteStrip from '../dwarf/SpriteStrip.vue'
+import DwarfLabel from './DwarfLabel.vue'
 import MineTab from './MineTab.vue'
 
 const props = defineProps<{
@@ -41,6 +48,12 @@ const props = defineProps<{
   side: 'top' | 'bottom' | 'left' | 'right'
   /** Its tab is risen (07 machine 23). */
   risen: boolean
+  /** The dwarf whose chat is risen, drawn pressed; `null` when none of this chamber's is. */
+  openDwarf: DwarfId | null
+  /** A dwarf's hover label and its name for a screen reader (`dwarfLabels`). */
+  labelsOf: (dwarf: DwarfWire) => { tip: string; aria: string }
+  /** The window holds the hovered dwarf's label room: it may show. Shown at once when unset. */
+  labelOn?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -52,7 +65,43 @@ const emit = defineEmits<{
   open: []
   /** "+" on its tab. */
   add: []
+  /** A click, Enter or Space on a dwarf's sprite: its chat. */
+  dwarf: [dwarfId: DwarfId]
+  /** The pointer is on a dwarf, or on none of this chamber's. */
+  dwarfHover: [dwarfId: DwarfId | null]
 }>()
+
+/** The dwarf under the pointer, whose label shows. */
+const hovered = ref<DwarfId | null>(null)
+const crewRef = ref<HTMLElement | null>(null)
+const tabRef = ref<HTMLElement | null>(null)
+const labelStyle = ref<Record<string, string>>({})
+
+const hoveredDwarf = computed(() => props.dwarfs.find((d) => d.id === hovered.value) ?? null)
+
+/** A box in the chamber's own pixels: the crew row's offset plus the part's in it. */
+function boxOf(part: HTMLElement, within: HTMLElement | null): LabelBox {
+  return {
+    x: (within?.offsetLeft ?? 0) + part.offsetLeft,
+    y: (within?.offsetTop ?? 0) + part.offsetTop,
+    width: part.offsetWidth,
+    height: part.offsetHeight
+  }
+}
+
+function hoverDwarf(dwarfId: DwarfId | null, event?: PointerEvent): void {
+  if (dwarfId !== null && event?.currentTarget instanceof HTMLElement) {
+    const tab = tabRef.value
+    const tabBox =
+      tab === null
+        ? null
+        : { x: tab.offsetLeft, y: tab.offsetTop, width: tab.offsetWidth, height: tab.offsetHeight }
+    labelStyle.value = labelPlace(props.side, boxOf(event.currentTarget, crewRef.value), tabBox)
+  }
+  if (dwarfId === null && hovered.value === null) return
+  hovered.value = dwarfId
+  emit('dwarfHover', dwarfId)
+}
 
 /** Focus leaving for an element still inside the chamber (its tab's buttons) is not focus leaving it. */
 function focusOut(event: FocusEvent): void {
@@ -114,15 +163,21 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
       aria-hidden="true"
       data-veta-lamp
     />
-    <div class="veta-chamber__crew">
-      <span
+    <div ref="crewRef" class="veta-chamber__crew">
+      <button
         v-for="dwarf in crew"
         :key="dwarf.id"
-        class="veta-dwarf"
+        type="button"
+        class="veta-dwarf dm-focus-inset"
+        :aria-label="labelsOf(dwarf).aria"
+        :aria-pressed="openDwarf === dwarf.id ? 'true' : 'false'"
         :data-status="dwarf.status"
         :data-dwarf-id="dwarf.id"
-        aria-hidden="true"
         data-veta-dwarf
+        @mousedown.prevent
+        @click="emit('dwarf', dwarf.id)"
+        @pointerenter="hoverDwarf(dwarf.id, $event)"
+        @pointerleave="hoverDwarf(null)"
       >
         <SpriteStrip :clips="clipsOf(dwarf)" :phase-clips="1" flip />
         <span v-if="dwarf.status === 'asking'" class="veta-dwarf__ask" data-veta-ask>{{
@@ -131,9 +186,18 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
         <span v-else-if="dwarf.status === 'asleep'" class="veta-dwarf__z" data-veta-z>{{
           portraitMark('asleep')
         }}</span>
-      </span>
+      </button>
     </div>
+    <DwarfLabel
+      v-if="hoveredDwarf !== null"
+      :text="labelsOf(hoveredDwarf).tip"
+      :side="side"
+      :place="labelStyle"
+      :on="labelOn ?? true"
+      :data-dwarf-id="hoveredDwarf.id"
+    />
     <div
+      ref="tabRef"
       class="veta-chamber__tab"
       :data-risen="risen ? 'true' : 'false'"
       :aria-hidden="risen ? undefined : 'true'"
@@ -312,13 +376,41 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
   align-items: center;
 }
 
-/* `.dm-vdwarf`: the sprite at 1:1. */
+/* `.dm-vdwarf`: the sprite at 1:1, a button with no chrome of its own; its brass underline on hover and while its chat
+   is open. */
 .veta-dwarf {
   position: relative;
   display: block;
   flex: none;
   width: 36px;
   height: 38px;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+.veta-dwarf::after {
+  position: absolute;
+  right: 6px;
+  bottom: -3px;
+  left: 6px;
+  height: 2px;
+  content: '';
+  background: var(--brass);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-step);
+}
+
+.veta-dwarf:hover::after {
+  opacity: 0.6;
+}
+
+.veta-dwarf[aria-pressed='true']::after {
+  opacity: 1;
 }
 
 .veta-dwarf__ask,

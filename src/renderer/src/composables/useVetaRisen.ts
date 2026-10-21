@@ -17,7 +17,8 @@
  * - The window shrinks only after the fold has played (`layoutVeta {fold}`, S24.09); after a drag UI main already
  *   forgot the room (S24.14). Motion is the host's (`transform`/`opacity` only) and ends by itself or by its watchdog.
  * - A reveal (A-N16 `onRevealDwarfChat`) rises a present dwarf's chat as a click does, or brings only its mine
- *   (S24.15, S24.16); the "+N" unfold before it is ISSUE-291's.
+ *   (S24.15, S24.16); the "+N" unfold before it is ISSUE-291's. Veta's display removed (A-N28, S21.13) folds the
+ *   chat at once (S24.14).
  *
  * Each step stamps the effects it starts: a later step (a fold mid-rise, a drag) stops the earlier one's remaining
  * effects, so a motion that ends late never steps a machine that has moved on. The bridge and the host are injected
@@ -31,6 +32,7 @@ import type {
   UiSessionPatch,
   UiSessionSnapshot,
   VetaDock,
+  VetaDockChanged,
   VetaLayoutRequest,
   VetaLayoutResult
 } from '@dwarfai/contracts'
@@ -48,12 +50,13 @@ import {
   type RisenWindow
 } from '../lib/veta/risenWindow'
 
-/** The seam A members the risen window uses (14 §2.2 A-N16, A-N17, A-N18, A-N23). */
+/** The seam A members the risen window uses (14 §2.2 A-N16, A-N17, A-N18, A-N23, A-N28). */
 export interface VetaRisenBridge {
   layoutVeta(request: VetaLayoutRequest): Promise<VetaLayoutResult>
   patchUiSession(patch: UiSessionPatch): void
   getUiSession(): Promise<UiSessionSnapshot>
   onRevealDwarfChat(listener: (target: RevealDwarfChatPush) => void): () => void
+  onVetaDockChanged(listener: (changed: VetaDockChanged) => void): () => void
 }
 
 type Size = { width: number; height: number }
@@ -110,7 +113,7 @@ export interface VetaRisen {
   dispatch(event: RisenEvent): Promise<void>
   /** The open chat's draft as it is typed, kept in the session store. */
   draft(dwarfId: DwarfId, text: string): void
-  /** Hears reveals. */
+  /** Hears reveals and Veta's display going away. */
   start(): void
   stop(): void
 }
@@ -125,6 +128,7 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
   /** What holds the risen window's room in UI main: a `rise`, or the Add panel's room beside the band. */
   let heldBy: 'rise' | 'add' | null = null
   let unlisten: (() => void) | null = null
+  let unlistenDock: (() => void) | null = null
 
   function place(content: RisenContent): RisenGeometry {
     const { size, island } = host.stage()
@@ -269,10 +273,22 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
           present: target.dwarfId !== null && host.present(target.mineId, target.dwarfId)
         })
       })
+      // Veta's display removed (S21.13): the island moved to another display, the chat folds at once (S24.14).
+      unlistenDock ??= bridge.onVetaDockChanged((changed) => {
+        if (changed.reason === 'display-removed')
+          void dispatch({ type: 'interrupt', why: 'display' })
+      })
     },
     stop() {
       unlisten?.()
       unlisten = null
+      unlistenDock?.()
+      unlistenDock = null
     }
   }
+}
+
+/** The risen window over the page's own `window.api` (R13: `window.api` is read in composables only). */
+export function useWindowVetaRisen(host: VetaRisenHost): VetaRisen {
+  return useVetaRisen({ bridge: window.api, host })
 }
