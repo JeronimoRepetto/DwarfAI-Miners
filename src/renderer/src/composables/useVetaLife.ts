@@ -15,6 +15,7 @@
 import type {
   DwarfWire,
   HostFrame,
+  MineId,
   MineWire,
   MoveToModeParams,
   SnapshotChunk,
@@ -63,8 +64,11 @@ export interface VetaLifePart {
   /** Follows the Host; answers whether the first snapshot was read. */
   start(): Promise<boolean>
   stop(): void
-  /** S20.12 and expand: the Panel, with no mine (A-N13 `moveToMode`; machine 27 runs the move). */
-  openPanel(): void
+  /**
+   * S20.12 and expand: the Panel, with no mine; a mine tab's "▢" (S23.04): the Panel on that mine (A-N13 `moveToMode`;
+   * machine 27 runs the move).
+   */
+  openPanel(mineId?: MineId): void
 }
 
 /** The sections Veta reads (14 §6.4). */
@@ -144,8 +148,10 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
       return fed
     },
     stop,
-    openPanel() {
-      void deps.bridge.moveToMode({ mode: 'panel' }).catch(() => {
+    openPanel(mineId) {
+      const params: MoveToModeParams =
+        mineId === undefined ? { mode: 'panel' } : { mode: 'panel', mineId }
+      void deps.bridge.moveToMode(params).catch(() => {
         // UI main is unreachable: nothing moved, and the entrance stays where the person can try again.
       })
     }

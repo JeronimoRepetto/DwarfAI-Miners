@@ -11,6 +11,11 @@
  * - UI main out of reach: the overlay shows anyway in the window it has, which is better than a control that does
  *   nothing at all.
  *
+ * The mine tab's band (07 §24 I-22, N-25; ISSUE-289) is room the window holds for good while chambers are drawn, so a
+ * hover never resizes it: `band` asks for it each time its size changes. An overlay's room is the box around the band
+ * and the overlay, both on the screen side from the island's anchored end, and a closed overlay gives the window back
+ * to the band, not to the bare island. After a `drop` the band is asked again.
+ *
  * The bridge is injected (the house idiom over `vi.mock`).
  */
 import type { VetaLayoutRequest, VetaLayoutResult } from '@dwarfai/contracts'
@@ -25,29 +30,50 @@ export interface VetaOverlayDeps {
   bridge: VetaOverlayBridge
 }
 
+type Size = { width: number; height: number }
+
 export interface VetaOverlay {
   /** Whether the overlay may be drawn: the window has its room. */
   shown: Readonly<Ref<boolean>>
   /** Grows the window for an overlay of `size` (its gap to the island included), then shows it. */
-  open(size: { width: number; height: number }): Promise<void>
+  open(size: Size): Promise<void>
   /** Hides the overlay, then gives the room back once it has left the page. */
   close(): Promise<void>
   /** Hides the overlay with no request: UI main already forgot it (a drag started). */
   drop(): void
+  /** The mine tab's band, held in the window from now on; `null` when no chamber is drawn. */
+  band(size: Size | null): Promise<void>
 }
+
+const same = (a: Size | null, b: Size | null): boolean =>
+  a === b || (a !== null && b !== null && a.width === b.width && a.height === b.height)
 
 export function useVetaOverlay(deps: VetaOverlayDeps): VetaOverlay {
   const shown = ref(false)
-  /** Whether UI main holds room for an overlay. */
-  let grown = false
+  /** The band the mine tab rises into. */
+  let band: Size | null = null
+  /** The open overlay's room. */
+  let current: Size | null = null
+  /** The room UI main holds; `undefined` when not known (nothing asked yet, or forgotten by a drag). */
+  let held: Size | null | undefined = undefined
   /** Stamps each open and close, so a late answer is told apart. */
   let stamp = 0
 
-  async function ask(bounds: { width: number; height: number } | null): Promise<void> {
+  /** The room for the band and the open overlay together. */
+  function room(): Size | null {
+    if (band === null || current === null) return band ?? current
+    return {
+      width: Math.max(band.width, current.width),
+      height: Math.max(band.height, current.height)
+    }
+  }
+
+  async function ask(bounds: Size | null): Promise<void> {
+    held = bounds
     try {
       await deps.bridge.layoutVeta({ kind: 'overlay', bounds })
     } catch {
-      // UI main is out of reach: the window keeps the size it has.
+      // UI main is unreachable: the window keeps the size it has.
     }
   }
 
@@ -55,22 +81,31 @@ export function useVetaOverlay(deps: VetaOverlayDeps): VetaOverlay {
     shown,
     async open(size) {
       const mine = ++stamp
-      grown = true
-      await ask({ width: Math.ceil(size.width), height: Math.ceil(size.height) })
+      current = { width: Math.ceil(size.width), height: Math.ceil(size.height) }
+      await ask(room())
       if (mine === stamp) shown.value = true
     },
     async close() {
       ++stamp
       shown.value = false
-      if (!grown) return
-      grown = false
+      if (current === null) return
+      current = null
       await nextTick()
-      await ask(null)
+      await ask(room())
     },
     drop() {
       ++stamp
       shown.value = false
-      grown = false
+      current = null
+      held = undefined
+    },
+    async band(size) {
+      band = size === null ? null : { width: Math.ceil(size.width), height: Math.ceil(size.height) }
+      const next = room()
+      if (held !== undefined && same(next, held)) return
+      // Nothing known to be held and nothing to hold: there is nothing to ask for.
+      if (held === undefined && next === null) return
+      await ask(next)
     }
   }
 }

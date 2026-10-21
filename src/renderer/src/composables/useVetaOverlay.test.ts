@@ -87,4 +87,40 @@ describe('useVetaOverlay', () => {
     expect(overlay.shown.value).toBe(false)
     expect(log).toHaveLength(asked)
   })
+
+  it('[S23.01, ADR-025] the mine tab band stays in the window: an overlay grows it to both, and its close gives back only the overlay', async () => {
+    const { overlay, log, answer } = world()
+    // The band the tabs rise into is held for good (07 §24 I-22), asked once for each new size.
+    void overlay.band({ width: 310, height: 40 })
+    void overlay.band({ width: 310, height: 40 })
+    expect(log).toEqual(['{"kind":"overlay","bounds":{"width":310,"height":40}}'])
+    expect(overlay.shown.value).toBe(false)
+    await answer()
+
+    // The grip menu opens: the room holds the menu and the band, both from the island's anchored end.
+    const opened = overlay.open({ width: 180, height: 160 })
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":{"width":310,"height":160}}')
+    await answer()
+    await opened
+    expect(overlay.shown.value).toBe(true)
+
+    // It closes: the window goes back to the band, never to the bare island.
+    const closing = overlay.close()
+    // Asked once the menu has left the page.
+    await nextTick()
+    await answer()
+    await closing
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":{"width":310,"height":40}}')
+
+    // A drag forgets everything (UI main replaced the window); once landed, the band is asked again.
+    overlay.drop()
+    void overlay.band({ width: 270, height: 300 })
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":{"width":270,"height":300}}')
+    const asked = log.length
+    void overlay.band({ width: 270, height: 300 })
+    expect(log).toHaveLength(asked)
+    // No chamber left: the band is given back.
+    void overlay.band(null)
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":null}')
+  })
 })

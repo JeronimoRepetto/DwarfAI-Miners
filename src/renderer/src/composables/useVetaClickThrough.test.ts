@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { useVetaClickThrough } from './useVetaClickThrough'
+import { useVetaClickThrough, vetaTakesPointer } from './useVetaClickThrough'
 
 /** An island 300 × 60 at (10, 10) whose four corners, 12 px round, are transparent. */
 const RADIUS = 12
@@ -25,5 +26,35 @@ describe('useVetaClickThrough (ADR-025 item 4; 14 §2.2 A-N22)', () => {
     clickThrough.pointerMoved(309, 69) // the bottom-right corner
     clickThrough.pointerMoved(30, 30) // back on the island, inside the curve
     expect(sent).toEqual([{ ignore: true }, { ignore: false }, { ignore: true }, { ignore: false }])
+  })
+
+  it('[US-VETA-004.AC02, ADR-025] the tab band is click-through except over a risen tab', () => {
+    // The Veta window as the root draws it: the island with a chamber and its tab, the open overlay's card, and the
+    // transparent room around them (the tab band, the overlay's gap).
+    document.body.innerHTML = `
+      <div data-veta-root>
+        <div data-veta-island>
+          <div data-veta-chamber data-mine-id="a">
+            <span data-veta-dwarf></span>
+            <div data-veta-tab data-risen="false"><button data-tab-open></button></div>
+          </div>
+          <div data-veta-chamber data-mine-id="b">
+            <div data-veta-tab data-risen="true"><button data-tab-open></button></div>
+          </div>
+        </div>
+        <div data-veta-overlay><div data-veta-overlay-card><button></button></div></div>
+      </div>`
+    const at = (selector: string): Element => document.querySelector(selector)!
+    // The band and the overlay's room are transparent: the mouse goes through.
+    expect(vetaTakesPointer(at('[data-veta-root]'))).toBe(false)
+    expect(vetaTakesPointer(at('[data-veta-overlay]'))).toBe(false)
+    expect(vetaTakesPointer(null)).toBe(false)
+    // A folded tab, even caught mid-fade, is part of the band.
+    expect(vetaTakesPointer(at('[data-mine-id="a"] [data-tab-open]'))).toBe(false)
+    // The island, a risen tab and the overlay's card take it.
+    expect(vetaTakesPointer(at('[data-veta-dwarf]'))).toBe(true)
+    expect(vetaTakesPointer(at('[data-mine-id="b"] [data-tab-open]'))).toBe(true)
+    expect(vetaTakesPointer(at('[data-veta-overlay-card] button'))).toBe(true)
+    document.body.innerHTML = ''
   })
 })

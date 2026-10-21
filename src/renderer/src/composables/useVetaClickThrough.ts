@@ -9,6 +9,9 @@
  * where moves are not forwarded, UI main changes nothing and the bounds hugging the island are the rule
  * (S-025-3); the renderer does not need to know which OS it runs on.
  *
+ * The window always holds the band the mine tab rises into (07 §24 I-22; ISSUE-289), so the band is click-through
+ * except over a risen tab (`vetaTakesPointer`).
+ *
  * The bridge and the island's shape are injected (the house idiom over `vi.mock`).
  */
 
@@ -40,6 +43,18 @@ export function useVetaClickThrough(deps: VetaClickThroughDeps): VetaClickThroug
       deps.bridge.setVetaClickThrough({ ignore })
     }
   }
+}
+
+/**
+ * Whether the element under the pointer takes the mouse (ADR-025 item 4; UC-047): the island, a risen mine tab and an
+ * open overlay's card do. The rest of the window is transparent room: the band the mine tab rises into (07 §24 I-22),
+ * held in the window for good, and an overlay's gap. A folded tab is part of that band, even while it fades out.
+ */
+export function vetaTakesPointer(hit: Element | null): boolean {
+  if (hit === null) return false
+  const tab = hit.closest('[data-veta-tab]')
+  if (tab !== null) return tab.getAttribute('data-risen') === 'true'
+  return hit.closest('[data-veta-island], [data-veta-overlay-card]') !== null
 }
 
 /** Click-through over the page's own `window.api` (R13: `window.api` is read in composables only). */
