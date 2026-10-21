@@ -1,5 +1,5 @@
 // layer: L2
-import type { VetaDockChanged } from '@dwarfai/contracts'
+import type { MineId, VetaDockChanged } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
 import { RecordingUiLog } from '../../hostLauncher/fakes/RecordingUiLog'
 import { FakeScreenAreaProvider } from '../ports/fakes/FakeScreenAreaProvider'
@@ -27,6 +27,8 @@ const SECOND: DisplayInfo = {
   primary: false
 }
 const ISLAND = { length: 480, thickness: 72 }
+/** A mine of the unbuilt `unfold-overflow` request. */
+const PRIMARY_MINE = '11111111-1111-4111-8111-111111111111' as MineId
 
 function world(options: { store?: InMemoryUiPreferenceStore; displays?: DisplayInfo[] } = {}) {
   const store = options.store ?? new InMemoryUiPreferenceStore()
@@ -195,9 +197,9 @@ describe('the Veta dock in UI main (07 machine 21; UC-045)', () => {
     expect(dock.layout({ kind: 'drag-start', screenX: 100, screenY: 100 }).applied).toBe(false)
     expect(dock.layout({ kind: 'dock-key', edge: 'top' }).applied).toBe(false)
     // The kinds of later issues answer `applied: false` until they are built. AMENDED for ISSUE-288: `overlay` is built.
-    for (const request of [{ kind: 'fold' }] as const) {
-      expect(dock.layout(request).applied).toBe(false)
-    }
+    // AMENDED for ISSUE-290: `rise` and `fold` are built (their case is the risen-room one below); `unfold-overflow`
+    // is ISSUE-291's.
+    expect(dock.layout({ kind: 'unfold-overflow', mineId: PRIMARY_MINE }).applied).toBe(false)
   })
 
   it('[S21.17] Reset metrics moves a shown Veta to the default place, with no onVetaDockChanged', () => {
@@ -247,5 +249,47 @@ describe('the Veta dock in UI main (07 machine 21; UC-045)', () => {
     dock.layout({ kind: 'drag-start', screenX: 1000, screenY: 1380 })
     dock.layout({ kind: 'drag-end', screenX: 1000, screenY: 1380 })
     expect(placed.at(-1)).toMatchObject({ width: 400, height: 72 })
+  })
+
+  it('[ADR-025, S24.01, S24.09, S24.14] a rise grows the window by the risen room, kept with an overlay, and a fold or a drag gives it back', () => {
+    const { dock, placed, store } = world()
+    // The tab band is held (ISSUE-289): 480 x 30 beside the island.
+    dock.layout({ kind: 'overlay', bounds: { width: 480, height: 30 } })
+    expect(placed.at(-1)).toEqual({ x: 2560 - 16 - 480, y: 1392 - 102, width: 480, height: 102 })
+    // A chat rises: the window grows toward the screen and away from the anchor corner, the island unmoved.
+    const answer = dock.layout({
+      kind: 'rise',
+      dwarfId: '33333333-3333-4333-8333-333333333333' as never,
+      chatBounds: { width: 700, height: 614 }
+    })
+    expect(answer).toMatchObject({ applied: true, displayKey: PRIMARY.displayKey })
+    expect(placed.at(-1)).toEqual({
+      x: 2560 - 16 - 700,
+      y: 1392 - 72 - 614,
+      width: 700,
+      height: 686
+    })
+    // A menu opening meanwhile keeps the risen room: the larger of the two holds the window.
+    dock.layout({ kind: 'overlay', bounds: { width: 480, height: 200 } })
+    expect(placed.at(-1)).toEqual({
+      x: 2560 - 16 - 700,
+      y: 1392 - 72 - 614,
+      width: 700,
+      height: 686
+    })
+    dock.layout({ kind: 'overlay', bounds: { width: 480, height: 30 } })
+    // Folded: back to the band. Nothing about a rise is ever saved.
+    expect(dock.layout({ kind: 'fold' }).applied).toBe(true)
+    expect(placed.at(-1)).toEqual({ x: 2560 - 16 - 480, y: 1392 - 102, width: 480, height: 102 })
+    expect(store.load('vetaDock')).toEqual({})
+    // A drag forgets a risen chat (S24.14): its drop lands the island alone.
+    dock.layout({
+      kind: 'rise',
+      dwarfId: '33333333-3333-4333-8333-333333333333' as never,
+      chatBounds: { width: 700, height: 614 }
+    })
+    dock.layout({ kind: 'drag-start', screenX: 1000, screenY: 1380 })
+    dock.layout({ kind: 'drag-end', screenX: 1000, screenY: 1380 })
+    expect(placed.at(-1)).toMatchObject({ width: 480, height: 72 })
   })
 })
