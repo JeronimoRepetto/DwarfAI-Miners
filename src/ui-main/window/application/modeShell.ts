@@ -128,9 +128,12 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
     start: deps.start
   })
   revealer = deps.revealer({
+    // The mode of the window that exists: Veta while Veta is shown (07 S24.15, ISSUE-290), else the Panel, a hidden
+    // one included (S10.11).
     existing: () => {
       const rung = coordinator.ladder().state
-      return rung === 'tray-only' || rung === 'not-running' ? null : 'panel'
+      if (rung === 'tray-only' || rung === 'not-running') return null
+      return rung === 'veta' ? 'veta' : 'panel'
     },
     restore: () => void coordinator.restore(),
     openAtLaunch: async () => {

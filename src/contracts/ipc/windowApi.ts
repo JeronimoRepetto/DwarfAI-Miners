@@ -492,8 +492,8 @@ export const windowingLimitsSchema = z
 
 // A-N23 `layoutVeta`, A-N28 `onVetaDockChanged` (14 §2.2, §3.9; ADR-025 items 2, 5, 8; 07 machine 21, N-14, N-25;
 // ISSUE-286): the whole `VetaLayoutRequest` union as 14 §3.9 writes it. ISSUE-286 implements `drag-start`, `drag-end`,
-// `dock-key` and `island-resize`; the other kinds answer `applied: false` until their issue implements them (ISSUE-287,
-// ISSUE-288, ISSUE-291, ISSUE-292). Geometry, ids and a display key only: nothing a person or a provider said.
+// `dock-key` and `island-resize`, ISSUE-288 `overlay`, ISSUE-290 `rise` and `fold`; the other kinds answer
+// `applied: false` until their issue implements them (ISSUE-291, ISSUE-292). Geometry, ids and a display key only: nothing a person or a provider said.
 export type VetaLayoutRequest =
   | { kind: 'rise'; dwarfId: DwarfId; chatBounds: { width: number; height: number } } // resize before the rise (ADR-025 D2)
   | { kind: 'fold' } // resize after the fold completes

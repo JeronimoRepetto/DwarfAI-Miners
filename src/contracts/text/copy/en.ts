@@ -150,6 +150,20 @@ export const en = {
   },
   'veta.chamber.asking': { one: '{count} needs you', other: '{count} need you' },
 
+  // A dwarf in a Veta chamber (US-VETA-005; 07 machine 24; ISSUE-290): its name as a target, the design's run-time
+  // `<name>, <status>, silent <silence>` (DS/docs/copy.md, Veta strip, each dwarf's aria-label), and its one-line hover
+  // label "`<name>` · `<status>` · silent `<silence>`" (DS/docs/components.md, Mine chamber, Anatomy; US-VETA-005.AC01,
+  // PO #54). The status words are the design's: working, needs you, asleep and idle. A silence nobody measured prints
+  // nothing rather than a guess (the dwarf tooltip's rule), so each line has a form without it.
+  'veta.dwarf.label': '{name}, {status}, silent {silence}',
+  'veta.dwarf.label.unmeasured': '{name}, {status}',
+  'veta.dwarf.tip': '{name} · {status} · silent {silence}',
+  'veta.dwarf.tip.unmeasured': '{name} · {status}',
+  'veta.dwarf.status.working': 'working',
+  'veta.dwarf.status.asking': 'needs you',
+  'veta.dwarf.status.asleep': 'asleep',
+  'veta.dwarf.status.idle': 'idle',
+
   // A chamber's mine tab (US-VETA-004; 07 machine 23; ISSUE-289): its two icon buttons' names and titles, the design's
   // own copy (DS/docs/copy.md, Mine tab, "Built at run time"; DS/docs/accessibility.md, the Veta mine tab).
   'veta.tab.open': 'Open {name} in the Panel',

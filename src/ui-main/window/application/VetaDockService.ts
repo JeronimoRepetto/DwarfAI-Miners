@@ -12,8 +12,12 @@
 //   toward the screen and aligned to the island's anchored end (`vetaOverlayFrame`; the renderer pins the island and
 //   the overlay by the same rule), so the island never moves on the screen, and `null` shrinks it back once the
 //   overlay closed. An overlay
-//   is never saved, and a drag forgets it (the renderer closes it silently, S22.17). The other kinds answer
-//   `applied: false` until their issue builds them.
+//   is never saved, and a drag forgets it (the renderer closes it silently, S22.17). `rise` (ISSUE-290; 07 machine 24
+//   S24.01, S24.09; ADR-025 item 2) grows the window before a dwarf's chat rises, by the risen room `chatBounds` beside
+//   the island the same way (toward the screen, from its anchored end: the window grows away from the anchor corner,
+//   DS/docs/screens/veta.md V4); the larger of the overlay and the risen room holds the window, so a menu opened over a
+//   risen chat never shrinks it. `fold` gives the risen room back once the fold has played; a drag forgets it (S24.14).
+//   Neither is ever saved. The other kinds answer `applied: false` until their issue builds them.
 // - A landing whose bounds the OS refused (the read-back differs, `dockingAvailable` false) puts the island back where
 //   it was and saves nothing (S21.20); with docking unavailable (native Wayland, S21.16) a drag or an arrow key changes
 //   nothing.
@@ -106,6 +110,8 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
   let place: VetaPlace | null = null
   /** The open overlay's room beside the island, or `null` while none is open. */
   let overlay: { width: number; height: number } | null = null
+  /** The risen chat's room beside the island (07 machine 24), or `null` while it is folded. */
+  let risen: { width: number; height: number } | null = null
   /** The work area Veta was last placed (or first found) against, to tell a work-area change (S21.12). */
   let placedArea: Rect = { x: 0, y: 0, width: 0, height: 0 }
 
@@ -123,10 +129,19 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
     }
     return place
   }
+  /** The room beside the island the window holds: the larger of the overlay's and the risen chat's. */
+  const room = (): { width: number; height: number } | null => {
+    if (overlay === null || risen === null) return overlay ?? risen
+    return {
+      width: Math.max(overlay.width, risen.width),
+      height: Math.max(overlay.height, risen.height)
+    }
+  }
   const boundsAt = (at: VetaPlace): Rect => {
     const hugging = vetaBounds(areaOf(at.displayKey), at.dock, island)
-    if (overlay === null) return hugging
-    const frame = vetaOverlayFrame(at.dock, island, overlay)
+    const beside = room()
+    if (beside === null) return hugging
+    const frame = vetaOverlayFrame(at.dock, island, beside)
     return {
       x: hugging.x - frame.island.x,
       y: hugging.y - frame.island.y,
@@ -188,6 +203,7 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
       case 'drag-start': {
         if (!deps.dockingAvailable()) return result(false)
         overlay = null
+        risen = null
         const surface = displayUnder(displays(), request.screenX, request.screenY)
         // The drag surface is not a place: `placedArea` stays the work area Veta is docked against (S21.12).
         window.placeAt(surface.workArea)
@@ -215,6 +231,16 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
       }
       case 'overlay': {
         overlay = request.bounds === null ? null : { ...request.bounds }
+        putAt(at)
+        return result(true)
+      }
+      case 'rise': {
+        risen = { ...request.chatBounds }
+        putAt(at)
+        return result(true)
+      }
+      case 'fold': {
+        risen = null
         putAt(at)
         return result(true)
       }
