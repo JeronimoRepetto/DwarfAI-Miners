@@ -9,7 +9,7 @@
 //   the Panel those parts get answers `hide`, `show` and `toggleVisible` through it. Everything else is the Panel's own.
 // - A notification click reaches the per-mode reveal through the coordinator (S27.14), and the reveal's own restore
 //   and launch-open are runs too (S10.11, S10.12).
-import type { DwarfId } from '@dwarfai/contracts'
+import { builtModesOf, type DwarfId } from '@dwarfai/contracts'
 import type { UiLog } from '../../diagnostics/uiLogger'
 import type { ModeTiming } from '../ports/modeTiming'
 import type { ModeWindow } from '../ports/windowFactory'
@@ -19,12 +19,17 @@ import type { DwarfChatRevealer, RevealWindows } from './revealDwarfChat'
 import type { VetaWindowController } from './VetaWindowController'
 import type { StoredUiPreferences } from './uiPreferences'
 
+/** The build profile electron.vite.config.ts stamps from `DWARFAI_BUILD_PROFILE`; absent outside a build (tests). */
+declare const __DWARFAI_BUILD_PROFILE__: string | undefined
+
 /**
- * The modes this build ships, UI main's copy of ISSUE-267's feature list (`renderer/src/lib/shell/builtDestinations.ts`
- * `SHIPPED_MODES`): the Panel until the Veta epic ships (ADR-034 item 2). Veta and Valle join here with their windows
- * (ISSUE-285, EPIC-20).
+ * The modes this build contains: the one built-modes list (`builtModesOf`, 17 §1.9), which the renderer's controls
+ * read too (`SHIPPED_MODES`). A release build has the Panel alone until the Veta epic ships (ADR-034 item 2); the E2E
+ * build profile adds Veta and Valle. Valle is data only: with no window built, a move to it is refused (EPIC-20).
  */
-export const BUILT_MODES: readonly AppMode[] = ['panel']
+export const BUILT_MODES: readonly AppMode[] = builtModesOf(
+  typeof __DWARFAI_BUILD_PROFILE__ === 'string' ? __DWARFAI_BUILD_PROFILE__ : undefined
+)
 
 export interface ModeShellDeps {
   panel: PanelWindowUseCases

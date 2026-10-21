@@ -5,15 +5,17 @@
  *
  * Two inputs, neither written as a provider or a mode the renderer happens to know about:
  *
- * - The build's feature list, `SHIPPED_MODES`: the modes this release ships. The Panel alone until
- *   the Veta epic ships (EPIC-19 adds Veta here, EPIC-20 Valle); any Veta or Valle code ported
- *   meanwhile stays unreachable because nothing here points at it (21 §7).
+ * - The build's feature list, `SHIPPED_MODES`: the modes this build ships, build-time data
+ *   (`builtModesOf` in contracts, 17 §1.9). A release build has the Panel alone until the Veta
+ *   epic ships (ISSUE-294 adds Veta to the release list, ISSUE-311 Valle); the E2E build profile
+ *   lists them earlier. Any Veta or Valle code stays unreachable in a release build because nothing
+ *   here points at it (21 §7).
  * - The offered catalog main answers (A-36, `AgentProviderOption.launchable`): whether this build
  *   has a launch for a detected provider. A provider whose launch is not offered — Antigravity in
  *   a public build (20 §8 R-03), any provider whose driver is not built — is decided there and only
  *   read here, so no provider id is compared in the renderer (R12).
  */
-import type { UiPreferencesMap, WindowMode } from '@dwarfai/contracts'
+import { builtModesOf, type UiPreferencesMap, type WindowMode } from '@dwarfai/contracts'
 import type { AgentProviderOption } from '../../types'
 
 /** A mode the window can show (06 §15), `hidden` aside. */
@@ -23,8 +25,17 @@ export type LeverMode = Exclude<AppMode, 'panel'>
 /** Settings › General "Mode at launch" (14 §3.9 `modeAtLaunch`). */
 export type ModeAtLaunch = UiPreferencesMap['modeAtLaunch']
 
-/** This build's feature list: the modes it ships. The Panel only until Veta ships (ADR-034). */
-export const SHIPPED_MODES: readonly AppMode[] = ['panel']
+/** The build profile electron.vite.config.ts stamps from `DWARFAI_BUILD_PROFILE`; absent outside a build (tests). */
+declare const __DWARFAI_BUILD_PROFILE__: string | undefined
+
+/**
+ * This build's feature list: the modes it ships, the one built-modes list UI main reads too (`builtModesOf`, 17
+ * §1.9). A release build ships the Panel only until Veta ships (ADR-034); the E2E build profile lists Veta and Valle
+ * so their L9 cases run.
+ */
+export const SHIPPED_MODES: readonly AppMode[] = builtModesOf(
+  typeof __DWARFAI_BUILD_PROFILE__ === 'string' ? __DWARFAI_BUILD_PROFILE__ : undefined
+)
 
 /** The lever's sides, top to bottom as the design draws them: "▲ Valle", then "▼ Veta". */
 const LEVER_ORDER: readonly LeverMode[] = ['valle', 'veta']

@@ -41,6 +41,14 @@ function gitShortCommit(): string {
   }
 }
 
+/*
+ * ADDED for ISSUE-285 (17 §1.9): the build profile, `DWARFAI_BUILD_PROFILE` at build time, stamped into UI main and
+ * the renderer as `__DWARFAI_BUILD_PROFILE__`; both read the one built-modes list from it (`builtModesOf` in
+ * src/contracts/ipc/builtModes.ts). Unset is `release`: the Panel alone. The CI E2E and perf lanes build with `e2e`,
+ * which adds Veta and Valle. Nothing else selects a mode: no production test backdoor.
+ */
+const BUILD_PROFILE = JSON.stringify(process.env.DWARFAI_BUILD_PROFILE ?? 'release')
+
 // `@dwarfai/contracts` is the one contracts barrel (ADR-004 P13, 05 §2.1), resolved the same way
 // in every build and in both tsconfigs and vitest.config.ts.
 export default defineConfig({
@@ -50,7 +58,8 @@ export default defineConfig({
     },
     plugins: [externalizeDepsPlugin()],
     define: {
-      __DWARFAI_BUILD_ID__: JSON.stringify(gitShortCommit())
+      __DWARFAI_BUILD_ID__: JSON.stringify(gitShortCommit()),
+      __DWARFAI_BUILD_PROFILE__: BUILD_PROFILE
     },
     build: {
       outDir: 'out/ui-main',
@@ -78,6 +87,7 @@ export default defineConfig({
     resolve: {
       alias: { '@dwarfai/contracts': resolve(__dirname, 'src/contracts/index.ts') }
     },
-    plugins: [vue()]
+    plugins: [vue()],
+    define: { __DWARFAI_BUILD_PROFILE__: BUILD_PROFILE }
   }
 })
