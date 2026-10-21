@@ -30,12 +30,28 @@
  * to its opener; a drag, a mode change or the window hidden closes it silently. Over the overlay's transparent room
  * the mouse goes through to whatever is below (`useVetaClickThrough`, ADR-025 item 4). A worktree folder picked by Add a
  * mine asks the Mines page's worktree question first, over a window grown to hold it (US-MINES-004.AC03).
+ *
+ * The mine tab (ISSUE-289; 07 machine 23, `stepMineTab`; UC-047): hovering a chamber, or keyboard focus in it, raises
+ * its tab, the chamber under the pointer winning over the one holding focus, so never more than one rises. "▢" moves to
+ * the Panel on that mine (A-N13), "+" asks for the Add panel aimed at it (S24.03, ISSUE-290's rise). The tab goes with
+ * its chamber and closes when a drag starts. The window holds the band the tabs rise into for good while chambers are
+ * drawn (07 §24 I-22, `layoutVeta {overlay}`, measured from the tabs' boxes), so a hover never resizes it, and the band
+ * is click-through except over a risen tab (`vetaTakesPointer`).
  */
 import { VETA_ISLAND, type MineId } from '@dwarfai/contracts'
 import type { MineWorktreeOf } from '../../types'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+  type CSSProperties
+} from 'vue'
 import { useWindowMinePicker } from '../../composables/useMinePicker'
-import { useWindowVetaClickThrough } from '../../composables/useVetaClickThrough'
+import { useWindowVetaClickThrough, vetaTakesPointer } from '../../composables/useVetaClickThrough'
 import { useWindowVetaDock } from '../../composables/useVetaDock'
 import { useWindowVetaLife } from '../../composables/useVetaLife'
 import { useWindowVetaOverlay } from '../../composables/useVetaOverlay'
@@ -45,6 +61,15 @@ import { snapRect } from '../../lib/veta/dockGesture'
 import { gripMenuEntries, type GripMenuItemId, type Opener } from '../../lib/veta/gripMenu'
 import { islandLength } from '../../lib/veta/island'
 import { entranceIntent } from '../../lib/veta/lifeState'
+import {
+  PLAIN_MINE_TAB,
+  aimOf,
+  stepMineTab,
+  tabBand,
+  type MineTab,
+  type MineTabEvent,
+  type TabBox
+} from '../../lib/veta/mineTab'
 import WorktreeDialog from '../browse/WorktreeDialog.vue'
 import MinePicker from './MinePicker.vue'
 import VetaChamber from './VetaChamber.vue'
@@ -277,12 +302,14 @@ watch(overlayBox, (box) => {
   resizes.observe(box)
 })
 
-// A drag closes an open overlay silently (S22.17): the window is the drag surface now, so no room is given back.
+// A drag closes an open overlay silently (S22.17) and a risen tab (S23.08): the window is the drag surface now, so no
+// room is given back, and UI main forgot the tab band with it (it is asked again once the island has landed).
 watch(dragging, (now) => {
   if (!now) return
   swallow = false
-  if (overlayKind.value === null) return
+  tabStep({ type: 'drag-start' })
   overlay.drop()
+  if (overlayKind.value === null) return
   picker.dispatch({ type: 'interrupt' })
 })
 
@@ -311,10 +338,101 @@ function blurred(): void {
  * The island and the overlay card take it; out of an overlay, and while dragged, the window is all island.
  */
 const clickThrough = useWindowVetaClickThrough((x, y) => {
-  if (dragging.value || overlayKind.value === null || question.value !== null) return true
-  const hit = document.elementFromPoint(x, y)
-  return hit?.closest('[data-veta-island], [data-veta-overlay-card]') != null
+  if (dragging.value || question.value !== null) return true
+  return vetaTakesPointer(document.elementFromPoint?.(x, y) ?? null)
 })
+
+/*
+ * The mine tab (07 machine 23): which chamber the pointer and the keyboard focus are on, the one tab risen, and the
+ * effects its steps name.
+ */
+const tab = shallowRef<MineTab>(PLAIN_MINE_TAB)
+const pointerOn = ref<MineId | null>(null)
+const focusOn = ref<MineId | null>(null)
+const drawn = computed(() => chambers.value.map((c) => c.mine.id))
+
+function tabStep(event: MineTabEvent): void {
+  const next = stepMineTab(tab.value, event, {
+    life: state.value,
+    dragging: dragging.value,
+    drawn: drawn.value
+  })
+  tab.value = next.machine
+  if (!next.step.ok) return
+  for (const effect of next.step.effects) {
+    if (effect.kind === 'move') life.openPanel(effect.mineId)
+    else addPanelFor.value = effect.mineId
+  }
+}
+
+watch(
+  () => aimOf(pointerOn.value, focusOn.value),
+  (mineId) => tabStep({ type: 'aim', mineId })
+)
+// A chamber closed, folded into "+N" or its mine removed: its tab goes with it (S23.07).
+watch(drawn, (now) => {
+  if (pointerOn.value !== null && !now.includes(pointerOn.value)) pointerOn.value = null
+  if (focusOn.value !== null && !now.includes(focusOn.value)) focusOn.value = null
+  tabStep({ type: 'drawn' })
+})
+
+function chamberHover(mineId: MineId, on: boolean): void {
+  if (on) pointerOn.value = mineId
+  else if (pointerOn.value === mineId) pointerOn.value = null
+}
+
+function chamberFocus(mineId: MineId, on: boolean): void {
+  if (on) focusOn.value = mineId
+  else if (focusOn.value === mineId) focusOn.value = null
+}
+
+/** "▢" or "+" on a chamber's tab: only the risen one acts. */
+function tabAction(mineId: MineId, type: 'open' | 'add'): void {
+  if (tab.value.mineId === mineId) tabStep({ type })
+}
+
+/** Where a chamber's tab rises: toward the screen, away from the docked edge. */
+const TAB_SIDE = { bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as const
+const tabSide = computed(() => TAB_SIDE[dock.dock.value.edge])
+
+/*
+ * The tab band (07 §24 I-22): the room every tab would rise into, measured from the tabs' boxes at their risen place
+ * (offsets leave out their resting 4 px slide), held in the window while chambers are drawn. Measured again whenever
+ * the strip's parts, its edge or its anchored end change, and once the island has landed after a drag.
+ */
+function measureBand(): void {
+  if (dragging.value) return
+  const island = root.value?.querySelector<HTMLElement>('[data-veta-island]')
+  if (island == null || !sessions.value) {
+    void overlay.band(null)
+    return
+  }
+  const tabs: TabBox[] = [...island.querySelectorAll<HTMLElement>('[data-veta-tab]')].map((box) => {
+    const chamber = box.parentElement!
+    return {
+      x: chamber.offsetLeft + box.offsetLeft,
+      y: chamber.offsetTop + box.offsetTop,
+      width: box.offsetWidth,
+      height: box.offsetHeight
+    }
+  })
+  const size = { width: island.offsetWidth, height: island.offsetHeight }
+  void overlay.band(tabBand(dock.dock.value, size, tabs))
+}
+
+watch(
+  () => [
+    sessions.value,
+    dragging.value,
+    dock.dock.value.edge,
+    dock.dock.value.end,
+    chambers.value
+      .map((c) => `${c.mine.id}:${c.mine.name}:${c.mine.tier ?? ''}:${c.dwarfs.length}`)
+      .join('|')
+  ],
+  measureBand,
+  { flush: 'post' }
+)
 
 function hovered(event: PointerEvent): void {
   clickThrough.pointerMoved(event.clientX, event.clientY)
@@ -340,6 +458,8 @@ onMounted(() => {
   void dock.start().then(() => {
     started = true
   })
+  // A name measures its true width once the pixel faces have loaded.
+  void document.fonts?.ready.then(measureBand)
   void life.start()
 })
 onBeforeUnmount(() => {
@@ -405,6 +525,12 @@ onBeforeUnmount(() => {
           :attention="chamber.attention"
           :vertical="vertical"
           :reverse="anchorEnd"
+          :side="tabSide"
+          :risen="tab.state === 'risen' && tab.mineId === chamber.mine.id"
+          @hover="chamberHover(chamber.mine.id, $event)"
+          @focus="chamberFocus(chamber.mine.id, $event)"
+          @open="tabAction(chamber.mine.id, 'open')"
+          @add="tabAction(chamber.mine.id, 'add')"
         />
         <!-- "+N" lands here, on the anchor side of the grip (ISSUE-291). -->
         <VetaExpand v-if="anchorEnd" :edge="dock.dock.value.edge" @activate="life.openPanel()" />

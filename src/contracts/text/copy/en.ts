@@ -150,6 +150,11 @@ export const en = {
   },
   'veta.chamber.asking': { one: '{count} needs you', other: '{count} need you' },
 
+  // A chamber's mine tab (US-VETA-004; 07 machine 23; ISSUE-289): its two icon buttons' names and titles, the design's
+  // own copy (DS/docs/copy.md, Mine tab, "Built at run time"; DS/docs/accessibility.md, the Veta mine tab).
+  'veta.tab.open': 'Open {name} in the Panel',
+  'veta.tab.newDwarf': 'New dwarf in {name}',
+
   // The grip menu (US-VETA-003; 07 machine 22; ISSUE-288): the design's own copy (DS/docs/screens/veta.md, the grip
   // menu in order; DS/docs/copy.md, Veta strip, "Also in the code"). "New dwarf in…" carries the hint ▸.
   'veta.menu.openPanel': 'Open Panel',

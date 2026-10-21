@@ -10,8 +10,14 @@
  * and its marks redrawn, never rebuilding its element (NFR-PERF-03, S20.14). Anchored at the right or bottom end
  * (`reverse`), the latest dwarf is first in DOM order, so a new one goes in at the far end and nothing moves.
  *
- * Opening a dwarf's chat (ISSUE-290) and the mine tab (ISSUE-289) are not built: the dwarfs are figures, the chamber's
- * name says who is in it.
+ * Its mine tab (07 machine 23; US-VETA-004; ISSUE-289) hangs off it toward the screen (`side`), aligned to its anchored
+ * end, and rises when its container says so (`risen`): the container runs machine 23 over the pointer entering and
+ * leaving the chamber and the keyboard focus moving in and out of it, so one tab at most is ever risen. The chamber is a
+ * keyboard stop (the design's `.dm-chamber`, tabindex 0) whose focus raises its tab, then Tab walks the tab's buttons.
+ * The tab floats in the band the window always holds (07 §24 I-22): rising it never widens the strip or moves a dwarf.
+ * The chamber body has no click handler: a container, never a target (S23.06).
+ *
+ * Opening a dwarf's chat (ISSUE-290) is not built: the dwarfs are figures, the chamber's name says who is in it.
  */
 import { t, type DwarfWire, type MineWire } from '@dwarfai/contracts'
 import { computed } from 'vue'
@@ -22,6 +28,7 @@ import { settledClips } from '../../lib/sprite/dwarfSequence'
 import { loopOf, type SpriteClip } from '../../lib/sprite/spriteSheet'
 import type { MineTier } from '../../types'
 import SpriteStrip from '../dwarf/SpriteStrip.vue'
+import MineTab from './MineTab.vue'
 
 const props = defineProps<{
   mine: MineWire
@@ -30,7 +37,29 @@ const props = defineProps<{
   vertical: boolean
   /** Anchored at the right or bottom end. */
   reverse: boolean
+  /** Where its tab rises: always toward the screen, away from the docked edge. */
+  side: 'top' | 'bottom' | 'left' | 'right'
+  /** Its tab is risen (07 machine 23). */
+  risen: boolean
 }>()
+
+const emit = defineEmits<{
+  /** The pointer entered (`true`) or left (`false`) the chamber, its tab included. */
+  hover: [on: boolean]
+  /** The keyboard focus moved into (`true`) or out of (`false`) the chamber, its tab included. */
+  focus: [on: boolean]
+  /** "▢" on its tab. */
+  open: []
+  /** "+" on its tab. */
+  add: []
+}>()
+
+/** Focus leaving for an element still inside the chamber (its tab's buttons) is not focus leaving it. */
+function focusOut(event: FocusEvent): void {
+  const next = event.relatedTarget as Node | null
+  if (next !== null && (event.currentTarget as HTMLElement).contains(next)) return
+  emit('focus', false)
+}
 
 /** A mine not measured yet is drawn on bronze, as the Panel draws it. */
 const tier = computed<MineTier>(() => props.mine.tier ?? 'bronze')
@@ -61,15 +90,22 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
 <template>
   <div
     class="veta-chamber m-mat dm-focus-inset"
+    :class="{ 'is-tab': risen }"
     role="group"
+    tabindex="0"
     :aria-label="label"
     :data-tier="tier"
     :data-orient="vertical ? 'col' : 'row'"
     :data-align="reverse ? 'end' : 'start'"
+    :data-side="side"
     :data-attention="attention ? 'true' : 'false'"
     :data-mine-id="mine.id"
     data-veta-chamber
     data-veta-part="chamber"
+    @pointerenter="emit('hover', true)"
+    @pointerleave="emit('hover', false)"
+    @focusin="emit('focus', true)"
+    @focusout="focusOut"
   >
     <span class="veta-chamber__rock" :style="rockStyle" aria-hidden="true" />
     <span
@@ -96,6 +132,14 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
           portraitMark('asleep')
         }}</span>
       </span>
+    </div>
+    <div
+      class="veta-chamber__tab"
+      :data-risen="risen ? 'true' : 'false'"
+      :aria-hidden="risen ? undefined : 'true'"
+      data-veta-tab
+    >
+      <MineTab :mine="mine" @open="emit('open')" @add="emit('add')" />
     </div>
   </div>
 </template>
@@ -192,6 +236,67 @@ function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
 
 .veta-chamber__lamp.is-lit::after {
   opacity: 1;
+}
+
+/*
+ * `.dm-chamber__tab`: the mine tab hangs off the chamber toward the screen, aligned 2 px past its anchored end; its
+ * transparent padding toward the chamber keeps the hover alive between the two. At rest it is hidden 4 px in; risen
+ * (`.is-tab`, machine 23's one tab) it shows in place.
+ */
+.veta-chamber__tab {
+  position: absolute;
+  z-index: 4;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-step),
+    transform var(--dur-fast) var(--ease-out),
+    visibility 0s linear var(--dur-fast);
+}
+.veta-chamber[data-side='top'] > .veta-chamber__tab {
+  bottom: 100%;
+  padding-bottom: 4px;
+  transform: translateY(4px);
+}
+.veta-chamber[data-side='bottom'] > .veta-chamber__tab {
+  top: 100%;
+  padding-top: 4px;
+  transform: translateY(-4px);
+}
+.veta-chamber[data-side='top'][data-align='start'] > .veta-chamber__tab,
+.veta-chamber[data-side='bottom'][data-align='start'] > .veta-chamber__tab {
+  left: -2px;
+}
+.veta-chamber[data-side='top'][data-align='end'] > .veta-chamber__tab,
+.veta-chamber[data-side='bottom'][data-align='end'] > .veta-chamber__tab {
+  right: -2px;
+}
+.veta-chamber[data-side='left'] > .veta-chamber__tab {
+  right: 100%;
+  padding-right: 4px;
+  transform: translateX(4px);
+}
+.veta-chamber[data-side='right'] > .veta-chamber__tab {
+  left: 100%;
+  padding-left: 4px;
+  transform: translateX(-4px);
+}
+.veta-chamber[data-side='left'][data-align='start'] > .veta-chamber__tab,
+.veta-chamber[data-side='right'][data-align='start'] > .veta-chamber__tab {
+  top: -2px;
+}
+.veta-chamber[data-side='left'][data-align='end'] > .veta-chamber__tab,
+.veta-chamber[data-side='right'][data-align='end'] > .veta-chamber__tab {
+  bottom: -2px;
+}
+/* Risen: after the side rules, so it wins over their resting offset. */
+.veta-chamber.is-tab > .veta-chamber__tab.veta-chamber__tab {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  transition-delay: 0s;
 }
 
 .veta-chamber__crew {

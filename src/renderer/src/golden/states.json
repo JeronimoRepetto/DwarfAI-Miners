@@ -652,6 +652,18 @@
     "red": "the app's chamber mirrors every dwarf, as components.md (Mine chamber, Anatomy) rules for a dwarf with no station, and the Veta wire carries none, where the UI kit gives its sample dwarfs stations that face some of them left; the tab and label are ISSUE-289 and ISSUE-290's (hidden in the reference too). Not measured: this state was registered without a golden run (ISSUE-287)"
   },
   {
+    "key": "molecules/mine-chamber#tab-raised",
+    "red": "the app's chamber mirrors every dwarf, as components.md (Mine chamber, Anatomy) rules for a dwarf with no station, and the Veta wire carries none, where the UI kit gives its sample dwarfs stations that face some of them left. Not measured: this state was registered without a golden run (ISSUE-289)"
+  },
+  {
+    "key": "molecules/mine-tab#silver",
+    "red": "Not measured: this state was registered without a golden run (ISSUE-289)"
+  },
+  {
+    "key": "molecules/mine-tab#silver-long-name",
+    "red": "Not measured: this state was registered without a golden run (ISSUE-289)"
+  },
+  {
     "key": "molecules/mine-picker#first-run",
     "red": "the app focuses the search field when the picker opens (US-LAUNCH-007.AC01), so its brass edge and parchment ring show where the reference draws the field at rest. Not measured: this state was registered without a golden run (ISSUE-288)"
   }

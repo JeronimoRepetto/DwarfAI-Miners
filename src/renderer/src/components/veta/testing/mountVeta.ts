@@ -26,6 +26,8 @@ export interface VetaWorldOptions {
   declareMain?: MineDeclareResult
   /** Holds back each `overlay` answer until `answerOverlays` is called. */
   holdOverlays?: boolean
+  /** Where UI main answers the island is docked; `VETA_PLACE` by default. */
+  place?: VetaLayoutResult
 }
 
 export interface VetaWorld {
@@ -66,11 +68,12 @@ export async function mountVeta(
       return Promise.resolve({ ok: true, value: undefined })
     },
     layoutVeta: (request) => {
+      const place = options.place ?? VETA_PLACE
       layouts.push(request as VetaLayoutRequest)
-      if (request.kind !== 'overlay') return Promise.resolve(VETA_PLACE)
+      if (request.kind !== 'overlay') return Promise.resolve(place)
       shownAtLayout.push(shownOverlay())
-      if (options.holdOverlays !== true) return Promise.resolve(VETA_PLACE)
-      return new Promise((resolve) => held.push(() => resolve(VETA_PLACE)))
+      if (options.holdOverlays !== true) return Promise.resolve(place)
+      return new Promise((resolve) => held.push(() => resolve(place)))
     },
     declareMine: () => {
       declares.push('declareMine')

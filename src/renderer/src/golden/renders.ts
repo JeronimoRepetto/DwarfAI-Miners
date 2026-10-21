@@ -110,6 +110,7 @@ import {
 } from '../types'
 import { at as sampleTime, silenceMs, type GoldenSample } from './sample'
 import MinePicker from '../components/veta/MinePicker.vue'
+import MineTab from '../components/veta/MineTab.vue'
 import VetaChamber from '../components/veta/VetaChamber.vue'
 import VetaEntrance from '../components/veta/VetaEntrance.vue'
 import VetaIsland from '../components/veta/VetaIsland.vue'
@@ -1840,7 +1841,9 @@ const settings: Render = (sample, _texts, attributes) => {
  * Veta (ISSUE-287). The strip with no sessions is the island holding the closed entrance alone, "+" on first run. A
  * chamber is drawn from its state's own tree: the mine its group names (`data-mine`, `data-tier` and the name in its
  * label), and each dwarf's status and rank (`data-status`, its sprite's `data-sheet`), as the Host's wire would carry
- * them. The design text stays in the tree; nothing here restates it.
+ * them. The design text stays in the tree; nothing here restates it. A chamber's tab (ISSUE-289) rises toward the screen
+ * (`data-side`) and is risen where the state forces it (`.is-tab`, the UI kit's Tab raised); the tab alone takes the
+ * mine its handle names (`data-mine`, the chip's `data-tier`, the name its Open button carries).
  */
 const VetaStripStage = defineComponent({
   props: { first: { type: Boolean, default: false } },
@@ -1908,7 +1911,28 @@ const vetaChamber: Render = (_sample, _texts, attributes) => {
       dwarfs,
       attention: group['data-attention'] === 'true',
       vertical: group['data-orient'] === 'col',
-      reverse: group['data-align'] === 'end'
+      reverse: group['data-align'] === 'end',
+      side: group['data-side'] ?? 'top',
+      risen: attributes.some(
+        (entry) =>
+          entry.element.startsWith('div.dm-chamber.') && entry.element.split('.').includes('is-tab')
+      )
+    }
+  }
+}
+
+const mineTab: Render = (_sample, _texts, attributes) => {
+  const plate = elementsOf(attributes, 'div.dm-minetab')[0] ?? {}
+  const open = elementsOf(attributes, 'button.dm-btn')[0]?.['aria-label'] ?? ''
+  const tier = elementsOf(attributes, 'span.dm-tier')[0]?.['data-tier'] ?? null
+  return {
+    component: MineTab,
+    props: {
+      mine: {
+        id: (plate['data-mine'] ?? 'mine') as MineId,
+        name: /^Open (.*) in the Panel$/.exec(open)?.[1] ?? '',
+        tier: tier as Tier | null
+      }
     }
   }
 }
@@ -1937,6 +1961,10 @@ export const RENDERS: Record<string, Render> = {
   'organisms/veta-strip#no-sessions': vetaStrip(false),
   'molecules/mine-chamber#needs-you': vetaChamber,
   'molecules/mine-chamber#all-idle': vetaChamber,
+  // A chamber's mine tab (ISSUE-289): risen over its chamber, and alone.
+  'molecules/mine-chamber#tab-raised': vetaChamber,
+  'molecules/mine-tab#silver': mineTab,
+  'molecules/mine-tab#silver-long-name': mineTab,
   // The mine picker on first run (ISSUE-288): no mine yet, so no row; its words are its own.
   'molecules/mine-picker#first-run': () => ({
     component: MinePicker,
