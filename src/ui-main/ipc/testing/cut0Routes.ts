@@ -54,7 +54,10 @@ export const CUT_0_UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   'mode:transition:done': 'cut-5',
   // A-N22, A-N24 likewise (ISSUE-285).
   'veta:clickThrough': 'cut-5',
-  'window:limits': 'cut-5'
+  'window:limits': 'cut-5',
+  // A-N23, A-N28 likewise (ISSUE-286).
+  'veta:layout': 'cut-5',
+  'veta:dock:changed': 'cut-5'
 }
 
 function cut0Route(channel: ChannelKey): ChannelRoute {

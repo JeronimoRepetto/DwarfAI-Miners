@@ -255,6 +255,9 @@ export function goldenApi(sample: GoldenSample): Api {
     setVetaClickThrough: none,
     getWindowingLimits: () =>
       Promise.resolve({ dockingAvailable: true, alwaysOnTopAvailable: true }),
+    // A-N23, A-N28: a golden renders no Veta window, so nothing is laid out or re-placed.
+    layoutVeta: refuse('layoutVeta'),
+    onVetaDockChanged: unsubscribe,
     // A-N31: a golden draws a fixed sample and never writes another tool's configuration.
     setClaudeHooksEnabled: refuse('setClaudeHooksEnabled'),
     // A-N07: a golden draws a fixed sample and never moves an ask.

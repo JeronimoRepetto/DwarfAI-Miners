@@ -53,7 +53,9 @@ export const UI_PREFERENCE_DEFAULTS: Readonly<UiPreferenceStoreMap> = {
   // No reset applied yet: the Host's first Reset metrics epoch (1) is newer (14 §4.3 rule 4).
   resetEpochApplied: 0,
   // The Panel until a mode transition ran (S10.01; ADR-034: the Panel ships first).
-  lastMode: 'panel'
+  lastMode: 'panel',
+  // No stored place: Veta takes the default place on the primary display (07 S21.02; ISSUE-286).
+  vetaDock: {}
 }
 
 /** A fresh copy of a store's defaults, so a caller that edits it cannot edit the defaults. */
@@ -101,7 +103,15 @@ const STORED_FORMS: StoredForms = {
   shortcut: (v) => v,
   startWithSystem: (v) => v,
   resetEpochApplied: (v) => v,
-  lastMode: (v) => v
+  lastMode: (v) => v,
+  // Each place as 14 §3.9 types it, in its saved order (the last one saved is where Veta lives).
+  vetaDock: (v) =>
+    Object.fromEntries(
+      Object.entries(v).map(([key, dock]) => [
+        key,
+        { edge: dock.edge, end: dock.end, offset: dock.offset }
+      ])
+    )
 }
 
 /** The one stored form of `value` for `key`: what a setter stores and answers (ADR-024 item 9). */

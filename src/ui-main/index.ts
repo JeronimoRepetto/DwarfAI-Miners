@@ -84,6 +84,7 @@ import {
   type PanelWindowUseCases
 } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
+import type { ModeWindow } from './window/ports/windowFactory'
 import { ozoneRelaunchArgs, runningLinuxSession } from './window/adapters/linuxSession'
 import { uiDataDirectory } from './dataDirectory'
 import {
@@ -91,7 +92,8 @@ import {
   dwarfIdSchema,
   PROTOCOL_VERSION,
   type ChannelKey,
-  type DwarfId
+  type DwarfId,
+  type UiPreferencesMap
 } from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
@@ -125,6 +127,8 @@ import { composeModeShell, type ModeShell } from './window/application/modeShell
 import { SystemModeTiming } from './window/adapters/SystemModeTiming'
 import { createModeRows, MODE_MOVE, MODE_TRANSITION_DONE } from './ipc/mode'
 import { createVetaRows, SET_VETA_CLICK_THROUGH, VETA_ROWS } from './ipc/veta'
+import { createVetaLayoutRows, LAYOUT_VETA, VETA_LAYOUT_ROWS } from './ipc/vetaLayout'
+import { createVetaDockService, type VetaDockService } from './window/application/VetaDockService'
 import {
   createVetaWindowController,
   VETA_ISLAND_PLACEHOLDER,
@@ -310,6 +314,8 @@ export interface WindowContents extends ModeWindowSender {
 /** The Veta window as the root composes it (ISSUE-285). */
 export interface VetaWindowParts {
   controller: VetaWindowController
+  /** Its place per display (07 machine 21; ISSUE-286): A-N23, A-N28 and `vetaDock`. */
+  dock: VetaDockService
   /** Whether a `webContents` id is the Veta window's. */
   isVeta(webContentsId: number): boolean
 }
@@ -327,6 +333,8 @@ export function composeUiLocal({
   presence,
   mode,
   veta,
+  vetaLayout,
+  vetaDock,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
@@ -346,6 +354,10 @@ export function composeUiLocal({
   mode?: RouteTargetPart
   /** A-N22, A-N24 to the Veta window and the windowing limits (ISSUE-285), routed `ui-local` likewise. */
   veta?: RouteTargetPart
+  /** A-N23, A-N28 to the Veta dock (ISSUE-286), routed `ui-local` likewise. */
+  vetaLayout?: RouteTargetPart
+  /** `vetaDock` for A-N20, read-only (ISSUE-286): the dock's stored places. */
+  vetaDock?: () => UiPreferencesMap['vetaDock']
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -363,7 +375,10 @@ export function composeUiLocal({
     parts.push({
       channels: UI_PREFERENCE_MAP_ROWS,
       target: createUiPreferenceMapRows(
-        createUiPreferenceMap(startWithSystem === undefined ? {} : { startWithSystem })
+        createUiPreferenceMap({
+          ...(startWithSystem === undefined ? {} : { startWithSystem }),
+          ...(vetaDock === undefined ? {} : { vetaDock })
+        })
       )
     })
   }
@@ -423,6 +438,7 @@ export function composeUiLocal({
   if (presence !== undefined) parts.push(presence)
   if (mode !== undefined) parts.push(mode)
   if (veta !== undefined) parts.push(veta)
+  if (vetaLayout !== undefined) parts.push(vetaLayout)
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
 
@@ -1246,9 +1262,13 @@ export async function startUiMain({
           store: uiPreferences.store,
           session: uiSession,
           ...(startWithSystem === undefined ? {} : { startWithSystem }),
-          push: createUiPreferencesResetPush(() =>
-            routed(UI_PREFERENCES_RESET_PUSH) ? modeWindowList() : []
-          ),
+          push: (reset) => {
+            createUiPreferencesResetPush(() =>
+              routed(UI_PREFERENCES_RESET_PUSH) ? modeWindowList() : []
+            )(reset)
+            // S21.17: the reset rewrote `vetaDock`; a shown Veta moves to the default place, with no A-N28 (14 §3.9).
+            veta?.dock.reset()
+          },
           host: host.client
         })
   const stopResetListening = uiPreferencesReset?.listen()
@@ -1492,6 +1512,16 @@ export async function startUiMain({
               limits: () => veta.controller.limits()
             })
           } satisfies RouteTargetPart
+        }),
+    // A-N23, A-N28 and the read-only `vetaDock` (ISSUE-286), once the table routes A-N23.
+    ...(veta === undefined || !routed(LAYOUT_VETA)
+      ? {}
+      : {
+          vetaLayout: {
+            channels: [...VETA_LAYOUT_ROWS],
+            target: createVetaLayoutRows({ dock: veta.dock, isVeta })
+          } satisfies RouteTargetPart,
+          vetaDock: () => uiPreferences?.store.load('vetaDock') ?? {}
         }),
     modeWindows
   })
@@ -1742,27 +1772,43 @@ function electronPanelWindow(
     return panel
   }
   // The Veta window over the same factory and displays (ISSUE-285): composing it builds nothing; the window is built
-  // on its first move. It opens on the primary display until ISSUE-286 stores a dock per display.
+  // on its first move, at the place its dock keeps per display (ISSUE-286; 07 machine 21), and the dock hears the
+  // display events once Electron is ready (S21.12–S21.14).
   const veta = (): VetaWindowParts => {
     if (built === null) throw new Error('the Veta window was composed before the Panel')
     const { windows, screenArea } = built
     const platform = currentUiPlatform()
+    // The controller and its dock read each other late: the dock places the window once it exists, the window is
+    // placed where the dock says.
+    let controller: VetaWindowController | null = null
+    const window = (): ModeWindow | null => (controller?.built() ? controller.window() : null)
+    const dock = createVetaDockService({
+      screen: screenArea,
+      prefs: createUiPreferences({ store, modeWindows: () => [] }),
+      panelSide: () => store.load('dockSide'),
+      window: {
+        placeAt: (bounds) => window()?.placeAt(bounds),
+        send: (push, payload) => window()?.send(push, payload)
+      },
+      dockingAvailable: () => controller?.limits().dockingAvailable ?? true,
+      island: { length: VETA_ISLAND_PLACEHOLDER.width, thickness: VETA_ISLAND_PLACEHOLDER.height },
+      log: uiLog
+    })
+    controller = createVetaWindowController({
+      factory: windows,
+      surface: () => windows.vetaSurface(),
+      screen: screenArea,
+      displayKey: () => dock.current().displayKey,
+      dock: () => dock.current().dock,
+      island: () => ({ width: dock.island().length, height: dock.island().thickness }),
+      platform,
+      session: platform === 'linux' ? runningLinuxSession(process.env, process.argv) : null,
+      log: uiLog
+    })
+    void app.whenReady().then(() => screenArea.onChange(() => dock.displaysChanged()))
     return {
-      controller: createVetaWindowController({
-        factory: windows,
-        surface: () => windows.vetaSurface(),
-        screen: screenArea,
-        displayKey: () => {
-          const displays = screenArea.displays()
-          const primary = displays.find((display) => display.primary) ?? displays[0]
-          if (primary === undefined) throw new Error('no display to place the Veta window on')
-          return primary.displayKey
-        },
-        island: () => VETA_ISLAND_PLACEHOLDER,
-        platform,
-        session: platform === 'linux' ? runningLinuxSession(process.env, process.argv) : null,
-        log: uiLog
-      }),
+      controller,
+      dock,
       isVeta: (webContentsId) => windows.vetaWebContentsId() === webContentsId
     }
   }

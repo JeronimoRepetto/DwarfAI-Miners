@@ -108,7 +108,9 @@ describe('JsonUiPreferenceStore', () => {
       // NEW with ISSUE-061, no store of today's: the document this store writes.
       resetEpochApplied: { epoch: 2 },
       // NEW with ISSUE-284, no store of today's: the document this store writes.
-      lastMode: { mode: 'veta' }
+      lastMode: { mode: 'veta' },
+      // NEW with ISSUE-286, no store of today's: the document this store writes (the map itself).
+      vetaDock: NON_DEFAULT_VALUES.vetaDock
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), `${JSON.stringify(legacy[key])}\n`)
@@ -135,7 +137,9 @@ describe('JsonUiPreferenceStore', () => {
       // An epoch is a whole count from 0.
       resetEpochApplied: { epoch: -1 },
       // `hidden` is a window state, never the mode shown last (14 §3.9 `Exclude<WindowMode, 'hidden'>`).
-      lastMode: { mode: 'hidden' }
+      lastMode: { mode: 'hidden' },
+      // An edge a display does not have (14 §3.9 `VetaDock.edge`).
+      vetaDock: { 'Q27G2WG4|2560x1440|@1|0,0': { edge: 'middle', end: 'start', offset: 0 } }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), JSON.stringify(nonConforming[key]))

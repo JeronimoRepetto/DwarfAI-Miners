@@ -44,6 +44,11 @@ export interface UiPreferenceStoreMap {
   resetEpochApplied: UiPreferencesMap['resetEpochApplied']
   /** The mode shown last (14 §3.9; ADR-024 item 1): written by the `ModeCoordinator` only (ISSUE-284). */
   lastMode: UiPreferencesMap['lastMode']
+  /**
+   * Veta's place per display (14 §3.9; ADR-024 items 1, 5): written by UI main only, through the dock
+   * (`VetaDockService`, ISSUE-286), the whole map at once; the entry saved last is the display Veta lives on.
+   */
+  vetaDock: UiPreferencesMap['vetaDock']
 }
 
 export type UiPreferenceStoreKey = keyof UiPreferenceStoreMap

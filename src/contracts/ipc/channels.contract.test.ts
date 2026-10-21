@@ -295,6 +295,24 @@ const NEW_ROWS = [
     placement: 'ui-local',
     sensitive: false
   },
+  // ISSUE-286: Veta's layout requests and UI main's word that it re-placed Veta (ADR-025 items 2, 5; 07 machine 21),
+  // born `ui-local` in the PR that declares them (22 §5); geometry, ids and a display key only
+  {
+    id: 'A-N23',
+    wire: 'veta:layout',
+    member: 'layoutVeta',
+    kind: 'invoke',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N28',
+    wire: 'veta:dock:changed',
+    member: 'onVetaDockChanged',
+    kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
+  },
   // ISSUE-221: Settings → Integrations "Claude Code · instant updates" (AMENDMENT-7, OQ-68; ADR-016 items 5–7), born
   // `host` in cut 2; a boolean and a requestId, nothing a person or a provider said
   {
@@ -559,6 +577,7 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'mode:transition:done': { transitionId: '0190a1b2-c3d4-7e5f-8a6b-7c8d9e0f1b01' },
   'veta:clickThrough': { ignore: true },
   'window:limits': undefined,
+  'veta:layout': { kind: 'drag-end', screenX: 1280, screenY: 1380 },
   'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
   'ui:preferences:set': { key: 'startWithSystem', value: false },
   'host:snapshot': { sections: ['mines', 'dwarfs'] },
