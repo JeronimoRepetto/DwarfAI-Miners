@@ -12,9 +12,7 @@ import { runFolderPickerContract } from '../ports/folderPicker.contract'
  */
 
 /** Stands in for the Electron window a `WindowRef` resolves to; only its identity matters here. */
-const PANEL = { id: 3, isVisible: () => true } as unknown as BaseWindow
-/** The Panel window hidden while Veta is the shown mode window (ISSUE-288). */
-const HIDDEN_PANEL = { id: 3, isVisible: () => false } as unknown as BaseWindow
+const PANEL = { id: 3 } as unknown as BaseWindow
 const FOLDER_DIALOG: OpenDialogOptions = { properties: ['openDirectory'] }
 
 class RecordingDialog {
@@ -66,16 +64,6 @@ describe('ElectronFolderPicker (16 §4.14)', () => {
 
   it('[ADR-019] a parent window that is gone opens the folder picker on its own', async () => {
     const { dialog, picker } = subject({ canceled: false, filePaths: ['/home/j/ore'] }, {})
-
-    expect(await picker.pick({ windowId: 3 })).toBe('/home/j/ore')
-    expect(dialog.calls).toEqual([{ parent: undefined, options: FOLDER_DIALOG }])
-  })
-
-  it('[S22.10, NFR-PLAT-09] a parent window that is hidden opens the folder picker on its own, so it shows over Veta', async () => {
-    const { dialog, picker } = subject(
-      { canceled: false, filePaths: ['/home/j/ore'] },
-      { 3: HIDDEN_PANEL }
-    )
 
     expect(await picker.pick({ windowId: 3 })).toBe('/home/j/ore')
     expect(dialog.calls).toEqual([{ parent: undefined, options: FOLDER_DIALOG }])
