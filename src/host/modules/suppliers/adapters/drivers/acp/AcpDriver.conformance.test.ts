@@ -18,7 +18,7 @@ import { createInstallDetection } from '../../../application/detection'
 import { ceilingOf, type ProviderCapabilities } from '../../../domain/capabilities'
 import type { CatalogRecord, PermissionModeCatalog } from '../../../domain/profile'
 import { FakeInstallResolver } from '../../../ports/fakes/FakeInstallResolver'
-import type { InstalledProvider, SessionRef } from '../../../ports/providerDriver'
+import type { DriverSession, InstalledProvider, SessionRef } from '../../../ports/providerDriver'
 import {
   LOGIN_ENV,
   driverConformance,
@@ -477,7 +477,95 @@ describe('AcpDriver', () => {
     const opened = run.sent.find((frame) => (frame as { method?: string }).method === 'session/new')
     expect(opened).toMatchObject({ params: { cwd: '/work/mine', mcpServers: [] } })
   })
+
+  /*
+   * #1463: 15 §1.2 hands the driver the Host-revalidated paths (`TurnInput.attachments`) and
+   * US-MSG-002.AC03 wants them to travel. Package gap (15 §4.10 is silent), resolved from the ACP
+   * schema the pinned SDK carries (`@agentclientprotocol/sdk` `PromptCapabilities`: text and
+   * resource links are the baseline every agent accepts; `ResourceLink` needs `uri` and `name`):
+   * each file is one `resource_link` block after the words, which the agent opens itself. Paths
+   * only, as `file://` URIs; no mimeType (nothing verifies one); the echo is the words alone.
+   */
+  it('[C-05, US-MSG-002.AC03] a turn with files sends each as a resource_link block after its text block, and its echo is the words alone', async () => {
+    const run = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf('c-05-send-turn') },
+      OPTIONS
+    )
+    const session = run.session as DriverSession
+    const receipt = await session
+      .sendTurn({
+        messageId: 'm-1' as never,
+        kind: 'message',
+        text: 'list the files',
+        attachments: [
+          { path: '/work/mine/a.png', name: 'a.png', bytes: 3 },
+          { path: '/work/mine/my notes.txt', name: 'my notes.txt', bytes: 12 }
+        ]
+      })
+      .catch((error: unknown) => error)
+    await settle()
+    expect(receipt).toMatchObject({ confidence: 'unconfirmed', correlation: 'm-1' })
+    const prompts = sentFrames(run).filter((frame) => frame.method === 'session/prompt')
+    expect(prompts[1]?.params.prompt).toEqual([
+      { type: 'text', text: 'list the files' },
+      { type: 'resource_link', uri: 'file:///work/mine/a.png', name: 'a.png' },
+      { type: 'resource_link', uri: 'file:///work/mine/my%20notes.txt', name: 'my notes.txt' }
+    ])
+    const echo = run.events.find((event) => event.t === 'message' && event.record.echoOf === 'm-1')
+    expect(echo).toMatchObject({ record: { role: 'person', text: 'list the files' } })
+  })
+
+  it('[C-05, US-MSG-002.AC03] a turn of files alone carries no empty text block, and a turn queued behind another keeps its files', async () => {
+    const run = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf('c-05-send-turn') },
+      OPTIONS
+    )
+    const session = run.session as DriverSession
+    const turns = [
+      session.sendTurn({
+        messageId: 'm-1' as never,
+        kind: 'message',
+        text: 'list the files',
+        attachments: []
+      }),
+      session.sendTurn({
+        messageId: 'm-2' as never,
+        kind: 'message',
+        text: '',
+        attachments: [{ path: 'C:\\work\\mine\\shot.png', name: 'shot.png', bytes: 3 }]
+      })
+    ].map((turn) => turn.catch((error: unknown) => error))
+    const held = await turns[1]
+    await settle()
+    expect(held).toMatchObject({ heldUntilTurnEnd: true, correlation: 'm-2' })
+    const prompts = sentFrames(run).filter((frame) => frame.method === 'session/prompt')
+    expect(prompts.map((frame) => frame.params.prompt)).toEqual([
+      [{ type: 'text', text: 'first prompt' }],
+      [{ type: 'text', text: 'list the files' }],
+      [{ type: 'resource_link', uri: 'file:///C:/work/mine/shot.png', name: 'shot.png' }]
+    ])
+  })
 })
+
+/** Lets every pending continuation run; no timer is involved (the clock is fake). */
+async function settle(): Promise<void> {
+  for (let round = 0; round < 50; round++) {
+    await new Promise<void>((resolve) => process.nextTick(resolve))
+  }
+}
+
+/** Every frame the driver wrote so far, parsed. */
+function sentFrames(run: {
+  transports: readonly { sent: readonly string[] }[]
+}): { method?: string; params: { prompt?: unknown } }[] {
+  return (run.transports[0]?.sent ?? []).map(
+    (frame) => JSON.parse(frame) as { method?: string; params: { prompt?: unknown } }
+  )
+}
 
 /** A rig of fresh doubles for a driver built outside `runScript`. */
 function fakeRig(): ConformanceRig {
