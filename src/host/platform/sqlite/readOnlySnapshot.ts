@@ -17,9 +17,14 @@
 //   complete in the main file, so the snapshot reads a private copy instead and the provider's
 //   folder is left exactly as it was. A `-journal` beside the file is a rollback-mode commit in
 //   flight: retry next cycle.
+// - The private copy is removed before `close` returns (and on every failure path), never by a
+//   removal left running behind the caller: that one raced the next read's copy and, when the
+//   file was still held (Windows), rejected with nobody to catch it. A copy that cannot be
+//   removed is left in the temp folder rather than failing the read.
 //
 // Nothing the file holds is logged (ADR-026 item 4).
-import { access, copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
+import { access, copyFile, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -55,8 +60,14 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/** Opens a consistent, read-only snapshot of the SQLite file at `location`. Never throws. */
-export async function openReadOnlySnapshot(location: string): Promise<ReadOnlySnapshot> {
+/**
+ * Opens a consistent, read-only snapshot of the SQLite file at `location`. Never throws.
+ * `copyRoot` is where a private copy is made (the OS temp folder; tests pass their own).
+ */
+export async function openReadOnlySnapshot(
+  location: string,
+  copyRoot: string = tmpdir()
+): Promise<ReadOnlySnapshot> {
   if (!(await exists(location))) return { kind: 'unavailable', code: 'not-found' }
   if (await exists(`${location}-journal`)) return { kind: 'retry-next-cycle', code: 'hot-journal' }
   if (await exists(`${location}-wal`)) return openAt(location, null)
@@ -64,29 +75,38 @@ export async function openReadOnlySnapshot(location: string): Promise<ReadOnlySn
   // No provider is writing: read a private copy, so nothing appears beside the provider's file.
   let dir: string
   try {
-    dir = await mkdtemp(join(tmpdir(), 'dwarfai-foreign-db-'))
+    dir = await mkdtemp(join(copyRoot, 'dwarfai-foreign-db-'))
   } catch {
     return { kind: 'unavailable', code: 'copy-failed' }
   }
-  const cleanup = () => rm(dir, { recursive: true, force: true })
+  const cleanup = () => removeQuietly(dir)
   try {
     const copy = join(dir, 'snapshot.sqlite')
     await copyFile(location, copy)
     // The provider started while the file was copied: the copy may be torn, read it next cycle.
     if ((await exists(`${location}-wal`)) || (await exists(`${location}-journal`))) {
-      await cleanup()
+      cleanup()
       return { kind: 'retry-next-cycle', code: 'SQLITE_BUSY' }
     }
     const snapshot = openAt(copy, cleanup)
-    if (snapshot.kind !== 'open') await cleanup()
+    if (snapshot.kind !== 'open') cleanup()
     return snapshot
   } catch {
-    await cleanup()
+    cleanup()
     return { kind: 'unavailable', code: 'copy-failed' }
   }
 }
 
-function openAt(location: string, onClose: (() => Promise<void>) | null): ReadOnlySnapshot {
+/** Removes a private copy's folder now; a folder still held is left behind, never thrown. */
+function removeQuietly(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {
+    // Still held (Windows): the temp folder keeps it; the read itself is unaffected.
+  }
+}
+
+function openAt(location: string, onClose: (() => void) | null): ReadOnlySnapshot {
   const uri = pathToFileURL(location)
   uri.searchParams.set('mode', 'ro')
   let db: DatabaseSync | null = null
@@ -127,7 +147,7 @@ function openAt(location: string, onClose: (() => Promise<void>) | null): ReadOn
           // Nothing to commit on a read transaction that already ended; closing ends it anyway.
         }
         open.close()
-        if (onClose !== null) void onClose()
+        if (onClose !== null) onClose()
       }
     }
   }

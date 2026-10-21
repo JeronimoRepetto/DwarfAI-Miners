@@ -3,6 +3,7 @@
 // foreign database (15 §5; 13 FM-090; 18 T-30; lead decision 2026-09-30 in ISSUE-073), with a live
 // writer standing in for the provider (Codex `state_5.sqlite`, OpenCode `opencode.db`).
 import { createHash } from 'node:crypto'
+import { readdirSync } from 'node:fs'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -117,5 +118,28 @@ describe('openReadOnlySnapshot', () => {
 
     // A file that is not there is unavailable, not an error.
     expect((await openReadOnlySnapshot(join(dir, 'absent.sqlite'))).kind).toBe('unavailable')
+  })
+
+  it('[FM-090] closing the snapshot of a resting database removes its private copy before close returns', async () => {
+    const dir = await tempDir()
+    const path = join(dir, 'opencode.db')
+    const provider = new DatabaseSync(path, { timeout: 0 })
+    provider.exec('PRAGMA journal_mode = WAL')
+    provider.exec("CREATE TABLE t (x); INSERT INTO t VALUES ('a')")
+    provider.close()
+    const copyRoot = await tempDir()
+
+    const snapshot = await openReadOnlySnapshot(path, copyRoot)
+    if (snapshot.kind !== 'open') throw new Error(`expected an open snapshot, got ${snapshot.kind}`)
+    // The copy lives under its own folder while the snapshot is open …
+    expect(readdirSync(copyRoot)).toHaveLength(1)
+    expect(snapshot.reader.all('SELECT x FROM t')).toEqual([{ x: 'a' }])
+    snapshot.reader.close()
+    // … and is gone once close returns: no removal is left running behind the caller, where a
+    // failure would be an unhandled rejection and the next read's copy would race it.
+    expect(readdirSync(copyRoot)).toEqual([])
+    // Closing twice is harmless.
+    snapshot.reader.close()
+    expect(readdirSync(copyRoot)).toEqual([])
   })
 })
