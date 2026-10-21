@@ -12,7 +12,9 @@
  * transition's end or on its watchdog (NFR-TIM-16); under reduced motion none plays. The window around it is grown
  * before a rise and shrunk after a fold, never during one (`useVetaRisen`).
  *
- * "▢ Open in the Panel" and the history request inside the chat are ISSUE-293's (S24.12, S24.13).
+ * The chat is hosted as Veta's (`hostedIn: 'veta'`), so its header offers "▢ Open in the Panel" (S24.12; ISSUE-293),
+ * relayed as `open-in-panel`; its mine-history request stays hidden until the Panel can be opened on the history
+ * (S24.13, pending `ModeTransition.slot`).
  */
 import type { ChatViewState } from '@dwarfai/contracts'
 import { computed, nextTick, onBeforeUnmount, ref, type CSSProperties } from 'vue'
@@ -23,6 +25,7 @@ import { WATCHDOG_MARGIN_MS } from '../../lib/shell/motionTiming'
 import { RISEN, type RisenGeometry, type RisenWindow } from '../../lib/veta/risenWindow'
 import AddPanel from '../launch/AddPanel.vue'
 import DwarfMessagePanel from '../message/DwarfMessagePanel.vue'
+import { messageBoxesOf } from '../message/messageBoxes'
 
 type MessageDock = ReturnType<typeof useMessageDock>
 
@@ -44,6 +47,8 @@ const emit = defineEmits<{
   draft: [dwarfId: string, text: string]
   /** The panel's own close (its ×, or Esc inside it). */
   close: []
+  /** "▢ Open in the Panel" in the chat header (S24.12). */
+  'open-in-panel': []
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -152,15 +157,24 @@ const field = (): HTMLTextAreaElement | null =>
 
 /** The open chat's view state as the panel shows it (ADR-024 item 3). */
 function captureView(): ChatViewState {
-  return captureChatView(list() ?? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, [], field())
+  const log = list()
+  return captureChatView(
+    log ?? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
+    log === null ? [] : messageBoxesOf(log),
+    field()
+  )
 }
+
+/** The scroll anchor the next chat opens on (S24.01, S24.18): the panel keeps it through its opening frame. */
+const openAt = ref<ChatViewState['scrollAnchor'] | undefined>(undefined)
 
 /** Puts a stored view state back once the panel is drawn. */
 async function restoreView(view: ChatViewState | null): Promise<void> {
+  openAt.value = view?.scrollAnchor
   await nextTick()
   if (view === null) return
   const log = list()
-  if (log !== null) log.scrollTop = restoredScrollTop(view.scrollAnchor, log, [])
+  if (log !== null) log.scrollTop = restoredScrollTop(view.scrollAnchor, log, messageBoxesOf(log))
   const composer = field()
   if (composer !== null && view.selection !== undefined) {
     const { start, end, direction } = view.selection
@@ -201,6 +215,9 @@ defineExpose({ play, focusContent, captureView, restoreView })
       :echo-attachments="dock.sentEchoAttachments[dock.selectedDwarf.value.id]"
       :stop-disabled="dock.stopDisabled(dock.selectedDwarf.value.id)"
       :answer-state="dock.questionState.byDwarfId[dock.selectedDwarf.value.id]"
+      hosted-in="veta"
+      :open-at="openAt"
+      @open-in-panel="emit('open-in-panel')"
       @draft="emit('draft', dock.selectedDwarf.value.id, $event)"
       @send="dock.sendText(dock.selectedDwarf.value, $event)"
       @retry="dock.retryMessage(dock.selectedDwarf.value, $event)"

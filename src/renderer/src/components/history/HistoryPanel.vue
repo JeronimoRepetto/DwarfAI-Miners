@@ -9,7 +9,8 @@
  * mark a prompt wears are lib/history/mineHistory's; the rows fold their tool calls the way the
  * MessagePanel does (groupActivity). What it opens is App's: a step's own path (#279) and a link.
  *
- * Mounted per mine (App keys it), so opening it on another mine is a fresh panel on its first tab.
+ * Mounted per mine (App keys it), so opening it on another mine is a fresh panel on its first tab, or on the tab of
+ * the dwarf `openOn` names.
  */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import ActionButton from '../controls/ActionButton.vue'
@@ -49,6 +50,11 @@ const props = defineProps<{
   pathRefusal?: { key: string; reason: string }
   /** The messages the app sent that never arrived, by dwarf id (PANEL-QUESTIONS 16). */
   failed?: Record<string, FailedSend[]>
+  /**
+   * The dwarf whose tab it opens on (ISSUE-293; 07 S24.13: a hand-off opens the history "on this dwarf's tab"); the
+   * first tab when it is absent or that dwarf has no tab.
+   */
+  openOn?: string
 }>()
 
 const emit = defineEmits<{
@@ -71,7 +77,7 @@ const ordered = computed(() =>
  * The tab the person chose, or null for the first. Kept as an id rather than an index, so a live
  * re-read that reorders the tabs leaves the reader on the dwarf they were reading.
  */
-const chosenId = ref<string | null>(null)
+const chosenId = ref<string | null>(props.openOn ?? null)
 const selectedId = computed(() => selectedSpeakerId(ordered.value, chosenId.value))
 const selected = computed(() => ordered.value.find((speaker) => speaker.id === selectedId.value))
 const failedOf = (id: string): FailedSend[] => props.failed?.[id] ?? []

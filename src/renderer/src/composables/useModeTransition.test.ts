@@ -193,6 +193,160 @@ describe('useModeTransition (ADR-025 item 3; 07 machines 9 and 27)', () => {
   })
 })
 
+// APPENDED for ISSUE-293: the chat hand-off between Veta and the Panel (07 machine 9, S24.18; UC-051).
+describe('the chat hand-off of a run (ISSUE-293)', () => {
+  const OTHER = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a09' as DwarfId
+
+  it('[US-DLG-006.AC03, INV-114, S9.02] an input-method composition in progress ends at the switch and the rest of the draft travels', () => {
+    const s = setup()
+    // The person is composing "dig" with an input method: the composer holds "half a " plus the composition.
+    let draft = 'half a '
+    let composing: string | null = 'dig'
+    s.transition.register({
+      open: () => DWARF,
+      draft: () => draft,
+      view: () => VIEW,
+      restore: () => undefined,
+      endComposition() {
+        s.events.push('end composition')
+        if (composing !== null) draft += composing
+        composing = null
+      }
+    })
+    s.push({ role: 'source' })
+    // The composition ends first, then the whole draft is flushed: the IME state itself is never carried.
+    expect(s.events).toEqual(['end composition', 'patch draft', 'patch chat-view'])
+    expect(s.patches[0]).toEqual({ kind: 'draft', dwarfId: DWARF, text: 'half a dig' })
+  })
+
+  it('[S24.18, US-VETA-009.AC02] into Veta the carried chat rises M plus 60 ms after landing', async () => {
+    const s = setup()
+    const rises: string[] = []
+    s.transition.onLanded((chat) => rises.push(`${chat.dwarfId} ${chat.mineId}`))
+    const t0 = s.clock.now() + 16
+    s.push({ role: 'target', from: 'panel', to: 'veta', chat: { dwarfId: DWARF, mineId: MINE } })
+    await flush()
+    s.clock.advance(16)
+    await flush()
+    s.finish()
+    await flush()
+    // The Veta parts played their M = 270 ms; the chat waits 60 ms more.
+    s.clock.advance(t0 + 270 + 59 - s.clock.now())
+    expect(rises).toEqual([])
+    s.clock.advance(1)
+    expect(rises).toEqual([`${DWARF} ${MINE}`])
+
+    // A run that carries no chat raises nothing.
+    s.push({ role: 'target', transitionId: 't-2', from: 'panel', to: 'veta' })
+    await flush()
+    s.clock.advance(1_000)
+    await flush()
+    s.finish()
+    s.clock.advance(1_000)
+    expect(rises).toHaveLength(1)
+  })
+
+  it("[S24.14, S24.12] a window that played a run's source half is told it left once its content is veiled, never before", async () => {
+    const s = setup()
+    const left: string[] = []
+    s.transition.onLeft((t) => left.push(`${t.from}->${t.to}`))
+    s.push({ role: 'source', from: 'veta', to: 'panel', chat: { dwarfId: DWARF, mineId: MINE } })
+    s.clock.advance(16)
+    await flush()
+    // Still playing its half: the chat it hosts fades with it.
+    expect(left).toEqual([])
+    s.finish()
+    await flush()
+    expect(s.events.slice(-2)).toEqual(['veil true', 'done t-1'])
+    expect(left).toEqual(['veta->panel'])
+    // A target half tells nothing of the kind.
+    s.push({ role: 'target', transitionId: 't-2', from: 'panel', to: 'veta' })
+    await flush()
+    s.clock.advance(16)
+    await flush()
+    s.finish()
+    await flush()
+    expect(left).toEqual(['veta->panel'])
+  })
+
+  it('[US-MSG-010.AC01, S27.01] a target opens the carried chat before it restores it, and never restores a draft into another chat', async () => {
+    const s = setup({
+      session: { drafts: { [DWARF]: 'carried text' }, chatViews: { [DWARF]: VIEW } }
+    })
+    let open: DwarfId = OTHER
+    s.transition.register({
+      open: () => open,
+      draft: () => '',
+      view: () => VIEW,
+      restore(state) {
+        s.events.push(`restore ${open === DWARF ? 'carried' : 'other'} ${state.draft}`)
+      }
+    })
+    s.transition.onArrival(async (chat) => {
+      s.events.push(`open ${chat.dwarfId === DWARF ? 'carried' : 'other'}`)
+      await Promise.resolve()
+      open = chat.dwarfId
+    })
+    s.push({ role: 'target', from: 'veta', to: 'panel', chat: { dwarfId: DWARF, mineId: MINE } })
+    await flush()
+    s.clock.advance(16)
+    await flush()
+    expect(s.events).toEqual([
+      'open carried',
+      'restore carried carried text',
+      'veil false',
+      'play 1'
+    ])
+
+    // With nothing to open it on, the carried draft goes into no other dwarf's chat.
+    const bare = setup({ session: { drafts: { [DWARF]: 'carried text' } } })
+    bare.transition.register({
+      open: () => OTHER,
+      draft: () => '',
+      view: () => VIEW,
+      restore: (state) => void bare.events.push(`restore ${state.draft}`)
+    })
+    bare.push({ role: 'target', from: 'veta', to: 'panel', chat: { dwarfId: DWARF, mineId: MINE } })
+    await flush()
+    bare.clock.advance(16)
+    await flush()
+    expect(bare.events).toEqual(['veil false', 'play 1'])
+  })
+
+  it('[US-MSG-010.AC01, S27.05] a carried chat whose panel mounts after the arrival is restored once it registers', async () => {
+    const s = setup({
+      session: { drafts: { [DWARF]: 'carried text' }, chatViews: { [DWARF]: VIEW } }
+    })
+    s.transition.register({
+      open: () => OTHER,
+      draft: () => '',
+      view: () => VIEW,
+      restore: () => void s.events.push('restore other')
+    })
+    // The window opens the chat, whose panel mounts a moment later (the dock's slot is the host's).
+    s.transition.onArrival(() => {
+      s.events.push('open carried')
+    })
+    s.push({ role: 'target', from: 'veta', to: 'panel', chat: { dwarfId: DWARF, mineId: MINE } })
+    await flush()
+    s.transition.register({
+      open: () => DWARF,
+      draft: () => '',
+      view: () => VIEW,
+      restore: (state) => void s.events.push(`restore carried ${state.draft}`)
+    })
+    await flush()
+    s.clock.advance(16)
+    await flush()
+    expect(s.events).toEqual([
+      'open carried',
+      'restore carried carried text',
+      'veil false',
+      'play 1'
+    ])
+  })
+})
+
 describe('the window part of a run (ISSUE-284)', () => {
   it('[S27.05, S10.08, S10.09] one part per window speaks window.api, veils the content after its source half and unveils it at its target t0', async () => {
     vi.useFakeTimers({ now: 10_000 })

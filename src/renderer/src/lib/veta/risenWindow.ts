@@ -20,8 +20,10 @@
  *   (S24.15, S24.16). A rise the window could not grow for shows nothing and is logged (S24.17). The UI process gone,
  *   the next start is folded with nothing kept (S24.21).
  *
- * "▢ Open in the Panel", the history request and the rise after a mode change (S24.12, S24.13, S24.18) are ISSUE-293's
- * and not modelled here. A step 07 does not list is rejected and the machine is held.
+ * "▢ Open in the Panel" asks for the Panel on the chat's mine and dwarf (S24.12), the run carrying the chat; the window
+ * folds when it hides (S24.14). A mode change into Veta carrying a chat rises it as a click does, once landed (S24.18).
+ * The history request (S24.13) waits on the Panel being able to open on the history (`ModeTransition.slot`, an
+ * amendment), so it is not modelled yet (ISSUE-293). A step 07 does not list is rejected and the machine is held.
  *
  * The geometry (DS/docs/screens/veta.md, Layout; the prototype's `veta.js` numbers): 444 px wide, as tall as the room
  * beside the strip less 40 px held between 360 and 600 px, 14 px from the strip, centred on the dwarf or button that
@@ -87,6 +89,15 @@ export type RisenEvent =
   | { readonly type: 'refused' }
   /** The UI process crashed or the app closed. */
   | { readonly type: 'lost' }
+  /** "▢ Open in the Panel" in the chat header (S24.12). */
+  | { readonly type: 'open-in-panel' }
+  /** A mode change into Veta carrying a chat landed (S24.18); `present` whether its dwarf is still there. */
+  | {
+      readonly type: 'arrive'
+      readonly mineId: MineId
+      readonly dwarfId: DwarfId
+      readonly present: boolean
+    }
 
 export type RisenEffect =
   /** `layoutVeta {rise, dwarfId, chatBounds}`: the window grows for the chat before anything shows. */
@@ -113,6 +124,8 @@ export type RisenEffect =
   | { readonly kind: 'bring-mine'; readonly mineId: MineId }
   /** The refused rise logged (`veta.placement`, `unplaced`). */
   | { readonly kind: 'log-refused' }
+  /** `moveToMode {mode: 'panel', mineId, dwarfId}`: machine 27 runs the move, machine 9 carries the chat. */
+  | { readonly kind: 'move-to-panel'; readonly mineId: MineId; readonly dwarfId: DwarfId }
 
 export type RisenStep =
   | {
@@ -307,6 +320,18 @@ function transition(machine: RisenWindow, event: RisenEvent, context: RisenConte
         : null
     case 'lost':
       return { id: 'S24.21', to: FOLDED }
+    case 'open-in-panel':
+      // S24.12: the run carries the chat (machine 9); it stays risen here until the window hides (S24.14).
+      if (state !== 'risen-chat' || openChat === null) return null
+      return {
+        id: 'S24.12',
+        to: machine,
+        effects: [{ kind: 'move-to-panel', mineId: openChat.mineId, dwarfId: openChat.dwarfId }]
+      }
+    case 'arrive':
+      // S24.18: the carried chat rises as a click raises it, its draft and view given back by the session store.
+      if (state !== 'folded' || !event.present) return null
+      return rise(event.dwarfId, event.mineId, 'S24.18')
   }
 }
 

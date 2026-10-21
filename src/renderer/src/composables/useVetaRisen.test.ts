@@ -107,6 +107,11 @@ function world(
       onVetaDockChanged(listener) {
         replaced.push(listener)
         return () => undefined
+      },
+      // ISSUE-293: the hand-off to the Panel (A-N13), logged in the same order as UI main's other requests.
+      moveToMode(params) {
+        log.push(`moveToMode ${JSON.stringify(params)}`)
+        return Promise.resolve({ ok: true, value: undefined })
       }
     },
     host
@@ -300,5 +305,31 @@ describe('useVetaRisen', () => {
     await settle()
     expect(await risen.talkedTo(MORIA, [BORIN, DAIN])).toBe(BORIN)
     expect(await risen.talkedTo(EREBOR, [BORIN, DAIN])).toBeNull()
+  })
+
+  // APPENDED for ISSUE-293: the hand-offs (07 S24.12, S24.18; UC-051).
+  it("[S24.12, US-MSG-010.AC01] Open in the Panel asks UI main for the Panel on the chat's mine and dwarf, and the chat stays risen until the window hides", async () => {
+    const { risen, log, motionEnds } = world()
+    await risen.dispatch({ type: 'dwarf-hit', dwarfId: BORIN, mineId: MORIA })
+    await motionEnds()
+    log.length = 0
+    await risen.dispatch({ type: 'open-in-panel' })
+    await settle()
+    // The draft and the view travel with the run's own flush (S9.02): this step writes nothing to the store.
+    expect(log).toEqual([`moveToMode {"mode":"panel","mineId":"${MORIA}","dwarfId":"${BORIN}"}`])
+    expect(risen.machine.value.state).toBe('risen-chat')
+  })
+
+  it('[S24.18, US-VETA-009.AC02] a chat carried into Veta rises with its draft and view from the session store', async () => {
+    const { risen, log } = world({ drafts: { [BORIN]: 'carried from the Panel' } })
+    await risen.dispatch({ type: 'arrive', mineId: MORIA, dwarfId: BORIN, present: true })
+    expect(log).toEqual([
+      RISE_BORIN,
+      `patch {"kind":"veta-risen-chat","dwarfId":"${BORIN}"}`,
+      `patch {"kind":"open-chat","host":"veta","dwarfId":"${BORIN}"}`,
+      'getUiSession',
+      'showChat borin "carried from the Panel" null',
+      'motion rise'
+    ])
   })
 })

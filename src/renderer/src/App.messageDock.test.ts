@@ -1786,15 +1786,20 @@ describe('paging back through the conversation (#364)', () => {
    */
   const PAGED_DWARF = HOST_DWARF
 
-  /** The Host's rows for the open dwarf (the newest) and one page older than them, oldest first. */
+  /**
+   * The Host's rows for the open dwarf (the newest) and one page older than them, each newest first as the Host sends
+   * them. AMENDED for ISSUE-293 (was: oldest first): the Host reads a chat newest first (`sort_at DESC, id DESC`,
+   * host/modules/conversation/application/queries.ts; 16 §4.6), the snapshot's `tails` and A-15's pages alike. The
+   * oldest row of each list, the cursor the cases expect, is its last element now: the same row, the same id.
+   */
   function rows() {
     const newest = [
-      hostRow(HOST_DWARF_ID, 'assistant', 'Halfway down the shaft', NINE + 2 * 60_000),
-      hostRow(HOST_DWARF_ID, 'assistant', 'Seam exhausted', NINE + 3 * 60_000)
+      hostRow(HOST_DWARF_ID, 'assistant', 'Seam exhausted', NINE + 3 * 60_000),
+      hostRow(HOST_DWARF_ID, 'assistant', 'Halfway down the shaft', NINE + 2 * 60_000)
     ]
     const older = [
-      hostRow(HOST_DWARF_ID, 'assistant', 'Starting the shaft', NINE),
-      hostRow(HOST_DWARF_ID, 'assistant', 'Through the topsoil', NINE + 60_000)
+      hostRow(HOST_DWARF_ID, 'assistant', 'Through the topsoil', NINE + 60_000),
+      hostRow(HOST_DWARF_ID, 'assistant', 'Starting the shaft', NINE)
     ]
     return { newest, older }
   }
@@ -1831,7 +1836,7 @@ describe('paging back through the conversation (#364)', () => {
 
     expect(api.getDwarfFeedPage).toHaveBeenCalledWith({
       dwarfId: HOST_DWARF_ID,
-      page: { before: newest[0]!.id, limit: 50 }
+      page: { before: newest.at(-1)!.id, limit: 50 }
     })
   })
 
@@ -1865,7 +1870,7 @@ describe('paging back through the conversation (#364)', () => {
 
     expect(getDwarfFeedPage).toHaveBeenLastCalledWith({
       dwarfId: HOST_DWARF_ID,
-      page: { before: older[0]!.id, limit: 50 }
+      page: { before: older.at(-1)!.id, limit: 50 }
     })
     expect(textsOf(wrapper)[0]).toBe('Arrived at the mine')
   })

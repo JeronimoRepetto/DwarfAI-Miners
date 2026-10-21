@@ -150,12 +150,15 @@ export function useDwarfPaging() {
     const parsed = hostPageAnswer.safeParse(answered)
     if (!parsed.success || !parsed.data.ok) return
 
-    const page = parsed.data.value
-    const oldest = page.messages[0]
+    // The Host pages newest first (16 §4.6, `sort_at DESC, id DESC`); a page is held oldest first, as the chat is,
+    // and its oldest row is where the next page hangs off (ISSUE-293).
+    const rows = [...parsed.data.value.messages].reverse()
+    const oldest = rows[0]
     if (oldest !== undefined) {
       hostCursor = oldest.id
-      state.pages = [page.messages.map(feedMessageOf), ...state.pages]
+      state.pages = [rows.map(feedMessageOf), ...state.pages]
     }
+    const page = parsed.data.value
     state.reachedStart = page.reachedStart
   }
 

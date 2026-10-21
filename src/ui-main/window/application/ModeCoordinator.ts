@@ -15,9 +15,14 @@
 // and runs as soon as the run settles, the last request winning (S27.09; owner OQ-78, AMENDMENT-10); a reveal is held
 // the same way and applied in the target mode (S27.14). Any other input during a run is ignored, never queued.
 //
+// A run that carries a chat steps machine 9 with it (ISSUE-293; `domain/chatHandoff.ts`): the chat lands in the target
+// as the run lands, stays in the source when the target fails to show (S9.06: logged, `lastMode` unwritten), ends
+// read-only or closed when its dwarf departs mid-run (S9.08), and is lost with the UI process (S9.09).
+//
 // OS show/hide animations stay as the platform has them: disabling them is UNVERIFIED until S-025-1 is recorded
 // (ADR-025 item 1), so nothing here depends on it.
 import type {
+  DepartureCause,
   DwarfId,
   IpcResult,
   MineId,
@@ -27,6 +32,12 @@ import type {
   WindowMode
 } from '@dwarfai/contracts'
 import type { UiLog } from '../../diagnostics/uiLogger'
+import {
+  nextChatHandoff,
+  startChatHandoff,
+  type ChatHandoffEvent,
+  type ChatHandoffNode
+} from '../domain/chatHandoff'
 import {
   nextModeTransition,
   type ModeTransitionEvent,
@@ -119,8 +130,8 @@ export interface ModeCoordinator {
   toggle(): Promise<IpcResult<void>>
   /** A click or a key on a mode window that is not a mode request (S27.09: ignored during a run). */
   input(): void
-  /** `DwarfDeparted` (S27.11). */
-  departed(dwarfId: DwarfId): void
+  /** `DwarfDeparted` (S27.11), with its cause when the caller knows it (S9.08). */
+  departed(dwarfId: DwarfId, cause?: DepartureCause): void
   /** S27.10 with S10.14 (last window closed) or S10.15 (tray Quit). */
   closed(kind: 'windows-closed' | 'quit'): void
   /** S10.16: the Host closed cleanly. */
@@ -133,6 +144,8 @@ export interface ModeCoordinator {
   offered(): AppMode[]
   /** Machine 10: the rung and the last S10 id taken (`null` before any). */
   ladder(): { state: LadderState; lastId: string | null }
+  /** Machine 9: the chat the last run carried and where it stands; `null` when no run carried one. */
+  handoff(): ChatHandoffNode | null
 }
 
 const OK: IpcResult<void> = { ok: true, value: undefined }
@@ -177,6 +190,15 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
   let revealCount = 0
   /** Whether the windows were told a run's motion is playing (NFR-PERF-02), so each start gets one end. */
   let playingTold = false
+  /** Machine 9: the chat the last run carried (07 S9.01–S9.09), or `null` when it carried none. */
+  let handoff: ChatHandoffNode | null = null
+
+  /** Steps the carried chat's machine 9; an event 07 does not list for it leaves it where it is. */
+  function stepHandoff(event: ChatHandoffEvent): void {
+    if (handoff === null) return
+    const next = nextChatHandoff(handoff, event)
+    if (next.ok) handoff = next.value.to
+  }
 
   function tellPlaying(playing: boolean): void {
     if (playingTold === playing) return
@@ -329,6 +351,9 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     }
     node = moved.value.to
     const to = request.mode
+    // S9.01: a mode control with an open chat; the run's own guard already held (the target mode is built).
+    handoff = request.chat === undefined ? null : startChatHandoff({ ...request.chat }, from)
+    stepHandoff({ type: 'mode-control', to, built: true })
     let target: ModeWindow | null
     try {
       // ADR-025 item 3 step 1: at the final bounds, then shown inactive; never placed again until the run lands.
@@ -357,18 +382,24 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     }
     current = { request, cancelWatchdog: () => {} }
     if (deps.reducedMotion()) {
-      // S27.06: durations 0 ms, the same state transfer.
+      // S27.06: durations 0 ms, the same state transfer (S9.05).
+      stepHandoff({ type: 'reduced-motion' })
       step({ type: 'reduced-motion' })
       land(from, to)
       return
     }
+    // S9.02: the source was told the run before `t0` and flushes the chat on receipt.
+    stepHandoff({ type: 'flushed' })
     step({ type: 'prepared' })
     tellPlaying(true)
     const run = current
     run.cancelWatchdog = timing.after(
       MODE_T0_LEAD_MS + MODE_MOTION_MS + MODE_WATCHDOG_MARGIN_MS,
       () => {
-        if (current === run && step({ type: 'watchdog' })) land(from, to)
+        if (current === run && step({ type: 'watchdog' })) {
+          stepHandoff({ type: 'watchdog' })
+          land(from, to)
+        }
       }
     )
     // An end with no window has nothing to play: its answer is the coordinator's own.
@@ -384,6 +415,8 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     shownTarget: ModeWindow | null
   ): void {
     if (shownTarget !== null) safely(from, to, () => shownTarget.hide())
+    // S9.06: the chat stays in the source; nothing is written.
+    stepHandoff({ type: 'target-failed' })
     step({ type: 'target-failed' })
     logFailed(from, to)
     for (const answer of request.answers) answer(failed('the mode window could not be shown'))
@@ -394,7 +427,10 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     if (node.state !== 'playing') return
     const { from, to } = node.run
     // `step` moves `node`: read its state again once it ran.
-    if (step({ type: 'done', role }) && stateOf() === 'completing') land(from, to)
+    if (step({ type: 'done', role }) && stateOf() === 'completing') {
+      stepHandoff({ type: 'done' })
+      land(from, to)
+    }
   }
 
   function request(r: Request): Promise<IpcResult<void>> {
@@ -437,6 +473,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       current?.cancelWatchdog()
       current = null
       step({ type: 'hidden' })
+      stepHandoff({ type: 'hidden' })
       tellPlaying(false)
       safely(from, to, () => windowOf(from)?.hide())
       safely(from, to, () => windowOf(to)?.hide())
@@ -513,11 +550,15 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       // S27.09: a click or a key that is not a mode request is ignored during a run, never queued.
       if (running()) step({ type: 'input' })
     },
-    departed(dwarfId) {
+    departed(dwarfId, cause) {
       if (node.state !== 'preparing' && node.state !== 'playing') return
       if (current?.request.chat?.dwarfId !== dwarfId) return
       const { from, to } = node.run
-      if (step({ type: 'departed' })) land(from, to)
+      if (step({ type: 'departed' })) {
+        // S9.08: read-only or closed by cause in the target, which also hears the departure itself.
+        stepHandoff(cause === undefined ? { type: 'departed' } : { type: 'departed', cause })
+        land(from, to)
+      }
     },
     closed(kind) {
       // S27.10: every window closes; `lastMode` keeps what it is (written only at S27.03).
@@ -557,6 +598,8 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       held = null
       tellPlaying(false)
       step({ type: 'crashed' })
+      // S9.09: drafts and view state are lost with the UI process, and nothing else.
+      stepHandoff({ type: 'crashed' })
       node = { state: 'settled', mode: 'hidden' }
       climb({ type: 'crashed' })
       for (const answer of pending) answer(failed('the UI process crashed'))
@@ -567,6 +610,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     },
     mode: shown,
     offered: () => [...built],
-    ladder: () => ({ ...ladder })
+    ladder: () => ({ ...ladder }),
+    handoff: () => (handoff === null ? null : { ...handoff })
   }
 }

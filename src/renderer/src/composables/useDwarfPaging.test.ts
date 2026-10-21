@@ -324,7 +324,8 @@ describe('useDwarfPaging from the Host', () => {
   it('[ADR-007] scrolling back calls getDwarfFeedPage with the 14 FeedParams shape and stops at reachedStart', async () => {
     const getDwarfFeedPage = vi
       .fn<HostFeedPageRead>()
-      .mockResolvedValueOnce(feedPage([view(3), view(4)], false))
+      // AMENDED for ISSUE-293 (was: the wire oldest first): the Host sends a chat newest first (16 §4.6).
+      .mockResolvedValueOnce(feedPage([view(4), view(3)], false))
       .mockResolvedValueOnce(feedPage([view(2)], true))
     const { state, hold, olderFromHost } = useDwarfPaging()
 
@@ -378,5 +379,20 @@ describe('useDwarfPaging from the Host', () => {
       unpageable: false,
       beyondReach: false
     })
+  })
+
+  // ADDED for ISSUE-293: a Host page is newest first on the wire (16 §4.6, `sort_at DESC, id DESC`).
+  it('[ADR-033] a Host page, newest first on the wire, is held oldest first and its oldest row is the next cursor', async () => {
+    const read = vi
+      .fn<HostFeedPageRead>()
+      .mockResolvedValueOnce(feedPage([view(4), view(3)], false))
+      .mockResolvedValueOnce(feedPage([view(2)], true))
+    const { state, hold, olderFromHost } = useDwarfPaging()
+
+    hold(BORIN)
+    await olderFromHost(BORIN, id(5), read)
+    expect(state.pages[0]!.map((message) => message.text)).toEqual(['line 3', 'line 4'])
+    await olderFromHost(BORIN, id(5), read)
+    expect(read).toHaveBeenLastCalledWith({ dwarfId: BORIN, page: { before: id(3), limit: 50 } })
   })
 })

@@ -1336,7 +1336,8 @@ describe('useDwarfMessaging chat from the Host read model', () => {
   })
 
   it("[ADR-033] a dwarf's chat is built from its tails chunk and then from conversation.appended frames with a higher seq", async () => {
-    const host = installHost([page(5, tails({ dwarfId: BORIN, messages: [view(1), view(2)] }))])
+    // AMENDED for ISSUE-293 (was: the wire oldest first): the Host sends a chat newest first (16 §4.6).
+    const host = installHost([page(5, tails({ dwarfId: BORIN, messages: [view(2), view(1)] }))])
     expect(await useDwarfMessaging().startChat()).toBe(true)
     host.push([frame(6, 'conversation.appended', { dwarfId: BORIN, messages: [view(3)] })])
     expect(chatOf(BORIN)).toEqual({
@@ -1351,6 +1352,23 @@ describe('useDwarfMessaging chat from the Host read model', () => {
     // AMENDED for ISSUE-249 (was: A-14, A-16 and A-17 never called): those members no longer exist (`MEMBER_REMOVED`).
   })
 
+  // ADDED for ISSUE-293: the scroll anchor names a message by its Host id (ADR-024 item 3, `ChatViewState`).
+  it('[ADR-024, INV-114] every row the Host fed carries its Host message id, so a chat view can be anchored to it', async () => {
+    const host = installHost([page(5, tails({ dwarfId: BORIN, messages: [view(2), view(1)] }))])
+    await useDwarfMessaging().startChat()
+    host.push([frame(6, 'conversation.appended', { dwarfId: BORIN, messages: [view(3)] })])
+    const rows = chatOf(BORIN)?.messages ?? []
+    expect(rows.map((row) => useDwarfMessaging().hostMessageIdOf(row))).toEqual([
+      id(1),
+      id(2),
+      id(3)
+    ])
+    // A row the Host never fed (the poll's `lastMessage`, a test's own) names no message.
+    expect(
+      useDwarfMessaging().hostMessageIdOf({ role: 'assistant', text: 'line 1', timestamp: '' })
+    ).toBeUndefined()
+  })
+
   it('[ADR-033] a frame with seq at or below the snapshot seq is ignored, and resync-required re-reads the snapshot', async () => {
     let host: Host | null = null
     host = installHost([
@@ -1359,7 +1377,8 @@ describe('useDwarfMessaging chat from the Host read model', () => {
         host!.push([frame(5, 'conversation.appended', { dwarfId: BORIN, messages: [view(9)] })])
         return page(5, tails({ dwarfId: BORIN, messages: [view(1)] }))
       },
-      page(8, tails({ dwarfId: BORIN, messages: [view(1), view(2), view(3)] }))
+      // AMENDED for ISSUE-293 (was: the wire oldest first): the Host sends a chat newest first (16 §4.6).
+      page(8, tails({ dwarfId: BORIN, messages: [view(3), view(2), view(1)] }))
     ])
     await useDwarfMessaging().startChat()
     await settle()
@@ -1455,7 +1474,8 @@ describe('useDwarfMessaging chat from the Host read model', () => {
       installHost([
         page(
           5,
-          tails({ dwarfId: BORIN, messages: [view(1, { issuer: { dwarfId: DAIN } }), view(2)] })
+          // AMENDED for ISSUE-293 (was: the wire oldest first): the Host sends a chat newest first (16 §4.6).
+          tails({ dwarfId: BORIN, messages: [view(2), view(1, { issuer: { dwarfId: DAIN } })] })
         )
       ])
       await useDwarfMessaging().startChat()
@@ -1620,6 +1640,27 @@ describe('useDwarfMessaging chat from the Host read model', () => {
     })
     expect(sendDwarfText).toHaveBeenCalledOnce()
     useDwarfMessaging().clearAll()
+  })
+
+  // ADDED for ISSUE-293: the Host reads a chat newest first (16 §4.6 `ConversationQueries.feed`, `sort_at DESC, id
+  // DESC`), the snapshot's `tails` included; a chat is held oldest first whichever way it was built.
+  it('[ADR-033, ADR-024] a chat built from the Host tails snapshot, newest first on the wire, is held oldest first, as frames build it', async () => {
+    const host = installHost([
+      page(5, tails({ dwarfId: BORIN, messages: [view(3), view(2), view(1)] })),
+      page(9, tails({ dwarfId: BORIN, messages: [view(4), view(3), view(2), view(1)] }))
+    ])
+    await useDwarfMessaging().startChat()
+    expect(textsOf(BORIN)).toEqual(['line 1', 'line 2', 'line 3'])
+    // The scroll-back hangs off the oldest row held.
+    expect(useDwarfMessaging().hostOldestMessageId(BORIN)).toBe(id(1))
+    host.push([frame(6, 'conversation.appended', { dwarfId: BORIN, messages: [view(4)] })])
+    expect(textsOf(BORIN)).toEqual(['line 1', 'line 2', 'line 3', 'line 4'])
+
+    // A reconnect re-reads the snapshot: the same order, never reversed.
+    host.push([frame(7, 'resync-required', { reason: 'ring-overrun' })])
+    await settle()
+    expect(host.requests).toHaveLength(2)
+    expect(textsOf(BORIN)).toEqual(['line 1', 'line 2', 'line 3', 'line 4'])
   })
 })
 

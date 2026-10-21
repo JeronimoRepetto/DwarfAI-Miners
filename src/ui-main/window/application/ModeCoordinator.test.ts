@@ -567,4 +567,43 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     expect(shown.coordinator.hostClosed()).toEqual({ ok: false, error: 'not-listed' })
     expect(shown.coordinator.ladder()).toEqual({ state: 'panel', lastId: null })
   })
+
+  // APPENDED for ISSUE-293: machine 9 carried by the run (07 S9.01–S9.09; ADR-025 item 3).
+  it('[S9.01, S9.03, S9.06, S9.08] a run carrying a chat steps machine 9: it lands the chat in the target, a target that fails leaves it in the source with lastMode unwritten, and a departure ends it by cause', async () => {
+    const s = setup({ start: 'veta' })
+    expect(s.coordinator.handoff()).toBeNull()
+    const moved = s.coordinator.moveToMode({ mode: 'panel', mineId: MINE, dwarfId: DWARF })
+    // The source was told the run before t0: it flushes the chat; both windows now animate.
+    expect(s.coordinator.handoff()).toMatchObject({ state: 'transitioning', to: 'panel' })
+    bothDone(s, 'veta', 'panel')
+    await moved
+    expect(s.coordinator.handoff()).toEqual({
+      state: 'in-target',
+      chat: { dwarfId: DWARF, mineId: MINE },
+      from: 'veta',
+      to: 'panel',
+      ending: 'live'
+    })
+
+    const failed = setup({ start: 'veta', lastMode: 'veta' })
+    failed.failing.add('panel')
+    await failed.coordinator.moveToMode({ mode: 'panel', mineId: MINE, dwarfId: DWARF })
+    expect(failed.coordinator.handoff()).toEqual({
+      state: 'in-source',
+      chat: { dwarfId: DWARF, mineId: MINE },
+      from: 'veta'
+    })
+    expect(failed.store.load('lastMode')).toBe('veta')
+    expect(transitions(failed.win.veta)).toEqual([])
+
+    const left = setup({ start: 'veta' })
+    void left.coordinator.moveToMode({ mode: 'panel', mineId: MINE, dwarfId: DWARF })
+    left.coordinator.departed(DWARF, 'mine-removed')
+    expect(left.coordinator.handoff()).toMatchObject({ state: 'in-target', ending: 'closed' })
+
+    // A move with no chat carries no hand-off.
+    const bare = setup({ start: 'veta' })
+    void bare.coordinator.moveToMode({ mode: 'panel' })
+    expect(bare.coordinator.handoff()).toBeNull()
+  })
 })

@@ -360,3 +360,44 @@ describe('machine 24 diagram conformance', () => {
     expect(risenGeometry({ edge: 'left', end: 'end' }, side, shaft, 150).room).toEqual(right.room)
   })
 })
+
+// APPENDED for ISSUE-293: the hand-offs out of and into the risen window (07 S24.12, S24.18; UC-051).
+describe('machine 24 hand-offs (ISSUE-293)', () => {
+  it("[S24.12, S24.18] Open in the Panel asks for the Panel on the chat's mine and dwarf, and a chat carried into Veta rises as a click does", () => {
+    const handoff = run([{ type: 'open-in-panel' }], RISEN_BORIN)
+    expect(ids(handoff.steps)).toEqual(['S24.12'])
+    expect(handoff.steps[0]).toMatchObject({
+      effects: [{ kind: 'move-to-panel', mineId: MORIA, dwarfId: BORIN }]
+    })
+    // The chat stays where it is until the window hides: the run carries it, the hide folds it (S24.14).
+    expect(handoff.machine).toEqual(RISEN_BORIN)
+
+    const arrived = run([{ type: 'arrive', mineId: MORIA, dwarfId: BORIN, present: true }])
+    expect(ids(arrived.steps)).toEqual(['S24.18'])
+    expect(kinds(arrived.steps[0])).toEqual(['layout-rise', 'open-chat', 'motion'])
+    expect(arrived.machine).toEqual({
+      state: 'rising',
+      content: { kind: 'chat', dwarfId: BORIN, mineId: MORIA }
+    })
+
+    // Neither applies elsewhere: no hand-off from a chat that is not live, and nothing rises over an open window or
+    // for a dwarf no longer in its mine.
+    const readOnly = run(
+      [{ type: 'departed', dwarfId: BORIN, cause: 'stopped' }],
+      RISEN_BORIN
+    ).machine
+    const rejected: Array<[RisenWindow, RisenEvent]> = [
+      [FOLDED, { type: 'open-in-panel' }],
+      [readOnly, { type: 'open-in-panel' }],
+      [RISEN_BORIN, { type: 'arrive', mineId: MORIA, dwarfId: DAIN, present: true }],
+      [FOLDED, { type: 'arrive', mineId: MORIA, dwarfId: BORIN, present: false }]
+    ]
+    for (const [from, event] of rejected) {
+      expect(run([event], from).steps[0], `${from.state} ${event.type}`).toEqual({
+        ok: false,
+        from: from.state,
+        event: event.type
+      })
+    }
+  })
+})
