@@ -2,7 +2,7 @@
 import type { DwarfWire } from '@dwarfai/contracts'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
-import { dwarfLabels, labelPlace, silenceOf } from '../../lib/veta/dwarfLabel'
+import { dwarfLabels, labelBox, labelPlace, silenceOf } from '../../lib/veta/dwarfLabel'
 import {
   BORIN,
   DAIN,
@@ -161,5 +161,45 @@ describe('a dwarf in a Veta chamber', () => {
     expect(label.attributes('style')).toContain('bottom: calc(100% + 46px)')
     expect(label.attributes('data-side')).toBe('top')
     wrapper.unmount()
+  })
+
+  it("[S24.19, ADR-025] the band holds the room of every dwarf's label, so a hover never resizes the window", async () => {
+    // Where each label would stand, in the island's pixels: the same place `labelPlace` gives it, its size measured.
+    const size = { width: 190, height: 20 }
+    const chamber = { x: 40, y: 4, width: 100, height: 44 }
+    const dwarf = { x: 60, y: 8, width: 36, height: 38 }
+    expect(labelBox('top', chamber, dwarf, null, size)).toEqual({
+      x: 78 - 95,
+      y: 4 - 46 - 20,
+      ...size
+    })
+    expect(labelBox('bottom', chamber, dwarf, null, size)).toEqual({
+      x: 78 - 95,
+      y: 48 + 46,
+      ...size
+    })
+    const shaft = { x: 4, y: 40, width: 44, height: 120 }
+    const tab = { x: 4 - 120, y: 38, width: 120, height: 30 }
+    const level = { x: 8, y: 50, width: 36, height: 38 }
+    expect(labelBox('left', shaft, level, tab, size)).toEqual({
+      x: 4 - 130 - 190,
+      y: 69 - 10,
+      ...size
+    })
+    expect(labelBox('right', shaft, { ...level, y: 110 }, tab, size)).toEqual({
+      x: 48 + 8,
+      y: 129 - 10,
+      ...size
+    })
+
+    // In the Veta root: hovering a dwarf asks UI main for nothing, the label's room is already held.
+    world = await mountVeta(ONE_MINE)
+    const asked = world.layouts.length
+    document
+      .querySelector<HTMLElement>(`[data-veta-dwarf][data-dwarf-id="${BORIN}"]`)!
+      .dispatchEvent(new PointerEvent('pointerenter'))
+    await flushPromises()
+    expect(document.querySelector('[data-veta-dwarf-label]')).not.toBeNull()
+    expect(world.layouts.slice(asked)).toEqual([])
   })
 })

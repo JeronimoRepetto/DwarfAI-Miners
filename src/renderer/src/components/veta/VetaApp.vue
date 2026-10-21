@@ -47,7 +47,7 @@
  * departing leaves it read-only or, for a removed mine, closes it; a drag, the display going away or the window hidden
  * fold it at once. A click in another app does not fold it: the OS file picker and the console the chat itself opens
  * take the focus the same way, and would fold the chat under the person's hands. Hovering a dwarf shows its one-line
- * label, once the band the window holds has the label's room too.
+ * label, whose room the band holds for good with the tabs', so a hover never resizes the window.
  */
 import { VETA_ISLAND, type DwarfId, type DwarfWire, type MineId } from '@dwarfai/contracts'
 import type { MineWorktreeOf } from '../../types'
@@ -73,7 +73,7 @@ import { useWindowVetaPresence } from '../../composables/useVetaPresence'
 import { useWindowVetaRisen } from '../../composables/useVetaRisen'
 import { SHIPPED_MODES } from '../../lib/shell/builtDestinations'
 import { snapRect } from '../../lib/veta/dockGesture'
-import { dwarfLabels, silenceOf } from '../../lib/veta/dwarfLabel'
+import { dwarfLabels, labelBox, silenceOf } from '../../lib/veta/dwarfLabel'
 import { gripMenuEntries, type GripMenuItemId, type Opener } from '../../lib/veta/gripMenu'
 import { islandLength } from '../../lib/veta/island'
 import { entranceIntent } from '../../lib/veta/lifeState'
@@ -94,6 +94,7 @@ import VetaExpand from './VetaExpand.vue'
 import VetaGrip from './VetaGrip.vue'
 import VetaGripMenu from './VetaGripMenu.vue'
 import VetaIsland from './VetaIsland.vue'
+import DwarfLabel from './DwarfLabel.vue'
 import VetaRisen from './VetaRisen.vue'
 import type { RisenContent } from '../../lib/veta/risenWindow'
 
@@ -447,42 +448,57 @@ function measureBand(): Promise<void> {
       height: box.offsetHeight
     }
   })
-  // A dwarf's hover label stands beyond the tabs (ISSUE-290): the room of every label shown since the strip last changed
-  // is held too, so a hover never shrinks the window under a fading label.
+  const size = { width: island.offsetWidth, height: island.offsetHeight }
+  return overlay.band(tabBand(dock.dock.value, size, [...tabs, ...labelBoxes(island)]))
+}
+
+/** The hover-label probe: a label never shown, which measures each dwarf's label at its longest. */
+const labelProbe = ref<InstanceType<typeof DwarfLabel> | null>(null)
+/** A silence written with its most characters ("59m"), so a label never outgrows the room measured for it. */
+const LONGEST_SILENCE = 59 * 60_000
+
+/*
+ * The room of every dwarf's hover label (ISSUE-290; S24.19), held in the band with the tabs' (07 §24 I-22), so a hover
+ * never resizes the window: a window resized under the pointer moves the page under it, and the label would leave with
+ * the hover it shows for. Each label is measured at its longest and placed where `labelPlace` puts it.
+ */
+function labelBoxes(island: HTMLElement): TabBox[] {
+  const probe = labelProbe.value?.$el as HTMLElement | undefined
+  if (probe === undefined) return []
   const origin = island.getBoundingClientRect()
-  for (const label of island.querySelectorAll<HTMLElement>('[data-veta-dwarf-label]')) {
-    const box = label.getBoundingClientRect()
-    labelRoom = unionBox(labelRoom, {
+  const inIsland = (el: Element): TabBox => {
+    const box = el.getBoundingClientRect()
+    return {
       x: box.left - origin.left,
       y: box.top - origin.top,
       width: box.width,
       height: box.height
-    })
+    }
   }
-  const size = { width: island.offsetWidth, height: island.offsetHeight }
-  const boxes = labelRoom === null ? tabs : [...tabs, labelRoom]
-  return overlay.band(tabBand(dock.dock.value, size, boxes))
-}
-
-/** The room every hover label shown since the strip last changed took, in the island's pixels. */
-let labelRoom: TabBox | null = null
-
-function unionBox(a: TabBox | null, b: TabBox): TabBox {
-  if (a === null) return b
-  const x = Math.min(a.x, b.x)
-  const y = Math.min(a.y, b.y)
-  return {
-    x,
-    y,
-    width: Math.max(a.x + a.width, b.x + b.width) - x,
-    height: Math.max(a.y + a.height, b.y + b.height) - y
+  const boxes: TabBox[] = []
+  for (const chamber of island.querySelectorAll<HTMLElement>('[data-veta-chamber]')) {
+    const view = chambers.value.find((c) => c.mine.id === chamber.dataset.mineId)
+    if (view === undefined) continue
+    const tab = chamber.querySelector<HTMLElement>('[data-veta-tab]')
+    const tabBox =
+      tab === null
+        ? null
+        : {
+            x: chamber.offsetLeft + tab.offsetLeft,
+            y: chamber.offsetTop + tab.offsetTop,
+            width: tab.offsetWidth,
+            height: tab.offsetHeight
+          }
+    for (const button of chamber.querySelectorAll<HTMLElement>('[data-veta-dwarf]')) {
+      const dwarf = view.dwarfs.find((d) => d.id === button.dataset.dwarfId)
+      if (dwarf === undefined) continue
+      probe.textContent = dwarfLabels(dwarf, LONGEST_SILENCE).tip
+      const measured = { width: probe.offsetWidth, height: probe.offsetHeight }
+      boxes.push(labelBox(tabSide.value, inIsland(chamber), inIsland(button), tabBox, measured))
+    }
   }
-}
-
-/** The strip's parts, its edge or its anchored end changed: the labels' room is measured afresh. */
-function remeasureBand(): void {
-  labelRoom = null
-  void measureBand()
+  probe.textContent = ''
+  return boxes
 }
 
 watch(
@@ -492,10 +508,14 @@ watch(
     dock.dock.value.edge,
     dock.dock.value.end,
     chambers.value
-      .map((c) => `${c.mine.id}:${c.mine.name}:${c.mine.tier ?? ''}:${c.dwarfs.length}`)
+      .map(
+        (c) =>
+          `${c.mine.id}:${c.mine.name}:${c.mine.tier ?? ''}:` +
+          c.dwarfs.map((d) => `${d.customName ?? d.baseName}/${d.status}`).join(',')
+      )
       .join('|')
   ],
-  remeasureBand,
+  measureBand,
   { flush: 'post' }
 )
 
@@ -693,11 +713,12 @@ function dwarfHover(dwarfId: DwarfId | null): void {
   }, 1_000)
 }
 
+// Drawn first at opacity 0, then shown, so it fades in (`.dm-chamber__label`, 90 ms).
 watch(hoveredDwarf, async (dwarfId) => {
   labelOn.value = false
   if (dwarfId === null) return
   await nextTick()
-  await measureBand()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   labelOn.value = hoveredDwarf.value === dwarfId
 })
 
@@ -850,6 +871,14 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
+    <DwarfLabel
+      ref="labelProbe"
+      class="veta-root__probe"
+      text=""
+      side="top"
+      :place="{}"
+      :on="false"
+    />
     <VetaRisen
       ref="risenRef"
       :machine="risen.machine.value"
@@ -882,6 +911,11 @@ onBeforeUnmount(() => {
 /* The island keeps to its edge and anchored end (inline), so a window grown for an overlay never moves it. */
 .veta-root__island {
   position: absolute;
+}
+
+/* The hover-label probe: laid out to be measured, never seen. */
+.veta-root__probe {
+  visibility: hidden;
 }
 
 /* The overlay's room beside the island: transparent, its card drawn at the island's anchored end. */

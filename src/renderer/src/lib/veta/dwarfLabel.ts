@@ -86,8 +86,36 @@ export function labelPlace(
     const beyond = `calc(100% + ${ROW_BEYOND}px)`
     return side === 'top' ? { left, bottom: beyond } : { left, top: beyond }
   }
-  const level = tab !== null && dwarf.y < tab.y + tab.height && tab.y < dwarf.y + dwarf.height
-  const beyond = `calc(100% + ${level ? tab.width + PAST_TAB : SHAFT_BEYOND}px)`
+  const beyond = `calc(100% + ${levelWithTab(dwarf, tab) ? tab.width + PAST_TAB : SHAFT_BEYOND}px)`
   const top = `${dwarf.y + dwarf.height / 2}px`
   return side === 'left' ? { top, right: beyond } : { top, left: beyond }
+}
+
+/** Whether a dwarf stands level with the chamber's tab along a shaft. */
+const levelWithTab = (dwarf: LabelBox, tab: LabelBox | null): tab is LabelBox =>
+  tab !== null && dwarf.y < tab.y + tab.height && tab.y < dwarf.y + dwarf.height
+
+/**
+ * The box a dwarf's label of `size` takes, where `labelPlace` puts it: every box in the same pixels (the island's), the
+ * chamber's, the dwarf's and its tab's. The window holds the room of every dwarf's label in the tab band (07 §24 I-22),
+ * so a hover never resizes it.
+ */
+export function labelBox(
+  side: LabelSide,
+  chamber: LabelBox,
+  dwarf: LabelBox,
+  tab: LabelBox | null,
+  size: { width: number; height: number }
+): LabelBox {
+  if (side === 'top' || side === 'bottom') {
+    const x = dwarf.x + dwarf.width / 2 - size.width / 2
+    const y =
+      side === 'top'
+        ? chamber.y - ROW_BEYOND - size.height
+        : chamber.y + chamber.height + ROW_BEYOND
+    return { x, y, ...size }
+  }
+  const beyond = levelWithTab(dwarf, tab) ? tab.width + PAST_TAB : SHAFT_BEYOND
+  const x = side === 'left' ? chamber.x - beyond - size.width : chamber.x + chamber.width + beyond
+  return { x, y: dwarf.y + dwarf.height / 2 - size.height / 2, ...size }
 }
