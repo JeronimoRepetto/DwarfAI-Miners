@@ -29,7 +29,9 @@ const VIEW: ChatViewState = {
   selection: { start: 3, end: 3, direction: 'none' }
 }
 
-function world(options: { applied?: boolean; drafts?: Record<string, string> } = {}) {
+function world(
+  options: { applied?: boolean; drafts?: Record<string, string>; unfold?: boolean } = {}
+) {
   const log: string[] = []
   const reveals: Array<(t: RevealDwarfChatPush) => void> = []
   const replaced: Array<(e: VetaDockChanged) => void> = []
@@ -74,7 +76,16 @@ function world(options: { applied?: boolean; drafts?: Record<string, string> } =
     focus: (target) => log.push(`focus ${target}`),
     present: (_mineId, dwarfId) => dwarfId === BORIN,
     bringMine: (mineId) => log.push(`bringMine ${mineId === MORIA ? 'moria' : 'erebor'}`),
-    dragging: () => false
+    dragging: () => false,
+    // ISSUE-291: the "+N" unfold before a reveal, logged in the same order as UI main's requests.
+    ...(options.unfold === true
+      ? {
+          unfold: (mineId) => {
+            log.push(`unfold ${mineId === MORIA ? 'moria' : 'erebor'}`)
+            return Promise.resolve()
+          }
+        }
+      : {})
   }
   const risen = useVetaRisen({
     bridge: {
@@ -267,5 +278,27 @@ describe('useVetaRisen', () => {
     expect(risen.machine.value.state).toBe('folded')
     expect(log.filter((line) => line.startsWith('motion'))).toEqual([])
     expect(log).toContain('layoutVeta {"kind":"fold"}')
+  })
+
+  it('[S25.08, S24.15] a reveal unfolds the chamber "+N" folded before the window grows for the chat', async () => {
+    const { risen, log, reveals } = world({ unfold: true })
+    risen.start()
+    reveals[0]!({ mineId: MORIA, dwarfId: BORIN })
+    await settle()
+    const order = log.filter((line) => line.startsWith('unfold') || line.startsWith('layoutVeta'))
+    expect(order.slice(0, 2)).toEqual(['unfold moria', RISE_BORIN])
+  })
+
+  it("[US-VETA-006.AC09, S25.11] the chat last talked to in a mine is the last one this window opened there, else the session store's", async () => {
+    const { risen, session } = world()
+    // Nothing opened here yet: the session store's record of the mine, when that dwarf is in its crew.
+    session.valle = { talkedTo: { [MORIA]: DAIN } as UiSessionSnapshot['valle']['talkedTo'] }
+    expect(await risen.talkedTo(MORIA, [BORIN, DAIN])).toBe(DAIN)
+    expect(await risen.talkedTo(MORIA, [BORIN])).toBeNull()
+    // A chat opened in this window wins.
+    await risen.dispatch({ type: 'dwarf-hit', dwarfId: BORIN, mineId: MORIA })
+    await settle()
+    expect(await risen.talkedTo(MORIA, [BORIN, DAIN])).toBe(BORIN)
+    expect(await risen.talkedTo(EREBOR, [BORIN, DAIN])).toBeNull()
   })
 })

@@ -16,9 +16,12 @@
  *   draft the window holds; UI main drops the stored one itself (INV-34).
  * - The window shrinks only after the fold has played (`layoutVeta {fold}`, S24.09); after a drag UI main already
  *   forgot the room (S24.14). Motion is the host's (`transform`/`opacity` only) and ends by itself or by its watchdog.
- * - A reveal (A-N16 `onRevealDwarfChat`) rises a present dwarf's chat as a click does, or brings only its mine
- *   (S24.15, S24.16); the "+N" unfold before it is ISSUE-291's. Veta's display removed (A-N28, S21.13) folds the
- *   chat at once (S24.14).
+ * - A reveal (A-N16 `onRevealDwarfChat`) first unfolds the mine's chamber when "+N" folded it (`host.unfold`, the
+ *   window grown first, S25.08; ISSUE-291), then rises a present dwarf's chat as a click does, or brings only its mine
+ *   (S24.15, S24.16). Veta's display removed (A-N28, S21.13) folds the chat at once (S24.14).
+ * - The chat last talked to in a mine (`talkedTo`, for a "+N" list-item click, S25.11; lead decision derived from
+ *   OQ-76): the last one this window opened there, else the session store's record of one in that mine (Valle's
+ *   `talkedTo`, then the open chat of Veta, the Panel or Valle).
  *
  * Each step stamps the effects it starts: a later step (a fold mid-rise, a drag) stops the earlier one's remaining
  * effects, so a motion that ends late never steps a machine that has moved on. The bridge and the host are injected
@@ -94,6 +97,8 @@ export interface VetaRisenHost {
   present(mineId: MineId, dwarfId: DwarfId): boolean
   /** Brings the mine's chamber into view, with no chat (S24.16). */
   bringMine(mineId: MineId): void
+  /** Unfolds the mine's chamber when "+N" folded it, the window grown first (S25.08); before a reveal steps. */
+  unfold?(mineId: MineId): Promise<void>
   /** A grip drag is under way. */
   dragging(): boolean
 }
@@ -113,6 +118,8 @@ export interface VetaRisen {
   dispatch(event: RisenEvent): Promise<void>
   /** The open chat's draft as it is typed, kept in the session store. */
   draft(dwarfId: DwarfId, text: string): void
+  /** The dwarf of `crew` last talked to in the mine, or `null` (S25.11). */
+  talkedTo(mineId: MineId, crew: readonly DwarfId[]): Promise<DwarfId | null>
   /** Hears reveals and Veta's display going away. */
   start(): void
   stop(): void
@@ -129,6 +136,8 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
   let heldBy: 'rise' | 'add' | null = null
   let unlisten: (() => void) | null = null
   let unlistenDock: (() => void) | null = null
+  /** The chat this window last opened in each mine. */
+  const talked = new Map<MineId, DwarfId>()
 
   function place(content: RisenContent): RisenGeometry {
     const { size, island } = host.stage()
@@ -154,6 +163,7 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
   }
 
   async function openChat(mineId: MineId, dwarfId: DwarfId): Promise<void> {
+    talked.set(mineId, dwarfId)
     bridge.patchUiSession({ kind: 'veta-risen-chat', dwarfId })
     bridge.patchUiSession({ kind: 'open-chat', host: 'veta', dwarfId })
     let draft = ''
@@ -264,14 +274,34 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
     draft(dwarfId, text) {
       bridge.patchUiSession({ kind: 'draft', dwarfId, text })
     },
+    async talkedTo(mineId, crew) {
+      const own = talked.get(mineId)
+      if (own !== undefined && crew.includes(own)) return own
+      try {
+        const session = await bridge.getUiSession()
+        const recorded = [
+          session.valle.talkedTo?.[mineId],
+          session.openChat.veta,
+          session.openChat.panel,
+          session.openChat.valle
+        ]
+        return recorded.find((id): id is DwarfId => id != null && crew.includes(id)) ?? null
+      } catch {
+        // The session store could not be read: nobody is known to have been talked to.
+        return null
+      }
+    },
     start() {
       unlisten ??= bridge.onRevealDwarfChat((target) => {
-        void dispatch({
-          type: 'reveal',
-          mineId: target.mineId,
-          dwarfId: target.dwarfId,
-          present: target.dwarfId !== null && host.present(target.mineId, target.dwarfId)
-        })
+        void (async () => {
+          await host.unfold?.(target.mineId)
+          await dispatch({
+            type: 'reveal',
+            mineId: target.mineId,
+            dwarfId: target.dwarfId,
+            present: target.dwarfId !== null && host.present(target.mineId, target.dwarfId)
+          })
+        })()
       })
       // Veta's display removed (S21.13): the island moved to another display, the chat folds at once (S24.14).
       unlistenDock ??= bridge.onVetaDockChanged((changed) => {

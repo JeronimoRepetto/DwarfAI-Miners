@@ -2,8 +2,10 @@
  * Veta's on-screen report (07 S20.18; 14 A-44 `reportVisibleMines`; ADR-024 item 7; BR-02; ISSUE-287): the mines whose
  * chamber is drawn, for UI main's `PresenceTracker`, the one place "on screen" is computed (INV-119). The report is
  * empty in `first-run` and `no-sessions` (the closed entrance draws no chamber) and while the window is not shown; a
- * folded or undrawn mine is never in it. Debounced 100 ms, so a run of changes (an arrival, a wheel turn) sends once,
- * the last; an unchanged set is not sent again.
+ * folded or undrawn mine is never in it: a mine folded into "+N" is not on screen, so a need there may notify (07
+ * S25.10, BR-02; ISSUE-291). The drawn set is re-reported each time it changes, a wheel turn, an unfold or a re-measure
+ * (S25.03, S25.04, S25.11). Debounced 100 ms, so a run of changes (an arrival, a wheel turn) sends once, the last; an
+ * unchanged set is not sent again.
  *
  * The bridge and the facts are injected (the house idiom over `vi.mock`); the timer is the window's own.
  */

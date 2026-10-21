@@ -8,14 +8,24 @@
  * - `first-run` and `no-sessions`: the closed entrance is the only part and the one click target (US-VETA-011.AC04),
  *   with "+" on first run. It moves to the Panel with no mine (S20.12), or, on first run, opens the empty mine picker
  *   (S20.13, S22.08).
- * - `all-idle` and `sessions-working`: parts from the anchor outward, expand, one chamber per mine at work, the "+N"
- *   slot (ISSUE-291) and the grip. DOM order is visual order: anchored at the right or bottom end it runs grip, the
- *   chambers last-seen first, expand. Mines keep their first-seen order, so a lit chamber never jumps.
+ * - `all-idle` and `sessions-working`: parts from the anchor outward, expand, one chamber per mine at work, "+N" and
+ *   the grip. DOM order is visual order: anchored at the right or bottom end it runs grip, "+N", the chambers
+ *   last-seen first, expand. Mines keep their first-seen order, so a lit chamber never jumps.
  * - Before the Host has answered, nothing is drawn.
  *
  * The window hugs the island: its length along the edge is reported to UI main (`layoutVeta {island-resize}`, A-N23)
  * each time it changes, its thickness is `VETA_ISLAND.thickness`. The drawn chambers are reported as the mines on
- * screen (A-44, S20.18).
+ * screen (A-44, S20.18); a mine folded into "+N" is not on screen (S25.10, BR-02).
+ *
+ * The overflow (ISSUE-291; 07 machine 25, carried out by `useVetaOverflow`; UC-049): as many chambers as fit the
+ * stage's length along the edge show, up to four, and the rest fold into "+N" (`VetaOverflow`). The fit is measured
+ * again, debounced, on show, on an edge or display change, on a window resize and on a chamber set change; the wheel
+ * over the strip cycles the visible run. A longer island grows the window before it is drawn (`layoutVeta
+ * {island-resize}` first, S21.19). Hovering "+N" shows the folded mines, in a room the band holds for good with the
+ * tabs' and the labels', so a hover never resizes the window; a click on one unfolds its chamber (`layoutVeta
+ * {unfold-overflow}`) and opens the chat of its dwarf that needs the person, oldest first, else the one last talked to
+ * there, else the first of its crew (S25.11; OQ-76 A). A reveal for a folded mine unfolds its chamber the same way
+ * before the chat rises (S25.08).
  *
  * The dock (ISSUE-286; 07 machine 21): while the grip is dragged the window is the drag surface (the work area of the
  * display under the pointer): the island follows the pointer by transform and the dashed snap preview marks where it
@@ -67,7 +77,7 @@ import { useMines } from '../../composables/useMines'
 import { useWindowMinePicker } from '../../composables/useMinePicker'
 import { useWindowVetaClickThrough, vetaTakesPointer } from '../../composables/useVetaClickThrough'
 import { useWindowVetaDock } from '../../composables/useVetaDock'
-import { useWindowVetaLife } from '../../composables/useVetaLife'
+import { useWindowVetaLife, useWindowVetaOverflow } from '../../composables/useVetaLife'
 import { useWindowVetaOverlay } from '../../composables/useVetaOverlay'
 import { useWindowVetaPresence } from '../../composables/useVetaPresence'
 import { useWindowVetaRisen } from '../../composables/useVetaRisen'
@@ -77,6 +87,7 @@ import { dwarfLabels, labelBox, silenceOf } from '../../lib/veta/dwarfLabel'
 import { gripMenuEntries, type GripMenuItemId, type Opener } from '../../lib/veta/gripMenu'
 import { islandLength } from '../../lib/veta/island'
 import { entranceIntent } from '../../lib/veta/lifeState'
+import { dwarfToOpen } from '../../lib/veta/overflow'
 import {
   PLAIN_MINE_TAB,
   aimOf,
@@ -94,6 +105,7 @@ import VetaExpand from './VetaExpand.vue'
 import VetaGrip from './VetaGrip.vue'
 import VetaGripMenu from './VetaGripMenu.vue'
 import VetaIsland from './VetaIsland.vue'
+import VetaOverflow from './VetaOverflow.vue'
 import DwarfLabel from './DwarfLabel.vue'
 import VetaRisen from './VetaRisen.vue'
 import type { RisenContent } from '../../lib/veta/risenWindow'
@@ -129,32 +141,76 @@ const menuEntries = gripMenuEntries(SHIPPED_MODES)
 /** A press that closed an overlay on the grip or the entrance does not open one again on its release. */
 let swallow = false
 
+/** A growth asked for before the island draws it (S21.19): the length UI main places the window for meanwhile. */
+let growing: number | null = null
+/** The length a growth already placed the window for, so drawing it asks for nothing more. */
+let grown: number | null = null
+/** The dock has placed the island once: a length change re-places it from then on. */
+let started = false
+
 // The dock reads the island's length only once mounted, after `length` below exists.
 const dock = useWindowVetaDock(
-  () => length.value,
+  () => growing ?? length.value,
   () => {
     if (swallow) swallow = false
     else picker.dispatch({ type: 'grip-click', dragging: false })
   }
 )
 const { vertical, dragging, preview, follow } = dock
-/** The island's length along its edge: the closed entrance's, or the strip's parts added up. */
+
+/** The stage's length along the edge (`setLength`): its width on a top or bottom edge, its height on a side one. */
+function stageLength(): number {
+  return vertical.value ? window.screen.availHeight : window.screen.availWidth
+}
+
+const overflow = useWindowVetaOverflow({
+  chambers: () => chambers.value,
+  available: stageLength,
+  vertical: () => vertical.value,
+  async grow(to) {
+    if (!started) return
+    growing = to
+    try {
+      await dock.resized()
+    } finally {
+      growing = null
+    }
+    grown = to
+  }
+})
+const { drawn: drawnChambers, folded } = overflow
+const listShown = computed(() => overflow.machine.value.state === 'list-shown')
+
+/** The island's length along its edge: the closed entrance's, or the strip's parts added up, "+N" with them. */
 const length = computed(() =>
   sessions.value
     ? islandLength(
-        { kind: 'chambers', crews: chambers.value.map((c) => c.dwarfs.length) },
+        {
+          kind: 'chambers',
+          crews: drawnChambers.value.map((c) => c.dwarfs.length),
+          folded: folded.value.length > 0
+        },
         vertical.value
       )
     : VETA_ISLAND.length
 )
 const anchorEnd = computed(() => dock.dock.value.end === 'end')
-const ordered = computed(() => (anchorEnd.value ? [...chambers.value].reverse() : chambers.value))
+const ordered = computed(() =>
+  anchorEnd.value ? [...drawnChambers.value].reverse() : drawnChambers.value
+)
 
 useWindowVetaPresence(() => ({
   state: state.value,
   shown: life.shown.value,
-  drawn: chambers.value.map((c) => c.mine.id)
+  drawn: drawnChambers.value.map((c) => c.mine.id)
 }))
+
+/** A wheel notch over the strip cycles the visible run (S25.04); with everything drawn it does nothing (S25.09). */
+function wheeled(event: WheelEvent): void {
+  if (!sessions.value || dragging.value) return
+  const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX
+  if (delta !== 0) void overflow.wheel(delta)
+}
 
 /** A right-click, or Enter or Space on the grip (S22.02); a right-click that just closed the menu does not reopen it. */
 function gripMenu(): void {
@@ -348,7 +404,8 @@ function pressed(event: PointerEvent): void {
   if (
     risenOpen.value &&
     target?.closest('[data-veta-risen]') == null &&
-    target?.closest('[data-veta-dwarf]') == null
+    target?.closest('[data-veta-dwarf]') == null &&
+    target?.closest('[data-veta-more-item]') == null
   ) {
     void risen.dispatch({ type: 'outside' })
   }
@@ -380,7 +437,7 @@ const clickThrough = useWindowVetaClickThrough((x, y) => {
 const tab = shallowRef<MineTab>(PLAIN_MINE_TAB)
 const pointerOn = ref<MineId | null>(null)
 const focusOn = ref<MineId | null>(null)
-const drawn = computed(() => chambers.value.map((c) => c.mine.id))
+const drawn = computed(() => drawnChambers.value.map((c) => c.mine.id))
 
 function tabStep(event: MineTabEvent): void {
   const next = stepMineTab(tab.value, event, {
@@ -449,7 +506,22 @@ function measureBand(): Promise<void> {
     }
   })
   const size = { width: island.offsetWidth, height: island.offsetHeight }
-  return overlay.band(tabBand(dock.dock.value, size, [...tabs, ...labelBoxes(island)]))
+  // The "+N" list's room too, held beforehand so its hover never resizes the window (ISSUE-291).
+  const list = island.querySelector<HTMLElement>('[data-veta-more-list]')
+  const more = list === null ? [] : [boxIn(island, list)]
+  return overlay.band(tabBand(dock.dock.value, size, [...tabs, ...labelBoxes(island), ...more]))
+}
+
+/** An element's box in the island's CSS pixels, from its top-left corner. */
+function boxIn(island: HTMLElement, el: Element): TabBox {
+  const origin = island.getBoundingClientRect()
+  const box = el.getBoundingClientRect()
+  return {
+    x: box.left - origin.left,
+    y: box.top - origin.top,
+    width: box.width,
+    height: box.height
+  }
 }
 
 /** The hover-label probe: a label never shown, which measures each dwarf's label at its longest. */
@@ -465,19 +537,10 @@ const LONGEST_SILENCE = 59 * 60_000
 function labelBoxes(island: HTMLElement): TabBox[] {
   const probe = labelProbe.value?.$el as HTMLElement | undefined
   if (probe === undefined) return []
-  const origin = island.getBoundingClientRect()
-  const inIsland = (el: Element): TabBox => {
-    const box = el.getBoundingClientRect()
-    return {
-      x: box.left - origin.left,
-      y: box.top - origin.top,
-      width: box.width,
-      height: box.height
-    }
-  }
+  const inIsland = (el: Element): TabBox => boxIn(island, el)
   const boxes: TabBox[] = []
   for (const chamber of island.querySelectorAll<HTMLElement>('[data-veta-chamber]')) {
-    const view = chambers.value.find((c) => c.mine.id === chamber.dataset.mineId)
+    const view = drawnChambers.value.find((c) => c.mine.id === chamber.dataset.mineId)
     if (view === undefined) continue
     const tab = chamber.querySelector<HTMLElement>('[data-veta-tab]')
     const tabBox =
@@ -507,7 +570,10 @@ watch(
     dragging.value,
     dock.dock.value.edge,
     dock.dock.value.end,
-    chambers.value
+    folded.value
+      .map((c) => `${c.mine.id}:${c.mine.name}:${c.attention}:${c.dwarfs.length}`)
+      .join('|'),
+    drawnChambers.value
       .map(
         (c) =>
           `${c.mine.id}:${c.mine.name}:${c.mine.tier ?? ''}:` +
@@ -525,7 +591,11 @@ function hovered(event: PointerEvent): void {
 
 /** Hidden mid-drag (S21.10, S10.08): the island goes back where it was; an open overlay closes (S22.17). */
 function visibility(): void {
-  if (document.visibilityState !== 'hidden') return
+  // Shown: the fit is measured on each show (S25.01, S25.02).
+  if (document.visibilityState !== 'hidden') {
+    overflow.remeasure()
+    return
+  }
   dock.cancel('hidden')
   picker.dispatch({ type: 'interrupt' })
   void risen.dispatch({ type: 'interrupt', why: 'hidden' })
@@ -616,8 +686,9 @@ const risen = useWindowVetaRisen({
   focus: (target) => risenRef.value?.focusContent(target),
   present: (mineId, dwarfId) =>
     chambers.value.some((c) => c.mine.id === mineId && c.dwarfs.some((d) => d.id === dwarfId)),
-  // Every mine at work has its chamber drawn until "+N" folds some (ISSUE-291, S25.08): nothing to bring into view.
+  // A folded mine's chamber was unfolded before the reveal stepped (S25.08): it is in view already.
   bringMine: () => undefined,
+  unfold: (mineId) => overflow.reveal(mineId),
   dragging: () => dragging.value
 })
 
@@ -625,6 +696,29 @@ const risenOpen = computed(() => {
   const now = risen.machine.value.state
   return now === 'risen-chat' || now === 'risen-add' || now === 'read-only'
 })
+
+/*
+ * A click on a "+N" list item (S25.11; OQ-76 A): its chamber unfolds after the window grew, then the chat of the mine's
+ * dwarf that needs the person, oldest first, else of the one last talked to there, else of the first of its crew,
+ * opens as for a reveal (S24.15), or replaces the one risen (S24.05); with no dwarf present only its chamber shows.
+ */
+async function pickFolded(mineId: MineId): Promise<void> {
+  if (!(await overflow.pick(mineId))) return
+  const crew = chambers.value.find((c) => c.mine.id === mineId)?.dwarfs ?? []
+  const talkedTo = await risen.talkedTo(
+    mineId,
+    crew.map((d) => d.id)
+  )
+  const dwarfId = dwarfToOpen(crew, talkedTo)
+  const { content } = risen.machine.value
+  if (!risenOpen.value) {
+    void risen.dispatch({ type: 'reveal', mineId, dwarfId, present: dwarfId !== null })
+  } else if (dwarfId === null) {
+    void risen.dispatch({ type: 'outside' })
+  } else if (content?.kind !== 'chat' || content.dwarfId !== dwarfId) {
+    void risen.dispatch({ type: 'dwarf-hit', dwarfId, mineId })
+  }
+}
 /** The mine the risen Add panel is aimed at. */
 const addPanelFor = computed<MineId | null>(() => {
   const { state: now, content } = risen.machine.value
@@ -722,11 +816,24 @@ watch(hoveredDwarf, async (dwarfId) => {
   labelOn.value = hoveredDwarf.value === dwarfId
 })
 
-let started = false
-// A new length re-places the window for it (S21.19); the first is sent by the dock's start.
-watch(length, () => {
-  if (started) void dock.resized()
+// A new length re-places the window for it (S21.19); the first is sent by the dock's start, and a growth asked for
+// before it was drawn has placed it already.
+watch(length, (now) => {
+  const placed = grown === now
+  grown = null
+  if (started && !placed) void dock.resized()
 })
+
+// The fit is measured again on an edge or display change (S21.09, S21.11, S21.12, S25.03).
+watch(
+  () => [dock.dock.value.edge, dock.displayKey.value],
+  () => overflow.remeasure()
+)
+
+/** A window resize re-measures the fit (S25.03). */
+function resized(): void {
+  overflow.remeasure()
+}
 
 onMounted(() => {
   document.addEventListener('visibilitychange', visibility)
@@ -746,6 +853,7 @@ onMounted(() => {
     }
   })
   document.addEventListener('keydown', escape)
+  window.addEventListener('resize', resized)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', visibility)
@@ -758,6 +866,8 @@ onBeforeUnmount(() => {
   unlistenWalks?.()
   board.stop()
   document.removeEventListener('keydown', escape)
+  window.removeEventListener('resize', resized)
+  overflow.stop()
   stopTicking()
 })
 </script>
@@ -786,6 +896,7 @@ onBeforeUnmount(() => {
       :vertical="vertical"
       :dragging="dragging"
       :style="islandStyle"
+      @wheel="wheeled"
     >
       <VetaEntrance
         v-if="closed"
@@ -807,6 +918,16 @@ onBeforeUnmount(() => {
           @key="key"
           @menu="gripMenu"
         />
+        <VetaOverflow
+          v-if="anchorEnd && folded.length > 0"
+          :folded="folded"
+          :shown="listShown"
+          :edge="dock.dock.value.edge"
+          :side="tabSide"
+          @enter="overflow.enter()"
+          @leave="overflow.leave()"
+          @pick="pickFolded"
+        />
         <VetaChamber
           v-for="chamber in ordered"
           :key="chamber.mine.id"
@@ -827,7 +948,16 @@ onBeforeUnmount(() => {
           @open="tabAction(chamber.mine.id, 'open')"
           @add="tabAction(chamber.mine.id, 'add')"
         />
-        <!-- "+N" lands here, on the anchor side of the grip (ISSUE-291). -->
+        <VetaOverflow
+          v-if="!anchorEnd && folded.length > 0"
+          :folded="folded"
+          :shown="listShown"
+          :edge="dock.dock.value.edge"
+          :side="tabSide"
+          @enter="overflow.enter()"
+          @leave="overflow.leave()"
+          @pick="pickFolded"
+        />
         <VetaExpand v-if="anchorEnd" :edge="dock.dock.value.edge" @activate="life.openPanel()" />
         <VetaGrip
           v-if="!anchorEnd"

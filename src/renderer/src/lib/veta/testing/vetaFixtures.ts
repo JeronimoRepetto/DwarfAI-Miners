@@ -20,15 +20,38 @@ export const EPOCH = 'epoch-veta'
 export const MORIA = '01920000-0000-7000-8000-00000000a001' as MineId
 export const EREBOR = '01920000-0000-7000-8000-00000000a002' as MineId
 export const KHAZAD = '01920000-0000-7000-8000-00000000a003' as MineId
+/** Three more mines, for a strip that overflows into "+N" (ISSUE-291). */
+export const IRONHILLS = '01920000-0000-7000-8000-00000000a004' as MineId
+export const BELEGOST = '01920000-0000-7000-8000-00000000a005' as MineId
+export const NOGROD = '01920000-0000-7000-8000-00000000a006' as MineId
 
 export const BORIN = '01920000-0000-7000-8000-00000000d001' as DwarfId
 export const DAIN = '01920000-0000-7000-8000-00000000d002' as DwarfId
 export const NALI = '01920000-0000-7000-8000-00000000d003' as DwarfId
+/** More dwarfs, one or more per extra mine (ISSUE-291). */
+export const FLOI = '01920000-0000-7000-8000-00000000d004' as DwarfId
+export const ORI = '01920000-0000-7000-8000-00000000d005' as DwarfId
+export const THRAIN = '01920000-0000-7000-8000-00000000d006' as DwarfId
+export const BALIN = '01920000-0000-7000-8000-00000000d007' as DwarfId
+export const DWALIN = '01920000-0000-7000-8000-00000000d008' as DwarfId
 
 const NAMES: Readonly<Record<string, string>> = {
   [MORIA]: 'moria',
   [EREBOR]: 'erebor',
-  [KHAZAD]: 'khazad'
+  [KHAZAD]: 'khazad',
+  [IRONHILLS]: 'ironhills',
+  [BELEGOST]: 'belegost',
+  [NOGROD]: 'nogrod'
+}
+
+const DWARF_NAMES: Readonly<Record<string, string>> = {
+  [BORIN]: 'borin',
+  [DAIN]: 'dain',
+  [FLOI]: 'floi',
+  [ORI]: 'ori',
+  [THRAIN]: 'thrain',
+  [BALIN]: 'balin',
+  [DWALIN]: 'dwalin'
 }
 
 export function mineWire(id: MineId, overrides: Partial<MineWire> = {}): MineWire {
@@ -61,7 +84,7 @@ export function dwarfWire(
     id,
     mineId,
     providerId: 'claude',
-    baseName: id === BORIN ? 'borin' : id === DAIN ? 'dain' : 'nali',
+    baseName: DWARF_NAMES[id] ?? 'nali',
     customName: null,
     rank: 'worker',
     parentDwarfId: null,

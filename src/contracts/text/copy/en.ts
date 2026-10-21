@@ -169,6 +169,16 @@ export const en = {
   'veta.tab.open': 'Open {name} in the Panel',
   'veta.tab.newDwarf': 'New dwarf in {name}',
 
+  // "+N", the mines folded off the strip (US-VETA-006; 07 machine 25; ISSUE-291): the design's own copy (DS/docs/copy.md,
+  // Veta strip, "Built at run time" `{restCount} more mines: {rest}` and `[? needs you | {count} at work]`, and "Also in
+  // the code"). "+N" itself is a count; a folded mine whose dwarf needs the person reads "? needs you" (OQ-76 A).
+  'veta.more.count': '+{count}',
+  'veta.more.label': '{count} more mines: {names}',
+  'veta.more.title': 'More mines at work',
+  'veta.more.needsYou': '? needs you',
+  'veta.more.atWork': '{count} at work',
+  'veta.more.hint': 'Scroll over Veta to cycle',
+
   // The grip menu (US-VETA-003; 07 machine 22; ISSUE-288): the design's own copy (DS/docs/screens/veta.md, the grip
   // menu in order; DS/docs/copy.md, Veta strip, "Also in the code"). "New dwarf in…" carries the hint ▸.
   'veta.menu.openPanel': 'Open Panel',
