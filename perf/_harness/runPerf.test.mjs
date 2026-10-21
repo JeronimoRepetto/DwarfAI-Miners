@@ -1,9 +1,21 @@
 // layer: L7
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { runPerf } from './runPerf.mjs'
+import { osName, runPerf } from './runPerf.mjs'
+
+const RUNNER = fileURLToPath(new URL('./runPerf.mjs', import.meta.url))
 
 /**
  * L7 check of the perf runner (testing strategy `17` §1.11).
@@ -89,5 +101,81 @@ describe('perf runner (17 §1.11)', () => {
       expect.objectContaining({ case: 'perf/slow.perf.ts', samples: [Number.MAX_SAFE_INTEGER] })
     ])
     expect(existsSync(path.join(root, 'perf-results', 'linux', '2026-09-30.json'))).toBe(true)
+  })
+
+  it('[NFR-OBS-03] a case named with --case runs alone and only its record is appended', async () => {
+    const root = repoWithCases({
+      'perf/a.perf.ts': 'export default function run(): number[] {\n  return [1]\n}\n',
+      'perf/b.perf.ts': 'export default function run(): number[] {\n  return [2]\n}\n'
+    })
+
+    await runPerf({ root, ...RUN, only: 'perf/b.perf.ts' })
+
+    expect(readResults(root)).toEqual([
+      expect.objectContaining({ case: 'perf/b.perf.ts', samples: [2] })
+    ])
+  })
+
+  it('[NFR-OBS-03] a case reaches TypeScript modules imported without their extension, as the E2E harness it uses does', async () => {
+    const root = repoWithCases({
+      'perf/scene.perf.ts':
+        "import { seven } from './lib/a.ts'\nexport default function run(): number[] {\n  return [seven()]\n}\n",
+      'perf/lib/a.ts': "import { six } from './b'\nexport const seven = (): number => six() + 1\n",
+      'perf/lib/b.ts': 'export const six = (): number => 6\n'
+    })
+
+    const result = spawnSync(
+      process.execPath,
+      [RUNNER, '--root', root, '--case', 'perf/scene.perf.ts'],
+      { encoding: 'utf8', env: { ...process.env, GITHUB_SHA: RUN.commit } }
+    )
+
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    const os = osName(process.platform)
+    const [file] = readdirSync(path.join(root, 'perf-results', os))
+    const records = JSON.parse(readFileSync(path.join(root, 'perf-results', os, file), 'utf8'))
+    expect(records).toEqual([expect.objectContaining({ case: 'perf/scene.perf.ts', samples: [7] })])
+  })
+
+  it('[NFR-OBS-03] a case that fails a check after measuring keeps its samples in the record, names the failure and fails the run', async () => {
+    const root = repoWithCases({
+      'perf/checked.perf.ts': [
+        'export default function run(): number[] {',
+        "  const failure = new Error('[ADR-025] the hidden window requested a frame')",
+        '  Object.assign(failure, { samples: [0.5, 0.75] })',
+        '  throw failure',
+        '}',
+        ''
+      ].join('\n'),
+      'perf/fine.perf.ts': 'export default function run(): number[] {\n  return [1]\n}\n'
+    })
+
+    await expect(runPerf({ root, ...RUN })).rejects.toThrow(
+      'perf case perf/checked.perf.ts failed: [ADR-025] the hidden window requested a frame'
+    )
+
+    expect(readResults(root)).toEqual([
+      {
+        os: 'linux',
+        date: '2026-09-30',
+        commit: RUN.commit,
+        case: 'perf/checked.perf.ts',
+        samples: [0.5, 0.75],
+        failure: '[ADR-025] the hidden window requested a frame'
+      },
+      expect.objectContaining({ case: 'perf/fine.perf.ts', samples: [1] })
+    ])
+  })
+
+  it('[NFR-OBS-03] a --case that names no perf case fails the run and records nothing', async () => {
+    const root = repoWithCases({
+      'perf/a.perf.ts': 'export default function run(): number[] {\n  return [1]\n}\n'
+    })
+
+    await expect(runPerf({ root, ...RUN, only: 'perf/missing.perf.ts' })).rejects.toThrow(
+      'no perf case perf/missing.perf.ts'
+    )
+    expect(readResults(root)).toEqual([])
   })
 })
