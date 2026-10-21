@@ -149,6 +149,13 @@ function variantOf(name: string): FixtureVariant {
   return variant
 }
 
+/** Lets every pending continuation run; no timer is involved (the clock is fake). */
+async function settle(): Promise<void> {
+  for (let round = 0; round < 50; round++) {
+    await new Promise<void>((resolve) => process.nextTick(resolve))
+  }
+}
+
 /** Every variant of a fixture run against its expected file; failures as lines. */
 async function againstExpected(
   name: string,
@@ -539,7 +546,16 @@ describe('CodexAppServerDriver', () => {
     expect(await againstExpected('queued-turn')).toEqual([])
   })
 
-  it('[C-05] a turn with attachments is refused as a channel error, never sent without them', async () => {
+  /*
+   * AMENDED for #1463 (was: a turn with attachments refused as a channel error): 15 §1.2 hands the
+   * driver the Host-revalidated paths (`TurnInput.attachments`) and US-MSG-002.AC03 wants them to
+   * travel. Package gap (15 is silent on the encoding), resolved from the `UserInput` union of
+   * Codex 0.153.4's own schema (`codex app-server generate-json-schema`, `TurnStartParams.input`):
+   * an image goes as its `localImage` item (`{ type, path }`), which Codex reads itself; a file of
+   * another kind has no input item, so its path is named in the text item the way the Claude
+   * driver names it (`Attached file: <path>`), and codex opens it with its own tools. Paths only.
+   */
+  it('[C-05, US-MSG-002.AC03] a turn with files names each non-image path in its text item and sends each image as a localImage item', async () => {
     const run = await runScript(
       factoryWith(),
       [{ do: 'launch' }],
@@ -547,15 +563,111 @@ describe('CodexAppServerDriver', () => {
       OPTIONS
     )
     const session = run.session as DriverSession
-    await expect(
-      session.sendTurn({
+    // The recording ends with no answer to this turn/start: the receipt stays pending.
+    session
+      .sendTurn({
         messageId: 'm-1' as never,
         kind: 'message',
         text: 'look at this',
-        attachments: [{ path: '/work/mine/a.png', name: 'a.png', bytes: 3 }]
+        attachments: [
+          { path: '/work/mine/a.png', name: 'a.png', bytes: 3 },
+          { path: '/work/mine/notes.txt', name: 'notes.txt', bytes: 12 }
+        ]
       })
-    ).rejects.toEqual({ kind: 'channel-error', reason: expect.any(String) })
-    expect(run.transports[0]?.sent).toHaveLength(4)
+      .catch(() => undefined)
+    await settle()
+    const sent = run.transports[0]?.sent ?? []
+    expect(sent).toHaveLength(5)
+    expect(JSON.parse(sent[4] as string)).toMatchObject({
+      method: 'turn/start',
+      params: {
+        threadId: THREAD,
+        input: [
+          { type: 'text', text: 'Attached file: /work/mine/notes.txt\nlook at this' },
+          { type: 'localImage', path: '/work/mine/a.png' }
+        ]
+      }
+    })
+  })
+
+  it('[C-05, US-MSG-002.AC03] a turn of images alone carries only localImage items, never an empty text item', async () => {
+    const run = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf('s0151b-client1') },
+      OPTIONS
+    )
+    const session = run.session as DriverSession
+    session
+      .sendTurn({
+        messageId: 'm-2' as never,
+        kind: 'message',
+        text: '',
+        attachments: [{ path: 'C:\\work\\mine\\SHOT.PNG', name: 'SHOT.PNG', bytes: 3 }]
+      })
+      .catch(() => undefined)
+    await settle()
+    const inputs = (run.transports[0]?.sent ?? [])
+      .slice(4)
+      .map((frame) => (JSON.parse(frame) as { params: { input: unknown[] } }).params.input)
+    expect(inputs).toEqual([[{ type: 'localImage', path: 'C:\\work\\mine\\SHOT.PNG' }]])
+  })
+
+  it('[C-05, US-MSG-002.AC03] a message with files sent during a turn is queued with them and its own turn/start carries them', async () => {
+    const run = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf('queued-turn') },
+      OPTIONS
+    )
+    const session = run.session as DriverSession
+    const receipt = await session
+      .sendTurn({
+        messageId: 'm-2' as never,
+        kind: 'message',
+        text: 'queued text',
+        attachments: [{ path: '/work/mine/log.txt', name: 'log.txt', bytes: 40 }]
+      })
+      .catch((error: unknown) => error)
+    expect(receipt).toEqual({
+      confidence: 'unconfirmed',
+      heldUntilTurnEnd: true,
+      correlation: 'm-2'
+    })
+    await session.interrupt()
+    await settle()
+    const sent = run.transports[0]?.sent ?? []
+    expect(JSON.parse(sent[5] as string)).toMatchObject({
+      method: 'turn/start',
+      params: { input: [{ type: 'text', text: 'Attached file: /work/mine/log.txt\nqueued text' }] }
+    })
+  })
+
+  it('[C-05, US-MSG-002.AC03] the echo of a turn whose files DwarfAI named in its text item is the words the person typed alone', async () => {
+    // The queued-turn recording, with the userMessage item Codex echoes for the queued turn
+    // carrying the text item as DwarfAI sent it: the file named ahead of the words.
+    const recorded = variantOf('queued-turn')
+    const named =
+      '"content":[{"type":"text","text":"Attached file: /work/mine/log.txt\\nqueued text"'
+    const variant: FixtureVariant = {
+      ...recorded,
+      received: recorded.received.replace('"content":[{"type":"text","text":"queued text"', named)
+    }
+    expect(variant.received).toContain(named)
+    const run = await runScript(factoryWith(), [{ do: 'launch' }], { variant }, OPTIONS)
+    const session = run.session as DriverSession
+    await session
+      .sendTurn({
+        messageId: 'm-2' as never,
+        kind: 'message',
+        text: 'queued text',
+        attachments: [{ path: '/work/mine/log.txt', name: 'log.txt', bytes: 40 }]
+      })
+      .catch(() => undefined)
+    await session.interrupt()
+    await settle()
+    const echo = run.events.find((event) => event.t === 'message' && event.record.echoOf === 'm-2')
+    expect(echo).toMatchObject({ record: { role: 'person', text: 'queued text', echoOf: 'm-2' } })
   })
 
   it('[C-21] a reached rate limit is error rate-limited and a provider error carries its code word', async () => {

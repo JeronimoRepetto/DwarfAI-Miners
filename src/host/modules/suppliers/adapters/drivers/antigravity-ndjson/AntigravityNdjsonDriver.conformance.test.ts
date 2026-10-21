@@ -245,6 +245,52 @@ describe('AntigravityNdjsonDriver', () => {
     ])
   })
 
+  /*
+   * #1463: 15 §1.2 hands the driver the Host-revalidated paths (`TurnInput.attachments`) and
+   * US-MSG-002.AC03 wants them to travel. Package gap (15 §4.8 is silent), resolved with no native
+   * file input in evidence: agy 1.1.26's own `--help` lists none, its stream-json input is one
+   * `{"event":"user","message":{"content"}}` line, and no fixture carries a file. So each path is
+   * named in the line's content the way the Claude driver names it (`Attached file: <path>`), and
+   * agy opens it with its own tools. Paths only, on stdin; the echo is the person's words alone.
+   */
+  it('[C-05, US-MSG-002.AC03] a turn with files names each revalidated path in the user line ahead of the words, and its echo is the words alone', async () => {
+    const run = await runScript(
+      factoryWith(),
+      [{ do: 'launch', readyAfterMs: 3000 }],
+      { variant: variantOf('c-05-send-turn') },
+      OPTIONS
+    )
+    const session = run.session as DriverSession
+    const receipt = await session
+      .sendTurn({
+        messageId: 'm-1' as never,
+        kind: 'message',
+        text: 'say ping',
+        attachments: [
+          { path: '/work/mine/a.png', name: 'a.png', bytes: 3 },
+          { path: '/work/mine/notes.txt', name: 'notes.txt', bytes: 12 }
+        ]
+      })
+      .catch((error: unknown) => error)
+    await settle()
+    expect(receipt).toEqual({
+      confidence: 'unconfirmed',
+      heldUntilTurnEnd: false,
+      correlation: 'm-1'
+    })
+    expect((run.transports[0]?.sent ?? []).map((line) => JSON.parse(line) as unknown)).toEqual([
+      { event: 'user', message: { content: 'first prompt' } },
+      {
+        event: 'user',
+        message: {
+          content: 'Attached file: /work/mine/a.png\nAttached file: /work/mine/notes.txt\nsay ping'
+        }
+      }
+    ])
+    const echo = run.events.find((event) => event.t === 'message' && event.record.echoOf === 'm-1')
+    expect(echo).toMatchObject({ record: { role: 'person', text: 'say ping', echoOf: 'm-1' } })
+  })
+
   it('[C-22, SP-10] a policy-only launch has permission none and no deny flag until SP-10 records one', async () => {
     // 15 §2.8 row Antigravity: UNVERIFIED (SP-10 Antigravity part not run, spike SP-10).
     expect(ANTIGRAVITY.modes).toBeUndefined()

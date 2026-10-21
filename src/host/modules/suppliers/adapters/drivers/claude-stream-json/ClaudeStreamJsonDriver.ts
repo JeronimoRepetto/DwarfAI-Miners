@@ -73,6 +73,7 @@ import type {
   TurnInput
 } from '../../../ports/providerDriver'
 import { probeEnv } from '../../install/searchDirs'
+import { userContentOf } from '../attachedFiles'
 import { adapterLaunch, type LaunchTarget } from '../acp/client/adapterLaunch'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
 import { relayEntry } from '../shared/relayEntry'
@@ -1062,25 +1063,4 @@ function spawnFailure(error: unknown): DriverLaunchError {
   const code = (error as { code?: unknown } | null)?.code
   const named = typeof code === 'string' ? code : 'failed'
   return launchError(named === 'ENOENT' ? 'not-installed' : 'could-not-start', `spawn ${named}`)
-}
-
-/**
- * The line DwarfAI writes ahead of each file a turn carries (#1463): the same words the legacy held
- * route (`attachmentDelivery.ts` `heldContentFor`, #408) named a file with when it did not send its
- * bytes. Kept here, not imported: a module adapter never imports `contracts` (R9), and the literal
- * the renderer reads is `contracts/text/heldSessionText.ts` `ATTACHED_FILE_PREFIX`.
- */
-export const ATTACHED_FILE_PREFIX = 'Attached file: '
-
-/**
- * A user line's text (15 §1.2 `TurnInput.attachments`; US-MSG-002.AC03; package gap, recorded in the
- * #1463 hand-off): one `Attached file: <path>` line per Host-revalidated file, in the order sent,
- * then the person's words, so the person's own claude opens each file with its own tools. Only the
- * path travels, on stdin (never argv); the bytes are never read here (INV-62). A turn with no file
- * is its words exactly as before.
- */
-export function userContentOf(text: string, attachments: TurnInput['attachments']): string {
-  if (attachments.length === 0) return text
-  const named = attachments.map((file) => `${ATTACHED_FILE_PREFIX}${file.path}`)
-  return [...named, ...(text === '' ? [] : [text])].join('\n')
 }
