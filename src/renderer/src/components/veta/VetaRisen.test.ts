@@ -253,7 +253,7 @@ describe('the risen chat hand-off (ISSUE-293)', () => {
     expect(shownRisen()).toBe('shown')
     // Nothing offers to resize it: no handle, and the panel is not a resizable box.
     expect(card.find('[data-resize], .dm-resize').exists()).toBe(false)
-    expect(card.element.style.resize).toBe('')
+    expect((card.element as HTMLElement).style.resize).toBe('')
   })
 
   it('[S24.12, S24.14] once Veta has played its half of the run to the Panel its risen chat folds at once, its draft kept', async () => {
