@@ -98,7 +98,9 @@ describe('useMinePicker', () => {
     expect(picker.last.value).toMatchObject({ ok: true, id: 'S22.13' })
   })
 
-  it('[S22.14] a worktree is folded into its main project through A-31 and the Panel opens on that mine', async () => {
+  // AMENDED (was: a worktree adopted its main project at once): US-MINES-004.AC03 asks first, so the adoption waits
+  // for "Add <mine>" on the worktree question.
+  it('[US-MINES-004.AC06, S22.14, S22.13] Add <mine> on the worktree question adopts the main project through A-31 and the Panel opens on that mine', async () => {
     const { picker, calls, moves } = world({
       declare: { outcome: 'worktree-of', worktreeOf: { worktree: '/w/ore-wt', root: '/w/ore' } },
       main: { outcome: 'added', mineId: NEW_MINE }
@@ -107,9 +109,51 @@ describe('useMinePicker', () => {
     picker.dispatch({ type: 'choose', item: 'new-dwarf' })
     picker.dispatch({ type: 'add-mine' })
     await settle()
+    expect(calls).toEqual(['declareMine'])
+    picker.answerWorktree(true)
+    expect(picker.adopting.value).toBe(true)
+    await settle()
     expect(calls).toEqual(['declareMine', 'declareMainProject'])
     expect(moves).toEqual([{ mode: 'panel', mineId: NEW_MINE }])
     expect(picker.last.value).toMatchObject({ ok: true, id: 'S22.14' })
+    expect([picker.worktree.value, picker.adopting.value, picker.state.value]).toEqual([
+      null,
+      false,
+      'closed'
+    ])
+  })
+
+  it('[US-MINES-004.AC03, US-MINES-004.AC07, S22.14] a worktree folder asks first, and nothing is added or moved until it is answered', async () => {
+    const { picker, calls, moves } = world({
+      declare: { outcome: 'worktree-of', worktreeOf: { worktree: '/w/ore-wt', root: '/w/ore' } },
+      main: { outcome: 'added', mineId: NEW_MINE }
+    })
+    picker.dispatch({ type: 'grip-open' })
+    picker.dispatch({ type: 'choose', item: 'new-dwarf' })
+    picker.dispatch({ type: 'add-mine' })
+    await settle()
+    expect(picker.worktree.value).toEqual({ worktree: '/w/ore-wt', root: '/w/ore' })
+    expect(calls).toEqual(['declareMine'])
+    expect(moves).toEqual([])
+    expect(picker.state.value).toBe('choosing-folder')
+    // Esc or a press outside cannot close the picker under the question.
+    picker.dispatch({ type: 'dismiss' })
+    expect(picker.state.value).toBe('choosing-folder')
+  })
+
+  it('[US-MINES-004.AC03, S22.11] Cancel on the worktree question adds nothing and goes back to the picker', async () => {
+    const { picker, calls, moves } = world({
+      declare: { outcome: 'worktree-of', worktreeOf: { worktree: '/w/ore-wt', root: '/w/ore' } }
+    })
+    picker.dispatch({ type: 'entrance' })
+    picker.dispatch({ type: 'add-mine' })
+    await settle()
+    picker.answerWorktree(false)
+    await settle()
+    expect(picker.worktree.value).toBeNull()
+    expect(picker.state.value).toBe('picker-empty')
+    expect(picker.last.value).toMatchObject({ ok: true, id: 'S22.11' })
+    expect([calls, moves]).toEqual([['declareMine'], []])
   })
 
   it('[US-VETA-010.AC04, S22.11] a cancelled folder dialog adds nothing and goes back to the picker', async () => {

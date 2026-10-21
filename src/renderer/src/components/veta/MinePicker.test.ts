@@ -182,4 +182,68 @@ describe('the mine picker', () => {
       ).toBe(focused)
     }
   })
+
+  it('[US-MINES-004.AC03, US-MINES-004.AC07, ADR-025, S22.14] over Veta a worktree folder asks first, in a window grown for the question, and Cancel returns to the picker', async () => {
+    world = await mountVeta(MINES, {
+      declare: {
+        outcome: 'worktree-of',
+        worktreeOf: { worktree: 'C:/dev/alpha-worktrees/fix-ore', root: 'C:/dev/alpha' }
+      },
+      declareMain: { outcome: 'added', mineId: NEW_MINE },
+      holdOverlays: true
+    })
+    await world.root.get('[data-veta-grip]').trigger('keydown', { key: 'Enter' })
+    await world.answerOverlays()
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      .find((b) => b.textContent?.includes('New dwarf in…'))!
+      .click()
+    await flushPromises()
+    await world.answerOverlays()
+    expect(shownOverlay()).toBe('picker')
+    const grown = world.layouts.filter((l) => l.kind === 'overlay').length
+    picker()!.querySelector<HTMLButtonElement>('[data-picker-add]')!.click()
+    await flushPromises()
+    // The window is asked for the question's room first; the question shows only once it is answered.
+    expect(world.layouts.filter((l) => l.kind === 'overlay').length).toBe(grown + 1)
+    expect(
+      document.querySelector('[role="dialog"][aria-label$="is a worktree of alpha"]')
+    ).toBeNull()
+    await world.answerOverlays()
+    const question = document.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label$="is a worktree of alpha"]'
+    )
+    expect(question?.getAttribute('aria-label')).toBe('fix-ore is a worktree of alpha')
+    expect(question?.textContent).toContain('Its dwarfs will work in alpha.')
+    const actions = [...question!.querySelectorAll('button')].map((b) => b.textContent?.trim())
+    expect(actions).toEqual(['Cancel', 'Add alpha'])
+    // Nothing is adopted or moved before the answer.
+    expect([world.declares, world.moves]).toEqual([['declareMine'], []])
+
+    // Cancel: nothing added, the picker again, and the room given back to the picker's size.
+    question!.querySelector<HTMLButtonElement>('button')!.click()
+    await flushPromises()
+    await world.answerOverlays()
+    expect(
+      document.querySelector('[role="dialog"][aria-label$="is a worktree of alpha"]')
+    ).toBeNull()
+    expect(shownOverlay()).toBe('picker')
+    expect(world.layouts.filter((l) => l.kind === 'overlay').length).toBe(grown + 2)
+    expect([world.declares, world.moves]).toEqual([['declareMine'], []])
+
+    // Add alpha: the main project is adopted and the Panel opens on it (US-MINES-004.AC06, S22.13).
+    picker()!.querySelector<HTMLButtonElement>('[data-picker-add]')!.click()
+    await flushPromises()
+    await world.answerOverlays()
+    const again = document.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label$="is a worktree of alpha"]'
+    )!
+    ;[...again.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent?.trim() === 'Add alpha')!
+      .click()
+    await flushPromises()
+    await world.answerOverlays()
+    expect(world.declares).toEqual(['declareMine', 'declareMine', 'declareMainProject'])
+    expect(world.moves).toEqual([{ mode: 'panel', mineId: NEW_MINE }])
+    expect(shownOverlay()).toBe('none')
+  })
 })

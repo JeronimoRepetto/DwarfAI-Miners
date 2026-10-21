@@ -28,9 +28,11 @@
  * (`useVetaOverlay`). Out of a drag the island is pinned to its edge and anchored end, so a window growing around it
  * never moves it. Esc, a press outside the overlay, or the window losing the focus closes it and the focus goes back
  * to its opener; a drag, a mode change or the window hidden closes it silently. Over the overlay's transparent room
- * the mouse goes through to whatever is below (`useVetaClickThrough`, ADR-025 item 4).
+ * the mouse goes through to whatever is below (`useVetaClickThrough`, ADR-025 item 4). A worktree folder picked by Add a
+ * mine asks the Mines page's worktree question first, over a window grown to hold it (US-MINES-004.AC03).
  */
 import { VETA_ISLAND, type MineId } from '@dwarfai/contracts'
+import type { MineWorktreeOf } from '../../types'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import { useWindowMinePicker } from '../../composables/useMinePicker'
 import { useWindowVetaClickThrough } from '../../composables/useVetaClickThrough'
@@ -43,6 +45,7 @@ import { snapRect } from '../../lib/veta/dockGesture'
 import { gripMenuEntries, type GripMenuItemId, type Opener } from '../../lib/veta/gripMenu'
 import { islandLength } from '../../lib/veta/island'
 import { entranceIntent } from '../../lib/veta/lifeState'
+import WorktreeDialog from '../browse/WorktreeDialog.vue'
 import MinePicker from './MinePicker.vue'
 import VetaChamber from './VetaChamber.vue'
 import VetaEntrance from './VetaEntrance.vue'
@@ -237,6 +240,31 @@ watch(overlayKind, async (kind) => {
   else pickerRef.value?.focusSearch()
 })
 
+/*
+ * The worktree question over the picker (US-MINES-004.AC03, AC07; the Mines page's own WorktreeDialog): a dialog over
+ * the whole window, so the window first grows to hold it (its card is at most 380 px wide, on 16 px of scrim each
+ * side), and goes back to the picker's room once it has left.
+ */
+const QUESTION_ROOM = { width: 412, height: 280 } as const
+const question = ref<MineWorktreeOf | null>(null)
+watch(
+  () => picker.worktree.value,
+  async (asked) => {
+    if (asked === null) {
+      question.value = null
+      await nextTick()
+      if (overlayKind.value !== null) await overlay.open(overlaySize())
+      return
+    }
+    const room = overlaySize()
+    await overlay.open({
+      width: Math.max(room.width, QUESTION_ROOM.width),
+      height: Math.max(room.height, QUESTION_ROOM.height)
+    })
+    if (picker.worktree.value === asked) question.value = asked
+  }
+)
+
 // While shown, a change of the overlay's size (a refusal line, a search) re-sizes its room.
 let resizes: ResizeObserver | null = null
 watch(overlayBox, (box) => {
@@ -244,7 +272,7 @@ watch(overlayBox, (box) => {
   resizes = null
   if (box === null || typeof ResizeObserver === 'undefined') return
   resizes = new ResizeObserver(() => {
-    if (overlay.shown.value) void overlay.open(overlaySize())
+    if (overlay.shown.value && picker.worktree.value === null) void overlay.open(overlaySize())
   })
   resizes.observe(box)
 })
@@ -283,7 +311,7 @@ function blurred(): void {
  * The island and the overlay card take it; out of an overlay, and while dragged, the window is all island.
  */
 const clickThrough = useWindowVetaClickThrough((x, y) => {
-  if (dragging.value || overlayKind.value === null) return true
+  if (dragging.value || overlayKind.value === null || question.value !== null) return true
   const hit = document.elementFromPoint(x, y)
   return hit?.closest('[data-veta-island], [data-veta-overlay-card]') != null
 })
@@ -422,6 +450,12 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
+    <WorktreeDialog
+      :question="question"
+      :adding="picker.adopting.value"
+      @accept="picker.answerWorktree(true)"
+      @dismiss="picker.answerWorktree(false)"
+    />
   </div>
 </template>
 
