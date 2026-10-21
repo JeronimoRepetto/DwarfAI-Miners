@@ -191,6 +191,16 @@ describe('HistoryPanel tabs', () => {
     await wrapper.setProps({ history: { readable: true, speakers: [NEWEST] } })
     expect(tabs(wrapper)[0]!.attributes('aria-selected')).toBe('true')
   })
+
+  // APPENDED for ISSUE-293: the history slot a hand-off opens "on this dwarf's tab" (07 S24.13; UC-051).
+  it('[S24.13] opens on the tab of the dwarf it is asked for, and on the first tab when that dwarf has no tab', async () => {
+    const wrapper = panel({ openOn: 'claude:s1' })
+    expect(tabs(wrapper)[1]!.attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('.dm-hist__log').text()).toContain('Found the seam.')
+
+    const elsewhere = panel({ openOn: 'claude:gone' })
+    expect(tabs(elsewhere)[0]!.attributes('aria-selected')).toBe('true')
+  })
 })
 
 describe('HistoryPanel transcript', () => {
