@@ -20,8 +20,8 @@
  * from OQ-76), and debounces the re-measure (`createRemeasure`, S25.03). Pure: no DOM, no clock, no `window.api`; the
  * timers are injected.
  */
-import type { DwarfId, DwarfWire } from '@dwarfai/contracts'
-import { islandLength } from './island'
+import type { DwarfId, DwarfWire, MineId } from '@dwarfai/contracts'
+import { BUTTON_ALONG, MORE_ALONG, chamberLength, islandLength } from './island'
 
 /** The most chambers Veta draws (`DS/docs/screens/veta.md`, Numbers written in the scripts: mines shown before +N). */
 export const VETA_MAX_CHAMBERS = 4
@@ -212,6 +212,35 @@ export function stepOverflow(
     machine: { state: to, first: next.run.first, count: next.run.count },
     step: { ok: true, id: next.id, from: machine.state, to, effects }
   }
+}
+
+/** The drawn run as the island lays it out, for `chamberAt`. */
+export interface DrawnStrip {
+  /** The drawn chambers' mines and crews, in mine order. */
+  readonly mines: readonly { readonly mineId: MineId; readonly crew: number }[]
+  /** Some mine is folded into "+N". */
+  readonly folded: boolean
+  readonly vertical: boolean
+  /** Anchored at the right or bottom end: the parts run grip, "+N", the run nearest the anchor last, expand. */
+  readonly anchorEnd: boolean
+}
+
+/**
+ * The drawn chamber at `along` CSS pixels from the island's start (its left or top edge), or `null` over any other
+ * part, from the lengths the island adds up (`islandLength`). After a wheel notch the chamber under a resting pointer
+ * is another one, and the risen tab follows it (S25.04 with 07 machine 23: S23.02, or S23.03 over no chamber).
+ */
+export function chamberAt(strip: DrawnStrip, along: number): MineId | null {
+  const more = strip.folded ? MORE_ALONG[strip.vertical ? 'shaft' : 'row'] : 0
+  const chambers = strip.anchorEnd ? [...strip.mines].reverse() : strip.mines
+  // The island's 2 px padding, then the part before the chambers: the grip and "+N", or expand.
+  let at = 2 + (strip.anchorEnd ? BUTTON_ALONG + more : BUTTON_ALONG)
+  for (const { mineId, crew } of chambers) {
+    const end = at + chamberLength(crew, strip.vertical)
+    if (along >= at && along < end) return mineId
+    at = end
+  }
+  return null
 }
 
 /** The window's timers, injected. */

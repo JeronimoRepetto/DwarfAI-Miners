@@ -87,7 +87,7 @@ import { dwarfLabels, labelBox, silenceOf } from '../../lib/veta/dwarfLabel'
 import { gripMenuEntries, type GripMenuItemId, type Opener } from '../../lib/veta/gripMenu'
 import { islandLength } from '../../lib/veta/island'
 import { entranceIntent } from '../../lib/veta/lifeState'
-import { dwarfToOpen } from '../../lib/veta/overflow'
+import { chamberAt, dwarfToOpen } from '../../lib/veta/overflow'
 import {
   PLAIN_MINE_TAB,
   aimOf,
@@ -205,11 +205,29 @@ useWindowVetaPresence(() => ({
   drawn: drawnChambers.value.map((c) => c.mine.id)
 }))
 
-/** A wheel notch over the strip cycles the visible run (S25.04); with everything drawn it does nothing (S25.09). */
-function wheeled(event: WheelEvent): void {
+/**
+ * A wheel notch over the strip cycles the visible run (S25.04); with everything drawn it does nothing (S25.09). The
+ * pointer rests where it was, now over another chamber or none: the hovered chamber is resolved again from where the
+ * notch landed along the island, so the risen tab is the one under the pointer (S23.02), or none (S23.03).
+ */
+async function wheeled(event: WheelEvent): Promise<void> {
   if (!sessions.value || dragging.value) return
   const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX
-  if (delta !== 0) void overflow.wheel(delta)
+  if (delta === 0) return
+  const box = root.value?.querySelector<HTMLElement>('[data-veta-island]')?.getBoundingClientRect()
+  const along =
+    box === undefined ? null : vertical.value ? event.clientY - box.top : event.clientX - box.left
+  await overflow.wheel(delta)
+  if (along === null) return
+  pointerOn.value = chamberAt(
+    {
+      mines: drawnChambers.value.map((c) => ({ mineId: c.mine.id, crew: c.dwarfs.length })),
+      folded: folded.value.length > 0,
+      vertical: vertical.value,
+      anchorEnd: anchorEnd.value
+    },
+    along
+  )
 }
 
 /** A right-click, or Enter or Space on the grip (S22.02); a right-click that just closed the menu does not reopen it. */

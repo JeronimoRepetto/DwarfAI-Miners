@@ -215,4 +215,39 @@ describe('the "+N" fold of the Veta strip', () => {
     // No dwarf present: no chat to open, only the chamber brought into view ('mine-only', S24.16).
     expect(dwarfToOpen([], ORI)).toBeNull()
   })
+
+  it('[US-VETA-006.AC03, S25.04, S23.02] after a wheel notch the risen tab is the one of the chamber now under the pointer', async () => {
+    world = await mountVeta(sixMines())
+    const risenTab = (): string[] =>
+      [...document.querySelectorAll<HTMLElement>('[data-veta-tab][data-risen="true"]')].map(
+        (tab) => tab.closest<HTMLElement>('[data-veta-chamber]')!.dataset.mineId!
+      )
+    // Anchored at the right end, from the island's start: 2 px padding, the grip (36), "+2" (44), then the run nearest
+    // the anchor last: ironhills, khazad, erebor, moria, 58 px each. The pointer rests 100 px in, on ironhills.
+    const chamber = document.querySelector<HTMLElement>(
+      `[data-veta-chamber][data-mine-id="${IRONHILLS}"]`
+    )!
+    chamber.dispatchEvent(new PointerEvent('pointerenter'))
+    await flushPromises()
+    expect(risenTab()).toEqual([IRONHILLS])
+
+    // One notch: the run moves one chamber away from the anchor, and belegost now stands where ironhills stood.
+    document
+      .querySelector<HTMLElement>('[data-veta-island]')!
+      .dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 100, clientX: 100, clientY: 20, bubbles: true })
+      )
+    await flushPromises()
+    expect(drawn()).toEqual([BELEGOST, IRONHILLS, KHAZAD, EREBOR])
+    expect(risenTab()).toEqual([BELEGOST])
+
+    // The pointer over "+N", not a chamber: after the next notch no tab is risen.
+    document
+      .querySelector<HTMLElement>('[data-veta-island]')!
+      .dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 100, clientX: 60, clientY: 20, bubbles: true })
+      )
+    await flushPromises()
+    expect(risenTab()).toEqual([])
+  })
 })
