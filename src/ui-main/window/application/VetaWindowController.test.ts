@@ -55,6 +55,8 @@ function world(
     surface: () => windows.vetaSurface(),
     screen,
     displayKey: () => options.displayKey ?? RIGHT.displayKey,
+    // The default place (07 S21.02): the bottom edge, at the Panel's (right) end, 16 px along it.
+    dock: () => ({ edge: 'bottom', end: 'end', offset: 16 }),
     island: () => ISLAND,
     platform: options.platform ?? 'win32',
     session: options.session ?? null,

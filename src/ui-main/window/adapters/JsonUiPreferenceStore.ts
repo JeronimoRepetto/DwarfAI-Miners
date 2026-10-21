@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { CHANNELS, validateAccelerator } from '@dwarfai/contracts'
+import { CHANNELS, validateAccelerator, vetaDocksSchema } from '@dwarfai/contracts'
 import { defaultsOf, migrateTwoChoiceTypography, storedFormOf } from '../domain/uiPreferenceValues'
 import type {
   UiPreferenceLogRecord,
@@ -43,7 +43,9 @@ export const UI_PREFERENCE_FILES: Readonly<Record<UiPreferenceStoreKey, string>>
   // NEW with the Reset metrics UI step (ISSUE-061): no store of today's holds it.
   resetEpochApplied: 'reset-epoch-applied-v1.json',
   // NEW with the ModeCoordinator (ISSUE-284): no store of today's holds it.
-  lastMode: 'last-mode-v1.json'
+  lastMode: 'last-mode-v1.json',
+  // NEW with the Veta dock (ISSUE-286): no store of today's holds it.
+  vetaDock: 'veta-dock-v1.json'
 }
 
 /** The older two-choice typography preference (Interface and Messaging faces), read while no typography file exists. */
@@ -103,7 +105,8 @@ const FORMATS: { readonly [K in UiPreferenceStoreKey]: FileFormat<K> } = {
   shortcut: inField('accelerator', canonicalAccelerator),
   startWithSystem: inField('on', z.boolean()),
   resetEpochApplied: inField('epoch', z.number().int().nonnegative()),
-  lastMode: inField('mode', z.enum(['panel', 'veta', 'valle']))
+  lastMode: inField('mode', z.enum(['panel', 'veta', 'valle'])),
+  vetaDock: asItself(vetaDocksSchema)
 }
 
 export interface JsonUiPreferenceStoreOptions {

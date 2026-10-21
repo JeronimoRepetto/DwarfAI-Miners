@@ -18,6 +18,11 @@ export type UiPreferenceWriteRefusal = 'ui-main-only' | 'not-built'
 export interface UiPreferenceMapDeps {
   /** "Start with the system" (machine 40); absent while S-027-4 has not passed on this OS (loginEntryGate.ts). */
   startWithSystem?: Pick<StartWithSystem, 'stored' | 'toggle'>
+  /**
+   * Veta's stored places (`vetaDock`, 07 machine 21; ISSUE-286), answered once the dock is composed. Only UI main writes
+   * them, through `layoutVeta` (A-N23): a renderer's write is refused as UI main's own (ADR-024 item 9).
+   */
+  vetaDock?: () => UiPreferencesMap['vetaDock']
 }
 
 export interface UiPreferenceMap {
@@ -28,23 +33,25 @@ export interface UiPreferenceMap {
 /** The keys only UI main writes (14 §3.9). */
 const UI_MAIN_ONLY: readonly UiPreferenceKey[] = ['lastMode', 'resetEpochApplied']
 
-/** How a built key is read and written. */
+/** How a built key is read and, unless UI main alone writes it, written. */
 interface ServedKey<K extends UiPreferenceKey> {
   get(): UiPreferencesMap[K]
-  set(value: UiPreferencesMap[K]): UiPreferencesMap[K]
+  set?(value: UiPreferencesMap[K]): UiPreferencesMap[K]
 }
 
 type ServedKeys = { [K in UiPreferenceKey]?: ServedKey<K> }
 
 export function createUiPreferenceMap(deps: UiPreferenceMapDeps): UiPreferenceMap {
   const served: ServedKeys = {}
-  const { startWithSystem } = deps
+  const { startWithSystem, vetaDock } = deps
   if (startWithSystem !== undefined) {
     served.startWithSystem = {
       get: () => startWithSystem.stored(),
       set: (value) => startWithSystem.toggle(value).stored
     }
   }
+
+  if (vetaDock !== undefined) served.vetaDock = { get: vetaDock }
 
   return {
     get(keys) {
@@ -59,6 +66,7 @@ export function createUiPreferenceMap(deps: UiPreferenceMapDeps): UiPreferenceMa
       if (UI_MAIN_ONLY.includes(write.key)) return { ok: false, error: 'ui-main-only' }
       const entry = served[write.key] as ServedKey<typeof write.key> | undefined
       if (entry === undefined) return { ok: false, error: 'not-built' }
+      if (entry.set === undefined) return { ok: false, error: 'ui-main-only' }
       return {
         ok: true,
         value: { key: write.key, value: entry.set(write.value) } as UiPreferenceWrite

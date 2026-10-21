@@ -52,6 +52,9 @@
 - **Updated for ISSUE-285:** A-N22 `setVetaClickThrough` (`veta:clickThrough`) and A-N24 `getWindowingLimits`
   (`window:limits`), NEW, are declared in the registry with generated preload members and routed `ui-local` in the
   same PR (22 §5), so their rows moved to the found table.
+- **Updated for ISSUE-286:** A-N23 `layoutVeta` (`veta:layout`) and A-N28 `onVetaDockChanged` (`veta:dock:changed`),
+  NEW, are declared in the registry with generated preload members and routed `ui-local` in the same PR (22 §5), so
+  their rows moved to the found table and no `14` §2.2 row is left outside it.
 - **Updated for ISSUE-123:** A-44 is renamed by the cut-1 switch (14 §2.1 CHANGE): the generated preload member
   `reportVisibleMines` sends `presence:visibleMines`, so it has its own row under the same id, and the `panel:openMine`
   row lost its preload location. Today's `setOpenMine` registration and constant stay until cut 5.
@@ -86,11 +89,11 @@ pushes were evaluated against `14` §2 and none of them was changed.
 
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
-| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 19  | 11     | 0        | 79    |
-| Pushes                                            | 2    | 0      | 7   | 4      | 0        | 13    |
+| Request / one-way channels (`ipcMain` handlers)   | 32   | 17     | 20  | 11     | 0        | 80    |
+| Pushes                                            | 2    | 0      | 8   | 4      | 0        | 14    |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 17     | 26  | 15     | 0        | 93    |
-| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 8   | —      | —        | 8     |
+| **Found total**                                   | 35   | 17     | 28  | 15     | 0        | 95    |
+| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 6   | —      | —        | 6     |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
 constants (63 + 2) and 66 preload members (64 + 2). The two extra channels are `dwarf:setName` and
@@ -214,15 +217,14 @@ kind `14` gives it.
 | `ui:session:changed`              | `onUiSessionChanged`          | push   | src/preload/index.ts:310                                     | A-N19   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); UI main pushes it, unrouted until cut 1                                   |
 | `ui:session:get`                  | `getUiSession`                | invoke | src/preload/index.ts:306                                     | A-N17   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); unrouted until cut 1                                                      |
 | `ui:session:patch`                | `patchUiSession`              | send   | src/preload/index.ts:308                                     | A-N18   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); unrouted until cut 1                                                      |
-| `veta:clickThrough`               | `setVetaClickThrough`         | send   | src/preload/index.ts:477                                     | A-N22   | NEW    | —                 | Declared by ISSUE-285; its preload member is generated (ISSUE-045); `ui-local` from its declaring PR (22 §5)                                  |
+| `veta:clickThrough`               | `setVetaClickThrough`         | send   | src/preload/index.ts:481                                     | A-N22   | NEW    | —                 | Declared by ISSUE-285; its preload member is generated (ISSUE-045); `ui-local` from its declaring PR (22 §5)                                  |
+| `veta:dock:changed`               | `onVetaDockChanged`           | push   | src/preload/index.ts:485                                     | A-N28   | NEW    | —                 | Declared by ISSUE-286; its preload member is generated (ISSUE-045); UI main pushes it, `ui-local` from its declaring PR (22 §5)               |
+| `veta:layout`                     | `layoutVeta`                  | invoke | src/preload/index.ts:484                                     | A-N23   | NEW    | —                 | Declared by ISSUE-286; its preload member is generated (ISSUE-045); `ui-local` from its declaring PR (22 §5)                                  |
 | `welcome:answer`                  | `answerWelcome`               | invoke | src/preload/index.ts:590                                     | A-N32   | NEW    | —                 | Declared by ISSUE-223 (AMENDMENT-7); its preload member is generated (ISSUE-045); unrouted until cut 2                                        |
-| `window:limits`                   | `getWindowingLimits`          | invoke | src/preload/index.ts:479                                     | A-N24   | NEW    | —                 | Declared by ISSUE-285; its preload member is generated (ISSUE-045); `ui-local` from its declaring PR (22 §5)                                  |
+| `window:limits`                   | `getWindowingLimits`          | invoke | src/preload/index.ts:483                                     | A-N24   | NEW    | —                 | Declared by ISSUE-285; its preload member is generated (ISSUE-045); `ui-local` from its declaring PR (22 §5)                                  |
 
 ### 14 §2.2 rows not in the tree
 
-| Wire name           | Member              | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                    |
-| ------------------- | ------------------- | ------ | --------- | ----- | ------ | ----------------- | ------------------------------------------------------------------------ |
-| `veta:layout`       | `layoutVeta`        | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7) |
-| `veta:dock:changed` | `onVetaDockChanged` | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7) |
+None since ISSUE-286: A-N23 and A-N28, the last two, moved to the found table.
 
 <!-- reinventory-table:end -->

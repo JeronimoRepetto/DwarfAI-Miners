@@ -81,6 +81,8 @@ export const WINDOW_API_MEMBERS = {
   modeTransitionDone: 'send',
   setVetaClickThrough: 'send',
   getWindowingLimits: 'invoke',
+  layoutVeta: 'invoke',
+  onVetaDockChanged: 'push',
   setClaudeHooksEnabled: 'invoke',
   setAskStep: 'invoke',
   answerWelcome: 'invoke',

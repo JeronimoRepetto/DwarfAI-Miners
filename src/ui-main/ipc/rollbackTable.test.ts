@@ -122,7 +122,10 @@ describe('rollbackOf', () => {
         'mode:transition:done': 'cut-5',
         // AMENDED for ISSUE-285: A-N22 and A-N24 likewise.
         'veta:clickThrough': 'cut-5',
-        'window:limits': 'cut-5'
+        'window:limits': 'cut-5',
+        // AMENDED for ISSUE-286: A-N23 and A-N28 likewise.
+        'veta:layout': 'cut-5',
+        'veta:dock:changed': 'cut-5'
       },
       // An earlier cut's retired row stands for one whose legacy code that cut's retirement already deleted.
       retired: { 'dwarf:feed': 'cut-1', 'mines:get': 'cut-0' }

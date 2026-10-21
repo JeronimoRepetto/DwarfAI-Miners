@@ -8,8 +8,7 @@
 //   stands and a refused level is a known limit on the release checklist (EPIC-19 §4). Native Wayland has no
 //   always-on-top (ADR-025 item 6), so nothing is asked there.
 // - Placed from the work area of its `displayKey` (ADR-024 D5; INV-118: never `display.id`), flush against it, so the
-//   taskbar, Dock or panel is never covered. Where on that edge it sits, and the dock, are ISSUE-286's; until then it
-//   stands centred on the bottom edge.
+//   taskbar, Dock or panel is never covered, at the place the dock keeps (`VetaDockService`, ISSUE-286; 07 machine 21).
 // - Click-through (ADR-025 item 4): on Windows and macOS the renderer's hit-test toggles
 //   `setIgnoreMouseEvents(ignore, { forward: true })` (A-N22); on Linux, where `forward` is not available, the bounds
 //   hugging the island are the rule and a toggle changes nothing (S-025-3 records the session types).
@@ -19,6 +18,8 @@
 // - OS show/hide animations stay as the platform has them: disabling them is UNVERIFIED until S-025-1 is recorded
 //   (ADR-025 item 1), so nothing here depends on it.
 import type { UiLog } from '../../diagnostics/uiLogger'
+import { VETA_ISLAND_STAND_IN, type VetaDock } from '@dwarfai/contracts'
+import { vetaBounds } from '../domain/vetaPlacement'
 import {
   windowingLimits,
   type WindowingLimits,
@@ -53,7 +54,10 @@ export interface VetaWindowSurface {
  * The island the Veta window hugs until the strip reports its own (ISSUE-287): a stand-in size so an empty, transparent
  * window has bounds to be placed at, never a design value.
  */
-export const VETA_ISLAND_PLACEHOLDER: IslandSize = { width: 480, height: 72 }
+export const VETA_ISLAND_PLACEHOLDER: IslandSize = {
+  width: VETA_ISLAND_STAND_IN.length,
+  height: VETA_ISLAND_STAND_IN.thickness
+}
 
 /** The size of the Veta island the window hugs. */
 export interface IslandSize {
@@ -66,9 +70,11 @@ export interface VetaWindowControllerDeps {
   /** The surface of the Veta window `factory.veta` built. */
   surface(): VetaWindowSurface
   screen: Pick<ScreenAreaProvider, 'workArea'>
-  /** The display Veta lives on (ADR-024 D5; the dock that stores it is ISSUE-286's). */
+  /** The display Veta lives on (ADR-024 D5; `VetaDockService`). */
   displayKey(): DisplayKey
-  /** The island the window hugs (ADR-025 item 4). */
+  /** Its place on that display's work area (07 machine 21; `VetaDockService`). */
+  dock(): VetaDock
+  /** The island the window hugs (ADR-025 item 4): `width` along a top or bottom edge, `height` across it. */
   island(): IslandSize
   platform: WindowingPlatform
   /** The Linux session (`probeLinuxSession`); `null` on Windows and macOS. */
@@ -79,8 +85,10 @@ export interface VetaWindowControllerDeps {
 export interface VetaWindowController {
   /** The Veta window for the `ModeCoordinator`: built on the first call, the same window afterwards. */
   window(): ModeWindow
-  /** Its final bounds: the island, flush against the work area of its display. */
+  /** Its final bounds: the island at its place, flush against the work area of its display. */
   bounds(): Rect
+  /** Whether the window exists yet (the dock places and pushes to nothing before it does). */
+  built(): boolean
   /** A-N22: the renderer's hit-test result. Before the window exists there is nothing to change. */
   setClickThrough(ignore: boolean): void
   /** A-N24: what this session allows. */
@@ -91,18 +99,6 @@ export interface VetaWindowController {
 
 const sameRect = (a: Rect, b: Rect): boolean =>
   a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
-
-/** The island flush against the bottom of `area`, centred, never larger than `area`. */
-function flushBottom(area: Rect, island: IslandSize): Rect {
-  const width = Math.min(island.width, area.width)
-  const height = Math.min(island.height, area.height)
-  return {
-    x: area.x + Math.round((area.width - width) / 2),
-    y: area.y + area.height - height,
-    width,
-    height
-  }
-}
 
 export function createVetaWindowController(deps: VetaWindowControllerDeps): VetaWindowController {
   let built: ModeWindow | null = null
@@ -147,7 +143,14 @@ export function createVetaWindowController(deps: VetaWindowControllerDeps): Veta
 
   return {
     window,
-    bounds: () => flushBottom(deps.screen.workArea(deps.displayKey()), deps.island()),
+    bounds: () => {
+      const island = deps.island()
+      return vetaBounds(deps.screen.workArea(deps.displayKey()), deps.dock(), {
+        length: island.width,
+        thickness: island.height
+      })
+    },
+    built: () => built !== null,
     setClickThrough(ignore) {
       if (!clickThrough || built === null) return
       deps.surface().setIgnoreMouseEvents(ignore)

@@ -103,6 +103,9 @@ import {
   uiSessionPatchSchema,
   uiSessionSnapshotSchema,
   vetaClickThroughParamsSchema,
+  vetaDockChangedSchema,
+  vetaLayoutRequestSchema,
+  vetaLayoutResultSchema,
   windowingLimitsSchema
 } from './windowApi'
 
@@ -856,6 +859,26 @@ export const CHANNELS = {
     status: 'new',
     request: none,
     response: windowingLimitsSchema
+  },
+  // A-N23 `layoutVeta`, A-N28 `onVetaDockChanged` (ADR-025 items 2, 5, 8; 07 machine 21, N-14, N-25; ISSUE-286): the
+  // Veta renderer's layout requests (the whole `VetaLayoutRequest` union; the drag, keyboard docking and island length
+  // are ISSUE-286's, the rest answer `applied: false` until their issue), and UI main's word that it re-placed Veta
+  // after a display change. Geometry, ids and a display key only
+  'veta:layout': {
+    name: 'veta:layout',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: vetaLayoutRequestSchema,
+    response: vetaLayoutResultSchema
+  },
+  'veta:dock:changed': {
+    name: 'veta:dock:changed',
+    kind: 'push',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: vetaDockChangedSchema
   },
   // A-N31 `setClaudeHooksEnabled` (AMENDMENT-7, OQ-68; ADR-016 items 5–7): Settings → Integrations "Claude Code ·
   // instant updates", the equivalent of A-53 for the Claude hook entry; relays B-M39 `preferences.setClaudeHooks`

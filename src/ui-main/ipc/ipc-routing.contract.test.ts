@@ -473,7 +473,10 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       'mode:transition:done': 'cut-5',
       // AMENDED for ISSUE-285: A-N22 and A-N24 join them the same way.
       'veta:clickThrough': 'cut-5',
-      'window:limits': 'cut-5'
+      'window:limits': 'cut-5',
+      // AMENDED for ISSUE-286: A-N23 and A-N28 likewise.
+      'veta:layout': 'cut-5',
+      'veta:dock:changed': 'cut-5'
     })
   })
 

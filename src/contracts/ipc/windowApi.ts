@@ -412,7 +412,11 @@ export const getUiPreferencesRequestSchema = z
  * never answered (hidden until built, 21 §1 item 8).
  */
 export const uiPreferencesAnswerSchema = z
-  .object({ startWithSystem: z.boolean().optional() })
+  .object({
+    startWithSystem: z.boolean().optional(),
+    // ISSUE-286: Veta's stored places, read by the Veta renderer (14 §3.9 usage rule); written by UI main only.
+    vetaDock: z.lazy(() => vetaDocksSchema).optional()
+  })
   .strict() satisfies z.ZodType<Partial<UiPreferencesMap>>
 
 /**
@@ -485,3 +489,73 @@ export const vetaClickThroughParamsSchema = z
 export const windowingLimitsSchema = z
   .object({ dockingAvailable: z.boolean(), alwaysOnTopAvailable: z.boolean() })
   .strict() satisfies z.ZodType<WindowingLimitsView>
+
+// A-N23 `layoutVeta`, A-N28 `onVetaDockChanged` (14 §2.2, §3.9; ADR-025 items 2, 5, 8; 07 machine 21, N-14, N-25;
+// ISSUE-286): the whole `VetaLayoutRequest` union as 14 §3.9 writes it. ISSUE-286 implements `drag-start`, `drag-end`,
+// `dock-key` and `island-resize`; the other kinds answer `applied: false` until their issue implements them (ISSUE-287,
+// ISSUE-288, ISSUE-291, ISSUE-292). Geometry, ids and a display key only: nothing a person or a provider said.
+export type VetaLayoutRequest =
+  | { kind: 'rise'; dwarfId: DwarfId; chatBounds: { width: number; height: number } } // resize before the rise (ADR-025 D2)
+  | { kind: 'fold' } // resize after the fold completes
+  | { kind: 'unfold-overflow'; mineId: MineId } // "+N" unfold for a reveal (ADR-025 D8)
+  | { kind: 'drag-start'; screenX: number; screenY: number } // 07 N-14: the drag surface of the display under the pointer
+  | { kind: 'drag-end'; screenX: number; screenY: number } // may re-dock to another display (D5)
+  | { kind: 'dock-key'; edge: VetaDock['edge'] } // 07 N-14: keyboard docking
+  | { kind: 'island-resize'; length: number } // 07 N-14, V-10: grow before, shrink after (arrivals, departures, "+N")
+  | { kind: 'overlay'; bounds: { width: number; height: number } | null } // 07 N-25: tab band, menus, picker; null = closed
+export interface VetaLayoutResult {
+  applied: boolean
+  displayKey: string
+  dock: VetaDock
+}
+export interface VetaDockChanged {
+  // A-N28 push (07 N-14): main re-placed Veta
+  displayKey: string
+  dock: VetaDock
+  reason: 'display-removed' | 'display-changed' | 'work-area-changed'
+}
+
+/**
+ * The island's size until the Veta strip measures its own (ISSUE-287): a stand-in, never a design value, shared by UI
+ * main (the window it places) and the Veta renderer (the length it reports with `island-resize`), so the two agree.
+ */
+export const VETA_ISLAND_STAND_IN = { length: 480, thickness: 72 } as const
+
+const vetaEdgeSchema = z.enum(['left', 'right', 'top', 'bottom'])
+export const vetaDockSchema = z
+  .object({
+    edge: vetaEdgeSchema,
+    end: z.enum(['start', 'end']),
+    offset: z.number().finite().nonnegative()
+  })
+  .strict() satisfies z.ZodType<VetaDock>
+/** `UiPreferencesMap.vetaDock`: one place per `displayKey` (ADR-024 item 5). */
+export const vetaDocksSchema = z.record(z.string().min(1), vetaDockSchema) satisfies z.ZodType<
+  UiPreferencesMap['vetaDock']
+>
+const screenPoint = { screenX: z.number().finite(), screenY: z.number().finite() }
+const size = z
+  .object({ width: z.number().finite().nonnegative(), height: z.number().finite().nonnegative() })
+  .strict()
+export const vetaLayoutRequestSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('rise'), dwarfId: dwarfIdSchema, chatBounds: size }).strict(),
+  z.object({ kind: z.literal('fold') }).strict(),
+  z.object({ kind: z.literal('unfold-overflow'), mineId: mineIdSchema }).strict(),
+  z.object({ kind: z.literal('drag-start'), ...screenPoint }).strict(),
+  z.object({ kind: z.literal('drag-end'), ...screenPoint }).strict(),
+  z.object({ kind: z.literal('dock-key'), edge: vetaEdgeSchema }).strict(),
+  z
+    .object({ kind: z.literal('island-resize'), length: z.number().finite().nonnegative() })
+    .strict(),
+  z.object({ kind: z.literal('overlay'), bounds: size.nullable() }).strict()
+]) satisfies z.ZodType<VetaLayoutRequest>
+export const vetaLayoutResultSchema = z
+  .object({ applied: z.boolean(), displayKey: z.string(), dock: vetaDockSchema })
+  .strict() satisfies z.ZodType<VetaLayoutResult>
+export const vetaDockChangedSchema = z
+  .object({
+    displayKey: z.string(),
+    dock: vetaDockSchema,
+    reason: z.enum(['display-removed', 'display-changed', 'work-area-changed'])
+  })
+  .strict() satisfies z.ZodType<VetaDockChanged>

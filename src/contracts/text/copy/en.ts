@@ -127,5 +127,10 @@ export const en = {
   // AMENDMENT-22 carries the trivial and large-context flags to the card).
   'jevCard.tip.trivial': 'Treated as a trivial prompt.',
   'jevCard.tip.largeContext': 'Large-context model preferred.',
-  'jevCard.tip.trimmed': 'The prompt sent to Jev was trimmed to fit its request budget.'
+  'jevCard.tip.trimmed': 'The prompt sent to Jev was trimmed to fit its request budget.',
+
+  // The Veta grip (US-VETA-002; ISSUE-286): the design's own copy (DS/docs/copy.md, Veta strip, aria-label and title).
+  'veta.grip.label':
+    'Veta. Press for the menu; drag, or use the arrow keys, to move it to another edge',
+  'veta.grip.title': 'Drag to move · click for the menu'
 } as const satisfies CopyCatalog

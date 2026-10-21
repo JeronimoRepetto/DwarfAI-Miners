@@ -1,3 +1,4 @@
+import { displayKeyOf } from '../domain/displayKey'
 import type { DisplayInfo, ScreenAreaProvider } from '../ports/screenAreaProvider'
 import type { DisplayKey, Rect } from '../ports/windowFactory'
 
@@ -41,15 +42,11 @@ export interface ElectronScreen {
 }
 
 /**
- * The stable key of a display (ADR-024 D5; INV-118): its label where it has one, its native resolution, its scale
- * factor and its place relative to the primary display. Never `display.id`, whose stability across reboots is
- * unverified (S-024-1). Two identical unlabelled monitors are still told apart by where they stand.
+ * The stable key of a display (ADR-024 D5; INV-118), computed by the window module's pure `displayKeyOf`
+ * (`domain/displayKey.ts`, ISSUE-286): its label where it has one, its native resolution, its scale factor and its
+ * place relative to the primary display. Never `display.id`, whose stability across reboots is unverified (S-024-1).
  */
-export function displayKeyOf(display: ElectronDisplay, primary: ElectronDisplay): DisplayKey {
-  const native = `${Math.round(display.size.width * display.scaleFactor)}x${Math.round(display.size.height * display.scaleFactor)}`
-  const offset = `${display.bounds.x - primary.bounds.x},${display.bounds.y - primary.bounds.y}`
-  return [display.label, native, `@${display.scaleFactor}`, offset].join('|')
-}
+export { displayKeyOf }
 
 /**
  * The rectangle the Panel may span on this display: `workArea`, on every platform (#238). It leaves the Windows

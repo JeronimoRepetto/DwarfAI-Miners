@@ -125,6 +125,8 @@ const MEMBERS = {
   'mode:transition:done': 'modeTransitionDone', // A-N15 (ISSUE-284)
   'veta:clickThrough': 'setVetaClickThrough', // A-N22 (ISSUE-285)
   'window:limits': 'getWindowingLimits', // A-N24 (ISSUE-285)
+  'veta:layout': 'layoutVeta', // A-N23 (ISSUE-286)
+  'veta:dock:changed': 'onVetaDockChanged', // A-N28 (ISSUE-286)
   'claude:hooks:set': 'setClaudeHooksEnabled', // A-N31 (unrouted until cut 2)
   'ask:step:set': 'setAskStep', // A-N07 (unrouted until cut 2)
   'welcome:answer': 'answerWelcome', // A-N32 (unrouted until cut 2)

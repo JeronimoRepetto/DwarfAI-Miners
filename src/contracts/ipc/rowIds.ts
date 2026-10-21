@@ -95,6 +95,8 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'mode:transition:done': 'A-N15',
   'veta:clickThrough': 'A-N22',
   'window:limits': 'A-N24',
+  'veta:layout': 'A-N23',
+  'veta:dock:changed': 'A-N28',
   'claude:hooks:set': 'A-N31',
   'ask:step:set': 'A-N07',
   'welcome:answer': 'A-N32',

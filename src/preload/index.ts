@@ -261,6 +261,10 @@ export interface DwarfAiMinersApi {
   setVetaClickThrough: (request: TargetRequest<'veta:clickThrough'>) => void
   /** A-N24 · `window:limits` · invoke · NEW · target shape */
   getWindowingLimits: () => Promise<TargetResult<'window:limits'>>
+  /** A-N23 · `veta:layout` · invoke · NEW · target shape */
+  layoutVeta: (request: TargetRequest<'veta:layout'>) => Promise<TargetResult<'veta:layout'>>
+  /** A-N28 · `veta:dock:changed` · push · NEW · target shape */
+  onVetaDockChanged: (listener: (payload: TargetResult<'veta:dock:changed'>) => void) => () => void
   /** A-N31 · `claude:hooks:set` · invoke · NEW · target shape */
   setClaudeHooksEnabled: (
     request: TargetRequest<'claude:hooks:set'>
@@ -477,6 +481,14 @@ const api: DwarfAiMinersApi = {
   setVetaClickThrough: (request) =>
     sendOrDrop(() => ipcRenderer.send('veta:clickThrough', request)),
   getWindowingLimits: () => invokeOrReject(() => ipcRenderer.invoke('window:limits')),
+  layoutVeta: (request) => invokeOrReject(() => ipcRenderer.invoke('veta:layout', request)),
+  onVetaDockChanged: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
+      listener(payload as TargetResult<'veta:dock:changed'>)
+    }
+    ipcRenderer.on('veta:dock:changed', wrapped)
+    return () => ipcRenderer.removeListener('veta:dock:changed', wrapped)
+  },
   setClaudeHooksEnabled: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('claude:hooks:set', request)),
   setAskStep: (request) => invokeOrReject(() => ipcRenderer.invoke('ask:step:set', request)),
