@@ -49,6 +49,12 @@ export interface VetaWindowSurface {
   bounds(): Rect
 }
 
+/**
+ * The island the Veta window hugs until the strip reports its own (ISSUE-287): a stand-in size so an empty, transparent
+ * window has bounds to be placed at, never a design value.
+ */
+export const VETA_ISLAND_PLACEHOLDER: IslandSize = { width: 480, height: 72 }
+
 /** The size of the Veta island the window hugs. */
 export interface IslandSize {
   readonly width: number

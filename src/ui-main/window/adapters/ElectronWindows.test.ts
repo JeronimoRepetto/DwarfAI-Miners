@@ -231,6 +231,7 @@ describe('ElectronWindows (05 §3.14; ADR-019 items 1, 8)', () => {
     const windows = new ElectronWindows(deps({ registry }))
     const surface = windows.vetaSurface()
     expect(FakeBrowserWindow.built, 'asking for the Veta surface builds no window').toEqual([])
+    expect(windows.vetaWebContentsId(), 'no Veta window, no id').toBeNull()
     expect(() => surface.bounds()).toThrow(/no Veta window/)
     const veta = windows.veta('display-a')
     expect(windows.veta('display-b')).toBe(veta)
@@ -246,6 +247,8 @@ describe('ElectronWindows (05 §3.14; ADR-019 items 1, 8)', () => {
       secureWindowOptions({ preload: '/app/out/preload/index.cjs' }).webPreferences
     )
     expect(registry.has(window!.webContents.id)).toBe(true)
+    // The root tells the Veta window's events from the Panel's by this id (A-N15, A-N22).
+    expect(windows.vetaWebContentsId()).toBe(window!.webContents.id)
     surface.setAlwaysOnTopLevel('screen-saver')
     surface.setIgnoreMouseEvents(true)
     veta.placeAt({ x: 10, y: 20, width: 300, height: 40 })

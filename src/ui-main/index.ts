@@ -84,7 +84,7 @@ import {
   type PanelWindowUseCases
 } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
-import { ozoneRelaunchArgs } from './window/adapters/linuxSession'
+import { ozoneRelaunchArgs, runningLinuxSession } from './window/adapters/linuxSession'
 import { uiDataDirectory } from './dataDirectory'
 import {
   DEFAULT_TOGGLE_ACCELERATOR,
@@ -124,6 +124,12 @@ import {
 import { composeModeShell, type ModeShell } from './window/application/modeShell'
 import { SystemModeTiming } from './window/adapters/SystemModeTiming'
 import { createModeRows, MODE_MOVE, MODE_TRANSITION_DONE } from './ipc/mode'
+import { createVetaRows, SET_VETA_CLICK_THROUGH, VETA_ROWS } from './ipc/veta'
+import {
+  createVetaWindowController,
+  VETA_ISLAND_PLACEHOLDER,
+  type VetaWindowController
+} from './window/application/VetaWindowController'
 import { createPanelReveal, REVEAL_DWARF_CHAT_PUSH } from './window/adapters/panelReveal'
 import { drawsWithoutWindow } from './window/domain/trayNotificationGate'
 import type {
@@ -301,6 +307,13 @@ export interface WindowContents extends ModeWindowSender {
  * `undefined` when no part is present. The cut-0 switch (ISSUE-056) routes these rows here, but for the UI session and
  * UI preference map rows, which the cut-1 switch (ISSUE-123) routes.
  */
+/** The Veta window as the root composes it (ISSUE-285). */
+export interface VetaWindowParts {
+  controller: VetaWindowController
+  /** Whether a `webContents` id is the Veta window's. */
+  isVeta(webContentsId: number): boolean
+}
+
 export function composeUiLocal({
   uiPreferences,
   uiLog,
@@ -313,6 +326,7 @@ export function composeUiLocal({
   startWithSystem,
   presence,
   mode,
+  veta,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
@@ -330,6 +344,8 @@ export function composeUiLocal({
   presence?: RouteTargetPart
   /** A-N13, A-N15 to the `ModeCoordinator` (ISSUE-284), routed `ui-local` in the PR that declares them (22 §5). */
   mode?: RouteTargetPart
+  /** A-N22, A-N24 to the Veta window and the windowing limits (ISSUE-285), routed `ui-local` likewise. */
+  veta?: RouteTargetPart
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -406,6 +422,7 @@ export function composeUiLocal({
   }
   if (presence !== undefined) parts.push(presence)
   if (mode !== undefined) parts.push(mode)
+  if (veta !== undefined) parts.push(veta)
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
 
@@ -1011,6 +1028,12 @@ export interface UiMainDeps {
    */
   panelWindow?: (modeWindows: ModeWindowRegistry) => PanelWindowUseCases
   /**
+   * The Veta window (ISSUE-285; ADR-025 items 1, 4, 6), composed once the Panel is: its controller, and whether a
+   * `webContents` id is the Veta window's. The `ModeCoordinator` moves it only where the build's built-modes list
+   * contains Veta (`BUILT_MODES`); A-N24 reads its windowing limits in every build.
+   */
+  vetaWindow?: () => VetaWindowParts
+  /**
    * The Host attach (ISSUE-051; ADR-002 D4; ADR-003 items 7, 12): HostClient over the host launcher. The root reads
    * the remembered launch view, then starts the attach without awaiting it, before Electron is ready and the window
    * is composed, so the first paint never waits for the Host (US-RES-003.AC07); the board it keeps changes only when a
@@ -1100,6 +1123,7 @@ export async function startUiMain({
   uiPreferences,
   uiLog,
   panelWindow,
+  vetaWindow,
   host,
   notifications,
   launch = { kind: 'normal', tray: true, window: true },
@@ -1142,6 +1166,8 @@ export async function startUiMain({
   const modeWindowList = (): readonly AppWindow[] =>
     appWindows().filter((window) => modeWindows.has(window.webContentsId))
   const routed = (channel: ChannelKey): boolean => routes.some((r) => r.channel === channel)
+  const veta = vetaWindow?.()
+  const isVeta = (webContentsId: number): boolean => veta?.isVeta(webContentsId) ?? false
   // The ModeCoordinator (ISSUE-284; ADR-025 item 3), once the table routes A-N13: every hide and show of the Panel (the
   // global shortcut, Settings "Hide panel", the tray, a second launch, Stop everything's confirmation, a notification
   // click) is one of its runs (S10.08, S10.09), and it alone writes `lastMode`. The click's per-mode reveal is bound
@@ -1153,8 +1179,12 @@ export async function startUiMain({
       ? composeModeShell({
           panel,
           pushToPanel: (push, payload) => {
-            for (const window of modeWindowList()) window.send(push, payload)
+            // The Veta window has its own pushes (`ModeWindow.send`): a Panel push never reaches it.
+            for (const window of modeWindowList()) {
+              if (!isVeta(window.webContentsId)) window.send(push, payload)
+            }
           },
+          ...(veta === undefined ? {} : { veta: veta.controller }),
           lastMode: createUiPreferences({ store: uiPreferences.store, modeWindows: () => [] }),
           timing: new SystemModeTiming(),
           log: uiLog ?? { record: () => {} },
@@ -1446,8 +1476,20 @@ export async function startUiMain({
           mode: {
             channels: [MODE_MOVE, MODE_TRANSITION_DONE],
             target: createModeRows(shell.coordinator, (id) =>
-              modeWindows.has(id) ? 'panel' : undefined
+              isVeta(id) ? 'veta' : modeWindows.has(id) ? 'panel' : undefined
             )
+          } satisfies RouteTargetPart
+        }),
+    ...(veta === undefined || !routed(SET_VETA_CLICK_THROUGH)
+      ? {}
+      : {
+          veta: {
+            channels: [...VETA_ROWS],
+            target: createVetaRows({
+              veta: veta.controller,
+              isVeta,
+              limits: () => veta.controller.limits()
+            })
           } satisfies RouteTargetPart
         }),
     modeWindows
@@ -1654,11 +1696,18 @@ function resourcePath(name: string): string {
  * `load` once Electron is ready), and Electron's `screen` is read only after the app is ready. `composed()` answers the
  * use cases once the root composed them, for today's runtime to reach the Panel (`LegacyPanelSurface`).
  */
-function electronPanelWindow(store: UiPreferenceStore): {
+function electronPanelWindow(
+  store: UiPreferenceStore,
+  uiLog: UiLog
+): {
   factory: (modeWindows: ModeWindowRegistry) => PanelWindowUseCases
+  veta: () => VetaWindowParts
+  /** Whether a `webContents` id is the Veta window's (none before it is built). */
+  isVeta(webContentsId: number): boolean
   composed(): PanelWindowUseCases | null
 } {
   let panel: PanelWindowUseCases | null = null
+  let built: { windows: ElectronWindows; screenArea: ElectronScreenArea } | null = null
   const factory = (modeWindows: ModeWindowRegistry): PanelWindowUseCases => {
     const screenArea = new ElectronScreenArea(() => screen, currentUiPlatform())
     const windows = new ElectronWindows({
@@ -1688,9 +1737,40 @@ function electronPanelWindow(store: UiPreferenceStore): {
       floor: screenArea.minWindowWidth(),
       onDisplaysChanged: (h) => void app.whenReady().then(() => screenArea.onChange(h))
     })
+    built = { windows, screenArea }
     return panel
   }
-  return { factory, composed: () => panel }
+  // The Veta window over the same factory and displays (ISSUE-285): composing it builds nothing; the window is built
+  // on its first move. It opens on the primary display until ISSUE-286 stores a dock per display.
+  const veta = (): VetaWindowParts => {
+    if (built === null) throw new Error('the Veta window was composed before the Panel')
+    const { windows, screenArea } = built
+    const platform = currentUiPlatform()
+    return {
+      controller: createVetaWindowController({
+        factory: windows,
+        surface: () => windows.vetaSurface(),
+        screen: screenArea,
+        displayKey: () => {
+          const displays = screenArea.displays()
+          const primary = displays.find((display) => display.primary) ?? displays[0]
+          if (primary === undefined) throw new Error('no display to place the Veta window on')
+          return primary.displayKey
+        },
+        island: () => VETA_ISLAND_PLACEHOLDER,
+        platform,
+        session: platform === 'linux' ? runningLinuxSession(process.env, process.argv) : null,
+        log: uiLog
+      }),
+      isVeta: (webContentsId) => windows.vetaWebContentsId() === webContentsId
+    }
+  }
+  return {
+    factory,
+    veta,
+    isVeta: (webContentsId) => built?.windows.vetaWebContentsId() === webContentsId,
+    composed: () => panel
+  }
 }
 
 /**
@@ -1946,9 +2026,12 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
         close: () => window.close()
       }))
   /** The window a picker is attached to: the rebuilt Panel when it is open. */
+  const rebuiltPanel = electronPanelWindow(uiPreferenceStore, uiLog)
+  /** The Panel window, where every picker is attached: never the Veta window (ISSUE-285). */
   const panelBrowserWindow = (): BrowserWindow | undefined =>
-    BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
-  const rebuiltPanel = electronPanelWindow(uiPreferenceStore)
+    BrowserWindow.getAllWindows().find(
+      (window) => !window.isDestroyed() && !rebuiltPanel.isVeta(window.webContents.id)
+    )
   // AMENDED for ISSUE-243, the deletion of today's runtime (was: today's runtime composed here through
   // `LegacyRuntimeRoute`, without its window, tray and shortcut, its pushes and pickers reaching the rebuilt Panel): no
   // row is `legacy` any more (21 §2 cut 5), so nothing of it is composed.
@@ -1965,6 +2048,7 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     uiPreferences: { store: uiPreferenceStore, windows: appWindows },
     uiLog,
     panelWindow: rebuiltPanel.factory,
+    vetaWindow: rebuiltPanel.veta,
     ...(() => {
       const native = electronNativeRows(panelBrowserWindow)
       return { nativeRows: native.rows, minesNative: native.actions, consoles: native.actions }

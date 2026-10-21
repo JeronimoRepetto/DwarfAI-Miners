@@ -299,6 +299,12 @@ export class ElectronWindows implements WindowFactory {
     return this.vetaWindow.mode
   }
 
+  /** The `webContents` id of the Veta window, while it is open; `null` before it is built or once it closed. */
+  vetaWebContentsId(): number | null {
+    const built = this.vetaWindow?.window
+    return built === undefined || built.isDestroyed() ? null : built.webContents.id
+  }
+
   /**
    * The Veta window's own members beyond `ModeWindow` (`VetaWindowSurface`): each acts on the Veta window `veta()`
    * built. Asking for the surface builds nothing; using it before the window exists is a defect of its caller.
