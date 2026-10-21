@@ -148,5 +148,26 @@ export const en = {
     one: 'Mine {name}, {tier}, {count} dwarf',
     other: 'Mine {name}, {tier}, {count} dwarfs'
   },
-  'veta.chamber.asking': { one: '{count} needs you', other: '{count} need you' }
+  'veta.chamber.asking': { one: '{count} needs you', other: '{count} need you' },
+
+  // The grip menu (US-VETA-003; 07 machine 22; ISSUE-288): the design's own copy (DS/docs/screens/veta.md, the grip
+  // menu in order; DS/docs/copy.md, Veta strip, "Also in the code"). "New dwarf in…" carries the hint ▸.
+  'veta.menu.openPanel': 'Open Panel',
+  'veta.menu.openValle': 'Open Valle',
+  'veta.menu.newDwarf': 'New dwarf in…',
+  'veta.menu.newDwarf.hint': '▸',
+  'veta.menu.hide': 'Hide window',
+
+  // The mine picker (US-LAUNCH-007; 07 machine 22; ISSUE-288): the design's own copy (DS/docs/copy.md, Mine picker,
+  // its strings, "Built at run time" and "Also in the code").
+  'minePicker.label': 'Choose a mine',
+  'minePicker.title': 'New dwarf in…',
+  'minePicker.search': 'Search mines',
+  'minePicker.list.label': 'Mines',
+  'minePicker.noMatch': 'No mine matches.',
+  'minePicker.empty': 'No mines yet. Add a project folder to start.',
+  'minePicker.add': 'Add a mine',
+  'minePicker.crew': '{count} at work',
+  'minePicker.nobody': 'nobody here',
+  'minePicker.cannotEnter': 'Cannot be entered'
 } as const satisfies CopyCatalog
