@@ -79,6 +79,8 @@ export const WINDOW_API_MEMBERS = {
   moveToMode: 'invoke',
   onModeTransition: 'push',
   modeTransitionDone: 'send',
+  setVetaClickThrough: 'send',
+  getWindowingLimits: 'invoke',
   setClaudeHooksEnabled: 'invoke',
   setAskStep: 'invoke',
   answerWelcome: 'invoke',

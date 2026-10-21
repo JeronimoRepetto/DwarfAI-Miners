@@ -119,7 +119,10 @@ describe('rollbackOf', () => {
         // AMENDED for ISSUE-284: A-N13…A-N15, born `ui-local` in the release that declares them, are unrouted in cut 1.
         'mode:move': 'cut-5',
         'mode:transition': 'cut-5',
-        'mode:transition:done': 'cut-5'
+        'mode:transition:done': 'cut-5',
+        // AMENDED for ISSUE-285: A-N22 and A-N24 likewise.
+        'veta:clickThrough': 'cut-5',
+        'window:limits': 'cut-5'
       },
       // An earlier cut's retired row stands for one whose legacy code that cut's retirement already deleted.
       retired: { 'dwarf:feed': 'cut-1', 'mines:get': 'cut-0' }

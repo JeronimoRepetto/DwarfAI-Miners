@@ -20,6 +20,8 @@ import './assets/design-tokens.css'
 import './assets/theme.css'
 import { restoreLaunchView } from './composables/useView'
 import { modeTransitionPart } from './composables/useModeTransition'
+import VetaApp from './components/veta/VetaApp.vue'
+import { windowRoot } from './components/veta/vetaEntry'
 
 /*
  * One window, one root (#635). The message panel had a window of its own beside the shell (#162),
@@ -35,5 +37,12 @@ import { modeTransitionPart } from './composables/useModeTransition'
 // This window plays its part in every mode transition run from its first frame (ISSUE-284; ADR-025 item 3): it answers
 // each run and veils its content after a source half even with no chat open, so no run waits for the coordinator's
 // watchdog. An open chat registers its hand-off with the same part.
+//
+// The Veta window loads this same page with `?mode=veta` (ADR-025 item 1; ISSUE-285) and mounts the Veta root; it
+// plays its part in every run too. UI main builds that window only where Veta is in the build's built-modes list.
 modeTransitionPart()
-void restoreLaunchView(window.api).then(() => createApp(App).mount('#app'))
+if (windowRoot(window.location.search) === 'veta') {
+  createApp(VetaApp).mount('#app')
+} else {
+  void restoreLaunchView(window.api).then(() => createApp(App).mount('#app'))
+}

@@ -433,6 +433,8 @@ export const ROUTES: readonly ChannelRoute[] = [
   uiLocalVetaNew('mode:move'), // A-N13 (ISSUE-284)
   uiLocalVetaNew('mode:transition'), // A-N14 (ISSUE-284)
   uiLocalVetaNew('mode:transition:done'), // A-N15 (ISSUE-284)
+  uiLocalVetaNew('veta:clickThrough'), // A-N22 (ISSUE-285)
+  uiLocalVetaNew('window:limits'), // A-N24 (ISSUE-285)
   uiLocalCut1New('ui:session:get'), // A-N17
   uiLocalCut1New('ui:session:patch'), // A-N18
   uiLocalCut1New('ui:session:changed'), // A-N19

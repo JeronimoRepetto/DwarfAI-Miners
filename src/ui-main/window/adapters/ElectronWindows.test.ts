@@ -5,6 +5,7 @@ import { runWindowFactoryContract } from '../ports/windowFactory.contract'
 import {
   ElectronWindows,
   buildPanelWindowOptions,
+  buildVetaWindowOptions,
   type CrashMessageDialog,
   type ElectronWindowsDeps,
   type ManagedBrowserWindow
@@ -217,11 +218,57 @@ describe('ElectronWindows (05 §3.14; ADR-019 items 1, 8)', () => {
     ])
   })
 
+  // AMENDED for ISSUE-285 (was: Veta and Valle both refused): the Veta window is built now (ADR-025 item 1), so only
+  // Valle is refused here; the Veta window's own cases follow, and VetaWindowController.test.ts covers its use.
   it('[ADR-019] Veta and Valle windows are not built yet and are refused, never improvised', () => {
     const windows = new ElectronWindows(deps())
-    expect(() => windows.veta('display-a')).toThrow(/not built/)
     expect(() => windows.valle('display-a')).toThrow(/not built/)
     expect(FakeBrowserWindow.built).toEqual([])
+  })
+
+  it('[ADR-025, ADR-019] the Veta window is one secure-factory window that loads the app entry in Veta mode', () => {
+    const registry = createModeWindowRegistry()
+    const windows = new ElectronWindows(deps({ registry }))
+    const surface = windows.vetaSurface()
+    expect(FakeBrowserWindow.built, 'asking for the Veta surface builds no window').toEqual([])
+    expect(windows.vetaWebContentsId(), 'no Veta window, no id').toBeNull()
+    expect(() => surface.bounds()).toThrow(/no Veta window/)
+    const veta = windows.veta('display-a')
+    expect(windows.veta('display-b')).toBe(veta)
+    const [window] = FakeBrowserWindow.built
+    expect(FakeBrowserWindow.built).toHaveLength(1)
+    expect(window?.options).toEqual(
+      buildVetaWindowOptions({
+        preloadPath: '/app/out/preload/index.cjs',
+        iconPath: '/app/resources/app-icon.png'
+      })
+    )
+    expect(window?.options.webPreferences).toEqual(
+      secureWindowOptions({ preload: '/app/out/preload/index.cjs' }).webPreferences
+    )
+    expect(registry.has(window!.webContents.id)).toBe(true)
+    // The root tells the Veta window's events from the Panel's by this id (A-N15, A-N22).
+    expect(windows.vetaWebContentsId()).toBe(window!.webContents.id)
+    surface.setAlwaysOnTopLevel('screen-saver')
+    surface.setIgnoreMouseEvents(true)
+    veta.placeAt({ x: 10, y: 20, width: 300, height: 40 })
+    expect(surface.bounds()).toEqual({ x: 10, y: 20, width: 300, height: 40 })
+    expect(window?.calls).toEqual([
+      `loadURL ${APP_ENTRY}/?mode=veta`,
+      'setAlwaysOnTop true screen-saver',
+      'setIgnoreMouseEvents true {"forward":true}',
+      'setBounds 300x40@10,20'
+    ])
+  })
+
+  it('[ADR-019] a crashed Veta renderer reloads its own Veta entry, never the Panel entry', () => {
+    new ElectronWindows(deps()).veta('display-a')
+    const window = FakeBrowserWindow.built[0]!
+    window.webContents.crash()
+    expect(window.calls.filter((c) => c.startsWith('loadURL'))).toEqual([
+      `loadURL ${APP_ENTRY}/?mode=veta`,
+      `loadURL ${APP_ENTRY}/?mode=veta`
+    ])
   })
 
   it('[ADR-019] the Electron BrowserWindow class and dialog fit the adapter (checked by the typecheck)', () => {

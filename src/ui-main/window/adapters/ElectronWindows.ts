@@ -2,6 +2,7 @@ import type { BrowserWindowConstructorOptions } from 'electron'
 import { t } from '@dwarfai/contracts'
 import type { ModeWindowRegistry } from '../application/modeWindowRegistry'
 import type { PanelWindowSurface } from '../application/panelWindow'
+import type { AlwaysOnTopLevel, VetaWindowSurface } from '../application/VetaWindowController'
 import type {
   DisplayKey,
   PanelWindow,
@@ -28,8 +29,9 @@ import {
  *   item 8);
  * - is watched by the renderer crash and hang policy (ADR-019 item 11; 13 FM-043, FM-044).
  *
- * Veta and Valle are not built yet (EPIC-19, EPIC-20): asking for one is refused, never improvised (hidden until built,
- * 21 §1 item 8).
+ * The Veta window (ISSUE-285) loads the same entry with `?mode=veta`; it is built only when the composition asks for it,
+ * which a build does only where Veta is in its built-modes list. Valle is not built yet (EPIC-20): asking for it is
+ * refused, never improvised (hidden until built, 21 §1 item 8).
  */
 
 /** Two crashes of one window closer than this are a repeat: no automatic reload (ADR-019 item 11). */
@@ -89,7 +91,9 @@ export interface ManagedBrowserWindow {
   focus(): void
   moveTop(): void
   restore(): void
-  setAlwaysOnTop(flag: boolean): void
+  setAlwaysOnTop(flag: boolean, level?: AlwaysOnTopLevel): void
+  /** Click-through (ADR-025 item 4): `forward` keeps mouse moves reaching the page while clicks pass through. */
+  setIgnoreMouseEvents(ignore: boolean, options?: { forward?: boolean }): void
   isAlwaysOnTop(): boolean
   isVisible(): boolean
   isMinimized(): boolean
@@ -146,6 +150,53 @@ export function buildPanelWindowOptions(
   return secureWindowOptions(panelWindowRequest(input))
 }
 
+export interface VetaWindowOptionsInput {
+  preloadPath: string
+  iconPath: string
+}
+
+/**
+ * What the Veta window asks of the secure factory: the Veta row of ADR-025 item 1. Built hidden and placed by its
+ * controller before it is first shown (the work area of its `displayKey`); its always-on-top level is set right after
+ * creation, because a constructor option cannot name one (`VetaWindowController`).
+ */
+export function vetaWindowRequest(input: VetaWindowOptionsInput): SecureWindowRequest {
+  return {
+    preload: input.preloadPath,
+    window: {
+      show: false,
+      frame: false,
+      // The island's shape leaves transparent corners; they pass clicks through (ADR-025 item 4).
+      transparent: true,
+      // The strip paints its own shadow; macOS would draw a second one around the transparent window (#465).
+      hasShadow: false,
+      // Only UI main sizes it, before a rise and after a fold, never during a motion (ADR-025 item 2).
+      resizable: false,
+      // Windows keeps the DWM resize animation on a frameless window otherwise, flashing it on every `setBounds` (#394).
+      thickFrame: false,
+      skipTaskbar: true,
+      // Stated, not left to the default: the strip takes keys for docking and its chats (#165).
+      focusable: true,
+      alwaysOnTop: true,
+      icon: input.iconPath
+    }
+  }
+}
+
+/** The Veta window's constructor options, exactly as the secure factory builds them. */
+export function buildVetaWindowOptions(
+  input: VetaWindowOptionsInput
+): BrowserWindowConstructorOptions {
+  return secureWindowOptions(vetaWindowRequest(input))
+}
+
+/** The app entry a mode window loads: the same bundle, with its mode in the query (ADR-025 item 1). */
+export function modeEntry(appEntry: string, mode: 'veta'): string {
+  const url = new URL(appEntry)
+  url.searchParams.set('mode', mode)
+  return url.toString()
+}
+
 export interface ElectronWindowsDeps {
   /** Electron's `BrowserWindow` class, handed only to the secure factory. */
   BrowserWindow: BrowserWindowClass<ManagedBrowserWindow>
@@ -168,6 +219,7 @@ export class ElectronWindows implements WindowFactory {
   /** The zoom the Panel's page was last given, given back after every load (#153); `null` before the first fit. */
   private panelZoom: number | null = null
   private readonly panelMinimizeHandlers: Array<() => void> = []
+  private vetaWindow: { window: ManagedBrowserWindow; mode: VetaWindow } | null = null
 
   constructor(private readonly deps: ElectronWindowsDeps) {}
 
@@ -186,7 +238,7 @@ export class ElectronWindows implements WindowFactory {
         bounds: start.bounds
       })
     )
-    const mode = this.manage(window)
+    const mode = this.manage(window, this.deps.appEntry)
     // Electron resets a page's zoom on every navigation, a crash reload included: the Panel's page gets back the zoom
     // it was last given as soon as it has loaded, before anyone sees it at 1x (#153).
     window.webContents.on('did-finish-load', () => {
@@ -230,21 +282,57 @@ export class ElectronWindows implements WindowFactory {
     }
   }
 
+  /**
+   * The one Veta window (ADR-025 items 1, 5): the open one, or a new one when there is none. It is built on its first
+   * use and then kept; on another display it is the same window, placed there by its controller. `displayKey` names
+   * the display it opens on, which its controller reads for the placement (16 §4.14; INV-118).
+   */
   veta(_displayKey: DisplayKey): VetaWindow {
-    throw new Error('the Veta window is not built yet (EPIC-19)')
+    if (this.vetaWindow !== null && !this.vetaWindow.window.isDestroyed()) {
+      return this.vetaWindow.mode
+    }
+    const window = createSecureWindow(
+      this.deps.BrowserWindow,
+      vetaWindowRequest({ preloadPath: this.deps.preload, iconPath: this.deps.icon })
+    )
+    this.vetaWindow = { window, mode: this.manage(window, modeEntry(this.deps.appEntry, 'veta')) }
+    return this.vetaWindow.mode
+  }
+
+  /** The `webContents` id of the Veta window, while it is open; `null` before it is built or once it closed. */
+  vetaWebContentsId(): number | null {
+    const built = this.vetaWindow?.window
+    return built === undefined || built.isDestroyed() ? null : built.webContents.id
+  }
+
+  /**
+   * The Veta window's own members beyond `ModeWindow` (`VetaWindowSurface`): each acts on the Veta window `veta()`
+   * built. Asking for the surface builds nothing; using it before the window exists is a defect of its caller.
+   */
+  vetaSurface(): VetaWindowSurface {
+    const window = (): ManagedBrowserWindow => {
+      const built = this.vetaWindow?.window
+      if (built === undefined || built.isDestroyed()) throw new Error('no Veta window is built')
+      return built
+    }
+    return {
+      setAlwaysOnTopLevel: (level) => window().setAlwaysOnTop(true, level),
+      setIgnoreMouseEvents: (ignore) => window().setIgnoreMouseEvents(ignore, { forward: true }),
+      bounds: () => window().getBounds()
+    }
   }
 
   valle(_from: DisplayKey): ValleWindow {
     throw new Error('the Valle window is not built yet (EPIC-20)')
   }
 
-  /** Registers, watches and loads a new window, and answers its `ModeWindow` members. */
-  private manage(window: ManagedBrowserWindow): PanelWindow {
+  /** Registers, watches and loads a new window from `entry`, and answers its `ModeWindow` members. */
+  private manage(window: ManagedBrowserWindow, entry: string): PanelWindow {
     const id = window.webContents.id
     this.deps.registry.register(id)
     window.once('closed', () => this.deps.registry.drop(id))
-    watchRenderer(window, this.deps)
-    void window.webContents.loadURL(this.deps.appEntry)
+    watchRenderer(window, { ...this.deps, appEntry: entry })
+    void window.webContents.loadURL(entry)
     return {
       placeAt: (bounds) => window.setBounds(bounds),
       showInactive: () => window.showInactive(),

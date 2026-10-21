@@ -9,21 +9,27 @@
 //   the Panel those parts get answers `hide`, `show` and `toggleVisible` through it. Everything else is the Panel's own.
 // - A notification click reaches the per-mode reveal through the coordinator (S27.14), and the reveal's own restore
 //   and launch-open are runs too (S10.11, S10.12).
-import type { DwarfId } from '@dwarfai/contracts'
+import { builtModesOf, type DwarfId } from '@dwarfai/contracts'
 import type { UiLog } from '../../diagnostics/uiLogger'
 import type { ModeTiming } from '../ports/modeTiming'
 import type { ModeWindow } from '../ports/windowFactory'
 import { createModeCoordinator, type AppMode, type ModeCoordinator } from './ModeCoordinator'
 import type { PanelWindowUseCases } from './panelWindow'
 import type { DwarfChatRevealer, RevealWindows } from './revealDwarfChat'
+import type { VetaWindowController } from './VetaWindowController'
 import type { StoredUiPreferences } from './uiPreferences'
 
+/** The build profile electron.vite.config.ts stamps from `DWARFAI_BUILD_PROFILE`; absent outside a build (tests). */
+declare const __DWARFAI_BUILD_PROFILE__: string | undefined
+
 /**
- * The modes this build ships, UI main's copy of ISSUE-267's feature list (`renderer/src/lib/shell/builtDestinations.ts`
- * `SHIPPED_MODES`): the Panel until the Veta epic ships (ADR-034 item 2). Veta and Valle join here with their windows
- * (ISSUE-285, EPIC-20).
+ * The modes this build contains: the one built-modes list (`builtModesOf`, 17 §1.9), which the renderer's controls
+ * read too (`SHIPPED_MODES`). A release build has the Panel alone until the Veta epic ships (ADR-034 item 2); the E2E
+ * build profile adds Veta and Valle. Valle is data only: with no window built, a move to it is refused (EPIC-20).
  */
-export const BUILT_MODES: readonly AppMode[] = ['panel']
+export const BUILT_MODES: readonly AppMode[] = builtModesOf(
+  typeof __DWARFAI_BUILD_PROFILE__ === 'string' ? __DWARFAI_BUILD_PROFILE__ : undefined
+)
 
 export interface ModeShellDeps {
   panel: PanelWindowUseCases
@@ -43,6 +49,10 @@ export interface ModeShellDeps {
   departures?(h: (dwarfId: DwarfId) => void): () => void
   /** The Host closed on purpose (`host.closing`): from tray-only the UI process ends with it (S10.16). */
   hostClosing?(h: () => void): () => void
+  /** The modes this build ships; `BUILT_MODES` when not given. */
+  built?: readonly AppMode[]
+  /** The Veta window (`VetaWindowController`), moved only where `built` lists Veta. */
+  veta?: Pick<VetaWindowController, 'window' | 'bounds'>
 }
 
 export interface ModeShell {
@@ -51,6 +61,8 @@ export interface ModeShell {
   dispose(): void
   /** The Panel whose hide, show and toggle are the coordinator's runs. */
   panel: PanelWindowUseCases
+  /** Shows the Panel for a dialog only the Panel draws (Stop everything and quit's confirmation). */
+  surfacePanel(): void
 }
 
 export function composeModeShell(deps: ModeShellDeps): ModeShell {
@@ -63,21 +75,48 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
     focus: () => panel.raise(),
     send: (push, payload) => deps.pushToPanel(push, payload)
   }
+  const built = deps.built ?? BUILT_MODES
+  // The Veta window (ISSUE-285): moved only where this build ships Veta (BR-19; ADR-034 item 2), else not built.
+  const veta = built.includes('veta') ? deps.veta : undefined
+  let vetaShown = false
+  const vetaWindow = (): ModeWindow => {
+    if (veta === undefined) throw new Error('the veta window is not built')
+    const window = veta.window()
+    return {
+      placeAt: (bounds) => window.placeAt(bounds),
+      focus: () => window.focus(),
+      send: (push, payload) => window.send(push, payload),
+      showInactive: () => {
+        window.showInactive()
+        vetaShown = true
+      },
+      hide: () => {
+        window.hide()
+        vetaShown = false
+      }
+    }
+  }
   let revealer: DwarfChatRevealer = { revealDwarfChat: () => Promise.resolve('mine-only') }
   const coordinator = createModeCoordinator({
     windows: {
       window: (mode) => {
+        if (mode === 'veta') return vetaWindow()
         if (mode !== 'panel') throw new Error(`the ${mode} window is not built`)
         return panelWindow
       },
-      bounds: () => panel.panelStart().bounds,
+      bounds: (mode) => {
+        if (mode !== 'veta') return panel.panelStart().bounds
+        if (veta === undefined) throw new Error('the veta window is not built')
+        return veta.bounds()
+      },
       // The Panel's own show re-fits it, shows it inactive and raises it, which also un-minimizes it (#165).
-      bringForward: () => panel.show(),
-      isShown: () => panel.isShown()
+      bringForward: (mode) => (mode === 'veta' ? vetaWindow().focus() : panel.show()),
+      // The coordinator is the one that shows and hides Veta, so its own runs say whether it is on screen.
+      isShown: (mode) => (mode === 'veta' ? vetaShown : panel.isShown())
     },
     timing: deps.timing,
     lastMode: deps.lastMode,
-    built: BUILT_MODES,
+    built,
     // Late-bound: the reveal's windows are the coordinator's own runs.
     revealer: { revealDwarfChat: (t) => revealer.revealDwarfChat(t) },
     log: deps.log,
@@ -110,6 +149,13 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
     dispose: () => {
       stopDepartures?.()
       stopClosing?.()
+    },
+    // Only the Panel draws Stop everything and quit's confirmation (US-RES-002.AC08; S10.18): with another mode shown,
+    // the Panel is the target of a run, shown at once at its final bounds; from hidden it is the ordinary restore.
+    surfacePanel: () => {
+      const shown = coordinator.mode()
+      if (shown === 'hidden' || shown === 'panel') void coordinator.restore()
+      else void coordinator.moveToMode({ mode: 'panel' })
     },
     panel: {
       ...panel,

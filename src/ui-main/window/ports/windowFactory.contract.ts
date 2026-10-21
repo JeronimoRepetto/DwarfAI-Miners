@@ -13,6 +13,17 @@ export function runWindowFactoryContract(name: string, make: () => WindowFactory
       expect(factory.panel()).toBe(factory.panel())
     })
 
+    it('[ADR-025] asking for Veta again, on any display, returns the one Veta window', () => {
+      // ADR-025 items 1, 5: created lazily once, then kept; on another display it is the same window, placed there.
+      const factory = make()
+      const veta = factory.veta('display-a')
+      expect(factory.veta('display-a')).toBe(veta)
+      expect(factory.veta('display-b')).toBe(veta)
+      for (const member of ['placeAt', 'showInactive', 'hide', 'focus', 'send'] as const) {
+        expect(typeof veta[member], member).toBe('function')
+      }
+    })
+
     it('[ADR-019] the Panel window has exactly the ModeWindow members', () => {
       const panel = make().panel()
       for (const member of ['placeAt', 'showInactive', 'hide', 'focus', 'send'] as const) {

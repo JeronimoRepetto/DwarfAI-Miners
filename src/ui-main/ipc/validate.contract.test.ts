@@ -125,6 +125,7 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' },
   'mode:move': { mode: 'hidden' },
   'mode:transition:done': { transitionId: '0190a1b2-c3d4-7e5f-8a6b-7c8d9e0f1b01' },
+  'veta:clickThrough': { ignore: true },
   'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
   'ui:preferences:set': { key: 'startWithSystem', value: false },
   'host:snapshot': { sections: ['mines', 'dwarfs'] },

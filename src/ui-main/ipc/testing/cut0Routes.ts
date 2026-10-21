@@ -51,7 +51,10 @@ export const CUT_0_UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // §5): the cut-0 table never routed them.
   'mode:move': 'cut-5',
   'mode:transition': 'cut-5',
-  'mode:transition:done': 'cut-5'
+  'mode:transition:done': 'cut-5',
+  // A-N22, A-N24 likewise (ISSUE-285).
+  'veta:clickThrough': 'cut-5',
+  'window:limits': 'cut-5'
 }
 
 function cut0Route(channel: ChannelKey): ChannelRoute {

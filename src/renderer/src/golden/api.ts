@@ -251,6 +251,10 @@ export function goldenApi(sample: GoldenSample): Api {
     moveToMode: () => Promise.resolve({ ok: true, value: undefined }),
     onModeTransition: unsubscribe,
     modeTransitionDone: none,
+    // A-N22, A-N24: a golden renders no Veta window, so nothing ignores the mouse; the limits are the full ones.
+    setVetaClickThrough: none,
+    getWindowingLimits: () =>
+      Promise.resolve({ dockingAvailable: true, alwaysOnTopAvailable: true }),
     // A-N31: a golden draws a fixed sample and never writes another tool's configuration.
     setClaudeHooksEnabled: refuse('setClaudeHooksEnabled'),
     // A-N07: a golden draws a fixed sample and never moves an ask.

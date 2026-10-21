@@ -57,13 +57,13 @@ export class FakeModeWindow implements ModeWindow {
 
 /**
  * Hand-written double of `WindowFactory` (16 §4.14, 16 §2.8). Like `ElectronWindows` it keeps one window per mode
- * window (one Panel, one Veta per display key, one Valle), so asking again returns the window already built; `built`
- * records each window it built, in order.
+ * (one Panel, one Veta on whichever display it is asked for, one Valle), so asking again returns the window already
+ * built; `built` records each window it built, in order, with the display key it was first asked for.
  */
 export class FakeWindowFactory implements WindowFactory {
   readonly built: { kind: 'panel' | 'veta' | 'valle'; key?: DisplayKey }[] = []
   private panelWindow: FakeModeWindow | null = null
-  private readonly vetaWindows = new Map<DisplayKey, FakeModeWindow>()
+  private vetaWindow: FakeModeWindow | null = null
   private valleWindow: FakeModeWindow | null = null
 
   panel(): PanelWindow & FakeModeWindow {
@@ -75,13 +75,11 @@ export class FakeWindowFactory implements WindowFactory {
   }
 
   veta(displayKey: DisplayKey): VetaWindow & FakeModeWindow {
-    let window = this.vetaWindows.get(displayKey)
-    if (window === undefined) {
-      window = new FakeModeWindow()
-      this.vetaWindows.set(displayKey, window)
+    if (this.vetaWindow === null) {
+      this.vetaWindow = new FakeModeWindow()
       this.built.push({ kind: 'veta', key: displayKey })
     }
-    return window
+    return this.vetaWindow
   }
 
   valle(from: DisplayKey): ValleWindow & FakeModeWindow {

@@ -1,5 +1,6 @@
 import type { BrowserWindowConstructorOptions } from 'electron'
 import type { Rect } from '../../ports/windowFactory'
+import type { AlwaysOnTopLevel } from '../../application/VetaWindowController'
 import type { ManagedBrowserWindow, ManagedWebContents } from '../ElectronWindows'
 
 type Listener = (...args: never[]) => void
@@ -24,6 +25,11 @@ export class FakeBrowserWindow implements ManagedBrowserWindow {
   /** The rectangle the window manager left: the one asked, held to `widest`. */
   private placed: Rect = { x: 0, y: 0, width: 0, height: 0 }
   widest = Infinity
+  /**
+   * A window manager that places the window itself (a native Wayland compositor, ADR-025 item 6): given the rectangle
+   * asked, the one it leaves. `null` honours the request (held to `widest`).
+   */
+  compositor: ((asked: Rect) => Rect) | null = null
   pinned: boolean
   honorsPin = true
   visible = false
@@ -42,16 +48,29 @@ export class FakeBrowserWindow implements ManagedBrowserWindow {
 
   setBounds(bounds: Rect): void {
     this.calls.push(`setBounds ${bounds.width}x${bounds.height}@${bounds.x},${bounds.y}`)
-    this.placed = { ...bounds, width: Math.min(bounds.width, this.widest) }
+    this.placed =
+      this.compositor === null
+        ? { ...bounds, width: Math.min(bounds.width, this.widest) }
+        : this.compositor(bounds)
   }
 
   getBounds(): Rect {
     return { ...this.placed }
   }
 
-  setAlwaysOnTop(flag: boolean): void {
-    this.calls.push(`setAlwaysOnTop ${flag}`)
+  setAlwaysOnTop(flag: boolean, level?: AlwaysOnTopLevel): void {
+    this.calls.push(
+      level === undefined ? `setAlwaysOnTop ${flag}` : `setAlwaysOnTop ${flag} ${level}`
+    )
     if (this.honorsPin) this.pinned = flag
+  }
+
+  setIgnoreMouseEvents(ignore: boolean, options?: { forward?: boolean }): void {
+    this.calls.push(
+      options === undefined
+        ? `setIgnoreMouseEvents ${ignore}`
+        : `setIgnoreMouseEvents ${ignore} ${JSON.stringify(options)}`
+    )
   }
 
   isAlwaysOnTop(): boolean {

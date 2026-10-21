@@ -15,20 +15,32 @@ import { STUB_BIN } from '../_harness/stubs.ts'
 // The renderer's own filter of A-36 (`launchSourcesOf` in src/renderer/src/lib/launch/supplierEntries.ts, through
 // src/renderer/src/types.ts): an entry it does not recognise draws no chip.
 import { isDwarfProvider } from '../../src/contracts/wire/today.ts'
+// The one built-modes list (17 §1.9; ISSUE-285): what the build under test contains, from its build profile.
+import { builtModesOf } from '../../src/contracts/ipc/builtModes.ts'
 import { seedClaudeStubSession } from '../cut-1/claudeStubWorld.ts'
 
 /**
- * L9 (ISSUE-267; ADR-034 item 2; BR-19; 21 §1 item 8; 20 §8 R-03): a Panel build, as a person gets it, shows no control
- * whose destination is not built. The build's feature list ships the Panel alone
- * (`src/renderer/src/lib/shell/builtDestinations.ts`), so the nav draws no mode lever and Settings › General no "Mode
- * at launch" row, and the Add panel draws a chip only for a provider main offers to launch — never one for Antigravity,
- * whose launch the public build does not offer (R-03).
+ * L9 (ISSUE-267; ADR-034 item 2; BR-19; 21 §1 item 8; 20 §8 R-03): a build shows no control whose destination it does
+ * not contain. The mode lever is drawn exactly when the build's built-modes list holds a mode beside the Panel, with
+ * one side per such mode; Settings › General draws no "Mode at launch" row until ISSUE-294 builds it; and the Add panel draws a chip only for a provider main offers to launch — never
+ * one for Antigravity, whose launch the public build does not offer (R-03).
  *
- * The built app is the one every L9 case runs: it carries no setting a public build lacks, because the feature list
- * is the same in every build until Veta ships (EPIC-19). The Antigravity launch gate itself is the Host catalog's
- * (EPIC-09, out of this issue's scope); the stub kit has no Antigravity CLI, so this case proves the Panel's half: the
- * row is exactly what main offers (detected and launchable) and Other, and nothing else.
+ * AMENDED for ISSUE-285 (was: a public-style Panel build, no lever and no "Mode at launch" row): the built-modes list
+ * is build-time data now (17 §1.9), and the E2E lane builds with `DWARFAI_BUILD_PROFILE=e2e` (docs/e2e.md), whose list
+ * holds Veta and Valle, so this build draws the lever. The case checks the lever against the list of the profile the
+ * lane builds. A release build's list is the Panel alone, so it draws no lever and offers no "Mode at launch" choice:
+ * proven at the unit level, where no build is needed (`builtModes.test.ts` `builtModesOf('release')`,
+ * `builtDestinations.test.ts` over the release list).
+ *
+ * The Antigravity launch gate itself is the Host catalog's (EPIC-09, out of this issue's scope); the stub kit has no
+ * Antigravity CLI, so this case proves the Panel's half: the row is exactly what main offers (detected and launchable)
+ * and Other, and nothing else.
  */
+
+/** The build profile the E2E lane builds (docs/e2e.md), and whether its list holds a mode beside the Panel. */
+const LANE_PROFILE = 'e2e'
+const OTHER_MODES = builtModesOf(LANE_PROFILE).filter((mode) => mode !== 'panel')
+const OTHER_MODES_SHOWN = OTHER_MODES.length > 0
 
 test.describe.configure({ timeout: 240_000 })
 
@@ -43,7 +55,7 @@ test.describe('the Panel build hides what is not built (ISSUE-267)', () => {
     profile = undefined
   })
 
-  test('[ADR-034, BR-19] a public-style Panel build shows no mode lever, no Mode at launch row and no Antigravity launch chip', async () => {
+  test('[ADR-034, BR-19] the build shows a mode lever only for the modes it contains, no Mode at launch row and no Antigravity launch chip', async () => {
     profile = createIsolatedProfile()
     const owned = profile
     launched = await launchApp({
@@ -63,14 +75,26 @@ test.describe('the Panel build hides what is not built (ISSUE-267)', () => {
     await chooseTrayItem(app, TRAY_ITEMS.open)
     await answerFirstRunStep(window)
 
-    // The nav: no lever, no side of it, no MODE label.
+    // The nav: the lever, with its MODE label, exactly when the build contains a mode beside the Panel; one side per
+    // mode it contains.
     const nav = window.locator('nav.dm-nav')
     await expect(nav, 'the nav is drawn').toBeVisible({ timeout: 30_000 })
-    await expect(nav.locator('.dm-nav__lever'), 'no mode lever').toHaveCount(0)
-    await expect(nav.getByRole('group', { name: 'Mode' })).toHaveCount(0)
-    await expect(nav).not.toContainText('MODE')
+    await expect(nav.locator('.dm-nav__lever'), 'the mode lever').toHaveCount(
+      OTHER_MODES_SHOWN ? 1 : 0
+    )
+    await expect(nav.getByRole('group', { name: 'Mode' })).toHaveCount(OTHER_MODES_SHOWN ? 1 : 0)
+    if (OTHER_MODES_SHOWN) await expect(nav).toContainText('MODE')
+    else await expect(nav).not.toContainText('MODE')
+    const lever = nav.getByRole('group', { name: 'Mode' })
+    await expect(lever.locator('.dm-slot[data-label="▲ Valle"]')).toHaveCount(
+      OTHER_MODES.includes('valle') ? 1 : 0
+    )
+    await expect(lever.locator('.dm-slot[data-label="▼ Veta"]')).toHaveCount(
+      OTHER_MODES.includes('veta') ? 1 : 0
+    )
 
-    // Settings › General: no Mode at launch row.
+    // Settings › General: no Mode at launch row in any build yet. The row is ISSUE-294's, which draws it from the same
+    // list; until then SettingsPanel draws it nowhere, so its absence is true in the E2E build too.
     await nav.locator('.dm-slot[data-label="Settings"]').click()
     await window.locator('[role="tab"][data-s="General"]').click()
     const panel = window.locator('.dm-settings__panel')
