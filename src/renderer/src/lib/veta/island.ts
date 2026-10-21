@@ -23,10 +23,10 @@ export type IslandParts =
 const ISLAND_PADDING = 2 * 2
 /** Expand or grip: 32 px with a 2 px margin on each side. */
 export const BUTTON_ALONG = 32 + 2 * 2
-const CHAMBER_GAP = 4
+export const CHAMBER_GAP = 4
 /** The chamber's padding along the edge (10 + 8 px) and its margin (2 × 2 px). */
 const CHAMBER_FRAME = 10 + 8 + 2 * 2
-const SPRITE_ALONG = { row: 36, shaft: 38 } as const
+export const SPRITE_ALONG = { row: 36, shaft: 38 } as const
 /** "+N" with its 2 × 2 px margin: 40 px wide in a row, 32 px tall down a side edge. */
 export const MORE_ALONG = { row: 40 + 2 * 2, shaft: 32 + 2 * 2 } as const
 

@@ -21,7 +21,14 @@
  * timers are injected.
  */
 import type { DwarfId, DwarfWire, MineId } from '@dwarfai/contracts'
-import { BUTTON_ALONG, MORE_ALONG, chamberLength, islandLength } from './island'
+import {
+  BUTTON_ALONG,
+  CHAMBER_GAP,
+  MORE_ALONG,
+  SPRITE_ALONG,
+  chamberLength,
+  islandLength
+} from './island'
 
 /** The most chambers Veta draws (`DS/docs/screens/veta.md`, Numbers written in the scripts: mines shown before +N). */
 export const VETA_MAX_CHAMBERS = 4
@@ -216,8 +223,8 @@ export function stepOverflow(
 
 /** The drawn run as the island lays it out, for `chamberAt`. */
 export interface DrawnStrip {
-  /** The drawn chambers' mines and crews, in mine order. */
-  readonly mines: readonly { readonly mineId: MineId; readonly crew: number }[]
+  /** The drawn chambers' mines and their dwarfs in crew order, in mine order. */
+  readonly mines: readonly { readonly mineId: MineId; readonly dwarfs: readonly DwarfId[] }[]
   /** Some mine is folded into "+N". */
   readonly folded: boolean
   readonly vertical: boolean
@@ -225,19 +232,36 @@ export interface DrawnStrip {
   readonly anchorEnd: boolean
 }
 
+/** What lies at a point along the island: a drawn chamber, and the dwarf in it when the point is on its sprite. */
+export interface StripPart {
+  readonly mineId: MineId
+  readonly dwarfId: DwarfId | null
+}
+
 /**
- * The drawn chamber at `along` CSS pixels from the island's start (its left or top edge), or `null` over any other
- * part, from the lengths the island adds up (`islandLength`). After a wheel notch the chamber under a resting pointer
- * is another one, and the risen tab follows it (S25.04 with 07 machine 23: S23.02, or S23.03 over no chamber).
+ * The drawn chamber, and the dwarf in it, at `along` CSS pixels from the island's start (its left or top edge); `null`
+ * over any other part. From the lengths the island adds up (`islandLength`): inside a chamber its 2 px margin, its
+ * padding at its start (10 px, 8 px when anchored at the end, where its crew runs latest first), then each sprite at 1:1
+ * with 4 px gaps. After a wheel notch the chamber and the dwarf under a resting pointer are other ones, and the risen
+ * tab (S25.04 with 07 machine 23: S23.02, or S23.03 over no chamber) and the hover label (S24.19) follow them.
  */
-export function chamberAt(strip: DrawnStrip, along: number): MineId | null {
-  const more = strip.folded ? MORE_ALONG[strip.vertical ? 'shaft' : 'row'] : 0
+export function partAt(strip: DrawnStrip, along: number): StripPart | null {
+  const shaft = strip.vertical ? 'shaft' : 'row'
+  const more = strip.folded ? MORE_ALONG[shaft] : 0
   const chambers = strip.anchorEnd ? [...strip.mines].reverse() : strip.mines
   // The island's 2 px padding, then the part before the chambers: the grip and "+N", or expand.
   let at = 2 + (strip.anchorEnd ? BUTTON_ALONG + more : BUTTON_ALONG)
-  for (const { mineId, crew } of chambers) {
-    const end = at + chamberLength(crew, strip.vertical)
-    if (along >= at && along < end) return mineId
+  for (const { mineId, dwarfs } of chambers) {
+    const end = at + chamberLength(dwarfs.length, strip.vertical)
+    if (along >= at && along < end) {
+      const crew = strip.anchorEnd ? [...dwarfs].reverse() : dwarfs
+      let sprite = at + 2 + (strip.anchorEnd ? 8 : 10)
+      for (const dwarfId of crew) {
+        if (along >= sprite && along < sprite + SPRITE_ALONG[shaft]) return { mineId, dwarfId }
+        sprite += SPRITE_ALONG[shaft] + CHAMBER_GAP
+      }
+      return { mineId, dwarfId: null }
+    }
     at = end
   }
   return null

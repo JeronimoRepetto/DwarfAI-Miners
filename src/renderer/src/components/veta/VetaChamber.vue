@@ -25,7 +25,7 @@
  * holds the label's room before it shows (`labelOn`). The open chat's dwarf is drawn pressed.
  */
 import { t, type DwarfId, type DwarfWire, type MineWire } from '@dwarfai/contracts'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { INTERIOR_SRC } from '../../lib/art'
 import { labelPlace, type LabelBox } from '../../lib/veta/dwarfLabel'
 import { portraitMark } from '../../lib/dwarf/portrait'
@@ -54,6 +54,11 @@ const props = defineProps<{
   labelsOf: (dwarf: DwarfWire) => { tip: string; aria: string }
   /** The window holds the hovered dwarf's label room: it may show. Shown at once when unset. */
   labelOn?: boolean
+  /**
+   * The dwarf under a resting pointer after a wheel notch moved the strip under it (ISSUE-291), stamped per notch: no
+   * pointerenter or pointerleave fires then, so the label follows it from here, or goes when it is not one of these.
+   */
+  pointerDwarf?: { dwarfId: DwarfId | null; stamp: number }
 }>()
 
 const emit = defineEmits<{
@@ -90,18 +95,37 @@ function boxOf(part: HTMLElement, within: HTMLElement | null): LabelBox {
 }
 
 function hoverDwarf(dwarfId: DwarfId | null, event?: PointerEvent): void {
-  if (dwarfId !== null && event?.currentTarget instanceof HTMLElement) {
+  const was = hovered.value
+  hoverOn(dwarfId, event?.currentTarget instanceof HTMLElement ? event.currentTarget : null)
+  if (dwarfId === null && was === null) return
+  emit('dwarfHover', dwarfId)
+}
+
+/** The label goes to `dwarfId` (placed by its sprite `sprite`), or away with `null`. */
+function hoverOn(dwarfId: DwarfId | null, sprite: HTMLElement | null): void {
+  if (dwarfId !== null && sprite !== null) {
     const tab = tabRef.value
     const tabBox =
       tab === null
         ? null
         : { x: tab.offsetLeft, y: tab.offsetTop, width: tab.offsetWidth, height: tab.offsetHeight }
-    labelStyle.value = labelPlace(props.side, boxOf(event.currentTarget, crewRef.value), tabBox)
+    labelStyle.value = labelPlace(props.side, boxOf(sprite, crewRef.value), tabBox)
   }
-  if (dwarfId === null && hovered.value === null) return
   hovered.value = dwarfId
-  emit('dwarfHover', dwarfId)
 }
+
+// A wheel notch: the root already knows the dwarf now under the pointer; this chamber shows its label or drops its own.
+watch(
+  () => props.pointerDwarf?.stamp,
+  () => {
+    const dwarfId = props.pointerDwarf?.dwarfId ?? null
+    const sprite =
+      dwarfId === null
+        ? null
+        : (crewRef.value?.querySelector<HTMLElement>(`[data-dwarf-id="${dwarfId}"]`) ?? null)
+    hoverOn(sprite === null ? null : dwarfId, sprite)
+  }
+)
 
 /** Focus leaving for an element still inside the chamber (its tab's buttons) is not focus leaving it. */
 function focusOut(event: FocusEvent): void {

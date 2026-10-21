@@ -87,7 +87,7 @@ import { dwarfLabels, labelBox, silenceOf } from '../../lib/veta/dwarfLabel'
 import { gripMenuEntries, type GripMenuItemId, type Opener } from '../../lib/veta/gripMenu'
 import { islandLength } from '../../lib/veta/island'
 import { entranceIntent } from '../../lib/veta/lifeState'
-import { chamberAt, dwarfToOpen } from '../../lib/veta/overflow'
+import { dwarfToOpen, partAt } from '../../lib/veta/overflow'
 import {
   PLAIN_MINE_TAB,
   aimOf,
@@ -208,7 +208,8 @@ useWindowVetaPresence(() => ({
 /**
  * A wheel notch over the strip cycles the visible run (S25.04); with everything drawn it does nothing (S25.09). The
  * pointer rests where it was, now over another chamber or none: the hovered chamber is resolved again from where the
- * notch landed along the island, so the risen tab is the one under the pointer (S23.02), or none (S23.03).
+ * notch landed along the island, so the risen tab is the one under the pointer (S23.02), or none (S23.03), and the
+ * hover label is the one of the dwarf under it, or none (S24.19).
  */
 async function wheeled(event: WheelEvent): Promise<void> {
   if (!sessions.value || dragging.value) return
@@ -219,16 +220,29 @@ async function wheeled(event: WheelEvent): Promise<void> {
     box === undefined ? null : vertical.value ? event.clientY - box.top : event.clientX - box.left
   await overflow.wheel(delta)
   if (along === null) return
-  pointerOn.value = chamberAt(
+  const under = partAt(
     {
-      mines: drawnChambers.value.map((c) => ({ mineId: c.mine.id, crew: c.dwarfs.length })),
+      mines: drawnChambers.value.map((c) => ({
+        mineId: c.mine.id,
+        dwarfs: c.dwarfs.map((d) => d.id)
+      })),
       folded: folded.value.length > 0,
       vertical: vertical.value,
       anchorEnd: anchorEnd.value
     },
     along
   )
+  pointerOn.value = under?.mineId ?? null
+  const dwarfId = under?.dwarfId ?? null
+  pointerDwarf.value = { dwarfId, stamp: pointerDwarf.value.stamp + 1 }
+  dwarfHover(dwarfId)
 }
+
+/** The dwarf under a resting pointer after a wheel notch, for the chambers to show its label (stamped per notch). */
+const pointerDwarf = shallowRef<{ dwarfId: DwarfId | null; stamp: number }>({
+  dwarfId: null,
+  stamp: 0
+})
 
 /** A right-click, or Enter or Space on the grip (S22.02); a right-click that just closed the menu does not reopen it. */
 function gripMenu(): void {
@@ -959,6 +973,7 @@ onBeforeUnmount(() => {
           :open-dwarf="openDwarf"
           :labels-of="labelsOf"
           :label-on="labelOn"
+          :pointer-dwarf="pointerDwarf"
           @dwarf="dwarfHit(chamber.mine.id, $event)"
           @dwarf-hover="dwarfHover"
           @hover="chamberHover(chamber.mine.id, $event)"

@@ -250,4 +250,46 @@ describe('the "+N" fold of the Veta strip', () => {
     await flushPromises()
     expect(risenTab()).toEqual([])
   })
+
+  it('[US-VETA-006.AC03, S25.04, S24.19] after a wheel notch the hover label is the one of the dwarf now under the pointer', async () => {
+    // Ironhills holds balin and thrain: anchored at the right end its crew runs latest first, thrain then balin.
+    world = await mountVeta(
+      sixMines({
+        [IRONHILLS]: [
+          dwarfWire(BALIN, IRONHILLS, { status: 'working' }),
+          dwarfWire(THRAIN, IRONHILLS, { status: 'working' })
+        ]
+      })
+    )
+    const label = (): string[] =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-veta-chamber] [data-dwarf-id]:not([data-veta-dwarf])'
+        )
+      ].map((shown) => shown.textContent ?? '')
+    const island = document.querySelector<HTMLElement>('[data-veta-island]')!
+    const notch = async (clientX: number): Promise<void> => {
+      island.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 100, clientX, clientY: 20, bubbles: true })
+      )
+      await flushPromises()
+    }
+    // From the island's start: padding 2, grip 36, "+2" 44, then ironhills (98 px: margin 2, padding 8, thrain 36,
+    // gap 4, balin 36). The pointer rests 150 px in, on balin.
+    document
+      .querySelector<HTMLElement>(`[data-veta-dwarf][data-dwarf-id="${BALIN}"]`)!
+      .dispatchEvent(new PointerEvent('pointerenter'))
+    await flushPromises()
+    expect(label()).toHaveLength(1)
+    expect(label()[0]).toContain('balin')
+
+    // One notch: belegost comes in at the far end and ironhills moves 58 px toward the anchor, thrain now at 150 px.
+    await notch(150)
+    expect(label()).toHaveLength(1)
+    expect(label()[0]).toContain('thrain')
+
+    // The pointer over "+N", no dwarf: after the next notch no label shows.
+    await notch(60)
+    expect(label()).toEqual([])
+  })
 })
