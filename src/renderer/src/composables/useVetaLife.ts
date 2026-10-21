@@ -21,6 +21,8 @@
  * The bridge, the window's visibility and the timers are injected (the house idiom over `vi.mock`).
  */
 import type {
+  DepartureCause,
+  DwarfId,
   DwarfWire,
   VetaLayoutRequest,
   VetaLayoutResult,
@@ -32,6 +34,7 @@ import type {
   SnapshotParams,
   SnapshotSection
 } from '@dwarfai/contracts'
+import { HOST_FRAME_SCHEMAS } from '@dwarfai/contracts'
 import {
   computed,
   getCurrentScope,
@@ -79,6 +82,20 @@ export interface VetaLifeDeps {
   visibility: VetaVisibility
 }
 
+/**
+ * What machine 26 hears (ISSUE-292; ADR-033 item 3): the `dwarf.arrived` and `dwarf.departed` frames, in order, once
+ * the facts they changed are published, and a (re-)snapshot, which never walks anyone (S26.15).
+ */
+export type VetaFact =
+  | { readonly kind: 'arrived'; readonly dwarf: DwarfWire }
+  | {
+      readonly kind: 'departed'
+      readonly dwarfId: DwarfId
+      readonly mineId: MineId
+      readonly cause: DepartureCause
+    }
+  | { readonly kind: 'snapshot' }
+
 export interface VetaLifePart {
   state: Readonly<Ref<VetaLifeState | null>>
   shown: Readonly<Ref<boolean>>
@@ -88,6 +105,8 @@ export interface VetaLifePart {
   mines: Readonly<Ref<readonly VetaMineView[]>>
   /** The last step machine 20 took or refused. */
   last: Readonly<Ref<LifeStep | null>>
+  /** Hears the arrival and departure frames once drawn, and each snapshot (machine 26's inputs). */
+  onFacts(listener: (facts: readonly VetaFact[]) => void): () => void
   /** Follows the Host; answers whether the first snapshot was read. */
   start(): Promise<boolean>
   stop(): void
@@ -122,12 +141,39 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
   const last = shallowRef<LifeStep | null>(null)
   const mines = shallowRef<readonly VetaMineView[]>([])
 
+  /** Machine 26's listeners, and the facts applied since the last publish (ISSUE-292). */
+  const factListeners = new Set<(facts: readonly VetaFact[]) => void>()
+  let heard: VetaFact[] = []
+
   function publish(): void {
     state.value = life.state
     shown.value = life.shown
     chambers.value = life.chambers
     mines.value = life.mines
     last.value = life.last
+    if (heard.length === 0) return
+    const facts = heard
+    heard = []
+    for (const listener of [...factListeners]) listener(facts)
+  }
+
+  /** An arrival or a departure the read model applied, in its 14 §3.5 shape. */
+  function hear(frame: HostFrame): void {
+    if (frame.name === 'dwarf.arrived') {
+      const parsed = HOST_FRAME_SCHEMAS['dwarf.arrived'].safeParse(frame.data)
+      if (parsed.success) heard.push({ kind: 'arrived', dwarf: parsed.data.dwarf as DwarfWire })
+    } else if (frame.name === 'dwarf.departed') {
+      const parsed = HOST_FRAME_SCHEMAS['dwarf.departed'].safeParse(frame.data)
+      if (parsed.success) {
+        const { dwarfId, mineId, cause } = parsed.data
+        heard.push({
+          kind: 'departed',
+          dwarfId: dwarfId as DwarfId,
+          mineId: mineId as MineId,
+          cause
+        })
+      }
+    }
   }
 
   function visibilityChanged(): void {
@@ -138,8 +184,15 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
 
   const model = createReadModel<VetaFacts, HostFrame>({
     state: { minesEverKnown: false, mines: [], dwarfs: [] },
-    replace: (data) => life.applySnapshot(data),
-    apply: (frame) => life.applyFrame(frame)
+    replace: (data) => {
+      life.applySnapshot(data)
+      // A snapshot supersedes whatever frames it holds: no walk (S26.15).
+      heard = [{ kind: 'snapshot' }]
+    },
+    apply: (frame) => {
+      life.applyFrame(frame)
+      hear(frame)
+    }
   })
 
   let follower: HostFollower | null = null
@@ -159,6 +212,10 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
     chambers,
     mines,
     last,
+    onFacts(listener) {
+      factListeners.add(listener)
+      return () => factListeners.delete(listener)
+    },
     async start() {
       stopVisibility ??= deps.visibility.onChange(visibilityChanged)
       visibilityChanged()
@@ -212,6 +269,8 @@ export interface VetaOverflowPart {
   folded: ComputedRef<readonly VetaChamberView[]>
   /** Asks for a measure (S25.01–S25.03), debounced. */
   remeasure(): void
+  /** Measures at once: an arrival folded into "+N" (S26.18; ISSUE-292) never shows its chamber first. */
+  measure(): Promise<void>
   /** A wheel notch over the strip (S25.04, S25.09). */
   wheel(delta: number): Promise<void>
   /** The pointer enters "+N" (S25.05) or leaves it and its list (S25.06). */
@@ -315,6 +374,10 @@ export function useVetaOverflow(deps: VetaOverflowDeps): VetaOverflowPart {
     drawn,
     folded,
     remeasure: () => remeasure.request(),
+    async measure() {
+      remeasure.cancel()
+      await enqueue({ type: 'measure' })
+    },
     wheel: async (delta) => {
       await enqueue({ type: 'wheel', delta })
     },

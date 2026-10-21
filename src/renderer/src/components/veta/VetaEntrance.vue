@@ -8,6 +8,9 @@
  * Only the lantern moves: one slow loop of a few frames the browser plays from keyframes (`lib/veta/lantern.ts`, built
  * by `cssLoop`), with no JavaScript timer and no sprite on the frame clock (NFR-PERF-04). Under reduced motion it holds
  * a steady light. On a left or right edge the entrance swaps width and height, like every part of the island.
+ *
+ * Lit (07 S26.01; ISSUE-292): as the first dwarf arrives, the lamp brightens: its light jumps to full and stops
+ * flickering, a class with no transition (`DS/docs/motion.md`, "Veta, no sessions → working", `.dm-entrance.is-lit`).
  */
 import { t } from '@dwarfai/contracts'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -20,11 +23,20 @@ import {
 } from '../../lib/veta/lantern'
 import PixelIcon from '../icon/PixelIcon.vue'
 
-const props = defineProps<{ first: boolean; vertical: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    first: boolean
+    vertical: boolean
+    /** The lamp has brightened for an arrival (machine 26 `lighting`). */
+    lit?: boolean
+  }>(),
+  { lit: false }
+)
 const emit = defineEmits<{ activate: [] }>()
 
 const reduced = ref(prefersReducedMotion())
-const loop = computed(() => lanternLoop(reduced.value))
+// Steady under reduced motion, and once lit: either way nothing flickers.
+const loop = computed(() => lanternLoop(reduced.value || props.lit))
 const strip = ref<HTMLElement | null>(null)
 let playing: Animation | null = null
 
@@ -60,9 +72,10 @@ onBeforeUnmount(() => {
   playing = null
 })
 
-const steadyOpacity = computed(() =>
-  props.first ? LANTERN_STEADY_OPACITY.first : LANTERN_STEADY_OPACITY.plain
-)
+const steadyOpacity = computed(() => {
+  if (props.lit) return 1
+  return props.first ? LANTERN_STEADY_OPACITY.first : LANTERN_STEADY_OPACITY.plain
+})
 
 function key(event: KeyboardEvent): void {
   if (event.key !== 'Enter' && event.key !== ' ') return
@@ -75,7 +88,7 @@ function key(event: KeyboardEvent): void {
   <button
     type="button"
     class="veta-entrance m-mat dm-focus-inset"
-    :class="{ 'is-vertical': vertical }"
+    :class="{ 'is-vertical': vertical, 'is-lit': lit }"
     :data-first="first ? 'true' : 'false'"
     :aria-label="first ? t('veta.entrance.firstRun.label') : t('veta.entrance.label')"
     :title="first ? t('veta.entrance.firstRun.title') : t('veta.entrance.title')"

@@ -132,4 +132,45 @@ describe('useVetaLife', () => {
     expect(life.mines.value.map((m) => m.mine.id)).toEqual([EREBOR])
     scope.stop()
   })
+
+  // APPENDED for ISSUE-292: machine 26's inputs are the arrival and departure frames alone (ADR-033 item 3).
+  it('[ADR-033, S26.15, S26.16] hands the choreography the dwarf.arrived and dwarf.departed frames once drawn, and a snapshot as a snapshot', async () => {
+    const host = scriptedHost([
+      snapshotPage(10, {
+        minesEverKnown: true,
+        mines: [mineWire(MORIA), mineWire(EREBOR)],
+        dwarfs: [dwarfWire(BORIN, MORIA)]
+      })
+    ])
+    const scope = effectScope()
+    const life = scope.run(() =>
+      useVetaLife({ bridge: host.bridge, visibility: visibility(true).deps })
+    )!
+    const heard: Array<{ facts: string[]; chambers: number }> = []
+    life.onFacts((facts) => {
+      heard.push({
+        facts: facts.map((f) =>
+          f.kind === 'snapshot'
+            ? 'snapshot'
+            : `${f.kind}:${f.kind === 'arrived' ? f.dwarf.id : f.dwarfId}`
+        ),
+        chambers: life.chambers.value.length
+      })
+    })
+    await life.start()
+    expect(heard).toEqual([{ facts: ['snapshot'], chambers: 1 }])
+
+    // A status change and a mine change are not choreography inputs; arrivals and departures are, in order, once drawn.
+    host.push([
+      frame(11, 'dwarf.changed', { dwarf: dwarfWire(BORIN, MORIA, { status: 'idle' }) }),
+      frame(12, 'dwarf.arrived', { dwarf: dwarfWire(DAIN, EREBOR), announce: true }),
+      frame(13, 'dwarf.departed', { dwarfId: BORIN, mineId: MORIA, cause: 'stopped' })
+    ])
+    expect(heard.at(-1)).toEqual({ facts: [`arrived:${DAIN}`, `departed:${BORIN}`], chambers: 1 })
+    host.push([
+      frame(14, 'dwarf.changed', { dwarf: dwarfWire(DAIN, EREBOR, { status: 'asleep' }) })
+    ])
+    expect(heard).toHaveLength(2)
+    scope.stop()
+  })
 })

@@ -449,6 +449,11 @@ export function walkOutFrames(o: Outward): MotionFrames {
   ]
 }
 
+/** FLIP: a part laid out anew plays from where it was (`dx`, `dy` px away) to where it is, translate only. */
+export function flipFrames(dx: number, dy: number): MotionFrames {
+  return [{ transform: `translate(${px(dx)}, ${px(dy)})` }, { transform: 'none' }]
+}
+
 /** An emptied chamber fading out where it stands; held until removed. */
 export function fadeOutFrames(): MotionFrames {
   return [{ opacity: 1 }, { opacity: 0 }]
