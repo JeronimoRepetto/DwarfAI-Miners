@@ -1352,6 +1352,23 @@ describe('useDwarfMessaging chat from the Host read model', () => {
     // AMENDED for ISSUE-249 (was: A-14, A-16 and A-17 never called): those members no longer exist (`MEMBER_REMOVED`).
   })
 
+  // ADDED for ISSUE-293: the scroll anchor names a message by its Host id (ADR-024 item 3, `ChatViewState`).
+  it('[ADR-024, INV-114] every row the Host fed carries its Host message id, so a chat view can be anchored to it', async () => {
+    const host = installHost([page(5, tails({ dwarfId: BORIN, messages: [view(2), view(1)] }))])
+    await useDwarfMessaging().startChat()
+    host.push([frame(6, 'conversation.appended', { dwarfId: BORIN, messages: [view(3)] })])
+    const rows = chatOf(BORIN)?.messages ?? []
+    expect(rows.map((row) => useDwarfMessaging().hostMessageIdOf(row))).toEqual([
+      id(1),
+      id(2),
+      id(3)
+    ])
+    // A row the Host never fed (the poll's `lastMessage`, a test's own) names no message.
+    expect(
+      useDwarfMessaging().hostMessageIdOf({ role: 'assistant', text: 'line 1', timestamp: '' })
+    ).toBeUndefined()
+  })
+
   it('[ADR-033] a frame with seq at or below the snapshot seq is ignored, and resync-required re-reads the snapshot', async () => {
     let host: Host | null = null
     host = installHost([

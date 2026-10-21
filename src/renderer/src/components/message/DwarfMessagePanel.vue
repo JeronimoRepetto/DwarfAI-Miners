@@ -29,7 +29,7 @@ import {
   runsHaveEnded,
   type PanelEntry
 } from '../../lib/message/activityGroup'
-import { conversationOf, ENDED_NOTE } from '../../lib/message/conversation'
+import { conversationOf, ENDED_NOTE, feedMessagesOf } from '../../lib/message/conversation'
 import { echoRowsOf, mergeEchoes, type MessageEcho, type PanelRow } from '../../lib/message/echo'
 import { tailArrivals } from '../../lib/message/entryArrival'
 import { isOpenablePath } from '../../lib/message/openablePath'
@@ -63,10 +63,13 @@ import {
   filterDwarfName,
   t,
   type DwarfId,
-  type DwarfNameRefusal
+  type DwarfNameRefusal,
+  type MessageId
 } from '@dwarfai/contracts'
 import { captureChatView, restoredScrollTop } from '../../lib/chat/chatViewState'
 import { modeTransitionPart } from '../../composables/useModeTransition'
+import { hostMessageIdOf } from '../../composables/useDwarfMessaging'
+import { messageBoxesOf } from './messageBoxes'
 import type { AskAnswer } from '../../lib/question/questionAnswer'
 import { shownAskOf } from '../../lib/message/askCard'
 import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
@@ -526,7 +529,8 @@ watch(showsComposer, (shows) => {
 })
 
 /** One row of the conversation as this panel draws it, with its own delivery mark (#309). */
-type Row = PanelRow & { mark?: BubbleMark }
+/** A row, with the Host message id a chat view anchors to when the Host fed it (ISSUE-293; ADR-024 item 3). */
+type Row = PanelRow & { mark?: BubbleMark; messageId?: MessageId }
 
 /*
  * A message the person sent from this panel, which alone may offer Retry and Copy once it failed.
@@ -555,12 +559,20 @@ function refusalOf(row: Row): string | undefined {
  */
 const rows = computed<Row[]>(() => {
   const messages = conversation.value.messages
+  // The wire rows behind them, one for one: each the Host fed names its message (ISSUE-293).
+  const wire = feedMessagesOf(props.dwarf, props.feed)
   const marks = historyMarks(
     messages.map((row) => ({ ...row, author: { role: 'worker' as const, name: '' }, time: '' }))
   )
   return messages.map((row, i) => {
     const mark = marks[i]
-    return mark === undefined ? row : { ...row, mark: HISTORY_MARK[mark] }
+    const source = wire[i]
+    const messageId = source === undefined ? undefined : hostMessageIdOf(source)
+    return {
+      ...row,
+      ...(mark === undefined ? {} : { mark: HISTORY_MARK[mark] }),
+      ...(messageId === undefined ? {} : { messageId })
+    }
   })
 })
 
@@ -746,9 +758,8 @@ onMounted(showLatest)
 /*
  * The chat this panel holds travels with a mode transition run (ISSUE-284; ADR-025 item 3; ADR-024 item 3; 07 machine
  * 9): as the source of a run it hands its draft and its view state to the UI-main session store before t0; as the
- * target it takes them back before its content shows. The conversation rows carry no message id yet (the feed names
- * none, lib/message/conversation.ts), so the scroll anchor is the bottom; the composer's caret and selection travel
- * whole.
+ * target it takes them back before its content shows. The scroll anchor is the first row in view the Host fed, by its
+ * message id (ISSUE-293), else the bottom; the composer's caret and selection travel whole.
  */
 const composerField = (): HTMLTextAreaElement | null =>
   composerRef.value?.querySelector('textarea') ?? null
@@ -765,7 +776,7 @@ const stopHandoff = modeTransitionPart().register({
     const list = conversationRef.value
     return captureChatView(
       list ?? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
-      [],
+      list === null ? [] : messageBoxesOf(list),
       composerField()
     )
   },
@@ -774,7 +785,7 @@ const stopHandoff = modeTransitionPart().register({
     void nextTick(() => {
       const list = conversationRef.value
       if (list !== null && view !== null) {
-        list.scrollTop = restoredScrollTop(view.scrollAnchor, list, [])
+        list.scrollTop = restoredScrollTop(view.scrollAnchor, list, messageBoxesOf(list))
       }
       const field = composerField()
       if (field !== null && view?.selection !== undefined) {
@@ -1230,6 +1241,7 @@ async function resetName(): Promise<void> {
           :session-closed="ownSend(entry.message) && (closed || !canReceive)"
           :reason="refusalOf(entry.message)"
           :launcher="launcherOf(entry.message)"
+          :data-message-id="entry.message.messageId"
           @open-link="emit('open-link', $event)"
           @retry="entry.message.echo && emit('retry', entry.message.echo.id)"
           @copy="emit('copy', entry.message.text)"

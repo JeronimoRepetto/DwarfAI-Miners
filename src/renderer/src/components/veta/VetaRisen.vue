@@ -25,6 +25,7 @@ import { WATCHDOG_MARGIN_MS } from '../../lib/shell/motionTiming'
 import { RISEN, type RisenGeometry, type RisenWindow } from '../../lib/veta/risenWindow'
 import AddPanel from '../launch/AddPanel.vue'
 import DwarfMessagePanel from '../message/DwarfMessagePanel.vue'
+import { messageBoxesOf } from '../message/messageBoxes'
 
 type MessageDock = ReturnType<typeof useMessageDock>
 
@@ -156,7 +157,12 @@ const field = (): HTMLTextAreaElement | null =>
 
 /** The open chat's view state as the panel shows it (ADR-024 item 3). */
 function captureView(): ChatViewState {
-  return captureChatView(list() ?? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, [], field())
+  const log = list()
+  return captureChatView(
+    log ?? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
+    log === null ? [] : messageBoxesOf(log),
+    field()
+  )
 }
 
 /** Puts a stored view state back once the panel is drawn. */
@@ -164,7 +170,7 @@ async function restoreView(view: ChatViewState | null): Promise<void> {
   await nextTick()
   if (view === null) return
   const log = list()
-  if (log !== null) log.scrollTop = restoredScrollTop(view.scrollAnchor, log, [])
+  if (log !== null) log.scrollTop = restoredScrollTop(view.scrollAnchor, log, messageBoxesOf(log))
   const composer = field()
   if (composer !== null && view.selection !== undefined) {
     const { start, end, direction } = view.selection

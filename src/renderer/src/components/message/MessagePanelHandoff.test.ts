@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DwarfId, MineId, ModeTransition } from '@dwarfai/contracts'
+import type {
+  ChatViewState,
+  DwarfId,
+  MessageId,
+  MineId,
+  ModeTransition,
+  MessageView
+} from '@dwarfai/contracts'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
+import { feedMessageOf } from '../../composables/useDwarfMessaging'
 import { modeTransitionPart } from '../../composables/useModeTransition'
 import { defaultDwarf } from '../../testing/factories'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
@@ -21,7 +29,11 @@ const RUN = '01920000-0000-7000-8000-00000000f001'
 let listener: ((t: ModeTransition) => void) | null = null
 const patches: unknown[] = []
 const done: string[] = []
-let carried = { draft: '', selection: { start: 0, end: 0, direction: 'none' as const } }
+let carried: {
+  draft: string
+  selection: { start: number; end: number; direction: 'none' }
+  anchor?: ChatViewState['scrollAnchor']
+} = { draft: '', selection: { start: 0, end: 0, direction: 'none' as const } }
 
 beforeEach(() => {
   vi.useFakeTimers({ now: 50_000 })
@@ -41,7 +53,10 @@ beforeEach(() => {
       getUiSession: () =>
         Promise.resolve({
           drafts: carried.draft === '' ? {} : { [DWARF]: carried.draft },
-          chatViews: { [DWARF]: { scrollAnchor: 'bottom', selection: carried.selection } },
+          // AMENDED for ISSUE-293 (was: always 'bottom'): a case may carry a message anchor.
+          chatViews: {
+            [DWARF]: { scrollAnchor: carried.anchor ?? 'bottom', selection: carried.selection }
+          },
           askPicks: {},
           openChat: {},
           currentMine: {},
@@ -131,5 +146,82 @@ describe('MessagePanel chat hand-off (ISSUE-284)', () => {
     expect(items).toContain('Open console')
     expect(items).not.toContain('Mine history')
     expect(hosted.emitted('history')).toBeUndefined()
+  })
+
+  // APPENDED for ISSUE-293: the scroll anchor by Host message id (ADR-024 item 3; OQ-37 B; INV-114).
+  it('[US-DLG-006.AC03, INV-114, ADR-024] the scroll anchor is the first message in view by its Host id, and a target puts that message back at the same offset, or at the bottom when it holds no such message', async () => {
+    const id = (n: number) =>
+      `01920000-0000-7000-8000-00000000e${String(n).padStart(3, '0')}` as MessageId
+    const view = (n: number): MessageView => ({
+      id: id(n),
+      dwarfId: DWARF,
+      role: 'dwarf',
+      text: `line ${n}`,
+      attachments: [],
+      providerTime: null,
+      createdAt: 1_791_277_200_000 + n * 60_000
+    })
+    const feed = {
+      readable: true,
+      messages: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => feedMessageOf(view(n)))
+    }
+    const wrapper = mount(DwarfMessagePanel, { props: { dwarf, feed }, attachTo: document.body })
+    await flushPromises()
+    // jsdom lays nothing out: each row is 100 px tall in a list 100 px high, scrolled by `scrollTop`.
+    const list = wrapper.get('.dm-msg__log').element as HTMLElement
+    let scrollTop = 0
+    Object.defineProperty(list, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => void (scrollTop = value)
+    })
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 100 })
+    list.getBoundingClientRect = () => ({ top: 0 }) as DOMRect
+    const bubbles = [...list.querySelectorAll<HTMLElement>('[data-message-id]')]
+    expect(bubbles.map((b) => b.dataset['messageId'])).toEqual(
+      feed.messages.map((_, i) => id(i + 1))
+    )
+    bubbles.forEach((bubble, i) => {
+      bubble.getBoundingClientRect = () => ({ top: i * 100 - scrollTop }) as DOMRect
+    })
+
+    // As a source: line 3 starts the view, 50 px above its top.
+    scrollTop = 250
+    listener!({ transitionId: RUN, from: 'panel', to: 'veta', t0: Date.now() + 16, role: 'source' })
+    expect(patches).toContainEqual({
+      kind: 'chat-view',
+      dwarfId: DWARF,
+      view: { scrollAnchor: { messageId: id(3), offsetPx: 50 }, selection: expect.anything() }
+    })
+
+    // As a target: line 6 is put back 10 px into the view.
+    carried = { ...carried, anchor: { messageId: id(6), offsetPx: 10 } }
+    listener!({
+      transitionId: '01920000-0000-7000-8000-00000000f003',
+      from: 'veta',
+      to: 'panel',
+      t0: Date.now() + 16,
+      role: 'target',
+      chat: { dwarfId: DWARF, mineId: MINE }
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(scrollTop).toBe(510)
+
+    // A message this side has not loaded: the bottom.
+    carried = { ...carried, anchor: { messageId: id(99), offsetPx: 10 } }
+    listener!({
+      transitionId: '01920000-0000-7000-8000-00000000f004',
+      from: 'veta',
+      to: 'panel',
+      t0: Date.now() + 16,
+      role: 'target',
+      chat: { dwarfId: DWARF, mineId: MINE }
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(scrollTop).toBe(900)
+    carried = { draft: '', selection: { start: 0, end: 0, direction: 'none' } }
   })
 })

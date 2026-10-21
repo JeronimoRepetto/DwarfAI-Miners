@@ -1,4 +1,4 @@
-import { computed, reactive, shallowRef } from 'vue'
+import { computed, reactive, shallowRef, toRaw } from 'vue'
 import {
   HOST_FRAME_SCHEMAS,
   type Delivery,
@@ -561,12 +561,27 @@ export function feedMessageOf(view: MessageView): FeedMessage {
     view.issuer === undefined
       ? undefined
       : launcherIssuerOf(view.issuer.dwarfId, useMines().state.mines)
-  return {
+  const row: FeedMessage = {
     role: FEED_ROLE[view.role],
     text: view.text,
     timestamp: new Date(view.providerTime ?? view.createdAt).toISOString(),
     ...(issuer === undefined ? {} : { issuer })
   }
+  hostIds.set(row, view.id)
+  return row
+}
+
+/**
+ * The Host message id of each row `feedMessageOf` made (ISSUE-293): today's `FeedMessage` names no message, and a chat
+ * view is anchored to one (ADR-024 item 3, `ChatViewState.scrollAnchor.messageId`). Kept beside the row rather than in
+ * it, so the today shape the panel draws is unchanged; a row goes with its entry when nothing holds it any more.
+ */
+const hostIds = new WeakMap<FeedMessage, MessageId>()
+
+/** The Host message id of a row the Host fed, or `undefined` for any other row (the poll's `lastMessage`, an echo). */
+export function hostMessageIdOf(row: FeedMessage): MessageId | undefined {
+  // A row read through a reactive prop or store is its proxy: the id is kept against the row itself.
+  return hostIds.get(toRaw(row))
 }
 
 /** Every chat the Host feeds; the reactive mirror below is what renders. */
@@ -1152,6 +1167,7 @@ export function useDwarfMessaging() {
     hostFeedOf,
     chatFeedOf,
     hostOldestMessageId,
+    hostMessageIdOf,
     startMarks,
     stopMarks,
     hostMarkOf,
