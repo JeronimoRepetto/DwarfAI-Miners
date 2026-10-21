@@ -11,16 +11,20 @@ import {
   browserFrameClockEnv,
   createFrameClock,
   type FrameClock,
+  type PausableFrameClock,
   type PlayOptions
 } from '../lib/sprite/frameClock'
 import type { SequencePosition, SpriteClip } from '../lib/sprite/spriteSheet'
 
 export const FRAME_CLOCK_KEY: InjectionKey<FrameClock> = Symbol('frame-clock')
 
-let shared: FrameClock | undefined
+let shared: PausableFrameClock | undefined
 
-/** The window's own clock, made once, on the first sprite that asks for it. */
-export function sharedFrameClock(): FrameClock {
+/**
+ * The window's own clock, made once, on the first sprite that asks for it. Pausable, so the window's owner can hold it
+ * still while the window is hidden (usePanelFrameClock, ISSUE-297).
+ */
+export function sharedFrameClock(): PausableFrameClock {
   shared ??= createFrameClock(browserFrameClockEnv())
   return shared
 }

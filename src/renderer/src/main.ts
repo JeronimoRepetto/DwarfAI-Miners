@@ -20,6 +20,7 @@ import './assets/design-tokens.css'
 import './assets/theme.css'
 import { restoreLaunchView } from './composables/useView'
 import { modeTransitionPart } from './composables/useModeTransition'
+import { usePanelFrameClock } from './composables/usePanelFrameClock'
 import VetaApp from './components/veta/VetaApp.vue'
 import { windowRoot } from './components/veta/vetaEntry'
 
@@ -40,9 +41,17 @@ import { windowRoot } from './components/veta/vetaEntry'
 //
 // The Veta window loads this same page with `?mode=veta` (ADR-025 item 1; ISSUE-285) and mounts the Veta root; it
 // plays its part in every run too. UI main builds that window only where Veta is in the build's built-modes list.
+//
+// The Panel's sprites play on a clock held still while the Panel window is hidden (ISSUE-297; ADR-025 item 7): UI main
+// says when it is, because a hidden frameless window's `document.hidden` is a platform detail. Veta keeps its own
+// clock, which plays while Veta is shown.
 modeTransitionPart()
 if (windowRoot(window.location.search) === 'veta') {
   createApp(VetaApp).mount('#app')
 } else {
-  void restoreLaunchView(window.api).then(() => createApp(App).mount('#app'))
+  void restoreLaunchView(window.api).then(() => {
+    const panel = createApp(App)
+    usePanelFrameClock(panel, window.api)
+    panel.mount('#app')
+  })
 }
