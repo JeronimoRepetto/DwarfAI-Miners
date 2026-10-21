@@ -65,6 +65,7 @@ import type {
 } from '../../../ports/providerDriver'
 import { probeEnv } from '../../install/searchDirs'
 import { adapterLaunch, type LaunchTarget } from '../acp/client/adapterLaunch'
+import { isImageFile, userContentOf, type AttachedFile } from '../attachedFiles'
 import { childEnv, type LoginEnvironment } from '../shared/childEnv'
 import {
   JsonRpcStdioClient,
@@ -442,7 +443,11 @@ class AppServerSession implements DriverSession {
   private foreign = false
   private readonly asks = new Map<string, OpenAsk>()
   private readonly started: StartedTurn[] = []
-  private readonly queued: { text: string; correlation: string }[] = []
+  private readonly queued: {
+    text: string
+    correlation: string
+    attachments: readonly AttachedFile[]
+  }[] = []
   private readonly openTurns = new Set<string>()
   private readonly interrupted = new Set<string>()
   private readonly children = new Set<string>()
@@ -596,16 +601,17 @@ class AppServerSession implements DriverSession {
     if (this.exited || this.outputEnded || this.closing) {
       throw sendError('session-closed', 'the session has ended')
     }
-    if (input.attachments.length > 0) {
-      throw sendError('channel-error', 'this driver does not send attachments yet')
-    }
     if (this.working) {
       // v1 queues a message sent during a turn (15 §4.4 Quirks: no turn/steer).
-      this.queued.push({ text: input.text, correlation: input.messageId })
+      this.queued.push({
+        text: input.text,
+        correlation: input.messageId,
+        attachments: input.attachments
+      })
       return { confidence: 'unconfirmed', heldUntilTurnEnd: true, correlation: input.messageId }
     }
     try {
-      const turnId = await this.startTurn(input.text, input.messageId)
+      const turnId = await this.startTurn(input.text, input.messageId, input.attachments)
       return {
         confidence: 'confirmed',
         heldUntilTurnEnd: false,
@@ -623,7 +629,11 @@ class AppServerSession implements DriverSession {
   }
 
   /** Writes one `turn/start`; resolves the turn id its response names. */
-  private async startTurn(text: string, correlation: string | null): Promise<string | null> {
+  private async startTurn(
+    text: string,
+    correlation: string | null,
+    attachments: readonly AttachedFile[] = []
+  ): Promise<string | null> {
     if (!this.working) {
       this.working = true
       this.emit({ t: 'status', value: 'working' })
@@ -634,7 +644,7 @@ class AppServerSession implements DriverSession {
       const result = asRecord(
         await this.client.request('turn/start', {
           threadId: this.threadId,
-          input: [{ type: 'text', text }],
+          input: turnInputOf(text, attachments),
           ...(this.effort === undefined ? {} : { effort: this.effort })
         })
       )
@@ -980,7 +990,7 @@ class AppServerSession implements DriverSession {
   private afterTurn(): void {
     const next = this.queued.shift()
     if (next !== undefined && !this.closing && !this.outputEnded) {
-      void this.startTurn(next.text, next.correlation).catch(() => undefined)
+      void this.startTurn(next.text, next.correlation, next.attachments).catch(() => undefined)
       return
     }
     if (this.started.length === 0 && this.activeTurn === null) this.becomeIdle()
@@ -1173,4 +1183,25 @@ function spawnFailure(error: unknown): DriverLaunchError {
   const code = (error as { code?: unknown } | null)?.code
   const named = typeof code === 'string' ? code : 'failed'
   return launchError(named === 'ENOENT' ? 'not-installed' : 'could-not-start', `spawn ${named}`)
+}
+
+/**
+ * A `turn/start` input (15 §1.2 `TurnInput.attachments`; US-MSG-002.AC03; package gap, recorded in
+ * the #1463 hand-off), in the `UserInput` shapes of the Codex 0.153.4 schema the binary itself
+ * generates (`codex app-server generate-json-schema`, `TurnStartParams.input`): the words as the
+ * `text` item, each image as a `localImage` item (`{ type, path }`, read by Codex itself), and each
+ * file of another kind, which has no input item, named in the text item (`userContentOf`) for codex
+ * to open with its own tools. Paths only, never bytes (INV-62); a turn of images alone carries no
+ * empty text item.
+ */
+function turnInputOf(text: string, attachments: readonly AttachedFile[]): Record<string, string>[] {
+  if (attachments.length === 0) return [{ type: 'text', text }]
+  const words = userContentOf(
+    text,
+    attachments.filter((file) => !isImageFile(file))
+  )
+  return [
+    ...(words === '' ? [] : [{ type: 'text', text: words }]),
+    ...attachments.filter(isImageFile).map((file) => ({ type: 'localImage', path: file.path }))
+  ]
 }
