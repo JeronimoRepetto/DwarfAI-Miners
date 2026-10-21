@@ -216,6 +216,30 @@ describe('the mode shell with a Veta window (ISSUE-285; ADR-025 items 1, 3)', ()
     expect(veta.visible).toBe(false)
   })
 
+  it('[S24.15, ADR-025] a notification click while Veta is shown reveals in Veta, never moving the mode', async () => {
+    const veta = new FakeModeWindow()
+    const s = setup('hidden', false, {
+      built: ['panel', 'veta'],
+      veta: { window: () => veta, bounds: () => ({ x: 1920, y: 1328, width: 480, height: 72 }) }
+    })
+    s.shell.panel.toggleVisible()
+    s.answer()
+    await Promise.resolve()
+    const moved = s.shell.coordinator.moveToMode({ mode: 'veta' })
+    const run = s.transitions().at(-1)!
+    s.answer()
+    s.shell.coordinator.transitionDone('veta', { transitionId: run.transitionId })
+    await moved
+    const runs = s.transitions().length
+    expect(await s.shell.coordinator.revealDwarfChat({ mineId: MINE, dwarfId: DWARF })).toBe(
+      'chat-open'
+    )
+    // The Veta window reveals it (07 S24.15): the mode stays the person's (S10.10).
+    expect(s.reveals).toEqual([{ mineId: MINE, dwarfId: DWARF, existing: 'veta' }])
+    expect(s.shell.coordinator.mode()).toBe('veta')
+    expect(s.transitions()).toHaveLength(runs)
+  })
+
   it('[ADR-002, S10.18] a confirmation the Panel shows, asked for while Veta is shown, moves to the Panel first', async () => {
     const veta = new FakeModeWindow()
     const s = setup('hidden', false, {

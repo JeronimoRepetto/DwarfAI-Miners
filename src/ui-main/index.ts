@@ -1465,7 +1465,16 @@ export async function startUiMain({
                           return Promise.resolve(notifications.windowFocused?.() ?? false)
                         }
                       },
-                      reveals: { panel: createPanelReveal(modeWindowList) },
+                      // Each mode's reveal reaches its own window alone (ADR-025 item 8): the Panel's the Panel
+                      // windows, Veta's the Veta window, whose renderer rises that dwarf's chat (07 S24.15, ISSUE-290).
+                      reveals: {
+                        panel: createPanelReveal(() =>
+                          modeWindowList().filter((w) => !isVeta(w.webContentsId))
+                        ),
+                        veta: createPanelReveal(() =>
+                          modeWindowList().filter((w) => isVeta(w.webContentsId))
+                        )
+                      },
                       dwarfPresent: (t) => departedDwarfs.present(t),
                       log: uiLog
                     })
