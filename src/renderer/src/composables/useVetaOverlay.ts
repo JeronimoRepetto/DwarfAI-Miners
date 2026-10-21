@@ -16,6 +16,10 @@
  * and the overlay, both on the screen side from the island's anchored end, and a closed overlay gives the window back
  * to the band, not to the bare island. After a `drop` the band is asked again.
  *
+ * A risen Add panel (07 machine 24, S24.03; ISSUE-290) holds its room the same way (`hold`), apart from the menus: the
+ * Add panel names no dwarf for `layoutVeta {rise}`, so its room rides with the band, asked before it rises and given
+ * back after its fold (S24.09); a menu opening or closing meanwhile never touches it, and a drag forgets it.
+ *
  * The bridge is injected (the house idiom over `vi.mock`).
  */
 import type { VetaLayoutRequest, VetaLayoutResult } from '@dwarfai/contracts'
@@ -43,6 +47,8 @@ export interface VetaOverlay {
   drop(): void
   /** The mine tab's band, held in the window from now on; `null` when no chamber is drawn. */
   band(size: Size | null): Promise<void>
+  /** A risen Add panel's room (07 machine 24), held beside the band apart from any menu; `null` gives it back. */
+  hold(size: Size | null): Promise<void>
 }
 
 const same = (a: Size | null, b: Size | null): boolean =>
@@ -54,17 +60,20 @@ export function useVetaOverlay(deps: VetaOverlayDeps): VetaOverlay {
   let band: Size | null = null
   /** The open overlay's room. */
   let current: Size | null = null
+  /** A risen Add panel's room (ISSUE-290), held apart from the menus so one opening or closing never touches it. */
+  let risen: Size | null = null
   /** The room UI main holds; `undefined` when not known (nothing asked yet, or forgotten by a drag). */
   let held: Size | null | undefined = undefined
   /** Stamps each open and close, so a late answer is told apart. */
   let stamp = 0
 
-  /** The room for the band and the open overlay together. */
+  /** The room for the band, the open overlay and a risen Add panel together. */
   function room(): Size | null {
-    if (band === null || current === null) return band ?? current
+    const rooms = [band, current, risen].filter((r): r is Size => r !== null)
+    if (rooms.length === 0) return null
     return {
-      width: Math.max(band.width, current.width),
-      height: Math.max(band.height, current.height)
+      width: Math.max(...rooms.map((r) => r.width)),
+      height: Math.max(...rooms.map((r) => r.height))
     }
   }
 
@@ -97,7 +106,13 @@ export function useVetaOverlay(deps: VetaOverlayDeps): VetaOverlay {
       ++stamp
       shown.value = false
       current = null
+      risen = null
       held = undefined
+    },
+    async hold(size) {
+      risen =
+        size === null ? null : { width: Math.ceil(size.width), height: Math.ceil(size.height) }
+      await ask(room())
     },
     async band(size) {
       band = size === null ? null : { width: Math.ceil(size.width), height: Math.ceil(size.height) }

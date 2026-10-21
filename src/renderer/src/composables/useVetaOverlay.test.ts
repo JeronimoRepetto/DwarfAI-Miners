@@ -123,4 +123,36 @@ describe('useVetaOverlay', () => {
     void overlay.band(null)
     expect(log.at(-1)).toBe('{"kind":"overlay","bounds":null}')
   })
+
+  it("[S24.03, S24.09, ADR-025] the Add panel's room is held beside the band and kept apart from a menu, and given back after its fold", async () => {
+    const { overlay, log, answer } = world()
+    void overlay.band({ width: 310, height: 40 })
+    await answer()
+    // The Add panel rises: its room joins the band's, asked before it shows.
+    const held = overlay.hold({ width: 444, height: 614 })
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":{"width":444,"height":614}}')
+    await answer()
+    await held
+    // The grip menu opens and closes meanwhile: the Add panel's room stays.
+    const opened = overlay.open({ width: 180, height: 160 })
+    await answer()
+    await opened
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":{"width":444,"height":614}}')
+    const closing = overlay.close()
+    await nextTick()
+    await answer()
+    await closing
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":{"width":444,"height":614}}')
+    // Folded: back to the band.
+    const given = overlay.hold(null)
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":{"width":310,"height":40}}')
+    await answer()
+    await given
+    // A drag forgets it with the rest.
+    void overlay.hold({ width: 444, height: 614 })
+    await answer()
+    overlay.drop()
+    void overlay.band({ width: 310, height: 40 })
+    expect(log.at(-1)).toBe('{"kind":"overlay","bounds":{"width":310,"height":40}}')
+  })
 })
